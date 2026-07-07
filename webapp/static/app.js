@@ -124,6 +124,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadSettingsFromServer();
     loadVoiceOptions();
 
+    if (currentUser) cookingManager.restore();
+
     const hash = window.location.hash.slice(1);
     if (hash) navigateTo(hash);
 });
@@ -830,6 +832,7 @@ const cookingManager = {
                 throw new Error(data.detail || 'Build failed');
             }
             this.jobId = data.job_id;
+            this._persist();
             this._showCookingBar();
             this._connect();
         } catch (e) {
@@ -863,6 +866,7 @@ const cookingManager = {
             this.evtSrc.close();
             this.evtSrc = null;
             this.result = JSON.parse(e.data);
+            this._clear();
             state.videoUrl = this.result.output_url;
             state.videoPath = this.result.output_path;
             this._hideCookingBar();
@@ -883,8 +887,62 @@ const cookingManager = {
             this.evtSrc.close();
             this.evtSrc = null;
             this.jobId = null;
+            this._clear();
             this._hideCookingBar();
         });
+    },
+
+    _persist() {
+        try {
+            localStorage.setItem('cr_active_job', JSON.stringify({ jobId: this.jobId, title: this.title }));
+        } catch (_) {}
+    },
+
+    _clear() {
+        try { localStorage.removeItem('cr_active_job'); } catch (_) {}
+    },
+
+    // Re-attach to an in-flight (or just-finished) render after a page refresh.
+    async restore() {
+        let saved;
+        try { saved = JSON.parse(localStorage.getItem('cr_active_job') || 'null'); } catch (_) { saved = null; }
+        if (!saved || !saved.jobId) return;
+
+        this.jobId = saved.jobId;
+        this.title = saved.title || 'your video';
+
+        let res;
+        try {
+            res = await fetch(`/api/build/${this.jobId}/result`);
+        } catch (_) {
+            return; // network hiccup — leave saved, try again next load
+        }
+
+        if (res.status === 404) {
+            // Job no longer exists on the server (server restarted/redeployed).
+            this.jobId = null;
+            this._clear();
+            showRenderLostNotice();
+            return;
+        }
+
+        const data = await res.json();
+        if (data && data.output_url) {
+            this.result = data;
+            state.videoUrl = data.output_url;
+            state.videoPath = data.output_path;
+            this._clear();
+            this._showToast();
+            return;
+        }
+        if (data && (data.status === 'error' || data.status === 'cancelled')) {
+            this.jobId = null;
+            this._clear();
+            return;
+        }
+        // Still running / queued — show the bar and reconnect the live stream.
+        this._showCookingBar();
+        this._connect();
     },
 
     _showCookingBar() {
@@ -925,6 +983,7 @@ const cookingManager = {
         }
         this.jobId = null;
         this.result = null;
+        this._clear();
         this._hideCookingBar();
         if (state.page === 'pipeline' && state.step === 6) {
             document.getElementById('build-start').classList.remove('hidden');
@@ -932,6 +991,10 @@ const cookingManager = {
         }
     },
 };
+
+function showRenderLostNotice() {
+    alert("We couldn't recover your last render after the page reloaded — it may still be finishing. Check History in a few minutes; if it's not there and your credit wasn't restored, email hello@channelrecipe.com and we'll sort it out.");
+}
 
 function dismissToast() {
     document.getElementById('toast').classList.add('hidden');
