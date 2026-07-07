@@ -7,7 +7,10 @@ from __future__ import annotations
 import os
 
 RESEND_KEY = os.getenv("RESEND_KEY", "")
-FROM_EMAIL = "ChannelRecipe <noreply@channelrecipe.com>"
+# Override with the FROM_EMAIL env var. Must be an address on a domain you've
+# verified in Resend (resend.com/domains). Use "Acme <onboarding@resend.dev>"
+# for quick testing before your domain is verified.
+FROM_EMAIL = os.getenv("FROM_EMAIL", "ChannelRecipe <noreply@channelrecipe.com>")
 
 
 def _get_client():
