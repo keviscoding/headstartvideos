@@ -130,13 +130,24 @@ def _safe_user(u: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Stripe billing
 # ---------------------------------------------------------------------------
+class CheckoutRequest(BaseModel):
+    plan: str = "monthly"
+
+
 @app.post("/api/billing/checkout")
-async def create_checkout(request: Request):
-    """Create a Stripe Checkout session for the Pro plan."""
+async def create_checkout(req: CheckoutRequest, request: Request):
+    """Create a Stripe Checkout session for Pro monthly or annual."""
     import stripe
-    if not config.STRIPE_SECRET_KEY or not config.STRIPE_PRICE_ID:
+    if not config.STRIPE_SECRET_KEY:
         raise HTTPException(500, "Stripe not configured")
     stripe.api_key = config.STRIPE_SECRET_KEY
+
+    if req.plan == "annual" and config.STRIPE_PRICE_ID_ANNUAL:
+        price_id = config.STRIPE_PRICE_ID_ANNUAL
+    elif config.STRIPE_PRICE_ID:
+        price_id = config.STRIPE_PRICE_ID
+    else:
+        raise HTTPException(500, "Stripe price not configured")
 
     user = _current_user(request)
     if not user:
@@ -152,7 +163,7 @@ async def create_checkout(request: Request):
     session = stripe.checkout.Session.create(
         customer=customer_id,
         mode="subscription",
-        line_items=[{"price": config.STRIPE_PRICE_ID, "quantity": 1}],
+        line_items=[{"price": price_id, "quantity": 1}],
         success_url=f"{base_url}/app#pipeline",
         cancel_url=f"{base_url}/app#pipeline",
         metadata={"user_id": str(user["id"])},
