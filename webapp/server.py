@@ -78,7 +78,7 @@ from webapp.database import (
     deduct_credit, refund_credit,
     create_verify_code, verify_code,
     create_session, get_session_user, delete_session,
-    log_render_event, render_stats,
+    log_render_event, render_stats, backend_name,
 )
 
 # Rough COGS estimate in GBP pence per finished minute, per recipe. These are
@@ -424,6 +424,12 @@ async def terms_page():
 # ---------------------------------------------------------------------------
 # Niches
 # ---------------------------------------------------------------------------
+@app.get("/api/health")
+async def health():
+    """Public health check. Reports which DB backend is active (no secrets)."""
+    return {"status": "ok", "db": backend_name()}
+
+
 @app.get("/api/config")
 async def get_client_config():
     """Public front-end config: analytics keys only (safe to expose)."""

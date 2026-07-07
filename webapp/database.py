@@ -322,5 +322,10 @@ def cleanup_expired() -> int:
         return (c1 or 0) + (c2 or 0)
 
 
+def backend_name() -> str:
+    return "postgres" if IS_PG else "sqlite"
+
+
 # Initialize on import
+print(f"[db] Using {backend_name()} backend")
 _init_db()
