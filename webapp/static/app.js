@@ -681,11 +681,16 @@ const cookingManager = {
                 }),
             });
             const data = await res.json();
+            if (!res.ok) {
+                if (res.status === 401) { showAuthModal(); }
+                else { alert(data.detail || 'Build failed'); }
+                throw new Error(data.detail || 'Build failed');
+            }
             this.jobId = data.job_id;
             this._showCookingBar();
             this._connect();
         } catch (e) {
-            alert('Build request failed: ' + e.message);
+            if (e.message.includes('Sign in')) showAuthModal();
             document.getElementById('build-start').classList.remove('hidden');
             document.getElementById('build-progress').classList.add('hidden');
         }
@@ -790,6 +795,10 @@ function dismissToast() {
 }
 
 async function startBuild() {
+    if (!currentUser) {
+        showAuthModal();
+        return;
+    }
     await cookingManager.start();
 }
 

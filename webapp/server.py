@@ -595,9 +595,11 @@ async def generate_thumbnail_with_refs(
 @app.post("/api/build")
 async def start_build(req: BuildRequest, request: Request):
     user = _current_user(request)
-    user_id = user["id"] if user else None
+    if not user:
+        raise HTTPException(401, "Sign in to generate videos. It's free — 3 videos, no card.")
+    user_id = user["id"]
 
-    if user_id and not deduct_credit(user_id):
+    if not deduct_credit(user_id):
         raise HTTPException(402, "No credits remaining. Upgrade to Pro for more.")
 
     job_id = str(uuid.uuid4())[:8]
