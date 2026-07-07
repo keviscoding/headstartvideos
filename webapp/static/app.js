@@ -30,7 +30,10 @@ let previewAudio = null;
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
+let currentUser = null;
+
 document.addEventListener('DOMContentLoaded', () => {
+    checkAuth();
     loadNiches();
     bindEvents();
     loadSettingsFromServer();
@@ -1264,4 +1267,144 @@ function copyText(elementId) {
     if (!el) return;
     const text = el.value || el.textContent;
     navigator.clipboard.writeText(text);
+}
+
+// ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
+async function checkAuth() {
+    try {
+        const res = await fetch('/api/auth/me');
+        const data = await res.json();
+        if (data.user) {
+            currentUser = data.user;
+            updateAuthUI();
+        }
+    } catch (e) {
+        console.error('Auth check failed:', e);
+    }
+}
+
+function updateAuthUI() {
+    const loginBtn = document.getElementById('btn-login');
+    const userBtn = document.getElementById('btn-user-menu');
+    const creditsDisplay = document.getElementById('credits-display');
+
+    if (currentUser) {
+        loginBtn.classList.add('hidden');
+        userBtn.classList.remove('hidden');
+        userBtn.textContent = currentUser.email[0].toUpperCase();
+        document.getElementById('user-email-display').textContent = currentUser.email;
+        document.getElementById('user-plan-display').textContent = currentUser.plan === 'free' ? 'Free trial' : 'Pro';
+        document.getElementById('credits-count').textContent = currentUser.credits + ' credits';
+        document.getElementById('credits-plan').textContent = currentUser.plan === 'free' ? 'trial' : 'pro';
+        creditsDisplay.classList.remove('hidden');
+    } else {
+        loginBtn.classList.remove('hidden');
+        userBtn.classList.add('hidden');
+        creditsDisplay.classList.remove('hidden');
+    }
+}
+
+function toggleUserMenu() {
+    document.getElementById('user-menu').classList.toggle('hidden');
+}
+
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('#btn-user-menu') && !e.target.closest('#user-menu')) {
+        document.getElementById('user-menu')?.classList.add('hidden');
+    }
+});
+
+function showAuthModal() {
+    const modal = document.getElementById('auth-modal');
+    modal.classList.remove('hidden');
+    modal.style.display = 'flex';
+    document.getElementById('auth-step-email').classList.remove('hidden');
+    document.getElementById('auth-step-code').classList.add('hidden');
+    document.getElementById('auth-email').value = '';
+    document.getElementById('auth-code').value = '';
+    document.getElementById('auth-email-error').classList.add('hidden');
+    document.getElementById('auth-code-error').classList.add('hidden');
+    setTimeout(() => document.getElementById('auth-email').focus(), 100);
+}
+
+function hideAuthModal() {
+    const modal = document.getElementById('auth-modal');
+    modal.classList.add('hidden');
+    modal.style.display = 'none';
+}
+
+async function authSendCode() {
+    const email = document.getElementById('auth-email').value.trim();
+    if (!email || !email.includes('@')) {
+        document.getElementById('auth-email-error').textContent = 'Enter a valid email';
+        document.getElementById('auth-email-error').classList.remove('hidden');
+        return;
+    }
+    const btn = document.getElementById('btn-send-code');
+    btn.disabled = true;
+    btn.textContent = 'Sending...';
+    try {
+        const res = await fetch('/api/auth/send-code', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email }),
+        });
+        if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
+        document.getElementById('auth-step-email').classList.add('hidden');
+        document.getElementById('auth-step-code').classList.remove('hidden');
+        document.getElementById('auth-email-display').textContent = email;
+        setTimeout(() => document.getElementById('auth-code').focus(), 100);
+    } catch (e) {
+        document.getElementById('auth-email-error').textContent = e.message;
+        document.getElementById('auth-email-error').classList.remove('hidden');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Send verification code';
+    }
+}
+
+async function authVerifyCode() {
+    const email = document.getElementById('auth-email').value.trim();
+    const code = document.getElementById('auth-code').value.trim();
+    if (code.length !== 6) {
+        document.getElementById('auth-code-error').textContent = 'Enter the 6-digit code';
+        document.getElementById('auth-code-error').classList.remove('hidden');
+        return;
+    }
+    const btn = document.getElementById('btn-verify-code');
+    btn.disabled = true;
+    btn.textContent = 'Verifying...';
+    try {
+        const res = await fetch('/api/auth/verify', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, code }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Invalid code');
+        currentUser = data.user;
+        updateAuthUI();
+        hideAuthModal();
+    } catch (e) {
+        document.getElementById('auth-code-error').textContent = e.message;
+        document.getElementById('auth-code-error').classList.remove('hidden');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Verify';
+    }
+}
+
+function authBackToEmail() {
+    document.getElementById('auth-step-email').classList.remove('hidden');
+    document.getElementById('auth-step-code').classList.add('hidden');
+    document.getElementById('auth-code-error').classList.add('hidden');
+}
+
+async function handleLogout() {
+    try {
+        await fetch('/api/auth/logout', { method: 'POST' });
+    } catch (e) { /* ignore */ }
+    currentUser = null;
+    updateAuthUI();
+    document.getElementById('user-menu').classList.add('hidden');
 }

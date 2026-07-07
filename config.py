@@ -15,6 +15,10 @@ DOWNSUB_KEY = os.getenv("DOWNSUB_KEY", "")
 PIXABAY_KEY = os.getenv("PIXABAY_KEY", "")
 ATLASCLOUD_KEY = os.getenv("ATLASCLOUD_KEY", "")
 RESEND_KEY = os.getenv("RESEND_KEY", "")
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "")
 
 OUTPUT_DIR = ROOT_DIR / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)

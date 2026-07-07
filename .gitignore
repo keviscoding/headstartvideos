@@ -28,6 +28,10 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Database
+data/
+*.db
+
 # Uploads
 webapp/uploads/
 

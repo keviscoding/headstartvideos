@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChannelRecipe — Turn a proven niche into a finished YouTube video in 15 minutes</title>
+    <meta name="description" content="No editing, no camera, no experience. Pick a recipe, click generate, post. 3 free videos, no card required.">
+    <link rel="icon" href="/static/favicon.svg">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --canvas: #F7F5F0;
+            --canvas-2: #F1EEE6;
+            --ink: #16161A;
+            --ink-2: #45454E;
+            --ink-3: #6E6E79;
+            --hairline: #E5E1D8;
+            --accent: #6D5AE0;
+            --accent-hover: #5A48C9;
+            --accent-soft: #EDEAFB;
+            --white: #FFFFFF;
+            --success: #14B87A;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--canvas);
+            color: var(--ink);
+            -webkit-font-smoothing: antialiased;
+            line-height: 1.6;
+        }
+
+        .container { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+
+        /* -- Hero -- */
+        .hero {
+            padding: 80px 0 60px;
+            text-align: center;
+        }
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: var(--accent-soft);
+            color: var(--accent);
+            font-size: 13px;
+            font-weight: 600;
+            padding: 6px 14px;
+            border-radius: 999px;
+            margin-bottom: 24px;
+        }
+        .hero h1 {
+            font-size: clamp(32px, 5vw, 52px);
+            font-weight: 800;
+            line-height: 1.1;
+            letter-spacing: -0.03em;
+            max-width: 720px;
+            margin: 0 auto 20px;
+        }
+        .hero h1 .accent { color: var(--accent); }
+        .hero .sub {
+            font-size: 18px;
+            color: var(--ink-2);
+            max-width: 540px;
+            margin: 0 auto 32px;
+            line-height: 1.6;
+        }
+        .cta-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            background: var(--accent);
+            color: var(--white);
+            font-size: 17px;
+            font-weight: 700;
+            padding: 16px 36px;
+            border-radius: 12px;
+            border: none;
+            cursor: pointer;
+            text-decoration: none;
+            transition: background 0.2s;
+        }
+        .cta-btn:hover { background: var(--accent-hover); }
+        .cta-micro {
+            display: block;
+            font-size: 13px;
+            color: var(--ink-3);
+            margin-top: 12px;
+        }
+
+        /* -- Demo -- */
+        .demo-section {
+            padding: 0 0 80px;
+        }
+        .demo-frame {
+            background: var(--ink);
+            border-radius: 16px;
+            overflow: hidden;
+            aspect-ratio: 16/9;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 24px 80px rgba(0,0,0,0.15);
+        }
+        .demo-frame p {
+            color: #6C7192;
+            font-size: 15px;
+        }
+
+        /* -- How it works -- */
+        .how-section {
+            padding: 80px 0;
+            background: var(--canvas-2);
+        }
+        .section-title {
+            font-size: 14px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--accent);
+            text-align: center;
+            margin-bottom: 12px;
+        }
+        .section-heading {
+            font-size: clamp(26px, 3.5vw, 38px);
+            font-weight: 800;
+            text-align: center;
+            letter-spacing: -0.02em;
+            margin-bottom: 48px;
+        }
+        .steps-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+        }
+        @media (max-width: 640px) {
+            .steps-grid { grid-template-columns: 1fr; }
+        }
+        .step-card {
+            background: var(--white);
+            border-radius: 16px;
+            padding: 28px;
+            border: 1px solid var(--hairline);
+        }
+        .step-num {
+            width: 36px;
+            height: 36px;
+            background: var(--accent-soft);
+            color: var(--accent);
+            font-weight: 800;
+            font-size: 16px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 16px;
+        }
+        .step-card h3 {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        .step-card p {
+            font-size: 14px;
+            color: var(--ink-2);
+            line-height: 1.6;
+        }
+
+        /* -- Recipe wall -- */
+        .recipes-section {
+            padding: 80px 0;
+        }
+        .recipe-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+        }
+        @media (max-width: 640px) {
+            .recipe-grid { grid-template-columns: 1fr; }
+        }
+        .recipe-card {
+            background: var(--white);
+            border-radius: 16px;
+            padding: 24px;
+            border: 1px solid var(--hairline);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .recipe-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.08);
+        }
+        .recipe-tag {
+            display: inline-block;
+            background: var(--accent-soft);
+            color: var(--accent);
+            font-size: 11px;
+            font-weight: 700;
+            padding: 3px 10px;
+            border-radius: 999px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 10px;
+        }
+        .recipe-card h3 {
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+        .recipe-card p {
+            font-size: 14px;
+            color: var(--ink-2);
+            line-height: 1.5;
+        }
+        .recipe-meta {
+            margin-top: 14px;
+            font-size: 12px;
+            color: var(--ink-3);
+            font-family: 'Courier New', monospace;
+        }
+
+        /* -- Pricing -- */
+        .pricing-section {
+            padding: 80px 0;
+            background: var(--canvas-2);
+        }
+        .pricing-cards {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 24px;
+            max-width: 720px;
+            margin: 0 auto;
+        }
+        @media (max-width: 640px) {
+            .pricing-cards { grid-template-columns: 1fr; }
+        }
+        .price-card {
+            background: var(--white);
+            border-radius: 16px;
+            padding: 32px;
+            border: 1px solid var(--hairline);
+            text-align: center;
+        }
+        .price-card.featured {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 1px var(--accent);
+            position: relative;
+        }
+        .price-card.featured::before {
+            content: 'Most popular';
+            position: absolute;
+            top: -12px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--accent);
+            color: white;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 4px 14px;
+            border-radius: 999px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .price-name {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        .price-amount {
+            font-size: 42px;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            margin: 8px 0;
+        }
+        .price-amount span {
+            font-size: 16px;
+            font-weight: 500;
+            color: var(--ink-3);
+        }
+        .price-desc {
+            font-size: 14px;
+            color: var(--ink-2);
+            margin-bottom: 20px;
+        }
+        .price-features {
+            list-style: none;
+            text-align: left;
+            margin-bottom: 24px;
+        }
+        .price-features li {
+            font-size: 14px;
+            color: var(--ink-2);
+            padding: 6px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .price-features li::before {
+            content: '✓';
+            color: var(--success);
+            font-weight: 700;
+        }
+        .price-card .cta-btn {
+            width: 100%;
+            justify-content: center;
+            font-size: 15px;
+            padding: 12px 24px;
+        }
+        .price-card .cta-btn.outline {
+            background: transparent;
+            color: var(--accent);
+            border: 2px solid var(--accent);
+        }
+        .price-card .cta-btn.outline:hover {
+            background: var(--accent-soft);
+        }
+        .price-per-video {
+            font-size: 12px;
+            color: var(--ink-3);
+            margin-top: 10px;
+            font-family: 'Courier New', monospace;
+        }
+
+        /* -- FAQ -- */
+        .faq-section {
+            padding: 80px 0;
+        }
+        .faq-list {
+            max-width: 640px;
+            margin: 0 auto;
+        }
+        .faq-item {
+            border-bottom: 1px solid var(--hairline);
+            padding: 20px 0;
+        }
+        .faq-q {
+            font-size: 16px;
+            font-weight: 700;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .faq-q::after {
+            content: '+';
+            font-size: 20px;
+            color: var(--ink-3);
+            transition: transform 0.2s;
+        }
+        .faq-item.open .faq-q::after {
+            transform: rotate(45deg);
+        }
+        .faq-a {
+            font-size: 14px;
+            color: var(--ink-2);
+            line-height: 1.6;
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s, padding 0.3s;
+            padding-top: 0;
+        }
+        .faq-item.open .faq-a {
+            max-height: 200px;
+            padding-top: 12px;
+        }
+
+        /* -- Footer -- */
+        .footer-section {
+            padding: 48px 0;
+            text-align: center;
+            border-top: 1px solid var(--hairline);
+        }
+        .footer-section p {
+            font-size: 13px;
+            color: var(--ink-3);
+        }
+
+        /* -- Final CTA -- */
+        .final-cta {
+            padding: 80px 0;
+            text-align: center;
+            background: var(--canvas-2);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Hero -->
+    <section class="hero">
+        <div class="container">
+            <div class="hero-badge">
+                <svg width="14" height="14" viewBox="0 0 14 14"><path d="M4 2.5 L4 11.5 L11 7 Z" fill="currentColor"/></svg>
+                New recipes added weekly
+            </div>
+            <h1>Turn a proven niche into a finished YouTube video in <span class="accent">15 minutes</span></h1>
+            <p class="sub">No editing, no camera, no experience. Pick a recipe, click generate, post. AI handles the script, voice, visuals, and assembly.</p>
+            <a href="/app" class="cta-btn">
+                <svg width="18" height="18" viewBox="0 0 14 14"><path d="M4 2.5 L4 11.5 L11 7 Z" fill="currentColor"/></svg>
+                Make your first video free
+            </a>
+            <span class="cta-micro">3 free videos · no card · 2-minute setup</span>
+        </div>
+    </section>
+
+    <!-- Demo -->
+    <section class="demo-section">
+        <div class="container">
+            <div class="demo-frame">
+                <p>Product demo — coming soon</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- How it works -->
+    <section class="how-section">
+        <div class="container">
+            <p class="section-title">How it works</p>
+            <h2 class="section-heading">Three steps. One finished video.</h2>
+            <div class="steps-grid">
+                <div class="step-card">
+                    <div class="step-num">1</div>
+                    <h3>Pick a recipe</h3>
+                    <p>Choose from proven niches — animated explainers, cinematic B-roll, talking heads. Each recipe is pre-configured with the best settings.</p>
+                </div>
+                <div class="step-card">
+                    <div class="step-num">2</div>
+                    <h3>Enter a topic</h3>
+                    <p>Type your idea or pick from suggestions. AI generates the title, script, voiceover, and thumbnails — edit anything, or keep the defaults.</p>
+                </div>
+                <div class="step-card">
+                    <div class="step-num">3</div>
+                    <h3>Download &amp; post</h3>
+                    <p>Your video renders in minutes. Download the MP4, thumbnail, title, and description — everything you need to upload and go live.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Recipe wall -->
+    <section class="recipes-section">
+        <div class="container">
+            <p class="section-title">Proven recipes</p>
+            <h2 class="section-heading">Formats that actually get views</h2>
+            <div class="recipe-grid">
+                <div class="recipe-card">
+                    <span class="recipe-tag">Popular</span>
+                    <h3>Animated Explainer</h3>
+                    <p>Stick-figure documentaries with word-level visual changes. Cheap to produce, massive engagement.</p>
+                    <div class="recipe-meta">~15 min · 1 credit · RPM $4–$12</div>
+                </div>
+                <div class="recipe-card">
+                    <span class="recipe-tag">Premium</span>
+                    <h3>Cinematic B-Roll</h3>
+                    <p>AI-directed multi-asset productions mixing stock video, images, and text overlays.</p>
+                    <div class="recipe-meta">~15 min · 1 credit · RPM $6–$15</div>
+                </div>
+                <div class="recipe-card">
+                    <span class="recipe-tag">Classic</span>
+                    <h3>B-Roll Documentary</h3>
+                    <p>Narration over stock footage with Ken Burns zoom effects. Great for history and science.</p>
+                    <div class="recipe-meta">~15 min · 1 credit · RPM $3–$8</div>
+                </div>
+                <div class="recipe-card">
+                    <span class="recipe-tag">AI Avatar</span>
+                    <h3>Avatar + Illustrations</h3>
+                    <p>HeyGen AI talking head interleaved with AI-generated illustration B-roll.</p>
+                    <div class="recipe-meta">~15 min · 1 credit · RPM $5–$12</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Pricing -->
+    <section class="pricing-section">
+        <div class="container">
+            <p class="section-title">Simple pricing</p>
+            <h2 class="section-heading">Start free. Scale when ready.</h2>
+            <div class="pricing-cards">
+                <div class="price-card">
+                    <p class="price-name">Free Trial</p>
+                    <p class="price-amount">$0</p>
+                    <p class="price-desc">Try it, no card needed</p>
+                    <ul class="price-features">
+                        <li>3 videos</li>
+                        <li>All recipes</li>
+                        <li>Full pipeline</li>
+                        <li>7-day file retention</li>
+                    </ul>
+                    <a href="/app" class="cta-btn outline">Start free</a>
+                </div>
+                <div class="price-card featured">
+                    <p class="price-name">Pro</p>
+                    <p class="price-amount">$27<span>/mo</span></p>
+                    <p class="price-desc">15 videos per month</p>
+                    <ul class="price-features">
+                        <li>15 videos / month</li>
+                        <li>All recipes + new drops</li>
+                        <li>Longer videos (up to 20 min)</li>
+                        <li>30-day file retention</li>
+                        <li>Priority queue</li>
+                    </ul>
+                    <a href="/app" class="cta-btn">Get Pro — $27/mo</a>
+                    <p class="price-per-video">That's $1.80 per video</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- FAQ -->
+    <section class="faq-section">
+        <div class="container">
+            <p class="section-title">Questions</p>
+            <h2 class="section-heading">Frequently asked</h2>
+            <div class="faq-list">
+                <div class="faq-item">
+                    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">Do I need my own API keys?</div>
+                    <div class="faq-a">No. Everything runs on our infrastructure. You just pick a recipe, enter a topic, and the system handles all the AI generation, rendering, and assembly.</div>
+                </div>
+                <div class="faq-item">
+                    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">Is this YouTube-safe?</div>
+                    <div class="faq-a">Yes. All recipes use original AI-generated content, licensed stock footage, and original scripts. Your channel stays in full compliance with YouTube's monetization policies.</div>
+                </div>
+                <div class="faq-item">
+                    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">What if a render fails?</div>
+                    <div class="faq-a">Your credit is automatically refunded. No support ticket needed. You'll see the credit restored immediately and can try again.</div>
+                </div>
+                <div class="faq-item">
+                    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">Can I use my own script or voiceover?</div>
+                    <div class="faq-a">Yes. You can edit the AI-generated script freely, or upload your own voiceover recording. The pipeline adapts to whatever you provide.</div>
+                </div>
+                <div class="faq-item">
+                    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">What happens after the trial?</div>
+                    <div class="faq-a">Nothing automatic. Your 3 free videos don't expire, and we never ask for a card upfront. When you're ready for more, Pro is $27/month for 15 videos — cancel anytime.</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Final CTA -->
+    <section class="final-cta">
+        <div class="container">
+            <h2 class="section-heading">Ready to make your first video?</h2>
+            <a href="/app" class="cta-btn">
+                <svg width="18" height="18" viewBox="0 0 14 14"><path d="M4 2.5 L4 11.5 L11 7 Z" fill="currentColor"/></svg>
+                Make your first video free
+            </a>
+            <span class="cta-micro">3 free videos · no card · 2-minute setup</span>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <section class="footer-section">
+        <div class="container">
+            <p>&copy; 2026 ChannelRecipe. Proven recipes for faceless YouTube channels.</p>
+        </div>
+    </section>
+
+</body>
+</html>

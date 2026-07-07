@@ -16,8 +16,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi import Cookie, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
@@ -41,6 +41,187 @@ app = FastAPI(title="ChannelRecipe", docs_url="/docs")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 _jobs: dict[str, dict[str, Any]] = {}
+
+from webapp.database import (
+    get_user_by_email, create_user, get_user_by_id, update_user,
+    deduct_credit, refund_credit,
+    create_verify_code, verify_code,
+    create_session, get_session_user, delete_session,
+)
+
+
+def _current_user(request: Request) -> dict | None:
+    """Extract the logged-in user from session cookie."""
+    token = request.cookies.get("session")
+    if not token:
+        return None
+    return get_session_user(token)
+
+
+# ---------------------------------------------------------------------------
+# Auth endpoints
+# ---------------------------------------------------------------------------
+class AuthSendCodeRequest(BaseModel):
+    email: str
+
+class AuthVerifyRequest(BaseModel):
+    email: str
+    code: str
+
+
+@app.post("/api/auth/send-code")
+async def auth_send_code(req: AuthSendCodeRequest):
+    email = req.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(400, "Invalid email")
+    code = create_verify_code(email)
+    try:
+        from webapp.email_service import send_verification_code
+        sent = send_verification_code(email, code)
+        if not sent:
+            print(f"[auth] Code for {email}: {code} (email not configured, showing in logs)")
+    except Exception as e:
+        print(f"[auth] Email send failed, code for {email}: {code} — {e}")
+    return {"ok": True, "message": "Verification code sent"}
+
+
+@app.post("/api/auth/verify")
+async def auth_verify(req: AuthVerifyRequest):
+    email = req.email.strip().lower()
+    if not verify_code(email, req.code):
+        raise HTTPException(400, "Invalid or expired code")
+    user = get_user_by_email(email)
+    if not user:
+        user = create_user(email)
+    token = create_session(user["id"])
+    resp = JSONResponse({"ok": True, "user": _safe_user(user)})
+    resp.set_cookie("session", token, httponly=True, samesite="lax", max_age=30 * 86400)
+    return resp
+
+
+@app.get("/api/auth/me")
+async def auth_me(request: Request):
+    user = _current_user(request)
+    if not user:
+        return JSONResponse({"user": None}, status_code=200)
+    return {"user": _safe_user(user)}
+
+
+@app.post("/api/auth/logout")
+async def auth_logout(request: Request):
+    token = request.cookies.get("session")
+    if token:
+        delete_session(token)
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie("session")
+    return resp
+
+
+def _safe_user(u: dict) -> dict:
+    return {
+        "id": u["id"],
+        "email": u["email"],
+        "plan": u["plan"],
+        "credits": u["credits"],
+        "created_at": u["created_at"],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Stripe billing
+# ---------------------------------------------------------------------------
+@app.post("/api/billing/checkout")
+async def create_checkout(request: Request):
+    """Create a Stripe Checkout session for the Pro plan."""
+    import stripe
+    if not config.STRIPE_SECRET_KEY or not config.STRIPE_PRICE_ID:
+        raise HTTPException(500, "Stripe not configured")
+    stripe.api_key = config.STRIPE_SECRET_KEY
+
+    user = _current_user(request)
+    if not user:
+        raise HTTPException(401, "Sign in first")
+
+    customer_id = user.get("stripe_customer_id")
+    if not customer_id:
+        customer = stripe.Customer.create(email=user["email"])
+        customer_id = customer.id
+        update_user(user["id"], stripe_customer_id=customer_id)
+
+    base_url = str(request.base_url).rstrip("/")
+    session = stripe.checkout.Session.create(
+        customer=customer_id,
+        mode="subscription",
+        line_items=[{"price": config.STRIPE_PRICE_ID, "quantity": 1}],
+        success_url=f"{base_url}/app#pipeline",
+        cancel_url=f"{base_url}/app#pipeline",
+        metadata={"user_id": str(user["id"])},
+    )
+    return {"url": session.url}
+
+
+@app.post("/api/billing/webhook")
+async def stripe_webhook(request: Request):
+    """Handle Stripe webhook events."""
+    import stripe
+    if not config.STRIPE_SECRET_KEY:
+        raise HTTPException(500, "Stripe not configured")
+    stripe.api_key = config.STRIPE_SECRET_KEY
+
+    payload = await request.body()
+    sig = request.headers.get("stripe-signature", "")
+
+    try:
+        if config.STRIPE_WEBHOOK_SECRET:
+            event = stripe.Webhook.construct_event(payload, sig, config.STRIPE_WEBHOOK_SECRET)
+        else:
+            event = stripe.Event.construct_from(json.loads(payload), stripe.api_key)
+    except Exception as e:
+        raise HTTPException(400, f"Webhook error: {e}")
+
+    if event["type"] == "checkout.session.completed":
+        session = event["data"]["object"]
+        user_id = session.get("metadata", {}).get("user_id")
+        if user_id:
+            update_user(int(user_id), plan="pro", credits=15, stripe_sub_id=session.get("subscription", ""))
+            print(f"[stripe] User {user_id} upgraded to Pro")
+
+    elif event["type"] == "invoice.paid":
+        sub_id = event["data"]["object"].get("subscription")
+        if sub_id:
+            from webapp.database import _conn
+            with _conn() as conn:
+                row = conn.execute("SELECT id FROM users WHERE stripe_sub_id = ?", (sub_id,)).fetchone()
+                if row:
+                    update_user(row["id"], credits=15)
+                    print(f"[stripe] Refilled credits for user {row['id']}")
+
+    elif event["type"] in ("customer.subscription.deleted", "customer.subscription.updated"):
+        sub = event["data"]["object"]
+        sub_id = sub.get("id")
+        if sub_id and sub.get("status") in ("canceled", "unpaid", "past_due"):
+            from webapp.database import _conn
+            with _conn() as conn:
+                row = conn.execute("SELECT id FROM users WHERE stripe_sub_id = ?", (sub_id,)).fetchone()
+                if row:
+                    update_user(row["id"], plan="free")
+                    print(f"[stripe] User {row['id']} downgraded to free")
+
+    return {"ok": True}
+
+
+@app.get("/api/billing/status")
+async def billing_status(request: Request):
+    user = _current_user(request)
+    if not user:
+        return {"plan": "free", "credits": 3}
+    return {
+        "plan": user["plan"],
+        "credits": user["credits"],
+        "has_stripe": bool(config.STRIPE_SECRET_KEY),
+        "publishable_key": config.STRIPE_PUBLISHABLE_KEY,
+    }
+
 
 CURATED_VOICES = [
     {"id": "Charon", "name": "Charon", "tag": "Informative", "desc": "Clear, authoritative narrator — best for documentaries", "default": True},
@@ -132,6 +313,14 @@ class KeyTestRequest(BaseModel):
 # Pages
 # ---------------------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
+async def landing():
+    lp = STATIC_DIR / "landing.html"
+    if lp.exists():
+        return FileResponse(str(lp))
+    return RedirectResponse("/app")
+
+
+@app.get("/app", response_class=HTMLResponse)
 async def index():
     return FileResponse(str(STATIC_DIR / "index.html"))
 
@@ -393,13 +582,20 @@ async def generate_thumbnail_with_refs(
 # Build (recipe-aware + SSE progress)
 # ---------------------------------------------------------------------------
 @app.post("/api/build")
-async def start_build(req: BuildRequest):
+async def start_build(req: BuildRequest, request: Request):
+    user = _current_user(request)
+    user_id = user["id"] if user else None
+
+    if user_id and not deduct_credit(user_id):
+        raise HTTPException(402, "No credits remaining. Upgrade to Pro for more.")
+
     job_id = str(uuid.uuid4())[:8]
     _jobs[job_id] = {
         "status": "queued",
         "progress": [],
         "result": None,
         "request": req.model_dump(),
+        "user_id": user_id,
     }
 
     import threading
@@ -474,6 +670,10 @@ def _run_build(job_id: str, req: BuildRequest):
     except Exception as e:
         job["status"] = "error"
         job["error"] = str(e)
+        user_id = job.get("user_id")
+        if user_id:
+            refund_credit(user_id)
+            print(f"[build] Auto-refunded credit for user {user_id} after build failure")
 
 
 @app.get("/api/build/{job_id}/progress")
@@ -675,17 +875,35 @@ async def analyze_niche(req: NicheAnalyzeRequest):
 # ---------------------------------------------------------------------------
 # History
 # ---------------------------------------------------------------------------
+RETENTION_FREE_DAYS = 7
+RETENTION_PAID_DAYS = 30
+
+
+def _retention_days(request: Request | None = None) -> int:
+    if request:
+        user = _current_user(request)
+        if user and user.get("plan") == "pro":
+            return RETENTION_PAID_DAYS
+    return RETENTION_FREE_DAYS
+
+
 @app.get("/api/history")
-async def get_history(type: str = "all"):
+async def get_history(type: str = "all", request: Request = None):
     entries = []
     output = ROOT / "output"
     if not output.exists():
-        return {"entries": []}
+        return {"entries": [], "retention_days": _retention_days(request)}
+
+    now = time.time()
+    retention_secs = _retention_days(request) * 86400
 
     for d in sorted(output.iterdir(), reverse=True):
         if not d.is_dir():
             continue
         name = d.name
+        dir_age = now - d.stat().st_mtime
+        expires_in_days = max(0, round((retention_secs - dir_age) / 86400, 1))
+        expired = dir_age > retention_secs
 
         if name.startswith("explainer_") or name.startswith("cine_") or name.startswith("job_") or name.startswith("avatar_job_"):
             if type not in ("all", "video"):
@@ -699,6 +917,8 @@ async def get_history(type: str = "all"):
                     "timestamp": d.stat().st_mtime * 1000,
                     "path": str(video_files[0]),
                     "url": f"/api/files/{os.path.relpath(str(video_files[0]), str(ROOT))}",
+                    "expires_in_days": expires_in_days,
+                    "expired": expired,
                 })
 
         elif name.startswith("voiceover") or (d / "voiceover.wav").exists():
@@ -711,6 +931,8 @@ async def get_history(type: str = "all"):
                     "title": name,
                     "description": f"Voiceover: {wav_files[0].name}",
                     "timestamp": d.stat().st_mtime * 1000,
+                    "expires_in_days": expires_in_days,
+                    "expired": expired,
                 })
 
         elif name.startswith("thumbnail"):
@@ -724,9 +946,29 @@ async def get_history(type: str = "all"):
                     "description": img.name,
                     "timestamp": img.stat().st_mtime * 1000,
                     "url": f"/api/files/{os.path.relpath(str(img), str(ROOT))}",
+                    "expires_in_days": expires_in_days,
+                    "expired": expired,
                 })
 
-    return {"entries": entries[:50]}
+    return {"entries": entries[:50], "retention_days": _retention_days(request)}
+
+
+@app.post("/api/history/cleanup")
+async def cleanup_history(request: Request):
+    """Remove expired output directories."""
+    output = ROOT / "output"
+    if not output.exists():
+        return {"removed": 0}
+    now = time.time()
+    retention_secs = _retention_days(request) * 86400
+    removed = 0
+    for d in output.iterdir():
+        if not d.is_dir():
+            continue
+        if (now - d.stat().st_mtime) > retention_secs:
+            shutil.rmtree(str(d), ignore_errors=True)
+            removed += 1
+    return {"removed": removed}
 
 
 # ---------------------------------------------------------------------------
