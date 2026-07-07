@@ -243,18 +243,26 @@ async function loadNiches() {
         niches.forEach(niche => {
             const card = document.createElement('div');
             card.className = 'niche-card';
+            const previewHtml = niche.preview_gif
+                ? `<div class="niche-preview">
+                       <img src="${niche.preview_gif}" alt="${niche.name} preview" loading="lazy">
+                   </div>`
+                : '';
             card.innerHTML = `
-                <div class="flex items-start justify-between mb-3">
-                    <span class="niche-badge" style="background: ${niche.color || '#3B82F6'}22; color: ${niche.color || '#3B82F6'}">
-                        ${niche.category || 'Video'}
-                    </span>
-                    <span class="text-xs text-gray-500">${niche.difficulty || ''}</span>
-                </div>
-                <h3 class="text-lg font-bold text-white mb-1">${niche.name}</h3>
-                <p class="text-sm text-gray-400 mb-3">${niche.tagline || niche.description || ''}</p>
-                <div class="flex items-center justify-between text-xs text-gray-500">
-                    <span>RPM: ${niche.rpm_range || 'N/A'}</span>
-                    <span>Demand: ${niche.demand || 'N/A'}</span>
+                ${previewHtml}
+                <div class="niche-card-body">
+                    <div class="flex items-start justify-between mb-3">
+                        <span class="niche-badge" style="background: ${niche.color || '#3B82F6'}22; color: ${niche.color || '#3B82F6'}">
+                            ${niche.category || 'Video'}
+                        </span>
+                        <span class="text-xs text-gray-500">${niche.difficulty || ''}</span>
+                    </div>
+                    <h3 class="text-lg font-bold text-white mb-1">${niche.name}</h3>
+                    <p class="text-sm text-gray-400 mb-3">${niche.tagline || niche.description || ''}</p>
+                    <div class="flex items-center justify-between text-xs text-gray-500">
+                        <span>RPM: ${niche.rpm_range || 'N/A'}</span>
+                        <span>Demand: ${niche.demand || 'N/A'}</span>
+                    </div>
                 </div>
             `;
             card.addEventListener('click', () => selectNiche(niche, card));
