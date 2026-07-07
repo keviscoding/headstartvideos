@@ -40,6 +40,22 @@ CREATE TABLE IF NOT EXISTS verify_codes (
     expires_at  REAL NOT NULL,
     used        INTEGER NOT NULL DEFAULT 0
 );
+
+-- Durable, authoritative record of every render. This is the margin/COGS
+-- source of truth (PostHog is for funnels/UX; this is for unit economics).
+-- Metadata only — never stores script/voiceover content.
+CREATE TABLE IF NOT EXISTS render_events (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       INTEGER,
+    job_id        TEXT,
+    recipe        TEXT,
+    status        TEXT,               -- 'succeeded' | 'failed'
+    duration_sec  REAL DEFAULT 0,
+    target_minutes REAL DEFAULT 0,
+    cost_pence    REAL DEFAULT 0,     -- estimated COGS in GBP pence
+    error_class   TEXT DEFAULT '',
+    created_at    REAL NOT NULL DEFAULT (strftime('%s','now'))
+);
 """
 
 
@@ -165,6 +181,56 @@ def get_session_user(token: str) -> dict | None:
 def delete_session(token: str) -> None:
     with _conn() as conn:
         conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+
+
+# -- Render telemetry (COGS / unit economics) -------------------------------
+
+def log_render_event(
+    user_id: int | None,
+    job_id: str,
+    recipe: str,
+    status: str,
+    duration_sec: float = 0,
+    target_minutes: float = 0,
+    cost_pence: float = 0,
+    error_class: str = "",
+) -> None:
+    with _conn() as conn:
+        conn.execute(
+            """INSERT INTO render_events
+               (user_id, job_id, recipe, status, duration_sec, target_minutes, cost_pence, error_class)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, job_id, recipe, status, duration_sec, target_minutes, cost_pence, error_class),
+        )
+
+
+def render_stats(days: int = 30) -> dict:
+    """Aggregate render telemetry for a simple admin overview."""
+    since = time.time() - days * 86400
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT status, recipe, duration_sec, cost_pence FROM render_events WHERE created_at >= ?",
+            (since,),
+        ).fetchall()
+    total = len(rows)
+    succeeded = sum(1 for r in rows if r["status"] == "succeeded")
+    failed = total - succeeded
+    total_cost = sum((r["cost_pence"] or 0) for r in rows)
+    avg_dur = (sum((r["duration_sec"] or 0) for r in rows) / total) if total else 0
+    by_recipe: dict[str, int] = {}
+    for r in rows:
+        by_recipe[r["recipe"] or "unknown"] = by_recipe.get(r["recipe"] or "unknown", 0) + 1
+    return {
+        "days": days,
+        "total": total,
+        "succeeded": succeeded,
+        "failed": failed,
+        "success_rate": round(succeeded / total * 100, 1) if total else 0,
+        "total_cost_pence": round(total_cost, 1),
+        "avg_cost_pence": round(total_cost / total, 2) if total else 0,
+        "avg_duration_sec": round(avg_dur, 1),
+        "by_recipe": by_recipe,
+    }
 
 
 def cleanup_expired() -> int:

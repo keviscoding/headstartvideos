@@ -690,10 +690,50 @@
                 <img src="/static/glyph.svg" width="20" height="20" alt="">
                 <span style="font-family: var(--font-display); font-weight: 700; font-size: 14px;">Channel<span style="color: var(--accent);">Recipe</span></span>
             </div>
-            <p>&copy; 2026 ChannelRecipe. Proven recipes for faceless YouTube channels.</p>
-            <p style="margin-top: 6px;"><a href="mailto:hello@channelrecipe.com" style="color: var(--ink-3); text-decoration: none; font-family: var(--font-mono); font-size: 12px;">hello@channelrecipe.com</a></p>
+            <p>&copy; 2026 ChannelRecipe by Creative Tube Ltd. Proven recipes for faceless YouTube channels.</p>
+            <p style="margin-top: 6px;">
+                <a href="/privacy" style="color: var(--ink-3); text-decoration: none; font-family: var(--font-mono); font-size: 12px;">Privacy</a>
+                <span style="color: var(--hairline);">&nbsp;·&nbsp;</span>
+                <a href="/terms" style="color: var(--ink-3); text-decoration: none; font-family: var(--font-mono); font-size: 12px;">Terms</a>
+                <span style="color: var(--hairline);">&nbsp;·&nbsp;</span>
+                <a href="mailto:hello@channelrecipe.com" style="color: var(--ink-3); text-decoration: none; font-family: var(--font-mono); font-size: 12px;">hello@channelrecipe.com</a>
+            </p>
         </div>
     </section>
+
+    <!-- Cookie consent + analytics -->
+    <div id="cookie-banner" style="display:none; position: fixed; bottom: 16px; left: 16px; right: 16px; max-width: 560px; margin: 0 auto; z-index: 200; background: var(--white); border: 1px solid var(--hairline); border-radius: 14px; padding: 16px 18px; box-shadow: 0 8px 32px rgba(0,0,0,0.15); align-items: center; gap: 12px; flex-wrap: wrap;">
+        <p style="flex: 1; min-width: 220px; font-size: 13px; color: var(--ink-2); margin: 0;">
+            We use cookies for analytics to improve the product. See our <a href="/privacy" style="color: var(--accent);">Privacy Policy</a>.
+        </p>
+        <div style="display: flex; gap: 8px;">
+            <button onclick="crDeclineCookies()" style="font-size: 13px; padding: 7px 14px; border: 1px solid var(--hairline); background: var(--canvas); border-radius: 8px; cursor: pointer;">Decline</button>
+            <button onclick="crAcceptCookies()" style="font-size: 13px; padding: 7px 14px; border: none; background: var(--accent); color: #fff; border-radius: 8px; cursor: pointer;">Accept</button>
+        </div>
+    </div>
+    <script>
+    (async function () {
+        let cfg;
+        try { cfg = await (await fetch('/api/config')).json(); } catch { return; }
+        if (cfg.sentry_dsn) {
+            const s = document.createElement('script');
+            s.src = 'https://browser.sentry-cdn.com/7.120.0/bundle.min.js';
+            s.crossOrigin = 'anonymous';
+            s.onload = () => { try { window.Sentry.init({ dsn: cfg.sentry_dsn, tracesSampleRate: 0.1 }); } catch (_) {} };
+            document.head.appendChild(s);
+        }
+        function initPH() {
+            if (!cfg.posthog_key) return;
+            !function (t, e) { var o, n, p, r; e.__SV || (window.posthog = e, e._i = [], e.init = function (i, s, a) { function g(t, e) { var o = e.split("."); 2 == o.length && (t = t[o[0]], e = o[1]), t[e] = function () { t.push([e].concat(Array.prototype.slice.call(arguments, 0))) } } (p = t.createElement("script")).type = "text/javascript", p.async = !0, p.src = s.api_host + "/static/array.js", (r = t.getElementsByTagName("script")[0]).parentNode.insertBefore(p, r); var u = e; for (void 0 !== a ? u = e[a] = [] : a = "posthog", u.people = u.people || [], u.toString = function (t) { var e = "posthog"; return "posthog" !== a && (e += "." + a), t || (e += " (stub)"), e }, u.people.toString = function () { return u.toString(1) + ".people (stub)" }, o = "capture identify alias people.set people.set_once set_config register register_once unregister opt_out_capturing has_opted_out_capturing opt_in_capturing reset isFeatureEnabled onFeatureFlags getFeatureFlag getFeatureFlagPayload reloadFeatureFlags group updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures getActiveMatchingSurveys getSurveys onSessionId".split(" "), n = 0; n < o.length; n++)g(u, o[n]); e._i.push([i, s, a]) }, e.__SV = 1) }(document, window.posthog || []);
+            try { window.posthog.init(cfg.posthog_key, { api_host: cfg.posthog_host || 'https://us.i.posthog.com', capture_pageview: true, autocapture: true }); } catch (_) {}
+        }
+        const consent = localStorage.getItem('cr_cookie_consent');
+        if (consent === 'accepted') { initPH(); }
+        else if (consent !== 'declined' && cfg.posthog_key) { document.getElementById('cookie-banner').style.display = 'flex'; }
+        window.crAcceptCookies = function () { localStorage.setItem('cr_cookie_consent', 'accepted'); document.getElementById('cookie-banner').style.display = 'none'; initPH(); };
+        window.crDeclineCookies = function () { localStorage.setItem('cr_cookie_consent', 'declined'); document.getElementById('cookie-banner').style.display = 'none'; };
+    })();
+    </script>
 
 </body>
 </html>

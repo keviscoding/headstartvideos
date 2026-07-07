@@ -11,4 +11,6 @@ faster-whisper==1.2.1
 python-multipart>=0.0.9
 resend>=2.0.0
 stripe>=10.0.0
+posthog>=3.5.0
+sentry-sdk[fastapi]>=2.0.0
 pycaps @ git+https://github.com/francozanardi/pycaps.git@68a6843bbd3f7d0ea33047ffb1045d978a7671c4

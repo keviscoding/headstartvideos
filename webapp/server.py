@@ -37,6 +37,37 @@ OUTPUT_DIR = ROOT / "output"
 UPLOAD_DIR = OUTPUT_DIR / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+# ---------------------------------------------------------------------------
+# Telemetry (all optional — completely inert if keys are not configured)
+# ---------------------------------------------------------------------------
+if config.SENTRY_DSN:
+    try:
+        import sentry_sdk
+        sentry_sdk.init(dsn=config.SENTRY_DSN, traces_sample_rate=0.1, send_default_pii=False)
+        print("[telemetry] Sentry initialized")
+    except Exception as e:
+        print(f"[telemetry] Sentry init failed: {e}")
+
+_posthog = None
+if config.POSTHOG_KEY:
+    try:
+        from posthog import Posthog
+        _posthog = Posthog(project_api_key=config.POSTHOG_KEY, host=config.POSTHOG_HOST)
+        print("[telemetry] PostHog initialized")
+    except Exception as e:
+        print(f"[telemetry] PostHog init failed: {e}")
+
+
+def track(distinct_id: str | int, event: str, props: dict | None = None) -> None:
+    """Fire-and-forget server-side analytics event. No-op without PostHog."""
+    if not _posthog:
+        return
+    try:
+        _posthog.capture(distinct_id=str(distinct_id), event=event, properties=props or {})
+    except Exception as e:
+        print(f"[telemetry] capture failed for {event}: {e}")
+
+
 app = FastAPI(title="ChannelRecipe", docs_url="/docs")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -47,7 +78,21 @@ from webapp.database import (
     deduct_credit, refund_credit,
     create_verify_code, verify_code,
     create_session, get_session_user, delete_session,
+    log_render_event, render_stats,
 )
+
+# Rough COGS estimate in GBP pence per finished minute, per recipe. These are
+# tunable placeholders — refine once real per-render token/TTS data is captured.
+_COST_PENCE_PER_MIN = {
+    "animated_explainer": 15.0,
+    "broll_only": 5.0,
+    "broll_cinematic": 12.0,
+    "avatar_plus_broll": 40.0,
+}
+
+
+def _estimate_cost_pence(recipe: str, minutes: float) -> float:
+    return round(_COST_PENCE_PER_MIN.get(recipe, 10.0) * max(minutes, 0.1), 2)
 
 
 def _current_user(request: Request) -> dict | None:
@@ -112,8 +157,15 @@ async def auth_verify(req: AuthVerifyRequest):
     if not verify_code(email, req.code):
         raise HTTPException(400, "Invalid or expired code")
     user = get_user_by_email(email)
+    is_new = user is None
     if not user:
         user = create_user(email)
+    if _posthog:
+        try:
+            _posthog.identify(distinct_id=str(user["id"]), properties={"email": email, "plan": user["plan"]})
+        except Exception:
+            pass
+    track(user["id"], "signup_completed" if is_new else "login", {"new_user": is_new})
     token = create_session(user["id"])
     resp = JSONResponse({"ok": True, "user": _safe_user(user)})
     resp.set_cookie("session", token, httponly=True, samesite="lax", max_age=30 * 86400)
@@ -359,9 +411,29 @@ async def index():
     return FileResponse(str(STATIC_DIR / "index.html"))
 
 
+@app.get("/privacy", response_class=HTMLResponse)
+async def privacy_page():
+    return FileResponse(str(STATIC_DIR / "privacy.html"))
+
+
+@app.get("/terms", response_class=HTMLResponse)
+async def terms_page():
+    return FileResponse(str(STATIC_DIR / "terms.html"))
+
+
 # ---------------------------------------------------------------------------
 # Niches
 # ---------------------------------------------------------------------------
+@app.get("/api/config")
+async def get_client_config():
+    """Public front-end config: analytics keys only (safe to expose)."""
+    return {
+        "posthog_key": config.POSTHOG_KEY,
+        "posthog_host": config.POSTHOG_HOST,
+        "sentry_dsn": config.SENTRY_DSN,
+    }
+
+
 @app.get("/api/niches")
 async def get_niches():
     niches = []
@@ -644,11 +716,15 @@ async def start_build(req: BuildRequest, request: Request):
 def _run_build(job_id: str, req: BuildRequest):
     job = _jobs[job_id]
     job["status"] = "running"
+    started_at = time.time()
+    user_id = job.get("user_id")
+    est_minutes = round(len(req.script.split()) / 150, 2) if req.script else 0
 
     def on_progress(msg: str):
         job["progress"].append({"time": time.time(), "message": msg})
 
     recipe = req.recipe or "animated_explainer"
+    track(user_id or "anon", "render_started", {"recipe": recipe, "target_minutes": est_minutes})
 
     try:
         if recipe == "animated_explainer":
@@ -697,6 +773,17 @@ def _run_build(job_id: str, req: BuildRequest):
             "timing": result.get("timing", {}),
         }
 
+        duration = round(time.time() - started_at, 1)
+        cost = _estimate_cost_pence(recipe, est_minutes)
+        try:
+            log_render_event(user_id, job_id, recipe, "succeeded", duration, est_minutes, cost)
+        except Exception as log_err:
+            print(f"[telemetry] render log failed: {log_err}")
+        track(user_id or "anon", "render_succeeded", {
+            "recipe": recipe, "duration_sec": duration,
+            "target_minutes": est_minutes, "cost_pence": cost,
+        })
+
         if req.notify_email:
             try:
                 from webapp.email_service import send_video_ready
@@ -707,7 +794,15 @@ def _run_build(job_id: str, req: BuildRequest):
     except Exception as e:
         job["status"] = "error"
         job["error"] = str(e)
-        user_id = job.get("user_id")
+        duration = round(time.time() - started_at, 1)
+        err_class = type(e).__name__
+        try:
+            log_render_event(user_id, job_id, recipe, "failed", duration, est_minutes, 0, err_class)
+        except Exception as log_err:
+            print(f"[telemetry] render log failed: {log_err}")
+        track(user_id or "anon", "render_failed", {
+            "recipe": recipe, "duration_sec": duration, "error_class": err_class,
+        })
         if user_id:
             refund_credit(user_id)
             print(f"[build] Auto-refunded credit for user {user_id} after build failure")
@@ -1020,6 +1115,16 @@ KEY_MAP = {
     "pexels": "PEXELS_KEY",
     "downsub": "DOWNSUB_KEY",
 }
+
+
+@app.get("/api/admin/stats")
+async def admin_stats(days: int = 30, admin: dict = Depends(require_admin)):
+    """Lightweight COGS / render-health snapshot (admin only).
+
+    PostHog owns the pretty funnels; this is the authoritative unit-economics
+    view straight from our own render log.
+    """
+    return render_stats(days=days)
 
 
 @app.get("/api/settings/keys")

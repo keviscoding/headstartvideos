@@ -59,8 +59,66 @@ function ensureAuth(retry) {
     return false;
 }
 
+// ---------------------------------------------------------------------------
+// Analytics (PostHog + Sentry). Inert unless keys are configured on the server.
+// Metadata only — we never send script/voiceover text.
+// ---------------------------------------------------------------------------
+let track = () => {}; // replaced with posthog.capture once loaded
+
+function analyticsDeclined() {
+    return localStorage.getItem('cr_cookie_consent') === 'declined';
+}
+
+async function initAnalytics() {
+    let cfg;
+    try {
+        const res = await _origFetch('/api/config');
+        cfg = await res.json();
+    } catch { return; }
+
+    // Sentry (error tracking) — legitimate interest, load regardless of consent.
+    if (cfg.sentry_dsn) {
+        const s = document.createElement('script');
+        s.src = 'https://browser.sentry-cdn.com/7.120.0/bundle.min.js';
+        s.crossOrigin = 'anonymous';
+        s.onload = () => { try { window.Sentry?.init({ dsn: cfg.sentry_dsn, tracesSampleRate: 0.1 }); } catch (_) {} };
+        document.head.appendChild(s);
+    }
+
+    // PostHog (product analytics) — only with cookie consent.
+    if (cfg.posthog_key && !analyticsDeclined()) {
+        !function (t, e) { var o, n, p, r; e.__SV || (window.posthog = e, e._i = [], e.init = function (i, s, a) { function g(t, e) { var o = e.split("."); 2 == o.length && (t = t[o[0]], e = o[1]), t[e] = function () { t.push([e].concat(Array.prototype.slice.call(arguments, 0))) } } (p = t.createElement("script")).type = "text/javascript", p.async = !0, p.src = s.api_host + "/static/array.js", (r = t.getElementsByTagName("script")[0]).parentNode.insertBefore(p, r); var u = e; for (void 0 !== a ? u = e[a] = [] : a = "posthog", u.people = u.people || [], u.toString = function (t) { var e = "posthog"; return "posthog" !== a && (e += "." + a), t || (e += " (stub)"), e }, u.people.toString = function () { return u.toString(1) + ".people (stub)" }, o = "capture identify alias people.set people.set_once set_config register register_once unregister opt_out_capturing has_opted_out_capturing opt_in_capturing reset isFeatureEnabled onFeatureFlags getFeatureFlag getFeatureFlagPayload reloadFeatureFlags group updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures getActiveMatchingSurveys getSurveys onSessionId".split(" "), n = 0; n < o.length; n++)g(u, o[n]); e._i.push([i, s, a]) }, e.__SV = 1) }(document, window.posthog || []);
+        try {
+            window.posthog.init(cfg.posthog_key, { api_host: cfg.posthog_host || 'https://us.i.posthog.com', capture_pageview: true, autocapture: true });
+            track = (event, props) => { try { window.posthog.capture(event, props || {}); } catch (_) {} };
+            if (currentUser) window.posthog.identify(String(currentUser.id), { email: currentUser.email, plan: currentUser.plan });
+        } catch (_) { /* ignore */ }
+    }
+
+    maybeShowCookieBanner(cfg);
+}
+
+function maybeShowCookieBanner(cfg) {
+    if (!cfg.posthog_key) return;                       // nothing to consent to
+    if (localStorage.getItem('cr_cookie_consent')) return; // already chose
+    const banner = document.getElementById('cookie-banner');
+    if (banner) banner.classList.remove('hidden');
+}
+
+function acceptCookies() {
+    localStorage.setItem('cr_cookie_consent', 'accepted');
+    document.getElementById('cookie-banner')?.classList.add('hidden');
+    initAnalytics();
+}
+
+function declineCookies() {
+    localStorage.setItem('cr_cookie_consent', 'declined');
+    document.getElementById('cookie-banner')?.classList.add('hidden');
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
     await checkAuth();
+    initAnalytics();
     loadNiches();
     bindEvents();
     loadSettingsFromServer();
@@ -334,6 +392,7 @@ async function loadNiches() {
 
 function selectNiche(niche, card) {
     if (!ensureAuth(() => selectNiche(niche, card))) return;
+    track('recipe_selected', { recipe: niche.id });
     document.querySelectorAll('.niche-card').forEach(c => c.classList.remove('selected'));
     card.classList.add('selected');
     state.niche = niche.id;
@@ -387,6 +446,7 @@ function hideLengthUpgradePrompt() {
 
 async function upgradeToPro(plan = 'monthly') {
     if (!currentUser) { showAuthModal(); return; }
+    track('checkout_started', { plan });
     try {
         const res = await fetch('/api/billing/checkout', {
             method: 'POST',
@@ -471,6 +531,7 @@ async function generateScript() {
         editor.value = data.script;
         state.script = data.script;
         updateWordCount();
+        track('script_generated', { recipe: state.niche, target_minutes: state.targetMinutes, word_count: data.word_count });
     } catch (e) {
         alert('Script generation failed: ' + e.message);
     } finally {
@@ -1501,6 +1562,7 @@ async function authVerifyCode() {
         if (!res.ok) throw new Error(data.detail || 'Invalid code');
         currentUser = data.user;
         updateAuthUI();
+        try { window.posthog?.identify(String(currentUser.id), { email: currentUser.email, plan: currentUser.plan }); } catch (_) {}
         hideAuthModal();
         if (pendingAuthAction) {
             const action = pendingAuthAction;

@@ -25,6 +25,11 @@ STRIPE_PRICE_ID_ANNUAL = os.getenv("STRIPE_PRICE_ID_ANNUAL", "")
 # (Settings / API keys). If empty, those endpoints are locked to everyone.
 ADMIN_EMAILS = [e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()]
 
+# Telemetry (all optional — everything stays inert if these are blank)
+POSTHOG_KEY = os.getenv("POSTHOG_KEY", "")            # PostHog project API key (public)
+POSTHOG_HOST = os.getenv("POSTHOG_HOST", "https://us.i.posthog.com")
+SENTRY_DSN = os.getenv("SENTRY_DSN", "")              # Sentry DSN (backend + frontend)
+
 OUTPUT_DIR = ROOT_DIR / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 

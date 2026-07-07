@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy Policy — ChannelRecipe</title>
+    <link rel="icon" href="/static/favicon.svg">
+    <style>
+        @import url("https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@500,700,800,900&display=swap");
+        @import url("https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600,700&display=swap");
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --canvas: #F7F5F0; --ink: #16161A; --ink-2: #45454E; --ink-3: #6E6E79;
+            --hairline: #E5E1D8; --accent: #6D5AE0; --white: #FFFFFF;
+            --font-display: "Cabinet Grotesk", system-ui, sans-serif;
+            --font-body: "General Sans", "Inter", system-ui, sans-serif;
+        }
+        body { font-family: var(--font-body); background: var(--canvas); color: var(--ink); line-height: 1.65; -webkit-font-smoothing: antialiased; }
+        .container { max-width: 760px; margin: 0 auto; padding: 48px 24px 96px; }
+        .brand { display: inline-flex; align-items: center; gap: 8px; font-family: var(--font-display); font-weight: 800; font-size: 20px; color: var(--ink); text-decoration: none; margin-bottom: 40px; }
+        .brand .dot { width: 12px; height: 12px; border-radius: 3px; background: var(--accent); display: inline-block; }
+        h1 { font-family: var(--font-display); font-size: 40px; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 8px; }
+        .updated { color: var(--ink-3); font-size: 14px; margin-bottom: 40px; }
+        h2 { font-family: var(--font-display); font-size: 22px; font-weight: 700; margin: 36px 0 12px; }
+        p, li { color: var(--ink-2); font-size: 16px; margin-bottom: 12px; }
+        ul { padding-left: 22px; margin-bottom: 12px; }
+        a { color: var(--accent); }
+        table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 15px; }
+        th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--hairline); vertical-align: top; }
+        th { font-family: var(--font-display); color: var(--ink); }
+        .back { display: inline-block; margin-top: 40px; color: var(--accent); font-weight: 600; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="brand"><span class="dot"></span> ChannelRecipe</a>
+        <h1>Privacy Policy</h1>
+        <p class="updated">Last updated: 7 July 2026</p>
+
+        <p>This Privacy Policy explains how <strong>Creative Tube Ltd</strong> ("we", "us", "our") collects, uses, and protects your personal data when you use ChannelRecipe (the "Service") at channelrecipe.com. Creative Tube Ltd is a company registered in England &amp; Wales and acts as the data controller for the purposes of the UK GDPR and the Data Protection Act 2018.</p>
+
+        <h2>1. Data we collect</h2>
+        <table>
+            <tr><th>Category</th><th>Examples</th><th>Why</th></tr>
+            <tr><td>Account data</td><td>Email address, plan, credit balance</td><td>To create and manage your account and subscription</td></tr>
+            <tr><td>Usage &amp; product analytics</td><td>Pages viewed, buttons clicked, steps completed, device/browser type</td><td>To understand how the product is used and improve it</td></tr>
+            <tr><td>Generation metadata</td><td>Which recipe was chosen, script length, render duration, success/failure, estimated cost</td><td>To operate the Service, diagnose failures, and manage costs</td></tr>
+            <tr><td>Billing data</td><td>Handled by Stripe (we store only a customer ID and subscription status)</td><td>To process payments</td></tr>
+            <tr><td>Error diagnostics</td><td>Crash reports and stack traces</td><td>To detect and fix bugs</td></tr>
+        </table>
+
+        <p><strong>What we do not collect:</strong> we log metadata about your generations, but we do not use the <em>content</em> of your scripts, titles, or voiceovers for analytics. Your generated content belongs to you.</p>
+
+        <h2>2. Legal bases</h2>
+        <ul>
+            <li><strong>Contract</strong> — to provide the Service you signed up for (account, generations, billing).</li>
+            <li><strong>Legitimate interests</strong> — to secure the Service, prevent abuse, fix bugs, and improve the product.</li>
+            <li><strong>Consent</strong> — for non-essential analytics cookies, which you can accept or decline.</li>
+        </ul>
+
+        <h2>3. Cookies &amp; analytics</h2>
+        <p>We use essential cookies to keep you signed in. With your consent, we use analytics cookies (PostHog) to understand product usage. You can decline analytics via the cookie banner, and error monitoring (Sentry) runs on a legitimate-interest basis to keep the Service reliable.</p>
+
+        <h2>4. Third parties we share data with</h2>
+        <p>We only share what is necessary for these processors to provide their service:</p>
+        <ul>
+            <li><strong>Stripe</strong> — payment processing</li>
+            <li><strong>PostHog</strong> — product analytics</li>
+            <li><strong>Sentry</strong> — error monitoring</li>
+            <li><strong>Resend</strong> — transactional email (verification codes, notifications)</li>
+            <li><strong>Google, Anthropic, and image/voice model providers</strong> — to generate the media you request</li>
+            <li><strong>DigitalOcean</strong> — hosting</li>
+        </ul>
+        <p>Some processors are located outside the UK/EEA; where that is the case, transfers are protected by appropriate safeguards such as Standard Contractual Clauses.</p>
+
+        <h2>5. Data retention</h2>
+        <p>Account data is kept while your account is active. Generated files are retained for a limited window (7 days on the free plan, 30 days on Pro) and then deleted. You can request deletion of your account and associated data at any time.</p>
+
+        <h2>6. Your rights</h2>
+        <p>Under UK GDPR you have the right to access, correct, delete, restrict, or port your personal data, and to object to certain processing. To exercise any of these, email us at the address below. You also have the right to complain to the Information Commissioner's Office (ICO).</p>
+
+        <h2>7. Contact</h2>
+        <p>Creative Tube Ltd<br>Email: <a href="mailto:hello@channelrecipe.com">hello@channelrecipe.com</a></p>
+
+        <a href="/" class="back">&larr; Back to ChannelRecipe</a>
+    </div>
+</body>
+</html>
