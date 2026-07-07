@@ -1,0 +1,11 @@
+services:
+  headstart:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./output:/app/output
+      - ./presets:/app/presets
+    env_file:
+      - .env
+    restart: unless-stopped

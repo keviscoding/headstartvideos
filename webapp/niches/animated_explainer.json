@@ -1,0 +1,21 @@
+{
+  "id": "animated_explainer",
+  "name": "Animated Explainer",
+  "tagline": "Stick-figure documentaries that go viral",
+  "description": "Simple hand-drawn cartoon illustrations with word-level visual changes. Think Mack-style explainer videos — cheap to produce, massive engagement.",
+  "category": "Education & Documentary",
+  "difficulty": "Beginner",
+  "rpm_range": "$4 - $12",
+  "demand": "High",
+  "recipe": "animated_explainer",
+  "default_voice": "Charon",
+  "default_minutes": 8,
+  "style_preset": "default",
+  "thumbnail_style": "Bold hand-drawn cartoon style thumbnail with thick black outlines, flat muted colors, simple stick figure character, large text overlay, eye-catching composition",
+  "example_topics": [
+    "The tribe that has never been contacted by the modern world",
+    "Why ancient Romans were terrified of this one island",
+    "The forgotten kingdom that ruled half of Africa"
+  ],
+  "color": "#3B82F6"
+}

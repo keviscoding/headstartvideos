@@ -1,0 +1,21 @@
+{
+  "id": "broll_only",
+  "name": "B-Roll Documentary",
+  "tagline": "Stock footage narration videos",
+  "description": "Classic narration-over-footage style using Wikimedia and Pexels stock images with Ken Burns zoom effects. Great for history, science, and educational topics.",
+  "category": "Documentary",
+  "difficulty": "Beginner",
+  "rpm_range": "$3 - $8",
+  "demand": "High",
+  "recipe": "broll_only",
+  "default_voice": "Charon",
+  "default_minutes": 10,
+  "style_preset": "auto",
+  "thumbnail_style": "Documentary-style YouTube thumbnail with dramatic lighting, bold text overlay, and high contrast",
+  "example_topics": [
+    "The most dangerous roads in the world",
+    "Ancient civilizations that vanished overnight",
+    "The secret history of everyday objects"
+  ],
+  "color": "#10B981"
+}

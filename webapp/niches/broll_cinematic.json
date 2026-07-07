@@ -1,0 +1,21 @@
+{
+  "id": "broll_cinematic",
+  "name": "Cinematic B-Roll",
+  "tagline": "AI-directed multi-asset productions",
+  "description": "Premium format mixing stock video, images, AI art, and text overlays. An LLM directs each scene like a film editor, with VLM verification for quality.",
+  "category": "Premium Documentary",
+  "difficulty": "Intermediate",
+  "rpm_range": "$6 - $15",
+  "demand": "Medium",
+  "recipe": "broll_cinematic",
+  "default_voice": "Kore",
+  "default_minutes": 10,
+  "style_preset": "auto",
+  "thumbnail_style": "Cinematic widescreen YouTube thumbnail with dramatic color grading, lens flare, bold typography, and movie-poster composition",
+  "example_topics": [
+    "Inside the world's most secret laboratories",
+    "The psychology behind billion-dollar brands",
+    "What happens after the last human dies"
+  ],
+  "color": "#8B5CF6"
+}

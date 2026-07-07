@@ -1,0 +1,22 @@
+{
+  "id": "avatar_plus_broll",
+  "name": "Avatar + Illustrations",
+  "tagline": "AI talking head with visual B-roll",
+  "description": "HeyGen AI avatar as the presenter, interleaved with AI-generated or stock illustration B-roll. Requires a HeyGen API key.",
+  "category": "Talking Head",
+  "difficulty": "Intermediate",
+  "rpm_range": "$5 - $12",
+  "demand": "Medium",
+  "recipe": "avatar_plus_broll",
+  "default_voice": "Charon",
+  "default_minutes": 8,
+  "style_preset": "auto",
+  "requires_keys": ["HEYGEN_KEY"],
+  "thumbnail_style": "Professional talking head YouTube thumbnail with presenter silhouette, bold title text, and engaging facial expression",
+  "example_topics": [
+    "Breaking down the latest AI breakthroughs",
+    "Why this investing strategy beats the market",
+    "The morning routine of ultra-successful people"
+  ],
+  "color": "#F59E0B"
+}

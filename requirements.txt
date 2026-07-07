@@ -1,0 +1,12 @@
+fastapi==0.135.2
+uvicorn==0.42.0
+sse-starlette==3.4.5
+pydantic==2.12.5
+python-dotenv==1.2.2
+google-genai==2.3.0
+anthropic==0.86.0
+httpx==0.28.1
+pillow==12.1.1
+faster-whisper==1.2.1
+python-multipart>=0.0.9
+pycaps @ git+https://github.com/francozanardi/pycaps.git@68a6843bbd3f7d0ea33047ffb1045d978a7671c4

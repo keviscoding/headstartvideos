@@ -1,0 +1,9 @@
+.env
+output/
+presets/
+__pycache__/
+*.pyc
+.DS_Store
+.git/
+.venv/
+venv/
