@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import Cookie, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Cookie, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -56,6 +56,27 @@ def _current_user(request: Request) -> dict | None:
     if not token:
         return None
     return get_session_user(token)
+
+
+def require_user(request: Request) -> dict:
+    """FastAPI dependency: reject anonymous requests to protected endpoints.
+
+    Applied to every endpoint that consumes compute/credits so nobody can
+    generate anything without going through the authorized sign-in flow.
+    """
+    user = _current_user(request)
+    if not user:
+        raise HTTPException(401, "Sign in to continue — it's free, no card required.")
+    return user
+
+
+def require_admin(request: Request) -> dict:
+    """FastAPI dependency: restrict ops-only endpoints (API-key settings) to admins."""
+    user = require_user(request)
+    admins = getattr(config, "ADMIN_EMAILS", [])
+    if not admins or user.get("email", "").lower() not in admins:
+        raise HTTPException(403, "Admin access required.")
+    return user
 
 
 # ---------------------------------------------------------------------------
@@ -366,7 +387,7 @@ async def get_all_voices():
 # Titles (Gemini-based)
 # ---------------------------------------------------------------------------
 @app.post("/api/titles")
-async def generate_titles(req: TitleRequest):
+async def generate_titles(req: TitleRequest, user: dict = Depends(require_user)):
     from google import genai
 
     if not config.GEMINI_KEY:
@@ -403,7 +424,7 @@ async def generate_titles(req: TitleRequest):
 # Script (Gemini-based)
 # ---------------------------------------------------------------------------
 @app.post("/api/script")
-async def generate_script(req: ScriptRequest):
+async def generate_script(req: ScriptRequest, user: dict = Depends(require_user)):
     from google import genai
 
     if not config.GEMINI_KEY:
@@ -445,7 +466,7 @@ async def generate_script(req: ScriptRequest):
 # Voiceover
 # ---------------------------------------------------------------------------
 @app.post("/api/voiceover")
-async def generate_voiceover(req: VoiceoverRequest):
+async def generate_voiceover(req: VoiceoverRequest, user: dict = Depends(require_user)):
     from core.voiceover_gen import generate_voiceover as gen_vo
 
     out_dir = str(OUTPUT_DIR / "voiceovers" / str(int(time.time())))
@@ -458,7 +479,7 @@ async def generate_voiceover(req: VoiceoverRequest):
 
 
 @app.post("/api/voiceover/upload")
-async def upload_voiceover(file: UploadFile = File(...)):
+async def upload_voiceover(file: UploadFile = File(...), user: dict = Depends(require_user)):
     """Accept a user-uploaded voiceover file (WAV, MP3, M4A) and return its path."""
     import subprocess
 
@@ -492,7 +513,7 @@ async def upload_voiceover(file: UploadFile = File(...)):
 
 
 @app.post("/api/voiceover/preview")
-async def voice_preview(req: VoicePreviewRequest):
+async def voice_preview(req: VoicePreviewRequest, user: dict = Depends(require_user)):
     from core.voiceover_gen import generate_voiceover as gen_vo
 
     out_dir = str(OUTPUT_DIR / "voice_previews")
@@ -514,7 +535,7 @@ async def voice_preview(req: VoicePreviewRequest):
 
 
 @app.post("/api/voiceover/studio")
-async def voiceover_studio(req: VoiceoverStudioRequest):
+async def voiceover_studio(req: VoiceoverStudioRequest, user: dict = Depends(require_user)):
     from core.voiceover_gen import generate_voiceover as gen_vo
 
     out_dir = str(OUTPUT_DIR / "voiceovers" / str(int(time.time())))
@@ -536,7 +557,7 @@ async def voiceover_studio(req: VoiceoverStudioRequest):
 # Thumbnails
 # ---------------------------------------------------------------------------
 @app.post("/api/thumbnail")
-async def generate_thumbnail(req: ThumbnailRequest):
+async def generate_thumbnail(req: ThumbnailRequest, user: dict = Depends(require_user)):
     from core.thumbnail_gen import generate_thumbnail_no_refs
 
     out_dir = str(OUTPUT_DIR / "thumbnails" / str(int(time.time())))
@@ -561,6 +582,7 @@ async def generate_thumbnail_with_refs(
     style: str = Form(""),
     count: int = Form(2),
     refs: list[UploadFile] = File(default=[]),
+    user: dict = Depends(require_user),
 ):
     from core.thumbnail_gen import generate_thumbnails
 
@@ -739,7 +761,7 @@ async def build_result(job_id: str):
 # Upload Kit
 # ---------------------------------------------------------------------------
 @app.post("/api/upload-kit")
-async def generate_upload_kit(req: UploadKitRequest):
+async def generate_upload_kit(req: UploadKitRequest, user: dict = Depends(require_user)):
     from google import genai
 
     if not config.GEMINI_KEY:
@@ -766,7 +788,7 @@ async def generate_upload_kit(req: UploadKitRequest):
 # Channel Data + Analysis (Script Studio)
 # ---------------------------------------------------------------------------
 @app.post("/api/channel/fetch")
-async def fetch_channel(req: ChannelFetchRequest):
+async def fetch_channel(req: ChannelFetchRequest, user: dict = Depends(require_user)):
     from core.channel_data import fetch_channel_data
 
     if not config.YOUTUBE_API_KEY:
@@ -785,7 +807,7 @@ async def fetch_channel(req: ChannelFetchRequest):
 
 
 @app.post("/api/channel/analyze")
-async def analyze_channel(req: ChannelAnalyzeRequest):
+async def analyze_channel(req: ChannelAnalyzeRequest, user: dict = Depends(require_user)):
     if not config.ANTHROPIC_KEY:
         return {"analysis": "Claude API key not configured. Add it in Settings to enable channel analysis."}
 
@@ -798,7 +820,7 @@ async def analyze_channel(req: ChannelAnalyzeRequest):
 
 
 @app.post("/api/ideas")
-async def generate_ideas(req: IdeasRequest):
+async def generate_ideas(req: IdeasRequest, user: dict = Depends(require_user)):
     if not config.ANTHROPIC_KEY:
         raise HTTPException(400, "Claude API key not configured. Add it in Settings.")
 
@@ -817,7 +839,7 @@ async def generate_ideas(req: IdeasRequest):
 
 
 @app.post("/api/titles/claude")
-async def generate_titles_claude(req: ClaudeTitlesRequest):
+async def generate_titles_claude(req: ClaudeTitlesRequest, user: dict = Depends(require_user)):
     if not config.ANTHROPIC_KEY:
         raise HTTPException(400, "Claude API key not configured. Add it in Settings.")
 
@@ -835,7 +857,7 @@ async def generate_titles_claude(req: ClaudeTitlesRequest):
 
 
 @app.post("/api/script/claude")
-async def generate_script_claude(req: ClaudeScriptRequest):
+async def generate_script_claude(req: ClaudeScriptRequest, user: dict = Depends(require_user)):
     if not config.ANTHROPIC_KEY:
         raise HTTPException(400, "Claude API key not configured. Add it in Settings.")
 
@@ -857,7 +879,7 @@ async def generate_script_claude(req: ClaudeScriptRequest):
 # Niche Screener
 # ---------------------------------------------------------------------------
 @app.post("/api/niche/analyze")
-async def analyze_niche(req: NicheAnalyzeRequest):
+async def analyze_niche(req: NicheAnalyzeRequest, user: dict = Depends(require_user)):
     try:
         from core.video_analyzer import analyze_video
         profile = analyze_video(req.youtube_url, analyze_minutes=req.minutes)
@@ -901,7 +923,7 @@ def _retention_days(request: Request | None = None) -> int:
 
 
 @app.get("/api/history")
-async def get_history(type: str = "all", request: Request = None):
+async def get_history(type: str = "all", request: Request = None, user: dict = Depends(require_user)):
     entries = []
     output = ROOT / "output"
     if not output.exists():
@@ -967,7 +989,7 @@ async def get_history(type: str = "all", request: Request = None):
 
 
 @app.post("/api/history/cleanup")
-async def cleanup_history(request: Request):
+async def cleanup_history(request: Request, user: dict = Depends(require_user)):
     """Remove expired output directories."""
     output = ROOT / "output"
     if not output.exists():
@@ -999,7 +1021,7 @@ KEY_MAP = {
 
 
 @app.get("/api/settings/keys")
-async def get_settings():
+async def get_settings(admin: dict = Depends(require_admin)):
     result = {}
     for short, env_name in KEY_MAP.items():
         val = os.environ.get(env_name, "") or getattr(config, env_name, "")
@@ -1008,7 +1030,7 @@ async def get_settings():
 
 
 @app.post("/api/settings/keys")
-async def save_settings(keys: dict):
+async def save_settings(keys: dict, admin: dict = Depends(require_admin)):
     env_path = ROOT / ".env"
     existing = {}
     if env_path.exists():
@@ -1033,7 +1055,7 @@ async def save_settings(keys: dict):
 
 
 @app.post("/api/settings/test-key")
-async def test_key(req: KeyTestRequest):
+async def test_key(req: KeyTestRequest, admin: dict = Depends(require_admin)):
     env_name = KEY_MAP.get(req.key_name)
     key_val = req.key_value or os.environ.get(env_name or "", "") or getattr(config, env_name or "", "")
 

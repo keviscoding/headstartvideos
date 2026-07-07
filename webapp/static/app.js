@@ -31,9 +31,36 @@ let previewAudio = null;
 // Boot
 // ---------------------------------------------------------------------------
 let currentUser = null;
+let authReady = false;
+let pendingAuthAction = null;
 
-document.addEventListener('DOMContentLoaded', () => {
-    checkAuth();
+// Defense-in-depth: any protected API call that comes back 401 forces the
+// sign-in modal, so there is no way to consume compute without authenticating.
+const _origFetch = window.fetch.bind(window);
+window.fetch = async function (input, init) {
+    const res = await _origFetch(input, init);
+    try {
+        const url = typeof input === 'string' ? input : (input && input.url) || '';
+        if (res.status === 401 && url.includes('/api/') && !url.includes('/api/auth/')) {
+            currentUser = null;
+            if (typeof updateAuthUI === 'function') updateAuthUI();
+            if (typeof showAuthModal === 'function') showAuthModal();
+        }
+    } catch (_) { /* ignore */ }
+    return res;
+};
+
+// Proactive gate: returns true if signed in; otherwise shows the modal and
+// (optionally) replays `retry` once the user finishes signing in.
+function ensureAuth(retry) {
+    if (currentUser) return true;
+    pendingAuthAction = typeof retry === 'function' ? retry : null;
+    showAuthModal();
+    return false;
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+    await checkAuth();
     loadNiches();
     bindEvents();
     loadSettingsFromServer();
@@ -176,8 +203,17 @@ function bindEvents() {
     const label = document.getElementById('target-minutes-label');
     if (slider) {
         slider.addEventListener('input', () => {
-            state.targetMinutes = parseInt(slider.value);
-            label.textContent = slider.value + ' min';
+            let val = parseInt(slider.value);
+            const cap = freeMinuteCap();
+            if (!isPaidUser() && val > cap) {
+                val = cap;
+                slider.value = cap;
+                showLengthUpgradePrompt();
+            } else {
+                hideLengthUpgradePrompt();
+            }
+            state.targetMinutes = val;
+            label.textContent = val + ' min';
         });
     }
 
@@ -292,6 +328,7 @@ async function loadNiches() {
 }
 
 function selectNiche(niche, card) {
+    if (!ensureAuth(() => selectNiche(niche, card))) return;
     document.querySelectorAll('.niche-card').forEach(c => c.classList.remove('selected'));
     card.classList.add('selected');
     state.niche = niche.id;
@@ -300,26 +337,66 @@ function selectNiche(niche, card) {
     state.targetMinutes = niche.default_minutes || 8;
     state.voiceMode = 'generate';
     state.uploadedVoPath = '';
-    const maxFree = niche.max_free_minutes || 20;
+    const maxPaid = niche.max_paid_minutes || 20;
     const slider = document.getElementById('target-minutes');
     if (slider) {
         slider.value = state.targetMinutes;
-        slider.max = maxFree;
+        slider.max = maxPaid;
         document.getElementById('target-minutes-label').textContent = state.targetMinutes + ' min';
     }
     updateScriptLimitMsg();
     setTimeout(() => goToStep(2), 300);
 }
 
+function isPaidUser() {
+    return currentUser && currentUser.plan === 'pro';
+}
+
+function freeMinuteCap() {
+    return state.nicheData?.max_free_minutes || 8;
+}
+
 function updateScriptLimitMsg() {
     const msg = document.getElementById('script-limit-msg');
     if (!msg) return;
-    const maxFree = state.nicheData?.max_free_minutes || 20;
-    const slider = document.getElementById('target-minutes');
-    if (slider) slider.max = maxFree;
     const limitSpan = document.getElementById('limit-minutes');
-    if (limitSpan) limitSpan.textContent = maxFree;
+    if (limitSpan) limitSpan.textContent = freeMinuteCap();
     msg.classList.add('hidden');
+}
+
+let _lengthPromptTimer = null;
+function showLengthUpgradePrompt() {
+    const msg = document.getElementById('script-limit-msg');
+    if (!msg) return;
+    const limitSpan = document.getElementById('limit-minutes');
+    if (limitSpan) limitSpan.textContent = freeMinuteCap();
+    msg.classList.remove('hidden');
+    msg.classList.add('limit-pop');
+    clearTimeout(_lengthPromptTimer);
+    _lengthPromptTimer = setTimeout(() => msg.classList.remove('limit-pop'), 400);
+}
+
+function hideLengthUpgradePrompt() {
+    // keep it visible once shown within the session; do nothing on normal drag
+}
+
+async function upgradeToPro(plan = 'monthly') {
+    if (!currentUser) { showAuthModal(); return; }
+    try {
+        const res = await fetch('/api/billing/checkout', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plan }),
+        });
+        const data = await res.json();
+        if (res.ok && data.url) {
+            window.location.href = data.url;
+        } else {
+            alert(data.detail || 'Could not start checkout. Please try again.');
+        }
+    } catch (e) {
+        alert('Checkout failed: ' + e.message);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -865,6 +942,7 @@ async function fetchChannelData() {
 }
 
 async function analyzeChannel() {
+    if (!ensureAuth(analyzeChannel)) return;
     const btn = document.querySelector('#ss-channel-result .btn-primary');
     setLoading(btn, true);
     try {
@@ -886,6 +964,7 @@ async function analyzeChannel() {
 }
 
 async function generateIdeas() {
+    if (!ensureAuth(generateIdeas)) return;
     const btn = document.querySelector('#ss-ideas .btn-primary');
     setLoading(btn, true);
     try {
@@ -921,6 +1000,7 @@ async function generateIdeas() {
 }
 
 async function generateStudioTitles() {
+    if (!ensureAuth(generateStudioTitles)) return;
     const btn = document.querySelector('#ss-titles .btn-primary');
     setLoading(btn, true);
     try {
@@ -955,6 +1035,7 @@ async function generateStudioTitles() {
 }
 
 async function generateStudioScript() {
+    if (!ensureAuth(generateStudioScript)) return;
     const btn = document.querySelector('#ss-script .btn-primary:first-of-type');
     setLoading(btn, true);
     try {
@@ -1015,6 +1096,7 @@ async function loadVoiceOptions() {
 }
 
 async function generateStudioVoiceover() {
+    if (!ensureAuth(generateStudioVoiceover)) return;
     const btn = document.getElementById('btn-vo-generate');
     setLoading(btn, true);
     try {
@@ -1058,6 +1140,7 @@ function handleTsRefUpload(input) {
 }
 
 async function generateStudioThumbnails() {
+    if (!ensureAuth(generateStudioThumbnails)) return;
     const btn = document.querySelector('#page-thumbnail-studio .btn-primary');
     setLoading(btn, true);
     const gallery = document.getElementById('ts-gallery');
@@ -1101,6 +1184,7 @@ async function generateStudioThumbnails() {
 // Niche Screener
 // ---------------------------------------------------------------------------
 async function analyzeNiche() {
+    if (!ensureAuth(analyzeNiche)) return;
     const btn = document.querySelector('#page-niche-screener .btn-primary');
     setLoading(btn, true);
     try {
@@ -1283,7 +1367,7 @@ function copyText(elementId) {
 // ---------------------------------------------------------------------------
 async function checkAuth() {
     try {
-        const res = await fetch('/api/auth/me');
+        const res = await _origFetch('/api/auth/me');
         const data = await res.json();
         if (data.user) {
             currentUser = data.user;
@@ -1291,6 +1375,8 @@ async function checkAuth() {
         }
     } catch (e) {
         console.error('Auth check failed:', e);
+    } finally {
+        authReady = true;
     }
 }
 
@@ -1311,6 +1397,10 @@ function updateAuthUI() {
     } else {
         loginBtn.classList.remove('hidden');
         userBtn.classList.add('hidden');
+        const cc = document.getElementById('credits-count');
+        const cp = document.getElementById('credits-plan');
+        if (cc) cc.textContent = '3 free';
+        if (cp) cp.textContent = 'trial';
         creditsDisplay.classList.remove('hidden');
     }
 }
@@ -1394,6 +1484,11 @@ async function authVerifyCode() {
         currentUser = data.user;
         updateAuthUI();
         hideAuthModal();
+        if (pendingAuthAction) {
+            const action = pendingAuthAction;
+            pendingAuthAction = null;
+            setTimeout(action, 150);
+        }
     } catch (e) {
         document.getElementById('auth-code-error').textContent = e.message;
         document.getElementById('auth-code-error').classList.remove('hidden');
