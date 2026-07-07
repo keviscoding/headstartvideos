@@ -1,0 +1,28 @@
+<!-- @dsCard group="Brand" viewport="700x260" name="Logo lockups" subtitle="Glyph, wordmark, horizontal, app icon, favicon" -->
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="../styles.css">
+<style>
+  body{margin:0;background:var(--canvas);font-family:var(--font-display)}
+  .wrap{padding:26px;display:flex;flex-direction:column;gap:22px}
+  .row{display:flex;align-items:center;gap:30px;flex-wrap:wrap}
+  .word{font-weight:800;font-size:30px;letter-spacing:-.01em;color:var(--ink)}
+  .word em{font-style:normal;color:var(--accent)}
+  .lockup{display:flex;align-items:center;gap:12px}
+  .dark{background:var(--app-bg);border-radius:14px;padding:16px 22px;display:flex;align-items:center;gap:30px}
+  .cap{font-family:var(--font-mono);font-size:10px;color:var(--ink-3);letter-spacing:.06em;text-transform:uppercase}
+  .stack{display:flex;flex-direction:column;align-items:center;gap:6px}
+</style></head>
+<body>
+  <div class="wrap">
+    <div class="row">
+      <div class="stack"><div class="lockup"><img src="../assets/glyph.svg" width="34" height="34"><span class="word">Channel<em>Recipe</em></span></div><span class="cap">horizontal</span></div>
+      <div class="stack"><img src="../assets/glyph.svg" width="40" height="40"><span class="cap">glyph</span></div>
+      <div class="stack"><img src="../assets/app-icon.svg" width="44" height="44"><span class="cap">app icon</span></div>
+      <div class="stack"><img src="../assets/favicon.svg" width="20" height="20"><span class="cap">favicon 16–20px</span></div>
+    </div>
+    <div class="dark">
+      <img src="../assets/glyph.svg" width="34" height="34">
+      <span class="word" style="color:var(--app-ink)">Channel<em>Recipe</em></span>
+    </div>
+  </div>
+</body></html>

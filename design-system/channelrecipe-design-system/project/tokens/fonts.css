@@ -1,0 +1,9 @@
+/* ChannelRecipe webfonts
+   Display: Cabinet Grotesk (Fontshare, free)  — characterful heavy grotesque
+   Body:    General Sans   (Fontshare, free)  — quiet, legible
+   Mono:    JetBrains Mono (Google, free)     — numbers-as-receipts
+   These hosted stylesheets each contain the @font-face rules. */
+
+@import url("https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@500,700,800,900&display=swap");
+@import url("https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600,700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap");

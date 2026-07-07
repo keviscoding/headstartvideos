@@ -1,5 +1,5 @@
 /**
- * Video Factory — Complete System
+ * ChannelRecipe — Complete System
  * Pipeline + Tools + History + Settings
  */
 
@@ -248,20 +248,25 @@ async function loadNiches() {
                        <img src="${niche.preview_gif}" alt="${niche.name} preview" loading="lazy">
                    </div>`
                 : '';
+            const statusChip = niche.status === 'proven'
+                ? `<span class="status-chip proven"><svg width="11" height="11" viewBox="0 0 12 12"><path d="M1 9 L4 5 L6.5 7 L11 1" fill="none" stroke="var(--success)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Proven</span>`
+                : `<span class="status-chip new">New</span>`;
             card.innerHTML = `
                 ${previewHtml}
+                <svg class="fold-play" width="40" height="40" viewBox="0 0 40 40" aria-hidden="true">
+                    <path d="M40 0 V22 L18 0 Z" fill="var(--accent)" opacity="0.16"/>
+                    <path d="M15 11 L15 27 L29 19 Z" fill="var(--accent)"/>
+                </svg>
                 <div class="niche-card-body">
-                    <div class="flex items-start justify-between mb-3">
-                        <span class="niche-badge" style="background: ${niche.color || '#3B82F6'}22; color: ${niche.color || '#3B82F6'}">
-                            ${niche.category || 'Video'}
-                        </span>
-                        <span class="text-xs text-gray-500">${niche.difficulty || ''}</span>
-                    </div>
-                    <h3 class="text-lg font-bold text-white mb-1">${niche.name}</h3>
-                    <p class="text-sm text-gray-400 mb-3">${niche.tagline || niche.description || ''}</p>
-                    <div class="flex items-center justify-between text-xs text-gray-500">
-                        <span>RPM: ${niche.rpm_range || 'N/A'}</span>
-                        <span>Demand: ${niche.demand || 'N/A'}</span>
+                    <div style="margin-bottom: 4px;">${statusChip}</div>
+                    <h3 style="font-family: var(--font-display); font-weight: 800; font-size: 22px; line-height: 1.3; letter-spacing: -0.01em; color: var(--app-ink); max-width: 88%; margin-bottom: 6px;">${niche.name}</h3>
+                    <p style="font-family: var(--font-body); font-size: 15px; line-height: 1.5; color: var(--app-ink-2); margin-bottom: 12px;">${niche.tagline || niche.description || ''}</p>
+                    <div style="display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin-top: auto; font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.01em; color: var(--app-ink-3);">
+                        <span>~15 min</span>
+                        <span style="opacity: 0.5;">·</span>
+                        <span>1 credit</span>
+                        <span style="opacity: 0.5;">·</span>
+                        <span>RPM ${niche.rpm_range || 'N/A'}</span>
                     </div>
                 </div>
             `;
@@ -380,20 +385,22 @@ async function loadVoices() {
         voices.forEach(v => {
             const card = document.createElement('div');
             card.className = `voice-card${v.id === state.voice ? ' selected' : ''}`;
+            const recommended = v.default
+                ? `<span style="font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent);background:var(--accent-soft-dark);border-radius:var(--radius-pill);padding:2px 7px;">Best pick</span>`
+                : '';
             card.innerHTML = `
-                <div class="flex items-center gap-3">
-                    <button class="play-btn" data-voice="${v.id}" title="Preview voice">
-                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-                    </button>
-                    <div class="flex-1 min-w-0">
-                        <div class="flex items-center gap-2">
-                            <span class="font-semibold text-white">${v.name}</span>
-                            <span class="text-xs px-2 py-0.5 rounded-full bg-gray-800 text-gray-400">${v.tag}</span>
-                            ${v.default ? '<span class="text-xs text-accent">Recommended</span>' : ''}
-                        </div>
-                        <p class="text-xs text-gray-500 mt-0.5">${v.desc}</p>
+                <button class="play-btn" data-voice="${v.id}" title="Preview voice">
+                    <svg width="13" height="13" viewBox="0 0 14 14"><path d="M4 2.5 L4 11.5 L11 7 Z" fill="currentColor"/></svg>
+                </button>
+                <div class="flex-1 min-w-0">
+                    <div style="display:flex;align-items:center;gap:8px;font-family:var(--font-body);font-weight:600;font-size:15px;color:var(--app-ink);">
+                        ${v.name} ${recommended}
                     </div>
+                    <div style="font-family:var(--font-body);font-size:13px;color:var(--app-ink-3);margin-top:2px;">${v.desc || v.tag}</div>
                 </div>
+                <span style="width:20px;height:20px;flex:none;border-radius:50%;border:2px solid ${v.id === state.voice ? 'var(--accent)' : 'var(--app-border)'};display:flex;align-items:center;justify-content:center;">
+                    ${v.id === state.voice ? '<span style="width:10px;height:10px;border-radius:50%;background:var(--accent);"></span>' : ''}
+                </span>
             `;
             card.addEventListener('click', (e) => {
                 if (e.target.closest('.play-btn')) return;

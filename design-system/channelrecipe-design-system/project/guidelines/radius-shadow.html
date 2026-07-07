@@ -1,0 +1,21 @@
+<!-- @dsCard group="Spacing" viewport="700x200" name="Radius & shadow" subtitle="16px recipe-card radius · soft low shadows on cream" -->
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="../styles.css">
+<style>
+  body{margin:0;background:var(--canvas);font-family:var(--font-mono)}
+  .wrap{padding:26px;display:flex;gap:28px;align-items:flex-end;flex-wrap:wrap}
+  .item{display:flex;flex-direction:column;gap:8px;align-items:center}
+  .box{width:84px;height:64px;background:#fff;border:1px solid var(--hairline)}
+  .lbl{font-size:11px;color:var(--ink-3)}
+</style></head>
+<body>
+  <div class="wrap">
+    <div class="item"><div class="box" style="border-radius:8px"></div><span class="lbl">sm · 8</span></div>
+    <div class="item"><div class="box" style="border-radius:12px"></div><span class="lbl">md · 12</span></div>
+    <div class="item"><div class="box" style="border-radius:16px"></div><span class="lbl">card · 16</span></div>
+    <div class="item"><div class="box" style="border-radius:20px"></div><span class="lbl">lg · 20</span></div>
+    <div class="item"><div class="box" style="border-radius:12px;border:none;box-shadow:var(--shadow-sm)"></div><span class="lbl">shadow-sm</span></div>
+    <div class="item"><div class="box" style="border-radius:12px;border:none;box-shadow:var(--shadow-card)"></div><span class="lbl">shadow-card</span></div>
+    <div class="item"><div class="box" style="border-radius:12px;border:none;box-shadow:var(--shadow-accent)"></div><span class="lbl">shadow-accent</span></div>
+  </div>
+</body></html>

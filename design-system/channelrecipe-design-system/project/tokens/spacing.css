@@ -1,0 +1,46 @@
+/* ChannelRecipe spacing, radius, layout, shadow, motion
+   4px base grid; generous whitespace; single calm column. */
+
+:root {
+  /* ---- Spacing scale (4px base) ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --space-9: 96px;
+  --space-10: 128px;
+
+  /* ---- Layout ---- */
+  --container-max: 1100px;   /* @kind spacing */ /* landing page max width */
+  --container-narrow: 720px; /* @kind spacing */ /* prose / single-column reading */
+  --gutter: 24px;            /* @kind spacing */ /* page side padding */
+  --section-y: 96px;         /* @kind spacing */ /* vertical rhythm between sections */
+
+  /* ---- Radius ---- */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-card: 16px;   /* the recipe-card signature radius */
+  --radius-lg: 20px;
+  --radius-pill: 999px;
+  --fold-size: 28px;     /* @kind radius */ /* folded-corner / play-triangle size */
+
+  /* ---- Shadow (soft, low; cream needs restraint) ---- */
+  --shadow-xs: 0 1px 2px rgba(22, 22, 26, 0.05);
+  --shadow-sm: 0 2px 8px rgba(22, 22, 26, 0.06);
+  --shadow-card: 0 6px 24px rgba(22, 22, 26, 0.08);
+  --shadow-lg: 0 18px 48px rgba(22, 22, 26, 0.12);
+  --shadow-accent: 0 8px 24px rgba(109, 90, 224, 0.28); /* violet CTA lift */
+  /* dark theme depth */
+  --shadow-dark: 0 12px 40px rgba(0, 0, 0, 0.45);
+
+  /* ---- Motion ---- */
+  --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);  /* @kind other */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);        /* @kind other */
+  --dur-fast: 120ms;   /* @kind other */
+  --dur-base: 200ms;   /* @kind other */
+  --dur-slow: 360ms;   /* @kind other */
+}

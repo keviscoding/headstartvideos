@@ -1,0 +1,23 @@
+<!-- @dsCard group="Brand" viewport="700x200" name="One accent rule" subtitle="Violet does all accent work · green is status only" -->
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="../styles.css">
+<style>
+  body{margin:0;background:var(--canvas);font-family:var(--font-body);color:var(--ink-2)}
+  .wrap{padding:26px;display:flex;flex-direction:column;gap:14px;max-width:600px}
+  h2{font-family:var(--font-display);font-weight:800;font-size:26px;color:var(--ink);margin:0;letter-spacing:-.015em}
+  em{font-style:normal;color:var(--accent)}
+  .rules{display:flex;gap:10px;flex-wrap:wrap;font-family:var(--font-mono);font-size:12px}
+  .rule{display:flex;align-items:center;gap:7px;background:#fff;border:1px solid var(--hairline);border-radius:999px;padding:6px 12px}
+  .dot{width:9px;height:9px;border-radius:50%}
+</style></head>
+<body>
+  <div class="wrap">
+    <h2>Turn a proven niche into a finished video in <em>15 minutes</em></h2>
+    <p style="margin:0;font-size:15px">Exactly one accent-colored word per headline. Violet carries every CTA, link, and NEW badge. Green appears only as a status semantic.</p>
+    <div class="rules">
+      <span class="rule"><span class="dot" style="background:var(--accent)"></span>accent — CTAs, accent word, NEW</span>
+      <span class="rule"><span class="dot" style="background:var(--success)"></span>success — status only</span>
+      <span class="rule"><span class="dot" style="background:var(--ink)"></span>ink — everything else</span>
+    </div>
+  </div>
+</body></html>

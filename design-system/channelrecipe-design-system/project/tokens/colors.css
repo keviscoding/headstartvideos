@@ -1,0 +1,59 @@
+/* ChannelRecipe color tokens
+   Rule: ONE accent. Violet does all accent work.
+   Green is a STATUS semantic only — never decoration. */
+
+:root {
+  /* ---- Base palette ---- */
+  --canvas: #F7F5F0;        /* cream — marketing pages */
+  --canvas-2: #F1EEE6;      /* slightly deeper cream — section banding */
+  --ink: #16161A;           /* primary text */
+  --ink-2: #45454E;         /* secondary text */
+  --ink-3: #6E6E79;         /* muted text / meta */
+  --hairline: #E5E1D8;      /* 1px borders on cream */
+  --white: #FFFFFF;
+
+  /* ---- Accent (electric violet) ---- */
+  --accent: #6D5AE0;
+  --accent-hover: #5A48C9;
+  --accent-press: #4C3BB0;
+  --accent-soft: #EDEAFB;   /* violet tint fill (chips, hovers on cream) */
+  --accent-ink: #FFFFFF;    /* text on accent */
+
+  /* ---- App dark theme ---- */
+  --app-bg: #0F1222;        /* deep navy-violet page */
+  --app-surface: #171B2E;   /* cards / panels */
+  --app-surface-2: #1E2338; /* raised surface / inputs */
+  --app-border: #262B45;    /* dark hairline */
+  --app-ink: #EDEEF5;       /* primary text on dark */
+  --app-ink-2: #A7ACC4;     /* secondary text on dark */
+  --app-ink-3: #6C7192;     /* muted text on dark */
+  --accent-soft-dark: #23213F; /* violet-tinted dark fill */
+
+  /* ---- Status semantics ---- */
+  --success: #14B87A;
+  --success-soft: #E2F6EE;
+  --warn: #E8A13C;
+  --warn-soft: #FBF0DE;
+  --error: #E5484D;
+  --error-soft: #FCE7E7;
+
+  /* ---- Semantic aliases (light / marketing) ---- */
+  --bg-page: var(--canvas);
+  --bg-band: var(--canvas-2);
+  --surface-card: var(--white);
+  --border-card: var(--hairline);
+  --text-strong: var(--ink);
+  --text-body: var(--ink-2);
+  --text-muted: var(--ink-3);
+  --cta-bg: var(--accent);
+  --cta-bg-hover: var(--accent-hover);
+  --cta-ink: var(--accent-ink);
+  --accent-word: var(--accent);
+
+  /* ---- Semantic aliases (dark / app) ---- */
+  --app-surface-card: var(--app-surface);
+  --app-border-card: var(--app-border);
+  --app-text-strong: var(--app-ink);
+  --app-text-body: var(--app-ink-2);
+  --app-text-muted: var(--app-ink-3);
+}

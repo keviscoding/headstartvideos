@@ -1,0 +1,21 @@
+<!-- @dsCard group="Colors" viewport="700x180" name="App dark theme" subtitle="Deep navy-violet surfaces — the product runs dark" -->
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="../styles.css">
+<style>
+  body{margin:0;background:var(--app-bg);font-family:var(--font-body)}
+  .row{display:flex;gap:0;padding:22px}
+  .sw{flex:1;height:120px;display:flex;flex-direction:column;justify-content:flex-end;padding:12px;box-sizing:border-box;border:1px solid var(--app-border)}
+  .sw:first-child{border-radius:12px 0 0 12px}
+  .sw:last-child{border-radius:0 12px 12px 0}
+  .n{font-family:var(--font-mono);font-size:11px;color:var(--app-ink)}
+  .h{font-family:var(--font-mono);font-size:11px;color:var(--app-ink-3)}
+</style></head>
+<body>
+  <div class="row">
+    <div class="sw" style="background:var(--app-bg)"><span class="n">app-bg</span><span class="h">#0F1222</span></div>
+    <div class="sw" style="background:var(--app-surface)"><span class="n">app-surface</span><span class="h">#171B2E</span></div>
+    <div class="sw" style="background:var(--app-surface-2)"><span class="n">surface-2</span><span class="h">#1E2338</span></div>
+    <div class="sw" style="background:var(--app-border)"><span class="n">app-border</span><span class="h">#262B45</span></div>
+    <div class="sw" style="background:var(--accent)"><span class="n" style="color:#fff">accent</span><span class="h" style="color:#e9e5fb">#6D5AE0</span></div>
+  </div>
+</body></html>

@@ -1,0 +1,19 @@
+<!-- @dsCard group="Colors" viewport="700x180" name="Status semantics" subtitle="Green = status only, never decoration · warn · error" -->
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="../styles.css">
+<style>
+  body{margin:0;background:var(--canvas);font-family:var(--font-body)}
+  .row{display:flex;gap:14px;padding:22px}
+  .cell{flex:1}
+  .sw{height:76px;border-radius:12px 12px 0 0;display:flex;align-items:flex-end;padding:10px;box-sizing:border-box}
+  .soft{height:34px;border-radius:0 0 12px 12px;display:flex;align-items:center;padding:0 10px;box-sizing:border-box}
+  .n{font-family:var(--font-mono);font-size:11px;color:#fff}
+  .h{font-family:var(--font-mono);font-size:10px}
+</style></head>
+<body>
+  <div class="row">
+    <div class="cell"><div class="sw" style="background:var(--success)"><span class="n">success #14B87A</span></div><div class="soft" style="background:var(--success-soft)"><span class="h" style="color:var(--success)">success-soft</span></div></div>
+    <div class="cell"><div class="sw" style="background:var(--warn)"><span class="n">warn #E8A13C</span></div><div class="soft" style="background:var(--warn-soft)"><span class="h" style="color:#8a5a12">warn-soft</span></div></div>
+    <div class="cell"><div class="sw" style="background:var(--error)"><span class="n">error #E5484D</span></div><div class="soft" style="background:var(--error-soft)"><span class="h" style="color:var(--error)">error-soft</span></div></div>
+  </div>
+</body></html>

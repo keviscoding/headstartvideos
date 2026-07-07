@@ -1,42 +1,46 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Video Factory</title>
+    <title>ChannelRecipe — Proven recipes for faceless YouTube channels</title>
+    <link rel="icon" href="/static/favicon.svg">
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/styles.css">
     <script>
         tailwind.config = {
-            darkMode: 'class',
             theme: {
                 extend: {
-                    fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
-                    colors: { accent: { DEFAULT: '#3B82F6', light: '#60A5FA', dark: '#2563EB' } },
+                    fontFamily: {
+                        display: ['"Cabinet Grotesk"', '"General Sans"', 'system-ui', 'sans-serif'],
+                        body: ['"General Sans"', '"Inter"', 'system-ui', 'sans-serif'],
+                        mono: ['"JetBrains Mono"', 'ui-monospace', '"SF Mono"', 'Menlo', 'monospace'],
+                    },
+                    colors: {
+                        accent: { DEFAULT: '#6D5AE0', hover: '#5A48C9', press: '#4C3BB0', soft: '#EDEAFB', ink: '#FFFFFF', 'soft-dark': '#23213F' },
+                        app: { bg: '#0F1222', surface: '#171B2E', 'surface-2': '#1E2338', border: '#262B45', ink: '#EDEEF5', 'ink-2': '#A7ACC4', 'ink-3': '#6C7192' },
+                        success: { DEFAULT: '#14B87A', soft: '#E2F6EE' },
+                        warn: { DEFAULT: '#E8A13C' },
+                        err: { DEFAULT: '#E5484D' },
+                    },
+                    borderRadius: { card: '16px', md: '12px', sm: '8px' },
                 }
             }
         }
     </script>
 </head>
-<body class="bg-gray-950 text-gray-100 font-sans min-h-screen">
+<body style="background: var(--app-bg); color: var(--app-ink); font-family: var(--font-body); min-height: 100vh; -webkit-font-smoothing: antialiased;">
 
     <!-- Navigation -->
-    <header class="border-b border-gray-800/50 bg-gray-950/80 backdrop-blur-sm sticky top-0 z-50">
-        <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+    <header style="position: sticky; top: 0; z-index: 50; background: color-mix(in srgb, var(--app-bg) 88%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--app-border);">
+        <div class="max-w-5xl mx-auto px-6 py-3 flex items-center justify-between">
             <div class="flex items-center gap-6">
                 <div class="flex items-center gap-2 cursor-pointer" onclick="navigateTo('pipeline')">
-                    <div class="w-7 h-7 bg-accent rounded-lg flex items-center justify-center">
-                        <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                        </svg>
-                    </div>
-                    <span class="text-base font-bold text-white">Video Factory</span>
+                    <img src="/static/glyph.svg" width="28" height="28" alt="ChannelRecipe">
+                    <span style="font-family: var(--font-display); font-weight: 800; font-size: 18px; letter-spacing: -0.01em; color: var(--app-ink);">Channel<span style="color: var(--accent);">Recipe</span></span>
                 </div>
                 <nav class="hidden sm:flex items-center gap-1">
-                    <button class="nav-btn active" data-page="pipeline">Create Video</button>
+                    <button class="nav-btn active" data-page="pipeline">New video</button>
                     <div class="relative" id="tools-dropdown">
                         <button class="nav-btn" data-page="tools" onclick="toggleToolsMenu(event)">
                             Tools
@@ -54,14 +58,22 @@
                     <button class="nav-btn" data-page="settings" onclick="navigateTo('settings')">Settings</button>
                 </nav>
             </div>
-            <!-- Mobile menu -->
-            <button id="mobile-menu-btn" class="sm:hidden text-gray-400 hover:text-white" onclick="toggleMobileMenu()">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
-            </button>
+            <div class="flex items-center gap-3">
+                <div class="credits-chip hidden" id="credits-display">
+                    <span class="dot"></span>
+                    <span style="color: var(--app-ink); font-weight: 500;">3 credits</span>
+                    <span style="opacity: 0.45;">·</span>
+                    <span>trial</span>
+                </div>
+                <!-- Mobile menu -->
+                <button id="mobile-menu-btn" class="sm:hidden" style="color: var(--app-ink-3);" onclick="toggleMobileMenu()">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+                </button>
+            </div>
         </div>
         <!-- Mobile nav -->
-        <div id="mobile-menu" class="sm:hidden hidden border-t border-gray-800/50 px-4 py-3 space-y-1">
-            <button class="mobile-nav-btn" onclick="navigateTo('pipeline')">Create Video</button>
+        <div id="mobile-menu" class="sm:hidden hidden px-4 py-3 space-y-1" style="border-top: 1px solid var(--app-border);">
+            <button class="mobile-nav-btn" onclick="navigateTo('pipeline')">New video</button>
             <button class="mobile-nav-btn" onclick="navigateTo('script-studio')">Script Studio</button>
             <button class="mobile-nav-btn" onclick="navigateTo('voiceover-studio')">Voiceover Studio</button>
             <button class="mobile-nav-btn" onclick="navigateTo('thumbnail-studio')">Thumbnail Studio</button>
@@ -77,105 +89,133 @@
     <!-- ============================================================ -->
     <div id="page-pipeline" class="page-container">
         <!-- Stepper -->
-        <div class="max-w-5xl mx-auto px-4 pt-6 pb-2">
-            <div class="flex items-center justify-between" id="stepper">
-                <div class="step-indicator" data-step="1"><div class="step-dot active" onclick="goToCompletedStep(1)">1</div><span class="step-label">Niche</span></div>
-                <div class="step-line"></div>
-                <div class="step-indicator" data-step="2"><div class="step-dot" onclick="goToCompletedStep(2)">2</div><span class="step-label">Title</span></div>
-                <div class="step-line"></div>
-                <div class="step-indicator" data-step="3"><div class="step-dot" onclick="goToCompletedStep(3)">3</div><span class="step-label">Script</span></div>
-                <div class="step-line"></div>
-                <div class="step-indicator" data-step="4"><div class="step-dot" onclick="goToCompletedStep(4)">4</div><span class="step-label">Voice</span></div>
-                <div class="step-line"></div>
-                <div class="step-indicator" data-step="5"><div class="step-dot" onclick="goToCompletedStep(5)">5</div><span class="step-label">Thumbnail</span></div>
-                <div class="step-line"></div>
-                <div class="step-indicator" data-step="6"><div class="step-dot" onclick="goToCompletedStep(6)">6</div><span class="step-label">Build</span></div>
+        <div class="max-w-5xl mx-auto px-6 pt-6 pb-2">
+            <div class="cr-panel" style="padding: 20px 26px;">
+                <div class="flex items-center justify-between" id="stepper">
+                    <div class="step-indicator" data-step="1"><div class="step-dot active" onclick="goToCompletedStep(1)">1</div><span class="step-label">Recipe</span></div>
+                    <div class="step-line"></div>
+                    <div class="step-indicator" data-step="2"><div class="step-dot" onclick="goToCompletedStep(2)">2</div><span class="step-label">Title</span></div>
+                    <div class="step-line"></div>
+                    <div class="step-indicator" data-step="3"><div class="step-dot" onclick="goToCompletedStep(3)">3</div><span class="step-label">Script</span></div>
+                    <div class="step-line"></div>
+                    <div class="step-indicator" data-step="4"><div class="step-dot" onclick="goToCompletedStep(4)">4</div><span class="step-label">Voice</span></div>
+                    <div class="step-line"></div>
+                    <div class="step-indicator" data-step="5"><div class="step-dot" onclick="goToCompletedStep(5)">5</div><span class="step-label">Thumbnail</span></div>
+                    <div class="step-line"></div>
+                    <div class="step-indicator" data-step="6"><div class="step-dot" onclick="goToCompletedStep(6)">6</div><span class="step-label">Cook</span></div>
+                </div>
             </div>
         </div>
 
-        <main class="max-w-5xl mx-auto px-4 py-8">
-            <!-- STEP 1: Niche -->
+        <main class="max-w-5xl mx-auto px-6 py-6">
+            <!-- STEP 1: Recipe -->
             <section id="step-1" class="step-panel">
-                <div class="text-center mb-8">
-                    <h2 class="text-3xl font-bold text-white mb-2">Pick your niche</h2>
-                    <p class="text-gray-400 text-lg">Choose a proven format for your video</p>
+                <div class="cr-panel">
+                    <div class="mb-6">
+                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Pick your first recipe</h2>
+                        <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">Each one is proven on a real channel. A new recipe drops every week.</p>
+                    </div>
+                    <div id="niche-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
                 </div>
-                <div id="niche-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
             </section>
 
             <!-- STEP 2: Title -->
             <section id="step-2" class="step-panel hidden">
-                <div class="text-center mb-8">
-                    <h2 class="text-3xl font-bold text-white mb-2">Choose a title</h2>
-                    <p class="text-gray-400 text-lg">Pick one or write your own</p>
-                </div>
-                <div class="max-w-2xl mx-auto space-y-4">
-                    <input id="topic-input" type="text" placeholder="Optional: enter a topic to guide title generation..."
-                        class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-accent transition">
-                    <button id="btn-gen-titles" class="btn-primary w-full">
-                        <span class="btn-text">Generate Titles</span>
-                        <span class="btn-loading hidden"><svg class="animate-spin h-5 w-5 inline mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Generating...</span>
-                    </button>
-                    <div id="titles-list" class="space-y-3 mt-6"></div>
-                    <div class="mt-4">
-                        <label class="text-sm text-gray-400 mb-1 block">Or write your own title</label>
-                        <input id="custom-title" type="text" placeholder="Type your custom title..."
-                            class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-accent transition">
+                <div class="cr-panel">
+                    <div class="mb-6">
+                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Pick a title</h2>
+                        <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">We drafted a few from proven patterns. Pick one or write your own.</p>
                     </div>
-                    <div class="flex gap-3 mt-4">
-                        <button id="btn-back-2" class="btn-secondary flex-shrink-0 px-6" onclick="goToStep(1)">Back</button>
-                        <button id="btn-next-2" class="btn-primary flex-1 opacity-50 cursor-not-allowed" disabled>Next: Generate Script</button>
+                    <div class="max-w-2xl space-y-4">
+                        <input id="topic-input" type="text" placeholder="Optional: enter a topic to guide title generation..."
+                            class="cr-input">
+                        <button id="btn-gen-titles" class="btn-primary w-full">
+                            <span class="btn-text">Generate titles</span>
+                            <span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;"></div>Generating...</span>
+                        </button>
+                        <div id="titles-list" class="space-y-3 mt-4"></div>
+                        <div style="margin-top: 22px; border-top: 1px solid var(--app-border); padding-top: 16px;">
+                            <details>
+                                <summary style="cursor: pointer; font-family: var(--font-body); font-size: 14px; font-weight: 500; color: var(--app-ink-2);">Write your own title</summary>
+                                <input id="custom-title" type="text" placeholder="Your title" class="cr-input" style="margin-top: 10px;">
+                            </details>
+                        </div>
+                    </div>
+                    <div class="flex justify-between items-center mt-7 pt-5" style="border-top: 1px solid var(--app-border);">
+                        <button class="btn-ghost" onclick="goToStep(1)">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                            Recipes
+                        </button>
+                        <span class="cr-mono">Step 2 of 6</span>
+                        <button id="btn-next-2" class="btn-primary" disabled>Next</button>
                     </div>
                 </div>
             </section>
 
             <!-- STEP 3: Script -->
             <section id="step-3" class="step-panel hidden">
-                <div class="text-center mb-8">
-                    <h2 class="text-3xl font-bold text-white mb-2">Your script</h2>
-                    <p class="text-gray-400 text-lg">Edit freely, then continue</p>
-                </div>
-                <div class="max-w-3xl mx-auto space-y-4">
-                    <div class="flex items-center gap-4 mb-2">
-                        <label class="text-sm text-gray-400 whitespace-nowrap">Target length</label>
-                        <input id="target-minutes" type="range" min="3" max="20" value="8" class="flex-1 accent-blue-500">
-                        <span id="target-minutes-label" class="text-sm text-gray-300 font-medium w-16 text-right">8 min</span>
+                <div class="cr-panel">
+                    <div class="mb-6">
+                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Review the script</h2>
+                        <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">Written from the recipe. Edit anything, or keep it as is.</p>
                     </div>
-                    <div id="script-loading" class="text-center py-12 hidden">
-                        <svg class="animate-spin h-8 w-8 text-accent mx-auto mb-4" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                        <p class="text-gray-400">Writing your script...</p>
-                    </div>
-                    <div id="script-editor-wrap">
-                        <div class="flex items-center justify-between mb-2">
-                            <span id="word-count" class="text-sm text-gray-500">0 words</span>
-                            <button id="btn-regen-script" class="text-sm text-accent hover:text-accent-light transition">Regenerate</button>
+                    <div class="max-w-3xl space-y-4">
+                        <div class="flex items-center gap-4 mb-2">
+                            <label class="cr-label" style="margin-bottom: 0; white-space: nowrap;">Target length</label>
+                            <input id="target-minutes" type="range" min="3" max="20" value="8" class="flex-1" style="accent-color: var(--accent);">
+                            <span id="target-minutes-label" class="cr-mono" style="width: 4rem; text-align: right; color: var(--app-ink);">8 min</span>
                         </div>
-                        <textarea id="script-editor" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-4 text-gray-100 leading-relaxed focus:outline-none focus:border-accent transition resize-none" rows="16" placeholder="Your script will appear here..."></textarea>
+                        <div id="script-loading" class="text-center py-12 hidden">
+                            <div class="cr-spinner mx-auto mb-4"></div>
+                            <p style="color: var(--app-ink-2);">Writing your script...</p>
+                        </div>
+                        <div id="script-editor-wrap">
+                            <div class="cr-surface" style="padding: 16px;">
+                                <div class="flex items-center justify-between mb-3">
+                                    <span id="word-count" class="cr-eyebrow">0 words</span>
+                                    <button id="btn-regen-script" class="btn-ghost" style="font-size: 13px;">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4v6h6M23 20v-6h-6M20.49 9A9 9 0 1 0 5.64 5.64L1 10M22.36 14l-4.64 4.36"/></svg>
+                                        Regenerate
+                                    </button>
+                                </div>
+                                <textarea id="script-editor" class="cr-textarea" rows="14" placeholder="Your script will appear here..." style="border: none; padding: 0; background: transparent;"></textarea>
+                            </div>
+                        </div>
                     </div>
-                    <div class="flex gap-3">
-                        <button class="btn-secondary flex-shrink-0 px-6" onclick="goToStep(2)">Back</button>
-                        <button id="btn-next-3" class="btn-primary flex-1">Next: Choose Voice</button>
+                    <div class="flex justify-between items-center mt-7 pt-5" style="border-top: 1px solid var(--app-border);">
+                        <button class="btn-ghost" onclick="goToStep(2)">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                            Back
+                        </button>
+                        <span class="cr-mono">Step 3 of 6</span>
+                        <button id="btn-next-3" class="btn-primary">Next</button>
                     </div>
                 </div>
             </section>
 
             <!-- STEP 4: Voice -->
             <section id="step-4" class="step-panel hidden">
-                <div class="text-center mb-8">
-                    <h2 class="text-3xl font-bold text-white mb-2">Choose a voice</h2>
-                    <p class="text-gray-400 text-lg">Listen and pick the one that fits</p>
-                </div>
-                <div id="voices-grid" class="max-w-3xl mx-auto grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
-                <div class="max-w-3xl mx-auto mt-6">
-                    <div id="vo-generating" class="text-center py-8 hidden">
-                        <svg class="animate-spin h-8 w-8 text-accent mx-auto mb-4" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                        <p class="text-gray-400">Generating voiceover... this takes about 30 seconds</p>
+                <div class="cr-panel">
+                    <div class="mb-6">
+                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Choose a voice</h2>
+                        <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">Six voices, tuned for this recipe. The best pick is ready to go.</p>
                     </div>
-                    <div class="flex gap-3">
-                        <button class="btn-secondary flex-shrink-0 px-6" onclick="goToStep(3)">Back</button>
-                        <button id="btn-next-4" class="btn-primary flex-1">
-                            <span class="btn-text">Next: Generate Voiceover & Thumbnail</span>
-                            <span class="btn-loading hidden"><svg class="animate-spin h-5 w-5 inline mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Generating...</span>
+                    <div id="voices-grid" class="max-w-3xl grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
+                    <div class="max-w-3xl mt-4">
+                        <div id="vo-generating" class="text-center py-8 hidden">
+                            <div class="cr-spinner mx-auto mb-4"></div>
+                            <p style="color: var(--app-ink-2);">Generating voiceover... this takes about 30 seconds</p>
+                        </div>
+                    </div>
+                    <div class="flex justify-between items-center mt-7 pt-5" style="border-top: 1px solid var(--app-border);">
+                        <button class="btn-ghost" onclick="goToStep(3)">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                            Back
+                        </button>
+                        <span class="cr-mono">Step 4 of 6</span>
+                        <button id="btn-next-4" class="btn-primary">
+                            <span class="btn-text">Next</span>
+                            <span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;"></div>Generating...</span>
                         </button>
                     </div>
                 </div>
@@ -183,86 +223,154 @@
 
             <!-- STEP 5: Thumbnail -->
             <section id="step-5" class="step-panel hidden">
-                <div class="text-center mb-8">
-                    <h2 class="text-3xl font-bold text-white mb-2">Pick a thumbnail</h2>
-                    <p class="text-gray-400 text-lg">Choose the one that grabs attention</p>
-                </div>
-                <div id="thumb-grid" class="max-w-3xl mx-auto grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
-                <div id="thumb-loading" class="text-center py-12 hidden">
-                    <svg class="animate-spin h-8 w-8 text-accent mx-auto mb-4" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                    <p class="text-gray-400">Generating thumbnails...</p>
-                </div>
-                <div class="max-w-3xl mx-auto mt-4 space-y-4">
-                    <!-- Reference upload + regenerate -->
-                    <div class="flex flex-wrap items-center gap-3">
-                        <label class="btn-secondary text-sm cursor-pointer px-4 py-2">
-                            Upload Reference
-                            <input id="thumb-ref-upload" type="file" accept="image/*" multiple class="hidden" onchange="handleThumbRefUpload(this)">
-                        </label>
-                        <input id="thumb-style-input" type="text" placeholder="Custom style instructions..."
-                            class="flex-1 min-w-[200px] bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-accent transition">
-                        <button id="btn-regen-thumb" class="text-sm text-accent hover:text-accent-light transition" onclick="regenerateThumbnails()">Regenerate</button>
+                <div class="cr-panel">
+                    <div class="mb-6">
+                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Pick a thumbnail</h2>
+                        <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">Two options in the recipe's proven style.</p>
                     </div>
-                    <div id="thumb-refs-preview" class="flex gap-2 flex-wrap"></div>
-                    <div class="flex gap-3">
-                        <button class="btn-secondary flex-shrink-0 px-6" onclick="goToStep(4)">Back</button>
-                        <button id="btn-next-5" class="btn-primary flex-1 opacity-50 cursor-not-allowed" disabled>Next: Build Video</button>
+                    <div id="thumb-grid" class="max-w-3xl grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
+                    <div id="thumb-loading" class="text-center py-12 hidden">
+                        <div class="cr-spinner mx-auto mb-4"></div>
+                        <p style="color: var(--app-ink-2);">Generating thumbnails...</p>
+                    </div>
+                    <div class="max-w-3xl mt-4 space-y-4">
+                        <div class="flex flex-wrap items-center gap-3">
+                            <label class="btn-secondary text-sm cursor-pointer px-4 py-2" style="font-size: 14px;">
+                                Upload reference
+                                <input id="thumb-ref-upload" type="file" accept="image/*" multiple class="hidden" onchange="handleThumbRefUpload(this)">
+                            </label>
+                            <input id="thumb-style-input" type="text" placeholder="Custom style instructions..." class="cr-input" style="flex: 1; min-width: 200px; font-size: 14px;">
+                            <button id="btn-regen-thumb" class="btn-ghost" style="font-size: 13px;" onclick="regenerateThumbnails()">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4v6h6M23 20v-6h-6M20.49 9A9 9 0 1 0 5.64 5.64L1 10M22.36 14l-4.64 4.36"/></svg>
+                                Regenerate
+                            </button>
+                        </div>
+                        <div id="thumb-refs-preview" class="flex gap-2 flex-wrap"></div>
+                    </div>
+                    <div class="flex justify-between items-center mt-7 pt-5" style="border-top: 1px solid var(--app-border);">
+                        <button class="btn-ghost" onclick="goToStep(4)">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                            Back
+                        </button>
+                        <span class="cr-mono">Step 5 of 6</span>
+                        <button id="btn-next-5" class="btn-primary" disabled>Next</button>
                     </div>
                 </div>
             </section>
 
-            <!-- STEP 6: Build -->
+            <!-- STEP 6: Cook -->
             <section id="step-6" class="step-panel hidden">
-                <div id="build-start" class="text-center">
-                    <h2 class="text-3xl font-bold text-white mb-2">Ready to build</h2>
-                    <p class="text-gray-400 text-lg mb-8">Everything is set. Hit the button and watch the magic.</p>
-                    <div class="max-w-md mx-auto bg-gray-900 rounded-2xl p-6 mb-8 text-left space-y-3">
-                        <div class="flex justify-between text-sm"><span class="text-gray-400">Niche</span><span id="summary-niche" class="text-gray-200 font-medium"></span></div>
-                        <div class="flex justify-between text-sm"><span class="text-gray-400">Title</span><span id="summary-title" class="text-gray-200 font-medium truncate ml-4 max-w-[250px]"></span></div>
-                        <div class="flex justify-between text-sm"><span class="text-gray-400">Script</span><span id="summary-words" class="text-gray-200 font-medium"></span></div>
-                        <div class="flex justify-between text-sm"><span class="text-gray-400">Voice</span><span id="summary-voice" class="text-gray-200 font-medium"></span></div>
+                <div id="build-start" class="cr-panel">
+                    <div class="mb-6">
+                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Ready to cook</h2>
+                        <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">Here's your video. This uses 1 credit.</p>
                     </div>
-                    <div class="flex gap-3 max-w-md mx-auto">
-                        <button class="btn-secondary flex-shrink-0 px-6" onclick="goToStep(5)">Back</button>
-                        <button id="btn-build" class="btn-primary flex-1 text-lg py-4">Build My Video</button>
-                    </div>
-                </div>
-                <!-- Progress -->
-                <div id="build-progress" class="hidden max-w-2xl mx-auto">
-                    <div class="text-center mb-8">
-                        <h2 class="text-3xl font-bold text-white mb-2">Building your video</h2>
-                        <p class="text-gray-400">This takes 2-5 minutes</p>
-                    </div>
-                    <div class="bg-gray-900 rounded-2xl p-6">
-                        <div class="w-full bg-gray-800 rounded-full h-3 mb-4">
-                            <div id="progress-bar" class="bg-accent h-3 rounded-full transition-all duration-500" style="width: 0%"></div>
+                    <div class="cr-surface" style="padding: 4px; max-w-lg;">
+                        <div class="flex justify-between px-4 py-3" style="border-bottom: 1px solid var(--app-border);">
+                            <span style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-3);">Recipe</span>
+                            <span id="summary-niche" style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink); font-weight: 500;"></span>
                         </div>
-                        <div id="progress-log" class="space-y-1 text-sm text-gray-400 max-h-48 overflow-y-auto font-mono"></div>
+                        <div class="flex justify-between px-4 py-3" style="border-bottom: 1px solid var(--app-border);">
+                            <span style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-3);">Title</span>
+                            <span id="summary-title" style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink); font-weight: 500; max-width: 300px; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></span>
+                        </div>
+                        <div class="flex justify-between px-4 py-3" style="border-bottom: 1px solid var(--app-border);">
+                            <span style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-3);">Script</span>
+                            <span id="summary-words" style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink); font-weight: 500;"></span>
+                        </div>
+                        <div class="flex justify-between px-4 py-3">
+                            <span style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-3);">Voice</span>
+                            <span id="summary-voice" style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink); font-weight: 500;"></span>
+                        </div>
+                    </div>
+                    <div class="flex justify-between items-center mt-7 pt-5" style="border-top: 1px solid var(--app-border);">
+                        <button class="btn-ghost" onclick="goToStep(5)">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                            Back
+                        </button>
+                        <span class="cr-mono">Step 6 of 6</span>
+                        <button id="btn-build" class="btn-primary">
+                            <svg width="16" height="16" viewBox="0 0 14 14"><path d="M4 2.5 L4 11.5 L11 7 Z" fill="currentColor"/></svg>
+                            Cook video
+                        </button>
                     </div>
                 </div>
+
+                <!-- Cooking progress -->
+                <div id="build-progress" class="hidden">
+                    <div class="cr-panel max-w-xl mx-auto">
+                        <div class="flex items-center gap-3 mb-5">
+                            <img src="/static/glyph.svg" width="30" height="30" alt="">
+                            <div>
+                                <h2 class="cr-display" style="font-size: 24px; line-height: 1.12;">Cooking your video…</h2>
+                                <p style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2); margin-top: 4px;">You can leave this page — we'll keep cooking.</p>
+                            </div>
+                        </div>
+                        <div class="progress-bar-track mb-2">
+                            <div id="progress-bar" class="progress-bar-fill" style="width: 0%"></div>
+                        </div>
+                        <div class="flex justify-between mb-4">
+                            <span id="progress-pct" class="cr-mono">0%</span>
+                            <span id="progress-eta" class="cr-mono">about 3 minutes</span>
+                        </div>
+                        <div id="progress-log" class="space-y-2" style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2);"></div>
+                    </div>
+                </div>
+
                 <!-- Upload Kit -->
-                <div id="upload-kit" class="hidden max-w-3xl mx-auto">
-                    <div class="text-center mb-8">
-                        <div class="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
-                            <svg class="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                <div id="upload-kit" class="hidden">
+                    <div class="flex items-center gap-3 mb-5">
+                        <span class="status-chip proven">
+                            <svg width="11" height="11" viewBox="0 0 12 12"><path d="M1 9 L4 5 L6.5 7 L11 1" fill="none" stroke="var(--success)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                            Video ready
+                        </span>
+                        <span class="cr-mono">Upload Kit ready</span>
+                    </div>
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5" style="align-items: start;">
+                        <div class="cr-panel" style="padding: 0; overflow: hidden;">
+                            <video id="result-video" controls class="w-full" style="aspect-ratio: 16/9; background: black;"></video>
+                            <div class="flex gap-3 p-4" style="flex-wrap: wrap;">
+                                <a id="download-link" href="#" class="btn-primary" style="font-size: 15px;">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                                    Download Upload Kit
+                                </a>
+                            </div>
                         </div>
-                        <h2 class="text-3xl font-bold text-white mb-2">Your video is ready</h2>
-                        <p class="text-gray-400 text-lg">Download and upload to YouTube</p>
+                        <div class="space-y-4">
+                            <div class="kit-field">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="kit-label">Title</span>
+                                    <button class="copy-btn" data-target="kit-title">Copy</button>
+                                </div>
+                                <div id="kit-title" class="kit-value"></div>
+                            </div>
+                            <div class="kit-field">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="kit-label">Description</span>
+                                    <button class="copy-btn" data-target="kit-desc">Copy</button>
+                                </div>
+                                <div id="kit-desc" class="kit-value whitespace-pre-wrap"></div>
+                            </div>
+                            <div class="kit-field">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="kit-label">Tags</span>
+                                    <button class="copy-btn" data-target="kit-tags">Copy</button>
+                                </div>
+                                <div id="kit-tags" class="kit-value"></div>
+                            </div>
+                            <div class="kit-field" id="kit-thumb-wrap">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="kit-label">Thumbnail</span>
+                                    <a id="kit-thumb-dl" href="#" class="copy-btn">Download</a>
+                                </div>
+                                <img id="kit-thumb" class="rounded-lg max-h-48 object-cover" src="" alt="">
+                            </div>
+                            <button id="btn-make-another" class="btn-secondary w-full" style="font-size: 15px;">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                Make another
+                            </button>
+                        </div>
                     </div>
-                    <div class="bg-gray-900 rounded-2xl overflow-hidden mb-6"><video id="result-video" controls class="w-full aspect-video bg-black"></video></div>
-                    <a id="download-link" href="#" class="btn-primary w-full text-center block mb-8 text-lg py-4">
-                        <svg class="w-5 h-5 inline mr-2 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-                        Download Video
-                    </a>
-                    <div class="space-y-4">
-                        <h3 class="text-xl font-bold text-white">Upload Kit</h3>
-                        <p class="text-gray-400 text-sm">Everything you need to post on YouTube — just copy and paste.</p>
-                        <div class="kit-field"><div class="flex items-center justify-between mb-1"><label class="text-sm font-medium text-gray-300">Title</label><button class="copy-btn" data-target="kit-title">Copy</button></div><div id="kit-title" class="kit-value"></div></div>
-                        <div class="kit-field"><div class="flex items-center justify-between mb-1"><label class="text-sm font-medium text-gray-300">Description</label><button class="copy-btn" data-target="kit-desc">Copy</button></div><div id="kit-desc" class="kit-value whitespace-pre-wrap"></div></div>
-                        <div class="kit-field"><div class="flex items-center justify-between mb-1"><label class="text-sm font-medium text-gray-300">Tags</label><button class="copy-btn" data-target="kit-tags">Copy</button></div><div id="kit-tags" class="kit-value"></div></div>
-                        <div class="kit-field" id="kit-thumb-wrap"><div class="flex items-center justify-between mb-1"><label class="text-sm font-medium text-gray-300">Thumbnail</label><a id="kit-thumb-dl" href="#" class="copy-btn">Download</a></div><img id="kit-thumb" class="rounded-lg max-h-48 object-cover" src="" alt=""></div>
-                    </div>
-                    <button id="btn-make-another" class="btn-secondary w-full mt-8 text-lg py-4">Make Another Video</button>
                 </div>
             </section>
         </main>
@@ -272,124 +380,19 @@
     <!-- PAGE: Script Studio -->
     <!-- ============================================================ -->
     <div id="page-script-studio" class="page-container hidden">
-        <main class="max-w-4xl mx-auto px-4 py-8">
-            <h2 class="text-3xl font-bold text-white mb-2">Script Studio</h2>
-            <p class="text-gray-400 mb-6">Generate scripts powered by Claude AI — from channel analysis to final script.</p>
-
-            <!-- Sub-tabs -->
-            <div class="flex gap-1 mb-6 border-b border-gray-800">
+        <main class="max-w-4xl mx-auto px-6 py-8">
+            <h2 class="cr-display" style="font-size: 32px; margin-bottom: 8px;">Script Studio</h2>
+            <p style="color: var(--app-ink-2); margin-bottom: 24px;">Generate scripts powered by Claude AI — from channel analysis to final script.</p>
+            <div class="flex gap-1 mb-6" style="border-bottom: 1px solid var(--app-border);">
                 <button class="studio-tab active" data-tab="ss-channel" onclick="switchStudioTab('ss', 'ss-channel', this)">Channel Data</button>
                 <button class="studio-tab" data-tab="ss-ideas" onclick="switchStudioTab('ss', 'ss-ideas', this)">Ideas</button>
                 <button class="studio-tab" data-tab="ss-titles" onclick="switchStudioTab('ss', 'ss-titles', this)">Titles</button>
                 <button class="studio-tab" data-tab="ss-script" onclick="switchStudioTab('ss', 'ss-script', this)">Write Script</button>
             </div>
-
-            <!-- Channel Data Tab -->
-            <div id="ss-channel" class="studio-panel">
-                <div class="space-y-4">
-                    <div>
-                        <label class="text-sm text-gray-400 block mb-1">YouTube Channel URL</label>
-                        <input id="ss-channel-url" type="text" placeholder="https://youtube.com/@channelname"
-                            class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-accent transition">
-                    </div>
-                    <div class="flex items-center gap-4">
-                        <div class="flex-1">
-                            <label class="text-sm text-gray-400 block mb-1">Videos to fetch</label>
-                            <input id="ss-video-count" type="range" min="5" max="50" value="20" class="w-full accent-blue-500">
-                        </div>
-                        <span id="ss-video-count-label" class="text-sm text-gray-300 mt-4">20</span>
-                    </div>
-                    <button id="btn-fetch-channel" class="btn-primary" onclick="fetchChannelData()">
-                        <span class="btn-text">Fetch Channel Data</span>
-                        <span class="btn-loading hidden"><svg class="animate-spin h-5 w-5 inline mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Fetching...</span>
-                    </button>
-                    <div id="ss-channel-result" class="hidden">
-                        <div class="bg-gray-900 rounded-xl p-4 mt-4">
-                            <h4 class="text-sm font-medium text-gray-300 mb-2">Channel Data</h4>
-                            <pre id="ss-channel-data" class="text-xs text-gray-400 max-h-64 overflow-y-auto whitespace-pre-wrap"></pre>
-                        </div>
-                        <button class="btn-primary mt-4" onclick="analyzeChannel()">
-                            <span class="btn-text">Analyze with Claude</span>
-                            <span class="btn-loading hidden"><svg class="animate-spin h-5 w-5 inline mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Analyzing...</span>
-                        </button>
-                        <div id="ss-analysis" class="bg-gray-900 rounded-xl p-4 mt-4 hidden">
-                            <h4 class="text-sm font-medium text-gray-300 mb-2">Channel Analysis</h4>
-                            <div id="ss-analysis-text" class="text-sm text-gray-400 whitespace-pre-wrap"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Ideas Tab -->
-            <div id="ss-ideas" class="studio-panel hidden">
-                <div class="space-y-4">
-                    <div class="flex items-center gap-4">
-                        <label class="text-sm text-gray-400">Number of ideas</label>
-                        <input id="ss-idea-count" type="range" min="3" max="15" value="7" class="flex-1 accent-blue-500">
-                        <span id="ss-idea-count-label" class="text-sm text-gray-300">7</span>
-                    </div>
-                    <button class="btn-primary" onclick="generateIdeas()">
-                        <span class="btn-text">Generate Video Ideas</span>
-                        <span class="btn-loading hidden"><svg class="animate-spin h-5 w-5 inline mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Generating...</span>
-                    </button>
-                    <div id="ss-ideas-list" class="space-y-2"></div>
-                    <div class="mt-4">
-                        <label class="text-sm text-gray-400 block mb-1">Selected Idea</label>
-                        <textarea id="ss-selected-idea" rows="3" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-accent transition" placeholder="Click an idea above or type your own..."></textarea>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Titles Tab -->
-            <div id="ss-titles" class="studio-panel hidden">
-                <div class="space-y-4">
-                    <div>
-                        <label class="text-sm text-gray-400 block mb-1">Video Idea</label>
-                        <textarea id="ss-title-idea" rows="2" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-accent transition" placeholder="Paste your video idea here..."></textarea>
-                    </div>
-                    <button class="btn-primary" onclick="generateStudioTitles()">
-                        <span class="btn-text">Generate Titles</span>
-                        <span class="btn-loading hidden"><svg class="animate-spin h-5 w-5 inline mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Generating...</span>
-                    </button>
-                    <div id="ss-titles-list" class="space-y-2"></div>
-                    <div class="mt-4">
-                        <label class="text-sm text-gray-400 block mb-1">Selected Title</label>
-                        <input id="ss-selected-title" type="text" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-accent transition" placeholder="Click a title above or type your own...">
-                    </div>
-                </div>
-            </div>
-
-            <!-- Write Script Tab -->
-            <div id="ss-script" class="studio-panel hidden">
-                <div class="space-y-4">
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div>
-                            <label class="text-sm text-gray-400 block mb-1">Video Title</label>
-                            <input id="ss-script-title" type="text" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-accent transition" placeholder="Your video title...">
-                        </div>
-                        <div>
-                            <label class="text-sm text-gray-400 block mb-1">Target Length (minutes)</label>
-                            <input id="ss-script-length" type="number" min="3" max="20" value="8" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-gray-100 focus:outline-none focus:border-accent transition">
-                        </div>
-                    </div>
-                    <div>
-                        <label class="text-sm text-gray-400 block mb-1">Video Idea (optional context)</label>
-                        <textarea id="ss-script-idea" rows="2" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-accent transition" placeholder="Optional idea or context for the script..."></textarea>
-                    </div>
-                    <button class="btn-primary" onclick="generateStudioScript()">
-                        <span class="btn-text">Write Script</span>
-                        <span class="btn-loading hidden"><svg class="animate-spin h-5 w-5 inline mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Writing...</span>
-                    </button>
-                    <div>
-                        <div class="flex items-center justify-between mb-2">
-                            <span id="ss-word-count" class="text-sm text-gray-500">0 words</span>
-                            <button class="copy-btn" onclick="copyText('ss-script-output')">Copy Script</button>
-                        </div>
-                        <textarea id="ss-script-output" rows="16" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-4 text-gray-100 leading-relaxed focus:outline-none focus:border-accent transition resize-none" placeholder="Your script will appear here..."></textarea>
-                    </div>
-                    <button class="btn-primary" onclick="useScriptInPipeline()">Use in Create Video Pipeline</button>
-                </div>
-            </div>
+            <div id="ss-channel" class="studio-panel"><div class="space-y-4"><div><label class="cr-label">YouTube Channel URL</label><input id="ss-channel-url" type="text" placeholder="https://youtube.com/@channelname" class="cr-input"></div><div class="flex items-center gap-4"><div class="flex-1"><label class="cr-label">Videos to fetch</label><input id="ss-video-count" type="range" min="5" max="50" value="20" class="w-full" style="accent-color: var(--accent);"></div><span id="ss-video-count-label" class="cr-mono" style="margin-top: 24px; color: var(--app-ink);">20</span></div><button id="btn-fetch-channel" class="btn-primary" onclick="fetchChannelData()"><span class="btn-text">Fetch channel data</span><span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;display:inline-block;"></div> Fetching...</span></button><div id="ss-channel-result" class="hidden"><div class="cr-surface" style="padding: 16px; margin-top: 16px;"><h4 class="cr-eyebrow mb-2">Channel Data</h4><pre id="ss-channel-data" style="font-family: var(--font-mono); font-size: 12px; color: var(--app-ink-3); max-height: 256px; overflow-y: auto; white-space: pre-wrap;"></pre></div><button class="btn-primary mt-4" onclick="analyzeChannel()"><span class="btn-text">Analyze with Claude</span><span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;display:inline-block;"></div> Analyzing...</span></button><div id="ss-analysis" class="cr-surface hidden" style="padding: 16px; margin-top: 16px;"><h4 class="cr-eyebrow mb-2">Channel Analysis</h4><div id="ss-analysis-text" style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2); white-space: pre-wrap;"></div></div></div></div></div>
+            <div id="ss-ideas" class="studio-panel hidden"><div class="space-y-4"><div class="flex items-center gap-4"><label class="cr-label" style="margin-bottom: 0;">Number of ideas</label><input id="ss-idea-count" type="range" min="3" max="15" value="7" class="flex-1" style="accent-color: var(--accent);"><span id="ss-idea-count-label" class="cr-mono" style="color: var(--app-ink);">7</span></div><button class="btn-primary" onclick="generateIdeas()"><span class="btn-text">Generate video ideas</span><span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;display:inline-block;"></div> Generating...</span></button><div id="ss-ideas-list" class="space-y-2"></div><div class="mt-4"><label class="cr-label">Selected Idea</label><textarea id="ss-selected-idea" rows="3" class="cr-textarea" placeholder="Click an idea above or type your own..."></textarea></div></div></div>
+            <div id="ss-titles" class="studio-panel hidden"><div class="space-y-4"><div><label class="cr-label">Video Idea</label><textarea id="ss-title-idea" rows="2" class="cr-textarea" placeholder="Paste your video idea here..."></textarea></div><button class="btn-primary" onclick="generateStudioTitles()"><span class="btn-text">Generate titles</span><span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;display:inline-block;"></div> Generating...</span></button><div id="ss-titles-list" class="space-y-2"></div><div class="mt-4"><label class="cr-label">Selected Title</label><input id="ss-selected-title" type="text" class="cr-input" placeholder="Click a title above or type your own..."></div></div></div>
+            <div id="ss-script" class="studio-panel hidden"><div class="space-y-4"><div class="grid grid-cols-1 sm:grid-cols-2 gap-4"><div><label class="cr-label">Video Title</label><input id="ss-script-title" type="text" class="cr-input" placeholder="Your video title..."></div><div><label class="cr-label">Target Length (minutes)</label><input id="ss-script-length" type="number" min="3" max="20" value="8" class="cr-input"></div></div><div><label class="cr-label">Video Idea (optional context)</label><textarea id="ss-script-idea" rows="2" class="cr-textarea" placeholder="Optional idea or context for the script..."></textarea></div><button class="btn-primary" onclick="generateStudioScript()"><span class="btn-text">Write script</span><span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;display:inline-block;"></div> Writing...</span></button><div><div class="flex items-center justify-between mb-2"><span id="ss-word-count" class="cr-eyebrow">0 words</span><button class="copy-btn" onclick="copyText('ss-script-output')">Copy Script</button></div><textarea id="ss-script-output" rows="16" class="cr-textarea" placeholder="Your script will appear here..."></textarea></div><button class="btn-primary" onclick="useScriptInPipeline()">Use in pipeline</button></div></div>
         </main>
     </div>
 
@@ -397,40 +400,19 @@
     <!-- PAGE: Voiceover Studio -->
     <!-- ============================================================ -->
     <div id="page-voiceover-studio" class="page-container hidden">
-        <main class="max-w-4xl mx-auto px-4 py-8">
-            <h2 class="text-3xl font-bold text-white mb-2">Voiceover Studio</h2>
-            <p class="text-gray-400 mb-6">Generate narration audio with Gemini TTS. All 26 voices available.</p>
+        <main class="max-w-4xl mx-auto px-6 py-8">
+            <h2 class="cr-display" style="font-size: 32px; margin-bottom: 8px;">Voiceover Studio</h2>
+            <p style="color: var(--app-ink-2); margin-bottom: 24px;">Generate narration audio with Gemini TTS. All 26 voices available.</p>
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div class="lg:col-span-2 space-y-4">
-                    <textarea id="vo-script" rows="14" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-4 text-gray-100 leading-relaxed focus:outline-none focus:border-accent transition resize-none" placeholder="Paste your script here..."></textarea>
-                    <button id="btn-vo-generate" class="btn-primary w-full" onclick="generateStudioVoiceover()">
-                        <span class="btn-text">Generate Voiceover</span>
-                        <span class="btn-loading hidden"><svg class="animate-spin h-5 w-5 inline mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Generating...</span>
-                    </button>
-                    <div id="vo-result" class="hidden">
-                        <audio id="vo-audio" controls class="w-full mt-4"></audio>
-                        <a id="vo-download" href="#" class="btn-secondary w-full text-center block mt-3" download="voiceover.wav">Download WAV</a>
-                    </div>
+                    <textarea id="vo-script" rows="14" class="cr-textarea" placeholder="Paste your script here..."></textarea>
+                    <button id="btn-vo-generate" class="btn-primary w-full" onclick="generateStudioVoiceover()"><span class="btn-text">Generate voiceover</span><span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;display:inline-block;"></div> Generating...</span></button>
+                    <div id="vo-result" class="hidden"><audio id="vo-audio" controls class="w-full mt-4"></audio><a id="vo-download" href="#" class="btn-secondary w-full text-center block mt-3" download="voiceover.wav">Download WAV</a></div>
                 </div>
                 <div class="space-y-4">
-                    <div>
-                        <label class="text-sm text-gray-400 block mb-2">Voice</label>
-                        <select id="vo-voice" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-gray-100 focus:outline-none focus:border-accent transition"></select>
-                    </div>
-                    <div>
-                        <label class="text-sm text-gray-400 block mb-2">Style Preset</label>
-                        <select id="vo-style" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-gray-100 focus:outline-none focus:border-accent transition">
-                            <option value="Narrator">Narrator</option>
-                            <option value="News Anchor">News Anchor</option>
-                            <option value="Storyteller">Storyteller</option>
-                            <option value="Energetic">Energetic</option>
-                            <option value="Custom">Custom</option>
-                        </select>
-                    </div>
-                    <div id="vo-custom-wrap" class="hidden">
-                        <label class="text-sm text-gray-400 block mb-2">Custom Director's Notes</label>
-                        <textarea id="vo-custom-notes" rows="4" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-accent transition resize-none" placeholder="Describe the vocal style..."></textarea>
-                    </div>
+                    <div><label class="cr-label">Voice</label><select id="vo-voice" class="cr-select"></select></div>
+                    <div><label class="cr-label">Style Preset</label><select id="vo-style" class="cr-select"><option value="Narrator">Narrator</option><option value="News Anchor">News Anchor</option><option value="Storyteller">Storyteller</option><option value="Energetic">Energetic</option><option value="Custom">Custom</option></select></div>
+                    <div id="vo-custom-wrap" class="hidden"><label class="cr-label">Custom Director's Notes</label><textarea id="vo-custom-notes" rows="4" class="cr-textarea" placeholder="Describe the vocal style..."></textarea></div>
                 </div>
             </div>
         </main>
@@ -440,38 +422,14 @@
     <!-- PAGE: Thumbnail Studio -->
     <!-- ============================================================ -->
     <div id="page-thumbnail-studio" class="page-container hidden">
-        <main class="max-w-4xl mx-auto px-4 py-8">
-            <h2 class="text-3xl font-bold text-white mb-2">Thumbnail Studio</h2>
-            <p class="text-gray-400 mb-6">Generate eye-catching YouTube thumbnails with AI. Upload reference images for style matching.</p>
+        <main class="max-w-4xl mx-auto px-6 py-8">
+            <h2 class="cr-display" style="font-size: 32px; margin-bottom: 8px;">Thumbnail Studio</h2>
+            <p style="color: var(--app-ink-2); margin-bottom: 24px;">Generate eye-catching YouTube thumbnails with AI. Upload reference images for style matching.</p>
             <div class="space-y-4">
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                        <label class="text-sm text-gray-400 block mb-1">Video Title</label>
-                        <input id="ts-title" type="text" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-accent transition" placeholder="Enter your video title...">
-                    </div>
-                    <div>
-                        <label class="text-sm text-gray-400 block mb-1">Number of options</label>
-                        <select id="ts-count" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-gray-100 focus:outline-none focus:border-accent transition">
-                            <option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option>
-                        </select>
-                    </div>
-                </div>
-                <div>
-                    <label class="text-sm text-gray-400 block mb-1">Style Instructions</label>
-                    <input id="ts-style" type="text" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-accent transition" placeholder="Bold colors, dramatic lighting, large text...">
-                </div>
-                <div>
-                    <label class="text-sm text-gray-400 block mb-2">Reference Screenshots (optional)</label>
-                    <label class="btn-secondary cursor-pointer inline-block px-4 py-2 text-sm">
-                        Upload References
-                        <input id="ts-refs" type="file" accept="image/*" multiple class="hidden" onchange="handleTsRefUpload(this)">
-                    </label>
-                    <div id="ts-refs-preview" class="flex gap-2 flex-wrap mt-2"></div>
-                </div>
-                <button class="btn-primary w-full" onclick="generateStudioThumbnails()">
-                    <span class="btn-text">Generate Thumbnails</span>
-                    <span class="btn-loading hidden"><svg class="animate-spin h-5 w-5 inline mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Generating...</span>
-                </button>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4"><div><label class="cr-label">Video Title</label><input id="ts-title" type="text" class="cr-input" placeholder="Enter your video title..."></div><div><label class="cr-label">Number of options</label><select id="ts-count" class="cr-select"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select></div></div>
+                <div><label class="cr-label">Style Instructions</label><input id="ts-style" type="text" class="cr-input" placeholder="Bold colors, dramatic lighting, large text..."></div>
+                <div><label class="cr-label">Reference Screenshots (optional)</label><label class="btn-secondary cursor-pointer inline-block px-4 py-2" style="font-size: 14px;">Upload References<input id="ts-refs" type="file" accept="image/*" multiple class="hidden" onchange="handleTsRefUpload(this)"></label><div id="ts-refs-preview" class="flex gap-2 flex-wrap mt-2"></div></div>
+                <button class="btn-primary w-full" onclick="generateStudioThumbnails()"><span class="btn-text">Generate thumbnails</span><span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;display:inline-block;"></div> Generating...</span></button>
                 <div id="ts-gallery" class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4"></div>
             </div>
         </main>
@@ -481,38 +439,10 @@
     <!-- PAGE: Niche Screener -->
     <!-- ============================================================ -->
     <div id="page-niche-screener" class="page-container hidden">
-        <main class="max-w-4xl mx-auto px-4 py-8">
-            <h2 class="text-3xl font-bold text-white mb-2">Niche Screener</h2>
-            <p class="text-gray-400 mb-6">Analyze a YouTube video with Gemini to identify its visual style, B-roll patterns, and recommended recipe.</p>
-            <div class="space-y-4 max-w-2xl">
-                <div>
-                    <label class="text-sm text-gray-400 block mb-1">YouTube Video URL</label>
-                    <input id="ns-url" type="text" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-accent transition" placeholder="https://youtube.com/watch?v=...">
-                </div>
-                <div class="flex items-center gap-4">
-                    <label class="text-sm text-gray-400">Minutes to analyze</label>
-                    <input id="ns-minutes" type="range" min="1" max="10" value="5" class="flex-1 accent-blue-500">
-                    <span id="ns-minutes-label" class="text-sm text-gray-300">5</span>
-                </div>
-                <button class="btn-primary" onclick="analyzeNiche()">
-                    <span class="btn-text">Analyze Niche</span>
-                    <span class="btn-loading hidden"><svg class="animate-spin h-5 w-5 inline mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Analyzing...</span>
-                </button>
-                <div id="ns-result" class="hidden space-y-4">
-                    <div class="bg-gray-900 rounded-xl p-4">
-                        <h4 class="text-sm font-medium text-gray-300 mb-2">Analysis</h4>
-                        <div id="ns-analysis" class="text-sm text-gray-400 whitespace-pre-wrap"></div>
-                    </div>
-                    <div class="bg-gray-900 rounded-xl p-4">
-                        <div class="flex items-center justify-between mb-2">
-                            <h4 class="text-sm font-medium text-gray-300">NicheProfile JSON</h4>
-                            <button class="copy-btn" onclick="copyText('ns-json')">Copy</button>
-                        </div>
-                        <pre id="ns-json" class="text-xs text-gray-400 max-h-48 overflow-y-auto"></pre>
-                    </div>
-                    <button class="btn-primary" onclick="useNicheProfile()">Use in Create Video Pipeline</button>
-                </div>
-            </div>
+        <main class="max-w-4xl mx-auto px-6 py-8">
+            <h2 class="cr-display" style="font-size: 32px; margin-bottom: 8px;">Niche Screener</h2>
+            <p style="color: var(--app-ink-2); margin-bottom: 24px;">Analyze a YouTube video with Gemini to identify its visual style, B-roll patterns, and recommended recipe.</p>
+            <div class="space-y-4 max-w-2xl"><div><label class="cr-label">YouTube Video URL</label><input id="ns-url" type="text" class="cr-input" placeholder="https://youtube.com/watch?v=..."></div><div class="flex items-center gap-4"><label class="cr-label" style="margin-bottom: 0;">Minutes to analyze</label><input id="ns-minutes" type="range" min="1" max="10" value="5" class="flex-1" style="accent-color: var(--accent);"><span id="ns-minutes-label" class="cr-mono" style="color: var(--app-ink);">5</span></div><button class="btn-primary" onclick="analyzeNiche()"><span class="btn-text">Analyze niche</span><span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;display:inline-block;"></div> Analyzing...</span></button><div id="ns-result" class="hidden space-y-4"><div class="cr-surface" style="padding: 16px;"><h4 class="cr-eyebrow mb-2">Analysis</h4><div id="ns-analysis" style="font-size: 14px; color: var(--app-ink-2); white-space: pre-wrap;"></div></div><div class="cr-surface" style="padding: 16px;"><div class="flex items-center justify-between mb-2"><h4 class="cr-eyebrow">NicheProfile JSON</h4><button class="copy-btn" onclick="copyText('ns-json')">Copy</button></div><pre id="ns-json" style="font-family: var(--font-mono); font-size: 12px; color: var(--app-ink-3); max-height: 192px; overflow-y: auto;"></pre></div><button class="btn-primary" onclick="useNicheProfile()">Use in pipeline</button></div></div>
         </main>
     </div>
 
@@ -520,34 +450,10 @@
     <!-- PAGE: Channel Analyzer -->
     <!-- ============================================================ -->
     <div id="page-channel-analyzer" class="page-container hidden">
-        <main class="max-w-4xl mx-auto px-4 py-8">
-            <h2 class="text-3xl font-bold text-white mb-2">Channel Analyzer</h2>
-            <p class="text-gray-400 mb-6">Fetch YouTube channel data and analyze content strategy with Claude AI.</p>
-            <div class="space-y-4 max-w-2xl">
-                <div>
-                    <label class="text-sm text-gray-400 block mb-1">YouTube Channel URL</label>
-                    <input id="ca-url" type="text" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-accent transition" placeholder="https://youtube.com/@channelname">
-                </div>
-                <div class="flex items-center gap-4">
-                    <label class="text-sm text-gray-400">Videos to fetch</label>
-                    <input id="ca-count" type="range" min="5" max="50" value="20" class="flex-1 accent-blue-500">
-                    <span id="ca-count-label" class="text-sm text-gray-300">20</span>
-                </div>
-                <button class="btn-primary" onclick="fetchChannelForAnalyzer()">
-                    <span class="btn-text">Fetch & Analyze Channel</span>
-                    <span class="btn-loading hidden"><svg class="animate-spin h-5 w-5 inline mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Fetching...</span>
-                </button>
-                <div id="ca-result" class="hidden space-y-4">
-                    <div class="bg-gray-900 rounded-xl p-4">
-                        <h4 class="text-sm font-medium text-gray-300 mb-2">Channel Summary</h4>
-                        <div id="ca-summary" class="text-sm text-gray-400 whitespace-pre-wrap"></div>
-                    </div>
-                    <div class="bg-gray-900 rounded-xl p-4">
-                        <h4 class="text-sm font-medium text-gray-300 mb-2">Content Strategy Analysis</h4>
-                        <div id="ca-analysis" class="text-sm text-gray-400 whitespace-pre-wrap"></div>
-                    </div>
-                </div>
-            </div>
+        <main class="max-w-4xl mx-auto px-6 py-8">
+            <h2 class="cr-display" style="font-size: 32px; margin-bottom: 8px;">Channel Analyzer</h2>
+            <p style="color: var(--app-ink-2); margin-bottom: 24px;">Fetch YouTube channel data and analyze content strategy with Claude AI.</p>
+            <div class="space-y-4 max-w-2xl"><div><label class="cr-label">YouTube Channel URL</label><input id="ca-url" type="text" class="cr-input" placeholder="https://youtube.com/@channelname"></div><div class="flex items-center gap-4"><label class="cr-label" style="margin-bottom: 0;">Videos to fetch</label><input id="ca-count" type="range" min="5" max="50" value="20" class="flex-1" style="accent-color: var(--accent);"><span id="ca-count-label" class="cr-mono" style="color: var(--app-ink);">20</span></div><button class="btn-primary" onclick="fetchChannelForAnalyzer()"><span class="btn-text">Fetch & analyze channel</span><span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;display:inline-block;"></div> Fetching...</span></button><div id="ca-result" class="hidden space-y-4"><div class="cr-surface" style="padding: 16px;"><h4 class="cr-eyebrow mb-2">Channel Summary</h4><div id="ca-summary" style="font-size: 14px; color: var(--app-ink-2); white-space: pre-wrap;"></div></div><div class="cr-surface" style="padding: 16px;"><h4 class="cr-eyebrow mb-2">Content Strategy Analysis</h4><div id="ca-analysis" style="font-size: 14px; color: var(--app-ink-2); white-space: pre-wrap;"></div></div></div></div>
         </main>
     </div>
 
@@ -555,22 +461,14 @@
     <!-- PAGE: History -->
     <!-- ============================================================ -->
     <div id="page-history" class="page-container hidden">
-        <main class="max-w-4xl mx-auto px-4 py-8">
-            <h2 class="text-3xl font-bold text-white mb-2">History</h2>
-            <p class="text-gray-400 mb-6">Browse past generations and outputs.</p>
+        <main class="max-w-4xl mx-auto px-6 py-8">
+            <h2 class="cr-display" style="font-size: 32px; margin-bottom: 8px;">History</h2>
+            <p style="color: var(--app-ink-2); margin-bottom: 24px;">Browse past generations and outputs.</p>
             <div class="flex items-center gap-4 mb-6">
-                <select id="history-filter" class="bg-gray-900 border border-gray-700 rounded-xl px-4 py-2 text-gray-100 focus:outline-none focus:border-accent transition" onchange="loadHistory()">
-                    <option value="all">All Types</option>
-                    <option value="video">Videos</option>
-                    <option value="voiceover">Voiceovers</option>
-                    <option value="thumbnail">Thumbnails</option>
-                    <option value="script">Scripts</option>
-                </select>
-                <button class="btn-secondary text-sm px-4 py-2" onclick="loadHistory()">Refresh</button>
+                <select id="history-filter" class="cr-select" style="width: auto;" onchange="loadHistory()"><option value="all">All Types</option><option value="video">Videos</option><option value="voiceover">Voiceovers</option><option value="thumbnail">Thumbnails</option><option value="script">Scripts</option></select>
+                <button class="btn-secondary" style="font-size: 14px; padding: 8px 16px;" onclick="loadHistory()">Refresh</button>
             </div>
-            <div id="history-list" class="space-y-3">
-                <p class="text-gray-500 text-center py-8">No history yet. Generate something to see it here.</p>
-            </div>
+            <div id="history-list" class="space-y-3"><p style="color: var(--app-ink-3); text-align: center; padding: 32px 0;">No history yet. Generate something to see it here.</p></div>
         </main>
     </div>
 
@@ -578,68 +476,38 @@
     <!-- PAGE: Settings -->
     <!-- ============================================================ -->
     <div id="page-settings" class="page-container hidden">
-        <main class="max-w-3xl mx-auto px-4 py-8">
-            <h2 class="text-3xl font-bold text-white mb-2">Settings</h2>
-            <p class="text-gray-400 mb-6">Manage API keys for different services.</p>
+        <main class="max-w-3xl mx-auto px-6 py-8">
+            <h2 class="cr-display" style="font-size: 32px; margin-bottom: 8px;">Settings</h2>
+            <p style="color: var(--app-ink-2); margin-bottom: 24px;">Manage API keys for different services.</p>
             <div class="space-y-4" id="settings-keys">
-                <div class="setting-row">
-                    <div class="flex-1">
-                        <label class="text-sm font-medium text-gray-300 block mb-1">Gemini API Key <span class="text-accent text-xs">(Required)</span></label>
-                        <input type="password" id="key-gemini" class="setting-input" placeholder="Your Gemini API key...">
-                    </div>
-                    <button class="btn-secondary text-sm px-3 py-2 mt-5" onclick="testKey('gemini')">Test</button>
-                </div>
-                <div class="setting-row">
-                    <div class="flex-1">
-                        <label class="text-sm font-medium text-gray-300 block mb-1">Claude API Key <span class="text-gray-600 text-xs">(Script Studio)</span></label>
-                        <input type="password" id="key-claude" class="setting-input" placeholder="Your Anthropic Claude key...">
-                    </div>
-                    <button class="btn-secondary text-sm px-3 py-2 mt-5" onclick="testKey('claude')">Test</button>
-                </div>
-                <div class="setting-row">
-                    <div class="flex-1">
-                        <label class="text-sm font-medium text-gray-300 block mb-1">YouTube API Key <span class="text-gray-600 text-xs">(Channel data)</span></label>
-                        <input type="password" id="key-youtube" class="setting-input" placeholder="Your YouTube Data API key...">
-                    </div>
-                    <button class="btn-secondary text-sm px-3 py-2 mt-5" onclick="testKey('youtube')">Test</button>
-                </div>
-                <div class="setting-row">
-                    <div class="flex-1">
-                        <label class="text-sm font-medium text-gray-300 block mb-1">Atlas Cloud Key <span class="text-gray-600 text-xs">(Thumbnails)</span></label>
-                        <input type="password" id="key-atlascloud" class="setting-input" placeholder="Your Atlas Cloud API key...">
-                    </div>
-                    <button class="btn-secondary text-sm px-3 py-2 mt-5" onclick="testKey('atlascloud')">Test</button>
-                </div>
-                <div class="setting-row">
-                    <div class="flex-1">
-                        <label class="text-sm font-medium text-gray-300 block mb-1">HeyGen Key <span class="text-gray-600 text-xs">(Avatar recipe)</span></label>
-                        <input type="password" id="key-heygen" class="setting-input" placeholder="Your HeyGen API key...">
-                    </div>
-                    <button class="btn-secondary text-sm px-3 py-2 mt-5" onclick="testKey('heygen')">Test</button>
-                </div>
-                <div class="setting-row">
-                    <div class="flex-1">
-                        <label class="text-sm font-medium text-gray-300 block mb-1">Pexels Key <span class="text-gray-600 text-xs">(Stock footage)</span></label>
-                        <input type="password" id="key-pexels" class="setting-input" placeholder="Your Pexels API key...">
-                    </div>
-                    <button class="btn-secondary text-sm px-3 py-2 mt-5" onclick="testKey('pexels')">Test</button>
-                </div>
-                <div class="setting-row">
-                    <div class="flex-1">
-                        <label class="text-sm font-medium text-gray-300 block mb-1">DownSub Key <span class="text-gray-600 text-xs">(Transcripts)</span></label>
-                        <input type="password" id="key-downsub" class="setting-input" placeholder="Your DownSub API key...">
-                    </div>
-                </div>
+                <div class="setting-row"><div class="flex-1"><label class="cr-label">Gemini API Key <span style="color: var(--accent); font-size: 12px;">(Required)</span></label><input type="password" id="key-gemini" class="setting-input" placeholder="Your Gemini API key..."></div><button class="btn-secondary" style="font-size: 14px; padding: 8px 16px; margin-top: 24px;" onclick="testKey('gemini')">Test</button></div>
+                <div class="setting-row"><div class="flex-1"><label class="cr-label">Claude API Key <span style="color: var(--app-ink-3); font-size: 12px;">(Script Studio)</span></label><input type="password" id="key-claude" class="setting-input" placeholder="Your Anthropic Claude key..."></div><button class="btn-secondary" style="font-size: 14px; padding: 8px 16px; margin-top: 24px;" onclick="testKey('claude')">Test</button></div>
+                <div class="setting-row"><div class="flex-1"><label class="cr-label">YouTube API Key <span style="color: var(--app-ink-3); font-size: 12px;">(Channel data)</span></label><input type="password" id="key-youtube" class="setting-input" placeholder="Your YouTube Data API key..."></div><button class="btn-secondary" style="font-size: 14px; padding: 8px 16px; margin-top: 24px;" onclick="testKey('youtube')">Test</button></div>
+                <div class="setting-row"><div class="flex-1"><label class="cr-label">Atlas Cloud Key <span style="color: var(--app-ink-3); font-size: 12px;">(Thumbnails)</span></label><input type="password" id="key-atlascloud" class="setting-input" placeholder="Your Atlas Cloud API key..."></div><button class="btn-secondary" style="font-size: 14px; padding: 8px 16px; margin-top: 24px;" onclick="testKey('atlascloud')">Test</button></div>
+                <div class="setting-row"><div class="flex-1"><label class="cr-label">HeyGen Key <span style="color: var(--app-ink-3); font-size: 12px;">(Avatar recipe)</span></label><input type="password" id="key-heygen" class="setting-input" placeholder="Your HeyGen API key..."></div><button class="btn-secondary" style="font-size: 14px; padding: 8px 16px; margin-top: 24px;" onclick="testKey('heygen')">Test</button></div>
+                <div class="setting-row"><div class="flex-1"><label class="cr-label">Pexels Key <span style="color: var(--app-ink-3); font-size: 12px;">(Stock footage)</span></label><input type="password" id="key-pexels" class="setting-input" placeholder="Your Pexels API key..."></div><button class="btn-secondary" style="font-size: 14px; padding: 8px 16px; margin-top: 24px;" onclick="testKey('pexels')">Test</button></div>
+                <div class="setting-row"><div class="flex-1"><label class="cr-label">DownSub Key <span style="color: var(--app-ink-3); font-size: 12px;">(Transcripts)</span></label><input type="password" id="key-downsub" class="setting-input" placeholder="Your DownSub API key..."></div></div>
             </div>
             <div class="mt-6 flex items-center gap-4">
-                <button class="btn-primary" onclick="saveSettings()">Save All Keys</button>
-                <span id="settings-status" class="text-sm text-gray-500"></span>
+                <button class="btn-primary" onclick="saveSettings()">Save all keys</button>
+                <span id="settings-status" class="cr-mono"></span>
             </div>
         </main>
     </div>
 
-    <footer class="border-t border-gray-800/50 mt-16 py-6">
-        <p class="text-center text-sm text-gray-600">Video Factory</p>
+    <footer style="border-top: 1px solid var(--app-border); margin-top: 64px; padding: 40px 24px;">
+        <div class="max-w-5xl mx-auto flex flex-wrap gap-5 items-center justify-between">
+            <div class="flex flex-col gap-2">
+                <div class="flex items-center gap-2">
+                    <img src="/static/glyph.svg" width="20" height="20" alt="">
+                    <span style="font-family: var(--font-display); font-weight: 800; font-size: 14px; color: var(--app-ink);">Channel<span style="color: var(--accent);">Recipe</span></span>
+                </div>
+                <span style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-3);">From the team behind HeadStart Channels.</span>
+            </div>
+            <div class="flex flex-wrap gap-5 items-center" style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-3);">
+                <a href="mailto:hello@channelrecipe.com" style="font-family: var(--font-mono); font-size: 13px;">hello@channelrecipe.com</a>
+            </div>
+        </div>
     </footer>
 
     <script src="/static/app.js"></script>

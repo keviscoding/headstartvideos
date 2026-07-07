@@ -1,5 +1,5 @@
 """
-Video Factory — Complete Web App
+ChannelRecipe — Complete Web App
 
 Pipeline + Tools + Settings + History.
 Run:  python -m webapp.server
@@ -37,7 +37,7 @@ OUTPUT_DIR = ROOT / "output"
 UPLOAD_DIR = OUTPUT_DIR / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="Video Factory", docs_url="/docs")
+app = FastAPI(title="ChannelRecipe", docs_url="/docs")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 _jobs: dict[str, dict[str, Any]] = {}
@@ -793,6 +793,6 @@ def _load_niche(niche_key: str) -> dict | None:
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
-    print(f"\n  Video Factory")
+    print(f"\n  ChannelRecipe")
     print(f"  http://localhost:8000\n")
     uvicorn.run(app, host="0.0.0.0", port=8000)
