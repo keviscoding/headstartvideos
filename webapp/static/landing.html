@@ -7,7 +7,9 @@
     <meta name="description" content="No editing, no camera, no experience. Pick a recipe, click generate, post. 3 free videos, no card required.">
     <link rel="icon" href="/static/favicon.svg">
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+        @import url("https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@500,700,800,900&display=swap");
+        @import url("https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600,700&display=swap");
+        @import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap");
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -23,10 +25,13 @@
             --accent-soft: #EDEAFB;
             --white: #FFFFFF;
             --success: #14B87A;
+            --font-display: "Cabinet Grotesk", "General Sans", system-ui, sans-serif;
+            --font-body: "General Sans", "Inter", system-ui, sans-serif;
+            --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
         }
 
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-family: var(--font-body);
             background: var(--canvas);
             color: var(--ink);
             -webkit-font-smoothing: antialiased;
@@ -53,6 +58,7 @@
             margin-bottom: 24px;
         }
         .hero h1 {
+            font-family: var(--font-display);
             font-size: clamp(32px, 5vw, 52px);
             font-weight: 800;
             line-height: 1.1;
@@ -125,6 +131,7 @@
             margin-bottom: 12px;
         }
         .section-heading {
+            font-family: var(--font-display);
             font-size: clamp(26px, 3.5vw, 38px);
             font-weight: 800;
             text-align: center;
@@ -159,6 +166,7 @@
             margin-bottom: 16px;
         }
         .step-card h3 {
+            font-family: var(--font-display);
             font-size: 18px;
             font-weight: 700;
             margin-bottom: 8px;
@@ -205,6 +213,7 @@
             margin-bottom: 10px;
         }
         .recipe-card h3 {
+            font-family: var(--font-display);
             font-size: 20px;
             font-weight: 700;
             margin-bottom: 6px;
@@ -218,7 +227,7 @@
             margin-top: 14px;
             font-size: 12px;
             color: var(--ink-3);
-            font-family: 'Courier New', monospace;
+            font-family: var(--font-mono);
         }
 
         /* -- Pricing -- */
@@ -264,11 +273,13 @@
             letter-spacing: 0.05em;
         }
         .price-name {
+            font-family: var(--font-display);
             font-size: 18px;
             font-weight: 700;
             margin-bottom: 4px;
         }
         .price-amount {
+            font-family: var(--font-display);
             font-size: 42px;
             font-weight: 800;
             letter-spacing: -0.03em;
@@ -320,7 +331,7 @@
             font-size: 12px;
             color: var(--ink-3);
             margin-top: 10px;
-            font-family: 'Courier New', monospace;
+            font-family: var(--font-mono);
         }
 
         /* -- FAQ -- */
@@ -386,6 +397,17 @@
     </style>
 </head>
 <body>
+
+    <!-- Nav -->
+    <header style="padding: 20px 0; border-bottom: 1px solid var(--hairline);">
+        <div class="container" style="display: flex; align-items: center; justify-content: space-between;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <img src="/static/glyph.svg" width="28" height="28" alt="ChannelRecipe">
+                <span style="font-family: var(--font-display); font-weight: 800; font-size: 18px; letter-spacing: -0.01em;">Channel<span style="color: var(--accent);">Recipe</span></span>
+            </div>
+            <a href="/app" class="cta-btn" style="font-size: 14px; padding: 10px 22px; border-radius: 10px;">Get started free</a>
+        </div>
+    </header>
 
     <!-- Hero -->
     <section class="hero">
@@ -553,7 +575,12 @@
     <!-- Footer -->
     <section class="footer-section">
         <div class="container">
+            <div style="display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 12px;">
+                <img src="/static/glyph.svg" width="20" height="20" alt="">
+                <span style="font-family: var(--font-display); font-weight: 700; font-size: 14px;">Channel<span style="color: var(--accent);">Recipe</span></span>
+            </div>
             <p>&copy; 2026 ChannelRecipe. Proven recipes for faceless YouTube channels.</p>
+            <p style="margin-top: 6px;"><a href="mailto:hello@channelrecipe.com" style="color: var(--ink-3); text-decoration: none; font-family: var(--font-mono); font-size: 12px;">hello@channelrecipe.com</a></p>
         </div>
     </section>
 
