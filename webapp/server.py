@@ -139,12 +139,14 @@ async def auth_logout(request: Request):
 
 
 def _safe_user(u: dict) -> dict:
+    admins = getattr(config, "ADMIN_EMAILS", [])
     return {
         "id": u["id"],
         "email": u["email"],
         "plan": u["plan"],
         "credits": u["credits"],
         "created_at": u["created_at"],
+        "is_admin": bool(admins) and u.get("email", "").lower() in admins,
     }
 
 

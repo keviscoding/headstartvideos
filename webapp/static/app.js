@@ -74,6 +74,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 // Page Navigation (SPA routing)
 // ---------------------------------------------------------------------------
 function navigateTo(page) {
+    // Settings is an ops-only console — never expose it to non-admins.
+    if (page === 'settings' && !(currentUser && currentUser.is_admin)) {
+        if (!currentUser) { showAuthModal(); }
+        return;
+    }
     state.page = page;
     document.querySelectorAll('.page-container').forEach(p => p.classList.add('hidden'));
 
@@ -1288,8 +1293,12 @@ async function loadHistory() {
 // Settings
 // ---------------------------------------------------------------------------
 async function loadSettingsFromServer() {
+    // Ops-only: only admins can read key status, and we use the raw fetch so a
+    // 403/401 here never triggers the global sign-in modal on normal page loads.
+    if (!(currentUser && currentUser.is_admin)) return;
     try {
-        const res = await fetch('/api/settings/keys');
+        const res = await _origFetch('/api/settings/keys');
+        if (!res.ok) return;
         const data = await res.json();
         Object.entries(data).forEach(([key, info]) => {
             const input = document.getElementById(`key-${key}`);
@@ -1384,6 +1393,15 @@ function updateAuthUI() {
     const loginBtn = document.getElementById('btn-login');
     const userBtn = document.getElementById('btn-user-menu');
     const creditsDisplay = document.getElementById('credits-display');
+
+    const navSettings = document.getElementById('nav-settings');
+    const navSettingsMobile = document.getElementById('nav-settings-mobile');
+    const isAdmin = !!(currentUser && currentUser.is_admin);
+    navSettings?.classList.toggle('hidden', !isAdmin);
+    navSettingsMobile?.classList.toggle('hidden', !isAdmin);
+    if (!isAdmin && state.page === 'settings') {
+        navigateTo('pipeline');
+    }
 
     if (currentUser) {
         loginBtn.classList.add('hidden');

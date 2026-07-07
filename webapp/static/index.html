@@ -55,7 +55,7 @@
                         </div>
                     </div>
                     <button class="nav-btn" data-page="history" onclick="navigateTo('history')">History</button>
-                    <button class="nav-btn" data-page="settings" onclick="navigateTo('settings')">Settings</button>
+                    <button id="nav-settings" class="nav-btn hidden" data-page="settings" onclick="navigateTo('settings')">Settings</button>
                 </nav>
             </div>
             <div class="flex items-center gap-3">
@@ -89,7 +89,7 @@
             <button class="mobile-nav-btn" onclick="navigateTo('niche-screener')">Niche Screener</button>
             <button class="mobile-nav-btn" onclick="navigateTo('channel-analyzer')">Channel Analyzer</button>
             <button class="mobile-nav-btn" onclick="navigateTo('history')">History</button>
-            <button class="mobile-nav-btn" onclick="navigateTo('settings')">Settings</button>
+            <button id="nav-settings-mobile" class="mobile-nav-btn hidden" onclick="navigateTo('settings')">Settings</button>
         </div>
     </header>
 
