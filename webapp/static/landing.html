@@ -106,14 +106,8 @@
             border-radius: 16px;
             overflow: hidden;
             aspect-ratio: 16/9;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            position: relative;
             box-shadow: 0 24px 80px rgba(0,0,0,0.15);
-        }
-        .demo-frame p {
-            color: #6C7192;
-            font-size: 15px;
         }
 
         /* -- How it works -- */
@@ -184,7 +178,7 @@
         .recipe-grid {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
-            gap: 20px;
+            gap: 24px;
         }
         @media (max-width: 640px) {
             .recipe-grid { grid-template-columns: 1fr; }
@@ -192,42 +186,101 @@
         .recipe-card {
             background: var(--white);
             border-radius: 16px;
-            padding: 24px;
+            overflow: hidden;
             border: 1px solid var(--hairline);
-            transition: transform 0.2s, box-shadow 0.2s;
+            transition: transform 0.25s, box-shadow 0.25s;
+            cursor: pointer;
         }
         .recipe-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 32px rgba(0,0,0,0.08);
+            transform: translateY(-4px);
+            box-shadow: 0 12px 40px rgba(0,0,0,0.1);
         }
-        .recipe-tag {
-            display: inline-block;
-            background: var(--accent-soft);
-            color: var(--accent);
+        .recipe-preview {
+            position: relative;
+            aspect-ratio: 16/9;
+            overflow: hidden;
+            background: #1a1a2e;
+        }
+        .recipe-preview img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.4s;
+        }
+        .recipe-card:hover .recipe-preview img {
+            transform: scale(1.05);
+        }
+        .recipe-preview .views-badge {
+            position: absolute;
+            bottom: 8px;
+            right: 8px;
+            background: rgba(0,0,0,0.8);
+            color: #fff;
+            font-family: var(--font-mono);
             font-size: 11px;
+            font-weight: 600;
+            padding: 3px 8px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .recipe-preview .recipe-tag-overlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: var(--accent);
+            color: #fff;
+            font-family: var(--font-mono);
+            font-size: 10px;
             font-weight: 700;
             padding: 3px 10px;
-            border-radius: 999px;
+            border-radius: 4px;
             text-transform: uppercase;
-            letter-spacing: 0.05em;
-            margin-bottom: 10px;
+            letter-spacing: 0.06em;
         }
-        .recipe-card h3 {
+        .recipe-preview .recipe-tag-overlay.hot {
+            background: #E5484D;
+        }
+        .recipe-body {
+            padding: 16px 18px 18px;
+        }
+        .recipe-body h3 {
             font-family: var(--font-display);
-            font-size: 20px;
+            font-size: 18px;
             font-weight: 700;
-            margin-bottom: 6px;
+            margin-bottom: 4px;
+            color: var(--ink);
         }
-        .recipe-card p {
-            font-size: 14px;
+        .recipe-body .recipe-desc {
+            font-size: 13px;
             color: var(--ink-2);
             line-height: 1.5;
+            margin-bottom: 12px;
         }
-        .recipe-meta {
-            margin-top: 14px;
-            font-size: 12px;
-            color: var(--ink-3);
+        .recipe-stats {
+            display: flex;
+            align-items: center;
+            gap: 14px;
             font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--ink-3);
+            letter-spacing: 0.01em;
+        }
+        .recipe-stats .stat {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .recipe-stats .stat-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--success);
+        }
+        .recipe-stats .rpm-highlight {
+            color: var(--success);
+            font-weight: 600;
         }
 
         /* -- Pricing -- */
@@ -430,7 +483,7 @@
     <section class="demo-section">
         <div class="container">
             <div class="demo-frame">
-                <p>Product demo — coming soon</p>
+                <iframe src="https://www.youtube.com/embed/UQwQi4jK76I" title="ChannelRecipe Demo" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen style="width: 100%; height: 100%; position: absolute; top: 0; left: 0;"></iframe>
             </div>
         </div>
     </section>
@@ -465,31 +518,89 @@
         <div class="container">
             <p class="section-title">Proven recipes</p>
             <h2 class="section-heading">Formats that actually get views</h2>
+            <p style="text-align: center; color: var(--ink-2); font-size: 15px; margin-top: -32px; margin-bottom: 40px;">Each recipe is modeled after channels pulling millions of views. Hover to preview.</p>
             <div class="recipe-grid">
-                <div class="recipe-card">
-                    <span class="recipe-tag">Popular</span>
-                    <h3>Animated Explainer</h3>
-                    <p>Stick-figure documentaries with word-level visual changes. Cheap to produce, massive engagement.</p>
-                    <div class="recipe-meta">~15 min · 1 credit · RPM $4–$12</div>
-                </div>
-                <div class="recipe-card">
-                    <span class="recipe-tag">Premium</span>
-                    <h3>Cinematic B-Roll</h3>
-                    <p>AI-directed multi-asset productions mixing stock video, images, and text overlays.</p>
-                    <div class="recipe-meta">~15 min · 1 credit · RPM $6–$15</div>
-                </div>
-                <div class="recipe-card">
-                    <span class="recipe-tag">Classic</span>
-                    <h3>B-Roll Documentary</h3>
-                    <p>Narration over stock footage with Ken Burns zoom effects. Great for history and science.</p>
-                    <div class="recipe-meta">~15 min · 1 credit · RPM $3–$8</div>
-                </div>
-                <div class="recipe-card">
-                    <span class="recipe-tag">AI Avatar</span>
-                    <h3>Avatar + Illustrations</h3>
-                    <p>HeyGen AI talking head interleaved with AI-generated illustration B-roll.</p>
-                    <div class="recipe-meta">~15 min · 1 credit · RPM $5–$12</div>
-                </div>
+
+                <a href="/app" class="recipe-card" style="text-decoration: none; color: inherit;">
+                    <div class="recipe-preview">
+                        <img src="/static/previews/animated_explainer.gif" alt="Animated Explainer preview" loading="lazy">
+                        <span class="recipe-tag-overlay hot">Trending</span>
+                        <span class="views-badge">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                            2.1B+ niche views
+                        </span>
+                    </div>
+                    <div class="recipe-body">
+                        <h3>Animated Explainer</h3>
+                        <p class="recipe-desc">Stick-figure documentaries that go viral. Word-level visual changes, minimal art, maximum watch time.</p>
+                        <div class="recipe-stats">
+                            <span class="stat"><span class="stat-dot"></span> 1 credit</span>
+                            <span class="stat">~15 min</span>
+                            <span class="stat">RPM <span class="rpm-highlight">$4–$12</span></span>
+                        </div>
+                    </div>
+                </a>
+
+                <a href="/app" class="recipe-card" style="text-decoration: none; color: inherit;">
+                    <div class="recipe-preview">
+                        <img src="/static/previews/broll_cinematic.gif" alt="Cinematic B-Roll preview" loading="lazy">
+                        <span class="recipe-tag-overlay">Premium</span>
+                        <span class="views-badge">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                            890M+ niche views
+                        </span>
+                    </div>
+                    <div class="recipe-body">
+                        <h3>Cinematic B-Roll</h3>
+                        <p class="recipe-desc">AI-directed multi-asset productions. Stock video, images, AI art, and text overlays mixed like a real editor.</p>
+                        <div class="recipe-stats">
+                            <span class="stat"><span class="stat-dot"></span> 1 credit</span>
+                            <span class="stat">~15 min</span>
+                            <span class="stat">RPM <span class="rpm-highlight">$6–$15</span></span>
+                        </div>
+                    </div>
+                </a>
+
+                <a href="/app" class="recipe-card" style="text-decoration: none; color: inherit;">
+                    <div class="recipe-preview">
+                        <img src="/static/previews/broll_only.gif" alt="B-Roll Documentary preview" loading="lazy">
+                        <span class="recipe-tag-overlay">Classic</span>
+                        <span class="views-badge">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                            1.4B+ niche views
+                        </span>
+                    </div>
+                    <div class="recipe-body">
+                        <h3>B-Roll Documentary</h3>
+                        <p class="recipe-desc">Narration over stock footage with smooth zoom effects. The workhorse format for history, science, and education.</p>
+                        <div class="recipe-stats">
+                            <span class="stat"><span class="stat-dot"></span> 1 credit</span>
+                            <span class="stat">~15 min</span>
+                            <span class="stat">RPM <span class="rpm-highlight">$3–$8</span></span>
+                        </div>
+                    </div>
+                </a>
+
+                <a href="/app" class="recipe-card" style="text-decoration: none; color: inherit;">
+                    <div class="recipe-preview">
+                        <img src="/static/previews/avatar_plus_broll.gif" alt="Avatar + Illustrations preview" loading="lazy">
+                        <span class="recipe-tag-overlay">AI Avatar</span>
+                        <span class="views-badge">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                            650M+ niche views
+                        </span>
+                    </div>
+                    <div class="recipe-body">
+                        <h3>Avatar + Illustrations</h3>
+                        <p class="recipe-desc">AI talking head presenter interleaved with illustration B-roll. Personal feel, zero camera work.</p>
+                        <div class="recipe-stats">
+                            <span class="stat"><span class="stat-dot"></span> 1 credit</span>
+                            <span class="stat">~15 min</span>
+                            <span class="stat">RPM <span class="rpm-highlight">$5–$12</span></span>
+                        </div>
+                    </div>
+                </a>
+
             </div>
         </div>
     </section>
