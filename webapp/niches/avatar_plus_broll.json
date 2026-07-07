@@ -10,6 +10,8 @@
   "recipe": "avatar_plus_broll",
   "default_voice": "Charon",
   "default_minutes": 8,
+  "max_free_minutes": 8,
+  "max_paid_minutes": 20,
   "style_preset": "auto",
   "requires_keys": ["HEYGEN_KEY"],
   "thumbnail_style": "Professional talking head YouTube thumbnail with presenter silhouette, bold title text, and engaging facial expression",

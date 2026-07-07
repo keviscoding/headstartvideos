@@ -14,6 +14,7 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
 DOWNSUB_KEY = os.getenv("DOWNSUB_KEY", "")
 PIXABAY_KEY = os.getenv("PIXABAY_KEY", "")
 ATLASCLOUD_KEY = os.getenv("ATLASCLOUD_KEY", "")
+RESEND_KEY = os.getenv("RESEND_KEY", "")
 
 OUTPUT_DIR = ROOT_DIR / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)

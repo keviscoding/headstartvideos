@@ -84,6 +84,38 @@
         </div>
     </header>
 
+    <!-- Cooking bar (persistent during builds) -->
+    <div id="cooking-bar" class="hidden" style="position: sticky; top: 57px; z-index: 49; background: var(--accent-soft-dark); border-bottom: 1px solid var(--accent); padding: 8px 0;">
+        <div class="max-w-5xl mx-auto px-6 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="cr-spinner" style="width: 16px; height: 16px; border-width: 2px;"></div>
+                <span style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink);">
+                    Cooking <strong id="cooking-bar-title" style="color: var(--accent);">your video</strong>...
+                </span>
+                <span id="cooking-bar-status" class="cr-mono" style="font-size: 11px; color: var(--app-ink-3);"></span>
+            </div>
+            <div class="flex items-center gap-2">
+                <button onclick="cookingManager.viewProgress()" class="btn-ghost" style="font-size: 12px; padding: 4px 10px;">View</button>
+                <button onclick="cookingManager.cancel()" class="btn-ghost" style="font-size: 12px; padding: 4px 10px; color: var(--error);">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast notification -->
+    <div id="toast" class="hidden" style="position: fixed; bottom: 24px; right: 24px; z-index: 100; background: var(--app-surface); border: 1px solid var(--success); border-radius: var(--radius-md); padding: 14px 20px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); max-width: 360px;">
+        <div class="flex items-start gap-3">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex: none; margin-top: 1px;"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            <div style="flex: 1;">
+                <p style="font-family: var(--font-body); font-weight: 600; font-size: 14px; color: var(--app-ink);">Your video is ready!</p>
+                <p id="toast-title" style="font-family: var(--font-body); font-size: 12px; color: var(--app-ink-3); margin-top: 2px;"></p>
+            </div>
+            <button onclick="dismissToast()" style="color: var(--app-ink-3); background: none; border: none; cursor: pointer; padding: 2px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            </button>
+        </div>
+        <button onclick="cookingManager.viewResult()" class="btn-primary" style="width: 100%; margin-top: 10px; padding: 8px; font-size: 13px;">View video</button>
+    </div>
+
     <!-- ============================================================ -->
     <!-- PAGE: Pipeline (Create Video) -->
     <!-- ============================================================ -->
@@ -156,14 +188,18 @@
             <section id="step-3" class="step-panel hidden">
                 <div class="cr-panel">
                     <div class="mb-6">
-                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Review the script</h2>
-                        <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">Written from the recipe. Edit anything, or keep it as is.</p>
+                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Write the script</h2>
+                        <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">Choose a target length, generate, then edit anything.</p>
                     </div>
                     <div class="max-w-3xl space-y-4">
                         <div class="flex items-center gap-4 mb-2">
                             <label class="cr-label" style="margin-bottom: 0; white-space: nowrap;">Target length</label>
                             <input id="target-minutes" type="range" min="3" max="20" value="8" class="flex-1" style="accent-color: var(--accent);">
                             <span id="target-minutes-label" class="cr-mono" style="width: 4rem; text-align: right; color: var(--app-ink);">8 min</span>
+                            <button id="btn-gen-script" class="btn-primary" style="padding: 8px 20px; font-size: 14px;">Generate script</button>
+                        </div>
+                        <div id="script-limit-msg" class="hidden" style="background: var(--accent-soft-dark); border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 10px 14px; font-family: var(--font-body); font-size: 13px; color: var(--app-ink-2);">
+                            Videos longer than <span id="limit-minutes">8</span> min require a <a href="#" style="color: var(--accent); text-decoration: underline;">Pro subscription</a>.
                         </div>
                         <div id="script-loading" class="text-center py-12 hidden">
                             <div class="cr-spinner mx-auto mb-4"></div>
@@ -198,9 +234,37 @@
                 <div class="cr-panel">
                     <div class="mb-6">
                         <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Choose a voice</h2>
-                        <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">Six voices, tuned for this recipe. The best pick is ready to go.</p>
+                        <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">Generate with AI or upload your own recording.</p>
                     </div>
-                    <div id="voices-grid" class="max-w-3xl grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
+                    <!-- Voice mode toggle -->
+                    <div class="max-w-3xl mb-4 flex gap-2">
+                        <button id="vo-mode-generate" class="btn-secondary vo-mode-btn active" onclick="setVoiceMode('generate')" style="font-size: 13px; padding: 6px 16px;">Generate voice</button>
+                        <button id="vo-mode-upload" class="btn-secondary vo-mode-btn" onclick="setVoiceMode('upload')" style="font-size: 13px; padding: 6px 16px;">Upload your own</button>
+                    </div>
+                    <!-- Generate mode -->
+                    <div id="vo-generate-panel">
+                        <div id="voices-grid" class="max-w-3xl grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
+                    </div>
+                    <!-- Upload mode -->
+                    <div id="vo-upload-panel" class="hidden max-w-3xl">
+                        <div class="cr-surface" style="padding: 24px; text-align: center; border: 2px dashed var(--app-border); border-radius: var(--radius-card); cursor: pointer;" onclick="document.getElementById('vo-file-input').click()">
+                            <input id="vo-file-input" type="file" accept=".wav,.mp3,.m4a,.ogg,.webm" class="hidden" onchange="handleVoUpload(this)">
+                            <div id="vo-upload-placeholder">
+                                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--app-ink-3)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 12px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+                                <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2);">Drop your voiceover here or click to browse</p>
+                                <p style="font-family: var(--font-mono); font-size: 12px; color: var(--app-ink-3); margin-top: 6px;">WAV, MP3, M4A accepted</p>
+                            </div>
+                            <div id="vo-upload-info" class="hidden">
+                                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 8px;"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                                <p id="vo-upload-name" style="font-family: var(--font-body); font-weight: 600; font-size: 15px; color: var(--app-ink);"></p>
+                                <p style="font-family: var(--font-mono); font-size: 12px; color: var(--app-ink-3); margin-top: 4px;">Ready to use</p>
+                            </div>
+                        </div>
+                        <div id="vo-upload-progress" class="hidden text-center py-4">
+                            <div class="cr-spinner mx-auto mb-2"></div>
+                            <p style="color: var(--app-ink-2); font-size: 13px;">Uploading...</p>
+                        </div>
+                    </div>
                     <div class="max-w-3xl mt-4">
                         <div id="vo-generating" class="text-center py-8 hidden">
                             <div class="cr-spinner mx-auto mb-4"></div>
@@ -282,6 +346,12 @@
                             <span style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-3);">Voice</span>
                             <span id="summary-voice" style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink); font-weight: 500;"></span>
                         </div>
+                    </div>
+                    <div class="max-w-lg mt-4">
+                        <div class="flex items-center gap-3">
+                            <input id="notify-email" type="email" placeholder="Email me when it's ready (optional)" class="cr-input" style="flex: 1; font-size: 13px;">
+                        </div>
+                        <p style="font-family: var(--font-mono); font-size: 11px; color: var(--app-ink-3); margin-top: 4px;">You can browse other pages while it cooks.</p>
                     </div>
                     <div class="flex justify-between items-center mt-7 pt-5" style="border-top: 1px solid var(--app-border);">
                         <button class="btn-ghost" onclick="goToStep(5)">

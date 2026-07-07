@@ -10,6 +10,8 @@
   "recipe": "animated_explainer",
   "default_voice": "Charon",
   "default_minutes": 8,
+  "max_free_minutes": 8,
+  "max_paid_minutes": 20,
   "style_preset": "default",
   "thumbnail_style": "Bold hand-drawn cartoon style thumbnail with thick black outlines, flat muted colors, simple stick figure character, large text overlay, eye-catching composition",
   "example_topics": [

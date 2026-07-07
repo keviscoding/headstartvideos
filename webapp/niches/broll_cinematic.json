@@ -10,6 +10,8 @@
   "recipe": "broll_cinematic",
   "default_voice": "Kore",
   "default_minutes": 10,
+  "max_free_minutes": 10,
+  "max_paid_minutes": 20,
   "style_preset": "auto",
   "thumbnail_style": "Cinematic widescreen YouTube thumbnail with dramatic color grading, lens flare, bold typography, and movie-poster composition",
   "example_topics": [

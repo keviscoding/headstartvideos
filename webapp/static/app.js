@@ -21,6 +21,8 @@ const state = {
     videoPath: '',
     channelData: null,
     channelAnalysis: null,
+    voiceMode: 'generate',
+    uploadedVoPath: '',
 };
 
 let previewAudio = null;
@@ -59,6 +61,7 @@ function navigateTo(page) {
     const toolPages = ['script-studio', 'voiceover-studio', 'thumbnail-studio', 'niche-screener', 'channel-analyzer'];
     if (page === 'pipeline') {
         document.querySelector('[data-page="pipeline"]')?.classList.add('active');
+        goToStep(state.step);
     } else if (toolPages.includes(page)) {
         document.querySelector('[data-page="tools"]')?.classList.add('active');
     } else {
@@ -136,8 +139,9 @@ function bindEvents() {
     document.getElementById('btn-next-2').addEventListener('click', () => {
         if (!state.title) return;
         goToStep(3);
-        generateScript();
     });
+
+    document.getElementById('btn-gen-script').addEventListener('click', generateScript);
 
     document.getElementById('script-editor').addEventListener('input', (e) => {
         state.script = e.target.value;
@@ -213,6 +217,7 @@ function resetPipeline() {
         step: 1, niche: null, nicheData: null, title: '', script: '',
         voice: 'Charon', targetMinutes: 8, voiceoverPath: '', voiceoverUrl: '',
         thumbnailPath: '', thumbnailUrl: '', thumbnailRefs: [], videoUrl: '', videoPath: '',
+        voiceMode: 'generate', uploadedVoPath: '',
     });
     document.getElementById('topic-input').value = '';
     document.getElementById('custom-title').value = '';
@@ -226,7 +231,12 @@ function resetPipeline() {
     document.getElementById('progress-log').innerHTML = '';
     document.getElementById('progress-bar').style.width = '0%';
     const slider = document.getElementById('target-minutes');
-    if (slider) { slider.value = 8; document.getElementById('target-minutes-label').textContent = '8 min'; }
+    if (slider) { slider.value = 8; slider.max = 20; document.getElementById('target-minutes-label').textContent = '8 min'; }
+    setVoiceMode('generate');
+    const uploadInfo = document.getElementById('vo-upload-info');
+    if (uploadInfo) uploadInfo.classList.add('hidden');
+    const uploadPlaceholder = document.getElementById('vo-upload-placeholder');
+    if (uploadPlaceholder) uploadPlaceholder.classList.remove('hidden');
     goToStep(1);
 }
 
@@ -285,12 +295,28 @@ function selectNiche(niche, card) {
     state.nicheData = niche;
     state.voice = niche.default_voice || 'Charon';
     state.targetMinutes = niche.default_minutes || 8;
+    state.voiceMode = 'generate';
+    state.uploadedVoPath = '';
+    const maxFree = niche.max_free_minutes || 20;
     const slider = document.getElementById('target-minutes');
     if (slider) {
         slider.value = state.targetMinutes;
+        slider.max = maxFree;
         document.getElementById('target-minutes-label').textContent = state.targetMinutes + ' min';
     }
+    updateScriptLimitMsg();
     setTimeout(() => goToStep(2), 300);
+}
+
+function updateScriptLimitMsg() {
+    const msg = document.getElementById('script-limit-msg');
+    if (!msg) return;
+    const maxFree = state.nicheData?.max_free_minutes || 20;
+    const slider = document.getElementById('target-minutes');
+    if (slider) slider.max = maxFree;
+    const limitSpan = document.getElementById('limit-minutes');
+    if (limitSpan) limitSpan.textContent = maxFree;
+    msg.classList.add('hidden');
 }
 
 // ---------------------------------------------------------------------------
@@ -443,14 +469,76 @@ function resetPlayBtn(btn) {
     btn.innerHTML = '<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
 }
 
+function setVoiceMode(mode) {
+    state.voiceMode = mode;
+    document.getElementById('vo-generate-panel').classList.toggle('hidden', mode !== 'generate');
+    document.getElementById('vo-upload-panel').classList.toggle('hidden', mode !== 'upload');
+    document.querySelectorAll('.vo-mode-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById(`vo-mode-${mode}`).classList.add('active');
+}
+
+async function handleVoUpload(input) {
+    const file = input.files?.[0];
+    if (!file) return;
+    const prog = document.getElementById('vo-upload-progress');
+    prog.classList.remove('hidden');
+    try {
+        const form = new FormData();
+        form.append('file', file);
+        const res = await fetch('/api/voiceover/upload', { method: 'POST', body: form });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Upload failed');
+        state.uploadedVoPath = data.path;
+        state.voiceoverUrl = data.url;
+        document.getElementById('vo-upload-placeholder').classList.add('hidden');
+        document.getElementById('vo-upload-info').classList.remove('hidden');
+        document.getElementById('vo-upload-name').textContent = file.name;
+    } catch (e) {
+        alert('Upload failed: ' + e.message);
+    } finally {
+        prog.classList.add('hidden');
+    }
+}
+
 async function handleVoiceNext() {
     const btn = document.getElementById('btn-next-4');
     setLoading(btn, true);
+
+    const isUpload = state.voiceMode === 'upload' && state.uploadedVoPath;
+
+    if (isUpload) {
+        state.voiceoverPath = state.uploadedVoPath;
+        document.getElementById('vo-generating').classList.remove('hidden');
+        try {
+            const thumbRes = await fetch('/api/thumbnail', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: state.title, niche_style: state.nicheData?.thumbnail_style || '', count: 2 }) });
+            const thumbData = await thumbRes.json();
+            if (thumbRes.ok && thumbData.thumbnails?.length) {
+                renderThumbnails(thumbData.thumbnails, thumbData.paths);
+                goToStep(5);
+            } else {
+                goToStep(6);
+                populateBuildSummary();
+            }
+        } catch (e) {
+            alert('Thumbnail generation failed: ' + e.message);
+        } finally {
+            setLoading(btn, false);
+            document.getElementById('vo-generating').classList.add('hidden');
+        }
+        return;
+    }
+
+    if (state.voiceMode === 'upload' && !state.uploadedVoPath) {
+        alert('Please upload a voiceover file first.');
+        setLoading(btn, false);
+        return;
+    }
+
     document.getElementById('vo-generating').classList.remove('hidden');
     try {
         const [voRes, thumbRes] = await Promise.all([
             fetch('/api/voiceover', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ script: state.script, voice: state.voice }) }),
-            fetch('/api/thumbnail', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: state.title, niche_style: state.nicheData?.thumbnail_style || '' }) }),
+            fetch('/api/thumbnail', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: state.title, niche_style: state.nicheData?.thumbnail_style || '', count: 2 }) }),
         ]);
         const voData = await voRes.json();
         if (!voRes.ok) throw new Error(voData.detail || 'Voiceover failed');
@@ -550,51 +638,156 @@ function populateBuildSummary() {
     document.getElementById('summary-voice').textContent = state.voice;
 }
 
+const cookingManager = {
+    jobId: null,
+    evtSrc: null,
+    title: '',
+    result: null,
+    msgCount: 0,
+
+    get isCooking() { return this.jobId && !this.result; },
+
+    async start() {
+        if (this.isCooking) {
+            alert('A video is already cooking. Wait for it to finish or cancel it.');
+            return;
+        }
+
+        this.result = null;
+        this.msgCount = 0;
+        this.title = state.title;
+
+        document.getElementById('build-start').classList.add('hidden');
+        document.getElementById('build-progress').classList.remove('hidden');
+        document.getElementById('progress-log').innerHTML = '';
+        document.getElementById('progress-bar').style.width = '0%';
+
+        try {
+            const notifyEmail = document.getElementById('notify-email')?.value?.trim() || '';
+            const res = await fetch('/api/build', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    script: state.script,
+                    voiceover_path: state.voiceoverPath,
+                    title: state.title,
+                    niche: state.niche,
+                    recipe: state.nicheData?.recipe || 'animated_explainer',
+                    thumbnail_path: state.thumbnailPath,
+                    notify_email: notifyEmail,
+                }),
+            });
+            const data = await res.json();
+            this.jobId = data.job_id;
+            this._showCookingBar();
+            this._connect();
+        } catch (e) {
+            alert('Build request failed: ' + e.message);
+            document.getElementById('build-start').classList.remove('hidden');
+            document.getElementById('build-progress').classList.add('hidden');
+        }
+    },
+
+    _connect() {
+        this.evtSrc = new EventSource(`/api/build/${this.jobId}/progress`);
+        const progressBar = document.getElementById('progress-bar');
+        const progressLog = document.getElementById('progress-log');
+
+        this.evtSrc.addEventListener('progress', (e) => {
+            this.msgCount++;
+            const msg = JSON.parse(e.data);
+            document.getElementById('cooking-bar-status').textContent = msg.message.substring(0, 60);
+            if (progressLog) {
+                const line = document.createElement('div');
+                line.textContent = `> ${msg.message}`;
+                progressLog.appendChild(line);
+                progressLog.scrollTop = progressLog.scrollHeight;
+            }
+            if (progressBar) {
+                progressBar.style.width = Math.min(95, Math.round((this.msgCount / 30) * 100)) + '%';
+            }
+        });
+
+        this.evtSrc.addEventListener('complete', (e) => {
+            this.evtSrc.close();
+            this.evtSrc = null;
+            this.result = JSON.parse(e.data);
+            state.videoUrl = this.result.output_url;
+            state.videoPath = this.result.output_path;
+            this._hideCookingBar();
+
+            if (state.page === 'pipeline' && state.step === 6) {
+                if (progressBar) progressBar.style.width = '100%';
+                setTimeout(() => showUploadKit(this.result), 500);
+            } else {
+                this._showToast();
+            }
+        });
+
+        this.evtSrc.addEventListener('error', (e) => {
+            if (e.data) {
+                const err = JSON.parse(e.data).error || 'Unknown error';
+                alert('Build failed: ' + err);
+            }
+            this.evtSrc.close();
+            this.evtSrc = null;
+            this.jobId = null;
+            this._hideCookingBar();
+        });
+    },
+
+    _showCookingBar() {
+        const bar = document.getElementById('cooking-bar');
+        document.getElementById('cooking-bar-title').textContent = this.title || 'your video';
+        document.getElementById('cooking-bar-status').textContent = 'Starting...';
+        bar.classList.remove('hidden');
+    },
+
+    _hideCookingBar() {
+        document.getElementById('cooking-bar').classList.add('hidden');
+    },
+
+    _showToast() {
+        document.getElementById('toast-title').textContent = this.title;
+        document.getElementById('toast').classList.remove('hidden');
+        setTimeout(() => dismissToast(), 15000);
+    },
+
+    viewProgress() {
+        navigateTo('pipeline');
+        goToStep(6);
+        document.getElementById('build-start').classList.add('hidden');
+        document.getElementById('build-progress').classList.remove('hidden');
+    },
+
+    viewResult() {
+        dismissToast();
+        navigateTo('pipeline');
+        goToStep(6);
+        if (this.result) showUploadKit(this.result);
+    },
+
+    cancel() {
+        if (this.evtSrc) { this.evtSrc.close(); this.evtSrc = null; }
+        if (this.jobId) {
+            fetch(`/api/build/${this.jobId}`, { method: 'DELETE' }).catch(() => {});
+        }
+        this.jobId = null;
+        this.result = null;
+        this._hideCookingBar();
+        if (state.page === 'pipeline' && state.step === 6) {
+            document.getElementById('build-start').classList.remove('hidden');
+            document.getElementById('build-progress').classList.add('hidden');
+        }
+    },
+};
+
+function dismissToast() {
+    document.getElementById('toast').classList.add('hidden');
+}
+
 async function startBuild() {
-    document.getElementById('build-start').classList.add('hidden');
-    document.getElementById('build-progress').classList.remove('hidden');
-    const progressBar = document.getElementById('progress-bar');
-    const progressLog = document.getElementById('progress-log');
-    try {
-        const res = await fetch('/api/build', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                script: state.script,
-                voiceover_path: state.voiceoverPath,
-                title: state.title,
-                niche: state.niche,
-                recipe: state.nicheData?.recipe || 'animated_explainer',
-                thumbnail_path: state.thumbnailPath,
-            }),
-        });
-        const { job_id } = await res.json();
-        const evtSrc = new EventSource(`/api/build/${job_id}/progress`);
-        let msgCount = 0;
-        evtSrc.addEventListener('progress', (e) => {
-            msgCount++;
-            const data = JSON.parse(e.data);
-            const line = document.createElement('div');
-            line.textContent = `> ${data.message}`;
-            progressLog.appendChild(line);
-            progressLog.scrollTop = progressLog.scrollHeight;
-            progressBar.style.width = Math.min(95, Math.round((msgCount / 30) * 100)) + '%';
-        });
-        evtSrc.addEventListener('complete', (e) => {
-            evtSrc.close();
-            progressBar.style.width = '100%';
-            const result = JSON.parse(e.data);
-            state.videoUrl = result.output_url;
-            state.videoPath = result.output_path;
-            setTimeout(() => showUploadKit(result), 500);
-        });
-        evtSrc.addEventListener('error', (e) => {
-            if (e.data) alert('Build failed: ' + (JSON.parse(e.data).error || 'Unknown'));
-            evtSrc.close();
-        });
-    } catch (e) {
-        alert('Build request failed: ' + e.message);
-    }
+    await cookingManager.start();
 }
 
 async function showUploadKit(buildResult) {

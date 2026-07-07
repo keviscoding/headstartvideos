@@ -10,6 +10,8 @@
   "recipe": "broll_only",
   "default_voice": "Charon",
   "default_minutes": 10,
+  "max_free_minutes": 10,
+  "max_paid_minutes": 20,
   "style_preset": "auto",
   "thumbnail_style": "Documentary-style YouTube thumbnail with dramatic lighting, bold text overlay, and high contrast",
   "example_topics": [

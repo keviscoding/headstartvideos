@@ -389,8 +389,9 @@ def generate_thumbnail_no_refs(
     style_description: str = "",
     model: str = "",
     output_dir: str = "",
+    count: int = 2,
 ) -> list[str]:
     """Generate a thumbnail without reference images."""
     if ATLASCLOUD_KEY:
-        return _generate_text_only(title, style_description, 1, output_dir)
-    return _fallback_gemini(title, [], style_description, 1, output_dir)
+        return _generate_text_only(title, style_description, count, output_dir)
+    return _fallback_gemini(title, [], style_description, count, output_dir)

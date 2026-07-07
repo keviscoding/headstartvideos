@@ -84,6 +84,7 @@ class BuildRequest(BaseModel):
     niche: str = "animated_explainer"
     recipe: str = "animated_explainer"
     thumbnail_path: str = ""
+    notify_email: str = ""
 
 class UploadKitRequest(BaseModel):
     title: str
@@ -256,6 +257,40 @@ async def generate_voiceover(req: VoiceoverRequest):
         raise HTTPException(500, f"Voiceover generation failed: {e}")
 
 
+@app.post("/api/voiceover/upload")
+async def upload_voiceover(file: UploadFile = File(...)):
+    """Accept a user-uploaded voiceover file (WAV, MP3, M4A) and return its path."""
+    import subprocess
+
+    allowed = {".wav", ".mp3", ".m4a", ".ogg", ".webm"}
+    ext = Path(file.filename or "audio.wav").suffix.lower()
+    if ext not in allowed:
+        raise HTTPException(400, f"Unsupported format '{ext}'. Use WAV, MP3, or M4A.")
+
+    out_dir = OUTPUT_DIR / "voiceovers" / str(int(time.time()))
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    raw_path = out_dir / f"upload_raw{ext}"
+    with open(raw_path, "wb") as f:
+        content = await file.read()
+        f.write(content)
+
+    wav_path = out_dir / "voiceover.wav"
+    if ext == ".wav":
+        shutil.copy(str(raw_path), str(wav_path))
+    else:
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", str(raw_path), "-ar", "24000", "-ac", "1", str(wav_path)],
+                capture_output=True, check=True, timeout=60,
+            )
+        except Exception as e:
+            raise HTTPException(500, f"Audio conversion failed: {e}")
+
+    rel = os.path.relpath(str(wav_path), str(ROOT))
+    return {"path": str(wav_path), "url": f"/api/files/{rel}"}
+
+
 @app.post("/api/voiceover/preview")
 async def voice_preview(req: VoicePreviewRequest):
     from core.voiceover_gen import generate_voiceover as gen_vo
@@ -310,6 +345,7 @@ async def generate_thumbnail(req: ThumbnailRequest):
             title=req.title,
             style_description=req.niche_style or "Bold, eye-catching YouTube thumbnail with dramatic lighting",
             output_dir=out_dir,
+            count=req.count,
         )
         if not paths:
             raise ValueError("No thumbnails generated")
@@ -418,14 +454,23 @@ def _run_build(job_id: str, req: BuildRequest):
         else:
             raise ValueError(f"Unknown recipe: {recipe}")
 
+        output_url = f"/api/files/{os.path.relpath(result['output_path'], str(ROOT))}"
         job["status"] = "complete"
         job["result"] = {
             "output_path": result["output_path"],
-            "output_url": f"/api/files/{os.path.relpath(result['output_path'], str(ROOT))}",
+            "output_url": output_url,
             "job_dir": result.get("job_dir", ""),
             "concepts": len(result.get("slots", [])),
             "timing": result.get("timing", {}),
         }
+
+        if req.notify_email:
+            try:
+                from webapp.email_service import send_video_ready
+                send_video_ready(req.notify_email, req.title, output_url)
+            except Exception as email_err:
+                print(f"[build] Email notification failed: {email_err}")
+
     except Exception as e:
         job["status"] = "error"
         job["error"] = str(e)
@@ -448,12 +493,23 @@ async def build_progress(job_id: str, request: Request):
             if job["status"] == "complete":
                 yield {"event": "complete", "data": json.dumps(job["result"])}
                 break
-            elif job["status"] == "error":
+            elif job["status"] in ("error", "cancelled"):
                 yield {"event": "error", "data": json.dumps({"error": job.get("error", "Unknown")})}
                 break
             await asyncio.sleep(1)
 
     return EventSourceResponse(stream())
+
+
+@app.delete("/api/build/{job_id}")
+async def cancel_build(job_id: str):
+    if job_id not in _jobs:
+        raise HTTPException(404, "Job not found")
+    job = _jobs[job_id]
+    if job["status"] in ("queued", "running"):
+        job["status"] = "cancelled"
+        job["error"] = "Cancelled by user"
+    return {"status": "cancelled"}
 
 
 @app.get("/api/build/{job_id}/result")

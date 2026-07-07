@@ -248,6 +248,11 @@
   letter-spacing: -0.01em;
 }
 .btn-secondary:hover { background: var(--app-surface-2); }
+.vo-mode-btn.active {
+  background: var(--accent-soft-dark);
+  border-color: var(--accent);
+  color: var(--accent);
+}
 
 .btn-ghost {
   display: inline-flex;
