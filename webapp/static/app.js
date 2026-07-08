@@ -454,6 +454,11 @@ function showPricingModal() {
     modal.classList.remove('hidden');
     modal.style.display = 'flex';
     setPricingPlan('monthly');
+    const topupRow = document.getElementById('topup-row');
+    if (topupRow) {
+        if (isPaidUser()) { topupRow.classList.remove('hidden'); }
+        else { topupRow.classList.add('hidden'); }
+    }
     track('upgrade_viewed');
 }
 
