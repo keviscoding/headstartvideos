@@ -177,27 +177,38 @@ def run_explainer_pipeline(
     _log("Step 5/6: Rendering static clips...")
     t0 = time.time()
 
-    clip_paths: list[str] = []
-    slot_dicts: list[dict] = []
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    for i, (concept, result) in enumerate(zip(concepts, results)):
+    def _render_one(i: int, concept, result):
         if not result.success or not os.path.exists(result.image_path):
-            _log(f"  WARNING: Concept {i} has no image, creating placeholder")
             placeholder_path = os.path.join(assets_dir, f"placeholder_{i:04d}.png")
             _create_placeholder(placeholder_path, concept.text)
             img_path = placeholder_path
         else:
             img_path = result.image_path
-
         clip_path = os.path.join(clips_dir, f"clip_{i:04d}.mp4")
+        ok = _render_static_clip(image_path=img_path, output_path=clip_path, duration_sec=concept.duration_sec)
+        return i, clip_path, (ok and os.path.exists(clip_path))
 
-        success = _render_static_clip(
-            image_path=img_path,
-            output_path=clip_path,
-            duration_sec=concept.duration_sec,
-        )
+    # Encode clips in parallel — each is an independent ffmpeg subprocess, so this
+    # scales with available CPU cores instead of running one at a time.
+    workers = min(len(concepts), max(2, (os.cpu_count() or 2)))
+    rendered: dict[int, tuple[str, bool]] = {}
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = [ex.submit(_render_one, i, c, r) for i, (c, r) in enumerate(zip(concepts, results))]
+        done = 0
+        for fut in as_completed(futures):
+            i, clip_path, ok = fut.result()
+            rendered[i] = (clip_path, ok)
+            done += 1
+            if done % 5 == 0 or done == len(concepts):
+                _log(f"  Clips rendered: {done}/{len(concepts)}")
 
-        if success and os.path.exists(clip_path):
+    clip_paths: list[str] = []
+    slot_dicts: list[dict] = []
+    for i, concept in enumerate(concepts):
+        clip_path, ok = rendered.get(i, ("", False))
+        if ok:
             clip_paths.append(clip_path)
             slot_dicts.append({
                 "id": concept.id,
