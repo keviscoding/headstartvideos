@@ -557,14 +557,15 @@ async function _doCheckout(plan = 'monthly') {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ plan }),
         });
-        const data = await res.json();
+        let data;
+        try { data = await res.json(); } catch (_) { data = {}; }
         if (res.ok && data.url) {
             window.location.href = data.url;
         } else {
-            alert(data.detail || 'Could not start checkout. Please try again.');
+            alert(data.detail || `Checkout failed (${res.status}). Please try again.`);
         }
     } catch (e) {
-        alert('Checkout failed: ' + e.message);
+        alert('Could not connect to payment server. Please check your connection and try again.');
     }
 }
 

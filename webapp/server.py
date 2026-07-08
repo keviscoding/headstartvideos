@@ -301,8 +301,9 @@ async def create_checkout(req: CheckoutRequest, request: Request):
 
     resolver = _PLAN_PRICE_MAP.get(req.plan)
     price_id = resolver() if resolver else None
+    print(f"[stripe] Checkout: plan={req.plan} → price_id={price_id}")
     if not price_id:
-        raise HTTPException(400, f"Unknown plan: {req.plan}")
+        raise HTTPException(400, f"Plan '{req.plan}' not configured. Please set Stripe price IDs.")
 
     user = _current_user(request)
     if not user:
@@ -315,17 +316,21 @@ async def create_checkout(req: CheckoutRequest, request: Request):
         update_user(user["id"], stripe_customer_id=customer_id)
 
     base_url = str(request.base_url).rstrip("/")
-    session = stripe.checkout.Session.create(
-        customer=customer_id,
-        mode="subscription",
-        line_items=[{"price": price_id, "quantity": 1}],
-        subscription_data={"trial_period_days": 7},
-        payment_method_collection="always",
-        success_url=f"{base_url}/app#pipeline",
-        cancel_url=f"{base_url}/app#pipeline",
-        metadata={"user_id": str(user["id"]), "plan": req.plan},
-    )
-    return {"url": session.url}
+    try:
+        session = stripe.checkout.Session.create(
+            customer=customer_id,
+            mode="subscription",
+            line_items=[{"price": price_id, "quantity": 1}],
+            subscription_data={"trial_period_days": 7},
+            payment_method_collection="always",
+            success_url=f"{base_url}/app#pipeline",
+            cancel_url=f"{base_url}/app#pipeline",
+            metadata={"user_id": str(user["id"]), "plan": req.plan},
+        )
+        return {"url": session.url}
+    except Exception as e:
+        print(f"[stripe] Checkout session creation failed: {e}")
+        raise HTTPException(500, f"Payment setup failed: {e}")
 
 
 @app.post("/api/billing/topup")
