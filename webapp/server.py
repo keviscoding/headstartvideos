@@ -209,15 +209,30 @@ async def auth_logout(request: Request):
     return resp
 
 
+def _is_admin_email(email: str) -> bool:
+    admins = getattr(config, "ADMIN_EMAILS", [])
+    return bool(admins) and (email or "").lower() in admins
+
+
+def _is_pro(user: dict | None) -> bool:
+    """Admins always get full Pro treatment (clean renders, full length, no credit drain)."""
+    if not user:
+        return False
+    if _is_admin_email(user.get("email", "")):
+        return True
+    return user.get("plan") == "pro"
+
+
 def _safe_user(u: dict) -> dict:
     admins = getattr(config, "ADMIN_EMAILS", [])
+    is_admin = bool(admins) and u.get("email", "").lower() in admins
     return {
         "id": u["id"],
         "email": u["email"],
-        "plan": u["plan"],
+        "plan": "pro" if is_admin else u["plan"],
         "credits": u["credits"],
         "created_at": u["created_at"],
-        "is_admin": bool(admins) and u.get("email", "").lower() in admins,
+        "is_admin": is_admin,
     }
 
 
@@ -716,8 +731,10 @@ async def start_build(req: BuildRequest, request: Request):
         raise HTTPException(401, "Sign in to generate videos. It's free — 3 videos, no card.")
     user_id = user["id"]
 
-    if not deduct_credit(user_id):
-        raise HTTPException(402, "No credits remaining. Upgrade to Pro for more.")
+    # Admins render freely (no credit drain) for testing/ops.
+    if not _is_admin_email(user.get("email", "")):
+        if not deduct_credit(user_id):
+            raise HTTPException(402, "No credits remaining. Upgrade to Pro for more.")
 
     job_id = str(uuid.uuid4())[:8]
     _jobs[job_id] = {
@@ -789,8 +806,7 @@ def _run_build(job_id: str, req: BuildRequest):
         is_pro = False
         if user_id:
             try:
-                u = get_user_by_id(user_id)
-                is_pro = bool(u and u.get("plan") and u["plan"] != "free")
+                is_pro = _is_pro(get_user_by_id(user_id))
             except Exception:
                 is_pro = False
         if not is_pro:
@@ -938,7 +954,7 @@ _TRIAL_ATTRIBUTION = (
 
 
 def _maybe_attribute(kit: dict, user: dict) -> dict:
-    if user and user.get("plan") == "free":
+    if user and not _is_pro(user):
         desc = (kit.get("description") or "").rstrip()
         if "channelrecipe.com" not in desc:
             kit["description"] = desc + _TRIAL_ATTRIBUTION
