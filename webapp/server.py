@@ -323,6 +323,7 @@ async def create_checkout(req: CheckoutRequest, request: Request):
             line_items=[{"price": price_id, "quantity": 1}],
             subscription_data={"trial_period_days": 7},
             payment_method_collection="always",
+            allow_promotion_codes=True,
             success_url=f"{base_url}/app#pipeline",
             cancel_url=f"{base_url}/app#pipeline",
             metadata={"user_id": str(user["id"]), "plan": req.plan},
