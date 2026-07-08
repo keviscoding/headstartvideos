@@ -801,22 +801,6 @@ def _run_build(job_id: str, req: BuildRequest):
         else:
             raise ValueError(f"Unknown recipe: {recipe}")
 
-        # Trial watermark: FREE renders carry a burned-in channelrecipe.com bug;
-        # paid renders stay pristine. Failure falls back to the clean file.
-        is_pro = False
-        if user_id:
-            try:
-                is_pro = _is_pro(get_user_by_id(user_id))
-            except Exception:
-                is_pro = False
-        if not is_pro:
-            try:
-                from core.watermark import apply_watermark
-                on_progress("Adding ChannelRecipe watermark (free trial)…")
-                result["output_path"] = apply_watermark(result["output_path"])
-            except Exception as wm_err:
-                print(f"[watermark] failed, shipping clean render: {wm_err}")
-
         # Persist the finished video (and thumbnail) to durable storage.
         ts = int(time.time())
         try:

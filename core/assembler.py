@@ -279,13 +279,10 @@ def build_video(
     slots: list[dict],
     output_path: str,
     bg_music_path: str | None = None,
-    caption_style: str = "Clean",
-    caption_accent: str = "#00BFFF",
-    caption_font_size: str = "Medium",
-    caption_position: str = "Bottom",
     progress_callback=None,
     image_paths: list[str] | None = None,
     durations: list[float] | None = None,
+    **_kwargs,
 ) -> str:
     """
     Full assembly → final MP4.
@@ -300,10 +297,9 @@ def build_video(
     # --- Single-pass path (preferred) ---
     if image_paths and durations:
         if progress_callback:
-            progress_callback("Assembling video from images (single-pass)...")
+            progress_callback("Assembling video (single-pass)...")
 
-        pre_caption_output = str(out_dir / "_pre_caption.mp4")
-        ok = _slideshow_from_images(image_paths, durations, voiceover_path, pre_caption_output, bg_music_path)
+        ok = _slideshow_from_images(image_paths, durations, voiceover_path, output_path, bg_music_path)
 
         if not ok:
             print("[assembler] Single-pass failed, falling back to legacy multi-pass")
@@ -311,8 +307,6 @@ def build_video(
                 clip_paths=clip_paths, voiceover_path=voiceover_path,
                 slots=slots, output_path=output_path,
                 bg_music_path=bg_music_path,
-                caption_style=caption_style, caption_accent=caption_accent,
-                caption_font_size=caption_font_size, caption_position=caption_position,
                 progress_callback=progress_callback,
                 image_paths=None, durations=None,
             )
@@ -326,49 +320,16 @@ def build_video(
             raise RuntimeError("Failed to concatenate clips")
 
         if progress_callback:
-            progress_callback("Generating subtitles...")
+            progress_callback("Assembling final video...")
 
         sub_path = str(out_dir / "_subtitles.ass")
         generate_ass_subtitles(slots, sub_path)
 
-        if progress_callback:
-            progress_callback("Assembling final video...")
-
-        pre_caption_output = str(out_dir / "_pre_caption.mp4")
-
         if not assemble_final(
-            concat_path, voiceover_path, sub_path, pre_caption_output, bg_music_path
+            concat_path, voiceover_path, sub_path, output_path, bg_music_path
         ):
             raise RuntimeError("Failed to assemble final video")
 
         Path(concat_path).unlink(missing_ok=True)
-
-    # --- Captions (both paths converge here) ---
-    if caption_style and caption_style != "None":
-        if progress_callback:
-            progress_callback(f"Burning {caption_style} captions...")
-        try:
-            from core.captions import burn_captions_simple
-            burn_captions_simple(
-                video_path=pre_caption_output,
-                output_path=output_path,
-                caption_style=caption_style,
-                accent_color=caption_accent,
-                font_size=caption_font_size,
-                position=caption_position,
-            )
-            if Path(output_path).exists() and Path(output_path).stat().st_size > 0:
-                Path(pre_caption_output).unlink(missing_ok=True)
-            else:
-                print("[assembler] Caption output empty, using pre-caption version")
-                Path(pre_caption_output).rename(output_path)
-        except Exception as e:
-            print(f"[assembler] Caption burning failed ({e}), using pre-caption version")
-            if Path(pre_caption_output).exists():
-                if Path(output_path).exists():
-                    Path(output_path).unlink(missing_ok=True)
-                Path(pre_caption_output).rename(output_path)
-    else:
-        Path(pre_caption_output).rename(output_path)
 
     return output_path
