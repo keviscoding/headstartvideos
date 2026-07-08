@@ -73,6 +73,7 @@
                         <p id="user-email-display" style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink); font-weight: 500;"></p>
                         <p id="user-plan-display" style="font-family: var(--font-mono); font-size: 11px; color: var(--app-ink-3); margin-top: 2px;"></p>
                     </div>
+                    <button id="menu-billing-btn" class="hidden" onclick="navigateTo('billing'); toggleUserMenu();" style="width: 100%; text-align: left; padding: 8px 16px; background: none; border: none; color: var(--app-ink); font-family: var(--font-body); font-size: 13px; cursor: pointer;">Billing &amp; Plan</button>
                     <button onclick="handleLogout()" style="width: 100%; text-align: left; padding: 8px 16px; background: none; border: none; color: var(--app-ink-2); font-family: var(--font-body); font-size: 13px; cursor: pointer;">Sign out</button>
                 </div>
                 <!-- Mobile menu -->
@@ -566,6 +567,58 @@
                 <button class="btn-secondary" style="font-size: 14px; padding: 8px 16px;" onclick="loadHistory()">Refresh</button>
             </div>
             <div id="history-list" class="space-y-3"><p style="color: var(--app-ink-3); text-align: center; padding: 32px 0;">No videos yet. Finish a video in the pipeline and it will appear here.</p></div>
+        </main>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- PAGE: Billing -->
+    <!-- ============================================================ -->
+    <div id="page-billing" class="page-container hidden">
+        <main class="max-w-2xl mx-auto px-6 py-8">
+            <h2 class="cr-display" style="font-size: 32px; margin-bottom: 8px;">Billing &amp; Plan</h2>
+            <p style="color: var(--app-ink-2); margin-bottom: 28px;">Manage your subscription, credits, and payment method.</p>
+
+            <!-- Current plan card -->
+            <div style="background: var(--app-surface); border: 1px solid var(--app-border); border-radius: var(--radius-card); padding: 24px; margin-bottom: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+                    <div>
+                        <p style="font-family: var(--font-mono); font-size: 11px; color: var(--app-ink-3); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px;">Current plan</p>
+                        <h3 id="billing-plan-name" class="cr-display" style="font-size: 22px;">Free</h3>
+                    </div>
+                    <div style="text-align: right;">
+                        <p style="font-family: var(--font-mono); font-size: 11px; color: var(--app-ink-3); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px;">Credits remaining</p>
+                        <h3 id="billing-credits" class="cr-display" style="font-size: 22px;">0</h3>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Top-up credits (subscribers only) -->
+            <div id="billing-topup-section" class="hidden" style="background: var(--app-surface); border: 1px solid var(--app-border); border-radius: var(--radius-card); padding: 24px; margin-bottom: 20px;">
+                <h3 style="font-family: var(--font-display); font-size: 16px; font-weight: 700; margin-bottom: 4px;">Need more credits?</h3>
+                <p style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-2); margin-bottom: 16px;">Top-up credits are added to your balance instantly and don't expire while your subscription is active.</p>
+                <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                    <button onclick="proceedToTopup(5)" class="btn-secondary" style="font-size: 14px; padding: 10px 20px; flex: 1; min-width: 140px;">
+                        <strong>5 credits</strong> · $10
+                    </button>
+                    <button onclick="proceedToTopup(15)" class="btn-secondary" style="font-size: 14px; padding: 10px 20px; flex: 1; min-width: 140px;">
+                        <strong>15 credits</strong> · $25
+                    </button>
+                </div>
+            </div>
+
+            <!-- Manage subscription -->
+            <div id="billing-manage-section" class="hidden" style="background: var(--app-surface); border: 1px solid var(--app-border); border-radius: var(--radius-card); padding: 24px; margin-bottom: 20px;">
+                <h3 style="font-family: var(--font-display); font-size: 16px; font-weight: 700; margin-bottom: 4px;">Manage subscription</h3>
+                <p style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-2); margin-bottom: 16px;">Update your payment method, switch plans, or cancel your subscription through Stripe's secure portal.</p>
+                <button onclick="openStripePortal()" class="btn-primary" style="font-size: 14px; padding: 10px 20px;">Manage in Stripe →</button>
+            </div>
+
+            <!-- Upgrade (free users) -->
+            <div id="billing-upgrade-section" style="background: var(--app-surface); border: 1px solid var(--app-border); border-radius: var(--radius-card); padding: 24px; margin-bottom: 20px;">
+                <h3 style="font-family: var(--font-display); font-size: 16px; font-weight: 700; margin-bottom: 4px;">Start your free trial</h3>
+                <p style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-2); margin-bottom: 16px;">7 days free, then your chosen plan begins. Cancel anytime.</p>
+                <button onclick="showPricingModal()" class="btn-primary" style="font-size: 14px; padding: 10px 20px;">Choose a plan</button>
+            </div>
         </main>
     </div>
 

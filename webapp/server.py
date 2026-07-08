@@ -454,6 +454,34 @@ async def billing_status(request: Request):
     }
 
 
+@app.post("/api/billing/portal")
+async def create_portal_session(request: Request):
+    """Create a Stripe Customer Portal session for subscription management."""
+    import stripe
+    if not config.STRIPE_SECRET_KEY:
+        raise HTTPException(500, "Stripe not configured")
+    stripe.api_key = config.STRIPE_SECRET_KEY
+
+    user = _current_user(request)
+    if not user:
+        raise HTTPException(401, "Sign in first")
+
+    customer_id = user.get("stripe_customer_id")
+    if not customer_id:
+        raise HTTPException(400, "No billing account found. Start a subscription first.")
+
+    base_url = str(request.base_url).rstrip("/")
+    try:
+        session = stripe.billing_portal.Session.create(
+            customer=customer_id,
+            return_url=f"{base_url}/app#billing",
+        )
+        return {"url": session.url}
+    except Exception as e:
+        print(f"[stripe] Portal session failed: {e}")
+        raise HTTPException(500, f"Could not open billing portal: {e}")
+
+
 CURATED_VOICES = [
     {"id": "Charon", "name": "Charon", "tag": "Informative", "desc": "Clear, authoritative narrator — best for documentaries", "default": True},
     {"id": "Kore", "name": "Kore", "tag": "Firm", "desc": "Strong, confident delivery with gravitas"},

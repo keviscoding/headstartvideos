@@ -180,6 +180,7 @@ function navigateTo(page) {
     document.getElementById('mobile-menu')?.classList.add('hidden');
 
     if (page === 'history') { try { loadHistory(); } catch(_) {} }
+    if (page === 'billing') { try { loadBillingPage(); } catch(_) {} }
 
     window.location.hash = page;
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1796,6 +1797,8 @@ function updateAuthUI() {
         const isFree = !isPaidUser() && !currentUser.is_admin;
         if (navUpgrade) navUpgrade.classList.toggle('hidden', !isFree);
         if (cookingUpgrade) cookingUpgrade.classList.toggle('hidden', !isFree);
+        const billingBtn = document.getElementById('menu-billing-btn');
+        if (billingBtn) billingBtn.classList.remove('hidden');
     } else {
         loginBtn.classList.remove('hidden');
         userBtn.classList.add('hidden');
@@ -1920,4 +1923,45 @@ async function handleLogout() {
     currentUser = null;
     updateAuthUI();
     document.getElementById('user-menu').classList.add('hidden');
+}
+
+
+// ---------------------------------------------------------------------------
+// Billing page
+// ---------------------------------------------------------------------------
+function loadBillingPage() {
+    if (!currentUser) return;
+    const planLabels = { free: 'Free', starter: 'Starter', daily: 'Daily', pro: 'Pro' };
+    document.getElementById('billing-plan-name').textContent = planLabels[currentUser.plan] || currentUser.plan;
+    document.getElementById('billing-credits').textContent = currentUser.credits;
+
+    const paid = isPaidUser();
+    const topupSec = document.getElementById('billing-topup-section');
+    const manageSec = document.getElementById('billing-manage-section');
+    const upgradeSec = document.getElementById('billing-upgrade-section');
+
+    if (paid) {
+        topupSec.classList.remove('hidden');
+        manageSec.classList.remove('hidden');
+        upgradeSec.style.display = 'none';
+    } else {
+        topupSec.classList.add('hidden');
+        manageSec.classList.add('hidden');
+        upgradeSec.style.display = '';
+    }
+}
+
+async function openStripePortal() {
+    try {
+        const res = await fetch('/api/billing/portal', { method: 'POST' });
+        let data;
+        try { data = await res.json(); } catch (_) { data = {}; }
+        if (res.ok && data.url) {
+            window.location.href = data.url;
+        } else {
+            alert(data.detail || 'Could not open billing portal.');
+        }
+    } catch (e) {
+        alert('Could not connect to billing. Please try again.');
+    }
 }
