@@ -1088,8 +1088,13 @@ async def analyze_niche(req: NicheAnalyzeRequest, user: dict = Depends(require_u
             f"Notes: {profile.notes}"
         )
         return {"profile": profile_dict, "summary": summary}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     except Exception as e:
-        raise HTTPException(500, f"Niche analysis failed: {e}")
+        err = str(e)
+        if "MIME type" in err or "text/html" in err:
+            raise HTTPException(400, "Could not analyze this video. Make sure the URL is a public YouTube video (not a channel, playlist, or private video).")
+        raise HTTPException(500, f"Niche analysis failed. Please try a different video URL.")
 
 
 # ---------------------------------------------------------------------------

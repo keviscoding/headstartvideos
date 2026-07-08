@@ -904,9 +904,10 @@ const cookingManager = {
             });
             const data = await res.json();
             if (!res.ok) {
+                const errMsg = typeof data.detail === 'string' ? data.detail : (data.detail?.message || JSON.stringify(data.detail) || 'Build failed');
                 if (res.status === 401) { showAuthModal(); }
-                else { alert(data.detail || 'Build failed'); }
-                throw new Error(data.detail || 'Build failed');
+                else { alert(errMsg); }
+                throw new Error(errMsg);
             }
             this.jobId = data.job_id;
             this._persist();
@@ -1314,6 +1315,8 @@ function useScriptInPipeline() {
     const title = document.getElementById('ss-script-title').value.trim();
     if (script) state.script = script;
     if (title) state.title = title;
+    if (!state.niche) state.niche = 'animated_explainer';
+    if (!state.nicheData) state.nicheData = { name: 'Animated Explainer', recipe: 'animated_explainer' };
     navigateTo('pipeline');
     if (state.script) {
         document.getElementById('script-editor').value = state.script;

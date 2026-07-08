@@ -105,6 +105,20 @@ def analyze_video(
 
     client = genai.Client(api_key=GEMINI_KEY)
 
+    # Normalize URL — Gemini needs a standard youtube.com/watch?v= or youtu.be/ URL.
+    url = youtube_url.strip()
+    if "youtube.com/shorts/" in url:
+        vid_id = url.split("youtube.com/shorts/")[1].split("?")[0].split("&")[0]
+        url = f"https://www.youtube.com/watch?v={vid_id}"
+    elif "youtu.be/" in url:
+        vid_id = url.split("youtu.be/")[1].split("?")[0].split("&")[0]
+        url = f"https://www.youtube.com/watch?v={vid_id}"
+    elif "youtube.com" in url and "watch" not in url and "/v/" not in url:
+        raise ValueError(
+            "Please provide a YouTube video URL (e.g. youtube.com/watch?v=...), "
+            "not a channel or playlist URL."
+        )
+
     prompt = ANALYSIS_PROMPT
     if analyze_minutes < 10:
         prompt += (
@@ -117,7 +131,7 @@ def analyze_video(
         contents=types.Content(
             parts=[
                 types.Part(
-                    file_data=types.FileData(file_uri=youtube_url)
+                    file_data=types.FileData(file_uri=url)
                 ),
                 types.Part(text=prompt),
             ]
