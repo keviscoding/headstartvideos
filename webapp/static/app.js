@@ -656,7 +656,6 @@ async function handleVoiceNext() {
 
     if (isUpload) {
         state.voiceoverPath = state.uploadedVoPath;
-        document.getElementById('vo-generating').classList.remove('hidden');
         try {
             const thumbRes = await fetch('/api/thumbnail', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: state.title, niche_style: state.nicheData?.thumbnail_style || '', count: 2 }) });
             const thumbData = await thumbRes.json();
@@ -671,7 +670,6 @@ async function handleVoiceNext() {
             alert('Thumbnail generation failed: ' + e.message);
         } finally {
             setLoading(btn, false);
-            document.getElementById('vo-generating').classList.add('hidden');
         }
         return;
     }

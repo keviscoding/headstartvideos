@@ -221,32 +221,25 @@ def generate_voiceover(
     models_to_try = [m for m in models_to_try if m and m not in seen and not seen.add(m)]
 
     chunks = _chunk_script(script)
-    wav_paths: list[str] = []
-    prev_tail = ""
 
     working_model = models_to_try[0]
 
-    for i, chunk in enumerate(chunks):
-        prompt = _build_prompt(chunk, style_notes, prev_chunk_tail=prev_tail)
+    def _gen_chunk(i: int, chunk: str) -> tuple[int, str]:
+        """Generate a single TTS chunk with retries + model fallback."""
+        prompt = _build_prompt(chunk, style_notes)
         print(f"[voiceover] Generating chunk {i + 1}/{len(chunks)} "
               f"({len(chunk)} chars, voice={voice_name})...")
-
         retries = 3
         for attempt in range(retries):
             for mi, try_model in enumerate(models_to_try if attempt == 0 else [working_model]):
                 try:
                     audio_data = _tts_generate(client, try_model, prompt, voice_name)
-
                     if len(audio_data) < 1000:
                         print(f"[voiceover] WARNING: chunk {i+1} audio very small ({len(audio_data)} bytes)")
-
                     chunk_path = str(out_dir / f"_chunk_{i:03d}.wav")
                     _write_wav(chunk_path, audio_data)
-                    wav_paths.append(chunk_path)
-                    working_model = try_model
-                    prev_tail = chunk[-200:] if len(chunk) > 200 else chunk
                     print(f"[voiceover] Chunk {i + 1} complete ({len(audio_data)} bytes, model={try_model})")
-                    break
+                    return i, chunk_path
                 except Exception as e:
                     if mi < len(models_to_try) - 1 and attempt == 0:
                         print(f"[voiceover] Model {try_model} failed: {e}, trying next model...")
@@ -257,9 +250,17 @@ def generate_voiceover(
                     raise RuntimeError(
                         f"Failed to generate voiceover chunk {i + 1} after {retries} attempts: {e}"
                     )
-            else:
-                continue
-            break
+        raise RuntimeError(f"Failed to generate chunk {i + 1}")
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    results: dict[int, str] = {}
+    with ThreadPoolExecutor(max_workers=min(4, len(chunks))) as ex:
+        futures = {ex.submit(_gen_chunk, i, c): i for i, c in enumerate(chunks)}
+        for fut in as_completed(futures):
+            idx, path = fut.result()
+            results[idx] = path
+
+    wav_paths = [results[i] for i in range(len(chunks))]
 
     output_path = str(out_dir / "voiceover.wav")
     _concat_wavs(wav_paths, output_path)
