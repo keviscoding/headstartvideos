@@ -109,21 +109,23 @@ async function initAnalytics() {
 }
 
 function maybeShowCookieBanner(cfg) {
-    if (!cfg.posthog_key) return;                       // nothing to consent to
-    if (localStorage.getItem('cr_cookie_consent')) return; // already chose
+    if (!cfg.posthog_key) return;
+    if (localStorage.getItem('cr_cookie_consent')) return;
     const banner = document.getElementById('cookie-banner');
-    if (banner) banner.classList.remove('hidden');
+    if (banner) banner.style.display = 'flex';
 }
 
 function acceptCookies() {
     localStorage.setItem('cr_cookie_consent', 'accepted');
-    document.getElementById('cookie-banner')?.classList.add('hidden');
+    const b = document.getElementById('cookie-banner');
+    if (b) b.style.display = 'none';
     initAnalytics();
 }
 
 function declineCookies() {
     localStorage.setItem('cr_cookie_consent', 'declined');
-    document.getElementById('cookie-banner')?.classList.add('hidden');
+    const b = document.getElementById('cookie-banner');
+    if (b) b.style.display = 'none';
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -472,17 +474,6 @@ function showPricingModal() {
     modal.classList.remove('hidden');
     modal.style.display = 'flex';
     setPricingPlan('monthly');
-
-    // Free users can't dismiss — hide close button and backdrop click
-    const closeBtn = modal.querySelector('button[onclick="hidePricingModal()"]');
-    const backdrop = modal.querySelector('div[onclick="hidePricingModal()"]');
-    if (!isPaidUser()) {
-        if (closeBtn) closeBtn.style.display = 'none';
-        if (backdrop) backdrop.onclick = null;
-    } else {
-        if (closeBtn) closeBtn.style.display = '';
-        if (backdrop) backdrop.onclick = () => hidePricingModal();
-    }
 
     const topupRow = document.getElementById('topup-row');
     if (topupRow) {
@@ -1901,9 +1892,6 @@ async function authVerifyCode() {
         try { window.posthog?.identify(String(currentUser.id), { email: currentUser.email, plan: currentUser.plan }); } catch (_) {}
         hideAuthModal();
         cookingManager.restore();
-        if (!isPaidUser()) {
-            setTimeout(() => showPricingModal(), 300);
-        }
         if (pendingAuthAction) {
             const action = pendingAuthAction;
             pendingAuthAction = null;

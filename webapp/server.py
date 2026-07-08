@@ -389,27 +389,33 @@ async def stripe_webhook(request: Request):
     except Exception as e:
         raise HTTPException(400, f"Webhook signature verification failed: {e}")
 
-    if event["type"] == "checkout.session.completed":
-        session = event["data"]["object"]
-        meta = session.get("metadata", {})
+    # Convert Stripe objects to plain dicts for safe .get() access
+    evt_type = event["type"]
+    try:
+        obj = json.loads(str(event["data"]["object"]))
+    except Exception:
+        obj = event["data"]["object"]
+        if hasattr(obj, "to_dict"):
+            obj = obj.to_dict()
+
+    if evt_type == "checkout.session.completed":
+        meta = obj.get("metadata") or {}
         user_id = meta.get("user_id")
         if user_id:
-            # Top-up (one-time payment)
             topup = meta.get("topup_credits")
             if topup:
                 add_credits(int(user_id), int(topup))
                 print(f"[stripe] User {user_id} topped up {topup} credits")
             else:
-                # Subscription checkout
                 plan_key = meta.get("plan", "starter_monthly")
                 credits = _PLAN_CREDITS.get(plan_key, 15)
                 plan_label = "daily" if "daily" in plan_key else "starter"
                 update_user(int(user_id), plan=plan_label, credits=credits,
-                            stripe_sub_id=session.get("subscription", ""))
+                            stripe_sub_id=obj.get("subscription", ""))
                 print(f"[stripe] User {user_id} subscribed to {plan_label} ({credits} credits)")
 
-    elif event["type"] == "invoice.paid":
-        sub_id = event["data"]["object"].get("subscription")
+    elif evt_type == "invoice.paid":
+        sub_id = obj.get("subscription")
         if sub_id:
             row = get_user_by_sub_id(sub_id)
             if row:
@@ -418,10 +424,9 @@ async def stripe_webhook(request: Request):
                 update_user(row["id"], credits=credits)
                 print(f"[stripe] Refilled {credits} credits for user {row['id']} ({plan})")
 
-    elif event["type"] in ("customer.subscription.deleted", "customer.subscription.updated"):
-        sub = event["data"]["object"]
-        sub_id = sub.get("id")
-        if sub_id and sub.get("status") in ("canceled", "unpaid", "past_due"):
+    elif evt_type in ("customer.subscription.deleted", "customer.subscription.updated"):
+        sub_id = obj.get("id")
+        if sub_id and obj.get("status") in ("canceled", "unpaid", "past_due"):
             row = get_user_by_sub_id(sub_id)
             if row:
                 update_user(row["id"], plan="free")
