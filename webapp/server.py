@@ -113,7 +113,7 @@ def require_user(request: Request) -> dict:
     """
     user = _current_user(request)
     if not user:
-        raise HTTPException(401, "Sign in to continue — it's free, no card required.")
+        raise HTTPException(401, "Sign in to continue.")
     return user
 
 
@@ -802,13 +802,13 @@ async def generate_thumbnail_with_refs(
 async def start_build(req: BuildRequest, request: Request):
     user = _current_user(request)
     if not user:
-        raise HTTPException(401, "Sign in to generate videos. It's free — 3 videos, no card.")
+        raise HTTPException(401, "Sign in to continue.")
     user_id = user["id"]
 
     # Admins render freely (no credit drain) for testing/ops.
     if not _is_admin_email(user.get("email", "")):
         if not deduct_credit(user_id):
-            raise HTTPException(402, "No credits remaining. Upgrade to Pro for more.")
+            raise HTTPException(402, "No credits remaining. Upgrade your plan for more videos.")
 
     job_id = str(uuid.uuid4())[:8]
     _jobs[job_id] = {

@@ -35,16 +35,20 @@ let authReady = false;
 let pendingAuthAction = null;
 
 // Defense-in-depth: any protected API call that comes back 401 forces the
-// sign-in modal, so there is no way to consume compute without authenticating.
+// sign-in modal; 402 (no credits) forces the pricing modal.
 const _origFetch = window.fetch.bind(window);
 window.fetch = async function (input, init) {
     const res = await _origFetch(input, init);
     try {
         const url = typeof input === 'string' ? input : (input && input.url) || '';
-        if (res.status === 401 && url.includes('/api/') && !url.includes('/api/auth/')) {
-            currentUser = null;
-            if (typeof updateAuthUI === 'function') updateAuthUI();
-            if (typeof showAuthModal === 'function') showAuthModal();
+        if (url.includes('/api/') && !url.includes('/api/auth/')) {
+            if (res.status === 401) {
+                currentUser = null;
+                if (typeof updateAuthUI === 'function') updateAuthUI();
+                if (typeof showAuthModal === 'function') showAuthModal();
+            } else if (res.status === 402) {
+                if (typeof showPricingModal === 'function') showPricingModal();
+            }
         }
     } catch (_) { /* ignore */ }
     return res;
@@ -232,6 +236,7 @@ function bindEvents() {
     });
 
     document.getElementById('btn-next-2').addEventListener('click', () => {
+        if (!ensureAuth()) return;
         if (!state.title) return;
         goToStep(3);
     });
@@ -246,6 +251,7 @@ function bindEvents() {
     document.getElementById('btn-regen-script').addEventListener('click', generateScript);
 
     document.getElementById('btn-next-3').addEventListener('click', () => {
+        if (!ensureAuth()) return;
         state.script = document.getElementById('script-editor').value.trim();
         if (!state.script) return;
         goToStep(4);
@@ -255,6 +261,7 @@ function bindEvents() {
     document.getElementById('btn-next-4').addEventListener('click', handleVoiceNext);
 
     document.getElementById('btn-next-5').addEventListener('click', () => {
+        if (!ensureAuth()) return;
         goToStep(6);
         populateBuildSummary();
     });
@@ -551,6 +558,7 @@ async function _doCheckout(plan = 'monthly') {
 // Step 2: Titles
 // ---------------------------------------------------------------------------
 async function generateTitles() {
+    if (!ensureAuth(generateTitles)) return;
     const btn = document.getElementById('btn-gen-titles');
     setLoading(btn, true);
     try {
@@ -599,6 +607,7 @@ function updateNextBtn2() {
 // Step 3: Script
 // ---------------------------------------------------------------------------
 async function generateScript() {
+    if (!ensureAuth(generateScript)) return;
     const loading = document.getElementById('script-loading');
     const editor = document.getElementById('script-editor');
     loading.classList.remove('hidden');
@@ -730,6 +739,7 @@ async function handleVoUpload(input) {
 }
 
 async function handleVoiceNext() {
+    if (!ensureAuth(handleVoiceNext)) return;
     const btn = document.getElementById('btn-next-4');
     setLoading(btn, true);
 
