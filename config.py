@@ -26,8 +26,16 @@ RESEND_KEY = os.getenv("RESEND_KEY", "")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+# Legacy (kept for backward compat)
 STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "")
 STRIPE_PRICE_ID_ANNUAL = os.getenv("STRIPE_PRICE_ID_ANNUAL", "")
+# Two-tier pricing
+STRIPE_PRICE_STARTER_MONTHLY = os.getenv("STRIPE_PRICE_STARTER_MONTHLY", "")
+STRIPE_PRICE_STARTER_ANNUAL = os.getenv("STRIPE_PRICE_STARTER_ANNUAL", "")
+STRIPE_PRICE_DAILY_MONTHLY = os.getenv("STRIPE_PRICE_DAILY_MONTHLY", "")
+STRIPE_PRICE_DAILY_ANNUAL = os.getenv("STRIPE_PRICE_DAILY_ANNUAL", "")
+STRIPE_PRICE_TOPUP_5 = os.getenv("STRIPE_PRICE_TOPUP_5", "")
+STRIPE_PRICE_TOPUP_15 = os.getenv("STRIPE_PRICE_TOPUP_15", "")
 
 # Comma-separated list of admin emails allowed to touch ops-only endpoints
 # (Settings / API keys). If empty, those endpoints are locked to everyone.

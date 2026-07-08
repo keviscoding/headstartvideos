@@ -25,11 +25,68 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from config import (
-    GEMINI_KEY, VIDEO_WIDTH, VIDEO_HEIGHT, VIDEO_FPS,
+    GEMINI_KEY, VIDEO_WIDTH, VIDEO_HEIGHT, VIDEO_FPS, ATLASCLOUD_KEY,
 )
 
 
 _AI_IMAGE_MODELS = ["gemini-3-pro-image", "gemini-3.1-flash-image"]
+
+
+def _generate_ernie_cinematic(prompt: str, output_path: str) -> bool:
+    """Try ERNIE Image Turbo for cinematic images — FREE via Atlas Cloud."""
+    if not ATLASCLOUD_KEY:
+        return False
+    import httpx, time
+
+    ATLAS_BASE = "https://api.atlascloud.ai/api/v1"
+    try:
+        resp = httpx.post(
+            f"{ATLAS_BASE}/model/generateImage",
+            headers={"Authorization": f"Bearer {ATLASCLOUD_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": "baidu/ERNIE-Image-Turbo/text-to-image",
+                "prompt": prompt[:490],
+                "size": "1376x768",
+                "n": 1,
+                "use_pe": True,
+                "num_inference_steps": 8,
+                "guidance_scale": 1,
+            },
+            timeout=30,
+        )
+        data = resp.json()
+        pred_id = None
+        if "data" in data and isinstance(data["data"], dict):
+            pred_id = data["data"].get("id")
+        if not pred_id:
+            pred_id = data.get("id") or data.get("prediction_id")
+        if not pred_id:
+            return False
+
+        for _ in range(25):
+            time.sleep(2)
+            poll = httpx.get(
+                f"{ATLAS_BASE}/model/prediction/{pred_id}",
+                headers={"Authorization": f"Bearer {ATLASCLOUD_KEY}"},
+                timeout=15,
+            )
+            inner = poll.json().get("data", poll.json())
+            status = str(inner.get("status", "")).lower()
+            if status in ("succeeded", "completed", "done"):
+                outputs = inner.get("outputs") or inner.get("output") or []
+                img_url = outputs[0] if isinstance(outputs, list) and outputs else (outputs if isinstance(outputs, str) else None)
+                if not img_url:
+                    return False
+                img_resp = httpx.get(img_url, timeout=30, follow_redirects=True)
+                Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+                with open(output_path, "wb") as f:
+                    f.write(img_resp.content)
+                return os.path.exists(output_path) and os.path.getsize(output_path) > 1000
+            if status in ("failed", "error", "cancelled"):
+                return False
+    except Exception as e:
+        print(f"  [ai] ERNIE cinematic failed: {e}")
+    return False
 
 MAX_STATIC_CLIP_SEC = 4.0
 
@@ -389,6 +446,21 @@ def _handle_ai_image(
         prompt = prompt.rstrip(".") + "." + NO_TEXT_SUFFIX
 
     print(f"  [ai] Generating image: {prompt[:80]}...")
+
+    # Try ERNIE first (free), fall back to Gemini
+    ernie_path = str(assets_dir / f"scene_{scene.id:03d}_ai.png")
+    if _generate_ernie_cinematic(prompt, ernie_path):
+        from core.ken_burns import render_clip, pick_effects
+        effect = pick_effects(1)[0]
+        clip_path = str(clips_dir / f"clip_{scene.id:04d}.mp4")
+        if render_clip(ernie_path, clip_path, scene.duration_sec, effect):
+            print(f"  [ai] Generated with ERNIE (free)")
+            return ResolvedAsset(
+                scene_id=scene.id, asset_type="ai_image",
+                file_path=ernie_path, clip_path=clip_path,
+                duration_sec=scene.duration_sec, source="ernie",
+                query_used=prompt[:80],
+            )
 
     client = genai.Client(api_key=GEMINI_KEY)
 

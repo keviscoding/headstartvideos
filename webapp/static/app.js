@@ -415,7 +415,7 @@ function selectNiche(niche, card) {
 }
 
 function isPaidUser() {
-    return currentUser && currentUser.plan === 'pro';
+    return currentUser && ['pro', 'starter', 'daily'].includes(currentUser.plan);
 }
 
 function freeMinuteCap() {
@@ -446,7 +446,7 @@ function hideLengthUpgradePrompt() {
     // keep it visible once shown within the session; do nothing on normal drag
 }
 
-let _selectedPricingPlan = 'monthly';
+let _pricingBillingCycle = 'monthly';
 
 function showPricingModal() {
     if (!currentUser) { showAuthModal(); return; }
@@ -463,35 +463,58 @@ function hidePricingModal() {
     modal.style.display = 'none';
 }
 
-function setPricingPlan(plan) {
-    _selectedPricingPlan = plan;
+function setPricingPlan(cycle) {
+    _pricingBillingCycle = cycle;
     const mBtn = document.getElementById('pricing-monthly-btn');
     const aBtn = document.getElementById('pricing-annual-btn');
-    const amount = document.getElementById('pricing-amount');
-    const period = document.getElementById('pricing-period');
-    const note = document.getElementById('pricing-note');
-    const cta = document.getElementById('pricing-cta-btn');
 
-    if (plan === 'annual') {
+    if (cycle === 'annual') {
         mBtn.style.background = 'transparent'; mBtn.style.color = 'var(--app-ink-3)';
         aBtn.style.background = 'var(--accent)'; aBtn.style.color = 'white';
-        amount.textContent = '$18';
-        period.textContent = '/month';
-        note.textContent = 'Billed $216/year — save $108';
-        cta.textContent = 'Start Pro — $18/mo (billed yearly)';
+        document.getElementById('starter-price').textContent = '$22.50';
+        document.getElementById('starter-period').textContent = '/mo';
+        document.getElementById('starter-note').textContent = 'Billed $270/year · 2 months free';
+        document.getElementById('starter-videos').innerHTML = '<strong>180 videos</strong>/year';
+        document.getElementById('daily-price').textContent = '$40.83';
+        document.getElementById('daily-period').textContent = '/mo';
+        document.getElementById('daily-note').textContent = 'Billed $490/year · 2 months free';
+        document.getElementById('daily-videos').innerHTML = '<strong>420 videos</strong>/year';
     } else {
         aBtn.style.background = 'transparent'; aBtn.style.color = 'var(--app-ink-3)';
         mBtn.style.background = 'var(--accent)'; mBtn.style.color = 'white';
-        amount.textContent = '$27';
-        period.textContent = '/month';
-        note.textContent = 'Under $2 per video';
-        cta.textContent = 'Start Pro — $27/mo';
+        document.getElementById('starter-price').textContent = '$27';
+        document.getElementById('starter-period').textContent = '/mo';
+        document.getElementById('starter-note').textContent = '~$1.80 per video';
+        document.getElementById('starter-videos').innerHTML = '<strong>15 videos</strong>/month';
+        document.getElementById('daily-price').textContent = '$49';
+        document.getElementById('daily-period').textContent = '/mo';
+        document.getElementById('daily-note').textContent = '~$1.40/video · save 22%';
+        document.getElementById('daily-videos').innerHTML = '<strong>35 videos</strong>/month';
     }
 }
 
-async function proceedToCheckout() {
+async function proceedToCheckout(tier = 'starter') {
     hidePricingModal();
-    await _doCheckout(_selectedPricingPlan);
+    const plan = `${tier}_${_pricingBillingCycle}`;
+    await _doCheckout(plan);
+}
+
+async function proceedToTopup(amount) {
+    hidePricingModal();
+    if (!currentUser) { showAuthModal(); return; }
+    track('topup_started', { amount });
+    try {
+        const res = await fetch('/api/billing/topup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ credits: amount }),
+        });
+        const data = await res.json();
+        if (res.ok && data.url) window.location.href = data.url;
+        else alert(data.detail || 'Could not start top-up.');
+    } catch (e) {
+        alert('Top-up failed: ' + e.message);
+    }
 }
 
 function upgradeToPro(plan = 'monthly') {
@@ -1721,11 +1744,12 @@ function updateAuthUI() {
         userBtn.classList.remove('hidden');
         userBtn.textContent = currentUser.email[0].toUpperCase();
         document.getElementById('user-email-display').textContent = currentUser.email;
-        document.getElementById('user-plan-display').textContent = currentUser.plan === 'free' ? 'Free trial' : 'Pro';
+        const planLabels = { free: 'Free trial', starter: 'Starter', daily: 'Daily', pro: 'Pro' };
+        document.getElementById('user-plan-display').textContent = planLabels[currentUser.plan] || currentUser.plan;
         document.getElementById('credits-count').textContent = currentUser.credits + ' credits';
-        document.getElementById('credits-plan').textContent = currentUser.plan === 'free' ? 'trial' : 'pro';
+        document.getElementById('credits-plan').textContent = currentUser.plan === 'free' ? 'trial' : (planLabels[currentUser.plan] || 'pro').toLowerCase();
         creditsDisplay.classList.remove('hidden');
-        const isFree = currentUser.plan === 'free' && !currentUser.is_admin;
+        const isFree = !isPaidUser() && !currentUser.is_admin;
         if (navUpgrade) navUpgrade.classList.toggle('hidden', !isFree);
         if (cookingUpgrade) cookingUpgrade.classList.toggle('hidden', !isFree);
     } else {

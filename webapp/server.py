@@ -220,7 +220,7 @@ def _is_pro(user: dict | None) -> bool:
         return False
     if _is_admin_email(user.get("email", "")):
         return True
-    return user.get("plan") == "pro"
+    return user.get("plan") in ("pro", "starter", "daily")
 
 
 def _safe_user(u: dict) -> dict:
@@ -240,23 +240,39 @@ def _safe_user(u: dict) -> dict:
 # Stripe billing
 # ---------------------------------------------------------------------------
 class CheckoutRequest(BaseModel):
-    plan: str = "monthly"
+    plan: str = "starter_monthly"
+
+class TopupRequest(BaseModel):
+    credits: int = 5
+
+_PLAN_PRICE_MAP = {
+    "starter_monthly": lambda: config.STRIPE_PRICE_STARTER_MONTHLY or config.STRIPE_PRICE_ID,
+    "starter_annual": lambda: config.STRIPE_PRICE_STARTER_ANNUAL or config.STRIPE_PRICE_ID_ANNUAL,
+    "daily_monthly": lambda: config.STRIPE_PRICE_DAILY_MONTHLY,
+    "daily_annual": lambda: config.STRIPE_PRICE_DAILY_ANNUAL,
+    "monthly": lambda: config.STRIPE_PRICE_STARTER_MONTHLY or config.STRIPE_PRICE_ID,
+    "annual": lambda: config.STRIPE_PRICE_STARTER_ANNUAL or config.STRIPE_PRICE_ID_ANNUAL,
+}
+
+_PLAN_CREDITS = {
+    "starter_monthly": 15, "starter_annual": 15,
+    "daily_monthly": 35, "daily_annual": 35,
+    "monthly": 15, "annual": 15,
+}
 
 
 @app.post("/api/billing/checkout")
 async def create_checkout(req: CheckoutRequest, request: Request):
-    """Create a Stripe Checkout session for Pro monthly or annual."""
+    """Create a Stripe Checkout session with 7-day trial (card required)."""
     import stripe
     if not config.STRIPE_SECRET_KEY:
         raise HTTPException(500, "Stripe not configured")
     stripe.api_key = config.STRIPE_SECRET_KEY
 
-    if req.plan == "annual" and config.STRIPE_PRICE_ID_ANNUAL:
-        price_id = config.STRIPE_PRICE_ID_ANNUAL
-    elif config.STRIPE_PRICE_ID:
-        price_id = config.STRIPE_PRICE_ID
-    else:
-        raise HTTPException(500, "Stripe price not configured")
+    resolver = _PLAN_PRICE_MAP.get(req.plan)
+    price_id = resolver() if resolver else None
+    if not price_id:
+        raise HTTPException(400, f"Unknown plan: {req.plan}")
 
     user = _current_user(request)
     if not user:
@@ -273,9 +289,50 @@ async def create_checkout(req: CheckoutRequest, request: Request):
         customer=customer_id,
         mode="subscription",
         line_items=[{"price": price_id, "quantity": 1}],
+        subscription_data={"trial_period_days": 7},
+        payment_method_collection="always",
         success_url=f"{base_url}/app#pipeline",
         cancel_url=f"{base_url}/app#pipeline",
-        metadata={"user_id": str(user["id"])},
+        metadata={"user_id": str(user["id"]), "plan": req.plan},
+    )
+    return {"url": session.url}
+
+
+@app.post("/api/billing/topup")
+async def create_topup(req: TopupRequest, request: Request):
+    """Create a Stripe Checkout session for a one-time credit top-up."""
+    import stripe
+    if not config.STRIPE_SECRET_KEY:
+        raise HTTPException(500, "Stripe not configured")
+    stripe.api_key = config.STRIPE_SECRET_KEY
+
+    if req.credits == 15 and config.STRIPE_PRICE_TOPUP_15:
+        price_id = config.STRIPE_PRICE_TOPUP_15
+        credit_amount = 15
+    elif config.STRIPE_PRICE_TOPUP_5:
+        price_id = config.STRIPE_PRICE_TOPUP_5
+        credit_amount = 5
+    else:
+        raise HTTPException(500, "Top-up pricing not configured")
+
+    user = _current_user(request)
+    if not user:
+        raise HTTPException(401, "Sign in first")
+
+    customer_id = user.get("stripe_customer_id")
+    if not customer_id:
+        customer = stripe.Customer.create(email=user["email"])
+        customer_id = customer.id
+        update_user(user["id"], stripe_customer_id=customer_id)
+
+    base_url = str(request.base_url).rstrip("/")
+    session = stripe.checkout.Session.create(
+        customer=customer_id,
+        mode="payment",
+        line_items=[{"price": price_id, "quantity": 1}],
+        success_url=f"{base_url}/app#pipeline",
+        cancel_url=f"{base_url}/app#pipeline",
+        metadata={"user_id": str(user["id"]), "topup_credits": str(credit_amount)},
     )
     return {"url": session.url}
 
@@ -301,18 +358,35 @@ async def stripe_webhook(request: Request):
 
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
-        user_id = session.get("metadata", {}).get("user_id")
+        meta = session.get("metadata", {})
+        user_id = meta.get("user_id")
         if user_id:
-            update_user(int(user_id), plan="pro", credits=15, stripe_sub_id=session.get("subscription", ""))
-            print(f"[stripe] User {user_id} upgraded to Pro")
+            # Top-up (one-time payment)
+            topup = meta.get("topup_credits")
+            if topup:
+                from webapp.database import get_user_by_id
+                u = get_user_by_id(int(user_id))
+                new_credits = (u["credits"] if u else 0) + int(topup)
+                update_user(int(user_id), credits=new_credits)
+                print(f"[stripe] User {user_id} topped up {topup} credits (now {new_credits})")
+            else:
+                # Subscription checkout
+                plan_key = meta.get("plan", "starter_monthly")
+                credits = _PLAN_CREDITS.get(plan_key, 15)
+                plan_label = "daily" if "daily" in plan_key else "starter"
+                update_user(int(user_id), plan=plan_label, credits=credits,
+                            stripe_sub_id=session.get("subscription", ""))
+                print(f"[stripe] User {user_id} subscribed to {plan_label} ({credits} credits)")
 
     elif event["type"] == "invoice.paid":
         sub_id = event["data"]["object"].get("subscription")
         if sub_id:
             row = get_user_by_sub_id(sub_id)
             if row:
-                update_user(row["id"], credits=15)
-                print(f"[stripe] Refilled credits for user {row['id']}")
+                plan = row.get("plan", "starter")
+                credits = 35 if plan == "daily" else 15
+                update_user(row["id"], credits=credits)
+                print(f"[stripe] Refilled {credits} credits for user {row['id']} ({plan})")
 
     elif event["type"] in ("customer.subscription.deleted", "customer.subscription.updated"):
         sub = event["data"]["object"]
@@ -1107,7 +1181,7 @@ RETENTION_PAID_DAYS = 30
 def _retention_days(request: Request | None = None) -> int:
     if request:
         user = _current_user(request)
-        if user and user.get("plan") == "pro":
+        if user and user.get("plan") in ("pro", "starter", "daily"):
             return RETENTION_PAID_DAYS
     return RETENTION_FREE_DAYS
 
