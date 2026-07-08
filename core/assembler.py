@@ -70,22 +70,44 @@ def concatenate_clips(
             f.write(f"file '{abs_path}'\n")
         list_path = f.name
 
-    cmd = [
+    # Clips are all produced with identical codec/params, so we can stream-copy
+    # (join without re-encoding) — near-instant and, crucially, the final
+    # assemble pass re-encodes everything anyway, so re-encoding here is wasted
+    # CPU that was timing out on small instances.
+    copy_cmd = [
+        "ffmpeg", "-y",
+        "-f", "concat",
+        "-safe", "0",
+        "-i", list_path,
+        "-c", "copy",
+        "-movflags", "+faststart",
+        output_path,
+    ]
+    try:
+        result = subprocess.run(copy_cmd, capture_output=True, text=True, timeout=120)
+        if result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
+            return True
+        print(f"[assembler] copy-concat failed, falling back to re-encode: {result.stderr[-300:]}")
+    except Exception as e:
+        print(f"[assembler] copy-concat exception, falling back to re-encode: {e}")
+
+    # Fallback: clips weren't uniform — normalize with a fast re-encode.
+    reencode_cmd = [
         "ffmpeg", "-y",
         "-f", "concat",
         "-safe", "0",
         "-i", list_path,
         "-c:v", "libx264",
-        "-preset", "fast",
+        "-preset", "veryfast",
         "-crf", "20",
         "-r", str(VIDEO_FPS),
         "-pix_fmt", "yuv420p",
+        "-threads", "0",
         "-an",
         output_path,
     ]
-
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        result = subprocess.run(reencode_cmd, capture_output=True, text=True, timeout=600)
         if result.returncode != 0:
             print(f"[assembler] concat failed: {result.stderr[-500:]}")
         return result.returncode == 0
@@ -156,17 +178,19 @@ def assemble_final(
 
     cmd.extend([
         "-c:v", "libx264",
-        "-preset", "fast",
+        "-preset", "veryfast",
         "-crf", "20",
+        "-threads", "0",
         "-c:a", "aac",
         "-b:a", "192k",
         "-shortest",
         "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
         output_path,
     ])
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
         if result.returncode != 0:
             print(f"[assembler] ffmpeg stderr: {result.stderr[-500:]}")
         return result.returncode == 0
