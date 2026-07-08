@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS users (
     email       TEXT UNIQUE NOT NULL,
     created_at  REAL NOT NULL DEFAULT (strftime('%s','now')),
     plan        TEXT NOT NULL DEFAULT 'free',
-    credits     INTEGER NOT NULL DEFAULT 3,
+    credits     INTEGER NOT NULL DEFAULT 0,
     stripe_customer_id TEXT DEFAULT '',
     stripe_sub_id      TEXT DEFAULT ''
 );
@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS users (
     email       TEXT UNIQUE NOT NULL,
     created_at  DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now()),
     plan        TEXT NOT NULL DEFAULT 'free',
-    credits     INTEGER NOT NULL DEFAULT 3,
+    credits     INTEGER NOT NULL DEFAULT 0,
     stripe_customer_id TEXT DEFAULT '',
     stripe_sub_id      TEXT DEFAULT ''
 );

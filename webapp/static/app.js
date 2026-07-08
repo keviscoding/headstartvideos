@@ -57,10 +57,16 @@ window.fetch = async function (input, init) {
 // Proactive gate: returns true if signed in; otherwise shows the modal and
 // (optionally) replays `retry` once the user finishes signing in.
 function ensureAuth(retry) {
-    if (currentUser) return true;
-    pendingAuthAction = typeof retry === 'function' ? retry : null;
-    showAuthModal();
-    return false;
+    if (!currentUser) {
+        pendingAuthAction = typeof retry === 'function' ? retry : null;
+        showAuthModal();
+        return false;
+    }
+    if (!isPaidUser() && (currentUser.credits || 0) <= 0) {
+        showPricingModal();
+        return false;
+    }
+    return true;
 }
 
 // ---------------------------------------------------------------------------
