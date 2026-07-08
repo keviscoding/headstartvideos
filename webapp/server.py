@@ -73,12 +73,31 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 _jobs: dict[str, dict[str, Any]] = {}
 
+
+@app.on_event("startup")
+async def _startup_tasks():
+    try:
+        removed = cleanup_expired()
+        print(f"[db] Cleaned {removed} expired sessions/codes on startup")
+    except Exception as e:
+        print(f"[db] cleanup_expired failed: {e}")
+
+    async def _periodic_cleanup():
+        while True:
+            await asyncio.sleep(3600)
+            try:
+                cleanup_expired()
+            except Exception:
+                pass
+
+    asyncio.create_task(_periodic_cleanup())
+
 from webapp.database import (
     get_user_by_email, create_user, get_user_by_id, update_user,
-    get_user_by_sub_id, deduct_credit, refund_credit,
+    get_user_by_sub_id, deduct_credit, refund_credit, add_credits,
     create_verify_code, verify_code,
     create_session, get_session_user, delete_session,
-    log_render_event, render_stats, backend_name,
+    log_render_event, render_stats, backend_name, cleanup_expired,
     create_video, list_videos, get_video, update_video_kit, delete_video,
 )
 from webapp import storage
@@ -164,14 +183,14 @@ async def auth_send_code(req: AuthSendCodeRequest):
         from webapp.email_service import send_verification_code
         sent = send_verification_code(email, code)
         if not sent:
-            print(f"[auth] Code for {email}: {code} (email not configured, showing in logs)")
+            print(f"[auth] Email delivery not configured for {email}")
     except Exception as e:
-        print(f"[auth] Email send failed, code for {email}: {code} — {e}")
+        print(f"[auth] Email send failed for {email}: {e}")
     return {"ok": True, "message": "Verification code sent"}
 
 
 @app.post("/api/auth/verify")
-async def auth_verify(req: AuthVerifyRequest):
+async def auth_verify(req: AuthVerifyRequest, request: Request):
     email = req.email.strip().lower()
     if not verify_code(email, req.code):
         raise HTTPException(400, "Invalid or expired code")
@@ -187,7 +206,8 @@ async def auth_verify(req: AuthVerifyRequest):
     track(user["id"], "signup_completed" if is_new else "login", {"new_user": is_new})
     token = create_session(user["id"])
     resp = JSONResponse({"ok": True, "user": _safe_user(user)})
-    resp.set_cookie("session", token, httponly=True, samesite="lax", max_age=30 * 86400)
+    is_secure = request.url.scheme == "https" or os.getenv("FORCE_SECURE_COOKIES") == "1"
+    resp.set_cookie("session", token, httponly=True, samesite="lax", secure=is_secure, max_age=30 * 86400, path="/")
     return resp
 
 
@@ -318,6 +338,8 @@ async def create_topup(req: TopupRequest, request: Request):
     user = _current_user(request)
     if not user:
         raise HTTPException(401, "Sign in first")
+    if user.get("plan") not in ("starter", "daily", "pro"):
+        raise HTTPException(403, "Top-ups require an active subscription.")
 
     customer_id = user.get("stripe_customer_id")
     if not customer_id:
@@ -349,12 +371,13 @@ async def stripe_webhook(request: Request):
     sig = request.headers.get("stripe-signature", "")
 
     try:
-        if config.STRIPE_WEBHOOK_SECRET:
-            event = stripe.Webhook.construct_event(payload, sig, config.STRIPE_WEBHOOK_SECRET)
-        else:
-            event = stripe.Event.construct_from(json.loads(payload), stripe.api_key)
+        if not config.STRIPE_WEBHOOK_SECRET:
+            raise HTTPException(500, "STRIPE_WEBHOOK_SECRET not configured")
+        event = stripe.Webhook.construct_event(payload, sig, config.STRIPE_WEBHOOK_SECRET)
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(400, f"Webhook error: {e}")
+        raise HTTPException(400, f"Webhook signature verification failed: {e}")
 
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
@@ -364,11 +387,8 @@ async def stripe_webhook(request: Request):
             # Top-up (one-time payment)
             topup = meta.get("topup_credits")
             if topup:
-                from webapp.database import get_user_by_id
-                u = get_user_by_id(int(user_id))
-                new_credits = (u["credits"] if u else 0) + int(topup)
-                update_user(int(user_id), credits=new_credits)
-                print(f"[stripe] User {user_id} topped up {topup} credits (now {new_credits})")
+                add_credits(int(user_id), int(topup))
+                print(f"[stripe] User {user_id} topped up {topup} credits")
             else:
                 # Subscription checkout
                 plan_key = meta.get("plan", "starter_monthly")
@@ -798,6 +818,17 @@ async def generate_thumbnail_with_refs(
 # ---------------------------------------------------------------------------
 # Build (recipe-aware + SSE progress)
 # ---------------------------------------------------------------------------
+def _safe_user_path(path_str: str, label: str) -> None:
+    """Validate that a user-supplied path stays inside OUTPUT_DIR."""
+    if not path_str:
+        return
+    resolved = Path(path_str).resolve()
+    if not resolved.is_relative_to(OUTPUT_DIR.resolve()):
+        raise HTTPException(400, f"Invalid {label} path")
+    if not resolved.is_file():
+        raise HTTPException(400, f"{label} file not found")
+
+
 @app.post("/api/build")
 async def start_build(req: BuildRequest, request: Request):
     user = _current_user(request)
@@ -805,18 +836,24 @@ async def start_build(req: BuildRequest, request: Request):
         raise HTTPException(401, "Sign in to continue.")
     user_id = user["id"]
 
-    # Admins render freely (no credit drain) for testing/ops.
-    if not _is_admin_email(user.get("email", "")):
+    _safe_user_path(req.voiceover_path, "voiceover")
+    _safe_user_path(req.thumbnail_path, "thumbnail")
+
+    is_admin = _is_admin_email(user.get("email", ""))
+    credit_deducted = False
+    if not is_admin:
         if not deduct_credit(user_id):
             raise HTTPException(402, "No credits remaining. Upgrade your plan for more videos.")
+        credit_deducted = True
 
-    job_id = str(uuid.uuid4())[:8]
+    job_id = str(uuid.uuid4())
     _jobs[job_id] = {
         "status": "queued",
         "progress": [],
         "result": None,
         "request": req.model_dump(),
         "user_id": user_id,
+        "credit_deducted": credit_deducted,
     }
 
     import threading
@@ -940,6 +977,11 @@ def _run_build(job_id: str, req: BuildRequest):
     except Exception as e:
         job["status"] = "error"
         job["error"] = str(e)
+        try:
+            import sentry_sdk
+            sentry_sdk.capture_exception(e)
+        except Exception:
+            pass
         duration = round(time.time() - started_at, 1)
         err_class = type(e).__name__
         try:
@@ -949,22 +991,32 @@ def _run_build(job_id: str, req: BuildRequest):
         track(user_id or "anon", "render_failed", {
             "recipe": recipe, "duration_sec": duration, "error_class": err_class,
         })
-        if user_id:
+        if user_id and job.get("credit_deducted"):
             refund_credit(user_id)
+            job["credit_deducted"] = False
             print(f"[build] Auto-refunded credit for user {user_id} after build failure")
+
+
+def _get_user_job(job_id: str, request: Request) -> dict:
+    """Validate job exists and belongs to the requesting user."""
+    if job_id not in _jobs:
+        raise HTTPException(404, "Job not found")
+    user = _current_user(request)
+    job = _jobs[job_id]
+    if not user or job.get("user_id") != user["id"]:
+        raise HTTPException(403, "Access denied")
+    return job
 
 
 @app.get("/api/build/{job_id}/progress")
 async def build_progress(job_id: str, request: Request):
-    if job_id not in _jobs:
-        raise HTTPException(404, "Job not found")
+    job = _get_user_job(job_id, request)
 
     async def stream():
         seen = 0
         while True:
             if await request.is_disconnected():
                 break
-            job = _jobs[job_id]
             for msg in job["progress"][seen:]:
                 yield {"event": "progress", "data": json.dumps(msg)}
                 seen += 1
@@ -980,13 +1032,15 @@ async def build_progress(job_id: str, request: Request):
 
 
 @app.delete("/api/build/{job_id}")
-async def cancel_build(job_id: str):
-    if job_id not in _jobs:
-        raise HTTPException(404, "Job not found")
-    job = _jobs[job_id]
+async def cancel_build(job_id: str, request: Request):
+    job = _get_user_job(job_id, request)
     if job["status"] in ("queued", "running"):
         job["status"] = "cancelled"
         job["error"] = "Cancelled by user"
+        if job.get("credit_deducted"):
+            refund_credit(job["user_id"])
+            job["credit_deducted"] = False
+            print(f"[build] Refunded credit on cancel for user {job['user_id']}")
     return {"status": "cancelled"}
 
 
@@ -1395,9 +1449,11 @@ async def test_key(req: KeyTestRequest, admin: dict = Depends(require_admin)):
 # ---------------------------------------------------------------------------
 @app.get("/api/files/{file_path:path}")
 async def serve_file(file_path: str):
-    full = ROOT / file_path
+    full = (ROOT / file_path).resolve()
+    if not full.is_relative_to(ROOT.resolve()):
+        raise HTTPException(403, "Access denied")
     if not full.exists():
-        raise HTTPException(404, f"File not found: {file_path}")
+        raise HTTPException(404, "File not found")
     return FileResponse(str(full))
 
 

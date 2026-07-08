@@ -148,14 +148,25 @@ def _conn():
         conn.close()
 
 
+_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_users_stripe_sub ON users (stripe_sub_id);
+CREATE INDEX IF NOT EXISTS idx_videos_user ON videos (user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_verify_codes_email ON verify_codes (email, used);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions (expires_at);
+CREATE INDEX IF NOT EXISTS idx_render_events_created ON render_events (created_at);
+"""
+
+
 def _init_db():
     schema = _SCHEMA_PG if IS_PG else _SCHEMA_SQLITE
     with _conn() as conn:
         if IS_PG:
             with conn.cursor() as cur:
                 cur.execute(schema)
+                cur.execute(_INDEXES)
         else:
             conn.executescript(schema)
+            conn.executescript(_INDEXES)
 
 
 # -- Users ------------------------------------------------------------------
@@ -220,6 +231,15 @@ def deduct_credit(user_id: int) -> bool:
 def refund_credit(user_id: int) -> None:
     with _conn() as conn:
         conn.cursor().execute(_q("UPDATE users SET credits = credits + 1 WHERE id = ?"), (user_id,))
+
+
+def add_credits(user_id: int, amount: int) -> None:
+    """Atomically add N credits (for top-ups)."""
+    with _conn() as conn:
+        conn.cursor().execute(
+            _q("UPDATE users SET credits = credits + ? WHERE id = ?"),
+            (amount, user_id),
+        )
 
 
 # -- Verification codes -----------------------------------------------------

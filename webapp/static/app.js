@@ -171,6 +171,8 @@ function navigateTo(page) {
     document.getElementById('tools-menu')?.classList.add('hidden');
     document.getElementById('mobile-menu')?.classList.add('hidden');
 
+    if (page === 'history') { try { loadHistory(); } catch(_) {} }
+
     window.location.hash = page;
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -435,6 +437,7 @@ function updateScriptLimitMsg() {
     const limitSpan = document.getElementById('limit-minutes');
     if (limitSpan) limitSpan.textContent = freeMinuteCap();
     msg.classList.add('hidden');
+    msg.style.display = 'none';
 }
 
 let _lengthPromptTimer = null;
@@ -444,13 +447,15 @@ function showLengthUpgradePrompt() {
     const limitSpan = document.getElementById('limit-minutes');
     if (limitSpan) limitSpan.textContent = freeMinuteCap();
     msg.classList.remove('hidden');
+    msg.style.display = 'flex';
     msg.classList.add('limit-pop');
     clearTimeout(_lengthPromptTimer);
     _lengthPromptTimer = setTimeout(() => msg.classList.remove('limit-pop'), 400);
 }
 
 function hideLengthUpgradePrompt() {
-    // keep it visible once shown within the session; do nothing on normal drag
+    const msg = document.getElementById('script-limit-msg');
+    if (msg) { msg.classList.add('hidden'); msg.style.display = 'none'; }
 }
 
 let _pricingBillingCycle = 'monthly';
@@ -577,13 +582,15 @@ async function generateTitles() {
     }
 }
 
+function _esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
 function renderTitles(titles) {
     const list = document.getElementById('titles-list');
     list.innerHTML = '';
     titles.forEach((t, i) => {
         const card = document.createElement('div');
         card.className = 'title-card';
-        card.innerHTML = `<div class="flex items-center gap-3"><span class="text-accent font-bold text-lg">${i + 1}</span><span class="text-gray-100">${t}</span></div>`;
+        card.innerHTML = `<div class="flex items-center gap-3"><span class="text-accent font-bold text-lg">${i + 1}</span><span class="text-gray-100">${_esc(t)}</span></div>`;
         card.addEventListener('click', () => {
             document.querySelectorAll('.title-card').forEach(c => c.classList.remove('selected'));
             card.classList.add('selected');
@@ -608,6 +615,10 @@ function updateNextBtn2() {
 // ---------------------------------------------------------------------------
 async function generateScript() {
     if (!ensureAuth(generateScript)) return;
+    const genBtn = document.getElementById('btn-gen-script');
+    const regenBtn = document.getElementById('btn-regen-script');
+    if (genBtn) setLoading(genBtn, true);
+    if (regenBtn) setLoading(regenBtn, true);
     const loading = document.getElementById('script-loading');
     const editor = document.getElementById('script-editor');
     loading.classList.remove('hidden');
@@ -628,6 +639,8 @@ async function generateScript() {
         alert('Script generation failed: ' + e.message);
     } finally {
         loading.classList.add('hidden');
+        if (genBtn) setLoading(genBtn, false);
+        if (regenBtn) setLoading(regenBtn, false);
     }
 }
 
@@ -1151,7 +1164,13 @@ async function startBuild() {
         showAuthModal();
         return;
     }
-    await cookingManager.start();
+    const btn = document.getElementById('btn-build');
+    if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; }
+    try {
+        await cookingManager.start();
+    } finally {
+        if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+    }
 }
 
 async function showUploadKit(buildResult) {
@@ -1809,6 +1828,7 @@ function hideAuthModal() {
     const modal = document.getElementById('auth-modal');
     modal.classList.add('hidden');
     modal.style.display = 'none';
+    pendingAuthAction = null;
 }
 
 async function authSendCode() {
@@ -1862,6 +1882,7 @@ async function authVerifyCode() {
         updateAuthUI();
         try { window.posthog?.identify(String(currentUser.id), { email: currentUser.email, plan: currentUser.plan }); } catch (_) {}
         hideAuthModal();
+        cookingManager.restore();
         if (pendingAuthAction) {
             const action = pendingAuthAction;
             pendingAuthAction = null;
