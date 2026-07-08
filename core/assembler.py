@@ -199,6 +199,80 @@ def assemble_final(
         return False
 
 
+def _slideshow_from_images(
+    image_paths: list[str],
+    durations: list[float],
+    voiceover_path: str,
+    output_path: str,
+    bg_music_path: str | None = None,
+) -> bool:
+    """One-pass ffmpeg: images + durations + audio → final video.
+
+    Uses the concat demuxer with `duration` per image, avoiding the need to
+    encode each image into a separate clip first (eliminates 3 encode passes).
+    """
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+        for img, dur in zip(image_paths, durations):
+            abs_path = os.path.abspath(img)
+            f.write(f"file '{abs_path}'\n")
+            f.write(f"duration {dur:.4f}\n")
+        # ffmpeg concat demuxer needs the last file repeated without duration
+        if image_paths:
+            f.write(f"file '{os.path.abspath(image_paths[-1])}'\n")
+        list_path = f.name
+
+    if bg_music_path:
+        filter_complex = (
+            "[1:a]volume=1.0[vo];"
+            "[2:a]volume=0.08[bg];"
+            "[vo][bg]amix=inputs=2:duration=first[aout]"
+        )
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0", "-i", list_path,
+            "-i", voiceover_path,
+            "-i", bg_music_path,
+            "-filter_complex", filter_complex,
+            "-vf", f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT},format=yuv420p",
+            "-map", "0:v", "-map", "[aout]",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-r", str(VIDEO_FPS), "-threads", "0",
+            "-c:a", "aac", "-b:a", "192k",
+            "-shortest", "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            output_path,
+        ]
+    else:
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0", "-i", list_path,
+            "-i", voiceover_path,
+            "-vf", f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT},format=yuv420p",
+            "-map", "0:v", "-map", "1:a",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-r", str(VIDEO_FPS), "-threads", "0",
+            "-c:a", "aac", "-b:a", "192k",
+            "-shortest", "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            output_path,
+        ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
+        if result.returncode != 0:
+            print(f"[assembler] slideshow ffmpeg stderr: {result.stderr[-500:]}")
+            return False
+        return os.path.exists(output_path) and os.path.getsize(output_path) > 1000
+    except Exception as e:
+        print(f"[assembler] slideshow exception: {e}")
+        return False
+    finally:
+        try:
+            os.unlink(list_path)
+        except OSError:
+            pass
+
+
 def build_video(
     clip_paths: list[str],
     voiceover_path: str,
@@ -210,46 +284,73 @@ def build_video(
     caption_font_size: str = "Medium",
     caption_position: str = "Bottom",
     progress_callback=None,
+    image_paths: list[str] | None = None,
+    durations: list[float] | None = None,
 ) -> str:
     """
-    Full assembly: concat clips -> overlay audio -> burn subtitles -> export.
-    Returns the path to the final MP4.
+    Full assembly → final MP4.
+
+    If `image_paths` + `durations` are provided, uses a single-pass slideshow
+    encode (images → video + audio in one ffmpeg call). Otherwise falls back
+    to the legacy multi-pass pipeline (clip_paths → concat → assemble).
     """
     out_dir = Path(output_path).parent
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    if progress_callback:
-        progress_callback("Concatenating clips...")
+    # --- Single-pass path (preferred) ---
+    if image_paths and durations:
+        if progress_callback:
+            progress_callback("Assembling video from images (single-pass)...")
 
-    concat_path = str(out_dir / "_concat.mp4")
-    if not concatenate_clips(clip_paths, concat_path):
-        raise RuntimeError("Failed to concatenate clips")
+        pre_caption_output = str(out_dir / "_pre_caption.mp4")
+        ok = _slideshow_from_images(image_paths, durations, voiceover_path, pre_caption_output, bg_music_path)
 
-    if progress_callback:
-        progress_callback("Generating subtitles...")
+        if not ok:
+            print("[assembler] Single-pass failed, falling back to legacy multi-pass")
+            return build_video(
+                clip_paths=clip_paths, voiceover_path=voiceover_path,
+                slots=slots, output_path=output_path,
+                bg_music_path=bg_music_path,
+                caption_style=caption_style, caption_accent=caption_accent,
+                caption_font_size=caption_font_size, caption_position=caption_position,
+                progress_callback=progress_callback,
+                image_paths=None, durations=None,
+            )
+    else:
+        # --- Legacy multi-pass path ---
+        if progress_callback:
+            progress_callback("Concatenating clips...")
 
-    sub_path = str(out_dir / "_subtitles.ass")
-    generate_ass_subtitles(slots, sub_path)
+        concat_path = str(out_dir / "_concat.mp4")
+        if not concatenate_clips(clip_paths, concat_path):
+            raise RuntimeError("Failed to concatenate clips")
 
-    if progress_callback:
-        progress_callback("Assembling final video...")
+        if progress_callback:
+            progress_callback("Generating subtitles...")
 
-    no_caption_output = str(out_dir / "_no_captions.mp4")
+        sub_path = str(out_dir / "_subtitles.ass")
+        generate_ass_subtitles(slots, sub_path)
 
-    if not assemble_final(
-        concat_path, voiceover_path, sub_path, no_caption_output, bg_music_path
-    ):
-        raise RuntimeError("Failed to assemble final video")
+        if progress_callback:
+            progress_callback("Assembling final video...")
 
-    Path(concat_path).unlink(missing_ok=True)
+        pre_caption_output = str(out_dir / "_pre_caption.mp4")
 
+        if not assemble_final(
+            concat_path, voiceover_path, sub_path, pre_caption_output, bg_music_path
+        ):
+            raise RuntimeError("Failed to assemble final video")
+
+        Path(concat_path).unlink(missing_ok=True)
+
+    # --- Captions (both paths converge here) ---
     if caption_style and caption_style != "None":
         if progress_callback:
             progress_callback(f"Burning {caption_style} captions...")
         try:
             from core.captions import burn_captions_simple
             burn_captions_simple(
-                video_path=no_caption_output,
+                video_path=pre_caption_output,
                 output_path=output_path,
                 caption_style=caption_style,
                 accent_color=caption_accent,
@@ -257,17 +358,17 @@ def build_video(
                 position=caption_position,
             )
             if Path(output_path).exists() and Path(output_path).stat().st_size > 0:
-                Path(no_caption_output).unlink(missing_ok=True)
+                Path(pre_caption_output).unlink(missing_ok=True)
             else:
-                print("[assembler] Caption output empty, using ASS-subtitled version")
-                Path(no_caption_output).rename(output_path)
+                print("[assembler] Caption output empty, using pre-caption version")
+                Path(pre_caption_output).rename(output_path)
         except Exception as e:
-            print(f"[assembler] Caption burning failed ({e}), using ASS-subtitled version")
-            if Path(no_caption_output).exists():
+            print(f"[assembler] Caption burning failed ({e}), using pre-caption version")
+            if Path(pre_caption_output).exists():
                 if Path(output_path).exists():
                     Path(output_path).unlink(missing_ok=True)
-                Path(no_caption_output).rename(output_path)
+                Path(pre_caption_output).rename(output_path)
     else:
-        Path(no_caption_output).rename(output_path)
+        Path(pre_caption_output).rename(output_path)
 
     return output_path

@@ -14,6 +14,14 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
 DOWNSUB_KEY = os.getenv("DOWNSUB_KEY", "")
 PIXABAY_KEY = os.getenv("PIXABAY_KEY", "")
 ATLASCLOUD_KEY = os.getenv("ATLASCLOUD_KEY", "")
+# Groq — fast, cheap Whisper transcription API. If set, word-level alignment is
+# offloaded here (large-v3-turbo) instead of running whisper on the local CPU.
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_WHISPER_MODEL = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo")
+# Concept segmentation model (kept configurable so we can trade speed/quality).
+CONCEPT_SEGMENTER_MODEL = os.getenv("CONCEPT_SEGMENTER_MODEL", "gemini-2.5-flash")
+# Illustration generation concurrency (API-bound, safe to raise).
+ILLUSTRATION_WORKERS = int(os.getenv("ILLUSTRATION_WORKERS", "16"))
 RESEND_KEY = os.getenv("RESEND_KEY", "")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY", "")

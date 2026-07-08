@@ -5,6 +5,7 @@ pydantic==2.12.5
 python-dotenv==1.2.2
 google-genai==2.3.0
 google-api-python-client>=2.100.0
+groq>=0.9.0
 anthropic==0.86.0
 httpx==0.28.1
 pillow==12.1.1

@@ -43,6 +43,47 @@ def _normalize(text: str) -> str:
     return re.sub(r'[^\w\s]', '', text.lower()).strip()
 
 
+def _transcribe_groq(audio_path: str) -> list[dict]:
+    """Transcribe via Groq's hosted Whisper (large-v3-turbo). Fast, cheap, better accuracy."""
+    import config
+    from groq import Groq
+
+    client = Groq(api_key=config.GROQ_API_KEY)
+    with open(audio_path, "rb") as f:
+        result = client.audio.transcriptions.create(
+            file=f,
+            model=config.GROQ_WHISPER_MODEL,
+            response_format="verbose_json",
+            timestamp_granularities=["word"],
+            language="en",
+            temperature=0.0,
+        )
+
+    words = []
+    for w in (result.words or []):
+        word_text = w.word if isinstance(w, dict) is False else w.get("word", "")
+        start = w.start if not isinstance(w, dict) else w.get("start", 0)
+        end = w.end if not isinstance(w, dict) else w.get("end", 0)
+        if hasattr(w, "word"):
+            word_text, start, end = w.word, w.start, w.end
+        words.append({"word": word_text.strip(), "start": float(start), "end": float(end)})
+    return words
+
+
+def _transcribe_local(audio_path: str, model_size: str = "base") -> list[dict]:
+    """Transcribe locally with faster-whisper. Fallback when Groq is unavailable."""
+    from faster_whisper import WhisperModel
+
+    model = WhisperModel(model_size, compute_type="int8")
+    segments_iter, info = model.transcribe(audio_path, word_timestamps=True, language="en")
+
+    words = []
+    for seg in segments_iter:
+        for w in (seg.words or []):
+            words.append({"word": w.word.strip(), "start": w.start, "end": w.end})
+    return words
+
+
 def align_script_to_audio(
     script: str,
     audio_path: str,
@@ -54,21 +95,19 @@ def align_script_to_audio(
     Returns (sentence_timestamps, all_words) where each sentence has precise
     start/end times from the audio, plus the raw word list for downstream use.
     """
-    from faster_whisper import WhisperModel
+    import config
 
-    model = WhisperModel(model_size, compute_type="int8")
-    segments_iter, info = model.transcribe(
-        audio_path, word_timestamps=True, language="en"
-    )
-
-    words: list[dict] = []
-    for seg in segments_iter:
-        for w in (seg.words or []):
-            words.append({
-                "word": w.word.strip(),
-                "start": w.start,
-                "end": w.end,
-            })
+    # Prefer Groq (large-v3-turbo, ~5s, zero CPU) → fall back to local whisper.
+    if config.GROQ_API_KEY:
+        try:
+            print("[segmenter] Using Groq Whisper API for alignment...")
+            words = _transcribe_groq(audio_path)
+            print(f"[segmenter] Groq returned {len(words)} words")
+        except Exception as e:
+            print(f"[segmenter] Groq failed ({e}), falling back to local whisper...")
+            words = _transcribe_local(audio_path, model_size)
+    else:
+        words = _transcribe_local(audio_path, model_size)
 
     if not words:
         return [], words

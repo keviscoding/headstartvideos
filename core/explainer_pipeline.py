@@ -134,11 +134,12 @@ def run_explainer_pipeline(
     def _on_gen_progress(completed, total):
         _log(f"  Illustrations: {completed}/{total}")
 
+    import config as _cfg
     results = illustration_gen.generate_batch(
         concepts=concepts,
         output_dir=assets_dir,
         style_ref_path=style_ref_path,
-        max_workers=8,
+        max_workers=getattr(_cfg, "ILLUSTRATION_WORKERS", 16),
         progress_callback=_on_gen_progress,
         hook_cutoff_sec=HOOK_CUTOFF_SEC,
     )
@@ -172,67 +173,43 @@ def run_explainer_pipeline(
          f"({timing['illustration_gen']:.1f}s)")
 
     # ------------------------------------------------------------------
-    # STEP 5: Render static clips (no Ken Burns for explainer style)
+    # STEP 5: Prepare images (normalize, no per-clip encoding)
     # ------------------------------------------------------------------
-    _log("Step 5/6: Rendering static clips...")
+    _log("Step 5/6: Preparing images...")
     t0 = time.time()
 
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    image_paths: list[str] = []
+    image_durations: list[float] = []
+    clip_paths: list[str] = []          # kept for legacy fallback
+    slot_dicts: list[dict] = []
 
-    def _render_one(i: int, concept, result):
+    for i, (concept, result) in enumerate(zip(concepts, results)):
         if not result.success or not os.path.exists(result.image_path):
+            _log(f"  WARNING: Concept {i} has no image, creating placeholder")
             placeholder_path = os.path.join(assets_dir, f"placeholder_{i:04d}.png")
             _create_placeholder(placeholder_path, concept.text)
             img_path = placeholder_path
         else:
             img_path = result.image_path
-        clip_path = os.path.join(clips_dir, f"clip_{i:04d}.mp4")
-        ok = _render_static_clip(image_path=img_path, output_path=clip_path, duration_sec=concept.duration_sec)
-        return i, clip_path, (ok and os.path.exists(clip_path))
 
-    # Encode clips in parallel — each is an independent ffmpeg subprocess, so this
-    # scales with available CPU cores instead of running one at a time. Capped at
-    # 4 so we don't OOM small containers (os.cpu_count() reports the host, not the
-    # container's limit). Override with CLIP_RENDER_WORKERS if you size up.
-    try:
-        _cap = int(os.getenv("CLIP_RENDER_WORKERS", "4"))
-    except ValueError:
-        _cap = 4
-    workers = max(1, min(len(concepts), _cap))
-    rendered: dict[int, tuple[str, bool]] = {}
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        futures = [ex.submit(_render_one, i, c, r) for i, (c, r) in enumerate(zip(concepts, results))]
-        done = 0
-        for fut in as_completed(futures):
-            i, clip_path, ok = fut.result()
-            rendered[i] = (clip_path, ok)
-            done += 1
-            if done % 5 == 0 or done == len(concepts):
-                _log(f"  Clips rendered: {done}/{len(concepts)}")
-
-    clip_paths: list[str] = []
-    slot_dicts: list[dict] = []
-    for i, concept in enumerate(concepts):
-        clip_path, ok = rendered.get(i, ("", False))
-        if ok:
-            clip_paths.append(clip_path)
-            slot_dicts.append({
-                "id": concept.id,
-                "text": concept.text,
-                "start_sec": concept.start_sec,
-                "end_sec": concept.end_sec,
-            })
-        else:
-            _log(f"  WARNING: Clip render failed for concept {i}")
+        _normalize_image(img_path, 1920, 1080)
+        image_paths.append(img_path)
+        image_durations.append(concept.duration_sec)
+        slot_dicts.append({
+            "id": concept.id,
+            "text": concept.text,
+            "start_sec": concept.start_sec,
+            "end_sec": concept.end_sec,
+        })
 
     timing["render"] = time.time() - t0
-    _log(f"  {len(clip_paths)} clips rendered ({timing['render']:.1f}s)")
+    _log(f"  {len(image_paths)} images prepared ({timing['render']:.1f}s)")
 
-    if not clip_paths:
-        raise RuntimeError("No clips were rendered successfully")
+    if not image_paths:
+        raise RuntimeError("No images were prepared successfully")
 
     # ------------------------------------------------------------------
-    # STEP 6: Assembly
+    # STEP 6: Assembly (single-pass: images + audio → video)
     # ------------------------------------------------------------------
     _log("Step 6/6: Assembling final video...")
     t0 = time.time()
@@ -249,6 +226,8 @@ def run_explainer_pipeline(
         caption_font_size=caption_font_size,
         caption_position=caption_position,
         progress_callback=_log,
+        image_paths=image_paths,
+        durations=image_durations,
     )
 
     timing["assembly"] = time.time() - t0

@@ -260,8 +260,9 @@ def segment_into_concepts(
 
     for attempt in range(3):
         try:
+            import config as _cfg
             response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model=getattr(_cfg, "CONCEPT_SEGMENTER_MODEL", "gemini-2.5-flash"),
                 contents=[
                     {"role": "user", "parts": [{"text": prompt + "\n\n" + user_msg}]}
                 ],
