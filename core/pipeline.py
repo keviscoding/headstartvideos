@@ -196,10 +196,7 @@ def run_pipeline(
     ]
     build_video(
         clip_paths, voiceover_path, slot_dicts, output_path,
-        caption_style=caption_style,
-        caption_accent=caption_accent,
-        caption_font_size=caption_font_size,
-        caption_position=caption_position,
+        progress_callback=_log,
     )
     timings["assembly"] = time.time() - t0
     _log(f"  -> Done ({timings['assembly']:.1f}s)")
@@ -391,10 +388,7 @@ def run_cinematic_pipeline(
 
     build_video(
         clip_paths, voiceover_path, slot_dicts, output_path,
-        caption_style=caption_style,
-        caption_accent=caption_accent,
-        caption_font_size=caption_font_size,
-        caption_position=caption_position,
+        progress_callback=_log,
     )
 
     timings["assembly"] = time.time() - t0

@@ -74,7 +74,7 @@ STYLE_PRESETS = {
     "Custom": "",
 }
 
-MAX_CHUNK_CHARS = 4000
+MAX_CHUNK_CHARS = 1500
 
 _TTS_MODELS = [
     "gemini-3.1-flash-tts-preview",
