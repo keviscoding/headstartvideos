@@ -613,6 +613,13 @@
                 <button onclick="openStripePortal()" class="btn-primary" style="font-size: 14px; padding: 10px 20px;">Manage in Stripe →</button>
             </div>
 
+            <!-- Trial: Start plan now (trial users) -->
+            <div id="billing-trial-section" style="display:none; background: var(--app-surface); border: 1px solid var(--accent, #6c5ce7); border-radius: var(--radius-card); padding: 24px; margin-bottom: 20px;">
+                <h3 style="font-family: var(--font-display); font-size: 16px; font-weight: 700; margin-bottom: 4px;">Ready to go full speed?</h3>
+                <p style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-2); margin-bottom: 16px;">End your trial now and unlock your full credit allocation immediately. You'll be billed right away.</p>
+                <button onclick="endTrialNow()" class="btn-primary" style="font-size: 14px; padding: 10px 20px;">Start plan now →</button>
+            </div>
+
             <!-- Upgrade (free users) -->
             <div id="billing-upgrade-section" style="background: var(--app-surface); border: 1px solid var(--app-border); border-radius: var(--radius-card); padding: 24px; margin-bottom: 20px;">
                 <h3 style="font-family: var(--font-display); font-size: 16px; font-weight: 700; margin-bottom: 4px;">Start your free trial</h3>

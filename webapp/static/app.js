@@ -47,7 +47,11 @@ window.fetch = async function (input, init) {
                 if (typeof updateAuthUI === 'function') updateAuthUI();
                 if (typeof showAuthModal === 'function') showAuthModal();
             } else if (res.status === 402) {
-                if (typeof showPricingModal === 'function') showPricingModal();
+                if (typeof isTrialUser === 'function' && isTrialUser()) {
+                    if (typeof showTrialExhaustedModal === 'function') showTrialExhaustedModal();
+                } else {
+                    if (typeof showPricingModal === 'function') showPricingModal();
+                }
             }
         }
     } catch (_) { /* ignore */ }
@@ -64,6 +68,10 @@ function ensureAuth(retry) {
     }
     if (!isPaidUser()) {
         showPricingModal();
+        return false;
+    }
+    if (isTrialUser() && (currentUser.credits || 0) <= 0) {
+        showTrialExhaustedModal();
         return false;
     }
     return true;
@@ -433,7 +441,11 @@ function selectNiche(niche, card) {
 }
 
 function isPaidUser() {
-    return currentUser && ['pro', 'starter', 'daily'].includes(currentUser.plan);
+    return currentUser && ['pro', 'starter', 'daily', 'starter_trial', 'daily_trial'].includes(currentUser.plan);
+}
+
+function isTrialUser() {
+    return currentUser && ['starter_trial', 'daily_trial'].includes(currentUser.plan);
 }
 
 function freeMinuteCap() {
@@ -478,7 +490,7 @@ function showPricingModal() {
 
     const topupRow = document.getElementById('topup-row');
     if (topupRow) {
-        if (isPaidUser()) { topupRow.classList.remove('hidden'); }
+        if (isPaidUser() && !isTrialUser()) { topupRow.classList.remove('hidden'); }
         else { topupRow.classList.add('hidden'); }
     }
     track('upgrade_viewed');
@@ -488,6 +500,63 @@ function hidePricingModal() {
     const modal = document.getElementById('pricing-modal');
     modal.classList.add('hidden');
     modal.style.display = 'none';
+}
+
+function showTrialExhaustedModal() {
+    const existing = document.getElementById('trial-exhausted-modal');
+    if (existing) { existing.style.display = 'flex'; return; }
+
+    const tierLabel = currentUser.plan === 'daily_trial' ? 'Daily' : 'Starter';
+    const credits = currentUser.plan === 'daily_trial' ? 35 : 15;
+    const price = currentUser.plan === 'daily_trial' ? '$49' : '$27';
+
+    const modal = document.createElement('div');
+    modal.id = 'trial-exhausted-modal';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.7);';
+    modal.innerHTML = `
+        <div style="background:var(--bg-card,#1a1a2e);border-radius:16px;padding:32px;max-width:420px;width:90%;text-align:center;position:relative;">
+            <button onclick="hideTrialExhaustedModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;color:var(--text-secondary,#aaa);font-size:20px;cursor:pointer;">&times;</button>
+            <div style="font-size:40px;margin-bottom:12px;">🎬</div>
+            <h3 style="margin:0 0 8px;color:var(--text-primary,#fff);font-size:20px;">You've used your 3 trial videos</h3>
+            <p style="color:var(--text-secondary,#aaa);margin:0 0 24px;font-size:14px;line-height:1.5;">
+                Start your <strong>${tierLabel}</strong> plan now to unlock <strong>${credits} videos/month</strong> at ${price}/mo, or wait until your trial ends.
+            </p>
+            <button onclick="endTrialNow()" style="width:100%;padding:14px;border:none;border-radius:10px;background:var(--accent,#6c5ce7);color:#fff;font-size:16px;font-weight:600;cursor:pointer;margin-bottom:10px;">
+                Start plan now — ${credits} videos
+            </button>
+            <button onclick="hideTrialExhaustedModal()" style="width:100%;padding:12px;border:1px solid var(--border,#333);border-radius:10px;background:transparent;color:var(--text-secondary,#aaa);font-size:14px;cursor:pointer;">
+                I'll wait
+            </button>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    track('trial_exhausted_viewed');
+}
+
+function hideTrialExhaustedModal() {
+    const modal = document.getElementById('trial-exhausted-modal');
+    if (modal) modal.style.display = 'none';
+}
+
+async function endTrialNow() {
+    const btn = document.querySelector('#trial-exhausted-modal button');
+    if (btn) { btn.disabled = true; btn.textContent = 'Activating...'; }
+
+    try {
+        const resp = await fetch('/api/billing/end-trial', { method: 'POST' });
+        if (!resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            alert(data.detail || 'Could not end trial. Please try again.');
+            return;
+        }
+        hideTrialExhaustedModal();
+        await refreshUserData();
+        track('trial_ended_early');
+    } catch (e) {
+        alert('Network error. Please try again.');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Start plan now'; }
+    }
 }
 
 function setPricingPlan(cycle) {
@@ -1767,6 +1836,19 @@ async function checkAuth() {
     }
 }
 
+async function refreshUserData() {
+    try {
+        const res = await _origFetch('/api/auth/me');
+        const data = await res.json();
+        if (data.user) {
+            currentUser = data.user;
+            updateAuthUI();
+        }
+    } catch (e) {
+        console.error('Refresh user data failed:', e);
+    }
+}
+
 function updateAuthUI() {
     const loginBtn = document.getElementById('btn-login');
     const userBtn = document.getElementById('btn-user-menu');
@@ -1789,10 +1871,15 @@ function updateAuthUI() {
         userBtn.classList.remove('hidden');
         userBtn.textContent = currentUser.email[0].toUpperCase();
         document.getElementById('user-email-display').textContent = currentUser.email;
-        const planLabels = { free: 'Free trial', starter: 'Starter', daily: 'Daily', pro: 'Pro' };
+        const planLabels = { free: 'Free', starter: 'Starter', daily: 'Daily', pro: 'Pro', starter_trial: 'Starter (trial)', daily_trial: 'Daily (trial)' };
         document.getElementById('user-plan-display').textContent = planLabels[currentUser.plan] || currentUser.plan;
-        document.getElementById('credits-count').textContent = currentUser.credits + ' credits';
-        document.getElementById('credits-plan').textContent = currentUser.plan === 'free' ? 'trial' : (planLabels[currentUser.plan] || 'pro').toLowerCase();
+        if (isTrialUser()) {
+            document.getElementById('credits-count').textContent = currentUser.credits + ' of 3 trial';
+            document.getElementById('credits-plan').textContent = 'videos';
+        } else {
+            document.getElementById('credits-count').textContent = currentUser.credits + ' credits';
+            document.getElementById('credits-plan').textContent = currentUser.plan === 'free' ? '' : (planLabels[currentUser.plan] || '').toLowerCase();
+        }
         creditsDisplay.classList.remove('hidden');
         const isFree = !isPaidUser() && !currentUser.is_admin;
         if (navUpgrade) navUpgrade.classList.toggle('hidden', !isFree);
@@ -1931,23 +2018,36 @@ async function handleLogout() {
 // ---------------------------------------------------------------------------
 function loadBillingPage() {
     if (!currentUser) return;
-    const planLabels = { free: 'Free', starter: 'Starter', daily: 'Daily', pro: 'Pro' };
+    const planLabels = { free: 'Free', starter: 'Starter', daily: 'Daily', pro: 'Pro', starter_trial: 'Starter (trial)', daily_trial: 'Daily (trial)' };
     document.getElementById('billing-plan-name').textContent = planLabels[currentUser.plan] || currentUser.plan;
-    document.getElementById('billing-credits').textContent = currentUser.credits;
+    if (isTrialUser()) {
+        document.getElementById('billing-credits').textContent = currentUser.credits + ' of 3 trial videos';
+    } else {
+        document.getElementById('billing-credits').textContent = currentUser.credits;
+    }
 
     const paid = isPaidUser();
+    const trial = isTrialUser();
     const topupSec = document.getElementById('billing-topup-section');
     const manageSec = document.getElementById('billing-manage-section');
     const upgradeSec = document.getElementById('billing-upgrade-section');
+    const trialSec = document.getElementById('billing-trial-section');
 
-    if (paid) {
+    if (paid && !trial) {
         topupSec.classList.remove('hidden');
         manageSec.classList.remove('hidden');
         upgradeSec.style.display = 'none';
+        if (trialSec) trialSec.style.display = 'none';
+    } else if (trial) {
+        topupSec.classList.add('hidden');
+        manageSec.classList.remove('hidden');
+        upgradeSec.style.display = 'none';
+        if (trialSec) trialSec.style.display = '';
     } else {
         topupSec.classList.add('hidden');
         manageSec.classList.add('hidden');
         upgradeSec.style.display = '';
+        if (trialSec) trialSec.style.display = 'none';
     }
 }
 

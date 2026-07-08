@@ -141,7 +141,7 @@ def require_active_plan(request: Request) -> dict:
     user = require_user(request)
     if _is_admin_email(user.get("email", "")):
         return user
-    if user.get("plan") not in ("starter", "daily", "pro"):
+    if user.get("plan") not in ("starter", "daily", "pro", "starter_trial", "daily_trial"):
         raise HTTPException(402, "Start your free trial to generate videos.")
     return user
 
@@ -250,7 +250,7 @@ def _is_pro(user: dict | None) -> bool:
         return False
     if _is_admin_email(user.get("email", "")):
         return True
-    return user.get("plan") in ("pro", "starter", "daily")
+    return user.get("plan") in ("pro", "starter", "daily", "starter_trial", "daily_trial")
 
 
 def _safe_user(u: dict) -> dict:
@@ -414,11 +414,10 @@ async def stripe_webhook(request: Request):
                 print(f"[stripe] User {user_id} topped up {topup} credits")
             else:
                 plan_key = meta.get("plan", "starter_monthly")
-                credits = _PLAN_CREDITS.get(plan_key, 15)
-                plan_label = "daily" if "daily" in plan_key else "starter"
-                update_user(int(user_id), plan=plan_label, credits=credits,
+                plan_label = "daily_trial" if "daily" in plan_key else "starter_trial"
+                update_user(int(user_id), plan=plan_label, credits=3,
                             stripe_sub_id=obj.get("subscription", ""))
-                print(f"[stripe] User {user_id} subscribed to {plan_label} ({credits} credits)")
+                print(f"[stripe] User {user_id} started trial ({plan_label}, 3 credits)")
 
     elif evt_type == "invoice.paid":
         sub_id = obj.get("subscription")
@@ -426,9 +425,15 @@ async def stripe_webhook(request: Request):
             row = get_user_by_sub_id(sub_id)
             if row:
                 plan = row.get("plan", "starter")
-                credits = 35 if plan == "daily" else 15
-                update_user(row["id"], credits=credits)
-                print(f"[stripe] Refilled {credits} credits for user {row['id']} ({plan})")
+                if plan in ("starter_trial", "daily_trial"):
+                    new_plan = "daily" if "daily" in plan else "starter"
+                    credits = 35 if new_plan == "daily" else 15
+                    update_user(row["id"], plan=new_plan, credits=credits)
+                    print(f"[stripe] Trial converted: user {row['id']} → {new_plan} ({credits} credits)")
+                else:
+                    credits = 35 if plan == "daily" else 15
+                    update_user(row["id"], credits=credits)
+                    print(f"[stripe] Refilled {credits} credits for user {row['id']} ({plan})")
 
     elif evt_type in ("customer.subscription.deleted", "customer.subscription.updated"):
         sub_id = obj.get("id")
@@ -480,6 +485,33 @@ async def create_portal_session(request: Request):
     except Exception as e:
         print(f"[stripe] Portal session failed: {e}")
         raise HTTPException(500, f"Could not open billing portal: {e}")
+
+
+@app.post("/api/billing/end-trial")
+async def end_trial_early(request: Request):
+    """End the 7-day trial immediately and start billing (grants full credits)."""
+    import stripe
+    if not config.STRIPE_SECRET_KEY:
+        raise HTTPException(500, "Stripe not configured")
+    stripe.api_key = config.STRIPE_SECRET_KEY
+
+    user = _current_user(request)
+    if not user:
+        raise HTTPException(401, "Sign in first")
+    if user.get("plan") not in ("starter_trial", "daily_trial"):
+        raise HTTPException(400, "No active trial to end.")
+
+    sub_id = user.get("stripe_sub_id")
+    if not sub_id:
+        raise HTTPException(400, "No subscription found.")
+
+    try:
+        stripe.Subscription.modify(sub_id, trial_end="now")
+        print(f"[stripe] Trial ended early for user {user['id']} (sub {sub_id})")
+        return {"ok": True, "message": "Trial ended. Your plan is now active."}
+    except Exception as e:
+        print(f"[stripe] End trial failed: {e}")
+        raise HTTPException(500, f"Could not end trial: {e}")
 
 
 CURATED_VOICES = [
@@ -1284,7 +1316,7 @@ RETENTION_PAID_DAYS = 30
 def _retention_days(request: Request | None = None) -> int:
     if request:
         user = _current_user(request)
-        if user and user.get("plan") in ("pro", "starter", "daily"):
+        if user and user.get("plan") in ("pro", "starter", "daily", "starter_trial", "daily_trial"):
             return RETENTION_PAID_DAYS
     return RETENTION_FREE_DAYS
 
