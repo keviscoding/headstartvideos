@@ -191,8 +191,14 @@ def run_explainer_pipeline(
         return i, clip_path, (ok and os.path.exists(clip_path))
 
     # Encode clips in parallel — each is an independent ffmpeg subprocess, so this
-    # scales with available CPU cores instead of running one at a time.
-    workers = min(len(concepts), max(2, (os.cpu_count() or 2)))
+    # scales with available CPU cores instead of running one at a time. Capped at
+    # 4 so we don't OOM small containers (os.cpu_count() reports the host, not the
+    # container's limit). Override with CLIP_RENDER_WORKERS if you size up.
+    try:
+        _cap = int(os.getenv("CLIP_RENDER_WORKERS", "4"))
+    except ValueError:
+        _cap = 4
+    workers = max(1, min(len(concepts), _cap))
     rendered: dict[int, tuple[str, bool]] = {}
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futures = [ex.submit(_render_one, i, c, r) for i, (c, r) in enumerate(zip(concepts, results))]

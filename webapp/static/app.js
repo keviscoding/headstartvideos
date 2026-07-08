@@ -843,9 +843,13 @@ const cookingManager = {
     },
 
     _connect() {
+        // Reset per-connection state so a reconnect replay doesn't duplicate the
+        // log or inflate the progress bar (the server replays from the start).
+        this.msgCount = 0;
         this.evtSrc = new EventSource(`/api/build/${this.jobId}/progress`);
         const progressBar = document.getElementById('progress-bar');
         const progressLog = document.getElementById('progress-log');
+        if (progressLog) progressLog.innerHTML = '';
 
         this.evtSrc.addEventListener('progress', (e) => {
             this.msgCount++;
@@ -880,15 +884,26 @@ const cookingManager = {
         });
 
         this.evtSrc.addEventListener('error', (e) => {
-            if (e.data) {
-                const err = JSON.parse(e.data).error || 'Unknown error';
+            // Explicit server-sent error event → the render genuinely failed.
+            if (e && e.data) {
+                let err = 'Unknown error';
+                try { err = JSON.parse(e.data).error || err; } catch (_) {}
+                try { this.evtSrc && this.evtSrc.close(); } catch (_) {}
+                this.evtSrc = null;
+                this.jobId = null;
+                this._clear();
+                this._hideCookingBar();
                 alert('Build failed: ' + err);
+                return;
             }
-            this.evtSrc.close();
+            // Transient disconnect (idle timeout / LB / network). The render keeps
+            // running server-side — reconnect and replay instead of giving up.
+            try { this.evtSrc && this.evtSrc.close(); } catch (_) {}
             this.evtSrc = null;
-            this.jobId = null;
-            this._clear();
-            this._hideCookingBar();
+            if (this.jobId && !this.result) {
+                clearTimeout(this._reconnectTimer);
+                this._reconnectTimer = setTimeout(() => this._reattach(), 2500);
+            }
         });
     },
 
@@ -907,21 +922,29 @@ const cookingManager = {
         let saved;
         try { saved = JSON.parse(localStorage.getItem('cr_active_job') || 'null'); } catch (_) { saved = null; }
         if (!saved || !saved.jobId) return;
-
         this.jobId = saved.jobId;
         this.title = saved.title || 'your video';
+        this._reattach();
+    },
 
+    // Check the job's real state, then either finish, stop, or reconnect the
+    // live stream. Shared by page-load restore and transient SSE reconnects.
+    async _reattach() {
+        if (!this.jobId || this.result) return;
         let res;
         try {
             res = await fetch(`/api/build/${this.jobId}/result`);
         } catch (_) {
-            return; // network hiccup — leave saved, try again next load
+            clearTimeout(this._reconnectTimer);
+            this._reconnectTimer = setTimeout(() => this._reattach(), 3000);
+            return;
         }
 
         if (res.status === 404) {
-            // Job no longer exists on the server (server restarted/redeployed).
+            // Job no longer exists (server restarted/redeployed) — truly lost.
             this.jobId = null;
             this._clear();
+            this._hideCookingBar();
             showRenderLostNotice();
             return;
         }
@@ -932,12 +955,18 @@ const cookingManager = {
             state.videoUrl = data.output_url;
             state.videoPath = data.output_path;
             this._clear();
-            this._showToast();
+            this._hideCookingBar();
+            if (state.page === 'pipeline' && state.step === 6) {
+                showUploadKit(data);
+            } else {
+                this._showToast();
+            }
             return;
         }
         if (data && (data.status === 'error' || data.status === 'cancelled')) {
             this.jobId = null;
             this._clear();
+            this._hideCookingBar();
             return;
         }
         // Still running / queued — show the bar and reconnect the live stream.
