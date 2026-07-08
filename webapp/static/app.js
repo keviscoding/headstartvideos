@@ -1632,6 +1632,8 @@ document.addEventListener('click', (e) => {
 });
 
 function showAuthModal() {
+    // Never nag an already-signed-in user (guards against stray background 401s).
+    if (currentUser) return;
     const modal = document.getElementById('auth-modal');
     modal.classList.remove('hidden');
     modal.style.display = 'flex';
