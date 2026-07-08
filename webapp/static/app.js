@@ -1024,6 +1024,8 @@ async function showUploadKit(buildResult) {
         document.getElementById('kit-thumb-wrap').classList.add('hidden');
     }
     document.getElementById('kit-title').textContent = state.title;
+    const isFree = !currentUser || currentUser.plan === 'free';
+    document.getElementById('trial-watermark-note')?.classList.toggle('hidden', !isFree);
     const videoId = buildResult.video_id || null;
     try {
         const res = await fetch('/api/upload-kit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: state.title, script: state.script, niche: state.niche }) });

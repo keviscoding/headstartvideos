@@ -137,11 +137,28 @@ class AuthVerifyRequest(BaseModel):
     code: str
 
 
+# Deletes the lazy majority of trial-farming at zero cost to honest users.
+_DISPOSABLE_EMAIL_DOMAINS = {
+    "mailinator.com", "guerrillamail.com", "guerrillamail.info", "sharklasers.com",
+    "grr.la", "10minutemail.com", "10minutemail.net", "temp-mail.org", "tempmail.com",
+    "tempmailo.com", "throwawaymail.com", "yopmail.com", "yopmail.fr", "getnada.com",
+    "trashmail.com", "trashmail.de", "maildrop.cc", "dispostable.com", "mailnesia.com",
+    "fakeinbox.com", "spam4.me", "mohmal.com", "emailondeck.com", "moakt.com",
+    "mailcatch.com", "tempinbox.com", "burnermail.io", "temp-mail.io", "mintemail.com",
+    "1secmail.com", "1secmail.org", "1secmail.net", "mailtemp.net", "tempr.email",
+    "discard.email", "einrot.com", "spambog.com", "harakirimail.com", "inboxbear.com",
+    "vomoto.com", "tafmail.com", "byom.de", "gishpuppy.com", "mytemp.email",
+}
+
+
 @app.post("/api/auth/send-code")
 async def auth_send_code(req: AuthSendCodeRequest):
     email = req.email.strip().lower()
-    if not email or "@" not in email:
+    if not email or "@" not in email or email.count("@") != 1 or "." not in email.split("@")[1]:
         raise HTTPException(400, "Invalid email")
+    domain = email.split("@")[1]
+    if domain in _DISPOSABLE_EMAIL_DOMAINS:
+        raise HTTPException(400, "Please use a permanent email address — temporary inboxes aren't supported.")
     code = create_verify_code(email)
     try:
         from webapp.email_service import send_verification_code
@@ -767,6 +784,23 @@ def _run_build(job_id: str, req: BuildRequest):
         else:
             raise ValueError(f"Unknown recipe: {recipe}")
 
+        # Trial watermark: FREE renders carry a burned-in channelrecipe.com bug;
+        # paid renders stay pristine. Failure falls back to the clean file.
+        is_pro = False
+        if user_id:
+            try:
+                u = get_user_by_id(user_id)
+                is_pro = bool(u and u.get("plan") and u["plan"] != "free")
+            except Exception:
+                is_pro = False
+        if not is_pro:
+            try:
+                from core.watermark import apply_watermark
+                on_progress("Adding ChannelRecipe watermark (free trial)…")
+                result["output_path"] = apply_watermark(result["output_path"])
+            except Exception as wm_err:
+                print(f"[watermark] failed, shipping clean render: {wm_err}")
+
         # Persist the finished video (and thumbnail) to durable storage.
         ts = int(time.time())
         try:
@@ -895,12 +929,28 @@ async def build_result(job_id: str):
 # ---------------------------------------------------------------------------
 # Upload Kit
 # ---------------------------------------------------------------------------
+# Trial outputs carry a clickable, measurable attribution line in the default
+# description — the only trackable layer of the distribution loop.
+_TRIAL_ATTRIBUTION = (
+    "\n\n———\nMade with ChannelRecipe → "
+    "https://channelrecipe.com/?utm_source=youtube&utm_medium=description&utm_campaign=trial"
+)
+
+
+def _maybe_attribute(kit: dict, user: dict) -> dict:
+    if user and user.get("plan") == "free":
+        desc = (kit.get("description") or "").rstrip()
+        if "channelrecipe.com" not in desc:
+            kit["description"] = desc + _TRIAL_ATTRIBUTION
+    return kit
+
+
 @app.post("/api/upload-kit")
 async def generate_upload_kit(req: UploadKitRequest, user: dict = Depends(require_user)):
     from google import genai
 
     if not config.GEMINI_KEY:
-        return {"description": f"Check out this video: {req.title}", "tags": ["youtube", "video"]}
+        return _maybe_attribute({"description": f"Check out this video: {req.title}", "tags": ["youtube", "video"], "hashtags": []}, user)
 
     client = genai.Client(api_key=config.GEMINI_KEY)
     prompt = (
@@ -914,9 +964,9 @@ async def generate_upload_kit(req: UploadKitRequest, user: dict = Depends(requir
     try:
         resp = client.models.generate_content(model="gemini-2.5-flash", contents=[{"role": "user", "parts": [{"text": prompt}]}])
         raw = resp.text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-        return json.loads(raw)
+        return _maybe_attribute(json.loads(raw), user)
     except Exception:
-        return {"description": f"Check out this video: {req.title}", "tags": ["youtube", "video"], "hashtags": []}
+        return _maybe_attribute({"description": f"Check out this video: {req.title}", "tags": ["youtube", "video"], "hashtags": []}, user)
 
 
 # ---------------------------------------------------------------------------

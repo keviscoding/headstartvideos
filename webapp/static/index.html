@@ -212,8 +212,8 @@
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
                             </div>
                             <div style="flex: 1;">
-                                <p style="font-family: var(--font-display); font-weight: 700; font-size: 14px; color: var(--app-ink);">Want longer videos?</p>
-                                <p style="font-family: var(--font-body); font-size: 12px; color: var(--app-ink-2); margin-top: 1px;">Free plan caps at <span id="limit-minutes">8</span> min. Go Pro for videos up to 20 minutes.</p>
+                                <p style="font-family: var(--font-display); font-weight: 700; font-size: 14px; color: var(--app-ink);">Want longer, watermark-free videos?</p>
+                                <p style="font-family: var(--font-body); font-size: 12px; color: var(--app-ink-2); margin-top: 1px;">Free plan caps at <span id="limit-minutes">8</span> min and watermarks output. Go Pro: up to 20 min, no watermark, 15 videos/mo.</p>
                             </div>
                             <button onclick="upgradeToPro()" class="btn-primary" style="flex: none; font-size: 13px; padding: 8px 16px;">Upgrade</button>
                         </div>
@@ -420,6 +420,16 @@
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
                                     Download Upload Kit
                                 </a>
+                            </div>
+                            <div id="trial-watermark-note" class="hidden" style="margin: 0 16px 16px; background: linear-gradient(135deg, var(--accent-soft-dark), rgba(109,90,224,0.12)); border: 1px solid var(--accent); border-radius: var(--radius-md); padding: 14px 16px; display: flex; align-items: center; gap: 12px;">
+                                <div style="flex: none; width: 36px; height: 36px; border-radius: 10px; background: var(--accent); display: flex; align-items: center; justify-content: center;">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                                </div>
+                                <div style="flex: 1;">
+                                    <p style="font-family: var(--font-display); font-weight: 700; font-size: 14px; color: var(--app-ink);">Your free video has a ChannelRecipe watermark</p>
+                                    <p style="font-family: var(--font-body); font-size: 12px; color: var(--app-ink-2); margin-top: 1px;">Go Pro for clean, watermark-free videos — 15 a month, under $2 each.</p>
+                                </div>
+                                <button onclick="upgradeToPro()" class="btn-primary" style="flex: none; font-size: 13px; padding: 8px 16px;">Remove it</button>
                             </div>
                         </div>
                         <div class="space-y-4">
