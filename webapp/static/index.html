@@ -59,6 +59,7 @@
                 </nav>
             </div>
             <div class="flex items-center gap-3">
+                <button id="nav-upgrade-btn" class="hidden" onclick="showPricingModal()" style="background: var(--accent); color: white; border: none; border-radius: 99px; padding: 5px 14px; font-family: var(--font-body); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;">Upgrade</button>
                 <div class="credits-chip" id="credits-display">
                     <span class="dot"></span>
                     <span id="credits-count" style="color: var(--app-ink); font-weight: 500;">3 credits</span>
@@ -104,6 +105,7 @@
                 <span id="cooking-bar-status" class="cr-mono" style="font-size: 11px; color: var(--app-ink-3);"></span>
             </div>
             <div class="flex items-center gap-2">
+                <button id="cooking-upgrade-btn" class="hidden" onclick="showPricingModal()" style="background: transparent; border: 1px solid var(--accent); color: var(--accent); border-radius: 99px; padding: 4px 12px; font-family: var(--font-body); font-size: 11px; font-weight: 600; cursor: pointer; white-space: nowrap;">Skip the queue →</button>
                 <button onclick="cookingManager.viewProgress()" class="btn-ghost" style="font-size: 12px; padding: 4px 10px;">View</button>
                 <button onclick="cookingManager.cancel()" class="btn-ghost" style="font-size: 12px; padding: 4px 10px; color: var(--error);">Cancel</button>
             </div>
@@ -215,7 +217,7 @@
                                 <p style="font-family: var(--font-display); font-weight: 700; font-size: 14px; color: var(--app-ink);">Want longer, watermark-free videos?</p>
                                 <p style="font-family: var(--font-body); font-size: 12px; color: var(--app-ink-2); margin-top: 1px;">Free plan caps at <span id="limit-minutes">8</span> min and watermarks output. Go Pro: up to 20 min, no watermark, 15 videos/mo.</p>
                             </div>
-                            <button onclick="upgradeToPro()" class="btn-primary" style="flex: none; font-size: 13px; padding: 8px 16px;">Upgrade</button>
+                            <button onclick="showPricingModal()" class="btn-primary" style="flex: none; font-size: 13px; padding: 8px 16px;">Upgrade</button>
                         </div>
                         <div id="script-loading" class="text-center py-12 hidden">
                             <div class="cr-spinner mx-auto mb-4"></div>
@@ -429,7 +431,7 @@
                                     <p style="font-family: var(--font-display); font-weight: 700; font-size: 14px; color: var(--app-ink);">Your free video has a ChannelRecipe watermark</p>
                                     <p style="font-family: var(--font-body); font-size: 12px; color: var(--app-ink-2); margin-top: 1px;">Go Pro for clean, watermark-free videos — 15 a month, under $2 each.</p>
                                 </div>
-                                <button onclick="upgradeToPro()" class="btn-primary" style="flex: none; font-size: 13px; padding: 8px 16px;">Remove it</button>
+                                <button onclick="showPricingModal()" class="btn-primary" style="flex: none; font-size: 13px; padding: 8px 16px;">Remove it</button>
                             </div>
                         </div>
                         <div class="space-y-4">
@@ -606,6 +608,58 @@
     </footer>
 
     <!-- Auth Modal -->
+    <!-- Pricing modal -->
+    <div id="pricing-modal" class="hidden" style="position: fixed; inset: 0; z-index: 190; display: none; align-items: center; justify-content: center;">
+        <div style="position: absolute; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);" onclick="hidePricingModal()"></div>
+        <div style="position: relative; background: var(--app-surface); border: 1px solid var(--app-border); border-radius: var(--radius-card); padding: 0; width: 100%; max-width: 480px; margin: 16px; overflow: hidden;">
+            <button onclick="hidePricingModal()" style="position: absolute; top: 12px; right: 12px; background: none; border: none; color: var(--app-ink-3); cursor: pointer; z-index: 2;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            </button>
+            <div style="padding: 32px 28px 24px; text-align: center;">
+                <h2 class="cr-display" style="font-size: 24px; margin-bottom: 6px;">Upgrade to Pro</h2>
+                <p style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2);">Make more videos, faster.</p>
+                <!-- Toggle -->
+                <div id="pricing-toggle" style="display: inline-flex; background: var(--app-bg); border-radius: 99px; padding: 3px; margin-top: 18px; border: 1px solid var(--app-border);">
+                    <button id="pricing-monthly-btn" onclick="setPricingPlan('monthly')" style="padding: 6px 18px; border-radius: 99px; border: none; font-family: var(--font-body); font-size: 13px; font-weight: 600; cursor: pointer; background: var(--accent); color: white; transition: all 0.2s;">Monthly</button>
+                    <button id="pricing-annual-btn" onclick="setPricingPlan('annual')" style="padding: 6px 18px; border-radius: 99px; border: none; font-family: var(--font-body); font-size: 13px; font-weight: 600; cursor: pointer; background: transparent; color: var(--app-ink-3); transition: all 0.2s;">Annual <span style="color: var(--success); font-size: 11px;">Save 33%</span></button>
+                </div>
+            </div>
+            <div style="padding: 0 28px 28px;">
+                <div style="background: var(--app-bg); border: 1px solid var(--app-border); border-radius: var(--radius-md); padding: 24px; text-align: center;">
+                    <div style="display: flex; align-items: baseline; justify-content: center; gap: 4px; margin-bottom: 4px;">
+                        <span id="pricing-amount" class="cr-display" style="font-size: 42px;">$27</span>
+                        <span id="pricing-period" style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-3);">/month</span>
+                    </div>
+                    <p id="pricing-note" style="font-family: var(--font-mono); font-size: 12px; color: var(--app-ink-3); margin-bottom: 20px;">Under $2 per video</p>
+                    <ul style="list-style: none; padding: 0; margin: 0 0 20px; text-align: left;">
+                        <li style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink); padding: 7px 0; display: flex; align-items: center; gap: 10px;">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="var(--accent)" opacity="0.15"/><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                            <span><strong>15 videos</strong> per month</span>
+                        </li>
+                        <li style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink); padding: 7px 0; display: flex; align-items: center; gap: 10px;">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="var(--accent)" opacity="0.15"/><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                            <span>Videos up to <strong>20 minutes</strong></span>
+                        </li>
+                        <li style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink); padding: 7px 0; display: flex; align-items: center; gap: 10px;">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="var(--accent)" opacity="0.15"/><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                            <span><strong>Priority</strong> render queue</span>
+                        </li>
+                        <li style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink); padding: 7px 0; display: flex; align-items: center; gap: 10px;">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="var(--accent)" opacity="0.15"/><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                            <span>All video recipes</span>
+                        </li>
+                        <li style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink); padding: 7px 0; display: flex; align-items: center; gap: 10px;">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="var(--accent)" opacity="0.15"/><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                            <span>Full upload kit with every video</span>
+                        </li>
+                    </ul>
+                    <button id="pricing-cta-btn" onclick="proceedToCheckout()" class="btn-primary w-full" style="font-size: 15px; padding: 12px 0;">Start Pro — $27/mo</button>
+                    <p style="font-family: var(--font-mono); font-size: 11px; color: var(--app-ink-3); margin-top: 10px;">Cancel anytime. No long-term commitment.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div id="auth-modal" class="hidden" style="position: fixed; inset: 0; z-index: 200; display: none; align-items: center; justify-content: center;">
         <div style="position: absolute; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);" onclick="hideAuthModal()"></div>
         <div style="position: relative; background: var(--app-surface); border: 1px solid var(--app-border); border-radius: var(--radius-card); padding: 32px; width: 100%; max-width: 380px; margin: 16px;">

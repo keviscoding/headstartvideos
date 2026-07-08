@@ -446,7 +446,60 @@ function hideLengthUpgradePrompt() {
     // keep it visible once shown within the session; do nothing on normal drag
 }
 
-async function upgradeToPro(plan = 'monthly') {
+let _selectedPricingPlan = 'monthly';
+
+function showPricingModal() {
+    if (!currentUser) { showAuthModal(); return; }
+    const modal = document.getElementById('pricing-modal');
+    modal.classList.remove('hidden');
+    modal.style.display = 'flex';
+    setPricingPlan('monthly');
+    track('upgrade_viewed');
+}
+
+function hidePricingModal() {
+    const modal = document.getElementById('pricing-modal');
+    modal.classList.add('hidden');
+    modal.style.display = 'none';
+}
+
+function setPricingPlan(plan) {
+    _selectedPricingPlan = plan;
+    const mBtn = document.getElementById('pricing-monthly-btn');
+    const aBtn = document.getElementById('pricing-annual-btn');
+    const amount = document.getElementById('pricing-amount');
+    const period = document.getElementById('pricing-period');
+    const note = document.getElementById('pricing-note');
+    const cta = document.getElementById('pricing-cta-btn');
+
+    if (plan === 'annual') {
+        mBtn.style.background = 'transparent'; mBtn.style.color = 'var(--app-ink-3)';
+        aBtn.style.background = 'var(--accent)'; aBtn.style.color = 'white';
+        amount.textContent = '$18';
+        period.textContent = '/month';
+        note.textContent = 'Billed $216/year — save $108';
+        cta.textContent = 'Start Pro — $18/mo (billed yearly)';
+    } else {
+        aBtn.style.background = 'transparent'; aBtn.style.color = 'var(--app-ink-3)';
+        mBtn.style.background = 'var(--accent)'; mBtn.style.color = 'white';
+        amount.textContent = '$27';
+        period.textContent = '/month';
+        note.textContent = 'Under $2 per video';
+        cta.textContent = 'Start Pro — $27/mo';
+    }
+}
+
+async function proceedToCheckout() {
+    hidePricingModal();
+    await _doCheckout(_selectedPricingPlan);
+}
+
+function upgradeToPro(plan = 'monthly') {
+    if (!currentUser) { showAuthModal(); return; }
+    showPricingModal();
+}
+
+async function _doCheckout(plan = 'monthly') {
     if (!currentUser) { showAuthModal(); return; }
     track('checkout_started', { plan });
     try {
@@ -784,6 +837,32 @@ function populateBuildSummary() {
     document.getElementById('summary-voice').textContent = state.voice;
 }
 
+function _friendlyProgress(raw) {
+    if (/Step 1.*Aligning/i.test(raw)) return 'Analyzing your script...';
+    if (/Step 2.*Segment/i.test(raw)) return 'Planning visual scenes...';
+    if (/Step 3.*Style/i.test(raw)) return 'Creating art style...';
+    if (/Step 4.*Generat.*illustr/i.test(raw)) return 'Generating artwork...';
+    if (/Illustrations?:\s*(\d+)\/(\d+)/i.test(raw)) {
+        const m = raw.match(/(\d+)\/(\d+)/);
+        return m ? `Drawing scene ${m[1]} of ${m[2]}...` : 'Drawing scenes...';
+    }
+    if (/Step 5.*Prepar/i.test(raw)) return 'Preparing images...';
+    if (/Step 6.*Assembl/i.test(raw)) return 'Building your video...';
+    if (/Assembling video/i.test(raw)) return 'Building your video...';
+    if (/Concatenat/i.test(raw)) return 'Building your video...';
+    if (/concepts? planned/i.test(raw)) return 'Scenes planned';
+    if (/Style ref/i.test(raw)) return 'Art style ready';
+    if (/Got \d+ words/i.test(raw)) return 'Script analyzed';
+    if (/illustrations? generated/i.test(raw)) return 'All artwork ready';
+    if (/images? prepared/i.test(raw)) return 'Images ready';
+    if (/clips? rendered/i.test(raw)) return 'Almost there...';
+    if (/Assembly complete/i.test(raw)) return 'Finishing up...';
+    if (/Total pipeline/i.test(raw)) return 'Done!';
+    if (/Generating thumbnail/i.test(raw)) return 'Creating thumbnails...';
+    if (/watermark/i.test(raw)) return 'Finishing up...';
+    return raw.replace(/\[.*?\]\s*/g, '').replace(/Step \d\/\d:\s*/g, '').substring(0, 60);
+}
+
 const cookingManager = {
     jobId: null,
     evtSrc: null,
@@ -852,10 +931,11 @@ const cookingManager = {
         this.evtSrc.addEventListener('progress', (e) => {
             this.msgCount++;
             const msg = JSON.parse(e.data);
-            document.getElementById('cooking-bar-status').textContent = msg.message.substring(0, 60);
+            const friendly = _friendlyProgress(msg.message);
+            document.getElementById('cooking-bar-status').textContent = friendly.substring(0, 60);
             if (progressLog) {
                 const line = document.createElement('div');
-                line.textContent = `> ${msg.message}`;
+                line.textContent = `> ${friendly}`;
                 progressLog.appendChild(line);
                 progressLog.scrollTop = progressLog.scrollHeight;
             }
@@ -1630,6 +1710,9 @@ function updateAuthUI() {
         navigateTo('pipeline');
     }
 
+    const navUpgrade = document.getElementById('nav-upgrade-btn');
+    const cookingUpgrade = document.getElementById('cooking-upgrade-btn');
+
     if (currentUser) {
         loginBtn.classList.add('hidden');
         userBtn.classList.remove('hidden');
@@ -1639,6 +1722,9 @@ function updateAuthUI() {
         document.getElementById('credits-count').textContent = currentUser.credits + ' credits';
         document.getElementById('credits-plan').textContent = currentUser.plan === 'free' ? 'trial' : 'pro';
         creditsDisplay.classList.remove('hidden');
+        const isFree = currentUser.plan === 'free' && !currentUser.is_admin;
+        if (navUpgrade) navUpgrade.classList.toggle('hidden', !isFree);
+        if (cookingUpgrade) cookingUpgrade.classList.toggle('hidden', !isFree);
     } else {
         loginBtn.classList.remove('hidden');
         userBtn.classList.add('hidden');
@@ -1647,6 +1733,8 @@ function updateAuthUI() {
         if (cc) cc.textContent = '3 free';
         if (cp) cp.textContent = 'trial';
         creditsDisplay.classList.remove('hidden');
+        if (navUpgrade) navUpgrade.classList.add('hidden');
+        if (cookingUpgrade) cookingUpgrade.classList.add('hidden');
     }
 }
 
