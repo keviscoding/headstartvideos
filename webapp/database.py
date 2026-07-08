@@ -188,6 +188,14 @@ def create_user(email: str) -> dict:
         return dict(cur.fetchone())
 
 
+def get_user_by_sub_id(sub_id: str) -> dict | None:
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(_q("SELECT * FROM users WHERE stripe_sub_id = ?"), (sub_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
 def update_user(user_id: int, **fields) -> None:
     if not fields:
         return

@@ -75,7 +75,7 @@ _jobs: dict[str, dict[str, Any]] = {}
 
 from webapp.database import (
     get_user_by_email, create_user, get_user_by_id, update_user,
-    deduct_credit, refund_credit,
+    get_user_by_sub_id, deduct_credit, refund_credit,
     create_verify_code, verify_code,
     create_session, get_session_user, delete_session,
     log_render_event, render_stats, backend_name,
@@ -277,23 +277,19 @@ async def stripe_webhook(request: Request):
     elif event["type"] == "invoice.paid":
         sub_id = event["data"]["object"].get("subscription")
         if sub_id:
-            from webapp.database import _conn
-            with _conn() as conn:
-                row = conn.execute("SELECT id FROM users WHERE stripe_sub_id = ?", (sub_id,)).fetchone()
-                if row:
-                    update_user(row["id"], credits=15)
-                    print(f"[stripe] Refilled credits for user {row['id']}")
+            row = get_user_by_sub_id(sub_id)
+            if row:
+                update_user(row["id"], credits=15)
+                print(f"[stripe] Refilled credits for user {row['id']}")
 
     elif event["type"] in ("customer.subscription.deleted", "customer.subscription.updated"):
         sub = event["data"]["object"]
         sub_id = sub.get("id")
         if sub_id and sub.get("status") in ("canceled", "unpaid", "past_due"):
-            from webapp.database import _conn
-            with _conn() as conn:
-                row = conn.execute("SELECT id FROM users WHERE stripe_sub_id = ?", (sub_id,)).fetchone()
-                if row:
-                    update_user(row["id"], plan="free")
-                    print(f"[stripe] User {row['id']} downgraded to free")
+            row = get_user_by_sub_id(sub_id)
+            if row:
+                update_user(row["id"], plan="free")
+                print(f"[stripe] User {row['id']} downgraded to free")
 
     return {"ok": True}
 
