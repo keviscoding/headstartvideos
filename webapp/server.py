@@ -79,7 +79,9 @@ from webapp.database import (
     create_verify_code, verify_code,
     create_session, get_session_user, delete_session,
     log_render_event, render_stats, backend_name,
+    create_video, list_videos, get_video, update_video_kit, delete_video,
 )
+from webapp import storage
 
 # Rough COGS estimate in GBP pence per finished minute, per recipe. These are
 # tunable placeholders — refine once real per-render token/TTS data is captured.
@@ -769,11 +771,45 @@ def _run_build(job_id: str, req: BuildRequest):
         else:
             raise ValueError(f"Unknown recipe: {recipe}")
 
-        output_url = f"/api/files/{os.path.relpath(result['output_path'], str(ROOT))}"
+        # Persist the finished video (and thumbnail) to durable storage.
+        ts = int(time.time())
+        try:
+            output_url = storage.store_file(
+                result["output_path"], f"videos/{user_id}/{ts}_{job_id}.mp4", "video/mp4"
+            )
+        except Exception as up_err:
+            print(f"[storage] video upload failed, falling back to local: {up_err}")
+            output_url = f"/api/files/{os.path.relpath(result['output_path'], str(ROOT))}"
+
+        thumb_url = ""
+        if req.thumbnail_path and os.path.exists(req.thumbnail_path):
+            try:
+                ext = os.path.splitext(req.thumbnail_path)[1] or ".png"
+                thumb_url = storage.store_file(
+                    req.thumbnail_path, f"thumbnails/{user_id}/{ts}_{job_id}{ext}"
+                )
+            except Exception as th_err:
+                print(f"[storage] thumbnail upload failed: {th_err}")
+
+        video_id = None
+        if user_id:
+            try:
+                video_id = create_video(
+                    user_id=user_id,
+                    title=req.title or "Untitled",
+                    recipe=recipe,
+                    video_url=output_url,
+                    thumbnail_url=thumb_url,
+                )
+            except Exception as rec_err:
+                print(f"[videos] failed to save video record: {rec_err}")
+
         job["status"] = "complete"
         job["result"] = {
             "output_path": result["output_path"],
             "output_url": output_url,
+            "thumbnail_url": thumb_url,
+            "video_id": video_id,
             "job_dir": result.get("job_dir", ""),
             "concepts": len(result.get("slots", [])),
             "timing": result.get("timing", {}),
@@ -1025,70 +1061,87 @@ def _retention_days(request: Request | None = None) -> int:
     return RETENTION_FREE_DAYS
 
 
+def _video_to_entry(v: dict, retention_secs: float, now: float) -> dict:
+    age = now - float(v.get("created_at") or now)
+    expires_in_days = max(0, round((retention_secs - age) / 86400, 1))
+    try:
+        tags = json.loads(v.get("tags") or "[]")
+    except Exception:
+        tags = []
+    try:
+        hashtags = json.loads(v.get("hashtags") or "[]")
+    except Exception:
+        hashtags = []
+    return {
+        "id": v.get("id"),
+        "type": "video",
+        "title": v.get("title") or "Untitled",
+        "recipe": v.get("recipe") or "",
+        "url": v.get("video_url") or "",
+        "thumbnail_url": v.get("thumbnail_url") or "",
+        "description": v.get("description") or "",
+        "tags": tags,
+        "hashtags": hashtags,
+        "timestamp": float(v.get("created_at") or now) * 1000,
+        "expires_in_days": expires_in_days,
+        "expired": age > retention_secs,
+    }
+
+
 @app.get("/api/history")
 async def get_history(type: str = "all", request: Request = None, user: dict = Depends(require_user)):
-    entries = []
-    output = ROOT / "output"
-    if not output.exists():
-        return {"entries": [], "retention_days": _retention_days(request)}
-
     now = time.time()
     retention_secs = _retention_days(request) * 86400
+    videos = list_videos(user["id"])
+    entries = [_video_to_entry(v, retention_secs, now) for v in videos]
+    return {"entries": entries, "retention_days": _retention_days(request)}
 
-    for d in sorted(output.iterdir(), reverse=True):
-        if not d.is_dir():
-            continue
-        name = d.name
-        dir_age = now - d.stat().st_mtime
-        expires_in_days = max(0, round((retention_secs - dir_age) / 86400, 1))
-        expired = dir_age > retention_secs
 
-        if name.startswith("explainer_") or name.startswith("cine_") or name.startswith("job_") or name.startswith("avatar_job_"):
-            if type not in ("all", "video"):
-                continue
-            video_files = list(d.glob("*.mp4"))
-            if video_files:
-                entries.append({
-                    "type": "video",
-                    "title": name,
-                    "description": f"Video: {video_files[0].name}",
-                    "timestamp": d.stat().st_mtime * 1000,
-                    "path": str(video_files[0]),
-                    "url": f"/api/files/{os.path.relpath(str(video_files[0]), str(ROOT))}",
-                    "expires_in_days": expires_in_days,
-                    "expired": expired,
-                })
+@app.get("/api/videos")
+async def api_list_videos(request: Request = None, user: dict = Depends(require_user)):
+    now = time.time()
+    retention_secs = _retention_days(request) * 86400
+    videos = [_video_to_entry(v, retention_secs, now) for v in list_videos(user["id"])]
+    return {"videos": videos, "retention_days": _retention_days(request)}
 
-        elif name.startswith("voiceover") or (d / "voiceover.wav").exists():
-            if type not in ("all", "voiceover"):
-                continue
-            wav_files = list(d.glob("*.wav"))
-            if wav_files:
-                entries.append({
-                    "type": "voiceover",
-                    "title": name,
-                    "description": f"Voiceover: {wav_files[0].name}",
-                    "timestamp": d.stat().st_mtime * 1000,
-                    "expires_in_days": expires_in_days,
-                    "expired": expired,
-                })
 
-        elif name.startswith("thumbnail"):
-            if type not in ("all", "thumbnail"):
-                continue
-            img_files = list(d.glob("*.png")) + list(d.glob("*.jpg"))
-            for img in img_files:
-                entries.append({
-                    "type": "thumbnail",
-                    "title": name,
-                    "description": img.name,
-                    "timestamp": img.stat().st_mtime * 1000,
-                    "url": f"/api/files/{os.path.relpath(str(img), str(ROOT))}",
-                    "expires_in_days": expires_in_days,
-                    "expired": expired,
-                })
+@app.get("/api/videos/{video_id}")
+async def api_get_video(video_id: int, request: Request = None, user: dict = Depends(require_user)):
+    v = get_video(video_id, user["id"])
+    if not v:
+        raise HTTPException(status_code=404, detail="Video not found")
+    return _video_to_entry(v, _retention_days(request) * 86400, time.time())
 
-    return {"entries": entries[:50], "retention_days": _retention_days(request)}
+
+class VideoKitRequest(BaseModel):
+    description: str = ""
+    tags: list[str] | str = ""
+    hashtags: list[str] | str = ""
+
+
+@app.post("/api/videos/{video_id}/kit")
+async def api_save_video_kit(video_id: int, req: VideoKitRequest, user: dict = Depends(require_user)):
+    v = get_video(video_id, user["id"])
+    if not v:
+        raise HTTPException(status_code=404, detail="Video not found")
+    tags = req.tags if isinstance(req.tags, list) else [t.strip() for t in str(req.tags).split(",") if t.strip()]
+    hashtags = req.hashtags if isinstance(req.hashtags, list) else [h.strip() for h in str(req.hashtags).split(",") if h.strip()]
+    update_video_kit(video_id, user["id"], req.description, json.dumps(tags), json.dumps(hashtags))
+    return {"ok": True}
+
+
+@app.delete("/api/videos/{video_id}")
+async def api_delete_video(video_id: int, user: dict = Depends(require_user)):
+    row = delete_video(video_id, user["id"])
+    if not row:
+        raise HTTPException(status_code=404, detail="Video not found")
+    # Best-effort removal of stored objects when they live in Spaces.
+    for url_field in ("video_url", "thumbnail_url"):
+        url = row.get(url_field) or ""
+        if storage.is_remote() and url and "digitaloceanspaces.com/" in url:
+            key = url.split("digitaloceanspaces.com/", 1)[1]
+            storage.delete_key(key)
+    return {"ok": True}
 
 
 @app.post("/api/history/cleanup")

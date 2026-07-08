@@ -68,6 +68,18 @@ CREATE TABLE IF NOT EXISTS render_events (
     error_class   TEXT DEFAULT '',
     created_at    REAL NOT NULL DEFAULT (strftime('%s','now'))
 );
+CREATE TABLE IF NOT EXISTS videos (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       INTEGER NOT NULL,
+    title         TEXT DEFAULT '',
+    recipe        TEXT DEFAULT '',
+    video_url     TEXT DEFAULT '',
+    thumbnail_url TEXT DEFAULT '',
+    description   TEXT DEFAULT '',
+    tags          TEXT DEFAULT '',
+    hashtags      TEXT DEFAULT '',
+    created_at    REAL NOT NULL DEFAULT (strftime('%s','now'))
+);
 """
 
 _SCHEMA_PG = """
@@ -104,6 +116,18 @@ CREATE TABLE IF NOT EXISTS render_events (
     target_minutes DOUBLE PRECISION DEFAULT 0,
     cost_pence    DOUBLE PRECISION DEFAULT 0,
     error_class   TEXT DEFAULT '',
+    created_at    DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now())
+);
+CREATE TABLE IF NOT EXISTS videos (
+    id            BIGSERIAL PRIMARY KEY,
+    user_id       BIGINT NOT NULL,
+    title         TEXT DEFAULT '',
+    recipe        TEXT DEFAULT '',
+    video_url     TEXT DEFAULT '',
+    thumbnail_url TEXT DEFAULT '',
+    description   TEXT DEFAULT '',
+    tags          TEXT DEFAULT '',
+    hashtags      TEXT DEFAULT '',
     created_at    DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now())
 );
 """
@@ -308,6 +332,67 @@ def render_stats(days: int = 30) -> dict:
         "avg_duration_sec": round(avg_dur, 1),
         "by_recipe": by_recipe,
     }
+
+
+# -- Videos (per-user library) ----------------------------------------------
+
+def create_video(
+    user_id: int,
+    title: str = "",
+    recipe: str = "",
+    video_url: str = "",
+    thumbnail_url: str = "",
+) -> int:
+    with _conn() as conn:
+        cur = conn.cursor()
+        if IS_PG:
+            cur.execute(
+                _q("""INSERT INTO videos (user_id, title, recipe, video_url, thumbnail_url)
+                      VALUES (?, ?, ?, ?, ?) RETURNING id"""),
+                (user_id, title, recipe, video_url, thumbnail_url),
+            )
+            return cur.fetchone()["id"]
+        cur.execute(
+            "INSERT INTO videos (user_id, title, recipe, video_url, thumbnail_url) VALUES (?, ?, ?, ?, ?)",
+            (user_id, title, recipe, video_url, thumbnail_url),
+        )
+        return cur.lastrowid
+
+
+def list_videos(user_id: int, limit: int = 100) -> list[dict]:
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            _q("SELECT * FROM videos WHERE user_id = ? ORDER BY created_at DESC LIMIT ?"),
+            (user_id, limit),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def get_video(video_id: int, user_id: int) -> dict | None:
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(_q("SELECT * FROM videos WHERE id = ? AND user_id = ?"), (video_id, user_id))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def update_video_kit(video_id: int, user_id: int, description: str, tags: str, hashtags: str) -> None:
+    with _conn() as conn:
+        conn.cursor().execute(
+            _q("UPDATE videos SET description = ?, tags = ?, hashtags = ? WHERE id = ? AND user_id = ?"),
+            (description, tags, hashtags, video_id, user_id),
+        )
+
+
+def delete_video(video_id: int, user_id: int) -> dict | None:
+    """Delete a video row (after the caller removes the stored files). Returns the row."""
+    row = get_video(video_id, user_id)
+    if not row:
+        return None
+    with _conn() as conn:
+        conn.cursor().execute(_q("DELETE FROM videos WHERE id = ? AND user_id = ?"), (video_id, user_id))
+    return row
 
 
 def cleanup_expired() -> int:

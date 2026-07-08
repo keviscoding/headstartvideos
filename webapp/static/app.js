@@ -1024,11 +1024,21 @@ async function showUploadKit(buildResult) {
         document.getElementById('kit-thumb-wrap').classList.add('hidden');
     }
     document.getElementById('kit-title').textContent = state.title;
+    const videoId = buildResult.video_id || null;
     try {
         const res = await fetch('/api/upload-kit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: state.title, script: state.script, niche: state.niche }) });
         const kit = await res.json();
+        const tagsArr = Array.isArray(kit.tags) ? kit.tags : (kit.tags ? String(kit.tags).split(',').map(t => t.trim()) : []);
+        const hashArr = Array.isArray(kit.hashtags) ? kit.hashtags : (kit.hashtags ? String(kit.hashtags).split(',').map(t => t.trim()) : []);
         document.getElementById('kit-desc').textContent = kit.description || '';
-        document.getElementById('kit-tags').textContent = Array.isArray(kit.tags) ? kit.tags.join(', ') : (kit.tags || '');
+        document.getElementById('kit-tags').textContent = tagsArr.join(', ');
+        // Attach the kit to the saved video so it shows in History.
+        if (videoId) {
+            fetch(`/api/videos/${videoId}/kit`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ description: kit.description || '', tags: tagsArr, hashtags: hashArr }),
+            }).catch(() => {});
+        }
     } catch {
         document.getElementById('kit-desc').textContent = `Check out this video: ${state.title}`;
         document.getElementById('kit-tags').textContent = 'youtube, video';
@@ -1383,34 +1393,98 @@ async function fetchChannelForAnalyzer() {
 // ---------------------------------------------------------------------------
 // History
 // ---------------------------------------------------------------------------
+const RECIPE_LABELS = {
+    animated_explainer: 'Animated Explainer',
+    cinematic: 'Cinematic',
+    avatar: 'Avatar',
+    documentary: 'Documentary',
+};
+
+function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+}
+
 async function loadHistory() {
+    const list = document.getElementById('history-list');
     try {
-        const filter = document.getElementById('history-filter').value;
-        const res = await fetch(`/api/history?type=${filter}`);
+        const res = await fetch('/api/videos');
         const data = await res.json();
-        const list = document.getElementById('history-list');
-        if (!data.entries || data.entries.length === 0) {
-            list.innerHTML = '<p class="text-gray-500 text-center py-8">No history yet. Generate something to see it here.</p>';
+        window._videoLibrary = data.videos || [];
+        if (!data.videos || data.videos.length === 0) {
+            list.className = '';
+            list.innerHTML = '<p style="color: var(--app-ink-3); text-align: center; padding: 32px 0;">No videos yet. Finish a video in the pipeline and it will appear here.</p>';
             return;
         }
-        list.innerHTML = '';
-        data.entries.forEach(entry => {
-            const item = document.createElement('div');
-            item.className = 'history-item';
-            item.innerHTML = `
-                <div class="flex items-center justify-between">
-                    <div>
-                        <span class="text-xs px-2 py-0.5 rounded-full bg-gray-800 text-gray-400">${entry.type}</span>
-                        <span class="text-sm text-gray-300 ml-2">${entry.title || entry.description || 'Untitled'}</span>
-                    </div>
-                    <span class="text-xs text-gray-600">${new Date(entry.timestamp).toLocaleDateString()}</span>
-                </div>
-            `;
-            list.appendChild(item);
-        });
+        list.className = 'video-grid';
+        list.innerHTML = data.videos.map(v => renderVideoCard(v, data.retention_days)).join('');
     } catch {
-        document.getElementById('history-list').innerHTML = '<p class="text-gray-500 text-center py-8">Could not load history.</p>';
+        list.className = '';
+        list.innerHTML = '<p style="color: var(--app-ink-3); text-align: center; padding: 32px 0;">Could not load your videos.</p>';
     }
+}
+
+function renderVideoCard(v, retentionDays) {
+    const date = new Date(v.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    const recipe = RECIPE_LABELS[v.recipe] || v.recipe || 'Video';
+    const expiry = (typeof v.expires_in_days === 'number')
+        ? `<span class="video-expiry" title="Videos are kept for ${retentionDays} days">Expires in ${v.expires_in_days}d</span>`
+        : '';
+    const thumb = v.thumbnail_url
+        ? `<img src="${esc(v.thumbnail_url)}" alt="" class="video-thumb-img">`
+        : `<div class="video-thumb-placeholder">🎬</div>`;
+    const hasKit = v.description || (v.tags && v.tags.length) || (v.hashtags && v.hashtags.length);
+    const kitBtn = hasKit
+        ? `<button class="video-btn" onclick="toggleVideoKit(${v.id})">Upload kit</button>` : '';
+    return `
+    <div class="video-card" id="video-card-${v.id}">
+        <div class="video-thumb">${thumb}<span class="video-badge">${esc(recipe)}</span></div>
+        <div class="video-body">
+            <div class="video-title" title="${esc(v.title)}">${esc(v.title)}</div>
+            <div class="video-meta"><span>${date}</span>${expiry}</div>
+            <div class="video-actions">
+                <a class="video-btn video-btn-primary" href="${esc(v.url)}" download="${esc(v.title)}.mp4" target="_blank" rel="noopener">Download</a>
+                ${kitBtn}
+                <button class="video-btn video-btn-danger" onclick="deleteVideo(${v.id})" title="Delete">✕</button>
+            </div>
+            <div class="video-kit hidden" id="video-kit-${v.id}">${renderKitPanel(v)}</div>
+        </div>
+    </div>`;
+}
+
+function renderKitPanel(v) {
+    const tags = (v.tags || []).join(', ');
+    const hashtags = (v.hashtags || []).join(' ');
+    return `
+        <div class="kit-block">
+            <div class="kit-block-head"><span>Description</span><button class="kit-copy" data-copy="desc-${v.id}" onclick="copyRaw(this)">Copy</button></div>
+            <p class="kit-text" id="kit-desc-${v.id}">${esc(v.description) || '<em>No description</em>'}</p>
+        </div>
+        ${tags ? `<div class="kit-block"><div class="kit-block-head"><span>Tags</span><button class="kit-copy" data-copy="tags-${v.id}" onclick="copyRaw(this)">Copy</button></div><p class="kit-text" id="kit-tags-${v.id}">${esc(tags)}</p></div>` : ''}
+        ${hashtags ? `<div class="kit-block"><div class="kit-block-head"><span>Hashtags</span><button class="kit-copy" data-copy="hash-${v.id}" onclick="copyRaw(this)">Copy</button></div><p class="kit-text" id="kit-hash-${v.id}">${esc(hashtags)}</p></div>` : ''}
+    `;
+}
+
+function toggleVideoKit(id) {
+    document.getElementById(`video-kit-${id}`)?.classList.toggle('hidden');
+}
+
+function copyRaw(btn) {
+    const [kind, id] = (btn.dataset.copy || '').split('-');
+    const target = document.getElementById(`kit-${kind}-${id}`);
+    if (!target) return;
+    navigator.clipboard.writeText(target.textContent).then(() => {
+        const old = btn.textContent; btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = old; }, 1200);
+    });
+}
+
+async function deleteVideo(id) {
+    if (!confirm('Delete this video? This cannot be undone.')) return;
+    try {
+        const res = await fetch(`/api/videos/${id}`, { method: 'DELETE' });
+        if (res.ok) document.getElementById(`video-card-${id}`)?.remove();
+    } catch { /* ignore */ }
 }
 
 // ---------------------------------------------------------------------------

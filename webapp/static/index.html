@@ -548,13 +548,12 @@
     <!-- ============================================================ -->
     <div id="page-history" class="page-container hidden">
         <main class="max-w-4xl mx-auto px-6 py-8">
-            <h2 class="cr-display" style="font-size: 32px; margin-bottom: 8px;">History</h2>
-            <p style="color: var(--app-ink-2); margin-bottom: 24px;">Browse past generations and outputs.</p>
+            <h2 class="cr-display" style="font-size: 32px; margin-bottom: 8px;">Your videos</h2>
+            <p style="color: var(--app-ink-2); margin-bottom: 24px;">Every video you finish is saved here — download it or grab its upload kit anytime.</p>
             <div class="flex items-center gap-4 mb-6">
-                <select id="history-filter" class="cr-select" style="width: auto;" onchange="loadHistory()"><option value="all">All Types</option><option value="video">Videos</option><option value="voiceover">Voiceovers</option><option value="thumbnail">Thumbnails</option><option value="script">Scripts</option></select>
                 <button class="btn-secondary" style="font-size: 14px; padding: 8px 16px;" onclick="loadHistory()">Refresh</button>
             </div>
-            <div id="history-list" class="space-y-3"><p style="color: var(--app-ink-3); text-align: center; padding: 32px 0;">No history yet. Generate something to see it here.</p></div>
+            <div id="history-list" class="space-y-3"><p style="color: var(--app-ink-3); text-align: center; padding: 32px 0;">No videos yet. Finish a video in the pipeline and it will appear here.</p></div>
         </main>
     </div>
 

@@ -30,6 +30,14 @@ POSTHOG_KEY = os.getenv("POSTHOG_KEY", "")            # PostHog project API key 
 POSTHOG_HOST = os.getenv("POSTHOG_HOST", "https://us.i.posthog.com")
 SENTRY_DSN = os.getenv("SENTRY_DSN", "")              # Sentry DSN (backend + frontend)
 
+# Object storage (DigitalOcean Spaces / S3). If unset, files stay on local disk.
+SPACES_KEY = os.getenv("SPACES_KEY", "")
+SPACES_SECRET = os.getenv("SPACES_SECRET", "")
+SPACES_BUCKET = os.getenv("SPACES_BUCKET", "")
+SPACES_REGION = os.getenv("SPACES_REGION", "")                 # e.g. "fra1", "nyc3"
+SPACES_ENDPOINT = os.getenv("SPACES_ENDPOINT", "")            # e.g. "https://fra1.digitaloceanspaces.com"
+SPACES_CDN_ENDPOINT = os.getenv("SPACES_CDN_ENDPOINT", "")    # optional CDN base for public URLs
+
 OUTPUT_DIR = ROOT_DIR / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
