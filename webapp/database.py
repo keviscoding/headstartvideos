@@ -157,6 +157,11 @@ CREATE INDEX IF NOT EXISTS idx_render_events_created ON render_events (created_a
 """
 
 
+_MIGRATIONS = """
+UPDATE users SET credits = 0 WHERE plan = 'free' AND credits > 0;
+"""
+
+
 def _init_db():
     schema = _SCHEMA_PG if IS_PG else _SCHEMA_SQLITE
     with _conn() as conn:
@@ -164,9 +169,15 @@ def _init_db():
             with conn.cursor() as cur:
                 cur.execute(schema)
                 cur.execute(_INDEXES)
+                cur.execute(_MIGRATIONS)
+                try:
+                    cur.execute("ALTER TABLE users ALTER COLUMN credits SET DEFAULT 0")
+                except Exception:
+                    pass
         else:
             conn.executescript(schema)
             conn.executescript(_INDEXES)
+            conn.executescript(_MIGRATIONS)
 
 
 # -- Users ------------------------------------------------------------------

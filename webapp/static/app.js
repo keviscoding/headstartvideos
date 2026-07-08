@@ -62,7 +62,7 @@ function ensureAuth(retry) {
         showAuthModal();
         return false;
     }
-    if (!isPaidUser() && (currentUser.credits || 0) <= 0) {
+    if (!isPaidUser()) {
         showPricingModal();
         return false;
     }
@@ -472,6 +472,18 @@ function showPricingModal() {
     modal.classList.remove('hidden');
     modal.style.display = 'flex';
     setPricingPlan('monthly');
+
+    // Free users can't dismiss — hide close button and backdrop click
+    const closeBtn = modal.querySelector('button[onclick="hidePricingModal()"]');
+    const backdrop = modal.querySelector('div[onclick="hidePricingModal()"]');
+    if (!isPaidUser()) {
+        if (closeBtn) closeBtn.style.display = 'none';
+        if (backdrop) backdrop.onclick = null;
+    } else {
+        if (closeBtn) closeBtn.style.display = '';
+        if (backdrop) backdrop.onclick = () => hidePricingModal();
+    }
+
     const topupRow = document.getElementById('topup-row');
     if (topupRow) {
         if (isPaidUser()) { topupRow.classList.remove('hidden'); }
@@ -1889,6 +1901,9 @@ async function authVerifyCode() {
         try { window.posthog?.identify(String(currentUser.id), { email: currentUser.email, plan: currentUser.plan }); } catch (_) {}
         hideAuthModal();
         cookingManager.restore();
+        if (!isPaidUser()) {
+            setTimeout(() => showPricingModal(), 300);
+        }
         if (pendingAuthAction) {
             const action = pendingAuthAction;
             pendingAuthAction = null;

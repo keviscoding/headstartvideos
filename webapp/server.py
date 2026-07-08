@@ -135,15 +135,14 @@ def require_user(request: Request) -> dict:
 def require_active_plan(request: Request) -> dict:
     """Require sign-in AND an active subscription (or admin).
 
-    Free users with 0 credits must go through Stripe checkout first.
-    This gates all compute-consuming endpoints.
+    Free users MUST go through Stripe checkout to start a trial.
+    No generation is allowed on plan='free' regardless of credits.
     """
     user = require_user(request)
     if _is_admin_email(user.get("email", "")):
         return user
     if user.get("plan") not in ("starter", "daily", "pro"):
-        if user.get("credits", 0) <= 0:
-            raise HTTPException(402, "Start your free trial to generate videos.")
+        raise HTTPException(402, "Start your free trial to generate videos.")
     return user
 
 
