@@ -10,7 +10,7 @@ const state = {
     nicheData: null,
     title: '',
     script: '',
-    voice: 'Charon',
+    voice: 'leo',
     targetMinutes: 8,
     voiceoverPath: '',
     voiceoverUrl: '',
@@ -363,7 +363,7 @@ function resetPipeline() {
     clearPipelineDraft();
     Object.assign(state, {
         step: 1, niche: null, nicheData: null, title: '', script: '',
-        voice: 'Charon', targetMinutes: 8, voiceoverPath: '', voiceoverUrl: '',
+        voice: 'leo', targetMinutes: 8, voiceoverPath: '', voiceoverUrl: '',
         thumbnailPath: '', thumbnailUrl: '', thumbnailRefs: [], videoUrl: '', videoPath: '',
         voiceMode: 'generate', uploadedVoPath: '',
     });
@@ -443,7 +443,7 @@ function selectNiche(niche, card) {
     card.classList.add('selected');
     state.niche = niche.id;
     state.nicheData = niche;
-    state.voice = niche.default_voice || 'Charon';
+    state.voice = niche.default_voice || 'leo';
     state.targetMinutes = niche.default_minutes || 8;
     state.voiceMode = 'generate';
     state.uploadedVoPath = '';
@@ -884,19 +884,26 @@ async function loadVoices() {
         const voices = await res.json();
         const grid = document.getElementById('voices-grid');
         grid.innerHTML = '';
+        // Default to Leo (Atlas narrator) if current voice is a legacy Gemini name
+        const legacy = ['Charon', 'Kore', 'Gacrux', 'Schedar', 'Puck', 'Sulafat'];
+        if (!state.voice || legacy.includes(state.voice)) {
+            const def = voices.find(v => v.default) || voices[0];
+            if (def) state.voice = def.id;
+        }
         voices.forEach(v => {
             const card = document.createElement('div');
             card.className = `voice-card${v.id === state.voice ? ' selected' : ''}`;
             const recommended = v.default
                 ? `<span style="font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent);background:var(--accent-soft-dark);border-radius:var(--radius-pill);padding:2px 7px;">Best pick</span>`
                 : '';
+            const gender = v.gender ? `<span style="font-family:var(--font-mono);font-size:10px;color:var(--app-ink-3);text-transform:uppercase;">${v.gender}</span>` : '';
             card.innerHTML = `
                 <button class="play-btn" data-voice="${v.id}" title="Preview voice">
                     <svg width="13" height="13" viewBox="0 0 14 14"><path d="M4 2.5 L4 11.5 L11 7 Z" fill="currentColor"/></svg>
                 </button>
                 <div class="flex-1 min-w-0">
                     <div style="display:flex;align-items:center;gap:8px;font-family:var(--font-body);font-weight:600;font-size:15px;color:var(--app-ink);">
-                        ${v.name} ${recommended}
+                        ${v.name} ${recommended} ${gender}
                     </div>
                     <div style="font-family:var(--font-body);font-size:13px;color:var(--app-ink-3);margin-top:2px;">${v.desc || v.tag}</div>
                 </div>
@@ -909,10 +916,11 @@ async function loadVoices() {
                 document.querySelectorAll('.voice-card').forEach(c => c.classList.remove('selected'));
                 card.classList.add('selected');
                 state.voice = v.id;
+                persistPipelineState();
             });
             card.querySelector('.play-btn').addEventListener('click', (e) => {
                 e.stopPropagation();
-                previewVoice(v.id, e.currentTarget);
+                previewVoice(v.id, e.currentTarget, v.preview_url);
             });
             grid.appendChild(card);
         });
@@ -921,15 +929,24 @@ async function loadVoices() {
     }
 }
 
-async function previewVoice(voiceId, btn) {
+async function previewVoice(voiceId, btn, previewUrl) {
     if (previewAudio) { previewAudio.pause(); previewAudio = null; }
     btn.classList.add('loading');
     btn.innerHTML = '<svg class="animate-spin w-4 h-4" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>';
     try {
-        const res = await fetch('/api/voiceover/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ voice: voiceId }) });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Preview failed');
-        previewAudio = new Audio(data.url);
+        let url = previewUrl;
+        if (!url) {
+            // Fallback: generate a short sample via our API
+            const res = await fetch('/api/voiceover/preview', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ voice: voiceId }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Preview failed');
+            url = data.url;
+        }
+        previewAudio = new Audio(url);
         previewAudio.play();
         previewAudio.addEventListener('ended', () => resetPlayBtn(btn));
         btn.innerHTML = '<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>';
@@ -2123,7 +2140,7 @@ function restorePipelineState() {
         nicheData: draft.nicheData || null,
         title: draft.title || '',
         script: draft.script || '',
-        voice: draft.voice || 'Charon',
+        voice: draft.voice || 'leo',
         targetMinutes: draft.targetMinutes || 8,
         voiceoverPath: draft.voiceoverPath || '',
         voiceoverUrl: draft.voiceoverUrl || '',

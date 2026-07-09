@@ -595,13 +595,54 @@ async def end_trial_early(request: Request):
         raise HTTPException(500, f"Could not end trial: {e}")
 
 
+# Atlas Cloud xAI TTS voices (real voice_ids + official sample URLs)
 CURATED_VOICES = [
-    {"id": "Charon", "name": "Charon", "tag": "Informative", "desc": "Clear, authoritative narrator — best for documentaries", "default": True},
-    {"id": "Kore", "name": "Kore", "tag": "Firm", "desc": "Strong, confident delivery with gravitas"},
-    {"id": "Gacrux", "name": "Gacrux", "tag": "Mature", "desc": "Deep, seasoned voice with natural warmth"},
-    {"id": "Schedar", "name": "Schedar", "tag": "Even", "desc": "Calm, steady pacing — great for explainers"},
-    {"id": "Puck", "name": "Puck", "tag": "Upbeat", "desc": "Energetic, engaging — ideal for listicles"},
-    {"id": "Sulafat", "name": "Sulafat", "tag": "Warm", "desc": "Gentle, approachable storytelling tone"},
+    {
+        "id": "leo", "name": "Leo", "tag": "Narrator", "gender": "male",
+        "desc": "Authoritative, instructional — best for documentaries",
+        "preview_url": "https://data.x.ai/audio-samples/voice_leo.mp3",
+        "default": True,
+    },
+    {
+        "id": "rex", "name": "Rex", "tag": "Professional", "gender": "male",
+        "desc": "Polished business tone — great for explainers",
+        "preview_url": "https://data.x.ai/audio-samples/voice_rex.mp3",
+    },
+    {
+        "id": "sal", "name": "Sal", "tag": "Neutral", "gender": "male",
+        "desc": "Versatile, clear delivery that fits most niches",
+        "preview_url": "https://data.x.ai/audio-samples/voice_sal.mp3",
+    },
+    {
+        "id": "78a495fdbb39", "name": "James", "tag": "Engaging", "gender": "male",
+        "desc": "Young, energetic English narrator — ideal for listicles",
+        "preview_url": "https://static.atlascloud.ai/media/audios/47_James_78a495fdbb39.mp3",
+    },
+    {
+        "id": "96819d0bd28d", "name": "Daniel", "tag": "Mature", "gender": "male",
+        "desc": "Seasoned English voice with natural warmth",
+        "preview_url": "https://static.atlascloud.ai/media/audios/42_Daniel_96819d0bd28d.mp3",
+    },
+    {
+        "id": "ara", "name": "Ara", "tag": "Warm", "gender": "female",
+        "desc": "Warm and conversational — great for storytelling",
+        "preview_url": "https://data.x.ai/audio-samples/voice_ara.mp3",
+    },
+    {
+        "id": "eve", "name": "Eve", "tag": "Upbeat", "gender": "female",
+        "desc": "Energetic and upbeat — strong for viral formats",
+        "preview_url": "https://data.x.ai/audio-samples/voice_eve.mp3",
+    },
+    {
+        "id": "f8cf5c2c78d4", "name": "Grace", "tag": "Clear", "gender": "female",
+        "desc": "Young, clear English voice — approachable and bright",
+        "preview_url": "https://static.atlascloud.ai/media/audios/29_Grace_f8cf5c2c78d4.mp3",
+    },
+    {
+        "id": "79f3a8b96d43", "name": "Claire", "tag": "Steady", "gender": "female",
+        "desc": "Calm, middle-aged English narrator — steady pacing",
+        "preview_url": "https://static.atlascloud.ai/media/audios/46_Claire_79f3a8b96d43.mp3",
+    },
 ]
 
 
@@ -619,7 +660,7 @@ class ScriptRequest(BaseModel):
 
 class VoiceoverRequest(BaseModel):
     script: str
-    voice: str = "Charon"
+    voice: str = "leo"
 
 class VoicePreviewRequest(BaseModel):
     voice: str
@@ -668,7 +709,7 @@ class ClaudeScriptRequest(BaseModel):
 
 class VoiceoverStudioRequest(BaseModel):
     script: str
-    voice: str = "Charon"
+    voice: str = "leo"
     style_preset: str = "Narrator"
     custom_notes: str = ""
 
@@ -880,10 +921,16 @@ async def upload_voiceover(file: UploadFile = File(...), user: dict = Depends(re
 
 @app.post("/api/voiceover/preview")
 async def voice_preview(req: VoicePreviewRequest, user: dict = Depends(require_user)):
+    """Return a quick preview — prefer Atlas official sample URLs when available."""
+    for v in CURATED_VOICES:
+        if v["id"] == req.voice and v.get("preview_url"):
+            return {"url": v["preview_url"], "cached": True}
+
     from core.voiceover_gen import generate_voiceover as gen_vo
 
     out_dir = str(OUTPUT_DIR / "voice_previews")
-    cache_path = Path(out_dir) / f"{req.voice.lower()}_preview.wav"
+    safe_name = "".join(c if c.isalnum() else "_" for c in req.voice.lower())[:40]
+    cache_path = Path(out_dir) / f"{safe_name}_preview.wav"
 
     if cache_path.exists():
         rel = os.path.relpath(str(cache_path), str(ROOT))

@@ -8,7 +8,7 @@
   "rpm_range": "$3 - $8",
   "demand": "High",
   "recipe": "broll_only",
-  "default_voice": "Charon",
+  "default_voice": "leo",
   "default_minutes": 10,
   "max_free_minutes": 10,
   "max_paid_minutes": 20,

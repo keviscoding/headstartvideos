@@ -43,20 +43,36 @@ VOICES = {
     "Sulafat": "Warm",
 }
 
-# Map Gemini-style voice names → Atlas xAI voice_ids
+# Legacy Gemini names → Atlas xAI voice_ids (backward compat)
 _ATLAS_VOICE_MAP = {
-    "Charon": "leo",       # authoritative narrator
-    "Kore": "rex",         # firm / professional
+    # New Atlas IDs pass through as-is when already known
+    "leo": "leo", "rex": "rex", "sal": "sal", "ara": "ara", "eve": "eve",
+    "78a495fdbb39": "78a495fdbb39",  # James
+    "96819d0bd28d": "96819d0bd28d",  # Daniel
+    "f8cf5c2c78d4": "f8cf5c2c78d4",  # Grace
+    "79f3a8b96d43": "79f3a8b96d43",  # Claire
+    # Legacy Gemini names
+    "Charon": "leo",
+    "Kore": "rex",
     "Gacrux": "rex",
     "Schedar": "leo",
-    "Puck": "eve",         # upbeat
+    "Puck": "eve",
     "Fenrir": "eve",
-    "Zephyr": "ara",       # warm
+    "Zephyr": "ara",
     "Aoede": "ara",
     "Sulafat": "ara",
     "Leda": "ara",
     "Orus": "leo",
     "Rasalgethi": "leo",
+    "James": "78a495fdbb39",
+    "Daniel": "96819d0bd28d",
+    "Grace": "f8cf5c2c78d4",
+    "Claire": "79f3a8b96d43",
+    "Leo": "leo",
+    "Rex": "rex",
+    "Sal": "sal",
+    "Ara": "ara",
+    "Eve": "eve",
 }
 
 VOICE_CHOICES = [f"{name} -- {desc}" for name, desc in VOICES.items()]
