@@ -73,6 +73,7 @@ function ensureCanCook(retry) {
     if (!ensureSignedIn(retry)) return false;
     if (!isPaidUser()) {
         pendingAuthAction = typeof retry === 'function' ? retry : null;
+        persistPipelineState(); // keep progress across Stripe redirect
         showPricingModal({ reason: 'cook' });
         return false;
     }
@@ -157,8 +158,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (currentUser) cookingManager.restore();
 
+    const restored = restorePipelineState();
     const hash = window.location.hash.slice(1);
     if (hash) navigateTo(hash);
+    else if (restored) navigateTo('pipeline');
 
     maybeShowWelcomeCelebration();
 });
@@ -249,6 +252,7 @@ function goToStep(n) {
         line.classList.toggle('done', i < n - 1);
     });
 
+    if (n >= 2) persistPipelineState();
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -356,6 +360,7 @@ function bindSliderLabel(sliderId, labelId) {
 }
 
 function resetPipeline() {
+    clearPipelineDraft();
     Object.assign(state, {
         step: 1, niche: null, nicheData: null, title: '', script: '',
         voice: 'Charon', targetMinutes: 8, voiceoverPath: '', voiceoverUrl: '',
@@ -595,6 +600,12 @@ function hideCelebration() {
     setTimeout(() => {
         overlay.classList.remove('show');
         overlay.style.display = 'none';
+        // After celebrating trial/upgrade, resume where they left off in the pipeline
+        if (state.step >= 2) {
+            navigateTo('pipeline');
+            goToStep(state.step);
+            if (state.step === 6) populateBuildSummary();
+        }
     }, 350);
 }
 
@@ -752,6 +763,8 @@ function upgradeToPro(plan = 'monthly') {
 
 async function _doCheckout(plan = 'monthly') {
     if (!currentUser) { showAuthModal(); return; }
+    // Save pipeline progress so Stripe redirect doesn't wipe their work
+    persistPipelineState();
     track('checkout_started', { plan });
     try {
         const res = await fetch('/api/billing/checkout', {
@@ -1466,6 +1479,18 @@ async function fetchChannelData() {
 
 async function analyzeChannel() {
     if (!ensureAuth(analyzeChannel)) return;
+    if (!state.channelData) {
+        showSoftPrompt(
+            'Fetch channel data first — then we can analyze what’s working on that channel.',
+            'Go to Channel Data',
+            () => {
+                navigateTo('script-studio');
+                const tab = document.querySelector('.studio-tab[data-tab="ss-channel"]');
+                if (tab) tab.click();
+            }
+        );
+        return;
+    }
     const btn = document.querySelector('#ss-channel-result .btn-primary');
     setLoading(btn, true);
     try {
@@ -1475,12 +1500,12 @@ async function analyzeChannel() {
             body: JSON.stringify({ channel_data: state.channelData }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Failed');
+        if (!res.ok) throw new Error(friendlyApiError(data, 'Analysis failed'));
         state.channelAnalysis = data.analysis;
         document.getElementById('ss-analysis-text').textContent = data.analysis;
         document.getElementById('ss-analysis').classList.remove('hidden');
     } catch (e) {
-        alert('Analysis failed: ' + e.message);
+        showSoftPrompt(e.message || 'Channel analysis failed.');
     } finally {
         setLoading(btn, false);
     }
@@ -1488,6 +1513,34 @@ async function analyzeChannel() {
 
 async function generateIdeas() {
     if (!ensureAuth(generateIdeas)) return;
+    // Channel data is optional — we generate general ideas if missing, but nudge them
+    if (!state.channelData && !state._ideasGeneralOk) {
+        showSoftPrompt(
+            'No channel data yet. We can still generate general viral ideas — or fetch a channel first for better results.',
+            'Generate anyway',
+            () => {
+                state._ideasGeneralOk = true;
+                generateIdeas();
+            }
+        );
+        const el = document.getElementById('soft-prompt');
+        if (el) {
+            const row = el.querySelector('div:last-child');
+            if (row) {
+                const fetchBtn = document.createElement('button');
+                fetchBtn.textContent = 'Fetch channel';
+                fetchBtn.style.cssText = 'padding:8px 14px;border:1px solid var(--app-border);border-radius:8px;background:transparent;color:var(--app-ink-2);font-size:13px;cursor:pointer;';
+                fetchBtn.onclick = () => {
+                    el.style.display = 'none';
+                    navigateTo('script-studio');
+                    document.querySelector('.studio-tab[data-tab="ss-channel"]')?.click();
+                };
+                row.insertBefore(fetchBtn, row.firstChild);
+            }
+        }
+        return;
+    }
+    state._ideasGeneralOk = false;
     const btn = document.querySelector('#ss-ideas .btn-primary');
     setLoading(btn, true);
     try {
@@ -1495,19 +1548,19 @@ async function generateIdeas() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                channel_data: state.channelData,
+                channel_data: state.channelData || { topic_hint: 'faceless YouTube automation niches' },
                 num_ideas: parseInt(document.getElementById('ss-idea-count').value),
                 analysis: state.channelAnalysis || '',
             }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Failed');
+        if (!res.ok) throw new Error(friendlyApiError(data, 'Idea generation failed'));
         const list = document.getElementById('ss-ideas-list');
         list.innerHTML = '';
-        data.ideas.forEach(idea => {
+        (data.ideas || []).forEach(idea => {
             const card = document.createElement('div');
             card.className = 'title-card';
-            card.innerHTML = `<p class="text-gray-100 text-sm">${idea}</p>`;
+            card.innerHTML = `<p class="text-gray-100 text-sm">${_esc(idea)}</p>`;
             card.addEventListener('click', () => {
                 document.querySelectorAll('#ss-ideas-list .title-card').forEach(c => c.classList.remove('selected'));
                 card.classList.add('selected');
@@ -1515,8 +1568,11 @@ async function generateIdeas() {
             });
             list.appendChild(card);
         });
+        if (!(data.ideas || []).length) {
+            showSoftPrompt('No ideas came back. Try again, or fetch channel data for better results.');
+        }
     } catch (e) {
-        alert('Idea generation failed: ' + e.message);
+        showSoftPrompt(e.message || 'Idea generation failed.');
     } finally {
         setLoading(btn, false);
     }
@@ -1524,6 +1580,25 @@ async function generateIdeas() {
 
 async function generateStudioTitles() {
     if (!ensureAuth(generateStudioTitles)) return;
+    const idea = document.getElementById('ss-title-idea').value.trim();
+    if (!idea) {
+        showSoftPrompt(
+            'Paste a video idea first — then we’ll generate title options.',
+            'Use selected idea',
+            () => {
+                const selected = document.getElementById('ss-selected-idea')?.value?.trim();
+                if (selected) {
+                    document.getElementById('ss-title-idea').value = selected;
+                    const tab = document.querySelector('.studio-tab[data-tab="ss-titles"]');
+                    if (tab) tab.click();
+                } else {
+                    const ideasTab = document.querySelector('.studio-tab[data-tab="ss-ideas"]');
+                    if (ideasTab) ideasTab.click();
+                }
+            }
+        );
+        return;
+    }
     const btn = document.querySelector('#ss-titles .btn-primary');
     setLoading(btn, true);
     try {
@@ -1531,18 +1606,18 @@ async function generateStudioTitles() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                video_idea: document.getElementById('ss-title-idea').value.trim(),
-                channel_data: state.channelData,
+                video_idea: idea,
+                channel_data: state.channelData || null,
             }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Failed');
+        if (!res.ok) throw new Error(friendlyApiError(data, 'Title generation failed'));
         const list = document.getElementById('ss-titles-list');
         list.innerHTML = '';
-        data.titles.forEach(t => {
+        (data.titles || []).forEach(t => {
             const card = document.createElement('div');
             card.className = 'title-card';
-            card.innerHTML = `<p class="text-gray-100">${t}</p>`;
+            card.innerHTML = `<p class="text-gray-100">${_esc(t)}</p>`;
             card.addEventListener('click', () => {
                 document.querySelectorAll('#ss-titles-list .title-card').forEach(c => c.classList.remove('selected'));
                 card.classList.add('selected');
@@ -1551,7 +1626,7 @@ async function generateStudioTitles() {
             list.appendChild(card);
         });
     } catch (e) {
-        alert('Title generation failed: ' + e.message);
+        showSoftPrompt(e.message || 'Title generation failed.');
     } finally {
         setLoading(btn, false);
     }
@@ -1559,6 +1634,22 @@ async function generateStudioTitles() {
 
 async function generateStudioScript() {
     if (!ensureAuth(generateStudioScript)) return;
+    const title = document.getElementById('ss-script-title').value.trim();
+    if (!title) {
+        showSoftPrompt(
+            'Enter a video title first — then we’ll write the full script.',
+            'Use selected title',
+            () => {
+                const selected = document.getElementById('ss-selected-title')?.value?.trim();
+                if (selected) {
+                    document.getElementById('ss-script-title').value = selected;
+                } else {
+                    document.querySelector('.studio-tab[data-tab="ss-titles"]')?.click();
+                }
+            }
+        );
+        return;
+    }
     const btn = document.querySelector('#ss-script .btn-primary:first-of-type');
     setLoading(btn, true);
     try {
@@ -1566,19 +1657,19 @@ async function generateStudioScript() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                title: document.getElementById('ss-script-title').value.trim(),
+                title,
                 video_idea: document.getElementById('ss-script-idea').value.trim(),
-                channel_data: state.channelData,
+                channel_data: state.channelData || null,
                 target_minutes: parseInt(document.getElementById('ss-script-length').value),
             }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Failed');
+        if (!res.ok) throw new Error(friendlyApiError(data, 'Script generation failed'));
         document.getElementById('ss-script-output').value = data.script;
         const wc = data.script.split(/\s+/).length;
         document.getElementById('ss-word-count').textContent = `${wc} words (~${Math.round(wc / 150)} min)`;
     } catch (e) {
-        alert('Script generation failed: ' + e.message);
+        showSoftPrompt(e.message || 'Script generation failed.');
     } finally {
         setLoading(btn, false);
     }
@@ -1948,11 +2039,121 @@ function setLoading(btn, loading) {
     btn.disabled = loading;
 }
 
+function showSoftPrompt(message, actionLabel, actionFn) {
+    // Non-scary in-app prompt instead of raw alert() for missing prerequisites
+    let el = document.getElementById('soft-prompt');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'soft-prompt';
+        el.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:280;max-width:440px;width:calc(100% - 32px);background:var(--app-surface);border:1px solid var(--app-border);border-radius:14px;padding:16px 18px;box-shadow:0 12px 40px rgba(0,0,0,.35);display:none;';
+        document.body.appendChild(el);
+    }
+    el.innerHTML = `
+        <p style="margin:0 0 12px;font-family:var(--font-body);font-size:14px;color:var(--app-ink);line-height:1.45;">${_esc(message)}</p>
+        <div style="display:flex;gap:8px;justify-content:flex-end;">
+            <button id="soft-prompt-dismiss" style="padding:8px 14px;border:1px solid var(--app-border);border-radius:8px;background:transparent;color:var(--app-ink-2);font-size:13px;cursor:pointer;">Got it</button>
+            ${actionLabel ? `<button id="soft-prompt-action" class="btn-primary" style="font-size:13px;padding:8px 14px;">${_esc(actionLabel)}</button>` : ''}
+        </div>
+    `;
+    el.style.display = 'block';
+    document.getElementById('soft-prompt-dismiss').onclick = () => { el.style.display = 'none'; };
+    const act = document.getElementById('soft-prompt-action');
+    if (act && typeof actionFn === 'function') {
+        act.onclick = () => { el.style.display = 'none'; actionFn(); };
+    }
+}
+
+function friendlyApiError(data, fallback) {
+    const d = data && data.detail;
+    if (typeof d === 'string' && d.trim()) return d;
+    if (Array.isArray(d) && d[0]?.msg) return d[0].msg;
+    return fallback || 'Something went wrong. Please try again.';
+}
+
 function copyText(elementId) {
     const el = document.getElementById(elementId);
     if (!el) return;
     const text = el.value || el.textContent;
     navigator.clipboard.writeText(text);
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline persistence (survives Stripe checkout redirect)
+// ---------------------------------------------------------------------------
+const PIPELINE_STORAGE_KEY = 'cr_pipeline_draft';
+
+function persistPipelineState() {
+    try {
+        const draft = {
+            step: state.step,
+            niche: state.niche,
+            nicheData: state.nicheData,
+            title: state.title,
+            script: state.script,
+            voice: state.voice,
+            targetMinutes: state.targetMinutes,
+            voiceoverPath: state.voiceoverPath,
+            voiceoverUrl: state.voiceoverUrl,
+            thumbnailPath: state.thumbnailPath,
+            thumbnailUrl: state.thumbnailUrl,
+            voiceMode: state.voiceMode,
+            uploadedVoPath: state.uploadedVoPath,
+            savedAt: Date.now(),
+        };
+        localStorage.setItem(PIPELINE_STORAGE_KEY, JSON.stringify(draft));
+    } catch (_) {}
+}
+
+function clearPipelineDraft() {
+    try { localStorage.removeItem(PIPELINE_STORAGE_KEY); } catch (_) {}
+}
+
+function restorePipelineState() {
+    let draft = null;
+    try { draft = JSON.parse(localStorage.getItem(PIPELINE_STORAGE_KEY) || 'null'); } catch (_) { draft = null; }
+    if (!draft || !draft.savedAt) return false;
+    // Expire after 24h
+    if (Date.now() - draft.savedAt > 24 * 60 * 60 * 1000) {
+        clearPipelineDraft();
+        return false;
+    }
+    Object.assign(state, {
+        step: draft.step || 1,
+        niche: draft.niche || null,
+        nicheData: draft.nicheData || null,
+        title: draft.title || '',
+        script: draft.script || '',
+        voice: draft.voice || 'Charon',
+        targetMinutes: draft.targetMinutes || 8,
+        voiceoverPath: draft.voiceoverPath || '',
+        voiceoverUrl: draft.voiceoverUrl || '',
+        thumbnailPath: draft.thumbnailPath || '',
+        thumbnailUrl: draft.thumbnailUrl || '',
+        voiceMode: draft.voiceMode || 'generate',
+        uploadedVoPath: draft.uploadedVoPath || '',
+    });
+
+    // Rehydrate UI fields
+    const titleEl = document.getElementById('custom-title');
+    if (titleEl && state.title) titleEl.value = state.title;
+    const scriptEl = document.getElementById('script-editor');
+    if (scriptEl && state.script) {
+        scriptEl.value = state.script;
+        updateWordCount();
+    }
+    const slider = document.getElementById('target-minutes');
+    if (slider) {
+        slider.value = state.targetMinutes;
+        const label = document.getElementById('target-minutes-label');
+        if (label) label.textContent = state.targetMinutes + ' min';
+    }
+    if (state.thumbnailUrl) {
+        // Will re-render when they land on step 5/6
+    }
+    if (state.step >= 2) updateNextBtn2();
+    goToStep(Math.min(Math.max(state.step, 1), 6));
+    if (state.step === 6) populateBuildSummary();
+    return true;
 }
 
 // ---------------------------------------------------------------------------

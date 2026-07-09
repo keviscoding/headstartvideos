@@ -1293,6 +1293,8 @@ async def analyze_channel(req: ChannelAnalyzeRequest, user: dict = Depends(requi
         from core.script_gen import analyze_channel as _analyze
         result = _analyze(channel_data=req.channel_data, api_key=config.ANTHROPIC_KEY)
         return {"analysis": result}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(500, f"Channel analysis failed: {e}")
 
@@ -1312,6 +1314,8 @@ async def generate_ideas(req: IdeasRequest, user: dict = Depends(require_user)):
         )
         ideas = [line.strip() for line in result.split("\n") if line.strip()]
         return {"ideas": ideas, "raw": result}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(500, f"Idea generation failed: {e}")
 
@@ -1330,6 +1334,8 @@ async def generate_titles_claude(req: ClaudeTitlesRequest, user: dict = Depends(
         )
         titles = [line.strip().lstrip("0123456789.-) ") for line in result.split("\n") if line.strip()]
         return {"titles": titles[:5], "raw": result}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(500, f"Title generation failed: {e}")
 
@@ -1349,6 +1355,8 @@ async def generate_script_claude(req: ClaudeScriptRequest, user: dict = Depends(
             target_length_min=req.target_minutes,
         )
         return {"script": result, "word_count": len(result.split())}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(500, f"Script generation failed: {e}")
 

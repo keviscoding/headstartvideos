@@ -114,14 +114,21 @@ def _call_claude(
     raise last_err or RuntimeError("No Claude model available")
 
 
-def _format_channel_data(channel_data: dict) -> str:
+def _format_channel_data(channel_data: dict | None) -> str:
     """Format channel data into a readable string for Claude."""
+    if not channel_data or not isinstance(channel_data, dict):
+        return (
+            "No channel data provided. Generate strong, general YouTube ideas "
+            "suitable for a faceless/automation-style channel. Prefer proven "
+            "niches and clear hooks."
+        )
+
     parts = []
 
     videos = channel_data.get("videos", [])
     if videos:
         parts.append("=== CHANNEL VIDEOS (by view count) ===")
-        sorted_vids = sorted(videos, key=lambda v: v.get("views", 0), reverse=True)
+        sorted_vids = sorted(videos, key=lambda v: v.get("views", 0) or 0, reverse=True)
         for v in sorted_vids[:30]:
             views = v.get("views", "N/A")
             title = v.get("title", "Untitled")
@@ -141,15 +148,25 @@ def _format_channel_data(channel_data: dict) -> str:
         for k, v in meta.items():
             parts.append(f"  {k}: {v}")
 
-    return "\n".join(parts) if parts else "No channel data provided."
+    # Also accept a freeform niche/topic hint
+    hint = channel_data.get("topic_hint") or channel_data.get("niche")
+    if hint:
+        parts.append(f"\n=== TOPIC / NICHE HINT ===\n  {hint}")
+
+    return "\n".join(parts) if parts else (
+        "No channel data provided. Generate strong, general YouTube ideas "
+        "suitable for a faceless/automation-style channel."
+    )
 
 
 def analyze_channel(
-    channel_data: dict,
+    channel_data: dict | None,
     api_key: str,
     model: str = "",
 ) -> str:
     """Analyze a channel's content strategy and patterns."""
+    if not channel_data:
+        raise ValueError("Fetch channel data first, then run analysis.")
     formatted = _format_channel_data(channel_data)
     user_msg = (
         "Analyze this YouTube channel's content strategy in detail. "
@@ -160,13 +177,13 @@ def analyze_channel(
 
 
 def generate_ideas(
-    channel_data: dict,
+    channel_data: dict | None,
     api_key: str,
     num_ideas: int = 7,
     model: str = "",
     analysis: str = "",
 ) -> str:
-    """Generate viral video ideas based on channel data."""
+    """Generate viral video ideas based on channel data (optional)."""
     formatted = _format_channel_data(channel_data)
     context = f"\n\nPrevious channel analysis:\n{analysis}" if analysis else ""
     user_msg = (
@@ -178,11 +195,13 @@ def generate_ideas(
 
 def generate_titles(
     video_idea: str,
-    channel_data: dict,
+    channel_data: dict | None,
     api_key: str,
     model: str = "",
 ) -> str:
     """Generate 5 viral title options for a video idea."""
+    if not (video_idea or "").strip():
+        raise ValueError("Enter a video idea first, then generate titles.")
     formatted = _format_channel_data(channel_data)
     user_msg = (
         f"Generate 5 title options for this video idea:\n\n"
@@ -195,17 +214,19 @@ def generate_titles(
 def generate_script(
     title: str,
     video_idea: str,
-    channel_data: dict,
+    channel_data: dict | None,
     api_key: str,
     target_length_min: int = 8,
     model: str = "",
 ) -> str:
     """Generate a full video script."""
+    if not (title or "").strip():
+        raise ValueError("Enter a video title first, then write the script.")
     formatted = _format_channel_data(channel_data)
     user_msg = (
         f"Write a complete YouTube script for:\n"
         f"Title: {title}\n"
-        f"Concept: {video_idea}\n"
+        f"Concept: {video_idea or title}\n"
         f"Target length: {target_length_min} minutes\n\n"
         f"Match the voice and style of this channel:\n{formatted}"
     )
