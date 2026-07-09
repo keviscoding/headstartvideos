@@ -332,14 +332,16 @@ async def create_checkout(req: CheckoutRequest, request: Request):
         "line_items": [{"price": price_id, "quantity": 1}],
         "payment_method_collection": "always",
         "allow_promotion_codes": True,
-        "success_url": f"{base_url}/app#pipeline",
+        "success_url": f"{base_url}/app?welcome=1#pipeline",
         "cancel_url": f"{base_url}/app#pipeline",
         "metadata": {"user_id": str(user["id"]), "plan": req.plan},
     }
     if not already_trialed:
         session_kwargs["subscription_data"] = {"trial_period_days": 7}
+        session_kwargs["success_url"] = f"{base_url}/app?welcome=trial#pipeline"
     else:
         session_kwargs["metadata"]["skip_trial"] = "1"
+        session_kwargs["success_url"] = f"{base_url}/app?welcome=upgrade#pipeline"
 
     try:
         session = stripe.checkout.Session.create(**session_kwargs)
@@ -751,7 +753,7 @@ async def get_all_voices():
 # Titles (Gemini-based)
 # ---------------------------------------------------------------------------
 @app.post("/api/titles")
-async def generate_titles(req: TitleRequest, user: dict = Depends(require_active_plan)):
+async def generate_titles(req: TitleRequest, user: dict = Depends(require_user)):
     from google import genai
 
     if not config.GEMINI_KEY:
@@ -788,7 +790,7 @@ async def generate_titles(req: TitleRequest, user: dict = Depends(require_active
 # Script (Gemini-based)
 # ---------------------------------------------------------------------------
 @app.post("/api/script")
-async def generate_script(req: ScriptRequest, user: dict = Depends(require_active_plan)):
+async def generate_script(req: ScriptRequest, user: dict = Depends(require_user)):
     from google import genai
 
     if not config.GEMINI_KEY:
@@ -830,7 +832,7 @@ async def generate_script(req: ScriptRequest, user: dict = Depends(require_activ
 # Voiceover
 # ---------------------------------------------------------------------------
 @app.post("/api/voiceover")
-async def generate_voiceover(req: VoiceoverRequest, user: dict = Depends(require_active_plan)):
+async def generate_voiceover(req: VoiceoverRequest, user: dict = Depends(require_user)):
     from core.voiceover_gen import generate_voiceover as gen_vo
 
     out_dir = str(OUTPUT_DIR / "voiceovers" / str(int(time.time())))
@@ -843,7 +845,7 @@ async def generate_voiceover(req: VoiceoverRequest, user: dict = Depends(require
 
 
 @app.post("/api/voiceover/upload")
-async def upload_voiceover(file: UploadFile = File(...), user: dict = Depends(require_active_plan)):
+async def upload_voiceover(file: UploadFile = File(...), user: dict = Depends(require_user)):
     """Accept a user-uploaded voiceover file (WAV, MP3, M4A) and return its path."""
     import subprocess
 
@@ -877,7 +879,7 @@ async def upload_voiceover(file: UploadFile = File(...), user: dict = Depends(re
 
 
 @app.post("/api/voiceover/preview")
-async def voice_preview(req: VoicePreviewRequest, user: dict = Depends(require_active_plan)):
+async def voice_preview(req: VoicePreviewRequest, user: dict = Depends(require_user)):
     from core.voiceover_gen import generate_voiceover as gen_vo
 
     out_dir = str(OUTPUT_DIR / "voice_previews")
@@ -899,7 +901,7 @@ async def voice_preview(req: VoicePreviewRequest, user: dict = Depends(require_a
 
 
 @app.post("/api/voiceover/studio")
-async def voiceover_studio(req: VoiceoverStudioRequest, user: dict = Depends(require_active_plan)):
+async def voiceover_studio(req: VoiceoverStudioRequest, user: dict = Depends(require_user)):
     from core.voiceover_gen import generate_voiceover as gen_vo
 
     out_dir = str(OUTPUT_DIR / "voiceovers" / str(int(time.time())))
@@ -921,7 +923,7 @@ async def voiceover_studio(req: VoiceoverStudioRequest, user: dict = Depends(req
 # Thumbnails
 # ---------------------------------------------------------------------------
 @app.post("/api/thumbnail")
-async def generate_thumbnail(req: ThumbnailRequest, user: dict = Depends(require_active_plan)):
+async def generate_thumbnail(req: ThumbnailRequest, user: dict = Depends(require_user)):
     from core.thumbnail_gen import generate_thumbnail_no_refs
 
     out_dir = str(OUTPUT_DIR / "thumbnails" / str(int(time.time())))
@@ -946,7 +948,7 @@ async def generate_thumbnail_with_refs(
     style: str = Form(""),
     count: int = Form(2),
     refs: list[UploadFile] = File(default=[]),
-    user: dict = Depends(require_active_plan),
+    user: dict = Depends(require_user),
 ):
     from core.thumbnail_gen import generate_thumbnails
 
@@ -996,10 +998,13 @@ async def start_build(req: BuildRequest, request: Request):
         raise HTTPException(401, "Sign in to continue.")
     user_id = user["id"]
 
+    is_admin = _is_admin_email(user.get("email", ""))
+    if not is_admin and user.get("plan") not in ("starter", "daily", "pro", "starter_trial", "daily_trial"):
+        raise HTTPException(402, "Start your free trial to cook this video.")
+
     _safe_user_path(req.voiceover_path, "voiceover")
     _safe_user_path(req.thumbnail_path, "thumbnail")
 
-    is_admin = _is_admin_email(user.get("email", ""))
     credit_deducted = False
     if not is_admin:
         if not deduct_credit(user_id):
@@ -1234,7 +1239,7 @@ def _maybe_attribute(kit: dict, user: dict) -> dict:
 
 
 @app.post("/api/upload-kit")
-async def generate_upload_kit(req: UploadKitRequest, user: dict = Depends(require_active_plan)):
+async def generate_upload_kit(req: UploadKitRequest, user: dict = Depends(require_user)):
     from google import genai
 
     if not config.GEMINI_KEY:
@@ -1261,7 +1266,7 @@ async def generate_upload_kit(req: UploadKitRequest, user: dict = Depends(requir
 # Channel Data + Analysis (Script Studio)
 # ---------------------------------------------------------------------------
 @app.post("/api/channel/fetch")
-async def fetch_channel(req: ChannelFetchRequest, user: dict = Depends(require_active_plan)):
+async def fetch_channel(req: ChannelFetchRequest, user: dict = Depends(require_user)):
     from core.channel_data import fetch_channel_data
 
     if not config.YOUTUBE_API_KEY:
@@ -1280,7 +1285,7 @@ async def fetch_channel(req: ChannelFetchRequest, user: dict = Depends(require_a
 
 
 @app.post("/api/channel/analyze")
-async def analyze_channel(req: ChannelAnalyzeRequest, user: dict = Depends(require_active_plan)):
+async def analyze_channel(req: ChannelAnalyzeRequest, user: dict = Depends(require_user)):
     if not config.ANTHROPIC_KEY:
         return {"analysis": "Claude API key not configured. Add it in Settings to enable channel analysis."}
 
@@ -1293,7 +1298,7 @@ async def analyze_channel(req: ChannelAnalyzeRequest, user: dict = Depends(requi
 
 
 @app.post("/api/ideas")
-async def generate_ideas(req: IdeasRequest, user: dict = Depends(require_active_plan)):
+async def generate_ideas(req: IdeasRequest, user: dict = Depends(require_user)):
     if not config.ANTHROPIC_KEY:
         raise HTTPException(400, "Claude API key not configured. Add it in Settings.")
 
@@ -1312,7 +1317,7 @@ async def generate_ideas(req: IdeasRequest, user: dict = Depends(require_active_
 
 
 @app.post("/api/titles/claude")
-async def generate_titles_claude(req: ClaudeTitlesRequest, user: dict = Depends(require_active_plan)):
+async def generate_titles_claude(req: ClaudeTitlesRequest, user: dict = Depends(require_user)):
     if not config.ANTHROPIC_KEY:
         raise HTTPException(400, "Claude API key not configured. Add it in Settings.")
 
@@ -1330,7 +1335,7 @@ async def generate_titles_claude(req: ClaudeTitlesRequest, user: dict = Depends(
 
 
 @app.post("/api/script/claude")
-async def generate_script_claude(req: ClaudeScriptRequest, user: dict = Depends(require_active_plan)):
+async def generate_script_claude(req: ClaudeScriptRequest, user: dict = Depends(require_user)):
     if not config.ANTHROPIC_KEY:
         raise HTTPException(400, "Claude API key not configured. Add it in Settings.")
 
@@ -1352,7 +1357,7 @@ async def generate_script_claude(req: ClaudeScriptRequest, user: dict = Depends(
 # Niche Screener
 # ---------------------------------------------------------------------------
 @app.post("/api/niche/analyze")
-async def analyze_niche(req: NicheAnalyzeRequest, user: dict = Depends(require_active_plan)):
+async def analyze_niche(req: NicheAnalyzeRequest, user: dict = Depends(require_user)):
     try:
         from core.video_analyzer import analyze_video
         profile = analyze_video(req.youtube_url, analyze_minutes=req.minutes)

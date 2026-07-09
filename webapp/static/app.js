@@ -49,8 +49,8 @@ window.fetch = async function (input, init) {
             } else if (res.status === 402) {
                 if (typeof isTrialUser === 'function' && isTrialUser()) {
                     if (typeof showTrialExhaustedModal === 'function') showTrialExhaustedModal();
-                } else {
-                    if (typeof showPricingModal === 'function') showPricingModal();
+                } else if (typeof showPricingModal === 'function') {
+                    showPricingModal({ reason: 'cook' });
                 }
             }
         }
@@ -58,16 +58,22 @@ window.fetch = async function (input, init) {
     return res;
 };
 
-// Proactive gate: returns true if signed in; otherwise shows the modal and
-// (optionally) replays `retry` once the user finishes signing in.
-function ensureAuth(retry) {
+// Signed-in only — lets free users walk the pipeline (steps 1–5).
+function ensureSignedIn(retry) {
     if (!currentUser) {
         pendingAuthAction = typeof retry === 'function' ? retry : null;
         showAuthModal();
         return false;
     }
+    return true;
+}
+
+// Paid/trial required — used only when cooking a video (step 6).
+function ensureCanCook(retry) {
+    if (!ensureSignedIn(retry)) return false;
     if (!isPaidUser()) {
-        showPricingModal();
+        pendingAuthAction = typeof retry === 'function' ? retry : null;
+        showPricingModal({ reason: 'cook' });
         return false;
     }
     if (isTrialUser() && (currentUser.credits || 0) <= 0) {
@@ -75,6 +81,11 @@ function ensureAuth(retry) {
         return false;
     }
     return true;
+}
+
+// Back-compat alias used by tools; prefer ensureSignedIn / ensureCanCook.
+function ensureAuth(retry) {
+    return ensureSignedIn(retry);
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +159,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const hash = window.location.hash.slice(1);
     if (hash) navigateTo(hash);
+
+    maybeShowWelcomeCelebration();
 });
 
 // ---------------------------------------------------------------------------
@@ -255,7 +268,7 @@ function bindEvents() {
     });
 
     document.getElementById('btn-next-2').addEventListener('click', () => {
-        if (!ensureAuth()) return;
+        if (!ensureSignedIn()) return;
         if (!state.title) return;
         goToStep(3);
     });
@@ -270,7 +283,7 @@ function bindEvents() {
     document.getElementById('btn-regen-script').addEventListener('click', generateScript);
 
     document.getElementById('btn-next-3').addEventListener('click', () => {
-        if (!ensureAuth()) return;
+        if (!ensureSignedIn()) return;
         state.script = document.getElementById('script-editor').value.trim();
         if (!state.script) return;
         goToStep(4);
@@ -280,7 +293,7 @@ function bindEvents() {
     document.getElementById('btn-next-4').addEventListener('click', handleVoiceNext);
 
     document.getElementById('btn-next-5').addEventListener('click', () => {
-        if (!ensureAuth()) return;
+        if (!ensureSignedIn()) return;
         goToStep(6);
         populateBuildSummary();
     });
@@ -419,7 +432,7 @@ async function loadNiches() {
 }
 
 function selectNiche(niche, card) {
-    if (!ensureAuth(() => selectNiche(niche, card))) return;
+    if (!ensureSignedIn(() => selectNiche(niche, card))) return;
     track('recipe_selected', { recipe: niche.id });
     document.querySelectorAll('.niche-card').forEach(c => c.classList.remove('selected'));
     card.classList.add('selected');
@@ -481,7 +494,7 @@ function hideLengthUpgradePrompt() {
 
 let _pricingBillingCycle = 'monthly';
 
-function showPricingModal() {
+function showPricingModal(opts = {}) {
     if (!currentUser) { showAuthModal(); return; }
     const modal = document.getElementById('pricing-modal');
     modal.classList.remove('hidden');
@@ -499,22 +512,105 @@ function showPricingModal() {
     const starterBtn = document.getElementById('pricing-cta-starter');
     const dailyBtn = document.getElementById('pricing-cta-daily');
     const subtitle = document.getElementById('pricing-subtitle');
+    const heading = modal.querySelector('h2.cr-display');
     const ctaText = usedTrial ? 'Subscribe now' : 'Start free trial';
     if (starterBtn) starterBtn.textContent = ctaText;
     if (dailyBtn) dailyBtn.textContent = ctaText;
-    if (subtitle) {
-        subtitle.textContent = usedTrial
-            ? 'Your free trial was already used. Subscribe to keep creating.'
-            : '7-day free trial on any plan. Cancel anytime.';
+
+    if (opts.reason === 'cook' && !usedTrial) {
+        if (heading) heading.textContent = 'Your video is ready to cook';
+        if (subtitle) subtitle.textContent = 'Start your free trial to cook this video — 3 videos included.';
+    } else if (usedTrial) {
+        if (heading) heading.textContent = 'Choose your plan';
+        if (subtitle) subtitle.textContent = 'Your free trial was already used. Subscribe to keep creating.';
+    } else {
+        if (heading) heading.textContent = 'Choose your plan';
+        if (subtitle) subtitle.textContent = '7-day free trial on any plan. Cancel anytime.';
     }
 
-    track('upgrade_viewed');
+    track('upgrade_viewed', { reason: opts.reason || 'general' });
 }
 
 function hidePricingModal() {
     const modal = document.getElementById('pricing-modal');
     modal.classList.add('hidden');
     modal.style.display = 'none';
+}
+
+// ---------------------------------------------------------------------------
+// Celebration moments (trial start / upgrade)
+// ---------------------------------------------------------------------------
+function showCelebration(kind = 'trial') {
+    const overlay = document.getElementById('celebration-overlay');
+    if (!overlay) return;
+    const title = document.getElementById('celebration-title');
+    const sub = document.getElementById('celebration-sub');
+    const cta = document.getElementById('celebration-cta');
+    const burst = document.getElementById('cele-burst');
+
+    if (kind === 'upgrade') {
+        if (title) title.textContent = "You're upgraded";
+        if (sub) sub.textContent = 'Full credits unlocked. Keep cooking.';
+        if (cta) cta.textContent = 'Back to cooking →';
+    } else if (kind === 'subscribe') {
+        if (title) title.textContent = "You're subscribed";
+        if (sub) sub.textContent = 'Welcome aboard. Your plan is live.';
+        if (cta) cta.textContent = "Let's go →";
+    } else {
+        if (title) title.textContent = "You're in";
+        if (sub) sub.textContent = 'Your free trial is live. 3 videos ready to cook.';
+        if (cta) cta.textContent = "Let's cook →";
+    }
+
+    if (burst) {
+        burst.innerHTML = '';
+        const colors = ['var(--accent)', '#22c55e', '#f59e0b', '#38bdf8', '#f472b6'];
+        for (let i = 0; i < 18; i++) {
+            const p = document.createElement('div');
+            p.className = 'cele-particle';
+            const angle = (i / 18) * Math.PI * 2;
+            const dist = 60 + Math.random() * 80;
+            p.style.setProperty('--dx', Math.cos(angle) * dist + 'px');
+            p.style.setProperty('--dy', Math.sin(angle) * dist + 'px');
+            p.style.left = '50%';
+            p.style.top = '40%';
+            p.style.background = colors[i % colors.length];
+            p.style.animationDelay = (Math.random() * 0.15) + 's';
+            burst.appendChild(p);
+        }
+    }
+
+    overlay.classList.add('show');
+    overlay.style.display = 'flex';
+    // Force reflow so opacity transition plays
+    void overlay.offsetWidth;
+    overlay.style.opacity = '1';
+    track('celebration_shown', { kind });
+}
+
+function hideCelebration() {
+    const overlay = document.getElementById('celebration-overlay');
+    if (!overlay) return;
+    overlay.style.opacity = '0';
+    setTimeout(() => {
+        overlay.classList.remove('show');
+        overlay.style.display = 'none';
+    }, 350);
+}
+
+function maybeShowWelcomeCelebration() {
+    const params = new URLSearchParams(window.location.search);
+    const welcome = params.get('welcome');
+    if (!welcome) return;
+    // Clean URL without losing hash
+    const hash = window.location.hash || '#pipeline';
+    window.history.replaceState({}, '', window.location.pathname + hash);
+    // Wait a beat for auth/UI to settle, then celebrate
+    setTimeout(() => {
+        if (welcome === 'trial') showCelebration('trial');
+        else if (welcome === 'upgrade') showCelebration('upgrade');
+        else showCelebration('subscribe');
+    }, 400);
 }
 
 function showTrialExhaustedModal() {
@@ -585,6 +681,7 @@ async function endTrialNow() {
         }
         hideTrialExhaustedModal();
         loadBillingPage();
+        showCelebration('upgrade');
         track('trial_ended_early');
     } catch (e) {
         alert('Network error. Please try again.');
@@ -678,7 +775,7 @@ async function _doCheckout(plan = 'monthly') {
 // Step 2: Titles
 // ---------------------------------------------------------------------------
 async function generateTitles() {
-    if (!ensureAuth(generateTitles)) return;
+    if (!ensureSignedIn(generateTitles)) return;
     const btn = document.getElementById('btn-gen-titles');
     setLoading(btn, true);
     try {
@@ -729,7 +826,7 @@ function updateNextBtn2() {
 // Step 3: Script
 // ---------------------------------------------------------------------------
 async function generateScript() {
-    if (!ensureAuth(generateScript)) return;
+    if (!ensureSignedIn(generateScript)) return;
     const genBtn = document.getElementById('btn-gen-script');
     const regenBtn = document.getElementById('btn-regen-script');
     if (genBtn) setLoading(genBtn, true);
@@ -867,7 +964,7 @@ async function handleVoUpload(input) {
 }
 
 async function handleVoiceNext() {
-    if (!ensureAuth(handleVoiceNext)) return;
+    if (!ensureSignedIn(handleVoiceNext)) return;
     const btn = document.getElementById('btn-next-4');
     setLoading(btn, true);
 
@@ -1073,7 +1170,7 @@ const cookingManager = {
                 const errMsg = typeof data.detail === 'string' ? data.detail : (data.detail?.message || JSON.stringify(data.detail) || 'Build failed');
                 if (res.status === 401) { showAuthModal(); }
                 else if (res.status === 402 && isTrialUser()) { showTrialExhaustedModal(); }
-                else if (res.status === 402) { showPricingModal(); }
+                else if (res.status === 402) { showPricingModal({ reason: 'cook' }); }
                 else { alert(errMsg); }
                 throw new Error(errMsg);
             }
@@ -1283,7 +1380,7 @@ function dismissToast() {
 }
 
 async function startBuild() {
-    if (!ensureAuth(startBuild)) return;
+    if (!ensureCanCook(startBuild)) return;
     const btn = document.getElementById('btn-build');
     if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; }
     try {
