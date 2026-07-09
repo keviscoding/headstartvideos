@@ -421,15 +421,19 @@ async def stripe_webhook(request: Request):
 
     elif evt_type == "invoice.paid":
         sub_id = obj.get("subscription")
+        amount_paid = obj.get("amount_paid", 0)
         if sub_id:
             row = get_user_by_sub_id(sub_id)
             if row:
                 plan = row.get("plan", "starter")
                 if plan in ("starter_trial", "daily_trial"):
-                    new_plan = "daily" if "daily" in plan else "starter"
-                    credits = 35 if new_plan == "daily" else 15
-                    update_user(row["id"], plan=new_plan, credits=credits)
-                    print(f"[stripe] Trial converted: user {row['id']} → {new_plan} ({credits} credits)")
+                    if amount_paid == 0:
+                        print(f"[stripe] Skipping $0 trial invoice for user {row['id']} (already has 3 trial credits)")
+                    else:
+                        new_plan = "daily" if "daily" in plan else "starter"
+                        credits = 35 if new_plan == "daily" else 15
+                        update_user(row["id"], plan=new_plan, credits=credits)
+                        print(f"[stripe] Trial converted: user {row['id']} → {new_plan} ({credits} credits)")
                 else:
                     credits = 35 if plan == "daily" else 15
                     update_user(row["id"], credits=credits)
