@@ -109,6 +109,66 @@
             position: relative;
             box-shadow: 0 24px 80px rgba(0,0,0,0.15);
         }
+        /* Click-to-play facade — avoids blank YouTube iframes hanging on CDN */
+        .yt-facade {
+            position: absolute;
+            inset: 0;
+            display: block;
+            width: 100%;
+            height: 100%;
+            padding: 0;
+            border: 0;
+            cursor: pointer;
+            background: #0b0d14;
+            color: inherit;
+        }
+        .yt-facade img {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .yt-facade::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(180deg, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0.35) 100%);
+            pointer-events: none;
+        }
+        .yt-play {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 1;
+            width: 72px;
+            height: 72px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.94);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 8px 28px rgba(0,0,0,0.35);
+            transition: transform 0.15s ease, background 0.15s ease;
+        }
+        .yt-facade:hover .yt-play,
+        .yt-facade:focus-visible .yt-play {
+            transform: translate(-50%, -50%) scale(1.06);
+            background: #fff;
+        }
+        .yt-play svg {
+            margin-left: 4px;
+            color: var(--accent);
+        }
+        .demo-frame iframe {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+            border: 0;
+        }
 
         /* -- How it works -- */
         .how-section {
@@ -479,11 +539,26 @@
         </div>
     </section>
 
-    <!-- Demo -->
+    <!-- Demo — click-to-play (thumbnail first; YouTube iframe only after click) -->
     <section class="demo-section">
         <div class="container">
-            <div class="demo-frame">
-                <iframe src="https://www.youtube.com/embed/UQwQi4jK76I" title="ChannelRecipe Demo" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen style="width: 100%; height: 100%; position: absolute; top: 0; left: 0;"></iframe>
+            <div class="demo-frame" id="demo-player" data-yt-id="UQwQi4jK76I">
+                <button type="button" class="yt-facade" id="yt-facade" aria-label="Play ChannelRecipe demo video">
+                    <img
+                        src="https://i.ytimg.com/vi/UQwQi4jK76I/hqdefault.jpg"
+                        srcset="https://i.ytimg.com/vi/UQwQi4jK76I/hqdefault.jpg 480w, https://i.ytimg.com/vi/UQwQi4jK76I/sddefault.jpg 640w, https://i.ytimg.com/vi/UQwQi4jK76I/maxresdefault.jpg 1280w"
+                        sizes="(max-width: 900px) 100vw, 900px"
+                        alt="ChannelRecipe demo video"
+                        width="1280"
+                        height="720"
+                        loading="eager"
+                        decoding="async"
+                        onerror="if(!this.dataset.fb){this.dataset.fb=1;this.src='https://i.ytimg.com/vi/UQwQi4jK76I/hqdefault.jpg';this.removeAttribute('srcset');}"
+                    >
+                    <span class="yt-play" aria-hidden="true">
+                        <svg width="28" height="28" viewBox="0 0 14 14"><path d="M4 2.5 L4 11.5 L11 7 Z" fill="currentColor"/></svg>
+                    </span>
+                </button>
             </div>
         </div>
     </section>
@@ -723,6 +798,23 @@
             <button onclick="crAcceptCookies()" style="font-size: 13px; padding: 7px 14px; border: none; background: var(--accent); color: #fff; border-radius: 8px; cursor: pointer;">Accept</button>
         </div>
     </div>
+    <script>
+    (function () {
+        const facade = document.getElementById('yt-facade');
+        const frame = document.getElementById('demo-player');
+        if (!facade || !frame) return;
+        facade.addEventListener('click', function () {
+            const id = frame.getAttribute('data-yt-id') || 'UQwQi4jK76I';
+            const iframe = document.createElement('iframe');
+            iframe.src = 'https://www.youtube-nocookie.com/embed/' + id + '?autoplay=1&rel=0&modestbranding=1';
+            iframe.title = 'ChannelRecipe Demo';
+            iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+            iframe.allowFullscreen = true;
+            iframe.setAttribute('allowfullscreen', '');
+            facade.replaceWith(iframe);
+        });
+    })();
+    </script>
     <script>
     (async function () {
         let cfg;
