@@ -932,7 +932,7 @@ async def generate_titles(req: TitleRequest, user: dict = Depends(require_user))
 
     try:
         resp = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=config.GEMINI_TEXT_MODEL,
             contents=[{"role": "user", "parts": [{"text": prompt}]}],
         )
         raw = resp.text.strip()
@@ -980,7 +980,7 @@ async def generate_script(req: ScriptRequest, user: dict = Depends(require_user)
 
     try:
         resp = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=config.GEMINI_TEXT_MODEL,
             contents=[{"role": "user", "parts": [{"text": prompt}]}],
         )
         script = resp.text.strip()
@@ -1460,7 +1460,7 @@ async def generate_upload_kit(req: UploadKitRequest, user: dict = Depends(requir
         f"- \"hashtags\": array of 3 hashtags\n\nReturn ONLY valid JSON."
     )
     try:
-        resp = client.models.generate_content(model="gemini-2.5-flash", contents=[{"role": "user", "parts": [{"text": prompt}]}])
+        resp = client.models.generate_content(model=config.GEMINI_TEXT_MODEL, contents=[{"role": "user", "parts": [{"text": prompt}]}])
         raw = resp.text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         return _maybe_attribute(json.loads(raw), user)
     except Exception:
@@ -1793,7 +1793,7 @@ async def test_key(req: KeyTestRequest, admin: dict = Depends(require_admin)):
         if req.key_name == "gemini":
             from google import genai
             client = genai.Client(api_key=key_val)
-            client.models.generate_content(model="gemini-2.5-flash", contents="Say hi")
+            client.models.generate_content(model=config.GEMINI_TEXT_MODEL, contents="Say hi")
             return {"ok": True}
 
         elif req.key_name == "claude":

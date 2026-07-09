@@ -12,7 +12,7 @@ import json
 import re
 from dataclasses import dataclass, field, asdict
 
-from config import GEMINI_KEY
+from config import GEMINI_KEY, GEMINI_TEXT_MODEL
 
 
 @dataclass
@@ -303,7 +303,7 @@ def plan_scenes(
     for attempt in range(3):
         try:
             response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model=GEMINI_TEXT_MODEL,
                 contents=[
                     {"role": "user", "parts": [{"text": prompt + "\n\n" + user_msg}]}
                 ],
@@ -657,7 +657,7 @@ def _extract_context(script: str, client) -> tuple[str, str]:
     """
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=GEMINI_TEXT_MODEL,
             contents=[{
                 "role": "user",
                 "parts": [{"text": (

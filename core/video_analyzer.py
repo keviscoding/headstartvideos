@@ -9,7 +9,7 @@ import json
 import re
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from config import GEMINI_KEY
+from config import GEMINI_KEY, GEMINI_TEXT_MODEL
 
 
 @dataclass
@@ -127,7 +127,7 @@ def analyze_video(
         )
 
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model=GEMINI_TEXT_MODEL,
         contents=types.Content(
             parts=[
                 types.Part(

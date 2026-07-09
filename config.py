@@ -18,8 +18,10 @@ ATLASCLOUD_KEY = os.getenv("ATLASCLOUD_KEY", "")
 # offloaded here (large-v3-turbo) instead of running whisper on the local CPU.
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_WHISPER_MODEL = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo")
+# Default Gemini text model (gemini-2.5-flash was retired — use 3.5 Flash).
+GEMINI_TEXT_MODEL = os.getenv("GEMINI_TEXT_MODEL", "gemini-3.5-flash")
 # Concept segmentation model (kept configurable so we can trade speed/quality).
-CONCEPT_SEGMENTER_MODEL = os.getenv("CONCEPT_SEGMENTER_MODEL", "gemini-2.5-flash")
+CONCEPT_SEGMENTER_MODEL = os.getenv("CONCEPT_SEGMENTER_MODEL", GEMINI_TEXT_MODEL)
 # Illustration generation concurrency (API-bound, safe to raise).
 ILLUSTRATION_WORKERS = int(os.getenv("ILLUSTRATION_WORKERS", "16"))
 RESEND_KEY = os.getenv("RESEND_KEY", "")

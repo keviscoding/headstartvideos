@@ -11,7 +11,7 @@ import json
 import re
 from dataclasses import dataclass, field
 
-from config import GEMINI_KEY
+from config import GEMINI_KEY, GEMINI_TEXT_MODEL
 
 
 @dataclass
@@ -262,7 +262,7 @@ def segment_into_concepts(
         try:
             import config as _cfg
             response = client.models.generate_content(
-                model=getattr(_cfg, "CONCEPT_SEGMENTER_MODEL", "gemini-2.5-flash"),
+                model=getattr(_cfg, "CONCEPT_SEGMENTER_MODEL", GEMINI_TEXT_MODEL),
                 contents=[
                     {"role": "user", "parts": [{"text": prompt + "\n\n" + user_msg}]}
                 ],

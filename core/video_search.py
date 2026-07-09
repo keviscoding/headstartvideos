@@ -16,7 +16,7 @@ from pathlib import Path
 import httpx
 
 from config import (
-    PEXELS_KEY, PIXABAY_KEY, GEMINI_KEY,
+    PEXELS_KEY, PIXABAY_KEY, GEMINI_KEY, GEMINI_TEXT_MODEL,
     VIDEO_WIDTH, VIDEO_HEIGHT, VIDEO_FPS,
 )
 
@@ -270,7 +270,7 @@ def vlm_verify(
         )
 
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=GEMINI_TEXT_MODEL,
             contents=[
                 {
                     "role": "user",

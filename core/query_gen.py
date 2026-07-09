@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from config import GEMINI_KEY
+from config import GEMINI_KEY, GEMINI_TEXT_MODEL
 
 
 @dataclass
@@ -217,7 +217,7 @@ Generate a JSON array with one object per segment. Each object must have:
 - style_hint ("historical_bw" | "cinematic_dark" | "modern_color" | "neutral")"""
 
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model=GEMINI_TEXT_MODEL,
         contents=[
             {"role": "user", "parts": [{"text": SYSTEM_PROMPT + "\n\n" + user_prompt}]}
         ],
