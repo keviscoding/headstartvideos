@@ -66,7 +66,22 @@ def store_file(local_path: str, key: str, content_type: str | None = None) -> st
         content_type = mimetypes.guess_type(local_path)[0] or "application/octet-stream"
 
     if _SPACES_ENABLED:
-        client = _get_client()
+        from botocore.config import Config as BotoConfig
+        import boto3
+
+        # Hard timeout so a hung Spaces upload can't leave cooks stuck forever
+        client = boto3.client(
+            "s3",
+            region_name=config.SPACES_REGION or None,
+            endpoint_url=config.SPACES_ENDPOINT,
+            aws_access_key_id=config.SPACES_KEY,
+            aws_secret_access_key=config.SPACES_SECRET,
+            config=BotoConfig(
+                connect_timeout=15,
+                read_timeout=120,
+                retries={"max_attempts": 2, "mode": "standard"},
+            ),
+        )
         client.upload_file(
             local_path,
             config.SPACES_BUCKET,

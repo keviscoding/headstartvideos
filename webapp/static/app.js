@@ -176,6 +176,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     bindEvents();
     loadSettingsFromServer();
     loadVoiceOptions();
+    // Prefetch pipeline voices so step 4 never flashes empty
+    loadVoices();
 
     if (currentUser) cookingManager.restore();
 
@@ -273,6 +275,9 @@ function goToStep(n) {
         line.classList.toggle('done', i < n - 1);
     });
 
+    // Always ensure voices are ready when entering Voice step (any navigation path)
+    if (n === 4) loadVoices();
+
     if (n >= 2) persistPipelineState();
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -312,7 +317,6 @@ function bindEvents() {
         state.script = document.getElementById('script-editor').value.trim();
         if (!state.script) return;
         goToStep(4);
-        loadVoices();
     });
 
     document.getElementById('btn-next-4').addEventListener('click', handleVoiceNext);
@@ -957,55 +961,87 @@ function updateWordCount() {
 // ---------------------------------------------------------------------------
 // Step 4: Voice
 // ---------------------------------------------------------------------------
-async function loadVoices() {
-    try {
-        const res = await fetch('/api/voices');
-        const voices = await res.json();
-        const grid = document.getElementById('voices-grid');
-        grid.innerHTML = '';
-        // Default to Leo (Atlas narrator) if current voice is a legacy Gemini name
-        const legacy = ['Charon', 'Kore', 'Gacrux', 'Schedar', 'Puck', 'Sulafat'];
-        if (!state.voice || legacy.includes(state.voice)) {
-            const def = voices.find(v => v.default) || voices[0];
-            if (def) state.voice = def.id;
-        }
-        voices.forEach(v => {
-            const card = document.createElement('div');
-            card.className = `voice-card${v.id === state.voice ? ' selected' : ''}`;
-            const recommended = v.default
-                ? `<span style="font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent);background:var(--accent-soft-dark);border-radius:var(--radius-pill);padding:2px 7px;">Best pick</span>`
-                : '';
-            const gender = v.gender ? `<span style="font-family:var(--font-mono);font-size:10px;color:var(--app-ink-3);text-transform:uppercase;">${v.gender}</span>` : '';
-            card.innerHTML = `
-                <button class="play-btn" data-voice="${v.id}" title="Preview voice">
-                    <svg width="13" height="13" viewBox="0 0 14 14"><path d="M4 2.5 L4 11.5 L11 7 Z" fill="currentColor"/></svg>
-                </button>
-                <div class="flex-1 min-w-0">
-                    <div style="display:flex;align-items:center;gap:8px;font-family:var(--font-body);font-weight:600;font-size:15px;color:var(--app-ink);">
-                        ${v.name} ${recommended} ${gender}
-                    </div>
-                    <div style="font-family:var(--font-body);font-size:13px;color:var(--app-ink-3);margin-top:2px;">${v.desc || v.tag}</div>
-                </div>
-                <span style="width:20px;height:20px;flex:none;border-radius:50%;border:2px solid ${v.id === state.voice ? 'var(--accent)' : 'var(--app-border)'};display:flex;align-items:center;justify-content:center;">
-                    ${v.id === state.voice ? '<span style="width:10px;height:10px;border-radius:50%;background:var(--accent);"></span>' : ''}
-                </span>
-            `;
-            card.addEventListener('click', (e) => {
-                if (e.target.closest('.play-btn')) return;
-                document.querySelectorAll('.voice-card').forEach(c => c.classList.remove('selected'));
-                card.classList.add('selected');
-                state.voice = v.id;
-                persistPipelineState();
-            });
-            card.querySelector('.play-btn').addEventListener('click', (e) => {
-                e.stopPropagation();
-                previewVoice(v.id, e.currentTarget, v.preview_url);
-            });
-            grid.appendChild(card);
-        });
-    } catch (e) {
-        console.error('Failed to load voices:', e);
+// Instant fallback so the grid never looks empty while /api/voices loads
+const FALLBACK_VOICES = [
+    { id: 'leo', name: 'Leo', tag: 'Narrator', gender: 'male', desc: 'Authoritative, instructional — best for documentaries', preview_url: 'https://data.x.ai/audio-samples/voice_leo.mp3', default: true },
+    { id: 'rex', name: 'Rex', tag: 'Professional', gender: 'male', desc: 'Polished business tone — great for explainers', preview_url: 'https://data.x.ai/audio-samples/voice_rex.mp3' },
+    { id: 'sal', name: 'Sal', tag: 'Neutral', gender: 'male', desc: 'Versatile, clear delivery that fits most niches', preview_url: 'https://data.x.ai/audio-samples/voice_sal.mp3' },
+    { id: 'ara', name: 'Ara', tag: 'Warm', gender: 'female', desc: 'Warm and conversational — great for storytelling', preview_url: 'https://data.x.ai/audio-samples/voice_ara.mp3' },
+    { id: 'eve', name: 'Eve', tag: 'Upbeat', gender: 'female', desc: 'Energetic and upbeat — strong for viral formats', preview_url: 'https://data.x.ai/audio-samples/voice_eve.mp3' },
+];
+
+let _voicesLoaded = false;
+let _voicesLoading = null;
+
+function _renderVoiceGrid(voices) {
+    const grid = document.getElementById('voices-grid');
+    if (!grid || !voices?.length) return;
+    grid.innerHTML = '';
+    const legacy = ['Charon', 'Kore', 'Gacrux', 'Schedar', 'Puck', 'Sulafat'];
+    if (!state.voice || legacy.includes(state.voice)) {
+        const def = voices.find(v => v.default) || voices[0];
+        if (def) state.voice = def.id;
     }
+    voices.forEach(v => {
+        const card = document.createElement('div');
+        card.className = `voice-card${v.id === state.voice ? ' selected' : ''}`;
+        const recommended = v.default
+            ? `<span style="font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent);background:var(--accent-soft-dark);border-radius:var(--radius-pill);padding:2px 7px;">Best pick</span>`
+            : '';
+        const gender = v.gender ? `<span style="font-family:var(--font-mono);font-size:10px;color:var(--app-ink-3);text-transform:uppercase;">${v.gender}</span>` : '';
+        card.innerHTML = `
+            <button class="play-btn" data-voice="${v.id}" title="Preview voice">
+                <svg width="13" height="13" viewBox="0 0 14 14"><path d="M4 2.5 L4 11.5 L11 7 Z" fill="currentColor"/></svg>
+            </button>
+            <div class="flex-1 min-w-0">
+                <div style="display:flex;align-items:center;gap:8px;font-family:var(--font-body);font-weight:600;font-size:15px;color:var(--app-ink);">
+                    ${v.name} ${recommended} ${gender}
+                </div>
+                <div style="font-family:var(--font-body);font-size:13px;color:var(--app-ink-3);margin-top:2px;">${v.desc || v.tag}</div>
+            </div>
+            <span style="width:20px;height:20px;flex:none;border-radius:50%;border:2px solid ${v.id === state.voice ? 'var(--accent)' : 'var(--app-border)'};display:flex;align-items:center;justify-content:center;">
+                ${v.id === state.voice ? '<span style="width:10px;height:10px;border-radius:50%;background:var(--accent);"></span>' : ''}
+            </span>
+        `;
+        card.addEventListener('click', (e) => {
+            if (e.target.closest('.play-btn')) return;
+            document.querySelectorAll('.voice-card').forEach(c => c.classList.remove('selected'));
+            card.classList.add('selected');
+            state.voice = v.id;
+            persistPipelineState();
+        });
+        card.querySelector('.play-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            previewVoice(v.id, e.currentTarget, v.preview_url);
+        });
+        grid.appendChild(card);
+    });
+}
+
+async function loadVoices() {
+    const grid = document.getElementById('voices-grid');
+    if (!grid) return;
+    // Paint instantly from cache/fallback so the step never looks empty
+    if (!_voicesLoaded && !grid.children.length) {
+        _renderVoiceGrid(FALLBACK_VOICES);
+    }
+    if (_voicesLoaded) return;
+    if (_voicesLoading) return _voicesLoading;
+    _voicesLoading = (async () => {
+        try {
+            const res = await fetch('/api/voices');
+            const voices = await res.json();
+            if (Array.isArray(voices) && voices.length) {
+                _renderVoiceGrid(voices);
+                _voicesLoaded = true;
+            }
+        } catch (e) {
+            console.error('Failed to load voices:', e);
+        } finally {
+            _voicesLoading = null;
+        }
+    })();
+    return _voicesLoading;
 }
 
 async function previewVoice(voiceId, btn, previewUrl) {
@@ -1224,6 +1260,11 @@ function populateBuildSummary() {
 }
 
 function _friendlyProgress(raw) {
+    if (/Uploading your video/i.test(raw)) return 'Uploading your video...';
+    if (/Saving thumbnail/i.test(raw)) return 'Saving thumbnail...';
+    if (/Saving to your library/i.test(raw)) return 'Saving to your library...';
+    if (/Upload slow/i.test(raw)) return 'Finishing upload...';
+    if (/^Done!$/i.test(raw)) return 'Done!';
     if (/Step 1.*Aligning/i.test(raw)) return 'Analyzing your script...';
     if (/Step 2.*Segment/i.test(raw)) return 'Planning visual scenes...';
     if (/Step 3.*Style/i.test(raw)) return 'Creating art style...';
@@ -1234,19 +1275,41 @@ function _friendlyProgress(raw) {
     }
     if (/Step 5.*Prepar/i.test(raw)) return 'Preparing images...';
     if (/Step 6.*Assembl/i.test(raw)) return 'Building your video...';
-    if (/Assembling video/i.test(raw)) return 'Building your video...';
+    if (/Assembling/i.test(raw)) return 'Building your video...';
     if (/Concatenat/i.test(raw)) return 'Building your video...';
+    if (/Planning scenes|DirectorScore/i.test(raw)) return 'Planning visual scenes...';
+    if (/Resolving assets/i.test(raw)) return 'Finding footage & images...';
+    if (/assets resolved/i.test(raw)) return 'Assets ready';
     if (/concepts? planned/i.test(raw)) return 'Scenes planned';
     if (/Style ref/i.test(raw)) return 'Art style ready';
-    if (/Got \d+ words/i.test(raw)) return 'Script analyzed';
+    if (/Got \d+ words|sentences aligned/i.test(raw)) return 'Script analyzed';
     if (/illustrations? generated/i.test(raw)) return 'All artwork ready';
     if (/images? prepared/i.test(raw)) return 'Images ready';
     if (/clips? rendered/i.test(raw)) return 'Almost there...';
-    if (/Assembly complete/i.test(raw)) return 'Finishing up...';
-    if (/Total pipeline/i.test(raw)) return 'Done!';
+    if (/Assembly complete|Assembled/i.test(raw)) return 'Video assembled — uploading...';
+    if (/Total (cinematic )?pipeline/i.test(raw)) return 'Almost done — saving...';
     if (/Generating thumbnail/i.test(raw)) return 'Creating thumbnails...';
     if (/watermark/i.test(raw)) return 'Finishing up...';
     return raw.replace(/\[.*?\]\s*/g, '').replace(/Step \d\/\d:\s*/g, '').substring(0, 60);
+}
+
+/** Map cook log lines to a believable percent (cinematic emits few messages). */
+function _estimateCookPercent(raw, msgCount) {
+    const r = raw || '';
+    if (/Done!|Saving to your library/i.test(r)) return 97;
+    if (/Uploading your video|Saving thumbnail|Upload slow/i.test(r)) return 92;
+    if (/Total (cinematic )?pipeline|Assembly complete|Assembled/i.test(r)) return 85;
+    if (/Assembling|Building your video|Concatenat/i.test(r)) return 70;
+    if (/assets resolved|clips? rendered|images? prepared/i.test(r)) return 55;
+    if (/Resolving assets|Finding footage/i.test(r)) return 40;
+    if (/Planning scenes|DirectorScore|Segment|concepts? planned/i.test(r)) return 25;
+    if (/Analyzing|Aligning|sentences aligned/i.test(r)) return 12;
+    if (/Illustrations?:\s*(\d+)\/(\d+)/i.test(r)) {
+        const m = r.match(/(\d+)\/(\d+)/);
+        if (m) return Math.min(65, 30 + Math.round((parseInt(m[1]) / parseInt(m[2])) * 30));
+    }
+    // Fallback: slow climb so we never sit at 8% forever
+    return Math.min(80, Math.max(8, Math.round((msgCount / 12) * 70)));
 }
 
 const cookingManager = {
@@ -1327,15 +1390,24 @@ const cookingManager = {
             this.msgCount++;
             const msg = JSON.parse(e.data);
             const friendly = _friendlyProgress(msg.message);
-            document.getElementById('cooking-bar-status').textContent = friendly.substring(0, 60);
+            const statusEl = document.getElementById('cooking-bar-status');
+            if (statusEl) statusEl.textContent = friendly.substring(0, 60);
             if (progressLog) {
                 const line = document.createElement('div');
                 line.textContent = `> ${friendly}`;
                 progressLog.appendChild(line);
                 progressLog.scrollTop = progressLog.scrollHeight;
             }
-            if (progressBar) {
-                progressBar.style.width = Math.min(95, Math.round((this.msgCount / 30) * 100)) + '%';
+            // Phase-aware progress (msgCount alone looked stuck at ~8% for cinematic)
+            const pct = _estimateCookPercent(msg.message, this.msgCount);
+            const pctEl = document.getElementById('progress-pct');
+            if (progressBar) progressBar.style.width = pct + '%';
+            if (pctEl) pctEl.textContent = pct + '%';
+            const etaEl = document.getElementById('progress-eta');
+            if (etaEl) {
+                if (pct >= 90) etaEl.textContent = 'almost done';
+                else if (pct >= 70) etaEl.textContent = 'about 1 minute';
+                else etaEl.textContent = 'about 3 minutes';
             }
         });
 
@@ -1347,13 +1419,16 @@ const cookingManager = {
             state.videoUrl = this.result.output_url;
             state.videoPath = this.result.output_path;
             this._hideCookingBar();
+            const pctEl = document.getElementById('progress-pct');
+            if (progressBar) progressBar.style.width = '100%';
+            if (pctEl) pctEl.textContent = '100%';
 
-            if (state.page === 'pipeline' && state.step === 6) {
-                if (progressBar) progressBar.style.width = '100%';
-                setTimeout(() => showUploadKit(this.result), 500);
-            } else {
-                this._showToast();
-            }
+            // Always surface the finished video on the Cook step
+            if (state.page !== 'pipeline') navigateTo('pipeline');
+            if (state.step !== 6) goToStep(6);
+            setTimeout(() => showUploadKit(this.result), 400);
+            try { loadHistory(); } catch (_) {}
+            refreshUserData();
         });
 
         this.evtSrc.addEventListener('error', (e) => {
@@ -1667,7 +1742,8 @@ async function generateIdeas() {
             body: JSON.stringify({
                 channel_data: state.channelData || { topic_hint: 'faceless YouTube automation niches' },
                 num_ideas: parseInt(document.getElementById('ss-idea-count').value),
-                analysis: state.channelAnalysis || '',
+                // Trim analysis — full essays make Claude much slower
+                analysis: (state.channelAnalysis || '').slice(0, 1200),
             }),
         });
         const data = await res.json();

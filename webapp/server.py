@@ -1261,6 +1261,8 @@ def _run_build(job_id: str, req: BuildRequest):
             raise ValueError(f"Unknown recipe: {recipe}")
 
         # Persist the finished video (and thumbnail) to durable storage.
+        # Emit progress so the UI doesn't look stuck after "Assembled".
+        on_progress("Uploading your video...")
         ts = int(time.time())
         try:
             output_url = storage.store_file(
@@ -1268,11 +1270,13 @@ def _run_build(job_id: str, req: BuildRequest):
             )
         except Exception as up_err:
             print(f"[storage] video upload failed, falling back to local: {up_err}")
+            on_progress("Upload slow — saving local copy...")
             output_url = f"/api/files/{os.path.relpath(result['output_path'], str(ROOT))}"
 
         thumb_url = ""
         if req.thumbnail_path and os.path.exists(req.thumbnail_path):
             try:
+                on_progress("Saving thumbnail...")
                 ext = os.path.splitext(req.thumbnail_path)[1] or ".png"
                 thumb_url = storage.store_file(
                     req.thumbnail_path, f"thumbnails/{user_id}/{ts}_{job_id}{ext}"
@@ -1282,6 +1286,7 @@ def _run_build(job_id: str, req: BuildRequest):
 
         video_id = None
         if user_id:
+            on_progress("Saving to your library...")
             try:
                 video_id = create_video(
                     user_id=user_id,
@@ -1291,8 +1296,22 @@ def _run_build(job_id: str, req: BuildRequest):
                     thumbnail_url=thumb_url,
                 )
             except Exception as rec_err:
-                print(f"[videos] failed to save video record: {rec_err}")
+                # Retry once — History missing is a worse UX than a brief delay
+                print(f"[videos] save failed, retrying: {rec_err}")
+                try:
+                    time.sleep(0.5)
+                    video_id = create_video(
+                        user_id=user_id,
+                        title=req.title or "Untitled",
+                        recipe=recipe,
+                        video_url=output_url,
+                        thumbnail_url=thumb_url,
+                    )
+                except Exception as rec_err2:
+                    print(f"[videos] failed to save video record: {rec_err2}")
+                    capture_error(rec_err2, {"job_id": job_id, "user_id": user_id, "phase": "create_video"})
 
+        on_progress("Done!")
         job["status"] = "complete"
         job["result"] = {
             "output_path": result["output_path"],
@@ -1486,14 +1505,14 @@ async def generate_ideas(req: IdeasRequest, user: dict = Depends(require_user)):
         raise HTTPException(400, "Claude API key not configured. Add it in Settings.")
 
     try:
-        from core.script_gen import generate_ideas as _gen
+        from core.script_gen import generate_ideas as _gen, parse_ideas_response
         result = _gen(
             channel_data=req.channel_data,
             api_key=config.ANTHROPIC_KEY,
             num_ideas=req.num_ideas,
             analysis=req.analysis,
         )
-        ideas = [line.strip() for line in result.split("\n") if line.strip()]
+        ideas = parse_ideas_response(result, limit=req.num_ideas or 7)
         return {"ideas": ideas, "raw": result}
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -1507,14 +1526,14 @@ async def generate_titles_claude(req: ClaudeTitlesRequest, user: dict = Depends(
         raise HTTPException(400, "Claude API key not configured. Add it in Settings.")
 
     try:
-        from core.script_gen import generate_titles as _gen
+        from core.script_gen import generate_titles as _gen, parse_titles_response
         result = _gen(
             video_idea=req.video_idea,
             channel_data=req.channel_data,
             api_key=config.ANTHROPIC_KEY,
         )
-        titles = [line.strip().lstrip("0123456789.-) ") for line in result.split("\n") if line.strip()]
-        return {"titles": titles[:5], "raw": result}
+        titles = parse_titles_response(result, limit=5)
+        return {"titles": titles, "raw": result}
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
