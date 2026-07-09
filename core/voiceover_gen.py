@@ -51,7 +51,7 @@ STYLE_PRESETS = {
     "Custom": "",
 }
 
-ATLAS_MAX_CHARS = 14000  # xAI TTS limit is 15k; leave headroom
+ATLAS_MAX_CHARS = 2500  # Keep chunks small — Atlas stalls on 5k+ char requests
 ATLAS_BASE = "https://api.atlascloud.ai/api/v1"
 
 
@@ -116,7 +116,7 @@ def _download_audio(url: str, out_path: str) -> None:
     if not url:
         raise RuntimeError("Atlas TTS returned no audio URL")
 
-    with httpx.stream("GET", url, timeout=60, follow_redirects=True) as r:
+    with httpx.stream("GET", url, timeout=90, follow_redirects=True) as r:
         r.raise_for_status()
         with open(out_path, "wb") as f:
             for chunk in r.iter_bytes():
@@ -139,6 +139,12 @@ def _download_audio(url: str, out_path: str) -> None:
         raise RuntimeError("Atlas TTS audio normalize failed")
 
 
+def _poll_budget_seconds(text_len: int) -> float:
+    """How long to wait for one Atlas chunk — scales with text length."""
+    # ~0.02s per char of speech synthesis + network overhead, min 45s, max 4 min
+    return min(240.0, max(45.0, 30.0 + text_len * 0.025))
+
+
 def _atlas_tts_chunk(text: str, voice_id: str, out_path: str) -> None:
     """Generate one audio chunk via Atlas xAI TTS. Raises on failure."""
     import httpx
@@ -159,7 +165,7 @@ def _atlas_tts_chunk(text: str, voice_id: str, out_path: str) -> None:
         "sample_rate": 24000,
     }
 
-    r = httpx.post(f"{ATLAS_BASE}/model/generateAudio", headers=headers, json=payload, timeout=60)
+    r = httpx.post(f"{ATLAS_BASE}/model/generateAudio", headers=headers, json=payload, timeout=90)
     if r.status_code >= 400:
         raise RuntimeError(f"Atlas TTS request failed ({r.status_code}): {r.text[:400]}")
 
@@ -175,10 +181,15 @@ def _atlas_tts_chunk(text: str, voice_id: str, out_path: str) -> None:
             return
         raise RuntimeError(f"Atlas TTS: no prediction id: {r.text[:300]}")
 
-    # Poll for completion
-    last_status = ""
-    for _ in range(60):
-        time.sleep(0.5)
+    # Poll until completed — budget scales with chunk length
+    budget = _poll_budget_seconds(len(text))
+    deadline = time.time() + budget
+    last_status = data.get("status", "processing")
+    poll_interval = 0.75
+    print(f"[voiceover] Polling prediction {pred_id} (budget {budget:.0f}s, {len(text)} chars)...")
+
+    while time.time() < deadline:
+        time.sleep(poll_interval)
         pr = httpx.get(f"{ATLAS_BASE}/model/prediction/{pred_id}", headers=headers, timeout=30)
         if pr.status_code >= 400:
             raise RuntimeError(f"Atlas TTS poll failed ({pr.status_code}): {pr.text[:300]}")
@@ -196,8 +207,13 @@ def _atlas_tts_chunk(text: str, voice_id: str, out_path: str) -> None:
         if last_status in ("failed", "timeout", "error"):
             err = pdata.get("error") or pdata
             raise RuntimeError(f"Atlas TTS generation failed ({last_status}): {err}")
+        # Back off slightly as we wait longer
+        poll_interval = min(2.0, poll_interval + 0.1)
 
-    raise RuntimeError(f"Atlas TTS timed out waiting for audio (last status={last_status})")
+    raise RuntimeError(
+        f"Atlas TTS timed out after {budget:.0f}s waiting for audio "
+        f"(last status={last_status}, chars={len(text)}, pred={pred_id})"
+    )
 
 
 def generate_voiceover(
@@ -225,16 +241,26 @@ def generate_voiceover(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     chunks = _chunk_script(script.strip(), max_chars=ATLAS_MAX_CHARS)
-    print(f"[voiceover] Atlas xAI TTS — {len(chunks)} chunk(s), voice={voice_id}")
+    print(f"[voiceover] Atlas xAI TTS — {len(chunks)} chunk(s), voice={voice_id}, total_chars={len(script)}")
 
-    wav_paths: list[str] = []
+    wav_paths: list[str] = [""] * len(chunks)
+
+    def _run_one(i: int, chunk: str) -> tuple[int, str]:
+        chunk_path = str(out_dir / f"_atlas_{i:03d}.wav")
+        print(f"[voiceover] Chunk {i + 1}/{len(chunks)} ({len(chunk)} chars)...")
+        _atlas_tts_chunk(chunk, voice_id, chunk_path)
+        print(f"[voiceover] Chunk {i + 1}/{len(chunks)} done")
+        return i, chunk_path
+
     try:
-        for i, chunk in enumerate(chunks):
-            chunk_path = str(out_dir / f"_atlas_{i:03d}.wav")
-            print(f"[voiceover] Chunk {i + 1}/{len(chunks)} ({len(chunk)} chars)...")
-            _atlas_tts_chunk(chunk, voice_id, chunk_path)
-            wav_paths.append(chunk_path)
-            print(f"[voiceover] Chunk {i + 1}/{len(chunks)} done")
+        # Parallelize chunks for speed (Atlas handles concurrent requests well)
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        workers = min(3, len(chunks))
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futures = [ex.submit(_run_one, i, c) for i, c in enumerate(chunks)]
+            for fut in as_completed(futures):
+                idx, path = fut.result()
+                wav_paths[idx] = path
 
         output_path = str(out_dir / "voiceover.wav")
         _concat_wavs(wav_paths, output_path)
@@ -243,5 +269,6 @@ def generate_voiceover(
         return final
     except Exception:
         for p in wav_paths:
-            Path(p).unlink(missing_ok=True)
+            if p:
+                Path(p).unlink(missing_ok=True)
         raise
