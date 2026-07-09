@@ -439,13 +439,24 @@ async def stripe_webhook(request: Request):
                     update_user(row["id"], credits=credits)
                     print(f"[stripe] Refilled {credits} credits for user {row['id']} ({plan})")
 
-    elif evt_type in ("customer.subscription.deleted", "customer.subscription.updated"):
+    elif evt_type == "customer.subscription.deleted":
         sub_id = obj.get("id")
-        if sub_id and obj.get("status") in ("canceled", "unpaid", "past_due"):
+        if sub_id:
             row = get_user_by_sub_id(sub_id)
             if row:
-                update_user(row["id"], plan="free")
-                print(f"[stripe] User {row['id']} downgraded to free")
+                update_user(row["id"], plan="free", credits=0)
+                print(f"[stripe] Subscription deleted — user {row['id']} downgraded to free")
+
+    elif evt_type == "customer.subscription.updated":
+        sub_id = obj.get("id")
+        status = obj.get("status")
+        if sub_id and status in ("canceled", "unpaid"):
+            row = get_user_by_sub_id(sub_id)
+            if row and row.get("plan") not in ("starter_trial", "daily_trial"):
+                update_user(row["id"], plan="free", credits=0)
+                print(f"[stripe] Subscription {status} — user {row['id']} downgraded to free")
+            elif row:
+                print(f"[stripe] Ignoring {status} for trial user {row['id']} (handled by end-trial endpoint)")
 
     return {"ok": True}
 
@@ -493,7 +504,7 @@ async def create_portal_session(request: Request):
 
 @app.post("/api/billing/end-trial")
 async def end_trial_early(request: Request):
-    """End the 7-day trial immediately and start billing (grants full credits)."""
+    """End the 7-day trial immediately, charge the card, grant full credits."""
     import stripe
     if not config.STRIPE_SECRET_KEY:
         raise HTTPException(500, "Stripe not configured")
@@ -510,9 +521,22 @@ async def end_trial_early(request: Request):
         raise HTTPException(400, "No subscription found.")
 
     try:
-        stripe.Subscription.modify(sub_id, trial_end="now")
-        print(f"[stripe] Trial ended early for user {user['id']} (sub {sub_id})")
-        return {"ok": True, "message": "Trial ended. Your plan is now active."}
+        updated_sub = stripe.Subscription.modify(sub_id, trial_end="now")
+        sub_status = updated_sub.get("status") if isinstance(updated_sub, dict) else getattr(updated_sub, "status", None)
+        print(f"[stripe] Trial ended early for user {user['id']} (sub {sub_id}, status={sub_status})")
+
+        if sub_status == "active":
+            new_plan = "daily" if "daily" in user["plan"] else "starter"
+            credits = 35 if new_plan == "daily" else 15
+            update_user(user["id"], plan=new_plan, credits=credits)
+            print(f"[stripe] Converted user {user['id']} → {new_plan} ({credits} credits)")
+            return {"ok": True, "plan": new_plan, "credits": credits}
+        elif sub_status in ("past_due", "incomplete"):
+            raise HTTPException(402, "Payment failed. Please update your card in billing settings.")
+        else:
+            raise HTTPException(500, f"Unexpected subscription status: {sub_status}")
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"[stripe] End trial failed: {e}")
         raise HTTPException(500, f"Could not end trial: {e}")

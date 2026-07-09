@@ -538,24 +538,36 @@ function hideTrialExhaustedModal() {
     if (modal) modal.style.display = 'none';
 }
 
+let _endTrialInFlight = false;
 async function endTrialNow() {
-    const btn = document.querySelector('#trial-exhausted-modal button');
-    if (btn) { btn.disabled = true; btn.textContent = 'Activating...'; }
+    if (_endTrialInFlight) return;
+    _endTrialInFlight = true;
+
+    const modalBtn = document.querySelector('#trial-exhausted-modal button');
+    const billingBtn = document.querySelector('#billing-trial-section .btn-primary');
+    const buttons = [modalBtn, billingBtn].filter(Boolean);
+    buttons.forEach(b => { b.disabled = true; b.dataset.origText = b.textContent; b.textContent = 'Activating…'; });
 
     try {
         const resp = await fetch('/api/billing/end-trial', { method: 'POST' });
+        const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
-            const data = await resp.json().catch(() => ({}));
             alert(data.detail || 'Could not end trial. Please try again.');
             return;
         }
+        if (data.plan && data.credits != null) {
+            currentUser.plan = data.plan;
+            currentUser.credits = data.credits;
+            updateAuthUI();
+        }
         hideTrialExhaustedModal();
-        await refreshUserData();
+        loadBillingPage();
         track('trial_ended_early');
     } catch (e) {
         alert('Network error. Please try again.');
     } finally {
-        if (btn) { btn.disabled = false; btn.textContent = 'Start plan now'; }
+        _endTrialInFlight = false;
+        buttons.forEach(b => { b.disabled = false; b.textContent = b.dataset.origText || 'Start plan now'; });
     }
 }
 
