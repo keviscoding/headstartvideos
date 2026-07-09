@@ -287,6 +287,34 @@ def _is_pro(user: dict | None) -> bool:
     return user.get("plan") in ("pro", "starter", "daily", "starter_trial", "daily_trial")
 
 
+def _is_trial(user: dict | None) -> bool:
+    return bool(user) and user.get("plan") in ("starter_trial", "daily_trial")
+
+
+# Trial (and free) users cannot generate scripts / cook videos longer than this.
+TRIAL_MAX_MINUTES = 8
+
+
+def _enforce_length_cap(user: dict, target_minutes: int | float, *, label: str = "Video") -> None:
+    """Raise 402 if a trial/free user requests more than the allowed minutes."""
+    if _is_admin_email(user.get("email", "")):
+        return
+    plan = user.get("plan") or "free"
+    if plan in ("starter", "daily", "pro"):
+        return
+    cap = TRIAL_MAX_MINUTES
+    if float(target_minutes or 0) > cap:
+        raise HTTPException(
+            402,
+            f"{label} length is capped at {cap} minutes on trial. Start your plan for up to 20 min.",
+        )
+
+
+def _estimate_script_minutes(script: str) -> float:
+    words = len((script or "").split())
+    return round(words / 150, 2) if words else 0.0
+
+
 def _safe_user(u: dict) -> dict:
     admins = getattr(config, "ADMIN_EMAILS", [])
     is_admin = bool(admins) and u.get("email", "").lower() in admins
@@ -900,6 +928,8 @@ async def generate_titles(req: TitleRequest, user: dict = Depends(require_user))
 async def generate_script(req: ScriptRequest, user: dict = Depends(require_user)):
     from google import genai
 
+    _enforce_length_cap(user, req.target_minutes, label="Script")
+
     if not config.GEMINI_KEY:
         raise HTTPException(500, "GEMINI_KEY not configured on backend")
 
@@ -1114,6 +1144,10 @@ async def start_build(req: BuildRequest, request: Request):
     is_admin = _is_admin_email(user.get("email", ""))
     if not is_admin and user.get("plan") not in ("starter", "daily", "pro", "starter_trial", "daily_trial"):
         raise HTTPException(402, "Start your free trial to cook this video.")
+
+    # Trial/free: hard-cap finished video length (~150 wpm)
+    if not is_admin:
+        _enforce_length_cap(user, _estimate_script_minutes(req.script), label="Video")
 
     _safe_user_path(req.voiceover_path, "voiceover")
     _safe_user_path(req.thumbnail_path, "thumbnail")
@@ -1453,6 +1487,8 @@ async def generate_titles_claude(req: ClaudeTitlesRequest, user: dict = Depends(
 async def generate_script_claude(req: ClaudeScriptRequest, user: dict = Depends(require_user)):
     if not config.ANTHROPIC_KEY:
         raise HTTPException(400, "Claude API key not configured. Add it in Settings.")
+
+    _enforce_length_cap(user, req.target_minutes, label="Script")
 
     try:
         from core.script_gen import generate_script as _gen

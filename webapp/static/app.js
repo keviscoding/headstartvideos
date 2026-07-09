@@ -324,14 +324,14 @@ function bindEvents() {
 
     document.getElementById('btn-make-another').addEventListener('click', resetPipeline);
 
-    // Target minutes slider
+    // Target minutes slider — free + trial capped; paid plans get full range
     const slider = document.getElementById('target-minutes');
     const label = document.getElementById('target-minutes-label');
     if (slider) {
         slider.addEventListener('input', () => {
             let val = parseInt(slider.value);
-            const cap = freeMinuteCap();
-            if (!isPaidUser() && val > cap) {
+            const cap = effectiveMinuteCap();
+            if (!hasFullLengthAccess() && val > cap) {
                 val = cap;
                 slider.value = cap;
                 showLengthUpgradePrompt();
@@ -465,13 +465,12 @@ function selectNiche(niche, card) {
     state.targetMinutes = niche.default_minutes || 8;
     state.voiceMode = 'generate';
     state.uploadedVoPath = '';
-    const maxPaid = niche.max_paid_minutes || 20;
     const slider = document.getElementById('target-minutes');
     if (slider) {
         slider.value = state.targetMinutes;
-        slider.max = maxPaid;
         document.getElementById('target-minutes-label').textContent = state.targetMinutes + ' min';
     }
+    applyLengthSliderLimits();
     updateScriptLimitMsg();
     setTimeout(() => goToStep(2), 300);
 }
@@ -484,15 +483,58 @@ function isTrialUser() {
     return currentUser && ['starter_trial', 'daily_trial'].includes(currentUser.plan);
 }
 
+/** Paid plans past trial can go up to max_paid_minutes; free + trial are capped. */
+function hasFullLengthAccess() {
+    return isPaidUser() && !isTrialUser();
+}
+
 function freeMinuteCap() {
     return state.nicheData?.max_free_minutes || 8;
+}
+
+/** Effective max minutes for the current user (trial hard-capped at 8). */
+function effectiveMinuteCap() {
+    if (hasFullLengthAccess()) return state.nicheData?.max_paid_minutes || 20;
+    if (isTrialUser()) return 8;
+    return freeMinuteCap();
+}
+
+function applyLengthSliderLimits() {
+    const slider = document.getElementById('target-minutes');
+    if (!slider) return;
+    const cap = effectiveMinuteCap();
+    const maxPaid = state.nicheData?.max_paid_minutes || 20;
+    slider.max = hasFullLengthAccess() ? maxPaid : cap;
+    let val = parseInt(slider.value) || state.targetMinutes || 8;
+    if (val > cap) {
+        val = cap;
+        slider.value = cap;
+        state.targetMinutes = cap;
+        const label = document.getElementById('target-minutes-label');
+        if (label) label.textContent = val + ' min';
+    }
+    const studioLen = document.getElementById('ss-script-length');
+    if (studioLen) {
+        studioLen.max = cap;
+        if (parseInt(studioLen.value) > cap) studioLen.value = cap;
+    }
 }
 
 function updateScriptLimitMsg() {
     const msg = document.getElementById('script-limit-msg');
     if (!msg) return;
     const limitSpan = document.getElementById('limit-minutes');
-    if (limitSpan) limitSpan.textContent = freeMinuteCap();
+    const cap = effectiveMinuteCap();
+    if (limitSpan) limitSpan.textContent = cap;
+    const paras = msg.querySelectorAll('p');
+    const body = paras[1];
+    if (body) {
+        if (isTrialUser()) {
+            body.innerHTML = `Trial caps at <span id="limit-minutes">${cap}</span> min. Start your plan for up to 20 min videos.`;
+        } else {
+            body.innerHTML = `Free plan caps at <span id="limit-minutes">${cap}</span> min and watermarks output. Go Pro: up to 20 min, no watermark, 15 videos/mo.`;
+        }
+    }
     msg.classList.add('hidden');
     msg.style.display = 'none';
 }
@@ -501,8 +543,16 @@ let _lengthPromptTimer = null;
 function showLengthUpgradePrompt() {
     const msg = document.getElementById('script-limit-msg');
     if (!msg) return;
-    const limitSpan = document.getElementById('limit-minutes');
-    if (limitSpan) limitSpan.textContent = freeMinuteCap();
+    const cap = effectiveMinuteCap();
+    const paras = msg.querySelectorAll('p');
+    const body = paras[1];
+    if (body) {
+        if (isTrialUser()) {
+            body.innerHTML = `Trial caps at <span id="limit-minutes">${cap}</span> min. Start your plan for up to 20 min videos.`;
+        } else {
+            body.innerHTML = `Free plan caps at <span id="limit-minutes">${cap}</span> min and watermarks output. Go Pro: up to 20 min, no watermark, 15 videos/mo.`;
+        }
+    }
     msg.classList.remove('hidden');
     msg.style.display = 'flex';
     msg.classList.add('limit-pop');
@@ -859,6 +909,13 @@ function updateNextBtn2() {
 // ---------------------------------------------------------------------------
 async function generateScript() {
     if (!ensureSignedIn(generateScript)) return;
+    const cap = effectiveMinuteCap();
+    if (!hasFullLengthAccess() && state.targetMinutes > cap) {
+        state.targetMinutes = cap;
+        applyLengthSliderLimits();
+        showLengthUpgradePrompt();
+        return;
+    }
     const genBtn = document.getElementById('btn-gen-script');
     const regenBtn = document.getElementById('btn-regen-script');
     if (genBtn) setLoading(genBtn, true);
@@ -1431,6 +1488,13 @@ function dismissToast() {
 
 async function startBuild() {
     if (!ensureCanCook(startBuild)) return;
+    const cap = effectiveMinuteCap();
+    const words = (state.script || '').trim().split(/\s+/).filter(Boolean).length;
+    const estMin = words / 150;
+    if (!hasFullLengthAccess() && estMin > cap + 0.5) {
+        alert(`Trial videos are capped at ${cap} minutes. Shorten your script (~${Math.round(cap * 150)} words) or start your plan for longer videos.`);
+        return;
+    }
     const btn = document.getElementById('btn-build');
     if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; }
     try {
@@ -1687,6 +1751,15 @@ async function generateStudioScript() {
         );
         return;
     }
+    const lengthInput = document.getElementById('ss-script-length');
+    let targetMinutes = parseInt(lengthInput?.value) || 8;
+    const cap = effectiveMinuteCap();
+    if (!hasFullLengthAccess() && targetMinutes > cap) {
+        targetMinutes = cap;
+        if (lengthInput) lengthInput.value = cap;
+        showSoftPrompt(`Trial caps scripts at ${cap} minutes. Start your plan for up to 20 min.`);
+        return;
+    }
     const btn = document.querySelector('#ss-script .btn-primary:first-of-type');
     setLoading(btn, true);
     try {
@@ -1697,7 +1770,7 @@ async function generateStudioScript() {
                 title,
                 video_idea: document.getElementById('ss-script-idea').value.trim(),
                 channel_data: state.channelData || null,
-                target_minutes: parseInt(document.getElementById('ss-script-length').value),
+                target_minutes: targetMinutes,
             }),
         });
         const data = await res.json();
@@ -2260,6 +2333,7 @@ function updateAuthUI() {
         const showUpgrade = (!isPaidUser() || isTrialUser()) && !currentUser.is_admin;
         if (navUpgrade) navUpgrade.classList.toggle('hidden', !showUpgrade);
         if (cookingUpgrade) cookingUpgrade.classList.toggle('hidden', !showUpgrade);
+        applyLengthSliderLimits();
         const billingBtn = document.getElementById('menu-billing-btn');
         if (billingBtn) billingBtn.classList.remove('hidden');
         // Keep analytics person properties in sync
