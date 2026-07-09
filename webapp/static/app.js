@@ -1915,6 +1915,12 @@ async function loadVoiceOptions() {
 
 async function generateStudioVoiceover() {
     if (!ensureAuth(generateStudioVoiceover)) return;
+    const script = document.getElementById('vo-script')?.value?.trim() || '';
+    if (!script) {
+        showSoftPrompt('Paste a script first — then we’ll generate the voiceover.');
+        document.getElementById('vo-script')?.focus();
+        return;
+    }
     const btn = document.getElementById('btn-vo-generate');
     setLoading(btn, true);
     try {
@@ -1922,19 +1928,19 @@ async function generateStudioVoiceover() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                script: document.getElementById('vo-script').value.trim(),
+                script,
                 voice: document.getElementById('vo-voice').value,
                 style_preset: document.getElementById('vo-style').value,
                 custom_notes: document.getElementById('vo-custom-notes')?.value || '',
             }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Failed');
+        if (!res.ok) throw new Error(friendlyApiError(data, 'Voiceover generation failed'));
         document.getElementById('vo-audio').src = data.url;
         document.getElementById('vo-download').href = data.url;
         document.getElementById('vo-result').classList.remove('hidden');
     } catch (e) {
-        alert('Voiceover generation failed: ' + e.message);
+        showSoftPrompt(e.message || 'Voiceover generation failed.');
     } finally {
         setLoading(btn, false);
     }

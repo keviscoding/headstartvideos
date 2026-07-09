@@ -999,6 +999,8 @@ def _provider_http_status(exc: Exception) -> int:
         return 503
     if "not found" in msg or "no youtube channel" in msg or "could not extract channel" in msg:
         return 400
+    if "script is empty" in msg or "nothing to narrate" in msg:
+        return 400
     if "not configured" in msg:
         return 503
     return 500
@@ -1083,6 +1085,9 @@ async def voice_preview(req: VoicePreviewRequest, user: dict = Depends(require_u
 async def voiceover_studio(req: VoiceoverStudioRequest, user: dict = Depends(require_user)):
     from core.voiceover_gen import generate_voiceover as gen_vo
 
+    if not (req.script or "").strip():
+        raise HTTPException(400, "Paste a script first, then generate the voiceover.")
+
     out_dir = str(OUTPUT_DIR / "voiceovers" / str(int(time.time())))
     try:
         wav_path = gen_vo(
@@ -1094,6 +1099,8 @@ async def voiceover_studio(req: VoiceoverStudioRequest, user: dict = Depends(req
         )
         rel = os.path.relpath(wav_path, str(ROOT))
         return {"path": wav_path, "url": f"/api/files/{rel}"}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(_provider_http_status(e), f"Voiceover generation failed: {e}")
 
