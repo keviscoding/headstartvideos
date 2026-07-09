@@ -8,7 +8,7 @@
   "rpm_range": "$6 - $15",
   "demand": "Medium",
   "recipe": "broll_cinematic",
-  "default_voice": "Kore",
+  "default_voice": "leo",
   "default_minutes": 10,
   "max_free_minutes": 10,
   "max_paid_minutes": 20,
