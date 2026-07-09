@@ -111,7 +111,25 @@ async function initAnalytics() {
         const s = document.createElement('script');
         s.src = 'https://browser.sentry-cdn.com/7.120.0/bundle.min.js';
         s.crossOrigin = 'anonymous';
-        s.onload = () => { try { window.Sentry?.init({ dsn: cfg.sentry_dsn, tracesSampleRate: 0.1 }); } catch (_) {} };
+        s.onload = () => {
+            try {
+                window.Sentry?.init({
+                    dsn: cfg.sentry_dsn,
+                    tracesSampleRate: 0.1,
+                    environment: 'production',
+                    ignoreErrors: [
+                        'ResizeObserver loop',
+                        'Non-Error promise rejection',
+                        'NetworkError when attempting to fetch',
+                        'Load failed',
+                        'Failed to fetch',
+                    ],
+                });
+                if (currentUser) {
+                    window.Sentry?.setUser({ id: String(currentUser.id), email: currentUser.email });
+                }
+            } catch (_) {}
+        };
         document.head.appendChild(s);
     }
 
@@ -800,6 +818,7 @@ async function generateTitles() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Failed');
         renderTitles(data.titles);
+        track('titles_generated', { recipe: state.niche, count: (data.titles || []).length });
     } catch (e) {
         alert('Title generation failed: ' + e.message);
     } finally {
@@ -1036,6 +1055,7 @@ async function handleVoiceNext() {
         if (!voRes.ok) throw new Error(voData.detail || 'Voiceover failed');
         state.voiceoverPath = voData.path;
         state.voiceoverUrl = voData.url;
+        track('voiceover_generated', { voice: state.voice, recipe: state.niche });
 
         const thumbData = await thumbRes.json();
         if (thumbRes.ok && thumbData.thumbnails?.length) {
@@ -2242,6 +2262,16 @@ function updateAuthUI() {
         if (cookingUpgrade) cookingUpgrade.classList.toggle('hidden', !showUpgrade);
         const billingBtn = document.getElementById('menu-billing-btn');
         if (billingBtn) billingBtn.classList.remove('hidden');
+        // Keep analytics person properties in sync
+        try {
+            window.posthog?.identify(String(currentUser.id), {
+                email: currentUser.email,
+                plan: currentUser.plan,
+                credits: currentUser.credits,
+                trial_used: !!currentUser.trial_used,
+            });
+            window.Sentry?.setUser({ id: String(currentUser.id), email: currentUser.email });
+        } catch (_) {}
     } else {
         loginBtn.classList.remove('hidden');
         userBtn.classList.add('hidden');
@@ -2252,6 +2282,7 @@ function updateAuthUI() {
         creditsDisplay.classList.remove('hidden');
         if (navUpgrade) navUpgrade.classList.add('hidden');
         if (cookingUpgrade) cookingUpgrade.classList.add('hidden');
+        try { window.Sentry?.setUser(null); } catch (_) {}
     }
 }
 

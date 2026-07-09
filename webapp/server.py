@@ -43,8 +43,19 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 if config.SENTRY_DSN:
     try:
         import sentry_sdk
-        sentry_sdk.init(dsn=config.SENTRY_DSN, traces_sample_rate=0.1, send_default_pii=False)
-        print("[telemetry] Sentry initialized")
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.starlette import StarletteIntegration
+        sentry_sdk.init(
+            dsn=config.SENTRY_DSN,
+            integrations=[
+                StarletteIntegration(transaction_style="endpoint"),
+                FastApiIntegration(transaction_style="endpoint"),
+            ],
+            traces_sample_rate=0.15,
+            send_default_pii=False,
+            environment=os.getenv("APP_ENV", "production"),
+        )
+        print("[telemetry] Sentry initialized (FastAPI)")
     except Exception as e:
         print(f"[telemetry] Sentry init failed: {e}")
 
@@ -66,6 +77,29 @@ def track(distinct_id: str | int, event: str, props: dict | None = None) -> None
         _posthog.capture(distinct_id=str(distinct_id), event=event, properties=props or {})
     except Exception as e:
         print(f"[telemetry] capture failed for {event}: {e}")
+
+
+def identify_user(user_id: str | int, props: dict) -> None:
+    """Update PostHog person properties (plan, credits, etc.)."""
+    if not _posthog:
+        return
+    try:
+        _posthog.identify(distinct_id=str(user_id), properties=props)
+    except Exception as e:
+        print(f"[telemetry] identify failed: {e}")
+
+
+def capture_error(exc: Exception, context: dict | None = None) -> None:
+    """Send an exception to Sentry with optional context tags."""
+    try:
+        import sentry_sdk
+        with sentry_sdk.push_scope() as scope:
+            if context:
+                for k, v in context.items():
+                    scope.set_extra(k, v)
+            sentry_sdk.capture_exception(exc)
+    except Exception:
+        pass
 
 
 app = FastAPI(title="ChannelRecipe", docs_url="/docs")
@@ -210,7 +244,7 @@ async def auth_verify(req: AuthVerifyRequest, request: Request):
         user = create_user(email)
     if _posthog:
         try:
-            _posthog.identify(distinct_id=str(user["id"]), properties={"email": email, "plan": user["plan"]})
+            identify_user(user["id"], {"email": email, "plan": user["plan"]})
         except Exception:
             pass
     track(user["id"], "signup_completed" if is_new else "login", {"new_user": is_new})
@@ -429,6 +463,7 @@ async def stripe_webhook(request: Request):
             if topup:
                 add_credits(int(user_id), int(topup))
                 print(f"[stripe] User {user_id} topped up {topup} credits")
+                track(user_id, "topup_completed", {"credits": int(topup)})
             else:
                 plan_key = meta.get("plan", "starter_monthly")
                 skip_trial = meta.get("skip_trial") == "1"
@@ -440,12 +475,20 @@ async def stripe_webhook(request: Request):
                                 stripe_sub_id=obj.get("subscription", ""),
                                 trial_used=1)
                     print(f"[stripe] User {user_id} subscribed (no trial) → {plan_label} ({credits} credits)")
+                    identify_user(user_id, {"plan": plan_label, "credits": credits, "trial_used": True})
+                    track(user_id, "subscription_started", {
+                        "plan": plan_label, "plan_key": plan_key, "credits": credits, "had_trial": False,
+                    })
                 else:
                     plan_label = "daily_trial" if "daily" in plan_key else "starter_trial"
                     update_user(int(user_id), plan=plan_label, credits=3,
                                 stripe_sub_id=obj.get("subscription", ""),
                                 trial_used=1)
                     print(f"[stripe] User {user_id} started trial ({plan_label}, 3 credits)")
+                    identify_user(user_id, {"plan": plan_label, "credits": 3, "trial_used": True})
+                    track(user_id, "trial_started", {
+                        "plan": plan_label, "plan_key": plan_key, "credits": 3,
+                    })
 
     elif evt_type == "invoice.paid":
         sub_id = obj.get("subscription")
@@ -462,19 +505,29 @@ async def stripe_webhook(request: Request):
                         credits = 35 if new_plan == "daily" else 15
                         update_user(row["id"], plan=new_plan, credits=credits)
                         print(f"[stripe] Trial converted: user {row['id']} → {new_plan} ({credits} credits)")
+                        identify_user(row["id"], {"plan": new_plan, "credits": credits})
+                        track(row["id"], "trial_converted", {
+                            "from_plan": plan, "to_plan": new_plan,
+                            "credits": credits, "amount_paid": amount_paid,
+                            "source": "invoice.paid",
+                        })
                 else:
                     credits = 35 if plan == "daily" else 15
                     update_user(row["id"], credits=credits)
                     print(f"[stripe] Refilled {credits} credits for user {row['id']} ({plan})")
+                    track(row["id"], "credits_refilled", {"plan": plan, "credits": credits, "amount_paid": amount_paid})
 
     elif evt_type == "customer.subscription.deleted":
         sub_id = obj.get("id")
         if sub_id:
             row = get_user_by_sub_id(sub_id)
             if row:
+                prev_plan = row.get("plan", "unknown")
                 # Keep trial_used=1 so they cannot start another free trial
                 update_user(row["id"], plan="free", credits=0, stripe_sub_id="")
                 print(f"[stripe] Subscription deleted — user {row['id']} downgraded to free (trial_used preserved)")
+                identify_user(row["id"], {"plan": "free", "credits": 0})
+                track(row["id"], "subscription_canceled", {"from_plan": prev_plan})
 
     elif evt_type == "customer.subscription.updated":
         sub_id = obj.get("id")
@@ -482,8 +535,11 @@ async def stripe_webhook(request: Request):
         if sub_id and status in ("canceled", "unpaid"):
             row = get_user_by_sub_id(sub_id)
             if row and row.get("plan") not in ("starter_trial", "daily_trial"):
+                prev_plan = row.get("plan", "unknown")
                 update_user(row["id"], plan="free", credits=0)
                 print(f"[stripe] Subscription {status} — user {row['id']} downgraded to free")
+                identify_user(row["id"], {"plan": "free", "credits": 0})
+                track(row["id"], "subscription_canceled", {"from_plan": prev_plan, "status": status})
             elif row:
                 print(f"[stripe] Ignoring {status} for trial user {row['id']} (handled by end-trial endpoint)")
         elif sub_id and status == "active":
@@ -494,6 +550,11 @@ async def stripe_webhook(request: Request):
                 credits = 35 if new_plan == "daily" else 15
                 update_user(row["id"], plan=new_plan, credits=credits, trial_used=1)
                 print(f"[stripe] subscription.updated active — converted user {row['id']} → {new_plan}")
+                identify_user(row["id"], {"plan": new_plan, "credits": credits})
+                track(row["id"], "trial_converted", {
+                    "from_plan": row["plan"], "to_plan": new_plan,
+                    "credits": credits, "source": "subscription.updated",
+                })
 
     return {"ok": True}
 
@@ -581,6 +642,11 @@ async def end_trial_early(request: Request):
             credits = 35 if new_plan == "daily" else 15
             update_user(user["id"], plan=new_plan, credits=credits, trial_used=1)
             print(f"[stripe] Converted user {user['id']} → {new_plan} ({credits} credits)")
+            identify_user(user["id"], {"plan": new_plan, "credits": credits})
+            track(user["id"], "trial_converted", {
+                "from_plan": user["plan"], "to_plan": new_plan,
+                "credits": credits, "source": "end_trial_early",
+            })
             return {"ok": True, "plan": new_plan, "credits": credits}
         if sub_status in ("past_due", "unpaid", "incomplete", "incomplete_expired"):
             raise HTTPException(402, "Payment failed. Please update your card via Manage in Stripe, then try again.")
@@ -1189,11 +1255,7 @@ def _run_build(job_id: str, req: BuildRequest):
     except Exception as e:
         job["status"] = "error"
         job["error"] = str(e)
-        try:
-            import sentry_sdk
-            sentry_sdk.capture_exception(e)
-        except Exception:
-            pass
+        capture_error(e, {"job_id": job_id, "recipe": recipe, "user_id": user_id})
         duration = round(time.time() - started_at, 1)
         err_class = type(e).__name__
         try:
