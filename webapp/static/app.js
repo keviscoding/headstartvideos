@@ -493,6 +493,21 @@ function showPricingModal() {
         if (isPaidUser() && !isTrialUser()) { topupRow.classList.remove('hidden'); }
         else { topupRow.classList.add('hidden'); }
     }
+
+    // Returning users who already used a trial pay immediately — update CTA copy
+    const usedTrial = !!currentUser.trial_used;
+    const starterBtn = document.getElementById('pricing-cta-starter');
+    const dailyBtn = document.getElementById('pricing-cta-daily');
+    const subtitle = document.getElementById('pricing-subtitle');
+    const ctaText = usedTrial ? 'Subscribe now' : 'Start free trial';
+    if (starterBtn) starterBtn.textContent = ctaText;
+    if (dailyBtn) dailyBtn.textContent = ctaText;
+    if (subtitle) {
+        subtitle.textContent = usedTrial
+            ? 'Your free trial was already used. Subscribe to keep creating.'
+            : '7-day free trial on any plan. Cancel anytime.';
+    }
+
     track('upgrade_viewed');
 }
 
@@ -552,12 +567,20 @@ async function endTrialNow() {
         const resp = await fetch('/api/billing/end-trial', { method: 'POST' });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
-            alert(data.detail || 'Could not end trial. Please try again.');
+            const msg = data.detail || 'Could not end trial. Please try again.';
+            if (resp.status === 503) {
+                alert(msg);
+            } else if (resp.status === 402) {
+                alert(msg);
+            } else {
+                alert(msg);
+            }
             return;
         }
         if (data.plan && data.credits != null) {
             currentUser.plan = data.plan;
             currentUser.credits = data.credits;
+            currentUser.trial_used = true;
             updateAuthUI();
         }
         hideTrialExhaustedModal();
@@ -1049,6 +1072,8 @@ const cookingManager = {
             if (!res.ok) {
                 const errMsg = typeof data.detail === 'string' ? data.detail : (data.detail?.message || JSON.stringify(data.detail) || 'Build failed');
                 if (res.status === 401) { showAuthModal(); }
+                else if (res.status === 402 && isTrialUser()) { showTrialExhaustedModal(); }
+                else if (res.status === 402) { showPricingModal(); }
                 else { alert(errMsg); }
                 throw new Error(errMsg);
             }
@@ -1056,6 +1081,12 @@ const cookingManager = {
             this._persist();
             this._showCookingBar();
             this._connect();
+            // Reflect the deducted credit in the UI immediately
+            if (currentUser && typeof currentUser.credits === 'number' && currentUser.credits > 0) {
+                currentUser.credits -= 1;
+                updateAuthUI();
+            }
+            refreshUserData();
         } catch (e) {
             if (e.message.includes('Sign in')) showAuthModal();
             document.getElementById('build-start').classList.remove('hidden');
@@ -1252,10 +1283,7 @@ function dismissToast() {
 }
 
 async function startBuild() {
-    if (!currentUser) {
-        showAuthModal();
-        return;
-    }
+    if (!ensureAuth(startBuild)) return;
     const btn = document.getElementById('btn-build');
     if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; }
     try {
@@ -1893,9 +1921,10 @@ function updateAuthUI() {
             document.getElementById('credits-plan').textContent = currentUser.plan === 'free' ? '' : (planLabels[currentUser.plan] || '').toLowerCase();
         }
         creditsDisplay.classList.remove('hidden');
-        const isFree = !isPaidUser() && !currentUser.is_admin;
-        if (navUpgrade) navUpgrade.classList.toggle('hidden', !isFree);
-        if (cookingUpgrade) cookingUpgrade.classList.toggle('hidden', !isFree);
+        // Show Upgrade for free users AND trial users (so they can convert early)
+        const showUpgrade = (!isPaidUser() || isTrialUser()) && !currentUser.is_admin;
+        if (navUpgrade) navUpgrade.classList.toggle('hidden', !showUpgrade);
+        if (cookingUpgrade) cookingUpgrade.classList.toggle('hidden', !showUpgrade);
         const billingBtn = document.getElementById('menu-billing-btn');
         if (billingBtn) billingBtn.classList.remove('hidden');
     } else {
@@ -2060,6 +2089,20 @@ function loadBillingPage() {
         manageSec.classList.add('hidden');
         upgradeSec.style.display = '';
         if (trialSec) trialSec.style.display = 'none';
+        // Returning free users who already used a trial
+        const usedTrial = !!currentUser.trial_used;
+        const title = document.getElementById('billing-upgrade-title');
+        const desc = document.getElementById('billing-upgrade-desc');
+        const btn = document.getElementById('billing-upgrade-btn');
+        if (usedTrial) {
+            if (title) title.textContent = 'Subscribe to keep creating';
+            if (desc) desc.textContent = 'Your free trial was already used. Choose a plan to continue — billed immediately.';
+            if (btn) btn.textContent = 'Choose a plan';
+        } else {
+            if (title) title.textContent = 'Start your free trial';
+            if (desc) desc.textContent = '7 days free, then your chosen plan begins. Cancel anytime.';
+            if (btn) btn.textContent = 'Choose a plan';
+        }
     }
 }
 

@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS users (
     plan        TEXT NOT NULL DEFAULT 'free',
     credits     INTEGER NOT NULL DEFAULT 0,
     stripe_customer_id TEXT DEFAULT '',
-    stripe_sub_id      TEXT DEFAULT ''
+    stripe_sub_id      TEXT DEFAULT '',
+    trial_used  INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS sessions (
     token       TEXT PRIMARY KEY,
@@ -90,7 +91,8 @@ CREATE TABLE IF NOT EXISTS users (
     plan        TEXT NOT NULL DEFAULT 'free',
     credits     INTEGER NOT NULL DEFAULT 0,
     stripe_customer_id TEXT DEFAULT '',
-    stripe_sub_id      TEXT DEFAULT ''
+    stripe_sub_id      TEXT DEFAULT '',
+    trial_used  INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS sessions (
     token       TEXT PRIMARY KEY,
@@ -159,7 +161,20 @@ CREATE INDEX IF NOT EXISTS idx_render_events_created ON render_events (created_a
 
 _MIGRATIONS = """
 UPDATE users SET credits = 0 WHERE plan = 'free' AND credits > 0;
+UPDATE users SET trial_used = 1 WHERE plan IN ('starter_trial', 'daily_trial', 'starter', 'daily', 'pro') AND COALESCE(trial_used, 0) = 0;
+UPDATE users SET trial_used = 1 WHERE plan = 'free' AND COALESCE(stripe_customer_id, '') != '' AND COALESCE(trial_used, 0) = 0;
 """
+
+
+def _ensure_column(cur, table: str, column: str, col_def: str):
+    """Add a column if missing (Postgres + SQLite)."""
+    try:
+        if IS_PG:
+            cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {col_def}")
+        else:
+            cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_def}")
+    except Exception:
+        pass
 
 
 def _init_db():
@@ -169,6 +184,7 @@ def _init_db():
             with conn.cursor() as cur:
                 cur.execute(schema)
                 cur.execute(_INDEXES)
+                _ensure_column(cur, "users", "trial_used", "INTEGER NOT NULL DEFAULT 0")
                 cur.execute(_MIGRATIONS)
                 try:
                     cur.execute("ALTER TABLE users ALTER COLUMN credits SET DEFAULT 0")
@@ -177,6 +193,8 @@ def _init_db():
         else:
             conn.executescript(schema)
             conn.executescript(_INDEXES)
+            cur = conn.cursor()
+            _ensure_column(cur, "users", "trial_used", "INTEGER NOT NULL DEFAULT 0")
             conn.executescript(_MIGRATIONS)
 
 

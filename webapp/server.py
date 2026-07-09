@@ -263,6 +263,7 @@ def _safe_user(u: dict) -> dict:
         "credits": u["credits"],
         "created_at": u["created_at"],
         "is_admin": is_admin,
+        "trial_used": bool(u.get("trial_used")),
     }
 
 
@@ -309,6 +310,15 @@ async def create_checkout(req: CheckoutRequest, request: Request):
     if not user:
         raise HTTPException(401, "Sign in first")
 
+    plan = user.get("plan", "free")
+    if plan in ("starter_trial", "daily_trial"):
+        raise HTTPException(400, "You already have an active trial. Use Billing → Start plan now to upgrade.")
+    if plan in ("starter", "daily", "pro"):
+        raise HTTPException(400, "You already have an active subscription. Manage it from Billing.")
+
+    # One free trial per account — returning users pay immediately
+    already_trialed = bool(user.get("trial_used"))
+
     customer_id = user.get("stripe_customer_id")
     if not customer_id:
         customer = stripe.Customer.create(email=user["email"])
@@ -316,18 +326,23 @@ async def create_checkout(req: CheckoutRequest, request: Request):
         update_user(user["id"], stripe_customer_id=customer_id)
 
     base_url = str(request.base_url).rstrip("/")
+    session_kwargs = {
+        "customer": customer_id,
+        "mode": "subscription",
+        "line_items": [{"price": price_id, "quantity": 1}],
+        "payment_method_collection": "always",
+        "allow_promotion_codes": True,
+        "success_url": f"{base_url}/app#pipeline",
+        "cancel_url": f"{base_url}/app#pipeline",
+        "metadata": {"user_id": str(user["id"]), "plan": req.plan},
+    }
+    if not already_trialed:
+        session_kwargs["subscription_data"] = {"trial_period_days": 7}
+    else:
+        session_kwargs["metadata"]["skip_trial"] = "1"
+
     try:
-        session = stripe.checkout.Session.create(
-            customer=customer_id,
-            mode="subscription",
-            line_items=[{"price": price_id, "quantity": 1}],
-            subscription_data={"trial_period_days": 7},
-            payment_method_collection="always",
-            allow_promotion_codes=True,
-            success_url=f"{base_url}/app#pipeline",
-            cancel_url=f"{base_url}/app#pipeline",
-            metadata={"user_id": str(user["id"]), "plan": req.plan},
-        )
+        session = stripe.checkout.Session.create(**session_kwargs)
         return {"url": session.url}
     except Exception as e:
         print(f"[stripe] Checkout session creation failed: {e}")
@@ -414,10 +429,21 @@ async def stripe_webhook(request: Request):
                 print(f"[stripe] User {user_id} topped up {topup} credits")
             else:
                 plan_key = meta.get("plan", "starter_monthly")
-                plan_label = "daily_trial" if "daily" in plan_key else "starter_trial"
-                update_user(int(user_id), plan=plan_label, credits=3,
-                            stripe_sub_id=obj.get("subscription", ""))
-                print(f"[stripe] User {user_id} started trial ({plan_label}, 3 credits)")
+                skip_trial = meta.get("skip_trial") == "1"
+                if skip_trial:
+                    # Returning customer — charge immediately, full credits
+                    plan_label = "daily" if "daily" in plan_key else "starter"
+                    credits = _PLAN_CREDITS.get(plan_key, 15)
+                    update_user(int(user_id), plan=plan_label, credits=credits,
+                                stripe_sub_id=obj.get("subscription", ""),
+                                trial_used=1)
+                    print(f"[stripe] User {user_id} subscribed (no trial) → {plan_label} ({credits} credits)")
+                else:
+                    plan_label = "daily_trial" if "daily" in plan_key else "starter_trial"
+                    update_user(int(user_id), plan=plan_label, credits=3,
+                                stripe_sub_id=obj.get("subscription", ""),
+                                trial_used=1)
+                    print(f"[stripe] User {user_id} started trial ({plan_label}, 3 credits)")
 
     elif evt_type == "invoice.paid":
         sub_id = obj.get("subscription")
@@ -444,8 +470,9 @@ async def stripe_webhook(request: Request):
         if sub_id:
             row = get_user_by_sub_id(sub_id)
             if row:
-                update_user(row["id"], plan="free", credits=0)
-                print(f"[stripe] Subscription deleted — user {row['id']} downgraded to free")
+                # Keep trial_used=1 so they cannot start another free trial
+                update_user(row["id"], plan="free", credits=0, stripe_sub_id="")
+                print(f"[stripe] Subscription deleted — user {row['id']} downgraded to free (trial_used preserved)")
 
     elif evt_type == "customer.subscription.updated":
         sub_id = obj.get("id")
@@ -457,6 +484,14 @@ async def stripe_webhook(request: Request):
                 print(f"[stripe] Subscription {status} — user {row['id']} downgraded to free")
             elif row:
                 print(f"[stripe] Ignoring {status} for trial user {row['id']} (handled by end-trial endpoint)")
+        elif sub_id and status == "active":
+            # Safety net: if end-trial or day-7 conversion left plan as *_trial, fix it
+            row = get_user_by_sub_id(sub_id)
+            if row and row.get("plan") in ("starter_trial", "daily_trial"):
+                new_plan = "daily" if "daily" in row["plan"] else "starter"
+                credits = 35 if new_plan == "daily" else 15
+                update_user(row["id"], plan=new_plan, credits=credits, trial_used=1)
+                print(f"[stripe] subscription.updated active — converted user {row['id']} → {new_plan}")
 
     return {"ok": True}
 
@@ -521,20 +556,36 @@ async def end_trial_early(request: Request):
         raise HTTPException(400, "No subscription found.")
 
     try:
-        updated_sub = stripe.Subscription.modify(sub_id, trial_end="now")
-        sub_status = updated_sub.get("status") if isinstance(updated_sub, dict) else getattr(updated_sub, "status", None)
-        print(f"[stripe] Trial ended early for user {user['id']} (sub {sub_id}, status={sub_status})")
+        # End trial and create the first real invoice immediately
+        import asyncio
+        await asyncio.to_thread(stripe.Subscription.modify, sub_id, trial_end="now")
+        print(f"[stripe] Trial end requested for user {user['id']} (sub {sub_id})")
+
+        # Stripe may take a moment to charge — poll until active or failed
+        sub_status = None
+        for _ in range(8):
+            sub = await asyncio.to_thread(stripe.Subscription.retrieve, sub_id)
+            sub_status = sub.get("status") if isinstance(sub, dict) else getattr(sub, "status", None)
+            if sub_status == "active":
+                break
+            if sub_status in ("past_due", "unpaid", "canceled", "incomplete_expired"):
+                break
+            await asyncio.sleep(0.75)
+
+        print(f"[stripe] End-trial poll result: user {user['id']} status={sub_status}")
 
         if sub_status == "active":
             new_plan = "daily" if "daily" in user["plan"] else "starter"
             credits = 35 if new_plan == "daily" else 15
-            update_user(user["id"], plan=new_plan, credits=credits)
+            update_user(user["id"], plan=new_plan, credits=credits, trial_used=1)
             print(f"[stripe] Converted user {user['id']} → {new_plan} ({credits} credits)")
             return {"ok": True, "plan": new_plan, "credits": credits}
-        elif sub_status in ("past_due", "incomplete"):
-            raise HTTPException(402, "Payment failed. Please update your card in billing settings.")
-        else:
-            raise HTTPException(500, f"Unexpected subscription status: {sub_status}")
+        if sub_status in ("past_due", "unpaid", "incomplete", "incomplete_expired"):
+            raise HTTPException(402, "Payment failed. Please update your card via Manage in Stripe, then try again.")
+        if sub_status == "trialing":
+            # Charge still processing — leave trial intact, ask user to wait
+            raise HTTPException(503, "Payment is still processing. Wait a few seconds and try again.")
+        raise HTTPException(500, f"Unexpected subscription status: {sub_status}")
     except HTTPException:
         raise
     except Exception as e:
