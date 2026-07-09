@@ -123,6 +123,9 @@ async function initAnalytics() {
                         'NetworkError when attempting to fetch',
                         'Load failed',
                         'Failed to fetch',
+                        'AbortError',
+                        'play() request was interrupted',
+                        'The play() request was interrupted',
                     ],
                 });
                 if (currentUser) {
@@ -1006,7 +1009,10 @@ async function loadVoices() {
 }
 
 async function previewVoice(voiceId, btn, previewUrl) {
-    if (previewAudio) { previewAudio.pause(); previewAudio = null; }
+    if (previewAudio) {
+        try { previewAudio.pause(); } catch (_) {}
+        previewAudio = null;
+    }
     btn.classList.add('loading');
     btn.innerHTML = '<svg class="animate-spin w-4 h-4" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>';
     try {
@@ -1022,12 +1028,22 @@ async function previewVoice(voiceId, btn, previewUrl) {
             if (!res.ok) throw new Error(data.detail || 'Preview failed');
             url = data.url;
         }
-        previewAudio = new Audio(url);
-        previewAudio.play();
-        previewAudio.addEventListener('ended', () => resetPlayBtn(btn));
+        const audio = new Audio(url);
+        previewAudio = audio;
+        audio.addEventListener('ended', () => resetPlayBtn(btn));
+        // play() rejects with AbortError if the user clicks another voice quickly — ignore that
+        await audio.play().catch((err) => {
+            if (err && (err.name === 'AbortError' || /interrupted/i.test(err.message || ''))) return;
+            throw err;
+        });
+        if (previewAudio !== audio) return; // superseded by a newer preview
         btn.innerHTML = '<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>';
         btn.classList.remove('loading');
     } catch (e) {
+        if (e && (e.name === 'AbortError' || /interrupted/i.test(e.message || ''))) {
+            resetPlayBtn(btn);
+            return;
+        }
         console.error('Voice preview failed:', e);
         resetPlayBtn(btn);
     }

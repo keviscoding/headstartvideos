@@ -155,6 +155,7 @@ def generate_thumbnails(
         return _fallback_gemini(title, reference_image_paths, style_prompt, num_images, output_dir)
 
     ref_urls = []
+    atlas_balance_error = False
     for ref_path in reference_image_paths:
         if not Path(ref_path).exists():
             print(f"[thumbnail] Reference not found: {ref_path}")
@@ -165,10 +166,24 @@ def generate_thumbnails(
                 ref_urls.append(url)
         except Exception as e:
             print(f"[thumbnail] Failed to upload {ref_path}: {e}")
+            if "402" in str(e) or "insufficient" in str(e).lower():
+                atlas_balance_error = True
 
     if not ref_urls:
         print("[thumbnail] No reference images uploaded, using text-to-image mode")
-        return _generate_text_only(title, style_prompt, num_images, output_dir)
+        try:
+            paths = _generate_text_only(title, style_prompt, num_images, output_dir)
+            if paths:
+                return paths
+        except Exception as e:
+            print(f"[thumbnail] Atlas T2I failed: {e}")
+            atlas_balance_error = atlas_balance_error or "balance" in str(e).lower()
+        if GEMINI_KEY:
+            print("[thumbnail] Falling back to Gemini after Atlas miss")
+            return _fallback_gemini(title, reference_image_paths, style_prompt, num_images, output_dir)
+        if atlas_balance_error:
+            raise RuntimeError("Thumbnail service unavailable (provider balance). Try again later.")
+        return []
 
     extra = f"Additional style instructions: {style_prompt}" if style_prompt else ""
     prompt_text = THUMBNAIL_PROMPT_TEMPLATE.format(title=title, extra_instructions=extra)
@@ -201,7 +216,11 @@ def generate_thumbnails(
             )
 
             if resp.status_code != 200:
-                print(f"[thumbnail] Generate request failed: HTTP {resp.status_code} - {resp.text[:200]}")
+                body = (resp.text or "")[:200]
+                print(f"[thumbnail] Generate request failed: HTTP {resp.status_code} - {body}")
+                if resp.status_code == 402 or "insufficient balance" in body.lower():
+                    atlas_balance_error = True
+                    break
                 continue
 
             raw = resp.json()
@@ -242,6 +261,15 @@ def generate_thumbnails(
         except Exception as e:
             print(f"[thumbnail] Error generating thumbnail {i + 1}: {e}")
 
+    if generated_paths:
+        return generated_paths
+
+    if GEMINI_KEY:
+        print("[thumbnail] Atlas edit produced nothing — falling back to Gemini")
+        return _fallback_gemini(title, reference_image_paths, style_prompt, num_images, output_dir)
+
+    if atlas_balance_error:
+        raise RuntimeError("Thumbnail service unavailable (provider balance). Try again later.")
     return generated_paths
 
 
@@ -286,7 +314,10 @@ def _generate_text_only(
             )
 
             if resp.status_code != 200:
-                print(f"[thumbnail] T2I request failed: HTTP {resp.status_code}")
+                body = (resp.text or "")[:300]
+                print(f"[thumbnail] T2I request failed: HTTP {resp.status_code} - {body}")
+                if resp.status_code == 402 or "insufficient balance" in body.lower():
+                    raise RuntimeError("Atlas insufficient balance")
                 continue
 
             raw = resp.json()
@@ -306,6 +337,8 @@ def _generate_text_only(
                 generated_paths.append(str(out_path))
                 print(f"[thumbnail] Generated: {out_path.name}")
 
+        except RuntimeError:
+            raise
         except Exception as e:
             print(f"[thumbnail] T2I error: {e}")
 
@@ -391,7 +424,22 @@ def generate_thumbnail_no_refs(
     output_dir: str = "",
     count: int = 2,
 ) -> list[str]:
-    """Generate a thumbnail without reference images."""
+    """Generate a thumbnail without reference images. Falls back to Gemini if Atlas fails."""
+    paths: list[str] = []
     if ATLASCLOUD_KEY:
-        return _generate_text_only(title, style_description, count, output_dir)
-    return _fallback_gemini(title, [], style_description, count, output_dir)
+        try:
+            paths = _generate_text_only(title, style_description, count, output_dir)
+        except Exception as e:
+            print(f"[thumbnail] Atlas T2I failed, trying Gemini: {e}")
+            paths = []
+    if paths:
+        return paths
+    if GEMINI_KEY:
+        print("[thumbnail] Using Gemini fallback for text-only thumbnails")
+        return _fallback_gemini(title, [], style_description, count, output_dir)
+    if ATLASCLOUD_KEY:
+        raise RuntimeError(
+            "Thumbnail generation failed — Atlas returned no images "
+            "(check provider balance) and GEMINI_KEY is not set."
+        )
+    raise ValueError("Neither ATLASCLOUD_KEY nor GEMINI_KEY is set")

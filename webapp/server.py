@@ -45,6 +45,29 @@ if config.SENTRY_DSN:
         import sentry_sdk
         from sentry_sdk.integrations.fastapi import FastApiIntegration
         from sentry_sdk.integrations.starlette import StarletteIntegration
+        def _sentry_before_send(event, hint):
+            """Drop expected client/user errors so Sentry stays signal-heavy."""
+            exc_info = hint.get("exc_info")
+            if exc_info:
+                exc = exc_info[1]
+                # FastAPI HTTPException — only keep unexpected 5xx
+                try:
+                    from fastapi import HTTPException as _HTTPExc
+                    if isinstance(exc, _HTTPExc) and exc.status_code < 500:
+                        return None
+                except Exception:
+                    pass
+                msg = str(exc).lower()
+                # Provider out-of-credit / bad user input — ops issue, not a bug
+                if any(s in msg for s in (
+                    "insufficient balance",
+                    "no youtube channel found",
+                    "could not extract channel",
+                    "provider balance",
+                )):
+                    return None
+            return event
+
         sentry_sdk.init(
             dsn=config.SENTRY_DSN,
             integrations=[
@@ -54,6 +77,7 @@ if config.SENTRY_DSN:
             traces_sample_rate=0.15,
             send_default_pii=False,
             environment=os.getenv("APP_ENV", "production"),
+            before_send=_sentry_before_send,
         )
         print("[telemetry] Sentry initialized (FastAPI)")
     except Exception as e:
@@ -968,6 +992,18 @@ async def generate_script(req: ScriptRequest, user: dict = Depends(require_user)
 # ---------------------------------------------------------------------------
 # Voiceover
 # ---------------------------------------------------------------------------
+def _provider_http_status(exc: Exception) -> int:
+    """Map known provider/user errors to non-500 statuses (keeps Sentry quieter)."""
+    msg = str(exc).lower()
+    if "insufficient balance" in msg or "provider balance" in msg or "temporarily unavailable" in msg:
+        return 503
+    if "not found" in msg or "no youtube channel" in msg or "could not extract channel" in msg:
+        return 400
+    if "not configured" in msg:
+        return 503
+    return 500
+
+
 @app.post("/api/voiceover")
 async def generate_voiceover(req: VoiceoverRequest, user: dict = Depends(require_user)):
     from core.voiceover_gen import generate_voiceover as gen_vo
@@ -978,7 +1014,7 @@ async def generate_voiceover(req: VoiceoverRequest, user: dict = Depends(require
         rel = os.path.relpath(wav_path, str(ROOT))
         return {"path": wav_path, "url": f"/api/files/{rel}"}
     except Exception as e:
-        raise HTTPException(500, f"Voiceover generation failed: {e}")
+        raise HTTPException(_provider_http_status(e), f"Voiceover generation failed: {e}")
 
 
 @app.post("/api/voiceover/upload")
@@ -1059,7 +1095,7 @@ async def voiceover_studio(req: VoiceoverStudioRequest, user: dict = Depends(req
         rel = os.path.relpath(wav_path, str(ROOT))
         return {"path": wav_path, "url": f"/api/files/{rel}"}
     except Exception as e:
-        raise HTTPException(500, f"Voiceover generation failed: {e}")
+        raise HTTPException(_provider_http_status(e), f"Voiceover generation failed: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -1078,11 +1114,11 @@ async def generate_thumbnail(req: ThumbnailRequest, user: dict = Depends(require
             count=req.count,
         )
         if not paths:
-            raise ValueError("No thumbnails generated")
+            raise ValueError("No thumbnails generated — try again in a moment")
         urls = [f"/api/files/{os.path.relpath(p, str(ROOT))}" for p in paths[:req.count]]
         return {"thumbnails": urls, "paths": paths[:req.count]}
     except Exception as e:
-        raise HTTPException(500, f"Thumbnail generation failed: {e}")
+        raise HTTPException(_provider_http_status(e), f"Thumbnail generation failed: {e}")
 
 
 @app.post("/api/thumbnail/with-refs")
@@ -1113,11 +1149,11 @@ async def generate_thumbnail_with_refs(
             output_dir=out_dir,
         )
         if not paths:
-            raise ValueError("No thumbnails generated")
+            raise ValueError("No thumbnails generated — try again in a moment")
         urls = [f"/api/files/{os.path.relpath(p, str(ROOT))}" for p in paths]
         return {"thumbnails": urls, "paths": paths}
     except Exception as e:
-        raise HTTPException(500, f"Thumbnail generation failed: {e}")
+        raise HTTPException(_provider_http_status(e), f"Thumbnail generation failed: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -1423,8 +1459,10 @@ async def fetch_channel(req: ChannelFetchRequest, user: dict = Depends(require_u
             max_videos=req.max_videos,
         )
         return data
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     except Exception as e:
-        raise HTTPException(500, f"Channel fetch failed: {e}")
+        raise HTTPException(_provider_http_status(e), f"Channel fetch failed: {e}")
 
 
 @app.post("/api/channel/analyze")

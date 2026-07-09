@@ -19,42 +19,98 @@ def _extract_channel_id(url: str, yt_api_key: str) -> str:
     - youtube.com/channel/UCxxxxxx
     - youtube.com/@handle
     - youtube.com/c/customname
+    - youtube.com/user/name
     """
     url = url.strip().rstrip("/")
 
-    match = re.search(r'/channel/(UC[\w-]+)', url)
+    match = re.search(r"/channel/(UC[\w-]+)", url, re.I)
     if match:
         return match.group(1)
 
-    handle_match = re.search(r'/@([\w.-]+)', url)
-    custom_match = re.search(r'/c/([\w.-]+)', url)
-    username = handle_match.group(1) if handle_match else (custom_match.group(1) if custom_match else None)
+    # Bare UC… id pasted as the whole "URL"
+    bare = re.fullmatch(r"(UC[\w-]{20,})", url)
+    if bare:
+        return bare.group(1)
+
+    handle_match = re.search(r"/@([\w.-]+)", url)
+    custom_match = re.search(r"/c/([\w.-]+)", url)
+    user_match = re.search(r"/user/([\w.-]+)", url)
+    username = (
+        handle_match.group(1) if handle_match
+        else (custom_match.group(1) if custom_match
+              else (user_match.group(1) if user_match else None))
+    )
 
     if username:
-        # First try scraping the channel page to get the ID directly
+        # Official API — most reliable for @handles
+        channel_id = _resolve_handle_via_api(username, yt_api_key)
+        if channel_id:
+            return channel_id
+
+        # Page scrape (works when API quota/scopes are limited)
         channel_id = _resolve_handle_via_page(username)
         if channel_id:
             return channel_id
 
-        # Fall back to search API
+        # Last resort: search (often needs broader API enablement)
+        channel_id = _resolve_via_search(username, yt_api_key, prefer_handle=bool(handle_match))
+        if channel_id:
+            return channel_id
+
+        raise ValueError(
+            f"No YouTube channel found for @{username}. "
+            "Check the handle spelling, or paste a channel URL like "
+            "youtube.com/channel/UCxxxx or youtube.com/@handle."
+        )
+
+    raise ValueError(
+        f"Could not extract channel ID from: {url}. "
+        "Use a URL like youtube.com/@handle or youtube.com/channel/UCxxxx."
+    )
+
+
+def _resolve_handle_via_api(handle: str, yt_api_key: str) -> str | None:
+    """Resolve @handle via channels.list forHandle (YouTube Data API v3)."""
+    if not yt_api_key:
+        return None
+    try:
         from googleapiclient.discovery import build
         youtube = build("youtube", "v3", developerKey=yt_api_key)
+        for candidate in (handle, f"@{handle}"):
+            resp = youtube.channels().list(part="id", forHandle=candidate).execute()
+            items = resp.get("items") or []
+            if items:
+                cid = items[0].get("id")
+                if cid:
+                    print(f"[channel_data] forHandle @{handle} -> {cid}")
+                    return cid
+    except Exception as e:
+        print(f"[channel_data] forHandle failed for @{handle}: {e}")
+    return None
 
-        search_query = f"@{username}" if handle_match else username
+
+def _resolve_via_search(username: str, yt_api_key: str, prefer_handle: bool = True) -> str | None:
+    if not yt_api_key:
+        return None
+    try:
+        from googleapiclient.discovery import build
+        youtube = build("youtube", "v3", developerKey=yt_api_key)
+        search_query = f"@{username}" if prefer_handle else username
         resp = youtube.search().list(
             part="snippet", q=search_query, type="channel", maxResults=1
         ).execute()
-
         items = resp.get("items", [])
-        if items:
-            if "id" in items[0] and isinstance(items[0]["id"], dict):
-                cid = items[0]["id"].get("channelId")
-                if cid:
-                    return cid
-            if "snippet" in items[0] and "channelId" in items[0]["snippet"]:
-                return items[0]["snippet"]["channelId"]
-
-    raise ValueError(f"Could not extract channel ID from: {url}")
+        if not items:
+            return None
+        if "id" in items[0] and isinstance(items[0]["id"], dict):
+            cid = items[0]["id"].get("channelId")
+            if cid:
+                return cid
+        if "snippet" in items[0] and "channelId" in items[0]["snippet"]:
+            return items[0]["snippet"]["channelId"]
+    except Exception as e:
+        print(f"[channel_data] search fallback failed for {username}: {e}")
+    return None
 
 
 def _resolve_handle_via_page(handle: str) -> str | None:
@@ -68,10 +124,16 @@ def _resolve_handle_via_page(handle: str) -> str | None:
                               "Chrome/120.0.0.0 Safari/537.36",
                 "Accept-Language": "en-US,en;q=0.9",
             },
-            cookies={"CONSENT": "PENDING+999", "SOCS": "CAISNQgDEitib3FfaWRlbnRpdHlmcm9udGVuZHVpc2VydmVyXzIwMjMwODI5LjA3X3AxGgJlbiACGgYIgJnSmgY"},
+            cookies={
+                "CONSENT": "YES+cb.20210328-17-p0.en+FX+111",
+                "SOCS": "CAISNQgDEitib3FfaWRlbnRpdHlmcm9udGVuZHVpc2VydmVyXzIwMjMwODI5LjA3X3AxGgJlbiACGgYIgJnSmgY",
+            },
             follow_redirects=True,
             timeout=15,
         )
+        if resp.status_code == 404:
+            print(f"[channel_data] Page 404 for @{handle} — channel likely does not exist")
+            return None
         if resp.status_code == 200:
             for pattern in [
                 r'"externalId"\s*:\s*"(UC[\w-]+)"',

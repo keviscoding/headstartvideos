@@ -167,7 +167,13 @@ def _atlas_tts_chunk(text: str, voice_id: str, out_path: str) -> None:
 
     r = httpx.post(f"{ATLAS_BASE}/model/generateAudio", headers=headers, json=payload, timeout=90)
     if r.status_code >= 400:
-        raise RuntimeError(f"Atlas TTS request failed ({r.status_code}): {r.text[:400]}")
+        body = (r.text or "")[:400]
+        if r.status_code == 402 or "insufficient balance" in body.lower():
+            raise RuntimeError(
+                "Voiceover service is temporarily unavailable (provider balance). "
+                "Please try again later or contact support."
+            )
+        raise RuntimeError(f"Atlas TTS request failed ({r.status_code}): {body}")
 
     data = r.json().get("data") or r.json()
     pred_id = data.get("id")
