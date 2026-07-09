@@ -58,6 +58,26 @@ window.fetch = async function (input, init) {
     return res;
 };
 
+/** Parse JSON from a fetch Response without throwing on HTML/plain-text error bodies. */
+async function readJson(res, fallback = null) {
+    const text = await res.text();
+    if (!text) return fallback;
+    try {
+        return JSON.parse(text);
+    } catch (_) {
+        return fallback;
+    }
+}
+
+function safeJsonParse(text, fallback = null) {
+    if (text == null || text === '') return fallback;
+    try {
+        return JSON.parse(text);
+    } catch (_) {
+        return fallback;
+    }
+}
+
 // Signed-in only — lets free users walk the pipeline (steps 1–5).
 function ensureSignedIn(retry) {
     if (!currentUser) {
@@ -103,7 +123,8 @@ async function initAnalytics() {
     let cfg;
     try {
         const res = await _origFetch('/api/config');
-        cfg = await res.json();
+        cfg = await readJson(res, null);
+        if (!cfg) return;
     } catch { return; }
 
     // Sentry (error tracking) — legitimate interest, load regardless of consent.
@@ -126,6 +147,10 @@ async function initAnalytics() {
                         'AbortError',
                         'play() request was interrupted',
                         'The play() request was interrupted',
+                        'JSON.parse',
+                        'unexpected character at line',
+                        'Unexpected token',
+                        'is not valid JSON',
                     ],
                 });
                 if (currentUser) {
@@ -1388,8 +1413,9 @@ const cookingManager = {
 
         this.evtSrc.addEventListener('progress', (e) => {
             this.msgCount++;
-            const msg = JSON.parse(e.data);
-            const friendly = _friendlyProgress(msg.message);
+            const msg = safeJsonParse(e.data);
+            if (!msg || typeof msg !== 'object') return;
+            const friendly = _friendlyProgress(msg.message || '');
             const statusEl = document.getElementById('cooking-bar-status');
             if (statusEl) statusEl.textContent = friendly.substring(0, 60);
             if (progressLog) {
@@ -1414,7 +1440,11 @@ const cookingManager = {
         this.evtSrc.addEventListener('complete', (e) => {
             this.evtSrc.close();
             this.evtSrc = null;
-            this.result = JSON.parse(e.data);
+            this.result = safeJsonParse(e.data);
+            if (!this.result || !this.result.output_url) {
+                this._reattach();
+                return;
+            }
             this._clear();
             state.videoUrl = this.result.output_url;
             state.videoPath = this.result.output_path;
@@ -2182,10 +2212,11 @@ async function loadSettingsFromServer() {
     try {
         const res = await _origFetch('/api/settings/keys');
         if (!res.ok) return;
-        const data = await res.json();
+        const data = await readJson(res, null);
+        if (!data || typeof data !== 'object') return;
         Object.entries(data).forEach(([key, info]) => {
             const input = document.getElementById(`key-${key}`);
-            if (input && info.configured) input.placeholder = 'Configured (hidden)';
+            if (input && info?.configured) input.placeholder = 'Configured (hidden)';
         });
     } catch { /* Settings load is best-effort */ }
 }
@@ -2203,7 +2234,12 @@ async function saveSettings() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(keys),
         });
-        const data = await res.json();
+        const data = await readJson(res, {});
+        if (!res.ok) {
+            document.getElementById('settings-status').textContent =
+                friendlyApiError(data, 'Save failed');
+            return;
+        }
         document.getElementById('settings-status').textContent = data.message || 'Saved!';
         setTimeout(() => { document.getElementById('settings-status').textContent = ''; }, 3000);
     } catch (e) {
@@ -2223,7 +2259,7 @@ async function testKey(name) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ key_name: name, key_value: val || '' }),
         });
-        const data = await res.json();
+        const data = await readJson(res, {});
         btn.textContent = data.ok ? 'OK' : 'Fail';
         btn.style.color = data.ok ? '#10b981' : '#ef4444';
         setTimeout(() => { btn.textContent = origText; btn.style.color = ''; btn.disabled = false; }, 2000);
@@ -2370,8 +2406,8 @@ function restorePipelineState() {
 async function checkAuth() {
     try {
         const res = await _origFetch('/api/auth/me');
-        const data = await res.json();
-        if (data.user) {
+        const data = await readJson(res, null);
+        if (data?.user) {
             currentUser = data.user;
             updateAuthUI();
         }
@@ -2385,8 +2421,8 @@ async function checkAuth() {
 async function refreshUserData() {
     try {
         const res = await _origFetch('/api/auth/me');
-        const data = await res.json();
-        if (data.user) {
+        const data = await readJson(res, null);
+        if (data?.user) {
             currentUser = data.user;
             updateAuthUI();
         }
