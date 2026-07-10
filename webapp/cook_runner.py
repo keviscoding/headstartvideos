@@ -162,9 +162,26 @@ def run_cook_job(
                 progress_callback=on_progress,
             )
         elif recipe == "avatar_plus_broll":
-            raise ValueError(
-                "Avatar + Illustrations isn't available in the web app yet. "
-                "Choose Animated Explainer or a B-roll recipe."
+            from core.avatar_pipeline import run_avatar_pipeline
+            from webapp.database import get_user_heygen_key
+
+            avatar_id = (req_data.get("avatar_id") or "").strip()
+            voice_id = (req_data.get("voice_id") or "").strip()
+            if not avatar_id or not voice_id:
+                raise ValueError("Avatar recipe requires avatar_id and voice_id.")
+            heygen_key = get_user_heygen_key(user_id) if user_id else None
+            if not heygen_key:
+                raise ValueError(
+                    "HeyGen API key missing — reconnect it in Settings → Integrations."
+                )
+            result = run_avatar_pipeline(
+                script=script,
+                avatar_id=avatar_id,
+                voice_id=voice_id,
+                voiceover_path=None,
+                output_name="pipeline_video.mp4",
+                progress_callback=on_progress,
+                heygen_api_key=heygen_key,
             )
         else:
             raise ValueError(f"Unknown recipe: {recipe}")

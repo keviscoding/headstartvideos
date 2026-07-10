@@ -159,6 +159,7 @@ from webapp.database import (
     create_video, list_videos, get_video, update_video_kit, delete_video,
     create_cook_job, update_cook_job, get_cook_job,
     cook_queue_stats, announce_queued_jobs,
+    set_user_heygen_key, get_user_heygen_key, user_heygen_status,
 )
 from webapp import storage
 from webapp import job_queue
@@ -783,12 +784,19 @@ class ThumbnailRequest(BaseModel):
 
 class BuildRequest(BaseModel):
     script: str
-    voiceover_path: str
+    voiceover_path: str = ""
     title: str = ""
     niche: str = "animated_explainer"
     recipe: str = "animated_explainer"
     thumbnail_path: str = ""
     notify_email: str = ""
+    avatar_id: str = ""
+    voice_id: str = ""
+
+
+class HeyGenKeyRequest(BaseModel):
+    api_key: str = ""
+    test: bool = True
 
 class UploadKitRequest(BaseModel):
     title: str
@@ -1249,13 +1257,16 @@ async def start_build(req: BuildRequest, request: Request):
 
     recipe = req.recipe or "animated_explainer"
     if recipe == "avatar_plus_broll":
-        raise HTTPException(
-            400,
-            "Avatar + Illustrations isn't available in the web app yet. "
-            "Choose Animated Explainer or a B-roll recipe.",
-        )
+        if not (req.avatar_id or "").strip() or not (req.voice_id or "").strip():
+            raise HTTPException(400, "Pick a HeyGen avatar and voice (or paste their IDs) before cooking.")
+        if not get_user_heygen_key(user_id):
+            raise HTTPException(
+                400,
+                "Connect your HeyGen API key in Settings → Integrations before cooking an avatar video.",
+            )
+    else:
+        _safe_user_path(req.voiceover_path, "voiceover")
 
-    _safe_user_path(req.voiceover_path, "voiceover")
     _safe_user_path(req.thumbnail_path, "thumbnail")
 
     credit_deducted = False
@@ -1763,6 +1774,95 @@ async def cleanup_history(request: Request, user: dict = Depends(require_user)):
             shutil.rmtree(str(d), ignore_errors=True)
             removed += 1
     return {"removed": removed}
+
+
+# ---------------------------------------------------------------------------
+# User integrations (BYOK — HeyGen)
+# ---------------------------------------------------------------------------
+_HEYGEN_GUIDE = {
+    "title": "Connect HeyGen",
+    "steps": [
+        "Create a free account or sign in at app.heygen.com",
+        "Open Settings → API (or Account → API token) and create an API key",
+        "Copy the key and paste it below, then Save & test",
+        "Optional: in HeyGen, copy an Avatar ID or Voice ID if you prefer pasting over the grid",
+    ],
+    "docs_url": "https://docs.heygen.com/docs/quick-start",
+    "app_url": "https://app.heygen.com",
+}
+
+
+@app.get("/api/me/integrations")
+async def get_my_integrations(user: dict = Depends(require_user)):
+    return {
+        "heygen": user_heygen_status(user["id"]),
+        "guide": {"heygen": _HEYGEN_GUIDE},
+    }
+
+
+@app.post("/api/me/integrations/heygen")
+async def save_heygen_key(req: HeyGenKeyRequest, user: dict = Depends(require_user)):
+    key = (req.api_key or "").strip()
+    if not key:
+        raise HTTPException(400, "Paste your HeyGen API key.")
+    if req.test:
+        from core.heygen import test_api_key
+        if not test_api_key(key):
+            raise HTTPException(
+                400,
+                "HeyGen rejected that key. Double-check you copied the full API token from app.heygen.com → Settings → API.",
+            )
+    set_user_heygen_key(user["id"], key)
+    track(user["id"], "heygen_connected", {})
+    return {"ok": True, "heygen": user_heygen_status(user["id"])}
+
+
+@app.delete("/api/me/integrations/heygen")
+async def delete_heygen_key(user: dict = Depends(require_user)):
+    set_user_heygen_key(user["id"], None)
+    return {"ok": True, "heygen": {"configured": False, "last4": ""}}
+
+
+@app.post("/api/me/integrations/heygen/test")
+async def test_heygen_key(req: HeyGenKeyRequest, user: dict = Depends(require_user)):
+    from core.heygen import test_api_key
+    key = (req.api_key or "").strip() or (get_user_heygen_key(user["id"]) or "")
+    if not key:
+        return {"ok": False, "error": "No HeyGen key to test. Paste one first."}
+    ok = test_api_key(key)
+    return {"ok": ok, "error": "" if ok else "HeyGen rejected that key."}
+
+
+def _user_heygen_or_400(user: dict) -> str:
+    key = get_user_heygen_key(user["id"])
+    if not key:
+        raise HTTPException(
+            400,
+            "Connect your HeyGen API key in Settings → Integrations first.",
+        )
+    return key
+
+
+@app.get("/api/heygen/avatars")
+async def heygen_avatars(user: dict = Depends(require_user)):
+    from core.heygen import list_avatars
+    key = _user_heygen_or_400(user)
+    try:
+        avatars = list_avatars(api_key=key)
+    except Exception as e:
+        raise HTTPException(502, f"Could not load HeyGen avatars: {e}")
+    return {"avatars": avatars, "guide": _HEYGEN_GUIDE}
+
+
+@app.get("/api/heygen/voices")
+async def heygen_voices(user: dict = Depends(require_user)):
+    from core.heygen import list_voices
+    key = _user_heygen_or_400(user)
+    try:
+        voices = list_voices(api_key=key)
+    except Exception as e:
+        raise HTTPException(502, f"Could not load HeyGen voices: {e}")
+    return {"voices": voices, "guide": _HEYGEN_GUIDE}
 
 
 # ---------------------------------------------------------------------------

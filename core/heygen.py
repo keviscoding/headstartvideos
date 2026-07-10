@@ -1,7 +1,7 @@
 """
 HeyGen API integration for AI avatar video generation.
 Uses the v2 Studio API for multi-scene avatar videos.
-User provides their own HeyGen API key.
+Callers pass api_key (BYOK) — falls back to config.HEYGEN_KEY for CLI/admin.
 """
 
 from __future__ import annotations
@@ -24,21 +24,29 @@ class AvatarVideo:
     error: str = ""
 
 
-def _headers() -> dict:
-    if not HEYGEN_KEY:
-        raise ValueError("HEYGEN_KEY not set -- add it to videofactory/.env")
+def _resolve_key(api_key: str | None = None) -> str:
+    key = (api_key or HEYGEN_KEY or "").strip()
+    if not key:
+        raise ValueError(
+            "HeyGen API key required — add yours in Settings → Integrations, "
+            "or set HEYGEN_KEY for local/admin use."
+        )
+    return key
+
+
+def _headers(api_key: str | None = None) -> dict:
     return {
-        "X-Api-Key": HEYGEN_KEY,
+        "X-Api-Key": _resolve_key(api_key),
         "Content-Type": "application/json",
     }
 
 
-def list_avatars() -> list[dict]:
-    """Fetch available avatars from HeyGen."""
+def list_avatars(api_key: str | None = None) -> list[dict]:
+    """Fetch available avatars from HeyGen (public + account private)."""
     resp = httpx.get(
         f"{HEYGEN_API}/v2/avatars",
-        headers=_headers(),
-        timeout=15,
+        headers=_headers(api_key),
+        timeout=30,
     )
     resp.raise_for_status()
     data = resp.json()
@@ -46,19 +54,22 @@ def list_avatars() -> list[dict]:
     return [
         {
             "avatar_id": a.get("avatar_id", ""),
-            "avatar_name": a.get("avatar_name", ""),
-            "preview_url": a.get("preview_image_url", ""),
+            "avatar_name": a.get("avatar_name", "") or a.get("name", ""),
+            "preview_url": a.get("preview_image_url", "") or a.get("preview_url", ""),
+            "gender": a.get("gender", "") or "",
+            "default_voice_id": a.get("default_voice_id", "") or "",
         }
         for a in avatars
+        if a.get("avatar_id")
     ]
 
 
-def list_voices() -> list[dict]:
+def list_voices(api_key: str | None = None) -> list[dict]:
     """Fetch available voices from HeyGen."""
     resp = httpx.get(
         f"{HEYGEN_API}/v2/voices",
-        headers=_headers(),
-        timeout=15,
+        headers=_headers(api_key),
+        timeout=30,
     )
     resp.raise_for_status()
     data = resp.json()
@@ -69,9 +80,20 @@ def list_voices() -> list[dict]:
             "display_name": v.get("display_name", "") or v.get("name", ""),
             "language": v.get("language", ""),
             "gender": v.get("gender", ""),
+            "preview_audio": v.get("preview_audio", "") or v.get("preview_audio_url", ""),
         }
         for v in voices
+        if v.get("voice_id")
     ]
+
+
+def test_api_key(api_key: str) -> bool:
+    """Return True if the key can list avatars."""
+    try:
+        list_avatars(api_key=api_key)
+        return True
+    except Exception:
+        return False
 
 
 def create_avatar_video(
@@ -82,14 +104,11 @@ def create_avatar_video(
     height: int = 1080,
     caption: bool = False,
     background: dict | None = None,
+    api_key: str | None = None,
 ) -> AvatarVideo:
     """
     Create an avatar video from a script using HeyGen v2 Studio API.
     The avatar speaks the full script as a single scene.
-
-    background: optional dict, e.g.
-      {"type": "color", "value": "#1a1a2e"}
-      {"type": "image", "url": "https://..."}
     """
     scene = {
         "character": {
@@ -115,7 +134,7 @@ def create_avatar_video(
 
     resp = httpx.post(
         f"{HEYGEN_API}/v2/video/generate",
-        headers=_headers(),
+        headers=_headers(api_key),
         json=payload,
         timeout=30,
     )
@@ -141,11 +160,9 @@ def create_avatar_video_with_audio(
     avatar_id: str,
     width: int = 1920,
     height: int = 1080,
+    api_key: str | None = None,
 ) -> AvatarVideo:
-    """
-    Create an avatar video from an audio URL (lip-sync mode).
-    The avatar lip-syncs to the provided audio.
-    """
+    """Create an avatar video from an audio URL (lip-sync mode)."""
     payload = {
         "video_inputs": [
             {
@@ -165,7 +182,7 @@ def create_avatar_video_with_audio(
 
     resp = httpx.post(
         f"{HEYGEN_API}/v2/video/generate",
-        headers=_headers(),
+        headers=_headers(api_key),
         json=payload,
         timeout=30,
     )
@@ -182,12 +199,12 @@ def create_avatar_video_with_audio(
     return AvatarVideo(video_id=video_id, status="pending")
 
 
-def check_status(video_id: str) -> AvatarVideo:
+def check_status(video_id: str, api_key: str | None = None) -> AvatarVideo:
     """Check the rendering status of a HeyGen video."""
     resp = httpx.get(
         f"{HEYGEN_API}/v1/video_status.get",
         params={"video_id": video_id},
-        headers=_headers(),
+        headers=_headers(api_key),
         timeout=15,
     )
     resp.raise_for_status()
@@ -207,14 +224,12 @@ def wait_for_completion(
     poll_interval: int = POLL_INTERVAL,
     timeout: int = MAX_WAIT,
     progress_callback=None,
+    api_key: str | None = None,
 ) -> AvatarVideo:
-    """
-    Poll HeyGen until the video is completed or fails.
-    Returns the final AvatarVideo with video_url populated.
-    """
+    """Poll HeyGen until the video is completed or fails."""
     start = time.time()
     while time.time() - start < timeout:
-        result = check_status(video_id)
+        result = check_status(video_id, api_key=api_key)
         elapsed = time.time() - start
         if progress_callback:
             progress_callback(f"HeyGen status: {result.status} ({elapsed:.0f}s)")

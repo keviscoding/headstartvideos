@@ -51,9 +51,10 @@ STRIPE_PRICE_DAILY_ANNUAL = os.getenv("STRIPE_PRICE_DAILY_ANNUAL", "")
 STRIPE_PRICE_TOPUP_5 = os.getenv("STRIPE_PRICE_TOPUP_5", "")
 STRIPE_PRICE_TOPUP_15 = os.getenv("STRIPE_PRICE_TOPUP_15", "")
 
-# Comma-separated list of admin emails allowed to touch ops-only endpoints
-# (Settings / API keys). If empty, those endpoints are locked to everyone.
-ADMIN_EMAILS = [e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()]
+# Fernet key (or passphrase) for encrypting per-user BYOK secrets (HeyGen, etc.).
+# Generate once: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+SECRETS_KEY = os.getenv("SECRETS_KEY", "")
+
 
 # Telemetry (all optional — everything stays inert if these are blank)
 POSTHOG_KEY = os.getenv("POSTHOG_KEY", "")            # PostHog project API key (public)

@@ -67,6 +67,7 @@ def run_avatar_pipeline(
     niche_profile: dict | None = None,
     background: dict | None = None,
     progress_callback=None,
+    heygen_api_key: str | None = None,
 ) -> dict:
     """
     Full avatar pipeline: script -> avatar video + illustration B-roll -> final MP4.
@@ -74,6 +75,7 @@ def run_avatar_pipeline(
     avatar_ratio: fraction of slots that show the avatar (0.0-1.0).
         0.5 means every other slot alternates between avatar and illustration.
     use_ai_images: if True, generate illustrations with AI; if False, search stock.
+    heygen_api_key: BYOK key (required in web app); falls back to HEYGEN_KEY env.
     """
     timings = {}
     job_dir = OUTPUT_DIR / f"avatar_job_{int(time.time())}"
@@ -96,6 +98,7 @@ def run_avatar_pipeline(
         avatar_id=avatar_id,
         voice_id=voice_id,
         background=background,
+        api_key=heygen_api_key,
     )
     if avatar_result.status == "failed":
         raise RuntimeError(f"HeyGen video creation failed: {avatar_result.error}")
@@ -103,6 +106,7 @@ def run_avatar_pipeline(
     completed = wait_for_completion(
         avatar_result.video_id,
         progress_callback=lambda msg: _log(f"  {msg}"),
+        api_key=heygen_api_key,
     )
     avatar_path = str(job_dir / "avatar_full.mp4")
     download_video(completed.video_url, avatar_path)

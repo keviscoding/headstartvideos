@@ -23,9 +23,14 @@ const state = {
     channelAnalysis: null,
     voiceMode: 'generate',
     uploadedVoPath: '',
+    avatarId: '',
+    voiceId: '',
+    avatarName: '',
+    heygenVoiceName: '',
 };
 
 let previewAudio = null;
+let heygenConfigured = false;
 
 // ---------------------------------------------------------------------------
 // Boot
@@ -218,9 +223,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 // Page Navigation (SPA routing)
 // ---------------------------------------------------------------------------
 function navigateTo(page) {
-    // Settings is an ops-only console — never expose it to non-admins.
-    if (page === 'settings' && !(currentUser && currentUser.is_admin)) {
-        if (!currentUser) { showAuthModal(); }
+    if (page === 'settings' && !currentUser) {
+        showAuthModal();
         return;
     }
     state.page = page;
@@ -245,6 +249,13 @@ function navigateTo(page) {
         document.querySelector('[data-page="tools"]')?.classList.add('active');
     } else {
         document.querySelector(`[data-page="${page}"]`)?.classList.add('active');
+    }
+
+    if (page === 'settings') {
+        loadIntegrations();
+        loadSettingsFromServer();
+        const adminKeys = document.getElementById('settings-admin-keys');
+        if (adminKeys) adminKeys.classList.toggle('hidden', !(currentUser && currentUser.is_admin));
     }
 
     // Close menus
@@ -300,8 +311,16 @@ function goToStep(n) {
         line.classList.toggle('done', i < n - 1);
     });
 
-    // Always ensure voices are ready when entering Voice step (any navigation path)
-    if (n === 4) loadVoices();
+    // Always ensure voices / avatar studio ready when entering step 4
+    if (n === 4) {
+        if (isAvatarRecipe()) {
+            setupAvatarStep();
+        } else {
+            document.getElementById('step4-avatar')?.classList.add('hidden');
+            document.getElementById('step4-voiceover')?.classList.remove('hidden');
+            loadVoices();
+        }
+    }
 
     if (n >= 2) persistPipelineState();
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -416,6 +435,7 @@ function resetPipeline() {
         voice: 'leo', targetMinutes: 8, voiceoverPath: '', voiceoverUrl: '',
         thumbnailPath: '', thumbnailUrl: '', thumbnailRefs: [], videoUrl: '', videoPath: '',
         voiceMode: 'generate', uploadedVoPath: '',
+        avatarId: '', voiceId: '', avatarName: '', heygenVoiceName: '',
     });
     document.getElementById('topic-input').value = '';
     document.getElementById('custom-title').value = '';
@@ -1164,6 +1184,46 @@ async function handleVoiceNext() {
     const btn = document.getElementById('btn-next-4');
     setLoading(btn, true);
 
+    // Avatar recipe: skip Atlas VO — require HeyGen IDs only
+    if (isAvatarRecipe()) {
+        if (!state.avatarId || !state.voiceId) {
+            alert('Pick a HeyGen avatar and voice (or paste both IDs) before continuing.');
+            setLoading(btn, false);
+            return;
+        }
+        if (!heygenConfigured) {
+            alert('Connect your HeyGen API key in Settings first.');
+            setLoading(btn, false);
+            return;
+        }
+        state.voiceoverPath = '';
+        state.voiceoverUrl = '';
+        try {
+            const thumbRes = await fetch('/api/thumbnail', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: state.title,
+                    niche_style: state.nicheData?.thumbnail_style || '',
+                    count: 2,
+                }),
+            });
+            const thumbData = await thumbRes.json();
+            if (thumbRes.ok && thumbData.thumbnails?.length) {
+                renderThumbnails(thumbData.thumbnails, thumbData.paths);
+                goToStep(5);
+            } else {
+                goToStep(6);
+                populateBuildSummary();
+            }
+        } catch (e) {
+            alert('Thumbnail generation failed: ' + e.message);
+        } finally {
+            setLoading(btn, false);
+        }
+        return;
+    }
+
     const isUpload = state.voiceMode === 'upload' && state.uploadedVoPath;
 
     if (isUpload) {
@@ -1294,7 +1354,14 @@ function populateBuildSummary() {
     document.getElementById('summary-title').textContent = state.title;
     const wc = state.script.split(/\s+/).length;
     document.getElementById('summary-words').textContent = `${wc} words (~${Math.round(wc / 150)} min)`;
-    document.getElementById('summary-voice').textContent = state.voice;
+    const voiceEl = document.getElementById('summary-voice');
+    if (isAvatarRecipe()) {
+        const a = state.avatarName || state.avatarId || '—';
+        const v = state.heygenVoiceName || state.voiceId || '—';
+        voiceEl.textContent = `${a} · ${v}`;
+    } else {
+        voiceEl.textContent = state.voice;
+    }
 }
 
 function _friendlyProgress(raw) {
@@ -1385,12 +1452,14 @@ const cookingManager = {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     script: state.script,
-                    voiceover_path: state.voiceoverPath,
+                    voiceover_path: state.voiceoverPath || '',
                     title: state.title,
                     niche: state.niche,
                     recipe: state.nicheData?.recipe || 'animated_explainer',
                     thumbnail_path: state.thumbnailPath,
                     notify_email: notifyEmail,
+                    avatar_id: state.avatarId || '',
+                    voice_id: state.voiceId || '',
                 }),
             });
             const data = await readJson(res, {});
@@ -2260,11 +2329,212 @@ async function deleteVideo(id) {
 }
 
 // ---------------------------------------------------------------------------
-// Settings
+// Settings + HeyGen integrations
 // ---------------------------------------------------------------------------
+function isAvatarRecipe() {
+    return (state.nicheData?.recipe || state.niche) === 'avatar_plus_broll';
+}
+
+function renderHeygenStatus(status) {
+    heygenConfigured = !!(status && status.configured);
+    const chip = document.getElementById('heygen-status-chip');
+    const connected = document.getElementById('heygen-connected-panel');
+    const connect = document.getElementById('heygen-connect-panel');
+    const last4 = document.getElementById('heygen-last4');
+    if (chip) {
+        chip.textContent = heygenConfigured ? `Connected · ••••${status.last4 || ''}` : 'Not connected';
+        chip.style.color = heygenConfigured ? 'var(--success)' : 'var(--app-ink-3)';
+    }
+    if (connected) connected.classList.toggle('hidden', !heygenConfigured);
+    if (connect) connect.classList.toggle('hidden', heygenConfigured);
+    if (last4 && status?.last4) last4.textContent = `••••${status.last4}`;
+}
+
+async function loadIntegrations() {
+    if (!currentUser) return;
+    try {
+        const res = await fetch('/api/me/integrations');
+        const data = await readJson(res, {});
+        if (res.ok) renderHeygenStatus(data.heygen || {});
+    } catch { /* best-effort */ }
+}
+
+async function saveHeygenKey() {
+    const statusEl = document.getElementById('heygen-integ-status');
+    const key = document.getElementById('heygen-user-key')?.value?.trim() || '';
+    if (!key) {
+        if (statusEl) statusEl.textContent = 'Paste your HeyGen API key first.';
+        return;
+    }
+    if (statusEl) statusEl.textContent = 'Testing with HeyGen…';
+    try {
+        const res = await fetch('/api/me/integrations/heygen', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ api_key: key, test: true }),
+        });
+        const data = await readJson(res, {});
+        if (!res.ok) {
+            if (statusEl) statusEl.textContent = friendlyApiError(data, 'Could not save key');
+            return;
+        }
+        document.getElementById('heygen-user-key').value = '';
+        renderHeygenStatus(data.heygen || { configured: true });
+        if (statusEl) statusEl.textContent = 'Connected — you can cook Avatar videos.';
+        track('heygen_key_saved', {});
+    } catch (e) {
+        if (statusEl) statusEl.textContent = 'Save failed: ' + e.message;
+    }
+}
+
+async function disconnectHeygen() {
+    if (!confirm('Disconnect your HeyGen key? Avatar cooks will need it again.')) return;
+    try {
+        await fetch('/api/me/integrations/heygen', { method: 'DELETE' });
+        renderHeygenStatus({ configured: false, last4: '' });
+        const statusEl = document.getElementById('heygen-integ-status');
+        if (statusEl) statusEl.textContent = 'Disconnected.';
+    } catch (e) {
+        alert('Could not disconnect: ' + e.message);
+    }
+}
+
+async function setupAvatarStep() {
+    const vo = document.getElementById('step4-voiceover');
+    const av = document.getElementById('step4-avatar');
+    if (vo) vo.classList.add('hidden');
+    if (av) av.classList.remove('hidden');
+
+    await loadIntegrations();
+    const needKey = document.getElementById('avatar-need-key');
+    const picker = document.getElementById('avatar-picker-panel');
+    if (!heygenConfigured) {
+        needKey?.classList.remove('hidden');
+        picker?.classList.add('hidden');
+        return;
+    }
+    needKey?.classList.add('hidden');
+    picker?.classList.remove('hidden');
+    await Promise.all([loadHeygenAvatars(), loadHeygenVoices()]);
+}
+
+async function loadHeygenAvatars() {
+    const grid = document.getElementById('heygen-avatars-grid');
+    const loading = document.getElementById('heygen-avatars-loading');
+    if (!grid) return;
+    loading?.classList.remove('hidden');
+    grid.innerHTML = '';
+    try {
+        const res = await fetch('/api/heygen/avatars');
+        const data = await readJson(res, {});
+        if (!res.ok) throw new Error(friendlyApiError(data, 'Failed to load avatars'));
+        const avatars = data.avatars || [];
+        if (!avatars.length) {
+            grid.innerHTML = '<p style="font-size:14px;color:var(--app-ink-2);">No avatars returned. Paste an avatar ID below.</p>';
+            return;
+        }
+        avatars.slice(0, 48).forEach(a => {
+            const card = document.createElement('button');
+            card.type = 'button';
+            card.className = 'cr-surface heygen-avatar-card';
+            card.style.cssText = 'padding:0;overflow:hidden;text-align:left;border:2px solid transparent;border-radius:var(--radius-card);cursor:pointer;';
+            card.dataset.id = a.avatar_id;
+            const img = a.preview_url
+                ? `<img src="${esc(a.preview_url)}" alt="" style="width:100%;aspect-ratio:1;object-fit:cover;display:block;" loading="lazy">`
+                : `<div style="aspect-ratio:1;background:var(--app-border);"></div>`;
+            card.innerHTML = `${img}<div style="padding:8px 10px;"><div style="font-size:13px;font-weight:600;color:var(--app-ink);">${esc(a.avatar_name || a.avatar_id)}</div></div>`;
+            card.addEventListener('click', () => selectHeygenAvatar(a));
+            if (state.avatarId === a.avatar_id) card.style.borderColor = 'var(--accent)';
+            grid.appendChild(card);
+        });
+    } catch (e) {
+        grid.innerHTML = `<p style="font-size:14px;color:var(--app-ink-2);">${esc(e.message)}</p>`;
+    } finally {
+        loading?.classList.add('hidden');
+    }
+}
+
+function selectHeygenAvatar(a) {
+    state.avatarId = a.avatar_id || '';
+    state.avatarName = a.avatar_name || a.avatar_id || '';
+    const paste = document.getElementById('heygen-avatar-paste');
+    if (paste) paste.value = state.avatarId;
+    document.querySelectorAll('.heygen-avatar-card').forEach(c => {
+        c.style.borderColor = c.dataset.id === state.avatarId ? 'var(--accent)' : 'transparent';
+    });
+    if (a.default_voice_id && !state.voiceId) {
+        state.voiceId = a.default_voice_id;
+        const vp = document.getElementById('heygen-voice-paste');
+        if (vp) vp.value = state.voiceId;
+        highlightHeygenVoice(state.voiceId);
+    }
+}
+
+function onHeygenAvatarPaste(val) {
+    state.avatarId = (val || '').trim();
+    state.avatarName = state.avatarId;
+    document.querySelectorAll('.heygen-avatar-card').forEach(c => {
+        c.style.borderColor = c.dataset.id === state.avatarId ? 'var(--accent)' : 'transparent';
+    });
+}
+
+async function loadHeygenVoices() {
+    const list = document.getElementById('heygen-voices-list');
+    const loading = document.getElementById('heygen-voices-loading');
+    if (!list) return;
+    loading?.classList.remove('hidden');
+    list.innerHTML = '';
+    try {
+        const res = await fetch('/api/heygen/voices');
+        const data = await readJson(res, {});
+        if (!res.ok) throw new Error(friendlyApiError(data, 'Failed to load voices'));
+        const voices = data.voices || [];
+        if (!voices.length) {
+            list.innerHTML = '<p style="font-size:14px;color:var(--app-ink-2);">No voices returned. Paste a voice ID below.</p>';
+            return;
+        }
+        voices.slice(0, 80).forEach(v => {
+            const row = document.createElement('button');
+            row.type = 'button';
+            row.className = 'heygen-voice-row cr-surface';
+            row.dataset.id = v.voice_id;
+            row.style.cssText = 'width:100%;display:flex;justify-content:space-between;align-items:center;padding:10px 12px;text-align:left;border:1px solid var(--app-border);border-radius:8px;cursor:pointer;background:transparent;';
+            const meta = [v.language, v.gender].filter(Boolean).join(' · ');
+            row.innerHTML = `<span style="font-size:14px;font-weight:600;color:var(--app-ink);">${esc(v.display_name || v.voice_id)}</span><span class="cr-mono" style="font-size:11px;color:var(--app-ink-3);">${esc(meta)}</span>`;
+            row.addEventListener('click', () => selectHeygenVoice(v));
+            list.appendChild(row);
+        });
+        if (state.voiceId) highlightHeygenVoice(state.voiceId);
+    } catch (e) {
+        list.innerHTML = `<p style="font-size:14px;color:var(--app-ink-2);">${esc(e.message)}</p>`;
+    } finally {
+        loading?.classList.add('hidden');
+    }
+}
+
+function selectHeygenVoice(v) {
+    state.voiceId = v.voice_id || '';
+    state.heygenVoiceName = v.display_name || v.voice_id || '';
+    const paste = document.getElementById('heygen-voice-paste');
+    if (paste) paste.value = state.voiceId;
+    highlightHeygenVoice(state.voiceId);
+}
+
+function onHeygenVoicePaste(val) {
+    state.voiceId = (val || '').trim();
+    state.heygenVoiceName = state.voiceId;
+    highlightHeygenVoice(state.voiceId);
+}
+
+function highlightHeygenVoice(id) {
+    document.querySelectorAll('.heygen-voice-row').forEach(r => {
+        const on = r.dataset.id === id;
+        r.style.borderColor = on ? 'var(--accent)' : 'var(--app-border)';
+    });
+}
+
 async function loadSettingsFromServer() {
-    // Ops-only: only admins can read key status, and we use the raw fetch so a
-    // 403/401 here never triggers the global sign-in modal on normal page loads.
+    // Ops-only: only admins can read platform key status
     if (!(currentUser && currentUser.is_admin)) return;
     try {
         const res = await _origFetch('/api/settings/keys');
@@ -2467,6 +2737,7 @@ async function checkAuth() {
         if (data?.user) {
             currentUser = data.user;
             updateAuthUI();
+            loadIntegrations();
         }
     } catch (e) {
         console.error('Auth check failed:', e);
@@ -2482,6 +2753,7 @@ async function refreshUserData() {
         if (data?.user) {
             currentUser = data.user;
             updateAuthUI();
+            loadIntegrations();
         }
     } catch (e) {
         console.error('Refresh user data failed:', e);
@@ -2495,10 +2767,10 @@ function updateAuthUI() {
 
     const navSettings = document.getElementById('nav-settings');
     const navSettingsMobile = document.getElementById('nav-settings-mobile');
-    const isAdmin = !!(currentUser && currentUser.is_admin);
-    navSettings?.classList.toggle('hidden', !isAdmin);
-    navSettingsMobile?.classList.toggle('hidden', !isAdmin);
-    if (!isAdmin && state.page === 'settings') {
+    const signedIn = !!currentUser;
+    navSettings?.classList.toggle('hidden', !signedIn);
+    navSettingsMobile?.classList.toggle('hidden', !signedIn);
+    if (!signedIn && state.page === 'settings') {
         navigateTo('pipeline');
     }
 

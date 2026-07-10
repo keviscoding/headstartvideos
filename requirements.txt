@@ -17,4 +17,5 @@ posthog>=3.5.0
 sentry-sdk[fastapi]>=2.0.0
 psycopg[binary]>=3.1.0
 boto3>=1.34.0
+cryptography>=42.0.0
 pycaps @ git+https://github.com/francozanardi/pycaps.git@68a6843bbd3f7d0ea33047ffb1045d978a7671c4

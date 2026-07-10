@@ -45,7 +45,8 @@ Open **http://localhost:8000**
 | **Atlas Cloud** | Thumbnail generation | For thumbnails |
 | **Claude** | Script Studio (channel analysis, ideas, scripts) | For Script Studio |
 | **YouTube API** | Channel data fetching | For Channel Analyzer |
-| **HeyGen** | AI avatar videos | For Avatar recipe |
+| **HeyGen** | AI avatar videos (BYOK) | Avatar recipe — user pastes their own API key in Settings → Integrations |
+
 | **Pexels** | Stock photos and video | For B-Roll recipes |
 
 Get API keys:

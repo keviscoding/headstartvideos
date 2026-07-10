@@ -248,48 +248,79 @@
                 </div>
             </section>
 
-            <!-- STEP 4: Voice -->
+            <!-- STEP 4: Voice / Avatar -->
             <section id="step-4" class="step-panel hidden">
                 <div class="cr-panel">
-                    <div class="mb-6">
-                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Choose a voice</h2>
-                        <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">Generate with AI or upload your own recording.</p>
-                    </div>
-                    <!-- Voice mode toggle -->
-                    <div class="max-w-3xl mb-4 flex gap-2">
-                        <button id="vo-mode-generate" class="btn-secondary vo-mode-btn active" onclick="setVoiceMode('generate')" style="font-size: 13px; padding: 6px 16px;">Generate voice</button>
-                        <button id="vo-mode-upload" class="btn-secondary vo-mode-btn" onclick="setVoiceMode('upload')" style="font-size: 13px; padding: 6px 16px;">Upload your own</button>
-                    </div>
-                    <!-- Generate mode -->
-                    <div id="vo-generate-panel">
-                        <div id="voices-grid" class="max-w-3xl grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
-                    </div>
-                    <!-- Upload mode -->
-                    <div id="vo-upload-panel" class="hidden max-w-3xl">
-                        <div class="cr-surface" style="padding: 24px; text-align: center; border: 2px dashed var(--app-border); border-radius: var(--radius-card); cursor: pointer;" onclick="document.getElementById('vo-file-input').click()">
-                            <input id="vo-file-input" type="file" accept=".wav,.mp3,.m4a,.ogg,.webm" class="hidden" onchange="handleVoUpload(this)">
-                            <div id="vo-upload-placeholder">
-                                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--app-ink-3)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 12px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
-                                <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2);">Drop your voiceover here or click to browse</p>
-                                <p style="font-family: var(--font-mono); font-size: 12px; color: var(--app-ink-3); margin-top: 6px;">WAV, MP3, M4A accepted</p>
+                    <div id="step4-voiceover">
+                        <div class="mb-6">
+                            <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Choose a voice</h2>
+                            <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">Generate with AI or upload your own recording.</p>
+                        </div>
+                        <div class="max-w-3xl mb-4 flex gap-2">
+                            <button id="vo-mode-generate" class="btn-secondary vo-mode-btn active" onclick="setVoiceMode('generate')" style="font-size: 13px; padding: 6px 16px;">Generate voice</button>
+                            <button id="vo-mode-upload" class="btn-secondary vo-mode-btn" onclick="setVoiceMode('upload')" style="font-size: 13px; padding: 6px 16px;">Upload your own</button>
+                        </div>
+                        <div id="vo-generate-panel">
+                            <div id="voices-grid" class="max-w-3xl grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
+                        </div>
+                        <div id="vo-upload-panel" class="hidden max-w-3xl">
+                            <div class="cr-surface" style="padding: 24px; text-align: center; border: 2px dashed var(--app-border); border-radius: var(--radius-card); cursor: pointer;" onclick="document.getElementById('vo-file-input').click()">
+                                <input id="vo-file-input" type="file" accept=".wav,.mp3,.m4a,.ogg,.webm" class="hidden" onchange="handleVoUpload(this)">
+                                <div id="vo-upload-placeholder">
+                                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--app-ink-3)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 12px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+                                    <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2);">Drop your voiceover here or click to browse</p>
+                                    <p style="font-family: var(--font-mono); font-size: 12px; color: var(--app-ink-3); margin-top: 6px;">WAV, MP3, M4A accepted</p>
+                                </div>
+                                <div id="vo-upload-info" class="hidden">
+                                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 8px;"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                                    <p id="vo-upload-name" style="font-family: var(--font-body); font-weight: 600; font-size: 15px; color: var(--app-ink);"></p>
+                                    <p style="font-family: var(--font-mono); font-size: 12px; color: var(--app-ink-3); margin-top: 4px;">Ready to use</p>
+                                </div>
                             </div>
-                            <div id="vo-upload-info" class="hidden">
-                                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 8px;"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-                                <p id="vo-upload-name" style="font-family: var(--font-body); font-weight: 600; font-size: 15px; color: var(--app-ink);"></p>
-                                <p style="font-family: var(--font-mono); font-size: 12px; color: var(--app-ink-3); margin-top: 4px;">Ready to use</p>
+                            <div id="vo-upload-progress" class="hidden text-center py-4">
+                                <div class="cr-spinner mx-auto mb-2"></div>
+                                <p style="color: var(--app-ink-2); font-size: 13px;">Uploading...</p>
                             </div>
                         </div>
-                        <div id="vo-upload-progress" class="hidden text-center py-4">
-                            <div class="cr-spinner mx-auto mb-2"></div>
-                            <p style="color: var(--app-ink-2); font-size: 13px;">Uploading...</p>
+                        <div class="max-w-3xl mt-4">
+                            <div id="vo-generating" class="text-center py-8 hidden">
+                                <div class="cr-spinner mx-auto mb-4"></div>
+                                <p style="color: var(--app-ink-2);">Generating voiceover… usually under a minute</p>
+                            </div>
                         </div>
                     </div>
-                    <div class="max-w-3xl mt-4">
-                        <div id="vo-generating" class="text-center py-8 hidden">
-                            <div class="cr-spinner mx-auto mb-4"></div>
-                            <p style="color: var(--app-ink-2);">Generating voiceover… usually under a minute</p>
+
+                    <div id="step4-avatar" class="hidden">
+                        <div class="mb-6">
+                            <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Avatar &amp; voice</h2>
+                            <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">Pick a HeyGen presenter and voice. Atlas voiceover is skipped for this recipe.</p>
+                        </div>
+                        <div id="avatar-need-key" class="hidden max-w-3xl cr-surface" style="padding: 24px; margin-bottom: 20px; border: 1px solid var(--app-border); border-radius: var(--radius-card);">
+                            <h3 style="font-family: var(--font-display); font-weight: 700; font-size: 16px; margin-bottom: 8px;">Connect HeyGen first</h3>
+                            <ol style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2); line-height: 1.6; margin: 0 0 16px 18px;">
+                                <li>Sign in at <a href="https://app.heygen.com" target="_blank" rel="noopener" style="color: var(--accent);">app.heygen.com</a></li>
+                                <li>Open Settings → API and copy your API key</li>
+                                <li>Paste it in ChannelRecipe Settings → Integrations</li>
+                            </ol>
+                            <button type="button" class="btn-primary" style="font-size: 14px;" onclick="navigateTo('settings')">Open Settings</button>
+                        </div>
+                        <div id="avatar-picker-panel" class="max-w-3xl">
+                            <h3 style="font-family: var(--font-display); font-size: 15px; font-weight: 700; margin-bottom: 10px;">Avatar</h3>
+                            <div id="heygen-avatars-loading" class="text-center py-6 hidden">
+                                <div class="cr-spinner mx-auto mb-2"></div>
+                                <p style="font-size: 13px; color: var(--app-ink-2);">Loading your HeyGen avatars…</p>
+                            </div>
+                            <div id="heygen-avatars-grid" class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4"></div>
+                            <label class="cr-label" for="heygen-avatar-paste">Or paste avatar ID</label>
+                            <input id="heygen-avatar-paste" type="text" class="cr-input mb-6" placeholder="e.g. Abigail_expressive_2024112701" oninput="onHeygenAvatarPaste(this.value)">
+                            <h3 style="font-family: var(--font-display); font-size: 15px; font-weight: 700; margin-bottom: 10px;">Voice</h3>
+                            <div id="heygen-voices-loading" class="text-center py-4 hidden"><div class="cr-spinner mx-auto mb-2"></div></div>
+                            <div id="heygen-voices-list" class="space-y-2 mb-4" style="max-height: 280px; overflow-y: auto;"></div>
+                            <label class="cr-label" for="heygen-voice-paste">Or paste voice ID</label>
+                            <input id="heygen-voice-paste" type="text" class="cr-input" placeholder="HeyGen voice_id" oninput="onHeygenVoicePaste(this.value)">
                         </div>
                     </div>
+
                     <div class="flex justify-between items-center mt-7 pt-5" style="border-top: 1px solid var(--app-border);">
                         <button class="btn-ghost" onclick="goToStep(3)">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
@@ -635,20 +666,63 @@
     <div id="page-settings" class="page-container hidden">
         <main class="max-w-3xl mx-auto px-6 py-8">
             <h2 class="cr-display" style="font-size: 32px; margin-bottom: 8px;">Settings</h2>
-            <p style="color: var(--app-ink-2); margin-bottom: 24px;">Manage API keys for different services.</p>
-            <div class="space-y-4" id="settings-keys">
-                <div class="setting-row"><div class="flex-1"><label class="cr-label">Gemini API Key <span style="color: var(--accent); font-size: 12px;">(Required)</span></label><input type="password" id="key-gemini" class="setting-input" placeholder="Your Gemini API key..."></div><button class="btn-secondary" style="font-size: 14px; padding: 8px 16px; margin-top: 24px;" onclick="testKey('gemini')">Test</button></div>
-                <div class="setting-row"><div class="flex-1"><label class="cr-label">Claude API Key <span style="color: var(--app-ink-3); font-size: 12px;">(Script Studio)</span></label><input type="password" id="key-claude" class="setting-input" placeholder="Your Anthropic Claude key..."></div><button class="btn-secondary" style="font-size: 14px; padding: 8px 16px; margin-top: 24px;" onclick="testKey('claude')">Test</button></div>
-                <div class="setting-row"><div class="flex-1"><label class="cr-label">YouTube API Key <span style="color: var(--app-ink-3); font-size: 12px;">(Channel data)</span></label><input type="password" id="key-youtube" class="setting-input" placeholder="Your YouTube Data API key..."></div><button class="btn-secondary" style="font-size: 14px; padding: 8px 16px; margin-top: 24px;" onclick="testKey('youtube')">Test</button></div>
-                <div class="setting-row"><div class="flex-1"><label class="cr-label">Atlas Cloud Key <span style="color: var(--app-ink-3); font-size: 12px;">(Thumbnails)</span></label><input type="password" id="key-atlascloud" class="setting-input" placeholder="Your Atlas Cloud API key..."></div><button class="btn-secondary" style="font-size: 14px; padding: 8px 16px; margin-top: 24px;" onclick="testKey('atlascloud')">Test</button></div>
-                <div class="setting-row"><div class="flex-1"><label class="cr-label">HeyGen Key <span style="color: var(--app-ink-3); font-size: 12px;">(Avatar recipe)</span></label><input type="password" id="key-heygen" class="setting-input" placeholder="Your HeyGen API key..."></div><button class="btn-secondary" style="font-size: 14px; padding: 8px 16px; margin-top: 24px;" onclick="testKey('heygen')">Test</button></div>
-                <div class="setting-row"><div class="flex-1"><label class="cr-label">Pexels Key <span style="color: var(--app-ink-3); font-size: 12px;">(Stock footage)</span></label><input type="password" id="key-pexels" class="setting-input" placeholder="Your Pexels API key..."></div><button class="btn-secondary" style="font-size: 14px; padding: 8px 16px; margin-top: 24px;" onclick="testKey('pexels')">Test</button></div>
-                <div class="setting-row"><div class="flex-1"><label class="cr-label">DownSub Key <span style="color: var(--app-ink-3); font-size: 12px;">(Transcripts)</span></label><input type="password" id="key-downsub" class="setting-input" placeholder="Your DownSub API key..."></div></div>
-            </div>
-            <div class="mt-6 flex items-center gap-4">
-                <button class="btn-primary" onclick="saveSettings()">Save all keys</button>
-                <span id="settings-status" class="cr-mono"></span>
-            </div>
+            <p style="color: var(--app-ink-2); margin-bottom: 24px;">Connect tools you bring yourself. ChannelRecipe never sees your HeyGen minutes bill.</p>
+
+            <!-- Integrations (all signed-in users) -->
+            <section id="settings-integrations" style="margin-bottom: 40px;">
+                <h3 style="font-family: var(--font-display); font-size: 18px; font-weight: 700; margin-bottom: 12px;">Integrations</h3>
+                <div class="cr-surface" style="padding: 24px; border-radius: var(--radius-card); border: 1px solid var(--app-border);">
+                    <div class="flex items-start justify-between gap-4 flex-wrap" style="margin-bottom: 16px;">
+                        <div>
+                            <h4 style="font-family: var(--font-display); font-size: 16px; font-weight: 700;">HeyGen</h4>
+                            <p style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2); margin-top: 4px;">Powers the Avatar + Illustrations recipe. You use your own API key (BYOK).</p>
+                        </div>
+                        <span id="heygen-status-chip" class="cr-mono" style="font-size: 12px; color: var(--app-ink-3);">Not connected</span>
+                    </div>
+
+                    <ol id="heygen-guide-steps" style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2); line-height: 1.6; margin: 0 0 16px 18px; padding: 0;">
+                        <li>Create a free account or sign in at <a href="https://app.heygen.com" target="_blank" rel="noopener" style="color: var(--accent);">app.heygen.com</a></li>
+                        <li>Open <strong>Settings → API</strong> (or Account → API token) and create an API key</li>
+                        <li>Copy the key, paste it below, then <strong>Save &amp; test</strong></li>
+                        <li>Optional: copy an Avatar ID / Voice ID in HeyGen if you prefer pasting over the grid</li>
+                    </ol>
+
+                    <div id="heygen-connected-panel" class="hidden" style="margin-bottom: 16px;">
+                        <p style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink);">
+                            Connected · <span class="cr-mono" id="heygen-last4">••••</span>
+                        </p>
+                        <button type="button" class="btn-ghost" style="font-size: 13px; margin-top: 8px; padding: 6px 0;" onclick="disconnectHeygen()">Disconnect</button>
+                    </div>
+
+                    <div id="heygen-connect-panel" class="flex flex-wrap gap-3 items-end">
+                        <div class="flex-1" style="min-width: 220px;">
+                            <label class="cr-label" for="heygen-user-key">Your HeyGen API key</label>
+                            <input type="password" id="heygen-user-key" class="setting-input" placeholder="Paste key from HeyGen Settings → API" autocomplete="off">
+                        </div>
+                        <button type="button" class="btn-primary" style="font-size: 14px; padding: 10px 18px;" onclick="saveHeygenKey()">Save &amp; test</button>
+                    </div>
+                    <p id="heygen-integ-status" class="cr-mono" style="font-size: 12px; margin-top: 10px; color: var(--app-ink-3);"></p>
+                </div>
+            </section>
+
+            <!-- Admin platform keys -->
+            <section id="settings-admin-keys" class="hidden">
+                <h3 style="font-family: var(--font-display); font-size: 18px; font-weight: 700; margin-bottom: 8px;">Platform API keys</h3>
+                <p style="color: var(--app-ink-2); margin-bottom: 16px; font-size: 14px;">Admin only — server-wide keys for ChannelRecipe services.</p>
+                <div class="space-y-4" id="settings-keys">
+                    <div class="setting-row"><div class="flex-1"><label class="cr-label">Gemini API Key <span style="color: var(--accent); font-size: 12px;">(Required)</span></label><input type="password" id="key-gemini" class="setting-input" placeholder="Your Gemini API key..."></div><button class="btn-secondary" style="font-size: 14px; padding: 8px 16px; margin-top: 24px;" onclick="testKey('gemini')">Test</button></div>
+                    <div class="setting-row"><div class="flex-1"><label class="cr-label">Claude API Key <span style="color: var(--app-ink-3); font-size: 12px;">(Script Studio)</span></label><input type="password" id="key-claude" class="setting-input" placeholder="Your Anthropic Claude key..."></div><button class="btn-secondary" style="font-size: 14px; padding: 8px 16px; margin-top: 24px;" onclick="testKey('claude')">Test</button></div>
+                    <div class="setting-row"><div class="flex-1"><label class="cr-label">YouTube API Key <span style="color: var(--app-ink-3); font-size: 12px;">(Channel data)</span></label><input type="password" id="key-youtube" class="setting-input" placeholder="Your YouTube Data API key..."></div><button class="btn-secondary" style="font-size: 14px; padding: 8px 16px; margin-top: 24px;" onclick="testKey('youtube')">Test</button></div>
+                    <div class="setting-row"><div class="flex-1"><label class="cr-label">Atlas Cloud Key <span style="color: var(--app-ink-3); font-size: 12px;">(Thumbnails)</span></label><input type="password" id="key-atlascloud" class="setting-input" placeholder="Your Atlas Cloud API key..."></div><button class="btn-secondary" style="font-size: 14px; padding: 8px 16px; margin-top: 24px;" onclick="testKey('atlascloud')">Test</button></div>
+                    <div class="setting-row"><div class="flex-1"><label class="cr-label">HeyGen Key <span style="color: var(--app-ink-3); font-size: 12px;">(Platform fallback)</span></label><input type="password" id="key-heygen" class="setting-input" placeholder="Platform HeyGen key (optional)..."></div><button class="btn-secondary" style="font-size: 14px; padding: 8px 16px; margin-top: 24px;" onclick="testKey('heygen')">Test</button></div>
+                    <div class="setting-row"><div class="flex-1"><label class="cr-label">Pexels Key <span style="color: var(--app-ink-3); font-size: 12px;">(Stock footage)</span></label><input type="password" id="key-pexels" class="setting-input" placeholder="Your Pexels API key..."></div><button class="btn-secondary" style="font-size: 14px; padding: 8px 16px; margin-top: 24px;" onclick="testKey('pexels')">Test</button></div>
+                    <div class="setting-row"><div class="flex-1"><label class="cr-label">DownSub Key <span style="color: var(--app-ink-3); font-size: 12px;">(Transcripts)</span></label><input type="password" id="key-downsub" class="setting-input" placeholder="Your DownSub API key..."></div></div>
+                </div>
+                <div class="mt-6 flex items-center gap-4">
+                    <button class="btn-primary" onclick="saveSettings()">Save all keys</button>
+                    <span id="settings-status" class="cr-mono"></span>
+                </div>
+            </section>
         </main>
     </div>
 
