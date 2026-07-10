@@ -202,6 +202,7 @@ def segment_into_concepts(
     all_words: list[dict],
     style_preset: str = "default",
     niche_hint: str = "",
+    lite_mode: bool = False,
 ) -> list[Concept]:
     """
     Segment a script into visual concepts using word-level timestamps.
@@ -211,6 +212,7 @@ def segment_into_concepts(
         all_words: word timestamps from faster-whisper [{"word", "start", "end"}, ...]
         style_preset: art style preset name
         niche_hint: optional hint about the video's niche/topic
+        lite_mode: fewer concepts (trial) — less illustration COGS/latency
 
     Returns:
         list of Concept objects with exact timing and illustration prompts
@@ -230,8 +232,13 @@ def segment_into_concepts(
 
     hook_dur = min(HOOK_CUTOFF_SEC, total_duration)
     body_dur = max(0, total_duration - hook_dur)
-    hook_concepts = max(3, int(hook_dur / 2.5))
-    body_concepts = max(1, int(body_dur / 4.0)) if body_dur > 0 else 0
+    # Lite: longer body shots → fewer AI images (biggest cost lever)
+    if lite_mode:
+        hook_concepts = max(2, int(hook_dur / 3.5))
+        body_concepts = max(1, int(body_dur / 7.0)) if body_dur > 0 else 0
+    else:
+        hook_concepts = max(3, int(hook_dur / 2.5))
+        body_concepts = max(1, int(body_dur / 4.0)) if body_dur > 0 else 0
     target_concepts = hook_concepts + body_concepts
 
     context = ""

@@ -54,11 +54,25 @@ Get API keys:
 - Claude: [console.anthropic.com](https://console.anthropic.com/)
 - Pexels: [pexels.com/api](https://www.pexels.com/api/)
 
+## Cook queue (production)
+
+Renders are **FIFO-queued** with a hard concurrency cap so one busy cook cannot freeze the whole site.
+
+| Env var | Default | Meaning |
+|---------|---------|---------|
+| `MAX_CONCURRENT_COOKS` | `1` | Max simultaneous ffmpeg/Atlas cooks on this process |
+| `GROQ_API_KEY` | — | **Required in production** for Whisper (local whisper disabled) |
+| `ILLUSTRATION_WORKERS_LITE` | `6` | Parallel image gens for trial/lite cooks |
+| `EST_MINUTES_PER_COOK` | `7` | Heuristic for “~N min wait” in the UI |
+
+Set `MAX_CONCURRENT_COOKS=1` on DigitalOcean. Raise to `2` only after measuring CPU on a larger droplet.
+
 ## Architecture
 
 ```
 webapp/
   server.py          FastAPI backend — API routes + static files
+  job_queue.py       In-process FIFO cook queue + concurrency cap
   static/
     index.html       Single-page app (Tailwind CSS)
     app.js           Client-side state machine + routing

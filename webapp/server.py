@@ -157,8 +157,10 @@ from webapp.database import (
     create_session, get_session_user, delete_session,
     log_render_event, render_stats, backend_name, cleanup_expired,
     create_video, list_videos, get_video, update_video_kit, delete_video,
+    create_cook_job, update_cook_job, get_cook_job,
 )
 from webapp import storage
+from webapp import job_queue
 
 # Rough COGS estimate in GBP pence per finished minute, per recipe. These are
 # tunable placeholders — refine once real per-render token/TTS data is captured.
@@ -1177,6 +1179,39 @@ def _safe_user_path(path_str: str, label: str) -> None:
         raise HTTPException(400, f"{label} file not found")
 
 
+def _persist_job_progress(job_id: str, job: dict) -> None:
+    """Best-effort sync of in-memory job state to Postgres/SQLite."""
+    try:
+        progress = job.get("progress") or []
+        update_cook_job(
+            job_id,
+            status=job.get("status"),
+            progress_json=json.dumps(progress[-40:]),
+            result_json=json.dumps(job["result"]) if job.get("result") else None,
+            error=job.get("error") or "",
+            credit_deducted=job.get("credit_deducted"),
+        )
+    except Exception as e:
+        print(f"[build] persist job failed: {e}")
+
+
+def _execute_cook_job(job_id: str) -> None:
+    """Queue runner entrypoint — loads request from the in-memory job dict."""
+    job = _jobs.get(job_id)
+    if not job or job.get("status") == "cancelled":
+        return
+    req = BuildRequest(**job["request"])
+    try:
+        update_cook_job(job_id, status="running", started=True)
+    except Exception:
+        pass
+    _run_build(job_id, req)
+
+
+# Wire the FIFO dispatcher once at import (after _run_build is defined below).
+# configure() is called at the end of this section.
+
+
 @app.post("/api/build")
 async def start_build(req: BuildRequest, request: Request):
     user = _current_user(request)
@@ -1202,6 +1237,7 @@ async def start_build(req: BuildRequest, request: Request):
         credit_deducted = True
 
     job_id = str(uuid.uuid4())
+    lite_mode = (not is_admin) and user.get("plan") in ("starter_trial", "daily_trial", "free")
     _jobs[job_id] = {
         "status": "queued",
         "progress": [],
@@ -1209,26 +1245,66 @@ async def start_build(req: BuildRequest, request: Request):
         "request": req.model_dump(),
         "user_id": user_id,
         "credit_deducted": credit_deducted,
+        "lite_mode": lite_mode,
+        "queue_position": 0,
+        "est_wait_minutes": 0,
+        "created_at": time.time(),
     }
 
-    import threading
-    t = threading.Thread(target=_run_build, args=(job_id, req), daemon=True)
-    t.start()
-    return {"job_id": job_id}
+    try:
+        create_cook_job(
+            job_id=job_id,
+            user_id=user_id,
+            recipe=req.recipe or "animated_explainer",
+            title=req.title or "",
+            request_json=json.dumps(req.model_dump()),
+            credit_deducted=credit_deducted,
+        )
+    except Exception as e:
+        print(f"[build] create_cook_job failed (continuing in-memory): {e}")
+
+    qinfo = job_queue.enqueue(job_id)
+    track(user_id, "cook_queued", {
+        "recipe": req.recipe or "animated_explainer",
+        "queue_position": qinfo.get("queue_position"),
+        "queue_length": qinfo.get("queue_length"),
+        "lite_mode": lite_mode,
+    })
+    return {
+        "job_id": job_id,
+        "status": qinfo.get("status", "queued"),
+        "queue_position": qinfo.get("queue_position", 1),
+        "queue_length": qinfo.get("queue_length", 1),
+        "est_wait_minutes": qinfo.get("est_wait_minutes", 0),
+        "max_concurrent": job_queue.MAX_CONCURRENT_COOKS,
+    }
 
 
 def _run_build(job_id: str, req: BuildRequest):
     job = _jobs[job_id]
+    if job.get("status") == "cancelled":
+        return
     job["status"] = "running"
     started_at = time.time()
     user_id = job.get("user_id")
     est_minutes = round(len(req.script.split()) / 150, 2) if req.script else 0
+    lite_mode = bool(job.get("lite_mode"))
+    _progress_persist_at = [0.0]
 
-    def on_progress(msg: str):
-        job["progress"].append({"time": time.time(), "message": msg})
+    def on_progress(msg: str, phase: str = "running"):
+        if job.get("status") == "cancelled":
+            raise RuntimeError("Cancelled by user")
+        job["progress"].append({"time": time.time(), "message": msg, "phase": phase})
+        # Throttle DB writes
+        now = time.time()
+        if now - _progress_persist_at[0] >= 3.0:
+            _progress_persist_at[0] = now
+            _persist_job_progress(job_id, job)
 
     recipe = req.recipe or "animated_explainer"
-    track(user_id or "anon", "render_started", {"recipe": recipe, "target_minutes": est_minutes})
+    track(user_id or "anon", "render_started", {
+        "recipe": recipe, "target_minutes": est_minutes, "lite_mode": lite_mode,
+    })
 
     try:
         if recipe == "animated_explainer":
@@ -1239,6 +1315,7 @@ def _run_build(job_id: str, req: BuildRequest):
                 output_name="pipeline_video.mp4",
                 style_preset="default",
                 progress_callback=on_progress,
+                lite_mode=lite_mode,
             )
         elif recipe == "broll_only":
             from core.pipeline import run_pipeline
@@ -1267,8 +1344,10 @@ def _run_build(job_id: str, req: BuildRequest):
         else:
             raise ValueError(f"Unknown recipe: {recipe}")
 
+        if job.get("status") == "cancelled":
+            raise RuntimeError("Cancelled by user")
+
         # Persist the finished video (and thumbnail) to durable storage.
-        # Emit progress so the UI doesn't look stuck after "Assembled".
         on_progress("Uploading your video...")
         ts = int(time.time())
         try:
@@ -1303,7 +1382,6 @@ def _run_build(job_id: str, req: BuildRequest):
                     thumbnail_url=thumb_url,
                 )
             except Exception as rec_err:
-                # Retry once — History missing is a worse UX than a brief delay
                 print(f"[videos] save failed, retrying: {rec_err}")
                 try:
                     time.sleep(0.5)
@@ -1329,6 +1407,16 @@ def _run_build(job_id: str, req: BuildRequest):
             "concepts": len(result.get("slots", [])),
             "timing": result.get("timing", {}),
         }
+        try:
+            update_cook_job(
+                job_id,
+                status="complete",
+                result_json=json.dumps(job["result"]),
+                progress_json=json.dumps(job["progress"][-40:]),
+                finished=True,
+            )
+        except Exception as e:
+            print(f"[build] final persist failed: {e}")
 
         duration = round(time.time() - started_at, 1)
         cost = _estimate_cost_pence(recipe, est_minutes)
@@ -1349,9 +1437,21 @@ def _run_build(job_id: str, req: BuildRequest):
                 print(f"[build] Email notification failed: {email_err}")
 
     except Exception as e:
+        if job.get("status") == "cancelled" or "Cancelled by user" in str(e):
+            job["status"] = "cancelled"
+            job["error"] = "Cancelled by user"
+            try:
+                update_cook_job(job_id, status="cancelled", error=job["error"], finished=True)
+            except Exception:
+                pass
+            return
         job["status"] = "error"
         job["error"] = str(e)
         capture_error(e, {"job_id": job_id, "recipe": recipe, "user_id": user_id})
+        try:
+            update_cook_job(job_id, status="error", error=str(e), finished=True)
+        except Exception:
+            pass
         duration = round(time.time() - started_at, 1)
         err_class = type(e).__name__
         try:
@@ -1364,17 +1464,50 @@ def _run_build(job_id: str, req: BuildRequest):
         if user_id and job.get("credit_deducted"):
             refund_credit(user_id)
             job["credit_deducted"] = False
+            try:
+                update_cook_job(job_id, credit_deducted=False)
+            except Exception:
+                pass
             print(f"[build] Auto-refunded credit for user {user_id} after build failure")
+
+
+job_queue.configure(_jobs, _execute_cook_job)
 
 
 def _get_user_job(job_id: str, request: Request) -> dict:
     """Validate job exists and belongs to the requesting user."""
-    if job_id not in _jobs:
-        raise HTTPException(404, "Job not found")
     user = _current_user(request)
-    job = _jobs[job_id]
-    if not user or job.get("user_id") != user["id"]:
-        raise HTTPException(403, "Access denied")
+    if not user:
+        raise HTTPException(401, "Sign in to continue.")
+    job = _jobs.get(job_id)
+    if job:
+        if job.get("user_id") != user["id"]:
+            raise HTTPException(403, "Access denied")
+        return job
+    # Fall back to durable row (e.g. after soft restart while still queued/done)
+    row = get_cook_job(job_id)
+    if not row or row.get("user_id") != user["id"]:
+        raise HTTPException(404, "Job not found")
+    # Hydrate a minimal in-memory view for SSE
+    progress = []
+    try:
+        progress = json.loads(row.get("progress_json") or "[]")
+    except Exception:
+        progress = []
+    result = None
+    try:
+        result = json.loads(row["result_json"]) if row.get("result_json") else None
+    except Exception:
+        result = None
+    job = {
+        "status": row["status"],
+        "progress": progress,
+        "result": result,
+        "user_id": row["user_id"],
+        "error": row.get("error") or "",
+        "credit_deducted": bool(row.get("credit_deducted")),
+    }
+    _jobs[job_id] = job
     return job
 
 
@@ -1387,6 +1520,9 @@ async def build_progress(job_id: str, request: Request):
         while True:
             if await request.is_disconnected():
                 break
+            # Refresh queue announcements for waiting jobs
+            if job.get("status") == "queued":
+                job_queue.queue_info(job_id)
             for msg in job["progress"][seen:]:
                 yield {"event": "progress", "data": json.dumps(msg)}
                 seen += 1
@@ -1404,23 +1540,59 @@ async def build_progress(job_id: str, request: Request):
 @app.delete("/api/build/{job_id}")
 async def cancel_build(job_id: str, request: Request):
     job = _get_user_job(job_id, request)
-    if job["status"] in ("queued", "running"):
-        job["status"] = "cancelled"
-        job["error"] = "Cancelled by user"
-        if job.get("credit_deducted"):
-            refund_credit(job["user_id"])
-            job["credit_deducted"] = False
-            print(f"[build] Refunded credit on cancel for user {job['user_id']}")
-    return {"status": "cancelled"}
+    if job["status"] not in ("queued", "running"):
+        return {"status": job["status"]}
+
+    was_queued = job_queue.cancel_queued(job_id)
+    job["status"] = "cancelled"
+    job["error"] = "Cancelled by user"
+    job["progress"].append({
+        "time": time.time(),
+        "message": "Cancelled",
+        "phase": "cancelled",
+    })
+    if job.get("credit_deducted"):
+        refund_credit(job["user_id"])
+        job["credit_deducted"] = False
+        print(f"[build] Refunded credit on cancel for user {job['user_id']} (queued={was_queued})")
+    try:
+        update_cook_job(
+            job_id, status="cancelled", error="Cancelled by user",
+            credit_deducted=False, finished=True,
+        )
+    except Exception:
+        pass
+    return {"status": "cancelled", "was_queued": was_queued}
 
 
 @app.get("/api/build/{job_id}/result")
-async def build_result(job_id: str):
-    if job_id not in _jobs:
-        raise HTTPException(404, "Job not found")
-    job = _jobs[job_id]
+async def build_result(job_id: str, request: Request):
+    user = _current_user(request)
+    job = _jobs.get(job_id)
+    if not job:
+        row = get_cook_job(job_id)
+        if not row:
+            raise HTTPException(404, "Job not found")
+        if user and row.get("user_id") != user["id"]:
+            raise HTTPException(403, "Access denied")
+        if row["status"] != "complete":
+            return {
+                "status": row["status"],
+                "progress": 0,
+                **job_queue.queue_info(job_id),
+            }
+        try:
+            return json.loads(row["result_json"] or "{}")
+        except Exception:
+            raise HTTPException(404, "Job result missing")
+    if user and job.get("user_id") != user["id"]:
+        raise HTTPException(403, "Access denied")
     if job["status"] != "complete":
-        return {"status": job["status"], "progress": len(job["progress"])}
+        return {
+            "status": job["status"],
+            "progress": len(job["progress"]),
+            **job_queue.queue_info(job_id),
+        }
     return job["result"]
 
 

@@ -1285,6 +1285,8 @@ function populateBuildSummary() {
 }
 
 function _friendlyProgress(raw) {
+    if (/Queued/i.test(raw) || /You're next/i.test(raw)) return raw;
+    if (/Starting your cook/i.test(raw)) return 'Starting your cook...';
     if (/Uploading your video/i.test(raw)) return 'Uploading your video...';
     if (/Saving thumbnail/i.test(raw)) return 'Saving thumbnail...';
     if (/Saving to your library/i.test(raw)) return 'Saving to your library...';
@@ -1318,9 +1320,11 @@ function _friendlyProgress(raw) {
     return raw.replace(/\[.*?\]\s*/g, '').replace(/Step \d\/\d:\s*/g, '').substring(0, 60);
 }
 
-/** Map cook log lines to a believable percent (cinematic emits few messages). */
+/** Map cook log lines to a believable percent (queued stays near 0). */
 function _estimateCookPercent(raw, msgCount) {
     const r = raw || '';
+    if (/Queued|You're next/i.test(r)) return 2;
+    if (/Starting your cook/i.test(r)) return 5;
     if (/Done!|Saving to your library/i.test(r)) return 97;
     if (/Uploading your video|Saving thumbnail|Upload slow/i.test(r)) return 92;
     if (/Total (cinematic )?pipeline|Assembly complete|Assembled/i.test(r)) return 85;
@@ -1376,7 +1380,7 @@ const cookingManager = {
                     notify_email: notifyEmail,
                 }),
             });
-            const data = await res.json();
+            const data = await readJson(res, {});
             if (!res.ok) {
                 const errMsg = typeof data.detail === 'string' ? data.detail : (data.detail?.message || JSON.stringify(data.detail) || 'Build failed');
                 if (res.status === 401) { showAuthModal(); }
@@ -1386,8 +1390,31 @@ const cookingManager = {
                 throw new Error(errMsg);
             }
             this.jobId = data.job_id;
+            this.queuePosition = data.queue_position || 0;
+            this.estWaitMinutes = data.est_wait_minutes || 0;
             this._persist();
             this._showCookingBar();
+            // Immediate honest queue state before SSE connects
+            if (data.status === 'queued' && (data.queue_position || 0) > 0) {
+                const wait = Math.max(1, Math.round(data.est_wait_minutes || 7));
+                const qMsg = data.queue_position <= 1 && data.status === 'queued'
+                    ? `Queued — waiting for a free cook slot (~${wait} min)`
+                    : `Queued — position ${data.queue_position} (~${wait} min wait)`;
+                const progressLog = document.getElementById('progress-log');
+                const statusEl = document.getElementById('cooking-bar-status');
+                const etaEl = document.getElementById('progress-eta');
+                const pctEl = document.getElementById('progress-pct');
+                const progressBar = document.getElementById('progress-bar');
+                if (statusEl) statusEl.textContent = qMsg.substring(0, 60);
+                if (progressLog) {
+                    const line = document.createElement('div');
+                    line.textContent = `> ${qMsg}`;
+                    progressLog.appendChild(line);
+                }
+                if (etaEl) etaEl.textContent = `~${wait} min in queue`;
+                if (pctEl) pctEl.textContent = '2%';
+                if (progressBar) progressBar.style.width = '2%';
+            }
             this._connect();
             // Reflect the deducted credit in the UI immediately
             if (currentUser && typeof currentUser.credits === 'number' && currentUser.credits > 0) {
@@ -1409,7 +1436,8 @@ const cookingManager = {
         this.evtSrc = new EventSource(`/api/build/${this.jobId}/progress`);
         const progressBar = document.getElementById('progress-bar');
         const progressLog = document.getElementById('progress-log');
-        if (progressLog) progressLog.innerHTML = '';
+        // Keep any immediate queue line; only clear if empty
+        if (progressLog && !progressLog.children.length) progressLog.innerHTML = '';
 
         this.evtSrc.addEventListener('progress', (e) => {
             this.msgCount++;
@@ -1419,24 +1447,29 @@ const cookingManager = {
             const statusEl = document.getElementById('cooking-bar-status');
             if (statusEl) statusEl.textContent = friendly.substring(0, 60);
             if (progressLog) {
-                const line = document.createElement('div');
-                line.textContent = `> ${friendly}`;
-                progressLog.appendChild(line);
-                progressLog.scrollTop = progressLog.scrollHeight;
+                // Deduplicate consecutive identical queue lines
+                const last = progressLog.lastElementChild;
+                if (!last || last.textContent !== `> ${friendly}`) {
+                    const line = document.createElement('div');
+                    line.textContent = `> ${friendly}`;
+                    progressLog.appendChild(line);
+                    progressLog.scrollTop = progressLog.scrollHeight;
+                }
             }
-            // Phase-aware progress (msgCount alone looked stuck at ~8% for cinematic)
             const pct = _estimateCookPercent(msg.message, this.msgCount);
             const pctEl = document.getElementById('progress-pct');
             if (progressBar) progressBar.style.width = pct + '%';
             if (pctEl) pctEl.textContent = pct + '%';
             const etaEl = document.getElementById('progress-eta');
             if (etaEl) {
-                if (pct >= 90) etaEl.textContent = 'almost done';
+                if (/Queued|You're next/i.test(msg.message || '')) {
+                    const m = (msg.message || '').match(/~(\d+)\s*min/i);
+                    etaEl.textContent = m ? `~${m[1]} min in queue` : 'in queue';
+                } else if (pct >= 90) etaEl.textContent = 'almost done';
                 else if (pct >= 70) etaEl.textContent = 'about 1 minute';
-                else etaEl.textContent = 'about 3 minutes';
+                else etaEl.textContent = 'about 3–7 minutes';
             }
         });
-
         this.evtSrc.addEventListener('complete', (e) => {
             this.evtSrc.close();
             this.evtSrc = null;
@@ -1534,11 +1567,10 @@ const cookingManager = {
             state.videoPath = data.output_path;
             this._clear();
             this._hideCookingBar();
-            if (state.page === 'pipeline' && state.step === 6) {
-                showUploadKit(data);
-            } else {
-                this._showToast();
-            }
+            if (state.page !== 'pipeline') navigateTo('pipeline');
+            if (state.step !== 6) goToStep(6);
+            showUploadKit(data);
+            try { loadHistory(); } catch (_) {}
             return;
         }
         if (data && (data.status === 'error' || data.status === 'cancelled')) {
@@ -1548,6 +1580,15 @@ const cookingManager = {
             return;
         }
         // Still running / queued — show the bar and reconnect the live stream.
+        if (data && data.status === 'queued') {
+            const wait = Math.max(1, Math.round(data.est_wait_minutes || 7));
+            const statusEl = document.getElementById('cooking-bar-status');
+            if (statusEl) {
+                statusEl.textContent = data.queue_position
+                    ? `Queued — position ${data.queue_position} (~${wait} min)`
+                    : `Queued (~${wait} min)`;
+            }
+        }
         this._showCookingBar();
         this._connect();
     },
@@ -1555,7 +1596,10 @@ const cookingManager = {
     _showCookingBar() {
         const bar = document.getElementById('cooking-bar');
         document.getElementById('cooking-bar-title').textContent = this.title || 'your video';
-        document.getElementById('cooking-bar-status').textContent = 'Starting...';
+        const statusEl = document.getElementById('cooking-bar-status');
+        if (statusEl && (!statusEl.textContent || statusEl.textContent === 'Starting...')) {
+            statusEl.textContent = 'Joining cook queue...';
+        }
         bar.classList.remove('hidden');
     },
 

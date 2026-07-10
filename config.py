@@ -24,6 +24,10 @@ GEMINI_TEXT_MODEL = os.getenv("GEMINI_TEXT_MODEL", "gemini-3.5-flash")
 CONCEPT_SEGMENTER_MODEL = os.getenv("CONCEPT_SEGMENTER_MODEL", GEMINI_TEXT_MODEL)
 # Illustration generation concurrency (API-bound, safe to raise).
 ILLUSTRATION_WORKERS = int(os.getenv("ILLUSTRATION_WORKERS", "16"))
+# Trial / lite cooks — keep the box healthy under the FIFO cook queue.
+ILLUSTRATION_WORKERS_LITE = int(os.getenv("ILLUSTRATION_WORKERS_LITE", "6"))
+# Max simultaneous cooks on this process (1 = serialize; stops site-wide meltdown).
+MAX_CONCURRENT_COOKS = int(os.getenv("MAX_CONCURRENT_COOKS", "1"))
 RESEND_KEY = os.getenv("RESEND_KEY", "")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY", "")

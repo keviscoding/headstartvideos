@@ -81,6 +81,21 @@ CREATE TABLE IF NOT EXISTS videos (
     hashtags      TEXT DEFAULT '',
     created_at    REAL NOT NULL DEFAULT (strftime('%s','now'))
 );
+CREATE TABLE IF NOT EXISTS cook_jobs (
+    job_id        TEXT PRIMARY KEY,
+    user_id       INTEGER NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'queued',
+    recipe        TEXT DEFAULT '',
+    title         TEXT DEFAULT '',
+    request_json  TEXT DEFAULT '',
+    progress_json TEXT DEFAULT '[]',
+    result_json   TEXT DEFAULT '',
+    error         TEXT DEFAULT '',
+    credit_deducted INTEGER NOT NULL DEFAULT 0,
+    created_at    REAL NOT NULL DEFAULT (strftime('%s','now')),
+    started_at    REAL DEFAULT 0,
+    finished_at   REAL DEFAULT 0
+);
 """
 
 _SCHEMA_PG = """
@@ -132,6 +147,21 @@ CREATE TABLE IF NOT EXISTS videos (
     hashtags      TEXT DEFAULT '',
     created_at    DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now())
 );
+CREATE TABLE IF NOT EXISTS cook_jobs (
+    job_id        TEXT PRIMARY KEY,
+    user_id       BIGINT NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'queued',
+    recipe        TEXT DEFAULT '',
+    title         TEXT DEFAULT '',
+    request_json  TEXT DEFAULT '',
+    progress_json TEXT DEFAULT '[]',
+    result_json   TEXT DEFAULT '',
+    error         TEXT DEFAULT '',
+    credit_deducted INTEGER NOT NULL DEFAULT 0,
+    created_at    DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now()),
+    started_at    DOUBLE PRECISION DEFAULT 0,
+    finished_at   DOUBLE PRECISION DEFAULT 0
+);
 """
 
 
@@ -156,6 +186,8 @@ CREATE INDEX IF NOT EXISTS idx_videos_user ON videos (user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_verify_codes_email ON verify_codes (email, used);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions (expires_at);
 CREATE INDEX IF NOT EXISTS idx_render_events_created ON render_events (created_at);
+CREATE INDEX IF NOT EXISTS idx_cook_jobs_user ON cook_jobs (user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_cook_jobs_status ON cook_jobs (status, created_at);
 """
 
 
@@ -462,6 +494,77 @@ def cleanup_expired() -> int:
         cur.execute(_q("DELETE FROM verify_codes WHERE expires_at < ?"), (now,))
         c2 = cur.rowcount
         return (c1 or 0) + (c2 or 0)
+
+
+# -- Cook jobs (durable queue metadata) ------------------------------------
+
+def create_cook_job(
+    job_id: str,
+    user_id: int,
+    recipe: str = "",
+    title: str = "",
+    request_json: str = "",
+    credit_deducted: bool = False,
+) -> None:
+    with _conn() as conn:
+        conn.cursor().execute(
+            _q("""INSERT INTO cook_jobs
+                  (job_id, user_id, status, recipe, title, request_json, credit_deducted, created_at)
+                  VALUES (?, ?, 'queued', ?, ?, ?, ?, ?)"""),
+            (job_id, user_id, recipe, title, request_json, 1 if credit_deducted else 0, time.time()),
+        )
+
+
+def update_cook_job(
+    job_id: str,
+    *,
+    status: str | None = None,
+    progress_json: str | None = None,
+    result_json: str | None = None,
+    error: str | None = None,
+    started: bool = False,
+    finished: bool = False,
+    credit_deducted: bool | None = None,
+) -> None:
+    fields: list[str] = []
+    vals: list = []
+    if status is not None:
+        fields.append("status = ?")
+        vals.append(status)
+    if progress_json is not None:
+        fields.append("progress_json = ?")
+        vals.append(progress_json)
+    if result_json is not None:
+        fields.append("result_json = ?")
+        vals.append(result_json)
+    if error is not None:
+        fields.append("error = ?")
+        vals.append(error)
+    if started:
+        fields.append("started_at = ?")
+        vals.append(time.time())
+    if finished:
+        fields.append("finished_at = ?")
+        vals.append(time.time())
+    if credit_deducted is not None:
+        fields.append("credit_deducted = ?")
+        vals.append(1 if credit_deducted else 0)
+    if not fields:
+        return
+    vals.append(job_id)
+    with _conn() as conn:
+        conn.cursor().execute(
+            _q(f"UPDATE cook_jobs SET {', '.join(fields)} WHERE job_id = ?"),
+            tuple(vals),
+        )
+
+
+def get_cook_job(job_id: str) -> dict | None:
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(_q("SELECT * FROM cook_jobs WHERE job_id = ?"), (job_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
 
 
 def backend_name() -> str:

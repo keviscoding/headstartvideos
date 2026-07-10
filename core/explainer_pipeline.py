@@ -30,6 +30,7 @@ def run_explainer_pipeline(
     caption_font_size: str = "Medium",
     caption_position: str = "Bottom",
     progress_callback=None,
+    lite_mode: bool = False,
 ) -> dict:
     """
     Run the full animated explainer pipeline.
@@ -99,6 +100,7 @@ def run_explainer_pipeline(
         all_words=all_words,
         style_preset=style_preset,
         niche_hint=niche_hint,
+        lite_mode=lite_mode,
     )
 
     timing["segmentation"] = time.time() - t0
@@ -135,11 +137,17 @@ def run_explainer_pipeline(
         _log(f"  Illustrations: {completed}/{total}")
 
     import config as _cfg
+    # Lite (trial) cooks: fewer parallel gens so one box stays healthy under queue
+    default_workers = getattr(_cfg, "ILLUSTRATION_WORKERS", 16)
+    lite_workers = getattr(_cfg, "ILLUSTRATION_WORKERS_LITE", 6)
+    workers = lite_workers if lite_mode else default_workers
+    if lite_mode:
+        _log(f"  Lite mode — using {workers} illustration workers")
     results = illustration_gen.generate_batch(
         concepts=concepts,
         output_dir=assets_dir,
         style_ref_path=style_ref_path,
-        max_workers=getattr(_cfg, "ILLUSTRATION_WORKERS", 16),
+        max_workers=workers,
         progress_callback=_on_gen_progress,
         hook_cutoff_sec=HOOK_CUTOFF_SEC,
     )

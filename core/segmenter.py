@@ -9,6 +9,7 @@ Two alignment modes:
 """
 
 from __future__ import annotations
+import os
 import re
 import random
 from dataclasses import dataclass, field
@@ -97,16 +98,29 @@ def align_script_to_audio(
     """
     import config
 
-    # Prefer Groq (large-v3-turbo, ~5s, zero CPU) → fall back to local whisper.
+    # Prefer Groq (large-v3-turbo, ~5s, zero CPU). Local whisper melts the web
+    # dyno under load — only allowed when ALLOW_LOCAL_WHISPER=1 (dev).
+    allow_local = os.getenv("ALLOW_LOCAL_WHISPER", "").strip() in ("1", "true", "yes")
+    app_env = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "").lower()
+    is_prod = app_env in ("production", "prod") or bool(os.getenv("DATABASE_URL", "").strip())
+
     if config.GROQ_API_KEY:
         try:
             print("[segmenter] Using Groq Whisper API for alignment...")
             words = _transcribe_groq(audio_path)
             print(f"[segmenter] Groq returned {len(words)} words")
         except Exception as e:
+            if is_prod and not allow_local:
+                raise RuntimeError(
+                    f"Groq Whisper failed and local whisper is disabled in production: {e}"
+                ) from e
             print(f"[segmenter] Groq failed ({e}), falling back to local whisper...")
             words = _transcribe_local(audio_path, model_size)
     else:
+        if is_prod and not allow_local:
+            raise RuntimeError(
+                "GROQ_API_KEY is required in production. Local Whisper would freeze the server under load."
+            )
         words = _transcribe_local(audio_path, model_size)
 
     if not words:
