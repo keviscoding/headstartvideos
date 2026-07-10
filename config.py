@@ -26,8 +26,16 @@ CONCEPT_SEGMENTER_MODEL = os.getenv("CONCEPT_SEGMENTER_MODEL", GEMINI_TEXT_MODEL
 ILLUSTRATION_WORKERS = int(os.getenv("ILLUSTRATION_WORKERS", "16"))
 # Trial / lite cooks — keep the box healthy under the FIFO cook queue.
 ILLUSTRATION_WORKERS_LITE = int(os.getenv("ILLUSTRATION_WORKERS_LITE", "6"))
-# Max simultaneous cooks on this process (1 = serialize; stops site-wide meltdown).
+# Max simultaneous cooks on THIS process (web in-process queue or each worker).
 MAX_CONCURRENT_COOKS = int(os.getenv("MAX_CONCURRENT_COOKS", "1"))
+# When false, the web dyno only enqueues jobs — a separate `python -m webapp.worker`
+# process must claim and run them (optimum / multi-worker setup).
+COOK_ON_WEB = os.getenv("COOK_ON_WEB", "1").strip().lower() in ("1", "true", "yes", "on")
+# How often workers poll for new jobs (seconds).
+WORKER_POLL_SECONDS = float(os.getenv("WORKER_POLL_SECONDS", "2"))
+# Reclaim jobs stuck in "running" with a stale heartbeat (seconds).
+WORKER_STALE_SECONDS = int(os.getenv("WORKER_STALE_SECONDS", "900"))
+
 RESEND_KEY = os.getenv("RESEND_KEY", "")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY", "")

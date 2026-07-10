@@ -1,11 +1,32 @@
 services:
-  headstart:
+  web:
     build: .
     ports:
       - "8000:8000"
     volumes:
       - ./output:/app/output
       - ./presets:/app/presets
+      - ./data:/app/data
     env_file:
       - .env
+    environment:
+      # Web enqueues only; workers claim + cook.
+      COOK_ON_WEB: "0"
     restart: unless-stopped
+    command: ["uvicorn", "webapp.server:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  worker:
+    build: .
+    volumes:
+      - ./output:/app/output
+      - ./presets:/app/presets
+      - ./data:/app/data
+    env_file:
+      - .env
+    environment:
+      MAX_CONCURRENT_COOKS: "1"
+      # Workers claim status=queued only (web must set COOK_ON_WEB=0).
+      COOK_ON_WEB: "0"
+    restart: unless-stopped
+    command: ["python", "-m", "webapp.worker"]
+    # Scale: docker compose up --scale worker=2

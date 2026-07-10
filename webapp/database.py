@@ -7,6 +7,7 @@ and multiple instances), and falls back to a local SQLite file otherwise
 """
 from __future__ import annotations
 
+import json
 import os
 import secrets
 import sqlite3
@@ -92,6 +93,9 @@ CREATE TABLE IF NOT EXISTS cook_jobs (
     result_json   TEXT DEFAULT '',
     error         TEXT DEFAULT '',
     credit_deducted INTEGER NOT NULL DEFAULT 0,
+    lite_mode     INTEGER NOT NULL DEFAULT 0,
+    worker_id     TEXT DEFAULT '',
+    heartbeat_at  REAL DEFAULT 0,
     created_at    REAL NOT NULL DEFAULT (strftime('%s','now')),
     started_at    REAL DEFAULT 0,
     finished_at   REAL DEFAULT 0
@@ -158,6 +162,9 @@ CREATE TABLE IF NOT EXISTS cook_jobs (
     result_json   TEXT DEFAULT '',
     error         TEXT DEFAULT '',
     credit_deducted INTEGER NOT NULL DEFAULT 0,
+    lite_mode     INTEGER NOT NULL DEFAULT 0,
+    worker_id     TEXT DEFAULT '',
+    heartbeat_at  DOUBLE PRECISION DEFAULT 0,
     created_at    DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now()),
     started_at    DOUBLE PRECISION DEFAULT 0,
     finished_at   DOUBLE PRECISION DEFAULT 0
@@ -217,6 +224,9 @@ def _init_db():
                 cur.execute(schema)
                 cur.execute(_INDEXES)
                 _ensure_column(cur, "users", "trial_used", "INTEGER NOT NULL DEFAULT 0")
+                _ensure_column(cur, "cook_jobs", "lite_mode", "INTEGER NOT NULL DEFAULT 0")
+                _ensure_column(cur, "cook_jobs", "worker_id", "TEXT DEFAULT ''")
+                _ensure_column(cur, "cook_jobs", "heartbeat_at", "DOUBLE PRECISION DEFAULT 0")
                 cur.execute(_MIGRATIONS)
                 try:
                     cur.execute("ALTER TABLE users ALTER COLUMN credits SET DEFAULT 0")
@@ -227,6 +237,9 @@ def _init_db():
             conn.executescript(_INDEXES)
             cur = conn.cursor()
             _ensure_column(cur, "users", "trial_used", "INTEGER NOT NULL DEFAULT 0")
+            _ensure_column(cur, "cook_jobs", "lite_mode", "INTEGER NOT NULL DEFAULT 0")
+            _ensure_column(cur, "cook_jobs", "worker_id", "TEXT DEFAULT ''")
+            _ensure_column(cur, "cook_jobs", "heartbeat_at", "REAL DEFAULT 0")
             conn.executescript(_MIGRATIONS)
 
 
@@ -505,13 +518,25 @@ def create_cook_job(
     title: str = "",
     request_json: str = "",
     credit_deducted: bool = False,
+    lite_mode: bool = False,
+    status: str = "queued",
 ) -> None:
+    """
+    status='queued' — durable queue; workers may claim (COOK_ON_WEB=0).
+    status='web_queued' — in-process web queue only; workers ignore.
+    """
+    if status not in ("queued", "web_queued"):
+        status = "queued"
     with _conn() as conn:
         conn.cursor().execute(
             _q("""INSERT INTO cook_jobs
-                  (job_id, user_id, status, recipe, title, request_json, credit_deducted, created_at)
-                  VALUES (?, ?, 'queued', ?, ?, ?, ?, ?)"""),
-            (job_id, user_id, recipe, title, request_json, 1 if credit_deducted else 0, time.time()),
+                  (job_id, user_id, status, recipe, title, request_json, credit_deducted,
+                   lite_mode, created_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"""),
+            (
+                job_id, user_id, status, recipe, title, request_json,
+                1 if credit_deducted else 0, 1 if lite_mode else 0, time.time(),
+            ),
         )
 
 
@@ -525,6 +550,8 @@ def update_cook_job(
     started: bool = False,
     finished: bool = False,
     credit_deducted: bool | None = None,
+    worker_id: str | None = None,
+    heartbeat: bool = False,
 ) -> None:
     fields: list[str] = []
     vals: list = []
@@ -549,6 +576,12 @@ def update_cook_job(
     if credit_deducted is not None:
         fields.append("credit_deducted = ?")
         vals.append(1 if credit_deducted else 0)
+    if worker_id is not None:
+        fields.append("worker_id = ?")
+        vals.append(worker_id)
+    if heartbeat:
+        fields.append("heartbeat_at = ?")
+        vals.append(time.time())
     if not fields:
         return
     vals.append(job_id)
@@ -565,6 +598,185 @@ def get_cook_job(job_id: str) -> dict | None:
         cur.execute(_q("SELECT * FROM cook_jobs WHERE job_id = ?"), (job_id,))
         row = cur.fetchone()
         return dict(row) if row else None
+
+
+def _row_count(row) -> int:
+    if row is None:
+        return 0
+    if isinstance(row, dict):
+        return int(row.get("c") or 0)
+    try:
+        return int(row["c"])
+    except Exception:
+        return int(row[0])
+
+
+def cook_queue_stats(job_id: str | None = None) -> dict:
+    """FIFO position among queued jobs + running count (DB-backed, multi-worker safe)."""
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(_q("SELECT COUNT(*) AS c FROM cook_jobs WHERE status = 'running'"))
+        running = _row_count(cur.fetchone())
+        cur.execute(_q("SELECT COUNT(*) AS c FROM cook_jobs WHERE status = 'queued'"))
+        queued = _row_count(cur.fetchone())
+        pos = 0
+        status = "unknown"
+        if job_id:
+            cur.execute(_q("SELECT status, created_at FROM cook_jobs WHERE job_id = ?"), (job_id,))
+            row = cur.fetchone()
+            if row:
+                status = row["status"]
+                if status == "queued":
+                    cur.execute(
+                        _q("""SELECT COUNT(*) AS c FROM cook_jobs
+                              WHERE status = 'queued' AND created_at <= ?"""),
+                        (row["created_at"],),
+                    )
+                    pos = _row_count(cur.fetchone()) or 1
+                elif status == "running":
+                    pos = 0
+    est_min = float(os.getenv("EST_MINUTES_PER_COOK", "7"))
+    ahead = (max(pos - 1, 0) + running) if status == "queued" else 0
+    return {
+        "status": status,
+        "queue_position": pos,
+        "queue_length": queued,
+        "running_count": running,
+        "est_wait_minutes": round(ahead * est_min, 1) if status == "queued" else 0,
+    }
+
+
+def announce_queued_jobs() -> None:
+    """Refresh progress messages for all queued jobs (DB-backed queue UX)."""
+    est_min = float(os.getenv("EST_MINUTES_PER_COOK", "7"))
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(_q("SELECT COUNT(*) AS c FROM cook_jobs WHERE status = 'running'"))
+        running = _row_count(cur.fetchone())
+        cur.execute(
+            _q("""SELECT job_id, progress_json, created_at FROM cook_jobs
+                  WHERE status = 'queued' ORDER BY created_at ASC""")
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+    total = len(rows)
+    for i, row in enumerate(rows):
+        pos = i + 1
+        ahead = i + running
+        wait_m = round(ahead * est_min)
+        if ahead <= 0:
+            msg = "You're next — starting shortly..."
+        elif pos == 1 and running > 0:
+            msg = f"Queued — 1 cook ahead (~{max(wait_m, 1)} min)"
+        else:
+            msg = f"Queued — position {pos} of {total} (~{max(wait_m, 1)} min wait)"
+        try:
+            progress = json.loads(row.get("progress_json") or "[]")
+        except Exception:
+            progress = []
+        if not isinstance(progress, list):
+            progress = []
+        prev = progress[-1]["message"] if progress else ""
+        if prev == msg:
+            continue
+        progress.append({"time": time.time(), "message": msg, "phase": "queued"})
+        update_cook_job(row["job_id"], progress_json=json.dumps(progress[-40:]), status="queued")
+
+
+def claim_next_cook_job(worker_id: str) -> dict | None:
+    """
+    Atomically claim the oldest queued job for a worker.
+    Postgres: FOR UPDATE SKIP LOCKED. SQLite: BEGIN IMMEDIATE + conditional UPDATE.
+    """
+    now = time.time()
+    if IS_PG:
+        with _conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE cook_jobs SET
+                        status = 'running',
+                        worker_id = %s,
+                        started_at = %s,
+                        heartbeat_at = %s
+                    WHERE job_id = (
+                        SELECT job_id FROM cook_jobs
+                        WHERE status = 'queued'
+                        ORDER BY created_at ASC
+                        FOR UPDATE SKIP LOCKED
+                        LIMIT 1
+                    )
+                    RETURNING *
+                    """,
+                    (worker_id, now, now),
+                )
+                row = cur.fetchone()
+                return dict(row) if row else None
+
+    # SQLite
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute("BEGIN IMMEDIATE")
+        cur.execute(
+            """SELECT job_id FROM cook_jobs
+               WHERE status = 'queued'
+               ORDER BY created_at ASC LIMIT 1"""
+        )
+        row = cur.fetchone()
+        if not row:
+            conn.commit()
+            return None
+        jid = row["job_id"]
+        cur.execute(
+            """UPDATE cook_jobs SET status = 'running', worker_id = ?,
+                   started_at = ?, heartbeat_at = ?
+               WHERE job_id = ? AND status = 'queued'""",
+            (worker_id, now, now, jid),
+        )
+        if cur.rowcount != 1:
+            conn.commit()
+            return None
+        cur.execute("SELECT * FROM cook_jobs WHERE job_id = ?", (jid,))
+        claimed = cur.fetchone()
+        conn.commit()
+        return dict(claimed) if claimed else None
+
+
+def reclaim_stale_cook_jobs(stale_seconds: int = 900) -> int:
+    """Re-queue jobs stuck in running with a dead worker heartbeat."""
+    cutoff = time.time() - stale_seconds
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            _q("""UPDATE cook_jobs SET status = 'queued', worker_id = '',
+                      started_at = 0, heartbeat_at = 0,
+                      error = 'Requeued after stale worker heartbeat'
+                  WHERE status = 'running'
+                    AND COALESCE(heartbeat_at, 0) > 0
+                    AND heartbeat_at < ?"""),
+            (cutoff,),
+        )
+        return cur.rowcount or 0
+
+
+def append_cook_progress(job_id: str, message: str, phase: str = "running") -> None:
+    """Append one progress line and bump heartbeat (worker → web SSE via DB)."""
+    row = get_cook_job(job_id)
+    if not row:
+        return
+    try:
+        progress = json.loads(row.get("progress_json") or "[]")
+    except Exception:
+        progress = []
+    if not isinstance(progress, list):
+        progress = []
+    progress.append({"time": time.time(), "message": message, "phase": phase})
+    progress = progress[-60:]
+    update_cook_job(
+        job_id,
+        progress_json=json.dumps(progress),
+        heartbeat=True,
+        status=row.get("status"),
+    )
 
 
 def backend_name() -> str:
