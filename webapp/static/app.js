@@ -450,13 +450,16 @@ async function loadNiches() {
 
         niches.forEach(niche => {
             const card = document.createElement('div');
-            card.className = 'niche-card';
+            const unavailable = niche.available === false || niche.status === 'coming_soon';
+            card.className = unavailable ? 'niche-card niche-card--soon' : 'niche-card';
             const previewHtml = niche.preview_gif
                 ? `<div class="niche-preview">
                        <img src="${niche.preview_gif}" alt="${niche.name} preview" loading="lazy">
                    </div>`
                 : '';
-            const statusChip = niche.status === 'proven'
+            const statusChip = unavailable
+                ? `<span class="status-chip new">Coming soon</span>`
+                : niche.status === 'proven'
                 ? `<span class="status-chip proven"><svg width="11" height="11" viewBox="0 0 12 12"><path d="M1 9 L4 5 L6.5 7 L11 1" fill="none" stroke="var(--success)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Proven</span>`
                 : `<span class="status-chip new">New</span>`;
             card.innerHTML = `
@@ -478,7 +481,17 @@ async function loadNiches() {
                     </div>
                 </div>
             `;
-            card.addEventListener('click', () => selectNiche(niche, card));
+            if (unavailable) {
+                card.style.opacity = '0.55';
+                card.style.cursor = 'not-allowed';
+                card.title = 'Coming soon — pick Animated Explainer or B-roll for now';
+                card.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    alert('Avatar + Illustrations is coming soon. Use Animated Explainer or a B-roll recipe for now.');
+                });
+            } else {
+                card.addEventListener('click', () => selectNiche(niche, card));
+            }
             grid.appendChild(card);
         });
     } catch (e) {

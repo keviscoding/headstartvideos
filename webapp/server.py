@@ -1247,6 +1247,14 @@ async def start_build(req: BuildRequest, request: Request):
     if not is_admin:
         _enforce_length_cap(user, _estimate_script_minutes(req.script), label="Video")
 
+    recipe = req.recipe or "animated_explainer"
+    if recipe == "avatar_plus_broll":
+        raise HTTPException(
+            400,
+            "Avatar + Illustrations isn't available in the web app yet. "
+            "Choose Animated Explainer or a B-roll recipe.",
+        )
+
     _safe_user_path(req.voiceover_path, "voiceover")
     _safe_user_path(req.thumbnail_path, "thumbnail")
 

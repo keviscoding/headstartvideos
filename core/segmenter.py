@@ -44,31 +44,137 @@ def _normalize(text: str) -> str:
     return re.sub(r'[^\w\s]', '', text.lower()).strip()
 
 
-def _transcribe_groq(audio_path: str) -> list[dict]:
-    """Transcribe via Groq's hosted Whisper (large-v3-turbo). Fast, cheap, better accuracy."""
-    import config
-    from groq import Groq
+# Stay under Groq's ~25MB direct-upload limit (free tier / attachment cap).
+_GROQ_MAX_BYTES = int(os.getenv("GROQ_WHISPER_MAX_BYTES", str(24 * 1024 * 1024)))
+# Chunk length when a downsampled file is still too large (~10 min of 16k mono).
+_GROQ_CHUNK_SECONDS = float(os.getenv("GROQ_WHISPER_CHUNK_SECONDS", "600"))
 
-    client = Groq(api_key=config.GROQ_API_KEY)
-    with open(audio_path, "rb") as f:
+
+def _ffprobe_duration(audio_path: str) -> float:
+    import subprocess
+    try:
+        r = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1", audio_path,
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        return float((r.stdout or "").strip() or 0)
+    except Exception:
+        return 0.0
+
+
+def _ffmpeg_16k_mono(src: str, dest: str, *, start_sec: float | None = None, duration: float | None = None) -> None:
+    """Downsample to 16kHz mono FLAC — smaller upload, same ASR quality Groq uses internally."""
+    import subprocess
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
+    if start_sec is not None:
+        cmd += ["-ss", f"{start_sec:.3f}"]
+    cmd += ["-i", src]
+    if duration is not None:
+        cmd += ["-t", f"{duration:.3f}"]
+    cmd += ["-ar", "16000", "-ac", "1", "-c:a", "flac", dest]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    if r.returncode != 0 or not os.path.isfile(dest):
+        raise RuntimeError(f"ffmpeg downsample failed: {(r.stderr or r.stdout or '')[:400]}")
+
+
+def _parse_groq_words(result, offset: float = 0.0) -> list[dict]:
+    words = []
+    for w in (result.words or []):
+        if hasattr(w, "word"):
+            word_text, start, end = w.word, w.start, w.end
+        elif isinstance(w, dict):
+            word_text, start, end = w.get("word", ""), w.get("start", 0), w.get("end", 0)
+        else:
+            word_text = getattr(w, "word", "") or ""
+            start = getattr(w, "start", 0) or 0
+            end = getattr(w, "end", 0) or 0
+        words.append({
+            "word": str(word_text).strip(),
+            "start": float(start) + offset,
+            "end": float(end) + offset,
+        })
+    return words
+
+
+def _groq_transcribe_file(client, model: str, path: str, offset: float = 0.0) -> list[dict]:
+    with open(path, "rb") as f:
         result = client.audio.transcriptions.create(
             file=f,
-            model=config.GROQ_WHISPER_MODEL,
+            model=model,
             response_format="verbose_json",
             timestamp_granularities=["word"],
             language="en",
             temperature=0.0,
         )
+    return _parse_groq_words(result, offset)
 
-    words = []
-    for w in (result.words or []):
-        word_text = w.word if isinstance(w, dict) is False else w.get("word", "")
-        start = w.start if not isinstance(w, dict) else w.get("start", 0)
-        end = w.end if not isinstance(w, dict) else w.get("end", 0)
-        if hasattr(w, "word"):
-            word_text, start, end = w.word, w.start, w.end
-        words.append({"word": word_text.strip(), "start": float(start), "end": float(end)})
-    return words
+
+def _transcribe_groq(audio_path: str) -> list[dict]:
+    """Transcribe via Groq Whisper. Downsamples + chunks so long cooks don't 413."""
+    import tempfile
+    import config
+    from groq import Groq
+
+    client = Groq(api_key=config.GROQ_API_KEY)
+    model = config.GROQ_WHISPER_MODEL
+    cleanup: list[str] = []
+
+    try:
+        # Always downsample first — stereo/high-bitrate WAVs blow past 25MB easily.
+        fd, prepared = tempfile.mkstemp(suffix=".flac", prefix="groq_asr_")
+        os.close(fd)
+        cleanup.append(prepared)
+        print(f"[segmenter] Downsampling for Groq: {audio_path}")
+        _ffmpeg_16k_mono(audio_path, prepared)
+
+        size = os.path.getsize(prepared)
+        duration = _ffprobe_duration(prepared) or _ffprobe_duration(audio_path)
+
+        if size <= _GROQ_MAX_BYTES:
+            try:
+                return _groq_transcribe_file(client, model, prepared)
+            except Exception as e:
+                err = str(e).lower()
+                if "413" not in err and "too_large" not in err and "too large" not in err:
+                    raise
+                print(f"[segmenter] Groq 413 on single file ({size} bytes) — chunking...")
+
+        # Chunk long / oversized audio
+        chunk_len = max(60.0, _GROQ_CHUNK_SECONDS)
+        if duration <= 0:
+            # Fallback estimate: ~32KB/s for 16k mono flac is rough; use fixed chunks from source
+            duration = max(chunk_len, size / 20_000)
+
+        all_words: list[dict] = []
+        start = 0.0
+        idx = 0
+        while start < duration - 0.05:
+            fd, chunk_path = tempfile.mkstemp(suffix=".flac", prefix=f"groq_chunk_{idx}_")
+            os.close(fd)
+            cleanup.append(chunk_path)
+            take = min(chunk_len, duration - start)
+            _ffmpeg_16k_mono(audio_path, chunk_path, start_sec=start, duration=take)
+            csize = os.path.getsize(chunk_path)
+            if csize > _GROQ_MAX_BYTES:
+                # Rare: shorten chunk and retry this window
+                take = max(30.0, take * 0.5)
+                _ffmpeg_16k_mono(audio_path, chunk_path, start_sec=start, duration=take)
+            print(f"[segmenter] Groq chunk {idx}: {start:.1f}s–{start + take:.1f}s ({csize} bytes)")
+            all_words.extend(_groq_transcribe_file(client, model, chunk_path, offset=start))
+            start += take
+            idx += 1
+            if idx > 200:
+                raise RuntimeError("Too many Groq audio chunks — aborting")
+        return all_words
+    finally:
+        for p in cleanup:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
 
 
 def _transcribe_local(audio_path: str, model_size: str = "base") -> list[dict]:

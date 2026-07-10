@@ -162,12 +162,9 @@ def run_cook_job(
                 progress_callback=on_progress,
             )
         elif recipe == "avatar_plus_broll":
-            from core.avatar_pipeline import run_avatar_pipeline
-            result = run_avatar_pipeline(
-                script=script,
-                voiceover_path=voiceover_path if voiceover_path else None,
-                output_name="pipeline_video.mp4",
-                progress_callback=on_progress,
+            raise ValueError(
+                "Avatar + Illustrations isn't available in the web app yet. "
+                "Choose Animated Explainer or a B-roll recipe."
             )
         else:
             raise ValueError(f"Unknown recipe: {recipe}")
