@@ -16,12 +16,18 @@ import threading
 import time
 import uuid
 
-from config import MAX_CONCURRENT_COOKS, WORKER_POLL_SECONDS, WORKER_STALE_SECONDS
+from config import (
+    MAX_CONCURRENT_COOKS,
+    WORKER_DRAIN_SECONDS,
+    WORKER_POLL_SECONDS,
+    WORKER_STALE_SECONDS,
+)
 from webapp.cook_runner import hydrate_job_from_row, run_cook_job
 from webapp.database import (
     claim_next_cook_job,
     get_cook_job,
     reclaim_stale_cook_jobs,
+    requeue_cook_job,
     update_cook_job,
 )
 
@@ -32,6 +38,7 @@ _worker_id = os.getenv(
 )
 _slots = threading.Semaphore(max(1, int(MAX_CONCURRENT_COOKS)))
 _active = 0
+_active_jobs: set[str] = set()
 _active_lock = threading.Lock()
 
 
@@ -80,6 +87,7 @@ def _run_claimed(row: dict) -> None:
     job_id = row["job_id"]
     with _active_lock:
         _active += 1
+        _active_jobs.add(job_id)
     try:
         job = hydrate_job_from_row(row)
         job["status"] = "running"
@@ -117,12 +125,27 @@ def _run_claimed(row: dict) -> None:
     finally:
         with _active_lock:
             _active -= 1
+            _active_jobs.discard(job_id)
         _slots.release()
 
 
 def _handle_signal(signum, frame):
-    print(f"[worker {_worker_id}] signal {signum} — draining...")
+    print(f"[worker {_worker_id}] signal {signum} — draining (no new claims)...")
     _stop.set()
+
+
+def _requeue_inflight(reason: str) -> None:
+    with _active_lock:
+        jobs = list(_active_jobs)
+    for jid in jobs:
+        try:
+            if requeue_cook_job(jid, reason=reason):
+                print(f"[worker {_worker_id}] requeued {jid} ({reason})")
+                _track("system", "cook_requeued", {
+                    "job_id": jid, "reason": reason, "worker_id": _worker_id,
+                })
+        except Exception as e:
+            print(f"[worker {_worker_id}] requeue failed for {jid}: {e}")
 
 
 def main() -> None:
@@ -130,16 +153,20 @@ def main() -> None:
     signal.signal(signal.SIGTERM, _handle_signal)
     print(
         f"[worker {_worker_id}] online — max_concurrent={MAX_CONCURRENT_COOKS} "
-        f"poll={WORKER_POLL_SECONDS}s stale={WORKER_STALE_SECONDS}s"
+        f"poll={WORKER_POLL_SECONDS}s stale={WORKER_STALE_SECONDS}s "
+        f"drain={WORKER_DRAIN_SECONDS}s"
     )
     last_reclaim = 0.0
     while not _stop.is_set():
         now = time.time()
-        if now - last_reclaim >= 60:
+        if now - last_reclaim >= 30:
             try:
                 n = reclaim_stale_cook_jobs(WORKER_STALE_SECONDS)
                 if n:
                     print(f"[worker {_worker_id}] reclaimed {n} stale job(s)")
+                    _track("system", "cook_stale_reclaimed", {
+                        "count": n, "worker_id": _worker_id,
+                    })
             except Exception as e:
                 print(f"[worker {_worker_id}] reclaim failed: {e}")
             last_reclaim = now
@@ -169,13 +196,19 @@ def main() -> None:
         )
         t.start()
 
-    # Wait briefly for in-flight cooks
-    deadline = time.time() + 30
+    # Drain: let in-flight cooks finish; if deadline hits, requeue so another worker picks up.
+    deadline = time.time() + max(30, int(WORKER_DRAIN_SECONDS))
+    print(f"[worker {_worker_id}] waiting up to {WORKER_DRAIN_SECONDS}s for in-flight cooks...")
     while time.time() < deadline:
         with _active_lock:
             if _active <= 0:
                 break
         time.sleep(0.5)
+    with _active_lock:
+        still = _active
+    if still > 0:
+        print(f"[worker {_worker_id}] drain timeout with {still} active — requeueing")
+        _requeue_inflight("Requeued after worker drain timeout (redeploy)")
     print(f"[worker {_worker_id}] stopped")
 
 

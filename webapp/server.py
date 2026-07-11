@@ -1430,7 +1430,11 @@ async def start_build(req: BuildRequest, request: Request):
         "recipe": req.recipe or "animated_explainer",
         "queue_position": qinfo.get("queue_position"),
         "queue_length": qinfo.get("queue_length"),
+        "running_count": qinfo.get("running_count"),
+        "est_wait_minutes": qinfo.get("est_wait_minutes"),
+        "est_minutes_per_cook": qinfo.get("est_minutes_per_cook"),
         "lite_mode": lite_mode,
+        "plan": user.get("plan") or "",
         "cook_on_web": COOK_ON_WEB,
     })
     return {

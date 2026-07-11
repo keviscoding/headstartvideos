@@ -511,6 +511,7 @@ def render_stats(days: int = 30) -> dict:
     for r in rows:
         key = r["recipe"] or "unknown"
         by_recipe[key] = by_recipe.get(key, 0) + 1
+    p50_cook = median_cook_minutes(lookback=80)
     return {
         "days": days,
         "total": total,
@@ -520,8 +521,59 @@ def render_stats(days: int = 30) -> dict:
         "total_cost_pence": round(total_cost, 1),
         "avg_cost_pence": round(total_cost / total, 2) if total else 0,
         "avg_duration_sec": round(avg_dur, 1),
+        "p50_cook_minutes": p50_cook,
         "by_recipe": by_recipe,
+        "queue": cook_queue_stats(),
     }
+
+
+def median_cook_minutes(lookback: int = 40, recipe: str | None = None) -> float:
+    """
+    Live p50 cook duration (minutes) from recent successes.
+    Falls back to EST_MINUTES_PER_COOK when we lack data.
+    """
+    try:
+        from config import EST_MINUTES_PER_COOK as _fallback
+        fallback = float(_fallback)
+    except Exception:
+        fallback = float(os.getenv("EST_MINUTES_PER_COOK", "7"))
+    lookback = max(5, min(int(lookback), 200))
+    with _conn() as conn:
+        cur = conn.cursor()
+        if recipe:
+            cur.execute(
+                _q("""SELECT duration_sec FROM render_events
+                      WHERE status = 'succeeded' AND duration_sec > 30 AND recipe = ?
+                      ORDER BY created_at DESC LIMIT ?"""),
+                (recipe, lookback),
+            )
+        else:
+            cur.execute(
+                _q("""SELECT duration_sec FROM render_events
+                      WHERE status = 'succeeded' AND duration_sec > 30
+                      ORDER BY created_at DESC LIMIT ?"""),
+                (lookback,),
+            )
+        secs = sorted(float(r["duration_sec"]) for r in cur.fetchall() if r and r["duration_sec"])
+    if len(secs) < 3:
+        return fallback
+    mid = secs[len(secs) // 2]
+    minutes = mid / 60.0
+    # Clamp so a wild outlier batch can't advertise 90-min waits forever
+    return round(max(3.0, min(minutes, 25.0)), 1)
+
+
+def requeue_cook_job(job_id: str, reason: str = "Requeued by worker drain") -> bool:
+    """Put a running job back on the queue (deploy drain / crash recovery)."""
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            _q("""UPDATE cook_jobs SET status = 'queued', worker_id = '',
+                      started_at = 0, heartbeat_at = 0, error = ?
+                  WHERE job_id = ? AND status = 'running'"""),
+            (reason[:500], job_id),
+        )
+        return (cur.rowcount or 0) > 0
 
 
 # -- Videos (per-user library) ----------------------------------------------
@@ -700,7 +752,8 @@ def _row_count(row) -> int:
 
 
 def cook_queue_stats(job_id: str | None = None) -> dict:
-    """FIFO position among queued jobs + running count (DB-backed, multi-worker safe)."""
+    """Priority-aware position among queued jobs + running count (DB-backed)."""
+    est_min = median_cook_minutes()
     with _conn() as conn:
         cur = conn.cursor()
         cur.execute(_q("SELECT COUNT(*) AS c FROM cook_jobs WHERE status = 'running'"))
@@ -710,48 +763,68 @@ def cook_queue_stats(job_id: str | None = None) -> dict:
         pos = 0
         status = "unknown"
         if job_id:
-            cur.execute(_q("SELECT status, created_at FROM cook_jobs WHERE job_id = ?"), (job_id,))
+            cur.execute(
+                _q("SELECT status, created_at, lite_mode FROM cook_jobs WHERE job_id = ?"),
+                (job_id,),
+            )
             row = cur.fetchone()
             if row:
                 status = row["status"]
                 if status == "queued":
+                    # Same order as claim_next_cook_job: lite/trial first, then FIFO
                     cur.execute(
                         _q("""SELECT COUNT(*) AS c FROM cook_jobs
-                              WHERE status = 'queued' AND created_at <= ?"""),
-                        (row["created_at"],),
+                              WHERE status = 'queued'
+                                AND (
+                                  COALESCE(lite_mode, 0) > ?
+                                  OR (COALESCE(lite_mode, 0) = ? AND created_at <= ?)
+                                )"""),
+                        (
+                            int(row["lite_mode"] or 0),
+                            int(row["lite_mode"] or 0),
+                            row["created_at"],
+                        ),
                     )
                     pos = _row_count(cur.fetchone()) or 1
                 elif status == "running":
                     pos = 0
-    est_min = float(os.getenv("EST_MINUTES_PER_COOK", "7"))
-    ahead = (max(pos - 1, 0) + running) if status == "queued" else 0
+    work_ahead = (max(pos - 1, 0) + running) if status == "queued" else 0
+    parallelism = max(running, 1)
+    est_wait = 0.0
+    if status == "queued" and work_ahead > 0:
+        import math
+        est_wait = round(math.ceil(work_ahead / parallelism) * est_min, 1)
     return {
         "status": status,
         "queue_position": pos,
         "queue_length": queued,
         "running_count": running,
-        "est_wait_minutes": round(ahead * est_min, 1) if status == "queued" else 0,
+        "est_wait_minutes": est_wait,
+        "est_minutes_per_cook": est_min,
     }
 
 
 def announce_queued_jobs() -> None:
     """Refresh progress messages for all queued jobs (DB-backed queue UX)."""
-    est_min = float(os.getenv("EST_MINUTES_PER_COOK", "7"))
+    est_min = median_cook_minutes()
+    import math
     with _conn() as conn:
         cur = conn.cursor()
         cur.execute(_q("SELECT COUNT(*) AS c FROM cook_jobs WHERE status = 'running'"))
         running = _row_count(cur.fetchone())
         cur.execute(
-            _q("""SELECT job_id, progress_json, created_at FROM cook_jobs
-                  WHERE status = 'queued' ORDER BY created_at ASC""")
+            _q("""SELECT job_id, progress_json, created_at, lite_mode FROM cook_jobs
+                  WHERE status = 'queued'
+                  ORDER BY COALESCE(lite_mode, 0) DESC, created_at ASC""")
         )
         rows = [dict(r) for r in cur.fetchall()]
     total = len(rows)
+    parallelism = max(running, 1)
     for i, row in enumerate(rows):
         pos = i + 1
-        ahead = i + running
-        wait_m = round(ahead * est_min)
-        if ahead <= 0:
+        work_ahead = i + running
+        wait_m = int(math.ceil(work_ahead / parallelism) * est_min) if work_ahead else 0
+        if work_ahead <= 0:
             msg = "You're next — starting shortly..."
         elif pos == 1 and running > 0:
             msg = f"Queued — 1 cook ahead (~{max(wait_m, 1)} min)"
@@ -772,7 +845,8 @@ def announce_queued_jobs() -> None:
 
 def claim_next_cook_job(worker_id: str) -> dict | None:
     """
-    Atomically claim the oldest queued job for a worker.
+    Atomically claim the next queued job for a worker.
+    Trial/lite jobs jump ahead of full paid cooks so first-video UX stays fast.
     Postgres: FOR UPDATE SKIP LOCKED. SQLite: BEGIN IMMEDIATE + conditional UPDATE.
     """
     now = time.time()
@@ -789,7 +863,7 @@ def claim_next_cook_job(worker_id: str) -> dict | None:
                     WHERE job_id = (
                         SELECT job_id FROM cook_jobs
                         WHERE status = 'queued'
-                        ORDER BY created_at ASC
+                        ORDER BY COALESCE(lite_mode, 0) DESC, created_at ASC
                         FOR UPDATE SKIP LOCKED
                         LIMIT 1
                     )
@@ -807,7 +881,7 @@ def claim_next_cook_job(worker_id: str) -> dict | None:
         cur.execute(
             """SELECT job_id FROM cook_jobs
                WHERE status = 'queued'
-               ORDER BY created_at ASC LIMIT 1"""
+               ORDER BY COALESCE(lite_mode, 0) DESC, created_at ASC LIMIT 1"""
         )
         row = cur.fetchone()
         if not row:
@@ -829,7 +903,7 @@ def claim_next_cook_job(worker_id: str) -> dict | None:
         return dict(claimed) if claimed else None
 
 
-def reclaim_stale_cook_jobs(stale_seconds: int = 900) -> int:
+def reclaim_stale_cook_jobs(stale_seconds: int = 180) -> int:
     """Re-queue jobs stuck in running with a dead worker heartbeat."""
     cutoff = time.time() - stale_seconds
     with _conn() as conn:

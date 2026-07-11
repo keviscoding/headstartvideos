@@ -127,6 +127,16 @@ def run_cook_job(
     user_id = job.get("user_id")
     est_minutes = round(len(script.split()) / 150, 2) if script else 0
     lite_mode = bool(job.get("lite_mode"))
+    queued_at = float(job.get("created_at") or started_at)
+    queue_wait_sec = max(0.0, round(started_at - queued_at, 1))
+    plan = ""
+    if user_id:
+        try:
+            from webapp.database import get_user_by_id
+            u = get_user_by_id(int(user_id))
+            plan = (u or {}).get("plan") or ""
+        except Exception:
+            plan = ""
     _progress_persist_at = [0.0]
 
     def on_progress(msg: str, phase: str = "running"):
@@ -147,9 +157,15 @@ def run_cook_job(
             except Exception as e:
                 print(f"[cook] persist progress failed: {e}")
 
-    _track(user_id or "anon", "render_started", {
-        "recipe": recipe, "target_minutes": est_minutes, "lite_mode": lite_mode,
-    })
+    base_props = {
+        "recipe": recipe,
+        "target_minutes": est_minutes,
+        "lite_mode": lite_mode,
+        "plan": plan,
+        "queue_wait_sec": queue_wait_sec,
+        "job_id": job_id,
+    }
+    _track(user_id or "anon", "render_started", dict(base_props))
 
     try:
         if recipe == "animated_explainer":
@@ -284,8 +300,11 @@ def run_cook_job(
         except Exception as log_err:
             print(f"[telemetry] render log failed: {log_err}")
         _track(user_id or "anon", "render_succeeded", {
-            "recipe": recipe, "duration_sec": duration,
-            "target_minutes": est_minutes, "cost_pence": cost,
+            **base_props,
+            "duration_sec": duration,
+            "cook_minutes": round(duration / 60.0, 2),
+            "cost_pence": cost,
+            "total_wall_sec": round(queue_wait_sec + duration, 1),
         })
 
         if notify_email:
@@ -318,7 +337,10 @@ def run_cook_job(
         except Exception as log_err:
             print(f"[telemetry] render log failed: {log_err}")
         _track(user_id or "anon", "render_failed", {
-            "recipe": recipe, "duration_sec": duration, "error_class": err_class,
+            **base_props,
+            "duration_sec": duration,
+            "cook_minutes": round(duration / 60.0, 2),
+            "error_class": err_class,
         })
         if user_id and job.get("credit_deducted"):
             refund_credit(user_id)
