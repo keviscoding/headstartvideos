@@ -77,7 +77,17 @@ Renders are **FIFO-queued** with a hard concurrency cap so one busy cook cannot 
 
 Leave `COOK_ON_WEB=1` and `MAX_CONCURRENT_COOKS=1` on DigitalOcean. The API process runs the in-process FIFO queue. Voiceovers no longer block the event loop, but heavy cooks still compete for CPU — prefer workers in production.
 
-### Optimum: web + workers (App Platform)
+### Optimum: web + Modal (scale-to-zero — preferred)
+
+Don’t buy more DO workers as traffic grows. Cooks run on Modal: pay per second, burst in parallel, **$0 when idle**.
+
+1. `pip install modal && modal setup`
+2. `modal secret create channelrecipe-env` with DATABASE_URL, SPACES_*, GEMINI_KEY, ATLASCLOUD_KEY, GROQ_API_KEY, etc. (see `modal_cook.py`)
+3. `modal deploy modal_cook.py`
+4. On DO **Web**: `COOK_ON_WEB=0`, `COOK_ON_MODAL=1`, `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`
+5. Scale DO **cook-worker** to **0** instances
+
+### Fallback: web + always-on DO workers
 
 1. Confirm Spaces env vars (`SPACES_KEY/SECRET/BUCKET/ENDPOINT`) — voiceovers/thumbnails are staged there so workers can fetch them.
 2. Set `COOK_ON_WEB=0` on the **Web** component.
