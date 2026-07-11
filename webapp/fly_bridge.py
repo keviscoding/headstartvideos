@@ -61,7 +61,7 @@ def spawn_cook(job_id: str) -> bool:
         print("[fly] FLY_COOK_APP / FLY_COOK_IMAGE missing")
         return False
     try:
-        region = (getattr(config, "FLY_COOK_REGION", "") or "sfo").strip() or "sfo"
+        region = (getattr(config, "FLY_COOK_REGION", "") or "sjc").strip() or "sjc"
         cpus = max(1, int(getattr(config, "FLY_COOK_CPUS", 2) or 2))
         memory_mb = max(1024, int(getattr(config, "FLY_COOK_MEMORY_MB", 4096) or 4096))
         body = {

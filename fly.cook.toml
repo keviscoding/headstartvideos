@@ -3,7 +3,7 @@
 # Secrets: fly secrets set -a channelrecipe-cook DATABASE_URL=... SPACES_*=... etc.
 
 app = 'channelrecipe-cook'
-primary_region = 'sfo'
+primary_region = 'sjc'
 
 [build]
   dockerfile = 'Dockerfile'

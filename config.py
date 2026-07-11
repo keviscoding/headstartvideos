@@ -41,7 +41,7 @@ COOK_ON_FLY = os.getenv("COOK_ON_FLY", "0").strip().lower() in ("1", "true", "ye
 FLY_API_TOKEN = (os.getenv("FLY_API_TOKEN", "") or "").strip()
 FLY_COOK_APP = (os.getenv("FLY_COOK_APP", "channelrecipe-cook") or "channelrecipe-cook").strip()
 FLY_COOK_IMAGE = (os.getenv("FLY_COOK_IMAGE", "") or "").strip()
-FLY_COOK_REGION = (os.getenv("FLY_COOK_REGION", "sfo") or "sfo").strip()
+FLY_COOK_REGION = (os.getenv("FLY_COOK_REGION", "sjc") or "sjc").strip()
 FLY_COOK_CPUS = max(1, int(os.getenv("FLY_COOK_CPUS", "2")))
 FLY_COOK_MEMORY_MB = max(1024, int(os.getenv("FLY_COOK_MEMORY_MB", "4096")))
 # How often workers poll for new jobs (seconds).
