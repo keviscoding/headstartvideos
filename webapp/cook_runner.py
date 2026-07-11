@@ -108,6 +108,8 @@ def run_cook_job(
     # Resolve Spaces URLs /api/files paths to local files for ffmpeg pipelines
     from webapp.storage import fetch_to_local
     cache_dir = ROOT / "output" / "job_inputs" / job_id
+    voiceover_path = (voiceover_path or "").strip()
+    thumbnail_path = (thumbnail_path or "").strip()
     if voiceover_path:
         try:
             voiceover_path = fetch_to_local(voiceover_path, cache_dir)

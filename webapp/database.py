@@ -100,6 +100,12 @@ CREATE TABLE IF NOT EXISTS cook_jobs (
     started_at    REAL DEFAULT 0,
     finished_at   REAL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS ops_credit_grants (
+    grant_key   TEXT PRIMARY KEY,
+    email       TEXT NOT NULL,
+    amount      INTEGER NOT NULL,
+    applied_at  REAL NOT NULL DEFAULT (strftime('%s','now'))
+);
 """
 
 _SCHEMA_PG = """
@@ -168,6 +174,12 @@ CREATE TABLE IF NOT EXISTS cook_jobs (
     created_at    DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now()),
     started_at    DOUBLE PRECISION DEFAULT 0,
     finished_at   DOUBLE PRECISION DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS ops_credit_grants (
+    grant_key   TEXT PRIMARY KEY,
+    email       TEXT NOT NULL,
+    amount      INTEGER NOT NULL,
+    applied_at  DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now())
 );
 """
 
@@ -243,6 +255,48 @@ def _init_db():
             _ensure_column(cur, "cook_jobs", "worker_id", "TEXT DEFAULT ''")
             _ensure_column(cur, "cook_jobs", "heartbeat_at", "REAL DEFAULT 0")
             conn.executescript(_MIGRATIONS)
+    _apply_pending_credit_grants()
+
+
+# Idempotent support credit grants (applied once per grant_key on boot).
+_PENDING_CREDIT_GRANTS = [
+    # Spaces CDN env had a trailing newline → cook failed after credit deduct;
+    # customer reported being charged twice for the failed build.
+    ("2026-07-11-arman-newline-url", "armankaladiya02@gmail.com", 2),
+]
+
+
+def _apply_pending_credit_grants() -> None:
+    for grant_key, email, amount in _PENDING_CREDIT_GRANTS:
+        email = email.lower().strip()
+        if amount <= 0:
+            continue
+        try:
+            with _conn() as conn:
+                cur = conn.cursor()
+                cur.execute(_q("SELECT 1 FROM ops_credit_grants WHERE grant_key = ?"), (grant_key,))
+                if cur.fetchone():
+                    continue
+                cur.execute(_q("SELECT id, credits FROM users WHERE email = ?"), (email,))
+                row = cur.fetchone()
+                if not row:
+                    print(f"[ops] credit grant {grant_key}: user {email} not found yet — will retry next boot")
+                    continue
+                user = dict(row)
+                cur.execute(
+                    _q("UPDATE users SET credits = credits + ? WHERE id = ?"),
+                    (amount, user["id"]),
+                )
+                cur.execute(
+                    _q("INSERT INTO ops_credit_grants (grant_key, email, amount, applied_at) VALUES (?, ?, ?, ?)"),
+                    (grant_key, email, amount, time.time()),
+                )
+                print(
+                    f"[ops] Granted +{amount} credits to {email} "
+                    f"(was {user['credits']}) via {grant_key}"
+                )
+        except Exception as e:
+            print(f"[ops] credit grant {grant_key} failed: {e}")
 
 
 # -- Users ------------------------------------------------------------------

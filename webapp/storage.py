@@ -47,13 +47,20 @@ def _get_client():
     return _client
 
 
+def _clean_url_part(value: str) -> str:
+    """Strip whitespace/newlines that sneak in via DO env paste."""
+    return "".join((value or "").split())
+
+
 def _public_url(key: str) -> str:
+    key = (key or "").lstrip("/")
     if config.SPACES_CDN_ENDPOINT:
-        base = config.SPACES_CDN_ENDPOINT.rstrip("/")
+        base = _clean_url_part(config.SPACES_CDN_ENDPOINT).rstrip("/")
         return f"{base}/{key}"
     # Standard Spaces virtual-hosted URL: https://<bucket>.<region>.digitaloceanspaces.com/<key>
-    endpoint = config.SPACES_ENDPOINT.replace("https://", "").rstrip("/")
-    return f"https://{config.SPACES_BUCKET}.{endpoint}/{key}"
+    endpoint = _clean_url_part(config.SPACES_ENDPOINT).replace("https://", "").rstrip("/")
+    bucket = _clean_url_part(config.SPACES_BUCKET)
+    return f"https://{bucket}.{endpoint}/{key}"
 
 
 def store_file(local_path: str, key: str, content_type: str | None = None) -> str:
@@ -113,6 +120,9 @@ def fetch_to_local(path_or_url: str, dest_dir: str | Path | None = None) -> str:
         if os.path.isfile(local):
             return local
         raise FileNotFoundError(f"Local media not found: {raw}")
+
+    # Defense: DO env paste can leave \n mid-URL (host\n/key) which .strip() misses
+    raw = "".join(raw.split())
 
     dest_root = Path(dest_dir) if dest_dir else (OUTPUT_DIR / "remote_cache")
     dest_root.mkdir(parents=True, exist_ok=True)

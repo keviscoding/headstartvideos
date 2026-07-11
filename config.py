@@ -57,21 +57,29 @@ STRIPE_PRICE_TOPUP_15 = os.getenv("STRIPE_PRICE_TOPUP_15", "")
 
 # Fernet key (or passphrase) for encrypting per-user BYOK secrets (HeyGen, etc.).
 # Generate once: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-SECRETS_KEY = os.getenv("SECRETS_KEY", "")
+SECRETS_KEY = (os.getenv("SECRETS_KEY", "") or "").strip()
 
+# Admin emails (comma-separated). Required for /api/admin/* and Settings keys.
+ADMIN_EMAILS = [
+    e.strip().lower()
+    for e in (os.getenv("ADMIN_EMAILS", "") or "").split(",")
+    if e.strip()
+]
 
 # Telemetry (all optional — everything stays inert if these are blank)
-POSTHOG_KEY = os.getenv("POSTHOG_KEY", "")            # PostHog project API key (public)
-POSTHOG_HOST = os.getenv("POSTHOG_HOST", "https://us.i.posthog.com")
-SENTRY_DSN = os.getenv("SENTRY_DSN", "")              # Sentry DSN (backend + frontend)
+POSTHOG_KEY = (os.getenv("POSTHOG_KEY", "") or "").strip()
+POSTHOG_HOST = (os.getenv("POSTHOG_HOST", "https://us.i.posthog.com") or "").strip()
+SENTRY_DSN = (os.getenv("SENTRY_DSN", "") or "").strip()
 
 # Object storage (DigitalOcean Spaces / S3). If unset, files stay on local disk.
-SPACES_KEY = os.getenv("SPACES_KEY", "")
-SPACES_SECRET = os.getenv("SPACES_SECRET", "")
-SPACES_BUCKET = os.getenv("SPACES_BUCKET", "")
-SPACES_REGION = os.getenv("SPACES_REGION", "")                 # e.g. "fra1", "nyc3"
-SPACES_ENDPOINT = os.getenv("SPACES_ENDPOINT", "")            # e.g. "https://fra1.digitaloceanspaces.com"
-SPACES_CDN_ENDPOINT = os.getenv("SPACES_CDN_ENDPOINT", "")    # optional CDN base for public URLs
+# Always strip — DO App Platform env paste often leaves a trailing \n, which
+# breaks public URLs (httpx: "Invalid non-printable ASCII character... '\n'").
+SPACES_KEY = (os.getenv("SPACES_KEY", "") or "").strip()
+SPACES_SECRET = (os.getenv("SPACES_SECRET", "") or "").strip()
+SPACES_BUCKET = (os.getenv("SPACES_BUCKET", "") or "").strip()
+SPACES_REGION = (os.getenv("SPACES_REGION", "") or "").strip()                 # e.g. "fra1", "nyc3"
+SPACES_ENDPOINT = (os.getenv("SPACES_ENDPOINT", "") or "").strip()            # e.g. "https://fra1.digitaloceanspaces.com"
+SPACES_CDN_ENDPOINT = (os.getenv("SPACES_CDN_ENDPOINT", "") or "").strip()    # optional CDN base for public URLs
 
 OUTPUT_DIR = ROOT_DIR / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)

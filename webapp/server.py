@@ -1979,6 +1979,33 @@ async def admin_stats(days: int = 30, admin: dict = Depends(require_admin)):
     return render_stats(days=days)
 
 
+class CreditGrantRequest(BaseModel):
+    email: str
+    amount: int = 1
+    reason: str = ""
+
+
+@app.post("/api/admin/credits")
+async def admin_grant_credits(req: CreditGrantRequest, admin: dict = Depends(require_admin)):
+    """Support: grant cook credits to a user by email."""
+    email = (req.email or "").lower().strip()
+    amount = int(req.amount or 0)
+    if not email or "@" not in email:
+        raise HTTPException(400, "Valid email required")
+    if amount < 1 or amount > 100:
+        raise HTTPException(400, "amount must be 1–100")
+    user = get_user_by_email(email)
+    if not user:
+        raise HTTPException(404, f"No user with email {email}")
+    add_credits(user["id"], amount)
+    updated = get_user_by_id(user["id"])
+    print(
+        f"[admin] {admin.get('email')} granted +{amount} credits to {email} "
+        f"(now {updated['credits']}) reason={req.reason!r}"
+    )
+    return {"ok": True, "email": email, "granted": amount, "credits": updated["credits"]}
+
+
 @app.get("/api/settings/keys")
 async def get_settings(admin: dict = Depends(require_admin)):
     result = {}
