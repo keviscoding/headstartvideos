@@ -12,16 +12,43 @@ Deploy once (see README / guide):
   fly launch --name channelrecipe-cook --region sfo --no-deploy
   fly secrets set ...
   fly deploy -c fly.cook.toml
+
+Note: we inject Spaces/DB/API env from the web process into each Machine.
+Fly app secrets stay "staged" when the app is scaled to 0, so Machines API
+one-shots would otherwise cook without Spaces and "complete" with dead
+/api/files URLs.
 """
 from __future__ import annotations
 
 import json
+import os
 import urllib.error
 import urllib.request
 
 import config
 
 _API = "https://api.machines.dev"
+
+# Copied from the web dyno into each ephemeral cook Machine.
+_INJECT_ENV_KEYS = (
+    "DATABASE_URL",
+    "SPACES_KEY",
+    "SPACES_SECRET",
+    "SPACES_BUCKET",
+    "SPACES_REGION",
+    "SPACES_ENDPOINT",
+    "SPACES_CDN_ENDPOINT",
+    "GEMINI_KEY",
+    "ATLASCLOUD_KEY",
+    "GROQ_API_KEY",
+    "PEXELS_KEY",
+    "PIXABAY_KEY",
+    "SECRETS_KEY",
+    "POSTHOG_KEY",
+    "POSTHOG_HOST",
+    "SENTRY_DSN",
+    "HEYGEN_KEY",
+)
 
 
 def _headers() -> dict:
@@ -51,6 +78,23 @@ def _request(method: str, path: str, body: dict | None = None) -> dict | list | 
         raise RuntimeError(f"Fly API {method} {path} → {e.code}: {err[:500]}") from e
 
 
+def _machine_env() -> dict[str, str]:
+    env: dict[str, str] = {
+        "COOK_ON_WEB": "0",
+        "ALLOW_LOCAL_WHISPER": "0",
+    }
+    for key in _INJECT_ENV_KEYS:
+        # Prefer live process env (DO App Platform), then config attrs.
+        val = (os.getenv(key) or "").strip()
+        if not val and hasattr(config, key):
+            val = str(getattr(config, key) or "").strip()
+        # Strip accidental whitespace/newlines from DO paste
+        val = "".join(val.split()) if val else ""
+        if val:
+            env[key] = val
+    return env
+
+
 def spawn_cook(job_id: str) -> bool:
     """Create + start an ephemeral Fly Machine that cooks job_id then exits."""
     if not getattr(config, "COOK_ON_FLY", False):
@@ -64,6 +108,13 @@ def spawn_cook(job_id: str) -> bool:
         region = (getattr(config, "FLY_COOK_REGION", "") or "sjc").strip() or "sjc"
         cpus = max(1, int(getattr(config, "FLY_COOK_CPUS", 2) or 2))
         memory_mb = max(1024, int(getattr(config, "FLY_COOK_MEMORY_MB", 4096) or 4096))
+        env = _machine_env()
+        if not env.get("DATABASE_URL"):
+            print("[fly] DATABASE_URL missing on web — cannot spawn cook")
+            return False
+        if not (env.get("SPACES_KEY") and env.get("SPACES_SECRET") and env.get("SPACES_BUCKET")):
+            print("[fly] SPACES_* missing on web — cook would 404 after finish")
+            return False
         body = {
             "region": region,
             "config": {
@@ -75,10 +126,7 @@ def spawn_cook(job_id: str) -> bool:
                     "cpus": cpus,
                     "memory_mb": memory_mb,
                 },
-                "env": {
-                    "COOK_ON_WEB": "0",
-                    "ALLOW_LOCAL_WHISPER": "0",
-                },
+                "env": env,
                 "init": {
                     "cmd": ["python", "-m", "webapp.fly_oneshot", job_id],
                 },
@@ -95,7 +143,7 @@ def spawn_cook(job_id: str) -> bool:
             _request("POST", f"/v1/apps/{app}/machines/{mid}/start", {})
         except Exception as start_err:
             print(f"[fly] start after create ({mid}): {start_err}")
-        print(f"[fly] spawned machine {mid} for cook {job_id}")
+        print(f"[fly] spawned machine {mid} for cook {job_id} (env keys={sorted(env)})")
         return True
     except Exception as e:
         print(f"[fly] spawn failed for {job_id}: {e}")
