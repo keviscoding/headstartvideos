@@ -90,13 +90,16 @@ POSTHOG_HOST = (os.getenv("POSTHOG_HOST", "https://us.i.posthog.com") or "").str
 SENTRY_DSN = (os.getenv("SENTRY_DSN", "") or "").strip()
 
 # Object storage (DigitalOcean Spaces / S3). If unset, files stay on local disk.
-# Strip ALL whitespace — DO/Fly env paste often leaves \n mid-value, which breaks
-# public URLs and S3 request signatures (SignatureDoesNotMatch).
+# Strip whitespace carefully — DO/Fly env paste often leaves a trailing \n.
 def _env_clean(name: str) -> str:
     return "".join((os.getenv(name, "") or "").split())
 
-SPACES_KEY = _env_clean("SPACES_KEY")
-SPACES_SECRET = _env_clean("SPACES_SECRET")
+def _env_secret(name: str) -> str:
+    # Access keys/secrets: trim ends + quotes only (preserve + / = inside).
+    return (os.getenv(name, "") or "").strip().strip('"').strip("'")
+
+SPACES_KEY = _env_secret("SPACES_KEY")
+SPACES_SECRET = _env_secret("SPACES_SECRET")
 SPACES_BUCKET = _env_clean("SPACES_BUCKET")
 SPACES_REGION = _env_clean("SPACES_REGION")                 # e.g. "fra1", "nyc3"
 SPACES_ENDPOINT = _env_clean("SPACES_ENDPOINT")            # e.g. "https://fra1.digitaloceanspaces.com"

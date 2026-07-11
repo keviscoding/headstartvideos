@@ -82,14 +82,28 @@ def _machine_env() -> dict[str, str]:
     env: dict[str, str] = {
         "COOK_ON_WEB": "0",
         "ALLOW_LOCAL_WHISPER": "0",
+        "APP_ENV": "fly-cook",
+    }
+    # URLs / ids: strip all whitespace. Secrets: trim ends only (preserve + / =).
+    url_keys = {
+        "DATABASE_URL",
+        "SPACES_BUCKET",
+        "SPACES_REGION",
+        "SPACES_ENDPOINT",
+        "SPACES_CDN_ENDPOINT",
+        "POSTHOG_HOST",
+        "SENTRY_DSN",
     }
     for key in _INJECT_ENV_KEYS:
-        # Prefer live process env (DO App Platform), then config attrs.
         val = (os.getenv(key) or "").strip()
         if not val and hasattr(config, key):
             val = str(getattr(config, key) or "").strip()
-        # Strip accidental whitespace/newlines from DO paste
-        val = "".join(val.split()) if val else ""
+        if not val:
+            continue
+        if key in url_keys or key.endswith("_ENDPOINT") or key.endswith("_HOST"):
+            val = "".join(val.split())
+        else:
+            val = val.strip().strip('"').strip("'")
         if val:
             env[key] = val
     return env
