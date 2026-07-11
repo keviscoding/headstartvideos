@@ -929,6 +929,75 @@ async def get_all_voices():
 
 
 # ---------------------------------------------------------------------------
+# Gemini helpers (titles / scripts)
+# ---------------------------------------------------------------------------
+def _extract_gemini_text(resp) -> tuple[str, str]:
+    """Return (visible_text, finish_reason). Skips thought-only parts."""
+    text = (getattr(resp, "text", None) or "").strip()
+    finish = ""
+    try:
+        cands = list(getattr(resp, "candidates", None) or [])
+        if not cands:
+            pf = getattr(resp, "prompt_feedback", None)
+            br = getattr(pf, "block_reason", None) if pf else None
+            return "", f"blocked:{br}" if br else "no_candidates"
+        cand = cands[0]
+        finish = str(getattr(cand, "finish_reason", "") or "")
+        if text:
+            return text, finish
+        content = getattr(cand, "content", None)
+        parts = list(getattr(content, "parts", None) or [])
+        chunks: list[str] = []
+        for p in parts:
+            if getattr(p, "thought", None):
+                continue
+            t = getattr(p, "text", None) or ""
+            if t:
+                chunks.append(t)
+        return "".join(chunks).strip(), finish
+    except Exception:
+        return text, finish or "extract_error"
+
+
+def _gemini_generate_text(
+    client,
+    prompt: str,
+    *,
+    max_output_tokens: int = 8192,
+    retries: int = 2,
+    label: str = "Generation",
+) -> str:
+    """Call Gemini with enough output budget + light thinking; retry empty replies."""
+    from google.genai import types
+
+    last_finish = ""
+    for attempt in range(retries + 1):
+        # Bump budget on retries — thinking models often burn the first budget on thoughts.
+        tokens = max_output_tokens if attempt == 0 else max(max_output_tokens, 16384)
+        resp = client.models.generate_content(
+            model=config.GEMINI_TEXT_MODEL,
+            contents=[{"role": "user", "parts": [{"text": prompt}]}],
+            config=types.GenerateContentConfig(
+                max_output_tokens=tokens,
+                thinking_config=types.ThinkingConfig(
+                    thinking_level=types.ThinkingLevel.MINIMAL,
+                    include_thoughts=False,
+                ),
+            ),
+        )
+        text, finish = _extract_gemini_text(resp)
+        last_finish = finish
+        if text:
+            return text
+        time.sleep(0.35 * (attempt + 1))
+
+    raise HTTPException(
+        503,
+        f"{label} returned empty text ({last_finish or 'unknown'}). Try again in a moment.",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Titles (Gemini-based)
 # ---------------------------------------------------------------------------
 @app.post("/api/titles")
@@ -951,19 +1020,9 @@ def generate_titles(req: TitleRequest, user: dict = Depends(require_user)):
     )
 
     try:
-        resp = client.models.generate_content(
-            model=config.GEMINI_TEXT_MODEL,
-            contents=[{"role": "user", "parts": [{"text": prompt}]}],
+        raw = _gemini_generate_text(
+            client, prompt, max_output_tokens=2048, label="Title generation"
         )
-        raw = (getattr(resp, "text", None) or "").strip()
-        if not raw:
-            try:
-                parts = resp.candidates[0].content.parts
-                raw = "".join(getattr(p, "text", "") or "" for p in parts).strip()
-            except Exception:
-                raw = ""
-        if not raw:
-            raise HTTPException(503, "Title generation returned empty text. Try again.")
         raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         titles = json.loads(raw)
         if not isinstance(titles, list) or len(titles) < 1:
@@ -994,6 +1053,8 @@ def generate_script(req: ScriptRequest, user: dict = Depends(require_user)):
         style_hint = f"\nVideo style: {niche_data.get('description', '')}"
 
     word_target = req.target_minutes * 150
+    # ~1.4 tokens/word + headroom so thinking tokens don't starve the script body.
+    max_tokens = max(4096, min(32768, int(word_target * 2.5) + 2048))
 
     prompt = (
         f"Write a YouTube video script for this title: \"{req.title}\"\n\n"
@@ -1009,23 +1070,12 @@ def generate_script(req: ScriptRequest, user: dict = Depends(require_user)):
     )
 
     try:
-        resp = client.models.generate_content(
-            model=config.GEMINI_TEXT_MODEL,
-            contents=[{"role": "user", "parts": [{"text": prompt}]}],
+        script = _gemini_generate_text(
+            client,
+            prompt,
+            max_output_tokens=max_tokens,
+            label="Script generation",
         )
-        script = (getattr(resp, "text", None) or "").strip()
-        if not script:
-            # Some Gemini responses leave .text None — pull from candidates
-            try:
-                parts = resp.candidates[0].content.parts
-                script = "".join(getattr(p, "text", "") or "" for p in parts).strip()
-            except Exception:
-                script = ""
-        if not script:
-            raise HTTPException(
-                503,
-                "Script generation returned empty text. Try again in a moment.",
-            )
         return {"script": script, "word_count": len(script.split())}
     except HTTPException:
         raise
