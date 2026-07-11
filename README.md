@@ -59,9 +59,13 @@ Get API keys:
 
 Renders are **FIFO-queued** with a hard concurrency cap so one busy cook cannot freeze the whole site.
 
+**Critical:** long Atlas voiceovers / Gemini / thumbnails run as **sync FastAPI routes** (threadpool), never on the asyncio event loop — otherwise the homepage freezes for 60–120s.
+
 | Env var | Default | Meaning |
 |---------|---------|---------|
 | `MAX_CONCURRENT_COOKS` | `1` | Max simultaneous cooks on this process (web or each worker) |
+| `MAX_CONCURRENT_VOICEOVERS` | `2` | Cap parallel Atlas TTS jobs on this process |
+| `WEB_THREADPOOL_SIZE` | `32` | Threadpool for sync routes (VO / thumb / Gemini) |
 | `COOK_ON_WEB` | `1` | `1` = cooks run on the API process; `0` = enqueue only (workers claim) |
 | `GROQ_API_KEY` | — | **Required in production** for Whisper (local whisper disabled) |
 | `ILLUSTRATION_WORKERS_LITE` | `6` | Parallel image gens for trial/lite cooks |
@@ -71,15 +75,19 @@ Renders are **FIFO-queued** with a hard concurrency cap so one busy cook cannot 
 
 ### Single dyno (default)
 
-Leave `COOK_ON_WEB=1` and `MAX_CONCURRENT_COOKS=1` on DigitalOcean. The API process runs the in-process FIFO queue.
+Leave `COOK_ON_WEB=1` and `MAX_CONCURRENT_COOKS=1` on DigitalOcean. The API process runs the in-process FIFO queue. Voiceovers no longer block the event loop, but heavy cooks still compete for CPU — prefer workers in production.
 
-### Optimum: web + workers
+### Optimum: web + workers (App Platform)
 
-1. Set `COOK_ON_WEB=0` on the web/API service (same `DATABASE_URL`, Spaces, API keys).
-2. Run one or more workers: `python -m webapp.worker` (or `docker compose up --scale worker=2`).
-3. Workers claim jobs with Postgres `FOR UPDATE SKIP LOCKED` (SQLite uses an immediate transaction).
-4. Scale workers with queue depth; keep `MAX_CONCURRENT_COOKS=1` per worker box unless the machine is large.
-5. Workers must see the same `output/` uploads (shared volume) **or** run on the same host as the API. Finished videos still go to Spaces when configured.
+1. Confirm Spaces env vars (`SPACES_KEY/SECRET/BUCKET/ENDPOINT`) — voiceovers/thumbnails are staged there so workers can fetch them.
+2. Set `COOK_ON_WEB=0` on the **Web** component.
+3. Add a **Worker** component (same Docker image / env), run command:
+   ```bash
+   python -m webapp.worker
+   ```
+4. Workers claim jobs with Postgres `FOR UPDATE SKIP LOCKED`.
+5. Scale workers with queue depth; keep `MAX_CONCURRENT_COOKS=1` per worker instance.
+6. Health check path: `GET /api/health`
 
 Local split:
 

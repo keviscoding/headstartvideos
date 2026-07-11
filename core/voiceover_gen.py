@@ -7,10 +7,14 @@ No Gemini TTS fallback — if Atlas fails, we surface a clear error.
 from __future__ import annotations
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
 
-from config import ATLASCLOUD_KEY
+from config import ATLASCLOUD_KEY, MAX_CONCURRENT_VOICEOVERS
+
+# Limit parallel full-script TTS jobs on this process (protects the web dyno).
+_vo_slots = threading.Semaphore(max(1, int(MAX_CONCURRENT_VOICEOVERS)))
 
 # Display names for Gradio / legacy callers
 VOICES = {
@@ -240,6 +244,30 @@ def generate_voiceover(
     if not ATLASCLOUD_KEY:
         raise RuntimeError("ATLASCLOUD_KEY not configured. Voiceover requires Atlas Cloud.")
 
+    acquired = _vo_slots.acquire(timeout=180)
+    if not acquired:
+        raise RuntimeError(
+            "Too many voiceovers running right now. Wait a moment and try again."
+        )
+    try:
+        return _generate_voiceover_locked(
+            script=script,
+            voice=voice,
+            style_preset=style_preset,
+            custom_notes=custom_notes,
+            output_dir=output_dir,
+        )
+    finally:
+        _vo_slots.release()
+
+
+def _generate_voiceover_locked(
+    script: str,
+    voice: str = "leo",
+    style_preset: str = "Narrator",
+    custom_notes: str = "",
+    output_dir: str = "",
+) -> str:
     voice_name = voice.split(" -- ")[0].strip() if " -- " in voice else voice
     voice_id = _ATLAS_VOICE_MAP.get(voice_name, _ATLAS_VOICE_MAP.get(voice_name.lower(), "leo"))
 

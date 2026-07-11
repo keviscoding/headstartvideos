@@ -95,6 +95,68 @@ def store_file(local_path: str, key: str, content_type: str | None = None) -> st
     return f"/api/files/{rel}"
 
 
+def fetch_to_local(path_or_url: str, dest_dir: str | Path | None = None) -> str:
+    """
+    Resolve a local path or remote HTTPS URL to a local filesystem path.
+    Workers use this for Spaces-hosted voiceovers/thumbnails.
+    """
+    raw = (path_or_url or "").strip()
+    if not raw:
+        raise ValueError("Empty media path")
+
+    # Already local and exists
+    if not raw.startswith("http://") and not raw.startswith("https://"):
+        # Strip /api/files/ prefix if present
+        local = raw
+        if local.startswith("/api/files/"):
+            local = str(ROOT / local[len("/api/files/"):])
+        if os.path.isfile(local):
+            return local
+        raise FileNotFoundError(f"Local media not found: {raw}")
+
+    dest_root = Path(dest_dir) if dest_dir else (OUTPUT_DIR / "remote_cache")
+    dest_root.mkdir(parents=True, exist_ok=True)
+    # Stable-ish name from URL path
+    from urllib.parse import urlparse
+    import hashlib
+    import httpx
+
+    parsed = urlparse(raw)
+    ext = Path(parsed.path).suffix or ".bin"
+    name = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16] + ext
+    dest = dest_root / name
+    if dest.is_file() and dest.stat().st_size > 0:
+        return str(dest)
+
+    with httpx.stream("GET", raw, timeout=120, follow_redirects=True) as resp:
+        resp.raise_for_status()
+        tmp = dest.with_suffix(dest.suffix + ".part")
+        with open(tmp, "wb") as f:
+            for chunk in resp.iter_bytes():
+                f.write(chunk)
+        tmp.replace(dest)
+    print(f"[storage] fetched remote media → {dest}")
+    return str(dest)
+
+
+def stage_input(local_path: str, key: str, content_type: str | None = None) -> str:
+    """
+    Prefer Spaces URL for cook inputs (worker-safe). Falls back to local path
+    when Spaces is not configured.
+    """
+    if not local_path or not os.path.isfile(local_path):
+        return local_path
+    if not _SPACES_ENABLED:
+        return local_path
+    try:
+        url = store_file(local_path, key, content_type=content_type)
+        print(f"[storage] staged input {key} → {url}")
+        return url
+    except Exception as e:
+        print(f"[storage] stage_input failed, keeping local path: {e}")
+        return local_path
+
+
 def delete_key(key: str) -> None:
     """Best-effort delete of a stored object (remote) — no-op locally."""
     if not _SPACES_ENABLED:

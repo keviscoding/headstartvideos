@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Cookie, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
@@ -134,6 +134,21 @@ _jobs: dict[str, dict[str, Any]] = {}
 
 @app.on_event("startup")
 async def _startup_tasks():
+    # Sync routes (voiceover/thumbnail/Gemini) run in this pool — keep it large
+    # so a few 90s Atlas jobs don't starve the rest of the site.
+    try:
+        import concurrent.futures
+        loop = asyncio.get_running_loop()
+        loop.set_default_executor(
+            concurrent.futures.ThreadPoolExecutor(
+                max_workers=config.WEB_THREADPOOL_SIZE,
+                thread_name_prefix="web-sync",
+            )
+        )
+        print(f"[web] ThreadPoolExecutor max_workers={config.WEB_THREADPOOL_SIZE}")
+    except Exception as e:
+        print(f"[web] Could not enlarge threadpool: {e}")
+
     try:
         removed = cleanup_expired()
         print(f"[db] Cleaned {removed} expired sessions/codes on startup")
@@ -871,8 +886,13 @@ async def terms_page():
 # ---------------------------------------------------------------------------
 @app.get("/api/health")
 async def health():
-    """Public health check. Reports which DB backend is active (no secrets)."""
-    return {"status": "ok", "db": backend_name()}
+    """Liveness probe — no DB, no secrets. Safe for DigitalOcean health checks."""
+    return {"status": "ok"}
+
+
+@app.get("/robots.txt")
+async def robots_txt():
+    return PlainTextResponse("User-agent: *\nAllow: /\nDisallow: /api/\n")
 
 
 @app.get("/api/config")
@@ -912,7 +932,7 @@ async def get_all_voices():
 # Titles (Gemini-based)
 # ---------------------------------------------------------------------------
 @app.post("/api/titles")
-async def generate_titles(req: TitleRequest, user: dict = Depends(require_user)):
+def generate_titles(req: TitleRequest, user: dict = Depends(require_user)):
     from google import genai
 
     if not config.GEMINI_KEY:
@@ -959,7 +979,7 @@ async def generate_titles(req: TitleRequest, user: dict = Depends(require_user))
 # Script (Gemini-based)
 # ---------------------------------------------------------------------------
 @app.post("/api/script")
-async def generate_script(req: ScriptRequest, user: dict = Depends(require_user)):
+def generate_script(req: ScriptRequest, user: dict = Depends(require_user)):
     from google import genai
 
     _enforce_length_cap(user, req.target_minutes, label="Script")
@@ -1030,15 +1050,32 @@ def _provider_http_status(exc: Exception) -> int:
     return 500
 
 
+def _stage_user_media(local_path: str, user_id: int, kind: str, content_type: str) -> tuple[str, str]:
+    """
+    Return (path_for_cook, url_for_browser).
+    When Spaces is configured, path_for_cook is a public HTTPS URL so workers
+    can fetch it; otherwise both refer to local /api/files/... .
+    """
+    ts = int(time.time())
+    ext = Path(local_path).suffix or ".bin"
+    key = f"inputs/{user_id}/{ts}_{kind}{ext}"
+    staged = storage.stage_input(local_path, key, content_type=content_type)
+    if staged.startswith("http://") or staged.startswith("https://"):
+        return staged, staged
+    rel = os.path.relpath(local_path, str(ROOT))
+    url = f"/api/files/{rel}"
+    return local_path, url
+
+
 @app.post("/api/voiceover")
-async def generate_voiceover(req: VoiceoverRequest, user: dict = Depends(require_user)):
+def generate_voiceover(req: VoiceoverRequest, user: dict = Depends(require_user)):
     from core.voiceover_gen import generate_voiceover as gen_vo
 
     out_dir = str(OUTPUT_DIR / "voiceovers" / str(int(time.time())))
     try:
         wav_path = gen_vo(script=req.script, voice=req.voice, style_preset="Narrator", output_dir=out_dir)
-        rel = os.path.relpath(wav_path, str(ROOT))
-        return {"path": wav_path, "url": f"/api/files/{rel}"}
+        path, url = _stage_user_media(wav_path, user["id"], "voiceover", "audio/wav")
+        return {"path": path, "url": url}
     except Exception as e:
         raise HTTPException(_provider_http_status(e), f"Voiceover generation failed: {e}")
 
@@ -1053,32 +1090,35 @@ async def upload_voiceover(file: UploadFile = File(...), user: dict = Depends(re
     if ext not in allowed:
         raise HTTPException(400, f"Unsupported format '{ext}'. Use WAV, MP3, or M4A.")
 
-    out_dir = OUTPUT_DIR / "voiceovers" / str(int(time.time()))
-    out_dir.mkdir(parents=True, exist_ok=True)
+    content = await file.read()
 
-    raw_path = out_dir / f"upload_raw{ext}"
-    with open(raw_path, "wb") as f:
-        content = await file.read()
-        f.write(content)
-
-    wav_path = out_dir / "voiceover.wav"
-    if ext == ".wav":
-        shutil.copy(str(raw_path), str(wav_path))
-    else:
-        try:
+    def _convert() -> str:
+        out_dir = OUTPUT_DIR / "voiceovers" / str(int(time.time()))
+        out_dir.mkdir(parents=True, exist_ok=True)
+        raw_path = out_dir / f"upload_raw{ext}"
+        with open(raw_path, "wb") as f:
+            f.write(content)
+        wav_path = out_dir / "voiceover.wav"
+        if ext == ".wav":
+            shutil.copy(str(raw_path), str(wav_path))
+        else:
             subprocess.run(
                 ["ffmpeg", "-y", "-i", str(raw_path), "-ar", "24000", "-ac", "1", str(wav_path)],
                 capture_output=True, check=True, timeout=60,
             )
-        except Exception as e:
-            raise HTTPException(500, f"Audio conversion failed: {e}")
+        return str(wav_path)
 
-    rel = os.path.relpath(str(wav_path), str(ROOT))
-    return {"path": str(wav_path), "url": f"/api/files/{rel}"}
+    try:
+        wav_path = await asyncio.to_thread(_convert)
+    except Exception as e:
+        raise HTTPException(500, f"Audio conversion failed: {e}")
+
+    path, url = _stage_user_media(wav_path, user["id"], "voiceover", "audio/wav")
+    return {"path": path, "url": url}
 
 
 @app.post("/api/voiceover/preview")
-async def voice_preview(req: VoicePreviewRequest, user: dict = Depends(require_user)):
+def voice_preview(req: VoicePreviewRequest, user: dict = Depends(require_user)):
     """Return a quick preview — prefer Atlas official sample URLs when available."""
     for v in CURATED_VOICES:
         if v["id"] == req.voice and v.get("preview_url"):
@@ -1106,7 +1146,7 @@ async def voice_preview(req: VoicePreviewRequest, user: dict = Depends(require_u
 
 
 @app.post("/api/voiceover/studio")
-async def voiceover_studio(req: VoiceoverStudioRequest, user: dict = Depends(require_user)):
+def voiceover_studio(req: VoiceoverStudioRequest, user: dict = Depends(require_user)):
     from core.voiceover_gen import generate_voiceover as gen_vo
 
     if not (req.script or "").strip():
@@ -1121,8 +1161,8 @@ async def voiceover_studio(req: VoiceoverStudioRequest, user: dict = Depends(req
             custom_notes=req.custom_notes,
             output_dir=out_dir,
         )
-        rel = os.path.relpath(wav_path, str(ROOT))
-        return {"path": wav_path, "url": f"/api/files/{rel}"}
+        path, url = _stage_user_media(wav_path, user["id"], "voiceover", "audio/wav")
+        return {"path": path, "url": url}
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
@@ -1133,7 +1173,7 @@ async def voiceover_studio(req: VoiceoverStudioRequest, user: dict = Depends(req
 # Thumbnails
 # ---------------------------------------------------------------------------
 @app.post("/api/thumbnail")
-async def generate_thumbnail(req: ThumbnailRequest, user: dict = Depends(require_user)):
+def generate_thumbnail(req: ThumbnailRequest, user: dict = Depends(require_user)):
     from core.thumbnail_gen import generate_thumbnail_no_refs
 
     out_dir = str(OUTPUT_DIR / "thumbnails" / str(int(time.time())))
@@ -1146,8 +1186,13 @@ async def generate_thumbnail(req: ThumbnailRequest, user: dict = Depends(require
         )
         if not paths:
             raise ValueError("No thumbnails generated — try again in a moment")
-        urls = [f"/api/files/{os.path.relpath(p, str(ROOT))}" for p in paths[:req.count]]
-        return {"thumbnails": urls, "paths": paths[:req.count]}
+        staged_paths = []
+        urls = []
+        for i, p in enumerate(paths[:req.count]):
+            sp, su = _stage_user_media(p, user["id"], f"thumb_{i}", "image/png")
+            staged_paths.append(sp)
+            urls.append(su)
+        return {"thumbnails": urls, "paths": staged_paths}
     except Exception as e:
         raise HTTPException(_provider_http_status(e), f"Thumbnail generation failed: {e}")
 
@@ -1171,18 +1216,27 @@ async def generate_thumbnail_with_refs(
         ref_paths.append(str(dest))
 
     out_dir = str(OUTPUT_DIR / "thumbnails" / str(int(time.time())))
-    try:
-        paths = generate_thumbnails(
+
+    def _run():
+        return generate_thumbnails(
             title=title,
             reference_image_paths=ref_paths,
             style_prompt=style,
             num_images=count,
             output_dir=out_dir,
         )
+
+    try:
+        paths = await asyncio.to_thread(_run)
         if not paths:
             raise ValueError("No thumbnails generated — try again in a moment")
-        urls = [f"/api/files/{os.path.relpath(p, str(ROOT))}" for p in paths]
-        return {"thumbnails": urls, "paths": paths}
+        staged_paths = []
+        urls = []
+        for i, p in enumerate(paths):
+            sp, su = _stage_user_media(p, user["id"], f"thumbref_{i}", "image/png")
+            staged_paths.append(sp)
+            urls.append(su)
+        return {"thumbnails": urls, "paths": staged_paths}
     except Exception as e:
         raise HTTPException(_provider_http_status(e), f"Thumbnail generation failed: {e}")
 
@@ -1191,8 +1245,11 @@ async def generate_thumbnail_with_refs(
 # Build (recipe-aware + SSE progress)
 # ---------------------------------------------------------------------------
 def _safe_user_path(path_str: str, label: str) -> None:
-    """Validate that a user-supplied path stays inside OUTPUT_DIR."""
+    """Validate that a user-supplied path is local under OUTPUT_DIR or a remote HTTPS URL."""
     if not path_str:
+        return
+    if path_str.startswith("https://") or path_str.startswith("http://"):
+        # Spaces / CDN inputs for worker cooks
         return
     resolved = Path(path_str).resolve()
     if not resolved.is_relative_to(OUTPUT_DIR.resolve()):
@@ -1290,6 +1347,15 @@ async def start_build(req: BuildRequest, request: Request):
             )
     else:
         _safe_user_path(req.voiceover_path, "voiceover")
+        if not COOK_ON_WEB and req.voiceover_path and not (
+            req.voiceover_path.startswith("http://") or req.voiceover_path.startswith("https://")
+        ):
+            if not storage.is_remote():
+                raise HTTPException(
+                    503,
+                    "Worker mode requires Spaces for voiceovers. Configure SPACES_* env vars, "
+                    "or set COOK_ON_WEB=1 until Spaces is ready.",
+                )
 
     _safe_user_path(req.thumbnail_path, "thumbnail")
 
@@ -1521,7 +1587,7 @@ def _maybe_attribute(kit: dict, user: dict) -> dict:
 
 
 @app.post("/api/upload-kit")
-async def generate_upload_kit(req: UploadKitRequest, user: dict = Depends(require_user)):
+def generate_upload_kit(req: UploadKitRequest, user: dict = Depends(require_user)):
     from google import genai
 
     if not config.GEMINI_KEY:
@@ -1548,7 +1614,7 @@ async def generate_upload_kit(req: UploadKitRequest, user: dict = Depends(requir
 # Channel Data + Analysis (Script Studio)
 # ---------------------------------------------------------------------------
 @app.post("/api/channel/fetch")
-async def fetch_channel(req: ChannelFetchRequest, user: dict = Depends(require_user)):
+def fetch_channel(req: ChannelFetchRequest, user: dict = Depends(require_user)):
     from core.channel_data import fetch_channel_data
 
     if not config.YOUTUBE_API_KEY:
@@ -1569,7 +1635,7 @@ async def fetch_channel(req: ChannelFetchRequest, user: dict = Depends(require_u
 
 
 @app.post("/api/channel/analyze")
-async def analyze_channel(req: ChannelAnalyzeRequest, user: dict = Depends(require_user)):
+def analyze_channel(req: ChannelAnalyzeRequest, user: dict = Depends(require_user)):
     if not config.ANTHROPIC_KEY:
         return {"analysis": "Claude API key not configured. Add it in Settings to enable channel analysis."}
 
@@ -1584,7 +1650,7 @@ async def analyze_channel(req: ChannelAnalyzeRequest, user: dict = Depends(requi
 
 
 @app.post("/api/ideas")
-async def generate_ideas(req: IdeasRequest, user: dict = Depends(require_user)):
+def generate_ideas(req: IdeasRequest, user: dict = Depends(require_user)):
     if not config.ANTHROPIC_KEY:
         raise HTTPException(400, "Claude API key not configured. Add it in Settings.")
 
@@ -1605,7 +1671,7 @@ async def generate_ideas(req: IdeasRequest, user: dict = Depends(require_user)):
 
 
 @app.post("/api/titles/claude")
-async def generate_titles_claude(req: ClaudeTitlesRequest, user: dict = Depends(require_user)):
+def generate_titles_claude(req: ClaudeTitlesRequest, user: dict = Depends(require_user)):
     if not config.ANTHROPIC_KEY:
         raise HTTPException(400, "Claude API key not configured. Add it in Settings.")
 
@@ -1625,7 +1691,7 @@ async def generate_titles_claude(req: ClaudeTitlesRequest, user: dict = Depends(
 
 
 @app.post("/api/script/claude")
-async def generate_script_claude(req: ClaudeScriptRequest, user: dict = Depends(require_user)):
+def generate_script_claude(req: ClaudeScriptRequest, user: dict = Depends(require_user)):
     if not config.ANTHROPIC_KEY:
         raise HTTPException(400, "Claude API key not configured. Add it in Settings.")
 
@@ -1651,7 +1717,7 @@ async def generate_script_claude(req: ClaudeScriptRequest, user: dict = Depends(
 # Niche Screener
 # ---------------------------------------------------------------------------
 @app.post("/api/niche/analyze")
-async def analyze_niche(req: NicheAnalyzeRequest, user: dict = Depends(require_user)):
+def analyze_niche(req: NicheAnalyzeRequest, user: dict = Depends(require_user)):
     try:
         from core.video_analyzer import analyze_video
         profile = analyze_video(req.youtube_url, analyze_minutes=req.minutes)
@@ -1825,7 +1891,7 @@ async def get_my_integrations(user: dict = Depends(require_user)):
 
 
 @app.post("/api/me/integrations/heygen")
-async def save_heygen_key(req: HeyGenKeyRequest, user: dict = Depends(require_user)):
+def save_heygen_key(req: HeyGenKeyRequest, user: dict = Depends(require_user)):
     key = (req.api_key or "").strip()
     if not key:
         raise HTTPException(400, "Paste your HeyGen API key.")
@@ -1848,7 +1914,7 @@ async def delete_heygen_key(user: dict = Depends(require_user)):
 
 
 @app.post("/api/me/integrations/heygen/test")
-async def test_heygen_key(req: HeyGenKeyRequest, user: dict = Depends(require_user)):
+def test_heygen_key(req: HeyGenKeyRequest, user: dict = Depends(require_user)):
     from core.heygen import test_api_key
     key = (req.api_key or "").strip() or (get_user_heygen_key(user["id"]) or "")
     if not key:
@@ -1868,7 +1934,7 @@ def _user_heygen_or_400(user: dict) -> str:
 
 
 @app.get("/api/heygen/avatars")
-async def heygen_avatars(user: dict = Depends(require_user)):
+def heygen_avatars(user: dict = Depends(require_user)):
     from core.heygen import list_avatars
     key = _user_heygen_or_400(user)
     try:
@@ -1879,7 +1945,7 @@ async def heygen_avatars(user: dict = Depends(require_user)):
 
 
 @app.get("/api/heygen/voices")
-async def heygen_voices(user: dict = Depends(require_user)):
+def heygen_voices(user: dict = Depends(require_user)):
     from core.heygen import list_voices
     key = _user_heygen_or_400(user)
     try:

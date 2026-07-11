@@ -35,6 +35,10 @@ COOK_ON_WEB = os.getenv("COOK_ON_WEB", "1").strip().lower() in ("1", "true", "ye
 WORKER_POLL_SECONDS = float(os.getenv("WORKER_POLL_SECONDS", "2"))
 # Reclaim jobs stuck in "running" with a stale heartbeat (seconds).
 WORKER_STALE_SECONDS = int(os.getenv("WORKER_STALE_SECONDS", "900"))
+# Cap parallel Atlas TTS calls on the web dyno (each can take 30–90s).
+MAX_CONCURRENT_VOICEOVERS = max(1, int(os.getenv("MAX_CONCURRENT_VOICEOVERS", "2")))
+# Threadpool size for sync FastAPI routes (voiceover/thumbnail/Gemini).
+WEB_THREADPOOL_SIZE = max(8, int(os.getenv("WEB_THREADPOOL_SIZE", "32")))
 
 RESEND_KEY = os.getenv("RESEND_KEY", "")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")

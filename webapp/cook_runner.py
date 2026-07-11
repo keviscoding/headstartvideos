@@ -105,6 +105,21 @@ def run_cook_job(
     thumbnail_path = req_data.get("thumbnail_path") or ""
     notify_email = req_data.get("notify_email") or ""
 
+    # Resolve Spaces URLs /api/files paths to local files for ffmpeg pipelines
+    from webapp.storage import fetch_to_local
+    cache_dir = ROOT / "output" / "job_inputs" / job_id
+    if voiceover_path:
+        try:
+            voiceover_path = fetch_to_local(voiceover_path, cache_dir)
+        except Exception as e:
+            raise RuntimeError(f"Could not load voiceover for cook: {e}") from e
+    if thumbnail_path:
+        try:
+            thumbnail_path = fetch_to_local(thumbnail_path, cache_dir)
+        except Exception as e:
+            print(f"[cook] thumbnail fetch failed (continuing without): {e}")
+            thumbnail_path = ""
+
     job["status"] = "running"
     started_at = time.time()
     user_id = job.get("user_id")
