@@ -31,6 +31,11 @@ MAX_CONCURRENT_COOKS = int(os.getenv("MAX_CONCURRENT_COOKS", "1"))
 # When false, the web dyno only enqueues jobs — a separate `python -m webapp.worker`
 # process must claim and run them (optimum / multi-worker setup).
 COOK_ON_WEB = os.getenv("COOK_ON_WEB", "1").strip().lower() in ("1", "true", "yes", "on")
+# When true, web spawns cooks on Modal (scale-to-zero). Prefer over always-on DO workers.
+COOK_ON_MODAL = os.getenv("COOK_ON_MODAL", "0").strip().lower() in ("1", "true", "yes", "on")
+MODAL_APP_NAME = (os.getenv("MODAL_APP_NAME", "channelrecipe-cook") or "channelrecipe-cook").strip()
+# Cap parallel Modal cook containers (cost ceiling under burst).
+MODAL_MAX_CONCURRENT = max(1, int(os.getenv("MODAL_MAX_CONCURRENT", "8")))
 # How often workers poll for new jobs (seconds).
 WORKER_POLL_SECONDS = float(os.getenv("WORKER_POLL_SECONDS", "2"))
 # Reclaim jobs stuck in "running" with a stale heartbeat (seconds).

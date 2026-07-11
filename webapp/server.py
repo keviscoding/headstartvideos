@@ -179,7 +179,7 @@ from webapp.database import (
 from webapp import storage
 from webapp import job_queue
 from webapp.cook_runner import run_cook_job, hydrate_job_from_row
-from config import COOK_ON_WEB
+from config import COOK_ON_WEB, COOK_ON_MODAL
 
 
 def _current_user(request: Request) -> dict | None:
@@ -1317,6 +1317,8 @@ def _execute_cook_job(job_id: str) -> None:
 if COOK_ON_WEB:
     job_queue.configure(_jobs, _execute_cook_job)
     print("[build] COOK_ON_WEB=1 — cooks run in this process")
+elif COOK_ON_MODAL:
+    print("[build] COOK_ON_MODAL=1 — cooks spawn on Modal (scale-to-zero)")
 else:
     print("[build] COOK_ON_WEB=0 — enqueue only; start `python -m webapp.worker`")
 
@@ -1405,6 +1407,19 @@ async def start_build(req: BuildRequest, request: Request):
             announce_queued_jobs()
         except Exception:
             pass
+        if COOK_ON_MODAL:
+            try:
+                from webapp.modal_bridge import spawn_cook
+                if spawn_cook(job_id):
+                    _jobs[job_id]["progress"].append({
+                        "time": time.time(),
+                        "message": "Starting cook (elastic worker)...",
+                        "phase": "queued",
+                    })
+                else:
+                    print(f"[build] Modal spawn failed for {job_id} — left in queue for DO worker")
+            except Exception as e:
+                print(f"[build] Modal bridge error: {e}")
         qinfo = cook_queue_stats(job_id)
         # Seed first queue message into memory for immediate SSE
         wait_m = int(qinfo.get("est_wait_minutes") or 0)
@@ -1414,9 +1429,10 @@ async def start_build(req: BuildRequest, request: Request):
             if (pos <= 1 and not qinfo.get("running_count"))
             else f"Queued — position {pos} (~{max(wait_m, 1)} min wait)"
         )
-        _jobs[job_id]["progress"].append({
-            "time": time.time(), "message": msg, "phase": "queued",
-        })
+        if not any(p.get("message") == msg for p in _jobs[job_id].get("progress") or []):
+            _jobs[job_id]["progress"].append({
+                "time": time.time(), "message": msg, "phase": "queued",
+            })
         try:
             update_cook_job(
                 job_id,
@@ -1436,6 +1452,7 @@ async def start_build(req: BuildRequest, request: Request):
         "lite_mode": lite_mode,
         "plan": user.get("plan") or "",
         "cook_on_web": COOK_ON_WEB,
+        "cook_on_modal": COOK_ON_MODAL,
     })
     return {
         "job_id": job_id,
@@ -1445,6 +1462,7 @@ async def start_build(req: BuildRequest, request: Request):
         "est_wait_minutes": qinfo.get("est_wait_minutes", 0),
         "max_concurrent": job_queue.MAX_CONCURRENT_COOKS,
         "cook_on_web": COOK_ON_WEB,
+        "cook_on_modal": COOK_ON_MODAL,
     }
 
 

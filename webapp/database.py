@@ -752,7 +752,7 @@ def _row_count(row) -> int:
 
 
 def cook_queue_stats(job_id: str | None = None) -> dict:
-    """Priority-aware position among queued jobs + running count (DB-backed)."""
+    """FIFO position among queued jobs + running count (DB-backed)."""
     est_min = median_cook_minutes()
     with _conn() as conn:
         cur = conn.cursor()
@@ -764,26 +764,17 @@ def cook_queue_stats(job_id: str | None = None) -> dict:
         status = "unknown"
         if job_id:
             cur.execute(
-                _q("SELECT status, created_at, lite_mode FROM cook_jobs WHERE job_id = ?"),
+                _q("SELECT status, created_at FROM cook_jobs WHERE job_id = ?"),
                 (job_id,),
             )
             row = cur.fetchone()
             if row:
                 status = row["status"]
                 if status == "queued":
-                    # Same order as claim_next_cook_job: lite/trial first, then FIFO
                     cur.execute(
                         _q("""SELECT COUNT(*) AS c FROM cook_jobs
-                              WHERE status = 'queued'
-                                AND (
-                                  COALESCE(lite_mode, 0) > ?
-                                  OR (COALESCE(lite_mode, 0) = ? AND created_at <= ?)
-                                )"""),
-                        (
-                            int(row["lite_mode"] or 0),
-                            int(row["lite_mode"] or 0),
-                            row["created_at"],
-                        ),
+                              WHERE status = 'queued' AND created_at <= ?"""),
+                        (row["created_at"],),
                     )
                     pos = _row_count(cur.fetchone()) or 1
                 elif status == "running":
@@ -813,9 +804,9 @@ def announce_queued_jobs() -> None:
         cur.execute(_q("SELECT COUNT(*) AS c FROM cook_jobs WHERE status = 'running'"))
         running = _row_count(cur.fetchone())
         cur.execute(
-            _q("""SELECT job_id, progress_json, created_at, lite_mode FROM cook_jobs
+            _q("""SELECT job_id, progress_json, created_at FROM cook_jobs
                   WHERE status = 'queued'
-                  ORDER BY COALESCE(lite_mode, 0) DESC, created_at ASC""")
+                  ORDER BY created_at ASC""")
         )
         rows = [dict(r) for r in cur.fetchall()]
     total = len(rows)
@@ -842,11 +833,45 @@ def announce_queued_jobs() -> None:
         progress.append({"time": time.time(), "message": msg, "phase": "queued"})
         update_cook_job(row["job_id"], progress_json=json.dumps(progress[-40:]), status="queued")
 
+def claim_cook_job(job_id: str, worker_id: str) -> dict | None:
+    """Claim a specific queued job (Modal spawn path)."""
+    now = time.time()
+    with _conn() as conn:
+        cur = conn.cursor()
+        if IS_PG:
+            cur.execute(
+                """
+                UPDATE cook_jobs SET
+                    status = 'running',
+                    worker_id = %s,
+                    started_at = %s,
+                    heartbeat_at = %s
+                WHERE job_id = %s AND status = 'queued'
+                RETURNING *
+                """,
+                (worker_id, now, now, job_id),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+        cur.execute("BEGIN IMMEDIATE")
+        cur.execute(
+            """UPDATE cook_jobs SET status = 'running', worker_id = ?,
+                   started_at = ?, heartbeat_at = ?
+               WHERE job_id = ? AND status = 'queued'""",
+            (worker_id, now, now, job_id),
+        )
+        if cur.rowcount != 1:
+            conn.commit()
+            return None
+        cur.execute("SELECT * FROM cook_jobs WHERE job_id = ?", (job_id,))
+        claimed = cur.fetchone()
+        conn.commit()
+        return dict(claimed) if claimed else None
+
 
 def claim_next_cook_job(worker_id: str) -> dict | None:
     """
-    Atomically claim the next queued job for a worker.
-    Trial/lite jobs jump ahead of full paid cooks so first-video UX stays fast.
+    Atomically claim the oldest queued job for a worker (strict FIFO).
     Postgres: FOR UPDATE SKIP LOCKED. SQLite: BEGIN IMMEDIATE + conditional UPDATE.
     """
     now = time.time()
@@ -863,7 +888,7 @@ def claim_next_cook_job(worker_id: str) -> dict | None:
                     WHERE job_id = (
                         SELECT job_id FROM cook_jobs
                         WHERE status = 'queued'
-                        ORDER BY COALESCE(lite_mode, 0) DESC, created_at ASC
+                        ORDER BY created_at ASC
                         FOR UPDATE SKIP LOCKED
                         LIMIT 1
                     )
@@ -881,7 +906,7 @@ def claim_next_cook_job(worker_id: str) -> dict | None:
         cur.execute(
             """SELECT job_id FROM cook_jobs
                WHERE status = 'queued'
-               ORDER BY COALESCE(lite_mode, 0) DESC, created_at ASC LIMIT 1"""
+               ORDER BY created_at ASC LIMIT 1"""
         )
         row = cur.fetchone()
         if not row:
