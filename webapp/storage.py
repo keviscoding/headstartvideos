@@ -22,15 +22,13 @@ import config
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = ROOT / "output"
 
-_SPACES_ENABLED = bool(
-    config.SPACES_KEY and config.SPACES_SECRET and config.SPACES_BUCKET and config.SPACES_ENDPOINT
-)
-
 _client = None
 
 
 def is_remote() -> bool:
-    return _SPACES_ENABLED
+    """True when Spaces credentials are present (re-check env each call)."""
+    key, secret, bucket, _region, endpoint = _spaces_creds()
+    return bool(key and secret and bucket and endpoint)
 
 
 def _spaces_creds() -> tuple[str, str, str, str | None, str]:
@@ -83,7 +81,7 @@ def store_file(local_path: str, key: str, content_type: str | None = None) -> st
     if not content_type:
         content_type = mimetypes.guess_type(local_path)[0] or "application/octet-stream"
 
-    if _SPACES_ENABLED:
+    if is_remote():
         from botocore.config import Config as BotoConfig
         import boto3
 
@@ -193,7 +191,7 @@ def stage_input(local_path: str, key: str, content_type: str | None = None) -> s
     """
     if not local_path or not os.path.isfile(local_path):
         return local_path
-    if not _SPACES_ENABLED:
+    if not is_remote():
         return local_path
     try:
         url = store_file(local_path, key, content_type=content_type)
@@ -206,9 +204,9 @@ def stage_input(local_path: str, key: str, content_type: str | None = None) -> s
 
 def delete_key(key: str) -> None:
     """Best-effort delete of a stored object (remote) — no-op locally."""
-    if not _SPACES_ENABLED:
+    if not is_remote():
         return
     try:
-        _get_client().delete_object(Bucket=config.SPACES_BUCKET, Key=key)
+        _get_client().delete_object(Bucket=_spaces_creds()[2], Key=key)
     except Exception as e:
         print(f"[storage] delete failed for {key}: {e}")

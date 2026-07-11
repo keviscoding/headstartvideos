@@ -224,14 +224,24 @@ def run_cook_job(
 
         on_progress("Uploading your video...")
         ts = int(time.time())
+        # Fly Machines / DO workers: disk dies with the container. Never accept
+        # a local /api/files URL there — it shows "VIDEO READY" then 404s.
+        import config as _cfg
+        ephemeral = (
+            (not getattr(_cfg, "COOK_ON_WEB", True))
+            or bool(os.getenv("FLY_MACHINE_ID") or os.getenv("FLY_APP_NAME"))
+        )
+        if ephemeral and not storage.is_remote():
+            raise RuntimeError(
+                "Spaces is not configured on this cook worker — "
+                "finished videos cannot be saved. Set SPACES_* secrets."
+            )
         try:
             output_url = storage.store_file(
                 result["output_path"], f"videos/{user_id}/{ts}_{job_id}.mp4", "video/mp4"
             )
         except Exception as up_err:
-            # Remote cooks (Fly/worker) have ephemeral disks. A local /api/files
-            # fallback looks "complete" in History but Download 404s forever.
-            if storage.is_remote():
+            if ephemeral or storage.is_remote():
                 raise RuntimeError(
                     f"Video upload to Spaces failed (file would be lost): {up_err}"
                 ) from up_err
@@ -239,10 +249,12 @@ def run_cook_job(
             on_progress("Upload slow — saving local copy...")
             output_url = f"/api/files/{os.path.relpath(result['output_path'], str(ROOT))}"
 
-        if storage.is_remote() and output_url.startswith("/api/files/"):
+        if ephemeral and not (
+            output_url.startswith("http://") or output_url.startswith("https://")
+        ):
             raise RuntimeError(
-                "Cook produced a local-only video URL while Spaces is configured — "
-                "refusing to mark complete (download would 404)."
+                f"Remote cook refused local-only video URL ({output_url!r}) — "
+                "download would 404 after the machine exits."
             )
 
         thumb_url = ""
