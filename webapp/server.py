@@ -935,12 +935,22 @@ async def generate_titles(req: TitleRequest, user: dict = Depends(require_user))
             model=config.GEMINI_TEXT_MODEL,
             contents=[{"role": "user", "parts": [{"text": prompt}]}],
         )
-        raw = resp.text.strip()
+        raw = (getattr(resp, "text", None) or "").strip()
+        if not raw:
+            try:
+                parts = resp.candidates[0].content.parts
+                raw = "".join(getattr(p, "text", "") or "" for p in parts).strip()
+            except Exception:
+                raw = ""
+        if not raw:
+            raise HTTPException(503, "Title generation returned empty text. Try again.")
         raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         titles = json.loads(raw)
         if not isinstance(titles, list) or len(titles) < 1:
             raise ValueError("Expected list of titles")
         return {"titles": titles[:3]}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"Title generation failed: {e}")
 
