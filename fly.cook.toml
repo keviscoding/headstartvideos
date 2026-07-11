@@ -1,0 +1,20 @@
+# Fly app for ChannelRecipe cooks (ephemeral Machines started by the web API).
+# Deploy: fly deploy -c fly.cook.toml
+# Secrets: fly secrets set -a channelrecipe-cook DATABASE_URL=... SPACES_*=... etc.
+
+app = 'channelrecipe-cook'
+primary_region = 'sfo'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[env]
+  COOK_ON_WEB = '0'
+  ALLOW_LOCAL_WHISPER = '0'
+  MAX_CONCURRENT_COOKS = '1'
+
+# No public HTTP service — Machines are started via API for each cook.
+[[vm]]
+  size = 'shared-cpu-2x'
+  memory = '4gb'
+  cpus = 2

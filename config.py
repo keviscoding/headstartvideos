@@ -36,6 +36,14 @@ COOK_ON_MODAL = os.getenv("COOK_ON_MODAL", "0").strip().lower() in ("1", "true",
 MODAL_APP_NAME = (os.getenv("MODAL_APP_NAME", "channelrecipe-cook") or "channelrecipe-cook").strip()
 # Cap parallel Modal cook containers (cost ceiling under burst).
 MODAL_MAX_CONCURRENT = max(1, int(os.getenv("MODAL_MAX_CONCURRENT", "8")))
+# Fly Machines one-shot cooks (alternative when Modal billing rejects cards).
+COOK_ON_FLY = os.getenv("COOK_ON_FLY", "0").strip().lower() in ("1", "true", "yes", "on")
+FLY_API_TOKEN = (os.getenv("FLY_API_TOKEN", "") or "").strip()
+FLY_COOK_APP = (os.getenv("FLY_COOK_APP", "channelrecipe-cook") or "channelrecipe-cook").strip()
+FLY_COOK_IMAGE = (os.getenv("FLY_COOK_IMAGE", "") or "").strip()
+FLY_COOK_REGION = (os.getenv("FLY_COOK_REGION", "sfo") or "sfo").strip()
+FLY_COOK_CPUS = max(1, int(os.getenv("FLY_COOK_CPUS", "2")))
+FLY_COOK_MEMORY_MB = max(1024, int(os.getenv("FLY_COOK_MEMORY_MB", "4096")))
 # How often workers poll for new jobs (seconds).
 WORKER_POLL_SECONDS = float(os.getenv("WORKER_POLL_SECONDS", "2"))
 # Reclaim jobs stuck in "running" with a stale heartbeat (seconds).

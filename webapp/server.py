@@ -179,7 +179,7 @@ from webapp.database import (
 from webapp import storage
 from webapp import job_queue
 from webapp.cook_runner import run_cook_job, hydrate_job_from_row
-from config import COOK_ON_WEB, COOK_ON_MODAL
+from config import COOK_ON_WEB, COOK_ON_MODAL, COOK_ON_FLY
 
 
 def _current_user(request: Request) -> dict | None:
@@ -1317,6 +1317,8 @@ def _execute_cook_job(job_id: str) -> None:
 if COOK_ON_WEB:
     job_queue.configure(_jobs, _execute_cook_job)
     print("[build] COOK_ON_WEB=1 — cooks run in this process")
+elif COOK_ON_FLY:
+    print("[build] COOK_ON_FLY=1 — cooks spawn on Fly Machines (ephemeral)")
 elif COOK_ON_MODAL:
     print("[build] COOK_ON_MODAL=1 — cooks spawn on Modal (scale-to-zero)")
 else:
@@ -1407,7 +1409,20 @@ async def start_build(req: BuildRequest, request: Request):
             announce_queued_jobs()
         except Exception:
             pass
-        if COOK_ON_MODAL:
+        if COOK_ON_FLY:
+            try:
+                from webapp.fly_bridge import spawn_cook as fly_spawn
+                if fly_spawn(job_id):
+                    _jobs[job_id]["progress"].append({
+                        "time": time.time(),
+                        "message": "Starting cook (Fly elastic worker)...",
+                        "phase": "queued",
+                    })
+                else:
+                    print(f"[build] Fly spawn failed for {job_id} — left in queue for DO worker")
+            except Exception as e:
+                print(f"[build] Fly bridge error: {e}")
+        elif COOK_ON_MODAL:
             try:
                 from webapp.modal_bridge import spawn_cook
                 if spawn_cook(job_id):
@@ -1453,6 +1468,7 @@ async def start_build(req: BuildRequest, request: Request):
         "plan": user.get("plan") or "",
         "cook_on_web": COOK_ON_WEB,
         "cook_on_modal": COOK_ON_MODAL,
+        "cook_on_fly": COOK_ON_FLY,
     })
     return {
         "job_id": job_id,
@@ -1463,6 +1479,7 @@ async def start_build(req: BuildRequest, request: Request):
         "max_concurrent": job_queue.MAX_CONCURRENT_COOKS,
         "cook_on_web": COOK_ON_WEB,
         "cook_on_modal": COOK_ON_MODAL,
+        "cook_on_fly": COOK_ON_FLY,
     }
 
 
