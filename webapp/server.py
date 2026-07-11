@@ -1093,6 +1093,8 @@ def _provider_http_status(exc: Exception) -> int:
         return 503
     if "not found" in msg or "no youtube channel" in msg or "could not extract channel" in msg:
         return 400
+    if "playlistnotfound" in msg or "httperror 404" in msg:
+        return 400
     if "script is empty" in msg or "nothing to narrate" in msg:
         return 400
     if "not configured" in msg:
@@ -1720,7 +1722,16 @@ def fetch_channel(req: ChannelFetchRequest, user: dict = Depends(require_user)):
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
-        raise HTTPException(_provider_http_status(e), f"Channel fetch failed: {e}")
+        # YouTube HttpError 404s are bad channel input, not server bugs.
+        status = _provider_http_status(e)
+        detail = str(e)
+        if "playlistNotFound" in detail or "HttpError 404" in detail:
+            status = 400
+            detail = (
+                "That YouTube channel has no accessible uploads playlist. "
+                "Try another channel URL with public videos."
+            )
+        raise HTTPException(status, f"Channel fetch failed: {detail}")
 
 
 @app.post("/api/channel/analyze")

@@ -195,30 +195,77 @@ def _list_videos(playlist_id: str, yt_api_key: str, max_videos: int = 20) -> lis
     Returns list of {video_id, title, published_at}.
     """
     from googleapiclient.discovery import build
+    from googleapiclient.errors import HttpError
     youtube = build("youtube", "v3", developerKey=yt_api_key)
 
     videos = []
     page_token = None
 
+    try:
+        while len(videos) < max_videos:
+            resp = youtube.playlistItems().list(
+                part="snippet,contentDetails",
+                playlistId=playlist_id,
+                maxResults=min(50, max_videos - len(videos)),
+                pageToken=page_token,
+            ).execute()
+
+            for item in resp.get("items", []):
+                videos.append({
+                    "video_id": item["contentDetails"]["videoId"],
+                    "title": item["snippet"]["title"],
+                    "published_at": item["snippet"]["publishedAt"],
+                })
+
+            page_token = resp.get("nextPageToken")
+            if not page_token:
+                break
+    except HttpError as e:
+        reason = ""
+        try:
+            reason = e.error_details[0].get("reason", "") if e.error_details else ""
+        except Exception:
+            reason = ""
+        status = getattr(e.resp, "status", None) if getattr(e, "resp", None) else None
+        if status == 404 or reason == "playlistNotFound" or "playlistNotFound" in str(e):
+            raise ValueError(
+                "This channel's uploads playlist is unavailable (private, empty, "
+                "or removed). Try another channel URL, or a channel with public videos."
+            ) from e
+        raise
+
+    return videos[:max_videos]
+
+
+def _list_videos_via_search(channel_id: str, yt_api_key: str, max_videos: int = 20) -> list[dict]:
+    """Fallback when uploads playlist 404s — search.list by channelId."""
+    from googleapiclient.discovery import build
+    youtube = build("youtube", "v3", developerKey=yt_api_key)
+
+    videos = []
+    page_token = None
     while len(videos) < max_videos:
-        resp = youtube.playlistItems().list(
-            part="snippet,contentDetails",
-            playlistId=playlist_id,
+        resp = youtube.search().list(
+            part="snippet",
+            channelId=channel_id,
+            type="video",
+            order="date",
             maxResults=min(50, max_videos - len(videos)),
             pageToken=page_token,
         ).execute()
-
         for item in resp.get("items", []):
+            vid = (item.get("id") or {}).get("videoId")
+            if not vid:
+                continue
+            sn = item.get("snippet") or {}
             videos.append({
-                "video_id": item["contentDetails"]["videoId"],
-                "title": item["snippet"]["title"],
-                "published_at": item["snippet"]["publishedAt"],
+                "video_id": vid,
+                "title": sn.get("title") or "",
+                "published_at": sn.get("publishedAt") or "",
             })
-
         page_token = resp.get("nextPageToken")
         if not page_token:
             break
-
     return videos[:max_videos]
 
 
@@ -363,7 +410,16 @@ def fetch_channel_data(
     _log(f"Channel: {metadata['channel_name']} ({metadata['video_count']} videos)")
 
     _log(f"Listing latest {max_videos} videos...")
-    videos = _list_videos(playlist_id, yt_api_key, max_videos)
+    try:
+        videos = _list_videos(playlist_id, yt_api_key, max_videos)
+    except ValueError as playlist_err:
+        _log(f"Uploads playlist unavailable ({playlist_err}); falling back to search...")
+        videos = _list_videos_via_search(channel_id, yt_api_key, max_videos)
+        if not videos:
+            raise ValueError(
+                f"No public videos found for “{metadata.get('channel_name') or channel_id}”. "
+                "Pick a channel that has public uploads."
+            ) from playlist_err
     _log(f"Found {len(videos)} videos")
 
     _log("Fetching view counts...")
