@@ -983,8 +983,22 @@ async def generate_script(req: ScriptRequest, user: dict = Depends(require_user)
             model=config.GEMINI_TEXT_MODEL,
             contents=[{"role": "user", "parts": [{"text": prompt}]}],
         )
-        script = resp.text.strip()
+        script = (getattr(resp, "text", None) or "").strip()
+        if not script:
+            # Some Gemini responses leave .text None — pull from candidates
+            try:
+                parts = resp.candidates[0].content.parts
+                script = "".join(getattr(p, "text", "") or "" for p in parts).strip()
+            except Exception:
+                script = ""
+        if not script:
+            raise HTTPException(
+                503,
+                "Script generation returned empty text. Try again in a moment.",
+            )
         return {"script": script, "word_count": len(script.split())}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"Script generation failed: {e}")
 

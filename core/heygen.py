@@ -12,7 +12,8 @@ from pathlib import Path
 from config import HEYGEN_KEY, HEYGEN_API
 
 POLL_INTERVAL = 10
-MAX_WAIT = 600
+MAX_WAIT = 1200  # Multi-scene long scripts can take longer than 10 min
+HEYGEN_MAX_CHARS_PER_SCENE = 4800  # Hard limit is 5000; leave headroom
 
 
 @dataclass
@@ -96,6 +97,51 @@ def test_api_key(api_key: str) -> bool:
         return False
 
 
+def _chunk_script_for_heygen(script_text: str, max_chars: int = HEYGEN_MAX_CHARS_PER_SCENE) -> list[str]:
+    """Split narration into scenes under HeyGen's 5000-char per-scene limit."""
+    text = (script_text or "").strip()
+    if not text:
+        return []
+    if len(text) <= max_chars:
+        return [text]
+
+    # Prefer sentence boundaries; fall back to hard wraps.
+    import re
+    parts = re.split(r'(?<=[.!?])\s+', text)
+    chunks: list[str] = []
+    buf = ""
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        if len(part) > max_chars:
+            if buf:
+                chunks.append(buf.strip())
+                buf = ""
+            for i in range(0, len(part), max_chars):
+                chunks.append(part[i:i + max_chars])
+            continue
+        candidate = f"{buf} {part}".strip() if buf else part
+        if len(candidate) <= max_chars:
+            buf = candidate
+        else:
+            chunks.append(buf.strip())
+            buf = part
+    if buf.strip():
+        chunks.append(buf.strip())
+
+    if len(chunks) > 50:
+        # HeyGen allows max 50 scenes — merge overflow into last allowed scenes
+        head, tail = chunks[:49], chunks[49:]
+        merged = " ".join(tail)
+        # Re-chunk overflow if still huge
+        while merged and len(head) < 50:
+            head.append(merged[:max_chars])
+            merged = merged[max_chars:]
+        chunks = head[:50]
+    return chunks
+
+
 def create_avatar_video(
     script_text: str,
     avatar_id: str,
@@ -108,26 +154,35 @@ def create_avatar_video(
 ) -> AvatarVideo:
     """
     Create an avatar video from a script using HeyGen v2 Studio API.
-    The avatar speaks the full script as a single scene.
+    Long scripts are split into multiple scenes (max 5000 chars each).
     """
-    scene = {
-        "character": {
-            "type": "avatar",
-            "avatar_id": avatar_id,
-            "avatar_style": "normal",
-        },
-        "voice": {
-            "type": "text",
-            "input_text": script_text,
-            "voice_id": voice_id,
-        },
-    }
+    chunks = _chunk_script_for_heygen(script_text)
+    if not chunks:
+        return AvatarVideo(video_id="", status="failed", error="Script is empty")
 
-    if background:
-        scene["background"] = background
+    video_inputs = []
+    for chunk in chunks:
+        scene = {
+            "character": {
+                "type": "avatar",
+                "avatar_id": avatar_id,
+                "avatar_style": "normal",
+            },
+            "voice": {
+                "type": "text",
+                "input_text": chunk,
+                "voice_id": voice_id,
+            },
+        }
+        if background:
+            scene["background"] = background
+        video_inputs.append(scene)
+
+    print(f"[heygen] Creating video with {len(video_inputs)} scene(s), "
+          f"{len(script_text)} chars total")
 
     payload = {
-        "video_inputs": [scene],
+        "video_inputs": video_inputs,
         "dimension": {"width": width, "height": height},
         "caption": caption,
     }
@@ -136,7 +191,7 @@ def create_avatar_video(
         f"{HEYGEN_API}/v2/video/generate",
         headers=_headers(api_key),
         json=payload,
-        timeout=30,
+        timeout=60,
     )
     data = resp.json()
 
