@@ -62,12 +62,19 @@ def concatenate_clips(
     output_path: str,
 ) -> bool:
     """Concatenate video clips using ffmpeg concat demuxer."""
+    valid = [p for p in clip_paths if p and os.path.isfile(p) and os.path.getsize(p) > 500]
+    if not valid:
+        print("[assembler] concat called with no valid clip files")
+        return False
+
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".txt", delete=False
     ) as f:
-        for path in clip_paths:
+        for path in valid:
             abs_path = os.path.abspath(path)
-            f.write(f"file '{abs_path}'\n")
+            # Escape single quotes for concat demuxer
+            safe = abs_path.replace("'", r"'\''")
+            f.write(f"file '{safe}'\n")
         list_path = f.name
 
     # Clips are all produced with identical codec/params, so we can stream-copy
@@ -86,6 +93,10 @@ def concatenate_clips(
     try:
         result = subprocess.run(copy_cmd, capture_output=True, text=True, timeout=120)
         if result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
+            try:
+                os.unlink(list_path)
+            except OSError:
+                pass
             return True
         print(f"[assembler] copy-concat failed, falling back to re-encode: {result.stderr[-300:]}")
     except Exception as e:
@@ -110,10 +121,16 @@ def concatenate_clips(
         result = subprocess.run(reencode_cmd, capture_output=True, text=True, timeout=600)
         if result.returncode != 0:
             print(f"[assembler] concat failed: {result.stderr[-500:]}")
-        return result.returncode == 0
+        ok = result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 1000
+        return ok
     except Exception as e:
         print(f"[assembler] concat exception: {e}")
         return False
+    finally:
+        try:
+            os.unlink(list_path)
+        except OSError:
+            pass
 
 
 def _check_ass_filter() -> bool:
@@ -312,6 +329,8 @@ def build_video(
             )
     else:
         # --- Legacy multi-pass path ---
+        if not clip_paths:
+            raise RuntimeError("Failed to concatenate clips: no clips were rendered")
         if progress_callback:
             progress_callback("Concatenating clips...")
 

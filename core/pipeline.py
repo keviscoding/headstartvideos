@@ -16,7 +16,6 @@ from core.segmenter import segment_script_with_audio, segment_script_no_audio
 from core.query_gen import generate_queries
 from core.image_search import search_batch, search_pexels, download_image
 from core.ranker import rank_and_pick
-from core.ken_burns import render_all_clips
 from core.assembler import build_video
 from config import OUTPUT_DIR, WIKIMEDIA_USER_AGENT
 
@@ -163,28 +162,25 @@ def run_pipeline(
     found = sum(1 for img in selected_images if img["source"] != "fallback")
     _log(f"  -> {found}/{len(slots)} images found ({timings['download']:.1f}s)")
 
-    # --- Step 5: Ken Burns rendering ---
-    _log("Step 5/6: Rendering Ken Burns clips...")
+    # --- Step 5: Prepare images (slideshow — skip fragile/slow Ken Burns zoompan) ---
+    _log("Step 5/6: Preparing images for assembly...")
     t0 = time.time()
-
-    kb_clips = []
+    image_paths: list[str] = []
+    image_durations: list[float] = []
     for slot, img in zip(slots, selected_images):
-        kb_clips.append({
-            "id": slot.id,
-            "image_path": img["image_path"],
-            "duration_sec": slot.duration_sec,
-        })
-
-    def _kb_progress(done, total):
-        _log(f"  Rendering clip {done}/{total}...")
-
-    clip_paths = render_all_clips(
-        kb_clips, str(clips_dir),
-        max_workers=4,
-        progress_callback=_kb_progress,
-    )
+        path = img["image_path"]
+        if not path or not Path(path).is_file():
+            continue
+        try:
+            _normalize_still(path, 1920, 1080)
+        except Exception as e:
+            print(f"[pipeline] normalize failed for slot {slot.id}: {e}")
+        image_paths.append(path)
+        image_durations.append(max(0.5, float(slot.duration_sec)))
     timings["ken_burns"] = time.time() - t0
-    _log(f"  -> {len(clip_paths)} clips rendered ({timings['ken_burns']:.1f}s)")
+    _log(f"  -> {len(image_paths)} images ready ({timings['ken_burns']:.1f}s)")
+    if not image_paths:
+        raise RuntimeError("No images ready for assembly — search/download failed")
 
     # --- Step 6: Final assembly ---
     _log("Step 6/6: Assembling final video...")
@@ -195,8 +191,13 @@ def run_pipeline(
         for s in slots
     ]
     build_video(
-        clip_paths, voiceover_path, slot_dicts, output_path,
+        clip_paths=[],
+        voiceover_path=voiceover_path,
+        slots=slot_dicts,
+        output_path=output_path,
         progress_callback=_log,
+        image_paths=image_paths,
+        durations=image_durations,
     )
     timings["assembly"] = time.time() - t0
     _log(f"  -> Done ({timings['assembly']:.1f}s)")
@@ -214,6 +215,28 @@ def run_pipeline(
         "images": selected_images,
         "timing": timings,
     }
+
+
+def _normalize_still(image_path: str, width: int = 1920, height: int = 1080) -> None:
+    """Force-resize an image to WxH for slideshow assembly."""
+    from PIL import Image
+    img = Image.open(image_path).convert("RGB")
+    w, h = img.size
+    target_ratio = width / height
+    src_ratio = w / h
+    if abs(src_ratio - target_ratio) < 0.03:
+        img = img.resize((width, height), Image.LANCZOS)
+    else:
+        if src_ratio > target_ratio:
+            new_w = int(h * target_ratio)
+            left = (w - new_w) // 2
+            img = img.crop((left, 0, left + new_w, h))
+        else:
+            new_h = int(w / target_ratio)
+            top = (h - new_h) // 2
+            img = img.crop((0, top, w, top + new_h))
+        img = img.resize((width, height), Image.LANCZOS)
+    img.save(image_path, quality=92)
 
 
 def _align_text_overlays_to_words(scenes, all_words, _log=None):

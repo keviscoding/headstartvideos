@@ -8,7 +8,7 @@ from __future__ import annotations
 import subprocess
 import random
 from pathlib import Path
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from config import VIDEO_WIDTH, VIDEO_HEIGHT, VIDEO_FPS
 
 
@@ -75,14 +75,23 @@ def render_clip(
     effect: str,
 ) -> bool:
     """Render a single image as a Ken Burns video clip."""
-    zoompan = _build_zoompan_filter(effect, duration_sec)
+    duration_sec = max(0.5, float(duration_sec or 1.0))
+    # zoompan is O(frames); long clips time out on workers — hold a still instead.
+    use_simple = duration_sec > 12.0
 
-    vf = (
-        f"scale={VIDEO_WIDTH * 2}:{VIDEO_HEIGHT * 2}:force_original_aspect_ratio=increase,"
-        f"crop={VIDEO_WIDTH * 2}:{VIDEO_HEIGHT * 2},"
-        f"{zoompan},"
-        f"format=yuv420p"
-    )
+    if use_simple:
+        vf = (
+            f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT}:force_original_aspect_ratio=increase,"
+            f"crop={VIDEO_WIDTH}:{VIDEO_HEIGHT},format=yuv420p"
+        )
+    else:
+        zoompan = _build_zoompan_filter(effect, duration_sec)
+        vf = (
+            f"scale={VIDEO_WIDTH * 2}:{VIDEO_HEIGHT * 2}:force_original_aspect_ratio=increase,"
+            f"crop={VIDEO_WIDTH * 2}:{VIDEO_HEIGHT * 2},"
+            f"{zoompan},"
+            f"format=yuv420p"
+        )
 
     cmd = [
         "ffmpeg", "-y",
@@ -91,19 +100,33 @@ def render_clip(
         "-vf", vf,
         "-t", f"{duration_sec:.2f}",
         "-c:v", "libx264",
-        "-preset", "fast",
+        "-preset", "veryfast",
         "-crf", "23",
         "-pix_fmt", "yuv420p",
+        "-threads", "0",
         "-an",
         output_path,
     ]
 
+    # Allow ~2s encode budget per second of video, floored/capped
+    timeout = min(600, max(90, int(duration_sec * 2) + 30))
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=120
+            cmd, capture_output=True, text=True, timeout=timeout
         )
-        return result.returncode == 0
-    except Exception:
+        if result.returncode != 0:
+            err = (result.stderr or "")[-400:]
+            print(f"[ken_burns] ffmpeg failed ({duration_sec:.1f}s): {err}")
+            return False
+        if not Path(output_path).is_file() or Path(output_path).stat().st_size < 1000:
+            print(f"[ken_burns] output missing/too small: {output_path}")
+            return False
+        return True
+    except subprocess.TimeoutExpired:
+        print(f"[ken_burns] timeout after {timeout}s for {duration_sec:.1f}s clip ({image_path})")
+        return False
+    except Exception as e:
+        print(f"[ken_burns] exception: {e}")
         return False
 
 
@@ -145,8 +168,9 @@ def render_all_clips(
 
     output_map: dict[int, str] = {}
     completed = 0
-
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+    # ProcessPool can hang/fork badly on small dynos; thread pool is safer for ffmpeg.
+    workers = max(1, min(int(max_workers), 4, len(tasks) or 1))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
             executor.submit(
                 render_clip,
@@ -158,7 +182,11 @@ def render_all_clips(
 
         for future in as_completed(futures):
             task = futures[future]
-            success = future.result()
+            try:
+                success = future.result()
+            except Exception as e:
+                print(f"[ken_burns] worker error on clip {task['id']}: {e}")
+                success = False
             if success:
                 output_map[task["id"]] = task["output_path"]
             completed += 1

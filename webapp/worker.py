@@ -66,13 +66,19 @@ def _capture(exc, context=None):
             print(f"[worker] error: {exc} context={context}")
             return
         import sentry_sdk
-        if not sentry_sdk.Hub.current.client:
+        try:
+            initialized = sentry_sdk.is_initialized()
+        except Exception:
+            initialized = bool(getattr(getattr(sentry_sdk, "Hub", None), "current", None)
+                               and getattr(sentry_sdk.Hub.current, "client", None))
+        if not initialized:
             sentry_sdk.init(dsn=config.SENTRY_DSN, traces_sample_rate=0.0)
-        with sentry_sdk.push_scope() as scope:
-            if context:
-                for k, v in context.items():
-                    scope.set_extra(k, v)
-            sentry_sdk.capture_exception(exc)
+        if context:
+            try:
+                sentry_sdk.set_context("cook", context)
+            except Exception:
+                pass
+        sentry_sdk.capture_exception(exc)
     except Exception:
         print(f"[worker] error: {exc} context={context}")
 
