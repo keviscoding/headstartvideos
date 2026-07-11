@@ -86,8 +86,17 @@ def spawn_cook(job_id: str) -> bool:
         }
         created = _request("POST", f"/v1/apps/{app}/machines", body)
         mid = (created or {}).get("id")
+        if not mid:
+            print(f"[fly] spawn returned no machine id for cook {job_id}: {created}")
+            return False
+        # Suspended / scale-to-zero apps sometimes leave the VM in "created".
+        # Explicit start unblocks the one-shot cook.
+        try:
+            _request("POST", f"/v1/apps/{app}/machines/{mid}/start", {})
+        except Exception as start_err:
+            print(f"[fly] start after create ({mid}): {start_err}")
         print(f"[fly] spawned machine {mid} for cook {job_id}")
-        return bool(mid)
+        return True
     except Exception as e:
         print(f"[fly] spawn failed for {job_id}: {e}")
         return False
