@@ -2278,6 +2278,11 @@ function renderVideoCard(v, retentionDays) {
     const hasKit = v.description || (v.tags && v.tags.length) || (v.hashtags && v.hashtags.length);
     const kitBtn = hasKit
         ? `<button class="video-btn" onclick="toggleVideoKit(${v.id})">Upload kit</button>` : '';
+    // Local /api/files URLs from ephemeral Fly/worker disks are already gone.
+    const broken = !v.url || String(v.url).startsWith('/api/files/');
+    const dlBtn = broken
+        ? `<span class="video-btn" style="opacity:.55;cursor:not-allowed" title="File was lost before cloud upload finished — re-cook this video">Unavailable</span>`
+        : `<a class="video-btn video-btn-primary" href="${esc(v.url)}" download="${esc(v.title)}.mp4" target="_blank" rel="noopener">Download</a>`;
     return `
     <div class="video-card" id="video-card-${v.id}">
         <div class="video-thumb">${thumb}<span class="video-badge">${esc(recipe)}</span></div>
@@ -2285,7 +2290,7 @@ function renderVideoCard(v, retentionDays) {
             <div class="video-title" title="${esc(v.title)}">${esc(v.title)}</div>
             <div class="video-meta"><span>${date}</span>${expiry}</div>
             <div class="video-actions">
-                <a class="video-btn video-btn-primary" href="${esc(v.url)}" download="${esc(v.title)}.mp4" target="_blank" rel="noopener">Download</a>
+                ${dlBtn}
                 ${kitBtn}
                 <button class="video-btn video-btn-danger" onclick="deleteVideo(${v.id})" title="Delete">✕</button>
             </div>
