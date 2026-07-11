@@ -33,16 +33,27 @@ def is_remote() -> bool:
     return _SPACES_ENABLED
 
 
+def _spaces_creds() -> tuple[str, str, str, str | None, str]:
+    """Return cleaned (key, secret, bucket, region, endpoint) for boto3."""
+    key = _clean_url_part(config.SPACES_KEY)
+    secret = _clean_url_part(config.SPACES_SECRET)
+    bucket = _clean_url_part(config.SPACES_BUCKET)
+    region = _clean_url_part(config.SPACES_REGION) or None
+    endpoint = _clean_url_part(config.SPACES_ENDPOINT)
+    return key, secret, bucket, region, endpoint
+
+
 def _get_client():
     global _client
     if _client is None:
         import boto3
+        key, secret, _bucket, region, endpoint = _spaces_creds()
         _client = boto3.client(
             "s3",
-            region_name=config.SPACES_REGION or None,
-            endpoint_url=config.SPACES_ENDPOINT,
-            aws_access_key_id=config.SPACES_KEY,
-            aws_secret_access_key=config.SPACES_SECRET,
+            region_name=region,
+            endpoint_url=endpoint,
+            aws_access_key_id=key,
+            aws_secret_access_key=secret,
         )
     return _client
 
@@ -76,25 +87,51 @@ def store_file(local_path: str, key: str, content_type: str | None = None) -> st
         from botocore.config import Config as BotoConfig
         import boto3
 
-        # Hard timeout so a hung Spaces upload can't leave cooks stuck forever
+        key = (key or "").lstrip("/")
+        access_key, secret, bucket, region, endpoint = _spaces_creds()
+        if not all([access_key, secret, bucket, endpoint]):
+            raise RuntimeError("Spaces is enabled but credentials/endpoint are incomplete")
+
+        # Hard timeout so a hung Spaces upload can't leave cooks stuck forever.
+        # Prefer put_object over multipart — DO Spaces multipart has been flaky
+        # (SignatureDoesNotMatch on CreateMultipartUpload) with pasted secrets.
         client = boto3.client(
             "s3",
-            region_name=config.SPACES_REGION or None,
-            endpoint_url=config.SPACES_ENDPOINT,
-            aws_access_key_id=config.SPACES_KEY,
-            aws_secret_access_key=config.SPACES_SECRET,
+            region_name=region,
+            endpoint_url=endpoint,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret,
             config=BotoConfig(
                 connect_timeout=15,
-                read_timeout=120,
-                retries={"max_attempts": 2, "mode": "standard"},
+                read_timeout=300,
+                retries={"max_attempts": 3, "mode": "standard"},
+                s3={"addressing_style": "virtual"},
             ),
         )
-        client.upload_file(
-            local_path,
-            config.SPACES_BUCKET,
-            key,
-            ExtraArgs={"ACL": "public-read", "ContentType": content_type},
-        )
+        size = os.path.getsize(local_path)
+        # Single-request upload for typical cook outputs (< ~4.5GB API limit);
+        # avoids multipart signing bugs on Spaces.
+        if size <= 4 * 1024 * 1024 * 1024:
+            with open(local_path, "rb") as f:
+                client.put_object(
+                    Bucket=bucket,
+                    Key=key,
+                    Body=f,
+                    ACL="public-read",
+                    ContentType=content_type,
+                )
+        else:
+            from boto3.s3.transfer import TransferConfig
+            client.upload_file(
+                local_path,
+                bucket,
+                key,
+                ExtraArgs={"ACL": "public-read", "ContentType": content_type},
+                Config=TransferConfig(
+                    multipart_threshold=5 * 1024 * 1024 * 1024,
+                    max_concurrency=2,
+                ),
+            )
         return _public_url(key)
 
     # Local fallback — serve straight from disk via the existing files route.

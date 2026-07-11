@@ -90,14 +90,17 @@ POSTHOG_HOST = (os.getenv("POSTHOG_HOST", "https://us.i.posthog.com") or "").str
 SENTRY_DSN = (os.getenv("SENTRY_DSN", "") or "").strip()
 
 # Object storage (DigitalOcean Spaces / S3). If unset, files stay on local disk.
-# Always strip — DO App Platform env paste often leaves a trailing \n, which
-# breaks public URLs (httpx: "Invalid non-printable ASCII character... '\n'").
-SPACES_KEY = (os.getenv("SPACES_KEY", "") or "").strip()
-SPACES_SECRET = (os.getenv("SPACES_SECRET", "") or "").strip()
-SPACES_BUCKET = (os.getenv("SPACES_BUCKET", "") or "").strip()
-SPACES_REGION = (os.getenv("SPACES_REGION", "") or "").strip()                 # e.g. "fra1", "nyc3"
-SPACES_ENDPOINT = (os.getenv("SPACES_ENDPOINT", "") or "").strip()            # e.g. "https://fra1.digitaloceanspaces.com"
-SPACES_CDN_ENDPOINT = (os.getenv("SPACES_CDN_ENDPOINT", "") or "").strip()    # optional CDN base for public URLs
+# Strip ALL whitespace — DO/Fly env paste often leaves \n mid-value, which breaks
+# public URLs and S3 request signatures (SignatureDoesNotMatch).
+def _env_clean(name: str) -> str:
+    return "".join((os.getenv(name, "") or "").split())
+
+SPACES_KEY = _env_clean("SPACES_KEY")
+SPACES_SECRET = _env_clean("SPACES_SECRET")
+SPACES_BUCKET = _env_clean("SPACES_BUCKET")
+SPACES_REGION = _env_clean("SPACES_REGION")                 # e.g. "fra1", "nyc3"
+SPACES_ENDPOINT = _env_clean("SPACES_ENDPOINT")            # e.g. "https://fra1.digitaloceanspaces.com"
+SPACES_CDN_ENDPOINT = _env_clean("SPACES_CDN_ENDPOINT")    # optional CDN base for public URLs
 
 OUTPUT_DIR = ROOT_DIR / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)

@@ -229,9 +229,21 @@ def run_cook_job(
                 result["output_path"], f"videos/{user_id}/{ts}_{job_id}.mp4", "video/mp4"
             )
         except Exception as up_err:
+            # Remote cooks (Fly/worker) have ephemeral disks. A local /api/files
+            # fallback looks "complete" in History but Download 404s forever.
+            if storage.is_remote():
+                raise RuntimeError(
+                    f"Video upload to Spaces failed (file would be lost): {up_err}"
+                ) from up_err
             print(f"[storage] video upload failed, falling back to local: {up_err}")
             on_progress("Upload slow — saving local copy...")
             output_url = f"/api/files/{os.path.relpath(result['output_path'], str(ROOT))}"
+
+        if storage.is_remote() and output_url.startswith("/api/files/"):
+            raise RuntimeError(
+                "Cook produced a local-only video URL while Spaces is configured — "
+                "refusing to mark complete (download would 404)."
+            )
 
         thumb_url = ""
         if thumbnail_path and os.path.exists(thumbnail_path):
