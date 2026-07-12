@@ -85,7 +85,7 @@ def _request(method: str, path: str, body: dict | None = None) -> dict | list | 
 def _latest_app_image(app: str) -> str:
     """
     Resolve the newest release image for the cook app via Fly GraphQL.
-    Avoids stale FLY_COOK_IMAGE env on DigitalOcean after `fly deploy`.
+    Prefer digest-pinned refs so tag retargeting can't leave cooks on old code.
     """
     token = (getattr(config, "FLY_API_TOKEN", "") or "").strip()
     if not token:

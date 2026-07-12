@@ -1,22 +1,20 @@
 """
-File storage abstraction.
+File storage abstraction — DigitalOcean Spaces (S3-compatible).
 
-Uploads durable assets (finished videos, thumbnails) to DigitalOcean Spaces
-(S3-compatible) when configured, and falls back to keeping them on the local
-`output/` disk otherwise (fine for local dev, ephemeral in production).
-
-Public API:
-    is_remote()                      -> bool
-    store_file(local_path, key, ...) -> public URL
-    delete_key(key)                  -> None
+CRITICAL: boto3>=1.36 enables default request checksums that DO Spaces
+rejects with SignatureDoesNotMatch. We pin boto3<1.36 in requirements and
+also force when_required here as belt-and-suspenders.
 """
 from __future__ import annotations
 
 import mimetypes
 import os
 import re
-import shutil
 from pathlib import Path
+
+# Must be set before botocore clients are created in this process.
+os.environ.setdefault("AWS_REQUEST_CHECKSUM_CALCULATION", "when_required")
+os.environ.setdefault("AWS_RESPONSE_CHECKSUM_VALIDATION", "when_required")
 
 import config
 
@@ -27,19 +25,17 @@ _client = None
 
 
 def _clean_url_part(value: str) -> str:
-    """Strip whitespace/newlines that sneak in via DO env paste."""
     return "".join((value or "").split())
 
 
 def _clean_secret(value: str) -> str:
-    """Trim ends only — do not alter interior of access keys/secrets."""
+    # Trim ends + wrapping quotes. Never alter interior (+ / = are valid).
     return (value or "").strip().strip('"').strip("'")
 
 
 def _normalize_endpoint(endpoint: str, region: str | None) -> str:
     """Force regional Spaces API host (not bucket vhost / CDN)."""
     ep = _clean_url_part(endpoint).rstrip("/")
-    # https://bucket.sfo3.digitaloceanspaces.com → https://sfo3.digitaloceanspaces.com
     m = re.match(
         r"^https?://[^./]+\.([a-z0-9]+)\.digitaloceanspaces\.com",
         ep,
@@ -50,7 +46,6 @@ def _normalize_endpoint(endpoint: str, region: str | None) -> str:
     m2 = re.match(r"^https?://([a-z0-9]+)\.digitaloceanspaces\.com", ep, re.I)
     if m2:
         return f"https://{m2.group(1)}.digitaloceanspaces.com"
-    # CDN host mistaken for API endpoint
     if "cdn.digitaloceanspaces.com" in ep.lower() or "media-cf" in ep.lower():
         reg = (region or "sfo3").lower()
         return f"https://{reg}.digitaloceanspaces.com"
@@ -60,37 +55,44 @@ def _normalize_endpoint(endpoint: str, region: str | None) -> str:
 
 
 def is_remote() -> bool:
-    """True when Spaces credentials are present (re-check env each call)."""
     key, secret, bucket, _region, endpoint = _spaces_creds()
     return bool(key and secret and bucket and endpoint)
 
 
-def _spaces_creds() -> tuple[str, str, str, str | None, str]:
-    """Return cleaned (key, secret, bucket, region, endpoint) for boto3."""
+def _spaces_creds() -> tuple[str, str, str, str, str]:
+    """Return cleaned (key, secret, bucket, region, endpoint)."""
     key = _clean_secret(config.SPACES_KEY)
     secret = _clean_secret(config.SPACES_SECRET)
     bucket = _clean_url_part(config.SPACES_BUCKET)
-    region = _clean_url_part(config.SPACES_REGION) or None
+    region = (_clean_url_part(config.SPACES_REGION) or "sfo3").lower()
     endpoint = _normalize_endpoint(config.SPACES_ENDPOINT, region)
+    if not endpoint and region:
+        endpoint = f"https://{region}.digitaloceanspaces.com"
     return key, secret, bucket, region, endpoint
 
 
-def _spaces_boto_config(*, addressing_style: str = "virtual"):
-    """Boto config that works with DigitalOcean Spaces.
+def spaces_fingerprint() -> str:
+    """Safe debug string for logs (no secret material)."""
+    key, secret, bucket, region, endpoint = _spaces_creds()
+    return (
+        f"bucket={bucket!r} region={region!r} endpoint={endpoint!r} "
+        f"key_len={len(key)} secret_len={len(secret)} "
+        f"key_prefix={(key[:6] + '…') if len(key) >= 6 else key!r} "
+        f"secret_ws={any(c.isspace() for c in secret)}"
+    )
 
-    boto3>=1.36 enables default request checksums that Spaces rejects with
-    SignatureDoesNotMatch. Force checksums only when required.
-    """
+
+def _boto_config():
     from botocore.config import Config as BotoConfig
 
+    # Official DO guidance: virtual addressing.
     kwargs = dict(
         signature_version="s3v4",
+        s3={"addressing_style": "virtual"},
         connect_timeout=15,
         read_timeout=300,
         retries={"max_attempts": 3, "mode": "standard"},
-        s3={"addressing_style": addressing_style},
     )
-    # botocore 1.36+ — ignore on older versions
     try:
         return BotoConfig(
             **kwargs,
@@ -101,20 +103,30 @@ def _spaces_boto_config(*, addressing_style: str = "virtual"):
         return BotoConfig(**kwargs)
 
 
+def _make_client():
+    """Fresh client every call — avoids stale cached creds across retries."""
+    import boto3
+    from boto3.session import Session
+
+    access_key, secret, _bucket, region, endpoint = _spaces_creds()
+    if not all([access_key, secret, endpoint]):
+        raise RuntimeError("Spaces credentials/endpoint incomplete")
+    # Match DO docs exactly: session.client with region_name = Spaces region.
+    session = Session()
+    return session.client(
+        "s3",
+        region_name=region,
+        endpoint_url=endpoint,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret,
+        config=_boto_config(),
+    )
+
+
 def _get_client():
     global _client
     if _client is None:
-        import boto3
-
-        key, secret, _bucket, region, endpoint = _spaces_creds()
-        _client = boto3.client(
-            "s3",
-            region_name=region or "sfo3",
-            endpoint_url=endpoint,
-            aws_access_key_id=key,
-            aws_secret_access_key=secret,
-            config=_spaces_boto_config(addressing_style="virtual"),
-        )
+        _client = _make_client()
     return _client
 
 
@@ -123,136 +135,94 @@ def _public_url(key: str) -> str:
     if config.SPACES_CDN_ENDPOINT:
         base = _clean_url_part(config.SPACES_CDN_ENDPOINT).rstrip("/")
         return f"{base}/{key}"
-    # Standard Spaces virtual-hosted URL: https://<bucket>.<region>.digitaloceanspaces.com/<key>
     _key, _secret, bucket, region, endpoint = _spaces_creds()
     host = endpoint.replace("https://", "").replace("http://", "").rstrip("/")
     return f"https://{bucket}.{host}/{key}"
 
 
-def _spaces_client(addressing_style: str = "virtual"):
-    import boto3
-
-    access_key, secret, bucket, region, endpoint = _spaces_creds()
-    if not all([access_key, secret, bucket, endpoint]):
-        raise RuntimeError("Spaces is enabled but credentials/endpoint are incomplete")
-    client = boto3.client(
-        "s3",
-        region_name=region or "sfo3",
-        endpoint_url=endpoint,
-        aws_access_key_id=access_key,
-        aws_secret_access_key=secret,
-        config=_spaces_boto_config(addressing_style=addressing_style),
-    )
-    return client, bucket, endpoint, access_key
+def _friendly_spaces_error(exc: Exception) -> RuntimeError:
+    msg = str(exc)
+    if "SignatureDoesNotMatch" in msg:
+        return RuntimeError(
+            "Spaces rejected our upload signature (SignatureDoesNotMatch). "
+            "Almost always bad/rotated SPACES_KEY+SPACES_SECRET, or boto3 "
+            "checksums. Regenerate Spaces keys in DigitalOcean → API → "
+            "Spaces Keys, paste both onto the web app env, redeploy. "
+            f"Debug: {spaces_fingerprint()}"
+        )
+    return RuntimeError(msg)
 
 
-def _put_object_once(client, *, bucket: str, key: str, body: bytes, content_type: str):
-    """PutObject — try without ACL first, then public-read if the bucket requires it."""
+def store_file(local_path: str, key: str, content_type: str | None = None) -> str:
+    """Persist a local file under `key` and return a public URL."""
+    if not content_type:
+        content_type = mimetypes.guess_type(local_path)[0] or "application/octet-stream"
+
+    if not is_remote():
+        rel = os.path.relpath(local_path, str(ROOT))
+        return f"/api/files/{rel}"
+
+    key = (key or "").lstrip("/")
+    size = os.path.getsize(local_path)
+    access_key, _secret, bucket, region, endpoint = _spaces_creds()
+
+    # Low-level put_object only (upload_file / transfer manager re-enables
+    # checksums even when when_required is set — see boto/boto3#4400).
     try:
+        with open(local_path, "rb") as f:
+            body = f.read()
+        client = _make_client()
+        # No ACL in the signed request — bucket should be public-read via
+        # Spaces CDN / bucket policy. ACL in signature is a common DO fail.
         client.put_object(
             Bucket=bucket,
             Key=key,
             Body=body,
-            ContentLength=len(body),
             ContentType=content_type,
         )
-        return
-    except Exception as no_acl_err:
-        try:
-            client.put_object(
-                Bucket=bucket,
-                Key=key,
-                Body=body,
-                ContentLength=len(body),
-                ContentType=content_type,
-                ACL="public-read",
-            )
-            return
-        except Exception:
-            raise no_acl_err
+        print(
+            f"[storage] Spaces ok key={key!r} size={size} "
+            f"endpoint={endpoint!r} region={region!r} "
+            f"key_prefix={access_key[:6]}…"
+        )
+        return _public_url(key)
+    except Exception as e:
+        print(
+            f"[storage] Spaces upload failed key={key!r} size={size} "
+            f"{spaces_fingerprint()} err={e}"
+        )
+        raise _friendly_spaces_error(e) from e
 
 
-def store_file(local_path: str, key: str, content_type: str | None = None) -> str:
-    """Persist a local file under `key` and return a URL that will serve it.
+def probe_spaces_write() -> None:
+    """Upload a tiny object to verify credentials. Raises on failure."""
+    if not is_remote():
+        raise RuntimeError("Spaces not configured")
+    import time as _time
 
-    Remote: uploads to Spaces (public-read) and returns the public URL.
-    Local:  returns the existing /api/files/... URL (no copy needed).
-    """
-    if not content_type:
-        content_type = mimetypes.guess_type(local_path)[0] or "application/octet-stream"
-
-    if is_remote():
-        from boto3.s3.transfer import TransferConfig
-
-        key = (key or "").lstrip("/")
-        size = os.path.getsize(local_path)
-
-        # Single-part upload only. Multipart CreateMultipartUpload has been
-        # flaky with Spaces (SignatureDoesNotMatch). Read body so SigV4 gets
-        # an explicit Content-Length (file handles alone can mis-sign).
-        last_err: Exception | None = None
-        bucket = endpoint = access_key = ""
-        for style in ("virtual", "path"):
-            try:
-                client, bucket, endpoint, access_key = _spaces_client(addressing_style=style)
-                if size <= 512 * 1024 * 1024:
-                    with open(local_path, "rb") as f:
-                        body = f.read()
-                    _put_object_once(
-                        client,
-                        bucket=bucket,
-                        key=key,
-                        body=body,
-                        content_type=content_type,
-                    )
-                else:
-                    with open(local_path, "rb") as f:
-                        client.upload_fileobj(
-                            f,
-                            bucket,
-                            key,
-                            ExtraArgs={"ContentType": content_type},
-                            Config=TransferConfig(
-                                multipart_threshold=max(size + 1, 1024 * 1024 * 1024),
-                                max_concurrency=1,
-                                use_threads=False,
-                            ),
-                        )
-                print(
-                    f"[storage] Spaces ok key={key!r} style={style} "
-                    f"endpoint={endpoint!r} size={size}"
-                )
-                return _public_url(key)
-            except Exception as e:
-                last_err = e
-                print(
-                    f"[storage] Spaces upload failed style={style} key={key!r} "
-                    f"bucket={bucket!r} endpoint={endpoint!r} "
-                    f"access_key={access_key[:4]}…{access_key[-4:] if len(access_key) > 8 else ''} "
-                    f"size={size} err={e}"
-                )
-                if "SignatureDoesNotMatch" not in str(e):
-                    break
-        assert last_err is not None
-        raise last_err
-
-    # Local fallback — serve straight from disk via the existing files route.
-    rel = os.path.relpath(local_path, str(ROOT))
-    return f"/api/files/{rel}"
+    key = f"tests/probe-{int(_time.time())}-{os.getpid()}.txt"
+    client = _make_client()
+    body = b"channelrecipe-spaces-probe"
+    client.put_object(
+        Bucket=_spaces_creds()[2],
+        Key=key,
+        Body=body,
+        ContentType="text/plain",
+    )
+    try:
+        client.delete_object(Bucket=_spaces_creds()[2], Key=key)
+    except Exception:
+        pass
+    print(f"[storage] Spaces probe ok ({spaces_fingerprint()})")
 
 
 def fetch_to_local(path_or_url: str, dest_dir: str | Path | None = None) -> str:
-    """
-    Resolve a local path or remote HTTPS URL to a local filesystem path.
-    Workers use this for Spaces-hosted voiceovers/thumbnails.
-    """
+    """Resolve a local path or remote HTTPS URL to a local filesystem path."""
     raw = (path_or_url or "").strip()
     if not raw:
         raise ValueError("Empty media path")
 
-    # Already local and exists
     if not raw.startswith("http://") and not raw.startswith("https://"):
-        # Strip /api/files/ prefix if present
         local = raw
         if local.startswith("/api/files/"):
             local = str(ROOT / local[len("/api/files/"):])
@@ -260,12 +230,10 @@ def fetch_to_local(path_or_url: str, dest_dir: str | Path | None = None) -> str:
             return local
         raise FileNotFoundError(f"Local media not found: {raw}")
 
-    # Defense: DO env paste can leave \n mid-URL (host\n/key) which .strip() misses
     raw = "".join(raw.split())
 
     dest_root = Path(dest_dir) if dest_dir else (OUTPUT_DIR / "remote_cache")
     dest_root.mkdir(parents=True, exist_ok=True)
-    # Stable-ish name from URL path
     from urllib.parse import urlparse
     import hashlib
     import httpx
@@ -289,10 +257,7 @@ def fetch_to_local(path_or_url: str, dest_dir: str | Path | None = None) -> str:
 
 
 def stage_input(local_path: str, key: str, content_type: str | None = None) -> str:
-    """
-    Prefer Spaces URL for cook inputs (worker-safe). Falls back to local path
-    when Spaces is not configured.
-    """
+    """Prefer Spaces URL for cook inputs. Falls back to local path on failure."""
     if not local_path or not os.path.isfile(local_path):
         return local_path
     if not is_remote():
@@ -307,10 +272,9 @@ def stage_input(local_path: str, key: str, content_type: str | None = None) -> s
 
 
 def delete_key(key: str) -> None:
-    """Best-effort delete of a stored object (remote) — no-op locally."""
     if not is_remote():
         return
     try:
-        _get_client().delete_object(Bucket=_spaces_creds()[2], Key=key)
+        _make_client().delete_object(Bucket=_spaces_creds()[2], Key=key)
     except Exception as e:
         print(f"[storage] delete failed for {key}: {e}")

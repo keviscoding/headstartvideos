@@ -112,18 +112,30 @@ def main() -> int:
         return bool(r and r.get("status") == "cancelled")
 
     print(f"[fly] cooking {job_id} recipe={row.get('recipe')}")
-    # Log Spaces fingerprint (no secrets) so SignatureDoesNotMatch is debuggable
+    # Verify Spaces write BEFORE spending API $ on a cook that can't upload.
     try:
         import config as _cfg
-        print(
-            f"[fly] spaces configured="
-            f"{bool(_cfg.SPACES_KEY and _cfg.SPACES_SECRET and _cfg.SPACES_BUCKET)} "
-            f"endpoint={(_cfg.SPACES_ENDPOINT or '')[:48]!r} "
-            f"bucket={_cfg.SPACES_BUCKET!r} "
-            f"key_prefix={(_cfg.SPACES_KEY or '')[:6]!r}"
-        )
-    except Exception:
-        pass
+        from webapp import storage as _storage
+        print(f"[fly] spaces {_storage.spaces_fingerprint()}")
+        if _cfg.SPACES_KEY and _cfg.SPACES_SECRET and _cfg.SPACES_BUCKET:
+            _storage.probe_spaces_write()
+    except Exception as probe_err:
+        _capture(probe_err, {"job_id": job_id, "phase": "spaces_probe"})
+        try:
+            update_cook_job(
+                job_id,
+                status="error",
+                error=str(probe_err)[:800],
+                progress_json=json.dumps([{
+                    "time": time.time(),
+                    "message": f"Spaces upload check failed: {probe_err}",
+                    "phase": "error",
+                }]),
+            )
+        except Exception:
+            pass
+        print(f"[fly] aborting — Spaces probe failed: {probe_err}")
+        return 1
 
     run_cook_job(
         job_id,
