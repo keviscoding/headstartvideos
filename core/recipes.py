@@ -4,7 +4,7 @@ Each recipe defines a pipeline type, required API keys, and default settings.
 """
 
 from __future__ import annotations
-from config import PEXELS_KEY, GEMINI_KEY, HEYGEN_KEY
+from config import PEXELS_KEY, GEMINI_KEY, HEYGEN_KEY, ATLASCLOUD_KEY
 
 
 RECIPES = {
@@ -13,7 +13,7 @@ RECIPES = {
         "label": "B-Roll Only",
         "description": "Full B-roll video from script + voiceover. "
                        "Images sourced from Wikimedia/Pexels with Ken Burns effects.",
-        "requires_keys": ["GEMINI_KEY"],
+        "requires_keys": ["LLM"],
         "optional_keys": ["PEXELS_KEY"],
         "inputs": ["voiceover", "script"],
         "settings": ["swap_rate", "style"],
@@ -23,7 +23,7 @@ RECIPES = {
         "label": "Cinematic B-Roll",
         "description": "AI-directed cinematic B-roll with stock video, images, "
                        "AI art, and text overlays. LLM plans each scene, VLM verifies.",
-        "requires_keys": ["GEMINI_KEY"],
+        "requires_keys": ["LLM"],
         "optional_keys": ["PEXELS_KEY"],
         "inputs": ["voiceover", "script"],
         "settings": ["swap_rate", "style"],
@@ -33,7 +33,7 @@ RECIPES = {
         "label": "Avatar + Illustrations",
         "description": "AI avatar talking head (HeyGen) interleaved with "
                        "AI-generated or stock illustration B-roll.",
-        "requires_keys": ["HEYGEN_KEY", "GEMINI_KEY"],
+        "requires_keys": ["HEYGEN_KEY", "LLM"],
         "optional_keys": ["PEXELS_KEY"],
         "inputs": ["script", "avatar_id", "voice_id"],
         "settings": ["swap_rate", "style", "avatar_ratio", "use_ai_images"],
@@ -43,8 +43,9 @@ RECIPES = {
         "label": "Animated Explainer",
         "description": "AI-illustrated explainer documentary with consistent "
                        "hand-drawn art style, word-level visual timing, and "
-                       "background mood shifts. Cheapest recipe (~$0.034/scene).",
-        "requires_keys": ["GEMINI_KEY"],
+                       "background mood shifts. Body images: ERNIE only. "
+                       "Hook stills: Nano Banana premium.",
+        "requires_keys": ["ATLASCLOUD_KEY"],
         "optional_keys": [],
         "inputs": ["voiceover", "script"],
         "settings": ["style"],
@@ -69,12 +70,18 @@ def validate_keys(recipe_name: str) -> tuple[bool, list[str]]:
         "GEMINI_KEY": GEMINI_KEY,
         "PEXELS_KEY": PEXELS_KEY,
         "HEYGEN_KEY": HEYGEN_KEY,
+        "ATLASCLOUD_KEY": ATLASCLOUD_KEY,
+        # LLM text: Atlas preferred (Google project may be denied)
+        "LLM": ATLASCLOUD_KEY or GEMINI_KEY,
     }
 
     missing = []
     for key_name in recipe["requires_keys"]:
         if not key_values.get(key_name):
-            missing.append(key_name)
+            if key_name == "LLM":
+                missing.append("ATLASCLOUD_KEY or GEMINI_KEY")
+            else:
+                missing.append(key_name)
 
     return len(missing) == 0, missing
 

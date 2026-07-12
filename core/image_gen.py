@@ -1,15 +1,11 @@
 """
-AI image generation for illustration-style B-roll.
-Uses Gemini's image generation model (gemini-2.5-flash-image) to create
-images from visual-attribute prompts. Falls back to stock search if
-image generation is unavailable.
+AI image generation for illustration-style B-roll / avatar slots.
+ERNIE Image Turbo via Atlas only (free) — never Nano Banana / FLUX here.
 """
 
 from __future__ import annotations
-import asyncio
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
-from config import GEMINI_KEY
 
 
 def generate_image(
@@ -17,45 +13,12 @@ def generate_image(
     output_path: str,
     aspect_ratio: str = "16:9",
 ) -> bool:
-    """
-    Generate a single image using Gemini's image generation model.
-    Returns True if successful, False if generation failed or is unavailable.
-    """
-    from google import genai
-    from google.genai import types
+    """Generate a single image via ERNIE. Returns True if successful."""
+    from core.atlas_llm import generate_ernie_image_file, has_atlas
 
-    if not GEMINI_KEY:
+    if not has_atlas():
         return False
-
-    client = genai.Client(api_key=GEMINI_KEY)
-
-    try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash-image",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_modalities=["IMAGE"],
-                image_config=types.ImageConfig(
-                    aspect_ratio=aspect_ratio,
-                ),
-            ),
-        )
-
-        for part in response.candidates[0].content.parts:
-            if hasattr(part, "inline_data") and part.inline_data:
-                image_bytes = part.inline_data.data
-                Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-                with open(output_path, "wb") as f:
-                    f.write(image_bytes)
-                print(f"  [image_gen] Generated: {Path(output_path).name}")
-                return True
-
-        print(f"  [image_gen] No image in response for: {prompt[:60]}")
-        return False
-
-    except Exception as e:
-        print(f"  [image_gen] Error: {e}")
-        return False
+    return generate_ernie_image_file(prompt, output_path)
 
 
 def _gen_one(args: tuple) -> tuple[int, bool]:
@@ -80,25 +43,24 @@ def generate_batch(
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    tasks = []
+    work = []
     for p in prompts:
-        out_path = str(out_dir / f"gen_{p['id']:04d}.png")
-        tasks.append((p["id"], p["prompt"], out_path, aspect_ratio))
+        sid = p["id"]
+        path = str(out_dir / f"slot_{sid}.png")
+        work.append((sid, p["prompt"], path, aspect_ratio))
 
     results: dict[int, str] = {}
-    completed = 0
+    done = 0
+    total = len(work)
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(_gen_one, t): t for t in tasks}
-        for future in futures:
-            slot_id, success = future.result()
-            if success:
-                results[slot_id] = str(out_dir / f"gen_{slot_id:04d}.png")
-            completed += 1
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        for sid, ok in pool.map(_gen_one, work):
+            done += 1
+            if ok:
+                results[sid] = str(out_dir / f"slot_{sid}.png")
             if progress_callback:
-                progress_callback(completed, len(tasks))
+                progress_callback(done, total)
 
-    print(f"  [image_gen] Generated {len(results)}/{len(prompts)} images")
     return results
 
 

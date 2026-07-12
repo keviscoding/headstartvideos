@@ -220,13 +220,11 @@ def vlm_verify(
     threshold: float = 0.6,
 ) -> tuple[bool, float, str]:
     """
-    Use Gemini Flash as a VLM to verify a video matches the scene intent.
-    Extracts a frame, sends to Gemini with the description, gets a 0-1 score.
-    
-    Returns (passed, score, reason).
+    Optional VLM gate. Atlas chat Gemini is text-only, and Google Gemini
+    is often project-blocked — soft-skip so cooks still complete.
     """
     if not GEMINI_KEY:
-        return True, 1.0, "No API key, skipping verification"
+        return True, 1.0, "VLM skipped (no GEMINI_KEY; Atlas chat is text-only)"
 
     frame_path = _extract_frame(video_path)
     if not frame_path:

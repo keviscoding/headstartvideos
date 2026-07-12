@@ -101,7 +101,11 @@ def analyze_video(
     from google.genai import types
 
     if not GEMINI_KEY:
-        raise ValueError("GEMINI_KEY not set -- add it to videofactory/.env")
+        raise ValueError(
+            "YouTube video analysis still needs a working GEMINI_KEY "
+            "(Atlas chat models are text-only and cannot watch YouTube URLs). "
+            "Skip niche auto-analyze or set a valid Google key."
+        )
 
     client = genai.Client(api_key=GEMINI_KEY)
 

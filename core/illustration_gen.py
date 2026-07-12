@@ -1,29 +1,21 @@
 """
 Illustration Generator -- AI-generated illustrations for animated explainer videos.
 
-Primary: ERNIE Image Turbo via Atlas Cloud (FREE, native 16:9 @ 1376x768).
-Fallback 1: FLUX Schnell via Atlas Cloud ($0.003/image, fast + reliable).
-Fallback 2: Nano Banana 2 Lite via Gemini API ($0.034/image).
+Body / style-ref: ERNIE Image Turbo via Atlas (FREE) only — no FLUX, no Nano Banana.
+Hook concepts (first ~30s): Nano Banana premium (~$0.028), then ERNIE if that fails.
 
-ERNIE has a ~500 char prompt limit before upstream errors, so we use
-compact prompts for ERNIE and full-length prompts for FLUX/Gemini.
+ERNIE has a ~500 char prompt limit, so body uses compact prompts.
 """
 
 from __future__ import annotations
 import os
 import time
-import base64
 import threading
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
-from config import GEMINI_KEY, ATLASCLOUD_KEY
-
-_IMAGE_MODELS = [
-    "gemini-3.1-flash-lite-image",
-    "gemini-3.1-flash-image",
-]
+from config import ATLASCLOUD_KEY
 
 # Compact prompts for ERNIE (under 500 chars total with scene desc)
 STYLE_SHORT = (
@@ -39,7 +31,7 @@ CHARACTER_SHORT = (
     "Full body visible, not cropped."
 )
 
-# Full prompts for FLUX/Gemini (longer, more detailed)
+# Full prompts for premium hook Nano Banana
 STYLE_PREFIX = (
     "Simple hand-drawn cartoon illustration in the style of a whiteboard "
     "animation or doodle explainer video. Thick black outlines on everything. "
@@ -102,7 +94,7 @@ def build_prompt(
     background_mood: str = "warm_earth",
     has_character: bool = True,
 ) -> str:
-    """Build a full generation prompt (used for FLUX/Gemini)."""
+    """Build a full generation prompt (used for premium Nano Banana hooks)."""
     parts = [STYLE_PREFIX]
     if has_character:
         parts.append(CHARACTER_PREFIX)
@@ -127,96 +119,30 @@ def _build_short_prompt(
     return " ".join(parts)
 
 
-def _crop_to_16_9(image_path: str):
-    """Crop a square image to 16:9 by trimming top and bottom."""
-    try:
-        from PIL import Image
-        img = Image.open(image_path)
-        w, h = img.size
-        target_h = int(w * 9 / 16)
-        if h > target_h:
-            top = (h - target_h) // 2
-            img = img.crop((0, top, w, top + target_h))
-            img.save(image_path)
-    except Exception:
-        pass
-
-
 def generate_single_illustration(
     prompt: str,
     output_path: str,
     style_ref_path: str | None = None,
     short_prompt: str | None = None,
 ) -> GeneratedIllustration:
-    """
-    Generate a single illustration.
-    Chain: ERNIE Turbo (free) -> FLUX Schnell ($0.003) -> Gemini NB2 Lite ($0.034).
-    """
-    if ATLASCLOUD_KEY:
-        # Try ERNIE Image Turbo first (FREE, native 16:9)
-        ernie_prompt = short_prompt or prompt
-        result = _generate_via_ernie_turbo(ernie_prompt, output_path)
-        if result.success:
-            return result
-
-        # Fallback to FLUX Schnell ($0.003, fast + reliable)
-        result = _generate_via_flux_schnell(prompt, output_path)
-        if result.success:
-            return result
-
-    # Last resort: Gemini Nano Banana
-    from google import genai
-    from google.genai import types
-
-    if not GEMINI_KEY:
+    """Body/style stills: ERNIE only (free). No FLUX / Nano Banana."""
+    t0 = time.time()
+    if not ATLASCLOUD_KEY:
         return GeneratedIllustration(
             concept_id=-1, image_path="", model_used="",
-            generation_time_sec=0, success=False, error="No API keys available"
+            generation_time_sec=0, success=False,
+            error="ATLASCLOUD_KEY not set",
         )
 
-    client = genai.Client(api_key=GEMINI_KEY)
-    contents = []
-    if style_ref_path and os.path.exists(style_ref_path):
-        with open(style_ref_path, "rb") as f:
-            ref_bytes = f.read()
-        contents.append(types.Part.from_bytes(data=ref_bytes, mime_type="image/png"))
-        contents.append(types.Part.from_text(
-            text=f"Match the art style of this reference image exactly. {prompt}"
-        ))
-    else:
-        contents.append(types.Part.from_text(text=prompt))
-
-    for model_name in _IMAGE_MODELS:
-        t0 = time.time()
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=contents,
-                config=types.GenerateContentConfig(
-                    response_modalities=["TEXT", "IMAGE"],
-                ),
-            )
-            if not response.candidates:
-                continue
-            for part in response.candidates[0].content.parts:
-                if part.inline_data and part.inline_data.data:
-                    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-                    with open(output_path, "wb") as f:
-                        f.write(part.inline_data.data)
-                    return GeneratedIllustration(
-                        concept_id=-1, image_path=output_path,
-                        model_used=model_name,
-                        generation_time_sec=time.time() - t0, success=True,
-                    )
-        except Exception as e:
-            err = str(e)
-            if "not found" in err.lower() or "not supported" in err.lower():
-                continue
-            print(f"  [illustration_gen] {model_name} failed: {err[:100]}")
+    ernie_prompt = short_prompt or prompt
+    result = _generate_via_ernie_turbo(ernie_prompt, output_path)
+    if result.success:
+        return result
 
     return GeneratedIllustration(
         concept_id=-1, image_path="", model_used="",
-        generation_time_sec=0, success=False, error="All models failed"
+        generation_time_sec=time.time() - t0, success=False,
+        error=result.error or "ERNIE failed",
     )
 
 
@@ -301,137 +227,6 @@ def _generate_via_ernie_turbo(prompt: str, output_path: str) -> GeneratedIllustr
     )
 
 
-def _generate_via_flux_schnell(prompt: str, output_path: str) -> GeneratedIllustration:
-    """Fallback: FLUX Schnell on Atlas Cloud — $0.003/image, fast + reliable."""
-    import httpx
-
-    ATLAS_BASE = "https://api.atlascloud.ai/api/v1"
-    t0 = time.time()
-
-    try:
-        resp = httpx.post(
-            f"{ATLAS_BASE}/model/generateImage",
-            headers={
-                "Authorization": f"Bearer {ATLASCLOUD_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "black-forest-labs/flux-schnell",
-                "prompt": prompt,
-            },
-            timeout=30,
-        )
-        data = resp.json()
-        pred_id = None
-        if "data" in data and isinstance(data["data"], dict):
-            pred_id = data["data"].get("id")
-        if not pred_id:
-            pred_id = data.get("id") or data.get("prediction_id")
-        if not pred_id:
-            return GeneratedIllustration(
-                concept_id=-1, image_path="", model_used="",
-                generation_time_sec=time.time() - t0, success=False,
-                error="No prediction ID from FLUX"
-            )
-
-        for _ in range(20):
-            time.sleep(1.5)
-            poll = httpx.get(
-                f"{ATLAS_BASE}/model/prediction/{pred_id}",
-                headers={"Authorization": f"Bearer {ATLASCLOUD_KEY}"},
-                timeout=15,
-            )
-            inner = poll.json().get("data", poll.json())
-            status = str(inner.get("status", "")).lower()
-
-            if status in ("succeeded", "completed", "done"):
-                outputs = inner.get("output") or inner.get("outputs") or []
-                if isinstance(outputs, list) and outputs:
-                    img_url = outputs[0]
-                elif isinstance(outputs, str):
-                    img_url = outputs
-                else:
-                    break
-
-                img_resp = httpx.get(img_url, timeout=30, follow_redirects=True)
-                Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-                with open(output_path, "wb") as f:
-                    f.write(img_resp.content)
-
-                _crop_to_16_9(output_path)
-
-                return GeneratedIllustration(
-                    concept_id=-1, image_path=output_path,
-                    model_used="flux-schnell",
-                    generation_time_sec=time.time() - t0, success=True,
-                )
-
-            if status in ("failed", "error", "cancelled"):
-                break
-
-    except Exception as e:
-        print(f"  [illustration_gen] FLUX Schnell failed: {e}")
-
-    return GeneratedIllustration(
-        concept_id=-1, image_path="", model_used="",
-        generation_time_sec=time.time() - t0, success=False,
-        error="FLUX Schnell failed"
-    )
-
-
-def _poll_atlas_prediction(
-    prediction_id: str, output_path: str, t0: float, timeout: int = 60
-) -> GeneratedIllustration:
-    """Poll Atlas Cloud for a completed prediction."""
-    import httpx
-
-    ATLAS_BASE = "https://api.atlascloud.ai/api/v1"
-    deadline = time.time() + timeout
-
-    while time.time() < deadline:
-        try:
-            resp = httpx.get(
-                f"{ATLAS_BASE}/model/prediction/{prediction_id}",
-                headers={"Authorization": f"Bearer {ATLASCLOUD_KEY}"},
-                timeout=15,
-            )
-            data = resp.json().get("data", resp.json())
-            status = str(data.get("status", "")).lower()
-
-            if status in ("succeeded", "completed", "done"):
-                outputs = data.get("output", data.get("outputs", []))
-                if isinstance(outputs, list) and outputs:
-                    img_url = outputs[0]
-                elif isinstance(outputs, str):
-                    img_url = outputs
-                else:
-                    break
-
-                img_resp = httpx.get(img_url, timeout=30, follow_redirects=True)
-                Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-                with open(output_path, "wb") as f:
-                    f.write(img_resp.content)
-                return GeneratedIllustration(
-                    concept_id=-1, image_path=output_path,
-                    model_used="atlas/nano-banana-2-lite",
-                    generation_time_sec=time.time() - t0, success=True,
-                )
-
-            if status in ("failed", "error", "cancelled"):
-                break
-
-        except Exception:
-            pass
-
-        time.sleep(2)
-
-    return GeneratedIllustration(
-        concept_id=-1, image_path="", model_used="",
-        generation_time_sec=time.time() - t0, success=False,
-        error="Atlas prediction polling timed out"
-    )
-
-
 def generate_style_reference(
     output_dir: str,
     style_preset: str = "default",
@@ -467,53 +262,25 @@ def generate_style_reference(
 
 
 def _generate_premium(prompt: str, output_path: str, style_ref_path: str | None = None) -> GeneratedIllustration:
-    """Generate via Gemini NB2 Lite (premium quality for hook zone)."""
-    from google import genai
-    from google.genai import types
+    """Premium hook stills via Atlas Nano Banana (was Google Gemini image)."""
+    from core.atlas_llm import generate_image_file, has_atlas, ATLAS_PREMIUM_IMAGE_MODEL
 
-    if not GEMINI_KEY:
-        return generate_single_illustration(prompt, output_path, style_ref_path)
+    t0 = time.time()
+    if has_atlas() and generate_image_file(
+        prompt,
+        output_path,
+        model=ATLAS_PREMIUM_IMAGE_MODEL,
+        aspect_ratio="16:9",
+    ):
+        return GeneratedIllustration(
+            concept_id=-1,
+            image_path=output_path,
+            model_used=f"premium/{ATLAS_PREMIUM_IMAGE_MODEL}",
+            generation_time_sec=time.time() - t0,
+            success=True,
+        )
 
-    client = genai.Client(api_key=GEMINI_KEY)
-    contents = []
-    if style_ref_path and os.path.exists(style_ref_path):
-        with open(style_ref_path, "rb") as f:
-            ref_bytes = f.read()
-        contents.append(types.Part.from_bytes(data=ref_bytes, mime_type="image/png"))
-        contents.append(types.Part.from_text(
-            text=f"Match the art style of this reference image exactly. {prompt}"
-        ))
-    else:
-        contents.append(types.Part.from_text(text=prompt))
-
-    for model_name in _IMAGE_MODELS:
-        t0 = time.time()
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=contents,
-                config=types.GenerateContentConfig(
-                    response_modalities=["TEXT", "IMAGE"],
-                ),
-            )
-            if not response.candidates:
-                continue
-            for part in response.candidates[0].content.parts:
-                if part.inline_data and part.inline_data.data:
-                    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-                    with open(output_path, "wb") as f:
-                        f.write(part.inline_data.data)
-                    return GeneratedIllustration(
-                        concept_id=-1, image_path=output_path,
-                        model_used=f"premium/{model_name}",
-                        generation_time_sec=time.time() - t0, success=True,
-                    )
-        except Exception as e:
-            err = str(e)
-            if "not found" in err.lower() or "not supported" in err.lower():
-                continue
-            print(f"  [illustration_gen] premium {model_name} failed: {err[:100]}")
-
+    # If Nano Banana fails, fall back to free ERNIE (never FLUX)
     return generate_single_illustration(prompt, output_path, style_ref_path)
 
 
@@ -527,8 +294,8 @@ def generate_batch(
 ) -> list[GeneratedIllustration]:
     """Generate illustrations for all concepts in parallel.
 
-    Hook concepts (start_sec < hook_cutoff_sec) use premium Gemini NB2 Lite.
-    Body concepts use the ERNIE→FLUX→Gemini fallback chain.
+    Hook concepts (start_sec < hook_cutoff_sec): Nano Banana premium.
+    Body concepts: ERNIE only.
     """
     from core.concept_segmenter import BACKGROUND_MOODS
 
@@ -603,9 +370,11 @@ def generate_batch(
             model_counts[r.model_used] = model_counts.get(r.model_used, 0) + 1
 
     successes = sum(model_counts.values())
-    flux_cost = model_counts.get("flux-schnell", 0) * 0.003
-    premium_cost = sum(v for k, v in model_counts.items() if "premium" in k) * 0.034
-    total_cost = flux_cost + premium_cost
+    premium_cost = sum(
+        v for k, v in model_counts.items()
+        if "premium" in k or "nano-banana" in k
+    ) * 0.028
+    total_cost = premium_cost
     print(f"[illustration_gen] Batch complete: {successes}/{total} succeeded "
           f"in {elapsed:.1f}s | Models: {model_counts} | Est. cost: ${total_cost:.3f}")
 

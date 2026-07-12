@@ -17,7 +17,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from config import ATLASCLOUD_KEY, GEMINI_KEY
+from config import ATLASCLOUD_KEY
 
 ATLAS_BASE = "https://api.atlascloud.ai/api/v1"
 
@@ -151,8 +151,7 @@ def generate_thumbnails(
     import httpx
 
     if not ATLASCLOUD_KEY:
-        print("[thumbnail] No Atlas Cloud key, falling back to Gemini direct")
-        return _fallback_gemini(title, reference_image_paths, style_prompt, num_images, output_dir)
+        raise ValueError("ATLASCLOUD_KEY is not set")
 
     ref_urls = []
     atlas_balance_error = False
@@ -178,9 +177,6 @@ def generate_thumbnails(
         except Exception as e:
             print(f"[thumbnail] Atlas T2I failed: {e}")
             atlas_balance_error = atlas_balance_error or "balance" in str(e).lower()
-        if GEMINI_KEY:
-            print("[thumbnail] Falling back to Gemini after Atlas miss")
-            return _fallback_gemini(title, reference_image_paths, style_prompt, num_images, output_dir)
         if atlas_balance_error:
             raise RuntimeError("Thumbnail service unavailable (provider balance). Try again later.")
         return []
@@ -263,10 +259,6 @@ def generate_thumbnails(
 
     if generated_paths:
         return generated_paths
-
-    if GEMINI_KEY:
-        print("[thumbnail] Atlas edit produced nothing — falling back to Gemini")
-        return _fallback_gemini(title, reference_image_paths, style_prompt, num_images, output_dir)
 
     if atlas_balance_error:
         raise RuntimeError("Thumbnail service unavailable (provider balance). Try again later.")
@@ -354,69 +346,6 @@ def _download_image(url: str, output_path: str):
     Path(output_path).write_bytes(resp.content)
 
 
-def _fallback_gemini(
-    title: str,
-    reference_image_paths: list[str],
-    style_prompt: str = "",
-    num_images: int = 1,
-    output_dir: str = "",
-) -> list[str]:
-    """Fallback to direct Gemini API if Atlas Cloud key is not available."""
-    from google import genai
-    from google.genai import types
-
-    if not GEMINI_KEY:
-        raise ValueError("Neither ATLASCLOUD_KEY nor GEMINI_KEY is set")
-
-    client = genai.Client(api_key=GEMINI_KEY)
-
-    extra = f"Additional style instructions: {style_prompt}" if style_prompt else ""
-    prompt_text = THUMBNAIL_PROMPT_TEMPLATE.format(title=title, extra_instructions=extra)
-
-    contents = []
-    for ref_path in reference_image_paths:
-        ref = Path(ref_path)
-        if not ref.exists():
-            continue
-        img_bytes = ref.read_bytes()
-        mime = "image/png"
-        if ref.suffix.lower() in (".jpg", ".jpeg"):
-            mime = "image/jpeg"
-        elif ref.suffix.lower() == ".webp":
-            mime = "image/webp"
-        contents.append(types.Part.from_bytes(data=img_bytes, mime_type=mime))
-
-    contents.append(types.Part.from_text(text=prompt_text))
-
-    out_dir = Path(output_dir) if output_dir else Path("output/thumbnails")
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    generated_paths: list[str] = []
-    config = types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"])
-
-    for i in range(num_images):
-        try:
-            response = client.models.generate_content(
-                model="gemini-3-pro-image",
-                contents=contents,
-                config=config,
-            )
-            if (response.candidates
-                    and response.candidates[0].content
-                    and response.candidates[0].content.parts):
-                for part in response.candidates[0].content.parts:
-                    if hasattr(part, "inline_data") and part.inline_data and part.inline_data.data:
-                        out_path = out_dir / f"thumb_{i + 1:02d}.png"
-                        out_path.write_bytes(part.inline_data.data)
-                        generated_paths.append(str(out_path))
-                        print(f"[thumbnail] Gemini fallback generated: {out_path.name}")
-                        break
-        except Exception as e:
-            print(f"[thumbnail] Gemini fallback error: {e}")
-
-    return generated_paths
-
-
 def generate_thumbnail_no_refs(
     title: str,
     style_description: str = "",
@@ -424,22 +353,13 @@ def generate_thumbnail_no_refs(
     output_dir: str = "",
     count: int = 2,
 ) -> list[str]:
-    """Generate a thumbnail without reference images. Falls back to Gemini if Atlas fails."""
-    paths: list[str] = []
-    if ATLASCLOUD_KEY:
-        try:
-            paths = _generate_text_only(title, style_description, count, output_dir)
-        except Exception as e:
-            print(f"[thumbnail] Atlas T2I failed, trying Gemini: {e}")
-            paths = []
+    """Generate a thumbnail without reference images (Atlas Nano Banana only)."""
+    if not ATLASCLOUD_KEY:
+        raise ValueError("ATLASCLOUD_KEY is not set")
+    paths = _generate_text_only(title, style_description, count, output_dir)
     if paths:
         return paths
-    if GEMINI_KEY:
-        print("[thumbnail] Using Gemini fallback for text-only thumbnails")
-        return _fallback_gemini(title, [], style_description, count, output_dir)
-    if ATLASCLOUD_KEY:
-        raise RuntimeError(
-            "Thumbnail generation failed — Atlas returned no images "
-            "(check provider balance) and GEMINI_KEY is not set."
-        )
-    raise ValueError("Neither ATLASCLOUD_KEY nor GEMINI_KEY is set")
+    raise RuntimeError(
+        "Thumbnail generation failed — Atlas returned no images "
+        "(check provider balance)."
+    )

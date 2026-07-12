@@ -263,12 +263,10 @@ def plan_scenes(
     Returns:
         list of Scene objects ready for the asset router
     """
-    from google import genai
+    from core.atlas_llm import generate_text, has_atlas
 
-    if not GEMINI_KEY:
-        raise ValueError("GEMINI_KEY required for scene planning")
-
-    client = genai.Client(api_key=GEMINI_KEY)
+    if not GEMINI_KEY and not has_atlas():
+        raise ValueError("ATLASCLOUD_KEY or GEMINI_KEY required for scene planning")
 
     style_guidance = ""
     if niche_profile:
@@ -302,13 +300,11 @@ def plan_scenes(
 
     for attempt in range(3):
         try:
-            response = client.models.generate_content(
+            raw = generate_text(
+                prompt + "\n\n" + user_msg,
                 model=GEMINI_TEXT_MODEL,
-                contents=[
-                    {"role": "user", "parts": [{"text": prompt + "\n\n" + user_msg}]}
-                ],
+                max_tokens=8192,
             )
-            raw = response.text
             scene_dicts = _parse_scenes_json(raw)
             break
         except Exception as e:
@@ -366,7 +362,7 @@ def plan_scenes(
             pacing=sd.get("pacing", "normal"),
         ))
 
-    core_subject, environment = _extract_context(script, client)
+    core_subject, environment = _extract_context(script)
     print(f"[scene_planner] Core subject: \"{core_subject}\"")
     print(f"[scene_planner] Environment: \"{environment}\"")
 
@@ -650,37 +646,36 @@ def _detect_unstockable(scenes: list[Scene], core_subject: str) -> list[Scene]:
     return scenes
 
 
-def _extract_context(script: str, client) -> tuple[str, str]:
+def _extract_context(script: str, client=None) -> tuple[str, str]:
     """
     Extract core subject AND environment in a single LLM call (saves ~10s).
     Returns (core_subject, environment).
     """
+    from core.atlas_llm import generate_text
+
     try:
-        response = client.models.generate_content(
+        text = generate_text(
+            (
+                f"Read this script and extract TWO things. Reply in EXACTLY "
+                f"this format (two lines, nothing else):\n"
+                f"SUBJECT: <3-8 words for the core topic>\n"
+                f"ENVIRONMENT: <3-6 comma-separated keywords for physical setting>\n\n"
+                f"Examples:\n"
+                f"  Moon landing script:\n"
+                f"    SUBJECT: Apollo 11 NASA moon landing 1969\n"
+                f"    ENVIRONMENT: space, lunar surface, mission control\n"
+                f"  Deep ocean script:\n"
+                f"    SUBJECT: Deep ocean hydrothermal vent life\n"
+                f"    ENVIRONMENT: deep sea, underwater, dark, abyss\n"
+                f"  Amish community script:\n"
+                f"    SUBJECT: Amish community rural Pennsylvania America\n"
+                f"    ENVIRONMENT: rural, farmland, countryside, rustic\n\n"
+                f"SCRIPT:\n{script[:500]}\n\n"
+                f"Extract now (two lines only):"
+            ),
             model=GEMINI_TEXT_MODEL,
-            contents=[{
-                "role": "user",
-                "parts": [{"text": (
-                    f"Read this script and extract TWO things. Reply in EXACTLY "
-                    f"this format (two lines, nothing else):\n"
-                    f"SUBJECT: <3-8 words for the core topic>\n"
-                    f"ENVIRONMENT: <3-6 comma-separated keywords for physical setting>\n\n"
-                    f"Examples:\n"
-                    f"  Moon landing script:\n"
-                    f"    SUBJECT: Apollo 11 NASA moon landing 1969\n"
-                    f"    ENVIRONMENT: space, lunar surface, mission control\n"
-                    f"  Deep ocean script:\n"
-                    f"    SUBJECT: Deep ocean hydrothermal vent life\n"
-                    f"    ENVIRONMENT: deep sea, underwater, dark, abyss\n"
-                    f"  Amish community script:\n"
-                    f"    SUBJECT: Amish community rural Pennsylvania America\n"
-                    f"    ENVIRONMENT: rural, farmland, countryside, rustic\n\n"
-                    f"SCRIPT:\n{script[:500]}\n\n"
-                    f"Extract now (two lines only):"
-                )}],
-            }],
-        )
-        text = response.text.strip()
+            max_tokens=256,
+        ).strip()
         subject = ""
         environment = ""
         for line in text.split("\n"):

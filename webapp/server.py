@@ -967,33 +967,39 @@ def _gemini_generate_text(
     retries: int = 2,
     label: str = "Generation",
 ) -> str:
-    """Call Gemini with enough output budget + light thinking; retry empty replies."""
-    from google.genai import types
+    """Text generation via Atlas (preferred) or Google Gemini; retry empty replies."""
+    from core.atlas_llm import generate_text, has_atlas
 
-    last_finish = ""
+    last_err = ""
     for attempt in range(retries + 1):
-        # Bump budget on retries — thinking models often burn the first budget on thoughts.
         tokens = max_output_tokens if attempt == 0 else max(max_output_tokens, 16384)
-        resp = client.models.generate_content(
-            model=config.GEMINI_TEXT_MODEL,
-            contents=[{"role": "user", "parts": [{"text": prompt}]}],
-            config=types.GenerateContentConfig(
-                max_output_tokens=tokens,
-                thinking_config=types.ThinkingConfig(
-                    thinking_level=types.ThinkingLevel.MINIMAL,
-                    include_thoughts=False,
-                ),
-            ),
-        )
-        text, finish = _extract_gemini_text(resp)
-        last_finish = finish
-        if text:
-            return text
+        try:
+            text = generate_text(prompt, max_tokens=tokens).strip()
+            if text:
+                return text
+            last_err = "empty"
+        except Exception as e:
+            last_err = str(e)
+            # Legacy path only if Atlas is not configured
+            if not has_atlas() and client is not None:
+                try:
+                    from google.genai import types
+                    resp = client.models.generate_content(
+                        model=config.GEMINI_TEXT_MODEL,
+                        contents=[{"role": "user", "parts": [{"text": prompt}]}],
+                        config=types.GenerateContentConfig(max_output_tokens=tokens),
+                    )
+                    text, finish = _extract_gemini_text(resp)
+                    last_err = finish or last_err
+                    if text:
+                        return text
+                except Exception as e2:
+                    last_err = str(e2)
         time.sleep(0.35 * (attempt + 1))
 
     raise HTTPException(
         503,
-        f"{label} returned empty text ({last_finish or 'unknown'}). Try again in a moment.",
+        f"{label} returned empty text ({last_err or 'unknown'}). Try again in a moment.",
     )
 
 
@@ -1002,12 +1008,11 @@ def _gemini_generate_text(
 # ---------------------------------------------------------------------------
 @app.post("/api/titles")
 def generate_titles(req: TitleRequest, user: dict = Depends(require_user)):
-    from google import genai
+    from core.atlas_llm import has_atlas
 
-    if not config.GEMINI_KEY:
-        raise HTTPException(500, "GEMINI_KEY not configured on backend")
+    if not config.GEMINI_KEY and not has_atlas():
+        raise HTTPException(500, "ATLASCLOUD_KEY or GEMINI_KEY not configured on backend")
 
-    client = genai.Client(api_key=config.GEMINI_KEY)
     niche_data = _load_niche(req.niche)
     niche_name = niche_data.get("name", req.niche) if niche_data else req.niche
     topic_hint = f"\nTopic hint from user: {req.topic}" if req.topic else ""
@@ -1021,7 +1026,7 @@ def generate_titles(req: TitleRequest, user: dict = Depends(require_user)):
 
     try:
         raw = _gemini_generate_text(
-            client, prompt, max_output_tokens=2048, label="Title generation"
+            None, prompt, max_output_tokens=2048, label="Title generation"
         )
         raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         titles = json.loads(raw)
@@ -1039,14 +1044,13 @@ def generate_titles(req: TitleRequest, user: dict = Depends(require_user)):
 # ---------------------------------------------------------------------------
 @app.post("/api/script")
 def generate_script(req: ScriptRequest, user: dict = Depends(require_user)):
-    from google import genai
+    from core.atlas_llm import has_atlas
 
     _enforce_length_cap(user, req.target_minutes, label="Script")
 
-    if not config.GEMINI_KEY:
-        raise HTTPException(500, "GEMINI_KEY not configured on backend")
+    if not config.GEMINI_KEY and not has_atlas():
+        raise HTTPException(500, "ATLASCLOUD_KEY or GEMINI_KEY not configured on backend")
 
-    client = genai.Client(api_key=config.GEMINI_KEY)
     niche_data = _load_niche(req.niche)
     style_hint = ""
     if niche_data:
@@ -1071,7 +1075,7 @@ def generate_script(req: ScriptRequest, user: dict = Depends(require_user)):
 
     try:
         script = _gemini_generate_text(
-            client,
+            None,
             prompt,
             max_output_tokens=max_tokens,
             label="Script generation",
@@ -1679,12 +1683,11 @@ def _maybe_attribute(kit: dict, user: dict) -> dict:
 
 @app.post("/api/upload-kit")
 def generate_upload_kit(req: UploadKitRequest, user: dict = Depends(require_user)):
-    from google import genai
+    from core.atlas_llm import generate_text, has_atlas
 
-    if not config.GEMINI_KEY:
+    if not has_atlas() and not config.GEMINI_KEY:
         return _maybe_attribute({"description": f"Check out this video: {req.title}", "tags": ["youtube", "video"], "hashtags": []}, user)
 
-    client = genai.Client(api_key=config.GEMINI_KEY)
     prompt = (
         f"Generate YouTube upload metadata for this video:\n"
         f"Title: \"{req.title}\"\nScript excerpt: \"{req.script[:500]}\"\n\n"
@@ -1694,8 +1697,8 @@ def generate_upload_kit(req: UploadKitRequest, user: dict = Depends(require_user
         f"- \"hashtags\": array of 3 hashtags\n\nReturn ONLY valid JSON."
     )
     try:
-        resp = client.models.generate_content(model=config.GEMINI_TEXT_MODEL, contents=[{"role": "user", "parts": [{"text": prompt}]}])
-        raw = resp.text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        raw = generate_text(prompt, max_tokens=2048).strip()
+        raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         return _maybe_attribute(json.loads(raw), user)
     except Exception:
         return _maybe_attribute({"description": f"Check out this video: {req.title}", "tags": ["youtube", "video"], "hashtags": []}, user)
@@ -2177,7 +2180,23 @@ async def test_key(req: KeyTestRequest, admin: dict = Depends(require_admin)):
             return {"ok": r.status_code == 200}
 
         elif req.key_name == "atlascloud":
-            return {"ok": bool(key_val)}
+            import httpx
+            r = httpx.post(
+                "https://api.atlascloud.ai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {key_val}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": getattr(config, "ATLAS_TEXT_MODEL", "google/gemini-3.1-flash-lite"),
+                    "messages": [{"role": "user", "content": "Say hi"}],
+                    "max_tokens": 8,
+                },
+                timeout=30,
+            )
+            if r.status_code >= 400:
+                return {"ok": False, "error": r.text[:200]}
+            return {"ok": True}
 
         else:
             return {"ok": bool(key_val)}

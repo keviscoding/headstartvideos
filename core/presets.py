@@ -37,7 +37,7 @@ class PresetConfig:
     background: dict = field(default_factory=lambda: {"type": "color", "value": "#FFFFFF"})
     # Thumbnail settings
     thumbnail_style_prompt: str = ""
-    thumbnail_model: str = "gemini-3-pro-image"
+    thumbnail_model: str = "google/nano-banana-pro/text-to-image"
     # Script settings
     anthropic_model: str = "claude-sonnet-4-20250514"
 
@@ -143,7 +143,7 @@ def load_thumbnail_config(name: str) -> dict:
     if cfg_path.exists():
         with open(cfg_path) as f:
             return json.load(f)
-    return {"style_prompt": "", "model": "gemini-3-pro-image"}
+    return {"style_prompt": "", "model": "google/nano-banana-pro/text-to-image"}
 
 
 # --- Channel data ---

@@ -167,9 +167,10 @@ def generate_queries(
     segments: list of {"id": int, "text": str}
     niche_profile: optional NicheProfile dict with sample_queries for few-shot learning
     """
-    from google import genai
+    from core.atlas_llm import generate_text, has_atlas
 
-    client = genai.Client(api_key=GEMINI_KEY)
+    if not GEMINI_KEY and not has_atlas():
+        raise ValueError("ATLASCLOUD_KEY or GEMINI_KEY required for query generation")
 
     segment_list = "\n".join(
         f"Segment {s['id']}: \"{s['text']}\""
@@ -216,14 +217,11 @@ Generate a JSON array with one object per segment. Each object must have:
 - entity_type ("person" | "place" | "event" | "object" | "mood")
 - style_hint ("historical_bw" | "cinematic_dark" | "modern_color" | "neutral")"""
 
-    response = client.models.generate_content(
+    text = generate_text(
+        SYSTEM_PROMPT + "\n\n" + user_prompt,
         model=GEMINI_TEXT_MODEL,
-        contents=[
-            {"role": "user", "parts": [{"text": SYSTEM_PROMPT + "\n\n" + user_prompt}]}
-        ],
-    )
-
-    text = response.text.strip()
+        max_tokens=8192,
+    ).strip()
     text = re.sub(r'^```json\s*', '', text)
     text = re.sub(r'\s*```$', '', text)
 

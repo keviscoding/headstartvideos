@@ -25,11 +25,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from config import (
-    GEMINI_KEY, VIDEO_WIDTH, VIDEO_HEIGHT, VIDEO_FPS, ATLASCLOUD_KEY,
+    VIDEO_WIDTH, VIDEO_HEIGHT, VIDEO_FPS, ATLASCLOUD_KEY,
 )
-
-
-_AI_IMAGE_MODELS = ["gemini-3-pro-image", "gemini-3.1-flash-image"]
 
 
 def _generate_ernie_cinematic(prompt: str, output_path: str) -> bool:
@@ -409,13 +406,11 @@ def _handle_ai_image(
     scene, assets_dir: Path, clips_dir: Path
 ) -> ResolvedAsset | None:
     """
-    Generate a cinematic AI image using Gemini image generation.
-    Builds a rich visual metaphor prompt from the scene context.
+    Cinematic AI stills: ERNIE only (free). Never Nano Banana / Gemini image.
     """
-    if not GEMINI_KEY:
+    if not ATLASCLOUD_KEY:
         return None
 
-    from google import genai
     from core.ken_burns import render_clip, pick_effects
 
     if scene.ai_prompt:
@@ -445,67 +440,20 @@ def _handle_ai_image(
     if "do not include" not in prompt.lower() and "no text" not in prompt.lower():
         prompt = prompt.rstrip(".") + "." + NO_TEXT_SUFFIX
 
-    print(f"  [ai] Generating image: {prompt[:80]}...")
+    print(f"  [ai] Generating image (ERNIE only): {prompt[:80]}...")
 
-    # Try ERNIE first (free), fall back to Gemini
-    ernie_path = str(assets_dir / f"scene_{scene.id:03d}_ai.png")
-    if _generate_ernie_cinematic(prompt, ernie_path):
-        from core.ken_burns import render_clip, pick_effects
+    img_path = str(assets_dir / f"scene_{scene.id:03d}_ai.png")
+    if _generate_ernie_cinematic(prompt, img_path):
         effect = pick_effects(1)[0]
         clip_path = str(clips_dir / f"clip_{scene.id:04d}.mp4")
-        if render_clip(ernie_path, clip_path, scene.duration_sec, effect):
+        if render_clip(img_path, clip_path, scene.duration_sec, effect):
             print(f"  [ai] Generated with ERNIE (free)")
             return ResolvedAsset(
                 scene_id=scene.id, asset_type="ai_image",
-                file_path=ernie_path, clip_path=clip_path,
+                file_path=img_path, clip_path=clip_path,
                 duration_sec=scene.duration_sec, source="ernie",
                 query_used=prompt[:80],
             )
-
-    client = genai.Client(api_key=GEMINI_KEY)
-
-    for model in _AI_IMAGE_MODELS:
-        try:
-            response = client.models.generate_content(
-                model=model,
-                contents=[{"role": "user", "parts": [{"text": prompt}]}],
-                config={"response_modalities": ["TEXT", "IMAGE"]},
-            )
-
-            if not response.candidates:
-                continue
-
-            img_path = str(assets_dir / f"scene_{scene.id:03d}_ai.png")
-            found_image = False
-
-            for part in (response.candidates[0].content.parts or []):
-                if hasattr(part, "inline_data") and part.inline_data and part.inline_data.data:
-                    with open(img_path, "wb") as f:
-                        f.write(part.inline_data.data)
-                    found_image = True
-                    break
-
-            if not found_image:
-                print(f"  [ai] {model} returned no image data, trying next...")
-                continue
-
-            effect = pick_effects(1)[0]
-            clip_path = str(clips_dir / f"clip_{scene.id:04d}.mp4")
-            if render_clip(img_path, clip_path, scene.duration_sec, effect):
-                print(f"  [ai] Generated with {model}")
-                return ResolvedAsset(
-                    scene_id=scene.id,
-                    asset_type="ai_image",
-                    file_path=img_path,
-                    clip_path=clip_path,
-                    duration_sec=scene.duration_sec,
-                    source="gemini",
-                    query_used=prompt[:80],
-                )
-
-        except Exception as e:
-            print(f"  [ai] {model} failed: {e}")
-            continue
 
     return None
 
@@ -513,14 +461,10 @@ def _handle_ai_image(
 def _handle_ai_image_emergency(
     scene, assets_dir: Path, clips_dir: Path
 ) -> ResolvedAsset | None:
-    """
-    Emergency AI image gen with a simplified prompt.
-    This is the LAST visual option before falling back to text.
-    """
-    if not GEMINI_KEY:
+    """Emergency AI still — ERNIE only."""
+    if not ATLASCLOUD_KEY:
         return None
 
-    from google import genai
     from core.ken_burns import render_clip
 
     simple_prompt = (
@@ -529,35 +473,22 @@ def _handle_ai_image_emergency(
         f"Dramatic shadows, atmospheric, documentary style."
     )
 
-    print(f"  [ai-emergency] Trying simplified prompt...")
+    print(f"  [ai-emergency] Trying ERNIE with simplified prompt...")
 
     try:
-        client = genai.Client(api_key=GEMINI_KEY)
-        response = client.models.generate_content(
-            model=_AI_IMAGE_MODELS[0],
-            contents=[{"role": "user", "parts": [{"text": simple_prompt}]}],
-            config={"response_modalities": ["TEXT", "IMAGE"]},
-        )
-
-        if response.candidates:
-            img_path = str(assets_dir / f"scene_{scene.id:03d}_emergency.png")
-            for part in (response.candidates[0].content.parts or []):
-                if hasattr(part, "inline_data") and part.inline_data and part.inline_data.data:
-                    with open(img_path, "wb") as f:
-                        f.write(part.inline_data.data)
-
-                    clip_path = str(clips_dir / f"clip_{scene.id:04d}.mp4")
-                    if render_clip(img_path, clip_path, scene.duration_sec, "zoom_in_center"):
-                        return ResolvedAsset(
-                            scene_id=scene.id,
-                            asset_type="ai_image",
-                            file_path=img_path,
-                            clip_path=clip_path,
-                            duration_sec=scene.duration_sec,
-                            source="gemini_emergency",
-                            query_used=simple_prompt[:60],
-                        )
-                    break
+        img_path = str(assets_dir / f"scene_{scene.id:03d}_emergency.png")
+        if _generate_ernie_cinematic(simple_prompt, img_path):
+            clip_path = str(clips_dir / f"clip_{scene.id:04d}.mp4")
+            if render_clip(img_path, clip_path, scene.duration_sec, "zoom_in_center"):
+                return ResolvedAsset(
+                    scene_id=scene.id,
+                    asset_type="ai_image",
+                    file_path=img_path,
+                    clip_path=clip_path,
+                    duration_sec=scene.duration_sec,
+                    source="ernie_emergency",
+                    query_used=simple_prompt[:60],
+                )
     except Exception as e:
         print(f"  [ai-emergency] Failed: {e}")
 

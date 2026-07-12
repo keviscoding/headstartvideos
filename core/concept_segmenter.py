@@ -217,14 +217,12 @@ def segment_into_concepts(
     Returns:
         list of Concept objects with exact timing and illustration prompts
     """
-    from google import genai
+    from core.atlas_llm import generate_text, has_atlas
 
-    if not GEMINI_KEY:
-        raise ValueError("GEMINI_KEY required for concept segmentation")
+    if not GEMINI_KEY and not has_atlas():
+        raise ValueError("ATLASCLOUD_KEY or GEMINI_KEY required for concept segmentation")
     if not all_words:
         raise ValueError("No word timestamps provided")
-
-    client = genai.Client(api_key=GEMINI_KEY)
 
     words_formatted = _format_words_with_timestamps(all_words)
 
@@ -268,13 +266,12 @@ def segment_into_concepts(
     for attempt in range(3):
         try:
             import config as _cfg
-            response = client.models.generate_content(
-                model=getattr(_cfg, "CONCEPT_SEGMENTER_MODEL", GEMINI_TEXT_MODEL),
-                contents=[
-                    {"role": "user", "parts": [{"text": prompt + "\n\n" + user_msg}]}
-                ],
+            model = getattr(_cfg, "CONCEPT_SEGMENTER_MODEL", GEMINI_TEXT_MODEL)
+            raw = generate_text(
+                prompt + "\n\n" + user_msg,
+                model=model,
+                max_tokens=8192,
             )
-            raw = response.text
             concept_dicts = _parse_concepts_json(raw)
             break
         except Exception as e:

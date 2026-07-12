@@ -10,7 +10,6 @@ from __future__ import annotations
 import re
 import time
 import httpx
-from config import GEMINI_KEY
 
 
 def _extract_channel_id(url: str, yt_api_key: str) -> str:
