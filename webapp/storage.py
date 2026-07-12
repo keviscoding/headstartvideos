@@ -74,13 +74,14 @@ def _spaces_creds() -> tuple[str, str, str, str, str]:
 def spaces_fingerprint() -> str:
     """Safe debug string for logs (no secret material)."""
     key, secret, bucket, region, endpoint = _spaces_creds()
+    key_prefix = (key[:6] + "…") if len(key) >= 6 else repr(key)
+    key_suffix = ("…" + key[-4:]) if len(key) >= 4 else repr(key)
     return (
         f"bucket={bucket!r} region={region!r} endpoint={endpoint!r} "
         f"key_len={len(key)} secret_len={len(secret)} "
-        f"key_prefix={(key[:6] + '…') if len(key) >= 6 else key!r} "
-        f"key_suffix={(('…' + key[-4:]) if len(key) >= 4 else key!r)} "
+        f"key_prefix={key_prefix} key_suffix={key_suffix} "
         f"secret_ws={any(c.isspace() for c in secret)} "
-        f"secret_has_dollar={('$' in secret)} "
+        f"secret_has_dollar={'$' in secret} "
         f"secret_len_ok={20 <= len(secret) <= 64}"
     )
 
