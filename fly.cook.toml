@@ -1,6 +1,9 @@
 # Fly app for ChannelRecipe cooks (ephemeral Machines started by the web API).
 # Deploy: fly deploy -c fly.cook.toml
-# Secrets: fly secrets set -a channelrecipe-cook DATABASE_URL=... SPACES_*=... etc.
+#
+# Do NOT set SPACES_* / DATABASE_URL / API keys as `fly secrets` here.
+# Fly secrets override Machines API env, and stay stale when the app is
+# scaled to 0. The web dyno injects fresh env into each one-shot Machine.
 
 app = 'channelrecipe-cook'
 primary_region = 'sjc'

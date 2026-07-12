@@ -184,6 +184,18 @@ def spawn_cook(job_id: str) -> bool:
         if not (env.get("SPACES_KEY") and env.get("SPACES_SECRET") and env.get("SPACES_BUCKET")):
             print("[fly] SPACES_* missing on web — cook would 404 after finish")
             return False
+        # Log what WE inject (safe fingerprint). If cook logs a different
+        # key_suffix, Fly app secrets are overriding machine env — unset them.
+        try:
+            from webapp.storage import spaces_fingerprint
+            print(f"[fly] injecting spaces {spaces_fingerprint()}")
+        except Exception as fp_err:
+            sk = env.get("SPACES_KEY", "")
+            print(
+                f"[fly] injecting spaces key_len={len(sk)} "
+                f"key_suffix=…{sk[-4:] if len(sk) >= 4 else sk!r} "
+                f"(fingerprint failed: {fp_err})"
+            )
         body = {
             "region": region,
             "config": {
