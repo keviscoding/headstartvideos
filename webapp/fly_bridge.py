@@ -81,7 +81,9 @@ def _request(method: str, path: str, body: dict | None = None) -> dict | list | 
 def _machine_env() -> dict[str, str]:
     env: dict[str, str] = {
         "COOK_ON_WEB": "0",
-        "ALLOW_LOCAL_WHISPER": "0",
+        # Groq often 403s datacenter IPs ("check your network settings").
+        # Local whisper on an ephemeral Fly box is fine — it won't freeze the web dyno.
+        "ALLOW_LOCAL_WHISPER": "1",
         "APP_ENV": "fly-cook",
     }
     # URLs / ids: strip all whitespace. Secrets: trim ends only (preserve + / =).
