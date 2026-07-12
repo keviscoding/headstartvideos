@@ -50,6 +50,9 @@ if config.SENTRY_DSN:
             exc_info = hint.get("exc_info")
             if exc_info:
                 exc = exc_info[1]
+                # Fly machine stop / deploy / Ctrl-C — not app bugs
+                if isinstance(exc, (KeyboardInterrupt, SystemExit, GeneratorExit)):
+                    return None
                 # FastAPI HTTPException — only keep unexpected 5xx
                 try:
                     from fastapi import HTTPException as _HTTPExc
