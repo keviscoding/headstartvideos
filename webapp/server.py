@@ -358,6 +358,7 @@ def _safe_user(u: dict) -> dict:
         "created_at": u["created_at"],
         "is_admin": is_admin,
         "trial_used": bool(u.get("trial_used")),
+        "trial_credits": int(getattr(config, "TRIAL_CREDITS", 2) or 2),
     }
 
 
@@ -541,13 +542,14 @@ async def stripe_webhook(request: Request):
                     })
                 else:
                     plan_label = "daily_trial" if "daily" in plan_key else "starter_trial"
-                    update_user(int(user_id), plan=plan_label, credits=3,
+                    trial_credits = int(getattr(config, "TRIAL_CREDITS", 2) or 2)
+                    update_user(int(user_id), plan=plan_label, credits=trial_credits,
                                 stripe_sub_id=obj.get("subscription", ""),
                                 trial_used=1)
-                    print(f"[stripe] User {user_id} started trial ({plan_label}, 3 credits)")
-                    identify_user(user_id, {"plan": plan_label, "credits": 3, "trial_used": True})
+                    print(f"[stripe] User {user_id} started trial ({plan_label}, {trial_credits} credits)")
+                    identify_user(user_id, {"plan": plan_label, "credits": trial_credits, "trial_used": True})
                     track(user_id, "trial_started", {
-                        "plan": plan_label, "plan_key": plan_key, "credits": 3,
+                        "plan": plan_label, "plan_key": plan_key, "credits": trial_credits,
                     })
 
     elif evt_type == "invoice.paid":
@@ -559,7 +561,7 @@ async def stripe_webhook(request: Request):
                 plan = row.get("plan", "starter")
                 if plan in ("starter_trial", "daily_trial"):
                     if amount_paid == 0:
-                        print(f"[stripe] Skipping $0 trial invoice for user {row['id']} (already has 3 trial credits)")
+                        print(f"[stripe] Skipping $0 trial invoice for user {row['id']} (trial credits already granted)")
                     else:
                         new_plan = "daily" if "daily" in plan else "starter"
                         credits = 35 if new_plan == "daily" else 15

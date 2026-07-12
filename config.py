@@ -18,6 +18,8 @@ ATLASCLOUD_KEY = os.getenv("ATLASCLOUD_KEY", "")
 # offloaded here (large-v3-turbo) instead of running whisper on the local CPU.
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_WHISPER_MODEL = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo")
+# Trial grant (Stripe checkout with trial_period_days). Was 3; cut to 2 for COGS.
+TRIAL_CREDITS = max(1, int(os.getenv("TRIAL_CREDITS", "2")))
 # Cheap Atlas text for titles/scripts/planning (~$0.25/$1.50 per 1M vs 3.5's $1.50/$9).
 GEMINI_TEXT_MODEL = os.getenv("GEMINI_TEXT_MODEL", "gemini-3.1-flash-lite")
 ATLAS_TEXT_MODEL = os.getenv("ATLAS_TEXT_MODEL", "google/gemini-3.1-flash-lite")

@@ -544,6 +544,11 @@ function isPaidUser() {
     return currentUser && ['pro', 'starter', 'daily', 'starter_trial', 'daily_trial'].includes(currentUser.plan);
 }
 
+function trialCredits() {
+    const n = currentUser && currentUser.trial_credits;
+    return (typeof n === 'number' && n > 0) ? n : 2;
+}
+
 function isTrialUser() {
     return currentUser && ['starter_trial', 'daily_trial'].includes(currentUser.plan);
 }
@@ -657,7 +662,7 @@ function showPricingModal(opts = {}) {
 
     if (opts.reason === 'cook' && !usedTrial) {
         if (heading) heading.textContent = 'Your video is ready to cook';
-        if (subtitle) subtitle.textContent = 'Start your free trial to cook this video — 3 videos included.';
+        if (subtitle) subtitle.textContent = `Start your free trial to cook this video — ${trialCredits()} videos included.`;
     } else if (usedTrial) {
         if (heading) heading.textContent = 'Choose your plan';
         if (subtitle) subtitle.textContent = 'Your free trial was already used. Subscribe to keep creating.';
@@ -696,7 +701,7 @@ function showCelebration(kind = 'trial') {
         if (cta) cta.textContent = "Let's go →";
     } else {
         if (title) title.textContent = "You're in";
-        if (sub) sub.textContent = 'Your free trial is live. 3 videos ready to cook.';
+        if (sub) sub.textContent = `Your free trial is live. ${trialCredits()} videos ready to cook.`;
         if (cta) cta.textContent = "Let's cook →";
     }
 
@@ -751,10 +756,67 @@ function maybeShowWelcomeCelebration() {
     window.history.replaceState({}, '', window.location.pathname + hash);
     // Wait a beat for auth/UI to settle, then celebrate
     setTimeout(() => {
-        if (welcome === 'trial') showCelebration('trial');
-        else if (welcome === 'upgrade') showCelebration('upgrade');
-        else showCelebration('subscribe');
+        if (welcome === 'trial') {
+            // Transparent notice for people who saw the YouTube promise of 3 free videos
+            showTrialCreditChangeNotice(() => showCelebration('trial'));
+        } else if (welcome === 'upgrade') {
+            showCelebration('upgrade');
+        } else {
+            showCelebration('subscribe');
+        }
     }, 400);
+}
+
+/**
+ * One-time apology dialog for new trial users (video promised 3; we now grant 2).
+ * Only shown on fresh trial welcome — existing trials are untouched.
+ */
+function showTrialCreditChangeNotice(onDone) {
+    const KEY = 'cr_trial_credit_notice_v2';
+    try {
+        if (localStorage.getItem(KEY) === '1') {
+            if (typeof onDone === 'function') onDone();
+            return;
+        }
+    } catch (_) { /* private mode */ }
+
+    const existing = document.getElementById('trial-credit-notice');
+    if (existing) existing.remove();
+
+    const n = trialCredits();
+    const modal = document.createElement('div');
+    modal.id = 'trial-credit-notice';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.style.cssText = 'position:fixed;inset:0;z-index:220;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.72);padding:16px;';
+    modal.innerHTML = `
+        <div style="background:var(--app-surface,#1a1a2e);border:1px solid var(--app-border,#333);border-radius:16px;padding:28px 28px 22px;max-width:440px;width:100%;text-align:left;position:relative;box-shadow:0 24px 64px rgba(0,0,0,.45);">
+            <p style="font-family:var(--font-mono,monospace);font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:var(--app-ink-3,#888);margin:0 0 10px;">A quick note</p>
+            <h3 style="margin:0 0 12px;color:var(--app-ink,#fff);font-family:var(--font-display,sans-serif);font-size:22px;line-height:1.25;">We had to adjust the free trial</h3>
+            <p style="color:var(--app-ink-2,#bbb);margin:0 0 12px;font-size:14px;line-height:1.55;font-family:var(--font-body,sans-serif);">
+                If you came from our YouTube video, we promised <strong>3 free videos</strong>.
+                Due to rising generation costs, we unfortunately had to reduce new trials to
+                <strong>${n} free videos</strong>.
+            </p>
+            <p style="color:var(--app-ink-2,#bbb);margin:0 0 22px;font-size:14px;line-height:1.55;font-family:var(--font-body,sans-serif);">
+                We're sorry for the change — we still want you to fully test ChannelRecipe,
+                and every recipe remains available on your trial.
+            </p>
+            <button type="button" id="trial-credit-notice-ok" style="width:100%;padding:13px 16px;border:none;border-radius:10px;background:var(--accent,#6c5ce7);color:#fff;font-size:15px;font-weight:600;cursor:pointer;font-family:var(--font-body,sans-serif);">
+                Got it — continue with ${n} videos
+            </button>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    track('trial_credit_notice_shown', { trial_credits: n, previous_promised: 3 });
+
+    const finish = () => {
+        try { localStorage.setItem(KEY, '1'); } catch (_) {}
+        modal.remove();
+        track('trial_credit_notice_dismissed', { trial_credits: n });
+        if (typeof onDone === 'function') onDone();
+    };
+    modal.querySelector('#trial-credit-notice-ok')?.addEventListener('click', finish);
 }
 
 function showTrialExhaustedModal() {
@@ -764,6 +826,7 @@ function showTrialExhaustedModal() {
     const tierLabel = currentUser.plan === 'daily_trial' ? 'Daily' : 'Starter';
     const credits = currentUser.plan === 'daily_trial' ? 35 : 15;
     const price = currentUser.plan === 'daily_trial' ? '$49' : '$27';
+    const trialN = trialCredits();
 
     const modal = document.createElement('div');
     modal.id = 'trial-exhausted-modal';
@@ -772,7 +835,7 @@ function showTrialExhaustedModal() {
         <div style="background:var(--bg-card,#1a1a2e);border-radius:16px;padding:32px;max-width:420px;width:90%;text-align:center;position:relative;">
             <button onclick="hideTrialExhaustedModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;color:var(--text-secondary,#aaa);font-size:20px;cursor:pointer;">&times;</button>
             <div style="font-size:40px;margin-bottom:12px;">🎬</div>
-            <h3 style="margin:0 0 8px;color:var(--text-primary,#fff);font-size:20px;">You've used your 3 trial videos</h3>
+            <h3 style="margin:0 0 8px;color:var(--text-primary,#fff);font-size:20px;">You've used your ${trialN} trial videos</h3>
             <p style="color:var(--text-secondary,#aaa);margin:0 0 24px;font-size:14px;line-height:1.5;">
                 Start your <strong>${tierLabel}</strong> plan now to unlock <strong>${credits} videos/month</strong> at ${price}/mo, or wait until your trial ends.
             </p>
@@ -2800,7 +2863,7 @@ function updateAuthUI() {
         const planLabels = { free: 'Free', starter: 'Starter', daily: 'Daily', pro: 'Pro', starter_trial: 'Starter (trial)', daily_trial: 'Daily (trial)' };
         document.getElementById('user-plan-display').textContent = planLabels[currentUser.plan] || currentUser.plan;
         if (isTrialUser()) {
-            document.getElementById('credits-count').textContent = currentUser.credits + ' of 3 trial';
+            document.getElementById('credits-count').textContent = currentUser.credits + ' of ' + trialCredits() + ' trial';
             document.getElementById('credits-plan').textContent = 'videos';
         } else {
             document.getElementById('credits-count').textContent = currentUser.credits + ' credits';
@@ -2829,7 +2892,7 @@ function updateAuthUI() {
         userBtn.classList.add('hidden');
         const cc = document.getElementById('credits-count');
         const cp = document.getElementById('credits-plan');
-        if (cc) cc.textContent = '3 free';
+        if (cc) cc.textContent = trialCredits() + ' free';
         if (cp) cp.textContent = 'trial';
         creditsDisplay.classList.remove('hidden');
         if (navUpgrade) navUpgrade.classList.add('hidden');
@@ -2960,7 +3023,7 @@ function loadBillingPage() {
     const planLabels = { free: 'Free', starter: 'Starter', daily: 'Daily', pro: 'Pro', starter_trial: 'Starter (trial)', daily_trial: 'Daily (trial)' };
     document.getElementById('billing-plan-name').textContent = planLabels[currentUser.plan] || currentUser.plan;
     if (isTrialUser()) {
-        document.getElementById('billing-credits').textContent = currentUser.credits + ' of 3 trial videos';
+        document.getElementById('billing-credits').textContent = currentUser.credits + ' of ' + trialCredits() + ' trial videos';
     } else {
         document.getElementById('billing-credits').textContent = currentUser.credits;
     }
