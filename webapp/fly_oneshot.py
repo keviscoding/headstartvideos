@@ -7,10 +7,24 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import socket
 import sys
 import time
 import uuid
+
+# Fly destroy / scale-down / OOM kill → SIGTERM. Treat like KeyboardInterrupt
+# so we can mark the job + refund instead of leaving a zombie "running" row
+# and an unhandled Sentry excepthook event.
+_SHUTDOWN = (KeyboardInterrupt, SystemExit, GeneratorExit)
+
+
+def _sentry_before_send(event, hint):
+    """Drop machine-kill noise — not application bugs."""
+    exc_info = hint.get("exc_info")
+    if exc_info and isinstance(exc_info[1], _SHUTDOWN):
+        return None
+    return event
 
 
 def _init_sentry() -> None:
@@ -29,6 +43,7 @@ def _init_sentry() -> None:
             traces_sample_rate=0.0,
             send_default_pii=False,
             environment=os.getenv("APP_ENV", "fly-cook"),
+            before_send=_sentry_before_send,
         )
         print("[fly] Sentry initialized")
     except Exception as e:
@@ -87,6 +102,9 @@ def main() -> int:
             pass
 
     def _capture(exc, context=None):
+        if isinstance(exc, _SHUTDOWN):
+            print(f"[fly] shutdown signal (not reporting to Sentry): {type(exc).__name__}")
+            return
         print(f"[fly] error: {exc} context={context}")
         try:
             import config
@@ -111,6 +129,48 @@ def main() -> int:
         r = get_cook_job(job_id)
         return bool(r and r.get("status") == "cancelled")
 
+    def _mark_killed(reason: str) -> None:
+        """Machine stopped mid-cook — persist error + refund credit."""
+        msg = (
+            "Cook machine was stopped mid-render (host restart / deploy). "
+            "Your credit was refunded — please try again."
+        )
+        print(f"[fly] {reason}: {msg}")
+        job["status"] = "error"
+        job["error"] = msg
+        try:
+            update_cook_job(
+                job_id,
+                status="error",
+                error=msg[:800],
+                finished=True,
+                progress_json=json.dumps([{
+                    "time": time.time(),
+                    "message": msg,
+                    "phase": "error",
+                }]),
+            )
+        except Exception as e:
+            print(f"[fly] failed to mark killed job: {e}")
+        try:
+            from webapp.database import refund_credit
+            if job.get("user_id") and job.get("credit_deducted"):
+                refund_credit(int(job["user_id"]))
+                job["credit_deducted"] = False
+                update_cook_job(job_id, credit_deducted=False)
+                print(f"[fly] refunded credit after machine kill")
+        except Exception as refund_err:
+            print(f"[fly] refund after kill failed: {refund_err}")
+
+    # Fly Machines API destroy / platform stop sends SIGTERM. Default handler
+    # exits hard; convert to KeyboardInterrupt so we can refund + mark error.
+    def _on_term(signum, _frame):
+        print(f"[fly] received signal {signum}")
+        raise KeyboardInterrupt(f"signal {signum}")
+
+    signal.signal(signal.SIGTERM, _on_term)
+    signal.signal(signal.SIGINT, _on_term)
+
     print(f"[fly] cooking {job_id} recipe={row.get('recipe')}")
     # Verify Spaces write BEFORE spending API $ on a cook that can't upload.
     try:
@@ -119,6 +179,9 @@ def main() -> int:
         print(f"[fly] spaces {_storage.spaces_fingerprint()}")
         if _cfg.SPACES_KEY and _cfg.SPACES_SECRET and _cfg.SPACES_BUCKET:
             _storage.probe_spaces_write()
+    except _SHUTDOWN:
+        _mark_killed("shutdown during Spaces probe")
+        return 1
     except Exception as probe_err:
         _capture(probe_err, {"job_id": job_id, "phase": "spaces_probe"})
         try:
@@ -147,13 +210,19 @@ def main() -> int:
         print(f"[fly] aborting — Spaces probe failed: {probe_err}")
         return 1
 
-    run_cook_job(
-        job_id,
-        job,
-        track=_track,
-        capture_error=_capture,
-        cancel_check=_cancel,
-    )
+    try:
+        run_cook_job(
+            job_id,
+            job,
+            track=_track,
+            capture_error=_capture,
+            cancel_check=_cancel,
+        )
+    except _SHUTDOWN:
+        # cook_runner only catches Exception — KeyboardInterrupt bypasses it.
+        _mark_killed("shutdown during cook")
+        return 1
+
     status = job.get("status")
     print(f"[fly] finished {job_id} status={status}")
     return 0 if status in ("complete", "done", "cancelled") else 1
