@@ -383,11 +383,16 @@ def make_key_public(key: str) -> str:
     return _public_url(key)
 
 
-def playable_url(key_or_url: str, expires: int = 86400) -> str:
+def playable_url(
+    key_or_url: str,
+    expires: int = 86400,
+    *,
+    ensure_public: bool = True,
+) -> str:
     """
     URL the browser can actually play/download.
-    Tries public-read ACL first; always returns a working signed GET as
-    fallback when the object lives in our Spaces bucket.
+    By default flips ACL then returns a signed GET. For list endpoints pass
+    ensure_public=False so History refresh stays fast (presign only).
     """
     raw = (key_or_url or "").strip()
     if not raw:
@@ -400,12 +405,11 @@ def playable_url(key_or_url: str, expires: int = 86400) -> str:
         if not extracted:
             return raw
         key = extracted
-    try:
-        make_key_public(key)
-    except Exception as e:
-        print(f"[storage] make_key_public failed: {e}")
-    # Prefer stable public URL; if CDN still 403s, caller can use signed.
-    # Return signed URL so playback works immediately for already-private files.
+    if ensure_public:
+        try:
+            make_key_public(key)
+        except Exception as e:
+            print(f"[storage] make_key_public failed: {e}")
     try:
         return presigned_get_url(key, expires=expires)
     except Exception as e:

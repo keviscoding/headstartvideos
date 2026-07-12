@@ -1890,13 +1890,13 @@ def _video_to_entry(v: dict, retention_secs: float, now: float) -> dict:
         hashtags = []
     video_url = v.get("video_url") or ""
     thumb_url = v.get("thumbnail_url") or ""
-    # Private Spaces objects 403 in <video> — flip ACL + fall back to signed GET.
+    # Presign only — do NOT ACL every object on list (that made Refresh feel stuck).
     try:
         from webapp import storage as _storage
         if video_url:
-            video_url = _storage.playable_url(video_url)
+            video_url = _storage.playable_url(video_url, ensure_public=False)
         if thumb_url:
-            thumb_url = _storage.playable_url(thumb_url)
+            thumb_url = _storage.playable_url(thumb_url, ensure_public=False)
     except Exception as e:
         print(f"[media] playable_url rewrite failed: {e}")
     return {

@@ -2339,6 +2339,12 @@ function esc(s) {
 
 async function loadHistory() {
     const list = document.getElementById('history-list');
+    const btn = document.getElementById('btn-history-refresh');
+    setLoading(btn, true);
+    if (list) {
+        list.style.opacity = '0.55';
+        list.style.pointerEvents = 'none';
+    }
     try {
         const res = await fetch('/api/videos');
         const data = await res.json();
@@ -2353,6 +2359,12 @@ async function loadHistory() {
     } catch {
         list.className = '';
         list.innerHTML = '<p style="color: var(--app-ink-3); text-align: center; padding: 32px 0;">Could not load your videos.</p>';
+    } finally {
+        setLoading(btn, false);
+        if (list) {
+            list.style.opacity = '';
+            list.style.pointerEvents = '';
+        }
     }
 }
 

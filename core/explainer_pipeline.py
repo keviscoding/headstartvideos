@@ -193,10 +193,32 @@ def run_explainer_pipeline(
 
     for i, (concept, result) in enumerate(zip(concepts, results)):
         if not result.success or not os.path.exists(result.image_path):
-            _log(f"  WARNING: Concept {i} has no image, creating placeholder")
-            placeholder_path = os.path.join(assets_dir, f"placeholder_{i:04d}.png")
-            _create_placeholder(placeholder_path, concept.text)
-            img_path = placeholder_path
+            _log(f"  WARNING: Concept {i} failed — retrying once with simple scene")
+            retry_desc = concept.illustration_prompt or concept.text[:80]
+            if concept.section_topic and concept.section_topic.lower() not in retry_desc.lower():
+                retry_desc = f"{retry_desc}. Setting: {concept.section_topic}"
+            retry_path = os.path.join(assets_dir, f"illustration_{concept.id:04d}_retry.png")
+            retry = illustration_gen.generate_single_illustration(
+                prompt=illustration_gen.build_prompt(
+                    retry_desc,
+                    concept.background_mood,
+                    concept.has_character,
+                ),
+                output_path=retry_path,
+                short_prompt=illustration_gen._build_short_prompt(
+                    retry_desc,
+                    concept.background_mood,
+                    concept.has_character,
+                ),
+            )
+            if retry.success and os.path.exists(retry.image_path):
+                results[i] = retry
+                img_path = retry.image_path
+            else:
+                _log(f"  WARNING: Concept {i} still failed — silent placeholder (no text)")
+                placeholder_path = os.path.join(assets_dir, f"placeholder_{i:04d}.png")
+                _create_placeholder(placeholder_path, concept.background_mood)
+                img_path = placeholder_path
         else:
             img_path = result.image_path
 
@@ -394,22 +416,36 @@ def _estimate_word_timestamps(script: str, voiceover_path: str) -> list[dict]:
     return result
 
 
-def _create_placeholder(path: str, text: str):
-    """Create a simple colored placeholder image when illustration gen fails."""
+def _create_placeholder(path: str, mood_or_text: str = "warm_earth"):
+    """Silent visual placeholder when illustration gen fails.
+
+    NEVER draw narration/captions — that produced the beige text slides users saw.
+    """
     try:
-        from PIL import Image, ImageDraw, ImageFont
-        from core.text_overlay import _SYSTEM_FONT
+        from PIL import Image, ImageDraw
 
-        img = Image.new("RGB", (1920, 1080), color=(212, 197, 169))
+        moods = {
+            "warm_earth": (212, 197, 169),
+            "cool_blue": (123, 155, 170),
+            "nature_green": (139, 154, 107),
+            "dark_serious": (58, 50, 50),
+            "clean_white": (242, 240, 235),
+            "golden_warm": (196, 163, 90),
+            "dusty_rose": (184, 147, 138),
+        }
+        bg = moods.get(mood_or_text, (212, 197, 169))
+        img = Image.new("RGB", (1920, 1080), color=bg)
         draw = ImageDraw.Draw(img)
-
-        try:
-            font = ImageFont.truetype(_SYSTEM_FONT, 36) if _SYSTEM_FONT else ImageFont.load_default()
-        except Exception:
-            font = ImageFont.load_default()
-
-        short_text = text[:80] + "..." if len(text) > 80 else text
-        draw.text((960, 540), short_text, fill=(60, 60, 60), font=font, anchor="mm")
+        # Simple stick-figure glyph — no text
+        cx, cy = 960, 500
+        draw.ellipse((cx - 50, cy - 140, cx + 50, cy - 40), outline=(30, 30, 30), width=6)
+        draw.ellipse((cx - 18, cy - 110, cx - 8, cy - 100), fill=(30, 30, 30))
+        draw.ellipse((cx + 8, cy - 110, cx + 18, cy - 100), fill=(30, 30, 30))
+        draw.line((cx, cy - 40, cx, cy + 80), fill=(30, 30, 30), width=6)
+        draw.line((cx, cy, cx - 70, cy + 40), fill=(30, 30, 30), width=6)
+        draw.line((cx, cy, cx + 70, cy + 40), fill=(30, 30, 30), width=6)
+        draw.line((cx, cy + 80, cx - 50, cy + 180), fill=(30, 30, 30), width=6)
+        draw.line((cx, cy + 80, cx + 50, cy + 180), fill=(30, 30, 30), width=6)
         img.save(path)
     except Exception:
         from PIL import Image

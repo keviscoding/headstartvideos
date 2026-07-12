@@ -25,6 +25,7 @@ class Concept:
     background_mood: str = "warm_earth"
     has_character: bool = True
     cut_style: str = "crossfade"
+    section_topic: str = ""
 
 
 BACKGROUND_MOODS = {
@@ -92,19 +93,44 @@ BODY ZONE (after 30 seconds):
 Do NOT use a fixed duration. The concept length comes from what's being said, \
 not from an arbitrary timer.
 
-RULE 3 — ILLUSTRATION PROMPTS:
-Write prompts for simple hand-drawn cartoon illustrations.
-- Describe what the illustration SHOWS, not what the narration says
-- Use visual metaphors for abstract concepts
-- ALWAYS describe the COMPOSITION: what is on the left, right, center
-- ALWAYS center the main subject in the frame
-- Keep the illustration simple — one clear focal point per concept
-- Prompts must be SHORT (under 150 chars). Be concise.
+RULE 3 — ILLUSTRATION PROMPTS (MOST IMPORTANT):
+Write prompts for simple hand-drawn cartoon ILLUSTRATIONS — never captions.
+
+HARD BANS:
+- NEVER put spoken narration, quotes, or full sentences in the prompt
+- NEVER ask for text, labels, titles, captions, signs with words, or numbers
+- NEVER describe only an abstract action with no setting
+  (bad: "stick figure floating" / "person falling")
+
+REQUIRED in EVERY illustration_prompt:
+1. SETTING — the concrete place/topic of THIS beat, anchored to the video's
+   ongoing subject (if the paragraph is about the Moon, show the Moon; if
+   about Earth's core, show a cutaway of Earth — not a blank void)
+2. ACTION — what the stick figure (if any) is DOING
+3. 2–3 PROPS / landmarks that make the beat readable without audio
+   (ladder, tunnel through Earth, Moon crater, gravity arrows as SHAPES
+   not text, core glow, spacesuit, etc.)
+4. COMPOSITION — what is left / center / right
+
+Keep prompts SHORT but dense (under 180 chars). Style:
+  "Stick figure falling through tunnel cut through Earth cross-section,
+   mantle layers visible, glowing core below, rocks flying, centered"
+
+NOT: "As you plummet deeper something strange happens to gravity"
+
+RULE 3b — SECTION CONTEXT:
+Before writing body-zone prompts, infer the current SECTION TOPIC from the
+surrounding script (e.g. "falling through Earth", "on the Moon", "at the
+core"). Every illustration in that section MUST visually include that topic's
+setting/props so consecutive images feel like one continuous story, not
+random unrelated doodles.
 
 RULE 4 — VISUAL IMPACT HIERARCHY:
 Pick the most UNIQUE and IDENTIFYING visual from each phrase.
 - "horse-drawn buggies over cars" → the buggy (unique), not the car (generic)
 - "African kingdoms and trade" → kingdom buildings (specific)
+- "float endlessly" while discussing the Moon → figure floating ABOVE THE MOON
+  with craters and stars — never a figure floating in empty beige space
 
 RULE 5 — BACKGROUND MOOD:
 Available moods (use for variety, shift with topic changes):
@@ -133,7 +159,8 @@ Each object:
   "start_word_idx": <int, word index where this concept starts>,
   "end_word_idx": <int, word index where this concept ends (inclusive)>,
   "text": "<the script words covered>",
-  "illustration_prompt": "<short: what to draw, composition, focal point>",
+  "illustration_prompt": "<setting + action + 2-3 props + composition; NO spoken words>",
+  "section_topic": "<short ongoing topic e.g. falling through Earth / on the Moon>",
   "background_mood": "<mood name>",
   "has_character": <true|false>,
   "cut_style": "<crossfade|hard_cut>"
@@ -283,12 +310,77 @@ def segment_into_concepts(
 
     concepts = _build_concepts(concept_dicts, all_words)
     concepts = _enforce_duration_constraints(concepts)
+    concepts = _enrich_illustration_context(concepts, niche_hint=niche_hint, script=script)
 
     print(f"[concept_segmenter] Final: {len(concepts)} concepts, "
           f"avg {sum(c.duration_sec for c in concepts)/len(concepts):.1f}s, "
           f"moods: {_mood_summary(concepts)}")
 
     return concepts
+
+
+def _looks_like_narration(prompt: str) -> bool:
+    p = (prompt or "").strip()
+    if not p:
+        return True
+    # Spoken-sentence smells: long, starts with capital + many words, quote marks
+    if p.startswith('"') or p.startswith("'"):
+        return True
+    words = p.split()
+    if len(words) >= 10 and p[:1].isupper() and p.endswith((".", "!", "?", ",")):
+        return True
+    narration_starts = (
+        "as you ", "but as ", "when you ", "if you ", "this ", "the narrator",
+        "you would ", "you will ", "something strange",
+    )
+    low = p.lower()
+    return any(low.startswith(s) for s in narration_starts)
+
+
+def _enrich_illustration_context(
+    concepts: list[Concept],
+    *,
+    niche_hint: str = "",
+    script: str = "",
+) -> list[Concept]:
+    """Ensure each prompt carries setting/topic props; rewrite narration leaks."""
+    running_topic = (niche_hint or "").strip()
+    enriched: list[Concept] = []
+    for c in concepts:
+        topic = (c.section_topic or running_topic or "").strip()
+        if c.section_topic:
+            running_topic = c.section_topic.strip() or running_topic
+        prompt = (c.illustration_prompt or "").strip()
+        if _looks_like_narration(prompt) or not prompt:
+            # Build a visual metaphor from the beat text + topic
+            beat = re.sub(r"\s+", " ", (c.text or "")[:90]).strip()
+            if topic:
+                prompt = (
+                    f"Stick figure in scene about {topic}: visual metaphor for "
+                    f"'{beat}'. Show setting + 2 concrete props. No text."
+                )
+            else:
+                prompt = (
+                    f"Stick figure visual metaphor for '{beat}'. "
+                    f"Include clear setting and 2 props. No text."
+                )
+        elif topic:
+            # Soft-anchor topic if missing from prompt
+            if topic.lower() not in prompt.lower():
+                prompt = f"{prompt.rstrip('.')}. Setting: {topic}."
+        enriched.append(Concept(
+            id=c.id,
+            text=c.text,
+            start_sec=c.start_sec,
+            end_sec=c.end_sec,
+            duration_sec=c.duration_sec,
+            illustration_prompt=prompt[:220],
+            background_mood=c.background_mood,
+            has_character=c.has_character,
+            cut_style=c.cut_style,
+            section_topic=topic,
+        ))
+    return enriched
 
 
 def _build_concepts(concept_dicts: list[dict], all_words: list[dict]) -> list[Concept]:
@@ -340,6 +432,7 @@ def _build_concepts(concept_dicts: list[dict], all_words: list[dict]) -> list[Co
             background_mood=mood,
             has_character=cd.get("has_character", True),
             cut_style=cd.get("cut_style", "crossfade"),
+            section_topic=(cd.get("section_topic") or "").strip(),
         ))
 
     if not concepts:
@@ -414,6 +507,7 @@ def _enforce_duration_constraints(concepts: list[Concept]) -> list[Concept]:
                     background_mood=c.background_mood,
                     has_character=c.has_character,
                     cut_style="crossfade" if j > 0 else c.cut_style,
+                    section_topic=c.section_topic,
                 ))
         else:
             result.append(c)

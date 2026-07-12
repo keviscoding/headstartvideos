@@ -9,6 +9,7 @@ ERNIE has a ~500 char prompt limit, so body uses compact prompts.
 
 from __future__ import annotations
 import os
+import re
 import time
 import threading
 from pathlib import Path
@@ -17,18 +18,17 @@ from dataclasses import dataclass
 
 from config import ATLASCLOUD_KEY
 
-# Compact prompts for ERNIE (under 500 chars total with scene desc)
+# Compact prompts for ERNIE (~500 char hard limit). Keep style short so the
+# SCENE description (setting + props) gets most of the budget.
 STYLE_SHORT = (
-    "Simple hand-drawn cartoon, thick black outlines, flat muted colors, "
-    "minimalist, no text, no letters, no words. "
-    "IMPORTANT: Keep all subjects fully inside the frame with large margins. "
-    "Nothing touching or cut off at any edge. Leave 15% padding on all sides."
+    "Hand-drawn stick-figure cartoon, thick black outlines, flat muted colors. "
+    "NO text, letters, numbers, captions, or labels anywhere. "
+    "Full subjects inside frame with 15% margin."
 )
 
 CHARACTER_SHORT = (
-    "Simple black stick figure, round white head, dot eyes, "
-    "thin line body. Exactly TWO arms, TWO hands, TWO legs. "
-    "Full body visible, not cropped."
+    "One black stick figure: round white head, 2 dot eyes, thin body, "
+    "EXACTLY 2 arms + 2 hands + 2 legs. No extra limbs."
 )
 
 # Full prompts for premium hook Nano Banana
@@ -40,7 +40,9 @@ STYLE_PREFIX = (
     "zero labels, zero captions, zero watermarks anywhere in the image. "
     "Do not write on books, scrolls, signs, or any objects. Leave all surfaces blank. "
     "Wide 16:9 landscape composition. Keep all subjects fully inside the frame "
-    "with generous margins — nothing cut off or touching any edge."
+    "with generous margins — nothing cut off or touching any edge. "
+    "Fill the scene with concrete SETTING + PROPS that tell the story "
+    "(environment, objects, landmarks) — never a lone figure on empty ground."
 )
 
 CHARACTER_PREFIX = (
@@ -109,14 +111,32 @@ def _build_short_prompt(
     background_mood: str = "warm_earth",
     has_character: bool = True,
 ) -> str:
-    """Build a compact prompt for ERNIE (under ~450 chars)."""
-    parts = [STYLE_SHORT]
-    if has_character:
-        parts.append(CHARACTER_SHORT)
+    """Build a compact prompt for ERNIE (hard ~500 char limit).
+
+    Scene description is prioritized — style/character are shortened first.
+    """
     palette = BACKGROUND_PALETTES_SHORT.get(background_mood, "Warm beige background.")
-    parts.append(palette)
-    parts.append(illustration_desc)
-    return " ".join(parts)
+    scene = (illustration_desc or "").strip()
+    # Strip accidental quoted narration the segmenter sometimes leaks
+    if scene.startswith('"') and scene.endswith('"'):
+        scene = scene[1:-1].strip()
+    scene = re.sub(r"\s+", " ", scene)
+
+    prefix_parts = [STYLE_SHORT]
+    if has_character:
+        prefix_parts.append(CHARACTER_SHORT)
+    prefix_parts.append(palette)
+    prefix = " ".join(prefix_parts)
+    # Reserve budget for scene; if over limit, trim style before scene.
+    budget = 490
+    if len(prefix) + 1 + len(scene) > budget:
+        # Prefer dropping character line over gutting the scene
+        prefix_parts = [STYLE_SHORT, palette]
+        prefix = " ".join(prefix_parts)
+    room = max(80, budget - len(prefix) - 1)
+    if len(scene) > room:
+        scene = scene[: room - 1].rsplit(" ", 1)[0] + "…"
+    return f"{prefix} {scene}".strip()
 
 
 def generate_single_illustration(
