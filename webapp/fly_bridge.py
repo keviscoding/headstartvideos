@@ -82,6 +82,46 @@ def _request(method: str, path: str, body: dict | None = None) -> dict | list | 
         raise RuntimeError(f"Fly API {method} {path} → {e.code}: {err[:500]}") from e
 
 
+def _latest_app_image(app: str) -> str:
+    """
+    Resolve the newest release image for the cook app via Fly GraphQL.
+    Avoids stale FLY_COOK_IMAGE env on DigitalOcean after `fly deploy`.
+    """
+    token = (getattr(config, "FLY_API_TOKEN", "") or "").strip()
+    if not token:
+        return ""
+    query = {
+        "query": (
+            "query ($name: String!) {"
+            "  app(name: $name) {"
+            "    currentRelease { imageRef }"
+            "  }"
+            "}"
+        ),
+        "variables": {"name": app},
+    }
+    req = urllib.request.Request(
+        "https://api.fly.io/graphql",
+        data=json.dumps(query).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        ref = (
+            ((payload.get("data") or {}).get("app") or {})
+            .get("currentRelease") or {}
+        ).get("imageRef") or ""
+        return str(ref).strip()
+    except Exception as e:
+        print(f"[fly] latest image lookup failed: {e}")
+        return ""
+
+
 def _machine_env() -> dict[str, str]:
     env: dict[str, str] = {
         "COOK_ON_WEB": "0",
@@ -120,10 +160,16 @@ def spawn_cook(job_id: str) -> bool:
     if not getattr(config, "COOK_ON_FLY", False):
         return False
     app = (getattr(config, "FLY_COOK_APP", "") or "").strip()
-    image = (getattr(config, "FLY_COOK_IMAGE", "") or "").strip()
-    if not app or not image:
-        print("[fly] FLY_COOK_APP / FLY_COOK_IMAGE missing")
+    if not app:
+        print("[fly] FLY_COOK_APP missing")
         return False
+    # Prefer newest Fly release so cooks pick up code right after `fly deploy`
+    # without manually bumping FLY_COOK_IMAGE on DigitalOcean.
+    image = _latest_app_image(app) or (getattr(config, "FLY_COOK_IMAGE", "") or "").strip()
+    if not image:
+        print("[fly] no cook image (FLY_COOK_IMAGE unset and release lookup failed)")
+        return False
+    print(f"[fly] using image {image}")
     try:
         region = (getattr(config, "FLY_COOK_REGION", "") or "sjc").strip() or "sjc"
         cpus = max(1, int(getattr(config, "FLY_COOK_CPUS", 2) or 2))
