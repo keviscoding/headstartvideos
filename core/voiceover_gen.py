@@ -82,36 +82,96 @@ def _chunk_script(script: str, max_chars: int = ATLAS_MAX_CHARS) -> list[str]:
     return chunks
 
 
+def _ffmpeg_err(result: subprocess.CompletedProcess) -> str:
+    err = (result.stderr or b"").decode(errors="replace")
+    out = (result.stdout or b"").decode(errors="replace")
+    text = (err or out).strip()
+    # Prefer the last lines — ffmpeg dumps a huge banner first.
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    useful = [ln for ln in lines if not ln.startswith("ffmpeg version") and "configuration:" not in ln]
+    tail = useful[-12:] if useful else lines[-8:]
+    return " | ".join(tail)[:600] or f"exit {result.returncode}"
+
+
 def _concat_wavs(wav_paths: list[str], output_path: str) -> str:
-    """Concatenate multiple WAV files using ffmpeg."""
-    if len(wav_paths) == 1:
+    """Concatenate multiple WAV files into one PCM WAV."""
+    valid = []
+    for p in wav_paths:
+        if not p:
+            continue
+        path = Path(p)
+        if path.is_file() and path.stat().st_size >= 1000:
+            valid.append(str(path.resolve()))
+    if not valid:
+        raise RuntimeError("No valid voiceover chunks to concatenate")
+    if len(valid) == 1:
         import shutil
-        shutil.copy2(wav_paths[0], output_path)
-        Path(wav_paths[0]).unlink(missing_ok=True)
+        shutil.copy2(valid[0], output_path)
+        for p in wav_paths:
+            if p and p != output_path:
+                Path(p).unlink(missing_ok=True)
         return output_path
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-        for p in wav_paths:
-            abs_p = str(Path(p).resolve())
-            f.write(f"file '{abs_p}'\n")
-        list_path = f.name
-
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "concat", "-safe", "0",
-        "-i", list_path,
+    out = str(Path(output_path).resolve())
+    # filter_complex concat tolerates minor format differences; demuxer does not.
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
+    for p in valid:
+        cmd.extend(["-i", p])
+    n = len(valid)
+    filt = "".join(f"[{i}:a]" for i in range(n)) + f"concat=n={n}:v=0:a=1[a]"
+    cmd.extend([
+        "-filter_complex", filt,
+        "-map", "[a]",
         "-c:a", "pcm_s16le",
-        str(Path(output_path).resolve()),
-    ]
-    result = subprocess.run(cmd, capture_output=True, timeout=120)
-    Path(list_path).unlink(missing_ok=True)
-
-    if result.returncode != 0:
-        stderr = result.stderr.decode(errors="replace")
-        raise RuntimeError(f"ffmpeg concat failed (code {result.returncode}): {stderr[:500]}")
+        "-ar", "24000",
+        "-ac", "1",
+        out,
+    ])
+    result = subprocess.run(cmd, capture_output=True, timeout=180)
+    if result.returncode != 0 or not Path(out).is_file() or Path(out).stat().st_size < 1000:
+        # Fallback: concat demuxer list (same as assembler) after per-file normalize.
+        demux_err = _ffmpeg_err(result)
+        print(f"[voiceover] filter concat failed, trying demuxer: {demux_err}")
+        normalized: list[str] = []
+        try:
+            for i, p in enumerate(valid):
+                norm = str(Path(out).with_name(f"_norm_{i:03d}.wav"))
+                ncmd = [
+                    "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                    "-i", p, "-c:a", "pcm_s16le", "-ar", "24000", "-ac", "1", norm,
+                ]
+                nr = subprocess.run(ncmd, capture_output=True, timeout=60)
+                if nr.returncode != 0 or not Path(norm).is_file():
+                    raise RuntimeError(
+                        f"chunk {i + 1}/{n} normalize failed: {_ffmpeg_err(nr)}"
+                    )
+                normalized.append(norm)
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+                for p in normalized:
+                    safe = p.replace("'", r"'\''")
+                    f.write(f"file '{safe}'\n")
+                list_path = f.name
+            dcmd = [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-f", "concat", "-safe", "0",
+                "-i", list_path,
+                "-c:a", "pcm_s16le", "-ar", "24000", "-ac", "1",
+                out,
+            ]
+            result2 = subprocess.run(dcmd, capture_output=True, timeout=180)
+            Path(list_path).unlink(missing_ok=True)
+            if result2.returncode != 0 or not Path(out).is_file() or Path(out).stat().st_size < 1000:
+                raise RuntimeError(
+                    f"ffmpeg concat failed (code {result2.returncode}): "
+                    f"{_ffmpeg_err(result2)} (filter err: {demux_err})"
+                )
+        finally:
+            for p in normalized:
+                Path(p).unlink(missing_ok=True)
 
     for p in wav_paths:
-        Path(p).unlink(missing_ok=True)
+        if p and Path(p).resolve() != Path(out):
+            Path(p).unlink(missing_ok=True)
     return output_path
 
 
@@ -129,18 +189,20 @@ def _download_audio(url: str, out_path: str) -> None:
     if Path(out_path).stat().st_size < 1000:
         raise RuntimeError("Atlas TTS audio file too small / empty")
 
-    # Normalize to PCM WAV for consistent concat
+    # Normalize to PCM WAV for consistent concat — required, not optional.
     tmp = out_path + ".tmp.wav"
-    cmd = ["ffmpeg", "-y", "-i", out_path, "-c:a", "pcm_s16le", "-ar", "24000", "-ac", "1", tmp]
+    cmd = [
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-i", out_path, "-c:a", "pcm_s16le", "-ar", "24000", "-ac", "1", tmp,
+    ]
     result = subprocess.run(cmd, capture_output=True, timeout=60)
-    if result.returncode == 0 and Path(tmp).exists():
-        Path(out_path).unlink(missing_ok=True)
-        Path(tmp).rename(out_path)
-    elif Path(tmp).exists():
+    if result.returncode != 0 or not Path(tmp).is_file() or Path(tmp).stat().st_size < 1000:
         Path(tmp).unlink(missing_ok=True)
-
-    if Path(out_path).stat().st_size < 1000:
-        raise RuntimeError("Atlas TTS audio normalize failed")
+        raise RuntimeError(
+            f"Atlas TTS audio normalize failed: {_ffmpeg_err(result)}"
+        )
+    Path(out_path).unlink(missing_ok=True)
+    Path(tmp).rename(out_path)
 
 
 def _poll_budget_seconds(text_len: int) -> float:
