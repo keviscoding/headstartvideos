@@ -112,11 +112,22 @@ def _atlas_chat(
             },
             json=body,
         )
+        ctype = (resp.headers.get("content-type") or "").lower()
+        text_body = resp.text or ""
         if resp.status_code >= 400:
             raise RuntimeError(
-                f"Atlas LLM {resp.status_code}: {resp.text[:400]}"
+                f"Atlas LLM {resp.status_code}: {text_body[:400]}"
             )
-        data = resp.json()
+        if "application/json" not in ctype or text_body.lstrip().startswith("<!"):
+            raise RuntimeError(
+                f"Atlas LLM returned non-JSON ({ctype or 'unknown'}): {text_body[:200]}"
+            )
+        try:
+            data = resp.json()
+        except Exception as e:
+            raise RuntimeError(
+                f"Atlas LLM JSON parse failed: {e}; body={text_body[:200]}"
+            ) from e
 
     choices = data.get("choices") or []
     if not choices:

@@ -75,10 +75,35 @@ def _spaces_creds() -> tuple[str, str, str, str | None, str]:
     return key, secret, bucket, region, endpoint
 
 
+def _spaces_boto_config(*, addressing_style: str = "virtual"):
+    """Boto config that works with DigitalOcean Spaces.
+
+    boto3>=1.36 enables default request checksums that Spaces rejects with
+    SignatureDoesNotMatch. Force checksums only when required.
+    """
+    from botocore.config import Config as BotoConfig
+
+    kwargs = dict(
+        signature_version="s3v4",
+        connect_timeout=15,
+        read_timeout=300,
+        retries={"max_attempts": 3, "mode": "standard"},
+        s3={"addressing_style": addressing_style},
+    )
+    # botocore 1.36+ — ignore on older versions
+    try:
+        return BotoConfig(
+            **kwargs,
+            request_checksum_calculation="when_required",
+            response_checksum_validation="when_required",
+        )
+    except TypeError:
+        return BotoConfig(**kwargs)
+
+
 def _get_client():
     global _client
     if _client is None:
-        from botocore.config import Config as BotoConfig
         import boto3
 
         key, secret, _bucket, region, endpoint = _spaces_creds()
@@ -88,10 +113,7 @@ def _get_client():
             endpoint_url=endpoint,
             aws_access_key_id=key,
             aws_secret_access_key=secret,
-            config=BotoConfig(
-                signature_version="s3v4",
-                s3={"addressing_style": "virtual"},
-            ),
+            config=_spaces_boto_config(addressing_style="virtual"),
         )
     return _client
 
@@ -107,8 +129,7 @@ def _public_url(key: str) -> str:
     return f"https://{bucket}.{host}/{key}"
 
 
-def _spaces_client():
-    from botocore.config import Config as BotoConfig
+def _spaces_client(addressing_style: str = "virtual"):
     import boto3
 
     access_key, secret, bucket, region, endpoint = _spaces_creds()
@@ -120,15 +141,35 @@ def _spaces_client():
         endpoint_url=endpoint,
         aws_access_key_id=access_key,
         aws_secret_access_key=secret,
-        config=BotoConfig(
-            signature_version="s3v4",
-            connect_timeout=15,
-            read_timeout=300,
-            retries={"max_attempts": 3, "mode": "standard"},
-            s3={"addressing_style": "virtual"},
-        ),
+        config=_spaces_boto_config(addressing_style=addressing_style),
     )
     return client, bucket, endpoint, access_key
+
+
+def _put_object_once(client, *, bucket: str, key: str, body: bytes, content_type: str):
+    """PutObject — try without ACL first, then public-read if the bucket requires it."""
+    try:
+        client.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=body,
+            ContentLength=len(body),
+            ContentType=content_type,
+        )
+        return
+    except Exception as no_acl_err:
+        try:
+            client.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=body,
+                ContentLength=len(body),
+                ContentType=content_type,
+                ACL="public-read",
+            )
+            return
+        except Exception:
+            raise no_acl_err
 
 
 def store_file(local_path: str, key: str, content_type: str | None = None) -> str:
@@ -144,46 +185,56 @@ def store_file(local_path: str, key: str, content_type: str | None = None) -> st
         from boto3.s3.transfer import TransferConfig
 
         key = (key or "").lstrip("/")
-        client, bucket, endpoint, access_key = _spaces_client()
         size = os.path.getsize(local_path)
 
         # Single-part upload only. Multipart CreateMultipartUpload has been
         # flaky with Spaces (SignatureDoesNotMatch). Read body so SigV4 gets
         # an explicit Content-Length (file handles alone can mis-sign).
-        try:
-            if size <= 512 * 1024 * 1024:
-                with open(local_path, "rb") as f:
-                    body = f.read()
-                client.put_object(
-                    Bucket=bucket,
-                    Key=key,
-                    Body=body,
-                    ContentLength=len(body),
-                    ContentType=content_type,
-                    ACL="public-read",
-                )
-            else:
-                # Large files: upload_fileobj forced to one part via huge threshold.
-                with open(local_path, "rb") as f:
-                    client.upload_fileobj(
-                        f,
-                        bucket,
-                        key,
-                        ExtraArgs={"ACL": "public-read", "ContentType": content_type},
-                        Config=TransferConfig(
-                            multipart_threshold=max(size + 1, 1024 * 1024 * 1024),
-                            max_concurrency=1,
-                            use_threads=False,
-                        ),
+        last_err: Exception | None = None
+        bucket = endpoint = access_key = ""
+        for style in ("virtual", "path"):
+            try:
+                client, bucket, endpoint, access_key = _spaces_client(addressing_style=style)
+                if size <= 512 * 1024 * 1024:
+                    with open(local_path, "rb") as f:
+                        body = f.read()
+                    _put_object_once(
+                        client,
+                        bucket=bucket,
+                        key=key,
+                        body=body,
+                        content_type=content_type,
                     )
-        except Exception as e:
-            print(
-                f"[storage] Spaces upload failed key={key!r} bucket={bucket!r} "
-                f"endpoint={endpoint!r} access_key={access_key[:4]}…{access_key[-4:] if len(access_key) > 8 else ''} "
-                f"size={size} err={e}"
-            )
-            raise
-        return _public_url(key)
+                else:
+                    with open(local_path, "rb") as f:
+                        client.upload_fileobj(
+                            f,
+                            bucket,
+                            key,
+                            ExtraArgs={"ContentType": content_type},
+                            Config=TransferConfig(
+                                multipart_threshold=max(size + 1, 1024 * 1024 * 1024),
+                                max_concurrency=1,
+                                use_threads=False,
+                            ),
+                        )
+                print(
+                    f"[storage] Spaces ok key={key!r} style={style} "
+                    f"endpoint={endpoint!r} size={size}"
+                )
+                return _public_url(key)
+            except Exception as e:
+                last_err = e
+                print(
+                    f"[storage] Spaces upload failed style={style} key={key!r} "
+                    f"bucket={bucket!r} endpoint={endpoint!r} "
+                    f"access_key={access_key[:4]}…{access_key[-4:] if len(access_key) > 8 else ''} "
+                    f"size={size} err={e}"
+                )
+                if "SignatureDoesNotMatch" not in str(e):
+                    break
+        assert last_err is not None
+        raise last_err
 
     # Local fallback — serve straight from disk via the existing files route.
     rel = os.path.relpath(local_path, str(ROOT))

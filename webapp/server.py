@@ -1057,8 +1057,8 @@ def generate_script(req: ScriptRequest, user: dict = Depends(require_user)):
         style_hint = f"\nVideo style: {niche_data.get('description', '')}"
 
     word_target = req.target_minutes * 150
-    # ~1.4 tokens/word + headroom so thinking tokens don't starve the script body.
-    max_tokens = max(4096, min(32768, int(word_target * 2.5) + 2048))
+    # Keep scripts fast enough for App Platform HTTP timeouts (~100s).
+    max_tokens = max(2048, min(12288, int(word_target * 1.8) + 1024))
 
     prompt = (
         f"Write a YouTube video script for this title: \"{req.title}\"\n\n"

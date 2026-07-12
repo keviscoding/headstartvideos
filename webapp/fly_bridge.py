@@ -129,6 +129,9 @@ def _machine_env() -> dict[str, str]:
         # Local whisper on an ephemeral Fly box is fine — it won't freeze the web dyno.
         "ALLOW_LOCAL_WHISPER": "1",
         "APP_ENV": "fly-cook",
+        # boto3 1.36+ default checksums break DigitalOcean Spaces signatures.
+        "AWS_REQUEST_CHECKSUM_CALCULATION": "when_required",
+        "AWS_RESPONSE_CHECKSUM_VALIDATION": "when_required",
     }
     # URLs / ids: strip all whitespace. Secrets: trim ends only (preserve + / =).
     url_keys = {

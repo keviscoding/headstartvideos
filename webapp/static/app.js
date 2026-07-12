@@ -995,8 +995,18 @@ async function generateScript() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ title: state.title, niche: state.niche, target_minutes: state.targetMinutes }),
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Failed');
+        const data = await readJson(res, null);
+        if (!res.ok) {
+            const detail = (data && (data.detail || data.error)) || (
+                res.status === 502 || res.status === 504
+                    ? 'Server timed out writing the script — try a shorter length or retry.'
+                    : `Script request failed (HTTP ${res.status})`
+            );
+            throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+        }
+        if (!data || !data.script) {
+            throw new Error('Script service returned an empty response — please retry.');
+        }
         editor.value = data.script;
         state.script = data.script;
         updateWordCount();

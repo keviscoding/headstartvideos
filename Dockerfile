@@ -14,6 +14,9 @@ COPY . .
 
 RUN mkdir -p output presets webapp/uploads
 
+ENV AWS_REQUEST_CHECKSUM_CALCULATION=when_required \
+    AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
+
 EXPOSE 8000
 
 CMD ["uvicorn", "webapp.server:app", "--host", "0.0.0.0", "--port", "8000"]
