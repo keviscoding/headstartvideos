@@ -126,6 +126,7 @@ def main() -> int:
                 job_id,
                 status="error",
                 error=str(probe_err)[:800],
+                finished=True,
                 progress_json=json.dumps([{
                     "time": time.time(),
                     "message": f"Spaces upload check failed: {probe_err}",
@@ -134,6 +135,15 @@ def main() -> int:
             )
         except Exception:
             pass
+        # Credit was deducted at enqueue — refund since we never cooked.
+        try:
+            from webapp.database import refund_credit
+            if row.get("user_id") and row.get("credit_deducted"):
+                refund_credit(int(row["user_id"]))
+                update_cook_job(job_id, credit_deducted=False)
+                print(f"[fly] refunded credit after Spaces probe fail")
+        except Exception as refund_err:
+            print(f"[fly] refund failed: {refund_err}")
         print(f"[fly] aborting — Spaces probe failed: {probe_err}")
         return 1
 
