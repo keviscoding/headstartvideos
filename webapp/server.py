@@ -1095,6 +1095,10 @@ def _provider_http_status(exc: Exception) -> int:
     msg = str(exc).lower()
     if "insufficient balance" in msg or "provider balance" in msg or "temporarily unavailable" in msg:
         return 503
+    if "image_other" in msg or "no parts found" in msg or "no_image" in msg:
+        return 503
+    if "thumbnail generation failed after retries" in msg:
+        return 503
     if "not found" in msg or "no youtube channel" in msg or "could not extract channel" in msg:
         return 400
     if "playlistnotfound" in msg or "httperror 404" in msg:

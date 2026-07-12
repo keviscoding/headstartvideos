@@ -1,16 +1,13 @@
 """
-Thumbnail generation using Atlas Cloud's Nano Banana Pro (Gemini 3 Pro Image).
+Thumbnail generation using Atlas Cloud Nano Banana models.
 
 Workflow:
-1. User uploads channel page screenshots as reference images
-2. Reference images are uploaded to Atlas Cloud via uploadMedia
-3. System sends reference image URLs + prompt to Nano Banana Pro edit endpoint
-4. System polls for result and downloads generated thumbnail
+1. Optional: upload channel screenshot refs → edit endpoint
+2. Else / fallback: text-to-image
+3. Poll prediction, download PNG
 
-Atlas Cloud API:
-  - POST /api/v1/model/uploadMedia   -> upload local file, get public URL
-  - POST /api/v1/model/generateImage -> submit generation task
-  - GET  /api/v1/model/prediction/{id} -> poll for result
+IMAGE_OTHER is a known intermittent Gemini image failure — we retry and
+fall through cheaper/more stable Atlas models instead of surfacing 500s.
 """
 
 from __future__ import annotations
@@ -20,6 +17,19 @@ from pathlib import Path
 from config import ATLASCLOUD_KEY
 
 ATLAS_BASE = "https://api.atlascloud.ai/api/v1"
+
+# Prefer cheap + reliable developer tiers. Pro @ 2k was throwing IMAGE_OTHER overnight.
+_T2I_MODELS = [
+    "google/nano-banana-2-lite/text-to-image-developer",  # ~$0.028 @ 1k
+    "google/nano-banana-2/text-to-image-developer",
+    "google/nano-banana-pro/text-to-image-developer",
+]
+_EDIT_MODELS = [
+    "google/nano-banana-2-lite/edit-developer",
+    "google/nano-banana-2/edit-developer",
+    "google/nano-banana-pro/edit-developer",
+    "google/nano-banana-pro/edit",
+]
 
 THUMBNAIL_PROMPT_TEMPLATE = """\
 You are a YouTube thumbnail designer. I've provided reference thumbnails from \
@@ -42,11 +52,6 @@ CRITICAL REQUIREMENTS:
 - 16:9 aspect ratio, high resolution
 - The thumbnail MUST look like it belongs on the same channel as the references
 - Do NOT copy the reference thumbnails — create a new design in the same style"""
-
-_NANO_BANANA_MODELS = [
-    "google/nano-banana-pro/edit",
-    "google/nano-banana-pro/text-to-image",
-]
 
 
 def _get_headers() -> dict:
@@ -133,6 +138,75 @@ def _poll_prediction(prediction_id: str, timeout: int = 120) -> dict:
     raise TimeoutError(f"Prediction {prediction_id} timed out after {timeout}s")
 
 
+def _is_transient_image_error(err: Exception) -> bool:
+    msg = str(err).upper()
+    return any(
+        token in msg
+        for token in (
+            "IMAGE_OTHER",
+            "NO_IMAGE",
+            "IMAGE_SAFETY",
+            "NO PARTS FOUND",
+            "TIMEOUT",
+            "503",
+            "429",
+            "RATE",
+        )
+    )
+
+
+def _output_url(result: dict) -> str:
+    outputs = result.get("outputs") or result.get("output") or []
+    if isinstance(outputs, str):
+        return outputs if outputs.startswith("http") else ""
+    if isinstance(outputs, list) and outputs:
+        first = outputs[0]
+        return first if isinstance(first, str) and first.startswith("http") else ""
+    return ""
+
+
+def _submit_and_download(
+    payload: dict,
+    out_path: Path,
+    *,
+    label: str,
+) -> bool:
+    import httpx
+
+    resp = httpx.post(
+        f"{ATLAS_BASE}/model/generateImage",
+        headers=_get_headers(),
+        json=payload,
+        timeout=30,
+    )
+    if resp.status_code != 200:
+        body = (resp.text or "")[:300]
+        print(f"[thumbnail] {label} submit failed: HTTP {resp.status_code} - {body}")
+        if resp.status_code == 402 or "insufficient balance" in body.lower():
+            raise RuntimeError("Atlas insufficient balance")
+        raise RuntimeError(f"Submit failed: HTTP {resp.status_code}")
+
+    raw = resp.json()
+    inner = raw.get("data", raw)
+    prediction_id = inner.get("id", "")
+
+    if not prediction_id:
+        outputs = inner.get("outputs") or []
+        if isinstance(outputs, list) and outputs:
+            _download_image(outputs[0], str(out_path))
+            return True
+        raise RuntimeError(f"No prediction ID: {str(raw)[:200]}")
+
+    print(f"[thumbnail] {label} polling {prediction_id}...")
+    result = _poll_prediction(prediction_id)
+    url = _output_url(result)
+    if not url:
+        raise RuntimeError(f"No output URL: {str(result)[:200]}")
+    _download_image(url, str(out_path))
+    print(f"[thumbnail] Generated: {out_path.name} via {payload.get('model')}")
+    return True
+
+
 def generate_thumbnails(
     title: str,
     reference_image_paths: list[str],
@@ -141,15 +215,7 @@ def generate_thumbnails(
     num_images: int = 1,
     output_dir: str = "",
 ) -> list[str]:
-    """
-    Generate thumbnails using Atlas Cloud's Nano Banana Pro with reference images.
-
-    1. Uploads reference images to get public URLs
-    2. Sends them with the prompt to the edit endpoint
-    3. Polls for result and downloads the generated image
-    """
-    import httpx
-
+    """Generate thumbnails with reference images (edit), falling back to T2I."""
     if not ATLASCLOUD_KEY:
         raise ValueError("ATLASCLOUD_KEY is not set")
 
@@ -188,74 +254,50 @@ def generate_thumbnails(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     generated_paths: list[str] = []
+    models = ([model] if model else []) + [m for m in _EDIT_MODELS if m != model]
 
     for i in range(num_images):
-        try:
+        out_path = out_dir / f"thumb_{i + 1:02d}.png"
+        ok = False
+        last_err: Exception | None = None
+        for edit_model in models:
             payload = {
-                "model": "google/nano-banana-pro/edit",
+                "model": edit_model,
                 "prompt": prompt_text,
                 "images": ref_urls,
                 "aspect_ratio": "16:9",
-                "resolution": "2k",
+                "resolution": "1k",
                 "output_format": "png",
                 "enable_base64_output": False,
             }
-
-            print(f"[thumbnail] Generating thumbnail {i + 1}/{num_images} "
-                  f"with {len(ref_urls)} reference(s)...")
-
-            resp = httpx.post(
-                f"{ATLAS_BASE}/model/generateImage",
-                headers=_get_headers(),
-                json=payload,
-                timeout=30,
-            )
-
-            if resp.status_code != 200:
-                body = (resp.text or "")[:200]
-                print(f"[thumbnail] Generate request failed: HTTP {resp.status_code} - {body}")
-                if resp.status_code == 402 or "insufficient balance" in body.lower():
+            try:
+                print(
+                    f"[thumbnail] edit {i + 1}/{num_images} "
+                    f"model={edit_model} refs={len(ref_urls)}"
+                )
+                _submit_and_download(payload, out_path, label=f"edit/{edit_model}")
+                generated_paths.append(str(out_path))
+                ok = True
+                break
+            except Exception as e:
+                last_err = e
+                print(f"[thumbnail] edit failed ({edit_model}): {e}")
+                if "insufficient balance" in str(e).lower():
                     atlas_balance_error = True
                     break
-                continue
-
-            raw = resp.json()
-            inner = raw.get("data", raw)
-            prediction_id = inner.get("id", "")
-
-            if not prediction_id:
-                outputs = inner.get("outputs", [])
-                if outputs:
-                    out_path = out_dir / f"thumb_{i + 1:02d}.png"
-                    _download_image(outputs[0], str(out_path))
-                    generated_paths.append(str(out_path))
+                if not _is_transient_image_error(e) and "Submit failed" not in str(e):
+                    # still try next model — Atlas model availability varies
                     continue
-                print(f"[thumbnail] No prediction ID in response: {raw}")
-                continue
-
-            print(f"[thumbnail] Polling prediction {prediction_id}...")
-            result = _poll_prediction(prediction_id)
-
-            outputs = result.get("outputs", [])
-            output_url = outputs[0] if outputs else ""
-
-            if not output_url:
-                output = result.get("output", "")
-                if isinstance(output, list):
-                    output_url = output[0] if output else ""
-                elif isinstance(output, str):
-                    output_url = output
-
-            if output_url and output_url.startswith("http"):
-                out_path = out_dir / f"thumb_{i + 1:02d}.png"
-                _download_image(output_url, str(out_path))
-                generated_paths.append(str(out_path))
-                print(f"[thumbnail] Generated: {out_path.name}")
-            else:
-                print(f"[thumbnail] No output URL in result: {result}")
-
-        except Exception as e:
-            print(f"[thumbnail] Error generating thumbnail {i + 1}: {e}")
+                time.sleep(1.0)
+        if not ok:
+            print(f"[thumbnail] All edit models failed ({last_err}); trying T2I")
+            try:
+                t2i = _generate_text_only(title, style_prompt, 1, str(out_dir))
+                if t2i:
+                    # rename first result into expected slot if needed
+                    generated_paths.extend(t2i)
+            except Exception as e:
+                print(f"[thumbnail] T2I fallback failed: {e}")
 
     if generated_paths:
         return generated_paths
@@ -272,68 +314,53 @@ def _generate_text_only(
     output_dir: str = "",
 ) -> list[str]:
     """Generate thumbnail without reference images (text-to-image mode)."""
-    import httpx
-
     style = style_prompt or "modern, bold, eye-catching YouTube style"
-    prompt = (
+    base_prompt = (
         f"Generate a YouTube thumbnail for a video titled: \"{title}\". "
         f"Style: {style}. "
-        "Make it eye-catching, high contrast, bold text if appropriate, "
-        "16:9 aspect ratio, professional quality."
+        "Make it eye-catching, high contrast, bold readable title text if appropriate, "
+        "16:9 aspect ratio, professional quality. No watermarks, no real brand logos."
     )
 
     out_dir = Path(output_dir) if output_dir else Path("output/thumbnails")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    generated_paths = []
+    generated_paths: list[str] = []
 
     for i in range(num_images):
-        try:
+        out_path = out_dir / f"thumb_{i + 1:02d}.png"
+        last_err: Exception | None = None
+        for attempt, model in enumerate(_T2I_MODELS):
+            # Slight prompt jitter on retries helps IMAGE_OTHER intermittency
+            prompt = base_prompt if attempt == 0 else (
+                base_prompt + f" Variation {attempt + 1}: cinematic lighting, clean composition."
+            )
             payload = {
-                "model": "google/nano-banana-pro/text-to-image",
+                "model": model,
                 "prompt": prompt,
                 "aspect_ratio": "16:9",
-                "resolution": "2k",
+                "resolution": "1k",
                 "output_format": "png",
                 "enable_base64_output": False,
             }
-
-            resp = httpx.post(
-                f"{ATLAS_BASE}/model/generateImage",
-                headers=_get_headers(),
-                json=payload,
-                timeout=30,
-            )
-
-            if resp.status_code != 200:
-                body = (resp.text or "")[:300]
-                print(f"[thumbnail] T2I request failed: HTTP {resp.status_code} - {body}")
-                if resp.status_code == 402 or "insufficient balance" in body.lower():
-                    raise RuntimeError("Atlas insufficient balance")
-                continue
-
-            raw = resp.json()
-            inner = raw.get("data", raw)
-            prediction_id = inner.get("id", "")
-            if not prediction_id:
-                continue
-
-            result = _poll_prediction(prediction_id)
-
-            outputs = result.get("outputs", [])
-            output_url = outputs[0] if outputs else ""
-
-            if output_url and output_url.startswith("http"):
-                out_path = out_dir / f"thumb_{i + 1:02d}.png"
-                _download_image(output_url, str(out_path))
+            try:
+                print(f"[thumbnail] T2I {i + 1}/{num_images} model={model} attempt={attempt + 1}")
+                _submit_and_download(payload, out_path, label=f"t2i/{model}")
                 generated_paths.append(str(out_path))
-                print(f"[thumbnail] Generated: {out_path.name}")
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                print(f"[thumbnail] T2I failed ({model}): {e}")
+                if "insufficient balance" in str(e).lower():
+                    raise RuntimeError("Atlas insufficient balance") from e
+                time.sleep(0.8)
+        if last_err and str(out_path) not in generated_paths:
+            # Don't abort the whole batch — try remaining slots
+            print(f"[thumbnail] Giving up on slot {i + 1}: {last_err}")
 
-        except RuntimeError:
-            raise
-        except Exception as e:
-            print(f"[thumbnail] T2I error: {e}")
-
+    if not generated_paths and last_err:
+        raise RuntimeError(str(last_err)) from last_err
     return generated_paths
 
 
@@ -353,13 +380,13 @@ def generate_thumbnail_no_refs(
     output_dir: str = "",
     count: int = 2,
 ) -> list[str]:
-    """Generate a thumbnail without reference images (Atlas Nano Banana only)."""
+    """Generate a thumbnail without reference images."""
     if not ATLASCLOUD_KEY:
         raise ValueError("ATLASCLOUD_KEY is not set")
     paths = _generate_text_only(title, style_description, count, output_dir)
     if paths:
         return paths
     raise RuntimeError(
-        "Thumbnail generation failed — Atlas returned no images "
-        "(check provider balance)."
+        "Thumbnail generation failed after retries — try a simpler title/style, "
+        "or check Atlas balance at https://www.atlascloud.ai/console/billing"
     )
