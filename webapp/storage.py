@@ -78,7 +78,10 @@ def spaces_fingerprint() -> str:
         f"bucket={bucket!r} region={region!r} endpoint={endpoint!r} "
         f"key_len={len(key)} secret_len={len(secret)} "
         f"key_prefix={(key[:6] + '…') if len(key) >= 6 else key!r} "
-        f"secret_ws={any(c.isspace() for c in secret)}"
+        f"key_suffix={(('…' + key[-4:]) if len(key) >= 4 else key!r)} "
+        f"secret_ws={any(c.isspace() for c in secret)} "
+        f"secret_has_dollar={('$' in secret)} "
+        f"secret_len_ok={20 <= len(secret) <= 64}"
     )
 
 
@@ -143,12 +146,21 @@ def _public_url(key: str) -> str:
 def _friendly_spaces_error(exc: Exception) -> RuntimeError:
     msg = str(exc)
     if "SignatureDoesNotMatch" in msg:
+        fp = spaces_fingerprint()
+        dollar_hint = ""
+        if "secret_has_dollar=True" in fp:
+            dollar_hint = (
+                " SPACES_SECRET contains '$' — DigitalOcean App Platform may "
+                "have interpolated/truncated it. Escape as $$ or regenerate "
+                "a secret without '$'."
+            )
         return RuntimeError(
             "Spaces rejected our upload signature (SignatureDoesNotMatch). "
-            "Almost always bad/rotated SPACES_KEY+SPACES_SECRET, or boto3 "
-            "checksums. Regenerate Spaces keys in DigitalOcean → API → "
-            "Spaces Keys, paste both onto the web app env, redeploy. "
-            f"Debug: {spaces_fingerprint()}"
+            "This is the access key/secret pair on the web app — not a "
+            "cook-code bug. DigitalOcean → API → Spaces Keys → Generate "
+            "New Key → set BOTH SPACES_KEY and SPACES_SECRET on the web "
+            "app → Redeploy."
+            f"{dollar_hint} Debug: {fp}"
         )
     return RuntimeError(msg)
 
@@ -201,18 +213,22 @@ def probe_spaces_write() -> None:
     import time as _time
 
     key = f"tests/probe-{int(_time.time())}-{os.getpid()}.txt"
-    client = _make_client()
-    body = b"channelrecipe-spaces-probe"
-    client.put_object(
-        Bucket=_spaces_creds()[2],
-        Key=key,
-        Body=body,
-        ContentType="text/plain",
-    )
     try:
-        client.delete_object(Bucket=_spaces_creds()[2], Key=key)
-    except Exception:
-        pass
+        client = _make_client()
+        body = b"channelrecipe-spaces-probe"
+        client.put_object(
+            Bucket=_spaces_creds()[2],
+            Key=key,
+            Body=body,
+            ContentType="text/plain",
+        )
+        try:
+            client.delete_object(Bucket=_spaces_creds()[2], Key=key)
+        except Exception:
+            pass
+    except Exception as e:
+        print(f"[storage] Spaces probe failed ({spaces_fingerprint()}) err={e}")
+        raise _friendly_spaces_error(e) from e
     print(f"[storage] Spaces probe ok ({spaces_fingerprint()})")
 
 
