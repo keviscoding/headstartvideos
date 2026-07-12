@@ -1824,16 +1824,33 @@ async function startBuild() {
     }
 }
 
+async function playableMediaUrl(url) {
+    if (!url || typeof url !== 'string') return url;
+    if (!/digitaloceanspaces\.com/i.test(url)) return url;
+    try {
+        const res = await fetch('/api/media/playable?url=' + encodeURIComponent(url));
+        if (!res.ok) return url;
+        const data = await res.json();
+        return (data && data.url) || url;
+    } catch (_) {
+        return url;
+    }
+}
+
 async function showUploadKit(buildResult) {
     document.getElementById('build-progress').classList.add('hidden');
     document.getElementById('upload-kit').classList.remove('hidden');
-    document.getElementById('result-video').src = buildResult.output_url;
+    const videoUrl = await playableMediaUrl(buildResult.output_url);
+    const thumbUrl = await playableMediaUrl(buildResult.thumbnail_url || state.thumbnailUrl || '');
+    state.videoUrl = videoUrl;
+    document.getElementById('result-video').src = videoUrl;
     const dl = document.getElementById('download-link');
-    dl.href = buildResult.output_url;
+    dl.href = videoUrl;
     dl.setAttribute('download', 'video.mp4');
-    if (state.thumbnailUrl) {
-        document.getElementById('kit-thumb').src = state.thumbnailUrl;
-        document.getElementById('kit-thumb-dl').href = state.thumbnailUrl;
+    if (thumbUrl) {
+        state.thumbnailUrl = thumbUrl;
+        document.getElementById('kit-thumb').src = thumbUrl;
+        document.getElementById('kit-thumb-dl').href = thumbUrl;
         document.getElementById('kit-thumb-dl').setAttribute('download', 'thumbnail.png');
         document.getElementById('kit-thumb-wrap').classList.remove('hidden');
     } else {

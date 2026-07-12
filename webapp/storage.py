@@ -144,6 +144,42 @@ def _public_url(key: str) -> str:
     return f"https://{bucket}.{host}/{key}"
 
 
+def _object_key_from_url(url: str) -> str | None:
+    """If url is one of our Spaces/CDN public URLs, return the object key."""
+    raw = "".join((url or "").split())
+    if not raw.startswith("http"):
+        return None
+    from urllib.parse import urlparse
+
+    path = urlparse(raw).path.lstrip("/")
+    if not path:
+        return None
+    _, _, bucket, _region, endpoint = _spaces_creds()
+    cdn = _clean_url_part(config.SPACES_CDN_ENDPOINT or "").rstrip("/")
+    host = urlparse(raw).netloc.lower()
+    ours = {
+        f"{bucket}.{endpoint.replace('https://', '').replace('http://', '').rstrip('/')}".lower(),
+        f"{_clean_url_part(config.SPACES_REGION) or 'sfo3'}.digitaloceanspaces.com",
+    }
+    if cdn:
+        ours.add(urlparse(cdn).netloc.lower())
+    # channelrecipe-media.sfo3.cdn.digitaloceanspaces.com etc.
+    if host not in ours and bucket not in host and "digitaloceanspaces.com" not in host:
+        return None
+    # Path-style: /bucket/key → strip bucket prefix
+    if path.startswith(bucket + "/"):
+        return path[len(bucket) + 1 :]
+    return path
+
+
+def _ensure_public_read(client, bucket: str, key: str) -> None:
+    """Objects must be world-readable for <video src> / CDN playback."""
+    try:
+        client.put_object_acl(Bucket=bucket, Key=key, ACL="public-read")
+    except Exception as e:
+        print(f"[storage] put_object_acl public-read failed key={key!r}: {e}")
+
+
 def _friendly_spaces_error(exc: Exception) -> RuntimeError:
     msg = str(exc)
     if "SignatureDoesNotMatch" in msg:
@@ -185,14 +221,30 @@ def store_file(local_path: str, key: str, content_type: str | None = None) -> st
         with open(local_path, "rb") as f:
             body = f.read()
         client = _make_client()
-        # No ACL in the signed request — bucket should be public-read via
-        # Spaces CDN / bucket policy. ACL in signature is a common DO fail.
-        client.put_object(
-            Bucket=bucket,
-            Key=key,
-            Body=body,
-            ContentType=content_type,
-        )
+        # Prefer ACL on put. If Spaces rejects the signed ACL header, upload
+        # private then set ACL in a second call (still required for browser play).
+        try:
+            client.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=body,
+                ContentType=content_type,
+                ACL="public-read",
+            )
+        except Exception as acl_err:
+            if "SignatureDoesNotMatch" not in str(acl_err) and "InvalidArgument" not in str(acl_err):
+                raise
+            print(f"[storage] put with ACL failed, retrying then ACL separately: {acl_err}")
+            client.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=body,
+                ContentType=content_type,
+            )
+            _ensure_public_read(client, bucket, key)
+        else:
+            # Some DO configs ignore ACL on put — belt-and-suspenders.
+            _ensure_public_read(client, bucket, key)
         print(
             f"[storage] Spaces ok key={key!r} size={size} "
             f"endpoint={endpoint!r} region={region!r} "
@@ -208,25 +260,49 @@ def store_file(local_path: str, key: str, content_type: str | None = None) -> st
 
 
 def probe_spaces_write() -> None:
-    """Upload a tiny object to verify credentials. Raises on failure."""
+    """Upload a tiny public object to verify credentials + public-read."""
     if not is_remote():
         raise RuntimeError("Spaces not configured")
     import time as _time
+    import httpx
 
     key = f"tests/probe-{int(_time.time())}-{os.getpid()}.txt"
     try:
         client = _make_client()
+        bucket = _spaces_creds()[2]
         body = b"channelrecipe-spaces-probe"
-        client.put_object(
-            Bucket=_spaces_creds()[2],
-            Key=key,
-            Body=body,
-            ContentType="text/plain",
-        )
         try:
-            client.delete_object(Bucket=_spaces_creds()[2], Key=key)
+            client.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=body,
+                ContentType="text/plain",
+                ACL="public-read",
+            )
         except Exception:
-            pass
+            client.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=body,
+                ContentType="text/plain",
+            )
+            _ensure_public_read(client, bucket, key)
+        url = _public_url(key)
+        try:
+            r = httpx.get(url, timeout=15, follow_redirects=True)
+            if r.status_code == 403:
+                raise RuntimeError(
+                    "Spaces upload works but files are not publicly readable "
+                    f"(HTTP 403 on {url}). Enable public-read on objects or "
+                    "turn off file restriction on the Spaces bucket."
+                )
+            if r.status_code >= 400:
+                raise RuntimeError(f"Spaces probe GET failed HTTP {r.status_code} for {url}")
+        finally:
+            try:
+                client.delete_object(Bucket=bucket, Key=key)
+            except Exception:
+                pass
     except Exception as e:
         print(f"[storage] Spaces probe failed ({spaces_fingerprint()}) err={e}")
         raise _friendly_spaces_error(e) from e
@@ -262,6 +338,29 @@ def fetch_to_local(path_or_url: str, dest_dir: str | Path | None = None) -> str:
     if dest.is_file() and dest.stat().st_size > 0:
         return str(dest)
 
+    # Prefer authenticated Spaces GET — public CDN URLs 403 when objects
+    # were uploaded without public-read (browser shows MIME-type errors).
+    obj_key = _object_key_from_url(raw) if is_remote() else None
+    if obj_key:
+        try:
+            client = _make_client()
+            bucket = _spaces_creds()[2]
+            tmp = dest.with_suffix(dest.suffix + ".part")
+            # get_object (not download_file) — avoids transfer-manager checksums.
+            obj = client.get_object(Bucket=bucket, Key=obj_key)
+            with open(tmp, "wb") as f:
+                body = obj["Body"]
+                while True:
+                    chunk = body.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+            tmp.replace(dest)
+            print(f"[storage] fetched Spaces key={obj_key!r} → {dest}")
+            return str(dest)
+        except Exception as e:
+            print(f"[storage] authenticated Spaces fetch failed ({obj_key}): {e}")
+
     with httpx.stream("GET", raw, timeout=120, follow_redirects=True) as resp:
         resp.raise_for_status()
         tmp = dest.with_suffix(dest.suffix + ".part")
@@ -271,6 +370,66 @@ def fetch_to_local(path_or_url: str, dest_dir: str | Path | None = None) -> str:
         tmp.replace(dest)
     print(f"[storage] fetched remote media → {dest}")
     return str(dest)
+
+
+def make_key_public(key: str) -> str:
+    """Set public-read on an existing object; return its public URL."""
+    key = (key or "").lstrip("/")
+    if not is_remote() or not key:
+        return _public_url(key) if key else ""
+    client = _make_client()
+    bucket = _spaces_creds()[2]
+    _ensure_public_read(client, bucket, key)
+    return _public_url(key)
+
+
+def playable_url(key_or_url: str, expires: int = 86400) -> str:
+    """
+    URL the browser can actually play/download.
+    Tries public-read ACL first; always returns a working signed GET as
+    fallback when the object lives in our Spaces bucket.
+    """
+    raw = (key_or_url or "").strip()
+    if not raw:
+        return raw
+    if not is_remote():
+        return raw
+    key = raw.lstrip("/")
+    if raw.startswith("http://") or raw.startswith("https://"):
+        extracted = _object_key_from_url(raw)
+        if not extracted:
+            return raw
+        key = extracted
+    try:
+        make_key_public(key)
+    except Exception as e:
+        print(f"[storage] make_key_public failed: {e}")
+    # Prefer stable public URL; if CDN still 403s, caller can use signed.
+    # Return signed URL so playback works immediately for already-private files.
+    try:
+        return presigned_get_url(key, expires=expires)
+    except Exception as e:
+        print(f"[storage] presign failed, returning public URL: {e}")
+        return _public_url(key)
+
+
+def presigned_get_url(key_or_url: str, expires: int = 86400) -> str:
+    """Temporary signed GET URL — works even when the object is private."""
+    key = (key_or_url or "").lstrip("/")
+    if key.startswith("http://") or key.startswith("https://"):
+        extracted = _object_key_from_url(key)
+        if not extracted:
+            return key_or_url
+        key = extracted
+    if not is_remote() or not key:
+        return key_or_url
+    client = _make_client()
+    bucket = _spaces_creds()[2]
+    return client.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": bucket, "Key": key},
+        ExpiresIn=max(60, int(expires)),
+    )
 
 
 def stage_input(local_path: str, key: str, content_type: str | None = None) -> str:

@@ -1888,13 +1888,24 @@ def _video_to_entry(v: dict, retention_secs: float, now: float) -> dict:
         hashtags = json.loads(v.get("hashtags") or "[]")
     except Exception:
         hashtags = []
+    video_url = v.get("video_url") or ""
+    thumb_url = v.get("thumbnail_url") or ""
+    # Private Spaces objects 403 in <video> — flip ACL + fall back to signed GET.
+    try:
+        from webapp import storage as _storage
+        if video_url:
+            video_url = _storage.playable_url(video_url)
+        if thumb_url:
+            thumb_url = _storage.playable_url(thumb_url)
+    except Exception as e:
+        print(f"[media] playable_url rewrite failed: {e}")
     return {
         "id": v.get("id"),
         "type": "video",
         "title": v.get("title") or "Untitled",
         "recipe": v.get("recipe") or "",
-        "url": v.get("video_url") or "",
-        "thumbnail_url": v.get("thumbnail_url") or "",
+        "url": video_url,
+        "thumbnail_url": thumb_url,
         "description": v.get("description") or "",
         "tags": tags,
         "hashtags": hashtags,
@@ -1902,6 +1913,19 @@ def _video_to_entry(v: dict, retention_secs: float, now: float) -> dict:
         "expires_in_days": expires_in_days,
         "expired": age > retention_secs,
     }
+
+
+@app.get("/api/media/playable")
+async def media_playable(url: str = "", user: dict = Depends(require_user)):
+    """Return a browser-playable URL for a Spaces object (ACL + presign)."""
+    if not url or not url.startswith("http"):
+        raise HTTPException(status_code=400, detail="url required")
+    from webapp import storage as _storage
+    try:
+        playable = _storage.playable_url(url)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)[:300]) from e
+    return {"url": playable}
 
 
 @app.get("/api/history")
