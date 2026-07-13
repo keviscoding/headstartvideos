@@ -20,6 +20,9 @@ from config import (
     VIDEO_WIDTH, VIDEO_HEIGHT, VIDEO_FPS,
 )
 
+# After one Gemini project denial, skip VLM for the rest of the process.
+_vlm_disabled_reason: str | None = None
+
 
 @dataclass
 class VideoResult:
@@ -223,6 +226,10 @@ def vlm_verify(
     Optional VLM gate. Atlas chat Gemini is text-only, and Google Gemini
     is often project-blocked — soft-skip so cooks still complete.
     """
+    global _vlm_disabled_reason
+    if _vlm_disabled_reason:
+        return True, 1.0, f"VLM skipped ({_vlm_disabled_reason})"
+
     if not GEMINI_KEY:
         return True, 1.0, "VLM skipped (no GEMINI_KEY; Atlas chat is text-only)"
 
@@ -251,7 +258,7 @@ def vlm_verify(
             f"- Image is from a completely different subject, era, or culture\n"
             f"- Image is a tourist card, postcard, stereoscope, or novelty item\n"
             f"- Image is blurry, out of focus, or too low quality\n"
-            f"- Image shows modern digital graphics (Matrix style, neon, etc.) "
+            f"- Image is modern digital graphics (Matrix style, neon, etc.) "
             f"when scene describes historical content\n"
             f"- ATMOSPHERE MISMATCH: If the scene describes 'darkness', 'deep "
             f"ocean', 'pitch black', etc., reject bright sunlit imagery. If the "
@@ -291,12 +298,15 @@ def vlm_verify(
         return score >= threshold, score, reason
 
     except Exception as e:
+        err = str(e)
         print(f"  [vlm] Verification error: {e}")
+        if any(x in err for x in ("PERMISSION_DENIED", "denied access", "403")):
+            _vlm_disabled_reason = "Gemini project denied — skipping further VLM"
+            print(f"  [vlm] {_vlm_disabled_reason}")
         return True, 0.5, f"Verification error: {e}"
     finally:
         if frame_path and os.path.exists(frame_path):
             os.unlink(frame_path)
-
 
 def _extract_frame(video_path: str, at_sec: float = 1.0) -> str | None:
     """Extract a single frame from a video for VLM verification."""

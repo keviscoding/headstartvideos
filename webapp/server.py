@@ -179,6 +179,7 @@ from webapp.database import (
     cook_queue_stats, announce_queued_jobs,
     set_user_heygen_key, get_user_heygen_key, user_heygen_status,
     create_voice_clone, list_voice_clones, count_voice_clones_since,
+    list_unread_notices, mark_notice_read,
 )
 from webapp import storage
 from webapp import job_queue
@@ -296,7 +297,19 @@ async def auth_me(request: Request):
     user = _current_user(request)
     if not user:
         return JSONResponse({"user": None}, status_code=200)
-    return {"user": _safe_user(user)}
+    payload = {"user": _safe_user(user)}
+    try:
+        payload["notices"] = list_unread_notices(user.get("email") or "")
+    except Exception:
+        payload["notices"] = []
+    return payload
+
+
+@app.post("/api/notices/{notice_id}/ack")
+async def ack_notice(notice_id: int, request: Request):
+    user = require_user(request)
+    ok = mark_notice_read(notice_id, user.get("email") or "")
+    return {"ok": bool(ok)}
 
 
 @app.post("/api/auth/logout")
@@ -484,7 +497,7 @@ async def create_topup(req: TopupRequest, request: Request):
         customer=customer_id,
         mode="payment",
         line_items=[{"price": price_id, "quantity": 1}],
-        success_url=f"{base_url}/app#pipeline",
+        success_url=f"{base_url}/app?topup=1#pipeline",
         cancel_url=f"{base_url}/app#pipeline",
         metadata={"user_id": str(user["id"]), "topup_credits": str(credit_amount)},
     )
@@ -2047,7 +2060,13 @@ def analyze_niche(req: NicheAnalyzeRequest, user: dict = Depends(require_user)):
         err = str(e)
         if "MIME type" in err or "text/html" in err:
             raise HTTPException(400, "Could not analyze this video. Make sure the URL is a public YouTube video (not a channel, playlist, or private video).")
-        raise HTTPException(500, f"Niche analysis failed. Please try a different video URL.")
+        if any(x in err for x in ("PERMISSION_DENIED", "denied access", "403")):
+            raise HTTPException(
+                503,
+                "Niche video analysis is temporarily unavailable (Google Gemini access denied). "
+                "Pick a recipe manually for now — cooking still works.",
+            )
+        raise HTTPException(500, "Niche analysis failed. Please try a different video URL.")
 
 
 # ---------------------------------------------------------------------------

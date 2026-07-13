@@ -160,8 +160,13 @@ def resolve_all_scenes(
         for batch_start in range(0, len(scene_list), PARALLEL_BATCH_SIZE):
             batch = scene_list[batch_start:batch_start + PARALLEL_BATCH_SIZE]
             if progress_callback:
+                done = batch_start
+                total = len(scene_list)
                 ids = [s.id for _, s in batch]
-                progress_callback(f"Resolving scenes {ids}...")
+                progress_callback(
+                    f"Finding footage & images — {done + 1}–{min(done + len(batch), total)} of {total} "
+                    f"(scenes {ids})..."
+                )
 
             with ThreadPoolExecutor(max_workers=min(len(batch), PARALLEL_BATCH_SIZE)) as pool:
                 futures = {
@@ -172,6 +177,11 @@ def resolve_all_scenes(
                     try:
                         idx, asset = future.result()
                         results_map[idx] = asset
+                        if progress_callback:
+                            finished = sum(1 for i, _ in scene_list if i in results_map)
+                            progress_callback(
+                                f"Finding footage & images — {finished} of {len(scene_list)} ready..."
+                            )
                     except Exception as e:
                         idx = futures[future]
                         scene = scenes[idx]
@@ -650,24 +660,12 @@ def _enforce_motion(asset: ResolvedAsset):
 
 def _is_static_clip(clip_path: str) -> bool:
     """
-    Quick check: sample 3 frames and compare pixel differences.
-    Much faster than running ffprobe scene detection on the whole clip.
+    Detect near-static stock clips. Disabled for now: a prior stub always
+    returned True for clips >= 2s, forcing a 30s ffmpeg re-encode on every
+    stock clip and making cinematic cooks appear stuck on "Resolving scenes".
+    Prefer finishing cooks; re-enable with a real frame-diff when needed.
     """
-    try:
-        cmd = [
-            "ffprobe", "-v", "quiet",
-            "-select_streams", "v:0",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            clip_path,
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-        dur = float(result.stdout.strip()) if result.stdout.strip() else 0
-        if dur < 2:
-            return False
-        return True
-    except Exception:
-        return False
+    return False
 
 
 def _apply_light_zoom(clip_path: str, duration_sec: float):

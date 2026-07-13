@@ -115,6 +115,16 @@ CREATE TABLE IF NOT EXISTS voice_clones (
     consent_at      REAL NOT NULL,
     created_at      REAL NOT NULL DEFAULT (strftime('%s','now'))
 );
+CREATE TABLE IF NOT EXISTS user_notices (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    email       TEXT NOT NULL,
+    notice_key  TEXT UNIQUE NOT NULL,
+    kind        TEXT NOT NULL DEFAULT 'info',
+    title       TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    created_at  REAL NOT NULL DEFAULT (strftime('%s','now')),
+    read_at     REAL NOT NULL DEFAULT 0
+);
 """
 
 _SCHEMA_PG = """
@@ -199,6 +209,16 @@ CREATE TABLE IF NOT EXISTS voice_clones (
     consent_at      DOUBLE PRECISION NOT NULL,
     created_at      DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now())
 );
+CREATE TABLE IF NOT EXISTS user_notices (
+    id          BIGSERIAL PRIMARY KEY,
+    email       TEXT NOT NULL,
+    notice_key  TEXT UNIQUE NOT NULL,
+    kind        TEXT NOT NULL DEFAULT 'info',
+    title       TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    created_at  DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now()),
+    read_at     DOUBLE PRECISION NOT NULL DEFAULT 0
+);
 """
 
 
@@ -275,6 +295,7 @@ def _init_db():
             _ensure_column(cur, "cook_jobs", "heartbeat_at", "REAL DEFAULT 0")
             conn.executescript(_MIGRATIONS)
     _apply_pending_credit_grants()
+    _apply_pending_user_notices()
 
 
 # Idempotent support credit grants (applied once per grant_key on boot).
@@ -284,6 +305,22 @@ _PENDING_CREDIT_GRANTS = [
     ("2026-07-11-arman-newline-url", "armankaladiya02@gmail.com", 2),
     # Founder account short on credits while testing HQ (3-credit) cooks.
     ("2026-07-13-nwalike-hq-test", "nwalikekv@gmail.com", 10),
+    # Re-apply if first grant raced a deploy; idempotent by grant_key.
+    ("2026-07-13-nwalike-hq-test-v2", "nwalikekv@gmail.com", 10),
+    # Customer refund — failed cook / support.
+    ("2026-07-13-drama-refund-2", "dramarecap107@gmail.com", 2),
+]
+
+# One-shot in-app notices (shown once after login / refresh).
+# (notice_key, email, kind, title, body)
+_PENDING_USER_NOTICES = [
+    (
+        "2026-07-13-drama-refund-notice",
+        "dramarecap107@gmail.com",
+        "credit_refund",
+        "Credits refunded",
+        "We refunded 2 credits to your account. Sorry for the trouble — you're all set to cook again.",
+    ),
 ]
 
 
@@ -318,6 +355,57 @@ def _apply_pending_credit_grants() -> None:
                 )
         except Exception as e:
             print(f"[ops] credit grant {grant_key} failed: {e}")
+
+
+def _apply_pending_user_notices() -> None:
+    for notice_key, email, kind, title, body in _PENDING_USER_NOTICES:
+        email = email.lower().strip()
+        try:
+            with _conn() as conn:
+                cur = conn.cursor()
+                cur.execute(_q("SELECT 1 FROM user_notices WHERE notice_key = ?"), (notice_key,))
+                if cur.fetchone():
+                    continue
+                cur.execute(
+                    _q(
+                        "INSERT INTO user_notices (email, notice_key, kind, title, body, created_at, read_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, 0)"
+                    ),
+                    (email, notice_key, kind, title, body, time.time()),
+                )
+                print(f"[ops] Queued notice {notice_key} for {email}")
+        except Exception as e:
+            print(f"[ops] notice {notice_key} failed: {e}")
+
+
+def list_unread_notices(email: str) -> list[dict]:
+    email = (email or "").lower().strip()
+    if not email:
+        return []
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            _q(
+                "SELECT id, kind, title, body, created_at FROM user_notices "
+                "WHERE email = ? AND read_at = 0 ORDER BY created_at ASC LIMIT 10"
+            ),
+            (email,),
+        )
+        rows = cur.fetchall() or []
+        return [dict(r) for r in rows]
+
+
+def mark_notice_read(notice_id: int, email: str) -> bool:
+    email = (email or "").lower().strip()
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            _q(
+                "UPDATE user_notices SET read_at = ? WHERE id = ? AND email = ? AND read_at = 0"
+            ),
+            (time.time(), int(notice_id), email),
+        )
+        return cur.rowcount > 0
 
 
 # -- Users ------------------------------------------------------------------

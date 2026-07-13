@@ -275,7 +275,7 @@
                         <div class="max-w-3xl mb-4 flex gap-2" style="flex-wrap: wrap;">
                             <button id="vo-mode-generate" class="btn-secondary vo-mode-btn active" onclick="setVoiceMode('generate')" style="font-size: 13px; padding: 6px 16px;">Generate voice</button>
                             <button id="vo-mode-upload" class="btn-secondary vo-mode-btn" onclick="setVoiceMode('upload')" style="font-size: 13px; padding: 6px 16px;">Upload your own</button>
-                            <button id="vo-mode-clone" class="btn-secondary vo-mode-btn hidden" onclick="setVoiceMode('clone')" style="font-size: 13px; padding: 6px 16px;">Clone voice</button>
+                            <button id="vo-mode-clone" class="btn-secondary vo-mode-btn hidden" onclick="setVoiceMode('clone')" style="font-size: 13px; padding: 6px 16px; position: relative;"><span class="cr-new-badge" style="position: absolute; top: -8px; right: -8px;">New</span>Clone voice</button>
                         </div>
                         <div id="vo-generate-panel">
                             <div id="voices-grid" class="max-w-3xl grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
@@ -939,8 +939,19 @@
         </div>
     </div>
 
-    <!-- Pricing modal -->
-    <div id="pricing-modal" class="hidden" style="position: fixed; inset: 0; z-index: 190; display: none; align-items: center; justify-content: center;">
+    <!-- Credit / support notice modal -->
+    <div id="credit-notice-overlay" class="hidden" style="position: fixed; inset: 0; z-index: 210; display: none; align-items: center; justify-content: center;">
+        <div style="position: absolute; inset: 0; background: rgba(0,0,0,0.55); backdrop-filter: blur(5px);"></div>
+        <div id="credit-notice-card" style="position: relative; width: min(420px, calc(100% - 32px)); background: var(--app-surface); border: 1px solid var(--app-border); border-radius: var(--radius-card); padding: 28px 24px 22px; text-align: center; box-shadow: 0 24px 60px rgba(0,0,0,0.35);">
+            <div style="width: 56px; height: 56px; margin: 0 auto 14px; border-radius: 50%; background: color-mix(in srgb, var(--success) 18%, transparent); display: flex; align-items: center; justify-content: center;">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+            </div>
+            <h2 id="credit-notice-title" class="cr-display" style="font-size: 24px; margin-bottom: 8px;">Credits refunded</h2>
+            <p id="credit-notice-body" style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); line-height: 1.45; margin-bottom: 18px;"></p>
+            <button type="button" id="credit-notice-cta" class="btn-primary" style="width: 100%;" onclick="dismissCreditNotice()">Got it — thanks</button>
+        </div>
+    </div>
+
         <div style="position: absolute; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);" onclick="hidePricingModal()"></div>
         <div style="position: relative; background: var(--app-surface); border: 1px solid var(--app-border); border-radius: var(--radius-card); padding: 0; width: 100%; max-width: 720px; margin: 16px; overflow: hidden;">
             <button onclick="hidePricingModal()" style="position: absolute; top: 12px; right: 12px; background: none; border: none; color: var(--app-ink-3); cursor: pointer; z-index: 2;">

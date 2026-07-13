@@ -832,12 +832,34 @@ function hideCelebration() {
 function maybeShowWelcomeCelebration() {
     const params = new URLSearchParams(window.location.search);
     const welcome = params.get('welcome');
-    if (!welcome) return;
+    const topup = params.get('topup');
+    if (!welcome && !topup) return;
     // Clean URL without losing hash
     const hash = window.location.hash || '#pipeline';
     window.history.replaceState({}, '', window.location.pathname + hash);
     // Wait a beat for auth/UI to settle, then celebrate
-    setTimeout(() => {
+    setTimeout(async () => {
+        if (topup) {
+            // Stripe webhook may land a second after redirect — poll briefly.
+            for (let i = 0; i < 6; i++) {
+                await refreshUserData();
+                await new Promise((r) => setTimeout(r, 800));
+            }
+            const overlay = document.getElementById('credit-notice-overlay');
+            const title = document.getElementById('credit-notice-title');
+            const body = document.getElementById('credit-notice-body');
+            if (title) title.textContent = 'Credits added';
+            if (body) {
+                body.textContent = currentUser
+                    ? `Your top-up landed. You now have ${currentUser.credits} credits.`
+                    : 'Your top-up landed. Your balance will update in a moment.';
+            }
+            if (overlay) {
+                overlay.classList.remove('hidden');
+                overlay.style.display = 'flex';
+            }
+            return;
+        }
         if (welcome === 'trial') {
             // Transparent notice for people who saw the YouTube promise of 3 free videos
             showTrialCreditChangeNotice(() => showCelebration('trial'));
@@ -1744,7 +1766,9 @@ function _friendlyProgress(raw) {
     if (/Assembling/i.test(raw)) return 'Building your video...';
     if (/Concatenat/i.test(raw)) return 'Building your video...';
     if (/Planning scenes|DirectorScore/i.test(raw)) return 'Planning visual scenes...';
-    if (/Resolving assets/i.test(raw)) return 'Finding footage & images...';
+    if (/Resolving assets|Finding footage|Resolving scenes/i.test(raw)) {
+        return raw.replace(/^\[cinematic\]\s*/i, '').slice(0, 80) || 'Finding footage & images...';
+    }
     if (/assets resolved/i.test(raw)) return 'Assets ready';
     if (/concepts? planned/i.test(raw)) return 'Scenes planned';
     if (/Style ref/i.test(raw)) return 'Art style ready';
@@ -3312,11 +3336,13 @@ async function checkAuth() {
             currentUser = data.user;
             updateAuthUI();
             loadIntegrations();
+            maybeShowUserNotices(data.notices || []);
         }
     } catch (e) {
         console.error('Auth check failed:', e);
     } finally {
         authReady = true;
+        startCreditsPolling();
     }
 }
 
@@ -3328,10 +3354,63 @@ async function refreshUserData() {
             currentUser = data.user;
             updateAuthUI();
             loadIntegrations();
+            maybeShowUserNotices(data.notices || []);
         }
     } catch (e) {
         console.error('Refresh user data failed:', e);
     }
+}
+
+let _pendingNotice = null;
+function maybeShowUserNotices(notices) {
+    if (!Array.isArray(notices) || !notices.length) return;
+    // Prefer credit refunds first
+    const sorted = [...notices].sort((a, b) => {
+        const score = (n) => (n.kind === 'credit_refund' ? 0 : 1);
+        return score(a) - score(b);
+    });
+    const next = sorted[0];
+    if (!next || _pendingNotice?.id === next.id) return;
+    _pendingNotice = next;
+    const overlay = document.getElementById('credit-notice-overlay');
+    const title = document.getElementById('credit-notice-title');
+    const body = document.getElementById('credit-notice-body');
+    if (title) title.textContent = next.title || 'Account update';
+    if (body) body.textContent = next.body || '';
+    if (overlay) {
+        overlay.classList.remove('hidden');
+        overlay.style.display = 'flex';
+    }
+    track('user_notice_shown', { kind: next.kind || 'info', notice_id: next.id });
+}
+
+async function dismissCreditNotice() {
+    const overlay = document.getElementById('credit-notice-overlay');
+    if (overlay) {
+        overlay.classList.add('hidden');
+        overlay.style.display = 'none';
+    }
+    const notice = _pendingNotice;
+    _pendingNotice = null;
+    if (notice?.id) {
+        try {
+            await _origFetch(`/api/notices/${notice.id}/ack`, { method: 'POST' });
+        } catch (_) { /* ignore */ }
+    }
+    await refreshUserData();
+}
+
+function startCreditsPolling() {
+    if (window.__crCreditsPoll) return;
+    window.__crCreditsPoll = setInterval(() => {
+        if (currentUser) refreshUserData();
+    }, 45000);
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && currentUser) refreshUserData();
+    });
+    window.addEventListener('focus', () => {
+        if (currentUser) refreshUserData();
+    });
 }
 
 function updateAuthUI() {
