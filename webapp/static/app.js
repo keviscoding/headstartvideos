@@ -677,6 +677,7 @@ let _pricingBillingCycle = 'monthly';
 function showPricingModal(opts = {}) {
     if (!currentUser) { showAuthModal(); return; }
     const modal = document.getElementById('pricing-modal');
+    if (!modal) return;
     modal.classList.remove('hidden');
     modal.style.display = 'flex';
     setPricingPlan('monthly');
@@ -758,6 +759,7 @@ function showCreditsNeededModal({ need = 1, have = null, reason = 'credits' } = 
 
 function hidePricingModal() {
     const modal = document.getElementById('pricing-modal');
+    if (!modal) return;
     modal.classList.add('hidden');
     modal.style.display = 'none';
 }
@@ -3490,19 +3492,23 @@ function showAuthModal() {
     // Never nag an already-signed-in user (guards against stray background 401s).
     if (currentUser) return;
     const modal = document.getElementById('auth-modal');
+    if (!modal) return;
     modal.classList.remove('hidden');
     modal.style.display = 'flex';
-    document.getElementById('auth-step-email').classList.remove('hidden');
-    document.getElementById('auth-step-code').classList.add('hidden');
-    document.getElementById('auth-email').value = '';
-    document.getElementById('auth-code').value = '';
-    document.getElementById('auth-email-error').classList.add('hidden');
-    document.getElementById('auth-code-error').classList.add('hidden');
-    setTimeout(() => document.getElementById('auth-email').focus(), 100);
+    document.getElementById('auth-step-email')?.classList.remove('hidden');
+    document.getElementById('auth-step-code')?.classList.add('hidden');
+    const email = document.getElementById('auth-email');
+    const code = document.getElementById('auth-code');
+    if (email) email.value = '';
+    if (code) code.value = '';
+    document.getElementById('auth-email-error')?.classList.add('hidden');
+    document.getElementById('auth-code-error')?.classList.add('hidden');
+    setTimeout(() => email?.focus(), 100);
 }
 
 function hideAuthModal() {
     const modal = document.getElementById('auth-modal');
+    if (!modal) return;
     modal.classList.add('hidden');
     modal.style.display = 'none';
     pendingAuthAction = null;
