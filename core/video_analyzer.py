@@ -2,14 +2,37 @@
 Gemini-powered video analyzer for understanding YouTube niche B-roll patterns.
 Feeds a YouTube URL to Gemini, which watches the video and extracts a structured
 NicheProfile describing the B-roll strategy, visual style, and example queries.
+
+Requires a working Google Gemini project (ALLOW_GOOGLE_GEMINI=1). Atlas chat
+models are text-only and cannot watch YouTube URLs.
 """
 
 from __future__ import annotations
 import json
+import os
 import re
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from config import GEMINI_KEY, GEMINI_TEXT_MODEL
+
+# After one project denial, skip further Google calls in this process.
+_gemini_video_denied: str | None = None
+
+
+class NicheAnalysisUnavailable(RuntimeError):
+    """Expected ops condition — not a product bug. Safe to surface as HTTP 503."""
+
+
+def google_video_analyze_enabled() -> bool:
+    return (os.getenv("ALLOW_GOOGLE_GEMINI", "") or "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _mark_gemini_denied(reason: str) -> None:
+    global _gemini_video_denied
+    _gemini_video_denied = reason
+    print(f"[analyzer] Gemini video analyze disabled: {reason}")
 
 
 @dataclass
@@ -95,17 +118,26 @@ def analyze_video(
 ) -> NicheProfile:
     """
     Use Gemini to watch a YouTube video and extract a NicheProfile.
-    The video must be public. Uses Gemini's YouTube URL feature (preview, free tier).
+    The video must be public. Uses Gemini's YouTube URL feature.
     """
+    if _gemini_video_denied:
+        raise NicheAnalysisUnavailable(
+            "Niche video analysis is temporarily unavailable (Google Gemini access denied). "
+            "Pick a recipe manually for now — cooking still works."
+        )
+    if not google_video_analyze_enabled():
+        raise NicheAnalysisUnavailable(
+            "Niche video analysis needs a working Google Gemini project "
+            "(Atlas cannot watch YouTube). Pick a recipe manually — cooking still works."
+        )
+    if not GEMINI_KEY:
+        raise NicheAnalysisUnavailable(
+            "Niche video analysis needs GEMINI_KEY. "
+            "Pick a recipe manually for now — cooking still works."
+        )
+
     from google import genai
     from google.genai import types
-
-    if not GEMINI_KEY:
-        raise ValueError(
-            "YouTube video analysis still needs a working GEMINI_KEY "
-            "(Atlas chat models are text-only and cannot watch YouTube URLs). "
-            "Skip niche auto-analyze or set a valid Google key."
-        )
 
     client = genai.Client(api_key=GEMINI_KEY)
 
@@ -130,19 +162,29 @@ def analyze_video(
             "That should be enough to understand the B-roll patterns."
         )
 
-    response = client.models.generate_content(
-        model=GEMINI_TEXT_MODEL,
-        contents=types.Content(
-            parts=[
-                types.Part(
-                    file_data=types.FileData(file_uri=url)
-                ),
-                types.Part(text=prompt),
-            ]
-        ),
-    )
+    try:
+        response = client.models.generate_content(
+            model=GEMINI_TEXT_MODEL,
+            contents=types.Content(
+                parts=[
+                    types.Part(
+                        file_data=types.FileData(file_uri=url)
+                    ),
+                    types.Part(text=prompt),
+                ]
+            ),
+        )
+    except Exception as e:
+        err = str(e)
+        if any(x in err for x in ("PERMISSION_DENIED", "denied access", "403")):
+            _mark_gemini_denied(err[:160])
+            raise NicheAnalysisUnavailable(
+                "Niche video analysis is temporarily unavailable (Google Gemini access denied). "
+                "Pick a recipe manually for now — cooking still works."
+            ) from None
+        raise
 
-    text = response.text.strip()
+    text = (getattr(response, "text", None) or "").strip()
     text = re.sub(r'^```json\s*', '', text)
     text = re.sub(r'\s*```$', '', text)
 

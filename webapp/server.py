@@ -53,11 +53,21 @@ if config.SENTRY_DSN:
                 # Fly machine stop / deploy / Ctrl-C — not app bugs
                 if isinstance(exc, (KeyboardInterrupt, SystemExit, GeneratorExit)):
                     return None
-                # FastAPI HTTPException — only keep unexpected 5xx
+                # FastAPI HTTPException — drop expected client / ops responses
                 try:
                     from fastapi import HTTPException as _HTTPExc
-                    if isinstance(exc, _HTTPExc) and exc.status_code < 500:
-                        return None
+                    if isinstance(exc, _HTTPExc):
+                        if exc.status_code < 500:
+                            return None
+                        detail = str(exc.detail or "").lower()
+                        # Known ops 503s — not product bugs
+                        if exc.status_code == 503 and any(s in detail for s in (
+                            "gemini access denied",
+                            "niche video analysis",
+                            "pick a recipe manually",
+                            "coming soon",
+                        )):
+                            return None
                 except Exception:
                     pass
                 msg = str(exc).lower()
@@ -67,6 +77,8 @@ if config.SENTRY_DSN:
                     "no youtube channel found",
                     "could not extract channel",
                     "provider balance",
+                    "gemini access denied",
+                    "nicheanalysisunavailable",
                 )):
                     return None
             return event
@@ -2032,7 +2044,7 @@ def generate_script_claude(req: ClaudeScriptRequest, user: dict = Depends(requir
 @app.post("/api/niche/analyze")
 def analyze_niche(req: NicheAnalyzeRequest, user: dict = Depends(require_user)):
     try:
-        from core.video_analyzer import analyze_video
+        from core.video_analyzer import analyze_video, NicheAnalysisUnavailable
         profile = analyze_video(req.youtube_url, analyze_minutes=req.minutes)
         profile_dict = {
             "niche_name": profile.niche_name,
@@ -2054,19 +2066,21 @@ def analyze_niche(req: NicheAnalyzeRequest, user: dict = Depends(require_user)):
             f"Notes: {profile.notes}"
         )
         return {"profile": profile_dict, "summary": summary}
+    except NicheAnalysisUnavailable as e:
+        raise HTTPException(503, str(e)) from None
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, str(e)) from None
     except Exception as e:
         err = str(e)
         if "MIME type" in err or "text/html" in err:
-            raise HTTPException(400, "Could not analyze this video. Make sure the URL is a public YouTube video (not a channel, playlist, or private video).")
+            raise HTTPException(400, "Could not analyze this video. Make sure the URL is a public YouTube video (not a channel, playlist, or private video).") from None
         if any(x in err for x in ("PERMISSION_DENIED", "denied access", "403")):
             raise HTTPException(
                 503,
                 "Niche video analysis is temporarily unavailable (Google Gemini access denied). "
                 "Pick a recipe manually for now — cooking still works.",
-            )
-        raise HTTPException(500, "Niche analysis failed. Please try a different video URL.")
+            ) from None
+        raise HTTPException(500, "Niche analysis failed. Please try a different video URL.") from None
 
 
 # ---------------------------------------------------------------------------

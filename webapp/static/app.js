@@ -2632,7 +2632,14 @@ async function analyzeNiche() {
             }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Failed');
+        if (!res.ok) {
+            const msg = typeof data.detail === 'string' ? data.detail : (data.detail?.message || 'Failed');
+            if (res.status === 503) {
+                showSoftPrompt(msg, 'Go to New video', () => navigateTo('pipeline'));
+                return;
+            }
+            throw new Error(msg);
+        }
         document.getElementById('ns-analysis').textContent = data.summary || JSON.stringify(data.profile, null, 2);
         document.getElementById('ns-json').textContent = JSON.stringify(data.profile, null, 2);
         document.getElementById('ns-result').classList.remove('hidden');
