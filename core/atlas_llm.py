@@ -267,15 +267,18 @@ def generate_hq_image_file(
 ) -> bool:
     """
     GPT Image 2 Developer (Atlas) — HQ explainer / cinematic stills.
-    Uses low quality + 16:9 by default (~$0.005/image on current Atlas promo).
+
+    Cost-locked to the cheapest settings Atlas allows for 16:9:
+      quality=low, size=1024x576 (exact 16:9 at 1K floor — not 2K 2048x1152, not 4K).
     """
     key = _atlas_key()
     if not key:
         return False
 
     model = (getattr(config, "HQ_IMAGE_MODEL", None) or HQ_IMAGE_MODEL).strip()
-    quality = (getattr(config, "HQ_IMAGE_QUALITY", None) or "low").strip() or "low"
-    size = (getattr(config, "HQ_IMAGE_SIZE", None) or "2048x1152").strip() or "2048x1152"
+    # Hard-lock — never read env for these; higher tiers cost more per token.
+    quality = "low"
+    size = "1024x576"
     clipped = (prompt or "").strip()
     if not clipped:
         return False
@@ -295,6 +298,7 @@ def generate_hq_image_file(
                     "quality": quality,
                     "size": size,
                     "output_format": "jpeg",
+                    "moderation": "low",
                     "enable_base64_output": False,
                     "enable_sync_mode": False,
                 },
@@ -330,7 +334,7 @@ def generate_hq_image_file(
                     with open(output_path, "wb") as f:
                         f.write(img.content)
                     print(
-                        f"[atlas] HQ image ok model={model} q={quality} "
+                        f"[atlas] HQ image ok model={model} q={quality} size={size} "
                         f"{time.time() - t0:.1f}s → {Path(output_path).name}"
                     )
                     return True

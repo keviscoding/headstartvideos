@@ -93,11 +93,14 @@ VOICEOVER_WORDS_PER_MIN = max(100, int(os.getenv("VOICEOVER_WORDS_PER_MIN", "150
 MAX_VOICEOVER_WORDS = MAX_VOICEOVER_MINUTES * VOICEOVER_WORDS_PER_MIN
 
 # High-quality image cooks (GPT Image 2 Developer via Atlas). Pro/paid only.
+# ALWAYS use the cheapest 16:9 + lowest quality — pricing scales with size/quality.
 HQ_IMAGE_MODEL = (
     os.getenv("HQ_IMAGE_MODEL", "") or "openai/gpt-image-2-developer/text-to-image"
 ).strip()
-HQ_IMAGE_QUALITY = (os.getenv("HQ_IMAGE_QUALITY", "low") or "low").strip().lower()
-HQ_IMAGE_SIZE = (os.getenv("HQ_IMAGE_SIZE", "2048x1152") or "2048x1152").strip()
+# Forced cheap defaults (do not raise these — Atlas bills by tokens from size × quality).
+# 1024x576 = exact 16:9 at the 1K long-edge floor (NOT 2048x1152 2K, NOT 3840x2160 4K).
+HQ_IMAGE_QUALITY = "low"
+HQ_IMAGE_SIZE = "1024x576"
 HQ_CREDIT_COST = max(1, int(os.getenv("HQ_CREDIT_COST", "3")))
 HQ_MAX_MINUTES = max(3, int(os.getenv("HQ_MAX_MINUTES", "12")))
 
