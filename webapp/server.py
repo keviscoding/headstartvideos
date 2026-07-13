@@ -182,7 +182,8 @@ async def _startup_tasks():
 
 from webapp.database import (
     get_user_by_email, create_user, get_user_by_id, update_user,
-    get_user_by_sub_id, deduct_credit, deduct_credits, refund_credit, refund_credits, add_credits,
+    get_user_by_sub_id, get_user_by_customer_id, billing_plan_counts, list_billing_users,
+    deduct_credit, deduct_credits, refund_credit, refund_credits, add_credits,
     create_verify_code, verify_code,
     create_session, get_session_user, delete_session,
     log_render_event, render_stats, backend_name, cleanup_expired,
@@ -416,6 +417,84 @@ _PLAN_CREDITS = {
 }
 
 
+def _stripe_obj_to_dict(obj: Any) -> dict:
+    """Normalize Stripe webhook objects to plain dicts."""
+    if obj is None:
+        return {}
+    if isinstance(obj, dict):
+        return obj
+    if hasattr(obj, "to_dict"):
+        try:
+            return obj.to_dict()
+        except Exception:
+            pass
+    try:
+        return json.loads(str(obj))
+    except Exception:
+        return {}
+
+
+def _stripe_id(value: Any) -> str:
+    """Stripe ids may arrive as strings or expanded objects."""
+    if not value:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return str(value.get("id") or "")
+    return str(getattr(value, "id", "") or "")
+
+
+def _invoice_subscription_id(invoice: dict) -> str:
+    """Resolve subscription id across classic + Basil (2025-03-31+) invoice shapes.
+
+    Basil removed top-level invoice.subscription in favor of
+    invoice.parent.subscription_details.subscription. Without this fallback,
+    invoice.paid silently skips trial conversions and renewals.
+    """
+    sub_id = _stripe_id(invoice.get("subscription"))
+    if sub_id:
+        return sub_id
+    parent = invoice.get("parent") or {}
+    if isinstance(parent, dict):
+        details = parent.get("subscription_details") or {}
+        if isinstance(details, dict):
+            sub_id = _stripe_id(details.get("subscription"))
+            if sub_id:
+                return sub_id
+    # Last-resort: some payloads still nest it under lines
+    lines = (invoice.get("lines") or {}).get("data") or []
+    for line in lines:
+        if not isinstance(line, dict):
+            continue
+        sub_id = _stripe_id(line.get("subscription"))
+        if sub_id:
+            return sub_id
+        parent = line.get("parent") or {}
+        if isinstance(parent, dict):
+            for key in ("subscription_item_details", "invoice_item_details"):
+                details = parent.get(key) or {}
+                if isinstance(details, dict):
+                    sub_id = _stripe_id(details.get("subscription"))
+                    if sub_id:
+                        return sub_id
+    return ""
+
+
+def _find_user_for_stripe(*, sub_id: str = "", customer_id: str = "") -> dict | None:
+    row = get_user_by_sub_id(sub_id) if sub_id else None
+    if row:
+        return row
+    if customer_id:
+        row = get_user_by_customer_id(customer_id)
+        if row and sub_id and not row.get("stripe_sub_id"):
+            # Heal race: checkout webhook lagged behind invoice.paid
+            update_user(row["id"], stripe_sub_id=sub_id)
+            row["stripe_sub_id"] = sub_id
+        return row
+    return None
+
+
 @app.post("/api/billing/checkout")
 async def create_checkout(req: CheckoutRequest, request: Request):
     """Create a Stripe Checkout session with 7-day trial (card required)."""
@@ -536,19 +615,16 @@ async def stripe_webhook(request: Request):
     except Exception as e:
         raise HTTPException(400, f"Webhook signature verification failed: {e}")
 
-    # Convert Stripe objects to plain dicts for safe .get() access
     evt_type = event["type"]
-    try:
-        obj = json.loads(str(event["data"]["object"]))
-    except Exception:
-        obj = event["data"]["object"]
-        if hasattr(obj, "to_dict"):
-            obj = obj.to_dict()
+    obj = _stripe_obj_to_dict(event["data"]["object"])
+    print(f"[stripe] webhook {evt_type} id={event.get('id', '')}")
 
     if evt_type == "checkout.session.completed":
         meta = obj.get("metadata") or {}
         user_id = meta.get("user_id")
-        if user_id:
+        if not user_id:
+            print(f"[stripe] checkout.session.completed missing user_id metadata: {obj.get('id')}")
+        else:
             topup = meta.get("topup_credits")
             if topup:
                 add_credits(int(user_id), int(topup))
@@ -557,12 +633,13 @@ async def stripe_webhook(request: Request):
             else:
                 plan_key = meta.get("plan", "starter_monthly")
                 skip_trial = meta.get("skip_trial") == "1"
+                sub_id = _stripe_id(obj.get("subscription"))
                 if skip_trial:
                     # Returning customer — charge immediately, full credits
                     plan_label = "daily" if "daily" in plan_key else "starter"
                     credits = _PLAN_CREDITS.get(plan_key, 15)
                     update_user(int(user_id), plan=plan_label, credits=credits,
-                                stripe_sub_id=obj.get("subscription", ""),
+                                stripe_sub_id=sub_id,
                                 trial_used=1)
                     print(f"[stripe] User {user_id} subscribed (no trial) → {plan_label} ({credits} credits)")
                     identify_user(user_id, {"plan": plan_label, "credits": credits, "trial_used": True})
@@ -573,7 +650,7 @@ async def stripe_webhook(request: Request):
                     plan_label = "daily_trial" if "daily" in plan_key else "starter_trial"
                     trial_credits = int(getattr(config, "TRIAL_CREDITS", 2) or 2)
                     update_user(int(user_id), plan=plan_label, credits=trial_credits,
-                                stripe_sub_id=obj.get("subscription", ""),
+                                stripe_sub_id=sub_id,
                                 trial_used=1)
                     print(f"[stripe] User {user_id} started trial ({plan_label}, {trial_credits} credits)")
                     identify_user(user_id, {"plan": plan_label, "credits": trial_credits, "trial_used": True})
@@ -582,11 +659,22 @@ async def stripe_webhook(request: Request):
                     })
 
     elif evt_type == "invoice.paid":
-        sub_id = obj.get("subscription")
-        amount_paid = obj.get("amount_paid", 0)
-        if sub_id:
-            row = get_user_by_sub_id(sub_id)
-            if row:
+        sub_id = _invoice_subscription_id(obj)
+        customer_id = _stripe_id(obj.get("customer"))
+        amount_paid = int(obj.get("amount_paid") or 0)
+        if not sub_id:
+            print(
+                f"[stripe] invoice.paid missing subscription id "
+                f"(invoice={obj.get('id')}, customer={customer_id}, amount={amount_paid})"
+            )
+        else:
+            row = _find_user_for_stripe(sub_id=sub_id, customer_id=customer_id)
+            if not row:
+                print(
+                    f"[stripe] invoice.paid no user for sub={sub_id} customer={customer_id} "
+                    f"amount={amount_paid} invoice={obj.get('id')}"
+                )
+            else:
                 plan = row.get("plan", "starter")
                 if plan in ("starter_trial", "daily_trial"):
                     if amount_paid == 0:
@@ -594,7 +682,7 @@ async def stripe_webhook(request: Request):
                     else:
                         new_plan = "daily" if "daily" in plan else "starter"
                         credits = 35 if new_plan == "daily" else 15
-                        update_user(row["id"], plan=new_plan, credits=credits)
+                        update_user(row["id"], plan=new_plan, credits=credits, trial_used=1)
                         print(f"[stripe] Trial converted: user {row['id']} → {new_plan} ({credits} credits)")
                         identify_user(row["id"], {"plan": new_plan, "credits": credits})
                         track(row["id"], "trial_converted", {
@@ -609,9 +697,10 @@ async def stripe_webhook(request: Request):
                     track(row["id"], "credits_refilled", {"plan": plan, "credits": credits, "amount_paid": amount_paid})
 
     elif evt_type == "customer.subscription.deleted":
-        sub_id = obj.get("id")
+        sub_id = _stripe_id(obj.get("id"))
+        customer_id = _stripe_id(obj.get("customer"))
         if sub_id:
-            row = get_user_by_sub_id(sub_id)
+            row = _find_user_for_stripe(sub_id=sub_id, customer_id=customer_id)
             if row:
                 prev_plan = row.get("plan", "unknown")
                 # Keep trial_used=1 so they cannot start another free trial
@@ -619,12 +708,15 @@ async def stripe_webhook(request: Request):
                 print(f"[stripe] Subscription deleted — user {row['id']} downgraded to free (trial_used preserved)")
                 identify_user(row["id"], {"plan": "free", "credits": 0})
                 track(row["id"], "subscription_canceled", {"from_plan": prev_plan})
+            else:
+                print(f"[stripe] subscription.deleted no user for sub={sub_id} customer={customer_id}")
 
     elif evt_type == "customer.subscription.updated":
-        sub_id = obj.get("id")
+        sub_id = _stripe_id(obj.get("id"))
+        customer_id = _stripe_id(obj.get("customer"))
         status = obj.get("status")
         if sub_id and status in ("canceled", "unpaid"):
-            row = get_user_by_sub_id(sub_id)
+            row = _find_user_for_stripe(sub_id=sub_id, customer_id=customer_id)
             if row and row.get("plan") not in ("starter_trial", "daily_trial"):
                 prev_plan = row.get("plan", "unknown")
                 update_user(row["id"], plan="free", credits=0)
@@ -633,9 +725,11 @@ async def stripe_webhook(request: Request):
                 track(row["id"], "subscription_canceled", {"from_plan": prev_plan, "status": status})
             elif row:
                 print(f"[stripe] Ignoring {status} for trial user {row['id']} (handled by end-trial endpoint)")
+            else:
+                print(f"[stripe] subscription.updated({status}) no user for sub={sub_id}")
         elif sub_id and status == "active":
             # Safety net: if end-trial or day-7 conversion left plan as *_trial, fix it
-            row = get_user_by_sub_id(sub_id)
+            row = _find_user_for_stripe(sub_id=sub_id, customer_id=customer_id)
             if row and row.get("plan") in ("starter_trial", "daily_trial"):
                 new_plan = "daily" if "daily" in row["plan"] else "starter"
                 credits = 35 if new_plan == "daily" else 15
@@ -661,6 +755,103 @@ async def billing_status(request: Request):
         "has_stripe": bool(config.STRIPE_SECRET_KEY),
         "publishable_key": config.STRIPE_PUBLISHABLE_KEY,
     }
+
+
+@app.get("/api/admin/billing")
+async def admin_billing_health(sync: int = 0, admin: dict = Depends(require_admin)):
+    """Admin billing snapshot: plan counts + optional Stripe subscription sync.
+
+    ?sync=1 retrieves each Stripe subscription status and flags DB mismatches
+    (e.g. Stripe active/paid while DB still on *_trial, or missing sub ids).
+    """
+    import stripe
+
+    plans = billing_plan_counts()
+    users = list_billing_users(limit=300)
+    summary = {
+        "plans": plans,
+        "trialing_db": plans.get("starter_trial", 0) + plans.get("daily_trial", 0),
+        "paid_db": plans.get("starter", 0) + plans.get("daily", 0) + plans.get("pro", 0),
+        "free_db": plans.get("free", 0),
+        "stripe_configured": bool(config.STRIPE_SECRET_KEY and config.STRIPE_WEBHOOK_SECRET),
+        "price_ids": {
+            "starter_monthly": bool(config.STRIPE_PRICE_STARTER_MONTHLY or config.STRIPE_PRICE_ID),
+            "starter_annual": bool(config.STRIPE_PRICE_STARTER_ANNUAL or config.STRIPE_PRICE_ID_ANNUAL),
+            "daily_monthly": bool(config.STRIPE_PRICE_DAILY_MONTHLY),
+            "daily_annual": bool(config.STRIPE_PRICE_DAILY_ANNUAL),
+            "topup_5": bool(config.STRIPE_PRICE_TOPUP_5),
+            "topup_15": bool(config.STRIPE_PRICE_TOPUP_15),
+        },
+        "users": [
+            {
+                "id": u["id"],
+                "email": u["email"],
+                "plan": u.get("plan"),
+                "credits": u.get("credits"),
+                "trial_used": bool(u.get("trial_used")),
+                "has_customer": bool(u.get("stripe_customer_id")),
+                "has_sub": bool(u.get("stripe_sub_id")),
+                "created_at": u.get("created_at"),
+            }
+            for u in users
+        ],
+        "mismatches": [],
+    }
+
+    if not sync:
+        return summary
+    if not config.STRIPE_SECRET_KEY:
+        raise HTTPException(500, "Stripe not configured")
+
+    stripe.api_key = config.STRIPE_SECRET_KEY
+    mismatches = []
+    healed = 0
+    for u in users:
+        sub_id = (u.get("stripe_sub_id") or "").strip()
+        if not sub_id:
+            if u.get("plan") in ("starter", "daily", "pro", "starter_trial", "daily_trial"):
+                mismatches.append({
+                    "email": u["email"], "plan": u.get("plan"),
+                    "issue": "missing_stripe_sub_id",
+                })
+            continue
+        try:
+            sub = stripe.Subscription.retrieve(sub_id)
+            status = sub.get("status") if isinstance(sub, dict) else getattr(sub, "status", None)
+            db_plan = u.get("plan") or "free"
+            if status == "active" and db_plan in ("starter_trial", "daily_trial"):
+                new_plan = "daily" if "daily" in db_plan else "starter"
+                credits = 35 if new_plan == "daily" else 15
+                update_user(u["id"], plan=new_plan, credits=credits, trial_used=1)
+                healed += 1
+                mismatches.append({
+                    "email": u["email"], "plan": db_plan, "stripe_status": status,
+                    "issue": "trial_but_stripe_active", "healed_to": new_plan,
+                })
+            elif status in ("canceled", "unpaid", "incomplete_expired") and db_plan in ("starter", "daily", "pro"):
+                mismatches.append({
+                    "email": u["email"], "plan": db_plan, "stripe_status": status,
+                    "issue": "paid_in_db_but_stripe_dead",
+                })
+            elif status == "trialing" and db_plan in ("starter", "daily"):
+                mismatches.append({
+                    "email": u["email"], "plan": db_plan, "stripe_status": status,
+                    "issue": "paid_in_db_but_stripe_still_trialing",
+                })
+            elif status == "past_due":
+                mismatches.append({
+                    "email": u["email"], "plan": db_plan, "stripe_status": status,
+                    "issue": "past_due",
+                })
+        except Exception as e:
+            mismatches.append({
+                "email": u["email"], "plan": u.get("plan"), "sub_id": sub_id,
+                "issue": f"stripe_lookup_failed: {e}",
+            })
+
+    summary["mismatches"] = mismatches
+    summary["healed"] = healed
+    return summary
 
 
 @app.post("/api/billing/portal")

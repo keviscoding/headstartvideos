@@ -446,6 +446,47 @@ def get_user_by_sub_id(sub_id: str) -> dict | None:
         return dict(row) if row else None
 
 
+def get_user_by_customer_id(customer_id: str) -> dict | None:
+    if not customer_id:
+        return None
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(_q("SELECT * FROM users WHERE stripe_customer_id = ?"), (customer_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def billing_plan_counts() -> dict[str, int]:
+    """Counts of users by plan — for admin billing health checks."""
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(_q("SELECT plan, COUNT(*) AS n FROM users GROUP BY plan"))
+        rows = cur.fetchall()
+    out: dict[str, int] = {}
+    for row in rows:
+        d = dict(row)
+        out[str(d.get("plan") or "unknown")] = int(d.get("n") or 0)
+    return out
+
+
+def list_billing_users(limit: int = 200) -> list[dict]:
+    """Recent users that have touched Stripe (for admin reconciliation)."""
+    limit = max(1, min(int(limit or 200), 500))
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            _q(
+                "SELECT id, email, plan, credits, trial_used, stripe_customer_id, stripe_sub_id, created_at "
+                "FROM users "
+                "WHERE COALESCE(stripe_customer_id, '') != '' OR COALESCE(stripe_sub_id, '') != '' "
+                "OR plan IN ('starter', 'daily', 'pro', 'starter_trial', 'daily_trial') "
+                "ORDER BY id DESC LIMIT ?"
+            ),
+            (limit,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
 def update_user(user_id: int, **fields) -> None:
     if not fields:
         return
