@@ -206,19 +206,23 @@ def run_explainer_pipeline(
             if concept.section_topic and concept.section_topic.lower() not in retry_desc.lower():
                 retry_desc = f"{retry_desc}. Setting: {concept.section_topic}"
             retry_path = os.path.join(assets_dir, f"illustration_{concept.id:04d}_retry.png")
-            retry = illustration_gen.generate_single_illustration(
-                prompt=illustration_gen.build_prompt(
-                    retry_desc,
-                    concept.background_mood,
-                    concept.has_character,
-                ),
-                output_path=retry_path,
-                short_prompt=illustration_gen._build_short_prompt(
-                    retry_desc,
-                    concept.background_mood,
-                    concept.has_character,
-                ),
+            retry_prompt = illustration_gen.build_prompt(
+                retry_desc,
+                concept.background_mood,
+                concept.has_character,
             )
+            if hq:
+                retry = illustration_gen._generate_hq(retry_prompt, retry_path)
+            else:
+                retry = illustration_gen.generate_single_illustration(
+                    prompt=retry_prompt,
+                    output_path=retry_path,
+                    short_prompt=illustration_gen._build_short_prompt(
+                        retry_desc,
+                        concept.background_mood,
+                        concept.has_character,
+                    ),
+                )
             if retry.success and os.path.exists(retry.image_path):
                 results[i] = retry
                 img_path = retry.image_path

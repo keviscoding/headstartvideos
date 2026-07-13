@@ -316,8 +316,9 @@ def generate_hq_image_file(
     """
     GPT Image 2 Developer (Atlas) — HQ explainer / cinematic stills.
 
-    Cost-locked to the cheapest settings Atlas allows for 16:9:
-      quality=low, size=1024x576 (exact 16:9 at 1K floor — not 2K 2048x1152, not 4K).
+    Cost-locked to the cheapest *valid* settings Atlas allows for 16:9:
+      quality=low, size=1536x864 (exact 16:9 at 1K long-edge — not 2K/4K).
+      Note: 1024x576 is rejected by GPT Image 2 (below min pixel budget).
     """
     key = _atlas_key()
     if not key:
@@ -326,7 +327,7 @@ def generate_hq_image_file(
     model = (getattr(config, "HQ_IMAGE_MODEL", None) or HQ_IMAGE_MODEL).strip()
     # Hard-lock — never read env for these; higher tiers cost more per token.
     quality = "low"
-    size = "1024x576"
+    size = "1536x864"
     clipped = (prompt or "").strip()
     if not clipped:
         return False
