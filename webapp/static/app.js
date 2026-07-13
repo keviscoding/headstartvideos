@@ -180,13 +180,21 @@ async function initAnalytics() {
     applyFeatureFlags(cfg);
 }
 
-let _featureFlags = { voice_clone_enabled: false, voice_clone_credit_cost: 1, recipe_brain_enabled: false };
+let _featureFlags = {
+    voice_clone_enabled: false,
+    voice_clone_credit_cost: 1,
+    recipe_brain_enabled: false,
+    max_voiceover_minutes: 25,
+    max_voiceover_words: 3750,
+};
 
 function applyFeatureFlags(cfg) {
     if (!cfg) return;
     _featureFlags.voice_clone_enabled = !!cfg.voice_clone_enabled;
     _featureFlags.voice_clone_credit_cost = Number(cfg.voice_clone_credit_cost || 0);
     _featureFlags.recipe_brain_enabled = !!cfg.recipe_brain_enabled;
+    _featureFlags.max_voiceover_minutes = Number(cfg.max_voiceover_minutes || 25);
+    _featureFlags.max_voiceover_words = Number(cfg.max_voiceover_words || 3750);
     const cloneBtn = document.getElementById('vo-mode-clone');
     if (cloneBtn) cloneBtn.classList.toggle('hidden', !_featureFlags.voice_clone_enabled);
 }
@@ -253,7 +261,7 @@ function navigateTo(page) {
 
     // Update nav buttons
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-    const toolPages = ['script-studio', 'voiceover-studio', 'thumbnail-studio', 'niche-screener', 'channel-analyzer', 'recipe-brain'];
+    const toolPages = ['script-studio', 'voiceover-studio', 'thumbnail-studio', 'niche-screener', 'channel-analyzer'];
     if (page === 'pipeline') {
         document.querySelector('[data-page="pipeline"]')?.classList.add('active');
         goToStep(state.step);
@@ -1364,29 +1372,9 @@ async function handleVoiceNext() {
         }
         state.voiceoverPath = '';
         state.voiceoverUrl = '';
-        try {
-            const thumbRes = await fetch('/api/thumbnail', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    title: state.title,
-                    niche_style: state.nicheData?.thumbnail_style || '',
-                    count: 2,
-                }),
-            });
-            const thumbData = await thumbRes.json();
-            if (thumbRes.ok && thumbData.thumbnails?.length) {
-                renderThumbnails(thumbData.thumbnails, thumbData.paths);
-                goToStep(5);
-            } else {
-                goToStep(6);
-                populateBuildSummary();
-            }
-        } catch (e) {
-            alert('Thumbnail generation failed: ' + e.message);
-        } finally {
-            setLoading(btn, false);
-        }
+        resetThumbnailStep();
+        goToStep(5);
+        setLoading(btn, false);
         return;
     }
 
@@ -1398,57 +1386,86 @@ async function handleVoiceNext() {
         return;
     }
 
-    if (isUpload) {
-        state.voiceoverPath = state.uploadedVoPath;
-        try {
-            const thumbRes = await fetch('/api/thumbnail', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: state.title, niche_style: state.nicheData?.thumbnail_style || '', count: 2 }) });
-            const thumbData = await thumbRes.json();
-            if (thumbRes.ok && thumbData.thumbnails?.length) {
-                renderThumbnails(thumbData.thumbnails, thumbData.paths);
-                goToStep(5);
-            } else {
-                goToStep(6);
-                populateBuildSummary();
-            }
-        } catch (e) {
-            alert('Thumbnail generation failed: ' + e.message);
-        } finally {
-            setLoading(btn, false);
-        }
-        return;
-    }
-
     if (state.voiceMode === 'upload' && !state.uploadedVoPath) {
         alert('Please upload a voiceover file first.');
         setLoading(btn, false);
         return;
     }
 
-    document.getElementById('vo-generating').classList.remove('hidden');
+    if (isUpload) {
+        state.voiceoverPath = state.uploadedVoPath;
+        resetThumbnailStep();
+        goToStep(5);
+        setLoading(btn, false);
+        return;
+    }
+
+    const voLimit = assertVoiceoverLengthOk(state.script);
+    if (voLimit) {
+        alert(voLimit);
+        setLoading(btn, false);
+        return;
+    }
+
+    document.getElementById('vo-generating')?.classList.remove('hidden');
     try {
-        const [voRes, thumbRes] = await Promise.all([
-            fetch('/api/voiceover', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ script: state.script, voice: state.voice }) }),
-            fetch('/api/thumbnail', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: state.title, niche_style: state.nicheData?.thumbnail_style || '', count: 2 }) }),
-        ]);
+        const voRes = await fetch('/api/voiceover', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ script: state.script, voice: state.voice }),
+        });
         const voData = await voRes.json();
-        if (!voRes.ok) throw new Error(voData.detail || 'Voiceover failed');
+        if (!voRes.ok) throw new Error(friendlyApiError(voData, 'Voiceover failed'));
         state.voiceoverPath = voData.path;
         state.voiceoverUrl = voData.url;
         track('voiceover_generated', { voice: state.voice, recipe: state.niche });
-
-        const thumbData = await thumbRes.json();
-        if (thumbRes.ok && thumbData.thumbnails?.length) {
-            renderThumbnails(thumbData.thumbnails, thumbData.paths);
-            goToStep(5);
-        } else {
-            goToStep(6);
-            populateBuildSummary();
-        }
+        resetThumbnailStep();
+        goToStep(5);
     } catch (e) {
-        alert('Generation failed: ' + e.message);
+        alert('Generation failed: ' + (e.message || e));
     } finally {
         setLoading(btn, false);
-        document.getElementById('vo-generating').classList.add('hidden');
+        document.getElementById('vo-generating')?.classList.add('hidden');
+    }
+}
+
+function assertVoiceoverLengthOk(script) {
+    const words = String(script || '').trim().split(/\s+/).filter(Boolean).length;
+    const maxW = _featureFlags.max_voiceover_words || 3750;
+    const maxM = _featureFlags.max_voiceover_minutes || 25;
+    if (words > maxW) {
+        return `Script is too long for voiceover (${words} words). Max is ~${maxM} minutes (${maxW} words).`;
+    }
+    return null;
+}
+
+function resetThumbnailStep() {
+    state.thumbnailPath = '';
+    state.thumbnailUrl = '';
+    state.thumbnailRefs = [];
+    const grid = document.getElementById('thumb-grid');
+    if (grid) grid.innerHTML = '';
+    const preview = document.getElementById('thumb-refs-preview');
+    if (preview) preview.innerHTML = '';
+    document.getElementById('thumb-empty')?.classList.remove('hidden');
+    document.getElementById('thumb-loading')?.classList.add('hidden');
+    const next = document.getElementById('btn-next-5');
+    if (next) next.disabled = true;
+    updateThumbGenerateButton();
+}
+
+function updateThumbGenerateButton() {
+    const btn = document.getElementById('btn-regen-thumb');
+    const hasRefs = (state.thumbnailRefs || []).length > 0;
+    if (btn) {
+        btn.disabled = !hasRefs;
+        btn.title = hasRefs ? 'Generate thumbnails from your references' : 'Upload a reference image first';
+    }
+    const empty = document.getElementById('thumb-empty');
+    if (empty) {
+        const hasCards = (document.getElementById('thumb-grid')?.children?.length || 0) > 0;
+        const hasPick = !!(state.thumbnailUrl || state.thumbnailPath);
+        empty.classList.toggle('hidden', hasRefs || hasPick || hasCards);
     }
 }
 
@@ -1458,7 +1475,8 @@ async function handleVoiceNext() {
 function renderThumbnails(urls, paths) {
     const grid = document.getElementById('thumb-grid');
     grid.innerHTML = '';
-    document.getElementById('thumb-loading').classList.add('hidden');
+    document.getElementById('thumb-loading')?.classList.add('hidden');
+    document.getElementById('thumb-empty')?.classList.add('hidden');
     urls.forEach((url, i) => {
         const card = document.createElement('div');
         card.className = 'thumb-card';
@@ -1475,46 +1493,68 @@ function renderThumbnails(urls, paths) {
         grid.appendChild(card);
     });
     if (urls.length > 0) grid.querySelector('.thumb-card').click();
+    updateThumbGenerateButton();
 }
 
 function handleThumbRefUpload(input) {
     const preview = document.getElementById('thumb-refs-preview');
-    preview.innerHTML = '';
+    if (preview) preview.innerHTML = '';
     state.thumbnailRefs = [];
-    for (const file of input.files) {
+    for (const file of (input.files || [])) {
         state.thumbnailRefs.push(file);
-        const img = document.createElement('img');
-        img.className = 'ref-thumb';
-        img.src = URL.createObjectURL(file);
-        preview.appendChild(img);
+        if (preview) {
+            const img = document.createElement('img');
+            img.className = 'ref-thumb';
+            img.src = URL.createObjectURL(file);
+            preview.appendChild(img);
+        }
+    }
+    updateThumbGenerateButton();
+    document.getElementById('thumb-empty')?.classList.toggle('hidden', state.thumbnailRefs.length > 0);
+}
+
+async function handleThumbFinalUpload(input) {
+    const file = input.files?.[0];
+    if (!file) return;
+    if (!ensureAuth(handleThumbFinalUpload)) return;
+    try {
+        const form = new FormData();
+        form.append('file', file);
+        const res = await fetch('/api/thumbnail/upload', { method: 'POST', body: form });
+        const data = await res.json();
+        if (!res.ok) throw new Error(friendlyApiError(data, 'Upload failed'));
+        renderThumbnails([data.url], [data.path]);
+    } catch (e) {
+        alert(e.message || 'Thumbnail upload failed');
     }
 }
 
 async function regenerateThumbnails() {
+    if (!ensureAuth(regenerateThumbnails)) return;
+    if (!(state.thumbnailRefs || []).length) {
+        showSoftPrompt('Upload a reference image first — we don’t generate thumbnails cold.');
+        return;
+    }
     const grid = document.getElementById('thumb-grid');
-    grid.innerHTML = '';
-    document.getElementById('thumb-loading').classList.remove('hidden');
+    if (grid) grid.innerHTML = '';
+    document.getElementById('thumb-loading')?.classList.remove('hidden');
+    document.getElementById('thumb-empty')?.classList.add('hidden');
     const customStyle = document.getElementById('thumb-style-input')?.value || '';
     const style = customStyle || state.nicheData?.thumbnail_style || '';
     try {
-        if (state.thumbnailRefs.length > 0) {
-            const formData = new FormData();
-            formData.append('title', state.title);
-            formData.append('style', style);
-            state.thumbnailRefs.forEach(f => formData.append('refs', f));
-            const res = await fetch('/api/thumbnail/with-refs', { method: 'POST', body: formData });
-            const data = await res.json();
-            if (res.ok && data.thumbnails?.length) renderThumbnails(data.thumbnails, data.paths);
-            else throw new Error('No thumbnails generated');
-        } else {
-            const res = await fetch('/api/thumbnail', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: state.title, niche_style: style }) });
-            const data = await res.json();
-            if (res.ok && data.thumbnails?.length) renderThumbnails(data.thumbnails, data.paths);
-            else throw new Error('No thumbnails generated');
-        }
+        const formData = new FormData();
+        formData.append('title', state.title);
+        formData.append('style', style);
+        formData.append('count', '2');
+        state.thumbnailRefs.forEach(f => formData.append('refs', f));
+        const res = await fetch('/api/thumbnail/with-refs', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (res.ok && data.thumbnails?.length) renderThumbnails(data.thumbnails, data.paths);
+        else throw new Error(friendlyApiError(data, 'No thumbnails generated'));
     } catch (e) {
-        alert('Thumbnail regeneration failed: ' + e.message);
-        document.getElementById('thumb-loading').classList.add('hidden');
+        alert('Thumbnail generation failed: ' + e.message);
+        document.getElementById('thumb-loading')?.classList.add('hidden');
+        updateThumbGenerateButton();
     }
 }
 
@@ -2273,6 +2313,11 @@ async function loadVoiceOptions() {
 async function generateStudioVoiceover() {
     if (!ensureAuth(generateStudioVoiceover)) return;
     const script = document.getElementById('vo-script')?.value?.trim() || '';
+    const voLimit = assertVoiceoverLengthOk(script);
+    if (voLimit) {
+        showSoftPrompt(voLimit);
+        return;
+    }
     if (!script) {
         showSoftPrompt('Paste a script first — then we’ll generate the voiceover.');
         document.getElementById('vo-script')?.focus();
@@ -2438,11 +2483,20 @@ async function loadBrainStarter() {
         if (!res.ok) throw new Error(friendlyApiError(data, 'Could not load starter pack'));
         const list = document.getElementById('brain-starter-list');
         list.innerHTML = '';
-        (data.mistakes || []).forEach((m) => {
-            const li = document.createElement('li');
-            li.style.marginBottom = '8px';
-            li.textContent = m;
-            list.appendChild(li);
+        (data.mistakes || []).forEach((m, i) => {
+            const title = (typeof m === 'string') ? m.split(' — ')[0] : (m.title || '');
+            const body = (typeof m === 'string')
+                ? (m.includes(' — ') ? m.split(' — ').slice(1).join(' — ') : '')
+                : (m.body || '');
+            const row = document.createElement('article');
+            row.className = 'brain-mistake';
+            row.innerHTML = `
+                <div class="brain-mistake-num">${String(i + 1).padStart(2, '0')}</div>
+                <div>
+                    <h4 class="brain-mistake-title">${escapeHtml(title)}</h4>
+                    ${body ? `<p class="brain-mistake-body">${escapeHtml(body)}</p>` : ''}
+                </div>`;
+            list.appendChild(row);
         });
         list.classList.remove('hidden');
         _brainChatEnabled = !!data.chat_enabled;

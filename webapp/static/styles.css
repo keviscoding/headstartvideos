@@ -83,6 +83,79 @@
 .nav-btn:hover { color: var(--app-ink); background: var(--app-surface-2); }
 .nav-btn.active { color: var(--app-ink); background: var(--app-surface-2); }
 
+/* Recipe Brain — subtle curiosity magnet next to Settings */
+.nav-brain-btn {
+  padding: 0.3rem 0.45rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.nav-brain-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #B8A9FF;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent);
+  animation: brain-soft-glow 3.6s ease-in-out infinite;
+}
+.nav-brain-btn:hover .nav-brain-icon,
+.nav-brain-btn.active .nav-brain-icon {
+  color: #EDEAFB;
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+@keyframes brain-soft-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(109, 90, 224, 0); }
+  50% { box-shadow: 0 0 14px 1px rgba(109, 90, 224, 0.35); }
+}
+
+.brain-mistakes {
+  display: grid;
+  gap: 10px;
+}
+.brain-mistake {
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  gap: 12px;
+  align-items: start;
+  padding: 14px 14px 14px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--app-border);
+  background: var(--app-surface-2);
+}
+.brain-mistake-num {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-soft-dark);
+  border-radius: 8px;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.brain-mistake-title {
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--app-ink);
+  margin: 0 0 4px;
+  line-height: 1.35;
+}
+.brain-mistake-body {
+  font-size: 13px;
+  color: var(--app-ink-2);
+  margin: 0;
+  line-height: 1.45;
+}
+
 .mobile-nav-btn {
   display: block;
   width: 100%;

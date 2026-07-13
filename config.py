@@ -71,13 +71,22 @@ RECIPE_BRAIN_ENABLED = os.getenv("RECIPE_BRAIN_ENABLED", "0").strip().lower() in
     "1", "true", "yes", "on",
 )
 
-# Fish Audio voice clone (rights-gated). Off by default.
+# Fish Audio voice clone (rights-gated).
+# Auto-on when FISH_API_KEY is set; set VOICE_CLONE_ENABLED=0 to hide the UI.
 FISH_API_KEY = (os.getenv("FISH_API_KEY", "") or "").strip()
-VOICE_CLONE_ENABLED = os.getenv("VOICE_CLONE_ENABLED", "0").strip().lower() in (
-    "1", "true", "yes", "on",
-)
+_vc_raw = (os.getenv("VOICE_CLONE_ENABLED") or "").strip().lower()
+if _vc_raw in ("0", "false", "no", "off"):
+    VOICE_CLONE_ENABLED = False
+elif _vc_raw in ("1", "true", "yes", "on"):
+    VOICE_CLONE_ENABLED = True
+else:
+    VOICE_CLONE_ENABLED = bool(FISH_API_KEY)
 # Premium: credits charged to create a persistent Fish clone (0 = free when enabled).
 VOICE_CLONE_CREDIT_COST = max(0, int(os.getenv("VOICE_CLONE_CREDIT_COST", "1")))
+# Hard cap for TTS generation (~150 wpm). Blocks runaway / abuse scripts.
+MAX_VOICEOVER_MINUTES = max(1, int(os.getenv("MAX_VOICEOVER_MINUTES", "25")))
+VOICEOVER_WORDS_PER_MIN = max(100, int(os.getenv("VOICEOVER_WORDS_PER_MIN", "150")))
+MAX_VOICEOVER_WORDS = MAX_VOICEOVER_MINUTES * VOICEOVER_WORDS_PER_MIN
 
 RESEND_KEY = os.getenv("RESEND_KEY", "")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")

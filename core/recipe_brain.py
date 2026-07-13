@@ -31,26 +31,34 @@ def _read_doc(name: str) -> str:
 def starter_pack() -> dict:
     """Return the curated 20-mistakes starter list (always available)."""
     raw = _read_doc(STARTER_DOC)
-    mistakes: list[str] = []
+    mistakes: list[dict] = []
     for line in raw.splitlines():
         m = re.match(r"^\d+\.\s+\*\*(.+?)\*\*\s*[—–-]\s*(.+)$", line.strip())
         if m:
-            mistakes.append(f"{m.group(1)} — {m.group(2).strip()}")
+            mistakes.append({"title": m.group(1).strip(), "body": m.group(2).strip()})
             continue
         m2 = re.match(r"^\d+\.\s+(.+)$", line.strip())
         if m2:
-            mistakes.append(m2.group(1).strip())
+            text = m2.group(1).strip()
+            if " — " in text:
+                title, body = text.split(" — ", 1)
+            elif " - " in text:
+                title, body = text.split(" - ", 1)
+            else:
+                title, body = text, ""
+            mistakes.append({"title": title.strip(), "body": body.strip()})
     if len(mistakes) < 10:
-        # Fallback: non-empty bullet-ish lines
         for line in raw.splitlines():
             s = line.strip()
             if re.match(r"^\d+\.", s):
-                mistakes.append(re.sub(r"^\d+\.\s*", "", s))
+                text = re.sub(r"^\d+\.\s*", "", s)
+                mistakes.append({"title": text, "body": ""})
+    items = mistakes[:20]
     return {
         "id": "20_mistakes",
         "title": "20 mistakes not to make when starting YouTube automation",
-        "mistakes": mistakes[:20],
-        "count": len(mistakes[:20]),
+        "mistakes": items,
+        "count": len(items),
         "chat_enabled": knowledge_enabled(),
     }
 

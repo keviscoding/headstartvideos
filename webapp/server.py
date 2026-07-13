@@ -912,6 +912,8 @@ async def get_client_config():
         "voice_clone_enabled": clone_enabled(),
         "voice_clone_credit_cost": int(getattr(config, "VOICE_CLONE_CREDIT_COST", 1) or 0),
         "recipe_brain_enabled": bool(getattr(config, "RECIPE_BRAIN_ENABLED", False)),
+        "max_voiceover_minutes": int(getattr(config, "MAX_VOICEOVER_MINUTES", 25) or 25),
+        "max_voiceover_words": int(getattr(config, "MAX_VOICEOVER_WORDS", 3750) or 3750),
     }
 
 
@@ -1362,6 +1364,26 @@ def voiceover_studio(req: VoiceoverStudioRequest, user: dict = Depends(require_u
 # ---------------------------------------------------------------------------
 # Thumbnails
 # ---------------------------------------------------------------------------
+@app.post("/api/thumbnail/upload")
+async def upload_thumbnail(file: UploadFile = File(...), user: dict = Depends(require_user)):
+    """Accept a finished thumbnail the user already has — no AI generation."""
+    allowed = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+    ext = Path(file.filename or "thumb.png").suffix.lower()
+    if ext not in allowed:
+        raise HTTPException(400, "Use PNG, JPG, or WEBP.")
+    content = await file.read()
+    if len(content) < 500:
+        raise HTTPException(400, "Image file is too small.")
+    if len(content) > 12 * 1024 * 1024:
+        raise HTTPException(400, "Image too large (max 12MB).")
+    out_dir = OUTPUT_DIR / "thumbnails" / str(user["id"]) / str(int(time.time()))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    local = out_dir / f"upload{ext}"
+    local.write_bytes(content)
+    path, url = _stage_user_media(str(local), user["id"], "thumb_upload", "image/png" if ext == ".png" else "image/jpeg")
+    return {"path": path, "url": url}
+
+
 @app.post("/api/thumbnail")
 def generate_thumbnail(req: ThumbnailRequest, user: dict = Depends(require_user)):
     from core.thumbnail_gen import generate_thumbnail_no_refs

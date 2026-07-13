@@ -52,11 +52,20 @@
                             <button onclick="navigateTo('thumbnail-studio')">Thumbnail Studio</button>
                             <button onclick="navigateTo('niche-screener')">Niche Screener</button>
                             <button onclick="navigateTo('channel-analyzer')">Channel Analyzer</button>
-                            <button onclick="navigateTo('recipe-brain')">Recipe Brain <span style="opacity:.55;font-size:11px;">Soon</span></button>
                         </div>
                     </div>
                     <button class="nav-btn" data-page="history" onclick="navigateTo('history')">History</button>
                     <button id="nav-settings" class="nav-btn hidden" data-page="settings" onclick="navigateTo('settings')">Settings</button>
+                    <button class="nav-btn nav-brain-btn" data-page="recipe-brain" onclick="navigateTo('recipe-brain')" title="Recipe Brain" aria-label="Recipe Brain">
+                        <span class="nav-brain-icon" aria-hidden="true">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                                <path d="M9.5 4.5c-1.8 0-3.2 1.3-3.4 3-.9.3-1.6 1.2-1.6 2.3 0 .7.3 1.3.7 1.7-.4.5-.7 1.2-.7 1.9 0 1.3.9 2.4 2.1 2.7v1.1c0 .9.7 1.6 1.6 1.6h1.2V8.2c0-.7.3-1.3.8-1.7-.1-.3-.2-.6-.2-1 0-.6.5-1 1-1z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                                <path d="M14.5 4.5c1.8 0 3.2 1.3 3.4 3 .9.3 1.6 1.2 1.6 2.3 0 .7-.3 1.3-.7 1.7.4.5.7 1.2.7 1.9 0 1.3-.9 2.4-2.1 2.7v1.1c0 .9-.7 1.6-1.6 1.6h-1.2V8.2c0-.7-.3-1.3-.8-1.7.1-.3.2-.6.2-1 0-.6-.5-1-1-1z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                                <path d="M12 8.5v9.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                                <path d="M10.2 11.2h3.6M10.2 14h3.6" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" opacity=".7"/>
+                            </svg>
+                        </span>
+                    </button>
                 </nav>
             </div>
             <div class="flex items-center gap-3">
@@ -91,9 +100,14 @@
             <button class="mobile-nav-btn" onclick="navigateTo('thumbnail-studio')">Thumbnail Studio</button>
             <button class="mobile-nav-btn" onclick="navigateTo('niche-screener')">Niche Screener</button>
             <button class="mobile-nav-btn" onclick="navigateTo('channel-analyzer')">Channel Analyzer</button>
-            <button class="mobile-nav-btn" onclick="navigateTo('recipe-brain')">Recipe Brain</button>
             <button class="mobile-nav-btn" onclick="navigateTo('history')">History</button>
             <button id="nav-settings-mobile" class="mobile-nav-btn hidden" onclick="navigateTo('settings')">Settings</button>
+            <button class="mobile-nav-btn" onclick="navigateTo('recipe-brain')" style="display:flex;align-items:center;gap:8px;">
+                <span class="nav-brain-icon" style="width:22px;height:22px;" aria-hidden="true">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9.5 4.5c-1.8 0-3.2 1.3-3.4 3-.9.3-1.6 1.2-1.6 2.3 0 .7.3 1.3.7 1.7-.4.5-.7 1.2-.7 1.9 0 1.3.9 2.4 2.1 2.7v1.1c0 .9.7 1.6 1.6 1.6h1.2V8.2c0-.7.3-1.3.8-1.7-.1-.3-.2-.6-.2-1 0-.6.5-1 1-1z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M14.5 4.5c1.8 0 3.2 1.3 3.4 3 .9.3 1.6 1.2 1.6 2.3 0 .7-.3 1.3-.7 1.7.4.5.7 1.2.7 1.9 0 1.3-.9 2.4-2.1 2.7v1.1c0 .9-.7 1.6-1.6 1.6h-1.2V8.2c0-.7-.3-1.3-.8-1.7.1-.3.2-.6.2-1 0-.6-.5-1-1-1z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 8.5v9.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                </span>
+                Recipe Brain
+            </button>
         </div>
     </header>
 
@@ -374,7 +388,21 @@
                 <div class="cr-panel">
                     <div class="mb-6">
                         <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Pick a thumbnail</h2>
-                        <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">Two options in the recipe's proven style.</p>
+                        <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">We don’t auto-generate. Upload a reference (or your finished thumbnail), then generate — or skip AI entirely.</p>
+                    </div>
+                    <div id="thumb-empty" class="max-w-3xl cr-surface" style="padding: 28px; text-align: center; border: 1px dashed var(--app-border); margin-bottom: 16px;">
+                        <p style="font-size: 15px; color: var(--app-ink); font-weight: 600; margin-bottom: 6px;">Upload a reference first</p>
+                        <p style="font-size: 14px; color: var(--app-ink-2); max-width: 28rem; margin: 0 auto 16px;">Drop a channel screenshot or your own thumbnail so AI can match the style — or upload a finished thumbnail and continue.</p>
+                        <div class="flex flex-wrap gap-2 justify-center">
+                            <label class="btn-primary cursor-pointer" style="font-size: 14px; padding: 8px 16px;">
+                                Upload reference
+                                <input id="thumb-ref-upload-empty" type="file" accept="image/*" multiple class="hidden" onchange="handleThumbRefUpload(this)">
+                            </label>
+                            <label class="btn-secondary cursor-pointer" style="font-size: 14px; padding: 8px 16px;">
+                                I already have a thumbnail
+                                <input id="thumb-final-upload" type="file" accept="image/*" class="hidden" onchange="handleThumbFinalUpload(this)">
+                            </label>
+                        </div>
                     </div>
                     <div id="thumb-grid" class="max-w-3xl grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
                     <div id="thumb-loading" class="text-center py-12 hidden">
@@ -388,12 +416,12 @@
                                 <input id="thumb-ref-upload" type="file" accept="image/*" multiple class="hidden" onchange="handleThumbRefUpload(this)">
                             </label>
                             <input id="thumb-style-input" type="text" placeholder="Custom style instructions..." class="cr-input" style="flex: 1; min-width: 200px; font-size: 14px;">
-                            <button id="btn-regen-thumb" class="btn-ghost" style="font-size: 13px;" onclick="regenerateThumbnails()">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4v6h6M23 20v-6h-6M20.49 9A9 9 0 1 0 5.64 5.64L1 10M22.36 14l-4.64 4.36"/></svg>
-                                Regenerate
+                            <button id="btn-regen-thumb" class="btn-primary" style="font-size: 13px;" onclick="regenerateThumbnails()" disabled title="Upload a reference image first">
+                                Generate
                             </button>
                         </div>
                         <div id="thumb-refs-preview" class="flex gap-2 flex-wrap"></div>
+                        <p id="thumb-hint" style="font-size: 13px; color: var(--app-ink-3); margin: 0;">References unlock Generate. Or upload your own finished thumbnail above.</p>
                     </div>
                     <div class="flex justify-between items-center mt-7 pt-5" style="border-top: 1px solid var(--app-border);">
                         <button class="btn-ghost" onclick="goToStep(4)">
@@ -642,7 +670,7 @@
                     <span class="btn-text">Show the 20 mistakes</span>
                     <span class="btn-loading hidden"><span class="cr-spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;"></span> Loading…</span>
                 </button>
-                <ol id="brain-starter-list" class="hidden" style="margin: 18px 0 0; padding-left: 1.25rem; color: var(--app-ink); font-size: 14px; line-height: 1.55;"></ol>
+                <div id="brain-starter-list" class="hidden brain-mistakes" style="margin-top: 18px;"></div>
             </div>
 
             <div class="cr-surface" style="padding: 20px; opacity: 0.72;">

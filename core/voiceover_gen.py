@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 
-from config import ATLASCLOUD_KEY, MAX_CONCURRENT_VOICEOVERS
+from config import ATLASCLOUD_KEY, MAX_CONCURRENT_VOICEOVERS, MAX_VOICEOVER_MINUTES, MAX_VOICEOVER_WORDS
 
 # Limit parallel full-script TTS jobs on this process (protects the web dyno).
 _vo_slots = threading.Semaphore(max(1, int(MAX_CONCURRENT_VOICEOVERS)))
@@ -303,6 +303,15 @@ def generate_voiceover(
     """
     if not (script or "").strip():
         raise ValueError("Script is empty — nothing to narrate.")
+
+    # Abuse guard: ~25 min at 150 wpm by default
+    word_count = len(script.split())
+    if word_count > MAX_VOICEOVER_WORDS:
+        raise ValueError(
+            f"Script is too long for voiceover ({word_count} words). "
+            f"Max is ~{MAX_VOICEOVER_MINUTES} minutes ({MAX_VOICEOVER_WORDS} words). "
+            "Shorten the script and try again."
+        )
 
     # Rights-gated Fish clones use voice ids like "fish:<model_id>"
     voice_key = (voice or "").strip()

@@ -25,9 +25,10 @@ MIN_SAMPLE_SEC = 5
 
 
 def clone_enabled() -> bool:
-    return bool(getattr(config, "VOICE_CLONE_ENABLED", False)) and bool(
-        (getattr(config, "FISH_API_KEY", "") or "").strip()
-    )
+    """True when Fish key is present and VOICE_CLONE_ENABLED is not forced off."""
+    if not (getattr(config, "FISH_API_KEY", "") or "").strip():
+        return False
+    return bool(getattr(config, "VOICE_CLONE_ENABLED", False))
 
 
 def _headers() -> dict:
