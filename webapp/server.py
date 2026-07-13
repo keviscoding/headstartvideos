@@ -1140,6 +1140,8 @@ def _provider_http_status(exc: Exception) -> int:
         return 503
     if "thumbnail generation failed after retries" in msg:
         return 503
+    if "output path missing" in msg:
+        return 503
     if "not found" in msg or "no youtube channel" in msg or "could not extract channel" in msg:
         return 400
     if "playlistnotfound" in msg or "httperror 404" in msg:
@@ -1168,11 +1170,16 @@ def _stage_user_media(local_path: str, user_id: int, kind: str, content_type: st
     return local_path, url
 
 
+def _unique_media_dir(*parts: str) -> Path:
+    """Timestamp + uuid so concurrent requests never share a folder."""
+    return OUTPUT_DIR.joinpath(*parts, f"{int(time.time())}_{uuid.uuid4().hex[:10]}")
+
+
 @app.post("/api/voiceover")
 def generate_voiceover(req: VoiceoverRequest, user: dict = Depends(require_user)):
     from core.voiceover_gen import generate_voiceover as gen_vo
 
-    out_dir = str(OUTPUT_DIR / "voiceovers" / str(int(time.time())))
+    out_dir = str(_unique_media_dir("voiceovers"))
     try:
         wav_path = gen_vo(script=req.script, voice=req.voice, style_preset="Narrator", output_dir=out_dir)
         path, url = _stage_user_media(wav_path, user["id"], "voiceover", "audio/wav")
@@ -1194,7 +1201,7 @@ async def upload_voiceover(file: UploadFile = File(...), user: dict = Depends(re
     content = await file.read()
 
     def _convert() -> str:
-        out_dir = OUTPUT_DIR / "voiceovers" / str(int(time.time()))
+        out_dir = _unique_media_dir("voiceovers")
         out_dir.mkdir(parents=True, exist_ok=True)
         raw_path = out_dir / f"upload_raw{ext}"
         with open(raw_path, "wb") as f:
@@ -1373,7 +1380,7 @@ def voiceover_studio(req: VoiceoverStudioRequest, user: dict = Depends(require_u
     if not (req.script or "").strip():
         raise HTTPException(400, "Paste a script first, then generate the voiceover.")
 
-    out_dir = str(OUTPUT_DIR / "voiceovers" / str(int(time.time())))
+    out_dir = str(_unique_media_dir("voiceovers"))
     try:
         wav_path = gen_vo(
             script=req.script,

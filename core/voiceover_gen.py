@@ -5,10 +5,12 @@ No Gemini TTS fallback — if Atlas fails, we surface a clear error.
 """
 
 from __future__ import annotations
+import os
 import subprocess
 import tempfile
 import threading
 import time
+import uuid
 from pathlib import Path
 
 from config import ATLASCLOUD_KEY, MAX_CONCURRENT_VOICEOVERS, MAX_VOICEOVER_MINUTES, MAX_VOICEOVER_WORDS
@@ -177,32 +179,44 @@ def _concat_wavs(wav_paths: list[str], output_path: str) -> str:
 
 def _download_audio(url: str, out_path: str) -> None:
     import httpx
-    if not url:
-        raise RuntimeError("Atlas TTS returned no audio URL")
+    if not url or not isinstance(url, str):
+        raise RuntimeError(f"Atlas TTS returned no audio URL ({url!r})")
 
-    with httpx.stream("GET", url, timeout=90, follow_redirects=True) as r:
-        r.raise_for_status()
-        with open(out_path, "wb") as f:
-            for chunk in r.iter_bytes():
-                f.write(chunk)
+    dest = Path(out_path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    # Stage via unique sidecars so parallel requests / chunks never clobber
+    # the same path mid-download (second-resolution out dirs used to collide).
+    raw = dest.with_name(f".{dest.name}.{os.getpid()}.{threading.get_ident()}.download")
+    norm = dest.with_name(f".{dest.name}.{os.getpid()}.{threading.get_ident()}.norm.wav")
 
-    if Path(out_path).stat().st_size < 1000:
-        raise RuntimeError("Atlas TTS audio file too small / empty")
+    try:
+        with httpx.stream("GET", url, timeout=90, follow_redirects=True) as r:
+            r.raise_for_status()
+            with open(raw, "wb") as f:
+                for chunk in r.iter_bytes():
+                    f.write(chunk)
 
-    # Normalize to PCM WAV for consistent concat — required, not optional.
-    tmp = out_path + ".tmp.wav"
-    cmd = [
-        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-        "-i", out_path, "-c:a", "pcm_s16le", "-ar", "24000", "-ac", "1", tmp,
-    ]
-    result = subprocess.run(cmd, capture_output=True, timeout=60)
-    if result.returncode != 0 or not Path(tmp).is_file() or Path(tmp).stat().st_size < 1000:
-        Path(tmp).unlink(missing_ok=True)
+        if not raw.is_file() or raw.stat().st_size < 1000:
+            raise RuntimeError("Atlas TTS audio file too small / empty")
+
+        # Normalize to PCM WAV for consistent concat — required, not optional.
+        cmd = [
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            "-i", str(raw), "-c:a", "pcm_s16le", "-ar", "24000", "-ac", "1", str(norm),
+        ]
+        result = subprocess.run(cmd, capture_output=True, timeout=60)
+        if result.returncode != 0 or not norm.is_file() or norm.stat().st_size < 1000:
+            raise RuntimeError(
+                f"Atlas TTS audio normalize failed: {_ffmpeg_err(result)}"
+            )
+        norm.replace(dest)
+    except FileNotFoundError as e:
         raise RuntimeError(
-            f"Atlas TTS audio normalize failed: {_ffmpeg_err(result)}"
-        )
-    Path(out_path).unlink(missing_ok=True)
-    Path(tmp).rename(out_path)
+            "Voiceover download failed (output path missing). Please try again."
+        ) from e
+    finally:
+        raw.unlink(missing_ok=True)
+        norm.unlink(missing_ok=True)
 
 
 def _poll_budget_seconds(text_len: int) -> float:
@@ -355,7 +369,10 @@ def _generate_voiceover_locked(
     voice_name = voice.split(" -- ")[0].strip() if " -- " in voice else voice
     voice_id = _ATLAS_VOICE_MAP.get(voice_name, _ATLAS_VOICE_MAP.get(voice_name.lower(), "leo"))
 
-    out_dir = Path(output_dir) if output_dir else Path("output/voiceovers")
+    if output_dir:
+        out_dir = Path(output_dir)
+    else:
+        out_dir = Path("output/voiceovers") / f"{int(time.time())}_{uuid.uuid4().hex[:10]}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     chunks = _chunk_script(script.strip(), max_chars=ATLAS_MAX_CHARS)
@@ -364,7 +381,8 @@ def _generate_voiceover_locked(
     wav_paths: list[str] = [""] * len(chunks)
 
     def _run_one(i: int, chunk: str) -> tuple[int, str]:
-        chunk_path = str(out_dir / f"_atlas_{i:03d}.wav")
+        # Unique per-chunk names even if two requests share a second-bucket dir.
+        chunk_path = str(out_dir / f"_atlas_{i:03d}_{uuid.uuid4().hex[:8]}.wav")
         print(f"[voiceover] Chunk {i + 1}/{len(chunks)} ({len(chunk)} chars)...")
         _atlas_tts_chunk(chunk, voice_id, chunk_path)
         print(f"[voiceover] Chunk {i + 1}/{len(chunks)} done")
@@ -376,9 +394,14 @@ def _generate_voiceover_locked(
         workers = min(3, len(chunks))
         with ThreadPoolExecutor(max_workers=workers) as ex:
             futures = [ex.submit(_run_one, i, c) for i, c in enumerate(chunks)]
-            for fut in as_completed(futures):
-                idx, path = fut.result()
-                wav_paths[idx] = path
+            try:
+                for fut in as_completed(futures):
+                    idx, path = fut.result()
+                    wav_paths[idx] = path
+            except Exception:
+                for fut in futures:
+                    fut.cancel()
+                raise
 
         output_path = str(out_dir / "voiceover.wav")
         _concat_wavs(wav_paths, output_path)
