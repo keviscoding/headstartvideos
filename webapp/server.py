@@ -170,7 +170,7 @@ async def _startup_tasks():
 
 from webapp.database import (
     get_user_by_email, create_user, get_user_by_id, update_user,
-    get_user_by_sub_id, deduct_credit, refund_credit, add_credits,
+    get_user_by_sub_id, deduct_credit, deduct_credits, refund_credit, add_credits,
     create_verify_code, verify_code,
     create_session, get_session_user, delete_session,
     log_render_event, render_stats, backend_name, cleanup_expired,
@@ -178,6 +178,7 @@ from webapp.database import (
     create_cook_job, update_cook_job, get_cook_job,
     cook_queue_stats, announce_queued_jobs,
     set_user_heygen_key, get_user_heygen_key, user_heygen_status,
+    create_voice_clone, list_voice_clones, count_voice_clones_since,
 )
 from webapp import storage
 from webapp import job_queue
@@ -902,11 +903,15 @@ async def robots_txt():
 
 @app.get("/api/config")
 async def get_client_config():
-    """Public front-end config: analytics keys only (safe to expose)."""
+    """Public front-end config: analytics keys + feature flags (safe to expose)."""
+    from core.fish_clone import clone_enabled
     return {
         "posthog_key": config.POSTHOG_KEY,
         "posthog_host": config.POSTHOG_HOST,
         "sentry_dsn": config.SENTRY_DSN,
+        "voice_clone_enabled": clone_enabled(),
+        "voice_clone_credit_cost": int(getattr(config, "VOICE_CLONE_CREDIT_COST", 1) or 0),
+        "recipe_brain_enabled": bool(getattr(config, "RECIPE_BRAIN_ENABLED", False)),
     }
 
 
@@ -1208,6 +1213,126 @@ def voice_preview(req: VoicePreviewRequest, user: dict = Depends(require_user)):
         return {"url": f"/api/files/{rel}"}
     except Exception as e:
         raise HTTPException(500, f"Voice preview failed: {e}")
+
+
+@app.get("/api/voice/clones")
+def get_voice_clones(user: dict = Depends(require_user)):
+    from core.fish_clone import clone_enabled
+    if not clone_enabled():
+        return {"enabled": False, "clones": [], "credit_cost": 0}
+    clones = list_voice_clones(user["id"])
+    return {
+        "enabled": True,
+        "credit_cost": int(getattr(config, "VOICE_CLONE_CREDIT_COST", 1) or 0),
+        "clones": [
+            {
+                "id": c["id"],
+                "voice_id": f"fish:{c['fish_model_id']}",
+                "name": c["title"],
+                "source": c["source"],
+                "consent_at": c["consent_at"],
+                "created_at": c["created_at"],
+            }
+            for c in clones
+        ],
+    }
+
+
+@app.post("/api/voice/clone")
+async def create_fish_voice_clone(
+    request: Request,
+    user: dict = Depends(require_user),
+    file: UploadFile | None = File(None),
+    youtube_url: str = Form(""),
+    title: str = Form("My voice"),
+    consent: str = Form(""),
+):
+    """
+    Rights-gated Fish clone from upload or YouTube URL.
+    Requires consent checkbox; refuses without it.
+    """
+    from core.fish_clone import (
+        clone_enabled, create_voice_model, extract_youtube_audio, normalize_sample,
+    )
+
+    if not clone_enabled():
+        raise HTTPException(503, "Voice clone is not enabled yet.")
+
+    consent_ok = str(consent or "").strip().lower() in ("1", "true", "yes", "on")
+    if not consent_ok:
+        raise HTTPException(
+            400,
+            "Consent required: confirm you own this voice or have written permission.",
+        )
+
+    # Abuse rate limit: 3 clones / rolling 24h
+    since = time.time() - 86400
+    if count_voice_clones_since(user["id"], since) >= 3:
+        raise HTTPException(429, "Clone limit reached (3 per day). Try again tomorrow.")
+
+    cost = int(getattr(config, "VOICE_CLONE_CREDIT_COST", 1) or 0)
+    charged = False
+    if cost > 0:
+        if not deduct_credits(user["id"], cost):
+            raise HTTPException(402, f"Need {cost} credit(s) to create a voice clone.")
+        charged = True
+
+    tmp_dir = OUTPUT_DIR / "voice_clones" / str(user["id"]) / str(int(time.time()))
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    source = "upload"
+    try:
+        yt = (youtube_url or "").strip()
+        if yt:
+            source = "youtube"
+            sample_path = await asyncio.to_thread(extract_youtube_audio, yt, str(tmp_dir))
+        elif file is not None and file.filename:
+            raw = await file.read()
+            if len(raw) < 1000:
+                raise HTTPException(400, "Audio file is too small.")
+            if len(raw) > 25 * 1024 * 1024:
+                raise HTTPException(400, "Audio file too large (max 25MB).")
+            ext = Path(file.filename or "sample.wav").suffix.lower() or ".wav"
+            raw_path = tmp_dir / f"upload{ext}"
+            raw_path.write_bytes(raw)
+            sample_path = await asyncio.to_thread(normalize_sample, str(raw_path), str(tmp_dir))
+        else:
+            raise HTTPException(400, "Upload a voice sample or paste a YouTube URL.")
+
+        result = await asyncio.to_thread(
+            create_voice_model,
+            sample_path,
+            title=(title or "My voice").strip()[:80] or "My voice",
+            description="Rights-gated ChannelRecipe clone",
+        )
+        row = create_voice_clone(
+            user["id"],
+            fish_model_id=result["fish_model_id"],
+            title=(title or "My voice").strip()[:80] or "My voice",
+            source=source,
+            consent_at=time.time(),
+        )
+        refreshed = get_user_by_id(user["id"])
+        return {
+            "ok": True,
+            "voice_id": f"fish:{row['fish_model_id']}",
+            "title": row["title"],
+            "source": source,
+            "consent_at": row["consent_at"],
+            "credits_remaining": refreshed.get("credits") if refreshed else None,
+            "credit_cost": cost,
+        }
+    except HTTPException:
+        if charged:
+            add_credits(user["id"], cost)
+        raise
+    except ValueError as e:
+        if charged:
+            add_credits(user["id"], cost)
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        if charged:
+            add_credits(user["id"], cost)
+        raise HTTPException(500, f"Voice clone failed: {e}")
 
 
 @app.post("/api/voiceover/studio")
@@ -1860,6 +1985,42 @@ def analyze_niche(req: NicheAnalyzeRequest, user: dict = Depends(require_user)):
         if "MIME type" in err or "text/html" in err:
             raise HTTPException(400, "Could not analyze this video. Make sure the URL is a public YouTube video (not a channel, playlist, or private video).")
         raise HTTPException(500, f"Niche analysis failed. Please try a different video URL.")
+
+
+# ---------------------------------------------------------------------------
+# Recipe Brain
+# ---------------------------------------------------------------------------
+class BrainChatRequest(BaseModel):
+    messages: list[dict] = []
+
+
+@app.post("/api/brain/starter")
+def brain_starter(user: dict = Depends(require_user)):
+    """Always available — returns the curated 20-mistakes starter pack."""
+    try:
+        from core.recipe_brain import starter_pack
+        return starter_pack()
+    except Exception as e:
+        raise HTTPException(500, f"Could not load starter pack: {e}")
+
+
+@app.post("/api/brain/chat")
+def brain_chat(req: BrainChatRequest, user: dict = Depends(require_user)):
+    """Gated chat — 503 Coming Soon unless RECIPE_BRAIN_ENABLED=1."""
+    if not getattr(config, "RECIPE_BRAIN_ENABLED", False):
+        raise HTTPException(
+            503,
+            "Recipe Brain chat is Coming Soon. Use the starter pack for now.",
+        )
+    try:
+        from core.recipe_brain import chat as brain_chat_fn
+        return brain_chat_fn(req.messages or [])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Recipe Brain chat failed: {e}")
 
 
 # ---------------------------------------------------------------------------

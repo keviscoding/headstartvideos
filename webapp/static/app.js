@@ -177,6 +177,18 @@ async function initAnalytics() {
     }
 
     maybeShowCookieBanner(cfg);
+    applyFeatureFlags(cfg);
+}
+
+let _featureFlags = { voice_clone_enabled: false, voice_clone_credit_cost: 1, recipe_brain_enabled: false };
+
+function applyFeatureFlags(cfg) {
+    if (!cfg) return;
+    _featureFlags.voice_clone_enabled = !!cfg.voice_clone_enabled;
+    _featureFlags.voice_clone_credit_cost = Number(cfg.voice_clone_credit_cost || 0);
+    _featureFlags.recipe_brain_enabled = !!cfg.recipe_brain_enabled;
+    const cloneBtn = document.getElementById('vo-mode-clone');
+    if (cloneBtn) cloneBtn.classList.toggle('hidden', !_featureFlags.voice_clone_enabled);
 }
 
 function maybeShowCookieBanner(cfg) {
@@ -241,7 +253,7 @@ function navigateTo(page) {
 
     // Update nav buttons
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-    const toolPages = ['script-studio', 'voiceover-studio', 'thumbnail-studio', 'niche-screener', 'channel-analyzer'];
+    const toolPages = ['script-studio', 'voiceover-studio', 'thumbnail-studio', 'niche-screener', 'channel-analyzer', 'recipe-brain'];
     if (page === 'pipeline') {
         document.querySelector('[data-page="pipeline"]')?.classList.add('active');
         goToStep(state.step);
@@ -264,6 +276,7 @@ function navigateTo(page) {
 
     if (page === 'history') { try { loadHistory(); } catch(_) {} }
     if (page === 'billing') { try { loadBillingPage(); } catch(_) {} }
+    if (page === 'recipe-brain') { try { initRecipeBrainPage(); } catch(_) {} }
 
     window.location.hash = page;
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1162,8 +1175,29 @@ async function loadVoices() {
         try {
             const res = await fetch('/api/voices');
             const voices = await res.json();
-            if (Array.isArray(voices) && voices.length) {
-                _renderVoiceGrid(voices);
+            let merged = Array.isArray(voices) && voices.length ? [...voices] : [...FALLBACK_VOICES];
+            try {
+                const cRes = await fetch('/api/voice/clones');
+                if (cRes.ok) {
+                    const cData = await cRes.json();
+                    if (cData.enabled) {
+                        _featureFlags.voice_clone_enabled = true;
+                        document.getElementById('vo-mode-clone')?.classList.remove('hidden');
+                    }
+                    (cData.clones || []).forEach((c) => {
+                        merged.unshift({
+                            id: c.voice_id,
+                            name: c.name || 'Cloned voice',
+                            tag: 'Cloned',
+                            desc: 'Your rights-gated voice clone',
+                            gender: '',
+                            preview_url: '',
+                        });
+                    });
+                }
+            } catch (_) {}
+            if (merged.length) {
+                _renderVoiceGrid(merged);
                 _voicesLoaded = true;
             }
         } catch (e) {
@@ -1223,10 +1257,69 @@ function resetPlayBtn(btn) {
 
 function setVoiceMode(mode) {
     state.voiceMode = mode;
-    document.getElementById('vo-generate-panel').classList.toggle('hidden', mode !== 'generate');
-    document.getElementById('vo-upload-panel').classList.toggle('hidden', mode !== 'upload');
+    document.getElementById('vo-generate-panel')?.classList.toggle('hidden', mode !== 'generate');
+    document.getElementById('vo-upload-panel')?.classList.toggle('hidden', mode !== 'upload');
+    document.getElementById('vo-clone-panel')?.classList.toggle('hidden', mode !== 'clone');
     document.querySelectorAll('.vo-mode-btn').forEach(b => b.classList.remove('active'));
-    document.getElementById(`vo-mode-${mode}`).classList.add('active');
+    document.getElementById(`vo-mode-${mode}`)?.classList.add('active');
+    if (mode === 'clone') {
+        const cost = _featureFlags.voice_clone_credit_cost;
+        const status = document.getElementById('vo-clone-status');
+        if (status && !status.dataset.touched) {
+            status.textContent = cost > 0
+                ? `Creating a clone costs ${cost} credit${cost === 1 ? '' : 's'}.`
+                : 'Clone creation is free while this promo is on.';
+        }
+    }
+}
+
+async function createVoiceClone() {
+    if (!ensureAuth(createVoiceClone)) return;
+    if (!_featureFlags.voice_clone_enabled) {
+        showSoftPrompt('Voice clone is not enabled yet.');
+        return;
+    }
+    const consent = document.getElementById('vo-clone-consent')?.checked;
+    if (!consent) {
+        showSoftPrompt('Confirm you own this voice or have written permission before cloning.');
+        return;
+    }
+    const file = document.getElementById('vo-clone-file')?.files?.[0];
+    const yt = document.getElementById('vo-clone-yt')?.value?.trim() || '';
+    if (!file && !yt) {
+        showSoftPrompt('Upload a sample or paste a YouTube URL of your own video.');
+        return;
+    }
+    const btn = document.getElementById('btn-vo-clone');
+    const status = document.getElementById('vo-clone-status');
+    if (status) status.dataset.touched = '1';
+    setLoading(btn, true);
+    try {
+        const form = new FormData();
+        form.append('consent', 'true');
+        form.append('title', document.getElementById('vo-clone-title')?.value?.trim() || 'My voice');
+        if (yt) form.append('youtube_url', yt);
+        if (file) form.append('file', file);
+        const res = await fetch('/api/voice/clone', { method: 'POST', body: form });
+        const data = await res.json();
+        if (!res.ok) throw new Error(friendlyApiError(data, 'Clone failed'));
+        if (status) status.textContent = `Saved “${data.title}”. Pick it under Generate voice.`;
+        if (typeof data.credits_remaining === 'number' && currentUser) {
+            currentUser.credits = data.credits_remaining;
+            try { updateCreditsUI?.(); } catch (_) {}
+            try { refreshUserChip?.(); } catch (_) {}
+        }
+        state.voice = data.voice_id;
+        state.voiceMode = 'generate';
+        _voicesLoaded = false;
+        await loadVoices();
+        setVoiceMode('generate');
+    } catch (e) {
+        showSoftPrompt(e.message || 'Clone failed.');
+        if (status) status.textContent = e.message || 'Clone failed.';
+    } finally {
+        setLoading(btn, false);
+    }
 }
 
 async function handleVoUpload(input) {
@@ -1298,6 +1391,12 @@ async function handleVoiceNext() {
     }
 
     const isUpload = state.voiceMode === 'upload' && state.uploadedVoPath;
+
+    if (state.voiceMode === 'clone') {
+        alert('Create a clone first, then pick it under Generate voice — or switch to Upload.');
+        setLoading(btn, false);
+        return;
+    }
 
     if (isUpload) {
         state.voiceoverPath = state.uploadedVoPath;
@@ -2148,12 +2247,24 @@ async function loadVoiceOptions() {
         const sel = document.getElementById('vo-voice');
         if (!sel) return;
         sel.innerHTML = '';
-        voices.forEach(v => {
+        (Array.isArray(voices) ? voices : []).forEach(v => {
             const opt = document.createElement('option');
             opt.value = v.id;
             opt.textContent = `${v.name} — ${v.tag}`;
             sel.appendChild(opt);
         });
+        try {
+            const cRes = await fetch('/api/voice/clones');
+            if (cRes.ok) {
+                const cData = await cRes.json();
+                (cData.clones || []).forEach((c) => {
+                    const opt = document.createElement('option');
+                    opt.value = c.voice_id;
+                    opt.textContent = `${c.name} — Cloned`;
+                    sel.prepend(opt);
+                });
+            }
+        } catch (_) {}
     } catch (e) {
         console.error('Failed to load voice options:', e);
     }
@@ -2281,6 +2392,125 @@ async function analyzeNiche() {
 function useNicheProfile() {
     navigateTo('pipeline');
     goToStep(1);
+}
+
+// ---------------------------------------------------------------------------
+// Recipe Brain
+// ---------------------------------------------------------------------------
+let _brainChatEnabled = false;
+let _brainMessages = [];
+
+async function initRecipeBrainPage() {
+    _brainMessages = [];
+    const log = document.getElementById('brain-chat-log');
+    const input = document.getElementById('brain-chat-input');
+    const sendBtn = document.getElementById('btn-brain-chat');
+    try {
+        const res = await fetch('/api/brain/starter', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        if (res.ok) {
+            const data = await res.json();
+            _brainChatEnabled = !!data.chat_enabled;
+        }
+    } catch (_) {
+        _brainChatEnabled = false;
+    }
+    if (input) input.disabled = !_brainChatEnabled;
+    if (sendBtn) sendBtn.disabled = !_brainChatEnabled;
+    if (log) {
+        log.style.color = 'var(--app-ink-3)';
+        log.textContent = _brainChatEnabled
+            ? 'Ask about niches, hooks, retention, or packaging.'
+            : 'Chat unlocks when Recipe Brain is enabled. Until then, use the starter pack.';
+    }
+}
+
+async function loadBrainStarter() {
+    if (!ensureAuth(loadBrainStarter)) return;
+    const btn = document.getElementById('btn-brain-starter');
+    setLoading(btn, true);
+    try {
+        const res = await fetch('/api/brain/starter', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(friendlyApiError(data, 'Could not load starter pack'));
+        const list = document.getElementById('brain-starter-list');
+        list.innerHTML = '';
+        (data.mistakes || []).forEach((m) => {
+            const li = document.createElement('li');
+            li.style.marginBottom = '8px';
+            li.textContent = m;
+            list.appendChild(li);
+        });
+        list.classList.remove('hidden');
+        _brainChatEnabled = !!data.chat_enabled;
+        const input = document.getElementById('brain-chat-input');
+        const sendBtn = document.getElementById('btn-brain-chat');
+        if (input) input.disabled = !_brainChatEnabled;
+        if (sendBtn) sendBtn.disabled = !_brainChatEnabled;
+    } catch (e) {
+        showSoftPrompt(e.message || 'Could not load starter pack.');
+    } finally {
+        setLoading(btn, false);
+    }
+}
+
+async function sendBrainChat() {
+    if (!_brainChatEnabled) {
+        showSoftPrompt('Recipe Brain chat is Coming Soon.');
+        return;
+    }
+    if (!ensureAuth(sendBrainChat)) return;
+    const input = document.getElementById('brain-chat-input');
+    const text = (input?.value || '').trim();
+    if (!text) return;
+    const log = document.getElementById('brain-chat-log');
+    _brainMessages.push({ role: 'user', content: text });
+    if (input) input.value = '';
+    if (log) {
+        log.style.color = 'var(--app-ink)';
+        log.innerHTML = _brainMessages.map((m) => {
+            const who = m.role === 'user' ? 'You' : 'Brain';
+            return `<div style="margin-bottom:10px;"><strong>${who}:</strong> ${escapeHtml(m.content)}</div>`;
+        }).join('') + '<div style="opacity:.6;">Thinking…</div>';
+    }
+    try {
+        const res = await fetch('/api/brain/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messages: _brainMessages }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(friendlyApiError(data, 'Chat failed'));
+        _brainMessages.push({ role: 'assistant', content: data.reply || '' });
+        if (log) {
+            log.innerHTML = _brainMessages.map((m) => {
+                const who = m.role === 'user' ? 'You' : 'Brain';
+                return `<div style="margin-bottom:10px;"><strong>${who}:</strong> ${escapeHtml(m.content)}</div>`;
+            }).join('');
+        }
+    } catch (e) {
+        _brainMessages.pop();
+        showSoftPrompt(e.message || 'Chat failed.');
+        if (log) {
+            log.innerHTML = _brainMessages.length
+                ? _brainMessages.map((m) => {
+                    const who = m.role === 'user' ? 'You' : 'Brain';
+                    return `<div style="margin-bottom:10px;"><strong>${who}:</strong> ${escapeHtml(m.content)}</div>`;
+                }).join('')
+                : 'Chat unlocks when Recipe Brain is enabled. Until then, use the starter pack.';
+        }
+    }
+}
+
+function escapeHtml(s) {
+    return String(s || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
 }
 
 // ---------------------------------------------------------------------------

@@ -20,15 +20,17 @@ from config import ATLASCLOUD_KEY
 
 # Compact prompts for ERNIE (~500 char hard limit). Keep style short so the
 # SCENE description (setting + props) gets most of the budget.
+# IMPORTANT: Do NOT put the phrase "NO text / letters / captions" in the prompt —
+# ERNIE often paints that ban as a literal caption box (seen in Explainer V2).
 STYLE_SHORT = (
     "Hand-drawn stick-figure cartoon, thick black outlines, flat muted colors. "
-    "NO text, letters, numbers, captions, or labels anywhere. "
+    "Pictures only — blank signs, blank books, blank screens, blank clock faces. "
     "Full subjects inside frame with 15% margin."
 )
 
 CHARACTER_SHORT = (
-    "One black stick figure: round white head, 2 dot eyes, thin body, "
-    "EXACTLY 2 arms + 2 hands + 2 legs. No extra limbs."
+    "One black stick figure only: round white head, 2 dot eyes, thin body, "
+    "EXACTLY 2 arms + 2 hands + 2 legs. No clothes, no mannequin, no extra people."
 )
 
 # Full prompts for premium hook Nano Banana
@@ -36,9 +38,9 @@ STYLE_PREFIX = (
     "Simple hand-drawn cartoon illustration in the style of a whiteboard "
     "animation or doodle explainer video. Thick black outlines on everything. "
     "Flat muted colors with no gradients or shading. Minimalist and clean. "
-    "CRITICAL: Absolutely zero text, zero letters, zero words, zero numbers, "
-    "zero labels, zero captions, zero watermarks anywhere in the image. "
-    "Do not write on books, scrolls, signs, or any objects. Leave all surfaces blank. "
+    "Show pictures of settings and objects only — never write words, letters, "
+    "or digits on any surface. Books, signs, chalkboards, phones, and clocks "
+    "stay blank (empty dials, no numerals). No speech bubbles with writing. "
     "Wide 16:9 landscape composition. Keep all subjects fully inside the frame "
     "with generous margins — nothing cut off or touching any edge. "
     "Fill the scene with concrete SETTING + PROPS that tell the story "
@@ -56,8 +58,9 @@ CHARACTER_PREFIX = (
     "The head is about 1/4 of body height. The body is a single straight vertical black line. "
     "Arms are angled lines from the middle of the body line. "
     "Legs are two angled lines from the bottom of the body line. "
-    "The character has NO hair, NO clothing, NO accessories, NO skin color fill — "
-    "just pure black lines on white circle head."
+    "The character has NO hair, NO clothing, NO accessories, NO skin color fill, "
+    "NO mannequin joints, NO second human — "
+    "just pure black lines on white circle head. Never draw clothed people."
 )
 
 BACKGROUND_PALETTES = {
@@ -102,8 +105,96 @@ def build_prompt(
         parts.append(CHARACTER_PREFIX)
     palette = BACKGROUND_PALETTES.get(background_mood, BACKGROUND_PALETTES["warm_earth"])
     parts.append(palette)
-    parts.append(f"Scene: {illustration_desc}")
+    parts.append(f"Scene: {_sanitize_scene_desc(illustration_desc)}")
     return " ".join(parts)
+
+
+def _sanitize_scene_desc(illustration_desc: str) -> str:
+    """Strip narration leaks and instruction-echo bait from scene prompts."""
+    scene = (illustration_desc or "").strip()
+    if (scene.startswith('"') and scene.endswith('"')) or (
+        scene.startswith("'") and scene.endswith("'")
+    ):
+        scene = scene[1:-1].strip()
+    # Drop lines that look like spoken narration / captions
+    scene = re.sub(
+        r"(?i)\b(no text|letters?|numbers?|captions?|labels?|watermarks?)\b[^.]{0,40}",
+        "",
+        scene,
+    )
+    scene = re.sub(r"\s+", " ", scene).strip(" .;")
+    return scene
+
+
+def looks_like_text_slide(path: str) -> bool:
+    """Heuristic: caption box with horizontal ink bands (V2 failure modes)."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return False
+    try:
+        g = Image.open(path).convert("L").resize((320, 180))
+    except Exception:
+        return False
+    w, h = g.size
+    crop = g.crop((int(w * 0.12), int(h * 0.18), int(w * 0.88), int(h * 0.82)))
+    cw, ch = crop.size
+    pixels = list(crop.getdata())
+    if not pixels:
+        return False
+    bright = sum(1 for p in pixels if p >= 210) / len(pixels)
+    dark = sum(1 for p in pixels if p <= 70) / len(pixels)
+    mid = sum(1 for p in pixels if 40 <= p <= 200) / len(pixels)
+
+    def _banded(ink_thresh_lo: int, ink_thresh_hi: int) -> bool:
+        row_ink = []
+        for y in range(ch):
+            row = pixels[y * cw : (y + 1) * cw]
+            row_ink.append(
+                sum(1 for p in row if ink_thresh_lo <= p <= ink_thresh_hi) / cw
+            )
+        textish = sum(1 for v in row_ink if 0.04 <= v <= 0.55)
+        if textish < max(6, ch // 10):
+            return False
+        flips = 0
+        prev = row_ink[0] >= 0.04
+        for v in row_ink[1:]:
+            cur = v >= 0.04
+            if cur != prev:
+                flips += 1
+                prev = cur
+        return flips >= 8
+
+    # Pale caption card with dark lettering
+    if bright >= 0.22 and dark >= 0.035 and _banded(0, 90):
+        return True
+    # Dark scene with a white instruction/caption box (V2 sc12_022)
+    if bright >= 0.08 and mid >= 0.15 and _banded(0, 100):
+        # Extra: require a contiguous bright blob (the box)
+        bright_rows = 0
+        for y in range(ch):
+            row = pixels[y * cw : (y + 1) * cw]
+            if sum(1 for p in row if p >= 200) / cw >= 0.25:
+                bright_rows += 1
+        if bright_rows >= max(8, ch // 8) and _banded(0, 110):
+            return True
+    return False
+
+
+def looks_like_empty_prop_scene(path: str) -> bool:
+    """True when the still is basically a lone stick figure / blank (V2 placeholders)."""
+    try:
+        from PIL import Image, ImageFilter, ImageStat
+    except ImportError:
+        return False
+    try:
+        im = Image.open(path).convert("RGB").resize((240, 135))
+    except Exception:
+        return False
+    edges = im.convert("L").filter(ImageFilter.FIND_EDGES)
+    stat = ImageStat.Stat(edges)
+    # Very low edge energy ⇒ empty / placeholder
+    return float(stat.mean[0]) < 6.5
 
 
 def _build_short_prompt(
@@ -116,11 +207,7 @@ def _build_short_prompt(
     Scene description is prioritized — style/character are shortened first.
     """
     palette = BACKGROUND_PALETTES_SHORT.get(background_mood, "Warm beige background.")
-    scene = (illustration_desc or "").strip()
-    # Strip accidental quoted narration the segmenter sometimes leaks
-    if scene.startswith('"') and scene.endswith('"'):
-        scene = scene[1:-1].strip()
-    scene = re.sub(r"\s+", " ", scene)
+    scene = _sanitize_scene_desc(illustration_desc)
 
     prefix_parts = [STYLE_SHORT]
     if has_character:
@@ -354,6 +441,38 @@ def generate_batch(
                 style_ref_path=style_ref_path if style_ref_path else None,
                 short_prompt=short_prompt,
             )
+
+        # V2 audit: caption boxes + instruction-echo text slides → one regen
+        # with a scene-only prompt (no "text/letters" ban wording).
+        if result.success and result.image_path and (
+            looks_like_text_slide(result.image_path)
+            or looks_like_empty_prop_scene(result.image_path)
+        ):
+            topic = (getattr(concept, "section_topic", "") or "").strip()
+            scene = _sanitize_scene_desc(concept.illustration_prompt or "")
+            if topic and topic.lower() not in scene.lower():
+                scene = f"{scene}. Setting: {topic}".strip(". ")
+            if not scene:
+                scene = topic or "stick figure in a concrete place with 3 props"
+            retry_short = (
+                f"{STYLE_SHORT} {CHARACTER_SHORT if concept.has_character else ''} "
+                f"{BACKGROUND_PALETTES_SHORT.get(concept.background_mood, 'Warm beige background.')} "
+                f"{scene} Include tunnel/earth/moon props from the setting — not empty ground."
+            ).strip()
+            retry_path = out_path.replace(".png", "_fixtext.png")
+            retry = generate_single_illustration(
+                prompt=retry_short,
+                output_path=retry_path,
+                short_prompt=retry_short[:490],
+            )
+            if retry.success and retry.image_path and not looks_like_text_slide(retry.image_path):
+                try:
+                    import shutil
+                    shutil.copyfile(retry.image_path, out_path)
+                    retry.image_path = out_path
+                except Exception:
+                    pass
+                result = retry
 
         result.concept_id = concept.id
         return concept.id, result

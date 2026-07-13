@@ -106,6 +106,15 @@ CREATE TABLE IF NOT EXISTS ops_credit_grants (
     amount      INTEGER NOT NULL,
     applied_at  REAL NOT NULL DEFAULT (strftime('%s','now'))
 );
+CREATE TABLE IF NOT EXISTS voice_clones (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         INTEGER NOT NULL,
+    fish_model_id   TEXT NOT NULL,
+    title           TEXT NOT NULL DEFAULT 'My voice',
+    source          TEXT NOT NULL DEFAULT 'upload',
+    consent_at      REAL NOT NULL,
+    created_at      REAL NOT NULL DEFAULT (strftime('%s','now'))
+);
 """
 
 _SCHEMA_PG = """
@@ -181,6 +190,15 @@ CREATE TABLE IF NOT EXISTS ops_credit_grants (
     amount      INTEGER NOT NULL,
     applied_at  DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now())
 );
+CREATE TABLE IF NOT EXISTS voice_clones (
+    id              BIGSERIAL PRIMARY KEY,
+    user_id         BIGINT NOT NULL,
+    fish_model_id   TEXT NOT NULL,
+    title           TEXT NOT NULL DEFAULT 'My voice',
+    source          TEXT NOT NULL DEFAULT 'upload',
+    consent_at      DOUBLE PRECISION NOT NULL,
+    created_at      DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now())
+);
 """
 
 
@@ -207,6 +225,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions (expires_at);
 CREATE INDEX IF NOT EXISTS idx_render_events_created ON render_events (created_at);
 CREATE INDEX IF NOT EXISTS idx_cook_jobs_user ON cook_jobs (user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_cook_jobs_status ON cook_jobs (status, created_at);
+CREATE INDEX IF NOT EXISTS idx_voice_clones_user ON voice_clones (user_id, created_at);
 """
 
 
@@ -348,19 +367,25 @@ def update_user(user_id: int, **fields) -> None:
 
 def deduct_credit(user_id: int) -> bool:
     """Atomically deduct 1 credit. Returns False if insufficient."""
+    return deduct_credits(user_id, 1)
+
+
+def deduct_credits(user_id: int, amount: int) -> bool:
+    """Atomically deduct N credits. Returns False if insufficient."""
+    amount = int(amount or 0)
+    if amount <= 0:
+        return True
     with _conn() as conn:
         cur = conn.cursor()
-        # Conditional update avoids a read/write race across concurrent requests.
         cur.execute(
-            _q("UPDATE users SET credits = credits - 1 WHERE id = ? AND credits >= 1"),
-            (user_id,),
+            _q("UPDATE users SET credits = credits - ? WHERE id = ? AND credits >= ?"),
+            (amount, user_id, amount),
         )
         return cur.rowcount > 0
 
 
 def refund_credit(user_id: int) -> None:
-    with _conn() as conn:
-        conn.cursor().execute(_q("UPDATE users SET credits = credits + 1 WHERE id = ?"), (user_id,))
+    add_credits(user_id, 1)
 
 
 def add_credits(user_id: int, amount: int) -> None:
@@ -370,6 +395,90 @@ def add_credits(user_id: int, amount: int) -> None:
             _q("UPDATE users SET credits = credits + ? WHERE id = ?"),
             (amount, user_id),
         )
+
+
+def create_voice_clone(
+    user_id: int,
+    *,
+    fish_model_id: str,
+    title: str,
+    source: str,
+    consent_at: float,
+) -> dict:
+    with _conn() as conn:
+        cur = conn.cursor()
+        if IS_PG:
+            cur.execute(
+                "INSERT INTO voice_clones (user_id, fish_model_id, title, source, consent_at) "
+                "VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                (user_id, fish_model_id, title, source, consent_at),
+            )
+            row = cur.fetchone()
+            cid = row["id"] if isinstance(row, dict) else row[0]
+        else:
+            cur.execute(
+                "INSERT INTO voice_clones (user_id, fish_model_id, title, source, consent_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (user_id, fish_model_id, title, source, consent_at),
+            )
+            cid = cur.lastrowid
+    return get_voice_clone(int(cid), user_id) or {
+        "id": cid,
+        "user_id": user_id,
+        "fish_model_id": fish_model_id,
+        "title": title,
+        "source": source,
+        "consent_at": consent_at,
+    }
+
+
+def get_voice_clone(clone_id: int, user_id: int) -> dict | None:
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            _q("SELECT * FROM voice_clones WHERE id = ? AND user_id = ?"),
+            (clone_id, user_id),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def list_voice_clones(user_id: int) -> list[dict]:
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            _q(
+                "SELECT id, fish_model_id, title, source, consent_at, created_at "
+                "FROM voice_clones WHERE user_id = ? ORDER BY created_at DESC"
+            ),
+            (user_id,),
+        )
+        rows = cur.fetchall()
+        return [dict(r) for r in rows]
+
+
+def count_voice_clones_since(user_id: int, since_ts: float) -> int:
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            _q("SELECT COUNT(*) AS n FROM voice_clones WHERE user_id = ? AND created_at >= ?"),
+            (user_id, since_ts),
+        )
+        row = cur.fetchone()
+        if not row:
+            return 0
+        return int(row["n"] if isinstance(row, dict) else row[0])
+
+
+def get_voice_clone_by_fish_id(user_id: int, fish_model_id: str) -> dict | None:
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            _q("SELECT * FROM voice_clones WHERE user_id = ? AND fish_model_id = ?"),
+            (user_id, fish_model_id),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
 
 
 def set_user_heygen_key(user_id: int, plaintext: str | None) -> None:

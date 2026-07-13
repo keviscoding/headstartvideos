@@ -52,6 +52,7 @@
                             <button onclick="navigateTo('thumbnail-studio')">Thumbnail Studio</button>
                             <button onclick="navigateTo('niche-screener')">Niche Screener</button>
                             <button onclick="navigateTo('channel-analyzer')">Channel Analyzer</button>
+                            <button onclick="navigateTo('recipe-brain')">Recipe Brain <span style="opacity:.55;font-size:11px;">Soon</span></button>
                         </div>
                     </div>
                     <button class="nav-btn" data-page="history" onclick="navigateTo('history')">History</button>
@@ -90,6 +91,7 @@
             <button class="mobile-nav-btn" onclick="navigateTo('thumbnail-studio')">Thumbnail Studio</button>
             <button class="mobile-nav-btn" onclick="navigateTo('niche-screener')">Niche Screener</button>
             <button class="mobile-nav-btn" onclick="navigateTo('channel-analyzer')">Channel Analyzer</button>
+            <button class="mobile-nav-btn" onclick="navigateTo('recipe-brain')">Recipe Brain</button>
             <button class="mobile-nav-btn" onclick="navigateTo('history')">History</button>
             <button id="nav-settings-mobile" class="mobile-nav-btn hidden" onclick="navigateTo('settings')">Settings</button>
         </div>
@@ -256,9 +258,10 @@
                             <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Choose a voice</h2>
                             <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">Generate with AI or upload your own recording.</p>
                         </div>
-                        <div class="max-w-3xl mb-4 flex gap-2">
+                        <div class="max-w-3xl mb-4 flex gap-2" style="flex-wrap: wrap;">
                             <button id="vo-mode-generate" class="btn-secondary vo-mode-btn active" onclick="setVoiceMode('generate')" style="font-size: 13px; padding: 6px 16px;">Generate voice</button>
                             <button id="vo-mode-upload" class="btn-secondary vo-mode-btn" onclick="setVoiceMode('upload')" style="font-size: 13px; padding: 6px 16px;">Upload your own</button>
+                            <button id="vo-mode-clone" class="btn-secondary vo-mode-btn hidden" onclick="setVoiceMode('clone')" style="font-size: 13px; padding: 6px 16px;">Clone voice</button>
                         </div>
                         <div id="vo-generate-panel">
                             <div id="voices-grid" class="max-w-3xl grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
@@ -280,6 +283,37 @@
                             <div id="vo-upload-progress" class="hidden text-center py-4">
                                 <div class="cr-spinner mx-auto mb-2"></div>
                                 <p style="color: var(--app-ink-2); font-size: 13px;">Uploading...</p>
+                            </div>
+                        </div>
+                        <div id="vo-clone-panel" class="hidden max-w-3xl">
+                            <div class="cr-surface" style="padding: 20px;">
+                                <p style="font-size: 14px; color: var(--app-ink-2); margin-bottom: 14px;">
+                                    Clone a voice you own or have written permission to use — your channel host, licensed talent, or a VA you hired.
+                                    Creating a clone costs credits when enabled.
+                                </p>
+                                <div class="space-y-3">
+                                    <div>
+                                        <label class="cr-label">Clone name</label>
+                                        <input id="vo-clone-title" type="text" class="cr-input" placeholder="My channel host" maxlength="80">
+                                    </div>
+                                    <div>
+                                        <label class="cr-label">Upload sample (10–45s clear speech)</label>
+                                        <input id="vo-clone-file" type="file" accept=".wav,.mp3,.m4a,.ogg,.webm" class="cr-input" style="padding: 8px;">
+                                    </div>
+                                    <div>
+                                        <label class="cr-label">Or YouTube URL (your video)</label>
+                                        <input id="vo-clone-yt" type="text" class="cr-input" placeholder="https://youtube.com/watch?v=...">
+                                    </div>
+                                    <label style="display: flex; gap: 10px; align-items: flex-start; font-size: 13px; color: var(--app-ink); cursor: pointer;">
+                                        <input id="vo-clone-consent" type="checkbox" style="margin-top: 3px;">
+                                        <span>I own this voice or have written permission to clone it.</span>
+                                    </label>
+                                    <button id="btn-vo-clone" class="btn-primary" style="font-size: 14px;" onclick="createVoiceClone()">
+                                        <span class="btn-text">Create clone</span>
+                                        <span class="btn-loading hidden"><span class="cr-spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;"></span> Cloning…</span>
+                                    </button>
+                                    <p id="vo-clone-status" style="font-size: 13px; color: var(--app-ink-3); margin: 0;"></p>
+                                </div>
                             </div>
                         </div>
                         <div class="max-w-3xl mt-4">
@@ -584,6 +618,43 @@
             <h2 class="cr-display" style="font-size: 32px; margin-bottom: 8px;">Channel Analyzer</h2>
             <p style="color: var(--app-ink-2); margin-bottom: 24px;">Fetch YouTube channel data and analyze content strategy with Claude AI.</p>
             <div class="space-y-4 max-w-2xl"><div><label class="cr-label">YouTube Channel URL</label><input id="ca-url" type="text" class="cr-input" placeholder="https://youtube.com/@channelname"></div><div class="flex items-center gap-4"><label class="cr-label" style="margin-bottom: 0;">Videos to fetch</label><input id="ca-count" type="range" min="5" max="50" value="20" class="flex-1" style="accent-color: var(--accent);"><span id="ca-count-label" class="cr-mono" style="color: var(--app-ink);">20</span></div><button class="btn-primary" onclick="fetchChannelForAnalyzer()"><span class="btn-text">Fetch & analyze channel</span><span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;display:inline-block;"></div> Fetching...</span></button><div id="ca-result" class="hidden space-y-4"><div class="cr-surface" style="padding: 16px;"><h4 class="cr-eyebrow mb-2">Channel Summary</h4><div id="ca-summary" style="font-size: 14px; color: var(--app-ink-2); white-space: pre-wrap;"></div></div><div class="cr-surface" style="padding: 16px;"><h4 class="cr-eyebrow mb-2">Content Strategy Analysis</h4><div id="ca-analysis" style="font-size: 14px; color: var(--app-ink-2); white-space: pre-wrap;"></div></div></div></div>
+        </main>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- PAGE: Recipe Brain -->
+    <!-- ============================================================ -->
+    <div id="page-recipe-brain" class="page-container hidden">
+        <main class="max-w-3xl mx-auto px-6 py-8">
+            <div class="flex items-center gap-3 mb-2" style="flex-wrap: wrap;">
+                <h2 class="cr-display" style="font-size: 32px; margin: 0;">Recipe Brain</h2>
+                <span style="font-family: var(--font-mono); font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); background: var(--accent-soft-dark); border: 1px solid var(--accent); border-radius: 99px; padding: 4px 10px;">Coming soon</span>
+            </div>
+            <p style="color: var(--app-ink-2); margin-bottom: 28px; max-width: 36rem;">
+                Elite YouTube-automation advice trained on real channel data and operator lessons — not a generic chatbot.
+                Open with the starter pack below; full chat unlocks next.
+            </p>
+
+            <div class="cr-surface" style="padding: 20px; margin-bottom: 20px;">
+                <h3 class="cr-eyebrow mb-3">Starter pack</h3>
+                <p style="font-size: 14px; color: var(--app-ink-2); margin-bottom: 14px;">20 mistakes not to make when starting YouTube automation.</p>
+                <button id="btn-brain-starter" class="btn-primary" style="font-size: 14px;" onclick="loadBrainStarter()">
+                    <span class="btn-text">Show the 20 mistakes</span>
+                    <span class="btn-loading hidden"><span class="cr-spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;"></span> Loading…</span>
+                </button>
+                <ol id="brain-starter-list" class="hidden" style="margin: 18px 0 0; padding-left: 1.25rem; color: var(--app-ink); font-size: 14px; line-height: 1.55;"></ol>
+            </div>
+
+            <div class="cr-surface" style="padding: 20px; opacity: 0.72;">
+                <h3 class="cr-eyebrow mb-3">Chat with Recipe Brain</h3>
+                <div id="brain-chat-log" style="min-height: 120px; margin-bottom: 12px; font-size: 14px; color: var(--app-ink-3);">
+                    Chat unlocks when Recipe Brain is enabled. Until then, use the starter pack.
+                </div>
+                <div class="flex gap-2" style="align-items: stretch;">
+                    <input id="brain-chat-input" type="text" class="cr-input" disabled placeholder="Ask about niches, hooks, retention…" style="flex:1;">
+                    <button id="btn-brain-chat" class="btn-secondary" style="font-size: 14px; padding: 8px 16px;" disabled onclick="sendBrainChat()">Send</button>
+                </div>
+            </div>
         </main>
     </div>
 

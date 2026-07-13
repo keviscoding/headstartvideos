@@ -303,6 +303,19 @@ def generate_voiceover(
     """
     if not (script or "").strip():
         raise ValueError("Script is empty — nothing to narrate.")
+
+    # Rights-gated Fish clones use voice ids like "fish:<model_id>"
+    voice_key = (voice or "").strip()
+    if voice_key.startswith("fish:"):
+        fish_id = voice_key.split(":", 1)[1].strip()
+        if not fish_id:
+            raise ValueError("Invalid cloned voice id")
+        from core.fish_clone import tts_with_clone
+        out_dir = Path(output_dir) if output_dir else Path(tempfile.mkdtemp(prefix="vo_"))
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = str(out_dir / "voiceover.wav")
+        return tts_with_clone(script, fish_id, out_path)
+
     if not ATLASCLOUD_KEY:
         raise RuntimeError("ATLASCLOUD_KEY not configured. Voiceover requires Atlas Cloud.")
 

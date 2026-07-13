@@ -98,9 +98,13 @@ Write prompts for simple hand-drawn cartoon ILLUSTRATIONS — never captions.
 
 HARD BANS:
 - NEVER put spoken narration, quotes, or full sentences in the prompt
-- NEVER ask for text, labels, titles, captions, signs with words, or numbers
+- NEVER ask for writing, labels, titles, captions, signs with words, chalkboards
+  with writing, speech bubbles with words, or readable clock numerals
+  (use blank dials / hourglasses / unmarked gauges instead)
 - NEVER describe only an abstract action with no setting
   (bad: "stick figure floating" / "person falling")
+- NEVER request clothed humans, mannequins, or multiple different characters —
+  only the same stick figure (or no character)
 
 REQUIRED in EVERY illustration_prompt:
 1. SETTING — the concrete place/topic of THIS beat, anchored to the video's
@@ -117,6 +121,11 @@ Keep prompts SHORT but dense (under 180 chars). Style:
    mantle layers visible, glowing core below, rocks flying, centered"
 
 NOT: "As you plummet deeper something strange happens to gravity"
+NOT: any prompt that quotes the narration
+
+If the beat is abstract (velocity/zero/math), CONVERT it into a physical
+metaphor with props (e.g. figure slowing as it exits a tunnel, sandglass,
+motion lines fading) — never a caption card.
 
 RULE 3b — SECTION CONTEXT:
 Before writing body-zone prompts, infer the current SECTION TOPIC from the

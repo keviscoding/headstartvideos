@@ -39,3 +39,6 @@ webapp/uploads/
 test_*.py
 test_*.m4a
 *.m4a
+
+# Local frame audits
+tmp_explainer_v2_frames/

@@ -66,6 +66,19 @@ WEB_THREADPOOL_SIZE = max(8, int(os.getenv("WEB_THREADPOOL_SIZE", "32")))
 # Fallback queue ETA when we lack recent render_events (minutes).
 EST_MINUTES_PER_COOK = float(os.getenv("EST_MINUTES_PER_COOK", "7"))
 
+# Recipe Brain chat (starter pack API always works; chat gated).
+RECIPE_BRAIN_ENABLED = os.getenv("RECIPE_BRAIN_ENABLED", "0").strip().lower() in (
+    "1", "true", "yes", "on",
+)
+
+# Fish Audio voice clone (rights-gated). Off by default.
+FISH_API_KEY = (os.getenv("FISH_API_KEY", "") or "").strip()
+VOICE_CLONE_ENABLED = os.getenv("VOICE_CLONE_ENABLED", "0").strip().lower() in (
+    "1", "true", "yes", "on",
+)
+# Premium: credits charged to create a persistent Fish clone (0 = free when enabled).
+VOICE_CLONE_CREDIT_COST = max(0, int(os.getenv("VOICE_CLONE_CREDIT_COST", "1")))
+
 RESEND_KEY = os.getenv("RESEND_KEY", "")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY", "")
