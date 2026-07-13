@@ -439,7 +439,24 @@
                 <div id="build-start" class="cr-panel">
                     <div class="mb-6">
                         <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Ready to cook</h2>
-                        <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">Here's your video. This uses 1 credit.</p>
+                        <p id="build-credit-blurb" style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">Here's your video. This uses 1 credit.</p>
+                    </div>
+                    <div id="image-quality-picker" class="max-w-lg mb-5 hidden">
+                        <p class="cr-eyebrow mb-2">Image quality</p>
+                        <div class="quality-toggle" role="radiogroup" aria-label="Image quality">
+                            <button type="button" id="quality-standard" class="quality-card" onclick="setImageQuality('standard')" role="radio" aria-checked="true">
+                                <span class="quality-card-title">Standard</span>
+                                <span class="quality-card-meta">1 credit · fast</span>
+                                <span class="quality-card-desc">Solid everyday stills for most videos.</span>
+                            </button>
+                            <button type="button" id="quality-high" class="quality-card quality-card-pro" onclick="setImageQuality('high')" role="radio" aria-checked="false">
+                                <span class="quality-pro-badge">High quality</span>
+                                <span class="quality-card-title">Pro visuals</span>
+                                <span class="quality-card-meta" id="quality-high-meta">3 credits · up to 12 min</span>
+                                <span class="quality-card-desc">Sharper, more polished frames — the option when the look matters.</span>
+                            </button>
+                        </div>
+                        <p id="quality-hq-hint" class="hidden" style="font-family: var(--font-body); font-size: 12px; color: var(--app-ink-3); margin-top: 8px;"></p>
                     </div>
                     <div class="cr-surface" style="padding: 4px; max-w-lg;">
                         <div class="flex justify-between px-4 py-3" style="border-bottom: 1px solid var(--app-border);">

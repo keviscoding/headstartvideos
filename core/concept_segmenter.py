@@ -239,6 +239,7 @@ def segment_into_concepts(
     style_preset: str = "default",
     niche_hint: str = "",
     lite_mode: bool = False,
+    hq_mode: bool = False,
 ) -> list[Concept]:
     """
     Segment a script into visual concepts using word-level timestamps.
@@ -249,6 +250,7 @@ def segment_into_concepts(
         style_preset: art style preset name
         niche_hint: optional hint about the video's niche/topic
         lite_mode: fewer concepts (trial) — less illustration COGS/latency
+        hq_mode: slightly longer body shots for GPT Image 2 cooks
 
     Returns:
         list of Concept objects with exact timing and illustration prompts
@@ -270,6 +272,10 @@ def segment_into_concepts(
     if lite_mode:
         hook_concepts = max(2, int(hook_dur / 3.5))
         body_concepts = max(1, int(body_dur / 7.0)) if body_dur > 0 else 0
+    elif hq_mode:
+        # Slightly longer body shots so GPT Image 2 COGS stays sane at 12 min.
+        hook_concepts = max(3, int(hook_dur / 2.8))
+        body_concepts = max(1, int(body_dur / 5.5)) if body_dur > 0 else 0
     else:
         hook_concepts = max(3, int(hook_dur / 2.5))
         body_concepts = max(1, int(body_dur / 4.0)) if body_dur > 0 else 0

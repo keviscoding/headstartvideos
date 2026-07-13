@@ -388,6 +388,14 @@ def refund_credit(user_id: int) -> None:
     add_credits(user_id, 1)
 
 
+def refund_credits(user_id: int, amount: int) -> None:
+    """Refund N credits (HQ cooks charge more than 1)."""
+    amount = int(amount or 0)
+    if amount <= 0:
+        return
+    add_credits(user_id, amount)
+
+
 def add_credits(user_id: int, amount: int) -> None:
     """Atomically add N credits (for top-ups)."""
     with _conn() as conn:

@@ -31,6 +31,7 @@ def run_explainer_pipeline(
     caption_position: str = "Bottom",
     progress_callback=None,
     lite_mode: bool = False,
+    image_quality: str = "standard",
 ) -> dict:
     """
     Run the full animated explainer pipeline.
@@ -101,6 +102,7 @@ def run_explainer_pipeline(
         style_preset=style_preset,
         niche_hint=niche_hint,
         lite_mode=lite_mode,
+        hq_mode=(image_quality or "").strip().lower() in ("high", "hq", "pro"),
     )
 
     timing["segmentation"] = time.time() - t0
@@ -125,12 +127,17 @@ def run_explainer_pipeline(
          f"({timing['style_ref']:.1f}s)")
 
     # ------------------------------------------------------------------
-    # STEP 4: Illustration generation (premium hook + economy body)
+    # STEP 4: Illustration generation
     # ------------------------------------------------------------------
+    hq = (image_quality or "").strip().lower() in ("high", "hq", "pro")
     hook_count = sum(1 for c in concepts if c.start_sec < HOOK_CUTOFF_SEC)
     body_count = len(concepts) - hook_count
-    _log(f"Step 4/6: Generating {len(concepts)} illustrations "
-         f"({hook_count} premium hook + {body_count} economy body)...")
+    if hq:
+        _log(f"Step 4/6: Generating {len(concepts)} HQ illustrations "
+             f"(GPT Image 2 Developer)...")
+    else:
+        _log(f"Step 4/6: Generating {len(concepts)} illustrations "
+             f"({hook_count} premium hook + {body_count} economy body)...")
     t0 = time.time()
 
     def _on_gen_progress(completed, total):
@@ -150,6 +157,7 @@ def run_explainer_pipeline(
         max_workers=workers,
         progress_callback=_on_gen_progress,
         hook_cutoff_sec=HOOK_CUTOFF_SEC,
+        image_quality=image_quality,
     )
 
     # Quality gate: disabled for now — was causing excessive false positives

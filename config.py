@@ -92,6 +92,15 @@ MAX_VOICEOVER_MINUTES = max(1, int(os.getenv("MAX_VOICEOVER_MINUTES", "25")))
 VOICEOVER_WORDS_PER_MIN = max(100, int(os.getenv("VOICEOVER_WORDS_PER_MIN", "150")))
 MAX_VOICEOVER_WORDS = MAX_VOICEOVER_MINUTES * VOICEOVER_WORDS_PER_MIN
 
+# High-quality image cooks (GPT Image 2 Developer via Atlas). Pro/paid only.
+HQ_IMAGE_MODEL = (
+    os.getenv("HQ_IMAGE_MODEL", "") or "openai/gpt-image-2-developer/text-to-image"
+).strip()
+HQ_IMAGE_QUALITY = (os.getenv("HQ_IMAGE_QUALITY", "low") or "low").strip().lower()
+HQ_IMAGE_SIZE = (os.getenv("HQ_IMAGE_SIZE", "2048x1152") or "2048x1152").strip()
+HQ_CREDIT_COST = max(1, int(os.getenv("HQ_CREDIT_COST", "3")))
+HQ_MAX_MINUTES = max(3, int(os.getenv("HQ_MAX_MINUTES", "12")))
+
 RESEND_KEY = os.getenv("RESEND_KEY", "")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY", "")

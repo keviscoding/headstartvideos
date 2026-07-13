@@ -391,6 +391,23 @@ def _generate_premium(prompt: str, output_path: str, style_ref_path: str | None 
     return generate_single_illustration(prompt, output_path, style_ref_path)
 
 
+def _generate_hq(prompt: str, output_path: str) -> GeneratedIllustration:
+    """All stills via GPT Image 2 Developer (paid HQ cooks)."""
+    from core.atlas_llm import generate_hq_image_file, has_atlas
+
+    t0 = time.time()
+    if has_atlas() and generate_hq_image_file(prompt, output_path):
+        return GeneratedIllustration(
+            concept_id=-1,
+            image_path=output_path,
+            model_used="hq/gpt-image-2-developer",
+            generation_time_sec=time.time() - t0,
+            success=True,
+        )
+    # Fall back to ERNIE so a single HQ failure doesn't blank the slot
+    return generate_single_illustration(prompt, output_path)
+
+
 def generate_batch(
     concepts: list,
     output_dir: str,
@@ -398,15 +415,17 @@ def generate_batch(
     max_workers: int = 8,
     progress_callback=None,
     hook_cutoff_sec: float = 30.0,
+    image_quality: str = "standard",
 ) -> list[GeneratedIllustration]:
     """Generate illustrations for all concepts in parallel.
 
-    Hook concepts (start_sec < hook_cutoff_sec): Nano Banana premium.
-    Body concepts: ERNIE only.
+    standard: Nano Banana hooks + ERNIE body.
+    high: GPT Image 2 Developer for every still (Pro HQ cooks).
     """
     from core.concept_segmenter import BACKGROUND_MOODS
 
     Path(output_dir).mkdir(parents=True, exist_ok=True)
+    hq = (image_quality or "standard").strip().lower() in ("high", "hq", "pro")
 
     total = len(concepts)
     results_map: dict[int, GeneratedIllustration] = {}
@@ -421,29 +440,30 @@ def generate_batch(
         )
         out_path = os.path.join(output_dir, f"illustration_{concept.id:04d}.png")
 
-        is_hook = concept.start_sec < hook_cutoff_sec
-
-        if is_hook:
-            result = _generate_premium(
-                prompt=full_prompt,
-                output_path=out_path,
-                style_ref_path=style_ref_path if style_ref_path else None,
-            )
+        if hq:
+            result = _generate_hq(full_prompt, out_path)
         else:
-            short_prompt = _build_short_prompt(
-                illustration_desc=concept.illustration_prompt,
-                background_mood=concept.background_mood,
-                has_character=concept.has_character,
-            )
-            result = generate_single_illustration(
-                prompt=full_prompt,
-                output_path=out_path,
-                style_ref_path=style_ref_path if style_ref_path else None,
-                short_prompt=short_prompt,
-            )
+            is_hook = concept.start_sec < hook_cutoff_sec
+            if is_hook:
+                result = _generate_premium(
+                    prompt=full_prompt,
+                    output_path=out_path,
+                    style_ref_path=style_ref_path if style_ref_path else None,
+                )
+            else:
+                short_prompt = _build_short_prompt(
+                    illustration_desc=concept.illustration_prompt,
+                    background_mood=concept.background_mood,
+                    has_character=concept.has_character,
+                )
+                result = generate_single_illustration(
+                    prompt=full_prompt,
+                    output_path=out_path,
+                    style_ref_path=style_ref_path if style_ref_path else None,
+                    short_prompt=short_prompt,
+                )
 
         # V2 audit: caption boxes + instruction-echo text slides → one regen
-        # with a scene-only prompt (no "text/letters" ban wording).
         if result.success and result.image_path and (
             looks_like_text_slide(result.image_path)
             or looks_like_empty_prop_scene(result.image_path)
@@ -454,17 +474,23 @@ def generate_batch(
                 scene = f"{scene}. Setting: {topic}".strip(". ")
             if not scene:
                 scene = topic or "stick figure in a concrete place with 3 props"
-            retry_short = (
-                f"{STYLE_SHORT} {CHARACTER_SHORT if concept.has_character else ''} "
-                f"{BACKGROUND_PALETTES_SHORT.get(concept.background_mood, 'Warm beige background.')} "
+            retry_desc = (
                 f"{scene} Include tunnel/earth/moon props from the setting — not empty ground."
-            ).strip()
-            retry_path = out_path.replace(".png", "_fixtext.png")
-            retry = generate_single_illustration(
-                prompt=retry_short,
-                output_path=retry_path,
-                short_prompt=retry_short[:490],
             )
+            retry_path = out_path.replace(".png", "_fixtext.png")
+            if hq:
+                retry = _generate_hq(build_prompt(retry_desc, concept.background_mood, concept.has_character), retry_path)
+            else:
+                retry_short = (
+                    f"{STYLE_SHORT} {CHARACTER_SHORT if concept.has_character else ''} "
+                    f"{BACKGROUND_PALETTES_SHORT.get(concept.background_mood, 'Warm beige background.')} "
+                    f"{retry_desc}"
+                ).strip()
+                retry = generate_single_illustration(
+                    prompt=retry_short,
+                    output_path=retry_path,
+                    short_prompt=retry_short[:490],
+                )
             if retry.success and retry.image_path and not looks_like_text_slide(retry.image_path):
                 try:
                     import shutil
@@ -479,8 +505,9 @@ def generate_batch(
 
     hook_n = sum(1 for c in concepts if c.start_sec < hook_cutoff_sec)
     body_n = total - hook_n
+    mode_label = "HQ GPT-Image-2-Dev" if hq else f"{hook_n} premium hook + {body_n} economy body"
     print(f"[illustration_gen] Generating {total} illustrations "
-          f"(workers={max_workers}) | {hook_n} premium (hook) + {body_n} economy (body)")
+          f"(workers={max_workers}) | {mode_label}")
     t0 = time.time()
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -509,13 +536,14 @@ def generate_batch(
             model_counts[r.model_used] = model_counts.get(r.model_used, 0) + 1
 
     successes = sum(model_counts.values())
-    premium_cost = sum(
+    hq_n = sum(v for k, v in model_counts.items() if "hq/" in k or "gpt-image" in k)
+    premium_n = sum(
         v for k, v in model_counts.items()
         if "premium" in k or "nano-banana" in k
-    ) * 0.028
-    total_cost = premium_cost
+    )
+    est = hq_n * 0.005 + premium_n * 0.028
     print(f"[illustration_gen] Batch complete: {successes}/{total} succeeded "
-          f"in {elapsed:.1f}s | Models: {model_counts} | Est. cost: ${total_cost:.3f}")
+          f"in {elapsed:.1f}s | Models: {model_counts} | Est. cost: ${est:.3f}")
 
     ordered = [results_map[c.id] for c in concepts if c.id in results_map]
     return ordered

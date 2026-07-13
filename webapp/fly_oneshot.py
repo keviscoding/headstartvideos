@@ -153,12 +153,14 @@ def main() -> int:
         except Exception as e:
             print(f"[fly] failed to mark killed job: {e}")
         try:
-            from webapp.database import refund_credit
+            from webapp.database import refund_credits
+            from webapp.cook_runner import job_credits_charged
             if job.get("user_id") and job.get("credit_deducted"):
-                refund_credit(int(job["user_id"]))
+                amt = job_credits_charged(job)
+                refund_credits(int(job["user_id"]), amt)
                 job["credit_deducted"] = False
                 update_cook_job(job_id, credit_deducted=False)
-                print(f"[fly] refunded credit after machine kill")
+                print(f"[fly] refunded {amt} credit(s) after machine kill")
         except Exception as refund_err:
             print(f"[fly] refund after kill failed: {refund_err}")
 
@@ -200,11 +202,13 @@ def main() -> int:
             pass
         # Credit was deducted at enqueue — refund since we never cooked.
         try:
-            from webapp.database import refund_credit
+            from webapp.database import refund_credits
+            from webapp.cook_runner import job_credits_charged, hydrate_job_from_row
             if row.get("user_id") and row.get("credit_deducted"):
-                refund_credit(int(row["user_id"]))
+                amt = job_credits_charged(hydrate_job_from_row(row))
+                refund_credits(int(row["user_id"]), amt)
                 update_cook_job(job_id, credit_deducted=False)
-                print(f"[fly] refunded credit after Spaces probe fail")
+                print(f"[fly] refunded {amt} credit(s) after Spaces probe fail")
         except Exception as refund_err:
             print(f"[fly] refund failed: {refund_err}")
         print(f"[fly] aborting — Spaces probe failed: {probe_err}")

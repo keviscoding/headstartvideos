@@ -58,6 +58,21 @@ def hydrate_job_from_row(row: dict) -> dict[str, Any]:
     }
 
 
+def job_credits_charged(job: dict) -> int:
+    """How many credits to refund for this job (HQ may be > 1)."""
+    req = job.get("request") if isinstance(job.get("request"), dict) else {}
+    raw = req.get("credits_charged")
+    if raw is None:
+        raw = job.get("credit_deducted")
+    try:
+        n = int(raw or 0)
+    except (TypeError, ValueError):
+        n = 1 if raw else 0
+    if n <= 0 and job.get("credit_deducted"):
+        return 1
+    return max(0, n)
+
+
 def run_cook_job(
     job_id: str,
     job: dict[str, Any],
@@ -73,7 +88,7 @@ def run_cook_job(
     from webapp.database import (
         create_video,
         log_render_event,
-        refund_credit,
+        refund_credits,
         update_cook_job,
     )
     from webapp import storage
@@ -127,6 +142,16 @@ def run_cook_job(
     user_id = job.get("user_id")
     est_minutes = round(len(script.split()) / 150, 2) if script else 0
     lite_mode = bool(job.get("lite_mode"))
+    image_quality = (req_data.get("image_quality") or "standard").strip().lower()
+    if image_quality in ("high", "hq", "pro"):
+        image_quality = "high"
+    else:
+        image_quality = "standard"
+    try:
+        from core.image_quality_ctx import set_image_quality
+        set_image_quality(image_quality)
+    except Exception:
+        pass
     queued_at = float(job.get("created_at") or started_at)
     queue_wait_sec = max(0.0, round(started_at - queued_at, 1))
     plan = ""
@@ -161,6 +186,7 @@ def run_cook_job(
         "recipe": recipe,
         "target_minutes": est_minutes,
         "lite_mode": lite_mode,
+        "image_quality": image_quality,
         "plan": plan,
         "queue_wait_sec": queue_wait_sec,
         "job_id": job_id,
@@ -177,6 +203,7 @@ def run_cook_job(
                 style_preset="default",
                 progress_callback=on_progress,
                 lite_mode=lite_mode,
+                image_quality=image_quality,
             )
         elif recipe == "broll_only":
             from core.pipeline import run_pipeline
@@ -367,10 +394,11 @@ def run_cook_job(
             "error_class": err_class,
         })
         if user_id and job.get("credit_deducted"):
-            refund_credit(user_id)
+            amt = job_credits_charged(job)
+            refund_credits(user_id, amt)
             job["credit_deducted"] = False
             try:
                 update_cook_job(job_id, credit_deducted=False)
             except Exception:
                 pass
-            print(f"[cook] Auto-refunded credit for user {user_id} after build failure")
+            print(f"[cook] Auto-refunded {amt} credit(s) for user {user_id} after build failure")

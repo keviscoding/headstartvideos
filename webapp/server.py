@@ -170,7 +170,7 @@ async def _startup_tasks():
 
 from webapp.database import (
     get_user_by_email, create_user, get_user_by_id, update_user,
-    get_user_by_sub_id, deduct_credit, deduct_credits, refund_credit, add_credits,
+    get_user_by_sub_id, deduct_credit, deduct_credits, refund_credit, refund_credits, add_credits,
     create_verify_code, verify_code,
     create_session, get_session_user, delete_session,
     log_render_event, render_stats, backend_name, cleanup_expired,
@@ -182,7 +182,7 @@ from webapp.database import (
 )
 from webapp import storage
 from webapp import job_queue
-from webapp.cook_runner import run_cook_job, hydrate_job_from_row
+from webapp.cook_runner import run_cook_job, hydrate_job_from_row, job_credits_charged
 from config import COOK_ON_WEB, COOK_ON_MODAL, COOK_ON_FLY
 
 
@@ -813,6 +813,8 @@ class BuildRequest(BaseModel):
     notify_email: str = ""
     avatar_id: str = ""
     voice_id: str = ""
+    # standard (1 credit) | high (HQ_CREDIT_COST, paid plans only, max HQ_MAX_MINUTES)
+    image_quality: str = "standard"
 
 
 class HeyGenKeyRequest(BaseModel):
@@ -914,6 +916,8 @@ async def get_client_config():
         "recipe_brain_enabled": bool(getattr(config, "RECIPE_BRAIN_ENABLED", False)),
         "max_voiceover_minutes": int(getattr(config, "MAX_VOICEOVER_MINUTES", 25) or 25),
         "max_voiceover_words": int(getattr(config, "MAX_VOICEOVER_WORDS", 3750) or 3750),
+        "hq_credit_cost": int(getattr(config, "HQ_CREDIT_COST", 3) or 3),
+        "hq_max_minutes": int(getattr(config, "HQ_MAX_MINUTES", 12) or 12),
     }
 
 
@@ -1575,19 +1579,50 @@ async def start_build(req: BuildRequest, request: Request):
 
     _safe_user_path(req.thumbnail_path, "thumbnail")
 
-    credit_deducted = False
+    image_quality = (req.image_quality or "standard").strip().lower()
+    if image_quality in ("high", "hq", "pro"):
+        image_quality = "high"
+    else:
+        image_quality = "standard"
+
+    hq_cost = int(getattr(config, "HQ_CREDIT_COST", 3) or 3)
+    hq_max = int(getattr(config, "HQ_MAX_MINUTES", 12) or 12)
+    credit_cost = hq_cost if image_quality == "high" else 1
+
+    if image_quality == "high":
+        if not is_admin and user.get("plan") in ("starter_trial", "daily_trial", "free"):
+            raise HTTPException(
+                402,
+                "High quality is for paid plans. Upgrade to unlock GPT Image 2 renders.",
+            )
+        est_min = _estimate_script_minutes(req.script)
+        if not is_admin and est_min > hq_max + 0.5:
+            raise HTTPException(
+                400,
+                f"High quality caps at {hq_max} minutes. Shorten the script, "
+                "or cook part 2 separately and stitch.",
+            )
+
+    credit_deducted = 0
     if not is_admin:
-        if not deduct_credit(user_id):
-            raise HTTPException(402, "No credits remaining. Upgrade your plan for more videos.")
-        credit_deducted = True
+        if not deduct_credits(user_id, credit_cost):
+            raise HTTPException(
+                402,
+                f"Need {credit_cost} credit{'s' if credit_cost != 1 else ''}. "
+                "Upgrade or top up to cook this video.",
+            )
+        credit_deducted = credit_cost
 
     job_id = str(uuid.uuid4())
     lite_mode = (not is_admin) and user.get("plan") in ("starter_trial", "daily_trial", "free")
+    req_payload = req.model_dump()
+    req_payload["image_quality"] = image_quality
+    req_payload["credits_charged"] = credit_deducted
     _jobs[job_id] = {
         "status": "queued",
         "progress": [],
         "result": None,
-        "request": req.model_dump(),
+        "request": req_payload,
         "user_id": user_id,
         "credit_deducted": credit_deducted,
         "lite_mode": lite_mode,
@@ -1602,8 +1637,8 @@ async def start_build(req: BuildRequest, request: Request):
             user_id=user_id,
             recipe=req.recipe or "animated_explainer",
             title=req.title or "",
-            request_json=json.dumps(req.model_dump()),
-            credit_deducted=credit_deducted,
+            request_json=json.dumps(req_payload),
+            credit_deducted=bool(credit_deducted),
             lite_mode=lite_mode,
             # Workers only claim status=queued. web_queued = in-process only.
             status="queued" if not COOK_ON_WEB else "web_queued",
@@ -1611,7 +1646,7 @@ async def start_build(req: BuildRequest, request: Request):
     except Exception as e:
         print(f"[build] create_cook_job failed: {e}")
         if credit_deducted:
-            refund_credit(user_id)
+            add_credits(user_id, credit_deducted)
         raise HTTPException(500, "Could not queue your cook. Please try again.")
 
     if COOK_ON_WEB:
@@ -1677,6 +1712,8 @@ async def start_build(req: BuildRequest, request: Request):
         "est_wait_minutes": qinfo.get("est_wait_minutes"),
         "est_minutes_per_cook": qinfo.get("est_minutes_per_cook"),
         "lite_mode": lite_mode,
+        "image_quality": image_quality,
+        "credits_charged": credit_deducted,
         "plan": user.get("plan") or "",
         "cook_on_web": COOK_ON_WEB,
         "cook_on_modal": COOK_ON_MODAL,
@@ -1692,6 +1729,8 @@ async def start_build(req: BuildRequest, request: Request):
         "cook_on_web": COOK_ON_WEB,
         "cook_on_modal": COOK_ON_MODAL,
         "cook_on_fly": COOK_ON_FLY,
+        "image_quality": image_quality,
+        "credits_charged": credit_deducted,
     }
 
 
@@ -1771,9 +1810,10 @@ async def cancel_build(job_id: str, request: Request):
         "phase": "cancelled",
     })
     if job.get("credit_deducted"):
-        refund_credit(job["user_id"])
+        amt = job_credits_charged(job)
+        refund_credits(job["user_id"], amt)
         job["credit_deducted"] = False
-        print(f"[build] Refunded credit on cancel for user {job['user_id']} (queued={was_queued})")
+        print(f"[build] Refunded {amt} credit(s) on cancel for user {job['user_id']} (queued={was_queued})")
     try:
         update_cook_job(
             job_id, status="cancelled", error="Cancelled by user",

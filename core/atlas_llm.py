@@ -29,6 +29,11 @@ ATLAS_PREMIUM_IMAGE_MODEL = os.getenv(
     "google/nano-banana-2-lite/text-to-image-developer",
 )
 ERNIE_IMAGE_MODEL = "baidu/ERNIE-Image-Turbo/text-to-image"
+HQ_IMAGE_MODEL = getattr(
+    config,
+    "HQ_IMAGE_MODEL",
+    "openai/gpt-image-2-developer/text-to-image",
+)
 
 
 def _atlas_key() -> str:
@@ -251,6 +256,91 @@ def generate_image_file(
         print(f"[atlas] generateImage error: {e}")
         return False
     print(f"[atlas] generateImage timeout after {timeout_sec}s")
+    return False
+
+
+def generate_hq_image_file(
+    prompt: str,
+    output_path: str,
+    *,
+    timeout_sec: float = 120,
+) -> bool:
+    """
+    GPT Image 2 Developer (Atlas) — HQ explainer / cinematic stills.
+    Uses low quality + 16:9 by default (~$0.005/image on current Atlas promo).
+    """
+    key = _atlas_key()
+    if not key:
+        return False
+
+    model = (getattr(config, "HQ_IMAGE_MODEL", None) or HQ_IMAGE_MODEL).strip()
+    quality = (getattr(config, "HQ_IMAGE_QUALITY", None) or "low").strip() or "low"
+    size = (getattr(config, "HQ_IMAGE_SIZE", None) or "2048x1152").strip() or "2048x1152"
+    clipped = (prompt or "").strip()
+    if not clipped:
+        return False
+
+    t0 = time.time()
+    try:
+        with httpx.Client(timeout=30) as client:
+            resp = client.post(
+                f"{ATLAS_MEDIA_BASE}/model/generateImage",
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "prompt": clipped,
+                    "quality": quality,
+                    "size": size,
+                    "output_format": "jpeg",
+                    "enable_base64_output": False,
+                    "enable_sync_mode": False,
+                },
+            )
+            data = resp.json()
+            pred_id = None
+            if isinstance(data.get("data"), dict):
+                pred_id = data["data"].get("id")
+            pred_id = pred_id or data.get("id") or data.get("prediction_id")
+            if not pred_id:
+                print(f"[atlas] HQ image no id: {str(data)[:240]}")
+                return False
+
+            while time.time() - t0 < timeout_sec:
+                time.sleep(1.5)
+                poll = client.get(
+                    f"{ATLAS_MEDIA_BASE}/model/prediction/{pred_id}",
+                    headers={"Authorization": f"Bearer {key}"},
+                )
+                inner = poll.json().get("data", poll.json())
+                status = str(inner.get("status", "")).lower()
+                if status in ("succeeded", "completed", "done"):
+                    outputs = inner.get("outputs") or inner.get("output") or []
+                    if isinstance(outputs, str):
+                        img_url = outputs
+                    elif isinstance(outputs, list) and outputs:
+                        img_url = outputs[0]
+                    else:
+                        return False
+                    img = client.get(img_url, follow_redirects=True, timeout=60)
+                    img.raise_for_status()
+                    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+                    with open(output_path, "wb") as f:
+                        f.write(img.content)
+                    print(
+                        f"[atlas] HQ image ok model={model} q={quality} "
+                        f"{time.time() - t0:.1f}s → {Path(output_path).name}"
+                    )
+                    return True
+                if status in ("failed", "error", "cancelled"):
+                    print(f"[atlas] HQ image failed: {inner}")
+                    return False
+    except Exception as e:
+        print(f"[atlas] HQ image error: {e}")
+        return False
+    print(f"[atlas] HQ image timeout after {timeout_sec}s")
     return False
 
 

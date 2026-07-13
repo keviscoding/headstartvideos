@@ -12,6 +12,7 @@ const state = {
     script: '',
     voice: 'leo',
     targetMinutes: 8,
+    imageQuality: 'standard',
     voiceoverPath: '',
     voiceoverUrl: '',
     thumbnailPath: '',
@@ -186,6 +187,8 @@ let _featureFlags = {
     recipe_brain_enabled: false,
     max_voiceover_minutes: 25,
     max_voiceover_words: 3750,
+    hq_credit_cost: 3,
+    hq_max_minutes: 12,
 };
 
 function applyFeatureFlags(cfg) {
@@ -195,6 +198,8 @@ function applyFeatureFlags(cfg) {
     _featureFlags.recipe_brain_enabled = !!cfg.recipe_brain_enabled;
     _featureFlags.max_voiceover_minutes = Number(cfg.max_voiceover_minutes || 25);
     _featureFlags.max_voiceover_words = Number(cfg.max_voiceover_words || 3750);
+    _featureFlags.hq_credit_cost = Number(cfg.hq_credit_cost || 3);
+    _featureFlags.hq_max_minutes = Number(cfg.hq_max_minutes || 12);
     const cloneBtn = document.getElementById('vo-mode-clone');
     if (cloneBtn) cloneBtn.classList.toggle('hidden', !_featureFlags.voice_clone_enabled);
 }
@@ -453,7 +458,8 @@ function resetPipeline() {
     clearPipelineDraft();
     Object.assign(state, {
         step: 1, niche: null, nicheData: null, title: '', script: '',
-        voice: 'leo', targetMinutes: 8, voiceoverPath: '', voiceoverUrl: '',
+        voice: 'leo', targetMinutes: 8, imageQuality: 'standard',
+        voiceoverPath: '', voiceoverUrl: '',
         thumbnailPath: '', thumbnailUrl: '', thumbnailRefs: [], videoUrl: '', videoPath: '',
         voiceMode: 'generate', uploadedVoPath: '',
         avatarId: '', voiceId: '', avatarName: '', heygenVoiceName: '',
@@ -1574,6 +1580,92 @@ function populateBuildSummary() {
     } else {
         voiceEl.textContent = state.voice;
     }
+    syncImageQualityUI();
+}
+
+function supportsImageQualityPicker() {
+    const recipe = state.nicheData?.recipe || state.niche || '';
+    return recipe === 'animated_explainer' || recipe === 'broll_cinematic';
+}
+
+function canUseHighQuality() {
+    return !!(currentUser && !isTrialUser() && currentUser.plan !== 'free');
+}
+
+function hqCreditCost() {
+    return Math.max(1, Number(_featureFlags.hq_credit_cost || 3));
+}
+
+function hqMaxMinutes() {
+    return Math.max(3, Number(_featureFlags.hq_max_minutes || 12));
+}
+
+function cookCreditCost() {
+    if (supportsImageQualityPicker() && state.imageQuality === 'high') return hqCreditCost();
+    return 1;
+}
+
+function setImageQuality(q) {
+    const next = q === 'high' ? 'high' : 'standard';
+    if (next === 'high' && !canUseHighQuality()) {
+        showPricingModal({ reason: 'hq' });
+        return;
+    }
+    if (next === 'high') {
+        const words = (state.script || '').trim().split(/\s+/).filter(Boolean).length;
+        const estMin = words / 150;
+        if (estMin > hqMaxMinutes() + 0.5) {
+            alert(`High quality caps at ${hqMaxMinutes()} minutes. Shorten the script, or cook part 2 separately.`);
+            return;
+        }
+    }
+    state.imageQuality = next;
+    syncImageQualityUI();
+}
+
+function syncImageQualityUI() {
+    const picker = document.getElementById('image-quality-picker');
+    const blurb = document.getElementById('build-credit-blurb');
+    const hint = document.getElementById('quality-hq-hint');
+    const meta = document.getElementById('quality-high-meta');
+    const std = document.getElementById('quality-standard');
+    const hq = document.getElementById('quality-high');
+    const show = supportsImageQualityPicker();
+    if (picker) picker.classList.toggle('hidden', !show);
+    if (!show) {
+        state.imageQuality = 'standard';
+    } else if (state.imageQuality === 'high' && !canUseHighQuality()) {
+        state.imageQuality = 'standard';
+    }
+    const cost = cookCreditCost();
+    if (blurb) {
+        blurb.textContent = cost === 1
+            ? "Here's your video. This uses 1 credit."
+            : `Here's your video. High quality uses ${cost} credits.`;
+    }
+    if (meta) meta.textContent = `${hqCreditCost()} credits · up to ${hqMaxMinutes()} min`;
+    if (std) std.setAttribute('aria-checked', state.imageQuality === 'standard' ? 'true' : 'false');
+    if (hq) hq.setAttribute('aria-checked', state.imageQuality === 'high' ? 'true' : 'false');
+    if (hint) {
+        if (!canUseHighQuality()) {
+            hint.classList.remove('hidden');
+            hint.textContent = 'High quality is on paid plans — upgrade to unlock Pro visuals.';
+        } else if (state.imageQuality === 'high') {
+            hint.classList.remove('hidden');
+            hint.textContent = `Best for channels where the stills carry the video. Max ${hqMaxMinutes()} min per cook.`;
+        } else {
+            hint.classList.add('hidden');
+            hint.textContent = '';
+        }
+    }
+    const btn = document.getElementById('btn-build');
+    if (btn) {
+        const label = cost === 1 ? 'Cook video' : `Cook · ${cost} credits`;
+        const svg = btn.querySelector('svg');
+        btn.textContent = '';
+        if (svg) btn.appendChild(svg);
+        btn.appendChild(document.createTextNode(' ' + label));
+    }
 }
 
 function _friendlyProgress(raw) {
@@ -1672,6 +1764,7 @@ const cookingManager = {
                     notify_email: notifyEmail,
                     avatar_id: state.avatarId || '',
                     voice_id: state.voiceId || '',
+                    image_quality: supportsImageQualityPicker() ? (state.imageQuality || 'standard') : 'standard',
                 }),
             });
             const data = await readJson(res, {});
@@ -1710,9 +1803,10 @@ const cookingManager = {
                 if (progressBar) progressBar.style.width = '2%';
             }
             this._connect();
-            // Reflect the deducted credit in the UI immediately
-            if (currentUser && typeof currentUser.credits === 'number' && currentUser.credits > 0) {
-                currentUser.credits -= 1;
+            // Reflect the deducted credits in the UI immediately
+            const charged = Number(data.credits_charged || cookCreditCost() || 1);
+            if (currentUser && typeof currentUser.credits === 'number' && charged > 0) {
+                currentUser.credits = Math.max(0, currentUser.credits - charged);
                 updateAuthUI();
             }
             refreshUserData();
@@ -1953,6 +2047,21 @@ async function startBuild() {
     if (!hasFullLengthAccess() && estMin > cap + 0.5) {
         alert(`Trial videos are capped at ${cap} minutes. Shorten your script (~${Math.round(cap * 150)} words) or start your plan for longer videos.`);
         return;
+    }
+    if (supportsImageQualityPicker() && state.imageQuality === 'high') {
+        if (!canUseHighQuality()) {
+            showPricingModal({ reason: 'hq' });
+            return;
+        }
+        if (estMin > hqMaxMinutes() + 0.5) {
+            alert(`High quality caps at ${hqMaxMinutes()} minutes. Shorten the script, or cook part 2 separately.`);
+            return;
+        }
+        const need = hqCreditCost();
+        if (currentUser && typeof currentUser.credits === 'number' && currentUser.credits < need) {
+            showPricingModal({ reason: 'cook' });
+            return;
+        }
     }
     const btn = document.getElementById('btn-build');
     if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; }

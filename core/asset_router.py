@@ -406,12 +406,14 @@ def _handle_ai_image(
     scene, assets_dir: Path, clips_dir: Path
 ) -> ResolvedAsset | None:
     """
-    Cinematic AI stills: ERNIE only (free). Never Nano Banana / Gemini image.
+    Cinematic AI stills: ERNIE by default; GPT Image 2 Developer when HQ cook.
     """
     if not ATLASCLOUD_KEY:
         return None
 
     from core.ken_burns import render_clip, pick_effects
+    from core.image_quality_ctx import is_hq
+    from core.atlas_llm import generate_hq_image_file, generate_ernie_image_file
 
     if scene.ai_prompt:
         prompt = scene.ai_prompt
@@ -440,18 +442,29 @@ def _handle_ai_image(
     if "do not include" not in prompt.lower() and "no text" not in prompt.lower():
         prompt = prompt.rstrip(".") + "." + NO_TEXT_SUFFIX
 
-    print(f"  [ai] Generating image (ERNIE only): {prompt[:80]}...")
-
     img_path = str(assets_dir / f"scene_{scene.id:03d}_ai.png")
-    if _generate_ernie_cinematic(prompt, img_path):
+    if is_hq():
+        print(f"  [ai] Generating HQ image (GPT Image 2 Dev): {prompt[:80]}...")
+        ok = generate_hq_image_file(prompt, img_path)
+        source = "gpt-image-2-developer"
+        if not ok:
+            print("  [ai] HQ failed — falling back to ERNIE")
+            ok = generate_ernie_image_file(prompt, img_path) or _generate_ernie_cinematic(prompt, img_path)
+            source = "ernie"
+    else:
+        print(f"  [ai] Generating image (ERNIE): {prompt[:80]}...")
+        ok = _generate_ernie_cinematic(prompt, img_path)
+        source = "ernie"
+
+    if ok:
         effect = pick_effects(1)[0]
         clip_path = str(clips_dir / f"clip_{scene.id:04d}.mp4")
         if render_clip(img_path, clip_path, scene.duration_sec, effect):
-            print(f"  [ai] Generated with ERNIE (free)")
+            print(f"  [ai] Generated with {source}")
             return ResolvedAsset(
                 scene_id=scene.id, asset_type="ai_image",
                 file_path=img_path, clip_path=clip_path,
-                duration_sec=scene.duration_sec, source="ernie",
+                duration_sec=scene.duration_sec, source=source,
                 query_used=prompt[:80],
             )
 
