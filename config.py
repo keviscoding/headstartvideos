@@ -83,6 +83,10 @@ else:
     VOICE_CLONE_ENABLED = bool(FISH_API_KEY)
 # Premium: credits charged to create a persistent Fish clone (0 = free when enabled).
 VOICE_CLONE_CREDIT_COST = max(0, int(os.getenv("VOICE_CLONE_CREDIT_COST", "1")))
+# TTS model header for Fish /v1/tts.
+# Default: free S2.1 Pro promo (fair-use; ends ~end of July 2026).
+# Paid production: set FISH_TTS_MODEL=s2.1-pro or s2-pro.
+FISH_TTS_MODEL = (os.getenv("FISH_TTS_MODEL", "s2.1-pro-free") or "s2.1-pro-free").strip()
 # Hard cap for TTS generation (~150 wpm). Blocks runaway / abuse scripts.
 MAX_VOICEOVER_MINUTES = max(1, int(os.getenv("MAX_VOICEOVER_MINUTES", "25")))
 VOICEOVER_WORDS_PER_MIN = max(100, int(os.getenv("VOICEOVER_WORDS_PER_MIN", "150")))

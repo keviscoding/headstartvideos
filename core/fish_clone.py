@@ -18,10 +18,13 @@ import httpx
 import config
 
 FISH_API = "https://api.fish.audio"
-FISH_MODEL = "s2-pro"
 # Soft cap: Fish recommends clean 10–30s; accept up to 60s after trim.
 MAX_SAMPLE_SEC = 45
 MIN_SAMPLE_SEC = 5
+
+
+def _tts_model() -> str:
+    return (getattr(config, "FISH_TTS_MODEL", None) or "s2.1-pro-free").strip() or "s2.1-pro-free"
 
 
 def clone_enabled() -> bool:
@@ -155,7 +158,7 @@ def tts_with_clone(text: str, fish_model_id: str, output_path: str) -> str:
         headers={
             **_headers(),
             "Content-Type": "application/json",
-            "model": FISH_MODEL,
+            "model": _tts_model(),
         },
         json={
             "text": text[:4500],
