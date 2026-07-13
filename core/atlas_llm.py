@@ -62,8 +62,12 @@ def generate_text(
             getattr(config, "ATLAS_TEXT_MODEL", None)
             or ATLAS_TEXT_MODEL
         )
-        # Explicit Atlas ids win; Google short names → configured cheap Atlas model
+        # Explicit Atlas ids win; bare Gemini short names → configured Atlas model
         if model.startswith("google/"):
+            atlas_model = model
+        elif "gemini" in model.lower() and "/" not in model:
+            pass  # keep atlas_model default
+        elif "/" in model:
             atlas_model = model
         return _atlas_chat(
             prompt,
@@ -81,6 +85,42 @@ def generate_text(
         "ATLASCLOUD_KEY required for text generation "
         "(Google Gemini is disabled; set ALLOW_GOOGLE_GEMINI=1 to override)"
     )
+
+
+def _extract_atlas_message_text(msg: dict) -> str:
+    """Pull assistant text from OpenAI-compatible and Gemini-shaped Atlas payloads."""
+    if not isinstance(msg, dict):
+        return ""
+
+    content = msg.get("content")
+    if isinstance(content, str) and content.strip():
+        return content.strip()
+
+    # Some models return content as a list of parts: [{"type":"text","text":"..."}]
+    if isinstance(content, list):
+        chunks: list[str] = []
+        for part in content:
+            if isinstance(part, str) and part.strip():
+                chunks.append(part.strip())
+            elif isinstance(part, dict):
+                t = part.get("text") or part.get("content") or ""
+                if isinstance(t, str) and t.strip():
+                    chunks.append(t.strip())
+        if chunks:
+            return "\n".join(chunks).strip()
+
+    for key in (
+        "reasoning_content",
+        "reasoning",
+        "output_text",
+        "text",
+        "refusal",
+    ):
+        val = msg.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+
+    return ""
 
 
 def _atlas_chat(
@@ -137,10 +177,18 @@ def _atlas_chat(
     choices = data.get("choices") or []
     if not choices:
         raise RuntimeError(f"Atlas LLM empty response: {str(data)[:300]}")
-    msg = choices[0].get("message") or {}
-    text = (msg.get("content") or "").strip()
+    choice0 = choices[0] if isinstance(choices[0], dict) else {}
+    msg = choice0.get("message") or {}
+    text = _extract_atlas_message_text(msg)
     if not text:
-        raise RuntimeError("Atlas LLM returned empty content")
+        # Some gateways put the answer on the choice itself
+        text = _extract_atlas_message_text(choice0)
+    if not text:
+        finish = choice0.get("finish_reason") or choice0.get("native_finish_reason") or ""
+        raise RuntimeError(
+            f"Atlas LLM returned empty content "
+            f"(finish_reason={finish!r} model={body.get('model')})"
+        )
     return text
 
 

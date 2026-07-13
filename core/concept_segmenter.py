@@ -190,6 +190,69 @@ def _format_words_with_timestamps(words: list[dict]) -> str:
     return " ".join(parts)
 
 
+def _format_words_compact(words: list[dict]) -> str:
+    """Denser timestamp block for retries when the full list is huge."""
+    parts = []
+    for i, w in enumerate(words):
+        parts.append(f"{i}:{w['start']:.1f}:{w['word']}")
+    return " ".join(parts)
+
+
+def _fallback_concept_dicts(
+    all_words: list[dict],
+    *,
+    target_sec: float = 4.0,
+    hook_sec: float = HOOK_CUTOFF_SEC,
+    niche_hint: str = "",
+) -> list[dict]:
+    """
+    Deterministic segmentation when Atlas returns empty / unusable JSON.
+    Groups words into ~target_sec beats (faster in the hook).
+    """
+    if not all_words:
+        return []
+    target_sec = max(2.0, float(target_sec or 4.0))
+    hook_sec = max(5.0, float(hook_sec or HOOK_CUTOFF_SEC))
+    topic = (niche_hint or "this topic").strip() or "this topic"
+
+    out: list[dict] = []
+    start_idx = 0
+    n = len(all_words)
+    while start_idx < n:
+        start_t = float(all_words[start_idx]["start"])
+        desired = 2.5 if start_t < hook_sec else target_sec
+        end_idx = start_idx
+        while end_idx + 1 < n:
+            nxt_end = float(all_words[end_idx + 1]["end"])
+            if nxt_end - start_t >= desired and end_idx > start_idx:
+                break
+            end_idx += 1
+        for j in range(end_idx, min(n - 1, end_idx + 6)):
+            w = str(all_words[j].get("word") or "")
+            if w.endswith((".", "!", "?", ",", ";")):
+                end_idx = j
+                break
+        text = " ".join(
+            str(all_words[i].get("word") or "") for i in range(start_idx, end_idx + 1)
+        ).strip()
+        beat = re.sub(r"\s+", " ", text)[:80]
+        out.append({
+            "start_word_idx": start_idx,
+            "end_word_idx": end_idx,
+            "text": text,
+            "illustration_prompt": (
+                f"Stick figure scene about {topic}: visual metaphor for '{beat}'. "
+                f"Clear setting + 2 props. No text."
+            ),
+            "background_mood": "warm_earth",
+            "has_character": True,
+            "cut_style": "crossfade",
+            "section_topic": topic,
+        })
+        start_idx = end_idx + 1
+    return out
+
+
 def _parse_concepts_json(raw: str) -> list[dict]:
     """Extract JSON array from LLM response."""
     raw = raw.strip()
@@ -285,19 +348,6 @@ def segment_into_concepts(
     if niche_hint:
         context = f"\nVIDEO TOPIC: {niche_hint}\n"
 
-    user_msg = (
-        f"FULL SCRIPT:\n{script}\n\n"
-        f"WORD-LEVEL TIMESTAMPS:\n{words_formatted}\n\n"
-        f"Total duration: {total_duration:.1f}s\n"
-        f"HOOK ZONE (0-{hook_dur:.0f}s): ~{hook_concepts} concepts "
-        f"(fast cuts, 1.5-3s each)\n"
-        f"BODY ZONE ({hook_dur:.0f}s-{total_duration:.0f}s): ~{body_concepts} concepts "
-        f"(natural pacing, 2-6s each)\n"
-        f"Total target: ~{target_concepts} concepts\n"
-        f"{context}\n"
-        f"Segment into visual concepts now. JSON array only."
-    )
-
     prompt = CONCEPT_SEGMENTER_PROMPT
 
     print(f"[concept_segmenter] Segmenting {total_duration:.1f}s script into ~{target_concepts} concepts...")
@@ -309,10 +359,32 @@ def segment_into_concepts(
         try:
             import config as _cfg
             model = getattr(_cfg, "CONCEPT_SEGMENTER_MODEL", GEMINI_TEXT_MODEL)
+            # Prefer Atlas-prefixed id when a bare Gemini short name is configured.
+            if model and not model.startswith(("google/", "openai/", "anthropic/")):
+                atlas_default = getattr(_cfg, "ATLAS_TEXT_MODEL", None) or "google/gemini-3.1-flash-lite"
+                if "gemini" in model.lower():
+                    model = atlas_default
+            # Later retries: denser prompt + more output room (empty content often = truncated)
+            max_tok = 8192 if attempt == 0 else 12288
+            words_block = words_formatted
+            if attempt >= 1 and len(words_formatted) > 12000:
+                words_block = _format_words_compact(all_words)
             raw = generate_text(
-                prompt + "\n\n" + user_msg,
+                prompt + "\n\n" + (
+                    f"FULL SCRIPT:\n{script}\n\n"
+                    f"WORD-LEVEL TIMESTAMPS:\n{words_block}\n\n"
+                    f"Total duration: {total_duration:.1f}s\n"
+                    f"HOOK ZONE (0-{hook_dur:.0f}s): ~{hook_concepts} concepts "
+                    f"(fast cuts, 1.5-3s each)\n"
+                    f"BODY ZONE ({hook_dur:.0f}s-{total_duration:.0f}s): ~{body_concepts} concepts "
+                    f"(natural pacing, 2-6s each)\n"
+                    f"Total target: ~{target_concepts} concepts\n"
+                    f"{context}\n"
+                    f"Segment into visual concepts now. JSON array only."
+                ),
                 model=model,
-                max_tokens=8192,
+                max_tokens=max_tok,
+                temperature=0.2 if attempt == 0 else 0.4,
             )
             concept_dicts = _parse_concepts_json(raw)
             break
@@ -321,7 +393,16 @@ def segment_into_concepts(
             print(f"  [concept_segmenter] Attempt {attempt + 1} failed: {e}")
 
     if concept_dicts is None:
-        raise ValueError(f"Concept segmentation failed after 3 attempts: {last_error}")
+        print(
+            f"[concept_segmenter] LLM failed after 3 attempts ({last_error}); "
+            "using timed word-chunk fallback so the cook can continue"
+        )
+        concept_dicts = _fallback_concept_dicts(
+            all_words,
+            target_sec=7.0 if lite_mode else (5.5 if hq_mode else 4.0),
+            hook_sec=HOOK_CUTOFF_SEC,
+            niche_hint=niche_hint,
+        )
 
     concepts = _build_concepts(concept_dicts, all_words)
     concepts = _enforce_duration_constraints(concepts)
