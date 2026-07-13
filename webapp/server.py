@@ -1606,10 +1606,11 @@ async def start_build(req: BuildRequest, request: Request):
     credit_deducted = 0
     if not is_admin:
         if not deduct_credits(user_id, credit_cost):
+            have = int(user.get("credits") or 0)
             raise HTTPException(
                 402,
                 f"Need {credit_cost} credit{'s' if credit_cost != 1 else ''}. "
-                "Upgrade or top up to cook this video.",
+                f"You have {have}. Top up to cook this video.",
             )
         credit_deducted = credit_cost
 

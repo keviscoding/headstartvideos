@@ -55,6 +55,16 @@ window.fetch = async function (input, init) {
             } else if (res.status === 402) {
                 if (typeof isTrialUser === 'function' && isTrialUser()) {
                     if (typeof showTrialExhaustedModal === 'function') showTrialExhaustedModal();
+                } else if (
+                    typeof isPaidUser === 'function' && isPaidUser()
+                    && typeof isTrialUser === 'function' && !isTrialUser()
+                    && typeof showCreditsNeededModal === 'function'
+                ) {
+                    showCreditsNeededModal({
+                        need: 1,
+                        have: (typeof currentUser !== 'undefined' && currentUser) ? currentUser.credits : 0,
+                        reason: 'credits',
+                    });
                 } else if (typeof showPricingModal === 'function') {
                     showPricingModal({ reason: 'cook' });
                 }
@@ -672,22 +682,59 @@ function showPricingModal(opts = {}) {
     setPricingPlan('monthly');
 
     const topupRow = document.getElementById('topup-row');
+    const creditsPanel = document.getElementById('credits-needed-panel');
+    const pricingGrid = modal.querySelector('.pricing-grid');
+    const pricingToggle = document.getElementById('pricing-toggle');
+    const heading = modal.querySelector('h2.cr-display');
+    const subtitle = document.getElementById('pricing-subtitle');
+    const starterBtn = document.getElementById('pricing-cta-starter');
+    const dailyBtn = document.getElementById('pricing-cta-daily');
+    const usedTrial = !!currentUser.trial_used;
+    const need = Math.max(1, Number(opts.need || 1));
+    const have = Math.max(0, Number(opts.have ?? currentUser.credits ?? 0));
+    const paidSubscriber = isPaidUser() && !isTrialUser();
+    const creditsShort = (
+        opts.reason === 'credits'
+        || (paidSubscriber && (opts.reason === 'cook' || opts.reason === 'hq') && have < need)
+    );
+
+    // Paid subscribers short on credits → top-up, not "subscribe again"
+    if (creditsShort && paidSubscriber) {
+        if (heading) heading.textContent = 'Not enough credits';
+        if (subtitle) {
+            subtitle.textContent = need === 1
+                ? `You need 1 credit to cook. You have ${have}.`
+                : `You need ${need} credits for this cook. You have ${have}.`;
+        }
+        const summary = document.getElementById('credits-needed-summary');
+        if (summary) {
+            summary.textContent = `Top up to continue — Pro visuals costs ${hqCreditCost()} credits, Standard costs 1.`;
+        }
+        if (creditsPanel) creditsPanel.classList.remove('hidden');
+        if (pricingGrid) pricingGrid.style.display = 'none';
+        if (pricingToggle) pricingToggle.style.display = 'none';
+        if (topupRow) topupRow.classList.add('hidden');
+        track('credits_needed_viewed', { reason: opts.reason || 'credits', need, have });
+        return;
+    }
+
+    if (creditsPanel) creditsPanel.classList.add('hidden');
+    if (pricingGrid) pricingGrid.style.display = 'grid';
+    if (pricingToggle) pricingToggle.style.display = 'inline-flex';
+
     if (topupRow) {
-        if (isPaidUser() && !isTrialUser()) { topupRow.classList.remove('hidden'); }
+        if (paidSubscriber) { topupRow.classList.remove('hidden'); }
         else { topupRow.classList.add('hidden'); }
     }
 
-    // Returning users who already used a trial pay immediately — update CTA copy
-    const usedTrial = !!currentUser.trial_used;
-    const starterBtn = document.getElementById('pricing-cta-starter');
-    const dailyBtn = document.getElementById('pricing-cta-daily');
-    const subtitle = document.getElementById('pricing-subtitle');
-    const heading = modal.querySelector('h2.cr-display');
     const ctaText = usedTrial ? 'Subscribe now' : 'Start free trial';
     if (starterBtn) starterBtn.textContent = ctaText;
     if (dailyBtn) dailyBtn.textContent = ctaText;
 
-    if (opts.reason === 'cook' && !usedTrial) {
+    if (opts.reason === 'hq' && !paidSubscriber) {
+        if (heading) heading.textContent = 'Unlock Pro visuals';
+        if (subtitle) subtitle.textContent = 'High quality stills are on paid plans. Subscribe to use them.';
+    } else if (opts.reason === 'cook' && !usedTrial) {
         if (heading) heading.textContent = 'Your video is ready to cook';
         if (subtitle) subtitle.textContent = `Start your free trial to cook this video — ${trialCredits()} videos included.`;
     } else if (usedTrial) {
@@ -698,7 +745,15 @@ function showPricingModal(opts = {}) {
         if (subtitle) subtitle.textContent = '7-day free trial on any plan. Cancel anytime.';
     }
 
-    track('upgrade_viewed', { reason: opts.reason || 'general' });
+    track('upgrade_viewed', { reason: opts.reason || 'general', need, have });
+}
+
+function showCreditsNeededModal({ need = 1, have = null, reason = 'credits' } = {}) {
+    showPricingModal({
+        reason: reason || 'credits',
+        need,
+        have: have == null ? (currentUser?.credits ?? 0) : have,
+    });
 }
 
 function hidePricingModal() {
@@ -1772,6 +1827,11 @@ const cookingManager = {
                 const errMsg = typeof data.detail === 'string' ? data.detail : (data.detail?.message || JSON.stringify(data.detail) || 'Build failed');
                 if (res.status === 401) { showAuthModal(); }
                 else if (res.status === 402 && isTrialUser()) { showTrialExhaustedModal(); }
+                else if (res.status === 402 && isPaidUser() && !isTrialUser()) {
+                    const needMatch = String(errMsg).match(/Need\s+(\d+)/i);
+                    const need = needMatch ? parseInt(needMatch[1], 10) : cookCreditCost();
+                    showCreditsNeededModal({ need, have: currentUser?.credits ?? 0, reason: 'credits' });
+                }
                 else if (res.status === 402) { showPricingModal({ reason: 'cook' }); }
                 else { alert(errMsg); }
                 throw new Error(errMsg);
@@ -2058,10 +2118,24 @@ async function startBuild() {
             return;
         }
         const need = hqCreditCost();
-        if (currentUser && typeof currentUser.credits === 'number' && currentUser.credits < need) {
-            showPricingModal({ reason: 'cook' });
+        if (
+            currentUser && !currentUser.is_admin
+            && typeof currentUser.credits === 'number'
+            && currentUser.credits < need
+        ) {
+            showCreditsNeededModal({ need, have: currentUser.credits, reason: 'hq' });
             return;
         }
+    }
+    // Standard cook: paid users with 0 credits should top up, not re-subscribe
+    if (
+        isPaidUser() && !isTrialUser()
+        && currentUser && typeof currentUser.credits === 'number'
+        && currentUser.credits < cookCreditCost()
+        && !(currentUser.is_admin)
+    ) {
+        showCreditsNeededModal({ need: cookCreditCost(), have: currentUser.credits, reason: 'cook' });
+        return;
     }
     const btn = document.getElementById('btn-build');
     if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; }

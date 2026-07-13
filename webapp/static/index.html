@@ -450,6 +450,7 @@
                                 <span class="quality-card-desc">Solid everyday stills for most videos.</span>
                             </button>
                             <button type="button" id="quality-high" class="quality-card quality-card-pro" onclick="setImageQuality('high')" role="radio" aria-checked="false">
+                                <span class="cr-new-badge" title="New">New</span>
                                 <span class="quality-pro-badge">High quality</span>
                                 <span class="quality-card-title">Pro visuals</span>
                                 <span class="quality-card-meta" id="quality-high-meta">3 credits · up to 12 min</span>
@@ -951,6 +952,20 @@
                 <div id="pricing-toggle" style="display: inline-flex; background: var(--app-bg); border-radius: 99px; padding: 3px; margin-top: 16px; border: 1px solid var(--app-border);">
                     <button id="pricing-monthly-btn" onclick="setPricingPlan('monthly')" style="padding: 6px 18px; border-radius: 99px; border: none; font-family: var(--font-body); font-size: 13px; font-weight: 600; cursor: pointer; background: var(--accent); color: white; transition: all 0.2s;">Monthly</button>
                     <button id="pricing-annual-btn" onclick="setPricingPlan('annual')" style="padding: 6px 18px; border-radius: 99px; border: none; font-family: var(--font-body); font-size: 13px; font-weight: 600; cursor: pointer; background: transparent; color: var(--app-ink-3); transition: all 0.2s;">Annual <span style="color: var(--success); font-size: 11px;">2 months free</span></button>
+                </div>
+            </div>
+            <div id="credits-needed-panel" class="hidden" style="padding: 0 28px 24px;">
+                <div class="cr-surface" style="padding: 20px; text-align: center; max-width: 420px; margin: 0 auto;">
+                    <p id="credits-needed-summary" style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink); margin-bottom: 16px;"></p>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                        <button type="button" onclick="proceedToTopup(5)" class="btn-primary" style="font-size: 14px; padding: 12px 8px;">
+                            <strong>5 credits</strong><span style="display:block; font-size: 12px; opacity: 0.85; font-weight: 500;">$10</span>
+                        </button>
+                        <button type="button" onclick="proceedToTopup(15)" class="btn-primary" style="font-size: 14px; padding: 12px 8px;">
+                            <strong>15 credits</strong><span style="display:block; font-size: 12px; opacity: 0.85; font-weight: 500;">$25</span>
+                        </button>
+                    </div>
+                    <p style="font-family: var(--font-body); font-size: 12px; color: var(--app-ink-3); margin-top: 14px;">Top-ups add to your balance instantly and don't expire while your plan is active.</p>
                 </div>
             </div>
             <div class="pricing-grid" style="padding: 0 28px 24px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">

@@ -282,6 +282,8 @@ _PENDING_CREDIT_GRANTS = [
     # Spaces CDN env had a trailing newline → cook failed after credit deduct;
     # customer reported being charged twice for the failed build.
     ("2026-07-11-arman-newline-url", "armankaladiya02@gmail.com", 2),
+    # Founder account short on credits while testing HQ (3-credit) cooks.
+    ("2026-07-13-nwalike-hq-test", "nwalikekv@gmail.com", 10),
 ]
 
 

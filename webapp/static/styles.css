@@ -359,6 +359,32 @@
   transform: translateY(-1px);
   box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 12%, transparent);
 }
+.quality-card-pro .cr-new-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+.cr-new-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #fff;
+  background: #e11d48;
+  padding: 3px 7px 3px 6px;
+  border-radius: 999px;
+  line-height: 1;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.12);
+}
+.cr-new-badge::before {
+  content: "★";
+  font-size: 9px;
+  line-height: 1;
+}
 .quality-card-pro[aria-checked="true"] {
   border-color: var(--accent);
   box-shadow:
