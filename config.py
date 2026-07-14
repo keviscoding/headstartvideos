@@ -11,6 +11,9 @@ ELEVENLABS_KEY = os.getenv("ELEVENLABS_KEY", "")
 HEYGEN_KEY = os.getenv("HEYGEN_KEY", "")
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_KEY", "")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
+# Netscape cookies.txt for yt-dlp (voice-clone YouTube import). Optional —
+# without it we try android/ios clients; datacenter IPs often still get blocked.
+YOUTUBE_COOKIES_FILE = (os.getenv("YOUTUBE_COOKIES_FILE", "") or "").strip()
 DOWNSUB_KEY = os.getenv("DOWNSUB_KEY", "")
 PIXABAY_KEY = os.getenv("PIXABAY_KEY", "")
 ATLASCLOUD_KEY = os.getenv("ATLASCLOUD_KEY", "")

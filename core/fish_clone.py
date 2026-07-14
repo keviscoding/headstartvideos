@@ -77,35 +77,104 @@ def normalize_sample(src_path: str, out_dir: str | Path | None = None) -> str:
     return str(out)
 
 
+def _yt_dlp_err_text(stderr: str, stdout: str) -> str:
+    """Pull the useful ERROR line out of noisy yt-dlp/ffmpeg dumps."""
+    blob = "\n".join(x for x in (stderr or "", stdout or "") if x)
+    lines = [ln.strip() for ln in blob.splitlines() if ln.strip()]
+    err_lines = [ln for ln in lines if "ERROR:" in ln or "Sign in to confirm" in ln]
+    if err_lines:
+        return err_lines[-1][-300:]
+    return (lines[-1] if lines else "YouTube download failed")[-300:]
+
+
+def _yt_bot_blocked(err: str) -> bool:
+    e = (err or "").lower()
+    return any(
+        s in e
+        for s in (
+            "sign in to confirm",
+            "not a bot",
+            "cookies-from-browser",
+            "confirm you're not a bot",
+            "confirm you’re not a bot",
+            "login required",
+            "http error 403",
+        )
+    )
+
+
 def extract_youtube_audio(youtube_url: str, out_dir: str | Path | None = None) -> str:
-    """Download audio from a YouTube URL (requires yt-dlp)."""
+    """Download audio from a YouTube URL (requires yt-dlp).
+
+    YouTube often blocks datacenter IPs. We try several player clients, then
+    optional cookies from YOUTUBE_COOKIES_FILE. If still blocked, raise a clear
+    upload-fallback error (no raw yt-dlp wiki dump in the UI).
+    """
     url = (youtube_url or "").strip()
     if not re.search(r"(youtube\.com|youtu\.be)/", url, re.I):
         raise ValueError("Provide a YouTube video URL (watch or youtu.be).")
     out_dir = Path(out_dir or tempfile.mkdtemp(prefix="fish_yt_"))
     out_dir.mkdir(parents=True, exist_ok=True)
     out_tmpl = str(out_dir / "yt_audio.%(ext)s")
+
+    cookies = (getattr(config, "YOUTUBE_COOKIES_FILE", "") or "").strip()
+    cookie_args: list[str] = []
+    if cookies and Path(cookies).is_file():
+        cookie_args = ["--cookies", cookies]
+
+    # android / ios often bypass the web "not a bot" interstitial for audio.
+    client_attempts = [
+        "android,ios,mweb",
+        "android",
+        "ios",
+        "mweb",
+        "tv_embedded",
+        "",  # default client last
+    ]
+
+    last_err = ""
     try:
-        subprocess.run(
-            [
-                "yt-dlp", "-f", "bestaudio/best",
+        for clients in client_attempts:
+            for p in out_dir.glob("yt_audio*"):
+                p.unlink(missing_ok=True)
+            cmd = [
+                "yt-dlp",
+                "-f", "bestaudio/best",
                 "--no-playlist",
+                "--no-warnings",
                 "-x", "--audio-format", "wav",
                 "--audio-quality", "0",
                 "-o", out_tmpl,
-                url,
-            ],
-            capture_output=True, text=True, check=True, timeout=180,
-        )
+                *cookie_args,
+            ]
+            if clients:
+                cmd.extend(["--extractor-args", f"youtube:player_client={clients}"])
+            cmd.append(url)
+            try:
+                subprocess.run(
+                    cmd, capture_output=True, text=True, check=True, timeout=180,
+                )
+            except subprocess.CalledProcessError as e:
+                last_err = _yt_dlp_err_text(e.stderr or "", e.stdout or "")
+                print(f"[fish_clone] yt-dlp clients={clients or 'default'} failed: {last_err}")
+                continue
+
+            wavs = list(out_dir.glob("yt_audio*.wav")) + list(out_dir.glob("*.wav"))
+            if wavs:
+                return normalize_sample(str(wavs[0]), out_dir)
+            last_err = "YouTube download produced no audio file"
     except FileNotFoundError:
-        raise RuntimeError("yt-dlp is not installed on this server")
-    except subprocess.CalledProcessError as e:
-        err = (e.stderr or e.stdout or str(e))[-400:]
-        raise ValueError(f"Could not extract audio from YouTube: {err}")
-    wavs = list(out_dir.glob("yt_audio*.wav")) + list(out_dir.glob("*.wav"))
-    if not wavs:
-        raise ValueError("YouTube download produced no audio file")
-    return normalize_sample(str(wavs[0]), out_dir)
+        raise RuntimeError("yt-dlp is not installed on this server") from None
+
+    if _yt_bot_blocked(last_err):
+        raise ValueError(
+            "YouTube blocked the download (bot check). "
+            "Upload a short WAV/MP3 of the voice instead — that works reliably."
+        )
+    raise ValueError(
+        f"Could not extract audio from YouTube. "
+        f"Upload a WAV/MP3 sample instead. ({last_err[:180]})"
+    )
 
 
 def create_voice_model(
