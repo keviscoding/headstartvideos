@@ -5,7 +5,7 @@ Produces Mack-style animated explainer documentaries:
 1. Word-level alignment (faster-whisper)
 2. Concept segmentation (LLM splits script into visual concepts at word boundaries)
 3. Style reference generation (consistent character/art style)
-4. Parallel illustration generation (ERNIE body; Nano Banana hooks only)
+4. Parallel illustration generation (ERNIE body + GPT Image 2 fallback; Nano Banana hooks)
 5. Ken Burns rendering (subtle zoom/pan on each illustration)
 6. Assembly with voiceover + optional captions
 """

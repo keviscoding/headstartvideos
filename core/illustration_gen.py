@@ -1,9 +1,9 @@
 """
 Illustration Generator -- AI-generated illustrations for animated explainer videos.
 
-Body / style-ref: ERNIE Image Turbo via Atlas (FREE), with Nano Banana lite fallback
-when Baidu rate-limits under parallel load.
-Hook concepts (first ~30s): Nano Banana premium (~$0.028), then ERNIE if that fails.
+Body / style-ref: ERNIE Image Turbo via Atlas (FREE), with GPT Image 2 fallback
+(~$0.005/img) when Baidu rate-limits under parallel load.
+Hook concepts (first ~30s): Nano Banana premium (~$0.028), then ERNIE→GPT if that fails.
 
 ERNIE has a ~500 char prompt limit, so body uses compact prompts.
 """
@@ -233,7 +233,7 @@ def generate_single_illustration(
     style_ref_path: str | None = None,
     short_prompt: str | None = None,
 ) -> GeneratedIllustration:
-    """Body/style stills: throttled ERNIE, then Nano Banana lite fallback."""
+    """Body/style stills: throttled ERNIE, then GPT Image 2 (cheap) fallback."""
     t0 = time.time()
     if not ATLASCLOUD_KEY:
         return GeneratedIllustration(
@@ -247,31 +247,25 @@ def generate_single_illustration(
     if result.success:
         return result
 
-    # Last resort so cooks don't ship silent blank placeholders when Baidu
-    # is rate-limiting. Nano Banana lite is the same model used for hooks.
-    from core.atlas_llm import generate_image_file, ATLAS_PREMIUM_IMAGE_MODEL
+    # Prefer GPT Image 2 Developer over Nano Banana lite — ~$0.005/img vs ~$0.028.
+    from core.atlas_llm import generate_hq_image_file
 
     fallback_prompt = (prompt or ernie_prompt or "")[:1200]
-    if generate_image_file(
-        fallback_prompt,
-        output_path,
-        model=ATLAS_PREMIUM_IMAGE_MODEL,
-        aspect_ratio="16:9",
-    ):
+    if generate_hq_image_file(fallback_prompt, output_path):
         print(
-            f"  [illustration_gen] ERNIE failed ({result.error[:80]}) — "
-            f"used Nano Banana lite fallback → {Path(output_path).name}"
+            f"  [illustration_gen] ERNIE failed ({(result.error or '')[:80]}) — "
+            f"used GPT Image 2 fallback → {Path(output_path).name}"
         )
         return GeneratedIllustration(
             concept_id=-1, image_path=output_path,
-            model_used=f"fallback/{ATLAS_PREMIUM_IMAGE_MODEL}",
+            model_used="fallback/gpt-image-2-developer",
             generation_time_sec=time.time() - t0, success=True,
         )
 
     return GeneratedIllustration(
         concept_id=-1, image_path="", model_used="",
         generation_time_sec=time.time() - t0, success=False,
-        error=result.error or "ERNIE + Nano Banana fallback failed",
+        error=result.error or "ERNIE + GPT Image 2 fallback failed",
     )
 
 
@@ -379,7 +373,7 @@ def generate_batch(
 ) -> list[GeneratedIllustration]:
     """Generate illustrations for all concepts in parallel.
 
-    standard: Nano Banana hooks + ERNIE body.
+    standard: Nano Banana hooks + ERNIE body (GPT Image 2 if ERNIE fails).
     high: GPT Image 2 Developer for every still (Pro HQ cooks).
     """
     from core.concept_segmenter import BACKGROUND_MOODS
@@ -496,12 +490,14 @@ def generate_batch(
             model_counts[r.model_used] = model_counts.get(r.model_used, 0) + 1
 
     successes = sum(model_counts.values())
-    hq_n = sum(v for k, v in model_counts.items() if "hq/" in k or "gpt-image" in k)
+    # GPT Image 2 Developer @ low/1536x864 ≈ $0.005 (Atlas promo often ~$0.0049)
+    # Nano Banana lite hooks ≈ $0.028. ERNIE body ≈ $0.
+    gpt_n = sum(v for k, v in model_counts.items() if "gpt-image" in k or "hq/" in k)
     premium_n = sum(
         v for k, v in model_counts.items()
-        if "premium" in k or "nano-banana" in k
+        if ("premium" in k or "nano-banana" in k) and "gpt-image" not in k
     )
-    est = hq_n * 0.005 + premium_n * 0.028
+    est = gpt_n * 0.005 + premium_n * 0.028
     print(f"[illustration_gen] Batch complete: {successes}/{total} succeeded "
           f"in {elapsed:.1f}s | Models: {model_counts} | Est. cost: ${est:.3f}")
 
