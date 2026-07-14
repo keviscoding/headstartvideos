@@ -303,7 +303,7 @@
                             <div class="cr-surface" style="padding: 20px;">
                                 <p style="font-size: 14px; color: var(--app-ink-2); margin-bottom: 14px;">
                                     Clone a voice you own or have written permission to use — your channel host, licensed talent, or a VA you hired.
-                                    Creating a clone costs credits when enabled.
+                                    Easiest: paste a YouTube link, or drop a screen recording — we pull the audio and trim it automatically.
                                 </p>
                                 <div class="space-y-3">
                                     <div>
@@ -311,14 +311,15 @@
                                         <input id="vo-clone-title" type="text" class="cr-input" placeholder="My channel host" maxlength="80">
                                     </div>
                                     <div>
-                                        <label class="cr-label">Upload sample (10–45s clear speech)</label>
-                                        <input id="vo-clone-file" type="file" accept=".wav,.mp3,.m4a,.ogg,.webm" class="cr-input" style="padding: 8px;">
+                                        <label class="cr-label">YouTube URL</label>
+                                        <input id="vo-clone-yt" type="text" class="cr-input" placeholder="https://youtube.com/watch?v=...">
                                     </div>
                                     <div>
-                                        <label class="cr-label">Or YouTube URL (your video)</label>
-                                        <input id="vo-clone-yt" type="text" class="cr-input" placeholder="https://youtube.com/watch?v=...">
+                                        <label class="cr-label">Or screen recording / audio</label>
+                                        <input id="vo-clone-file" type="file" accept="video/*,audio/*,.mp4,.mov,.m4v,.webm,.mkv,.wav,.mp3,.m4a,.ogg,.aac" class="cr-input" style="padding: 8px;">
                                         <p style="font-size:12px;color:var(--app-ink-3);margin:6px 0 0;">
-                                            Upload is more reliable — YouTube sometimes blocks server downloads. Prefer a 10–45s WAV/MP3.
+                                            Record yourself talking (QuickTime / Phone screen record / Loom), then drag the video in.
+                                            We extract the voice and keep the first ~45 seconds.
                                         </p>
                                     </div>
                                     <label style="display: flex; gap: 10px; align-items: flex-start; font-size: 13px; color: var(--app-ink); cursor: pointer;">

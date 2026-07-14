@@ -55,24 +55,41 @@ def _probe_duration(path: str) -> float:
         return 0.0
 
 
+# Screen recordings / phone videos are the easy path when YouTube is blocked.
+_VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
+_AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".ogg", ".aac", ".flac", ".webm"}
+
+
 def normalize_sample(src_path: str, out_dir: str | Path | None = None) -> str:
-    """Convert to mono 24k WAV and trim to MAX_SAMPLE_SEC."""
+    """Pull audio (from audio OR video/screen recording), mono 24k WAV, trim to MAX_SAMPLE_SEC."""
     out_dir = Path(out_dir or tempfile.mkdtemp(prefix="fish_sample_"))
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / "sample.wav"
-    subprocess.run(
-        [
-            "ffmpeg", "-y", "-i", src_path,
-            "-t", str(MAX_SAMPLE_SEC),
-            "-ar", "24000", "-ac", "1",
-            str(out),
-        ],
-        capture_output=True, check=True, timeout=120,
-    )
+    src = Path(src_path)
+    # -vn drops video; -map 0:a:0? takes the first audio track when present.
+    cmd = [
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-i", str(src),
+        "-vn",
+        "-map", "0:a:0?",
+        "-t", str(MAX_SAMPLE_SEC),
+        "-ar", "24000", "-ac", "1",
+        str(out),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    if result.returncode != 0 or not out.is_file() or out.stat().st_size < 1000:
+        err = (result.stderr or result.stdout or "").strip()[-240:]
+        kind = "screen recording / video" if src.suffix.lower() in _VIDEO_EXTS else "file"
+        raise ValueError(
+            f"Could not extract speech from that {kind}. "
+            f"Use a clip with clear spoken audio (at least {MIN_SAMPLE_SEC}s). "
+            f"{err}"
+        )
     dur = _probe_duration(str(out))
     if dur < MIN_SAMPLE_SEC:
         raise ValueError(
-            f"Voice sample too short ({dur:.1f}s). Use at least {MIN_SAMPLE_SEC}s of clear speech."
+            f"Voice sample too short ({dur:.1f}s). Use at least {MIN_SAMPLE_SEC}s of clear speech "
+            f"(screen recordings and YouTube imports are auto-trimmed to {MAX_SAMPLE_SEC}s)."
         )
     return str(out)
 

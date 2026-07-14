@@ -1522,15 +1522,31 @@ async def create_fish_voice_clone(
         elif file is not None and file.filename:
             raw = await file.read()
             if len(raw) < 1000:
-                raise HTTPException(400, "Audio file is too small.")
-            if len(raw) > 25 * 1024 * 1024:
-                raise HTTPException(400, "Audio file too large (max 25MB).")
+                raise HTTPException(400, "File is too small.")
             ext = Path(file.filename or "sample.wav").suffix.lower() or ".wav"
+            video_exts = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
+            audio_exts = {".wav", ".mp3", ".m4a", ".ogg", ".aac", ".flac"}
+            # .webm can be audio or video — allow either
+            allowed = video_exts | audio_exts | {".webm"}
+            if ext not in allowed:
+                raise HTTPException(
+                    400,
+                    "Use a screen recording (MP4/MOV/WebM) or audio (WAV/MP3/M4A).",
+                )
+            # Screen recordings are larger; audio stays tighter.
+            max_bytes = 100 * 1024 * 1024 if ext in video_exts else 40 * 1024 * 1024
+            if len(raw) > max_bytes:
+                mb = max_bytes // (1024 * 1024)
+                raise HTTPException(400, f"File too large (max {mb}MB). Trim the recording and retry.")
             raw_path = tmp_dir / f"upload{ext}"
             raw_path.write_bytes(raw)
             sample_path = await asyncio.to_thread(normalize_sample, str(raw_path), str(tmp_dir))
+            source = "screen_recording" if ext in video_exts else "upload"
         else:
-            raise HTTPException(400, "Upload a voice sample or paste a YouTube URL.")
+            raise HTTPException(
+                400,
+                "Paste a YouTube URL, or upload a screen recording / audio sample.",
+            )
 
         result = await asyncio.to_thread(
             create_voice_model,

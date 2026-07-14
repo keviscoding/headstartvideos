@@ -1387,7 +1387,7 @@ async function createVoiceClone() {
     const file = document.getElementById('vo-clone-file')?.files?.[0];
     const yt = document.getElementById('vo-clone-yt')?.value?.trim() || '';
     if (!file && !yt) {
-        showSoftPrompt('Upload a sample or paste a YouTube URL of your own video.');
+        showSoftPrompt('Paste a YouTube URL, or drop a screen recording / audio clip of the voice.');
         return;
     }
     const btn = document.getElementById('btn-vo-clone');
