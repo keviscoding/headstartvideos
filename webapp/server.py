@@ -615,9 +615,14 @@ async def stripe_webhook(request: Request):
     except Exception as e:
         raise HTTPException(400, f"Webhook signature verification failed: {e}")
 
-    evt_type = event["type"]
-    obj = _stripe_obj_to_dict(event["data"]["object"])
-    print(f"[stripe] webhook {evt_type} id={event.get('id', '')}")
+    # construct_event returns a StripeObject — convert once so .get() works.
+    event_dict = _stripe_obj_to_dict(event)
+    evt_type = event_dict.get("type") or ""
+    data = event_dict.get("data") or {}
+    if not isinstance(data, dict):
+        data = _stripe_obj_to_dict(data)
+    obj = _stripe_obj_to_dict(data.get("object"))
+    print(f"[stripe] webhook {evt_type} id={event_dict.get('id', '')}")
 
     if evt_type == "checkout.session.completed":
         meta = obj.get("metadata") or {}
