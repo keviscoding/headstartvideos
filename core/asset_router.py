@@ -416,6 +416,10 @@ def _handle_ai_image(
         print(f"  [ai] Generating image (ERNIE): {prompt[:80]}...")
         ok = _generate_ernie_cinematic(prompt, img_path)
         source = "ernie"
+        if not ok:
+            print("  [ai] ERNIE failed — falling back to GPT Image 2")
+            ok = generate_hq_image_file(prompt, img_path)
+            source = "gpt-image-2-fallback"
 
     if ok:
         effect = pick_effects(1)[0]
@@ -435,11 +439,12 @@ def _handle_ai_image(
 def _handle_ai_image_emergency(
     scene, assets_dir: Path, clips_dir: Path
 ) -> ResolvedAsset | None:
-    """Emergency AI still — ERNIE only."""
+    """Emergency AI still — ERNIE, then cheap GPT Image 2."""
     if not ATLASCLOUD_KEY:
         return None
 
     from core.ken_burns import render_clip
+    from core.atlas_llm import generate_hq_image_file
 
     simple_prompt = (
         f"A moody, dark, cinematic photograph related to: "
@@ -451,7 +456,13 @@ def _handle_ai_image_emergency(
 
     try:
         img_path = str(assets_dir / f"scene_{scene.id:03d}_emergency.png")
-        if _generate_ernie_cinematic(simple_prompt, img_path):
+        ok = _generate_ernie_cinematic(simple_prompt, img_path)
+        source = "ernie_emergency"
+        if not ok:
+            print("  [ai-emergency] ERNIE failed — GPT Image 2 fallback")
+            ok = generate_hq_image_file(simple_prompt, img_path)
+            source = "gpt-image-2-emergency"
+        if ok:
             clip_path = str(clips_dir / f"clip_{scene.id:04d}.mp4")
             if render_clip(img_path, clip_path, scene.duration_sec, "zoom_in_center"):
                 return ResolvedAsset(
@@ -460,7 +471,7 @@ def _handle_ai_image_emergency(
                     file_path=img_path,
                     clip_path=clip_path,
                     duration_sec=scene.duration_sec,
-                    source="ernie_emergency",
+                    source=source,
                     query_used=simple_prompt[:60],
                 )
     except Exception as e:
