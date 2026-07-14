@@ -1,7 +1,8 @@
 """
 Illustration Generator -- AI-generated illustrations for animated explainer videos.
 
-Body / style-ref: ERNIE Image Turbo via Atlas (FREE) only — no FLUX, no Nano Banana.
+Body / style-ref: ERNIE Image Turbo via Atlas (FREE), with Nano Banana lite fallback
+when Baidu rate-limits under parallel load.
 Hook concepts (first ~30s): Nano Banana premium (~$0.028), then ERNIE if that fails.
 
 ERNIE has a ~500 char prompt limit, so body uses compact prompts.
@@ -232,7 +233,7 @@ def generate_single_illustration(
     style_ref_path: str | None = None,
     short_prompt: str | None = None,
 ) -> GeneratedIllustration:
-    """Body/style stills: ERNIE only (free). No FLUX / Nano Banana."""
+    """Body/style stills: throttled ERNIE, then Nano Banana lite fallback."""
     t0 = time.time()
     if not ATLASCLOUD_KEY:
         return GeneratedIllustration(
@@ -246,91 +247,50 @@ def generate_single_illustration(
     if result.success:
         return result
 
+    # Last resort so cooks don't ship silent blank placeholders when Baidu
+    # is rate-limiting. Nano Banana lite is the same model used for hooks.
+    from core.atlas_llm import generate_image_file, ATLAS_PREMIUM_IMAGE_MODEL
+
+    fallback_prompt = (prompt or ernie_prompt or "")[:1200]
+    if generate_image_file(
+        fallback_prompt,
+        output_path,
+        model=ATLAS_PREMIUM_IMAGE_MODEL,
+        aspect_ratio="16:9",
+    ):
+        print(
+            f"  [illustration_gen] ERNIE failed ({result.error[:80]}) — "
+            f"used Nano Banana lite fallback → {Path(output_path).name}"
+        )
+        return GeneratedIllustration(
+            concept_id=-1, image_path=output_path,
+            model_used=f"fallback/{ATLAS_PREMIUM_IMAGE_MODEL}",
+            generation_time_sec=time.time() - t0, success=True,
+        )
+
     return GeneratedIllustration(
         concept_id=-1, image_path="", model_used="",
         generation_time_sec=time.time() - t0, success=False,
-        error=result.error or "ERNIE failed",
+        error=result.error or "ERNIE + Nano Banana fallback failed",
     )
 
 
 def _generate_via_ernie_turbo(prompt: str, output_path: str) -> GeneratedIllustration:
-    """Generate via ERNIE Image Turbo on Atlas Cloud — FREE, native 16:9."""
-    import httpx
+    """Generate via shared throttled ERNIE helper (retries + concurrency cap)."""
+    from core.atlas_llm import generate_ernie_image_file_detailed
 
-    ATLAS_BASE = "https://api.atlascloud.ai/api/v1"
     t0 = time.time()
-
-    try:
-        resp = httpx.post(
-            f"{ATLAS_BASE}/model/generateImage",
-            headers={
-                "Authorization": f"Bearer {ATLASCLOUD_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "baidu/ERNIE-Image-Turbo/text-to-image",
-                "prompt": prompt,
-                "size": "1376x768",
-                "n": 1,
-                "use_pe": True,
-                "num_inference_steps": 8,
-                "guidance_scale": 1,
-            },
-            timeout=30,
+    ok, err = generate_ernie_image_file_detailed(prompt, output_path)
+    if ok:
+        return GeneratedIllustration(
+            concept_id=-1, image_path=output_path,
+            model_used="ernie-turbo",
+            generation_time_sec=time.time() - t0, success=True,
         )
-        data = resp.json()
-        pred_id = None
-        if "data" in data and isinstance(data["data"], dict):
-            pred_id = data["data"].get("id")
-        if not pred_id:
-            pred_id = data.get("id") or data.get("prediction_id")
-        if not pred_id:
-            return GeneratedIllustration(
-                concept_id=-1, image_path="", model_used="",
-                generation_time_sec=time.time() - t0, success=False,
-                error="No prediction ID from ERNIE"
-            )
-
-        for _ in range(25):
-            time.sleep(2)
-            poll = httpx.get(
-                f"{ATLAS_BASE}/model/prediction/{pred_id}",
-                headers={"Authorization": f"Bearer {ATLASCLOUD_KEY}"},
-                timeout=15,
-            )
-            inner = poll.json().get("data", poll.json())
-            status = str(inner.get("status", "")).lower()
-
-            if status in ("succeeded", "completed", "done"):
-                outputs = inner.get("outputs") or inner.get("output") or []
-                if isinstance(outputs, list) and outputs:
-                    img_url = outputs[0]
-                elif isinstance(outputs, str):
-                    img_url = outputs
-                else:
-                    break
-
-                img_resp = httpx.get(img_url, timeout=30, follow_redirects=True)
-                Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-                with open(output_path, "wb") as f:
-                    f.write(img_resp.content)
-
-                return GeneratedIllustration(
-                    concept_id=-1, image_path=output_path,
-                    model_used="ernie-turbo",
-                    generation_time_sec=time.time() - t0, success=True,
-                )
-
-            if status in ("failed", "error", "cancelled"):
-                break
-
-    except Exception as e:
-        print(f"  [illustration_gen] ERNIE Turbo failed: {e}")
-
     return GeneratedIllustration(
         concept_id=-1, image_path="", model_used="",
         generation_time_sec=time.time() - t0, success=False,
-        error="ERNIE Turbo failed"
+        error=err or "ERNIE Turbo failed",
     )
 
 

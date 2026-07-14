@@ -8,6 +8,7 @@ fallback only when Atlas is unset.
 from __future__ import annotations
 
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -35,9 +36,45 @@ HQ_IMAGE_MODEL = getattr(
     "openai/gpt-image-2-developer/text-to-image",
 )
 
+# Baidu ERNIE rate-limits hard under parallel load ("访问过于频繁" / HTML parse
+# errors). Cap concurrency process-wide so cooks don't blank half the video.
+_ERNIE_MAX_CONCURRENT = max(1, int(os.getenv("ERNIE_MAX_CONCURRENT", "3")))
+_ERNIE_MAX_RETRIES = max(1, int(os.getenv("ERNIE_MAX_RETRIES", "3")))
+_ernie_slots = threading.Semaphore(_ERNIE_MAX_CONCURRENT)
+_ernie_cooldown_lock = threading.Lock()
+_ernie_cooldown_until = 0.0
+
 
 def _atlas_key() -> str:
     return (getattr(config, "ATLASCLOUD_KEY", "") or "").strip()
+
+
+def _ernie_is_rate_limit(err: str) -> bool:
+    e = (err or "").lower()
+    return (
+        "过于频繁" in (err or "")
+        or "too frequent" in e
+        or "rate limit" in e
+        or "ratelimit" in e
+        or "invalid character '<'" in e
+        or "parse upstream" in e
+        or "访问过于" in (err or "")
+    )
+
+
+def _ernie_wait_cooldown() -> None:
+    global _ernie_cooldown_until
+    with _ernie_cooldown_lock:
+        until = _ernie_cooldown_until
+    delay = until - time.time()
+    if delay > 0:
+        time.sleep(min(delay, 20.0))
+
+
+def _ernie_trip_cooldown(seconds: float = 8.0) -> None:
+    global _ernie_cooldown_until
+    with _ernie_cooldown_lock:
+        _ernie_cooldown_until = max(_ernie_cooldown_until, time.time() + seconds)
 
 
 def has_atlas() -> bool:
@@ -401,81 +438,132 @@ def generate_ernie_image_file(
     prompt: str,
     output_path: str,
     *,
-    timeout_sec: float = 60,
+    timeout_sec: float = 75,
 ) -> bool:
     """
     Free ERNIE Image Turbo via Atlas — default for cinematic / body / avatar stills.
-    Prompt is truncated (~490 chars) to avoid upstream ERNIE errors.
+
+    Prompt is truncated (~490 chars). Concurrent calls are capped and rate-limit
+    errors are retried with backoff — unrestricted parallelism was blanking
+    explainer cooks (Baidu "访问过于频繁" / upstream HTML parse failures).
     """
+    ok, _err = generate_ernie_image_file_detailed(
+        prompt, output_path, timeout_sec=timeout_sec,
+    )
+    return ok
+
+
+def generate_ernie_image_file_detailed(
+    prompt: str,
+    output_path: str,
+    *,
+    timeout_sec: float = 75,
+) -> tuple[bool, str]:
+    """Like generate_ernie_image_file but returns (ok, error_message)."""
     key = _atlas_key()
     if not key:
-        return False
+        return False, "ATLASCLOUD_KEY not set"
 
     clipped = (prompt or "").strip()[:490]
     if not clipped:
-        return False
+        return False, "empty prompt"
 
-    t0 = time.time()
-    try:
-        with httpx.Client(timeout=30) as client:
-            resp = client.post(
-                f"{ATLAS_MEDIA_BASE}/model/generateImage",
-                headers={
-                    "Authorization": f"Bearer {key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": ERNIE_IMAGE_MODEL,
-                    "prompt": clipped,
-                    "size": "1376x768",
-                    "n": 1,
-                    "use_pe": True,
-                    "num_inference_steps": 8,
-                    "guidance_scale": 1,
-                },
-            )
-            data = resp.json()
-            pred_id = None
-            if isinstance(data.get("data"), dict):
-                pred_id = data["data"].get("id")
-            pred_id = pred_id or data.get("id") or data.get("prediction_id")
-            if not pred_id:
-                print(f"[atlas] ERNIE no id: {str(data)[:200]}")
-                return False
-
-            while time.time() - t0 < timeout_sec:
-                time.sleep(1.5)
-                poll = client.get(
-                    f"{ATLAS_MEDIA_BASE}/model/prediction/{pred_id}",
-                    headers={"Authorization": f"Bearer {key}"},
+    last_err = "ERNIE failed"
+    for attempt in range(_ERNIE_MAX_RETRIES):
+        _ernie_wait_cooldown()
+        acquired = _ernie_slots.acquire(timeout=120)
+        if not acquired:
+            return False, "ERNIE concurrency queue timeout"
+        t0 = time.time()
+        try:
+            with httpx.Client(timeout=30) as client:
+                resp = client.post(
+                    f"{ATLAS_MEDIA_BASE}/model/generateImage",
+                    headers={
+                        "Authorization": f"Bearer {key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": ERNIE_IMAGE_MODEL,
+                        "prompt": clipped,
+                        "size": "1376x768",
+                        "n": 1,
+                        "use_pe": True,
+                        "num_inference_steps": 8,
+                        "guidance_scale": 1,
+                    },
                 )
-                inner = poll.json().get("data", poll.json())
-                status = str(inner.get("status", "")).lower()
-                if status in ("succeeded", "completed", "done"):
-                    outputs = inner.get("outputs") or inner.get("output") or []
-                    if isinstance(outputs, str):
-                        img_url = outputs
-                    elif isinstance(outputs, list) and outputs:
-                        img_url = outputs[0]
-                    else:
-                        return False
-                    img = client.get(img_url, follow_redirects=True, timeout=60)
-                    img.raise_for_status()
-                    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-                    with open(output_path, "wb") as f:
-                        f.write(img.content)
-                    if Path(output_path).stat().st_size < 1000:
-                        return False
-                    print(
-                        f"[atlas] ERNIE ok {time.time() - t0:.1f}s → "
-                        f"{Path(output_path).name}"
+                if resp.status_code >= 400:
+                    last_err = f"ERNIE HTTP {resp.status_code}: {(resp.text or '')[:180]}"
+                    if _ernie_is_rate_limit(last_err) or resp.status_code in (429, 503):
+                        _ernie_trip_cooldown(6.0 + attempt * 4.0)
+                        time.sleep(2.0 + attempt * 2.0)
+                        continue
+                    return False, last_err
+
+                data = resp.json()
+                pred_id = None
+                if isinstance(data.get("data"), dict):
+                    pred_id = data["data"].get("id")
+                pred_id = pred_id or data.get("id") or data.get("prediction_id")
+                if not pred_id:
+                    last_err = f"ERNIE no id: {str(data)[:200]}"
+                    return False, last_err
+
+                while time.time() - t0 < timeout_sec:
+                    time.sleep(1.5)
+                    poll = client.get(
+                        f"{ATLAS_MEDIA_BASE}/model/prediction/{pred_id}",
+                        headers={"Authorization": f"Bearer {key}"},
                     )
-                    return True
-                if status in ("failed", "error", "cancelled"):
-                    print(f"[atlas] ERNIE failed: {inner}")
-                    return False
-    except Exception as e:
-        print(f"[atlas] ERNIE error: {e}")
-        return False
-    print(f"[atlas] ERNIE timeout after {timeout_sec}s")
-    return False
+                    inner = poll.json().get("data", poll.json())
+                    status = str(inner.get("status", "")).lower()
+                    if status in ("succeeded", "completed", "done"):
+                        outputs = inner.get("outputs") or inner.get("output") or []
+                        if isinstance(outputs, str):
+                            img_url = outputs
+                        elif isinstance(outputs, list) and outputs:
+                            img_url = outputs[0]
+                        else:
+                            last_err = "ERNIE completed with no outputs"
+                            break
+                        img = client.get(img_url, follow_redirects=True, timeout=60)
+                        img.raise_for_status()
+                        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+                        with open(output_path, "wb") as f:
+                            f.write(img.content)
+                        if Path(output_path).stat().st_size < 1000:
+                            last_err = "ERNIE image too small"
+                            break
+                        if attempt > 0:
+                            print(
+                                f"[atlas] ERNIE ok after retry {attempt + 1} "
+                                f"{time.time() - t0:.1f}s → {Path(output_path).name}"
+                            )
+                        else:
+                            print(
+                                f"[atlas] ERNIE ok {time.time() - t0:.1f}s → "
+                                f"{Path(output_path).name}"
+                            )
+                        return True, ""
+                    if status in ("failed", "error", "cancelled"):
+                        last_err = str(inner.get("error") or inner)[:240]
+                        print(f"[atlas] ERNIE failed (attempt {attempt + 1}): {last_err}")
+                        if _ernie_is_rate_limit(last_err):
+                            _ernie_trip_cooldown(8.0 + attempt * 4.0)
+                            break  # retry outer loop
+                        return False, last_err
+                else:
+                    last_err = f"ERNIE timeout after {timeout_sec}s"
+        except Exception as e:
+            last_err = f"ERNIE error: {e}"
+            print(f"[atlas] {last_err}")
+            if _ernie_is_rate_limit(last_err):
+                _ernie_trip_cooldown(8.0 + attempt * 4.0)
+        finally:
+            _ernie_slots.release()
+
+        if attempt + 1 < _ERNIE_MAX_RETRIES:
+            time.sleep(2.0 + attempt * 3.0)
+
+    return False, last_err

@@ -199,9 +199,11 @@ def run_explainer_pipeline(
     clip_paths: list[str] = []          # kept for legacy fallback
     slot_dicts: list[dict] = []
 
+    failed_n = 0
     for i, (concept, result) in enumerate(zip(concepts, results)):
-        if not result.success or not os.path.exists(result.image_path):
-            _log(f"  WARNING: Concept {i} failed — retrying once with simple scene")
+        if not result.success or not os.path.exists(result.image_path or ""):
+            err_hint = (result.error or "unknown")[:90]
+            _log(f"  WARNING: Concept {i} failed ({err_hint}) — retrying once with simple scene")
             retry_desc = concept.illustration_prompt or concept.text[:80]
             if concept.section_topic and concept.section_topic.lower() not in retry_desc.lower():
                 retry_desc = f"{retry_desc}. Setting: {concept.section_topic}"
@@ -227,7 +229,11 @@ def run_explainer_pipeline(
                 results[i] = retry
                 img_path = retry.image_path
             else:
-                _log(f"  WARNING: Concept {i} still failed — silent placeholder (no text)")
+                failed_n += 1
+                _log(
+                    f"  WARNING: Concept {i} still failed "
+                    f"({(retry.error or result.error or 'unknown')[:70]}) — silent placeholder"
+                )
                 placeholder_path = os.path.join(assets_dir, f"placeholder_{i:04d}.png")
                 _create_placeholder(placeholder_path, concept.background_mood)
                 img_path = placeholder_path
@@ -245,7 +251,13 @@ def run_explainer_pipeline(
         })
 
     timing["render"] = time.time() - t0
-    _log(f"  {len(image_paths)} images prepared ({timing['render']:.1f}s)")
+    if failed_n:
+        _log(
+            f"  {len(image_paths)} images prepared ({timing['render']:.1f}s) — "
+            f"{failed_n} placeholders (image provider rate-limited or failed)"
+        )
+    else:
+        _log(f"  {len(image_paths)} images prepared ({timing['render']:.1f}s)")
 
     if not image_paths:
         raise RuntimeError("No images were prepared successfully")

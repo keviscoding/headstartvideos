@@ -167,6 +167,13 @@ async function initAnalytics() {
                         'unexpected character at line',
                         'Unexpected token',
                         'is not valid JSON',
+                        // Browser-extension / media noise (not our app)
+                        'addListener',
+                        'Picture-in-Picture',
+                        'requestPictureInPicture',
+                        'MetaMask',
+                        'chrome-extension://',
+                        'moz-extension://',
                     ],
                 });
                 if (currentUser) {

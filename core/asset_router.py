@@ -33,57 +33,8 @@ def _generate_ernie_cinematic(prompt: str, output_path: str) -> bool:
     """Try ERNIE Image Turbo for cinematic images — FREE via Atlas Cloud."""
     if not ATLASCLOUD_KEY:
         return False
-    import httpx, time
-
-    ATLAS_BASE = "https://api.atlascloud.ai/api/v1"
-    try:
-        resp = httpx.post(
-            f"{ATLAS_BASE}/model/generateImage",
-            headers={"Authorization": f"Bearer {ATLASCLOUD_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": "baidu/ERNIE-Image-Turbo/text-to-image",
-                "prompt": prompt[:490],
-                "size": "1376x768",
-                "n": 1,
-                "use_pe": True,
-                "num_inference_steps": 8,
-                "guidance_scale": 1,
-            },
-            timeout=30,
-        )
-        data = resp.json()
-        pred_id = None
-        if "data" in data and isinstance(data["data"], dict):
-            pred_id = data["data"].get("id")
-        if not pred_id:
-            pred_id = data.get("id") or data.get("prediction_id")
-        if not pred_id:
-            return False
-
-        for _ in range(25):
-            time.sleep(2)
-            poll = httpx.get(
-                f"{ATLAS_BASE}/model/prediction/{pred_id}",
-                headers={"Authorization": f"Bearer {ATLASCLOUD_KEY}"},
-                timeout=15,
-            )
-            inner = poll.json().get("data", poll.json())
-            status = str(inner.get("status", "")).lower()
-            if status in ("succeeded", "completed", "done"):
-                outputs = inner.get("outputs") or inner.get("output") or []
-                img_url = outputs[0] if isinstance(outputs, list) and outputs else (outputs if isinstance(outputs, str) else None)
-                if not img_url:
-                    return False
-                img_resp = httpx.get(img_url, timeout=30, follow_redirects=True)
-                Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-                with open(output_path, "wb") as f:
-                    f.write(img_resp.content)
-                return os.path.exists(output_path) and os.path.getsize(output_path) > 1000
-            if status in ("failed", "error", "cancelled"):
-                return False
-    except Exception as e:
-        print(f"  [ai] ERNIE cinematic failed: {e}")
-    return False
+    from core.atlas_llm import generate_ernie_image_file
+    return generate_ernie_image_file((prompt or "")[:490], output_path)
 
 MAX_STATIC_CLIP_SEC = 4.0
 
