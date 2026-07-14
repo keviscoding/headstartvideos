@@ -1385,7 +1385,8 @@ async function createVoiceClone() {
         return;
     }
     const file = document.getElementById('vo-clone-file')?.files?.[0];
-    const yt = document.getElementById('vo-clone-yt')?.value?.trim() || '';
+    const ytInput = document.getElementById('vo-clone-yt');
+    const yt = ytInput?.value?.trim() || '';
     if (!file && !yt) {
         showSoftPrompt('Paste a YouTube URL, or drop a screen recording / audio clip of the voice.');
         return;
@@ -1398,12 +1399,19 @@ async function createVoiceClone() {
         const form = new FormData();
         form.append('consent', 'true');
         form.append('title', document.getElementById('vo-clone-title')?.value?.trim() || 'My voice');
-        if (yt) form.append('youtube_url', yt);
-        if (file) form.append('file', file);
+        // Prefer upload when both are set (screen recording after a failed YouTube try).
+        if (file) {
+            form.append('file', file);
+            if (yt && ytInput) ytInput.value = '';
+        } else if (yt) {
+            form.append('youtube_url', yt);
+        }
         const res = await fetch('/api/voice/clone', { method: 'POST', body: form });
         const data = await res.json();
         if (!res.ok) throw new Error(friendlyApiError(data, 'Clone failed'));
-        if (status) status.textContent = `Saved “${data.title}”. Pick it under Generate voice.`;
+        const via = data.source === 'screen_recording' ? ' from your recording'
+            : data.source === 'youtube' ? ' from YouTube' : '';
+        if (status) status.textContent = `Saved “${data.title}”${via}. Pick it under Generate voice.`;
         if (typeof data.credits_remaining === 'number' && currentUser) {
             currentUser.credits = data.credits_remaining;
             try { updateCreditsUI?.(); } catch (_) {}

@@ -1516,10 +1516,10 @@ async def create_fish_voice_clone(
     source = "upload"
     try:
         yt = (youtube_url or "").strip()
-        if yt:
-            source = "youtube"
-            sample_path = await asyncio.to_thread(extract_youtube_audio, yt, str(tmp_dir))
-        elif file is not None and file.filename:
+        has_file = file is not None and bool(file.filename)
+        # Upload wins when both are present — people paste a YouTube link, it
+        # gets bot-blocked, then drag in a screen recording without clearing the URL.
+        if has_file:
             raw = await file.read()
             if len(raw) < 1000:
                 raise HTTPException(400, "File is too small.")
@@ -1542,6 +1542,9 @@ async def create_fish_voice_clone(
             raw_path.write_bytes(raw)
             sample_path = await asyncio.to_thread(normalize_sample, str(raw_path), str(tmp_dir))
             source = "screen_recording" if ext in video_exts else "upload"
+        elif yt:
+            source = "youtube"
+            sample_path = await asyncio.to_thread(extract_youtube_audio, yt, str(tmp_dir))
         else:
             raise HTTPException(
                 400,
