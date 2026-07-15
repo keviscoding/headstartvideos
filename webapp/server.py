@@ -2667,41 +2667,101 @@ def _require_byok_user(user: dict) -> None:
         raise HTTPException(403, "Atlas BYOK is not enabled for this account.")
 
 
-def _test_atlas_key(key: str) -> bool:
+def _sanitize_atlas_key(raw: str) -> str:
+    """Strip paste junk (Bearer prefix, quotes, zero-width chars, whitespace)."""
+    key = (raw or "").strip()
+    # Common copy/paste artifacts
+    for ch in ("\u200b", "\u200c", "\u200d", "\ufeff", "\xa0"):
+        key = key.replace(ch, "")
+    key = key.strip().strip('"').strip("'")
+    if key.lower().startswith("bearer "):
+        key = key[7:].strip()
+    # Collapse accidental newlines/spaces from password managers
+    key = "".join(key.split())
+    return key
+
+
+def _test_atlas_key(key: str) -> tuple[bool, str]:
+    """
+    Auth-only probe. Do NOT require a successful generation:
+    - 401/403 => invalid key
+    - 200 / 402 (no balance) / 400 / 422 / 429 => key is accepted
+    New Atlas accounts often have 0 balance (402) which used to false-fail Save & test.
+    """
     import httpx
+
+    key = _sanitize_atlas_key(key)
+    if not key or len(key) < 16:
+        return False, "That doesn’t look like a full Atlas API key. Paste the whole key."
+
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+
+    def _classify(status: int, body: str) -> tuple[bool, str] | None:
+        snippet = (body or "").strip().replace("\n", " ")[:180]
+        if status in (401, 403):
+            return False, snippet or "Atlas says this API key is invalid."
+        # Valid key: success, empty wallet, bad payload, or rate limit
+        if status in (200, 201, 400, 402, 422, 429):
+            if status == 402:
+                return True, "Key works — Atlas balance looks empty. Top up at atlascloud.ai/console/billing before cooking."
+            return True, ""
+        return None
+
     try:
+        # 1) Media API (what voice/cook actually use) — empty body → 400 if key ok
         r = httpx.post(
+            "https://api.atlascloud.ai/api/v1/model/generateAudio",
+            headers=headers,
+            json={},
+            timeout=25,
+        )
+        classified = _classify(r.status_code, r.text or "")
+        if classified is not None:
+            return classified
+
+        # 2) LLM chat as fallback (model/balance issues must not fail auth)
+        r2 = httpx.post(
             "https://api.atlascloud.ai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {key}",
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             json={
                 "model": getattr(config, "ATLAS_TEXT_MODEL", "google/gemini-3.1-flash-lite"),
-                "messages": [{"role": "user", "content": "Say hi"}],
-                "max_tokens": 8,
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 4,
             },
             timeout=30,
         )
-        return r.status_code == 200
-    except Exception:
-        return False
+        classified = _classify(r2.status_code, r2.text or "")
+        if classified is not None:
+            return classified
+        return False, f"Atlas returned HTTP {r2.status_code}: {(r2.text or '')[:160]}"
+    except Exception as e:
+        return False, f"Could not reach Atlas to verify the key ({e}). Try again in a moment."
 
 
 @app.post("/api/me/integrations/atlas")
 def save_atlas_key(req: AtlasKeyRequest, user: dict = Depends(require_user)):
     _require_byok_user(user)
-    key = (req.api_key or "").strip()
+    key = _sanitize_atlas_key(req.api_key or "")
     if not key:
         raise HTTPException(400, "Paste your Atlas Cloud API key.")
-    if req.test and not _test_atlas_key(key):
-        raise HTTPException(
-            400,
-            "Atlas rejected that key. Copy the full API key from your Atlas Cloud dashboard.",
-        )
+    warning = ""
+    if req.test:
+        ok, detail = _test_atlas_key(key)
+        if not ok:
+            raise HTTPException(
+                400,
+                detail or "Atlas rejected that key. Copy the full API key from atlascloud.ai/console/api-keys.",
+            )
+        warning = detail or ""
     set_user_atlas_key(user["id"], key)
     track(user["id"], "atlas_byok_connected", {})
-    return {"ok": True, "atlas": user_atlas_status(user["id"])}
+    out = {"ok": True, "atlas": user_atlas_status(user["id"])}
+    if warning:
+        out["warning"] = warning
+    return out
 
 
 @app.delete("/api/me/integrations/atlas")
@@ -2714,11 +2774,11 @@ async def delete_atlas_key(user: dict = Depends(require_user)):
 @app.post("/api/me/integrations/atlas/test")
 def test_atlas_user_key(req: AtlasKeyRequest, user: dict = Depends(require_user)):
     _require_byok_user(user)
-    key = (req.api_key or "").strip() or (get_user_atlas_key(user["id"]) or "")
+    key = _sanitize_atlas_key(req.api_key or "") or (get_user_atlas_key(user["id"]) or "")
     if not key:
         return {"ok": False, "error": "No Atlas key to test. Paste one first."}
-    ok = _test_atlas_key(key)
-    return {"ok": ok, "error": "" if ok else "Atlas rejected that key."}
+    ok, detail = _test_atlas_key(key)
+    return {"ok": ok, "error": "" if ok else (detail or "Atlas rejected that key."), "warning": detail if ok and detail else ""}
 
 
 @app.post("/api/me/integrations/heygen")

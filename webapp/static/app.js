@@ -3316,7 +3316,10 @@ async function saveAtlasKey() {
         if (statusEl) statusEl.textContent = 'Paste your Atlas API key first.';
         return;
     }
-    if (statusEl) statusEl.textContent = 'Testing with Atlas…';
+    if (statusEl) {
+        statusEl.style.color = 'var(--app-ink-3)';
+        statusEl.textContent = 'Testing with Atlas…';
+    }
     try {
         const res = await fetch('/api/me/integrations/atlas', {
             method: 'POST',
@@ -3325,16 +3328,26 @@ async function saveAtlasKey() {
         });
         const data = await readJson(res, {});
         if (!res.ok) {
-            if (statusEl) statusEl.textContent = friendlyApiError(data, 'Could not save key');
+            if (statusEl) {
+                statusEl.style.color = '#f87171';
+                statusEl.textContent = friendlyApiError(data, 'Could not save key');
+            }
             return;
         }
         document.getElementById('atlas-user-key').value = '';
         renderAtlasStatus(data.atlas || { configured: true }, true);
         if (currentUser) currentUser.atlas_connected = true;
-        if (statusEl) statusEl.textContent = 'Connected — voice & cooks bill your Atlas account.';
+        if (statusEl) {
+            statusEl.style.color = data.warning ? '#fbbf24' : 'var(--success)';
+            statusEl.textContent = data.warning
+                || 'Connected — voice & cooks bill your Atlas account.';
+        }
         track('atlas_byok_saved', {});
     } catch (e) {
-        if (statusEl) statusEl.textContent = 'Save failed: ' + e.message;
+        if (statusEl) {
+            statusEl.style.color = '#f87171';
+            statusEl.textContent = 'Save failed: ' + e.message;
+        }
     }
 }
 
