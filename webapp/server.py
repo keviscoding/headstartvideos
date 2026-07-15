@@ -71,7 +71,7 @@ if config.SENTRY_DSN:
                 except Exception:
                     pass
                 msg = str(exc).lower()
-                # Provider out-of-credit / bad user input — ops issue, not a bug
+                # Provider outages / bad user input — ops issue, not a product bug
                 if any(s in msg for s in (
                     "insufficient balance",
                     "no youtube channel found",
@@ -79,8 +79,25 @@ if config.SENTRY_DSN:
                     "provider balance",
                     "gemini access denied",
                     "nicheanalysisunavailable",
+                    "tts synthesis failed",
+                    "atlas tts poll failed",
+                    "atlas tts request failed",
+                    "atlas tts generation failed",
+                    "voiceover service is temporarily unavailable",
                 )):
                     return None
+            # Browser-extension / injected-script noise (e.g. nativeIframe redeclare)
+            try:
+                values = (event.get("exception") or {}).get("values") or []
+                for v in values:
+                    vtype = (v.get("type") or "")
+                    vval = (v.get("value") or "")
+                    if vtype == "SyntaxError" and "nativeiframe" in vval.lower():
+                        return None
+                    if "has already been declared" in vval.lower() and "nativeiframe" in vval.lower():
+                        return None
+            except Exception:
+                pass
             return event
 
         sentry_sdk.init(
@@ -1348,6 +1365,8 @@ def _provider_http_status(exc: Exception) -> int:
     """Map known provider/user errors to non-500 statuses (keeps Sentry quieter)."""
     msg = str(exc).lower()
     if "insufficient balance" in msg or "provider balance" in msg or "temporarily unavailable" in msg:
+        return 503
+    if "tts synthesis failed" in msg or "atlas tts" in msg or "internal error" in msg:
         return 503
     if "image_other" in msg or "no parts found" in msg or "no_image" in msg:
         return 503

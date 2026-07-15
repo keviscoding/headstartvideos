@@ -226,18 +226,31 @@ def _poll_budget_seconds(text_len: int) -> float:
     return min(240.0, max(45.0, 30.0 + text_len * 0.025))
 
 
-def _atlas_tts_chunk(text: str, voice_id: str, out_path: str) -> None:
-    """Generate one audio chunk via Atlas xAI TTS. Raises on failure."""
+def _atlas_tts_transient(err: str) -> bool:
+    e = (err or "").lower()
+    return any(
+        s in e
+        for s in (
+            "internal error",
+            "tts synthesis failed",
+            "temporarily unavailable",
+            "timeout",
+            "timed out",
+            "502",
+            "503",
+            "504",
+            "poll failed (500)",
+            "request failed (500)",
+            "request failed (502)",
+            "request failed (503)",
+        )
+    )
+
+
+def _atlas_tts_chunk_once(text: str, voice_id: str, out_path: str, headers: dict) -> None:
+    """Single Atlas TTS attempt (submit + poll). Raises on failure."""
     import httpx
 
-    key = get_atlas_key()
-    if not key:
-        raise RuntimeError("ATLASCLOUD_KEY not configured. Add it in Settings / DigitalOcean env.")
-
-    headers = {
-        "Authorization": f"Bearer {key}",
-        "Content-Type": "application/json",
-    }
     payload = {
         "model": "xai/tts-v1",
         "text": text,
@@ -269,7 +282,6 @@ def _atlas_tts_chunk(text: str, voice_id: str, out_path: str) -> None:
             return
         raise RuntimeError(f"Atlas TTS: no prediction id: {r.text[:300]}")
 
-    # Poll until completed — budget scales with chunk length
     budget = _poll_budget_seconds(len(text))
     deadline = time.time() + budget
     last_status = data.get("status", "processing")
@@ -283,6 +295,8 @@ def _atlas_tts_chunk(text: str, voice_id: str, out_path: str) -> None:
             raise RuntimeError(f"Atlas TTS poll failed ({pr.status_code}): {pr.text[:300]}")
         pdata = pr.json().get("data") or pr.json()
         last_status = pdata.get("status", "")
+        # Atlas sometimes returns HTTP 200 with a failed payload + message
+        msg = str(pdata.get("message") or pdata.get("error") or "")
         if last_status == "completed":
             outputs = pdata.get("outputs") or []
             if not outputs:
@@ -293,15 +307,53 @@ def _atlas_tts_chunk(text: str, voice_id: str, out_path: str) -> None:
             _download_audio(url, out_path)
             return
         if last_status in ("failed", "timeout", "error"):
-            err = pdata.get("error") or pdata
+            err = msg or pdata.get("error") or pdata
             raise RuntimeError(f"Atlas TTS generation failed ({last_status}): {err}")
-        # Back off slightly as we wait longer
+        # Atlas sometimes returns HTTP 200 with {code:500, message:"TTS synthesis failed..."}
+        if (pdata.get("code") in (500, "500") or "tts synthesis failed" in msg.lower()) and not (
+            pdata.get("outputs")
+        ):
+            raise RuntimeError(f"Atlas TTS generation failed (error): {msg or pdata}")
         poll_interval = min(2.0, poll_interval + 0.1)
 
     raise RuntimeError(
         f"Atlas TTS timed out after {budget:.0f}s waiting for audio "
         f"(last status={last_status}, chars={len(text)}, pred={pred_id})"
     )
+
+
+def _atlas_tts_chunk(text: str, voice_id: str, out_path: str) -> None:
+    """Generate one audio chunk via Atlas xAI TTS. Retries transient provider 500s."""
+    key = get_atlas_key()
+    if not key:
+        raise RuntimeError("ATLASCLOUD_KEY not configured. Add it in Settings / DigitalOcean env.")
+
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+
+    attempts = 3
+    last_err: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            _atlas_tts_chunk_once(text, voice_id, out_path, headers)
+            return
+        except Exception as e:
+            last_err = e
+            if not _atlas_tts_transient(str(e)) or attempt >= attempts:
+                raise
+            delay = 1.5 * attempt
+            print(
+                f"[voiceover] Atlas TTS transient failure (attempt {attempt}/{attempts}): "
+                f"{str(e)[:160]} — retrying in {delay:.1f}s"
+            )
+            time.sleep(delay)
+            try:
+                Path(out_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+    raise last_err or RuntimeError("Atlas TTS failed")
 
 
 def generate_voiceover(

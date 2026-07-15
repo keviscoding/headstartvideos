@@ -174,7 +174,21 @@ async function initAnalytics() {
                         'MetaMask',
                         'chrome-extension://',
                         'moz-extension://',
+                        'nativeIframe',
+                        'has already been declared',
                     ],
+                    beforeSend(event) {
+                        try {
+                            const vals = event?.exception?.values || [];
+                            for (const v of vals) {
+                                const msg = `${v?.type || ''} ${v?.value || ''}`.toLowerCase();
+                                if (msg.includes('nativeiframe') && msg.includes('already been declared')) {
+                                    return null;
+                                }
+                            }
+                        } catch (_) {}
+                        return event;
+                    },
                 });
                 if (currentUser) {
                     window.Sentry?.setUser({ id: String(currentUser.id), email: currentUser.email });
