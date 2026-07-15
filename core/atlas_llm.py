@@ -46,7 +46,8 @@ _ernie_cooldown_until = 0.0
 
 
 def _atlas_key() -> str:
-    return (getattr(config, "ATLASCLOUD_KEY", "") or "").strip()
+    from core.atlas_runtime import get_atlas_key
+    return get_atlas_key()
 
 
 def _ernie_is_rate_limit(err: str) -> bool:

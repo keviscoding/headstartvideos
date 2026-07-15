@@ -1220,6 +1220,22 @@ const FALLBACK_VOICES = [
 let _voicesLoaded = false;
 let _voicesLoading = null;
 
+function _paintVoiceSelection(selectedId) {
+    const grid = document.getElementById('voices-grid');
+    if (!grid) return;
+    grid.querySelectorAll('.voice-card').forEach((card) => {
+        const id = card.dataset.voiceId || '';
+        const on = id === selectedId;
+        card.classList.toggle('selected', on);
+        const radio = card.querySelector('.voice-radio');
+        if (!radio) return;
+        radio.style.borderColor = on ? 'var(--accent)' : 'var(--app-border)';
+        radio.innerHTML = on
+            ? '<span style="width:10px;height:10px;border-radius:50%;background:var(--accent);"></span>'
+            : '';
+    });
+}
+
 function _renderVoiceGrid(voices) {
     const grid = document.getElementById('voices-grid');
     if (!grid || !voices?.length) return;
@@ -1232,29 +1248,29 @@ function _renderVoiceGrid(voices) {
     voices.forEach(v => {
         const card = document.createElement('div');
         card.className = `voice-card${v.id === state.voice ? ' selected' : ''}`;
+        card.dataset.voiceId = v.id;
         const recommended = v.default
             ? `<span style="font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent);background:var(--accent-soft-dark);border-radius:var(--radius-pill);padding:2px 7px;">Best pick</span>`
             : '';
         const gender = v.gender ? `<span style="font-family:var(--font-mono);font-size:10px;color:var(--app-ink-3);text-transform:uppercase;">${v.gender}</span>` : '';
         card.innerHTML = `
-            <button class="play-btn" data-voice="${v.id}" title="Preview voice">
+            <button type="button" class="play-btn" data-voice="${escapeHtml(v.id)}" title="Preview voice">
                 <svg width="13" height="13" viewBox="0 0 14 14"><path d="M4 2.5 L4 11.5 L11 7 Z" fill="currentColor"/></svg>
             </button>
             <div class="flex-1 min-w-0">
                 <div style="display:flex;align-items:center;gap:8px;font-family:var(--font-body);font-weight:600;font-size:15px;color:var(--app-ink);">
-                    ${v.name} ${recommended} ${gender}
+                    ${escapeHtml(v.name)} ${recommended} ${gender}
                 </div>
-                <div style="font-family:var(--font-body);font-size:13px;color:var(--app-ink-3);margin-top:2px;">${v.desc || v.tag}</div>
+                <div style="font-family:var(--font-body);font-size:13px;color:var(--app-ink-3);margin-top:2px;">${escapeHtml(v.desc || v.tag || '')}</div>
             </div>
-            <span style="width:20px;height:20px;flex:none;border-radius:50%;border:2px solid ${v.id === state.voice ? 'var(--accent)' : 'var(--app-border)'};display:flex;align-items:center;justify-content:center;">
+            <span class="voice-radio" style="width:20px;height:20px;flex:none;border-radius:50%;border:2px solid ${v.id === state.voice ? 'var(--accent)' : 'var(--app-border)'};display:flex;align-items:center;justify-content:center;">
                 ${v.id === state.voice ? '<span style="width:10px;height:10px;border-radius:50%;background:var(--accent);"></span>' : ''}
             </span>
         `;
         card.addEventListener('click', (e) => {
             if (e.target.closest('.play-btn')) return;
-            document.querySelectorAll('.voice-card').forEach(c => c.classList.remove('selected'));
-            card.classList.add('selected');
             state.voice = v.id;
+            _paintVoiceSelection(v.id);
             persistPipelineState();
         });
         card.querySelector('.play-btn').addEventListener('click', (e) => {
@@ -3263,13 +3279,76 @@ function renderHeygenStatus(status) {
     if (last4 && status?.last4) last4.textContent = `••••${status.last4}`;
 }
 
+function renderAtlasStatus(status, byokEnabled) {
+    const wrap = document.getElementById('settings-atlas-byok');
+    if (wrap) wrap.classList.toggle('hidden', !byokEnabled);
+    if (!byokEnabled) return;
+    const configured = !!(status && status.configured);
+    const chip = document.getElementById('atlas-status-chip');
+    const connected = document.getElementById('atlas-connected-panel');
+    const connect = document.getElementById('atlas-connect-panel');
+    const last4 = document.getElementById('atlas-last4');
+    if (chip) {
+        chip.textContent = configured ? `Connected · ••••${status.last4 || ''}` : 'Not connected';
+        chip.style.color = configured ? 'var(--success)' : 'var(--app-ink-3)';
+    }
+    if (connected) connected.classList.toggle('hidden', !configured);
+    if (connect) connect.classList.toggle('hidden', configured);
+    if (last4 && status?.last4) last4.textContent = `••••${status.last4}`;
+}
+
 async function loadIntegrations() {
     if (!currentUser) return;
     try {
         const res = await fetch('/api/me/integrations');
         const data = await readJson(res, {});
-        if (res.ok) renderHeygenStatus(data.heygen || {});
+        if (!res.ok) return;
+        renderHeygenStatus(data.heygen || {});
+        const byok = !!(data.byok_enabled || currentUser.byok_enabled);
+        renderAtlasStatus(data.atlas || {}, byok);
     } catch { /* best-effort */ }
+}
+
+async function saveAtlasKey() {
+    const statusEl = document.getElementById('atlas-integ-status');
+    const key = document.getElementById('atlas-user-key')?.value?.trim() || '';
+    if (!key) {
+        if (statusEl) statusEl.textContent = 'Paste your Atlas API key first.';
+        return;
+    }
+    if (statusEl) statusEl.textContent = 'Testing with Atlas…';
+    try {
+        const res = await fetch('/api/me/integrations/atlas', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ api_key: key, test: true }),
+        });
+        const data = await readJson(res, {});
+        if (!res.ok) {
+            if (statusEl) statusEl.textContent = friendlyApiError(data, 'Could not save key');
+            return;
+        }
+        document.getElementById('atlas-user-key').value = '';
+        renderAtlasStatus(data.atlas || { configured: true }, true);
+        if (currentUser) currentUser.atlas_connected = true;
+        if (statusEl) statusEl.textContent = 'Connected — voice & cooks bill your Atlas account.';
+        track('atlas_byok_saved', {});
+    } catch (e) {
+        if (statusEl) statusEl.textContent = 'Save failed: ' + e.message;
+    }
+}
+
+async function disconnectAtlas() {
+    if (!confirm('Disconnect your Atlas key? Voice and cooks will need it again.')) return;
+    try {
+        await fetch('/api/me/integrations/atlas', { method: 'DELETE' });
+        renderAtlasStatus({ configured: false, last4: '' }, true);
+        if (currentUser) currentUser.atlas_connected = false;
+        const statusEl = document.getElementById('atlas-integ-status');
+        if (statusEl) statusEl.textContent = 'Disconnected.';
+    } catch (e) {
+        alert('Could not disconnect: ' + e.message);
+    }
 }
 
 async function saveHeygenKey() {

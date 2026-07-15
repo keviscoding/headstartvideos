@@ -184,6 +184,19 @@ def spawn_cook(job_id: str) -> bool:
         if not (env.get("SPACES_KEY") and env.get("SPACES_SECRET") and env.get("SPACES_BUCKET")):
             print("[fly] SPACES_* missing on web — cook would 404 after finish")
             return False
+        # Custom BYOK: overlay this user's Atlas key so the machine never
+        # touches the shared platform key for voice/image/LLM spend.
+        try:
+            from webapp.database import get_cook_job, get_user_atlas_key
+            row = get_cook_job(job_id) or {}
+            uid = row.get("user_id")
+            if uid:
+                user_atlas = get_user_atlas_key(int(uid))
+                if user_atlas:
+                    env["ATLASCLOUD_KEY"] = user_atlas
+                    print(f"[fly] BYOK Atlas overlay for user {uid} (cook {job_id})")
+        except Exception as byok_err:
+            print(f"[fly] BYOK Atlas overlay skipped: {byok_err}")
         # Log what WE inject (safe fingerprint). If cook logs a different
         # key_suffix, Fly app secrets are overriding machine env — unset them.
         try:

@@ -191,6 +191,7 @@ from webapp.database import (
     create_cook_job, update_cook_job, get_cook_job,
     cook_queue_stats, announce_queued_jobs,
     set_user_heygen_key, get_user_heygen_key, user_heygen_status,
+    set_user_atlas_key, get_user_atlas_key, user_atlas_status,
     create_voice_clone, list_voice_clones, count_voice_clones_since,
     list_unread_notices, mark_notice_read,
 )
@@ -340,6 +341,11 @@ def _is_admin_email(email: str) -> bool:
     return bool(admins) and (email or "").lower() in admins
 
 
+def _is_byok_email(email: str) -> bool:
+    allow = getattr(config, "BYOK_EMAILS", []) or []
+    return bool(allow) and (email or "").lower() in allow
+
+
 def _is_pro(user: dict | None) -> bool:
     """Admins always get full Pro treatment (clean renders, full length, no credit drain)."""
     if not user:
@@ -380,6 +386,8 @@ def _estimate_script_minutes(script: str) -> float:
 def _safe_user(u: dict) -> dict:
     admins = getattr(config, "ADMIN_EMAILS", [])
     is_admin = bool(admins) and u.get("email", "").lower() in admins
+    byok = _is_byok_email(u.get("email", ""))
+    atlas = user_atlas_status(u["id"]) if byok else {"configured": False, "last4": ""}
     return {
         "id": u["id"],
         "email": u["email"],
@@ -387,6 +395,8 @@ def _safe_user(u: dict) -> dict:
         "credits": u["credits"],
         "created_at": u["created_at"],
         "is_admin": is_admin,
+        "byok_enabled": byok,
+        "atlas_connected": bool(atlas.get("configured")),
         "trial_used": bool(u.get("trial_used")),
         "trial_credits": int(getattr(config, "TRIAL_CREDITS", 2) or 2),
     }
@@ -1380,11 +1390,21 @@ def _unique_media_dir(*parts: str) -> Path:
 
 @app.post("/api/voiceover")
 def generate_voiceover(req: VoiceoverRequest, user: dict = Depends(require_user)):
+    from core.atlas_runtime import use_atlas_key
     from core.voiceover_gen import generate_voiceover as gen_vo
+
+    byok = _is_byok_email(user.get("email", ""))
+    user_atlas = get_user_atlas_key(user["id"]) if byok else None
+    if byok and not user_atlas:
+        raise HTTPException(
+            400,
+            "Add your Atlas API key in Settings → Integrations before generating voiceovers.",
+        )
 
     out_dir = str(_unique_media_dir("voiceovers"))
     try:
-        wav_path = gen_vo(script=req.script, voice=req.voice, style_preset="Narrator", output_dir=out_dir)
+        with use_atlas_key(user_atlas):
+            wav_path = gen_vo(script=req.script, voice=req.voice, style_preset="Narrator", output_dir=out_dir)
         path, url = _stage_user_media(wav_path, user["id"], "voiceover", "audio/wav")
         return {"path": path, "url": url}
     except Exception as e:
@@ -1597,20 +1617,30 @@ async def create_fish_voice_clone(
 
 @app.post("/api/voiceover/studio")
 def voiceover_studio(req: VoiceoverStudioRequest, user: dict = Depends(require_user)):
+    from core.atlas_runtime import use_atlas_key
     from core.voiceover_gen import generate_voiceover as gen_vo
 
     if not (req.script or "").strip():
         raise HTTPException(400, "Paste a script first, then generate the voiceover.")
 
+    byok = _is_byok_email(user.get("email", ""))
+    user_atlas = get_user_atlas_key(user["id"]) if byok else None
+    if byok and not user_atlas:
+        raise HTTPException(
+            400,
+            "Add your Atlas API key in Settings → Integrations before generating voiceovers.",
+        )
+
     out_dir = str(_unique_media_dir("voiceovers"))
     try:
-        wav_path = gen_vo(
-            script=req.script,
-            voice=req.voice,
-            style_preset=req.style_preset,
-            custom_notes=req.custom_notes,
-            output_dir=out_dir,
-        )
+        with use_atlas_key(user_atlas):
+            wav_path = gen_vo(
+                script=req.script,
+                voice=req.voice,
+                style_preset=req.style_preset,
+                custom_notes=req.custom_notes,
+                output_dir=out_dir,
+            )
         path, url = _stage_user_media(wav_path, user["id"], "voiceover", "audio/wav")
         return {"path": path, "url": url}
     except ValueError as e:
@@ -1803,6 +1833,15 @@ async def start_build(req: BuildRequest, request: Request):
     user_id = user["id"]
 
     is_admin = _is_admin_email(user.get("email", ""))
+    is_byok = _is_byok_email(user.get("email", ""))
+    byok_atlas = get_user_atlas_key(user_id) if is_byok else None
+    if is_byok and not byok_atlas:
+        raise HTTPException(
+            400,
+            "Add your Atlas API key in Settings → Integrations before cooking. "
+            "Your cooks bill your Atlas account — not ChannelRecipe's.",
+        )
+
     if not is_admin and user.get("plan") not in ("starter", "daily", "pro", "starter_trial", "daily_trial"):
         raise HTTPException(402, "Start your free trial to cook this video.")
 
@@ -1844,7 +1883,7 @@ async def start_build(req: BuildRequest, request: Request):
     credit_cost = hq_cost if image_quality == "high" else 1
 
     if image_quality == "high":
-        if not is_admin and user.get("plan") in ("starter_trial", "daily_trial", "free"):
+        if not is_admin and not is_byok and user.get("plan") in ("starter_trial", "daily_trial", "free"):
             raise HTTPException(
                 402,
                 "High quality is for paid plans. Upgrade to unlock GPT Image 2 renders.",
@@ -1857,8 +1896,9 @@ async def start_build(req: BuildRequest, request: Request):
                 "or cook part 2 separately and stitch.",
             )
 
+    # BYOK customers with Atlas connected: no ChannelRecipe credit drain.
     credit_deducted = 0
-    if not is_admin:
+    if not is_admin and not (is_byok and byok_atlas):
         if not deduct_credits(user_id, credit_cost):
             have = int(user.get("credits") or 0)
             raise HTTPException(
@@ -2606,10 +2646,79 @@ _HEYGEN_GUIDE = {
 
 @app.get("/api/me/integrations")
 async def get_my_integrations(user: dict = Depends(require_user)):
-    return {
+    byok = _is_byok_email(user.get("email", ""))
+    payload = {
         "heygen": user_heygen_status(user["id"]),
+        "byok_enabled": byok,
         "guide": {"heygen": _HEYGEN_GUIDE},
     }
+    if byok:
+        payload["atlas"] = user_atlas_status(user["id"])
+    return payload
+
+
+class AtlasKeyRequest(BaseModel):
+    api_key: str = ""
+    test: bool = True
+
+
+def _require_byok_user(user: dict) -> None:
+    if not _is_byok_email(user.get("email", "")):
+        raise HTTPException(403, "Atlas BYOK is not enabled for this account.")
+
+
+def _test_atlas_key(key: str) -> bool:
+    import httpx
+    try:
+        r = httpx.post(
+            "https://api.atlascloud.ai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": getattr(config, "ATLAS_TEXT_MODEL", "google/gemini-3.1-flash-lite"),
+                "messages": [{"role": "user", "content": "Say hi"}],
+                "max_tokens": 8,
+            },
+            timeout=30,
+        )
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+@app.post("/api/me/integrations/atlas")
+def save_atlas_key(req: AtlasKeyRequest, user: dict = Depends(require_user)):
+    _require_byok_user(user)
+    key = (req.api_key or "").strip()
+    if not key:
+        raise HTTPException(400, "Paste your Atlas Cloud API key.")
+    if req.test and not _test_atlas_key(key):
+        raise HTTPException(
+            400,
+            "Atlas rejected that key. Copy the full API key from your Atlas Cloud dashboard.",
+        )
+    set_user_atlas_key(user["id"], key)
+    track(user["id"], "atlas_byok_connected", {})
+    return {"ok": True, "atlas": user_atlas_status(user["id"])}
+
+
+@app.delete("/api/me/integrations/atlas")
+async def delete_atlas_key(user: dict = Depends(require_user)):
+    _require_byok_user(user)
+    set_user_atlas_key(user["id"], None)
+    return {"ok": True, "atlas": {"configured": False, "last4": ""}}
+
+
+@app.post("/api/me/integrations/atlas/test")
+def test_atlas_user_key(req: AtlasKeyRequest, user: dict = Depends(require_user)):
+    _require_byok_user(user)
+    key = (req.api_key or "").strip() or (get_user_atlas_key(user["id"]) or "")
+    if not key:
+        return {"ok": False, "error": "No Atlas key to test. Paste one first."}
+    ok = _test_atlas_key(key)
+    return {"ok": ok, "error": "" if ok else "Atlas rejected that key."}
 
 
 @app.post("/api/me/integrations/heygen")

@@ -25,13 +25,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from config import (
-    VIDEO_WIDTH, VIDEO_HEIGHT, VIDEO_FPS, ATLASCLOUD_KEY,
+    VIDEO_WIDTH, VIDEO_HEIGHT, VIDEO_FPS,
 )
+from core.atlas_runtime import get_atlas_key
 
 
 def _generate_ernie_cinematic(prompt: str, output_path: str) -> bool:
     """Try ERNIE Image Turbo for cinematic images — FREE via Atlas Cloud."""
-    if not ATLASCLOUD_KEY:
+    if not get_atlas_key():
         return False
     from core.atlas_llm import generate_ernie_image_file
     return generate_ernie_image_file((prompt or "")[:490], output_path)
@@ -369,7 +370,7 @@ def _handle_ai_image(
     """
     Cinematic AI stills: ERNIE by default; GPT Image 2 Developer when HQ cook.
     """
-    if not ATLASCLOUD_KEY:
+    if not get_atlas_key():
         return None
 
     from core.ken_burns import render_clip, pick_effects
@@ -440,7 +441,7 @@ def _handle_ai_image_emergency(
     scene, assets_dir: Path, clips_dir: Path
 ) -> ResolvedAsset | None:
     """Emergency AI still — ERNIE, then cheap GPT Image 2."""
-    if not ATLASCLOUD_KEY:
+    if not get_atlas_key():
         return None
 
     from core.ken_burns import render_clip

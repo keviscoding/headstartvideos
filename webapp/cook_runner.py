@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Callable
 
@@ -193,58 +194,72 @@ def run_cook_job(
     }
     _track(user_id or "anon", "render_started", dict(base_props))
 
-    try:
-        if recipe == "animated_explainer":
-            from core.explainer_pipeline import run_explainer_pipeline
-            result = run_explainer_pipeline(
-                script=script,
-                voiceover_path=voiceover_path,
-                output_name="pipeline_video.mp4",
-                style_preset="default",
-                progress_callback=on_progress,
-                lite_mode=lite_mode,
-                image_quality=image_quality,
-            )
-        elif recipe == "broll_only":
-            from core.pipeline import run_pipeline
-            result = run_pipeline(
-                script=script,
-                voiceover_path=voiceover_path,
-                output_name="pipeline_video.mp4",
-                progress_callback=on_progress,
-            )
-        elif recipe == "broll_cinematic":
-            from core.pipeline import run_cinematic_pipeline
-            result = run_cinematic_pipeline(
-                script=script,
-                voiceover_path=voiceover_path,
-                output_name="pipeline_video.mp4",
-                progress_callback=on_progress,
-            )
-        elif recipe == "avatar_plus_broll":
-            from core.avatar_pipeline import run_avatar_pipeline
-            from webapp.database import get_user_heygen_key
+    # BYOK: if this user stored an Atlas key, bill their provider for cook images/LLM.
+    atlas_cm = nullcontext()
+    if user_id:
+        try:
+            from webapp.database import get_user_atlas_key
+            from core.atlas_runtime import use_atlas_key
+            ak = get_user_atlas_key(int(user_id))
+            if ak:
+                atlas_cm = use_atlas_key(ak)
+        except Exception as atlas_err:
+            print(f"[cook] atlas BYOK lookup skipped: {atlas_err}")
+            atlas_cm = nullcontext()
 
-            avatar_id = (req_data.get("avatar_id") or "").strip()
-            voice_id = (req_data.get("voice_id") or "").strip()
-            if not avatar_id or not voice_id:
-                raise ValueError("Avatar recipe requires avatar_id and voice_id.")
-            heygen_key = get_user_heygen_key(user_id) if user_id else None
-            if not heygen_key:
-                raise ValueError(
-                    "HeyGen API key missing — reconnect it in Settings → Integrations."
+    try:
+        with atlas_cm:
+            if recipe == "animated_explainer":
+                from core.explainer_pipeline import run_explainer_pipeline
+                result = run_explainer_pipeline(
+                    script=script,
+                    voiceover_path=voiceover_path,
+                    output_name="pipeline_video.mp4",
+                    style_preset="default",
+                    progress_callback=on_progress,
+                    lite_mode=lite_mode,
+                    image_quality=image_quality,
                 )
-            result = run_avatar_pipeline(
-                script=script,
-                avatar_id=avatar_id,
-                voice_id=voice_id,
-                voiceover_path=None,
-                output_name="pipeline_video.mp4",
-                progress_callback=on_progress,
-                heygen_api_key=heygen_key,
-            )
-        else:
-            raise ValueError(f"Unknown recipe: {recipe}")
+            elif recipe == "broll_only":
+                from core.pipeline import run_pipeline
+                result = run_pipeline(
+                    script=script,
+                    voiceover_path=voiceover_path,
+                    output_name="pipeline_video.mp4",
+                    progress_callback=on_progress,
+                )
+            elif recipe == "broll_cinematic":
+                from core.pipeline import run_cinematic_pipeline
+                result = run_cinematic_pipeline(
+                    script=script,
+                    voiceover_path=voiceover_path,
+                    output_name="pipeline_video.mp4",
+                    progress_callback=on_progress,
+                )
+            elif recipe == "avatar_plus_broll":
+                from core.avatar_pipeline import run_avatar_pipeline
+                from webapp.database import get_user_heygen_key
+
+                avatar_id = (req_data.get("avatar_id") or "").strip()
+                voice_id = (req_data.get("voice_id") or "").strip()
+                if not avatar_id or not voice_id:
+                    raise ValueError("Avatar recipe requires avatar_id and voice_id.")
+                heygen_key = get_user_heygen_key(user_id) if user_id else None
+                if not heygen_key:
+                    raise ValueError(
+                        "HeyGen API key missing — reconnect it in Settings → Integrations."
+                    )
+                result = run_avatar_pipeline(
+                    script=script,
+                    avatar_id=avatar_id,
+                    voice_id=voice_id,
+                    voiceover_path=None,
+                    output_name="pipeline_video.mp4",
+                    progress_callback=on_progress,
+                    heygen_api_key=heygen_key,
+                )
+            else:
+                raise ValueError(f"Unknown recipe: {recipe}")
 
         if job.get("status") == "cancelled" or (cancel_check and cancel_check()):
             raise RuntimeError("Cancelled by user")

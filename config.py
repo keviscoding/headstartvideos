@@ -138,6 +138,18 @@ _ADMIN_EMAILS_DEFAULT = {
 }
 ADMIN_EMAILS = sorted(_ADMIN_EMAILS_DEFAULT | set(_ADMIN_EMAILS_ENV))
 
+# Custom BYOK customers — Atlas key only; titles/scripts/thumbs stay on platform.
+# Comma-separated env BYOK_EMAILS can add more without a deploy.
+_BYOK_EMAILS_ENV = [
+    e.strip().lower()
+    for e in (os.getenv("BYOK_EMAILS", "") or "").split(",")
+    if e.strip()
+]
+_BYOK_EMAILS_DEFAULT = {
+    "javinavarro28@gmail.com",
+}
+BYOK_EMAILS = sorted(_BYOK_EMAILS_DEFAULT | set(_BYOK_EMAILS_ENV))
+
 # Telemetry (all optional — everything stays inert if these are blank)
 POSTHOG_KEY = (os.getenv("POSTHOG_KEY", "") or "").strip()
 POSTHOG_HOST = (os.getenv("POSTHOG_HOST", "https://us.i.posthog.com") or "").strip()

@@ -13,7 +13,8 @@ import time
 import uuid
 from pathlib import Path
 
-from config import ATLASCLOUD_KEY, MAX_CONCURRENT_VOICEOVERS, MAX_VOICEOVER_MINUTES, MAX_VOICEOVER_WORDS
+from config import MAX_CONCURRENT_VOICEOVERS, MAX_VOICEOVER_MINUTES, MAX_VOICEOVER_WORDS
+from core.atlas_runtime import get_atlas_key
 
 # Limit parallel full-script TTS jobs on this process (protects the web dyno).
 _vo_slots = threading.Semaphore(max(1, int(MAX_CONCURRENT_VOICEOVERS)))
@@ -229,11 +230,12 @@ def _atlas_tts_chunk(text: str, voice_id: str, out_path: str) -> None:
     """Generate one audio chunk via Atlas xAI TTS. Raises on failure."""
     import httpx
 
-    if not ATLASCLOUD_KEY:
+    key = get_atlas_key()
+    if not key:
         raise RuntimeError("ATLASCLOUD_KEY not configured. Add it in Settings / DigitalOcean env.")
 
     headers = {
-        "Authorization": f"Bearer {ATLASCLOUD_KEY}",
+        "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
     }
     payload = {
@@ -339,7 +341,7 @@ def generate_voiceover(
         out_path = str(out_dir / "voiceover.wav")
         return tts_with_clone(script, fish_id, out_path)
 
-    if not ATLASCLOUD_KEY:
+    if not get_atlas_key():
         raise RuntimeError("ATLASCLOUD_KEY not configured. Voiceover requires Atlas Cloud.")
 
     acquired = _vo_slots.acquire(timeout=180)

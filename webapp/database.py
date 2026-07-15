@@ -276,6 +276,7 @@ def _init_db():
                 cur.execute(_INDEXES)
                 _ensure_column(cur, "users", "trial_used", "INTEGER NOT NULL DEFAULT 0")
                 _ensure_column(cur, "users", "heygen_key_enc", "TEXT DEFAULT ''")
+                _ensure_column(cur, "users", "atlas_key_enc", "TEXT DEFAULT ''")
                 _ensure_column(cur, "cook_jobs", "lite_mode", "INTEGER NOT NULL DEFAULT 0")
                 _ensure_column(cur, "cook_jobs", "worker_id", "TEXT DEFAULT ''")
                 _ensure_column(cur, "cook_jobs", "heartbeat_at", "DOUBLE PRECISION DEFAULT 0")
@@ -290,6 +291,7 @@ def _init_db():
             cur = conn.cursor()
             _ensure_column(cur, "users", "trial_used", "INTEGER NOT NULL DEFAULT 0")
             _ensure_column(cur, "users", "heygen_key_enc", "TEXT DEFAULT ''")
+            _ensure_column(cur, "users", "atlas_key_enc", "TEXT DEFAULT ''")
             _ensure_column(cur, "cook_jobs", "lite_mode", "INTEGER NOT NULL DEFAULT 0")
             _ensure_column(cur, "cook_jobs", "worker_id", "TEXT DEFAULT ''")
             _ensure_column(cur, "cook_jobs", "heartbeat_at", "REAL DEFAULT 0")
@@ -647,6 +649,38 @@ def user_heygen_status(user_id: int) -> dict:
     if not user:
         return {"configured": False, "last4": ""}
     plain = decrypt_secret(user.get("heygen_key_enc") or "")
+    if not plain:
+        return {"configured": False, "last4": ""}
+    return {"configured": True, "last4": secret_last4(plain)}
+
+
+def set_user_atlas_key(user_id: int, plaintext: str | None) -> None:
+    """Store encrypted Atlas Cloud API key (empty/None clears)."""
+    from webapp.secrets import encrypt_secret
+
+    enc = encrypt_secret((plaintext or "").strip()) if plaintext else ""
+    update_user(user_id, atlas_key_enc=enc)
+
+
+def get_user_atlas_key(user_id: int) -> str | None:
+    """Decrypt and return the user's Atlas API key, or None."""
+    from webapp.secrets import decrypt_secret
+
+    user = get_user_by_id(user_id)
+    if not user:
+        return None
+    raw = decrypt_secret(user.get("atlas_key_enc") or "")
+    return raw.strip() or None
+
+
+def user_atlas_status(user_id: int) -> dict:
+    """Public status for Settings UI — never returns the full key."""
+    from webapp.secrets import decrypt_secret, secret_last4
+
+    user = get_user_by_id(user_id)
+    if not user:
+        return {"configured": False, "last4": ""}
+    plain = decrypt_secret(user.get("atlas_key_enc") or "")
     if not plain:
         return {"configured": False, "last4": ""}
     return {"configured": True, "last4": secret_last4(plain)}

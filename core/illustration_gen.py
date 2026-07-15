@@ -17,7 +17,7 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
-from config import ATLASCLOUD_KEY
+from core.atlas_runtime import get_atlas_key
 
 # Compact prompts for ERNIE (~500 char hard limit). Keep style short so the
 # SCENE description (setting + props) gets most of the budget.
@@ -235,7 +235,7 @@ def generate_single_illustration(
 ) -> GeneratedIllustration:
     """Body/style stills: throttled ERNIE, then GPT Image 2 (cheap) fallback."""
     t0 = time.time()
-    if not ATLASCLOUD_KEY:
+    if not get_atlas_key():
         return GeneratedIllustration(
             concept_id=-1, image_path="", model_used="",
             generation_time_sec=0, success=False,
