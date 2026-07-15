@@ -21,17 +21,18 @@ NEW_WINDOW_DAYS = 30
 # Newest first.
 RESOURCES: list[dict] = [
     {
-        "id": "whitespace-ideation-prompt",
-        "title": "Whitespace Ideation Prompt",
-        "tagline": "Carve original niches your audience already wants — not recycled niches.",
+        "id": "blue-ocean-niche-prompt",
+        "title": "Blue Ocean Niche Prompt",
+        "tagline": "Stop copy-pasting viral channels. Combine niches into your own blue ocean.",
         "description": (
-            "A free research-backed prompt that turns winning channel data into adjacent, "
-            "unsaturated niche ideas. Attach your titles/transcripts/outliers, paste today's "
-            "date, and get a ranked idea slate with evidence — not vibes."
+            "Most people see a viral video and clone it. This prompt does the opposite: "
+            "it uses winning channel data + live research to bend niches together and invent "
+            "adjacent, unsaturated territory — your own blue ocean, not someone else's red one. "
+            "Attach titles/transcripts/outliers, paste today's date, get a ranked idea slate."
         ),
         "date": "2026-07-15",
-        "filename": "2026-07-15-whitespace-ideation-prompt.txt",
-        "download_name": "whitespace-ideation-prompt.txt",
+        "filename": "2026-07-15-blue-ocean-niche-prompt.txt",
+        "download_name": "blue-ocean-niche-prompt.txt",
         "kind": "prompt",
         # Explicit New until the next resource ships (also covered by NEW_WINDOW_DAYS).
         "is_new": True,
