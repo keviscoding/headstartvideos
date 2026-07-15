@@ -2,7 +2,7 @@
 Free YouTube resources (prompts, sauce) served from the Resources page.
 
 When adding a new resource:
-1. Drop the file in webapp/static/resources/
+1. Drop the file in webapp/resource_files/
 2. Append an entry below with today's date (YYYY-MM-DD)
 3. Set is_new=True on the new one; set older ones to False (or leave
    is_new unset and rely on NEW_WINDOW_DAYS)
@@ -13,7 +13,8 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-STATIC_RESOURCES = Path(__file__).resolve().parent / "static" / "resources"
+# Outside /static so downloads go through the auth-gated API only.
+RESOURCE_FILES = Path(__file__).resolve().parent / "resource_files"
 
 # Resources newer than this many days get a ★ New badge automatically.
 NEW_WINDOW_DAYS = 30
@@ -63,7 +64,7 @@ def list_resources(*, today: date | None = None) -> list[dict]:
     today = today or date.today()
     out = []
     for item in RESOURCES:
-        path = STATIC_RESOURCES / item["filename"]
+        path = RESOURCE_FILES / item["filename"]
         if not path.is_file():
             continue
         out.append({
@@ -87,7 +88,7 @@ def get_resource(resource_id: str) -> dict | None:
 
 
 def resource_file_path(item: dict) -> Path:
-    return STATIC_RESOURCES / item["filename"]
+    return RESOURCE_FILES / item["filename"]
 
 
 def any_new_resources(*, today: date | None = None) -> bool:

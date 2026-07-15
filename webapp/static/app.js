@@ -2859,11 +2859,24 @@ function _setResourcesNewBadges(hasNew) {
     }
 }
 
+async function _fetchSauceCatalog() {
+    // Prefer /api/sauce (ad blockers often swallow "/api/resources").
+    // Fall back to static JSON so the page still renders if the API is blocked.
+    const urls = ['/api/sauce', '/api/resources', '/static/sauce-catalog.json'];
+    for (const url of urls) {
+        try {
+            const res = await _origFetch(url, { cache: 'no-store' });
+            if (!res.ok) continue;
+            const data = await readJson(res, null);
+            if (data && Array.isArray(data.resources)) return data;
+        } catch (_) { /* try next */ }
+    }
+    return null;
+}
+
 async function refreshResourcesNewBadge() {
     try {
-        // Prefer /api/sauce — "/api/resources" is often blocked by ad blockers.
-        const res = await _origFetch('/api/sauce');
-        const data = await readJson(res, null);
+        const data = await _fetchSauceCatalog();
         if (!data) return;
         _setResourcesNewBadges(!!data.has_new);
     } catch (_) {}
@@ -2874,9 +2887,8 @@ async function loadResourcesPage() {
     if (!list) return;
     list.innerHTML = '<p style="font-size: 14px; color: var(--app-ink-3);">Loading resources…</p>';
     try {
-        const res = await _origFetch('/api/sauce');
-        const data = await readJson(res, null);
-        if (!res.ok || !data) {
+        const data = await _fetchSauceCatalog();
+        if (!data) {
             list.innerHTML = '<p style="font-size: 14px; color: var(--app-ink-3);">Could not load resources.</p>';
             return;
         }
@@ -2918,7 +2930,10 @@ async function downloadResource(resourceId) {
         return;
     }
     try {
-        const res = await _origFetch(`/api/sauce/${encodeURIComponent(id)}/download`);
+        let res = await _origFetch(`/api/sauce/${encodeURIComponent(id)}/download`);
+        if (res.status === 404) {
+            res = await _origFetch(`/api/resources/${encodeURIComponent(id)}/download`);
+        }
         if (res.status === 401 || res.status === 403) {
             showAuthModal();
             return;
