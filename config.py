@@ -127,11 +127,16 @@ STRIPE_PRICE_TOPUP_15 = os.getenv("STRIPE_PRICE_TOPUP_15", "")
 SECRETS_KEY = (os.getenv("SECRETS_KEY", "") or "").strip()
 
 # Admin emails (comma-separated). Required for /api/admin/* and Settings keys.
-ADMIN_EMAILS = [
+# Founder is always included so a missing DO/Fly env var can't silently demote admin UI.
+_ADMIN_EMAILS_ENV = [
     e.strip().lower()
     for e in (os.getenv("ADMIN_EMAILS", "") or "").split(",")
     if e.strip()
 ]
+_ADMIN_EMAILS_DEFAULT = {
+    "nwalikelv@gmail.com",
+}
+ADMIN_EMAILS = sorted(_ADMIN_EMAILS_DEFAULT | set(_ADMIN_EMAILS_ENV))
 
 # Telemetry (all optional — everything stays inert if these are blank)
 POSTHOG_KEY = (os.getenv("POSTHOG_KEY", "") or "").strip()

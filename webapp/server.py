@@ -2400,19 +2400,16 @@ def brain_chat(req: BrainChatRequest, user: dict = Depends(require_user)):
 
 
 # ---------------------------------------------------------------------------
-# Resources (free YouTube sauce — account required to download, no paid plan)
+# Sauce / free resources (account to download, no paid plan)
+# Paths avoid "/api/resources" — some ad blockers swallow that URL pattern.
 # ---------------------------------------------------------------------------
-@app.get("/api/resources")
-def api_list_resources():
-    """Public catalog. Download still requires a signed-in account."""
+def _sauce_catalog_payload() -> dict:
     from webapp.resources_catalog import any_new_resources, list_resources
     items = list_resources()
     return {"resources": items, "has_new": any_new_resources()}
 
 
-@app.get("/api/resources/{resource_id}/download")
-def api_download_resource(resource_id: str, user: dict = Depends(require_user)):
-    """Signed-in account only — no card, trial, or active plan required."""
+def _sauce_file_response(resource_id: str):
     from webapp.resources_catalog import get_resource, resource_file_path
     item = get_resource(resource_id)
     if not item:
@@ -2426,6 +2423,29 @@ def api_download_resource(resource_id: str, user: dict = Depends(require_user)):
         filename=download_name,
         media_type="text/plain; charset=utf-8",
     )
+
+
+@app.get("/api/sauce")
+def api_list_sauce():
+    """Public catalog. Download still requires a signed-in account."""
+    return _sauce_catalog_payload()
+
+
+@app.get("/api/sauce/{resource_id}/download")
+def api_download_sauce(resource_id: str, user: dict = Depends(require_user)):
+    """Signed-in account only — no card, trial, or active plan required."""
+    return _sauce_file_response(resource_id)
+
+
+# Back-compat aliases (may be blocked by ad blockers in some browsers)
+@app.get("/api/resources")
+def api_list_resources_legacy():
+    return _sauce_catalog_payload()
+
+
+@app.get("/api/resources/{resource_id}/download")
+def api_download_resource_legacy(resource_id: str, user: dict = Depends(require_user)):
+    return _sauce_file_response(resource_id)
 
 
 # ---------------------------------------------------------------------------

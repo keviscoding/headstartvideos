@@ -2861,7 +2861,8 @@ function _setResourcesNewBadges(hasNew) {
 
 async function refreshResourcesNewBadge() {
     try {
-        const res = await fetch('/api/resources');
+        // Prefer /api/sauce — "/api/resources" is often blocked by ad blockers.
+        const res = await _origFetch('/api/sauce');
         const data = await readJson(res, null);
         if (!data) return;
         _setResourcesNewBadges(!!data.has_new);
@@ -2873,7 +2874,7 @@ async function loadResourcesPage() {
     if (!list) return;
     list.innerHTML = '<p style="font-size: 14px; color: var(--app-ink-3);">Loading resources…</p>';
     try {
-        const res = await fetch('/api/resources');
+        const res = await _origFetch('/api/sauce');
         const data = await readJson(res, null);
         if (!res.ok || !data) {
             list.innerHTML = '<p style="font-size: 14px; color: var(--app-ink-3);">Could not load resources.</p>';
@@ -2885,7 +2886,9 @@ async function loadResourcesPage() {
             list.innerHTML = '<p style="font-size: 14px; color: var(--app-ink-3);">No resources yet — check back soon.</p>';
             return;
         }
-        list.innerHTML = items.map(r => `
+        list.innerHTML = items.map(r => {
+            const id = String(r.id || '').replace(/[^a-zA-Z0-9_-]/g, '');
+            return `
             <article class="cr-surface" style="padding: 20px; position: relative;">
                 <div class="flex items-start justify-between gap-3" style="flex-wrap: wrap; margin-bottom: 8px;">
                     <div class="flex items-center gap-2" style="flex-wrap: wrap;">
@@ -2896,12 +2899,12 @@ async function loadResourcesPage() {
                 </div>
                 <p style="font-size: 14px; color: var(--app-ink); margin: 0 0 6px; font-weight: 500;">${escapeHtml(r.tagline || '')}</p>
                 <p style="font-size: 14px; color: var(--app-ink-2); margin: 0 0 16px;">${escapeHtml(r.description || '')}</p>
-                <button type="button" class="btn-primary" style="font-size: 14px;" onclick="downloadResource('${escapeHtml(r.id)}')">
+                <button type="button" class="btn-primary" style="font-size: 14px;" data-resource-id="${id}" onclick="downloadResource(this.dataset.resourceId)">
                     Download free
                 </button>
                 <p style="font-size: 12px; color: var(--app-ink-3); margin: 10px 0 0;">Account required · no card needed</p>
-            </article>
-        `).join('');
+            </article>`;
+        }).join('');
     } catch (_) {
         list.innerHTML = '<p style="font-size: 14px; color: var(--app-ink-3);">Could not load resources.</p>';
     }
@@ -2909,8 +2912,13 @@ async function loadResourcesPage() {
 
 async function downloadResource(resourceId) {
     if (!ensureSignedIn(() => downloadResource(resourceId))) return;
+    const id = String(resourceId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!id) {
+        showSoftPrompt('Download failed. Try again.');
+        return;
+    }
     try {
-        const res = await fetch(`/api/resources/${encodeURIComponent(resourceId)}/download`);
+        const res = await _origFetch(`/api/sauce/${encodeURIComponent(id)}/download`);
         if (res.status === 401 || res.status === 403) {
             showAuthModal();
             return;
@@ -2923,7 +2931,7 @@ async function downloadResource(resourceId) {
         const blob = await res.blob();
         const cd = res.headers.get('Content-Disposition') || '';
         const match = /filename="?([^";]+)"?/i.exec(cd);
-        const filename = (match && match[1]) || `${resourceId}.txt`;
+        const filename = (match && match[1]) || `${id}.txt`;
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -2932,7 +2940,7 @@ async function downloadResource(resourceId) {
         a.click();
         a.remove();
         URL.revokeObjectURL(url);
-        try { track('resource_download', { resource_id: resourceId }); } catch (_) {}
+        try { track('resource_download', { resource_id: id }); } catch (_) {}
     } catch (_) {
         showSoftPrompt('Download failed. Try again.');
     }
