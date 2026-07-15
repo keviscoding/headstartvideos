@@ -177,56 +177,80 @@ def _atlas_chat(
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
-    body: dict = {
-        "model": model or ATLAS_TEXT_MODEL,
-        "messages": messages,
-        "max_tokens": max_tokens,
-    }
-    if temperature is not None:
-        body["temperature"] = temperature
+    # Gemini-via-Atlas sometimes burns the whole max_tokens budget on hidden
+    # thinking and returns finish_reason=length with an empty/missing message.
+    # Retry once with a larger cap before failing the cook.
+    attempts = [max(256, int(max_tokens))]
+    if max_tokens < 16384:
+        attempts.append(min(16384, max(max_tokens * 2, 12288)))
 
+    last_err = "Atlas LLM returned empty content"
     with httpx.Client(timeout=180) as client:
-        resp = client.post(
-            f"{ATLAS_LLM_BASE}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {key}",
-                "Content-Type": "application/json",
-            },
-            json=body,
-        )
-        ctype = (resp.headers.get("content-type") or "").lower()
-        text_body = resp.text or ""
-        if resp.status_code >= 400:
-            raise RuntimeError(
-                f"Atlas LLM {resp.status_code}: {text_body[:400]}"
-            )
-        if "application/json" not in ctype or text_body.lstrip().startswith("<!"):
-            raise RuntimeError(
-                f"Atlas LLM returned non-JSON ({ctype or 'unknown'}): {text_body[:200]}"
-            )
-        try:
-            data = resp.json()
-        except Exception as e:
-            raise RuntimeError(
-                f"Atlas LLM JSON parse failed: {e}; body={text_body[:200]}"
-            ) from e
+        for attempt_tokens in attempts:
+            body: dict = {
+                "model": model or ATLAS_TEXT_MODEL,
+                "messages": messages,
+                "max_tokens": attempt_tokens,
+            }
+            if temperature is not None:
+                body["temperature"] = temperature
 
-    choices = data.get("choices") or []
-    if not choices:
-        raise RuntimeError(f"Atlas LLM empty response: {str(data)[:300]}")
-    choice0 = choices[0] if isinstance(choices[0], dict) else {}
-    msg = choice0.get("message") or {}
-    text = _extract_atlas_message_text(msg)
-    if not text:
-        # Some gateways put the answer on the choice itself
-        text = _extract_atlas_message_text(choice0)
-    if not text:
-        finish = choice0.get("finish_reason") or choice0.get("native_finish_reason") or ""
-        raise RuntimeError(
-            f"Atlas LLM returned empty content "
-            f"(finish_reason={finish!r} model={body.get('model')})"
-        )
-    return text
+            resp = client.post(
+                f"{ATLAS_LLM_BASE}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                },
+                json=body,
+            )
+            ctype = (resp.headers.get("content-type") or "").lower()
+            text_body = resp.text or ""
+            if resp.status_code >= 400:
+                raise RuntimeError(
+                    f"Atlas LLM {resp.status_code}: {text_body[:400]}"
+                )
+            if "application/json" not in ctype or text_body.lstrip().startswith("<!"):
+                raise RuntimeError(
+                    f"Atlas LLM returned non-JSON ({ctype or 'unknown'}): {text_body[:200]}"
+                )
+            try:
+                data = resp.json()
+            except Exception as e:
+                raise RuntimeError(
+                    f"Atlas LLM JSON parse failed: {e}; body={text_body[:200]}"
+                ) from e
+
+            choices = data.get("choices") or []
+            if not choices:
+                last_err = f"Atlas LLM empty response: {str(data)[:300]}"
+                continue
+            choice0 = choices[0] if isinstance(choices[0], dict) else {}
+            msg = choice0.get("message") or {}
+            text = _extract_atlas_message_text(msg)
+            if not text:
+                # Some gateways put the answer on the choice itself
+                text = _extract_atlas_message_text(choice0)
+            if text:
+                if attempt_tokens != attempts[0]:
+                    print(
+                        f"[atlas] LLM ok after empty/length retry "
+                        f"(max_tokens {attempts[0]}→{attempt_tokens})"
+                    )
+                return text
+
+            finish = choice0.get("finish_reason") or choice0.get("native_finish_reason") or ""
+            usage = data.get("usage") or {}
+            last_err = (
+                f"Atlas LLM returned empty content "
+                f"(finish_reason={finish!r} model={body.get('model')} "
+                f"max_tokens={attempt_tokens} usage={usage})"
+            )
+            # Only worth retrying when the model hit the length wall / omitted message.
+            if str(finish).lower() not in ("length", "max_tokens", ""):
+                break
+            print(f"[atlas] {last_err} — retrying with more tokens")
+
+    raise RuntimeError(last_err)
 
 
 def _google_text(

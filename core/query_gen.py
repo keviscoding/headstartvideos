@@ -157,6 +157,113 @@ images of the same person.
 Return ONLY a JSON array, one object per segment. No markdown fences."""
 
 
+_QUERY_BATCH_SIZE = 28  # keep Atlas completions well under the empty-length cliff
+
+
+def _fallback_slot_query(seg: dict) -> SlotQuery:
+    """Keyword fallback so a single Atlas empty-length blip doesn't kill the cook."""
+    text = re.sub(r"\s+", " ", (seg.get("text") or "").strip())
+    words = [w for w in re.findall(r"[A-Za-z][A-Za-z'-]{2,}", text) if w.lower() not in {
+        "the", "and", "for", "that", "with", "this", "from", "they", "have", "were",
+        "been", "their", "what", "when", "where", "which", "about", "into", "than",
+    }]
+    subject = " ".join(words[:6]) or "documentary scene"
+    q = subject[:80]
+    return SlotQuery(
+        slot_id=int(seg.get("id", 0)),
+        subject=subject[:120],
+        era="modern",
+        tone="neutral documentary",
+        format_hint="stock photography",
+        primary_query=q,
+        fallback_query=q,
+        source_hint="stock",
+        entity_type="mood",
+        style_hint="neutral",
+    )
+
+
+def _parse_query_items(text: str) -> list[dict]:
+    text = (text or "").strip()
+    text = re.sub(r"^```json\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    try:
+        items = json.loads(text)
+    except json.JSONDecodeError:
+        match = re.search(r"\[.*\]", text, re.DOTALL)
+        if not match:
+            raise ValueError(f"Could not parse LLM response as JSON: {text[:200]}")
+        items = json.loads(match.group())
+    if not isinstance(items, list):
+        raise ValueError("Query LLM response was not a JSON array")
+    return [x for x in items if isinstance(x, dict)]
+
+
+def _generate_query_batch(
+    segments: list[dict],
+    *,
+    full_script: str,
+    few_shot: str,
+) -> list[SlotQuery]:
+    from core.atlas_llm import generate_text
+
+    segment_list = "\n".join(
+        f"Segment {s['id']}: \"{s['text']}\""
+        for s in segments
+    )
+    # Don't dump the entire script for every batch — keep prompt lean.
+    script_snip = (full_script or "")[:2500]
+    user_prompt = f"""Full script context (excerpt):
+\"\"\"{script_snip}\"\"\"
+{few_shot}
+Segments to generate queries for:
+{segment_list}
+
+Generate a JSON array with one object per segment. Each object must have:
+- slot_id (int)
+- subject (str) — the specific visual subject
+- era (str) — time period for this image
+- tone (str) — emotional/aesthetic feel
+- format_hint (str) — type of photograph/image
+- primary_query (str) — composed from subject + era + tone + format
+- fallback_query (str) — broader, keeping era + format
+- source_hint ("wikimedia" | "stock" | "any")
+- entity_type ("person" | "place" | "event" | "object" | "mood")
+- style_hint ("historical_bw" | "cinematic_dark" | "modern_color" | "neutral")"""
+
+    # ~250 tokens/item worst case; batch of 28 → ask for headroom
+    max_tokens = min(12288, max(4096, 350 * len(segments) + 512))
+    text = generate_text(
+        SYSTEM_PROMPT + "\n\n" + user_prompt,
+        model=GEMINI_TEXT_MODEL,
+        max_tokens=max_tokens,
+    )
+    items = _parse_query_items(text)
+    by_id = {int(item.get("slot_id", -1)): item for item in items}
+    out: list[SlotQuery] = []
+    for i, seg in enumerate(segments):
+        sid = int(seg.get("id", i))
+        item = by_id.get(sid) or (items[i] if i < len(items) else None)
+        if not item:
+            out.append(_fallback_slot_query(seg))
+            continue
+        out.append(
+            SlotQuery(
+                slot_id=int(item.get("slot_id", sid)),
+                subject=item.get("subject", ""),
+                era=item.get("era", ""),
+                tone=item.get("tone", ""),
+                format_hint=item.get("format_hint", ""),
+                primary_query=item.get("primary_query", ""),
+                fallback_query=item.get("fallback_query", ""),
+                source_hint=item.get("source_hint", "any"),
+                entity_type=item.get("entity_type", "mood"),
+                style_hint=item.get("style_hint", "neutral"),
+            )
+        )
+    return out
+
+
 def generate_queries(
     segments: list[dict],
     full_script: str = "",
@@ -167,15 +274,13 @@ def generate_queries(
     segments: list of {"id": int, "text": str}
     niche_profile: optional NicheProfile dict with sample_queries for few-shot learning
     """
-    from core.atlas_llm import generate_text, has_atlas
+    from core.atlas_llm import has_atlas
 
     if not GEMINI_KEY and not has_atlas():
         raise ValueError("ATLASCLOUD_KEY or GEMINI_KEY required for query generation")
 
-    segment_list = "\n".join(
-        f"Segment {s['id']}: \"{s['text']}\""
-        for s in segments
-    )
+    if not segments:
+        return []
 
     few_shot = ""
     if niche_profile and niche_profile.get("sample_queries"):
@@ -199,56 +304,22 @@ def generate_queries(
                 f"grain={style.get('grain', 'clean')}\n"
             )
 
-    user_prompt = f"""Full script context:
-\"\"\"{full_script}\"\"\"
-{few_shot}
-Segments to generate queries for:
-{segment_list}
-
-Generate a JSON array with one object per segment. Each object must have:
-- slot_id (int)
-- subject (str) — the specific visual subject
-- era (str) — time period for this image
-- tone (str) — emotional/aesthetic feel
-- format_hint (str) — type of photograph/image
-- primary_query (str) — composed from subject + era + tone + format
-- fallback_query (str) — broader, keeping era + format
-- source_hint ("wikimedia" | "stock" | "any")
-- entity_type ("person" | "place" | "event" | "object" | "mood")
-- style_hint ("historical_bw" | "cinematic_dark" | "modern_color" | "neutral")"""
-
-    text = generate_text(
-        SYSTEM_PROMPT + "\n\n" + user_prompt,
-        model=GEMINI_TEXT_MODEL,
-        max_tokens=8192,
-    ).strip()
-    text = re.sub(r'^```json\s*', '', text)
-    text = re.sub(r'\s*```$', '', text)
-
-    try:
-        items = json.loads(text)
-    except json.JSONDecodeError:
-        match = re.search(r'\[.*\]', text, re.DOTALL)
-        if match:
-            items = json.loads(match.group())
-        else:
-            raise ValueError(f"Could not parse LLM response as JSON: {text[:200]}")
-
-    queries = [
-        SlotQuery(
-            slot_id=item.get("slot_id", i),
-            subject=item.get("subject", ""),
-            era=item.get("era", ""),
-            tone=item.get("tone", ""),
-            format_hint=item.get("format_hint", ""),
-            primary_query=item.get("primary_query", ""),
-            fallback_query=item.get("fallback_query", ""),
-            source_hint=item.get("source_hint", "any"),
-            entity_type=item.get("entity_type", "mood"),
-            style_hint=item.get("style_hint", "neutral"),
-        )
-        for i, item in enumerate(items)
+    queries: list[SlotQuery] = []
+    batches = [
+        segments[i : i + _QUERY_BATCH_SIZE]
+        for i in range(0, len(segments), _QUERY_BATCH_SIZE)
     ]
+    print(f"[query_gen] {len(segments)} segments in {len(batches)} batch(es)")
+
+    for bi, batch in enumerate(batches):
+        try:
+            part = _generate_query_batch(
+                batch, full_script=full_script or "", few_shot=few_shot,
+            )
+            queries.extend(part)
+        except Exception as e:
+            print(f"  [query_gen] batch {bi + 1}/{len(batches)} failed ({e}) — keyword fallback")
+            queries.extend(_fallback_slot_query(s) for s in batch)
 
     for q in queries:
         print(f"  [query] Slot {q.slot_id}: "
