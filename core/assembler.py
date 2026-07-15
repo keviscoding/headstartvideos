@@ -36,7 +36,7 @@ PlayResY: {VIDEO_HEIGHT}
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,58,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,3,2,0,2,60,60,60,1
+Style: Default,DejaVu Sans,58,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,3,2,0,2,60,60,60,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -144,17 +144,14 @@ def _check_ass_filter() -> bool:
         return False
 
 
-def assemble_final(
+def _run_assemble_cmd(
     concat_video: str,
     voiceover_path: str,
-    subtitle_path: str,
     output_path: str,
-    bg_music_path: str | None = None,
-) -> bool:
-    """
-    Merge concatenated video with voiceover audio and burned-in subtitles.
-    Optionally mix in background music at low volume.
-    """
+    bg_music_path: str | None,
+    sub_filter: str | None,
+) -> tuple[bool, str]:
+    """Run one ffmpeg mux pass. Returns (ok, stderr_tail)."""
     inputs = ["-i", concat_video, "-i", voiceover_path]
     filter_parts = []
 
@@ -169,22 +166,11 @@ def assemble_final(
     else:
         audio_map = "1:a"
 
-    has_ass = _check_ass_filter()
-
     cmd = ["ffmpeg", "-y"]
     cmd.extend(inputs)
 
-    if has_ass and subtitle_path:
-        import shutil
-        tmp_sub = os.path.join(tempfile.gettempdir(), f"_vf_subtitles_{os.getpid()}.ass")
-        shutil.copy2(subtitle_path, tmp_sub)
-        sub_filter = f"ass={tmp_sub}"
-    else:
-        sub_filter = None
-
     if filter_parts:
-        full_filter = ";".join(filter_parts)
-        cmd.extend(["-filter_complex", full_filter])
+        cmd.extend(["-filter_complex", ";".join(filter_parts)])
         if sub_filter:
             cmd.extend(["-vf", sub_filter])
         cmd.extend(["-map", "0:v", "-map", audio_map])
@@ -208,12 +194,74 @@ def assemble_final(
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
+        err = (result.stderr or "")[-800:]
         if result.returncode != 0:
-            print(f"[assembler] ffmpeg stderr: {result.stderr[-500:]}")
-        return result.returncode == 0
+            return False, err
+        if not (os.path.exists(output_path) and os.path.getsize(output_path) > 1000):
+            return False, err or "output missing/too small"
+        return True, err
     except Exception as e:
-        print(f"[assembler] Exception: {e}")
+        return False, str(e)
+
+
+def assemble_final(
+    concat_video: str,
+    voiceover_path: str,
+    subtitle_path: str,
+    output_path: str,
+    bg_music_path: str | None = None,
+) -> bool:
+    """
+    Merge concatenated video with voiceover audio and burned-in subtitles.
+    Optionally mix in background music at low volume.
+    Retries without subtitles if the ASS burn-in pass fails (missing fonts, etc.).
+    """
+    if not os.path.isfile(concat_video) or os.path.getsize(concat_video) < 1000:
+        print(f"[assembler] concat video missing/too small: {concat_video}")
         return False
+    if not os.path.isfile(voiceover_path) or os.path.getsize(voiceover_path) < 100:
+        print(f"[assembler] voiceover missing/too small: {voiceover_path}")
+        return False
+
+    sub_filter = None
+    tmp_sub = None
+    if _check_ass_filter() and subtitle_path and os.path.isfile(subtitle_path):
+        import shutil
+        tmp_sub = os.path.join(tempfile.gettempdir(), f"_vf_subtitles_{os.getpid()}.ass")
+        shutil.copy2(subtitle_path, tmp_sub)
+        # Quote path for ffmpeg filtergraph
+        safe = tmp_sub.replace("\\", "/").replace(":", "\\:").replace("'", r"\'")
+        sub_filter = f"ass='{safe}'"
+
+    ok, err = _run_assemble_cmd(
+        concat_video, voiceover_path, output_path, bg_music_path, sub_filter
+    )
+    if ok:
+        if tmp_sub:
+            try:
+                os.unlink(tmp_sub)
+            except OSError:
+                pass
+        return True
+
+    if sub_filter:
+        print(f"[assembler] mux with subtitles failed — retrying without burn-in: {err[-400:]}")
+        ok2, err2 = _run_assemble_cmd(
+            concat_video, voiceover_path, output_path, bg_music_path, None
+        )
+        if tmp_sub:
+            try:
+                os.unlink(tmp_sub)
+            except OSError:
+                pass
+        if ok2:
+            print("[assembler] mux succeeded without subtitles")
+            return True
+        print(f"[assembler] ffmpeg stderr: {err2[-500:]}")
+        return False
+
+    print(f"[assembler] ffmpeg stderr: {err[-500:]}")
+    return False
 
 
 def _concat_file_line(path: str) -> str:
