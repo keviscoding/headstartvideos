@@ -2400,6 +2400,35 @@ def brain_chat(req: BrainChatRequest, user: dict = Depends(require_user)):
 
 
 # ---------------------------------------------------------------------------
+# Resources (free YouTube sauce — account required to download, no paid plan)
+# ---------------------------------------------------------------------------
+@app.get("/api/resources")
+def api_list_resources():
+    """Public catalog. Download still requires a signed-in account."""
+    from webapp.resources_catalog import any_new_resources, list_resources
+    items = list_resources()
+    return {"resources": items, "has_new": any_new_resources()}
+
+
+@app.get("/api/resources/{resource_id}/download")
+def api_download_resource(resource_id: str, user: dict = Depends(require_user)):
+    """Signed-in account only — no card, trial, or active plan required."""
+    from webapp.resources_catalog import get_resource, resource_file_path
+    item = get_resource(resource_id)
+    if not item:
+        raise HTTPException(404, "Resource not found")
+    path = resource_file_path(item)
+    if not path.is_file():
+        raise HTTPException(404, "Resource file missing")
+    download_name = item.get("download_name") or path.name
+    return FileResponse(
+        path,
+        filename=download_name,
+        media_type="text/plain; charset=utf-8",
+    )
+
+
+# ---------------------------------------------------------------------------
 # History
 # ---------------------------------------------------------------------------
 RETENTION_FREE_DAYS = 7

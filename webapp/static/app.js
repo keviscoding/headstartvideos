@@ -250,6 +250,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadVoiceOptions();
     // Prefetch pipeline voices so step 4 never flashes empty
     loadVoices();
+    refreshResourcesNewBadge();
 
     if (currentUser) cookingManager.restore();
 
@@ -283,7 +284,7 @@ function navigateTo(page) {
 
     // Update nav buttons
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-    const toolPages = ['script-studio', 'voiceover-studio', 'thumbnail-studio', 'niche-screener', 'channel-analyzer'];
+    const toolPages = ['script-studio', 'voiceover-studio', 'thumbnail-studio', 'niche-screener', 'channel-analyzer', 'resources'];
     if (page === 'pipeline') {
         document.querySelector('[data-page="pipeline"]')?.classList.add('active');
         goToStep(state.step);
@@ -308,6 +309,7 @@ function navigateTo(page) {
     if (page === 'billing') { try { loadBillingPage(); } catch(_) {} }
     if (page === 'recipe-brain') { try { initRecipeBrainPage(); } catch(_) {} }
     if (page === 'script-studio') { try { syncAdminChannelUI(); } catch(_) {} }
+    if (page === 'resources') { try { loadResourcesPage(); } catch(_) {} }
 
     window.location.hash = page;
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -2839,6 +2841,101 @@ async function analyzeNiche() {
 function useNicheProfile() {
     navigateTo('pipeline');
     goToStep(1);
+}
+
+// ---------------------------------------------------------------------------
+// Resources (free YouTube sauce — account to download, no card/plan)
+// ---------------------------------------------------------------------------
+function _formatResourceDate(iso) {
+    if (!iso) return '';
+    const d = new Date(iso + 'T12:00:00');
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function _setResourcesNewBadges(hasNew) {
+    for (const id of ['nav-tools-resources-new', 'nav-resources-new', 'nav-resources-new-mobile', 'resources-page-new']) {
+        document.getElementById(id)?.classList.toggle('hidden', !hasNew);
+    }
+}
+
+async function refreshResourcesNewBadge() {
+    try {
+        const res = await fetch('/api/resources');
+        const data = await readJson(res, null);
+        if (!data) return;
+        _setResourcesNewBadges(!!data.has_new);
+    } catch (_) {}
+}
+
+async function loadResourcesPage() {
+    const list = document.getElementById('resources-list');
+    if (!list) return;
+    list.innerHTML = '<p style="font-size: 14px; color: var(--app-ink-3);">Loading resources…</p>';
+    try {
+        const res = await fetch('/api/resources');
+        const data = await readJson(res, null);
+        if (!res.ok || !data) {
+            list.innerHTML = '<p style="font-size: 14px; color: var(--app-ink-3);">Could not load resources.</p>';
+            return;
+        }
+        _setResourcesNewBadges(!!data.has_new);
+        const items = data.resources || [];
+        if (!items.length) {
+            list.innerHTML = '<p style="font-size: 14px; color: var(--app-ink-3);">No resources yet — check back soon.</p>';
+            return;
+        }
+        list.innerHTML = items.map(r => `
+            <article class="cr-surface" style="padding: 20px; position: relative;">
+                <div class="flex items-start justify-between gap-3" style="flex-wrap: wrap; margin-bottom: 8px;">
+                    <div class="flex items-center gap-2" style="flex-wrap: wrap;">
+                        <h3 style="font-family: var(--font-display); font-size: 20px; margin: 0; color: var(--app-ink);">${escapeHtml(r.title)}</h3>
+                        ${r.is_new ? '<span class="cr-new-badge" style="position:static;">New</span>' : ''}
+                    </div>
+                    <span class="cr-mono" style="font-size: 12px; color: var(--app-ink-3);">${escapeHtml(_formatResourceDate(r.date))}</span>
+                </div>
+                <p style="font-size: 14px; color: var(--app-ink); margin: 0 0 6px; font-weight: 500;">${escapeHtml(r.tagline || '')}</p>
+                <p style="font-size: 14px; color: var(--app-ink-2); margin: 0 0 16px;">${escapeHtml(r.description || '')}</p>
+                <button type="button" class="btn-primary" style="font-size: 14px;" onclick="downloadResource('${escapeHtml(r.id)}')">
+                    Download free
+                </button>
+                <p style="font-size: 12px; color: var(--app-ink-3); margin: 10px 0 0;">Account required · no card needed</p>
+            </article>
+        `).join('');
+    } catch (_) {
+        list.innerHTML = '<p style="font-size: 14px; color: var(--app-ink-3);">Could not load resources.</p>';
+    }
+}
+
+async function downloadResource(resourceId) {
+    if (!ensureSignedIn(() => downloadResource(resourceId))) return;
+    try {
+        const res = await fetch(`/api/resources/${encodeURIComponent(resourceId)}/download`);
+        if (res.status === 401 || res.status === 403) {
+            showAuthModal();
+            return;
+        }
+        if (!res.ok) {
+            const err = await readJson(res, null);
+            showSoftPrompt((err && err.detail) || 'Download failed. Try again.');
+            return;
+        }
+        const blob = await res.blob();
+        const cd = res.headers.get('Content-Disposition') || '';
+        const match = /filename="?([^";]+)"?/i.exec(cd);
+        const filename = (match && match[1]) || `${resourceId}.txt`;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        try { track('resource_download', { resource_id: resourceId }); } catch (_) {}
+    } catch (_) {
+        showSoftPrompt('Download failed. Try again.');
+    }
 }
 
 // ---------------------------------------------------------------------------
