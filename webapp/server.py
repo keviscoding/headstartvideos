@@ -1051,6 +1051,13 @@ class ChannelFetchRequest(BaseModel):
     channel_url: str
     max_videos: int = 20
 
+class ChannelBatchItem(BaseModel):
+    channel_url: str
+    max_videos: int = 20
+
+class ChannelBatchFetchRequest(BaseModel):
+    channels: list[ChannelBatchItem]
+
 class ChannelAnalyzeRequest(BaseModel):
     channel_data: dict | None = None
 
@@ -2151,23 +2158,22 @@ def generate_upload_kit(req: UploadKitRequest, user: dict = Depends(require_user
 # ---------------------------------------------------------------------------
 # Channel Data + Analysis (Script Studio)
 # ---------------------------------------------------------------------------
-@app.post("/api/channel/fetch")
-def fetch_channel(req: ChannelFetchRequest, user: dict = Depends(require_user)):
+def _channel_fetch_or_raise(channel_url: str, max_videos: int) -> dict:
     from core.channel_data import fetch_channel_data
 
     if not config.YOUTUBE_API_KEY:
         raise HTTPException(400, "YouTube API key not configured. Add it in Settings.")
-
     try:
-        data = fetch_channel_data(
-            channel_url=req.channel_url,
+        return fetch_channel_data(
+            channel_url=channel_url,
             yt_api_key=config.YOUTUBE_API_KEY,
             downsub_key=config.DOWNSUB_KEY,
-            max_videos=req.max_videos,
+            max_videos=max(1, min(int(max_videos or 20), 50)),
         )
-        return data
     except ValueError as e:
         raise HTTPException(400, str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         # YouTube HttpError 404s are bad channel input, not server bugs.
         status = _provider_http_status(e)
@@ -2181,6 +2187,58 @@ def fetch_channel(req: ChannelFetchRequest, user: dict = Depends(require_user)):
         raise HTTPException(status, f"Channel fetch failed: {detail}")
 
 
+@app.post("/api/channel/fetch")
+def fetch_channel(req: ChannelFetchRequest, user: dict = Depends(require_user)):
+    return _channel_fetch_or_raise(req.channel_url, req.max_videos)
+
+
+@app.post("/api/channel/fetch-batch")
+def fetch_channel_batch(req: ChannelBatchFetchRequest, admin: dict = Depends(require_admin)):
+    """Admin-only: fetch multiple channels in parallel."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    channels = (req.channels or [])[:12]
+    if not channels:
+        raise HTTPException(400, "Add at least one channel URL.")
+    if not config.YOUTUBE_API_KEY:
+        raise HTTPException(400, "YouTube API key not configured. Add it in Settings.")
+
+    slots: list[dict | None] = [None] * len(channels)
+    errors: list[dict] = []
+
+    def _one(idx: int, item: ChannelBatchItem) -> tuple[int, str, dict | None, str]:
+        url = (item.channel_url or "").strip()
+        if not url:
+            return idx, url, None, "Empty channel URL"
+        try:
+            data = _channel_fetch_or_raise(url, item.max_videos)
+            data = dict(data)
+            data["_input_url"] = url
+            data["_max_videos"] = max(1, min(int(item.max_videos or 20), 50))
+            return idx, url, data, ""
+        except HTTPException as e:
+            return idx, url, None, str(e.detail)
+        except Exception as e:
+            return idx, url, None, str(e)
+
+    workers = min(6, max(1, len(channels)))
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = [ex.submit(_one, i, c) for i, c in enumerate(channels)]
+        for fut in as_completed(futs):
+            idx, url, data, err = fut.result()
+            if data is not None:
+                slots[idx] = data
+            else:
+                errors.append({"channel_url": url, "error": err, "index": idx})
+
+    ordered = [r for r in slots if r is not None]
+    return {
+        "ok": True,
+        "count": len(ordered),
+        "channels": ordered,
+        "errors": sorted(errors, key=lambda e: e.get("index", 0)),
+        "fetched_by": admin.get("email"),
+    }
 @app.post("/api/channel/analyze")
 def analyze_channel(req: ChannelAnalyzeRequest, user: dict = Depends(require_user)):
     if not config.ANTHROPIC_KEY:

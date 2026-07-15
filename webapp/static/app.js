@@ -307,6 +307,7 @@ function navigateTo(page) {
     if (page === 'history') { try { loadHistory(); } catch(_) {} }
     if (page === 'billing') { try { loadBillingPage(); } catch(_) {} }
     if (page === 'recipe-brain') { try { initRecipeBrainPage(); } catch(_) {} }
+    if (page === 'script-studio') { try { syncAdminChannelUI(); } catch(_) {} }
 
     window.location.hash = page;
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -2254,25 +2255,194 @@ function switchStudioTab(prefix, tabId, btn) {
     document.getElementById(tabId)?.classList.remove('hidden');
 }
 
+function isAdminUser() {
+    return !!(currentUser && currentUser.is_admin);
+}
+
+function syncAdminChannelUI() {
+    const multi = document.getElementById('ss-channel-multi');
+    const single = document.getElementById('ss-channel-single');
+    if (!multi || !single) return;
+    const admin = isAdminUser();
+    multi.classList.toggle('hidden', !admin);
+    single.classList.toggle('hidden', admin);
+    if (admin) {
+        const rows = document.getElementById('ss-channel-rows');
+        if (rows && !rows.children.length) {
+            // Seed from the single-channel fields if present
+            const url = document.getElementById('ss-channel-url')?.value?.trim() || '';
+            const count = parseInt(document.getElementById('ss-video-count')?.value || '20', 10) || 20;
+            addAdminChannelRow(url, count);
+        }
+    }
+}
+
+function addAdminChannelRow(url = '', maxVideos = 20) {
+    const rows = document.getElementById('ss-channel-rows');
+    if (!rows) return;
+    const idx = rows.children.length;
+    const n = Math.max(5, Math.min(50, parseInt(maxVideos, 10) || 20));
+    const wrap = document.createElement('div');
+    wrap.className = 'ss-channel-row cr-surface';
+    wrap.style.cssText = 'padding: 12px 14px;';
+    wrap.innerHTML = `
+        <div class="flex items-start gap-3" style="gap: 10px;">
+            <div style="flex:1;min-width:0;">
+                <label class="cr-label">Channel URL</label>
+                <input type="text" class="cr-input ss-multi-url" placeholder="https://youtube.com/@channelname" value="${_esc(url)}">
+            </div>
+            <button type="button" class="btn-secondary ss-multi-remove" style="margin-top: 22px; font-size: 12px; padding: 6px 10px;" title="Remove">✕</button>
+        </div>
+        <div class="flex items-center gap-4" style="margin-top: 10px;">
+            <div class="flex-1">
+                <label class="cr-label">Videos to fetch</label>
+                <input type="range" min="5" max="50" value="${n}" class="w-full ss-multi-count" style="accent-color: var(--accent);">
+            </div>
+            <span class="cr-mono ss-multi-count-label" style="margin-top: 24px; color: var(--app-ink);">${n}</span>
+        </div>
+    `;
+    const slider = wrap.querySelector('.ss-multi-count');
+    const label = wrap.querySelector('.ss-multi-count-label');
+    slider?.addEventListener('input', () => { if (label) label.textContent = slider.value; });
+    wrap.querySelector('.ss-multi-remove')?.addEventListener('click', () => {
+        if (rows.children.length <= 1) {
+            wrap.querySelector('.ss-multi-url').value = '';
+            return;
+        }
+        wrap.remove();
+    });
+    rows.appendChild(wrap);
+    // keep unused idx quiet for linters
+    void idx;
+}
+
+function collectAdminChannelRows() {
+    const rows = [...document.querySelectorAll('#ss-channel-rows .ss-channel-row')];
+    return rows.map((row) => ({
+        channel_url: row.querySelector('.ss-multi-url')?.value?.trim() || '',
+        max_videos: parseInt(row.querySelector('.ss-multi-count')?.value || '20', 10) || 20,
+    })).filter((r) => r.channel_url);
+}
+
+function _channelDownloadPayload() {
+    if (state.channelDataBatch) return state.channelDataBatch;
+    return state.channelData || null;
+}
+
+function downloadChannelData() {
+    const payload = _channelDownloadPayload();
+    if (!payload) {
+        showSoftPrompt('Fetch channel data first, then download.');
+        return;
+    }
+    const name = payload.channel_name
+        || (payload.channels && payload.channels[0] && payload.channels[0].channel_name)
+        || 'channel';
+    const safe = String(name).replace(/[^\w\-]+/g, '_').slice(0, 40) || 'channel';
+    const stamp = new Date().toISOString().slice(0, 10);
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${safe}_channel_data_${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+function copyChannelData() {
+    const payload = _channelDownloadPayload();
+    if (!payload) {
+        showSoftPrompt('Fetch channel data first, then copy.');
+        return;
+    }
+    const text = JSON.stringify(payload, null, 2);
+    navigator.clipboard?.writeText(text).then(
+        () => showSoftPrompt('Channel data copied.'),
+        () => {
+            // Fallback select
+            const pre = document.getElementById('ss-channel-data');
+            if (pre) {
+                const range = document.createRange();
+                range.selectNodeContents(pre);
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+            }
+            showSoftPrompt('Select the JSON and copy (⌘/Ctrl+C).');
+        }
+    );
+}
+
+function _showChannelResult(payload, { batch = false } = {}) {
+    if (batch) {
+        state.channelDataBatch = payload;
+        // Script Studio analyze / ideas still expect a single channel object
+        state.channelData = (payload.channels && payload.channels[0]) || null;
+    } else {
+        state.channelDataBatch = null;
+        state.channelData = payload;
+    }
+    const pre = document.getElementById('ss-channel-data');
+    if (pre) {
+        const note = batch
+            ? `/* ${payload.count || 0} channel(s) fetched — Download JSON has all. Analyze uses the first. */\n`
+            : '';
+        pre.textContent = note + JSON.stringify(payload, null, 2);
+    }
+    document.getElementById('ss-channel-result')?.classList.remove('hidden');
+}
+
 async function fetchChannelData() {
+    if (!ensureAuth(fetchChannelData)) return;
     const btn = document.getElementById('btn-fetch-channel');
     setLoading(btn, true);
     try {
-        const res = await fetch('/api/channel/fetch', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                channel_url: document.getElementById('ss-channel-url').value.trim(),
-                max_videos: parseInt(document.getElementById('ss-video-count').value),
-            }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Failed');
-        state.channelData = data;
-        document.getElementById('ss-channel-data').textContent = JSON.stringify(data, null, 2);
-        document.getElementById('ss-channel-result').classList.remove('hidden');
+        if (isAdminUser()) {
+            const channels = collectAdminChannelRows();
+            if (!channels.length) {
+                throw new Error('Add at least one YouTube channel URL.');
+            }
+            if (channels.length === 1) {
+                const res = await fetch('/api/channel/fetch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(channels[0]),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(friendlyApiError(data, 'Channel fetch failed'));
+                _showChannelResult(data, { batch: false });
+            } else {
+                const res = await fetch('/api/channel/fetch-batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ channels }),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(friendlyApiError(data, 'Batch fetch failed'));
+                _showChannelResult(data, { batch: true });
+                if ((data.errors || []).length) {
+                    const msgs = data.errors.map((e) => `${e.channel_url}: ${e.error}`).join('\n');
+                    showSoftPrompt(
+                        `Fetched ${data.count} channel(s). ${data.errors.length} failed:\n${msgs.slice(0, 280)}`
+                    );
+                }
+            }
+        } else {
+            const res = await fetch('/api/channel/fetch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    channel_url: document.getElementById('ss-channel-url').value.trim(),
+                    max_videos: parseInt(document.getElementById('ss-video-count').value, 10) || 20,
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(friendlyApiError(data, 'Channel fetch failed'));
+            _showChannelResult(data, { batch: false });
+        }
     } catch (e) {
-        alert('Channel fetch failed: ' + e.message);
+        showSoftPrompt(e.message || 'Channel fetch failed.');
     } finally {
         setLoading(btn, false);
     }
@@ -2292,7 +2462,8 @@ async function analyzeChannel() {
         );
         return;
     }
-    const btn = document.querySelector('#ss-channel-result .btn-primary');
+    const btn = document.getElementById('btn-analyze-channel')
+        || document.querySelector('#ss-channel-result .btn-primary');
     setLoading(btn, true);
     try {
         const res = await fetch('/api/channel/analyze', {
@@ -3486,6 +3657,7 @@ function updateAuthUI() {
             });
             window.Sentry?.setUser({ id: String(currentUser.id), email: currentUser.email });
         } catch (_) {}
+        try { syncAdminChannelUI(); } catch (_) {}
     } else {
         loginBtn.classList.remove('hidden');
         userBtn.classList.add('hidden');
@@ -3497,6 +3669,7 @@ function updateAuthUI() {
         if (navUpgrade) navUpgrade.classList.add('hidden');
         if (cookingUpgrade) cookingUpgrade.classList.add('hidden');
         try { window.Sentry?.setUser(null); } catch (_) {}
+        try { syncAdminChannelUI(); } catch (_) {}
     }
 }
 

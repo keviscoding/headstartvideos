@@ -604,7 +604,57 @@
                 <button class="studio-tab" data-tab="ss-titles" onclick="switchStudioTab('ss', 'ss-titles', this)">Titles</button>
                 <button class="studio-tab" data-tab="ss-script" onclick="switchStudioTab('ss', 'ss-script', this)">Write Script</button>
             </div>
-            <div id="ss-channel" class="studio-panel"><div class="space-y-4"><div><label class="cr-label">YouTube Channel URL</label><input id="ss-channel-url" type="text" placeholder="https://youtube.com/@channelname" class="cr-input"></div><div class="flex items-center gap-4"><div class="flex-1"><label class="cr-label">Videos to fetch</label><input id="ss-video-count" type="range" min="5" max="50" value="20" class="w-full" style="accent-color: var(--accent);"></div><span id="ss-video-count-label" class="cr-mono" style="margin-top: 24px; color: var(--app-ink);">20</span></div><button id="btn-fetch-channel" class="btn-primary" onclick="fetchChannelData()"><span class="btn-text">Fetch channel data</span><span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;display:inline-block;"></div> Fetching...</span></button><div id="ss-channel-result" class="hidden"><div class="cr-surface" style="padding: 16px; margin-top: 16px;"><h4 class="cr-eyebrow mb-2">Channel Data</h4><pre id="ss-channel-data" style="font-family: var(--font-mono); font-size: 12px; color: var(--app-ink-3); max-height: 256px; overflow-y: auto; white-space: pre-wrap;"></pre></div><button class="btn-primary mt-4" onclick="analyzeChannel()"><span class="btn-text">Analyze with Claude</span><span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;display:inline-block;"></div> Analyzing...</span></button><div id="ss-analysis" class="cr-surface hidden" style="padding: 16px; margin-top: 16px;"><h4 class="cr-eyebrow mb-2">Channel Analysis</h4><div id="ss-analysis-text" style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2); white-space: pre-wrap;"></div></div></div></div></div>
+            <div id="ss-channel" class="studio-panel">
+                <div class="space-y-4">
+                    <!-- Single-channel (everyone) -->
+                    <div id="ss-channel-single">
+                        <div>
+                            <label class="cr-label">YouTube Channel URL</label>
+                            <input id="ss-channel-url" type="text" placeholder="https://youtube.com/@channelname" class="cr-input">
+                        </div>
+                        <div class="flex items-center gap-4" style="margin-top: 12px;">
+                            <div class="flex-1">
+                                <label class="cr-label">Videos to fetch</label>
+                                <input id="ss-video-count" type="range" min="5" max="50" value="20" class="w-full" style="accent-color: var(--accent);">
+                            </div>
+                            <span id="ss-video-count-label" class="cr-mono" style="margin-top: 24px; color: var(--app-ink);">20</span>
+                        </div>
+                    </div>
+                    <!-- Multi-channel (admin only) -->
+                    <div id="ss-channel-multi" class="hidden">
+                        <div class="flex items-center justify-between" style="margin-bottom: 10px;">
+                            <label class="cr-label" style="margin: 0;">Channels (admin batch)</label>
+                            <button type="button" class="btn-secondary" style="font-size: 13px; padding: 6px 12px;" onclick="addAdminChannelRow()">+ Add channel</button>
+                        </div>
+                        <div id="ss-channel-rows" class="space-y-3"></div>
+                        <p style="font-size: 12px; color: var(--app-ink-3); margin: 8px 0 0;">Fetches run in parallel. Set videos per channel with each slider.</p>
+                    </div>
+                    <button id="btn-fetch-channel" class="btn-primary" onclick="fetchChannelData()">
+                        <span class="btn-text">Fetch channel data</span>
+                        <span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;display:inline-block;"></div> Fetching...</span>
+                    </button>
+                    <div id="ss-channel-result" class="hidden">
+                        <div class="cr-surface" style="padding: 16px; margin-top: 16px;">
+                            <div class="flex items-center justify-between mb-2" style="gap: 12px; flex-wrap: wrap;">
+                                <h4 class="cr-eyebrow" style="margin: 0;">Channel Data</h4>
+                                <div style="display: flex; gap: 8px;">
+                                    <button type="button" class="btn-secondary" style="font-size: 12px; padding: 6px 12px;" onclick="downloadChannelData()">Download JSON</button>
+                                    <button type="button" class="copy-btn" onclick="copyChannelData()">Copy</button>
+                                </div>
+                            </div>
+                            <pre id="ss-channel-data" style="font-family: var(--font-mono); font-size: 12px; color: var(--app-ink-3); max-height: 256px; overflow-y: auto; white-space: pre-wrap;"></pre>
+                        </div>
+                        <button id="btn-analyze-channel" class="btn-primary mt-4" onclick="analyzeChannel()">
+                            <span class="btn-text">Analyze with Claude</span>
+                            <span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;display:inline-block;"></div> Analyzing...</span>
+                        </button>
+                        <div id="ss-analysis" class="cr-surface hidden" style="padding: 16px; margin-top: 16px;">
+                            <h4 class="cr-eyebrow mb-2">Channel Analysis</h4>
+                            <div id="ss-analysis-text" style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2); white-space: pre-wrap;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
             <div id="ss-ideas" class="studio-panel hidden"><div class="space-y-4"><div class="flex items-center gap-4"><label class="cr-label" style="margin-bottom: 0;">Number of ideas</label><input id="ss-idea-count" type="range" min="3" max="15" value="7" class="flex-1" style="accent-color: var(--accent);"><span id="ss-idea-count-label" class="cr-mono" style="color: var(--app-ink);">7</span></div><button class="btn-primary" onclick="generateIdeas()"><span class="btn-text">Generate video ideas</span><span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;display:inline-block;"></div> Generating...</span></button><div id="ss-ideas-list" class="space-y-2"></div><div class="mt-4"><label class="cr-label">Selected Idea</label><textarea id="ss-selected-idea" rows="3" class="cr-textarea" placeholder="Click an idea above or type your own..."></textarea></div></div></div>
             <div id="ss-titles" class="studio-panel hidden"><div class="space-y-4"><div><label class="cr-label">Video Idea</label><textarea id="ss-title-idea" rows="2" class="cr-textarea" placeholder="Paste your video idea here..."></textarea></div><button class="btn-primary" onclick="generateStudioTitles()"><span class="btn-text">Generate titles</span><span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;display:inline-block;"></div> Generating...</span></button><div id="ss-titles-list" class="space-y-2"></div><div class="mt-4"><label class="cr-label">Selected Title</label><input id="ss-selected-title" type="text" class="cr-input" placeholder="Click a title above or type your own..."></div></div></div>
             <div id="ss-script" class="studio-panel hidden"><div class="space-y-4"><div class="grid grid-cols-1 sm:grid-cols-2 gap-4"><div><label class="cr-label">Video Title</label><input id="ss-script-title" type="text" class="cr-input" placeholder="Your video title..."></div><div><label class="cr-label">Target Length (minutes)</label><input id="ss-script-length" type="number" min="3" max="20" value="8" class="cr-input"></div></div><div><label class="cr-label">Video Idea (optional context)</label><textarea id="ss-script-idea" rows="2" class="cr-textarea" placeholder="Optional idea or context for the script..."></textarea></div><button class="btn-primary" onclick="generateStudioScript()"><span class="btn-text">Write script</span><span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;display:inline-block;"></div> Writing...</span></button><div><div class="flex items-center justify-between mb-2"><span id="ss-word-count" class="cr-eyebrow">0 words</span><button class="copy-btn" onclick="copyText('ss-script-output')">Copy Script</button></div><textarea id="ss-script-output" rows="16" class="cr-textarea" placeholder="Your script will appear here..."></textarea></div><button class="btn-primary" onclick="useScriptInPipeline()">Use in pipeline</button></div></div>
