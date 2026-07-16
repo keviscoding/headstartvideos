@@ -144,14 +144,39 @@ def _check_ass_filter() -> bool:
         return False
 
 
+def _probe_duration_sec(path: str) -> float:
+    """Best-effort media duration in seconds (0 if unknown)."""
+    try:
+        r = subprocess.run(
+            [
+                "ffprobe", "-v", "quiet",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                path,
+            ],
+            capture_output=True, text=True, timeout=15,
+        )
+        return max(0.0, float((r.stdout or "").strip() or 0))
+    except Exception:
+        return 0.0
+
+
 def _run_assemble_cmd(
     concat_video: str,
     voiceover_path: str,
     output_path: str,
     bg_music_path: str | None,
     sub_filter: str | None,
+    *,
+    copy_video: bool = False,
+    timeout: int = 1200,
 ) -> tuple[bool, str]:
-    """Run one ffmpeg mux pass. Returns (ok, stderr_tail)."""
+    """Run one ffmpeg mux pass. Returns (ok, stderr_tail).
+
+    When copy_video=True (no subtitle burn-in), stream-copy the already-encoded
+    H.264 concat and only encode/mux audio — critical on small Fly CPUs where a
+    full re-encode of long cinematic videos exceeds the process timeout.
+    """
     inputs = ["-i", concat_video, "-i", voiceover_path]
     filter_parts = []
 
@@ -166,6 +191,9 @@ def _run_assemble_cmd(
     else:
         audio_map = "1:a"
 
+    # Subtitle burn-in requires a video re-encode; otherwise prefer stream-copy.
+    use_copy = bool(copy_video) and not sub_filter
+
     cmd = ["ffmpeg", "-y"]
     cmd.extend(inputs)
 
@@ -179,21 +207,31 @@ def _run_assemble_cmd(
             cmd.extend(["-vf", sub_filter])
         cmd.extend(["-map", "0:v", "-map", audio_map])
 
-    cmd.extend([
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-crf", "20",
-        "-threads", "0",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-shortest",
-        "-pix_fmt", "yuv420p",
-        "-movflags", "+faststart",
-        output_path,
-    ])
+    if use_copy:
+        cmd.extend([
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-shortest",
+            "-movflags", "+faststart",
+            output_path,
+        ])
+    else:
+        cmd.extend([
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "22",
+            "-threads", "0",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-shortest",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            output_path,
+        ])
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         err = (result.stderr or "")[-800:]
         if result.returncode != 0:
             return False, err
@@ -214,7 +252,9 @@ def assemble_final(
     """
     Merge concatenated video with voiceover audio and burned-in subtitles.
     Optionally mix in background music at low volume.
-    Retries without subtitles if the ASS burn-in pass fails (missing fonts, etc.).
+
+    Prefer stream-copy mux (no video re-encode). Only re-encode when burning
+    ASS captions; if that fails or times out, fall back to copy without burn-in.
     """
     if not os.path.isfile(concat_video) or os.path.getsize(concat_video) < 1000:
         print(f"[assembler] concat video missing/too small: {concat_video}")
@@ -223,44 +263,82 @@ def assemble_final(
         print(f"[assembler] voiceover missing/too small: {voiceover_path}")
         return False
 
+    duration = max(
+        _probe_duration_sec(concat_video),
+        _probe_duration_sec(voiceover_path),
+    )
+    # Stream-copy mux is cheap; burn-in scales with length on weak CPUs.
+    copy_timeout = min(900, max(180, int(duration) + 120))
+    # Cap burn-in attempts — shared-cpu-2x cannot re-encode long cinematic
+    # videos in time (was failing after 1200s hard timeout).
+    burn_timeout = min(600, max(180, int(duration) + 120))
+    # Above ~6 min, skip burn-in entirely and stream-copy (reliable + fast).
+    try_burn_in = duration <= 360
+
     sub_filter = None
     tmp_sub = None
-    if _check_ass_filter() and subtitle_path and os.path.isfile(subtitle_path):
+    if (
+        try_burn_in
+        and _check_ass_filter()
+        and subtitle_path
+        and os.path.isfile(subtitle_path)
+    ):
         import shutil
         tmp_sub = os.path.join(tempfile.gettempdir(), f"_vf_subtitles_{os.getpid()}.ass")
         shutil.copy2(subtitle_path, tmp_sub)
         # Quote path for ffmpeg filtergraph
         safe = tmp_sub.replace("\\", "/").replace(":", "\\:").replace("'", r"\'")
         sub_filter = f"ass='{safe}'"
+    elif duration > 360:
+        print(
+            f"[assembler] skipping caption burn-in for long video "
+            f"(duration≈{duration:.0f}s) — using stream-copy mux"
+        )
 
-    ok, err = _run_assemble_cmd(
-        concat_video, voiceover_path, output_path, bg_music_path, sub_filter
-    )
-    if ok:
+    def _cleanup_tmp():
         if tmp_sub:
             try:
                 os.unlink(tmp_sub)
             except OSError:
                 pass
-        return True
 
     if sub_filter:
-        print(f"[assembler] mux with subtitles failed — retrying without burn-in: {err[-400:]}")
-        ok2, err2 = _run_assemble_cmd(
-            concat_video, voiceover_path, output_path, bg_music_path, None
+        print(
+            f"[assembler] attempting caption burn-in "
+            f"(duration≈{duration:.0f}s, timeout={burn_timeout}s)"
         )
-        if tmp_sub:
-            try:
-                os.unlink(tmp_sub)
-            except OSError:
-                pass
-        if ok2:
-            print("[assembler] mux succeeded without subtitles")
+        ok, err = _run_assemble_cmd(
+            concat_video, voiceover_path, output_path, bg_music_path, sub_filter,
+            copy_video=False, timeout=burn_timeout,
+        )
+        if ok:
+            _cleanup_tmp()
             return True
-        print(f"[assembler] ffmpeg stderr: {err2[-500:]}")
-        return False
+        print(f"[assembler] mux with subtitles failed — falling back to stream-copy: {err[-400:]}")
 
-    print(f"[assembler] ffmpeg stderr: {err[-500:]}")
+    ok2, err2 = _run_assemble_cmd(
+        concat_video, voiceover_path, output_path, bg_music_path, None,
+        copy_video=True, timeout=copy_timeout,
+    )
+    _cleanup_tmp()
+    if ok2:
+        if sub_filter or duration > 360:
+            print("[assembler] mux succeeded via stream-copy (no burned-in captions)")
+        else:
+            print("[assembler] mux succeeded via stream-copy")
+        return True
+
+    # Last resort: re-encode without captions (handles odd concat codecs).
+    print(f"[assembler] stream-copy mux failed — re-encoding without captions: {err2[-300:]}")
+    ok3, err3 = _run_assemble_cmd(
+        concat_video, voiceover_path, output_path, bg_music_path, None,
+        copy_video=False, timeout=min(1200, max(burn_timeout, int(duration) + 180)),
+    )
+    if ok3:
+        print("[assembler] mux succeeded via re-encode (no captions)")
+        return True
+
+    print(f"[assembler] ffmpeg stderr: {err3[-500:]}")
     return False
 
 
