@@ -1364,6 +1364,8 @@ def generate_script(req: ScriptRequest, user: dict = Depends(require_user)):
 def _provider_http_status(exc: Exception) -> int:
     """Map known provider/user errors to non-500 statuses (keeps Sentry quieter)."""
     msg = str(exc).lower()
+    if "too many voiceovers" in msg:
+        return 429
     if "insufficient balance" in msg or "provider balance" in msg or "temporarily unavailable" in msg:
         return 503
     if "tts synthesis failed" in msg or "atlas tts" in msg or "internal error" in msg:
