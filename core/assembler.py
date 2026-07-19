@@ -242,6 +242,46 @@ def _run_assemble_cmd(
         return False, str(e)
 
 
+def _pad_video_to_audio(concat_video: str, voiceover_path: str) -> str:
+    """If visuals are shorter than the voiceover, freeze the last frame to match.
+
+    Without this, ffmpeg `-shortest` silently truncates a full-length narration
+    down to whatever B-roll coverage the scene planner produced.
+    """
+    v_dur = _probe_duration_sec(concat_video)
+    a_dur = _probe_duration_sec(voiceover_path)
+    if v_dur <= 0 or a_dur <= 0 or a_dur - v_dur < 1.0:
+        return concat_video
+
+    pad = a_dur - v_dur + 0.15
+    out = str(Path(concat_video).with_name(Path(concat_video).stem + "_padded.mp4"))
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", concat_video,
+        "-vf", f"tpad=stop_mode=clone:stop_duration={pad:.3f}",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-crf", "22",
+        "-an",
+        "-pix_fmt", "yuv420p",
+        out,
+    ]
+    try:
+        # Padding should be cheap relative to full re-encode of the whole film.
+        timeout = min(900, max(120, int(pad) + 90))
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        if result.returncode == 0 and os.path.isfile(out) and os.path.getsize(out) > 1000:
+            print(
+                f"[assembler] padded visuals {v_dur:.1f}s → ~{a_dur:.1f}s "
+                f"to match voiceover (was short by {a_dur - v_dur:.1f}s)"
+            )
+            return out
+        print(f"[assembler] pad-to-audio failed: {(result.stderr or '')[-300:]}")
+    except Exception as e:
+        print(f"[assembler] pad-to-audio exception: {e}")
+    return concat_video
+
+
 def assemble_final(
     concat_video: str,
     voiceover_path: str,
@@ -262,6 +302,8 @@ def assemble_final(
     if not os.path.isfile(voiceover_path) or os.path.getsize(voiceover_path) < 100:
         print(f"[assembler] voiceover missing/too small: {voiceover_path}")
         return False
+
+    concat_video = _pad_video_to_audio(concat_video, voiceover_path)
 
     duration = max(
         _probe_duration_sec(concat_video),

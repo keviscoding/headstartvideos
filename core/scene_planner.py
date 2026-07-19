@@ -114,7 +114,8 @@ RULE 5 — SCENE DURATION & GROUPING (CRITICAL FOR PACING):
   - MAXIMUM scene duration is 6 seconds. NEVER create a scene longer than 7s.
   - MINIMUM scene duration is 3 seconds.
   - Sweet spot is 4-6 seconds per scene.
-  - For a 30-second script, plan 5-7 scenes. For 60s, plan 10-15. For 90s, plan 15-20.
+  - Cover EVERY sentence in the provided list — do not skip the middle or end.
+  - Rough density: ~1 scene per 4-6s of audio (30s→5-7, 60s→10-15, 180s→30-45).
   - EVERY sentence that introduces a new visual concept MUST be its own scene.
   - If one sentence covers 10+ seconds of audio, it MUST be split into 2 scenes.
   - Dense scripts with many concepts need MORE scenes, not fewer.
@@ -245,86 +246,70 @@ def _parse_scenes_json(raw: str) -> list[dict]:
     raise ValueError(f"Could not parse LLM scene plan as JSON: {text[:300]}")
 
 
-def plan_scenes(
-    script: str,
+# Plan long scripts in time windows so the LLM JSON isn't truncated mid-video
+# (a single 8192-token plan for a 15–20 min script often only covered the open).
+_PLAN_WINDOW_SEC = 150.0
+_PLAN_WINDOW_MAX_SENTENCES = 36
+
+
+def _sentence_windows(
     sentence_timestamps: list[dict],
-    niche_profile: dict | None = None,
-    style_notes: str = "",
+    *,
+    window_sec: float = _PLAN_WINDOW_SEC,
+    max_sentences: int = _PLAN_WINDOW_MAX_SENTENCES,
+) -> list[tuple[int, int]]:
+    """Return (start_idx, end_idx) half-open windows over sentence_timestamps."""
+    n = len(sentence_timestamps)
+    if n == 0:
+        return []
+    if n <= max_sentences:
+        audio_span = float(sentence_timestamps[-1]["end"]) - float(sentence_timestamps[0]["start"])
+        if audio_span <= window_sec * 1.25:
+            return [(0, n)]
+
+    windows: list[tuple[int, int]] = []
+    i = 0
+    while i < n:
+        start_t = float(sentence_timestamps[i]["start"])
+        j = i + 1
+        while j < n:
+            span = float(sentence_timestamps[j - 1]["end"]) - start_t
+            if (j - i) >= max_sentences or span >= window_sec:
+                break
+            j += 1
+        if j <= i:
+            j = min(n, i + 1)
+        windows.append((i, j))
+        i = j
+    return windows
+
+
+def _scene_dicts_to_scenes(
+    scene_dicts: list[dict],
+    sentence_timestamps: list[dict],
+    *,
+    index_offset: int = 0,
+    used_sentence_ids: set[int] | None = None,
 ) -> list[Scene]:
-    """
-    Generate a DirectorScore: a per-scene production plan.
-
-    Args:
-        script: full script text
-        sentence_timestamps: list of {text, start, end} per sentence
-        niche_profile: optional niche profile with visual style info
-        style_notes: additional style guidance text
-    
-    Returns:
-        list of Scene objects ready for the asset router
-    """
-    from core.atlas_llm import generate_text, has_atlas
-
-    if not GEMINI_KEY and not has_atlas():
-        raise ValueError("ATLASCLOUD_KEY or GEMINI_KEY required for scene planning")
-
-    style_guidance = ""
-    if niche_profile:
-        vs = niche_profile.get("visual_style", {})
-        style_guidance = (
-            f"VISUAL STYLE for this niche:\n"
-            f"  Era: {vs.get('era', 'modern')}\n"
-            f"  Tone: {vs.get('tone', 'neutral')}\n"
-            f"  Palette: {vs.get('palette', 'natural')}\n"
-            f"  Grain: {vs.get('grain', 'none')}\n"
-        )
-    if style_notes:
-        style_guidance += f"\nAdditional direction:\n{style_notes}\n"
-
-    prompt = SCENE_PLANNER_PROMPT.format(
-        style_guidance=style_guidance if style_guidance else "No specific style constraints."
-    )
-
-    sentence_context = _build_sentence_context(sentence_timestamps)
-
-    user_msg = (
-        f"FULL SCRIPT:\n{script}\n\n"
-        f"SENTENCES WITH TIMESTAMPS:\n{sentence_context}\n\n"
-        f"Plan the scenes now. Remember: JSON array only."
-    )
-
-    print("[scene_planner] Generating DirectorScore...")
-
-    scene_dicts = None
-    last_error = None
-
-    for attempt in range(3):
-        try:
-            raw = generate_text(
-                prompt + "\n\n" + user_msg,
-                model=GEMINI_TEXT_MODEL,
-                max_tokens=8192,
-            )
-            scene_dicts = _parse_scenes_json(raw)
-            break
-        except Exception as e:
-            last_error = e
-            print(f"  [scene_planner] Attempt {attempt + 1} failed: {e}")
-            if attempt < 2:
-                print(f"  [scene_planner] Retrying...")
-
-    if scene_dicts is None:
-        raise ValueError(f"Scene planning failed after 3 attempts: {last_error}")
-
+    """Map LLM scene dicts onto absolute sentence timestamps."""
+    if used_sentence_ids is None:
+        used_sentence_ids = set()
     scenes: list[Scene] = []
-    used_sentence_ids: set[int] = set()
 
     for sd in scene_dicts:
         sent_ids = sd.get("sentence_ids", [])
         if not sent_ids:
             continue
 
-        new_ids = [sid for sid in sent_ids if sid not in used_sentence_ids]
+        abs_ids = []
+        for sid in sent_ids:
+            try:
+                local = int(sid)
+            except (TypeError, ValueError):
+                continue
+            abs_ids.append(local + index_offset)
+
+        new_ids = [sid for sid in abs_ids if sid not in used_sentence_ids]
         if not new_ids:
             continue
 
@@ -333,7 +318,7 @@ def plan_scenes(
         end_sec = 0.0
 
         for sid in new_ids:
-            if sid < len(sentence_timestamps):
+            if 0 <= sid < len(sentence_timestamps):
                 st = sentence_timestamps[sid]
                 scene_texts.append(st["text"])
                 if start_sec is None:
@@ -355,12 +340,252 @@ def plan_scenes(
             end_sec=end_sec,
             duration_sec=duration,
             asset_type=sd.get("asset_type", "stock_video"),
-            search_queries=sd.get("search_queries", []),
-            ai_prompt=sd.get("ai_prompt", ""),
-            overlay_text=sd.get("overlay_text", ""),
+            search_queries=sd.get("search_queries", []) or [],
+            ai_prompt=sd.get("ai_prompt", "") or "",
+            overlay_text=sd.get("overlay_text", "") or "",
             cut_style=sd.get("cut_style", "hard_cut"),
             pacing=sd.get("pacing", "normal"),
         ))
+
+    return scenes
+
+
+def _fallback_scenes_for_range(
+    sentence_timestamps: list[dict],
+    start_idx: int,
+    end_idx: int,
+) -> list[Scene]:
+    """Deterministic scenes when the LLM skips a stretch of the script."""
+    scenes: list[Scene] = []
+    i = start_idx
+    while i < end_idx:
+        st = sentence_timestamps[i]
+        start = float(st["start"])
+        end = float(st["end"])
+        texts = [st["text"]]
+        j = i + 1
+        # Group short sentences up to ~5.5s so we don't explode clip count.
+        while j < end_idx:
+            nxt = sentence_timestamps[j]
+            cand_end = float(nxt["end"])
+            if cand_end - start > 5.5:
+                break
+            texts.append(nxt["text"])
+            end = cand_end
+            j += 1
+        duration = end - start
+        if duration > 0.5:
+            clean = re.sub(r"[.,!?;:'\"()\-]", " ", " ".join(texts))
+            words = [w for w in clean.split() if len(w) > 3][:6]
+            query = " ".join(words) if words else " ".join(texts)[:60]
+            scenes.append(Scene(
+                id=0,
+                text=" ".join(texts),
+                start_sec=start,
+                end_sec=end,
+                duration_sec=duration,
+                asset_type="stock_video",
+                search_queries=[query, f"{query} documentary"],
+                ai_prompt=(
+                    f"Cinematic documentary still: {' '.join(texts)[:180]}. "
+                    f"Photorealistic, dramatic lighting, 16:9."
+                ),
+                overlay_text="",
+                cut_style="hard_cut",
+                pacing="normal",
+            ))
+        i = j
+    return scenes
+
+
+def _fill_uncovered_sentences(
+    scenes: list[Scene],
+    sentence_timestamps: list[dict],
+    used_sentence_ids: set[int],
+) -> list[Scene]:
+    """Ensure every narrated sentence becomes visual time (fixes short finals)."""
+    if not sentence_timestamps:
+        return scenes
+
+    missing = [i for i in range(len(sentence_timestamps)) if i not in used_sentence_ids]
+    if not missing:
+        # Still close tiny timeline holes between planned scenes.
+        return _fill_timeline_gaps(scenes, sentence_timestamps)
+
+    print(
+        f"[scene_planner] Filling {len(missing)}/{len(sentence_timestamps)} "
+        f"uncovered sentences so video matches full voiceover"
+    )
+    filled = list(scenes)
+    # Group contiguous missing indices
+    run_start = missing[0]
+    prev = missing[0]
+    for idx in missing[1:] + [None]:
+        if idx is not None and idx == prev + 1:
+            prev = idx
+            continue
+        filled.extend(_fallback_scenes_for_range(sentence_timestamps, run_start, prev + 1))
+        if idx is None:
+            break
+        run_start = prev = idx
+
+    filled.sort(key=lambda s: s.start_sec)
+    return _fill_timeline_gaps(filled, sentence_timestamps)
+
+
+def _fill_timeline_gaps(
+    scenes: list[Scene],
+    sentence_timestamps: list[dict],
+) -> list[Scene]:
+    """Pad gaps between scenes so concat duration ≈ full audio length."""
+    if not scenes or not sentence_timestamps:
+        return scenes
+
+    audio_start = float(sentence_timestamps[0]["start"])
+    audio_end = float(sentence_timestamps[-1]["end"])
+    ordered = sorted(scenes, key=lambda s: s.start_sec)
+    out: list[Scene] = []
+    cursor = audio_start
+
+    def _sentences_between(t0: float, t1: float) -> tuple[int, int]:
+        idxs = [
+            i for i, st in enumerate(sentence_timestamps)
+            if float(st["end"]) > t0 + 0.05 and float(st["start"]) < t1 - 0.05
+        ]
+        if not idxs:
+            return 0, 0
+        return idxs[0], idxs[-1] + 1
+
+    for scene in ordered:
+        if scene.start_sec > cursor + 0.4:
+            a, b = _sentences_between(cursor, scene.start_sec)
+            if b > a:
+                out.extend(_fallback_scenes_for_range(sentence_timestamps, a, b))
+            else:
+                # No sentence mapping — stretch previous clip if we have one.
+                gap = scene.start_sec - cursor
+                if out and gap > 0.4:
+                    out[-1].end_sec = scene.start_sec
+                    out[-1].duration_sec = out[-1].end_sec - out[-1].start_sec
+        out.append(scene)
+        cursor = max(cursor, scene.end_sec)
+
+    if cursor < audio_end - 0.4:
+        a, b = _sentences_between(cursor, audio_end)
+        if b > a:
+            out.extend(_fallback_scenes_for_range(sentence_timestamps, a, b))
+        elif out:
+            out[-1].end_sec = audio_end
+            out[-1].duration_sec = out[-1].end_sec - out[-1].start_sec
+
+    for i, s in enumerate(out):
+        s.id = i
+    return out
+
+
+def _plan_window_scene_dicts(
+    prompt: str,
+    script: str,
+    window_sentences: list[dict],
+    *,
+    window_label: str,
+) -> list[dict]:
+    from core.atlas_llm import generate_text
+
+    sentence_context = _build_sentence_context(window_sentences)
+    user_msg = (
+        f"SCRIPT EXCERPT ({window_label}):\n{script}\n\n"
+        f"SENTENCES WITH TIMESTAMPS (indices are 0-based within this excerpt):\n"
+        f"{sentence_context}\n\n"
+        f"Plan scenes that cover EVERY sentence in this excerpt. JSON array only."
+    )
+
+    last_error = None
+    for attempt in range(3):
+        try:
+            raw = generate_text(
+                prompt + "\n\n" + user_msg,
+                model=GEMINI_TEXT_MODEL,
+                max_tokens=8192 if attempt == 0 else 12288,
+            )
+            return _parse_scenes_json(raw)
+        except Exception as e:
+            last_error = e
+            print(f"  [scene_planner] {window_label} attempt {attempt + 1} failed: {e}")
+    print(f"  [scene_planner] {window_label} LLM failed ({last_error}) — using fallback scenes")
+    return []
+
+
+def plan_scenes(
+    script: str,
+    sentence_timestamps: list[dict],
+    niche_profile: dict | None = None,
+    style_notes: str = "",
+) -> list[Scene]:
+    """
+    Generate a DirectorScore: a per-scene production plan.
+
+    Long scripts are planned in time windows so the model can't silently drop
+    the back half (which produced ~4–5 min videos from 15–20 min voiceovers).
+    """
+    from core.atlas_llm import has_atlas
+
+    if not GEMINI_KEY and not has_atlas():
+        raise ValueError("ATLASCLOUD_KEY or GEMINI_KEY required for scene planning")
+    if not sentence_timestamps:
+        raise ValueError("No sentence timestamps provided for scene planning")
+
+    style_guidance = ""
+    if niche_profile:
+        vs = niche_profile.get("visual_style", {})
+        style_guidance = (
+            f"VISUAL STYLE for this niche:\n"
+            f"  Era: {vs.get('era', 'modern')}\n"
+            f"  Tone: {vs.get('tone', 'neutral')}\n"
+            f"  Palette: {vs.get('palette', 'natural')}\n"
+            f"  Grain: {vs.get('grain', 'none')}\n"
+        )
+    if style_notes:
+        style_guidance += f"\nAdditional direction:\n{style_notes}\n"
+
+    prompt = SCENE_PLANNER_PROMPT.format(
+        style_guidance=style_guidance if style_guidance else "No specific style constraints."
+    )
+
+    windows = _sentence_windows(sentence_timestamps)
+    audio_dur = float(sentence_timestamps[-1]["end"]) - float(sentence_timestamps[0]["start"])
+    print(
+        f"[scene_planner] Generating DirectorScore for {len(sentence_timestamps)} "
+        f"sentences ({audio_dur:.0f}s) in {len(windows)} window(s)..."
+    )
+
+    used_sentence_ids: set[int] = set()
+    scenes: list[Scene] = []
+
+    for w_i, (start_i, end_i) in enumerate(windows):
+        window = sentence_timestamps[start_i:end_i]
+        w_start = float(window[0]["start"])
+        w_end = float(window[-1]["end"])
+        label = f"window {w_i + 1}/{len(windows)} ({w_start:.0f}s–{w_end:.0f}s)"
+        excerpt = " ".join(s["text"] for s in window)
+        scene_dicts = _plan_window_scene_dicts(prompt, excerpt, window, window_label=label)
+        if scene_dicts:
+            chunk_scenes = _scene_dicts_to_scenes(
+                scene_dicts,
+                sentence_timestamps,
+                index_offset=start_i,
+                used_sentence_ids=used_sentence_ids,
+            )
+            scenes.extend(chunk_scenes)
+            print(f"  [scene_planner] {label}: {len(chunk_scenes)} scenes")
+        else:
+            fallback = _fallback_scenes_for_range(sentence_timestamps, start_i, end_i)
+            for idx in range(start_i, end_i):
+                used_sentence_ids.add(idx)
+            scenes.extend(fallback)
+            print(f"  [scene_planner] {label}: fallback {len(fallback)} scenes")
+
+    scenes = _fill_uncovered_sentences(scenes, sentence_timestamps, used_sentence_ids)
 
     core_subject, environment = _extract_context(script)
     print(f"[scene_planner] Core subject: \"{core_subject}\"")
@@ -371,11 +596,20 @@ def plan_scenes(
     scenes = _enrich_queries_with_context(scenes, core_subject, environment)
     scenes = _inject_reveal_scenes(scenes)
 
-    print(f"[scene_planner] Final {len(scenes)} scenes: "
-          f"{sum(1 for s in scenes if s.asset_type == 'stock_video')} video, "
-          f"{sum(1 for s in scenes if s.asset_type == 'stock_image')} image, "
-          f"{sum(1 for s in scenes if s.asset_type == 'ai_image')} AI, "
-          f"{sum(1 for s in scenes if s.asset_type == 'text_overlay')} text")
+    # Constraints / text-overlay caps can shrink durations — restore full audio span.
+    scenes = _fill_timeline_gaps(scenes, sentence_timestamps)
+    for i, s in enumerate(scenes):
+        s.id = i
+
+    covered = sum(s.duration_sec for s in scenes)
+    print(
+        f"[scene_planner] Final {len(scenes)} scenes covering ~{covered:.0f}s "
+        f"of {audio_dur:.0f}s audio: "
+        f"{sum(1 for s in scenes if s.asset_type == 'stock_video')} video, "
+        f"{sum(1 for s in scenes if s.asset_type == 'stock_image')} image, "
+        f"{sum(1 for s in scenes if s.asset_type == 'ai_image')} AI, "
+        f"{sum(1 for s in scenes if s.asset_type == 'text_overlay')} text"
+    )
 
     return scenes
 

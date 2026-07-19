@@ -323,6 +323,13 @@ _PENDING_USER_NOTICES = [
         "Credits refunded",
         "We refunded 2 credits to your account. Sorry for the trouble — you're all set to cook again.",
     ),
+    (
+        "2026-07-20-benarko-refund-notice",
+        "benarko2016@gmail.com",
+        "credit_refund",
+        "Credits refunded",
+        "We refunded 2 credits to your account. Sorry for the trouble — you're all set to cook again.",
+    ),
 ]
 
 
