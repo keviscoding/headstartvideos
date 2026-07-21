@@ -2380,6 +2380,136 @@ def generate_script_claude(req: ClaudeScriptRequest, user: dict = Depends(requir
 
 
 # ---------------------------------------------------------------------------
+# Niche Finder (long-form keyword hunt)
+# ---------------------------------------------------------------------------
+_niche_finder_jobs: dict[str, dict] = {}
+
+
+def _niche_finder_access(user: dict) -> str:
+    """
+    Returns:
+      ok | pro_only | coming_soon
+    Admin + Pro can run. Trial/free see Pro upsell. Daily/Starter see coming soon.
+    """
+    if _is_admin_email(user.get("email", "")):
+        return "ok"
+    plan = (user.get("plan") or "free").lower()
+    if plan == "pro":
+        return "ok"
+    if plan in ("starter_trial", "daily_trial", "free"):
+        return "pro_only"
+    # starter / daily paid
+    return "coming_soon"
+
+
+class NicheFinderJobRequest(BaseModel):
+    keywords: list[str] = []
+    max_per_keyword: int = 12
+    max_channels: int = 40
+    min_recent_avg_views: int = 0
+    max_subscribers: int = 2_000_000
+
+
+@app.get("/api/niche-finder/access")
+def niche_finder_access(user: dict = Depends(require_user)):
+    from core.niche_finder import DEFAULT_KEYWORDS, MIN_DURATION_SEC
+
+    access = _niche_finder_access(user)
+    return {
+        "access": access,
+        "can_run": access == "ok",
+        "message": (
+            None
+            if access == "ok"
+            else (
+                "Niche Finder is only available on Pro."
+                if access == "pro_only"
+                else "Niche Finder is coming soon for your plan."
+            )
+        ),
+        "default_keywords": DEFAULT_KEYWORDS,
+        "min_duration_sec": MIN_DURATION_SEC,
+    }
+
+
+@app.post("/api/niche-finder/jobs")
+def start_niche_finder_job(req: NicheFinderJobRequest, user: dict = Depends(require_user)):
+    access = _niche_finder_access(user)
+    if access == "pro_only":
+        raise HTTPException(402, "Niche Finder is only available on Pro.")
+    if access == "coming_soon":
+        raise HTTPException(403, "Niche Finder is coming soon for your plan.")
+    if not config.YOUTUBE_API_KEY:
+        raise HTTPException(400, "YouTube API key not configured. Add it in Settings.")
+
+    import threading
+    from core.niche_finder import DEFAULT_KEYWORDS
+
+    job_id = str(uuid.uuid4())
+    keywords = [k.strip() for k in (req.keywords or []) if k and str(k).strip()]
+    if not keywords:
+        keywords = list(DEFAULT_KEYWORDS)
+
+    job = {
+        "id": job_id,
+        "status": "running",
+        "progress": [],
+        "hits": [],
+        "meta": {},
+        "error": None,
+        "user_id": user["id"],
+        "created_at": time.time(),
+    }
+    _niche_finder_jobs[job_id] = job
+
+    def _run():
+        try:
+            from core.niche_finder import run_niche_finder
+
+            def _progress(msg: str):
+                job["progress"].append({"t": time.time(), "msg": msg})
+                if len(job["progress"]) > 80:
+                    job["progress"] = job["progress"][-60:]
+
+            result = run_niche_finder(
+                api_key=config.YOUTUBE_API_KEY,
+                keywords=keywords,
+                max_per_keyword=max(3, min(int(req.max_per_keyword or 12), 25)),
+                max_channels=max(5, min(int(req.max_channels or 40), 80)),
+                min_recent_avg_views=max(0, int(req.min_recent_avg_views or 0)),
+                max_subscribers=max(10_000, int(req.max_subscribers or 2_000_000)),
+                progress=_progress,
+            )
+            job["hits"] = result.get("hits") or []
+            job["meta"] = result.get("meta") or {}
+            job["status"] = "completed"
+        except Exception as e:
+            job["status"] = "error"
+            job["error"] = str(e)
+            print(f"[niche_finder] job {job_id} failed: {e}")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"job_id": job_id, "status": "running"}
+
+
+@app.get("/api/niche-finder/jobs/{job_id}")
+def get_niche_finder_job(job_id: str, user: dict = Depends(require_user)):
+    job = _niche_finder_jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found (it may have expired after a restart).")
+    if job.get("user_id") != user["id"] and not _is_admin_email(user.get("email", "")):
+        raise HTTPException(403, "Not your job.")
+    return {
+        "id": job["id"],
+        "status": job["status"],
+        "progress": job.get("progress") or [],
+        "hits": job.get("hits") or [],
+        "meta": job.get("meta") or {},
+        "error": job.get("error"),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Niche Screener
 # ---------------------------------------------------------------------------
 @app.post("/api/niche/analyze")

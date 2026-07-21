@@ -324,6 +324,7 @@ function navigateTo(page) {
     if (page === 'recipe-brain') { try { initRecipeBrainPage(); } catch(_) {} }
     if (page === 'script-studio') { try { syncAdminChannelUI(); } catch(_) {} }
     if (page === 'resources') { try { loadResourcesPage(); } catch(_) {} }
+    if (page === 'niche-finder') { try { initNicheFinderPage(); } catch(_) {} }
 
     window.location.hash = page;
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -2831,6 +2832,204 @@ async function generateStudioThumbnails() {
     } finally {
         setLoading(btn, false);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Niche Finder (long-form keyword hunt)
+// ---------------------------------------------------------------------------
+let _nfPollTimer = null;
+let _nfAccess = null;
+
+function _nfFmt(n) {
+    const x = Number(n) || 0;
+    if (x >= 1e6) return (x / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+    if (x >= 1e3) return (x / 1e3).toFixed(1).replace(/\.0$/, '') + 'K';
+    return String(Math.round(x));
+}
+
+function _nfDur(sec) {
+    const s = Math.max(0, Math.round(Number(sec) || 0));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const r = s % 60;
+    if (h) return `${h}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`;
+    return `${m}:${String(r).padStart(2, '0')}`;
+}
+
+async function initNicheFinderPage() {
+    if (!ensureAuth(initNicheFinderPage)) return;
+    const gate = document.getElementById('nf-gate');
+    const workspace = document.getElementById('nf-workspace');
+    const status = document.getElementById('nf-status');
+    if (status) status.textContent = '';
+    try {
+        const res = await fetch('/api/niche-finder/access');
+        const data = await readJson(res, null);
+        if (!res.ok) throw new Error(data?.detail || 'Could not load Niche Finder');
+        _nfAccess = data;
+        const kw = document.getElementById('nf-keywords');
+        if (kw && !kw.value.trim() && Array.isArray(data.default_keywords)) {
+            kw.value = data.default_keywords.join('\n');
+        }
+        if (data.can_run) {
+            gate?.classList.add('hidden');
+            workspace?.classList.remove('hidden');
+        } else {
+            workspace?.classList.add('hidden');
+            gate?.classList.remove('hidden');
+            const title = document.getElementById('nf-gate-title');
+            const body = document.getElementById('nf-gate-body');
+            const cta = document.getElementById('nf-gate-cta');
+            if (data.access === 'pro_only') {
+                if (title) title.textContent = 'Only available on Pro';
+                if (body) body.textContent = data.message || 'Upgrade to Pro to hunt long-form niches.';
+                cta?.classList.remove('hidden');
+            } else {
+                if (title) title.textContent = 'Coming soon';
+                if (body) body.textContent = data.message || 'Niche Finder is coming soon for your plan.';
+                cta?.classList.add('hidden');
+            }
+        }
+    } catch (e) {
+        gate?.classList.remove('hidden');
+        workspace?.classList.add('hidden');
+        const title = document.getElementById('nf-gate-title');
+        const body = document.getElementById('nf-gate-body');
+        if (title) title.textContent = 'Unavailable';
+        if (body) body.textContent = e.message || 'Could not load Niche Finder.';
+    }
+}
+
+async function startNicheFinder() {
+    if (!ensureAuth(startNicheFinder)) return;
+    if (_nfAccess && !_nfAccess.can_run) {
+        initNicheFinderPage();
+        return;
+    }
+    const btn = document.getElementById('nf-run-btn');
+    const status = document.getElementById('nf-status');
+    const results = document.getElementById('nf-results');
+    const keywords = (document.getElementById('nf-keywords')?.value || '')
+        .split(/\n+/)
+        .map(s => s.trim())
+        .filter(Boolean);
+    const minViews = parseInt(document.getElementById('nf-min-views')?.value || '0', 10) || 0;
+    const maxSubs = parseInt(document.getElementById('nf-max-subs')?.value || '2000000', 10) || 2000000;
+
+    if (_nfPollTimer) { clearInterval(_nfPollTimer); _nfPollTimer = null; }
+    setLoading(btn, true);
+    if (results) results.innerHTML = '';
+    if (status) status.textContent = 'Starting search…';
+
+    try {
+        const res = await fetch('/api/niche-finder/jobs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                keywords,
+                min_recent_avg_views: minViews,
+                max_subscribers: maxSubs,
+            }),
+        });
+        const data = await readJson(res, null);
+        if (!res.ok) {
+            const msg = typeof data?.detail === 'string' ? data.detail : (data?.detail?.message || data?.message || 'Failed');
+            if (res.status === 402) {
+                showSoftPrompt(msg, 'Upgrade to Pro', () => showPricingModal());
+                return;
+            }
+            throw new Error(msg);
+        }
+        const jobId = data.job_id;
+        if (status) status.textContent = 'Searching YouTube…';
+        _nfPollTimer = setInterval(() => _pollNicheFinderJob(jobId), 2000);
+        await _pollNicheFinderJob(jobId);
+    } catch (e) {
+        if (status) status.textContent = '';
+        alert('Niche Finder failed: ' + e.message);
+        setLoading(btn, false);
+    }
+}
+
+async function _pollNicheFinderJob(jobId) {
+    const btn = document.getElementById('nf-run-btn');
+    const status = document.getElementById('nf-status');
+    try {
+        const res = await fetch(`/api/niche-finder/jobs/${jobId}`);
+        const data = await readJson(res, null);
+        if (!res.ok) throw new Error(data?.detail || 'Job failed');
+        const last = (data.progress || []).slice(-1)[0];
+        if (status && last?.msg) status.textContent = last.msg;
+
+        if (data.status === 'completed') {
+            if (_nfPollTimer) { clearInterval(_nfPollTimer); _nfPollTimer = null; }
+            setLoading(btn, false);
+            const n = (data.hits || []).length;
+            if (status) status.textContent = `Done — ${n} channel${n === 1 ? '' : 's'} ranked.`;
+            _renderNicheFinderHits(data.hits || []);
+        } else if (data.status === 'error') {
+            if (_nfPollTimer) { clearInterval(_nfPollTimer); _nfPollTimer = null; }
+            setLoading(btn, false);
+            if (status) status.textContent = '';
+            alert('Niche Finder failed: ' + (data.error || 'Unknown error'));
+        }
+    } catch (e) {
+        if (_nfPollTimer) { clearInterval(_nfPollTimer); _nfPollTimer = null; }
+        setLoading(btn, false);
+        if (status) status.textContent = '';
+        alert('Niche Finder failed: ' + e.message);
+    }
+}
+
+function _renderNicheFinderHits(hits) {
+    const root = document.getElementById('nf-results');
+    if (!root) return;
+    if (!hits.length) {
+        root.innerHTML = `<p style="color: var(--app-ink-3); font-size: 14px;">No channels matched. Try broader keywords or lower the min views filter.</p>`;
+        return;
+    }
+    root.innerHTML = hits.map((h) => {
+        const vids = (h.recent_videos || []).slice(0, 4);
+        const thumbs = vids.map(v => `
+            <a href="${v.url}" target="_blank" rel="noopener" title="${(v.title || '').replace(/"/g, '&quot;')}"
+               style="display:block; width: 148px; flex: none; text-decoration:none;">
+                <div style="aspect-ratio:16/9; border-radius: 8px; overflow:hidden; background: var(--app-surface-2); border: 1px solid var(--app-border);">
+                    ${v.thumbnail ? `<img src="${v.thumbnail}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover;">` : ''}
+                </div>
+                <p style="font-size: 11px; color: var(--app-ink-3); margin-top: 6px; line-height: 1.3; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">
+                    ${_nfFmt(v.view_count)} · ${_nfDur(v.duration_sec)}
+                </p>
+            </a>`).join('');
+        return `
+        <div class="cr-surface" style="padding: 18px 20px;">
+            <div class="flex items-start gap-4" style="flex-wrap: wrap;">
+                <a href="${h.channel_url}" target="_blank" rel="noopener" style="flex:none;">
+                    <img src="${h.avatar_url || ''}" alt="" width="48" height="48"
+                         style="width:48px;height:48px;border-radius:50%;object-fit:cover;background:var(--app-surface-2);">
+                </a>
+                <div style="flex:1; min-width: 200px;">
+                    <div class="flex items-center gap-2" style="flex-wrap:wrap;">
+                        <a href="${h.channel_url}" target="_blank" rel="noopener"
+                           style="font-family: var(--font-display); font-weight: 700; font-size: 18px; color: var(--app-ink); text-decoration:none;">
+                            ${h.channel_name || 'Channel'}
+                        </a>
+                        <span class="cr-mono" style="font-size: 11px; color: var(--accent); background: var(--accent-soft-dark); border: 1px solid var(--accent); border-radius: 99px; padding: 2px 8px;">
+                            score ${h.score}
+                        </span>
+                    </div>
+                    <p class="cr-mono" style="font-size: 12px; color: var(--app-ink-3); margin-top: 6px;">
+                        ${_nfFmt(h.subscriber_count)} subs ·
+                        ${_nfFmt(h.recent_avg_views)} recent avg ·
+                        ${h.view_to_sub_ratio}× v/sub ·
+                        ${h.uploads_per_month}/mo
+                    </p>
+                </div>
+            </div>
+            <div class="flex gap-3 mt-4" style="overflow-x:auto; padding-bottom: 4px;">
+                ${thumbs || '<span style="color:var(--app-ink-3);font-size:13px;">No recent long-form videos</span>'}
+            </div>
+        </div>`;
+    }).join('');
 }
 
 // ---------------------------------------------------------------------------

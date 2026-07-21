@@ -41,6 +41,7 @@
                 </div>
                 <nav class="hidden sm:flex items-center gap-1">
                     <button class="nav-btn active" data-page="pipeline" onclick="navigateTo('pipeline')">New video</button>
+                    <button class="nav-btn" data-page="niche-finder" onclick="navigateTo('niche-finder')">Niche Finder</button>
                     <div class="relative" id="tools-dropdown">
                         <button class="nav-btn" data-page="tools" onclick="toggleToolsMenu(event)" style="position:relative;">
                             Tools
@@ -100,6 +101,7 @@
         <!-- Mobile nav -->
         <div id="mobile-menu" class="sm:hidden hidden px-4 py-3 space-y-1" style="border-top: 1px solid var(--app-border);">
             <button class="mobile-nav-btn" onclick="navigateTo('pipeline')">New video</button>
+            <button class="mobile-nav-btn" onclick="navigateTo('niche-finder')">Niche Finder</button>
             <button class="mobile-nav-btn" onclick="navigateTo('script-studio')">Script Studio</button>
             <button class="mobile-nav-btn" onclick="navigateTo('voiceover-studio')">Voiceover Studio</button>
             <button class="mobile-nav-btn" onclick="navigateTo('thumbnail-studio')">Thumbnail Studio</button>
@@ -705,6 +707,49 @@
                 <div><label class="cr-label">Reference Screenshots (optional)</label><label class="btn-secondary cursor-pointer inline-block px-4 py-2" style="font-size: 14px;">Upload References<input id="ts-refs" type="file" accept="image/*" multiple class="hidden" onchange="handleTsRefUpload(this)"></label><div id="ts-refs-preview" class="flex gap-2 flex-wrap mt-2"></div></div>
                 <button class="btn-primary w-full" onclick="generateStudioThumbnails()"><span class="btn-text">Generate thumbnails</span><span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;display:inline-block;"></div> Generating...</span></button>
                 <div id="ts-gallery" class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4"></div>
+            </div>
+        </main>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- PAGE: Niche Finder (long-form keyword hunt) -->
+    <!-- ============================================================ -->
+    <div id="page-niche-finder" class="page-container hidden">
+        <main class="max-w-5xl mx-auto px-6 py-8">
+            <h2 class="cr-display" style="font-size: 32px; margin-bottom: 8px;">Niche Finder</h2>
+            <p style="color: var(--app-ink-2); margin-bottom: 24px; max-width: 40rem;">
+                Hunt long-form YouTube niches (4+ minutes, no max). Ranked by view-to-sub ratio,
+                recent average views, and upload cadence — with the last few videos so you can scan fast.
+            </p>
+
+            <div id="nf-gate" class="hidden cr-surface" style="padding: 28px; margin-bottom: 24px; max-width: 36rem;">
+                <h3 class="cr-display" style="font-size: 22px; margin-bottom: 8px;" id="nf-gate-title">Locked</h3>
+                <p style="color: var(--app-ink-2); margin-bottom: 16px;" id="nf-gate-body"></p>
+                <button id="nf-gate-cta" class="btn-primary hidden" onclick="showPricingModal()">Upgrade to Pro</button>
+            </div>
+
+            <div id="nf-workspace" class="hidden space-y-6">
+                <div class="cr-surface" style="padding: 20px;">
+                    <label class="cr-label">Keywords (one per line)</label>
+                    <textarea id="nf-keywords" class="cr-input" rows="6" style="font-family: var(--font-mono); font-size: 13px; resize: vertical;" placeholder="history documentary&#10;true story explained"></textarea>
+                    <div class="flex flex-wrap items-end gap-4 mt-4">
+                        <div>
+                            <label class="cr-label">Min recent avg views</label>
+                            <input id="nf-min-views" type="number" class="cr-input" value="0" min="0" step="1000" style="width: 140px;">
+                        </div>
+                        <div>
+                            <label class="cr-label">Max subscribers</label>
+                            <input id="nf-max-subs" type="number" class="cr-input" value="2000000" min="10000" step="10000" style="width: 140px;">
+                        </div>
+                        <button id="nf-run-btn" class="btn-primary" onclick="startNicheFinder()">
+                            <span class="btn-text">Find niches</span>
+                            <span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;display:inline-block;"></div> Searching…</span>
+                        </button>
+                    </div>
+                    <p id="nf-status" class="cr-mono" style="font-size: 12px; color: var(--app-ink-3); margin-top: 12px;"></p>
+                </div>
+
+                <div id="nf-results" class="space-y-4"></div>
             </div>
         </main>
     </div>
