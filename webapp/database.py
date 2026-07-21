@@ -158,11 +158,14 @@ CREATE TABLE IF NOT EXISTS niche_channels (
 );
 CREATE TABLE IF NOT EXISTS niche_hunt_runs (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id              TEXT UNIQUE,
     trigger             TEXT NOT NULL DEFAULT 'admin',
     status              TEXT NOT NULL DEFAULT 'running',
     started_at          REAL NOT NULL DEFAULT (strftime('%s','now')),
     finished_at         REAL DEFAULT 0,
     keywords_json       TEXT DEFAULT '[]',
+    request_json        TEXT DEFAULT '{}',
+    progress_json       TEXT DEFAULT '[]',
     meta_json           TEXT DEFAULT '{}',
     channels_upserted   INTEGER DEFAULT 0,
     error               TEXT DEFAULT ''
@@ -294,11 +297,14 @@ CREATE TABLE IF NOT EXISTS niche_channels (
 );
 CREATE TABLE IF NOT EXISTS niche_hunt_runs (
     id                  BIGSERIAL PRIMARY KEY,
+    job_id              TEXT UNIQUE,
     trigger             TEXT NOT NULL DEFAULT 'admin',
     status              TEXT NOT NULL DEFAULT 'running',
     started_at          DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now()),
     finished_at         DOUBLE PRECISION DEFAULT 0,
     keywords_json       TEXT DEFAULT '[]',
+    request_json        TEXT DEFAULT '{}',
+    progress_json       TEXT DEFAULT '[]',
     meta_json           TEXT DEFAULT '{}',
     channels_upserted   INTEGER DEFAULT 0,
     error               TEXT DEFAULT ''
@@ -373,6 +379,9 @@ def _init_db():
                 _ensure_column(cur, "niche_channels", "est_recent_monthly_revenue_low_usd", "DOUBLE PRECISION DEFAULT 0")
                 _ensure_column(cur, "niche_channels", "est_recent_monthly_revenue_high_usd", "DOUBLE PRECISION DEFAULT 0")
                 _ensure_column(cur, "niche_channels", "videos_last_14d", "INTEGER DEFAULT 0")
+                _ensure_column(cur, "niche_hunt_runs", "job_id", "TEXT")
+                _ensure_column(cur, "niche_hunt_runs", "request_json", "TEXT DEFAULT '{}'")
+                _ensure_column(cur, "niche_hunt_runs", "progress_json", "TEXT DEFAULT '[]'")
                 cur.execute(_INDEXES)
                 cur.execute(_MIGRATIONS)
                 try:
@@ -393,6 +402,9 @@ def _init_db():
             _ensure_column(cur, "niche_channels", "est_recent_monthly_revenue_low_usd", "REAL DEFAULT 0")
             _ensure_column(cur, "niche_channels", "est_recent_monthly_revenue_high_usd", "REAL DEFAULT 0")
             _ensure_column(cur, "niche_channels", "videos_last_14d", "INTEGER DEFAULT 0")
+            _ensure_column(cur, "niche_hunt_runs", "job_id", "TEXT")
+            _ensure_column(cur, "niche_hunt_runs", "request_json", "TEXT DEFAULT '{}'")
+            _ensure_column(cur, "niche_hunt_runs", "progress_json", "TEXT DEFAULT '[]'")
             conn.executescript(_INDEXES)
             conn.executescript(_MIGRATIONS)
     _apply_pending_credit_grants()
@@ -1565,14 +1577,15 @@ def list_niche_channels(
     limit = max(1, min(int(limit or 40), 100))
     offset = max(0, int(offset or 0))
     order = _NICHE_SORT_MAP.get(sort) or _NICHE_SORT_MAP["recent_revenue"]
+    # Soft boost: prefer channels posting more in the last 2 weeks (not a hard gate).
+    if active_recently:
+        order = f"COALESCE(videos_last_14d, 0) DESC, {order}"
     clauses = []
     params: list = []
     if active_only:
         clauses.append("active = 1")
     if has_recent_avg:
         clauses.append("COALESCE(recent_avg_views, 0) > 0")
-    if active_recently:
-        clauses.append("COALESCE(videos_last_14d, 0) >= 4")
     if min_recent_avg is not None and min_recent_avg > 0:
         clauses.append("COALESCE(recent_avg_views, 0) >= ?")
         params.append(float(min_recent_avg))
@@ -1637,8 +1650,6 @@ def count_niche_channels(
         clauses.append("active = 1")
     if has_recent_avg:
         clauses.append("COALESCE(recent_avg_views, 0) > 0")
-    if active_recently:
-        clauses.append("COALESCE(videos_last_14d, 0) >= 4")
     if min_recent_avg is not None and min_recent_avg > 0:
         clauses.append("COALESCE(recent_avg_views, 0) >= ?")
         params.append(float(min_recent_avg))
@@ -1681,29 +1692,117 @@ def count_niche_channels(
     return int(d.get("n") or d.get("count") or list(d.values())[0] or 0)
 
 
-def create_niche_hunt_run(*, trigger: str = "admin", keywords: list[str] | None = None) -> int:
+def create_niche_hunt_run(
+    *,
+    job_id: str,
+    trigger: str = "admin",
+    keywords: list[str] | None = None,
+    request: dict | None = None,
+) -> int:
     with _conn() as conn:
         cur = conn.cursor()
         kw_json = json.dumps(keywords or [])
+        req_json = json.dumps(request or {})
         if IS_PG:
             cur.execute(
                 """
-                INSERT INTO niche_hunt_runs (trigger, status, started_at, keywords_json)
-                VALUES (%s, 'running', %s, %s)
+                INSERT INTO niche_hunt_runs
+                    (job_id, trigger, status, started_at, keywords_json, request_json, progress_json)
+                VALUES (%s, %s, 'running', %s, %s, %s, '[]')
                 RETURNING id
                 """,
-                (trigger, time.time(), kw_json),
+                (job_id, trigger, time.time(), kw_json, req_json),
             )
             row = cur.fetchone()
             return int(row["id"] if isinstance(row, dict) else row[0])
         cur.execute(
             """
-            INSERT INTO niche_hunt_runs (trigger, status, started_at, keywords_json)
-            VALUES (?, 'running', ?, ?)
+            INSERT INTO niche_hunt_runs
+                (job_id, trigger, status, started_at, keywords_json, request_json, progress_json)
+            VALUES (?, ?, 'running', ?, ?, ?, '[]')
             """,
-            (trigger, time.time(), kw_json),
+            (job_id, trigger, time.time(), kw_json, req_json),
         )
         return int(cur.lastrowid)
+
+
+def append_niche_hunt_progress(job_id: str, msg: str) -> None:
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(_q("SELECT progress_json FROM niche_hunt_runs WHERE job_id = ?"), (job_id,))
+        row = cur.fetchone()
+        if not row:
+            return
+        d = dict(row)
+        try:
+            progress = json.loads(d.get("progress_json") or "[]")
+        except Exception:
+            progress = []
+        if not isinstance(progress, list):
+            progress = []
+        progress.append({"t": time.time(), "msg": msg})
+        progress = progress[-80:]
+        cur.execute(
+            _q("UPDATE niche_hunt_runs SET progress_json = ? WHERE job_id = ?"),
+            (json.dumps(progress), job_id),
+        )
+
+
+def get_niche_hunt_run_by_job_id(job_id: str) -> dict | None:
+    if not job_id:
+        return None
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(_q("SELECT * FROM niche_hunt_runs WHERE job_id = ?"), (job_id,))
+        row = cur.fetchone()
+    if not row:
+        return None
+    return _parse_niche_hunt_row(row)
+
+
+def _parse_niche_hunt_row(row) -> dict:
+    d = dict(row)
+    try:
+        d["keywords"] = json.loads(d.get("keywords_json") or "[]")
+    except Exception:
+        d["keywords"] = []
+    try:
+        d["meta"] = json.loads(d.get("meta_json") or "{}")
+    except Exception:
+        d["meta"] = {}
+    try:
+        d["progress"] = json.loads(d.get("progress_json") or "[]")
+    except Exception:
+        d["progress"] = []
+    try:
+        d["request"] = json.loads(d.get("request_json") or "{}")
+    except Exception:
+        d["request"] = {}
+    return d
+
+
+def get_latest_running_niche_hunt(*, trigger: str | None = None) -> dict | None:
+    with _conn() as conn:
+        cur = conn.cursor()
+        if trigger:
+            cur.execute(
+                _q(
+                    "SELECT * FROM niche_hunt_runs WHERE status = 'running' AND trigger = ? "
+                    "ORDER BY started_at DESC LIMIT 1"
+                ),
+                (trigger,),
+            )
+        else:
+            cur.execute(
+                _q(
+                    "SELECT * FROM niche_hunt_runs WHERE status = 'running' "
+                    "ORDER BY started_at DESC LIMIT 1"
+                )
+            )
+        row = cur.fetchone()
+    if not row:
+        return None
+    return _parse_niche_hunt_row(row)
 
 
 def finish_niche_hunt_run(
@@ -1756,6 +1855,10 @@ def list_niche_hunt_runs(limit: int = 20) -> list[dict]:
             d["meta"] = json.loads(d.get("meta_json") or "{}")
         except Exception:
             d["meta"] = {}
+        try:
+            d["progress"] = json.loads(d.get("progress_json") or "[]")
+        except Exception:
+            d["progress"] = []
         out.append(d)
     return out
 

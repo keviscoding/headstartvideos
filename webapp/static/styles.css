@@ -839,10 +839,24 @@
   border: 0;
 }
 .nf-filters {
-  padding: 20px 22px 18px;
+  padding: 22px 24px 20px;
   display: flex;
   flex-direction: column;
   gap: 18px;
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 80% at 0% 0%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 55%),
+    var(--app-surface);
+}
+.nf-filters::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  opacity: 0.7;
+  pointer-events: none;
 }
 .nf-filters-head {
   display: flex;
@@ -1027,7 +1041,7 @@
   left: 0%;
   width: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 70%, #8B7CF0), var(--accent));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 55%, var(--app-ink)), var(--accent));
 }
 .nf-range {
   position: absolute;

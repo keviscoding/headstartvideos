@@ -117,10 +117,11 @@ Niche Finder is a **shared database** users browse — not an on-demand hunt for
 Discovery **scrolls real YouTube search pages** (Playwright), like ViewHunt — not API search ranking.
 Videos older than **6 months** are ignored. Results upsert into `niche_channels`.
 
-Isolation: niche scrape runs on a dedicated background thread with its own lock. It does **not** use cook Fly Machines, the cook job queue, or Modal cooks.
+Isolation: niche scrape prefers an ephemeral **Fly Machine** on the cook app image (`python -m webapp.fly_niche_oneshot`) — same image as cooks, different command, **not** the cook queue. Progress lives in `niche_hunt_runs` so refreshing the page can resume polling. If Fly is off, it falls back to a web-dyno background thread.
 
-1. Set `CRON_SECRET` and `YOUTUBE_API_KEY` on the web app (API key is for channel-stats enrich only).
-2. Call the endpoint **1–2×/day**:
+1. Set `CRON_SECRET`, `YOUTUBE_API_KEY`, and (for Fly) `COOK_ON_FLY=1` + cook Fly secrets on the web app.
+2. Redeploy the cook image after niche code changes so Machines pick up `fly_niche_oneshot`.
+3. Call the endpoint **1–2×/day**:
 
 ```bash
 curl -X POST https://channelrecipe.com/api/internal/niche-finder/cron \

@@ -242,3 +242,72 @@ def spawn_cook(job_id: str) -> bool:
     except Exception as e:
         print(f"[fly] spawn failed for {job_id}: {e}")
         return False
+
+
+def spawn_niche_scrape(job_id: str) -> bool:
+    """
+    Ephemeral Fly Machine for Niche Finder scroll scrape (not a cook).
+    Same cook app/image, different one-shot command — never touches the cook queue.
+    """
+    if not getattr(config, "COOK_ON_FLY", False):
+        return False
+    app = (getattr(config, "FLY_COOK_APP", "") or "").strip()
+    if not app:
+        print("[fly-niche] FLY_COOK_APP missing")
+        return False
+    image = _latest_app_image(app) or (getattr(config, "FLY_COOK_IMAGE", "") or "").strip()
+    if not image:
+        print("[fly-niche] no cook image for niche scrape")
+        return False
+    try:
+        region = (getattr(config, "FLY_COOK_REGION", "") or "sjc").strip() or "sjc"
+        # Playwright + Chromium needs RAM; keep lighter than a full cook when possible.
+        cpus = max(1, min(2, int(getattr(config, "FLY_COOK_CPUS", 2) or 2)))
+        memory_mb = max(2048, min(4096, int(getattr(config, "FLY_COOK_MEMORY_MB", 4096) or 4096)))
+        env = _machine_env()
+        env["APP_ENV"] = "fly-niche"
+        env["COOK_ON_WEB"] = "0"
+        # Enrichment needs YouTube Data API; scrape itself is browser-based.
+        yt = (os.getenv("YOUTUBE_API_KEY") or "").strip()
+        if not yt and hasattr(config, "YOUTUBE_API_KEY"):
+            yt = str(getattr(config, "YOUTUBE_API_KEY") or "").strip()
+        if yt:
+            env["YOUTUBE_API_KEY"] = yt.strip().strip('"').strip("'")
+        if not env.get("DATABASE_URL"):
+            print("[fly-niche] DATABASE_URL missing — cannot spawn")
+            return False
+        if not env.get("YOUTUBE_API_KEY"):
+            print("[fly-niche] YOUTUBE_API_KEY missing — cannot spawn")
+            return False
+        body = {
+            "region": region,
+            "config": {
+                "image": image,
+                "auto_destroy": True,
+                "restart": {"policy": "no"},
+                "guest": {
+                    "cpu_kind": "shared",
+                    "cpus": cpus,
+                    "memory_mb": memory_mb,
+                },
+                "env": env,
+                "init": {
+                    "cmd": ["python", "-m", "webapp.fly_niche_oneshot", job_id],
+                },
+            },
+        }
+        created = _request("POST", f"/v1/apps/{app}/machines", body)
+        mid = (created or {}).get("id")
+        if not mid:
+            print(f"[fly-niche] spawn returned no machine id for {job_id}: {created}")
+            return False
+        try:
+            _request("POST", f"/v1/apps/{app}/machines/{mid}/start", {})
+        except Exception as start_err:
+            print(f"[fly-niche] start after create ({mid}): {start_err}")
+        print(f"[fly-niche] spawned machine {mid} for niche job {job_id}")
+        return True
+    except Exception as e:
+        print(f"[fly-niche] spawn failed for {job_id}: {e}")
+        return False
+

@@ -226,6 +226,7 @@ from webapp.database import (
     list_unread_notices, mark_notice_read,
     upsert_niche_channels, list_niche_channels, count_niche_channels,
     create_niche_hunt_run, finish_niche_hunt_run, list_niche_hunt_runs,
+    append_niche_hunt_progress, get_niche_hunt_run_by_job_id, get_latest_running_niche_hunt,
 )
 from webapp import storage
 from webapp import job_queue
@@ -2397,8 +2398,9 @@ def generate_script_claude(req: ClaudeScriptRequest, user: dict = Depends(requir
 # ---------------------------------------------------------------------------
 # Niche Finder (shared niche database — browse for users, hunt for admin/cron)
 # ---------------------------------------------------------------------------
-# Niche Finder scroll scrape uses a dedicated lock — never the cook queue / Fly cooks.
-_niche_finder_jobs: dict[str, dict] = {}
+# Jobs persist in niche_hunt_runs. Prefer a dedicated Fly Machine (same cook
+# app image, different cmd) so refresh/restarts don't kill the scrape.
+# Fallback: local daemon thread on the web dyno. Never uses the cook queue.
 _niche_scrape_lock = __import__("threading").Lock()
 
 
@@ -2423,6 +2425,79 @@ class NicheFinderJobRequest(BaseModel):
     max_video_age_days: int = 180
 
 
+def _niche_job_response(run: dict) -> dict:
+    return {
+        "id": run.get("job_id") or "",
+        "status": run.get("status") or "running",
+        "progress": run.get("progress") or [],
+        "hits": [],
+        "meta": run.get("meta") or {},
+        "channels_upserted": run.get("channels_upserted") or 0,
+        "error": run.get("error") or None,
+        "trigger": run.get("trigger") or "",
+        "runner": (run.get("meta") or {}).get("runner") if isinstance(run.get("meta"), dict) else None,
+    }
+
+
+def _run_niche_hunt_locally(
+    *,
+    job_id: str,
+    run_id: int,
+    kws: list[str],
+    max_per_keyword: int,
+    max_channels: int,
+    min_recent_avg_views: int,
+    max_subscribers: int,
+    scroll_count: int,
+    max_video_age_days: int,
+) -> None:
+    from core.niche_finder import run_niche_finder
+
+    def _progress(msg: str):
+        try:
+            append_niche_hunt_progress(job_id, msg)
+        except Exception:
+            pass
+
+    try:
+        _progress("Running niche scrape on web (Fly unavailable)…")
+        result = run_niche_finder(
+            api_key=config.YOUTUBE_API_KEY,
+            keywords=kws,
+            max_per_keyword=max(3, min(int(max_per_keyword or 12), 25)),
+            max_channels=max(5, min(int(max_channels or 60), 100)),
+            min_recent_avg_views=max(0, int(min_recent_avg_views or 0)),
+            max_subscribers=max(10_000, int(max_subscribers or 150_000)),
+            scroll_count=max(5, min(int(scroll_count or 20), 40)),
+            max_video_age_days=max(30, min(int(max_video_age_days or 180), 365)),
+            progress=_progress,
+        )
+        hits = result.get("hits") or []
+        n = upsert_niche_channels(hits)
+        meta = dict(result.get("meta") or {})
+        meta["runner"] = "web"
+        finish_niche_hunt_run(
+            run_id,
+            status="completed",
+            meta=meta,
+            channels_upserted=n,
+        )
+        _progress(f"Saved {n} channels to the niche library")
+    except Exception as e:
+        finish_niche_hunt_run(
+            run_id,
+            status="error",
+            channels_upserted=0,
+            error=str(e),
+        )
+        print(f"[niche_finder] job {job_id} failed: {e}")
+    finally:
+        try:
+            _niche_scrape_lock.release()
+        except Exception:
+            pass
+
+
 def _start_niche_hunt(
     *,
     keywords: list[str],
@@ -2436,84 +2511,91 @@ def _start_niche_hunt(
     max_video_age_days: int = 180,
 ) -> str:
     """
-    Kick off scroll discovery + upsert. Isolated from cook/video-creation:
-    dedicated lock + background thread only — never Fly cook Machines / cook queue.
+    Kick off scroll discovery + upsert. Prefer Fly Machine; fall back to web thread.
+    Job state is in Postgres so page refresh can keep polling.
     """
     import threading
-    from core.niche_finder import DEFAULT_KEYWORDS, run_niche_finder
+    from core.niche_finder import DEFAULT_KEYWORDS
 
-    if not _niche_scrape_lock.acquire(blocking=False):
-        raise HTTPException(409, "A niche discovery scrape is already running. Wait for it to finish.")
+    existing = get_latest_running_niche_hunt()
+    if existing and existing.get("job_id"):
+        age = time.time() - float(existing.get("started_at") or 0)
+        if age > 2 * 3600 and existing.get("id"):
+            finish_niche_hunt_run(
+                int(existing["id"]),
+                status="error",
+                error="Timed out (no finish within 2h) — safe to start a new scrape.",
+            )
+        else:
+            raise HTTPException(
+                409,
+                detail={
+                    "message": "A niche discovery scrape is already running. Re-attach to that job.",
+                    "job_id": existing["job_id"],
+                },
+            )
 
     kws = [k.strip() for k in (keywords or []) if k and str(k).strip()]
     if not kws:
         kws = list(DEFAULT_KEYWORDS)
 
     job_id = str(uuid.uuid4())
-    run_id = create_niche_hunt_run(trigger=trigger, keywords=kws)
-    job = {
-        "id": job_id,
-        "run_id": run_id,
-        "status": "running",
-        "progress": [],
-        "hits": [],
-        "meta": {},
-        "error": None,
-        "channels_upserted": 0,
+    request = {
+        "keywords": kws,
+        "max_per_keyword": max_per_keyword,
+        "max_channels": max_channels,
+        "min_recent_avg_views": min_recent_avg_views,
+        "max_subscribers": max_subscribers,
+        "scroll_count": scroll_count,
+        "max_video_age_days": max_video_age_days,
         "user_id": user_id,
-        "trigger": trigger,
-        "created_at": time.time(),
     }
-    _niche_finder_jobs[job_id] = job
+    run_id = create_niche_hunt_run(
+        job_id=job_id,
+        trigger=trigger,
+        keywords=kws,
+        request=request,
+    )
+    append_niche_hunt_progress(job_id, "Queued niche discovery…")
 
-    def _run():
+    spawned = False
+    if COOK_ON_FLY:
         try:
-            def _progress(msg: str):
-                job["progress"].append({"t": time.time(), "msg": msg})
-                if len(job["progress"]) > 80:
-                    job["progress"] = job["progress"][-60:]
-
-            result = run_niche_finder(
-                api_key=config.YOUTUBE_API_KEY,
-                keywords=kws,
-                max_per_keyword=max(3, min(int(max_per_keyword or 12), 25)),
-                max_channels=max(5, min(int(max_channels or 60), 100)),
-                min_recent_avg_views=max(0, int(min_recent_avg_views or 0)),
-                max_subscribers=max(10_000, int(max_subscribers or 150_000)),
-                scroll_count=max(5, min(int(scroll_count or 20), 40)),
-                max_video_age_days=max(30, min(int(max_video_age_days or 180), 365)),
-                progress=_progress,
-            )
-            hits = result.get("hits") or []
-            n = upsert_niche_channels(hits)
-            job["hits"] = hits
-            job["meta"] = result.get("meta") or {}
-            job["channels_upserted"] = n
-            job["status"] = "completed"
-            finish_niche_hunt_run(
-                run_id,
-                status="completed",
-                meta=job["meta"],
-                channels_upserted=n,
-            )
-            _progress(f"Saved {n} channels to the niche library")
+            from webapp.fly_bridge import spawn_niche_scrape
+            spawned = bool(spawn_niche_scrape(job_id))
         except Exception as e:
-            job["status"] = "error"
-            job["error"] = str(e)
-            finish_niche_hunt_run(
-                run_id,
-                status="error",
-                channels_upserted=0,
-                error=str(e),
-            )
-            print(f"[niche_finder] job {job_id} failed: {e}")
-        finally:
-            try:
-                _niche_scrape_lock.release()
-            except Exception:
-                pass
+            print(f"[niche_finder] Fly spawn error: {e}")
+            spawned = False
 
-    threading.Thread(target=_run, daemon=True, name="niche-scroll-scrape").start()
+    if spawned:
+        append_niche_hunt_progress(job_id, "Spawned Fly Machine for scroll scrape…")
+        return job_id
+
+    # Local fallback — only one web-thread scrape at a time
+    if not _niche_scrape_lock.acquire(blocking=False):
+        finish_niche_hunt_run(
+            run_id,
+            status="error",
+            error="Could not start local scrape (busy) and Fly spawn failed.",
+        )
+        raise HTTPException(409, "A niche discovery scrape is already running on the web dyno.")
+
+    threading.Thread(
+        target=_run_niche_hunt_locally,
+        kwargs=dict(
+            job_id=job_id,
+            run_id=run_id,
+            kws=kws,
+            max_per_keyword=max_per_keyword,
+            max_channels=max_channels,
+            min_recent_avg_views=min_recent_avg_views,
+            max_subscribers=max_subscribers,
+            scroll_count=scroll_count,
+            max_video_age_days=max_video_age_days,
+        ),
+        daemon=True,
+        name="niche-scroll-scrape",
+    ).start()
     return job_id
 
 
@@ -2531,9 +2613,14 @@ def niche_finder_access(user: dict = Depends(require_user)):
         access = "pro_only"
         message = "Niche Finder is only available on Pro."
     else:
-        # Unexpected paid-adjacent plans — still treat as browse-locked soft message
         access = "pro_only"
         message = "Niche Finder is only available on Pro."
+
+    active_job_id = None
+    if can_run:
+        running = get_latest_running_niche_hunt()
+        if running and running.get("job_id"):
+            active_job_id = running["job_id"]
 
     return {
         "access": access,
@@ -2543,6 +2630,8 @@ def niche_finder_access(user: dict = Depends(require_user)):
         "default_keywords": DEFAULT_KEYWORDS if can_run else [],
         "min_duration_sec": MIN_DURATION_SEC,
         "channel_count": count_niche_channels() if can_browse else 0,
+        "active_job_id": active_job_id,
+        "cook_on_fly": bool(COOK_ON_FLY),
     }
 
 
@@ -2614,18 +2703,10 @@ def start_niche_finder_job(
 
 @app.get("/api/niche-finder/jobs/{job_id}")
 def get_niche_finder_job(job_id: str, admin: dict = Depends(require_admin)):
-    job = _niche_finder_jobs.get(job_id)
-    if not job:
-        raise HTTPException(404, "Job not found (it may have expired after a restart).")
-    return {
-        "id": job["id"],
-        "status": job["status"],
-        "progress": job.get("progress") or [],
-        "hits": job.get("hits") or [],
-        "meta": job.get("meta") or {},
-        "channels_upserted": job.get("channels_upserted") or 0,
-        "error": job.get("error"),
-    }
+    run = get_niche_hunt_run_by_job_id(job_id)
+    if not run:
+        raise HTTPException(404, "Job not found.")
+    return _niche_job_response(run)
 
 
 @app.get("/api/niche-finder/runs")

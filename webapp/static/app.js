@@ -3197,6 +3197,10 @@ async function initNicheFinderPage() {
             workspace?.classList.remove('hidden');
             adminPanel?.classList.toggle('hidden', !data.can_run);
             await loadNicheFinderFeed();
+            if (data.can_run) {
+                const resumeId = data.active_job_id || localStorage.getItem('nf_active_job_id');
+                if (resumeId) _resumeNicheFinderJob(resumeId);
+            }
         } else {
             workspace?.classList.add('hidden');
             gate?.classList.remove('hidden');
@@ -3327,19 +3331,43 @@ async function startNicheFinder() {
             }),
         });
         const data = await readJson(res, null);
+        if (res.status === 409) {
+            const detail = data?.detail;
+            const resumeId = (typeof detail === 'object' && detail?.job_id) || null;
+            const msg = (typeof detail === 'object' && detail?.message)
+                || (typeof detail === 'string' ? detail : 'A scrape is already running.');
+            if (resumeId) {
+                if (status) status.textContent = 'Reconnecting to running scrape…';
+                _resumeNicheFinderJob(resumeId);
+                return;
+            }
+            throw new Error(msg);
+        }
         if (!res.ok) {
             const msg = typeof data?.detail === 'string' ? data.detail : (data?.detail?.message || data?.message || 'Failed');
             throw new Error(msg);
         }
         const jobId = data.job_id;
+        localStorage.setItem('nf_active_job_id', jobId);
         if (status) status.textContent = 'Searching YouTube…';
-        _nfPollTimer = setInterval(() => _pollNicheFinderJob(jobId), 2000);
-        await _pollNicheFinderJob(jobId);
+        _resumeNicheFinderJob(jobId);
     } catch (e) {
         if (status) status.textContent = '';
         alert('Library refresh failed: ' + e.message);
         setLoading(btn, false);
     }
+}
+
+function _resumeNicheFinderJob(jobId) {
+    if (!jobId) return;
+    localStorage.setItem('nf_active_job_id', jobId);
+    const btn = document.getElementById('nf-run-btn');
+    const status = document.getElementById('nf-status');
+    setLoading(btn, true);
+    if (status && !status.textContent) status.textContent = 'Reconnecting to scrape…';
+    if (_nfPollTimer) { clearInterval(_nfPollTimer); _nfPollTimer = null; }
+    _nfPollTimer = setInterval(() => _pollNicheFinderJob(jobId), 2500);
+    _pollNicheFinderJob(jobId);
 }
 
 async function _pollNicheFinderJob(jobId) {
@@ -3348,27 +3376,35 @@ async function _pollNicheFinderJob(jobId) {
     try {
         const res = await fetch(`/api/niche-finder/jobs/${jobId}`);
         const data = await readJson(res, null);
+        if (res.status === 404) {
+            localStorage.removeItem('nf_active_job_id');
+            if (_nfPollTimer) { clearInterval(_nfPollTimer); _nfPollTimer = null; }
+            setLoading(btn, false);
+            if (status) status.textContent = '';
+            return;
+        }
         if (!res.ok) throw new Error(data?.detail || 'Job failed');
         const last = (data.progress || []).slice(-1)[0];
         if (status && last?.msg) status.textContent = last.msg;
 
         if (data.status === 'completed') {
+            localStorage.removeItem('nf_active_job_id');
             if (_nfPollTimer) { clearInterval(_nfPollTimer); _nfPollTimer = null; }
             setLoading(btn, false);
             const n = data.channels_upserted || (data.hits || []).length;
             if (status) status.textContent = `Done — ${n} channel${n === 1 ? '' : 's'} saved to the library.`;
             await loadNicheFinderFeed();
         } else if (data.status === 'error') {
+            localStorage.removeItem('nf_active_job_id');
             if (_nfPollTimer) { clearInterval(_nfPollTimer); _nfPollTimer = null; }
             setLoading(btn, false);
             if (status) status.textContent = '';
             alert('Library refresh failed: ' + (data.error || 'Unknown error'));
         }
+        // Still running — keep polling; do not clear on transient blips
     } catch (e) {
-        if (_nfPollTimer) { clearInterval(_nfPollTimer); _nfPollTimer = null; }
-        setLoading(btn, false);
-        if (status) status.textContent = '';
-        alert('Library refresh failed: ' + e.message);
+        // Soft: keep polling through brief network hiccups after refresh
+        if (status) status.textContent = 'Still running… reconnecting (' + (e.message || 'network') + ')';
     }
 }
 
