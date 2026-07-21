@@ -2844,7 +2844,7 @@ async function generateStudioThumbnails() {
 // ---------------------------------------------------------------------------
 let _nfPollTimer = null;
 let _nfAccess = null;
-let _nfOffset = 0;
+let _nfPage = 1;
 let _nfTotal = 0;
 const _NF_PAGE = 40;
 
@@ -2907,20 +2907,21 @@ async function initNicheFinderPage() {
 
 async function loadNicheFinderFeed(opts = {}) {
     if (_nfAccess && !_nfAccess.can_browse) return;
-    const isAppend = opts.append === true;
-    if (!isAppend) {
-        _nfOffset = 0;
-        const results = document.getElementById('nf-results');
-        if (results) results.innerHTML = '';
-    }
+    if (opts.reset) _nfPage = 1;
     const meta = document.getElementById('nf-feed-meta');
-    const moreWrap = document.getElementById('nf-load-more-wrap');
+    const pager = document.getElementById('nf-pager');
+    const pageLabel = document.getElementById('nf-page-label');
+    const prevBtn = document.getElementById('nf-prev');
+    const nextBtn = document.getElementById('nf-next');
+    const results = document.getElementById('nf-results');
     try {
-        if (meta && !isAppend) meta.textContent = 'Loading niche library…';
+        if (meta) meta.textContent = 'Loading niche library…';
+        if (results) results.innerHTML = '';
+        const offset = (_nfPage - 1) * _NF_PAGE;
         const params = new URLSearchParams();
         params.set('sort', document.getElementById('nf-sort')?.value || 'recent_revenue');
         params.set('limit', String(_NF_PAGE));
-        params.set('offset', String(_nfOffset));
+        params.set('offset', String(offset));
         const minRecent = document.getElementById('nf-f-min-recent')?.value;
         const maxRecent = document.getElementById('nf-f-max-recent')?.value;
         const minSubs = document.getElementById('nf-f-min-subs')?.value;
@@ -2941,14 +2942,25 @@ async function loadNicheFinderFeed(opts = {}) {
         if (!res.ok) throw new Error(data?.detail || 'Failed to load niches');
         const channels = data.channels || [];
         _nfTotal = data.total || 0;
-        _renderNicheFinderHits(channels, { append: isAppend });
-        _nfOffset += channels.length;
+        const totalPages = Math.max(1, Math.ceil(_nfTotal / _NF_PAGE));
+        if (_nfPage > totalPages) {
+            _nfPage = totalPages;
+            if (offset > 0 && channels.length === 0 && _nfTotal > 0) {
+                return loadNicheFinderFeed();
+            }
+        }
+        _renderNicheFinderHits(channels, { append: false });
+        const from = _nfTotal ? offset + 1 : 0;
+        const to = offset + channels.length;
         if (meta) {
             meta.textContent = _nfTotal
-                ? `Showing ${_nfOffset} of ${_nfTotal} niches`
+                ? `Showing ${from}–${to} of ${_nfTotal} niches`
                 : 'Library is empty — run Add niches (admin) or wait for the daily cron.';
         }
-        moreWrap?.classList.toggle('hidden', _nfOffset >= _nfTotal || channels.length === 0);
+        if (pager) pager.classList.toggle('hidden', _nfTotal <= _NF_PAGE);
+        if (pageLabel) pageLabel.textContent = `Page ${_nfPage} of ${totalPages}`;
+        if (prevBtn) prevBtn.disabled = _nfPage <= 1;
+        if (nextBtn) nextBtn.disabled = _nfPage >= totalPages;
     } catch (e) {
         if (meta) meta.textContent = e.message || 'Failed to load niches';
     }
@@ -2958,8 +2970,23 @@ function applyNicheFilters() {
     loadNicheFinderFeed({ reset: true });
 }
 
+function nicheFinderNextPage() {
+    const totalPages = Math.max(1, Math.ceil(_nfTotal / _NF_PAGE));
+    if (_nfPage >= totalPages) return;
+    _nfPage += 1;
+    loadNicheFinderFeed();
+    document.getElementById('page-niche-finder')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function nicheFinderPrevPage() {
+    if (_nfPage <= 1) return;
+    _nfPage -= 1;
+    loadNicheFinderFeed();
+    document.getElementById('page-niche-finder')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 async function loadMoreNicheFinder() {
-    await loadNicheFinderFeed({ append: true });
+    nicheFinderNextPage();
 }
 
 async function startNicheFinder() {

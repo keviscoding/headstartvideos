@@ -94,26 +94,47 @@ def _search_video_ids(
     *,
     video_duration: str,
     max_results: int,
+    pages: int = 3,
 ) -> list[str]:
-    resp = (
-        youtube.search()
-        .list(
+    """
+    Pull multiple YouTube search pages (nextPageToken) so we go deeper than
+    the first result screen — same idea as scrolling to the bottom of search.
+    """
+    want = max(1, int(max_results))
+    pages = max(1, min(int(pages), 5))
+    ids: list[str] = []
+    seen: set[str] = set()
+    page_token: str | None = None
+    for _ in range(pages):
+        if len(ids) >= want:
+            break
+        kwargs = dict(
             part="id",
             q=keyword,
             type="video",
             videoDuration=video_duration,
-            order="viewCount",
-            maxResults=min(25, max(1, max_results)),
+            order="relevance",
+            maxResults=min(25, want - len(ids) if want - len(ids) > 0 else 25),
             relevanceLanguage="en",
         )
-        .execute()
-    )
-    ids = []
-    for item in resp.get("items") or []:
-        vid = (item.get("id") or {}).get("videoId")
-        if vid:
-            ids.append(vid)
-    return ids
+        if page_token:
+            kwargs["pageToken"] = page_token
+        try:
+            resp = youtube.search().list(**kwargs).execute()
+        except Exception:
+            break
+        for item in resp.get("items") or []:
+            vid = (item.get("id") or {}).get("videoId")
+            if vid and vid not in seen:
+                seen.add(vid)
+                ids.append(vid)
+                if len(ids) >= want:
+                    break
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            break
+        time.sleep(0.15)
+    return ids[:want]
 
 
 def _chunk(xs: list[str], n: int = 50) -> list[list[str]]:
@@ -451,8 +472,13 @@ def run_niche_finder(
         _log(f"Searching ({i + 1}/{len(kws)}): {kw}")
         for duration in ("medium", "long"):
             try:
+                # Dig through ~3 search pages per duration (scroll deeper)
                 ids = _search_video_ids(
-                    youtube, kw, video_duration=duration, max_results=max_per_keyword
+                    youtube,
+                    kw,
+                    video_duration=duration,
+                    max_results=max(max_per_keyword, 40),
+                    pages=3,
                 )
             except Exception as e:
                 _log(f"Search failed for '{kw}' ({duration}): {e}")
@@ -461,7 +487,8 @@ def run_niche_finder(
                 if vid not in seen_vids:
                     seen_vids.add(vid)
                     video_ids.append(vid)
-        time.sleep(0.05)
+            _log(f"  {duration}: +{len(ids)} videos (total unique {len(video_ids)})")
+        time.sleep(0.35)  # breathe between keywords so quota/pages settle
 
     _log(f"Enriching {len(video_ids)} candidate videos…")
     videos = _fetch_videos(youtube, video_ids)
