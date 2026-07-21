@@ -131,6 +131,32 @@ def run_cook_job(
             voiceover_path = fetch_to_local(voiceover_path, cache_dir)
         except Exception as e:
             raise RuntimeError(f"Could not load voiceover for cook: {e}") from e
+        # Guard: Fish (and others) used to silently truncate long scripts.
+        # If the VO is far shorter than the script implies, fail loudly.
+        try:
+            import subprocess
+            words = len((script or "").split())
+            if words >= 200:
+                expected_sec = words / 150.0 * 60.0
+                probe = subprocess.run(
+                    [
+                        "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                        "-of", "default=noprint_wrappers=1:nokey=1", voiceover_path,
+                    ],
+                    capture_output=True, text=True, timeout=30,
+                )
+                actual_sec = float((probe.stdout or "0").strip() or 0)
+                if actual_sec > 5 and expected_sec > 0 and actual_sec < expected_sec * 0.55:
+                    raise RuntimeError(
+                        f"Voiceover is incomplete for this script: audio is "
+                        f"{actual_sec / 60:.1f} min but the script is ~{expected_sec / 60:.1f} min "
+                        f"({words} words). Re-generate the voiceover (cloned voices now chunk "
+                        f"long scripts instead of truncating)."
+                    )
+        except RuntimeError:
+            raise
+        except Exception as e:
+            print(f"[cook] voiceover completeness check skipped: {e}")
     if thumbnail_path:
         try:
             thumbnail_path = fetch_to_local(thumbnail_path, cache_dir)

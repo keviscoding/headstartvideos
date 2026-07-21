@@ -299,6 +299,7 @@ def critique_local_video(
     title: str = "",
     description: str = "",
     tags: str = "",
+    script: str = "",
     model: str | None = None,
     progress: ProgressFn = None,
     work_dir: str | Path | None = None,
@@ -311,6 +312,21 @@ def critique_local_video(
     wd = Path(work_dir) if work_dir else (path.parent / f"qc_{path.stem}")
     wd.mkdir(parents=True, exist_ok=True)
 
+    duration_sec = 0.0
+    try:
+        import subprocess
+        probe = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1", str(path),
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        duration_sec = float((probe.stdout or "0").strip() or 0)
+    except Exception:
+        duration_sec = 0.0
+
+    data: dict[str, Any] | None = None
     if google_video_qc_enabled() and GEMINI_KEY:
         try:
             data = _critique_via_gemini_file(
@@ -321,28 +337,37 @@ def critique_local_video(
                 model=model,
                 progress=progress,
             )
-            if progress:
-                progress(
-                    f"QC done — score {data.get('overall_score', '?')}/100, "
-                    f"{len(data.get('scenes') or [])} scenes"
-                )
-            return data
         except Exception as e:
             if progress:
                 progress(f"Gemini file QC failed ({e}); falling back to Atlas frames…")
 
-    data = _critique_via_atlas_frames(
-        path,
-        title=title,
-        description=description,
-        tags=tags,
-        work_dir=wd,
-        progress=progress,
-    )
+    if data is None:
+        data = _critique_via_atlas_frames(
+            path,
+            title=title,
+            description=description,
+            tags=tags,
+            work_dir=wd,
+            progress=progress,
+        )
+
+    tr_path = wd / "transcript.txt"
+    if tr_path.is_file():
+        data.setdefault("_meta", {})["transcript_text"] = tr_path.read_text(encoding="utf-8")
+    data.setdefault("_meta", {})["duration_sec"] = duration_sec
+
+    if (script or "").strip():
+        data = apply_harsh_qc_gates(data, script=script, duration_sec=duration_sec)
+
     if progress:
         progress(
             f"QC done — score {data.get('overall_score', '?')}/100, "
             f"{len(data.get('scenes') or [])} scenes"
+            + (
+                f", completeness={data.get('completeness', {}).get('severity')}"
+                if data.get("completeness")
+                else ""
+            )
         )
     return data
 
@@ -396,5 +421,106 @@ def critique_to_markdown(data: dict[str, Any]) -> str:
     lines += ["", "## Must fix before ship"]
     for i, m in enumerate(data.get("must_fix_before_ship") or [], 1):
         lines.append(f"{i}. {m}")
+    comp = data.get("completeness") or {}
+    if comp:
+        lines += [
+            "",
+            "## Completeness (script vs finished video)",
+            f"- Severity: {comp.get('severity')}",
+            f"- Coverage: {comp.get('coverage_ratio')} "
+            f"({comp.get('actual_sec')}s actual / {comp.get('expected_sec')}s expected)",
+            f"- Notes: {comp.get('notes')}",
+        ]
     lines.append("")
     return "\n".join(lines)
+
+
+def assert_script_completeness(
+    *,
+    script: str,
+    video_duration_sec: float,
+    transcript_text: str = "",
+    wpm: float = 150.0,
+) -> dict[str, Any]:
+    """
+    Harsh completeness gate: did the finished video cover the full script?
+
+    Fail when audio/video is well under expected script duration, or when the
+    transcript stops before the script's final paragraph.
+    """
+    words = len((script or "").split())
+    expected_sec = (words / max(80.0, wpm)) * 60.0 if words else 0.0
+    actual = float(video_duration_sec or 0)
+    coverage = (actual / expected_sec) if expected_sec > 0 else 1.0
+
+    script_tail = " ".join((script or "").split()[-24:]).lower()
+    transcript_l = (transcript_text or "").lower()
+    # Prefer a distinctive mid-tail phrase
+    tail_probe = script_tail[:60] if script_tail else ""
+    tail_present = bool(tail_probe) and tail_probe[:32] in transcript_l
+
+    passed = coverage >= 0.85 and (tail_present or words < 200)
+    severity = "ok"
+    if coverage < 0.55:
+        severity = "critical"
+        passed = False
+    elif coverage < 0.85 or (words >= 200 and not tail_present):
+        severity = "major"
+        passed = False
+
+    return {
+        "passed": passed,
+        "severity": severity,
+        "script_words": words,
+        "expected_sec": round(expected_sec, 1),
+        "actual_sec": round(actual, 1),
+        "coverage_ratio": round(coverage, 3),
+        "script_tail_present_in_transcript": tail_present,
+        "notes": (
+            "PASS — duration and ending align with script"
+            if passed
+            else (
+                f"FAIL — video is {actual / 60:.1f} min but script implies "
+                f"~{expected_sec / 60:.1f} min ({int(coverage * 100)}% coverage). "
+                "Likely VO truncation (e.g. old Fish 4500-char silent cap)."
+            )
+        ),
+    }
+
+
+def apply_harsh_qc_gates(data: dict[str, Any], *, script: str = "", duration_sec: float = 0.0) -> dict[str, Any]:
+    """Cap scores and inject completeness when the finished video is truncated."""
+    transcript_bits = []
+    for s in data.get("scenes") or []:
+        if s.get("what_is_on_screen"):
+            transcript_bits.append(str(s.get("what_narration_likely_needs") or ""))
+    # Prefer real transcript file content if attached
+    tr = (data.get("_meta") or {}).get("transcript_text") or ""
+    completeness = assert_script_completeness(
+        script=script,
+        video_duration_sec=duration_sec or float((data.get("_meta") or {}).get("duration_sec") or 0),
+        transcript_text=tr,
+    )
+    data["completeness"] = completeness
+    if not completeness.get("passed"):
+        try:
+            score = float(data.get("overall_score") or 0)
+        except Exception:
+            score = 0
+        # Truncated videos cannot score above 15 on a harsh scale
+        data["overall_score"] = min(score, 15)
+        fails = list(data.get("primary_failures") or [])
+        note = completeness.get("notes") or "Script incomplete in finished video"
+        if note not in fails:
+            fails.insert(0, note)
+        data["primary_failures"] = fails
+        must = list(data.get("must_fix_before_ship") or [])
+        fix = "Re-generate voiceover with full script (Fish voices now chunk; do not use truncated VO)"
+        if fix not in must:
+            must.insert(0, fix)
+        data["must_fix_before_ship"] = must
+        data["verdict"] = (
+            f"CRITICAL: incomplete video ({completeness.get('coverage_ratio', 0):.0%} of script). "
+            + str(data.get("verdict") or "")
+        ).strip()
+    return data

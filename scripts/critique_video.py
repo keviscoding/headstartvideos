@@ -30,6 +30,7 @@ def main() -> int:
     ap.add_argument("--description", default="")
     ap.add_argument("--tags", default="")
     ap.add_argument("--out-dir", type=Path, default=None)
+    ap.add_argument("--script-file", type=Path, default=None, help="Full narration script for completeness gate")
     ap.add_argument("--model", default=None)
     args = ap.parse_args()
 
@@ -37,6 +38,9 @@ def main() -> int:
 
     out_dir = args.out_dir or (ROOT / "output" / "qc_runs" / args.video.stem)
     out_dir.mkdir(parents=True, exist_ok=True)
+    script = ""
+    if args.script_file and args.script_file.is_file():
+        script = args.script_file.read_text(encoding="utf-8")
 
     def progress(msg: str) -> None:
         print(f"[qc] {msg}", flush=True)
@@ -46,6 +50,7 @@ def main() -> int:
         title=args.title,
         description=args.description,
         tags=args.tags,
+        script=script,
         model=args.model,
         progress=progress,
         work_dir=out_dir,

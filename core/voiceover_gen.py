@@ -391,7 +391,27 @@ def generate_voiceover(
         out_dir = Path(output_dir) if output_dir else Path(tempfile.mkdtemp(prefix="vo_"))
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = str(out_dir / "voiceover.wav")
-        return tts_with_clone(script, fish_id, out_path)
+        # Fish silently used to truncate at 4500 chars (~3–4 min). Chunk + concat.
+        FISH_MAX = 4000
+        chunks = _chunk_script(script.strip(), max_chars=FISH_MAX)
+        print(
+            f"[voiceover] Fish clone TTS — {len(chunks)} chunk(s), "
+            f"model={fish_id[:12]}…, total_chars={len(script.strip())}"
+        )
+        if len(chunks) == 1:
+            return tts_with_clone(chunks[0], fish_id, out_path)
+        wav_paths: list[str] = []
+        try:
+            for i, chunk in enumerate(chunks):
+                chunk_path = str(out_dir / f"_fish_{i:03d}_{uuid.uuid4().hex[:8]}.wav")
+                print(f"[voiceover] Fish chunk {i + 1}/{len(chunks)} ({len(chunk)} chars)...")
+                tts_with_clone(chunk, fish_id, chunk_path)
+                wav_paths.append(chunk_path)
+            return _concat_wavs(wav_paths, out_path)
+        except Exception:
+            for p in wav_paths:
+                Path(p).unlink(missing_ok=True)
+            raise
 
     if not get_atlas_key():
         raise RuntimeError("ATLASCLOUD_KEY not configured. Voiceover requires Atlas Cloud.")

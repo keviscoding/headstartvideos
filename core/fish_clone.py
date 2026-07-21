@@ -234,10 +234,20 @@ def create_voice_model(
 
 
 def tts_with_clone(text: str, fish_model_id: str, output_path: str) -> str:
-    """Generate speech with a Fish reference_id (JSON path)."""
+    """Generate speech with a Fish reference_id (JSON path).
+
+    Callers must pass chunks ≤ ~4000 chars. We refuse silent truncation —
+    that previously cut ~8 min scripts down to ~3.5 min without error.
+    """
     text = (text or "").strip()
     if not text:
         raise ValueError("Empty script")
+    FISH_HARD_MAX = 4500
+    if len(text) > FISH_HARD_MAX:
+        raise ValueError(
+            f"Fish TTS chunk too long ({len(text)} chars; max {FISH_HARD_MAX}). "
+            "Chunk the script before calling tts_with_clone."
+        )
     # Prefer msgpack-free JSON for fewer deps; Fish accepts JSON for reference_id.
     resp = httpx.post(
         f"{FISH_API}/v1/tts",
@@ -247,7 +257,7 @@ def tts_with_clone(text: str, fish_model_id: str, output_path: str) -> str:
             "model": _tts_model(),
         },
         json={
-            "text": text[:4500],
+            "text": text,
             "reference_id": fish_model_id,
             "format": "wav",
         },
