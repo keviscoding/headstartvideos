@@ -2397,7 +2397,9 @@ def generate_script_claude(req: ClaudeScriptRequest, user: dict = Depends(requir
 # ---------------------------------------------------------------------------
 # Niche Finder (shared niche database — browse for users, hunt for admin/cron)
 # ---------------------------------------------------------------------------
+# Niche Finder scroll scrape uses a dedicated lock — never the cook queue / Fly cooks.
 _niche_finder_jobs: dict[str, dict] = {}
+_niche_scrape_lock = __import__("threading").Lock()
 
 
 def _niche_finder_can_browse(user: dict) -> bool:
@@ -2417,6 +2419,8 @@ class NicheFinderJobRequest(BaseModel):
     max_channels: int = 60
     min_recent_avg_views: int = 0
     max_subscribers: int = 150_000
+    scroll_count: int = 20
+    max_video_age_days: int = 180
 
 
 def _start_niche_hunt(
@@ -2428,10 +2432,18 @@ def _start_niche_hunt(
     max_subscribers: int,
     trigger: str,
     user_id: int | None = None,
+    scroll_count: int = 20,
+    max_video_age_days: int = 180,
 ) -> str:
-    """Kick off a background hunt that upserts into niche_channels."""
+    """
+    Kick off scroll discovery + upsert. Isolated from cook/video-creation:
+    dedicated lock + background thread only — never Fly cook Machines / cook queue.
+    """
     import threading
     from core.niche_finder import DEFAULT_KEYWORDS, run_niche_finder
+
+    if not _niche_scrape_lock.acquire(blocking=False):
+        raise HTTPException(409, "A niche discovery scrape is already running. Wait for it to finish.")
 
     kws = [k.strip() for k in (keywords or []) if k and str(k).strip()]
     if not kws:
@@ -2465,13 +2477,14 @@ def _start_niche_hunt(
                 api_key=config.YOUTUBE_API_KEY,
                 keywords=kws,
                 max_per_keyword=max(3, min(int(max_per_keyword or 12), 25)),
-                max_channels=max(5, min(int(max_channels or 40), 80)),
+                max_channels=max(5, min(int(max_channels or 60), 100)),
                 min_recent_avg_views=max(0, int(min_recent_avg_views or 0)),
                 max_subscribers=max(10_000, int(max_subscribers or 150_000)),
+                scroll_count=max(5, min(int(scroll_count or 20), 40)),
+                max_video_age_days=max(30, min(int(max_video_age_days or 180), 365)),
                 progress=_progress,
             )
             hits = result.get("hits") or []
-            # Tag each hit with first matching keyword when available
             n = upsert_niche_channels(hits)
             job["hits"] = hits
             job["meta"] = result.get("meta") or {}
@@ -2494,8 +2507,13 @@ def _start_niche_hunt(
                 error=str(e),
             )
             print(f"[niche_finder] job {job_id} failed: {e}")
+        finally:
+            try:
+                _niche_scrape_lock.release()
+            except Exception:
+                pass
 
-    threading.Thread(target=_run, daemon=True).start()
+    threading.Thread(target=_run, daemon=True, name="niche-scroll-scrape").start()
     return job_id
 
 
@@ -2586,6 +2604,8 @@ def start_niche_finder_job(
         max_channels=req.max_channels,
         min_recent_avg_views=req.min_recent_avg_views,
         max_subscribers=req.max_subscribers,
+        scroll_count=req.scroll_count,
+        max_video_age_days=req.max_video_age_days,
         trigger="admin",
         user_id=admin["id"],
     )
@@ -2642,9 +2662,11 @@ def niche_finder_cron(
     job_id = _start_niche_hunt(
         keywords=body.keywords or [],
         max_per_keyword=body.max_per_keyword or 12,
-        max_channels=body.max_channels or 40,
+        max_channels=body.max_channels or 60,
         min_recent_avg_views=body.min_recent_avg_views or 0,
         max_subscribers=body.max_subscribers or 150_000,
+        scroll_count=body.scroll_count or 20,
+        max_video_age_days=body.max_video_age_days or 180,
         trigger="cron",
         user_id=None,
     )

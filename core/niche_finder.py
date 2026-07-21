@@ -33,8 +33,19 @@ DEFAULT_MAX_CHANNELS = 60
 # Real RPM varies wildly ($1–$12+); we show a midpoint + band in the UI.
 DEFAULT_RPM_USD = 4.0
 
-# Broad starter pack — discovery is meant to be sprawling; filters sort later.
+# Broad probes (adjectives / glue words that work in manual YouTube tests)
+# mixed with niche phrases. Discovery scrolls real search pages (not API ranking).
 DEFAULT_KEYWORDS = [
+    "worse",
+    "is",
+    "why",
+    "how",
+    "never",
+    "always",
+    "secret",
+    "forbidden",
+    "untold",
+    "what happened to",
     "history documentary explained",
     "true story folktale",
     "forbidden history mysteries",
@@ -46,25 +57,13 @@ DEFAULT_KEYWORDS = [
     "personal finance explained",
     "stoic habits self improvement",
     "american football drama story",
-    "anime comic dub story",
     "war documentary full movie",
-    "what happened to",
-    "untold history",
     "reddit story narrated",
-    "sleep story bedtime",
     "true crime documentary",
-    "conspiracy unexplained",
     "bible prophecy explained",
-    "motivational speech stoic",
-    "retirement millionaire habits",
-    "space documentary full",
     "ancient civilization mystery",
-    "celebrity drama story",
-    "military documentary narrated",
     "horror story narrated long",
-    "business case study explained",
     "psychology facts explained",
-    "relationship advice stories",
 ]
 
 
@@ -447,9 +446,15 @@ def run_niche_finder(
     min_recent_avg_views: int = 0,
     max_subscribers: int = 150_000,
     rpm_usd: float = DEFAULT_RPM_USD,
+    scroll_count: int = 20,
+    max_video_age_days: int = 180,
     progress: ProgressCb | None = None,
 ) -> dict[str, Any]:
-    """Run a keyword long-form hunt. Returns {hits, meta}."""
+    """
+    Scroll-scrape YouTube search (ViewHunt-style), then lightly enrich with
+    channels.list / uploads for metrics. Discovery ranking comes from real
+    scrolled search — not youtube.search().list.
+    """
 
     def _log(msg: str) -> None:
         print(f"[niche_finder] {msg}")
@@ -457,41 +462,58 @@ def run_niche_finder(
             progress(msg)
 
     if not api_key:
-        raise ValueError("YouTube API key not configured")
+        raise ValueError("YouTube API key not configured (needed for channel enrich only)")
+
+    from core.niche_scraper import scrape_keywords, MAX_VIDEO_AGE_DAYS
 
     kws = [k.strip() for k in (keywords or DEFAULT_KEYWORDS) if k and k.strip()]
     if not kws:
         raise ValueError("Add at least one keyword")
-    kws = kws[:30]
+    kws = kws[:40]
+    age_limit = max_video_age_days or MAX_VIDEO_AGE_DAYS
+
+    _log("Starting scroll discovery (real YouTube search pages)…")
+    scraped = scrape_keywords(
+        kws,
+        scroll_count=max(5, min(int(scroll_count or 20), 40)),
+        max_age_days=age_limit,
+        progress=_log,
+    )
+    video_ids = [h["video_id"] for h in scraped if h.get("video_id")]
+    scrape_by_vid = {h["video_id"]: h for h in scraped if h.get("video_id")}
+    _log(f"Scroll discovery kept {len(video_ids)} fresh videos (≤{age_limit}d)")
+
+    if not video_ids:
+        return {
+            "hits": [],
+            "meta": {
+                "keywords": kws,
+                "videos_scanned": 0,
+                "channels_considered": 0,
+                "discovery": "scroll",
+                "max_video_age_days": age_limit,
+                "note": "No fresh long-form results from scroll scrape.",
+            },
+        }
 
     youtube = _yt(api_key)
-    video_ids: list[str] = []
-    seen_vids: set[str] = set()
-
-    for i, kw in enumerate(kws):
-        _log(f"Searching ({i + 1}/{len(kws)}): {kw}")
-        for duration in ("medium", "long"):
-            try:
-                # Dig through ~3 search pages per duration (scroll deeper)
-                ids = _search_video_ids(
-                    youtube,
-                    kw,
-                    video_duration=duration,
-                    max_results=max(max_per_keyword, 40),
-                    pages=3,
-                )
-            except Exception as e:
-                _log(f"Search failed for '{kw}' ({duration}): {e}")
-                continue
-            for vid in ids:
-                if vid not in seen_vids:
-                    seen_vids.add(vid)
-                    video_ids.append(vid)
-            _log(f"  {duration}: +{len(ids)} videos (total unique {len(video_ids)})")
-        time.sleep(0.35)  # breathe between keywords so quota/pages settle
-
-    _log(f"Enriching {len(video_ids)} candidate videos…")
+    _log(f"Enriching {len(video_ids)} videos (API stats only)…")
     videos = _fetch_videos(youtube, video_ids)
+    # Extra freshness guard from API publish dates
+    fresh_videos = []
+    for v in videos:
+        age = _days_since(v.get("published_at") or "")
+        if age is not None and age > age_limit:
+            continue
+        # Prefer scrape duration if API missing; already filtered long-form in scraper
+        seed = scrape_by_vid.get(v["video_id"]) or {}
+        if seed.get("source_keyword"):
+            v["source_keyword"] = seed["source_keyword"]
+        if not v.get("thumbnail") and seed.get("thumbnail"):
+            v["thumbnail"] = seed["thumbnail"]
+        fresh_videos.append(v)
+    videos = fresh_videos
+
     by_channel: dict[str, list[dict]] = {}
     for v in videos:
         cid = v.get("channel_id")
@@ -525,6 +547,14 @@ def run_niche_finder(
         for v in seed_videos:
             merged.setdefault(v["video_id"], v)
         longform = list(merged.values())
+        # Prefer uploads that are still fresh (≤6 months) for recent metrics
+        fresh_long = []
+        for v in longform:
+            age = _days_since(v.get("published_at") or "")
+            if age is None or age <= age_limit:
+                fresh_long.append(v)
+        if len(fresh_long) >= 2:
+            longform = fresh_long
         if not longform:
             return None
 
@@ -544,6 +574,13 @@ def run_niche_finder(
             return None
 
         videos_last_14d = videos_posted_last_days(by_date, days=14)
+
+        # Keyword tag from discovery seed if present
+        source_kw = ""
+        for v in by_channel.get(cid, []):
+            if v.get("source_keyword"):
+                source_kw = v["source_keyword"]
+                break
 
         subs = int(ch.get("subscriber_count") or 0)
         lifetime_avg = int(ch.get("avg_views_per_video") or 0)
@@ -618,6 +655,7 @@ def run_niche_finder(
             "channel_name": ch.get("channel_name"),
             "channel_url": ch.get("channel_url"),
             "avatar_url": ch.get("avatar_url"),
+            "source_keyword": source_kw,
             "subscriber_count": subs,
             "video_count": video_count,
             "days_since_start": round(days) if days is not None else None,
@@ -668,9 +706,12 @@ def run_niche_finder(
             "min_duration_sec": MIN_DURATION_SEC,
             "recent_video_count": RECENT_VIDEO_COUNT,
             "rpm_assumed": rpm_usd,
+            "discovery": "scroll",
+            "max_video_age_days": age_limit,
             "note": (
-                "Revenue is an estimate: avg_views × uploads/month × RPM/1000. "
-                "Default RPM $4 (band $2–$8). Sort mentally by est revenue + enterability."
+                "Discovery scrolls real YouTube search (not API ranking). "
+                "Videos older than 6 months are ignored. "
+                "Revenue estimate: views × uploads/month × RPM/1000 ($4 mid, $2–$8 band)."
             ),
         },
     }

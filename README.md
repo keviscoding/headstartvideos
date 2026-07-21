@@ -111,13 +111,16 @@ python -m webapp.worker
 
 Or: `docker compose up --build` (web with `COOK_ON_WEB=0` + one worker).
 
-## Niche Finder library (cron)
+## Niche Finder library (scroll discovery + cron)
 
 Niche Finder is a **shared database** users browse — not an on-demand hunt for everyone.
-Only admins (and cron) run discovery; results upsert into `niche_channels`.
+Discovery **scrolls real YouTube search pages** (Playwright), like ViewHunt — not API search ranking.
+Videos older than **6 months** are ignored. Results upsert into `niche_channels`.
 
-1. Set `CRON_SECRET` and `YOUTUBE_API_KEY` on the web app.
-2. Call the endpoint **1–2×/day** (DO App Platform scheduled job or any cron):
+Isolation: niche scrape runs on a dedicated background thread with its own lock. It does **not** use cook Fly Machines, the cook job queue, or Modal cooks.
+
+1. Set `CRON_SECRET` and `YOUTUBE_API_KEY` on the web app (API key is for channel-stats enrich only).
+2. Call the endpoint **1–2×/day**:
 
 ```bash
 curl -X POST https://channelrecipe.com/api/internal/niche-finder/cron \
@@ -126,8 +129,8 @@ curl -X POST https://channelrecipe.com/api/internal/niche-finder/cron \
   -d '{}'
 ```
 
-Optional JSON body: `keywords`, `max_per_keyword`, `max_channels`, `max_subscribers`.
-Admin can also hit **Refresh library** in the Niche Finder UI.
+Optional JSON: `keywords`, `scroll_count` (default 20), `max_video_age_days` (default 180), `max_channels`.
+Admin can also hit **Add niches** in the Niche Finder UI.
 
 ## Architecture
 
