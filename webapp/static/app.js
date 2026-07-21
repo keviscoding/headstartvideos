@@ -3362,24 +3362,60 @@ function _resumeNicheFinderJob(jobId) {
     if (!jobId) return;
     localStorage.setItem('nf_active_job_id', jobId);
     const btn = document.getElementById('nf-run-btn');
+    const cancelBtn = document.getElementById('nf-cancel-btn');
     const status = document.getElementById('nf-status');
     setLoading(btn, true);
+    cancelBtn?.classList.remove('hidden');
     if (status && !status.textContent) status.textContent = 'Reconnecting to scrape…';
     if (_nfPollTimer) { clearInterval(_nfPollTimer); _nfPollTimer = null; }
     _nfPollTimer = setInterval(() => _pollNicheFinderJob(jobId), 2500);
     _pollNicheFinderJob(jobId);
 }
 
+function _nfClearActiveJobUi() {
+    localStorage.removeItem('nf_active_job_id');
+    if (_nfPollTimer) { clearInterval(_nfPollTimer); _nfPollTimer = null; }
+    setLoading(document.getElementById('nf-run-btn'), false);
+    document.getElementById('nf-cancel-btn')?.classList.add('hidden');
+}
+
+async function cancelNicheFinder() {
+    if (!ensureAuth(cancelNicheFinder)) return;
+    const status = document.getElementById('nf-status');
+    const jobId = localStorage.getItem('nf_active_job_id');
+    try {
+        if (status) status.textContent = 'Cancelling…';
+        let res;
+        if (jobId) {
+            res = await fetch(`/api/niche-finder/jobs/${jobId}/cancel`, { method: 'POST' });
+        } else {
+            res = await fetch('/api/niche-finder/jobs/cancel-running', { method: 'POST' });
+        }
+        // Always force-clear any zombie running rows
+        await fetch('/api/niche-finder/jobs/cancel-running', { method: 'POST' });
+        _nfClearActiveJobUi();
+        if (status) status.textContent = 'Cancelled — you can start a new scrape.';
+        if (!res.ok) {
+            const data = await readJson(res, null);
+            console.warn('cancel niche', data);
+        }
+    } catch (e) {
+        _nfClearActiveJobUi();
+        if (status) status.textContent = 'Cleared local lock — try Add niches again.';
+        alert('Cancel request failed: ' + e.message + ' — UI unlocked anyway.');
+    }
+}
+
 async function _pollNicheFinderJob(jobId) {
     const btn = document.getElementById('nf-run-btn');
+    const cancelBtn = document.getElementById('nf-cancel-btn');
     const status = document.getElementById('nf-status');
+    cancelBtn?.classList.remove('hidden');
     try {
         const res = await fetch(`/api/niche-finder/jobs/${jobId}`);
         const data = await readJson(res, null);
         if (res.status === 404) {
-            localStorage.removeItem('nf_active_job_id');
-            if (_nfPollTimer) { clearInterval(_nfPollTimer); _nfPollTimer = null; }
-            setLoading(btn, false);
+            _nfClearActiveJobUi();
             if (status) status.textContent = '';
             return;
         }
@@ -3388,18 +3424,16 @@ async function _pollNicheFinderJob(jobId) {
         if (status && last?.msg) status.textContent = last.msg;
 
         if (data.status === 'completed') {
-            localStorage.removeItem('nf_active_job_id');
-            if (_nfPollTimer) { clearInterval(_nfPollTimer); _nfPollTimer = null; }
-            setLoading(btn, false);
+            _nfClearActiveJobUi();
             const n = data.channels_upserted || (data.hits || []).length;
             if (status) status.textContent = `Done — ${n} channel${n === 1 ? '' : 's'} saved to the library.`;
             await loadNicheFinderFeed();
-        } else if (data.status === 'error') {
-            localStorage.removeItem('nf_active_job_id');
-            if (_nfPollTimer) { clearInterval(_nfPollTimer); _nfPollTimer = null; }
-            setLoading(btn, false);
-            if (status) status.textContent = '';
-            alert('Library refresh failed: ' + (data.error || 'Unknown error'));
+        } else if (data.status === 'error' || data.status === 'cancelled') {
+            _nfClearActiveJobUi();
+            if (status) status.textContent = data.status === 'cancelled' ? 'Cancelled.' : '';
+            if (data.status === 'error') {
+                alert('Library refresh failed: ' + (data.error || 'Unknown error'));
+            }
         }
         // Still running — keep polling; do not clear on transient blips
     } catch (e) {

@@ -227,6 +227,7 @@ from webapp.database import (
     upsert_niche_channels, list_niche_channels, count_niche_channels,
     create_niche_hunt_run, finish_niche_hunt_run, list_niche_hunt_runs,
     append_niche_hunt_progress, get_niche_hunt_run_by_job_id, get_latest_running_niche_hunt,
+    cancel_niche_hunt_run, cancel_all_running_niche_hunts,
 )
 from webapp import storage
 from webapp import job_queue
@@ -2521,11 +2522,11 @@ def _start_niche_hunt(
     if existing and existing.get("job_id"):
         age = time.time() - float(existing.get("started_at") or 0)
         # Fly Machines that crash before writing progress leave a zombie "running" row.
-        if age > 15 * 60 and existing.get("id"):
+        if age > 5 * 60 and existing.get("id"):
             finish_niche_hunt_run(
                 int(existing["id"]),
                 status="error",
-                error="Timed out (no finish within 15m) — safe to start a new scrape.",
+                error="Timed out (no finish within 5m) — safe to start a new scrape.",
             )
         else:
             raise HTTPException(
@@ -2711,6 +2712,21 @@ def get_niche_finder_job(job_id: str, admin: dict = Depends(require_admin)):
     if not run:
         raise HTTPException(404, "Job not found.")
     return _niche_job_response(run)
+
+
+@app.post("/api/niche-finder/jobs/{job_id}/cancel")
+def cancel_niche_finder_job(job_id: str, admin: dict = Depends(require_admin)):
+    run = cancel_niche_hunt_run(job_id, reason="Cancelled by admin")
+    if not run:
+        raise HTTPException(404, "Job not found.")
+    return _niche_job_response(run)
+
+
+@app.post("/api/niche-finder/jobs/cancel-running")
+def cancel_running_niche_finder_jobs(admin: dict = Depends(require_admin)):
+    """Force-clear zombie 'running' hunts so Add niches unlocks."""
+    n = cancel_all_running_niche_hunts(reason="Cancelled by admin (force clear)")
+    return {"cancelled": n, "status": "ok"}
 
 
 @app.get("/api/niche-finder/runs")

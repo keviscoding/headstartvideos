@@ -1835,6 +1835,40 @@ def finish_niche_hunt_run(
         )
 
 
+def cancel_niche_hunt_run(job_id: str, *, reason: str = "Cancelled by admin") -> dict | None:
+    """Mark a running hunt cancelled so a new scrape can start."""
+    run = get_niche_hunt_run_by_job_id(job_id)
+    if not run:
+        return None
+    if (run.get("status") or "") != "running":
+        return run
+    finish_niche_hunt_run(
+        int(run["id"]),
+        status="cancelled",
+        meta={**(run.get("meta") or {}), "cancelled_at": time.time()},
+        channels_upserted=int(run.get("channels_upserted") or 0),
+        error=reason,
+    )
+    try:
+        append_niche_hunt_progress(job_id, reason)
+    except Exception:
+        pass
+    return get_niche_hunt_run_by_job_id(job_id)
+
+
+def cancel_all_running_niche_hunts(*, reason: str = "Cancelled by admin") -> int:
+    n = 0
+    while True:
+        run = get_latest_running_niche_hunt()
+        if not run or not run.get("job_id"):
+            break
+        cancel_niche_hunt_run(run["job_id"], reason=reason)
+        n += 1
+        if n > 20:
+            break
+    return n
+
+
 def list_niche_hunt_runs(limit: int = 20) -> list[dict]:
     limit = max(1, min(int(limit or 20), 50))
     with _conn() as conn:
