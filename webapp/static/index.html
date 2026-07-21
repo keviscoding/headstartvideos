@@ -754,11 +754,32 @@
                     <p id="nf-status" class="cr-mono" style="font-size: 12px; color: var(--app-ink-3); margin-top: 12px;"></p>
                 </div>
 
-                <div id="nf-filters" class="cr-surface" style="padding: 16px 18px;">
-                    <div class="flex flex-wrap gap-3" style="align-items: flex-end;">
+                <div id="nf-filters" class="nf-filters cr-surface">
+                    <!-- Hidden values kept for feed query wiring -->
+                    <input type="hidden" id="nf-f-min-recent" value="">
+                    <input type="hidden" id="nf-f-max-recent" value="">
+                    <input type="hidden" id="nf-f-min-subs" value="">
+                    <input type="hidden" id="nf-f-max-subs" value="">
+                    <input type="hidden" id="nf-f-min-rev" value="">
+                    <input type="checkbox" id="nf-f-has-recent" class="nf-sr-only" checked>
+                    <input type="checkbox" id="nf-f-active" class="nf-sr-only">
+
+                    <div class="nf-filters-head">
                         <div>
-                            <label class="cr-label">Sort</label>
-                            <select id="nf-sort" class="cr-input" style="min-width: 180px;">
+                            <p class="cr-eyebrow" style="margin-bottom: 4px;">Refine</p>
+                            <p class="nf-filters-sub">Slide, toggle, or search — updates as you go.</p>
+                        </div>
+                        <button type="button" id="nf-clear-filters" class="nf-clear-btn" onclick="clearNicheFilters()" disabled>Clear all</button>
+                    </div>
+
+                    <div class="nf-filters-toolbar">
+                        <label class="nf-search">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+                            <input id="nf-f-q" type="search" placeholder="Search niches, keywords, titles…" autocomplete="off">
+                        </label>
+                        <label class="nf-sort-wrap">
+                            <span class="nf-sort-label">Sort</span>
+                            <select id="nf-sort" class="nf-sort-select">
                                 <option value="recent_revenue">Best recent earnings</option>
                                 <option value="revenue">Best lifetime earnings</option>
                                 <option value="recent_avg">Best recent avg views</option>
@@ -770,41 +791,84 @@
                                 <option value="videos">Most videos</option>
                                 <option value="newest">Newest in library</option>
                             </select>
-                        </div>
-                        <div>
-                            <label class="cr-label">Min recent avg</label>
-                            <input id="nf-f-min-recent" type="number" class="cr-input" value="" min="0" step="500" placeholder="0" style="width: 110px;">
-                        </div>
-                        <div>
-                            <label class="cr-label">Max recent avg</label>
-                            <input id="nf-f-max-recent" type="number" class="cr-input" value="" min="0" step="500" placeholder="any" style="width: 110px;">
-                        </div>
-                        <div>
-                            <label class="cr-label">Min subs</label>
-                            <input id="nf-f-min-subs" type="number" class="cr-input" value="" min="0" step="1000" placeholder="0" style="width: 100px;">
-                        </div>
-                        <div>
-                            <label class="cr-label">Max subs</label>
-                            <input id="nf-f-max-subs" type="number" class="cr-input" value="" min="0" step="1000" placeholder="any" style="width: 100px;">
-                        </div>
-                        <div>
-                            <label class="cr-label">Min recent $/mo</label>
-                            <input id="nf-f-min-rev" type="number" class="cr-input" value="" min="0" step="50" placeholder="0" style="width: 100px;">
-                        </div>
-                        <div>
-                            <label class="cr-label">Search titles</label>
-                            <input id="nf-f-q" type="text" class="cr-input" placeholder="niche keyword…" style="width: 160px;">
-                        </div>
-                        <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--app-ink-2); cursor:pointer; padding-bottom: 8px;">
-                            <input id="nf-f-has-recent" type="checkbox" checked>
-                            Has recent avg
                         </label>
-                        <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--app-ink-2); cursor:pointer; padding-bottom: 8px;">
-                            <input id="nf-f-active" type="checkbox">
-                            Active recently (4+ in 14d)
-                        </label>
-                        <button type="button" class="btn-primary" style="font-size: 13px;" onclick="applyNicheFilters()">Apply filters</button>
                     </div>
+
+                    <div class="nf-filters-grid">
+                        <div class="nf-filter-block" data-nf-range="recent">
+                            <div class="nf-filter-block-head">
+                                <span class="nf-filter-title">Recent avg views</span>
+                                <span class="nf-filter-value" id="nf-recent-label">Any</span>
+                            </div>
+                            <div class="nf-presets" role="group" aria-label="Recent avg presets">
+                                <button type="button" class="nf-preset is-active" data-min="0" data-max="">Any</button>
+                                <button type="button" class="nf-preset" data-min="1000" data-max="">1K+</button>
+                                <button type="button" class="nf-preset" data-min="5000" data-max="">5K+</button>
+                                <button type="button" class="nf-preset" data-min="10000" data-max="">10K+</button>
+                                <button type="button" class="nf-preset" data-min="25000" data-max="">25K+</button>
+                            </div>
+                            <div class="nf-dual-range" data-nf-dual="recent">
+                                <div class="nf-dual-track"><div class="nf-dual-fill" id="nf-recent-fill"></div></div>
+                                <input type="range" id="nf-recent-min" class="nf-range" min="0" max="500000" step="500" value="0" aria-label="Min recent avg views">
+                                <input type="range" id="nf-recent-max" class="nf-range" min="0" max="500000" step="500" value="500000" aria-label="Max recent avg views">
+                            </div>
+                        </div>
+
+                        <div class="nf-filter-block" data-nf-range="subs">
+                            <div class="nf-filter-block-head">
+                                <span class="nf-filter-title">Subscribers</span>
+                                <span class="nf-filter-value" id="nf-subs-label">Any</span>
+                            </div>
+                            <div class="nf-presets" role="group" aria-label="Subscriber presets">
+                                <button type="button" class="nf-preset is-active" data-min="0" data-max="">Any</button>
+                                <button type="button" class="nf-preset" data-min="0" data-max="10000">≤10K</button>
+                                <button type="button" class="nf-preset" data-min="0" data-max="50000">≤50K</button>
+                                <button type="button" class="nf-preset" data-min="0" data-max="100000">≤100K</button>
+                                <button type="button" class="nf-preset" data-min="0" data-max="250000">≤250K</button>
+                            </div>
+                            <div class="nf-dual-range" data-nf-dual="subs">
+                                <div class="nf-dual-track"><div class="nf-dual-fill" id="nf-subs-fill"></div></div>
+                                <input type="range" id="nf-subs-min" class="nf-range" min="0" max="500000" step="1000" value="0" aria-label="Min subscribers">
+                                <input type="range" id="nf-subs-max" class="nf-range" min="0" max="500000" step="1000" value="500000" aria-label="Max subscribers">
+                            </div>
+                        </div>
+
+                        <div class="nf-filter-block" data-nf-range="rev">
+                            <div class="nf-filter-block-head">
+                                <span class="nf-filter-title">Min recent earnings</span>
+                                <span class="nf-filter-value" id="nf-rev-label">Any</span>
+                            </div>
+                            <div class="nf-presets" role="group" aria-label="Revenue presets">
+                                <button type="button" class="nf-preset is-active" data-min="0">Any</button>
+                                <button type="button" class="nf-preset" data-min="100">$100+</button>
+                                <button type="button" class="nf-preset" data-min="250">$250+</button>
+                                <button type="button" class="nf-preset" data-min="500">$500+</button>
+                                <button type="button" class="nf-preset" data-min="1000">$1K+</button>
+                            </div>
+                            <div class="nf-single-range">
+                                <input type="range" id="nf-rev-min" class="nf-range nf-range-single" min="0" max="5000" step="50" value="0" aria-label="Min recent monthly revenue">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="nf-toggles">
+                        <button type="button" class="nf-toggle is-on" id="nf-toggle-has-recent" aria-pressed="true" onclick="toggleNicheFilter('has-recent')">
+                            <span class="nf-toggle-knob"></span>
+                            <span class="nf-toggle-copy">
+                                <strong>Has recent avg</strong>
+                                <span>Only channels with a recent view average</span>
+                            </span>
+                        </button>
+                        <button type="button" class="nf-toggle" id="nf-toggle-active" aria-pressed="false" onclick="toggleNicheFilter('active')">
+                            <span class="nf-toggle-knob"></span>
+                            <span class="nf-toggle-copy">
+                                <strong>Active recently</strong>
+                                <span>4+ uploads in the last 14 days</span>
+                            </span>
+                        </button>
+                    </div>
+
+                    <div id="nf-filter-chips" class="nf-filter-chips" hidden></div>
                 </div>
 
                 <div class="flex items-center justify-between" style="flex-wrap: wrap; gap: 8px;">

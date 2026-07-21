@@ -2847,6 +2847,11 @@ let _nfAccess = null;
 let _nfPage = 1;
 let _nfTotal = 0;
 const _NF_PAGE = 40;
+let _nfFilterTimer = null;
+let _nfFiltersBound = false;
+const _NF_RECENT_MAX = 500000;
+const _NF_SUBS_MAX = 500000;
+const _NF_REV_MAX = 5000;
 
 function _nfFmt(n) {
     const x = Number(n) || 0;
@@ -2864,6 +2869,312 @@ function _nfDur(sec) {
     return `${m}:${String(r).padStart(2, '0')}`;
 }
 
+function _nfMoney(n) {
+    const x = Number(n) || 0;
+    if (x >= 1000) return '$' + _nfFmt(x);
+    return '$' + String(Math.round(x));
+}
+
+function _nfSetHidden(id, value) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.value = value == null || value === '' ? '' : String(value);
+}
+
+function _nfSyncDual(kind) {
+    const isRecent = kind === 'recent';
+    const minEl = document.getElementById(isRecent ? 'nf-recent-min' : 'nf-subs-min');
+    const maxEl = document.getElementById(isRecent ? 'nf-recent-max' : 'nf-subs-max');
+    const fill = document.getElementById(isRecent ? 'nf-recent-fill' : 'nf-subs-fill');
+    const label = document.getElementById(isRecent ? 'nf-recent-label' : 'nf-subs-label');
+    const ceiling = isRecent ? _NF_RECENT_MAX : _NF_SUBS_MAX;
+    if (!minEl || !maxEl) return { min: 0, max: ceiling };
+    let min = Number(minEl.value) || 0;
+    let max = Number(maxEl.value) || 0;
+    if (min > max) {
+        if (minEl.dataset.nfLast === 'min') max = min;
+        else min = max;
+        minEl.value = String(min);
+        maxEl.value = String(max);
+    }
+    const left = (min / ceiling) * 100;
+    const right = (max / ceiling) * 100;
+    if (fill) {
+        fill.style.left = `${left}%`;
+        fill.style.width = `${Math.max(0, right - left)}%`;
+    }
+    const openMax = max >= ceiling;
+    const openMin = min <= 0;
+    let text = 'Any';
+    if (openMin && openMax) text = 'Any';
+    else if (openMin) text = `≤ ${_nfFmt(max)}`;
+    else if (openMax) text = `${_nfFmt(min)}+`;
+    else text = `${_nfFmt(min)} – ${_nfFmt(max)}`;
+    if (label) label.textContent = text;
+
+    if (isRecent) {
+        _nfSetHidden('nf-f-min-recent', openMin ? '' : min);
+        _nfSetHidden('nf-f-max-recent', openMax ? '' : max);
+    } else {
+        _nfSetHidden('nf-f-min-subs', openMin ? '' : min);
+        _nfSetHidden('nf-f-max-subs', openMax ? '' : max);
+    }
+    _nfSyncPresets(kind, min, openMax ? '' : max);
+    return { min, max, openMin, openMax };
+}
+
+function _nfPaintSingleRange() {
+    const el = document.getElementById('nf-rev-min');
+    if (!el) return;
+    const max = Number(el.max) || _NF_REV_MAX;
+    const val = Number(el.value) || 0;
+    const pct = Math.max(0, Math.min(100, (val / max) * 100));
+    el.style.background =
+        `linear-gradient(90deg, var(--accent) ${pct}%, var(--app-border) ${pct}%) no-repeat center / 100% 6px`;
+}
+
+function _nfSyncRevenue() {
+    const el = document.getElementById('nf-rev-min');
+    const label = document.getElementById('nf-rev-label');
+    const val = Number(el?.value) || 0;
+    if (label) label.textContent = val > 0 ? `${_nfMoney(val)}+` : 'Any';
+    _nfSetHidden('nf-f-min-rev', val > 0 ? val : '');
+    _nfSyncPresets('rev', val, '');
+    _nfPaintSingleRange();
+    return val;
+}
+
+function _nfSyncPresets(kind, min, max) {
+    const block = document.querySelector(`.nf-filter-block[data-nf-range="${kind}"]`);
+    if (!block) return;
+    const presets = [...block.querySelectorAll('.nf-preset')];
+    presets.forEach((btn) => {
+        const pMin = Number(btn.dataset.min || 0);
+        const pMaxRaw = btn.dataset.max;
+        const pMax = pMaxRaw === undefined || pMaxRaw === '' ? '' : Number(pMaxRaw);
+        const maxMatch = (max === '' || max == null) ? pMax === '' : Number(pMax) === Number(max);
+        const minMatch = pMin === Number(min || 0);
+        btn.classList.toggle('is-active', minMatch && maxMatch);
+    });
+}
+
+function _nfActiveFilterCount() {
+    let n = 0;
+    const q = document.getElementById('nf-f-q')?.value?.trim();
+    if (q) n += 1;
+    if (document.getElementById('nf-f-min-recent')?.value) n += 1;
+    if (document.getElementById('nf-f-max-recent')?.value) n += 1;
+    if (document.getElementById('nf-f-min-subs')?.value) n += 1;
+    if (document.getElementById('nf-f-max-subs')?.value) n += 1;
+    if (document.getElementById('nf-f-min-rev')?.value) n += 1;
+    if (!document.getElementById('nf-f-has-recent')?.checked) n += 1;
+    if (document.getElementById('nf-f-active')?.checked) n += 1;
+    const sort = document.getElementById('nf-sort')?.value || 'recent_revenue';
+    if (sort !== 'recent_revenue') n += 1;
+    return n;
+}
+
+function _nfRenderFilterChips() {
+    const wrap = document.getElementById('nf-filter-chips');
+    const clearBtn = document.getElementById('nf-clear-filters');
+    if (!wrap) return;
+    const chips = [];
+    const q = document.getElementById('nf-f-q')?.value?.trim();
+    if (q) chips.push({ key: 'q', label: `Search “${q.length > 24 ? q.slice(0, 24) + '…' : q}”` });
+    const minR = document.getElementById('nf-f-min-recent')?.value;
+    const maxR = document.getElementById('nf-f-max-recent')?.value;
+    if (minR || maxR) {
+        const t = !minR ? `Recent ≤ ${_nfFmt(maxR)}` : !maxR ? `Recent ${_nfFmt(minR)}+` : `Recent ${_nfFmt(minR)}–${_nfFmt(maxR)}`;
+        chips.push({ key: 'recent', label: t });
+    }
+    const minS = document.getElementById('nf-f-min-subs')?.value;
+    const maxS = document.getElementById('nf-f-max-subs')?.value;
+    if (minS || maxS) {
+        const t = !minS ? `Subs ≤ ${_nfFmt(maxS)}` : !maxS ? `Subs ${_nfFmt(minS)}+` : `Subs ${_nfFmt(minS)}–${_nfFmt(maxS)}`;
+        chips.push({ key: 'subs', label: t });
+    }
+    const minRev = document.getElementById('nf-f-min-rev')?.value;
+    if (minRev) chips.push({ key: 'rev', label: `Earnings ${_nfMoney(minRev)}+` });
+    if (!document.getElementById('nf-f-has-recent')?.checked) {
+        chips.push({ key: 'has-recent-off', label: 'Including no recent avg' });
+    }
+    if (document.getElementById('nf-f-active')?.checked) {
+        chips.push({ key: 'active', label: 'Active recently' });
+    }
+    const sort = document.getElementById('nf-sort');
+    if (sort && sort.value !== 'recent_revenue') {
+        const opt = sort.options[sort.selectedIndex];
+        chips.push({ key: 'sort', label: opt ? opt.text : sort.value });
+    }
+    wrap.hidden = chips.length === 0;
+    wrap.innerHTML = chips.map((c) => (
+        `<span class="nf-chip">${c.label}<button type="button" aria-label="Remove filter" onclick="removeNicheFilterChip('${c.key}')">×</button></span>`
+    )).join('');
+    if (clearBtn) clearBtn.disabled = _nfActiveFilterCount() === 0;
+}
+
+function scheduleNicheFilterApply() {
+    _nfSyncDual('recent');
+    _nfSyncDual('subs');
+    _nfSyncRevenue();
+    _nfRenderFilterChips();
+    clearTimeout(_nfFilterTimer);
+    _nfFilterTimer = setTimeout(() => applyNicheFilters(), 320);
+}
+
+function applyNicheFilters() {
+    loadNicheFinderFeed({ reset: true });
+}
+
+function toggleNicheFilter(kind) {
+    if (kind === 'has-recent') {
+        const box = document.getElementById('nf-f-has-recent');
+        const btn = document.getElementById('nf-toggle-has-recent');
+        if (!box || !btn) return;
+        box.checked = !box.checked;
+        btn.classList.toggle('is-on', box.checked);
+        btn.setAttribute('aria-pressed', box.checked ? 'true' : 'false');
+    } else if (kind === 'active') {
+        const box = document.getElementById('nf-f-active');
+        const btn = document.getElementById('nf-toggle-active');
+        if (!box || !btn) return;
+        box.checked = !box.checked;
+        btn.classList.toggle('is-on', box.checked);
+        btn.setAttribute('aria-pressed', box.checked ? 'true' : 'false');
+    }
+    scheduleNicheFilterApply();
+}
+
+function removeNicheFilterChip(key) {
+    if (key === 'q') {
+        const q = document.getElementById('nf-f-q');
+        if (q) q.value = '';
+    } else if (key === 'recent') {
+        const minEl = document.getElementById('nf-recent-min');
+        const maxEl = document.getElementById('nf-recent-max');
+        if (minEl) minEl.value = '0';
+        if (maxEl) maxEl.value = String(_NF_RECENT_MAX);
+    } else if (key === 'subs') {
+        const minEl = document.getElementById('nf-subs-min');
+        const maxEl = document.getElementById('nf-subs-max');
+        if (minEl) minEl.value = '0';
+        if (maxEl) maxEl.value = String(_NF_SUBS_MAX);
+    } else if (key === 'rev') {
+        const el = document.getElementById('nf-rev-min');
+        if (el) el.value = '0';
+    } else if (key === 'has-recent-off') {
+        const box = document.getElementById('nf-f-has-recent');
+        const btn = document.getElementById('nf-toggle-has-recent');
+        if (box) box.checked = true;
+        if (btn) {
+            btn.classList.add('is-on');
+            btn.setAttribute('aria-pressed', 'true');
+        }
+    } else if (key === 'active') {
+        const box = document.getElementById('nf-f-active');
+        const btn = document.getElementById('nf-toggle-active');
+        if (box) box.checked = false;
+        if (btn) {
+            btn.classList.remove('is-on');
+            btn.setAttribute('aria-pressed', 'false');
+        }
+    } else if (key === 'sort') {
+        const sort = document.getElementById('nf-sort');
+        if (sort) sort.value = 'recent_revenue';
+    }
+    scheduleNicheFilterApply();
+}
+
+function clearNicheFilters() {
+    const q = document.getElementById('nf-f-q');
+    if (q) q.value = '';
+    const sort = document.getElementById('nf-sort');
+    if (sort) sort.value = 'recent_revenue';
+    const recentMin = document.getElementById('nf-recent-min');
+    const recentMax = document.getElementById('nf-recent-max');
+    const subsMin = document.getElementById('nf-subs-min');
+    const subsMax = document.getElementById('nf-subs-max');
+    const rev = document.getElementById('nf-rev-min');
+    if (recentMin) recentMin.value = '0';
+    if (recentMax) recentMax.value = String(_NF_RECENT_MAX);
+    if (subsMin) subsMin.value = '0';
+    if (subsMax) subsMax.value = String(_NF_SUBS_MAX);
+    if (rev) rev.value = '0';
+    const hasRecent = document.getElementById('nf-f-has-recent');
+    const active = document.getElementById('nf-f-active');
+    if (hasRecent) hasRecent.checked = true;
+    if (active) active.checked = false;
+    const tHas = document.getElementById('nf-toggle-has-recent');
+    const tAct = document.getElementById('nf-toggle-active');
+    if (tHas) {
+        tHas.classList.add('is-on');
+        tHas.setAttribute('aria-pressed', 'true');
+    }
+    if (tAct) {
+        tAct.classList.remove('is-on');
+        tAct.setAttribute('aria-pressed', 'false');
+    }
+    scheduleNicheFilterApply();
+}
+
+function bindNicheFilters() {
+    if (_nfFiltersBound) {
+        _nfSyncDual('recent');
+        _nfSyncDual('subs');
+        _nfSyncRevenue();
+        _nfRenderFilterChips();
+        return;
+    }
+    _nfFiltersBound = true;
+
+    const onDual = (kind, which) => (e) => {
+        e.target.dataset.nfLast = which;
+        const minEl = document.getElementById(kind === 'recent' ? 'nf-recent-min' : 'nf-subs-min');
+        const maxEl = document.getElementById(kind === 'recent' ? 'nf-recent-max' : 'nf-subs-max');
+        if (minEl && maxEl) {
+            minEl.style.zIndex = which === 'min' ? '5' : '4';
+            maxEl.style.zIndex = which === 'max' ? '5' : '4';
+        }
+        scheduleNicheFilterApply();
+    };
+    document.getElementById('nf-recent-min')?.addEventListener('input', onDual('recent', 'min'));
+    document.getElementById('nf-recent-max')?.addEventListener('input', onDual('recent', 'max'));
+    document.getElementById('nf-subs-min')?.addEventListener('input', onDual('subs', 'min'));
+    document.getElementById('nf-subs-max')?.addEventListener('input', onDual('subs', 'max'));
+    document.getElementById('nf-rev-min')?.addEventListener('input', () => {
+        _nfPaintSingleRange();
+        scheduleNicheFilterApply();
+    });
+    document.getElementById('nf-f-q')?.addEventListener('input', () => scheduleNicheFilterApply());
+    document.getElementById('nf-sort')?.addEventListener('change', () => scheduleNicheFilterApply());
+
+    document.querySelectorAll('.nf-filter-block .nf-preset').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const block = btn.closest('.nf-filter-block');
+            const kind = block?.dataset.nfRange;
+            const min = Number(btn.dataset.min || 0);
+            const maxRaw = btn.dataset.max;
+            if (kind === 'rev') {
+                const el = document.getElementById('nf-rev-min');
+                if (el) el.value = String(min);
+            } else if (kind === 'recent' || kind === 'subs') {
+                const ceiling = kind === 'recent' ? _NF_RECENT_MAX : _NF_SUBS_MAX;
+                const minEl = document.getElementById(kind === 'recent' ? 'nf-recent-min' : 'nf-subs-min');
+                const maxEl = document.getElementById(kind === 'recent' ? 'nf-recent-max' : 'nf-subs-max');
+                const max = maxRaw === undefined || maxRaw === '' ? ceiling : Number(maxRaw);
+                if (minEl) minEl.value = String(min);
+                if (maxEl) maxEl.value = String(max);
+            }
+            scheduleNicheFilterApply();
+        });
+    });
+
+    _nfSyncDual('recent');
+    _nfSyncDual('subs');
+    _nfSyncRevenue();
+    _nfRenderFilterChips();
+}
+
 async function initNicheFinderPage() {
     if (!ensureAuth(initNicheFinderPage)) return;
     const gate = document.getElementById('nf-gate');
@@ -2871,6 +3182,7 @@ async function initNicheFinderPage() {
     const adminPanel = document.getElementById('nf-admin-panel');
     const status = document.getElementById('nf-status');
     if (status) status.textContent = '';
+    bindNicheFilters();
     try {
         const res = await fetch('/api/niche-finder/access');
         const data = await readJson(res, null);
@@ -2964,10 +3276,6 @@ async function loadNicheFinderFeed(opts = {}) {
     } catch (e) {
         if (meta) meta.textContent = e.message || 'Failed to load niches';
     }
-}
-
-function applyNicheFilters() {
-    loadNicheFinderFeed({ reset: true });
 }
 
 function nicheFinderNextPage() {
