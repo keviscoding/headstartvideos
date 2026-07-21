@@ -730,7 +730,10 @@
 
             <div id="nf-workspace" class="hidden space-y-6">
                 <div id="nf-admin-panel" class="hidden cr-surface" style="padding: 20px;">
-                    <p class="cr-eyebrow" style="margin-bottom: 8px;">Admin — refresh library</p>
+                    <p class="cr-eyebrow" style="margin-bottom: 8px;">Admin — grow the library</p>
+                    <p style="font-size: 13px; color: var(--app-ink-3); margin-bottom: 12px;">
+                        Refresh <strong>adds</strong> new channels and updates metrics on ones we already have — it never wipes the library.
+                    </p>
                     <label class="cr-label">Keywords (one per line, optional)</label>
                     <textarea id="nf-keywords" class="cr-input" rows="4" style="font-family: var(--font-mono); font-size: 13px; resize: vertical;" placeholder="history documentary&#10;true story explained"></textarea>
                     <div class="flex flex-wrap items-end gap-4 mt-4">
@@ -743,16 +746,69 @@
                             <input id="nf-max-subs" type="number" class="cr-input" value="150000" min="10000" step="10000" style="width: 140px;">
                         </div>
                         <button id="nf-run-btn" class="btn-primary" onclick="startNicheFinder()">
-                            <span class="btn-text">Refresh library</span>
+                            <span class="btn-text">Add niches</span>
                             <span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;display:inline-block;"></div> Searching…</span>
                         </button>
                     </div>
                     <p id="nf-status" class="cr-mono" style="font-size: 12px; color: var(--app-ink-3); margin-top: 12px;"></p>
                 </div>
 
+                <div id="nf-filters" class="cr-surface" style="padding: 16px 18px;">
+                    <div class="flex flex-wrap gap-3" style="align-items: flex-end;">
+                        <div>
+                            <label class="cr-label">Sort</label>
+                            <select id="nf-sort" class="cr-input" style="min-width: 180px;">
+                                <option value="recent_revenue">Best recent earnings</option>
+                                <option value="revenue">Best lifetime earnings</option>
+                                <option value="recent_avg">Best recent avg views</option>
+                                <option value="ratio">Best view/sub ratio</option>
+                                <option value="score">Best score</option>
+                                <option value="views">Most avg views</option>
+                                <option value="subscribers">Most subscribers</option>
+                                <option value="subscribers_asc">Least subscribers</option>
+                                <option value="videos">Most videos</option>
+                                <option value="newest">Newest in library</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="cr-label">Min recent avg</label>
+                            <input id="nf-f-min-recent" type="number" class="cr-input" value="" min="0" step="500" placeholder="0" style="width: 110px;">
+                        </div>
+                        <div>
+                            <label class="cr-label">Max recent avg</label>
+                            <input id="nf-f-max-recent" type="number" class="cr-input" value="" min="0" step="500" placeholder="any" style="width: 110px;">
+                        </div>
+                        <div>
+                            <label class="cr-label">Min subs</label>
+                            <input id="nf-f-min-subs" type="number" class="cr-input" value="" min="0" step="1000" placeholder="0" style="width: 100px;">
+                        </div>
+                        <div>
+                            <label class="cr-label">Max subs</label>
+                            <input id="nf-f-max-subs" type="number" class="cr-input" value="" min="0" step="1000" placeholder="any" style="width: 100px;">
+                        </div>
+                        <div>
+                            <label class="cr-label">Min recent $/mo</label>
+                            <input id="nf-f-min-rev" type="number" class="cr-input" value="" min="0" step="50" placeholder="0" style="width: 100px;">
+                        </div>
+                        <div>
+                            <label class="cr-label">Search titles</label>
+                            <input id="nf-f-q" type="text" class="cr-input" placeholder="niche keyword…" style="width: 160px;">
+                        </div>
+                        <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--app-ink-2); cursor:pointer; padding-bottom: 8px;">
+                            <input id="nf-f-has-recent" type="checkbox" checked>
+                            Has recent avg
+                        </label>
+                        <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--app-ink-2); cursor:pointer; padding-bottom: 8px;">
+                            <input id="nf-f-active" type="checkbox">
+                            Active recently (4+ in 14d)
+                        </label>
+                        <button type="button" class="btn-primary" style="font-size: 13px;" onclick="applyNicheFilters()">Apply filters</button>
+                    </div>
+                </div>
+
                 <div class="flex items-center justify-between" style="flex-wrap: wrap; gap: 8px;">
                     <p id="nf-feed-meta" class="cr-mono" style="font-size: 12px; color: var(--app-ink-3);"></p>
-                    <button type="button" class="btn-secondary" style="font-size: 12px; padding: 6px 12px;" onclick="loadNicheFinderFeed()">Refresh feed</button>
+                    <button type="button" class="btn-secondary" style="font-size: 12px; padding: 6px 12px;" onclick="loadNicheFinderFeed({ reset: true })">Refresh feed</button>
                 </div>
                 <div id="nf-results" class="space-y-4"></div>
                 <div id="nf-load-more-wrap" class="hidden" style="text-align: center; padding: 8px 0 24px;">

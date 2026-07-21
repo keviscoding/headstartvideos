@@ -24,18 +24,16 @@ from googleapiclient.discovery import build
 
 # ≥ 4 minutes; no upper bound
 MIN_DURATION_SEC = 240
-RECENT_VIDEO_COUNT = 4
-POPULAR_SCAN = 18  # pull enough long-form to find "most popular"
+RECENT_VIDEO_COUNT = 8  # last N uploads for recent avg (ViewHunt-style)
+POPULAR_SCAN = 24  # pull enough long-form from uploads playlist
 DEFAULT_MAX_PER_KEYWORD = 12
-DEFAULT_MAX_CHANNELS = 40
+DEFAULT_MAX_CHANNELS = 60
 
 # Conservative faceless long-form RPM assumption for English markets.
 # Real RPM varies wildly ($1–$12+); we show a midpoint + band in the UI.
 DEFAULT_RPM_USD = 4.0
 
-# Starter pack oriented at faceless / story / documentary long-form
-# (patterns from operator NexLev examples: myths, history, geopolitics,
-# HFY/scifi stories, prayer, HOA drama, finance, football stories, stoic, etc.)
+# Broad starter pack — discovery is meant to be sprawling; filters sort later.
 DEFAULT_KEYWORDS = [
     "history documentary explained",
     "true story folktale",
@@ -52,6 +50,21 @@ DEFAULT_KEYWORDS = [
     "war documentary full movie",
     "what happened to",
     "untold history",
+    "reddit story narrated",
+    "sleep story bedtime",
+    "true crime documentary",
+    "conspiracy unexplained",
+    "bible prophecy explained",
+    "motivational speech stoic",
+    "retirement millionaire habits",
+    "space documentary full",
+    "ancient civilization mystery",
+    "celebrity drama story",
+    "military documentary narrated",
+    "horror story narrated long",
+    "business case study explained",
+    "psychology facts explained",
+    "relationship advice stories",
 ]
 
 
@@ -271,6 +284,38 @@ def estimate_monthly_revenue_usd(
     }
 
 
+def recent_average_views(videos: list[dict]) -> float:
+    """
+    ViewHunt-style recent average from newest uploads:
+    mean of view counts; if a viral outlier (>4× rest), use trimmed mean.
+    """
+    counts = sorted(
+        (int(v.get("view_count") or 0) for v in videos),
+        reverse=True,
+    )
+    counts = [c for c in counts if c > 0]
+    if not counts:
+        return 0.0
+    mean = sum(counts) / len(counts)
+    if len(counts) >= 3:
+        mx = counts[0]
+        rest = counts[1:]
+        rest_avg = sum(rest) / len(rest) if rest else 0
+        if rest_avg > 0 and mx / rest_avg > 4:
+            trimmed = counts[1:-1] if len(counts) >= 3 else counts
+            return round(sum(trimmed) / len(trimmed))
+    return round(mean)
+
+
+def videos_posted_last_days(videos: list[dict], *, days: int = 14) -> int:
+    n = 0
+    for v in videos:
+        age = _days_since(v.get("published_at") or "")
+        if age is not None and age <= days:
+            n += 1
+    return n
+
+
 def score_channel(
     *,
     subscriber_count: int,
@@ -448,8 +493,7 @@ def run_niche_finder(
         longform = _longform_from_uploads(
             youtube, ch.get("uploads_playlist") or "", want=POPULAR_SCAN
         )
-        # Always fold in keyword-search hits so "most popular" isn't limited
-        # to whatever happens to sit in the latest upload page.
+        # Always fold in keyword-search hits for richer video sample.
         merged = {v["video_id"]: v for v in longform}
         for v in seed_videos:
             merged.setdefault(v["video_id"], v)
@@ -457,7 +501,7 @@ def run_niche_finder(
         if not longform:
             return None
 
-        # Recent = newest by publish date; Popular = highest views
+        # Recent = newest by publish date (what operators actually want to see)
         by_date = sorted(
             longform,
             key=lambda x: x.get("published_at") or "",
@@ -466,18 +510,17 @@ def run_niche_finder(
         recent = by_date[:RECENT_VIDEO_COUNT]
         popular = sorted(
             longform, key=lambda x: x.get("view_count") or 0, reverse=True
-        )[:RECENT_VIDEO_COUNT]
+        )[:4]
 
-        recent_views = [int(v.get("view_count") or 0) for v in recent]
-        recent_avg = (
-            round(sum(recent_views) / len(recent_views)) if recent_views else 0
-        )
+        recent_avg = recent_average_views(recent)
         if min_recent_avg_views and recent_avg < min_recent_avg_views:
             return None
 
+        videos_last_14d = videos_posted_last_days(by_date, days=14)
+
         subs = int(ch.get("subscriber_count") or 0)
         lifetime_avg = int(ch.get("avg_views_per_video") or 0)
-        # NexLev-style card number: lifetime views / uploads.
+        # Card avg: lifetime views / uploads (NexLev-style), fallback to recent.
         display_avg = lifetime_avg or recent_avg
         ratio = round(recent_avg / subs, 3) if subs > 0 and recent_avg > 0 else (
             round(display_avg / subs, 3) if subs > 0 else 0.0
@@ -508,10 +551,14 @@ def run_niche_finder(
             else 0.0
         )
 
-        # Same spirit as NexLev monthly revenue sort:
-        # lifetime avg views × uploads/month × RPM/1000
+        # Lifetime economics (catalog) + recent economics (is it still printing?)
         rev = estimate_monthly_revenue_usd(
             avg_views=float(display_avg),
+            uploads_per_month=uploads_per_month,
+            rpm_usd=rpm_usd,
+        )
+        rev_recent = estimate_monthly_revenue_usd(
+            avg_views=float(recent_avg or display_avg),
             uploads_per_month=uploads_per_month,
             rpm_usd=rpm_usd,
         )
@@ -524,10 +571,20 @@ def run_niche_finder(
             uploads_per_month=uploads_per_month,
             days_since_start=days,
             outlier_score=outlier,
-            est_monthly_revenue_usd=rev["est_monthly_revenue_usd"],
+            est_monthly_revenue_usd=rev_recent["est_monthly_revenue_usd"],
         )
 
         likely_monetized = subs >= 1000  # YouTube partner threshold proxy
+
+        def _vid_row(v: dict) -> dict:
+            return {
+                "title": v.get("title"),
+                "url": v.get("url"),
+                "thumbnail": v.get("thumbnail"),
+                "view_count": v.get("view_count"),
+                "duration_sec": v.get("duration_sec"),
+                "published_at": v.get("published_at"),
+            }
 
         return {
             "channel_id": cid,
@@ -541,32 +598,17 @@ def run_niche_finder(
             "recent_avg_views": recent_avg,
             "view_to_sub_ratio": ratio,
             "uploads_per_month": uploads_per_month,
+            "videos_last_14d": videos_last_14d,
             "outlier_score": outlier,
             "likely_monetized": likely_monetized,
             "score": score,
             **rev,
-            "popular_videos": [
-                {
-                    "title": v.get("title"),
-                    "url": v.get("url"),
-                    "thumbnail": v.get("thumbnail"),
-                    "view_count": v.get("view_count"),
-                    "duration_sec": v.get("duration_sec"),
-                    "published_at": v.get("published_at"),
-                }
-                for v in popular
-            ],
-            "recent_videos": [
-                {
-                    "title": v.get("title"),
-                    "url": v.get("url"),
-                    "thumbnail": v.get("thumbnail"),
-                    "view_count": v.get("view_count"),
-                    "duration_sec": v.get("duration_sec"),
-                    "published_at": v.get("published_at"),
-                }
-                for v in recent
-            ],
+            "est_recent_monthly_revenue_usd": rev_recent["est_monthly_revenue_usd"],
+            "est_recent_monthly_revenue_low_usd": rev_recent["est_monthly_revenue_low_usd"],
+            "est_recent_monthly_revenue_high_usd": rev_recent["est_monthly_revenue_high_usd"],
+            # Primary gallery = most recent long-form
+            "recent_videos": [_vid_row(v) for v in recent[:4]],
+            "popular_videos": [_vid_row(v) for v in popular],
         }
 
     _log(f"Scoring {len(to_enrich)} channels…")

@@ -2414,7 +2414,7 @@ def _niche_finder_can_run(user: dict) -> bool:
 class NicheFinderJobRequest(BaseModel):
     keywords: list[str] = []
     max_per_keyword: int = 12
-    max_channels: int = 40
+    max_channels: int = 60
     min_recent_avg_views: int = 0
     max_subscribers: int = 150_000
 
@@ -2530,22 +2530,46 @@ def niche_finder_access(user: dict = Depends(require_user)):
 
 @app.get("/api/niche-finder/channels")
 def niche_finder_channels(
-    sort: str = "revenue",
+    sort: str = "recent_revenue",
     limit: int = 40,
     offset: int = 0,
+    min_recent_avg: float = 0,
+    max_recent_avg: float = 0,
+    min_subscribers: int = 0,
+    max_subscribers: int = 0,
+    min_videos: int = 0,
+    max_videos: int = 0,
+    min_recent_revenue: float = 0,
+    max_recent_revenue: float = 0,
+    active_recently: bool = False,
+    has_recent_avg: bool = False,
+    q: str = "",
     user: dict = Depends(require_user),
 ):
     if not _niche_finder_can_browse(user):
         raise HTTPException(402, "Niche Finder is only available on Pro.")
-    sort_key = "score" if sort == "score" else "revenue"
-    channels = list_niche_channels(sort=sort_key, limit=limit, offset=offset)
-    total = count_niche_channels()
+    filters = dict(
+        min_recent_avg=min_recent_avg or None,
+        max_recent_avg=max_recent_avg or None,
+        min_subscribers=min_subscribers or None,
+        max_subscribers=max_subscribers or None,
+        min_videos=min_videos or None,
+        max_videos=max_videos or None,
+        min_recent_revenue=min_recent_revenue or None,
+        max_recent_revenue=max_recent_revenue or None,
+        active_recently=bool(active_recently),
+        has_recent_avg=bool(has_recent_avg),
+        q=(q or "").strip(),
+    )
+    channels = list_niche_channels(sort=sort or "recent_revenue", limit=limit, offset=offset, **filters)
+    total = count_niche_channels(**filters)
     return {
         "channels": channels,
         "total": total,
         "limit": max(1, min(int(limit or 40), 100)),
         "offset": max(0, int(offset or 0)),
-        "sort": sort_key,
+        "sort": sort or "recent_revenue",
+        "filters": filters,
     }
 
 

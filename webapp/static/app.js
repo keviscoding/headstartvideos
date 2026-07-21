@@ -2884,7 +2884,7 @@ async function initNicheFinderPage() {
             gate?.classList.add('hidden');
             workspace?.classList.remove('hidden');
             adminPanel?.classList.toggle('hidden', !data.can_run);
-            await loadNicheFinderFeed({ reset: true });
+            await loadNicheFinderFeed();
         } else {
             workspace?.classList.add('hidden');
             gate?.classList.remove('hidden');
@@ -2907,8 +2907,8 @@ async function initNicheFinderPage() {
 
 async function loadNicheFinderFeed(opts = {}) {
     if (_nfAccess && !_nfAccess.can_browse) return;
-    const reset = !!opts.reset;
-    if (reset) {
+    const isAppend = opts.append === true;
+    if (!isAppend) {
         _nfOffset = 0;
         const results = document.getElementById('nf-results');
         if (results) results.innerHTML = '';
@@ -2916,18 +2916,37 @@ async function loadNicheFinderFeed(opts = {}) {
     const meta = document.getElementById('nf-feed-meta');
     const moreWrap = document.getElementById('nf-load-more-wrap');
     try {
-        if (meta && reset) meta.textContent = 'Loading niche library…';
-        const res = await fetch(`/api/niche-finder/channels?sort=revenue&limit=${_NF_PAGE}&offset=${_nfOffset}`);
+        if (meta && !isAppend) meta.textContent = 'Loading niche library…';
+        const params = new URLSearchParams();
+        params.set('sort', document.getElementById('nf-sort')?.value || 'recent_revenue');
+        params.set('limit', String(_NF_PAGE));
+        params.set('offset', String(_nfOffset));
+        const minRecent = document.getElementById('nf-f-min-recent')?.value;
+        const maxRecent = document.getElementById('nf-f-max-recent')?.value;
+        const minSubs = document.getElementById('nf-f-min-subs')?.value;
+        const maxSubs = document.getElementById('nf-f-max-subs')?.value;
+        const minRev = document.getElementById('nf-f-min-rev')?.value;
+        const q = document.getElementById('nf-f-q')?.value?.trim();
+        if (minRecent) params.set('min_recent_avg', minRecent);
+        if (maxRecent) params.set('max_recent_avg', maxRecent);
+        if (minSubs) params.set('min_subscribers', minSubs);
+        if (maxSubs) params.set('max_subscribers', maxSubs);
+        if (minRev) params.set('min_recent_revenue', minRev);
+        if (q) params.set('q', q);
+        if (document.getElementById('nf-f-has-recent')?.checked) params.set('has_recent_avg', 'true');
+        if (document.getElementById('nf-f-active')?.checked) params.set('active_recently', 'true');
+
+        const res = await fetch(`/api/niche-finder/channels?${params.toString()}`);
         const data = await readJson(res, null);
         if (!res.ok) throw new Error(data?.detail || 'Failed to load niches');
         const channels = data.channels || [];
         _nfTotal = data.total || 0;
-        _renderNicheFinderHits(channels, { append: !reset });
+        _renderNicheFinderHits(channels, { append: isAppend });
         _nfOffset += channels.length;
         if (meta) {
             meta.textContent = _nfTotal
-                ? `Showing ${_nfOffset} of ${_nfTotal} niches · sorted by est. monthly revenue`
-                : 'Building the niche library…';
+                ? `Showing ${_nfOffset} of ${_nfTotal} niches`
+                : 'Library is empty — run Add niches (admin) or wait for the daily cron.';
         }
         moreWrap?.classList.toggle('hidden', _nfOffset >= _nfTotal || channels.length === 0);
     } catch (e) {
@@ -2935,8 +2954,12 @@ async function loadNicheFinderFeed(opts = {}) {
     }
 }
 
+function applyNicheFilters() {
+    loadNicheFinderFeed({ reset: true });
+}
+
 async function loadMoreNicheFinder() {
-    await loadNicheFinderFeed({ reset: false });
+    await loadNicheFinderFeed({ append: true });
 }
 
 async function startNicheFinder() {
@@ -2999,7 +3022,7 @@ async function _pollNicheFinderJob(jobId) {
             setLoading(btn, false);
             const n = data.channels_upserted || (data.hits || []).length;
             if (status) status.textContent = `Done — ${n} channel${n === 1 ? '' : 's'} saved to the library.`;
-            await loadNicheFinderFeed({ reset: true });
+            await loadNicheFinderFeed();
         } else if (data.status === 'error') {
             if (_nfPollTimer) { clearInterval(_nfPollTimer); _nfPollTimer = null; }
             setLoading(btn, false);
@@ -3037,7 +3060,7 @@ function _renderNicheFinderHits(hits, opts = {}) {
         return;
     }
     const html = hits.map((h) => {
-        const vids = (h.popular_videos || h.recent_videos || []).slice(0, 4);
+        const vids = (h.recent_videos || h.popular_videos || []).slice(0, 4);
         const thumbs = vids.map(v => {
             const ago = v.published_at ? _nfRelTime(v.published_at) : '';
             return `
@@ -3091,19 +3114,20 @@ function _renderNicheFinderHits(hits, opts = {}) {
                         </span>
                     </div>
                     <p class="cr-mono" style="font-size: 12px; color: var(--success); margin-top: 6px;">
-                        Est. ${_nfMoney(h.est_monthly_revenue_low_usd)}–${_nfMoney(h.est_monthly_revenue_high_usd)}/mo
-                        <span style="color: var(--app-ink-3);">(mid ${_nfMoney(h.est_monthly_revenue_usd)} @ $4 RPM)</span>
+                        Recent est. ${_nfMoney(h.est_recent_monthly_revenue_usd || h.est_monthly_revenue_usd)}/mo
+                        <span style="color: var(--app-ink-3);">· lifetime ${_nfMoney(h.est_monthly_revenue_usd)}/mo @ $4 RPM</span>
+                        · recent avg ${_nfFmt(h.recent_avg_views)}
                         · ${_nfEsc(h.view_to_sub_ratio)}× v/sub
                     </p>
                 </div>
             </div>
             <div class="flex gap-2 mt-4" style="flex-wrap: wrap;">
-                ${metric('Avg. Views / Video', _nfFmt(h.avg_views_per_video))}
+                ${metric('Recent Avg Views', _nfFmt(h.recent_avg_views))}
                 ${metric('Days Since Start', h.days_since_start != null ? _nfEsc(h.days_since_start) : '—')}
                 ${metric('Uploads', _nfFmt(h.video_count))}
-                ${metric('Outlier Score', (h.outlier_score != null ? h.outlier_score + '×' : '—'))}
+                ${metric('Active 14d', h.videos_last_14d != null ? _nfEsc(h.videos_last_14d) : '—')}
             </div>
-            <p class="cr-eyebrow" style="margin: 16px 0 8px;">Most popular videos</p>
+            <p class="cr-eyebrow" style="margin: 16px 0 8px;">Most recent videos</p>
             <div class="flex gap-3" style="overflow-x:auto; padding-bottom: 4px;">
                 ${thumbs || '<span style="color:var(--app-ink-3);font-size:13px;">No long-form videos found</span>'}
             </div>

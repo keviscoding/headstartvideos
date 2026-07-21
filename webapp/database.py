@@ -146,6 +146,11 @@ CREATE TABLE IF NOT EXISTS niche_channels (
     est_monthly_revenue_high_usd REAL DEFAULT 0,
     rpm_assumed                 REAL DEFAULT 4,
     popular_videos_json         TEXT DEFAULT '[]',
+    recent_videos_json          TEXT DEFAULT '[]',
+    est_recent_monthly_revenue_usd REAL DEFAULT 0,
+    est_recent_monthly_revenue_low_usd REAL DEFAULT 0,
+    est_recent_monthly_revenue_high_usd REAL DEFAULT 0,
+    videos_last_14d             INTEGER DEFAULT 0,
     first_seen_at               REAL NOT NULL DEFAULT (strftime('%s','now')),
     last_seen_at                REAL NOT NULL DEFAULT (strftime('%s','now')),
     last_scored_at              REAL NOT NULL DEFAULT (strftime('%s','now')),
@@ -277,6 +282,11 @@ CREATE TABLE IF NOT EXISTS niche_channels (
     est_monthly_revenue_high_usd DOUBLE PRECISION DEFAULT 0,
     rpm_assumed                 DOUBLE PRECISION DEFAULT 4,
     popular_videos_json         TEXT DEFAULT '[]',
+    recent_videos_json          TEXT DEFAULT '[]',
+    est_recent_monthly_revenue_usd DOUBLE PRECISION DEFAULT 0,
+    est_recent_monthly_revenue_low_usd DOUBLE PRECISION DEFAULT 0,
+    est_recent_monthly_revenue_high_usd DOUBLE PRECISION DEFAULT 0,
+    videos_last_14d             INTEGER DEFAULT 0,
     first_seen_at               DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now()),
     last_seen_at                DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now()),
     last_scored_at              DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now()),
@@ -322,6 +332,8 @@ CREATE INDEX IF NOT EXISTS idx_cook_jobs_status ON cook_jobs (status, created_at
 CREATE INDEX IF NOT EXISTS idx_voice_clones_user ON voice_clones (user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_niche_channels_revenue ON niche_channels (active, est_monthly_revenue_usd DESC);
 CREATE INDEX IF NOT EXISTS idx_niche_channels_score ON niche_channels (active, score DESC);
+CREATE INDEX IF NOT EXISTS idx_niche_channels_recent_avg ON niche_channels (active, recent_avg_views DESC);
+CREATE INDEX IF NOT EXISTS idx_niche_channels_recent_rev ON niche_channels (active, est_recent_monthly_revenue_usd DESC);
 CREATE INDEX IF NOT EXISTS idx_niche_hunt_runs_started ON niche_hunt_runs (started_at DESC);
 """
 
@@ -350,13 +362,18 @@ def _init_db():
         if IS_PG:
             with conn.cursor() as cur:
                 cur.execute(schema)
-                cur.execute(_INDEXES)
                 _ensure_column(cur, "users", "trial_used", "INTEGER NOT NULL DEFAULT 0")
                 _ensure_column(cur, "users", "heygen_key_enc", "TEXT DEFAULT ''")
                 _ensure_column(cur, "users", "atlas_key_enc", "TEXT DEFAULT ''")
                 _ensure_column(cur, "cook_jobs", "lite_mode", "INTEGER NOT NULL DEFAULT 0")
                 _ensure_column(cur, "cook_jobs", "worker_id", "TEXT DEFAULT ''")
                 _ensure_column(cur, "cook_jobs", "heartbeat_at", "DOUBLE PRECISION DEFAULT 0")
+                _ensure_column(cur, "niche_channels", "recent_videos_json", "TEXT DEFAULT '[]'")
+                _ensure_column(cur, "niche_channels", "est_recent_monthly_revenue_usd", "DOUBLE PRECISION DEFAULT 0")
+                _ensure_column(cur, "niche_channels", "est_recent_monthly_revenue_low_usd", "DOUBLE PRECISION DEFAULT 0")
+                _ensure_column(cur, "niche_channels", "est_recent_monthly_revenue_high_usd", "DOUBLE PRECISION DEFAULT 0")
+                _ensure_column(cur, "niche_channels", "videos_last_14d", "INTEGER DEFAULT 0")
+                cur.execute(_INDEXES)
                 cur.execute(_MIGRATIONS)
                 try:
                     cur.execute("ALTER TABLE users ALTER COLUMN credits SET DEFAULT 0")
@@ -364,7 +381,6 @@ def _init_db():
                     pass
         else:
             conn.executescript(schema)
-            conn.executescript(_INDEXES)
             cur = conn.cursor()
             _ensure_column(cur, "users", "trial_used", "INTEGER NOT NULL DEFAULT 0")
             _ensure_column(cur, "users", "heygen_key_enc", "TEXT DEFAULT ''")
@@ -372,6 +388,12 @@ def _init_db():
             _ensure_column(cur, "cook_jobs", "lite_mode", "INTEGER NOT NULL DEFAULT 0")
             _ensure_column(cur, "cook_jobs", "worker_id", "TEXT DEFAULT ''")
             _ensure_column(cur, "cook_jobs", "heartbeat_at", "REAL DEFAULT 0")
+            _ensure_column(cur, "niche_channels", "recent_videos_json", "TEXT DEFAULT '[]'")
+            _ensure_column(cur, "niche_channels", "est_recent_monthly_revenue_usd", "REAL DEFAULT 0")
+            _ensure_column(cur, "niche_channels", "est_recent_monthly_revenue_low_usd", "REAL DEFAULT 0")
+            _ensure_column(cur, "niche_channels", "est_recent_monthly_revenue_high_usd", "REAL DEFAULT 0")
+            _ensure_column(cur, "niche_channels", "videos_last_14d", "INTEGER DEFAULT 0")
+            conn.executescript(_INDEXES)
             conn.executescript(_MIGRATIONS)
     _apply_pending_credit_grants()
     _apply_pending_user_notices()
@@ -1335,7 +1357,7 @@ def append_cook_progress(job_id: str, message: str, phase: str = "running") -> N
 # --- Niche Finder catalog --------------------------------------------------
 
 def upsert_niche_channel(hit: dict, *, source_keyword: str = "") -> None:
-    """Insert or refresh a niche channel from a hunt hit."""
+    """Insert or refresh a niche channel from a hunt hit (never deletes prior rows)."""
     now = time.time()
     cid = (hit.get("channel_id") or "").strip()
     if not cid:
@@ -1343,6 +1365,12 @@ def upsert_niche_channel(hit: dict, *, source_keyword: str = "") -> None:
     popular = hit.get("popular_videos") or []
     if not isinstance(popular, list):
         popular = []
+    recent = hit.get("recent_videos") or []
+    if not isinstance(recent, list):
+        recent = []
+    # Prefer recent gallery; fall back to popular for older rows
+    if not recent and popular:
+        recent = popular
     kw = (source_keyword or hit.get("source_keyword") or "").strip()
     vals = (
         cid,
@@ -1365,94 +1393,79 @@ def upsert_niche_channel(hit: dict, *, source_keyword: str = "") -> None:
         float(hit.get("est_monthly_revenue_high_usd") or 0),
         float(hit.get("rpm_assumed") or 4),
         json.dumps(popular),
+        json.dumps(recent),
+        float(hit.get("est_recent_monthly_revenue_usd") or 0),
+        float(hit.get("est_recent_monthly_revenue_low_usd") or 0),
+        float(hit.get("est_recent_monthly_revenue_high_usd") or 0),
+        int(hit.get("videos_last_14d") or 0),
         now,
         now,
         now,
         1,
     )
+    cols = """
+        channel_id, channel_name, channel_url, avatar_url, source_keyword,
+        subscriber_count, video_count, days_since_start,
+        avg_views_per_video, recent_avg_views, view_to_sub_ratio,
+        uploads_per_month, outlier_score, score, likely_monetized,
+        est_monthly_revenue_usd, est_monthly_revenue_low_usd,
+        est_monthly_revenue_high_usd, rpm_assumed, popular_videos_json,
+        recent_videos_json, est_recent_monthly_revenue_usd,
+        est_recent_monthly_revenue_low_usd, est_recent_monthly_revenue_high_usd,
+        videos_last_14d, first_seen_at, last_seen_at, last_scored_at, active
+    """
+    update = """
+        channel_name = EXCLUDED.channel_name,
+        channel_url = EXCLUDED.channel_url,
+        avatar_url = EXCLUDED.avatar_url,
+        source_keyword = CASE
+            WHEN EXCLUDED.source_keyword != '' THEN EXCLUDED.source_keyword
+            ELSE niche_channels.source_keyword
+        END,
+        subscriber_count = EXCLUDED.subscriber_count,
+        video_count = EXCLUDED.video_count,
+        days_since_start = EXCLUDED.days_since_start,
+        avg_views_per_video = EXCLUDED.avg_views_per_video,
+        recent_avg_views = EXCLUDED.recent_avg_views,
+        view_to_sub_ratio = EXCLUDED.view_to_sub_ratio,
+        uploads_per_month = EXCLUDED.uploads_per_month,
+        outlier_score = EXCLUDED.outlier_score,
+        score = EXCLUDED.score,
+        likely_monetized = EXCLUDED.likely_monetized,
+        est_monthly_revenue_usd = EXCLUDED.est_monthly_revenue_usd,
+        est_monthly_revenue_low_usd = EXCLUDED.est_monthly_revenue_low_usd,
+        est_monthly_revenue_high_usd = EXCLUDED.est_monthly_revenue_high_usd,
+        rpm_assumed = EXCLUDED.rpm_assumed,
+        popular_videos_json = EXCLUDED.popular_videos_json,
+        recent_videos_json = EXCLUDED.recent_videos_json,
+        est_recent_monthly_revenue_usd = EXCLUDED.est_recent_monthly_revenue_usd,
+        est_recent_monthly_revenue_low_usd = EXCLUDED.est_recent_monthly_revenue_low_usd,
+        est_recent_monthly_revenue_high_usd = EXCLUDED.est_recent_monthly_revenue_high_usd,
+        videos_last_14d = EXCLUDED.videos_last_14d,
+        last_seen_at = EXCLUDED.last_seen_at,
+        last_scored_at = EXCLUDED.last_scored_at,
+        active = 1
+    """
+    placeholders_pg = ",".join(["%s"] * 29)
+    placeholders_sq = ",".join(["?"] * 29)
     with _conn() as conn:
         cur = conn.cursor()
         if IS_PG:
             cur.execute(
-                """
-                INSERT INTO niche_channels (
-                    channel_id, channel_name, channel_url, avatar_url, source_keyword,
-                    subscriber_count, video_count, days_since_start,
-                    avg_views_per_video, recent_avg_views, view_to_sub_ratio,
-                    uploads_per_month, outlier_score, score, likely_monetized,
-                    est_monthly_revenue_usd, est_monthly_revenue_low_usd,
-                    est_monthly_revenue_high_usd, rpm_assumed, popular_videos_json,
-                    first_seen_at, last_seen_at, last_scored_at, active
-                ) VALUES (
-                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s
-                )
-                ON CONFLICT (channel_id) DO UPDATE SET
-                    channel_name = EXCLUDED.channel_name,
-                    channel_url = EXCLUDED.channel_url,
-                    avatar_url = EXCLUDED.avatar_url,
-                    source_keyword = CASE
-                        WHEN EXCLUDED.source_keyword != '' THEN EXCLUDED.source_keyword
-                        ELSE niche_channels.source_keyword
-                    END,
-                    subscriber_count = EXCLUDED.subscriber_count,
-                    video_count = EXCLUDED.video_count,
-                    days_since_start = EXCLUDED.days_since_start,
-                    avg_views_per_video = EXCLUDED.avg_views_per_video,
-                    recent_avg_views = EXCLUDED.recent_avg_views,
-                    view_to_sub_ratio = EXCLUDED.view_to_sub_ratio,
-                    uploads_per_month = EXCLUDED.uploads_per_month,
-                    outlier_score = EXCLUDED.outlier_score,
-                    score = EXCLUDED.score,
-                    likely_monetized = EXCLUDED.likely_monetized,
-                    est_monthly_revenue_usd = EXCLUDED.est_monthly_revenue_usd,
-                    est_monthly_revenue_low_usd = EXCLUDED.est_monthly_revenue_low_usd,
-                    est_monthly_revenue_high_usd = EXCLUDED.est_monthly_revenue_high_usd,
-                    rpm_assumed = EXCLUDED.rpm_assumed,
-                    popular_videos_json = EXCLUDED.popular_videos_json,
-                    last_seen_at = EXCLUDED.last_seen_at,
-                    last_scored_at = EXCLUDED.last_scored_at,
-                    active = 1
+                f"""
+                INSERT INTO niche_channels ({cols})
+                VALUES ({placeholders_pg})
+                ON CONFLICT (channel_id) DO UPDATE SET {update}
                 """,
                 vals,
             )
         else:
+            update_sq = update.replace("EXCLUDED.", "excluded.")
             cur.execute(
-                """
-                INSERT INTO niche_channels (
-                    channel_id, channel_name, channel_url, avatar_url, source_keyword,
-                    subscriber_count, video_count, days_since_start,
-                    avg_views_per_video, recent_avg_views, view_to_sub_ratio,
-                    uploads_per_month, outlier_score, score, likely_monetized,
-                    est_monthly_revenue_usd, est_monthly_revenue_low_usd,
-                    est_monthly_revenue_high_usd, rpm_assumed, popular_videos_json,
-                    first_seen_at, last_seen_at, last_scored_at, active
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                ON CONFLICT(channel_id) DO UPDATE SET
-                    channel_name = excluded.channel_name,
-                    channel_url = excluded.channel_url,
-                    avatar_url = excluded.avatar_url,
-                    source_keyword = CASE
-                        WHEN excluded.source_keyword != '' THEN excluded.source_keyword
-                        ELSE niche_channels.source_keyword
-                    END,
-                    subscriber_count = excluded.subscriber_count,
-                    video_count = excluded.video_count,
-                    days_since_start = excluded.days_since_start,
-                    avg_views_per_video = excluded.avg_views_per_video,
-                    recent_avg_views = excluded.recent_avg_views,
-                    view_to_sub_ratio = excluded.view_to_sub_ratio,
-                    uploads_per_month = excluded.uploads_per_month,
-                    outlier_score = excluded.outlier_score,
-                    score = excluded.score,
-                    likely_monetized = excluded.likely_monetized,
-                    est_monthly_revenue_usd = excluded.est_monthly_revenue_usd,
-                    est_monthly_revenue_low_usd = excluded.est_monthly_revenue_low_usd,
-                    est_monthly_revenue_high_usd = excluded.est_monthly_revenue_high_usd,
-                    rpm_assumed = excluded.rpm_assumed,
-                    popular_videos_json = excluded.popular_videos_json,
-                    last_seen_at = excluded.last_seen_at,
-                    last_scored_at = excluded.last_scored_at,
-                    active = 1
+                f"""
+                INSERT INTO niche_channels ({cols})
+                VALUES ({placeholders_sq})
+                ON CONFLICT(channel_id) DO UPDATE SET {update_sq}
                 """,
                 vals,
             )
@@ -1474,8 +1487,16 @@ def _niche_row_to_hit(row: dict) -> dict:
         popular = json.loads(d.get("popular_videos_json") or "[]")
     except Exception:
         popular = []
+    try:
+        recent = json.loads(d.get("recent_videos_json") or "[]")
+    except Exception:
+        recent = []
     if not isinstance(popular, list):
         popular = []
+    if not isinstance(recent, list):
+        recent = []
+    if not recent:
+        recent = popular
     return {
         "channel_id": d.get("channel_id"),
         "channel_name": d.get("channel_name"),
@@ -1489,13 +1510,18 @@ def _niche_row_to_hit(row: dict) -> dict:
         "recent_avg_views": d.get("recent_avg_views") or 0,
         "view_to_sub_ratio": d.get("view_to_sub_ratio") or 0,
         "uploads_per_month": d.get("uploads_per_month") or 0,
+        "videos_last_14d": int(d.get("videos_last_14d") or 0),
         "outlier_score": d.get("outlier_score") or 0,
         "score": d.get("score") or 0,
         "likely_monetized": bool(d.get("likely_monetized")),
         "est_monthly_revenue_usd": d.get("est_monthly_revenue_usd") or 0,
         "est_monthly_revenue_low_usd": d.get("est_monthly_revenue_low_usd") or 0,
         "est_monthly_revenue_high_usd": d.get("est_monthly_revenue_high_usd") or 0,
+        "est_recent_monthly_revenue_usd": d.get("est_recent_monthly_revenue_usd") or 0,
+        "est_recent_monthly_revenue_low_usd": d.get("est_recent_monthly_revenue_low_usd") or 0,
+        "est_recent_monthly_revenue_high_usd": d.get("est_recent_monthly_revenue_high_usd") or 0,
         "rpm_assumed": d.get("rpm_assumed") or 4,
+        "recent_videos": recent,
         "popular_videos": popular,
         "first_seen_at": d.get("first_seen_at"),
         "last_seen_at": d.get("last_seen_at"),
@@ -1503,36 +1529,151 @@ def _niche_row_to_hit(row: dict) -> dict:
     }
 
 
+_NICHE_SORT_MAP = {
+    "revenue": "est_monthly_revenue_usd DESC, score DESC",
+    "recent_revenue": "est_recent_monthly_revenue_usd DESC, recent_avg_views DESC",
+    "score": "score DESC, est_monthly_revenue_usd DESC",
+    "ratio": "view_to_sub_ratio DESC, recent_avg_views DESC",
+    "recent_avg": "recent_avg_views DESC, view_to_sub_ratio DESC",
+    "views": "avg_views_per_video DESC, recent_avg_views DESC",
+    "subscribers": "subscriber_count DESC",
+    "subscribers_asc": "subscriber_count ASC",
+    "videos": "video_count DESC",
+    "newest": "first_seen_at DESC",
+    "oldest": "first_seen_at ASC",
+}
+
+
 def list_niche_channels(
     *,
-    sort: str = "revenue",
+    sort: str = "recent_revenue",
     limit: int = 40,
     offset: int = 0,
     active_only: bool = True,
+    min_recent_avg: float | None = None,
+    max_recent_avg: float | None = None,
+    min_subscribers: int | None = None,
+    max_subscribers: int | None = None,
+    min_videos: int | None = None,
+    max_videos: int | None = None,
+    min_recent_revenue: float | None = None,
+    max_recent_revenue: float | None = None,
+    active_recently: bool = False,
+    has_recent_avg: bool = False,
+    q: str = "",
 ) -> list[dict]:
     limit = max(1, min(int(limit or 40), 100))
     offset = max(0, int(offset or 0))
-    order = (
-        "score DESC, est_monthly_revenue_usd DESC"
-        if sort == "score"
-        else "est_monthly_revenue_usd DESC, score DESC"
-    )
-    where = "WHERE active = 1" if active_only else ""
+    order = _NICHE_SORT_MAP.get(sort) or _NICHE_SORT_MAP["recent_revenue"]
+    clauses = []
+    params: list = []
+    if active_only:
+        clauses.append("active = 1")
+    if has_recent_avg:
+        clauses.append("COALESCE(recent_avg_views, 0) > 0")
+    if active_recently:
+        clauses.append("COALESCE(videos_last_14d, 0) >= 4")
+    if min_recent_avg is not None and min_recent_avg > 0:
+        clauses.append("COALESCE(recent_avg_views, 0) >= ?")
+        params.append(float(min_recent_avg))
+    if max_recent_avg is not None and max_recent_avg > 0:
+        clauses.append("COALESCE(recent_avg_views, 0) <= ?")
+        params.append(float(max_recent_avg))
+    if min_subscribers is not None and min_subscribers > 0:
+        clauses.append("COALESCE(subscriber_count, 0) >= ?")
+        params.append(int(min_subscribers))
+    if max_subscribers is not None and max_subscribers > 0:
+        clauses.append("COALESCE(subscriber_count, 0) <= ?")
+        params.append(int(max_subscribers))
+    if min_videos is not None and min_videos > 0:
+        clauses.append("COALESCE(video_count, 0) >= ?")
+        params.append(int(min_videos))
+    if max_videos is not None and max_videos > 0:
+        clauses.append("COALESCE(video_count, 0) <= ?")
+        params.append(int(max_videos))
+    if min_recent_revenue is not None and min_recent_revenue > 0:
+        clauses.append("COALESCE(est_recent_monthly_revenue_usd, 0) >= ?")
+        params.append(float(min_recent_revenue))
+    if max_recent_revenue is not None and max_recent_revenue > 0:
+        clauses.append("COALESCE(est_recent_monthly_revenue_usd, 0) <= ?")
+        params.append(float(max_recent_revenue))
+    q = (q or "").strip()
+    if q:
+        clauses.append(
+            "(channel_name LIKE ? OR source_keyword LIKE ? OR recent_videos_json LIKE ? OR popular_videos_json LIKE ?)"
+        )
+        like = f"%{q}%"
+        params.extend([like, like, like, like])
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    params.extend([limit, offset])
     with _conn() as conn:
         cur = conn.cursor()
         cur.execute(
             _q(f"SELECT * FROM niche_channels {where} ORDER BY {order} LIMIT ? OFFSET ?"),
-            (limit, offset),
+            tuple(params),
         )
         rows = cur.fetchall()
     return [_niche_row_to_hit(dict(r)) for r in rows]
 
 
-def count_niche_channels(*, active_only: bool = True) -> int:
-    where = "WHERE active = 1" if active_only else ""
+def count_niche_channels(
+    *,
+    active_only: bool = True,
+    min_recent_avg: float | None = None,
+    max_recent_avg: float | None = None,
+    min_subscribers: int | None = None,
+    max_subscribers: int | None = None,
+    min_videos: int | None = None,
+    max_videos: int | None = None,
+    min_recent_revenue: float | None = None,
+    max_recent_revenue: float | None = None,
+    active_recently: bool = False,
+    has_recent_avg: bool = False,
+    q: str = "",
+) -> int:
+    clauses = []
+    params: list = []
+    if active_only:
+        clauses.append("active = 1")
+    if has_recent_avg:
+        clauses.append("COALESCE(recent_avg_views, 0) > 0")
+    if active_recently:
+        clauses.append("COALESCE(videos_last_14d, 0) >= 4")
+    if min_recent_avg is not None and min_recent_avg > 0:
+        clauses.append("COALESCE(recent_avg_views, 0) >= ?")
+        params.append(float(min_recent_avg))
+    if max_recent_avg is not None and max_recent_avg > 0:
+        clauses.append("COALESCE(recent_avg_views, 0) <= ?")
+        params.append(float(max_recent_avg))
+    if min_subscribers is not None and min_subscribers > 0:
+        clauses.append("COALESCE(subscriber_count, 0) >= ?")
+        params.append(int(min_subscribers))
+    if max_subscribers is not None and max_subscribers > 0:
+        clauses.append("COALESCE(subscriber_count, 0) <= ?")
+        params.append(int(max_subscribers))
+    if min_videos is not None and min_videos > 0:
+        clauses.append("COALESCE(video_count, 0) >= ?")
+        params.append(int(min_videos))
+    if max_videos is not None and max_videos > 0:
+        clauses.append("COALESCE(video_count, 0) <= ?")
+        params.append(int(max_videos))
+    if min_recent_revenue is not None and min_recent_revenue > 0:
+        clauses.append("COALESCE(est_recent_monthly_revenue_usd, 0) >= ?")
+        params.append(float(min_recent_revenue))
+    if max_recent_revenue is not None and max_recent_revenue > 0:
+        clauses.append("COALESCE(est_recent_monthly_revenue_usd, 0) <= ?")
+        params.append(float(max_recent_revenue))
+    q = (q or "").strip()
+    if q:
+        clauses.append(
+            "(channel_name LIKE ? OR source_keyword LIKE ? OR recent_videos_json LIKE ? OR popular_videos_json LIKE ?)"
+        )
+        like = f"%{q}%"
+        params.extend([like, like, like, like])
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     with _conn() as conn:
         cur = conn.cursor()
-        cur.execute(f"SELECT COUNT(*) AS n FROM niche_channels {where}")
+        cur.execute(_q(f"SELECT COUNT(*) AS n FROM niche_channels {where}"), tuple(params))
         row = cur.fetchone()
     if not row:
         return 0
