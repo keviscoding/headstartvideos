@@ -2520,11 +2520,12 @@ def _start_niche_hunt(
     existing = get_latest_running_niche_hunt()
     if existing and existing.get("job_id"):
         age = time.time() - float(existing.get("started_at") or 0)
-        if age > 2 * 3600 and existing.get("id"):
+        # Fly Machines that crash before writing progress leave a zombie "running" row.
+        if age > 15 * 60 and existing.get("id"):
             finish_niche_hunt_run(
                 int(existing["id"]),
                 status="error",
-                error="Timed out (no finish within 2h) — safe to start a new scrape.",
+                error="Timed out (no finish within 15m) — safe to start a new scrape.",
             )
         else:
             raise HTTPException(
@@ -2559,16 +2560,19 @@ def _start_niche_hunt(
     append_niche_hunt_progress(job_id, "Queued niche discovery…")
 
     spawned = False
+    machine_id = ""
     if COOK_ON_FLY:
         try:
-            from webapp.fly_bridge import spawn_niche_scrape
-            spawned = bool(spawn_niche_scrape(job_id))
+            from webapp.fly_bridge import spawn_niche_scrape_machine
+            machine_id = spawn_niche_scrape_machine(job_id) or ""
+            spawned = bool(machine_id)
         except Exception as e:
             print(f"[niche_finder] Fly spawn error: {e}")
             spawned = False
 
     if spawned:
-        append_niche_hunt_progress(job_id, "Spawned Fly Machine for scroll scrape…")
+        mid_note = f" ({machine_id})" if machine_id else ""
+        append_niche_hunt_progress(job_id, f"Spawned Fly Machine for scroll scrape…{mid_note}")
         return job_id
 
     # Local fallback — only one web-thread scrape at a time

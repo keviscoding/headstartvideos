@@ -1,5 +1,9 @@
 # Fly app for ChannelRecipe cooks (ephemeral Machines started by the web API).
-# Deploy: fly deploy -c fly.cook.toml
+# Deploy image only (do NOT leave always-on VMs running):
+#   fly deploy -c fly.cook.toml --build-only
+# If `fly deploy` without --build-only creates an "app" machine, destroy it:
+#   fly machines list -a channelrecipe-cook
+#   fly machine destroy <id> -a channelrecipe-cook --force
 #
 # Do NOT set SPACES_* / DATABASE_URL / API keys as `fly secrets` here.
 # Fly secrets override Machines API env, and stay stale when the app is

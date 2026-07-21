@@ -248,17 +248,24 @@ def spawn_niche_scrape(job_id: str) -> bool:
     """
     Ephemeral Fly Machine for Niche Finder scroll scrape (not a cook).
     Same cook app/image, different one-shot command — never touches the cook queue.
+    Returns True if a Machine was created+started.
     """
+    mid = spawn_niche_scrape_machine(job_id)
+    return bool(mid)
+
+
+def spawn_niche_scrape_machine(job_id: str) -> str:
+    """Create + start niche scrape Machine; return machine id or ''."""
     if not getattr(config, "COOK_ON_FLY", False):
-        return False
+        return ""
     app = (getattr(config, "FLY_COOK_APP", "") or "").strip()
     if not app:
         print("[fly-niche] FLY_COOK_APP missing")
-        return False
+        return ""
     image = _latest_app_image(app) or (getattr(config, "FLY_COOK_IMAGE", "") or "").strip()
     if not image:
         print("[fly-niche] no cook image for niche scrape")
-        return False
+        return ""
     try:
         region = (getattr(config, "FLY_COOK_REGION", "") or "sjc").strip() or "sjc"
         # Playwright + Chromium needs RAM; keep lighter than a full cook when possible.
@@ -275,10 +282,11 @@ def spawn_niche_scrape(job_id: str) -> bool:
             env["YOUTUBE_API_KEY"] = yt.strip().strip('"').strip("'")
         if not env.get("DATABASE_URL"):
             print("[fly-niche] DATABASE_URL missing — cannot spawn")
-            return False
+            return ""
         if not env.get("YOUTUBE_API_KEY"):
             print("[fly-niche] YOUTUBE_API_KEY missing — cannot spawn")
-            return False
+            return ""
+        print(f"[fly-niche] using image {image}")
         body = {
             "region": region,
             "config": {
@@ -297,17 +305,17 @@ def spawn_niche_scrape(job_id: str) -> bool:
             },
         }
         created = _request("POST", f"/v1/apps/{app}/machines", body)
-        mid = (created or {}).get("id")
+        mid = (created or {}).get("id") or ""
         if not mid:
             print(f"[fly-niche] spawn returned no machine id for {job_id}: {created}")
-            return False
+            return ""
         try:
             _request("POST", f"/v1/apps/{app}/machines/{mid}/start", {})
         except Exception as start_err:
             print(f"[fly-niche] start after create ({mid}): {start_err}")
         print(f"[fly-niche] spawned machine {mid} for niche job {job_id}")
-        return True
+        return str(mid)
     except Exception as e:
         print(f"[fly-niche] spawn failed for {job_id}: {e}")
-        return False
+        return ""
 
