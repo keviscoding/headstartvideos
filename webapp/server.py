@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import Cookie, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Cookie, Depends, FastAPI, File, Form, HTTPException, Header, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -89,6 +89,7 @@ if config.SENTRY_DSN:
             # Browser-extension / injected-script noise (e.g. nativeIframe redeclare)
             try:
                 values = (event.get("exception") or {}).get("values") or []
+                frames_blob = ""
                 for v in values:
                     vtype = (v.get("type") or "")
                     vval = (v.get("value") or "")
@@ -96,6 +97,18 @@ if config.SENTRY_DSN:
                         return None
                     if "has already been declared" in vval.lower() and "nativeiframe" in vval.lower():
                         return None
+                    # Wallet / random Chrome extensions injecting into the page
+                    if "reading 'emit'" in vval.lower() or 'reading "emit"' in vval.lower():
+                        return None
+                    for frame in ((v.get("stacktrace") or {}).get("frames") or []):
+                        frames_blob += " " + str(frame.get("filename") or "")
+                        frames_blob += " " + str(frame.get("abs_path") or "")
+                if "chrome-extension://" in frames_blob.lower():
+                    return None
+                # Also check request / breadcrumbs URL when present
+                req_url = str(((event.get("request") or {}).get("url") or "")).lower()
+                if "chrome-extension://" in req_url:
+                    return None
             except Exception:
                 pass
             return event
@@ -211,6 +224,8 @@ from webapp.database import (
     set_user_atlas_key, get_user_atlas_key, user_atlas_status,
     create_voice_clone, list_voice_clones, count_voice_clones_since,
     list_unread_notices, mark_notice_read,
+    upsert_niche_channels, list_niche_channels, count_niche_channels,
+    create_niche_hunt_run, finish_niche_hunt_run, list_niche_hunt_runs,
 )
 from webapp import storage
 from webapp import job_queue
@@ -2380,26 +2395,20 @@ def generate_script_claude(req: ClaudeScriptRequest, user: dict = Depends(requir
 
 
 # ---------------------------------------------------------------------------
-# Niche Finder (long-form keyword hunt)
+# Niche Finder (shared niche database — browse for users, hunt for admin/cron)
 # ---------------------------------------------------------------------------
 _niche_finder_jobs: dict[str, dict] = {}
 
 
-def _niche_finder_access(user: dict) -> str:
-    """
-    Returns:
-      ok | pro_only | coming_soon
-    Admin + Pro can run. Trial/free see Pro upsell. Daily/Starter see coming soon.
-    """
+def _niche_finder_can_browse(user: dict) -> bool:
     if _is_admin_email(user.get("email", "")):
-        return "ok"
+        return True
     plan = (user.get("plan") or "free").lower()
-    if plan == "pro":
-        return "ok"
-    if plan in ("starter_trial", "daily_trial", "free"):
-        return "pro_only"
-    # starter / daily paid
-    return "coming_soon"
+    return plan in ("starter", "daily", "pro")
+
+
+def _niche_finder_can_run(user: dict) -> bool:
+    return _is_admin_email(user.get("email", ""))
 
 
 class NicheFinderJobRequest(BaseModel):
@@ -2407,65 +2416,46 @@ class NicheFinderJobRequest(BaseModel):
     max_per_keyword: int = 12
     max_channels: int = 40
     min_recent_avg_views: int = 0
-    max_subscribers: int = 2_000_000
+    max_subscribers: int = 150_000
 
 
-@app.get("/api/niche-finder/access")
-def niche_finder_access(user: dict = Depends(require_user)):
-    from core.niche_finder import DEFAULT_KEYWORDS, MIN_DURATION_SEC
-
-    access = _niche_finder_access(user)
-    return {
-        "access": access,
-        "can_run": access == "ok",
-        "message": (
-            None
-            if access == "ok"
-            else (
-                "Niche Finder is only available on Pro."
-                if access == "pro_only"
-                else "Niche Finder is coming soon for your plan."
-            )
-        ),
-        "default_keywords": DEFAULT_KEYWORDS,
-        "min_duration_sec": MIN_DURATION_SEC,
-    }
-
-
-@app.post("/api/niche-finder/jobs")
-def start_niche_finder_job(req: NicheFinderJobRequest, user: dict = Depends(require_user)):
-    access = _niche_finder_access(user)
-    if access == "pro_only":
-        raise HTTPException(402, "Niche Finder is only available on Pro.")
-    if access == "coming_soon":
-        raise HTTPException(403, "Niche Finder is coming soon for your plan.")
-    if not config.YOUTUBE_API_KEY:
-        raise HTTPException(400, "YouTube API key not configured. Add it in Settings.")
-
+def _start_niche_hunt(
+    *,
+    keywords: list[str],
+    max_per_keyword: int,
+    max_channels: int,
+    min_recent_avg_views: int,
+    max_subscribers: int,
+    trigger: str,
+    user_id: int | None = None,
+) -> str:
+    """Kick off a background hunt that upserts into niche_channels."""
     import threading
-    from core.niche_finder import DEFAULT_KEYWORDS
+    from core.niche_finder import DEFAULT_KEYWORDS, run_niche_finder
+
+    kws = [k.strip() for k in (keywords or []) if k and str(k).strip()]
+    if not kws:
+        kws = list(DEFAULT_KEYWORDS)
 
     job_id = str(uuid.uuid4())
-    keywords = [k.strip() for k in (req.keywords or []) if k and str(k).strip()]
-    if not keywords:
-        keywords = list(DEFAULT_KEYWORDS)
-
+    run_id = create_niche_hunt_run(trigger=trigger, keywords=kws)
     job = {
         "id": job_id,
+        "run_id": run_id,
         "status": "running",
         "progress": [],
         "hits": [],
         "meta": {},
         "error": None,
-        "user_id": user["id"],
+        "channels_upserted": 0,
+        "user_id": user_id,
+        "trigger": trigger,
         "created_at": time.time(),
     }
     _niche_finder_jobs[job_id] = job
 
     def _run():
         try:
-            from core.niche_finder import run_niche_finder
-
             def _progress(msg: str):
                 job["progress"].append({"t": time.time(), "msg": msg})
                 if len(job["progress"]) > 80:
@@ -2473,40 +2463,168 @@ def start_niche_finder_job(req: NicheFinderJobRequest, user: dict = Depends(requ
 
             result = run_niche_finder(
                 api_key=config.YOUTUBE_API_KEY,
-                keywords=keywords,
-                max_per_keyword=max(3, min(int(req.max_per_keyword or 12), 25)),
-                max_channels=max(5, min(int(req.max_channels or 40), 80)),
-                min_recent_avg_views=max(0, int(req.min_recent_avg_views or 0)),
-                max_subscribers=max(10_000, int(req.max_subscribers or 2_000_000)),
+                keywords=kws,
+                max_per_keyword=max(3, min(int(max_per_keyword or 12), 25)),
+                max_channels=max(5, min(int(max_channels or 40), 80)),
+                min_recent_avg_views=max(0, int(min_recent_avg_views or 0)),
+                max_subscribers=max(10_000, int(max_subscribers or 150_000)),
                 progress=_progress,
             )
-            job["hits"] = result.get("hits") or []
+            hits = result.get("hits") or []
+            # Tag each hit with first matching keyword when available
+            n = upsert_niche_channels(hits)
+            job["hits"] = hits
             job["meta"] = result.get("meta") or {}
+            job["channels_upserted"] = n
             job["status"] = "completed"
+            finish_niche_hunt_run(
+                run_id,
+                status="completed",
+                meta=job["meta"],
+                channels_upserted=n,
+            )
+            _progress(f"Saved {n} channels to the niche library")
         except Exception as e:
             job["status"] = "error"
             job["error"] = str(e)
+            finish_niche_hunt_run(
+                run_id,
+                status="error",
+                channels_upserted=0,
+                error=str(e),
+            )
             print(f"[niche_finder] job {job_id} failed: {e}")
 
     threading.Thread(target=_run, daemon=True).start()
+    return job_id
+
+
+@app.get("/api/niche-finder/access")
+def niche_finder_access(user: dict = Depends(require_user)):
+    from core.niche_finder import DEFAULT_KEYWORDS, MIN_DURATION_SEC
+
+    can_browse = _niche_finder_can_browse(user)
+    can_run = _niche_finder_can_run(user)
+    plan = (user.get("plan") or "free").lower()
+    if can_browse:
+        access = "ok"
+        message = None
+    elif plan in ("starter_trial", "daily_trial", "free"):
+        access = "pro_only"
+        message = "Niche Finder is only available on Pro."
+    else:
+        # Unexpected paid-adjacent plans — still treat as browse-locked soft message
+        access = "pro_only"
+        message = "Niche Finder is only available on Pro."
+
+    return {
+        "access": access,
+        "can_browse": can_browse,
+        "can_run": can_run,
+        "message": message,
+        "default_keywords": DEFAULT_KEYWORDS if can_run else [],
+        "min_duration_sec": MIN_DURATION_SEC,
+        "channel_count": count_niche_channels() if can_browse else 0,
+    }
+
+
+@app.get("/api/niche-finder/channels")
+def niche_finder_channels(
+    sort: str = "revenue",
+    limit: int = 40,
+    offset: int = 0,
+    user: dict = Depends(require_user),
+):
+    if not _niche_finder_can_browse(user):
+        raise HTTPException(402, "Niche Finder is only available on Pro.")
+    sort_key = "score" if sort == "score" else "revenue"
+    channels = list_niche_channels(sort=sort_key, limit=limit, offset=offset)
+    total = count_niche_channels()
+    return {
+        "channels": channels,
+        "total": total,
+        "limit": max(1, min(int(limit or 40), 100)),
+        "offset": max(0, int(offset or 0)),
+        "sort": sort_key,
+    }
+
+
+@app.post("/api/niche-finder/jobs")
+def start_niche_finder_job(
+    req: NicheFinderJobRequest,
+    admin: dict = Depends(require_admin),
+):
+    if not config.YOUTUBE_API_KEY:
+        raise HTTPException(400, "YouTube API key not configured. Add it in Settings.")
+    job_id = _start_niche_hunt(
+        keywords=req.keywords or [],
+        max_per_keyword=req.max_per_keyword,
+        max_channels=req.max_channels,
+        min_recent_avg_views=req.min_recent_avg_views,
+        max_subscribers=req.max_subscribers,
+        trigger="admin",
+        user_id=admin["id"],
+    )
     return {"job_id": job_id, "status": "running"}
 
 
 @app.get("/api/niche-finder/jobs/{job_id}")
-def get_niche_finder_job(job_id: str, user: dict = Depends(require_user)):
+def get_niche_finder_job(job_id: str, admin: dict = Depends(require_admin)):
     job = _niche_finder_jobs.get(job_id)
     if not job:
         raise HTTPException(404, "Job not found (it may have expired after a restart).")
-    if job.get("user_id") != user["id"] and not _is_admin_email(user.get("email", "")):
-        raise HTTPException(403, "Not your job.")
     return {
         "id": job["id"],
         "status": job["status"],
         "progress": job.get("progress") or [],
         "hits": job.get("hits") or [],
         "meta": job.get("meta") or {},
+        "channels_upserted": job.get("channels_upserted") or 0,
         "error": job.get("error"),
     }
+
+
+@app.get("/api/niche-finder/runs")
+def niche_finder_runs(limit: int = 20, admin: dict = Depends(require_admin)):
+    return {"runs": list_niche_hunt_runs(limit=limit)}
+
+
+@app.post("/api/internal/niche-finder/cron")
+def niche_finder_cron(
+    req: NicheFinderJobRequest | None = None,
+    authorization: str | None = Header(default=None),
+):
+    """
+    Scheduled library refresh (1–2×/day). Auth: Authorization: Bearer <CRON_SECRET>.
+
+    Example:
+      curl -X POST https://channelrecipe.com/api/internal/niche-finder/cron \\
+        -H "Authorization: Bearer $CRON_SECRET" \\
+        -H "Content-Type: application/json" \\
+        -d '{}'
+    """
+    secret = getattr(config, "CRON_SECRET", "") or ""
+    if not secret:
+        raise HTTPException(503, "CRON_SECRET not configured.")
+    token = ""
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+    if not token or token != secret:
+        raise HTTPException(401, "Invalid cron secret.")
+    if not config.YOUTUBE_API_KEY:
+        raise HTTPException(400, "YouTube API key not configured.")
+
+    body = req or NicheFinderJobRequest()
+    job_id = _start_niche_hunt(
+        keywords=body.keywords or [],
+        max_per_keyword=body.max_per_keyword or 12,
+        max_channels=body.max_channels or 40,
+        min_recent_avg_views=body.min_recent_avg_views or 0,
+        max_subscribers=body.max_subscribers or 150_000,
+        trigger="cron",
+        user_id=None,
+    )
+    return {"job_id": job_id, "status": "running", "trigger": "cron"}
 
 
 # ---------------------------------------------------------------------------

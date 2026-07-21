@@ -125,6 +125,43 @@ CREATE TABLE IF NOT EXISTS user_notices (
     created_at  REAL NOT NULL DEFAULT (strftime('%s','now')),
     read_at     REAL NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS niche_channels (
+    channel_id                  TEXT PRIMARY KEY,
+    channel_name                TEXT DEFAULT '',
+    channel_url                 TEXT DEFAULT '',
+    avatar_url                  TEXT DEFAULT '',
+    source_keyword              TEXT DEFAULT '',
+    subscriber_count            INTEGER DEFAULT 0,
+    video_count                 INTEGER DEFAULT 0,
+    days_since_start            REAL,
+    avg_views_per_video         REAL DEFAULT 0,
+    recent_avg_views            REAL DEFAULT 0,
+    view_to_sub_ratio           REAL DEFAULT 0,
+    uploads_per_month           REAL DEFAULT 0,
+    outlier_score               REAL DEFAULT 0,
+    score                       REAL DEFAULT 0,
+    likely_monetized            INTEGER DEFAULT 0,
+    est_monthly_revenue_usd     REAL DEFAULT 0,
+    est_monthly_revenue_low_usd REAL DEFAULT 0,
+    est_monthly_revenue_high_usd REAL DEFAULT 0,
+    rpm_assumed                 REAL DEFAULT 4,
+    popular_videos_json         TEXT DEFAULT '[]',
+    first_seen_at               REAL NOT NULL DEFAULT (strftime('%s','now')),
+    last_seen_at                REAL NOT NULL DEFAULT (strftime('%s','now')),
+    last_scored_at              REAL NOT NULL DEFAULT (strftime('%s','now')),
+    active                      INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS niche_hunt_runs (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    trigger             TEXT NOT NULL DEFAULT 'admin',
+    status              TEXT NOT NULL DEFAULT 'running',
+    started_at          REAL NOT NULL DEFAULT (strftime('%s','now')),
+    finished_at         REAL DEFAULT 0,
+    keywords_json       TEXT DEFAULT '[]',
+    meta_json           TEXT DEFAULT '{}',
+    channels_upserted   INTEGER DEFAULT 0,
+    error               TEXT DEFAULT ''
+);
 """
 
 _SCHEMA_PG = """
@@ -219,6 +256,43 @@ CREATE TABLE IF NOT EXISTS user_notices (
     created_at  DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now()),
     read_at     DOUBLE PRECISION NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS niche_channels (
+    channel_id                  TEXT PRIMARY KEY,
+    channel_name                TEXT DEFAULT '',
+    channel_url                 TEXT DEFAULT '',
+    avatar_url                  TEXT DEFAULT '',
+    source_keyword              TEXT DEFAULT '',
+    subscriber_count            INTEGER DEFAULT 0,
+    video_count                 INTEGER DEFAULT 0,
+    days_since_start            DOUBLE PRECISION,
+    avg_views_per_video         DOUBLE PRECISION DEFAULT 0,
+    recent_avg_views            DOUBLE PRECISION DEFAULT 0,
+    view_to_sub_ratio           DOUBLE PRECISION DEFAULT 0,
+    uploads_per_month           DOUBLE PRECISION DEFAULT 0,
+    outlier_score               DOUBLE PRECISION DEFAULT 0,
+    score                       DOUBLE PRECISION DEFAULT 0,
+    likely_monetized            INTEGER DEFAULT 0,
+    est_monthly_revenue_usd     DOUBLE PRECISION DEFAULT 0,
+    est_monthly_revenue_low_usd DOUBLE PRECISION DEFAULT 0,
+    est_monthly_revenue_high_usd DOUBLE PRECISION DEFAULT 0,
+    rpm_assumed                 DOUBLE PRECISION DEFAULT 4,
+    popular_videos_json         TEXT DEFAULT '[]',
+    first_seen_at               DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now()),
+    last_seen_at                DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now()),
+    last_scored_at              DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now()),
+    active                      INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS niche_hunt_runs (
+    id                  BIGSERIAL PRIMARY KEY,
+    trigger             TEXT NOT NULL DEFAULT 'admin',
+    status              TEXT NOT NULL DEFAULT 'running',
+    started_at          DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now()),
+    finished_at         DOUBLE PRECISION DEFAULT 0,
+    keywords_json       TEXT DEFAULT '[]',
+    meta_json           TEXT DEFAULT '{}',
+    channels_upserted   INTEGER DEFAULT 0,
+    error               TEXT DEFAULT ''
+);
 """
 
 
@@ -246,6 +320,9 @@ CREATE INDEX IF NOT EXISTS idx_render_events_created ON render_events (created_a
 CREATE INDEX IF NOT EXISTS idx_cook_jobs_user ON cook_jobs (user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_cook_jobs_status ON cook_jobs (status, created_at);
 CREATE INDEX IF NOT EXISTS idx_voice_clones_user ON voice_clones (user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_niche_channels_revenue ON niche_channels (active, est_monthly_revenue_usd DESC);
+CREATE INDEX IF NOT EXISTS idx_niche_channels_score ON niche_channels (active, score DESC);
+CREATE INDEX IF NOT EXISTS idx_niche_hunt_runs_started ON niche_hunt_runs (started_at DESC);
 """
 
 
@@ -1253,6 +1330,293 @@ def append_cook_progress(job_id: str, message: str, phase: str = "running") -> N
         heartbeat=True,
         status=row.get("status"),
     )
+
+
+# --- Niche Finder catalog --------------------------------------------------
+
+def upsert_niche_channel(hit: dict, *, source_keyword: str = "") -> None:
+    """Insert or refresh a niche channel from a hunt hit."""
+    now = time.time()
+    cid = (hit.get("channel_id") or "").strip()
+    if not cid:
+        return
+    popular = hit.get("popular_videos") or []
+    if not isinstance(popular, list):
+        popular = []
+    kw = (source_keyword or hit.get("source_keyword") or "").strip()
+    vals = (
+        cid,
+        hit.get("channel_name") or "",
+        hit.get("channel_url") or "",
+        hit.get("avatar_url") or "",
+        kw,
+        int(hit.get("subscriber_count") or 0),
+        int(hit.get("video_count") or 0),
+        hit.get("days_since_start"),
+        float(hit.get("avg_views_per_video") or 0),
+        float(hit.get("recent_avg_views") or 0),
+        float(hit.get("view_to_sub_ratio") or 0),
+        float(hit.get("uploads_per_month") or 0),
+        float(hit.get("outlier_score") or 0),
+        float(hit.get("score") or 0),
+        1 if hit.get("likely_monetized") else 0,
+        float(hit.get("est_monthly_revenue_usd") or 0),
+        float(hit.get("est_monthly_revenue_low_usd") or 0),
+        float(hit.get("est_monthly_revenue_high_usd") or 0),
+        float(hit.get("rpm_assumed") or 4),
+        json.dumps(popular),
+        now,
+        now,
+        now,
+        1,
+    )
+    with _conn() as conn:
+        cur = conn.cursor()
+        if IS_PG:
+            cur.execute(
+                """
+                INSERT INTO niche_channels (
+                    channel_id, channel_name, channel_url, avatar_url, source_keyword,
+                    subscriber_count, video_count, days_since_start,
+                    avg_views_per_video, recent_avg_views, view_to_sub_ratio,
+                    uploads_per_month, outlier_score, score, likely_monetized,
+                    est_monthly_revenue_usd, est_monthly_revenue_low_usd,
+                    est_monthly_revenue_high_usd, rpm_assumed, popular_videos_json,
+                    first_seen_at, last_seen_at, last_scored_at, active
+                ) VALUES (
+                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s
+                )
+                ON CONFLICT (channel_id) DO UPDATE SET
+                    channel_name = EXCLUDED.channel_name,
+                    channel_url = EXCLUDED.channel_url,
+                    avatar_url = EXCLUDED.avatar_url,
+                    source_keyword = CASE
+                        WHEN EXCLUDED.source_keyword != '' THEN EXCLUDED.source_keyword
+                        ELSE niche_channels.source_keyword
+                    END,
+                    subscriber_count = EXCLUDED.subscriber_count,
+                    video_count = EXCLUDED.video_count,
+                    days_since_start = EXCLUDED.days_since_start,
+                    avg_views_per_video = EXCLUDED.avg_views_per_video,
+                    recent_avg_views = EXCLUDED.recent_avg_views,
+                    view_to_sub_ratio = EXCLUDED.view_to_sub_ratio,
+                    uploads_per_month = EXCLUDED.uploads_per_month,
+                    outlier_score = EXCLUDED.outlier_score,
+                    score = EXCLUDED.score,
+                    likely_monetized = EXCLUDED.likely_monetized,
+                    est_monthly_revenue_usd = EXCLUDED.est_monthly_revenue_usd,
+                    est_monthly_revenue_low_usd = EXCLUDED.est_monthly_revenue_low_usd,
+                    est_monthly_revenue_high_usd = EXCLUDED.est_monthly_revenue_high_usd,
+                    rpm_assumed = EXCLUDED.rpm_assumed,
+                    popular_videos_json = EXCLUDED.popular_videos_json,
+                    last_seen_at = EXCLUDED.last_seen_at,
+                    last_scored_at = EXCLUDED.last_scored_at,
+                    active = 1
+                """,
+                vals,
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO niche_channels (
+                    channel_id, channel_name, channel_url, avatar_url, source_keyword,
+                    subscriber_count, video_count, days_since_start,
+                    avg_views_per_video, recent_avg_views, view_to_sub_ratio,
+                    uploads_per_month, outlier_score, score, likely_monetized,
+                    est_monthly_revenue_usd, est_monthly_revenue_low_usd,
+                    est_monthly_revenue_high_usd, rpm_assumed, popular_videos_json,
+                    first_seen_at, last_seen_at, last_scored_at, active
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(channel_id) DO UPDATE SET
+                    channel_name = excluded.channel_name,
+                    channel_url = excluded.channel_url,
+                    avatar_url = excluded.avatar_url,
+                    source_keyword = CASE
+                        WHEN excluded.source_keyword != '' THEN excluded.source_keyword
+                        ELSE niche_channels.source_keyword
+                    END,
+                    subscriber_count = excluded.subscriber_count,
+                    video_count = excluded.video_count,
+                    days_since_start = excluded.days_since_start,
+                    avg_views_per_video = excluded.avg_views_per_video,
+                    recent_avg_views = excluded.recent_avg_views,
+                    view_to_sub_ratio = excluded.view_to_sub_ratio,
+                    uploads_per_month = excluded.uploads_per_month,
+                    outlier_score = excluded.outlier_score,
+                    score = excluded.score,
+                    likely_monetized = excluded.likely_monetized,
+                    est_monthly_revenue_usd = excluded.est_monthly_revenue_usd,
+                    est_monthly_revenue_low_usd = excluded.est_monthly_revenue_low_usd,
+                    est_monthly_revenue_high_usd = excluded.est_monthly_revenue_high_usd,
+                    rpm_assumed = excluded.rpm_assumed,
+                    popular_videos_json = excluded.popular_videos_json,
+                    last_seen_at = excluded.last_seen_at,
+                    last_scored_at = excluded.last_scored_at,
+                    active = 1
+                """,
+                vals,
+            )
+
+
+def upsert_niche_channels(hits: list[dict], *, source_keyword: str = "") -> int:
+    n = 0
+    for hit in hits or []:
+        if not hit.get("channel_id"):
+            continue
+        upsert_niche_channel(hit, source_keyword=source_keyword)
+        n += 1
+    return n
+
+
+def _niche_row_to_hit(row: dict) -> dict:
+    d = dict(row)
+    try:
+        popular = json.loads(d.get("popular_videos_json") or "[]")
+    except Exception:
+        popular = []
+    if not isinstance(popular, list):
+        popular = []
+    return {
+        "channel_id": d.get("channel_id"),
+        "channel_name": d.get("channel_name"),
+        "channel_url": d.get("channel_url"),
+        "avatar_url": d.get("avatar_url"),
+        "source_keyword": d.get("source_keyword") or "",
+        "subscriber_count": int(d.get("subscriber_count") or 0),
+        "video_count": int(d.get("video_count") or 0),
+        "days_since_start": d.get("days_since_start"),
+        "avg_views_per_video": d.get("avg_views_per_video") or 0,
+        "recent_avg_views": d.get("recent_avg_views") or 0,
+        "view_to_sub_ratio": d.get("view_to_sub_ratio") or 0,
+        "uploads_per_month": d.get("uploads_per_month") or 0,
+        "outlier_score": d.get("outlier_score") or 0,
+        "score": d.get("score") or 0,
+        "likely_monetized": bool(d.get("likely_monetized")),
+        "est_monthly_revenue_usd": d.get("est_monthly_revenue_usd") or 0,
+        "est_monthly_revenue_low_usd": d.get("est_monthly_revenue_low_usd") or 0,
+        "est_monthly_revenue_high_usd": d.get("est_monthly_revenue_high_usd") or 0,
+        "rpm_assumed": d.get("rpm_assumed") or 4,
+        "popular_videos": popular,
+        "first_seen_at": d.get("first_seen_at"),
+        "last_seen_at": d.get("last_seen_at"),
+        "last_scored_at": d.get("last_scored_at"),
+    }
+
+
+def list_niche_channels(
+    *,
+    sort: str = "revenue",
+    limit: int = 40,
+    offset: int = 0,
+    active_only: bool = True,
+) -> list[dict]:
+    limit = max(1, min(int(limit or 40), 100))
+    offset = max(0, int(offset or 0))
+    order = (
+        "score DESC, est_monthly_revenue_usd DESC"
+        if sort == "score"
+        else "est_monthly_revenue_usd DESC, score DESC"
+    )
+    where = "WHERE active = 1" if active_only else ""
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            _q(f"SELECT * FROM niche_channels {where} ORDER BY {order} LIMIT ? OFFSET ?"),
+            (limit, offset),
+        )
+        rows = cur.fetchall()
+    return [_niche_row_to_hit(dict(r)) for r in rows]
+
+
+def count_niche_channels(*, active_only: bool = True) -> int:
+    where = "WHERE active = 1" if active_only else ""
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT COUNT(*) AS n FROM niche_channels {where}")
+        row = cur.fetchone()
+    if not row:
+        return 0
+    d = dict(row)
+    return int(d.get("n") or d.get("count") or list(d.values())[0] or 0)
+
+
+def create_niche_hunt_run(*, trigger: str = "admin", keywords: list[str] | None = None) -> int:
+    with _conn() as conn:
+        cur = conn.cursor()
+        kw_json = json.dumps(keywords or [])
+        if IS_PG:
+            cur.execute(
+                """
+                INSERT INTO niche_hunt_runs (trigger, status, started_at, keywords_json)
+                VALUES (%s, 'running', %s, %s)
+                RETURNING id
+                """,
+                (trigger, time.time(), kw_json),
+            )
+            row = cur.fetchone()
+            return int(row["id"] if isinstance(row, dict) else row[0])
+        cur.execute(
+            """
+            INSERT INTO niche_hunt_runs (trigger, status, started_at, keywords_json)
+            VALUES (?, 'running', ?, ?)
+            """,
+            (trigger, time.time(), kw_json),
+        )
+        return int(cur.lastrowid)
+
+
+def finish_niche_hunt_run(
+    run_id: int,
+    *,
+    status: str = "completed",
+    meta: dict | None = None,
+    channels_upserted: int = 0,
+    error: str = "",
+) -> None:
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            _q(
+                """
+                UPDATE niche_hunt_runs
+                SET status = ?, finished_at = ?, meta_json = ?,
+                    channels_upserted = ?, error = ?
+                WHERE id = ?
+                """
+            ),
+            (
+                status,
+                time.time(),
+                json.dumps(meta or {}),
+                int(channels_upserted or 0),
+                error or "",
+                int(run_id),
+            ),
+        )
+
+
+def list_niche_hunt_runs(limit: int = 20) -> list[dict]:
+    limit = max(1, min(int(limit or 20), 50))
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            _q("SELECT * FROM niche_hunt_runs ORDER BY started_at DESC LIMIT ?"),
+            (limit,),
+        )
+        rows = cur.fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["keywords"] = json.loads(d.get("keywords_json") or "[]")
+        except Exception:
+            d["keywords"] = []
+        try:
+            d["meta"] = json.loads(d.get("meta_json") or "{}")
+        except Exception:
+            d["meta"] = {}
+        out.append(d)
+    return out
 
 
 def backend_name() -> str:

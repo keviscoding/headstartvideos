@@ -712,14 +712,14 @@
     </div>
 
     <!-- ============================================================ -->
-    <!-- PAGE: Niche Finder (long-form keyword hunt) -->
+    <!-- PAGE: Niche Finder (shared niche library) -->
     <!-- ============================================================ -->
     <div id="page-niche-finder" class="page-container hidden">
         <main class="max-w-5xl mx-auto px-6 py-8">
             <h2 class="cr-display" style="font-size: 32px; margin-bottom: 8px;">Niche Finder</h2>
-            <p style="color: var(--app-ink-2); margin-bottom: 24px; max-width: 40rem;">
-                Hunt long-form YouTube niches (4+ minutes, no max). Ranked by view-to-sub ratio,
-                recent average views, and upload cadence — with the last few videos so you can scan fast.
+            <p style="color: var(--app-ink-2); margin-bottom: 24px; max-width: 42rem;">
+                A living library of faceless, enterable long-form niches — ranked by estimated monthly revenue,
+                avg views, cadence, and outlier hits. Browse what’s already working; discovery runs stay admin-only.
             </p>
 
             <div id="nf-gate" class="hidden cr-surface" style="padding: 28px; margin-bottom: 24px; max-width: 36rem;">
@@ -729,9 +729,10 @@
             </div>
 
             <div id="nf-workspace" class="hidden space-y-6">
-                <div class="cr-surface" style="padding: 20px;">
-                    <label class="cr-label">Keywords (one per line)</label>
-                    <textarea id="nf-keywords" class="cr-input" rows="6" style="font-family: var(--font-mono); font-size: 13px; resize: vertical;" placeholder="history documentary&#10;true story explained"></textarea>
+                <div id="nf-admin-panel" class="hidden cr-surface" style="padding: 20px;">
+                    <p class="cr-eyebrow" style="margin-bottom: 8px;">Admin — refresh library</p>
+                    <label class="cr-label">Keywords (one per line, optional)</label>
+                    <textarea id="nf-keywords" class="cr-input" rows="4" style="font-family: var(--font-mono); font-size: 13px; resize: vertical;" placeholder="history documentary&#10;true story explained"></textarea>
                     <div class="flex flex-wrap items-end gap-4 mt-4">
                         <div>
                             <label class="cr-label">Min recent avg views</label>
@@ -739,17 +740,24 @@
                         </div>
                         <div>
                             <label class="cr-label">Max subscribers</label>
-                            <input id="nf-max-subs" type="number" class="cr-input" value="2000000" min="10000" step="10000" style="width: 140px;">
+                            <input id="nf-max-subs" type="number" class="cr-input" value="150000" min="10000" step="10000" style="width: 140px;">
                         </div>
                         <button id="nf-run-btn" class="btn-primary" onclick="startNicheFinder()">
-                            <span class="btn-text">Find niches</span>
+                            <span class="btn-text">Refresh library</span>
                             <span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;display:inline-block;"></div> Searching…</span>
                         </button>
                     </div>
                     <p id="nf-status" class="cr-mono" style="font-size: 12px; color: var(--app-ink-3); margin-top: 12px;"></p>
                 </div>
 
+                <div class="flex items-center justify-between" style="flex-wrap: wrap; gap: 8px;">
+                    <p id="nf-feed-meta" class="cr-mono" style="font-size: 12px; color: var(--app-ink-3);"></p>
+                    <button type="button" class="btn-secondary" style="font-size: 12px; padding: 6px 12px;" onclick="loadNicheFinderFeed()">Refresh feed</button>
+                </div>
                 <div id="nf-results" class="space-y-4"></div>
+                <div id="nf-load-more-wrap" class="hidden" style="text-align: center; padding: 8px 0 24px;">
+                    <button id="nf-load-more" type="button" class="btn-secondary" onclick="loadMoreNicheFinder()">Load more</button>
+                </div>
             </div>
         </main>
     </div>

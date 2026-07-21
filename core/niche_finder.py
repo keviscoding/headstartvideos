@@ -1,8 +1,15 @@
 """
-Long-form Niche Finder — keyword hunt for underserved YouTube niches.
+Long-form Niche Finder — keyword hunt for enterable faceless YouTube niches.
 
-Uses YouTube Data API only (no per-video related scrape — too slow).
+Inspired by how operators use NexLev:
+  - small/mid channels (enterable)
+  - solid avg views
+  - days since start + upload volume (factory cadence)
+  - outlier hits (top video vs channel avg)
+  - rough monthly revenue estimate (views × RPM)
+
 Long-form = duration >= MIN_DURATION_SEC (default 4 minutes). No max.
+Related/suggested expansion is deferred (use later as a second hop, not on every video).
 """
 
 from __future__ import annotations
@@ -10,7 +17,6 @@ from __future__ import annotations
 import math
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -19,21 +25,33 @@ from googleapiclient.discovery import build
 # ≥ 4 minutes; no upper bound
 MIN_DURATION_SEC = 240
 RECENT_VIDEO_COUNT = 4
+POPULAR_SCAN = 18  # pull enough long-form to find "most popular"
 DEFAULT_MAX_PER_KEYWORD = 12
 DEFAULT_MAX_CHANNELS = 40
 
+# Conservative faceless long-form RPM assumption for English markets.
+# Real RPM varies wildly ($1–$12+); we show a midpoint + band in the UI.
+DEFAULT_RPM_USD = 4.0
+
 # Starter pack oriented at faceless / story / documentary long-form
+# (patterns from operator NexLev examples: myths, history, geopolitics,
+# HFY/scifi stories, prayer, HOA drama, finance, football stories, stoic, etc.)
 DEFAULT_KEYWORDS = [
-    "history documentary",
-    "true story explained",
-    "what happened to",
-    "why did they",
-    "ancient mysteries",
-    "untold history",
+    "history documentary explained",
+    "true story folktale",
+    "forbidden history mysteries",
     "dark history facts",
-    "science explained",
-    "how the world works",
-    "lost civilizations",
+    "geopolitics russia explained",
+    "sci fi stories HFY",
+    "christian prayer night",
+    "HOA revenge story",
+    "personal finance explained",
+    "stoic habits self improvement",
+    "american football drama story",
+    "anime comic dub story",
+    "war documentary full movie",
+    "what happened to",
+    "untold history",
 ]
 
 
@@ -153,14 +171,19 @@ def _fetch_channels(youtube, channel_ids: list[str]) -> dict[str, dict]:
                 or (thumbs.get("default") or {}).get("url")
                 or ""
             )
+            video_count = int(st.get("videoCount") or 0)
+            view_total = int(st.get("viewCount") or 0)
             out[item["id"]] = {
                 "channel_id": item["id"],
                 "channel_name": sn.get("title") or "",
                 "channel_url": f"https://www.youtube.com/channel/{item['id']}",
                 "avatar_url": avatar,
                 "subscriber_count": int(st.get("subscriberCount") or 0),
-                "video_count": int(st.get("videoCount") or 0),
-                "view_count_total": int(st.get("viewCount") or 0),
+                "video_count": video_count,
+                "view_count_total": view_total,
+                "avg_views_per_video": (
+                    round(view_total / video_count) if video_count > 0 else 0
+                ),
                 "uploads_playlist": (cd.get("relatedPlaylists") or {}).get("uploads")
                 or "",
                 "published_at": sn.get("publishedAt") or "",
@@ -168,28 +191,35 @@ def _fetch_channels(youtube, channel_ids: list[str]) -> dict[str, dict]:
     return out
 
 
-def _recent_longform_from_uploads(
+def _longform_from_uploads(
     youtube,
     uploads_playlist: str,
     *,
-    want: int = RECENT_VIDEO_COUNT,
-    scan: int = 20,
+    want: int = POPULAR_SCAN,
+    scan: int = 40,
 ) -> list[dict]:
-    """Pull recent uploads, keep long-form, return up to `want` with metrics."""
+    """Pull recent uploads, keep long-form only."""
     if not uploads_playlist:
         return []
-    try:
-        resp = (
-            youtube.playlistItems()
-            .list(
-                part="snippet,contentDetails",
-                playlistId=uploads_playlist,
-                maxResults=min(50, max(want * 3, scan)),
+    resp = None
+    last_err = None
+    for attempt in range(2):
+        try:
+            resp = (
+                youtube.playlistItems()
+                .list(
+                    part="snippet,contentDetails",
+                    playlistId=uploads_playlist,
+                    maxResults=min(50, max(want * 2, scan)),
+                )
+                .execute()
             )
-            .execute()
-        )
-    except Exception as e:
-        print(f"[niche_finder] playlistItems failed: {e}")
+            break
+        except Exception as e:
+            last_err = e
+            time.sleep(0.35 * (attempt + 1))
+    if resp is None:
+        print(f"[niche_finder] playlistItems failed: {last_err}")
         return []
 
     ids = []
@@ -215,64 +245,129 @@ def _days_since(iso: str) -> float | None:
         return None
 
 
-def _uploads_per_month(recent: list[dict]) -> float:
-    """Rough cadence from the span of recent long-form publish dates."""
-    if len(recent) < 2:
-        return 0.0
-    days = []
-    for v in recent:
-        d = _days_since(v.get("published_at") or "")
-        if d is not None:
-            days.append(d)
-    if len(days) < 2:
-        return 0.0
-    span = max(days) - min(days)
-    if span < 1:
-        return float(len(recent))
-    return round((len(recent) - 1) / (span / 30.0), 2)
+def estimate_monthly_revenue_usd(
+    *,
+    avg_views: float,
+    uploads_per_month: float,
+    rpm_usd: float = DEFAULT_RPM_USD,
+) -> dict[str, float]:
+    """
+    Rough operator math (same spirit as sorting NexLev by monthly revenue):
+      monthly_views ≈ avg_views × uploads_per_month
+      revenue ≈ monthly_views × RPM / 1000
+
+    Cap cadence for the estimate — factory channels can post a lot, but
+    300+/mo is usually a data quirk and shouldn't dominate the economics.
+    """
+    cadence = min(max(0.0, uploads_per_month), 90.0)  # ~3 long-form/day
+    monthly_views = max(0.0, avg_views) * cadence
+    mid = monthly_views * rpm_usd / 1000.0
+    return {
+        "est_monthly_views": round(monthly_views),
+        "est_monthly_revenue_usd": round(mid, 2),
+        "est_monthly_revenue_low_usd": round(monthly_views * 2.0 / 1000.0, 2),
+        "est_monthly_revenue_high_usd": round(monthly_views * 8.0 / 1000.0, 2),
+        "rpm_assumed": rpm_usd,
+    }
 
 
 def score_channel(
     *,
     subscriber_count: int,
+    avg_views_per_video: float,
     recent_avg_views: float,
     view_to_sub_ratio: float,
     uploads_per_month: float,
+    days_since_start: float | None,
+    outlier_score: float,
+    est_monthly_revenue_usd: float,
 ) -> float:
     """
-    Simple viral-niche score (higher = more interesting to clone into).
+    Soft ranking for enterable faceless niches — not a hyper-optimized oracle.
 
-    - Strong recent views vs small audience (ratio)
-    - Absolute recent avg views (log-scaled)
-    - Healthy cadence (not dead, not spammy daily mega-uploaders)
-    - Soft penalty for very large channels
+    What we're looking for (from operator NexLev examples):
+      - ~1K–50K subs (you can still enter)
+      - avg views in the low thousands+ (often ~3–5K in good finds)
+      - real upload factory cadence
+      - some breakout / consistent traction (outlier or solid recent)
+      - non-trivial estimated monthly revenue
     """
-    ratio = max(0.0, view_to_sub_ratio)
-    recent = max(0.0, recent_avg_views)
-    cadence = max(0.0, uploads_per_month)
-
     score = 0.0
-    score += min(ratio, 50.0) * 2.0
-    score += math.log10(recent + 1) * 12.0
+    avg_v = max(0.0, avg_views_per_video)
+    recent = max(0.0, recent_avg_views)
+    ratio = max(0.0, view_to_sub_ratio)
+    cadence = max(0.0, uploads_per_month)
+    outlier = max(0.0, outlier_score)
+    rev = max(0.0, est_monthly_revenue_usd)
 
-    # Ideal-ish: ~2–12 long uploads / month
-    if 2.0 <= cadence <= 12.0:
+    # Enterable sub band (NexLev cards cluster ~3K–25K)
+    if 1_500 <= subscriber_count <= 40_000:
+        score += 18.0
+    elif 500 <= subscriber_count < 1_500:
+        score += 10.0
+    elif 40_000 < subscriber_count <= 120_000:
+        score += 6.0
+    elif subscriber_count > 250_000:
+        score -= 12.0
+
+    # Channel avg views (lifetime) — the main NexLev card number
+    if avg_v >= 4000:
+        score += 14.0
+    elif avg_v >= 2500:
+        score += 10.0
+    elif avg_v >= 1200:
+        score += 6.0
+    elif avg_v >= 500:
+        score += 2.0
+
+    # Recent long-form avg (last few uploads)
+    score += min(math.log10(recent + 1) * 6.0, 18.0)
+
+    # Views vs subs (recent)
+    score += min(ratio, 8.0) * 3.0
+
+    # Cadence: factory niches often post very often.
+    # Reward activity without requiring a narrow band (avoid overfit).
+    if cadence >= 20:  # ~daily long-form factory
+        score += 12.0
+    elif cadence >= 8:
+        score += 10.0
+    elif cadence >= 3:
+        score += 7.0
+    elif cadence >= 1:
+        score += 3.0
+
+    # Young-ish channels that already work are gold (easy to copy format)
+    if days_since_start is not None:
+        if days_since_start <= 120:
+            score += 10.0
+        elif days_since_start <= 365:
+            score += 6.0
+        elif days_since_start <= 900:
+            score += 2.0
+        elif days_since_start > 2000 and cadence < 2:
+            # Old + slow = usually one viral legacy, not a copyable factory niche
+            score -= 18.0
+        elif days_since_start > 1500:
+            score -= 6.0
+
+    # Outlier = top popular / avg (breakout proof the niche can pop)
+    if outlier >= 10:
+        score += 10.0
+    elif outlier >= 4:
+        score += 7.0
+    elif outlier >= 2:
+        score += 3.0
+
+    # Economics — prefer channels that look like they already print
+    if rev >= 2000:
+        score += 12.0
+    elif rev >= 800:
         score += 8.0
-    elif 0.5 <= cadence < 2.0:
-        score += 4.0
-    elif cadence > 20:
-        score -= 6.0
-    elif cadence > 0:
-        score += 1.0
-
-    if subscriber_count >= 1_000_000:
-        score -= 15.0
-    elif subscriber_count >= 500_000:
-        score -= 8.0
-    elif subscriber_count >= 200_000:
-        score -= 3.0
-    elif 1_000 <= subscriber_count <= 100_000:
+    elif rev >= 300:
         score += 5.0
+    elif rev >= 100:
+        score += 2.0
 
     return round(max(0.0, score), 2)
 
@@ -284,12 +379,12 @@ def run_niche_finder(
     max_per_keyword: int = DEFAULT_MAX_PER_KEYWORD,
     max_channels: int = DEFAULT_MAX_CHANNELS,
     min_recent_avg_views: int = 0,
-    max_subscribers: int = 2_000_000,
+    max_subscribers: int = 150_000,
+    rpm_usd: float = DEFAULT_RPM_USD,
     progress: ProgressCb | None = None,
 ) -> dict[str, Any]:
-    """
-    Run a keyword long-form hunt. Returns {hits, meta}.
-    """
+    """Run a keyword long-form hunt. Returns {hits, meta}."""
+
     def _log(msg: str) -> None:
         print(f"[niche_finder] {msg}")
         if progress:
@@ -337,11 +432,11 @@ def run_niche_finder(
     channels = _fetch_channels(youtube, channel_ids)
 
     hits: list[dict] = []
-    # Enrich recent long-form in parallel (bounded)
     to_enrich = [
         (cid, ch)
         for cid, ch in channels.items()
         if ch.get("subscriber_count", 0) <= max_subscribers
+        and ch.get("subscriber_count", 0) >= 100
     ]
 
     def _enrich_one(cid: str, ch: dict) -> dict | None:
@@ -350,48 +445,117 @@ def run_niche_finder(
             key=lambda x: x.get("view_count") or 0,
             reverse=True,
         )
-        recent = _recent_longform_from_uploads(
-            youtube, ch.get("uploads_playlist") or "", want=RECENT_VIDEO_COUNT
+        longform = _longform_from_uploads(
+            youtube, ch.get("uploads_playlist") or "", want=POPULAR_SCAN
         )
-        # Prefer playlist recent; fall back to search hits for this channel
-        if len(recent) < 2:
-            recent = (recent + seed_videos)[:RECENT_VIDEO_COUNT]
-        if not recent:
+        # Always fold in keyword-search hits so "most popular" isn't limited
+        # to whatever happens to sit in the latest upload page.
+        merged = {v["video_id"]: v for v in longform}
+        for v in seed_videos:
+            merged.setdefault(v["video_id"], v)
+        longform = list(merged.values())
+        if not longform:
             return None
 
-        views = [int(v.get("view_count") or 0) for v in recent]
-        recent_avg = round(sum(views) / len(views)) if views else 0
+        # Recent = newest by publish date; Popular = highest views
+        by_date = sorted(
+            longform,
+            key=lambda x: x.get("published_at") or "",
+            reverse=True,
+        )
+        recent = by_date[:RECENT_VIDEO_COUNT]
+        popular = sorted(
+            longform, key=lambda x: x.get("view_count") or 0, reverse=True
+        )[:RECENT_VIDEO_COUNT]
+
+        recent_views = [int(v.get("view_count") or 0) for v in recent]
+        recent_avg = (
+            round(sum(recent_views) / len(recent_views)) if recent_views else 0
+        )
         if min_recent_avg_views and recent_avg < min_recent_avg_views:
             return None
 
         subs = int(ch.get("subscriber_count") or 0)
-        ratio = round(recent_avg / subs, 3) if subs > 0 else 0.0
-        cadence = _uploads_per_month(recent)
+        lifetime_avg = int(ch.get("avg_views_per_video") or 0)
+        # NexLev-style card number: lifetime views / uploads.
+        display_avg = lifetime_avg or recent_avg
+        ratio = round(recent_avg / subs, 3) if subs > 0 and recent_avg > 0 else (
+            round(display_avg / subs, 3) if subs > 0 else 0.0
+        )
+
+        days = _days_since(ch.get("published_at") or "")
+        video_count = int(ch.get("video_count") or 0)
+        if days and days > 1 and video_count > 0:
+            uploads_per_month = round(video_count / (days / 30.0), 2)
+        else:
+            # Fallback from recent publish span
+            if len(by_date) >= 2:
+                d0 = _days_since(by_date[0].get("published_at") or "") or 0
+                d1 = _days_since(by_date[-1].get("published_at") or "") or 0
+                span = abs(d1 - d0) or 1
+                uploads_per_month = round((len(by_date) - 1) / (span / 30.0), 2)
+            else:
+                uploads_per_month = 0.0
+
+        # Soft skip: ancient + idle channels (legacy virals, not copyable factories)
+        if days is not None and days > 2500 and uploads_per_month < 1.0:
+            return None
+
+        top_views = max((int(v.get("view_count") or 0) for v in popular), default=0)
+        outlier = (
+            round(top_views / display_avg, 2)
+            if display_avg > 0 and top_views > 0
+            else 0.0
+        )
+
+        # Same spirit as NexLev monthly revenue sort:
+        # lifetime avg views × uploads/month × RPM/1000
+        rev = estimate_monthly_revenue_usd(
+            avg_views=float(display_avg),
+            uploads_per_month=uploads_per_month,
+            rpm_usd=rpm_usd,
+        )
+
         score = score_channel(
             subscriber_count=subs,
+            avg_views_per_video=float(display_avg),
             recent_avg_views=float(recent_avg),
             view_to_sub_ratio=ratio,
-            uploads_per_month=cadence,
+            uploads_per_month=uploads_per_month,
+            days_since_start=days,
+            outlier_score=outlier,
+            est_monthly_revenue_usd=rev["est_monthly_revenue_usd"],
         )
-        sample = seed_videos[0] if seed_videos else recent[0]
+
+        likely_monetized = subs >= 1000  # YouTube partner threshold proxy
+
         return {
             "channel_id": cid,
             "channel_name": ch.get("channel_name"),
             "channel_url": ch.get("channel_url"),
             "avatar_url": ch.get("avatar_url"),
             "subscriber_count": subs,
-            "video_count": ch.get("video_count"),
+            "video_count": video_count,
+            "days_since_start": round(days) if days is not None else None,
+            "avg_views_per_video": display_avg,
             "recent_avg_views": recent_avg,
             "view_to_sub_ratio": ratio,
-            "uploads_per_month": cadence,
+            "uploads_per_month": uploads_per_month,
+            "outlier_score": outlier,
+            "likely_monetized": likely_monetized,
             "score": score,
-            "sample_video": {
-                "title": sample.get("title"),
-                "url": sample.get("url"),
-                "thumbnail": sample.get("thumbnail"),
-                "view_count": sample.get("view_count"),
-                "duration_sec": sample.get("duration_sec"),
-            },
+            **rev,
+            "popular_videos": [
+                {
+                    "title": v.get("title"),
+                    "url": v.get("url"),
+                    "thumbnail": v.get("thumbnail"),
+                    "view_count": v.get("view_count"),
+                    "duration_sec": v.get("duration_sec"),
+                    "published_at": v.get("published_at"),
+                }
+                for v in popular
+            ],
             "recent_videos": [
                 {
                     "title": v.get("title"),
@@ -401,23 +565,28 @@ def run_niche_finder(
                     "duration_sec": v.get("duration_sec"),
                     "published_at": v.get("published_at"),
                 }
-                for v in recent[:RECENT_VIDEO_COUNT]
+                for v in recent
             ],
         }
 
-    _log(f"Scoring {len(to_enrich)} channels (recent long-form)…")
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        futs = [ex.submit(_enrich_one, cid, ch) for cid, ch in to_enrich]
-        for fut in as_completed(futs):
-            try:
-                hit = fut.result()
-            except Exception as e:
-                print(f"[niche_finder] enrich error: {e}")
-                continue
-            if hit:
-                hits.append(hit)
+    _log(f"Scoring {len(to_enrich)} channels…")
+    # Sequential enrich — parallel googleapiclient calls flake hard (SSL/timeouts).
+    for cid, ch in to_enrich:
+        try:
+            hit = _enrich_one(cid, ch)
+        except Exception as e:
+            print(f"[niche_finder] enrich error: {e}")
+            continue
+        if hit:
+            hits.append(hit)
 
-    hits.sort(key=lambda h: h.get("score") or 0, reverse=True)
+    hits.sort(
+        key=lambda h: (
+            h.get("est_monthly_revenue_usd") or 0,
+            h.get("score") or 0,
+        ),
+        reverse=True,
+    )
     hits = hits[: max(1, max_channels)]
     _log(f"Done — {len(hits)} niches ranked")
 
@@ -429,5 +598,10 @@ def run_niche_finder(
             "channels_considered": len(channel_ids),
             "min_duration_sec": MIN_DURATION_SEC,
             "recent_video_count": RECENT_VIDEO_COUNT,
+            "rpm_assumed": rpm_usd,
+            "note": (
+                "Revenue is an estimate: avg_views × uploads/month × RPM/1000. "
+                "Default RPM $4 (band $2–$8). Sort mentally by est revenue + enterability."
+            ),
         },
     }

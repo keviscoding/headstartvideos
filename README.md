@@ -111,6 +111,24 @@ python -m webapp.worker
 
 Or: `docker compose up --build` (web with `COOK_ON_WEB=0` + one worker).
 
+## Niche Finder library (cron)
+
+Niche Finder is a **shared database** users browse — not an on-demand hunt for everyone.
+Only admins (and cron) run discovery; results upsert into `niche_channels`.
+
+1. Set `CRON_SECRET` and `YOUTUBE_API_KEY` on the web app.
+2. Call the endpoint **1–2×/day** (DO App Platform scheduled job or any cron):
+
+```bash
+curl -X POST https://channelrecipe.com/api/internal/niche-finder/cron \
+  -H "Authorization: Bearer $CRON_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+Optional JSON body: `keywords`, `max_per_keyword`, `max_channels`, `max_subscribers`.
+Admin can also hit **Refresh library** in the Niche Finder UI.
+
 ## Architecture
 
 ```

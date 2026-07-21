@@ -138,6 +138,9 @@ _ADMIN_EMAILS_DEFAULT = {
 }
 ADMIN_EMAILS = sorted(_ADMIN_EMAILS_DEFAULT | set(_ADMIN_EMAILS_ENV))
 
+# Secret for POST /api/internal/niche-finder/cron (Bearer token). Blank = cron disabled.
+CRON_SECRET = (os.getenv("CRON_SECRET", "") or "").strip().strip('"').strip("'")
+
 # Custom BYOK customers — Atlas key only; titles/scripts/thumbs stay on platform.
 # Comma-separated env BYOK_EMAILS can add more without a deploy.
 _BYOK_EMAILS_ENV = [

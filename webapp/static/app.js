@@ -176,15 +176,20 @@ async function initAnalytics() {
                         'moz-extension://',
                         'nativeIframe',
                         'has already been declared',
+                        "Cannot read properties of undefined (reading 'emit')",
+                        "reading 'emit'",
                     ],
                     beforeSend(event) {
                         try {
-                            const vals = event?.exception?.values || [];
-                            for (const v of vals) {
-                                const msg = `${v?.type || ''} ${v?.value || ''}`.toLowerCase();
-                                if (msg.includes('nativeiframe') && msg.includes('already been declared')) {
-                                    return null;
-                                }
+                            const values = event?.exception?.values || [];
+                            for (const v of values) {
+                                const msg = String(v?.value || '');
+                                const frames = (v?.stacktrace?.frames || [])
+                                    .map(f => `${f?.filename || ''} ${f?.abs_path || ''}`)
+                                    .join(' ');
+                                if (/nativeIframe/i.test(msg) || /has already been declared/i.test(msg)) return null;
+                                if (/reading ['\"]emit['\"]/i.test(msg)) return null;
+                                if (/chrome-extension:\/\//i.test(frames) || /moz-extension:\/\//i.test(frames)) return null;
                             }
                         } catch (_) {}
                         return event;
@@ -2835,10 +2840,13 @@ async function generateStudioThumbnails() {
 }
 
 // ---------------------------------------------------------------------------
-// Niche Finder (long-form keyword hunt)
+// Niche Finder (shared niche library)
 // ---------------------------------------------------------------------------
 let _nfPollTimer = null;
 let _nfAccess = null;
+let _nfOffset = 0;
+let _nfTotal = 0;
+const _NF_PAGE = 40;
 
 function _nfFmt(n) {
     const x = Number(n) || 0;
@@ -2860,6 +2868,7 @@ async function initNicheFinderPage() {
     if (!ensureAuth(initNicheFinderPage)) return;
     const gate = document.getElementById('nf-gate');
     const workspace = document.getElementById('nf-workspace');
+    const adminPanel = document.getElementById('nf-admin-panel');
     const status = document.getElementById('nf-status');
     if (status) status.textContent = '';
     try {
@@ -2868,27 +2877,23 @@ async function initNicheFinderPage() {
         if (!res.ok) throw new Error(data?.detail || 'Could not load Niche Finder');
         _nfAccess = data;
         const kw = document.getElementById('nf-keywords');
-        if (kw && !kw.value.trim() && Array.isArray(data.default_keywords)) {
+        if (kw && !kw.value.trim() && Array.isArray(data.default_keywords) && data.default_keywords.length) {
             kw.value = data.default_keywords.join('\n');
         }
-        if (data.can_run) {
+        if (data.can_browse) {
             gate?.classList.add('hidden');
             workspace?.classList.remove('hidden');
+            adminPanel?.classList.toggle('hidden', !data.can_run);
+            await loadNicheFinderFeed({ reset: true });
         } else {
             workspace?.classList.add('hidden');
             gate?.classList.remove('hidden');
             const title = document.getElementById('nf-gate-title');
             const body = document.getElementById('nf-gate-body');
             const cta = document.getElementById('nf-gate-cta');
-            if (data.access === 'pro_only') {
-                if (title) title.textContent = 'Only available on Pro';
-                if (body) body.textContent = data.message || 'Upgrade to Pro to hunt long-form niches.';
-                cta?.classList.remove('hidden');
-            } else {
-                if (title) title.textContent = 'Coming soon';
-                if (body) body.textContent = data.message || 'Niche Finder is coming soon for your plan.';
-                cta?.classList.add('hidden');
-            }
+            if (title) title.textContent = 'Only available on Pro';
+            if (body) body.textContent = data.message || 'Upgrade to Pro to browse the niche library.';
+            cta?.classList.remove('hidden');
         }
     } catch (e) {
         gate?.classList.remove('hidden');
@@ -2900,26 +2905,58 @@ async function initNicheFinderPage() {
     }
 }
 
+async function loadNicheFinderFeed(opts = {}) {
+    if (_nfAccess && !_nfAccess.can_browse) return;
+    const reset = !!opts.reset;
+    if (reset) {
+        _nfOffset = 0;
+        const results = document.getElementById('nf-results');
+        if (results) results.innerHTML = '';
+    }
+    const meta = document.getElementById('nf-feed-meta');
+    const moreWrap = document.getElementById('nf-load-more-wrap');
+    try {
+        if (meta && reset) meta.textContent = 'Loading niche library…';
+        const res = await fetch(`/api/niche-finder/channels?sort=revenue&limit=${_NF_PAGE}&offset=${_nfOffset}`);
+        const data = await readJson(res, null);
+        if (!res.ok) throw new Error(data?.detail || 'Failed to load niches');
+        const channels = data.channels || [];
+        _nfTotal = data.total || 0;
+        _renderNicheFinderHits(channels, { append: !reset });
+        _nfOffset += channels.length;
+        if (meta) {
+            meta.textContent = _nfTotal
+                ? `Showing ${_nfOffset} of ${_nfTotal} niches · sorted by est. monthly revenue`
+                : 'Building the niche library…';
+        }
+        moreWrap?.classList.toggle('hidden', _nfOffset >= _nfTotal || channels.length === 0);
+    } catch (e) {
+        if (meta) meta.textContent = e.message || 'Failed to load niches';
+    }
+}
+
+async function loadMoreNicheFinder() {
+    await loadNicheFinderFeed({ reset: false });
+}
+
 async function startNicheFinder() {
     if (!ensureAuth(startNicheFinder)) return;
     if (_nfAccess && !_nfAccess.can_run) {
-        initNicheFinderPage();
+        alert('Only admins can refresh the niche library.');
         return;
     }
     const btn = document.getElementById('nf-run-btn');
     const status = document.getElementById('nf-status');
-    const results = document.getElementById('nf-results');
     const keywords = (document.getElementById('nf-keywords')?.value || '')
         .split(/\n+/)
         .map(s => s.trim())
         .filter(Boolean);
     const minViews = parseInt(document.getElementById('nf-min-views')?.value || '0', 10) || 0;
-    const maxSubs = parseInt(document.getElementById('nf-max-subs')?.value || '2000000', 10) || 2000000;
+    const maxSubs = parseInt(document.getElementById('nf-max-subs')?.value || '150000', 10) || 150000;
 
     if (_nfPollTimer) { clearInterval(_nfPollTimer); _nfPollTimer = null; }
     setLoading(btn, true);
-    if (results) results.innerHTML = '';
-    if (status) status.textContent = 'Starting search…';
+    if (status) status.textContent = 'Starting library refresh…';
 
     try {
         const res = await fetch('/api/niche-finder/jobs', {
@@ -2934,10 +2971,6 @@ async function startNicheFinder() {
         const data = await readJson(res, null);
         if (!res.ok) {
             const msg = typeof data?.detail === 'string' ? data.detail : (data?.detail?.message || data?.message || 'Failed');
-            if (res.status === 402) {
-                showSoftPrompt(msg, 'Upgrade to Pro', () => showPricingModal());
-                return;
-            }
             throw new Error(msg);
         }
         const jobId = data.job_id;
@@ -2946,7 +2979,7 @@ async function startNicheFinder() {
         await _pollNicheFinderJob(jobId);
     } catch (e) {
         if (status) status.textContent = '';
-        alert('Niche Finder failed: ' + e.message);
+        alert('Library refresh failed: ' + e.message);
         setLoading(btn, false);
     }
 }
@@ -2964,72 +2997,134 @@ async function _pollNicheFinderJob(jobId) {
         if (data.status === 'completed') {
             if (_nfPollTimer) { clearInterval(_nfPollTimer); _nfPollTimer = null; }
             setLoading(btn, false);
-            const n = (data.hits || []).length;
-            if (status) status.textContent = `Done — ${n} channel${n === 1 ? '' : 's'} ranked.`;
-            _renderNicheFinderHits(data.hits || []);
+            const n = data.channels_upserted || (data.hits || []).length;
+            if (status) status.textContent = `Done — ${n} channel${n === 1 ? '' : 's'} saved to the library.`;
+            await loadNicheFinderFeed({ reset: true });
         } else if (data.status === 'error') {
             if (_nfPollTimer) { clearInterval(_nfPollTimer); _nfPollTimer = null; }
             setLoading(btn, false);
             if (status) status.textContent = '';
-            alert('Niche Finder failed: ' + (data.error || 'Unknown error'));
+            alert('Library refresh failed: ' + (data.error || 'Unknown error'));
         }
     } catch (e) {
         if (_nfPollTimer) { clearInterval(_nfPollTimer); _nfPollTimer = null; }
         setLoading(btn, false);
         if (status) status.textContent = '';
-        alert('Niche Finder failed: ' + e.message);
+        alert('Library refresh failed: ' + e.message);
     }
 }
 
-function _renderNicheFinderHits(hits) {
+function _nfMoney(n) {
+    const x = Number(n) || 0;
+    if (x >= 1000) return '$' + (x / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
+    return '$' + Math.round(x);
+}
+
+function _nfEsc(s) {
+    return String(s ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function _renderNicheFinderHits(hits, opts = {}) {
     const root = document.getElementById('nf-results');
     if (!root) return;
-    if (!hits.length) {
-        root.innerHTML = `<p style="color: var(--app-ink-3); font-size: 14px;">No channels matched. Try broader keywords or lower the min views filter.</p>`;
+    const append = !!opts.append;
+    if (!hits.length && !append) {
+        root.innerHTML = `<p style="color: var(--app-ink-3); font-size: 14px;">Building the niche library… Check back after the next refresh.</p>`;
         return;
     }
-    root.innerHTML = hits.map((h) => {
-        const vids = (h.recent_videos || []).slice(0, 4);
-        const thumbs = vids.map(v => `
-            <a href="${v.url}" target="_blank" rel="noopener" title="${(v.title || '').replace(/"/g, '&quot;')}"
-               style="display:block; width: 148px; flex: none; text-decoration:none;">
-                <div style="aspect-ratio:16/9; border-radius: 8px; overflow:hidden; background: var(--app-surface-2); border: 1px solid var(--app-border);">
-                    ${v.thumbnail ? `<img src="${v.thumbnail}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover;">` : ''}
+    const html = hits.map((h) => {
+        const vids = (h.popular_videos || h.recent_videos || []).slice(0, 4);
+        const thumbs = vids.map(v => {
+            const ago = v.published_at ? _nfRelTime(v.published_at) : '';
+            return `
+            <a href="${_nfEsc(v.url)}" target="_blank" rel="noopener" title="${_nfEsc(v.title || '')}"
+               style="display:block; width: 168px; flex: none; text-decoration:none;">
+                <div style="position:relative; aspect-ratio:16/9; border-radius: 8px; overflow:hidden; background: var(--app-surface-2); border: 1px solid var(--app-border);">
+                    ${v.thumbnail ? `<img src="${_nfEsc(v.thumbnail)}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover;">` : ''}
+                    <span class="cr-mono" style="position:absolute;right:6px;bottom:6px;background:rgba(0,0,0,.75);color:#fff;font-size:10px;padding:2px 5px;border-radius:4px;">${_nfDur(v.duration_sec)}</span>
                 </div>
-                <p style="font-size: 11px; color: var(--app-ink-3); margin-top: 6px; line-height: 1.3; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">
-                    ${_nfFmt(v.view_count)} · ${_nfDur(v.duration_sec)}
+                <p style="font-size: 11px; color: var(--app-ink-2); margin-top: 6px; line-height: 1.35; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">
+                    ${_nfEsc(v.title || '')}
                 </p>
-            </a>`).join('');
+                <p class="cr-mono" style="font-size: 10px; color: var(--app-ink-3); margin-top: 2px;">
+                    ${_nfFmt(v.view_count)} views${ago ? ' · ' + ago : ''}
+                </p>
+            </a>`;
+        }).join('');
+
+        const metric = (label, value) => `
+            <div style="flex:1; min-width: 110px; background: var(--app-surface-2); border: 1px solid var(--app-border); border-radius: 10px; padding: 10px 12px;">
+                <p class="cr-mono" style="font-size: 10px; color: var(--app-ink-3); text-transform: uppercase; letter-spacing: 0.04em;">${label}</p>
+                <p style="font-family: var(--font-display); font-weight: 700; font-size: 18px; color: var(--app-ink); margin-top: 4px;">${value}</p>
+            </div>`;
+
+        const mon = h.likely_monetized
+            ? `<span title="Likely monetized (≥1K subs)" style="color:#14B87A;font-weight:700;margin-left:4px;">$</span>`
+            : '';
+        const tag = h.source_keyword
+            ? `<span class="cr-mono" style="font-size: 11px; color: var(--app-ink-3); background: var(--app-surface-2); border: 1px solid var(--app-border); border-radius: 99px; padding: 2px 8px;">${_nfEsc(h.source_keyword)}</span>`
+            : '';
+
         return `
         <div class="cr-surface" style="padding: 18px 20px;">
             <div class="flex items-start gap-4" style="flex-wrap: wrap;">
-                <a href="${h.channel_url}" target="_blank" rel="noopener" style="flex:none;">
-                    <img src="${h.avatar_url || ''}" alt="" width="48" height="48"
+                <a href="${_nfEsc(h.channel_url)}" target="_blank" rel="noopener" style="flex:none;">
+                    <img src="${_nfEsc(h.avatar_url || '')}" alt="" width="48" height="48"
                          style="width:48px;height:48px;border-radius:50%;object-fit:cover;background:var(--app-surface-2);">
                 </a>
                 <div style="flex:1; min-width: 200px;">
                     <div class="flex items-center gap-2" style="flex-wrap:wrap;">
-                        <a href="${h.channel_url}" target="_blank" rel="noopener"
+                        <a href="${_nfEsc(h.channel_url)}" target="_blank" rel="noopener"
                            style="font-family: var(--font-display); font-weight: 700; font-size: 18px; color: var(--app-ink); text-decoration:none;">
-                            ${h.channel_name || 'Channel'}
+                            ${_nfEsc(h.channel_name || 'Channel')}${mon}
                         </a>
+                        ${tag}
                         <span class="cr-mono" style="font-size: 11px; color: var(--accent); background: var(--accent-soft-dark); border: 1px solid var(--accent); border-radius: 99px; padding: 2px 8px;">
-                            score ${h.score}
+                            score ${_nfEsc(h.score)}
+                        </span>
+                        <span class="cr-mono" style="font-size: 11px; color: var(--app-ink-3);">
+                            ${_nfFmt(h.subscriber_count)} subscribers
                         </span>
                     </div>
-                    <p class="cr-mono" style="font-size: 12px; color: var(--app-ink-3); margin-top: 6px;">
-                        ${_nfFmt(h.subscriber_count)} subs ·
-                        ${_nfFmt(h.recent_avg_views)} recent avg ·
-                        ${h.view_to_sub_ratio}× v/sub ·
-                        ${h.uploads_per_month}/mo
+                    <p class="cr-mono" style="font-size: 12px; color: var(--success); margin-top: 6px;">
+                        Est. ${_nfMoney(h.est_monthly_revenue_low_usd)}–${_nfMoney(h.est_monthly_revenue_high_usd)}/mo
+                        <span style="color: var(--app-ink-3);">(mid ${_nfMoney(h.est_monthly_revenue_usd)} @ $4 RPM)</span>
+                        · ${_nfEsc(h.view_to_sub_ratio)}× v/sub
                     </p>
                 </div>
             </div>
-            <div class="flex gap-3 mt-4" style="overflow-x:auto; padding-bottom: 4px;">
-                ${thumbs || '<span style="color:var(--app-ink-3);font-size:13px;">No recent long-form videos</span>'}
+            <div class="flex gap-2 mt-4" style="flex-wrap: wrap;">
+                ${metric('Avg. Views / Video', _nfFmt(h.avg_views_per_video))}
+                ${metric('Days Since Start', h.days_since_start != null ? _nfEsc(h.days_since_start) : '—')}
+                ${metric('Uploads', _nfFmt(h.video_count))}
+                ${metric('Outlier Score', (h.outlier_score != null ? h.outlier_score + '×' : '—'))}
+            </div>
+            <p class="cr-eyebrow" style="margin: 16px 0 8px;">Most popular videos</p>
+            <div class="flex gap-3" style="overflow-x:auto; padding-bottom: 4px;">
+                ${thumbs || '<span style="color:var(--app-ink-3);font-size:13px;">No long-form videos found</span>'}
             </div>
         </div>`;
     }).join('');
+    if (append) root.insertAdjacentHTML('beforeend', html);
+    else root.innerHTML = html;
+}
+
+function _nfRelTime(iso) {
+    try {
+        const d = new Date(iso);
+        const days = Math.max(0, Math.round((Date.now() - d.getTime()) / 86400000));
+        if (days <= 0) return 'today';
+        if (days === 1) return '1 day ago';
+        if (days < 30) return days + ' days ago';
+        const mo = Math.round(days / 30);
+        return mo === 1 ? '1 month ago' : mo + ' months ago';
+    } catch (_) {
+        return '';
+    }
 }
 
 // ---------------------------------------------------------------------------
