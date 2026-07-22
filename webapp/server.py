@@ -1143,11 +1143,6 @@ class StoryboardJobRequest(BaseModel):
     script: str = ""
     target_minutes: float = 8
 
-
-class StoryboardIdeasRequest(BaseModel):
-    seed: str = ""
-    count: int = 8
-
 class KeyTestRequest(BaseModel):
     key_name: str
     key_value: str = ""
@@ -1332,7 +1327,19 @@ def generate_titles(req: TitleRequest, user: dict = Depends(require_user)):
 
     niche_data = _load_niche(req.niche)
     niche_name = niche_data.get("name", req.niche) if niche_data else req.niche
+    recipe = (niche_data or {}).get("recipe") or req.niche or ""
     topic_hint = f"\nTopic hint from user: {req.topic}" if req.topic else ""
+
+    # Storyboard Pack: ground titles on Easy English family-channel style bible
+    if recipe == "storyboard_pack" or req.niche == "storyboard_pack":
+        try:
+            from core.storyboard_pack import generate_story_ideas
+            ideas = generate_story_ideas(seed=req.topic or "", count=6)
+            titles = [i["title"] for i in ideas if i.get("title")]
+            if titles:
+                return {"titles": titles[:6]}
+        except Exception as e:
+            print(f"[titles] storyboard style titles failed, falling back: {e}")
 
     prompt = (
         f"Generate exactly 3 viral YouTube video titles for the '{niche_name}' niche. "
@@ -2892,21 +2899,6 @@ def download_niche_intel_job(job_id: str, admin: dict = Depends(require_admin)):
 # ---------------------------------------------------------------------------
 # Storyboard Pack (admin-only v1 — stills + I2V prompts zip)
 # ---------------------------------------------------------------------------
-@app.post("/api/storyboard/ideas")
-async def storyboard_ideas(req: StoryboardIdeasRequest, admin: dict = Depends(require_admin)):
-    """Cheap style-bible ideation (not a fine-tune)."""
-    try:
-        from core.storyboard_pack import generate_story_ideas
-        ideas = generate_story_ideas(seed=req.seed or "", count=int(req.count or 8))
-    except Exception as e:
-        print(f"[storyboard] ideas failed: {e}")
-        raise HTTPException(500, f"Could not generate ideas: {e}")
-    if not ideas:
-        raise HTTPException(500, "No ideas came back. Try again.")
-    track(admin["id"], "storyboard_ideas", {"count": len(ideas), "has_seed": bool((req.seed or "").strip())})
-    return {"ideas": ideas}
-
-
 @app.post("/api/storyboard/jobs")
 async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(require_admin)):
     """Queue a storyboard pack build (0 credits while admin-testing)."""
