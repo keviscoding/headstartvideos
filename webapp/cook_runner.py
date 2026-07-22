@@ -20,6 +20,7 @@ _COST_PENCE_PER_MIN = {
     "broll_only": 5.0,
     "broll_cinematic": 12.0,
     "avatar_plus_broll": 40.0,
+    "storyboard_pack": 8.0,
 }
 
 
@@ -120,6 +121,16 @@ def run_cook_job(
     recipe = req_data.get("recipe") or "animated_explainer"
     thumbnail_path = req_data.get("thumbnail_path") or ""
     notify_email = req_data.get("notify_email") or ""
+
+    # Storyboard pack: stills + I2V prompts zip (no voiceover / video pipeline)
+    if recipe == "storyboard_pack":
+        return _run_storyboard_pack_job(
+            job_id,
+            job,
+            track=track,
+            capture_error=capture_error,
+            cancel_check=cancel_check,
+        )
 
     # Resolve Spaces URLs /api/files paths to local files for ffmpeg pipelines
     from webapp.storage import fetch_to_local
@@ -443,3 +454,155 @@ def run_cook_job(
             except Exception:
                 pass
             print(f"[cook] Auto-refunded {amt} credit(s) for user {user_id} after build failure")
+
+
+def _run_storyboard_pack_job(
+    job_id: str,
+    job: dict[str, Any],
+    *,
+    track: Callable[..., None] | None = None,
+    capture_error: Callable[..., None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+) -> None:
+    """Build a downloadable storyboard zip (stills + I2V prompts)."""
+    from webapp.database import update_cook_job
+    from webapp import storage
+
+    def _track(uid, event, props=None):
+        if track:
+            track(uid, event, props)
+
+    def _capture(exc, ctx=None):
+        if capture_error:
+            capture_error(exc, ctx)
+
+    req_data = job.get("request") or {}
+    title = (req_data.get("title") or "").strip()
+    topic = (req_data.get("topic") or "").strip()
+    script = (req_data.get("script") or "").strip()
+    try:
+        target_minutes = float(req_data.get("target_minutes") or 8)
+    except (TypeError, ValueError):
+        target_minutes = 8.0
+    is_admin = bool(req_data.get("is_admin"))
+    is_paid = bool(req_data.get("is_paid"))
+    user_id = job.get("user_id")
+    started_at = time.time()
+    job["status"] = "running"
+
+    _progress_persist_at = [0.0]
+
+    def on_progress(msg: str, phase: str = "running"):
+        if job.get("status") == "cancelled" or (cancel_check and cancel_check()):
+            job["status"] = "cancelled"
+            raise RuntimeError("Cancelled by user")
+        job["progress"].append({"time": time.time(), "message": msg, "phase": phase})
+        now = time.time()
+        if now - _progress_persist_at[0] >= 2.0:
+            _progress_persist_at[0] = now
+            try:
+                update_cook_job(
+                    job_id,
+                    status=job.get("status"),
+                    progress_json=json.dumps(job["progress"][-60:]),
+                    heartbeat=True,
+                )
+            except Exception as e:
+                print(f"[storyboard] persist progress failed: {e}")
+
+    atlas_cm = nullcontext()
+    if user_id:
+        try:
+            from webapp.database import get_user_atlas_key
+            from core.atlas_runtime import use_atlas_key
+            ak = get_user_atlas_key(int(user_id))
+            if ak:
+                atlas_cm = use_atlas_key(ak)
+        except Exception:
+            atlas_cm = nullcontext()
+
+    try:
+        with atlas_cm:
+            on_progress("Starting storyboard pack…")
+            from core.storyboard_pack import build_storyboard_pack
+            result = build_storyboard_pack(
+                title=title,
+                topic=topic,
+                script=script,
+                target_minutes=target_minutes,
+                progress=lambda m: on_progress(m),
+                is_admin=is_admin,
+                is_paid=is_paid,
+            )
+
+        zip_local = result.get("zip_path") or result.get("output_path") or ""
+        if not zip_local or not Path(zip_local).is_file():
+            raise RuntimeError("Storyboard zip was not created.")
+
+        on_progress("Uploading pack…")
+        ts = int(time.time())
+        import config as _cfg
+        ephemeral = (
+            (not getattr(_cfg, "COOK_ON_WEB", True))
+            or bool(os.getenv("FLY_MACHINE_ID") or os.getenv("FLY_APP_NAME"))
+        )
+        try:
+            zip_url = storage.store_file(
+                zip_local,
+                f"storyboard/{user_id or 'anon'}/{ts}_{job_id}.zip",
+                "application/zip",
+            )
+        except Exception as up_err:
+            if ephemeral or storage.is_remote():
+                raise RuntimeError(f"Storyboard zip upload failed: {up_err}") from up_err
+            print(f"[storyboard] upload failed, local fallback: {up_err}")
+            zip_url = f"/api/files/{os.path.relpath(zip_local, str(ROOT))}"
+
+        pack_meta = {
+            "title": result.get("title") or title,
+            "zip_url": zip_url,
+            "zip_path": zip_local,
+            "pack_dir": result.get("pack_dir") or "",
+            "beat_count": result.get("beat_count") or 0,
+            "target_minutes": result.get("target_minutes") or target_minutes,
+            "scene_files": result.get("scene_files") or [],
+            "kind": "storyboard_pack",
+        }
+        job["status"] = "complete"
+        job["result"] = pack_meta
+        job["error"] = ""
+        update_cook_job(
+            job_id,
+            status="complete",
+            progress_json=json.dumps(job["progress"][-60:]),
+            result_json=json.dumps(pack_meta),
+            finished=True,
+        )
+        on_progress("Pack ready — download your zip.")
+        _track(user_id or "anon", "storyboard_pack_complete", {
+            "job_id": job_id,
+            "beat_count": pack_meta["beat_count"],
+            "target_minutes": pack_meta["target_minutes"],
+            "duration_sec": round(time.time() - started_at, 1),
+        })
+    except Exception as e:
+        if job.get("status") == "cancelled" or "Cancelled by user" in str(e):
+            job["status"] = "cancelled"
+            job["error"] = "Cancelled by user"
+            try:
+                update_cook_job(job_id, status="cancelled", error=job["error"], finished=True)
+            except Exception:
+                pass
+            return
+        job["status"] = "error"
+        job["error"] = str(e)
+        _capture(e, {"job_id": job_id, "recipe": "storyboard_pack", "user_id": user_id})
+        try:
+            update_cook_job(job_id, status="error", error=str(e), finished=True)
+        except Exception:
+            pass
+        _track(user_id or "anon", "storyboard_pack_failed", {
+            "job_id": job_id,
+            "error_class": type(e).__name__,
+        })
+        print(f"[storyboard] job {job_id} failed: {e}")

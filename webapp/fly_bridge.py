@@ -160,7 +160,11 @@ def _machine_env() -> dict[str, str]:
 
 
 def spawn_cook(job_id: str) -> bool:
-    """Create + start an ephemeral Fly Machine that cooks job_id then exits."""
+    """Create + start an ephemeral Fly Machine that cooks job_id then exits.
+
+    Also used for storyboard_pack jobs (same cook image / fly_oneshot → cook_runner
+    branches on recipe=storyboard_pack and writes a zip instead of an mp4).
+    """
     if not getattr(config, "COOK_ON_FLY", False):
         return False
     app = (getattr(config, "FLY_COOK_APP", "") or "").strip()

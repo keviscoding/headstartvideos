@@ -1,0 +1,25 @@
+{
+  "id": "storyboard_pack",
+  "name": "Storyboard Pack",
+  "tagline": "Dialogue storyboards ready for image-to-video",
+  "description": "Turn a story idea or script into numbered scene stills + motion prompts you can batch into any image-to-video tool. Built for long AI family / English-listening story channels.",
+  "category": "Education & Story",
+  "difficulty": "Beginner",
+  "rpm_range": "$3 - $10",
+  "demand": "High",
+  "recipe": "storyboard_pack",
+  "default_voice": "leo",
+  "default_minutes": 8,
+  "max_free_minutes": 8,
+  "max_paid_minutes": 30,
+  "style_preset": "pixar_lite",
+  "thumbnail_style": "3D Pixar-lite family characters, warm lighting, large yellow caption, emotional story moment",
+  "example_topics": [
+    "Max made a big mistake before his exams",
+    "Mia tried to help but Max would not listen",
+    "Result day arrived and Max was afraid to open the door"
+  ],
+  "color": "#E8A838",
+  "preview_gif": "/static/previews/storyboard_pack.gif",
+  "status": "new"
+}

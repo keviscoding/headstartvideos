@@ -50,6 +50,17 @@ RECIPES = {
         "inputs": ["voiceover", "script"],
         "settings": ["style"],
     },
+    "storyboard_pack": {
+        "pipeline": "storyboard",
+        "label": "Storyboard Pack",
+        "description": "Dialogue story → timed scene stills + image-to-video "
+                       "prompts in a downloadable zip. Animate elsewhere, "
+                       "assemble later in ChannelRecipe.",
+        "requires_keys": ["ATLASCLOUD_KEY"],
+        "optional_keys": [],
+        "inputs": ["script", "topic"],
+        "settings": ["target_minutes", "style"],
+    },
 }
 
 

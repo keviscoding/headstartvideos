@@ -192,6 +192,60 @@
                 </div>
             </section>
 
+            <!-- Storyboard Pack (admin recipe — not the 6-step cook) -->
+            <section id="step-storyboard" class="step-panel hidden">
+                <div class="cr-panel">
+                    <div class="mb-6">
+                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Storyboard Pack</h2>
+                        <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">
+                            We generate numbered scene stills + image-to-video prompts. You animate them in your I2V tool, then come back later to assemble.
+                        </p>
+                    </div>
+                    <div class="max-w-3xl space-y-4">
+                        <div>
+                            <label class="cr-label" for="sb-title">Title (optional)</label>
+                            <input id="sb-title" type="text" class="cr-input" placeholder="Max Made a Big Mistake Before His Exams">
+                        </div>
+                        <div>
+                            <label class="cr-label" for="sb-topic">Story idea</label>
+                            <textarea id="sb-topic" class="cr-input" rows="3" placeholder="Max finished work quickly, compared himself with Mia, and played video games instead of studying…"></textarea>
+                        </div>
+                        <div>
+                            <label class="cr-label" for="sb-script">Or paste a full script (optional)</label>
+                            <textarea id="sb-script" class="cr-input" rows="8" placeholder="Paste dialogue here if you already have it…"></textarea>
+                        </div>
+                        <div class="flex items-center gap-4">
+                            <label class="cr-label" style="margin-bottom: 0; white-space: nowrap;">Target length</label>
+                            <input id="sb-minutes" type="range" min="3" max="30" value="8" class="flex-1" style="accent-color: var(--accent);">
+                            <span id="sb-minutes-label" class="cr-mono" style="width: 4rem; text-align: right;">8 min</span>
+                        </div>
+                        <p id="sb-hint" style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-3);">
+                            Admin testing: any length up to 30 min. Later: free/trial ≤ 8 min, paid up to 30.
+                        </p>
+                        <button id="btn-sb-generate" class="btn-primary w-full" type="button">
+                            <span class="btn-text">Generate pack</span>
+                            <span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;"></div>Working…</span>
+                        </button>
+                        <div id="sb-progress" class="hidden cr-surface" style="padding: 14px; max-height: 220px; overflow: auto; font-family: var(--font-mono); font-size: 12px; color: var(--app-ink-2);"></div>
+                        <div id="sb-result" class="hidden" style="padding: 16px; border: 1px solid var(--app-border); border-radius: var(--radius-md);">
+                            <p id="sb-result-summary" style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink); margin-bottom: 12px;"></p>
+                            <a id="sb-download" class="btn-primary" href="#" download>Download zip</a>
+                            <p style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-3); margin-top: 12px;">
+                                Drop each <code>NNN_scene</code> image into your I2V tool and paste the matching <code>NNN_prompt.txt</code>. Keep numbered filenames when you download clips.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="flex justify-between items-center mt-7 pt-5" style="border-top: 1px solid var(--app-border);">
+                        <button class="btn-ghost" type="button" onclick="goToStep(1)">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                            Recipes
+                        </button>
+                        <span class="cr-mono">Storyboard Pack</span>
+                        <span></span>
+                    </div>
+                </div>
+            </section>
+
             <!-- STEP 2: Title -->
             <section id="step-2" class="step-panel hidden">
                 <div class="cr-panel">

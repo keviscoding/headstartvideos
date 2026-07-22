@@ -1136,6 +1136,13 @@ class NicheIntelJobRequest(BaseModel):
     videos_per_channel: int = 10
     frames_per_video: int = 8
 
+
+class StoryboardJobRequest(BaseModel):
+    title: str = ""
+    topic: str = ""
+    script: str = ""
+    target_minutes: float = 8
+
 class KeyTestRequest(BaseModel):
     key_name: str
     key_value: str = ""
@@ -1200,11 +1207,22 @@ async def get_client_config():
 
 
 @app.get("/api/niches")
-async def get_niches():
+async def get_niches(request: Request):
     niches = []
+    user = _current_user(request)
+    is_admin = bool(user and _is_admin_email(user.get("email", "")))
     for f in sorted(NICHES_DIR.glob("*.json")):
         with open(f) as fh:
-            niches.append(json.load(fh))
+            niche = json.load(fh)
+        # Storyboard Pack: admin-only while testing (everyone else sees Coming soon)
+        if niche.get("id") == "storyboard_pack" or niche.get("recipe") == "storyboard_pack":
+            if is_admin:
+                niche["status"] = niche.get("status") or "new"
+                niche["available"] = True
+            else:
+                niche["status"] = "coming_soon"
+                niche["available"] = False
+        niches.append(niche)
     return niches
 
 
@@ -2864,6 +2882,170 @@ def download_niche_intel_job(job_id: str, admin: dict = Depends(require_admin)):
         media_type="application/zip",
         filename=zip_path.name,
     )
+
+
+# ---------------------------------------------------------------------------
+# Storyboard Pack (admin-only v1 — stills + I2V prompts zip)
+# ---------------------------------------------------------------------------
+@app.post("/api/storyboard/jobs")
+async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(require_admin)):
+    """Queue a storyboard pack build (0 credits while admin-testing)."""
+    topic = (req.topic or "").strip()
+    script = (req.script or "").strip()
+    title = (req.title or "").strip()
+    if not topic and not script and not title:
+        raise HTTPException(400, "Enter a story idea, title, or paste a script.")
+
+    try:
+        mins = float(req.target_minutes or 8)
+    except (TypeError, ValueError):
+        mins = 8.0
+    from core.storyboard_pack import clamp_minutes, MAX_PAID_MINUTES
+    mins = clamp_minutes(mins, is_admin=True, is_paid=True)
+    if mins > MAX_PAID_MINUTES:
+        raise HTTPException(400, f"Max length is {MAX_PAID_MINUTES} minutes.")
+
+    plan = (admin.get("plan") or "free").strip()
+    is_paid = plan in ("starter", "daily", "pro")
+
+    job_id = str(uuid.uuid4())
+    req_payload = {
+        "recipe": "storyboard_pack",
+        "title": title or topic[:80] or "Storyboard Pack",
+        "topic": topic,
+        "script": script,
+        "target_minutes": mins,
+        "is_admin": True,
+        "is_paid": is_paid,
+        "credits_charged": 0,
+        "notify_email": admin.get("email") or "",
+    }
+
+    try:
+        create_cook_job(
+            job_id=job_id,
+            user_id=admin["id"],
+            recipe="storyboard_pack",
+            title=req_payload["title"],
+            request_json=json.dumps(req_payload),
+            credit_deducted=False,
+            lite_mode=False,
+            status="web_queued" if COOK_ON_WEB else "queued",
+        )
+    except Exception as e:
+        print(f"[storyboard] create_cook_job failed: {e}")
+        raise HTTPException(500, "Could not queue storyboard pack.")
+
+    job = {
+        "status": "queued",
+        "progress": [{"time": time.time(), "message": "Queued storyboard pack…", "phase": "queued"}],
+        "result": None,
+        "request": req_payload,
+        "user_id": admin["id"],
+        "credit_deducted": False,
+        "lite_mode": False,
+        "error": "",
+        "created_at": time.time(),
+    }
+    _jobs[job_id] = job
+
+    if COOK_ON_WEB:
+        job_queue.enqueue(job_id)
+    else:
+        if COOK_ON_FLY:
+            try:
+                from webapp.fly_bridge import spawn_cook as fly_spawn
+                if fly_spawn(job_id):
+                    job["progress"].append({
+                        "time": time.time(),
+                        "message": "Starting pack on Fly…",
+                        "phase": "queued",
+                    })
+                else:
+                    print(f"[storyboard] Fly spawn failed for {job_id}")
+            except Exception as e:
+                print(f"[storyboard] Fly bridge error: {e}")
+        try:
+            update_cook_job(job_id, progress_json=json.dumps(job["progress"]), status="queued")
+        except Exception:
+            pass
+
+    track(admin["id"], "storyboard_pack_queued", {
+        "job_id": job_id,
+        "target_minutes": mins,
+        "has_script": bool(script),
+        "cook_on_fly": bool(COOK_ON_FLY),
+        "cook_on_web": bool(COOK_ON_WEB),
+    })
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "target_minutes": mins,
+        "title": req_payload["title"],
+    }
+
+
+@app.get("/api/storyboard/jobs/{job_id}")
+async def get_storyboard_job(job_id: str, admin: dict = Depends(require_admin)):
+    job = _jobs.get(job_id)
+    if job:
+        if job.get("user_id") != admin["id"] and not _is_admin_email(admin.get("email", "")):
+            raise HTTPException(403, "Access denied")
+        _refresh_job_from_db(job_id, job)
+    else:
+        row = get_cook_job(job_id)
+        if not row:
+            raise HTTPException(404, "Job not found.")
+        if row.get("user_id") != admin["id"] and not _is_admin_email(admin.get("email", "")):
+            raise HTTPException(403, "Access denied")
+        if (row.get("recipe") or "") != "storyboard_pack":
+            raise HTTPException(404, "Not a storyboard job.")
+        job = hydrate_job_from_row(row)
+        _jobs[job_id] = job
+
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    return {
+        "job_id": job_id,
+        "status": job.get("status") or "queued",
+        "progress": list(job.get("progress") or [])[-40:],
+        "error": job.get("error") or "",
+        "zip_ready": bool(result.get("zip_url") or result.get("zip_path")),
+        "zip_url": result.get("zip_url") or "",
+        "title": result.get("title") or (job.get("request") or {}).get("title") or "",
+        "beat_count": result.get("beat_count") or 0,
+        "target_minutes": result.get("target_minutes") or 0,
+    }
+
+
+@app.get("/api/storyboard/jobs/{job_id}/download")
+async def download_storyboard_job(job_id: str, admin: dict = Depends(require_admin)):
+    job = _jobs.get(job_id)
+    if not job:
+        row = get_cook_job(job_id)
+        if not row:
+            raise HTTPException(404, "Job not found.")
+        job = hydrate_job_from_row(row)
+        _jobs[job_id] = job
+    else:
+        _refresh_job_from_db(job_id, job)
+
+    if job.get("user_id") != admin["id"] and not _is_admin_email(admin.get("email", "")):
+        raise HTTPException(403, "Access denied")
+
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    zip_url = (result.get("zip_url") or "").strip()
+    if zip_url.startswith("http://") or zip_url.startswith("https://"):
+        return RedirectResponse(zip_url)
+    zip_path = Path(result.get("zip_path") or "")
+    if zip_path.is_file():
+        return FileResponse(
+            str(zip_path),
+            media_type="application/zip",
+            filename=zip_path.name,
+        )
+    if zip_url.startswith("/api/files/"):
+        return RedirectResponse(zip_url)
+    raise HTTPException(404, "Zip not ready yet.")
 
 
 @app.post("/api/internal/niche-finder/cron")
