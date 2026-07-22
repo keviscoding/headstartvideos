@@ -446,6 +446,10 @@ function goToStep(n) {
     }
     if (n === 'sb-cast') initStoryboardCastUI();
     if (n === 'storyboard') initStoryboardPackUI();
+    if (n === 'sb-assemble') {
+        const notify = document.getElementById('sb-assemble-notify');
+        if (notify && !notify.value && currentUser?.email) notify.value = currentUser.email;
+    }
 
     if (typeof n === 'number' && n >= 2) persistPipelineState();
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -465,6 +469,10 @@ function goToCompletedStep(n) {
             alert('Generate a storyboard pack first, then assemble.');
             goToStep('storyboard');
             return;
+        }
+        if (n === 'sb-assemble') {
+            const notify = document.getElementById('sb-assemble-notify');
+            if (notify && !notify.value && currentUser?.email) notify.value = currentUser.email;
         }
         goToStep(n);
         return;
@@ -4085,6 +4093,7 @@ const RECIPE_LABELS = {
     broll_only: 'B-Roll Documentary',
     avatar_plus_broll: 'Avatar + Illustrations',
     storyboard_pack: 'Storyboard Pack',
+    storyboard_assemble: 'Storyboard Assemble',
     cinematic: 'Cinematic',
     avatar: 'Avatar',
     documentary: 'Documentary',
@@ -5453,17 +5462,16 @@ function _sbRenderAssembleMatchLocal() {
     if (!box || !_sbAssembleFiles.length) return;
     const rows = _sbAssembleFiles
         .filter(f => !/\.zip$/i.test(f.name))
-        .map(f => {
-            const idx = _sbParseClipIndex(f.name);
-            return `<tr>
-                <td class="cr-mono">${idx != null ? String(idx).padStart(3, '0') : '—'}</td>
+        .map(f => `<tr>
+                <td class="cr-mono">—</td>
                 <td>${esc(f.name)}</td>
-                <td style="color:var(--app-ink-3);">${idx != null ? 'filename (local)' : 'needs server match'}</td>
-            </tr>`;
-        }).join('');
+                <td style="color:var(--app-ink-3);">awaiting hash match</td>
+            </tr>`).join('');
     box.classList.remove('hidden');
     box.innerHTML = `
-        <p style="font-family:var(--font-body);font-size:13px;color:var(--app-ink-2);margin-bottom:8px;">Quick filename read — run Preview match for pHash fallback.</p>
+        <p style="font-family:var(--font-body);font-size:13px;color:var(--app-ink-2);margin-bottom:8px;">
+            Filenames are ignored — run Preview match to pair clips by look (first + last frame).
+        </p>
         <table style="width:100%;font-family:var(--font-body);font-size:13px;border-collapse:collapse;">
             <thead><tr style="text-align:left;color:var(--app-ink-3);">
                 <th style="padding:6px 8px;">Scene</th><th style="padding:6px 8px;">File</th><th style="padding:6px 8px;">Method</th>
@@ -5476,12 +5484,15 @@ function _sbRenderAssembleMatchServer(matched, unmatched) {
     const box = document.getElementById('sb-assemble-match');
     if (!box) return;
     const rows = (matched || []).map(m => {
-        const method = m.method === 'filename' ? 'filename' : `hash (${Math.round((m.confidence || 0) * 100)}%)`;
-        const color = m.method === 'filename' ? 'var(--success, #3a9)' : 'var(--warning, #c90)';
+        const methodLabel = (m.method || 'hash').replace('phash_', 'hash ');
+        const pct = m.confidence != null ? ` (${Math.round((m.confidence || 0) * 100)}%)` : '';
+        const color = (m.method || '').includes('phash') || (m.method || '') === 'phash'
+            ? 'var(--warning, #c90)'
+            : 'var(--app-ink-3)';
         return `<tr>
             <td class="cr-mono" style="padding:6px 8px;">${String(m.index).padStart(3, '0')}</td>
             <td style="padding:6px 8px;">${esc(m.filename || '')}</td>
-            <td style="padding:6px 8px;color:${color};">${esc(method)}</td>
+            <td style="padding:6px 8px;color:${color};">${esc(methodLabel)}${pct}</td>
         </tr>`;
     }).join('');
     const un = (unmatched || []).map(u =>
@@ -5540,6 +5551,8 @@ async function runStoryboardAssemble() {
         const fd = new FormData();
         if (_sbAssembleStagingId) fd.append('staging_id', _sbAssembleStagingId);
         fd.append('burn_captions', '1');
+        const notify = (document.getElementById('sb-assemble-notify')?.value || '').trim();
+        if (notify) fd.append('notify_email', notify);
         if (!_sbAssembleStagingId) {
             _sbAssembleFiles.forEach(f => fd.append('clips', f));
         }
@@ -5579,13 +5592,14 @@ async function pollStoryboardAssemble() {
             const dl = document.getElementById('sb-assemble-download');
             if (summary) {
                 const mins = data.duration_sec ? (data.duration_sec / 60).toFixed(1) : '?';
-                summary.textContent = `Assembled — ${data.beat_count || '?'} scenes · ~${mins} min · ${data.caption_count || 0} captions`;
+                summary.textContent = `Assembled — ${data.beat_count || '?'} scenes · ~${mins} min · ${data.caption_count || 0} captions · saved to History`;
             }
             if (dl) {
                 dl.href = `/api/storyboard/jobs/${_sbAssembleJobId}/download`;
                 dl.download = '';
             }
             if (box) box.classList.remove('hidden');
+            try { loadHistory(); } catch (_) {}
             if (Array.isArray(data.match_report) && data.match_report.length) {
                 _sbRenderAssembleMatchServer(
                     data.match_report.map(m => ({

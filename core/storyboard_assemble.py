@@ -1,9 +1,9 @@
 """
-Storyboard Assemble — match numbered I2V clips to pack beats, stitch, burn dialogue captions.
+Storyboard Assemble — match I2V clips to pack beats, stitch, burn dialogue captions.
 
-Matching:
-  1) Filename index (001_, scene_003, …)
-  2) Frame-0 average hash vs pack stills (Pillow only)
+Matching (default): perceptual hash on first AND last frame vs pack stills
+(tools often use the still as the end frame). Clean 001_ filenames are a
+last-resort fallback only — tool UUIDs like hf_… are ignored.
 """
 
 from __future__ import annotations
@@ -113,19 +113,45 @@ def _hamming(a: int, b: int) -> int:
     return bin(a ^ b).count("1")
 
 
-def _extract_frame0(clip_path: Path, out_jpg: Path) -> bool:
+def _extract_frame_at(clip_path: Path, out_jpg: Path, *, at: str = "0") -> bool:
+    """Extract one frame. at='0' start, at='-1' near end (ffmpeg -sseof)."""
     out_jpg.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        "ffmpeg", "-y", "-ss", "0", "-i", str(clip_path),
-        "-frames:v", "1", "-q:v", "3", str(out_jpg),
-    ]
+    if at == "-1":
+        cmd = [
+            "ffmpeg", "-y", "-sseof", "-0.4", "-i", str(clip_path),
+            "-frames:v", "1", "-q:v", "3", str(out_jpg),
+        ]
+    else:
+        cmd = [
+            "ffmpeg", "-y", "-ss", "0", "-i", str(clip_path),
+            "-frames:v", "1", "-q:v", "3", str(out_jpg),
+        ]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         return r.returncode == 0 and out_jpg.is_file() and out_jpg.stat().st_size > 200
     except Exception as e:
-        print(f"[sb-assemble] frame0 extract failed: {e}")
+        print(f"[sb-assemble] frame extract failed ({at}): {e}")
         return False
 
+
+def _extract_frame0(clip_path: Path, out_jpg: Path) -> bool:
+    return _extract_frame_at(clip_path, out_jpg, at="0")
+
+
+def filename_looks_reliable(filename: str) -> bool:
+    """True only for clean pack-style names (001_scene…), not tool UUIDs like hf_…"""
+    name = Path(filename or "").name.lower()
+    if name.startswith("hf_") or "uuid" in name:
+        return False
+    if re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-", name):
+        return False
+    idx = parse_clip_index(name)
+    if idx is None:
+        return False
+    return bool(
+        re.match(r"^(?:scene[_\-]?)?0*\d{1,4}[_\-.]", name)
+        or re.match(r"^0*\d{1,4}\.", name)
+    )
 
 def _normalize_clip(src: Path, dest: Path, *, width: int = 1920, height: int = 1080) -> bool:
     """Re-encode to H.264 16:9 for reliable concat."""
@@ -247,10 +273,12 @@ def match_clips_to_beats(
     *,
     pack_dir: Path | None = None,
     work_dir: Path | None = None,
+    prefer_hash: bool = True,
 ) -> list[dict[str, Any]]:
     """
-    Return ordered matches: [{index, clip, method, confidence, dialogue}, ...]
-    One clip per beat index; extras ignored.
+    Match clips → beats via perceptual hash on first AND last frame
+    (I2V tools often use the still as the end frame). Clean 001_ filenames
+    are last-resort only — hf_/UUID names are ignored.
     """
     work = Path(work_dir or tempfile.mkdtemp(prefix="sb_match_"))
     work.mkdir(parents=True, exist_ok=True)
@@ -260,26 +288,8 @@ def match_clips_to_beats(
     frame_cache.mkdir(exist_ok=True)
 
     by_index = {int(b["index"]): b for b in beats}
-    assigned: dict[int, dict[str, Any]] = {}
-    leftover: list[Path] = []
-
-    for clip in clips:
-        idx = parse_clip_index(clip.name)
-        if idx is not None and idx in by_index and idx not in assigned:
-            assigned[idx] = {
-                "index": idx,
-                "clip": str(clip),
-                "method": "filename",
-                "confidence": 1.0,
-                "dialogue": by_index[idx].get("dialogue") or "",
-            }
-        else:
-            leftover.append(clip)
-
-    # Build still hashes for remaining beats
-    need = [b for b in beats if int(b["index"]) not in assigned]
     still_hashes: dict[int, int] = {}
-    for b in need:
+    for b in beats:
         sp = _still_path_for_beat(b, pack_dir, still_cache)
         if not sp:
             continue
@@ -287,32 +297,106 @@ def match_clips_to_beats(
         if h is not None:
             still_hashes[int(b["index"])] = h
 
-    for clip in leftover:
-        frame = frame_cache / f"{clip.stem}_f0.jpg"
-        if not _extract_frame0(clip, frame):
+    assigned: dict[int, dict[str, Any]] = {}
+    used_clips: set[str] = set()
+
+    def _assign(idx: int, clip: Path, method: str, conf: float, dist: int | None = None):
+        if idx in assigned or str(clip) in used_clips or idx not in by_index:
+            return False
+        row: dict[str, Any] = {
+            "index": idx,
+            "clip": str(clip),
+            "method": method,
+            "confidence": round(conf, 3),
+            "dialogue": by_index[idx].get("dialogue") or "",
+        }
+        if dist is not None:
+            row["distance"] = dist
+        assigned[idx] = row
+        used_clips.add(str(clip))
+        return True
+
+    if not prefer_hash:
+        for clip in clips:
+            if not filename_looks_reliable(clip.name):
+                continue
+            idx = parse_clip_index(clip.name)
+            if idx is not None:
+                _assign(idx, clip, "filename", 1.0)
+
+    candidates: list[tuple[int, Path, int, str]] = []
+    for clip in clips:
+        if str(clip) in used_clips:
             continue
-        ch = _average_hash(frame)
-        if ch is None:
+        f0 = frame_cache / f"{clip.stem}_f0.jpg"
+        f1 = frame_cache / f"{clip.stem}_f1.jpg"
+        hashes: list[tuple[str, int]] = []
+        if _extract_frame_at(clip, f0, at="0"):
+            h = _average_hash(f0)
+            if h is not None:
+                hashes.append(("phash_start", h))
+        if _extract_frame_at(clip, f1, at="-1"):
+            h = _average_hash(f1)
+            if h is not None:
+                hashes.append(("phash_end", h))
+        if not hashes:
             continue
         best_idx = None
         best_dist = 999
+        best_method = "phash"
+        for idx, sh in still_hashes.items():
+            for method, ch in hashes:
+                d = _hamming(ch, sh)
+                if d < best_dist:
+                    best_dist = d
+                    best_idx = idx
+                    best_method = method
+        if best_idx is not None and best_dist <= _AHASH_MAX_DISTANCE:
+            candidates.append((best_dist, clip, best_idx, best_method))
+
+    candidates.sort(key=lambda t: (t[0], t[2]))
+    for dist, clip, idx, method in candidates:
+        if idx in assigned or str(clip) in used_clips:
+            continue
+        conf = max(0.0, 1.0 - (dist / 64.0))
+        _assign(idx, clip, method, conf, dist)
+
+    leftover = [c for c in clips if str(c) not in used_clips]
+    for clip in leftover:
+        f0 = frame_cache / f"{clip.stem}_f0.jpg"
+        f1 = frame_cache / f"{clip.stem}_f1.jpg"
+        hashes = []
+        for path, method, at in ((f0, "phash_start", "0"), (f1, "phash_end", "-1")):
+            if path.is_file() or _extract_frame_at(clip, path, at=at):
+                h = _average_hash(path)
+                if h is not None:
+                    hashes.append((method, h))
+        if not hashes:
+            continue
+        best_idx = None
+        best_dist = 999
+        best_method = "phash"
         for idx, sh in still_hashes.items():
             if idx in assigned:
                 continue
-            d = _hamming(ch, sh)
-            if d < best_dist:
-                best_dist = d
-                best_idx = idx
+            for method, ch in hashes:
+                d = _hamming(ch, sh)
+                if d < best_dist:
+                    best_dist = d
+                    best_idx = idx
+                    best_method = method
         if best_idx is not None and best_dist <= _AHASH_MAX_DISTANCE:
             conf = max(0.0, 1.0 - (best_dist / 64.0))
-            assigned[best_idx] = {
-                "index": best_idx,
-                "clip": str(clip),
-                "method": "phash",
-                "confidence": round(conf, 3),
-                "dialogue": by_index[best_idx].get("dialogue") or "",
-                "distance": best_dist,
-            }
+            _assign(best_idx, clip, best_method, conf, best_dist)
+
+    for clip in clips:
+        if str(clip) in used_clips:
+            continue
+        if not filename_looks_reliable(clip.name):
+            continue
+        idx = parse_clip_index(clip.name)
+        if idx is not None:
+            _assign(idx, clip, "filename", 0.7)
 
     return [assigned[i] for i in sorted(assigned)]
 

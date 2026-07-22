@@ -287,6 +287,8 @@ class Beat:
     i2v_prompt: str
     location: str = ""
     characters: str = ""
+    time_of_day: str = ""  # e.g. morning, afternoon, dusk, night — continuity lock
+    outfit_continuity: str = ""  # same outfits unless beat notes a change
     image_path: str = ""
     error: str = ""
 
@@ -794,8 +796,10 @@ def generate_beat_sheet(
         '      "target_sec": 8,',
         '      "dialogue": "Speaker lines for this beat",',
         '      "location": "short place",',
+        '      "time_of_day": "morning|afternoon|dusk|night|indoor_evening (pick one; stay consistent across related beats)",',
+        '      "outfit_continuity": "same outfits as previous beats unless this beat explicitly changes clothes",',
         '      "characters": "CharacterA, CharacterB",',
-        '      "image_prompt": "Still frame description WITHOUT style brand words (cast + action + place)",',
+        '      "image_prompt": "Still frame description WITHOUT style brand words (cast + action + place + lighting for time_of_day)",',
         '      "i2v_prompt": "Short motion prompt: camera + character action for image-to-video"',
         '    }',
         '  ]',
@@ -803,7 +807,12 @@ def generate_beat_sheet(
         "",
         "HARD CONSTRAINTS (do not violate):",
         "- Follow the user's story / script. Do NOT invent a different plot, conflict, or ending.",
-        "- image_prompt: who is in frame, expression, props, location. No brand style words (Pixar, anime studio names, etc.).",
+        "- CONTINUITY: set time_of_day on every beat. Related consecutive scenes in the same sequence "
+        "MUST share the same time_of_day and lighting (do not flip night↔day unless the story jumps).",
+        "- OUTFITS: keep each character's outfit identical across beats in the same day/sequence. "
+        "Only change clothes when the story says so (new day, costume change). Put that note in outfit_continuity.",
+        "- image_prompt: who is in frame, expression, props, location, AND lighting matching time_of_day. "
+        "No brand style words (Pixar, anime studio names, etc.).",
         "- i2v_prompt: subtle motion only (turn head, speak, walk slowly, camera push-in).",
         "- Keep included cast visually consistent; omit characters the user turned off.",
         "- Prefer the user's title when given.",
@@ -905,6 +914,8 @@ def generate_beat_sheet(
                 i2v_prompt=i2v_prompt or "Subtle natural motion, gentle camera push-in, characters breathe and blink",
                 location=str(row.get("location") or "").strip(),
                 characters=str(row.get("characters") or "").strip(),
+                time_of_day=str(row.get("time_of_day") or "").strip(),
+                outfit_continuity=str(row.get("outfit_continuity") or "").strip(),
             )
         )
 
@@ -979,9 +990,11 @@ def _compact_image_prompt(beat: Beat, cast_lock: str = "", style_short: str = ""
     short = style_short or STYLE_SHORT
     cast = (beat.characters or "characters").strip()
     loc = (beat.location or "indoor").strip()
+    tod = (beat.time_of_day or "").strip()
     scene = beat.image_prompt.strip()
-    lock = (cast_lock or "")[:120]
-    base = f"{short}. {cast} at {loc}. {scene}"
+    lock = (cast_lock or "")[:100]
+    tod_bit = f" {tod} lighting." if tod else ""
+    base = f"{short}. {cast} at {loc}.{tod_bit} {scene}"
     if lock:
         base = f"{base} Looks: {lock}"
     if len(base) <= 480:
@@ -993,11 +1006,25 @@ def _full_image_prompt(beat: Beat, cast_lock: str = "", style_lock: str = "") ->
     lock = style_lock or STYLE_LOCK
     cast = (beat.characters or "").strip()
     loc = (beat.location or "").strip()
+    tod = (beat.time_of_day or "").strip()
+    outfit = (beat.outfit_continuity or "").strip()
     parts = [lock]
     if cast:
         parts.append(f"Characters: {cast}.")
     if loc:
         parts.append(f"Location: {loc}.")
+    if tod:
+        parts.append(
+            f"Time of day / lighting: {tod}. Match this lighting exactly — "
+            "do not switch day to night or night to day."
+        )
+    if outfit:
+        parts.append(f"Outfit continuity: {outfit}.")
+    else:
+        parts.append(
+            "Keep each character's outfit identical to their established look "
+            "unless this scene explicitly changes clothes."
+        )
     parts.append(beat.image_prompt.strip())
     if cast_lock:
         parts.append(f"Cast look lock: {cast_lock}")
@@ -1139,6 +1166,15 @@ def _scene_edit_prompt(beat: Beat, style_label: str, visual_style: str) -> str:
         parts.append(f"Characters in frame: {beat.characters.strip()}.")
     if (beat.location or "").strip():
         parts.append(f"Location: {beat.location.strip()}.")
+    if (beat.time_of_day or "").strip():
+        parts.append(
+            f"Time of day / lighting: {beat.time_of_day.strip()}. "
+            "Keep this lighting — do not flip day/night."
+        )
+    if (beat.outfit_continuity or "").strip():
+        parts.append(f"Outfit continuity: {beat.outfit_continuity.strip()}.")
+    else:
+        parts.append("Keep outfits identical to the character references.")
     parts.append(f"Scene: {beat.image_prompt.strip()}")
     parts.append("No text, no subtitles, no watermark, no logos.")
     return " ".join(parts)[:1400]
@@ -1206,6 +1242,10 @@ def _generate_still_t2i(
         parts.append(f"Characters: {beat.characters.strip()}.")
     if (beat.location or "").strip():
         parts.append(f"Location: {beat.location.strip()}.")
+    if (beat.time_of_day or "").strip():
+        parts.append(f"Time of day / lighting: {beat.time_of_day.strip()}.")
+    if (beat.outfit_continuity or "").strip():
+        parts.append(f"Outfit continuity: {beat.outfit_continuity.strip()}.")
     parts.append((beat.image_prompt or "").strip())
     if cast_lock:
         parts.append(f"Cast look lock: {cast_lock}")
@@ -1454,6 +1494,7 @@ def write_pack_files(
         w.writerow([
             "index", "filename", "prompt_file", "target_sec",
             "dialogue", "i2v_prompt", "location", "characters",
+            "time_of_day", "outfit_continuity",
         ])
         for b in ok_beats:
             img_name = Path(b.image_path).name
@@ -1466,6 +1507,8 @@ def write_pack_files(
                 (b.i2v_prompt or "").replace("\n", " ").strip(),
                 b.location,
                 b.characters,
+                (b.time_of_day or "").replace("\n", " ").strip(),
+                (b.outfit_continuity or "").replace("\n", " ").strip(),
             ])
 
     # ALL_PROMPTS.txt
@@ -1495,12 +1538,12 @@ Storyboard Pack for image-to-video batching.
 2. For each scene in order (`001`, `002`, …):
    - Drop `NNN_scene.jpg` (or `.png`) as the image.
    - Paste the **Image-to-video prompt** from `NNN_prompt.txt` (or from `ALL_PROMPTS.txt`).
-3. Keep download filenames starting with `001_`, `002_`, … if the tool allows — ChannelRecipe assemble will sort by that number.
+3. Filenames don’t matter for assemble — ChannelRecipe matches clips to stills by look (first + last frame).
 4. Target length per clip is in `MANIFEST.csv` (`target_sec`). Clips may come back shorter/longer; that is OK.
 5. Upload `{thumb_name or "thumbnail.png"}` as the YouTube thumbnail (if included).
 
 ## Files
-- `MANIFEST.csv` — index, filenames, dialogue, prompts, timings
+- `MANIFEST.csv` — index, filenames, dialogue, prompts, timings, time of day, outfit continuity
 - `NNN_scene.*` — still frame
 - `NNN_prompt.txt` — dialogue + I2V prompt for that scene
 - `ALL_PROMPTS.txt` — all I2V prompts in one file
@@ -1525,6 +1568,8 @@ Generated {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}.
                 "image_prompt": b.image_prompt,
                 "location": b.location,
                 "characters": b.characters,
+                "time_of_day": b.time_of_day,
+                "outfit_continuity": b.outfit_continuity,
                 "filename": Path(b.image_path).name,
             }
             for b in ok_beats
@@ -1659,6 +1704,8 @@ def build_storyboard_pack(
                 "image_prompt": b.image_prompt,
                 "location": b.location,
                 "characters": b.characters,
+                "time_of_day": b.time_of_day,
+                "outfit_continuity": b.outfit_continuity,
                 "filename": Path(b.image_path).name if b.image_path else "",
                 "image_path": b.image_path,
             }

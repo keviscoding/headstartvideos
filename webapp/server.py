@@ -3573,6 +3573,8 @@ async def regen_storyboard_beat(
         i2v_prompt=str(target.get("i2v_prompt") or ""),
         location=str(target.get("location") or ""),
         characters=str(target.get("characters") or ""),
+        time_of_day=str(target.get("time_of_day") or ""),
+        outfit_continuity=str(target.get("outfit_continuity") or ""),
     )
 
     try:
@@ -3800,6 +3802,7 @@ async def start_storyboard_assemble(
     job_id: str,
     staging_id: str = Form(""),
     burn_captions: str = Form("1"),
+    notify_email: str = Form(""),
     clips: list[UploadFile] = File(default=[]),
     admin: dict = Depends(require_admin),
 ):
@@ -3892,7 +3895,7 @@ async def start_storyboard_assemble(
         "staging_id": sid,
         "credits_charged": 0,
         "is_admin": True,
-        "notify_email": admin.get("email") or "",
+        "notify_email": (notify_email or "").strip() or (admin.get("email") or ""),
     }
     try:
         create_cook_job(

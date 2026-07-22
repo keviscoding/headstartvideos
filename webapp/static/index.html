@@ -409,8 +409,9 @@
                     <div class="mb-6">
                         <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Assemble your video</h2>
                         <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">
-                            Animate the pack stills in Kling, Seedance, Wan, etc. Keep filenames like <span class="cr-mono">001_</span>, <span class="cr-mono">002_</span>…
-                            Then drop the clips here — we match scenes and stitch with dialogue captions.
+                            Animate the pack stills in Kling, Seedance, Wan, etc. Filenames don’t matter —
+                            we match clips by look (first and last frame) to your stills, then stitch with dialogue captions.
+                            This runs as a background cook (you can leave and check History).
                         </p>
                     </div>
                     <div id="sb-assemble-drop" class="cr-surface" style="padding:28px;border:1px dashed var(--app-border);border-radius:var(--radius-md);text-align:center;cursor:pointer;">
@@ -432,6 +433,10 @@
                             <span class="btn-text">Assemble video</span>
                             <span class="btn-loading hidden"><span class="cr-spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;"></span> Assembling…</span>
                         </button>
+                    </div>
+                    <div style="margin-top:14px;">
+                        <label class="cr-label" for="sb-assemble-notify">Email when ready (optional)</label>
+                        <input id="sb-assemble-notify" type="email" class="cr-input" placeholder="you@email.com" style="max-width:360px;">
                     </div>
                     <div id="sb-assemble-progress" class="hidden cr-surface mt-4" style="padding: 14px; max-height: 140px; overflow: auto; font-family: var(--font-mono); font-size: 12px; color: var(--app-ink-2);"></div>
                     <div id="sb-assemble-result" class="hidden mt-5" style="padding: 16px; border: 1px solid var(--app-border); border-radius: var(--radius-md);">

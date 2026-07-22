@@ -623,6 +623,8 @@ def _run_storyboard_pack_job(
                 "image_prompt": beat.image_prompt,
                 "location": beat.location,
                 "characters": beat.characters,
+                "time_of_day": getattr(beat, "time_of_day", "") or "",
+                "outfit_continuity": getattr(beat, "outfit_continuity", "") or "",
                 "target_sec": beat.target_sec,
                 "filename": Path(local).name,
             }
@@ -699,6 +701,8 @@ def _run_storyboard_pack_job(
                     "image_prompt": b.get("image_prompt"),
                     "location": b.get("location"),
                     "characters": b.get("characters"),
+                    "time_of_day": b.get("time_of_day") or "",
+                    "outfit_continuity": b.get("outfit_continuity") or "",
                     "target_sec": b.get("target_sec"),
                     "filename": b.get("filename"),
                 })
@@ -853,9 +857,14 @@ def _run_storyboard_assemble_job(
             clips, beat_rows, pack_dir=pack_dir, work_dir=work / "match",
         )
         if not matched:
+            on_progress(
+                f"Could not match any clips to stills. "
+                "Clips are matched by look (first/last frame hash) — "
+                "filenames like hf_… are ignored."
+            )
             raise RuntimeError(
-                "Could not match any clips. Keep filenames like 001_scene.mp4 "
-                "or upload clips that visually match the stills."
+                "Could not match any clips to storyboard stills. "
+                "Re-upload clips that were generated from these scenes."
             )
         on_progress(f"Matched {len(matched)}/{len(beat_rows)} scenes — assembling…")
 
@@ -877,6 +886,46 @@ def _run_storyboard_assemble_job(
             )
         except Exception as e:
             print(f"[sb-assemble] Spaces upload failed (local path kept): {e}")
+        if not video_url and video_local and Path(video_local).is_file():
+            try:
+                import os
+                video_url = f"/api/files/{os.path.relpath(str(video_local), str(ROOT))}"
+            except Exception:
+                video_url = ""
+
+        # History entry (same as other recipes) + optional email notify
+        video_id = None
+        thumb_url = ""
+        # Prefer parent pack thumbnail if present on request beats / parent
+        try:
+            from webapp.database import create_video, get_cook_job
+            if parent_job_id:
+                parent = get_cook_job(parent_job_id) or {}
+                try:
+                    parent_req = json.loads(parent.get("request_json") or "{}")
+                except Exception:
+                    parent_req = {}
+                thumb_url = (parent_req.get("thumbnail_path") or "").strip()
+                if thumb_url and not thumb_url.startswith("http") and not thumb_url.startswith("/"):
+                    thumb_url = ""
+            if user_id and video_url:
+                video_id = create_video(
+                    user_id=int(user_id),
+                    title=title or "Storyboard assemble",
+                    recipe="storyboard_assemble",
+                    video_url=video_url,
+                    thumbnail_url=thumb_url if thumb_url.startswith("http") else "",
+                )
+        except Exception as rec_err:
+            print(f"[sb-assemble] create_video failed: {rec_err}")
+
+        notify_email = (req_data.get("notify_email") or "").strip()
+        if notify_email and video_url:
+            try:
+                from webapp.email_service import send_video_ready
+                send_video_ready(notify_email, title or "Your assembled video", video_url)
+            except Exception as email_err:
+                print(f"[sb-assemble] email notify failed: {email_err}")
 
         meta = {
             "kind": "storyboard_assemble",
@@ -885,6 +934,9 @@ def _run_storyboard_assemble_job(
             "video_path": video_local,
             "video_url": video_url,
             "output_path": video_local,
+            "output_url": video_url,
+            "video_id": video_id,
+            "thumbnail_url": thumb_url if thumb_url.startswith("http") else "",
             "match_report": result.get("match_report") or [],
             "beat_count": result.get("beat_count") or len(matched),
             "duration_sec": result.get("duration_sec") or 0,
