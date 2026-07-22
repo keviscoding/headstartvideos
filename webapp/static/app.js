@@ -355,8 +355,66 @@ document.addEventListener('click', (e) => {
 // ---------------------------------------------------------------------------
 // Pipeline Step Navigation
 // ---------------------------------------------------------------------------
+function syncPipelineChrome() {
+    const sb = isStoryboardRecipe();
+    document.getElementById('stepper-default')?.classList.toggle('hidden', sb);
+    document.getElementById('stepper-storyboard')?.classList.toggle('hidden', !sb);
+
+    const heading = document.getElementById('step2-heading');
+    const sub = document.getElementById('step2-sub');
+    const progress = document.getElementById('step2-progress-label');
+    const nextBtn = document.getElementById('btn-next-2');
+    const topicInput = document.getElementById('topic-input');
+    if (sb) {
+        if (heading) heading.textContent = 'Pick a story title';
+        if (sub) sub.textContent = 'Generate titles in the Easy English family-story style. Pick one — next we build your scene pack.';
+        if (progress) progress.textContent = 'Step 2 of 3';
+        if (nextBtn) nextBtn.textContent = 'Next: Build pack';
+        if (topicInput) topicInput.placeholder = 'Optional: exam results, lying, jealousy…';
+    } else {
+        if (heading) heading.textContent = 'Pick a title';
+        if (sub) sub.textContent = 'We drafted a few from proven patterns. Pick one or write your own.';
+        if (progress) progress.textContent = 'Step 2 of 6';
+        if (nextBtn) nextBtn.textContent = 'Next';
+        if (topicInput) topicInput.placeholder = 'Optional: enter a topic to guide title generation...';
+    }
+}
+
+function updateStepperActive(n) {
+    const sb = isStoryboardRecipe();
+    if (sb) {
+        let active = 1;
+        if (n === 2) active = 2;
+        else if (n === 'storyboard' || n === 3) active = 3;
+        else if (typeof n === 'number' && n >= 3) active = 3;
+        document.querySelectorAll('#stepper-storyboard .step-indicator').forEach(ind => {
+            const s = parseInt(ind.dataset.sbStep);
+            const dot = ind.querySelector('.step-dot');
+            dot.classList.remove('active', 'done');
+            if (s < active) dot.classList.add('done');
+            else if (s === active) dot.classList.add('active');
+        });
+        document.querySelectorAll('#stepper-storyboard .step-line').forEach((line, i) => {
+            line.classList.toggle('done', i < active - 1);
+        });
+        return;
+    }
+    const stepNum = typeof n === 'number' ? n : 1;
+    document.querySelectorAll('#stepper-default .step-indicator').forEach(ind => {
+        const s = parseInt(ind.dataset.step);
+        const dot = ind.querySelector('.step-dot');
+        dot.classList.remove('active', 'done');
+        if (s < stepNum) dot.classList.add('done');
+        else if (s === stepNum) dot.classList.add('active');
+    });
+    document.querySelectorAll('#stepper-default .step-line').forEach((line, i) => {
+        line.classList.toggle('done', i < stepNum - 1);
+    });
+}
+
 function goToStep(n) {
     state.step = n;
+    syncPipelineChrome();
     document.querySelectorAll('.step-panel').forEach(p => p.classList.add('hidden'));
     const panelId = n === 'storyboard' ? 'step-storyboard' : `step-${n}`;
     const panel = document.getElementById(panelId);
@@ -367,18 +425,7 @@ function goToStep(n) {
         panel.style.animation = '';
     }
 
-    const stepNum = typeof n === 'number' ? n : 0;
-    document.querySelectorAll('.step-indicator').forEach(ind => {
-        const s = parseInt(ind.dataset.step);
-        const dot = ind.querySelector('.step-dot');
-        dot.classList.remove('active', 'done');
-        if (stepNum && s < stepNum) dot.classList.add('done');
-        else if (stepNum && s === stepNum) dot.classList.add('active');
-    });
-
-    document.querySelectorAll('.step-line').forEach((line, i) => {
-        line.classList.toggle('done', stepNum > 0 && i < stepNum - 1);
-    });
+    updateStepperActive(n);
 
     // Always ensure voices / avatar studio ready when entering step 4
     if (n === 4) {
@@ -396,7 +443,18 @@ function goToStep(n) {
 }
 
 function goToCompletedStep(n) {
-    if (n < state.step) goToStep(n);
+    if (n === 'storyboard') {
+        if (isStoryboardRecipe() && state.title) {
+            initStoryboardPackUI();
+            goToStep('storyboard');
+        }
+        return;
+    }
+    if (isStoryboardRecipe() && typeof n === 'number' && n > 2) {
+        n = 2;
+    }
+    const cur = state.step === 'storyboard' ? 3 : state.step;
+    if (n < cur || n === cur) goToStep(n);
 }
 
 // ---------------------------------------------------------------------------
@@ -416,11 +474,6 @@ function bindEvents() {
         if (!state.title) return;
         if (isStoryboardRecipe()) {
             initStoryboardPackUI();
-            const titleEl = document.getElementById('sb-title');
-            const topicEl = document.getElementById('sb-topic');
-            if (titleEl) titleEl.value = state.title || '';
-            const topicHint = (document.getElementById('topic-input')?.value || '').trim();
-            if (topicEl && topicHint && !topicEl.value.trim()) topicEl.value = topicHint;
             goToStep('storyboard');
             return;
         }
@@ -618,9 +671,9 @@ function selectNiche(niche, card) {
     }
     applyLengthSliderLimits();
     updateScriptLimitMsg();
+    syncPipelineChrome();
 
     if ((niche.recipe || niche.id) === 'storyboard_pack') {
-        // Same title step as other recipes (Generate titles = ideation), then pack UI
         setTimeout(() => goToStep(2), 200);
         return;
     }
@@ -4952,7 +5005,7 @@ let _sbPollTimer = null;
 let _sbJobId = null;
 
 function initStoryboardPackUI() {
-    const mins = state.nicheData?.default_minutes || 8;
+    const mins = state.nicheData?.default_minutes || state.targetMinutes || 8;
     const slider = document.getElementById('sb-minutes');
     const label = document.getElementById('sb-minutes-label');
     if (slider) {
@@ -4960,6 +5013,15 @@ function initStoryboardPackUI() {
         slider.value = mins;
         if (label) label.textContent = mins + ' min';
     }
+    const title = state.title || '';
+    const titleInput = document.getElementById('sb-title');
+    const titleDisplay = document.getElementById('sb-title-display');
+    if (titleInput) titleInput.value = title;
+    if (titleDisplay) titleDisplay.textContent = title || '—';
+    const topicHint = (document.getElementById('topic-input')?.value || '').trim();
+    const topicEl = document.getElementById('sb-topic');
+    if (topicEl && topicHint && !topicEl.value.trim()) topicEl.value = topicHint;
+
     const res = document.getElementById('sb-result');
     const prog = document.getElementById('sb-progress');
     if (res) res.classList.add('hidden');

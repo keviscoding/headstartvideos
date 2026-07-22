@@ -164,7 +164,7 @@
         <!-- Stepper -->
         <div class="max-w-5xl mx-auto px-6 pt-6 pb-2">
             <div class="cr-panel" style="padding: 20px 26px;">
-                <div class="flex items-center justify-between" id="stepper">
+                <div class="flex items-center justify-between" id="stepper-default">
                     <div class="step-indicator" data-step="1"><div class="step-dot active" onclick="goToCompletedStep(1)">1</div><span class="step-label">Recipe</span></div>
                     <div class="step-line"></div>
                     <div class="step-indicator" data-step="2"><div class="step-dot" onclick="goToCompletedStep(2)">2</div><span class="step-label">Title</span></div>
@@ -176,6 +176,13 @@
                     <div class="step-indicator" data-step="5"><div class="step-dot" onclick="goToCompletedStep(5)">5</div><span class="step-label">Thumbnail</span></div>
                     <div class="step-line"></div>
                     <div class="step-indicator" data-step="6"><div class="step-dot" onclick="goToCompletedStep(6)">6</div><span class="step-label">Cook</span></div>
+                </div>
+                <div class="flex items-center justify-between hidden" id="stepper-storyboard">
+                    <div class="step-indicator" data-sb-step="1"><div class="step-dot active" onclick="goToCompletedStep(1)">1</div><span class="step-label">Recipe</span></div>
+                    <div class="step-line"></div>
+                    <div class="step-indicator" data-sb-step="2"><div class="step-dot" onclick="goToCompletedStep(2)">2</div><span class="step-label">Title</span></div>
+                    <div class="step-line"></div>
+                    <div class="step-indicator" data-sb-step="3"><div class="step-dot" onclick="goToCompletedStep('storyboard')">3</div><span class="step-label">Pack</span></div>
                 </div>
             </div>
         </div>
@@ -192,55 +199,67 @@
                 </div>
             </section>
 
-            <!-- Storyboard Pack (admin recipe — not the 6-step cook) -->
+            <!-- Storyboard Pack — 3-step journey: Recipe → Title → Pack -->
             <section id="step-storyboard" class="step-panel hidden">
                 <div class="cr-panel">
                     <div class="mb-6">
-                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Storyboard Pack</h2>
+                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Build your pack</h2>
                         <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">
-                            We generate numbered scene stills + image-to-video prompts. You animate them in your I2V tool, then come back later to assemble.
+                            We write the Easy English dialogue, split it into scenes, and generate a still + motion prompt for each scene.
+                            You download a zip, animate the stills in any image-to-video tool, then come back later to stitch.
                         </p>
                     </div>
-                    <div class="max-w-3xl space-y-4">
-                        <div>
-                            <label class="cr-label" for="sb-title">Title (optional)</label>
-                            <input id="sb-title" type="text" class="cr-input" placeholder="Max Made a Big Mistake Before His Exams">
+                    <div class="max-w-3xl space-y-5">
+                        <div class="cr-surface" style="padding: 14px 16px;">
+                            <p class="cr-eyebrow" style="margin-bottom: 6px;">Your title</p>
+                            <p id="sb-title-display" style="font-family: var(--font-display); font-weight: 700; font-size: 18px; color: var(--app-ink);">—</p>
+                            <input id="sb-title" type="hidden" value="">
                         </div>
                         <div>
-                            <label class="cr-label" for="sb-topic">Story idea</label>
-                            <textarea id="sb-topic" class="cr-input" rows="3" placeholder="Max finished work quickly, compared himself with Mia, and played video games instead of studying…"></textarea>
+                            <label class="cr-label" for="sb-minutes">How long should the finished video feel?</label>
+                            <div class="flex items-center gap-4">
+                                <input id="sb-minutes" type="range" min="3" max="30" value="8" class="flex-1" style="accent-color: var(--accent);">
+                                <span id="sb-minutes-label" class="cr-mono" style="width: 4rem; text-align: right;">8 min</span>
+                            </div>
+                            <p id="sb-hint" style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-3); margin-top: 8px;">
+                                We create about one scene every ~8 seconds. Longer = more images in the zip.
+                            </p>
                         </div>
-                        <div>
-                            <label class="cr-label" for="sb-script">Or paste a full script (optional)</label>
-                            <textarea id="sb-script" class="cr-input" rows="8" placeholder="Paste dialogue here if you already have it…"></textarea>
-                        </div>
-                        <div class="flex items-center gap-4">
-                            <label class="cr-label" style="margin-bottom: 0; white-space: nowrap;">Target length</label>
-                            <input id="sb-minutes" type="range" min="3" max="30" value="8" class="flex-1" style="accent-color: var(--accent);">
-                            <span id="sb-minutes-label" class="cr-mono" style="width: 4rem; text-align: right;">8 min</span>
-                        </div>
-                        <p id="sb-hint" style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-3);">
-                            Admin testing: any length up to 30 min. Later: free/trial ≤ 8 min, paid up to 30.
-                        </p>
+                        <details style="border-top: 1px solid var(--app-border); padding-top: 14px;">
+                            <summary style="cursor: pointer; font-family: var(--font-body); font-size: 14px; font-weight: 500; color: var(--app-ink-2);">Advanced (optional)</summary>
+                            <div class="space-y-3" style="margin-top: 12px;">
+                                <div>
+                                    <label class="cr-label" for="sb-topic">Extra story notes</label>
+                                    <textarea id="sb-topic" class="cr-input" rows="2" placeholder="Optional: add a premise or moral if the title isn’t enough…"></textarea>
+                                </div>
+                                <div>
+                                    <label class="cr-label" for="sb-script">Paste your own script</label>
+                                    <textarea id="sb-script" class="cr-input" rows="6" placeholder="Only if you already wrote the dialogue — otherwise we write it for you."></textarea>
+                                </div>
+                            </div>
+                        </details>
                         <button id="btn-sb-generate" class="btn-primary w-full" type="button">
                             <span class="btn-text">Generate pack</span>
-                            <span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;"></div>Working…</span>
+                            <span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;"></div>Writing scenes &amp; images…</span>
                         </button>
                         <div id="sb-progress" class="hidden cr-surface" style="padding: 14px; max-height: 220px; overflow: auto; font-family: var(--font-mono); font-size: 12px; color: var(--app-ink-2);"></div>
                         <div id="sb-result" class="hidden" style="padding: 16px; border: 1px solid var(--app-border); border-radius: var(--radius-md);">
                             <p id="sb-result-summary" style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink); margin-bottom: 12px;"></p>
-                            <a id="sb-download" class="btn-primary" href="#" download>Download zip</a>
-                            <p style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-3); margin-top: 12px;">
-                                Drop each <code>NNN_scene</code> image into your I2V tool and paste the matching <code>NNN_prompt.txt</code>. Keep numbered filenames when you download clips.
-                            </p>
+                            <a id="sb-download" class="btn-primary" href="#" download>Download pack zip</a>
+                            <ol style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-2); margin-top: 14px; padding-left: 1.2rem; line-height: 1.55;">
+                                <li>Open each <code>NNN_scene</code> image in your image-to-video tool.</li>
+                                <li>Paste the matching <code>NNN_prompt.txt</code> as the motion prompt.</li>
+                                <li>Keep clip names numbered (<code>001</code>, <code>002</code>…) when you download them.</li>
+                                <li>Assemble comes next in ChannelRecipe (soon) — for now stitch in any editor.</li>
+                            </ol>
                         </div>
                     </div>
                     <div class="flex justify-between items-center mt-7 pt-5" style="border-top: 1px solid var(--app-border);">
-                        <button class="btn-ghost" type="button" onclick="goToStep(1)">
+                        <button class="btn-ghost" type="button" onclick="goToStep(2)">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-                            Recipes
+                            Title
                         </button>
-                        <span class="cr-mono">Storyboard Pack</span>
+                        <span class="cr-mono">Step 3 of 3</span>
                         <span></span>
                     </div>
                 </div>
@@ -250,8 +269,8 @@
             <section id="step-2" class="step-panel hidden">
                 <div class="cr-panel">
                     <div class="mb-6">
-                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Pick a title</h2>
-                        <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">We drafted a few from proven patterns. Pick one or write your own.</p>
+                        <h2 id="step2-heading" class="cr-display" style="font-size: 28px; line-height: 1.12;">Pick a title</h2>
+                        <p id="step2-sub" style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">We drafted a few from proven patterns. Pick one or write your own.</p>
                     </div>
                     <div class="max-w-2xl space-y-4">
                         <input id="topic-input" type="text" placeholder="Optional: enter a topic to guide title generation..."
@@ -273,7 +292,7 @@
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
                             Recipes
                         </button>
-                        <span class="cr-mono">Step 2 of 6</span>
+                        <span id="step2-progress-label" class="cr-mono">Step 2 of 6</span>
                         <button id="btn-next-2" class="btn-primary" disabled>Next</button>
                     </div>
                 </div>
