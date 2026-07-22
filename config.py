@@ -31,6 +31,19 @@ ATLAS_PREMIUM_IMAGE_MODEL = os.getenv(
     "ATLAS_PREMIUM_IMAGE_MODEL",
     "google/nano-banana-2-lite/text-to-image-developer",
 )
+# Storyboard on-site I2V (Seedance v1.5 Pro Fast — native audio).
+ATLAS_I2V_MODEL = os.getenv(
+    "ATLAS_I2V_MODEL",
+    "bytedance/seedance-v1.5-pro/image-to-video-fast",
+)
+ATLAS_I2V_RESOLUTION = os.getenv("ATLAS_I2V_RESOLUTION", "720p")
+ATLAS_I2V_GENERATE_AUDIO = os.getenv("ATLAS_I2V_GENERATE_AUDIO", "1").strip().lower() in (
+    "1", "true", "yes", "on",
+)
+ATLAS_I2V_CONCURRENCY = max(1, int(os.getenv("ATLAS_I2V_CONCURRENCY", "3")))
+# Credit charge for on-site animate — 0 while admin-testing; tune in pricing pass.
+STORYBOARD_ANIMATE_CREDITS_PER_MIN = float(os.getenv("STORYBOARD_ANIMATE_CREDITS_PER_MIN", "0") or 0)
+STORYBOARD_ANIMATE_CREDITS_MIN = max(0, int(os.getenv("STORYBOARD_ANIMATE_CREDITS_MIN", "0") or 0))
 # Concept segmentation model (kept configurable so we can trade speed/quality).
 CONCEPT_SEGMENTER_MODEL = os.getenv("CONCEPT_SEGMENTER_MODEL", GEMINI_TEXT_MODEL)
 # Illustration generation concurrency (API-bound, safe to raise).

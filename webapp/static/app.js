@@ -449,6 +449,7 @@ function goToStep(n) {
     if (n === 'sb-assemble') {
         const notify = document.getElementById('sb-assemble-notify');
         if (notify && !notify.value && currentUser?.email) notify.value = currentUser.email;
+        _sbSyncAnimateUI();
     }
 
     if (typeof n === 'number' && n >= 2) persistPipelineState();
@@ -4094,6 +4095,7 @@ const RECIPE_LABELS = {
     avatar_plus_broll: 'Avatar + Illustrations',
     storyboard_pack: 'Storyboard Pack',
     storyboard_assemble: 'Storyboard Assemble',
+    storyboard_animate: 'Storyboard Video',
     cinematic: 'Cinematic',
     avatar: 'Avatar',
     documentary: 'Documentary',
@@ -5415,6 +5417,7 @@ function bindStoryboardPackUI() {
     document.getElementById('btn-sb-goto-assemble')?.addEventListener('click', () => goToStep('sb-assemble'));
     document.getElementById('btn-sb-assemble-match')?.addEventListener('click', matchStoryboardAssemble);
     document.getElementById('btn-sb-assemble-run')?.addEventListener('click', runStoryboardAssemble);
+    document.getElementById('btn-sb-animate-run')?.addEventListener('click', runStoryboardAnimate);
     const drop = document.getElementById('sb-assemble-drop');
     const fileIn = document.getElementById('sb-assemble-files');
     fileIn?.addEventListener('change', (e) => {
@@ -5573,7 +5576,8 @@ async function runStoryboardAssemble() {
 async function pollStoryboardAssemble() {
     if (!_sbAssembleJobId) return;
     const prog = document.getElementById('sb-assemble-progress');
-    const btn = document.getElementById('btn-sb-assemble-run');
+    const btnAssemble = document.getElementById('btn-sb-assemble-run');
+    const btnAnimate = document.getElementById('btn-sb-animate-run');
     try {
         const res = await fetch(`/api/storyboard/jobs/${_sbAssembleJobId}`);
         const data = await res.json().catch(() => ({}));
@@ -5586,13 +5590,16 @@ async function pollStoryboardAssemble() {
         }
         if (data.status === 'complete' || data.video_ready) {
             if (_sbAssemblePollTimer) { clearInterval(_sbAssemblePollTimer); _sbAssemblePollTimer = null; }
-            setLoading(btn, false);
+            setLoading(btnAssemble, false);
+            setLoading(btnAnimate, false);
             const box = document.getElementById('sb-assemble-result');
             const summary = document.getElementById('sb-assemble-summary');
             const dl = document.getElementById('sb-assemble-download');
+            const kind = data.kind || '';
             if (summary) {
                 const mins = data.duration_sec ? (data.duration_sec / 60).toFixed(1) : '?';
-                summary.textContent = `Assembled — ${data.beat_count || '?'} scenes · ~${mins} min · ${data.caption_count || 0} captions · saved to History`;
+                const verb = kind === 'storyboard_animate' ? 'Generated' : 'Assembled';
+                summary.textContent = `${verb} — ${data.beat_count || '?'} scenes · ~${mins} min · ${data.caption_count || 0} captions · saved to History`;
             }
             if (dl) {
                 dl.href = `/api/storyboard/jobs/${_sbAssembleJobId}/download`;
@@ -5611,14 +5618,61 @@ async function pollStoryboardAssemble() {
                     [],
                 );
             }
-            track('storyboard_assemble_ready', { job_id: _sbAssembleJobId });
+            track(kind === 'storyboard_animate' ? 'storyboard_animate_ready' : 'storyboard_assemble_ready', { job_id: _sbAssembleJobId });
         } else if (data.status === 'error' || data.status === 'cancelled') {
             if (_sbAssemblePollTimer) { clearInterval(_sbAssemblePollTimer); _sbAssemblePollTimer = null; }
-            setLoading(btn, false);
-            alert(data.error || 'Assemble failed');
+            setLoading(btnAssemble, false);
+            setLoading(btnAnimate, false);
+            alert(data.error || 'Job failed');
         }
     } catch (e) {
         console.warn('assemble poll', e);
+    }
+}
+
+async function _sbSyncAnimateUI() {
+    const btn = document.getElementById('btn-sb-animate-run');
+    const blurb = document.getElementById('sb-animate-blurb');
+    if (btn) btn.disabled = !_sbJobId;
+    let mins = 8;
+    try {
+        const slider = document.getElementById('sb-minutes');
+        if (slider) mins = Number(slider.value) || mins;
+    } catch (_) {}
+    try {
+        const res = await fetch(`/api/storyboard/animate-cost?minutes=${encodeURIComponent(mins)}`);
+        const data = await res.json().catch(() => ({}));
+        if (blurb && res.ok) {
+            const c = Number(data.credits || 0);
+            blurb.textContent = c > 0
+                ? `Animates every scene with Seedance (native audio), then stitches + captions. Uses ~${c} credit${c === 1 ? '' : 's'} for ~${mins} min.`
+                : 'Animates every scene with Seedance (native audio), then stitches + captions. Uses your cast-locked stills.';
+        }
+    } catch (_) {}
+}
+
+async function runStoryboardAnimate() {
+    if (!isAdminUser()) { alert('Storyboard Pack is admin-only while we test it.'); return; }
+    if (!_sbJobId) { alert('Generate a pack first.'); return; }
+    const btn = document.getElementById('btn-sb-animate-run');
+    setLoading(btn, true);
+    document.getElementById('sb-assemble-result')?.classList.add('hidden');
+    try {
+        const fd = new FormData();
+        fd.append('burn_captions', '1');
+        const notify = (document.getElementById('sb-assemble-notify')?.value || '').trim();
+        if (notify) fd.append('notify_email', notify);
+        const res = await fetch(`/api/storyboard/jobs/${_sbJobId}/animate`, { method: 'POST', body: fd });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Generate failed to start');
+        _sbAssembleJobId = data.job_id;
+        if (_sbAssemblePollTimer) clearInterval(_sbAssemblePollTimer);
+        _sbAssemblePollTimer = setInterval(pollStoryboardAssemble, 2500);
+        pollStoryboardAssemble();
+        track('storyboard_animate_queued', { job_id: _sbAssembleJobId, parent: _sbJobId, credits: data.credits_charged || 0 });
+    } catch (e) {
+        setLoading(btn, false);
+        alert(e.message || 'Generate failed');
     }
 }
 

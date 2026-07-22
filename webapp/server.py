@@ -3469,7 +3469,7 @@ async def get_storyboard_job(job_id: str, admin: dict = Depends(require_admin)):
         if row.get("user_id") != admin["id"] and not _is_admin_email(admin.get("email", "")):
             raise HTTPException(403, "Access denied")
         recipe = (row.get("recipe") or "")
-        if recipe not in ("storyboard_pack", "storyboard_assemble"):
+        if recipe not in ("storyboard_pack", "storyboard_assemble", "storyboard_animate"):
             raise HTTPException(404, "Not a storyboard job.")
         job = hydrate_job_from_row(row)
         _jobs[job_id] = job
@@ -3957,6 +3957,172 @@ async def start_storyboard_assemble(
         "status": "queued",
         "staging_id": sid,
     }
+
+
+def _storyboard_animate_credit_cost(target_minutes: float, *, byok: bool = False) -> int:
+    """Placeholder credit math — 0 while admin-testing; knobs in config for pricing pass."""
+    import math
+    per_min = float(getattr(config, "STORYBOARD_ANIMATE_CREDITS_PER_MIN", 0) or 0)
+    floor = int(getattr(config, "STORYBOARD_ANIMATE_CREDITS_MIN", 0) or 0)
+    if per_min <= 0 and floor <= 0:
+        return 0
+    raw = max(floor, int(math.ceil(max(target_minutes, 0.5) * per_min)))
+    if byok:
+        return max(0, min(raw, max(1, int(math.ceil(max(target_minutes, 0.5) / 4.0)))))
+    return raw
+
+
+@app.post("/api/storyboard/jobs/{job_id}/animate")
+async def start_storyboard_animate(
+    job_id: str,
+    burn_captions: str = Form("1"),
+    notify_email: str = Form(""),
+    admin: dict = Depends(require_admin),
+):
+    """Queue on-site Seedance I2V + assemble cook from a finished pack."""
+    from core.storyboard_assemble import load_pack_beats
+    from webapp.database import get_user_atlas_key, deduct_credits
+
+    job = _storyboard_pack_job_or_404(job_id, admin)
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    if not (result.get("zip_ready") or result.get("beats") or job.get("status") == "complete"):
+        raise HTTPException(400, "Finish the storyboard pack first, then generate.")
+
+    pack_dir = Path(result.get("pack_dir") or "")
+    pack_dir_s = str(pack_dir) if pack_dir.is_dir() else ""
+    beats = load_pack_beats(
+        pack_dir=Path(pack_dir_s) if pack_dir_s else None,
+        beats=result.get("beats") or [],
+    )
+    if not beats:
+        raise HTTPException(400, "No scenes in this pack to animate.")
+
+    title = (
+        (result.get("title") or "")
+        or ((job.get("request") or {}).get("title") or "")
+        or "Storyboard"
+    ).strip()
+    try:
+        target_minutes = float(
+            result.get("target_minutes")
+            or (job.get("request") or {}).get("target_minutes")
+            or 8
+        )
+    except (TypeError, ValueError):
+        target_minutes = 8.0
+
+    byok = False
+    try:
+        byok = bool(get_user_atlas_key(int(admin["id"])))
+    except Exception:
+        byok = False
+    credit_cost = _storyboard_animate_credit_cost(target_minutes, byok=byok)
+    credit_deducted = False
+    if credit_cost > 0:
+        if not deduct_credits(admin["id"], credit_cost):
+            raise HTTPException(
+                402,
+                f"Need {credit_cost} credit{'s' if credit_cost != 1 else ''} to generate on ChannelRecipe.",
+            )
+        credit_deducted = True
+
+    animate_id = str(uuid.uuid4())
+    req_payload = {
+        "recipe": "storyboard_animate",
+        "parent_job_id": job_id,
+        "title": title,
+        "pack_dir": pack_dir_s,
+        "beats": beats,
+        "burn_captions": (burn_captions or "1").strip() not in ("0", "false", "no"),
+        "credits_charged": credit_cost,
+        "is_admin": True,
+        "notify_email": (notify_email or "").strip() or (admin.get("email") or ""),
+        "target_minutes": target_minutes,
+    }
+    try:
+        create_cook_job(
+            job_id=animate_id,
+            user_id=admin["id"],
+            recipe="storyboard_animate",
+            title=f"Animate · {title}"[:120],
+            request_json=json.dumps(req_payload),
+            credit_deducted=credit_deducted,
+            lite_mode=False,
+            status="web_queued" if COOK_ON_WEB else "queued",
+        )
+    except Exception as e:
+        if credit_deducted:
+            try:
+                from webapp.database import refund_credits
+                refund_credits(admin["id"], credit_cost)
+            except Exception:
+                pass
+        print(f"[sb-animate] create_cook_job failed: {e}")
+        raise HTTPException(500, "Could not queue on-site generate.")
+
+    ajob = {
+        "status": "queued",
+        "progress": [{"time": time.time(), "message": "Queued Seedance animate…", "phase": "queued"}],
+        "result": None,
+        "request": req_payload,
+        "user_id": admin["id"],
+        "credit_deducted": credit_deducted,
+        "lite_mode": False,
+        "error": "",
+        "created_at": time.time(),
+    }
+    _jobs[animate_id] = ajob
+
+    if COOK_ON_WEB:
+        job_queue.enqueue(animate_id)
+    else:
+        if COOK_ON_FLY:
+            try:
+                from webapp.fly_bridge import spawn_cook as fly_spawn
+                if fly_spawn(animate_id):
+                    ajob["progress"].append({
+                        "time": time.time(),
+                        "message": "Starting animate on Fly…",
+                        "phase": "queued",
+                    })
+                else:
+                    print(f"[sb-animate] Fly spawn failed for {animate_id}")
+            except Exception as e:
+                print(f"[sb-animate] Fly bridge error: {e}")
+        try:
+            update_cook_job(animate_id, progress_json=json.dumps(ajob["progress"]), status="queued")
+        except Exception:
+            pass
+
+    track(admin["id"], "storyboard_animate_queued", {
+        "job_id": animate_id,
+        "parent_job_id": job_id,
+        "beat_count": len(beats),
+        "credits": credit_cost,
+    })
+    return {
+        "job_id": animate_id,
+        "parent_job_id": job_id,
+        "status": "queued",
+        "credits_charged": credit_cost,
+        "beat_count": len(beats),
+    }
+
+
+@app.get("/api/storyboard/animate-cost")
+async def storyboard_animate_cost(
+    minutes: float = 8,
+    admin: dict = Depends(require_admin),
+):
+    """Preview credit cost for on-site animate (UI blurb)."""
+    from webapp.database import get_user_atlas_key
+    byok = False
+    try:
+        byok = bool(get_user_atlas_key(int(admin["id"])))
+    except Exception:
+        byok = False
+    cost = _storyboard_animate_credit_cost(float(minutes or 8), byok=byok)
+    return {"credits": cost, "byok": byok, "minutes": float(minutes or 8)}
 
 @app.post("/api/internal/niche-finder/cron")
 def niche_finder_cron(

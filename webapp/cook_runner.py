@@ -22,6 +22,7 @@ _COST_PENCE_PER_MIN = {
     "avatar_plus_broll": 40.0,
     "storyboard_pack": 8.0,
     "storyboard_assemble": 4.0,
+    "storyboard_animate": 25.0,
 }
 
 
@@ -134,6 +135,14 @@ def run_cook_job(
         )
     if recipe == "storyboard_assemble":
         return _run_storyboard_assemble_job(
+            job_id,
+            job,
+            track=track,
+            capture_error=capture_error,
+            cancel_check=cancel_check,
+        )
+    if recipe == "storyboard_animate":
+        return _run_storyboard_animate_job(
             job_id,
             job,
             track=track,
@@ -981,3 +990,313 @@ def _run_storyboard_assemble_job(
             "error_class": type(e).__name__,
         })
         print(f"[sb-assemble] job {job_id} failed: {e}")
+
+
+def _beat_i2v_prompt(beat: dict[str, Any]) -> str:
+    """Motion prompt + dialogue cue so Seedance audio can lip-sync."""
+    motion = (beat.get("i2v_prompt") or "").strip()
+    dialogue = (beat.get("dialogue") or "").strip()
+    parts = []
+    if motion:
+        parts.append(motion)
+    else:
+        parts.append("Subtle natural motion, gentle camera push-in, characters breathe and blink")
+    if dialogue and dialogue.lower() not in ("(no dialogue)", "no dialogue"):
+        parts.append(f'Character speaks clearly: "{dialogue[:220]}"')
+    return ". ".join(parts)
+
+
+def _run_storyboard_animate_job(
+    job_id: str,
+    job: dict[str, Any],
+    *,
+    track: Callable[..., None] | None = None,
+    capture_error: Callable[..., None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+) -> None:
+    """On-site Seedance I2V for each pack still, then stitch + captions → MP4."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from webapp.database import update_cook_job, refund_credits
+    from webapp import storage
+    import config
+
+    def _track(uid, event, props=None):
+        if track:
+            track(uid, event, props)
+
+    def _capture(exc, ctx=None):
+        if capture_error:
+            capture_error(exc, ctx)
+
+    req_data = job.get("request") or {}
+    user_id = job.get("user_id")
+    started_at = time.time()
+    job["status"] = "running"
+    pack_dir_s = str(req_data.get("pack_dir") or "").strip()
+    pack_dir = Path(pack_dir_s) if pack_dir_s else None
+    beats = req_data.get("beats") if isinstance(req_data.get("beats"), list) else []
+    title = (req_data.get("title") or "storyboard").strip()
+    burn_captions = bool(req_data.get("burn_captions", True))
+    parent_job_id = (req_data.get("parent_job_id") or "").strip()
+    notify_email = (req_data.get("notify_email") or "").strip()
+    credits_charged = 0
+    try:
+        credits_charged = int(req_data.get("credits_charged") or 0)
+    except (TypeError, ValueError):
+        credits_charged = 0
+
+    _progress_persist_at = [0.0]
+
+    def on_progress(msg: str, phase: str = "running"):
+        if job.get("status") == "cancelled" or (cancel_check and cancel_check()):
+            job["status"] = "cancelled"
+            raise RuntimeError("Cancelled by user")
+        job["progress"].append({"time": time.time(), "message": msg, "phase": phase})
+        now = time.time()
+        if now - _progress_persist_at[0] >= 2.0:
+            _progress_persist_at[0] = now
+            try:
+                update_cook_job(
+                    job_id,
+                    status=job.get("status"),
+                    progress_json=json.dumps(job["progress"][-60:]),
+                    heartbeat=True,
+                )
+            except Exception as e:
+                print(f"[sb-animate] persist progress failed: {e}")
+
+    def _refund():
+        if user_id and credits_charged > 0:
+            try:
+                refund_credits(int(user_id), credits_charged)
+                print(f"[sb-animate] refunded {credits_charged} credit(s) for {job_id}")
+            except Exception as re:
+                print(f"[sb-animate] refund failed: {re}")
+
+    atlas_cm = nullcontext()
+    try:
+        from webapp.database import get_user_atlas_key
+        from core.atlas_runtime import use_atlas_key
+        if user_id:
+            ak = get_user_atlas_key(int(user_id))
+            if ak:
+                atlas_cm = use_atlas_key(ak)
+    except Exception:
+        atlas_cm = nullcontext()
+
+    try:
+        from core.atlas_llm import generate_video_file
+        from core.storyboard_assemble import (
+            assemble_storyboard_video,
+            load_pack_beats,
+            _still_path_for_beat,
+        )
+
+        if pack_dir and not pack_dir.is_dir():
+            pack_dir = None
+        beat_rows = load_pack_beats(pack_dir=pack_dir, beats=beats)
+        if not beat_rows:
+            raise RuntimeError("No pack scenes found to animate.")
+
+        work = ROOT / "output" / "storyboard_animate" / job_id
+        work.mkdir(parents=True, exist_ok=True)
+        clips_dir = work / "clips"
+        clips_dir.mkdir(parents=True, exist_ok=True)
+        still_cache = work / "stills"
+        still_cache.mkdir(exist_ok=True)
+
+        concurrency = max(1, int(getattr(config, "ATLAS_I2V_CONCURRENCY", 3) or 3))
+        total = len(beat_rows)
+        on_progress(f"Animating {total} scene(s) with Seedance (audio on)…")
+
+        done_lock = __import__("threading").Lock()
+        done_count = [0]
+        errors: list[str] = []
+        matched: list[dict[str, Any]] = []
+
+        def _one(beat: dict[str, Any]) -> dict[str, Any] | None:
+            idx = int(beat["index"])
+            still = _still_path_for_beat(beat, pack_dir, still_cache)
+            if not still:
+                # Prefer remote URL without downloading if path missing
+                url = (beat.get("image_url") or "").strip()
+                if url.startswith("http"):
+                    still = url
+                else:
+                    raise RuntimeError(f"No still for scene {idx:03d}")
+            out_clip = clips_dir / f"{idx:03d}_scene.mp4"
+            if out_clip.is_file() and out_clip.stat().st_size > 1000:
+                with done_lock:
+                    done_count[0] += 1
+                    on_progress(f"Scene {idx:03d} already generated ({done_count[0]}/{total})")
+                return {
+                    "index": idx,
+                    "clip": str(out_clip),
+                    "method": "cached",
+                    "confidence": 1.0,
+                    "dialogue": beat.get("dialogue") or "",
+                }
+            # Prefer public URL for Atlas when available (avoids huge base64 bodies)
+            image_in = (beat.get("image_url") or "").strip()
+            if not image_in.startswith("http"):
+                image_in = still
+            dur = int(round(float(beat.get("target_sec") or 5)))
+            prompt = _beat_i2v_prompt(beat)
+            ok = generate_video_file(
+                prompt,
+                image_in,
+                out_clip,
+                duration=dur,
+            )
+            if not ok or not out_clip.is_file():
+                raise RuntimeError(f"Seedance failed for scene {idx:03d}")
+            with done_lock:
+                done_count[0] += 1
+                on_progress(f"Animated scene {idx:03d} ({done_count[0]}/{total})")
+            return {
+                "index": idx,
+                "clip": str(out_clip),
+                "method": "seedance",
+                "confidence": 1.0,
+                "dialogue": beat.get("dialogue") or "",
+            }
+
+        with atlas_cm:
+            with ThreadPoolExecutor(max_workers=concurrency) as pool:
+                futs = {pool.submit(_one, b): b for b in beat_rows}
+                for fut in as_completed(futs):
+                    if job.get("status") == "cancelled" or (cancel_check and cancel_check()):
+                        raise RuntimeError("Cancelled by user")
+                    beat = futs[fut]
+                    try:
+                        row = fut.result()
+                        if row:
+                            matched.append(row)
+                    except Exception as e:
+                        idx = int(beat.get("index") or 0)
+                        errors.append(f"{idx:03d}: {e}")
+                        print(f"[sb-animate] scene {idx} failed: {e}")
+
+        if not matched:
+            raise RuntimeError(
+                "No scenes animated. " + ("; ".join(errors[:3]) if errors else "Check Atlas key / Seedance.")
+            )
+        matched.sort(key=lambda m: m["index"])
+        if errors:
+            on_progress(f"Continuing with {len(matched)}/{total} scenes ({len(errors)} failed)…")
+
+        on_progress(f"Stitching {len(matched)} clips…")
+        out_mp4 = work / f"{job_id}_assembled.mp4"
+        result = assemble_storyboard_video(
+            matched=matched,
+            output_path=out_mp4,
+            work_dir=work / "build",
+            progress=on_progress,
+            burn_captions=burn_captions,
+        )
+
+        video_local = result["output_path"]
+        video_url = ""
+        try:
+            video_url = storage.store_file(
+                video_local,
+                f"storyboard/{user_id or 'anon'}/{int(time.time())}_{job_id}_animated.mp4",
+            )
+        except Exception as e:
+            print(f"[sb-animate] Spaces upload failed: {e}")
+        if not video_url and video_local and Path(video_local).is_file():
+            try:
+                video_url = f"/api/files/{os.path.relpath(str(video_local), str(ROOT))}"
+            except Exception:
+                video_url = ""
+
+        video_id = None
+        thumb_url = ""
+        try:
+            from webapp.database import create_video, get_cook_job
+            if parent_job_id:
+                parent = get_cook_job(parent_job_id) or {}
+                try:
+                    parent_req = json.loads(parent.get("request_json") or "{}")
+                except Exception:
+                    parent_req = {}
+                thumb_url = (parent_req.get("thumbnail_path") or "").strip()
+                if thumb_url and not thumb_url.startswith("http") and not thumb_url.startswith("/"):
+                    thumb_url = ""
+            if user_id and video_url:
+                video_id = create_video(
+                    user_id=int(user_id),
+                    title=title or "Storyboard video",
+                    recipe="storyboard_animate",
+                    video_url=video_url,
+                    thumbnail_url=thumb_url if thumb_url.startswith("http") else "",
+                )
+        except Exception as rec_err:
+            print(f"[sb-animate] create_video failed: {rec_err}")
+
+        if notify_email and video_url:
+            try:
+                from webapp.email_service import send_video_ready
+                send_video_ready(notify_email, title or "Your storyboard video", video_url)
+            except Exception as email_err:
+                print(f"[sb-animate] email notify failed: {email_err}")
+
+        meta = {
+            "kind": "storyboard_animate",
+            "title": title,
+            "parent_job_id": parent_job_id,
+            "video_path": video_local,
+            "video_url": video_url,
+            "output_path": video_local,
+            "output_url": video_url,
+            "video_id": video_id,
+            "thumbnail_url": thumb_url if thumb_url.startswith("http") else "",
+            "match_report": result.get("match_report") or [],
+            "beat_count": result.get("beat_count") or len(matched),
+            "duration_sec": result.get("duration_sec") or 0,
+            "caption_count": result.get("caption_count") or 0,
+            "failed_scenes": errors,
+            "video_ready": True,
+        }
+        job["status"] = "complete"
+        job["result"] = meta
+        job["error"] = ""
+        update_cook_job(
+            job_id,
+            status="complete",
+            progress_json=json.dumps(job["progress"][-60:]),
+            result_json=json.dumps(meta),
+            finished=True,
+        )
+        on_progress("Video ready — download your MP4.")
+        _track(user_id or "anon", "storyboard_animate_complete", {
+            "job_id": job_id,
+            "parent_job_id": parent_job_id,
+            "beat_count": meta["beat_count"],
+            "failed": len(errors),
+            "duration_sec": round(time.time() - started_at, 1),
+        })
+    except Exception as e:
+        if job.get("status") == "cancelled" or "Cancelled by user" in str(e):
+            job["status"] = "cancelled"
+            job["error"] = "Cancelled by user"
+            _refund()
+            try:
+                update_cook_job(job_id, status="cancelled", error=job["error"], finished=True)
+            except Exception:
+                pass
+            return
+        job["status"] = "error"
+        job["error"] = str(e)
+        _refund()
+        _capture(e, {"job_id": job_id, "recipe": "storyboard_animate", "user_id": user_id})
+        try:
+            update_cook_job(job_id, status="error", error=str(e), finished=True)
+        except Exception:
+            pass
+        _track(user_id or "anon", "storyboard_animate_failed", {
+            "job_id": job_id,
+            "error_class": type(e).__name__,
+        })
+        print(f"[sb-animate] job {job_id} failed: {e}")

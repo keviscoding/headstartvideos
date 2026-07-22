@@ -204,6 +204,7 @@ def load_pack_beats(pack_dir: Path | None = None, beats: list[dict] | None = Non
             out.append({
                 "index": idx,
                 "dialogue": str(b.get("dialogue") or "").strip(),
+                "i2v_prompt": str(b.get("i2v_prompt") or "").strip(),
                 "filename": str(b.get("filename") or "").strip(),
                 "image_path": str(b.get("image_path") or "").strip(),
                 "image_url": str(b.get("image_url") or "").strip(),
@@ -234,6 +235,7 @@ def load_pack_beats(pack_dir: Path | None = None, beats: list[dict] | None = Non
                 rows.append({
                     "index": idx,
                     "dialogue": str(row.get("dialogue") or "").strip(),
+                    "i2v_prompt": str(row.get("i2v_prompt") or "").strip(),
                     "filename": str(row.get("filename") or "").strip(),
                     "image_path": str(pack_dir / (row.get("filename") or "")),
                     "image_url": "",

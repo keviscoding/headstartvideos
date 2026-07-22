@@ -288,6 +288,162 @@ def _google_text(
     return text
 
 
+def _image_payload_for_atlas(image: str | Path) -> str:
+    """URL, data-URI, or local path → Atlas `image` field value."""
+    s = str(image or "").strip()
+    if not s:
+        raise ValueError("image is required")
+    if s.startswith(("http://", "https://", "data:")):
+        return s
+    path = Path(s)
+    if not path.is_file():
+        raise FileNotFoundError(f"Image not found: {s}")
+    import base64
+    raw = path.read_bytes()
+    if len(raw) > 10 * 1024 * 1024:
+        raise ValueError("Image exceeds 10MB Atlas limit")
+    ext = path.suffix.lower()
+    mime = "image/jpeg"
+    if ext == ".png":
+        mime = "image/png"
+    elif ext == ".webp":
+        mime = "image/webp"
+    return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+
+
+def generate_video_file(
+    prompt: str,
+    image: str | Path,
+    output_path: str | Path,
+    *,
+    model: str | None = None,
+    duration: int = 5,
+    resolution: str | None = None,
+    generate_audio: bool | None = None,
+    aspect_ratio: str = "16:9",
+    camera_fixed: bool = False,
+    seed: int = -1,
+    last_image: str | Path | None = None,
+    timeout_sec: float = 360,
+) -> bool:
+    """
+    Image-to-video via Atlas generateVideo (Seedance etc.).
+    Returns True on success; writes MP4 to output_path.
+    """
+    key = _atlas_key()
+    if not key:
+        return False
+
+    model = (model or getattr(config, "ATLAS_I2V_MODEL", None) or
+             "bytedance/seedance-v1.5-pro/image-to-video-fast").strip()
+    resolution = (resolution or getattr(config, "ATLAS_I2V_RESOLUTION", None) or "720p").strip()
+    if generate_audio is None:
+        generate_audio = bool(getattr(config, "ATLAS_I2V_GENERATE_AUDIO", True))
+    try:
+        duration = int(duration)
+    except (TypeError, ValueError):
+        duration = 5
+    duration = max(4, min(12, duration))
+
+    clipped = (prompt or "").strip() or "Subtle natural motion, characters breathe and blink"
+    try:
+        image_val = _image_payload_for_atlas(image)
+    except Exception as e:
+        print(f"[atlas] generateVideo bad image: {e}")
+        return False
+
+    body: dict = {
+        "model": model,
+        "prompt": clipped,
+        "image": image_val,
+        "duration": duration,
+        "resolution": resolution,
+        "generate_audio": bool(generate_audio),
+        "camera_fixed": bool(camera_fixed),
+        "aspect_ratio": aspect_ratio or "16:9",
+        "seed": seed if seed is not None else -1,
+    }
+    if last_image:
+        try:
+            body["last_image"] = _image_payload_for_atlas(last_image)
+        except Exception as e:
+            print(f"[atlas] generateVideo last_image skipped: {e}")
+
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    t0 = time.time()
+    try:
+        with httpx.Client(timeout=60) as client:
+            resp = client.post(
+                f"{ATLAS_MEDIA_BASE}/model/generateVideo",
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                },
+                json=body,
+            )
+            data = resp.json() if resp.content else {}
+            if resp.status_code >= 400:
+                print(f"[atlas] generateVideo HTTP {resp.status_code}: {str(data)[:300]}")
+                return False
+            pred_id = None
+            if isinstance(data.get("data"), dict):
+                pred_id = data["data"].get("id")
+            pred_id = pred_id or data.get("id") or data.get("prediction_id")
+            if not pred_id:
+                print(f"[atlas] generateVideo no id: {str(data)[:240]}")
+                return False
+
+            sleep_s = 2.0
+            while time.time() - t0 < timeout_sec:
+                time.sleep(sleep_s)
+                sleep_s = min(5.0, sleep_s + 0.25)
+                poll = client.get(
+                    f"{ATLAS_MEDIA_BASE}/model/prediction/{pred_id}",
+                    headers={"Authorization": f"Bearer {key}"},
+                    timeout=45,
+                )
+                inner = poll.json().get("data", poll.json())
+                status = str(inner.get("status", "")).lower()
+                if status in ("succeeded", "completed", "done"):
+                    outputs = inner.get("outputs") or inner.get("output") or []
+                    if isinstance(outputs, str):
+                        vid_url = outputs
+                    elif isinstance(outputs, list) and outputs:
+                        first = outputs[0]
+                        vid_url = first if isinstance(first, str) else (
+                            (first or {}).get("url") or (first or {}).get("video") or ""
+                        )
+                    elif isinstance(outputs, dict):
+                        vid_url = outputs.get("url") or outputs.get("video") or ""
+                    else:
+                        print(f"[atlas] generateVideo no outputs: {str(inner)[:240]}")
+                        return False
+                    if not vid_url:
+                        return False
+                    vid = client.get(vid_url, follow_redirects=True, timeout=120)
+                    vid.raise_for_status()
+                    with open(out, "wb") as f:
+                        f.write(vid.content)
+                    if out.stat().st_size < 1000:
+                        print("[atlas] generateVideo empty download")
+                        return False
+                    print(
+                        f"[atlas] video ok model={model} {duration}s "
+                        f"{time.time() - t0:.1f}s → {out.name}"
+                    )
+                    return True
+                if status in ("failed", "error", "cancelled"):
+                    err = inner.get("error") or inner.get("message") or inner
+                    print(f"[atlas] generateVideo failed: {err}")
+                    return False
+    except Exception as e:
+        print(f"[atlas] generateVideo error: {e}")
+        return False
+    print(f"[atlas] generateVideo timeout after {timeout_sec}s")
+    return False
+
+
 def generate_image_file(
     prompt: str,
     output_path: str,
