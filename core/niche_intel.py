@@ -42,6 +42,19 @@ def _slug(text: str) -> str:
     return (s or "niche")[:60]
 
 
+def format_upload_date(published_at: str) -> str:
+    """Normalize YouTube publishedAt → YYYY-MM-DD (UTC)."""
+    raw = (published_at or "").strip()
+    if not raw:
+        return ""
+    try:
+        # 2024-01-15T12:34:56Z or with offset
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return dt.astimezone(timezone.utc).strftime("%Y-%m-%d")
+    except Exception:
+        return raw[:10] if len(raw) >= 10 else raw
+
+
 def parse_iso8601_duration(iso: str) -> float:
     """Parse YouTube ISO-8601 duration (e.g. PT1M30S) → seconds."""
     if not iso:
@@ -108,7 +121,10 @@ def download_short_video(video_id: str, out_path: Path) -> Path:
     """Download a single YouTube video (prefer mp4) via yt-dlp."""
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    url = f"https://www.youtube.com/watch?v={video_id}"
+    urls = [
+        f"https://www.youtube.com/shorts/{video_id}",
+        f"https://www.youtube.com/watch?v={video_id}",
+    ]
     tmpl = str(out_path.with_suffix("")) + ".%(ext)s"
 
     cookies = (getattr(config, "YOUTUBE_COOKIES_FILE", "") or "").strip()
@@ -116,44 +132,61 @@ def download_short_video(video_id: str, out_path: Path) -> Path:
     if cookies and Path(cookies).is_file():
         cookie_args = ["--cookies", cookies]
 
-    client_attempts = ["android,ios,mweb", "android", "ios", "mweb", ""]
+    # Datacenter IPs often get bot-blocked; rotate clients + formats.
+    client_attempts = [
+        "android,ios,mweb",
+        "android",
+        "ios",
+        "mweb",
+        "tv_embedded",
+        "web",
+        "",
+    ]
+    format_attempts = [
+        "best[height<=720][ext=mp4]/best[height<=720]/best",
+        "worst[ext=mp4]/worst",
+        "bv*[height<=480]+ba/b[height<=480]/b",
+    ]
     last_err = ""
-    for clients in client_attempts:
-        for p in out_path.parent.glob(out_path.stem + ".*"):
-            if p.suffix.lower() in (".mp4", ".webm", ".mkv", ".m4a"):
-                p.unlink(missing_ok=True)
-        cmd = [
-            "yt-dlp",
-            "-f", "best[height<=720][ext=mp4]/best[height<=720]/best",
-            "--no-playlist",
-            "--no-warnings",
-            "-o", tmpl,
-            *cookie_args,
-        ]
-        if clients:
-            cmd.extend(["--extractor-args", f"youtube:player_client={clients}"])
-        cmd.append(url)
-        try:
-            subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=240)
-        except FileNotFoundError as e:
-            raise RuntimeError("yt-dlp is not installed") from e
-        except subprocess.CalledProcessError as e:
-            last_err = ((e.stderr or e.stdout or "")[-300:]).strip()
-            continue
-        candidates = sorted(
-            out_path.parent.glob(out_path.stem + ".*"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-        for c in candidates:
-            if c.suffix.lower() in (".mp4", ".webm", ".mkv") and c.stat().st_size > 1000:
-                if c != out_path:
-                    if out_path.exists():
-                        out_path.unlink()
-                    c.rename(out_path)
-                return out_path
-        last_err = "download produced no video file"
-    raise RuntimeError(f"Could not download video {video_id}: {last_err[:200]}")
+    for url in urls:
+        for clients in client_attempts:
+            for fmt in format_attempts:
+                for p in out_path.parent.glob(out_path.stem + ".*"):
+                    if p.suffix.lower() in (".mp4", ".webm", ".mkv", ".m4a"):
+                        p.unlink(missing_ok=True)
+                cmd = [
+                    "yt-dlp",
+                    "-f", fmt,
+                    "--no-playlist",
+                    "--no-warnings",
+                    "--geo-bypass",
+                    "-o", tmpl,
+                    *cookie_args,
+                ]
+                if clients:
+                    cmd.extend(["--extractor-args", f"youtube:player_client={clients}"])
+                cmd.append(url)
+                try:
+                    subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=240)
+                except FileNotFoundError as e:
+                    raise RuntimeError("yt-dlp is not installed") from e
+                except subprocess.CalledProcessError as e:
+                    last_err = ((e.stderr or e.stdout or "")[-400:]).strip()
+                    continue
+                candidates = sorted(
+                    out_path.parent.glob(out_path.stem + ".*"),
+                    key=lambda p: p.stat().st_mtime,
+                    reverse=True,
+                )
+                for c in candidates:
+                    if c.suffix.lower() in (".mp4", ".webm", ".mkv") and c.stat().st_size > 1000:
+                        if c != out_path:
+                            if out_path.exists():
+                                out_path.unlink()
+                            c.rename(out_path)
+                        return out_path
+                last_err = "download produced no video file"
+    raise RuntimeError(f"Could not download video {video_id}: {last_err[:240]}")
 
 
 def extract_even_frames(video_path: Path, out_dir: Path, count: int = DEFAULT_FRAMES) -> list[Path]:
@@ -180,22 +213,88 @@ def extract_even_frames(video_path: Path, out_dir: Path, count: int = DEFAULT_FR
         duration = 30.0
 
     n = max(1, min(int(count), 24))
-    # Sample interior points so we avoid pure black first/last frames when possible
     frames: list[Path] = []
     for i in range(n):
         t = duration * (i + 0.5) / n
         dest = out_dir / f"f_{i + 1:02d}.jpg"
-        subprocess.run(
+        # Seek after -i is slower but more accurate on short/variable files
+        r = subprocess.run(
             [
-                "ffmpeg", "-y", "-ss", f"{t:.3f}",
+                "ffmpeg", "-y",
                 "-i", str(video_path),
+                "-ss", f"{t:.3f}",
                 "-frames:v", "1", "-q:v", "3",
                 str(dest),
             ],
             capture_output=True, check=False, timeout=60,
         )
+        if (not dest.exists() or dest.stat().st_size <= 500) and r.returncode != 0:
+            subprocess.run(
+                [
+                    "ffmpeg", "-y", "-ss", f"{t:.3f}",
+                    "-i", str(video_path),
+                    "-frames:v", "1", "-q:v", "3",
+                    str(dest),
+                ],
+                capture_output=True, check=False, timeout=60,
+            )
         if dest.exists() and dest.stat().st_size > 500:
             frames.append(dest)
+    return frames
+
+
+def fetch_thumbnail_frames(video_id: str, out_dir: Path, count: int = DEFAULT_FRAMES) -> list[Path]:
+    """
+    Fallback when yt-dlp is bot-blocked (common on cloud IPs).
+    Pulls YouTube CDN thumbnails / numbered stills so the LLM still gets visuals.
+    """
+    import httpx
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for old in out_dir.glob("f_*.jpg"):
+        old.unlink(missing_ok=True)
+
+    # Prefer distinct stills; pad with quality variants if needed
+    candidates = [
+        f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg",
+        f"https://i.ytimg.com/vi/{video_id}/sddefault.jpg",
+        f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
+        f"https://i.ytimg.com/vi/{video_id}/mqdefault.jpg",
+        f"https://i.ytimg.com/vi/{video_id}/0.jpg",
+        f"https://i.ytimg.com/vi/{video_id}/1.jpg",
+        f"https://i.ytimg.com/vi/{video_id}/2.jpg",
+        f"https://i.ytimg.com/vi/{video_id}/3.jpg",
+    ]
+    frames: list[Path] = []
+    seen_sizes: set[int] = set()
+    n = max(1, min(int(count), 24))
+    with httpx.Client(timeout=20, follow_redirects=True) as client:
+        for url in candidates:
+            if len(frames) >= n:
+                break
+            try:
+                resp = client.get(url)
+            except Exception:
+                continue
+            if resp.status_code != 200:
+                continue
+            body = resp.content
+            # Skip tiny placeholders / identical dupes
+            if len(body) < 2000 or len(body) in seen_sizes:
+                continue
+            ctype = (resp.headers.get("content-type") or "").lower()
+            if "image" not in ctype and not (
+                body.startswith(b"\xff\xd8\xff") or body.startswith(b"\x89PNG")
+            ):
+                continue
+            seen_sizes.add(len(body))
+            dest = out_dir / f"f_{len(frames) + 1:02d}.jpg"
+            dest.write_bytes(body)
+            frames.append(dest)
+
+    # If we only got 1 distinct thumb, duplicate-label it so pack isn't empty-looking
+    # (still better than zero visuals)
     return frames
 
 
@@ -317,19 +416,36 @@ def _process_channel(
         entry["is_visual_source"] = entry["video_id"] == visual["video_id"]
 
     frame_paths: list[str] = []
+    frames_source = ""
     video_file = raw_dir / f"video_{visual['video_num']:02d}.mp4"
+    frames_tmp = raw_dir / "frames"
     try:
         log(f"[{tag}] Downloading visual source {visual['anon_id']}…")
         download_short_video(visual["video_id"], video_file)
-        log(f"[{tag}] Extracting {frames_per_video} frames…")
-        frames = extract_even_frames(video_file, raw_dir / "frames", count=frames_per_video)
-        for fp in frames:
-            dest_name = f"{channel_slug}__Video{visual['video_num']:02d}__{fp.stem}.jpg"
-            dest = frames_llm / dest_name
-            shutil.copy2(fp, dest)
-            frame_paths.append(dest_name)
+        log(f"[{tag}] Extracting {frames_per_video} frames from video…")
+        frames = extract_even_frames(video_file, frames_tmp, count=frames_per_video)
+        frames_source = "video"
+        if not frames:
+            raise RuntimeError("ffmpeg produced no frames")
     except Exception as e:
-        log(f"[{tag}] Visual pack failed: {e}")
+        log(f"[{tag}] Video download/frames failed ({e}); falling back to YouTube thumbnails…")
+        try:
+            frames = fetch_thumbnail_frames(
+                visual["video_id"], frames_tmp, count=frames_per_video,
+            )
+            frames_source = "thumbnails"
+        except Exception as e2:
+            log(f"[{tag}] Thumbnail fallback failed: {e2}")
+            frames = []
+            frames_source = ""
+
+    for fp in frames:
+        dest_name = f"{channel_slug}__Video{visual['video_num']:02d}__{fp.stem}.jpg"
+        dest = frames_llm / dest_name
+        shutil.copy2(fp, dest)
+        frame_paths.append(dest_name)
+    if frame_paths:
+        log(f"[{tag}] Packed {len(frame_paths)} frames ({frames_source or 'unknown'})")
 
     return {
         "channel_name": channel_name,
@@ -340,6 +456,7 @@ def _process_channel(
         "comments_by_num": comments_by_num,
         "visual_video_num": visual["video_num"],
         "frame_files": frame_paths,
+        "frames_source": frames_source,
     }
 
 
@@ -367,6 +484,8 @@ def _write_llm_folder(pack_root: Path, niche: str, channels: list[dict[str, Any]
                 "title": v["title"],
                 "video_id": v["video_id"],
                 "url": v["url"],
+                "uploaded": format_upload_date(v.get("published_at") or ""),
+                "published_at": v.get("published_at") or "",
                 "views": v.get("views"),
                 "likes": v.get("likes"),
                 "comments": v.get("comments"),
@@ -380,6 +499,7 @@ def _write_llm_folder(pack_root: Path, niche: str, channels: list[dict[str, Any]
         "",
         "- **Channel names are real.**",
         "- **Video titles are hidden** — use Video 1, Video 2, … only.",
+        "- **Upload dates are included** (UTC, YYYY-MM-DD).",
         "",
         "---",
         "",
@@ -390,19 +510,25 @@ def _write_llm_folder(pack_root: Path, niche: str, channels: list[dict[str, Any]
     for ch in channels:
         meta = ch["metadata"]
         name = ch["channel_name"]
+        src = ch.get("frames_source") or ""
+        frame_note = f"Video {ch['visual_video_num']} ({len(ch.get('frame_files') or [])} stills"
+        if src:
+            frame_note += f", via {src}"
+        frame_note += ")"
         lines += [
             f"## {name}",
             f"- Subscribers: {meta.get('subscribers', 0):,}",
             f"- Channel total views: {meta.get('total_views', 0):,}",
             f"- Videos in this pack: {len(ch['videos'])}",
-            f"- Frames from: Video {ch['visual_video_num']} ({len(ch.get('frame_files') or [])} stills)",
+            f"- Frames from: {frame_note}",
             "",
-            "| Label | Views | Likes | Comment count | Duration (s) | Short? | Comments included | Has frames |",
-            "|---|---:|---:|---:|---:|:---:|:---:|:---:|",
+            "| Label | Uploaded | Views | Likes | Comment count | Duration (s) | Short? | Comments included | Has frames |",
+            "|---|---|---:|---:|---:|---:|:---:|:---:|:---:|",
         ]
         for v in ch["videos"]:
+            uploaded = format_upload_date(v.get("published_at") or "") or "—"
             lines.append(
-                f"| {v['anon_id']} | {v.get('views', 0):,} | {v.get('likes', 0):,} | "
+                f"| {v['anon_id']} | {uploaded} | {v.get('views', 0):,} | {v.get('likes', 0):,} | "
                 f"{v.get('comments', 0):,} | {int(v.get('duration_sec') or 0)} | "
                 f"{'yes' if v.get('is_short') else ''} | "
                 f"{'yes' if v.get('has_comments_pack') else ''} | "
@@ -419,9 +545,12 @@ def _write_llm_folder(pack_root: Path, niche: str, channels: list[dict[str, Any]
     for ch in channels:
         lines += [f"## {ch['channel_name']}", ""]
         for v in ch["videos"]:
+            uploaded = format_upload_date(v.get("published_at") or "")
+            head = f"### {v['anon_id']}"
+            if uploaded:
+                head += f"  \nUploaded: {uploaded}"
             body = (v.get("transcript") or "").strip() or "(no transcript available)"
-            lines += [f"### {v['anon_id']}", "", body, "", "---", ""]
-
+            lines += [head, "", body, "", "---", ""]
     lines += ["# Comments", "", "Top 2 videos by views per channel.", ""]
     for ch in channels:
         lines += [f"## {ch['channel_name']}", ""]
