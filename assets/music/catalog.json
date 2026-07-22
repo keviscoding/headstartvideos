@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "source": "YouTube Audio Library (curated offline)",
+  "moods": ["warm", "playful", "tension", "sad", "resolve"],
+  "notes": "Prefer Attribution not required + instrumental. Drop MP3s in inbox/ and run scripts/register_music_tracks.py",
+  "tracks": []
+}

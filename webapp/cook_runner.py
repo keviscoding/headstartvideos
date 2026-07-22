@@ -875,7 +875,7 @@ def _run_storyboard_assemble_job(
                 "Could not match any clips to storyboard stills. "
                 "Re-upload clips that were generated from these scenes."
             )
-        on_progress(f"Matched {len(matched)}/{len(beat_rows)} scenes — assembling…")
+        on_progress("Putting your video together…")
 
         out_mp4 = work / f"{job_id}_assembled.mp4"
         result = assemble_storyboard_video(
@@ -884,6 +884,9 @@ def _run_storyboard_assemble_job(
             work_dir=work / "build",
             progress=on_progress,
             burn_captions=burn_captions,
+            title=title,
+            beats=beat_rows,
+            music_seed=job_id,
         )
 
         video_local = result["output_path"]
@@ -950,6 +953,7 @@ def _run_storyboard_assemble_job(
             "beat_count": result.get("beat_count") or len(matched),
             "duration_sec": result.get("duration_sec") or 0,
             "caption_count": result.get("caption_count") or 0,
+            "music": result.get("music") or {},
             "video_ready": True,
         }
         job["status"] = "complete"
@@ -1213,6 +1217,9 @@ def _run_storyboard_animate_job(
             work_dir=work / "build",
             progress=on_progress,
             burn_captions=burn_captions,
+            title=title,
+            beats=beat_rows,
+            music_seed=job_id,
         )
 
         video_local = result["output_path"]
@@ -1276,6 +1283,7 @@ def _run_storyboard_animate_job(
             "duration_sec": result.get("duration_sec") or 0,
             "caption_count": result.get("caption_count") or 0,
             "failed_scenes": errors,
+            "music": result.get("music") or {},
             "video_ready": True,
         }
         job["status"] = "complete"

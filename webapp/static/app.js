@@ -5639,6 +5639,9 @@ function _friendlySbProgress(raw) {
     const s = String(raw || '');
     if (/Queued|queue/i.test(s)) return 'Queued — cooking soon…';
     if (/Starting|Joining/i.test(s)) return 'Starting your cook…';
+    if (/Adding music/i.test(s)) return 'Adding music…';
+    if (/Adding captions|caption/i.test(s)) return 'Adding captions…';
+    if (/Preparing scene|Putting your video/i.test(s)) return 'Putting your video together…';
     if (/Cooking scenes|Animating|Animated scene|scene\(s\)/i.test(s)) {
         const m = s.match(/(\d+)\s*\/\s*(\d+)/);
         if (m) return `Cooking scenes… ${m[1]} of ${m[2]}`;

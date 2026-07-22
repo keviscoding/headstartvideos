@@ -495,10 +495,15 @@ def assemble_storyboard_video(
     work_dir: str | Path | None = None,
     progress: ProgressFn | None = None,
     burn_captions: bool = True,
+    title: str = "",
+    beats: list[dict[str, Any]] | None = None,
+    music_seed: str = "",
+    add_music: bool = True,
 ) -> dict[str, Any]:
     """
-    Normalize matched clips → concat → optional dialogue caption burn-in.
-    Returns {output_path, match_report, duration_sec, caption_count}.
+    Normalize matched clips → concat → optional dialogue caption burn-in
+    → optional soft music bed under dialogue.
+    Returns {output_path, match_report, duration_sec, caption_count, music}.
     """
     from core.assembler import concatenate_clips, generate_ass_subtitles
 
@@ -518,7 +523,7 @@ def assemble_storyboard_video(
     for i, m in enumerate(matched):
         src = Path(m["clip"])
         dest = norm_dir / f"{int(m['index']):03d}_clip.mp4"
-        log(f"Normalizing scene {m['index']:03d} ({i + 1}/{len(matched)})…")
+        log(f"Preparing scene {m['index']:03d} ({i + 1}/{len(matched)})…")
         if not _normalize_clip(src, dest):
             raise RuntimeError(f"Could not normalize clip for scene {m['index']}: {src.name}")
         normalized.append(str(dest))
@@ -530,7 +535,7 @@ def assemble_storyboard_video(
             "dialogue": (m.get("dialogue") or "")[:160],
         })
 
-    log("Stitching clips…")
+    log("Putting your video together…")
     concat_path = str(work / "concat.mp4")
     if not concatenate_clips(normalized, concat_path):
         raise RuntimeError("Failed to concatenate clips.")
@@ -543,7 +548,7 @@ def assemble_storyboard_video(
         ])
         caption_count = len(slots)
         if slots:
-            log(f"Burning {caption_count} dialogue captions…")
+            log("Adding captions…")
             ass_path = str(work / "dialogue.ass")
             generate_ass_subtitles(slots, ass_path)
             if not _burn_captions_video_only(concat_path, ass_path, final):
@@ -553,12 +558,35 @@ def assemble_storyboard_video(
     else:
         shutil.copy2(concat_path, final)
 
+    music_meta: dict[str, Any] = {"applied": False}
+    if add_music:
+        try:
+            from core.storyboard_music import apply_storyboard_music
+            beat_rows = beats if isinstance(beats, list) else [
+                {"dialogue": m.get("dialogue") or ""} for m in matched
+            ]
+            music_meta = apply_storyboard_music(
+                final,
+                title=title or "",
+                beats=beat_rows,
+                seed=music_seed or out.stem,
+                work_dir=work / "music",
+                progress=log,
+            )
+            alt = music_meta.get("output_path")
+            if music_meta.get("applied") and alt and Path(alt).is_file():
+                shutil.copy2(alt, final)
+        except Exception as e:
+            print(f"[sb-assemble] music skipped: {e}")
+            music_meta = {"applied": False, "error": str(e)[:160]}
+
     duration = _probe_duration_sec(final)
-    log(f"Assemble complete — {len(matched)} scenes, {duration:.1f}s")
+    log(f"Video ready — {len(matched)} scenes, {duration:.1f}s")
     return {
         "output_path": final,
         "match_report": report,
         "duration_sec": duration,
         "caption_count": caption_count,
         "beat_count": len(matched),
+        "music": music_meta,
     }
