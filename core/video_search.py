@@ -223,90 +223,149 @@ def vlm_verify(
     threshold: float = 0.6,
 ) -> tuple[bool, float, str]:
     """
-    Optional VLM gate. Atlas chat Gemini is text-only, and Google Gemini
-    is often project-blocked — soft-skip so cooks still complete.
+    Optional VLM gate. Prefer Google Gemini vision; if the project is blocked
+    or missing, fall back to Atlas multimodal (same path QC uses).
+    Soft-skip only when neither vision path works — never pretend score=1.0.
     """
     global _vlm_disabled_reason
-    if _vlm_disabled_reason:
-        return True, 1.0, f"VLM skipped ({_vlm_disabled_reason})"
-
-    if not GEMINI_KEY:
-        return True, 1.0, "VLM skipped (no GEMINI_KEY; Atlas chat is text-only)"
+    if _vlm_disabled_reason and _vlm_disabled_reason.startswith("no_vision"):
+        return True, 0.5, f"VLM skipped ({_vlm_disabled_reason})"
 
     frame_path = _extract_frame(video_path)
     if not frame_path:
         return True, 0.5, "Could not extract frame"
 
     try:
-        from google import genai
-        from google.genai import types
-        import base64
+        prompt = _vlm_prompt(scene_description)
 
-        client = genai.Client(api_key=GEMINI_KEY)
+        # 1) Gemini (if not already known-broken)
+        if GEMINI_KEY and not (_vlm_disabled_reason and "Gemini" in _vlm_disabled_reason):
+            try:
+                return _vlm_via_gemini(frame_path, prompt, threshold)
+            except Exception as e:
+                err = str(e)
+                print(f"  [vlm] Gemini error: {e}")
+                if any(x in err for x in ("PERMISSION_DENIED", "denied access", "403")):
+                    _vlm_disabled_reason = "Gemini project denied — using Atlas vision"
+                    print(f"  [vlm] {_vlm_disabled_reason}")
+                # fall through to Atlas
 
-        with open(frame_path, "rb") as f:
-            img_bytes = f.read()
-        img_b64 = base64.b64encode(img_bytes).decode()
+        # 2) Atlas multimodal
+        try:
+            return _vlm_via_atlas(frame_path, prompt, threshold)
+        except Exception as e:
+            print(f"  [vlm] Atlas vision error: {e}")
+            _vlm_disabled_reason = f"no_vision: {e}"[:180]
+            return True, 0.5, f"Verification error: {e}"
 
-        prompt = (
-            f"You are a strict quality gate for a documentary video editor. "
-            f"Rate how well this image matches the scene description.\n\n"
-            f"SCENE: {scene_description}\n\n"
-            f"STRICT REJECTION RULES (score 0.0 if ANY apply):\n"
-            f"- Image contains prominent readable text (words, signs, titles, "
-            f"labels like 'Love', 'Success', book titles) NOT in the description\n"
-            f"- Image is from a completely different subject, era, or culture\n"
-            f"- Image is a tourist card, postcard, stereoscope, or novelty item\n"
-            f"- Image is blurry, out of focus, or too low quality\n"
-            f"- Image is modern digital graphics (Matrix style, neon, etc.) "
-            f"when scene describes historical content\n"
-            f"- ATMOSPHERE MISMATCH: If the scene describes 'darkness', 'deep "
-            f"ocean', 'pitch black', etc., reject bright sunlit imagery. If the "
-            f"scene describes underwater/deep sea, reject surface water, land, "
-            f"recreational scuba divers in sunlit caves, or above-water scenery\n\n"
-            f"SCORING:\n"
-            f"0.0 = any rejection rule triggered\n"
-            f"0.3 = vaguely related but wrong specific subject\n"
-            f"0.6 = related topic but not quite right\n"
-            f"0.8 = good contextual match\n"
-            f"1.0 = perfect match\n\n"
-            f"Reply with ONLY a JSON object: "
-            f'{{"score": <0.0 to 1.0>, "reason": "<brief explanation>"}}'
-        )
-
-        response = client.models.generate_content(
-            model=GEMINI_TEXT_MODEL,
-            contents=[
-                {
-                    "role": "user",
-                    "parts": [
-                        {"inline_data": {"mime_type": "image/jpeg", "data": img_b64}},
-                        {"text": prompt},
-                    ],
-                }
-            ],
-        )
-
-        import json, re
-        text = response.text.strip()
-        text = re.sub(r'^```json\s*', '', text)
-        text = re.sub(r'\s*```$', '', text)
-        result = json.loads(text)
-        score = float(result.get("score", 0.5))
-        reason = result.get("reason", "")
-
-        return score >= threshold, score, reason
-
-    except Exception as e:
-        err = str(e)
-        print(f"  [vlm] Verification error: {e}")
-        if any(x in err for x in ("PERMISSION_DENIED", "denied access", "403")):
-            _vlm_disabled_reason = "Gemini project denied — skipping further VLM"
-            print(f"  [vlm] {_vlm_disabled_reason}")
-        return True, 0.5, f"Verification error: {e}"
     finally:
         if frame_path and os.path.exists(frame_path):
             os.unlink(frame_path)
+
+
+def _vlm_prompt(scene_description: str) -> str:
+    return (
+        f"You are a strict quality gate for a documentary video editor. "
+        f"Rate how well this image matches the scene description.\n\n"
+        f"SCENE: {scene_description}\n\n"
+        f"STRICT REJECTION RULES (score 0.0 if ANY apply):\n"
+        f"- Image contains prominent readable text (words, signs, titles, "
+        f"labels like 'Love', 'Success', book titles) NOT in the description\n"
+        f"- Image is from a completely different subject, era, or culture\n"
+        f"- Image is a tourist card, postcard, stereoscope, or novelty item\n"
+        f"- Image is blurry, out of focus, or too low quality\n"
+        f"- Image is modern digital graphics (Matrix style, neon, etc.) "
+        f"when scene describes historical content\n"
+        f"- ATMOSPHERE MISMATCH: If the scene describes 'darkness', 'deep "
+        f"ocean', 'pitch black', etc., reject bright sunlit imagery. If the "
+        f"scene describes underwater/deep sea, reject surface water, land, "
+        f"recreational scuba divers in sunlit caves, or above-water scenery\n"
+        f"- DEMOGRAPHIC / TONE MISMATCH: for mature / 40+ / 50+ / elegant / "
+        f"power-dressing fashion scenes, reject lingerie, boudoir, Gen-Z "
+        f"influencer poses, drag/club looks, Christmas novelty sweaters, "
+        f"empty hangers, houseplants-as-filler, and wrong-gender wardrobe "
+        f"when the narration is about women's fashion\n\n"
+        f"SCORING:\n"
+        f"0.0 = any rejection rule triggered\n"
+        f"0.3 = vaguely related but wrong specific subject\n"
+        f"0.6 = related topic but not quite right\n"
+        f"0.8 = good contextual match\n"
+        f"1.0 = perfect match\n\n"
+        f"Reply with ONLY a JSON object: "
+        f'{{"score": <0.0 to 1.0>, "reason": "<brief explanation>"}}'
+    )
+
+
+def _parse_vlm_json(text: str) -> tuple[float, str]:
+    import json, re
+    text = (text or "").strip()
+    text = re.sub(r"^```json\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    result = json.loads(text)
+    return float(result.get("score", 0.5)), str(result.get("reason", "") or "")
+
+
+def _vlm_via_gemini(frame_path: str, prompt: str, threshold: float) -> tuple[bool, float, str]:
+    from google import genai
+    import base64
+
+    client = genai.Client(api_key=GEMINI_KEY)
+    with open(frame_path, "rb") as f:
+        img_bytes = f.read()
+    img_b64 = base64.b64encode(img_bytes).decode()
+
+    response = client.models.generate_content(
+        model=GEMINI_TEXT_MODEL,
+        contents=[
+            {
+                "role": "user",
+                "parts": [
+                    {"inline_data": {"mime_type": "image/jpeg", "data": img_b64}},
+                    {"text": prompt},
+                ],
+            }
+        ],
+    )
+    score, reason = _parse_vlm_json(response.text)
+    print(f"  [vlm] Gemini score={score:.2f}: {reason[:60]}")
+    return score >= threshold, score, reason
+
+
+def _vlm_via_atlas(frame_path: str, prompt: str, threshold: float) -> tuple[bool, float, str]:
+    import base64
+    import httpx
+    from core.atlas_llm import ATLAS_LLM_BASE, ATLAS_TEXT_MODEL, _atlas_key, _extract_atlas_message_text
+
+    key = _atlas_key()
+    if not key:
+        raise RuntimeError("ATLASCLOUD_KEY missing for vision fallback")
+
+    b64 = base64.b64encode(Path(frame_path).read_bytes()).decode("ascii")
+    body = {
+        "model": ATLAS_TEXT_MODEL,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+            ],
+        }],
+        "max_tokens": 256,
+    }
+    with httpx.Client(timeout=60) as client:
+        resp = client.post(
+            f"{ATLAS_LLM_BASE}/chat/completions",
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json=body,
+        )
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Atlas vision {resp.status_code}: {resp.text[:300]}")
+        payload = resp.json()
+    msg = ((payload.get("choices") or [{}])[0].get("message")) or {}
+    text = _extract_atlas_message_text(msg)
+    score, reason = _parse_vlm_json(text)
+    print(f"  [vlm] Atlas score={score:.2f}: {reason[:60]}")
+    return score >= threshold, score, reason
 
 def _extract_frame(video_path: str, at_sec: float = 1.0) -> str | None:
     """Extract a single frame from a video for VLM verification."""

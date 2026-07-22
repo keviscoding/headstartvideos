@@ -330,6 +330,7 @@ function navigateTo(page) {
     if (page === 'script-studio') { try { syncAdminChannelUI(); } catch(_) {} }
     if (page === 'resources') { try { loadResourcesPage(); } catch(_) {} }
     if (page === 'niche-finder') { try { initNicheFinderPage(); } catch(_) {} }
+    if (page === 'niche-intel') { try { initNicheIntelPage(); } catch(_) {} }
 
     window.location.hash = page;
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -3442,6 +3443,111 @@ async function _pollNicheFinderJob(jobId) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Niche Intel (admin-only Shorts competitor packs)
+// ---------------------------------------------------------------------------
+let _niPollTimer = null;
+let _niJobId = null;
+
+function initNicheIntelPage() {
+    if (!ensureAuth(initNicheIntelPage)) return;
+    const admin = isAdminUser();
+    document.getElementById('ni-gate')?.classList.toggle('hidden', admin);
+    document.getElementById('ni-workspace')?.classList.toggle('hidden', !admin);
+}
+
+async function startNicheIntel() {
+    if (!ensureAuth(startNicheIntel)) return;
+    if (!isAdminUser()) {
+        alert('Admin only.');
+        return;
+    }
+    const niche = (document.getElementById('ni-niche')?.value || '').trim() || 'niche';
+    const raw = document.getElementById('ni-channels')?.value || '';
+    const channels = raw.split(/\n+/).map(s => s.trim()).filter(Boolean);
+    if (!channels.length) {
+        alert('Paste at least one channel URL.');
+        return;
+    }
+    if (channels.length > 12) {
+        alert('Max 12 channels per run.');
+        return;
+    }
+    const videos = parseInt(document.getElementById('ni-videos')?.value || '10', 10) || 10;
+    const frames = parseInt(document.getElementById('ni-frames')?.value || '8', 10) || 8;
+
+    const btn = document.getElementById('ni-run-btn');
+    const status = document.getElementById('ni-status');
+    const dl = document.getElementById('ni-download');
+    setLoading(btn, true);
+    dl?.classList.add('hidden');
+    if (status) status.textContent = 'Starting…';
+    if (_niPollTimer) { clearInterval(_niPollTimer); _niPollTimer = null; }
+
+    try {
+        const res = await fetch('/api/niche-intel/jobs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                niche,
+                channels,
+                videos_per_channel: videos,
+                frames_per_video: frames,
+            }),
+        });
+        const data = await readJson(res, null);
+        if (!res.ok) throw new Error(data?.detail || 'Failed to start');
+        _niJobId = data.job_id;
+        if (status) status.textContent = 'Queued…';
+        _niPollTimer = setInterval(() => _pollNicheIntelJob(_niJobId), 2000);
+        await _pollNicheIntelJob(_niJobId);
+    } catch (e) {
+        setLoading(btn, false);
+        if (status) status.textContent = '';
+        alert(e.message || String(e));
+    }
+}
+
+async function _pollNicheIntelJob(jobId) {
+    const btn = document.getElementById('ni-run-btn');
+    const status = document.getElementById('ni-status');
+    const dl = document.getElementById('ni-download');
+    try {
+        const res = await fetch(`/api/niche-intel/jobs/${jobId}`);
+        const data = await readJson(res, null);
+        if (res.status === 404) {
+            if (_niPollTimer) { clearInterval(_niPollTimer); _niPollTimer = null; }
+            setLoading(btn, false);
+            return;
+        }
+        if (!res.ok) throw new Error(data?.detail || 'Job failed');
+        const lines = (data.progress || []).slice(-8).map(p => p.msg || '').filter(Boolean);
+        if (status) status.textContent = lines.join('\n') || data.status;
+
+        if (data.status === 'complete') {
+            if (_niPollTimer) { clearInterval(_niPollTimer); _niPollTimer = null; }
+            setLoading(btn, false);
+            const n = data.channels_ok || 0;
+            let msg = `Done — ${n} channel${n === 1 ? '' : 's'} packed.`;
+            if ((data.errors || []).length) {
+                msg += `\nPartial errors: ${data.errors.map(e => e.error).join('; ')}`;
+            }
+            if (status) status.textContent = msg;
+            if (dl && data.zip_ready) {
+                dl.href = `/api/niche-intel/jobs/${jobId}/download`;
+                dl.classList.remove('hidden');
+            }
+        } else if (data.status === 'error') {
+            if (_niPollTimer) { clearInterval(_niPollTimer); _niPollTimer = null; }
+            setLoading(btn, false);
+            if (status) status.textContent = data.error || 'Failed';
+            alert('Niche Intel failed: ' + (data.error || 'Unknown error'));
+        }
+    } catch (e) {
+        if (status) status.textContent = 'Still running… (' + (e.message || 'network') + ')';
+    }
+}
+
 function _nfMoney(n) {
     const x = Number(n) || 0;
     if (x >= 1000) return '$' + (x / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
@@ -4567,6 +4673,9 @@ function updateAuthUI() {
     const signedIn = !!currentUser;
     navSettings?.classList.toggle('hidden', !signedIn);
     navSettingsMobile?.classList.toggle('hidden', !signedIn);
+    const isAdmin = !!(currentUser && currentUser.is_admin);
+    document.getElementById('nav-niche-intel')?.classList.toggle('hidden', !isAdmin);
+    document.getElementById('nav-niche-intel-mobile')?.classList.toggle('hidden', !isAdmin);
     if (!signedIn && state.page === 'settings') {
         navigateTo('pipeline');
     }

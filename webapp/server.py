@@ -1130,6 +1130,12 @@ class NicheAnalyzeRequest(BaseModel):
     youtube_url: str
     minutes: int = 5
 
+class NicheIntelJobRequest(BaseModel):
+    niche: str = "niche"
+    channels: list[str] = []
+    videos_per_channel: int = 10
+    frames_per_video: int = 8
+
 class KeyTestRequest(BaseModel):
     key_name: str
     key_value: str = ""
@@ -2732,6 +2738,132 @@ def cancel_running_niche_finder_jobs(admin: dict = Depends(require_admin)):
 @app.get("/api/niche-finder/runs")
 def niche_finder_runs(limit: int = 20, admin: dict = Depends(require_admin)):
     return {"runs": list_niche_hunt_runs(limit=limit)}
+
+
+# ---------------------------------------------------------------------------
+# Niche Intel (admin-only Shorts competitor packs for LLM drag-and-drop)
+# ---------------------------------------------------------------------------
+_NICHE_INTEL_JOBS: dict[str, dict[str, Any]] = {}
+_niche_intel_lock = __import__("threading").Lock()
+
+
+def _niche_intel_job_public(job: dict) -> dict:
+    return {
+        "job_id": job.get("job_id"),
+        "status": job.get("status"),
+        "progress": list(job.get("progress") or [])[-40:],
+        "error": job.get("error") or "",
+        "niche": job.get("niche") or "",
+        "channels_ok": job.get("channels_ok") or 0,
+        "errors": job.get("errors") or [],
+        "zip_ready": bool(job.get("zip_path") and Path(job["zip_path"]).is_file()),
+        "created_at": job.get("created_at"),
+    }
+
+
+def _run_niche_intel_job(job_id: str) -> None:
+    import threading
+    with _niche_intel_lock:
+        job = _NICHE_INTEL_JOBS.get(job_id)
+    if not job:
+        return
+
+    def progress(msg: str) -> None:
+        with _niche_intel_lock:
+            j = _NICHE_INTEL_JOBS.get(job_id)
+            if not j:
+                return
+            j.setdefault("progress", []).append({"t": time.time(), "msg": msg})
+            j["progress"] = j["progress"][-80:]
+
+    try:
+        with _niche_intel_lock:
+            _NICHE_INTEL_JOBS[job_id]["status"] = "running"
+        from core.niche_intel import build_pack
+        result = build_pack(
+            niche=job.get("niche") or "niche",
+            channel_urls=list(job.get("channels") or []),
+            videos_per_channel=int(job.get("videos_per_channel") or 10),
+            frames_per_video=int(job.get("frames_per_video") or 8),
+            out_root=OUTPUT_DIR / "niche_intel",
+            progress=progress,
+        )
+        with _niche_intel_lock:
+            j = _NICHE_INTEL_JOBS.get(job_id) or {}
+            j.update({
+                "status": "complete",
+                "zip_path": result.get("zip_path") or "",
+                "pack_dir": result.get("pack_dir") or "",
+                "channels_ok": result.get("channels_ok") or 0,
+                "errors": result.get("errors") or [],
+            })
+            _NICHE_INTEL_JOBS[job_id] = j
+    except Exception as e:
+        progress(f"FAILED: {e}")
+        with _niche_intel_lock:
+            j = _NICHE_INTEL_JOBS.get(job_id) or {}
+            j["status"] = "error"
+            j["error"] = str(e)
+            _NICHE_INTEL_JOBS[job_id] = j
+
+
+@app.post("/api/niche-intel/jobs")
+def start_niche_intel_job(req: NicheIntelJobRequest, admin: dict = Depends(require_admin)):
+    import threading
+    if not config.YOUTUBE_API_KEY:
+        raise HTTPException(400, "YouTube API key not configured. Add it in Settings.")
+    channels = [c.strip() for c in (req.channels or []) if (c or "").strip()]
+    if not channels:
+        raise HTTPException(400, "Paste at least one channel URL.")
+    if len(channels) > 12:
+        raise HTTPException(400, "Max 12 channels per run.")
+
+    job_id = str(uuid.uuid4())
+    job = {
+        "job_id": job_id,
+        "status": "queued",
+        "progress": [{"t": time.time(), "msg": "Queued…"}],
+        "error": "",
+        "niche": (req.niche or "niche").strip() or "niche",
+        "channels": channels,
+        "videos_per_channel": max(1, min(int(req.videos_per_channel or 10), 30)),
+        "frames_per_video": max(2, min(int(req.frames_per_video or 8), 24)),
+        "zip_path": "",
+        "pack_dir": "",
+        "channels_ok": 0,
+        "errors": [],
+        "created_at": time.time(),
+        "user_id": admin["id"],
+    }
+    with _niche_intel_lock:
+        _NICHE_INTEL_JOBS[job_id] = job
+    threading.Thread(target=_run_niche_intel_job, args=(job_id,), daemon=True).start()
+    return _niche_intel_job_public(job)
+
+
+@app.get("/api/niche-intel/jobs/{job_id}")
+def get_niche_intel_job(job_id: str, admin: dict = Depends(require_admin)):
+    with _niche_intel_lock:
+        job = _NICHE_INTEL_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found.")
+    return _niche_intel_job_public(job)
+
+
+@app.get("/api/niche-intel/jobs/{job_id}/download")
+def download_niche_intel_job(job_id: str, admin: dict = Depends(require_admin)):
+    with _niche_intel_lock:
+        job = _NICHE_INTEL_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found.")
+    zip_path = Path(job.get("zip_path") or "")
+    if not zip_path.is_file():
+        raise HTTPException(404, "Zip not ready yet.")
+    return FileResponse(
+        str(zip_path),
+        media_type="application/zip",
+        filename=zip_path.name,
+    )
 
 
 @app.post("/api/internal/niche-finder/cron")

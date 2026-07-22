@@ -42,6 +42,7 @@
                 <nav class="hidden sm:flex items-center gap-1">
                     <button class="nav-btn active" data-page="pipeline" onclick="navigateTo('pipeline')">New video</button>
                     <button class="nav-btn" data-page="niche-finder" onclick="navigateTo('niche-finder')">Niche Finder</button>
+                    <button id="nav-niche-intel" class="nav-btn hidden" data-page="niche-intel" onclick="navigateTo('niche-intel')">Niche Intel</button>
                     <div class="relative" id="tools-dropdown">
                         <button class="nav-btn" data-page="tools" onclick="toggleToolsMenu(event)" style="position:relative;">
                             Tools
@@ -102,6 +103,7 @@
         <div id="mobile-menu" class="sm:hidden hidden px-4 py-3 space-y-1" style="border-top: 1px solid var(--app-border);">
             <button class="mobile-nav-btn" onclick="navigateTo('pipeline')">New video</button>
             <button class="mobile-nav-btn" onclick="navigateTo('niche-finder')">Niche Finder</button>
+            <button id="nav-niche-intel-mobile" class="mobile-nav-btn hidden" onclick="navigateTo('niche-intel')">Niche Intel</button>
             <button class="mobile-nav-btn" onclick="navigateTo('script-studio')">Script Studio</button>
             <button class="mobile-nav-btn" onclick="navigateTo('voiceover-studio')">Voiceover Studio</button>
             <button class="mobile-nav-btn" onclick="navigateTo('thumbnail-studio')">Thumbnail Studio</button>
@@ -881,6 +883,52 @@
                     <button id="nf-prev" type="button" class="btn-secondary" style="font-size: 13px; padding: 8px 16px;" onclick="nicheFinderPrevPage()">← Previous</button>
                     <span id="nf-page-label" class="cr-mono" style="font-size: 12px; color: var(--app-ink-3);"></span>
                     <button id="nf-next" type="button" class="btn-secondary" style="font-size: 13px; padding: 8px 16px;" onclick="nicheFinderNextPage()">Next →</button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- PAGE: Niche Intel (admin-only Shorts competitor packs) -->
+    <!-- ============================================================ -->
+    <div id="page-niche-intel" class="page-container hidden">
+        <main class="max-w-3xl mx-auto px-6 py-8">
+            <h2 class="cr-display" style="font-size: 32px; margin-bottom: 8px;">Niche Intel</h2>
+            <p style="color: var(--app-ink-2); margin-bottom: 24px; max-width: 40rem;">
+                Admin packager for Shorts competitor research. Pulls transcripts, stats, top-video comments,
+                and frame stills into a zip you can drag into an LLM. Titles are anonymized as Video 1 / Video 2
+                in the <code>for_llm/</code> folder.
+            </p>
+
+            <div id="ni-gate" class="hidden cr-surface" style="padding: 28px; margin-bottom: 24px;">
+                <h3 class="cr-display" style="font-size: 22px; margin-bottom: 8px;">Admin only</h3>
+                <p style="color: var(--app-ink-2);">Sign in with an admin account to build intel packs.</p>
+            </div>
+
+            <div id="ni-workspace" class="hidden space-y-5">
+                <div class="cr-surface" style="padding: 20px;">
+                    <label class="cr-label">Niche label</label>
+                    <input id="ni-niche" type="text" class="cr-input" placeholder="e.g. 80s fashion shorts UK" style="margin-bottom: 16px;">
+
+                    <label class="cr-label">Channel URLs (one per line, up to 12)</label>
+                    <textarea id="ni-channels" class="cr-input" rows="6" style="font-family: var(--font-mono); font-size: 13px; resize: vertical;" placeholder="https://youtube.com/@channel1&#10;https://youtube.com/@channel2&#10;https://youtube.com/@channel3"></textarea>
+
+                    <div class="flex flex-wrap items-end gap-4 mt-4">
+                        <div>
+                            <label class="cr-label">Videos / channel</label>
+                            <input id="ni-videos" type="number" class="cr-input" value="10" min="1" max="30" style="width: 120px;">
+                        </div>
+                        <div>
+                            <label class="cr-label">Frames / Short</label>
+                            <input id="ni-frames" type="number" class="cr-input" value="8" min="2" max="24" style="width: 120px;">
+                        </div>
+                        <button id="ni-run-btn" class="btn-primary" onclick="startNicheIntel()">
+                            <span class="btn-text">Build pack</span>
+                            <span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;display:inline-block;"></div> Building…</span>
+                        </button>
+                        <a id="ni-download" class="btn-secondary hidden" href="#" style="text-decoration:none;">Download zip</a>
+                    </div>
+                    <p id="ni-status" class="cr-mono" style="font-size: 12px; color: var(--app-ink-3); margin-top: 12px; white-space: pre-wrap;"></p>
                 </div>
             </div>
         </main>

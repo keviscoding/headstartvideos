@@ -47,6 +47,7 @@ _INJECT_ENV_KEYS = (
     "GROQ_API_KEY",
     "PEXELS_KEY",
     "PIXABAY_KEY",
+    "FISH_API_KEY",
     "SECRETS_KEY",
     "POSTHOG_KEY",
     "POSTHOG_HOST",

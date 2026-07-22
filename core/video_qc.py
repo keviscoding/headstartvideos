@@ -459,14 +459,32 @@ def assert_script_completeness(
     tail_probe = script_tail[:60] if script_tail else ""
     tail_present = bool(tail_probe) and tail_probe[:32] in transcript_l
 
-    passed = coverage >= 0.85 and (tail_present or words < 200)
-    severity = "ok"
+    # Duration is the hard gate. Tail matching is advisory — Whisper/scene
+    # transcripts often miss exact wording even when the full VO is present.
     if coverage < 0.55:
         severity = "critical"
         passed = False
-    elif coverage < 0.85 or (words >= 200 and not tail_present):
+    elif coverage < 0.85:
         severity = "major"
         passed = False
+    elif words >= 200 and not tail_present and coverage < 0.95:
+        severity = "major"
+        passed = False
+    else:
+        severity = "ok" if (tail_present or coverage >= 0.95) else "minor"
+        passed = True
+
+    if passed:
+        notes = (
+            "PASS — duration aligns with script"
+            + ("" if tail_present else " (ending phrase not confirmed in transcript)")
+        )
+    else:
+        notes = (
+            f"FAIL — video is {actual / 60:.1f} min but script implies "
+            f"~{expected_sec / 60:.1f} min ({int(coverage * 100)}% coverage). "
+            "Likely VO truncation (e.g. old Fish 4500-char silent cap)."
+        )
 
     return {
         "passed": passed,
@@ -476,15 +494,7 @@ def assert_script_completeness(
         "actual_sec": round(actual, 1),
         "coverage_ratio": round(coverage, 3),
         "script_tail_present_in_transcript": tail_present,
-        "notes": (
-            "PASS — duration and ending align with script"
-            if passed
-            else (
-                f"FAIL — video is {actual / 60:.1f} min but script implies "
-                f"~{expected_sec / 60:.1f} min ({int(coverage * 100)}% coverage). "
-                "Likely VO truncation (e.g. old Fish 4500-char silent cap)."
-            )
-        ),
+        "notes": notes,
     }
 
 
