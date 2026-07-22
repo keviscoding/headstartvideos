@@ -3121,6 +3121,161 @@ async def generate_storyboard_cast_look(
     return {"member": member, "cast": cast, "visual_style": style_id}
 
 
+    return {"member": member, "cast": cast, "visual_style": style_id}
+
+
+@app.post("/api/storyboard/thumbnail")
+async def storyboard_thumbnail(
+    title: str = Form(...),
+    story: str = Form(""),
+    script: str = Form(""),
+    moral: str = Form(""),
+    visual_style: str = Form(""),
+    niche_style: str = Form(""),
+    cast_json: str = Form("[]"),
+    count: int = Form(2),
+    refs: list[UploadFile] = File(default=[]),
+    admin: dict = Depends(require_admin),
+):
+    """Story-aware thumbnail: cheap gist + main cast portraits as edit refs."""
+    from core.storyboard_pack import (
+        normalize_cast,
+        resolve_visual_style,
+        suggest_storyboard_thumbnail_brief,
+    )
+    from core.thumbnail_gen import generate_thumbnail_no_refs, generate_thumbnails
+    from webapp.storage import fetch_to_local
+
+    title = (title or "").strip()
+    if not title:
+        raise HTTPException(400, "Add a title first.")
+    try:
+        cast_raw = json.loads(cast_json or "[]")
+    except Exception:
+        cast_raw = []
+    cast = normalize_cast(cast_raw if isinstance(cast_raw, list) else [])
+    style_id, _, _ = resolve_visual_style(visual_style or "")
+    n = max(1, min(int(count or 2), 3))
+
+    try:
+        brief = await asyncio.to_thread(
+            suggest_storyboard_thumbnail_brief,
+            title=title,
+            story=(story or "").strip(),
+            script=(script or "").strip(),
+            cast=cast,
+            visual_style=style_id,
+            moral=(moral or "").strip(),
+        )
+    except Exception as e:
+        print(f"[storyboard] thumb brief failed: {e}")
+        brief = {
+            "style_prompt": (
+                f"{niche_style or 'animated story YouTube thumbnail'}. "
+                f"Title: {title}. Bold emotional character faces, 16:9."
+            ),
+            "cast_focus": [],
+        }
+
+    style_prompt = " ".join(
+        p for p in [
+            (brief.get("style_prompt") or "").strip(),
+            (niche_style or "").strip(),
+        ] if p
+    )[:1400]
+
+    # Resolve cast portrait refs (prefer focus names)
+    focus = {str(n).strip().lower() for n in (brief.get("cast_focus") or []) if n}
+    cache = OUTPUT_DIR / "storyboard_thumb_refs" / str(admin["id"]) / str(int(time.time()))
+    cache.mkdir(parents=True, exist_ok=True)
+    ref_paths: list[str] = []
+
+    def _want(row: dict) -> bool:
+        if not row.get("included", True):
+            return False
+        if not focus:
+            return True
+        name = str(row.get("name") or "").strip().lower()
+        cid = str(row.get("id") or "").strip().lower()
+        return name in focus or cid in focus
+
+    prioritized = [r for r in cast if _want(r)] + [r for r in cast if not _want(r)]
+    for row in prioritized:
+        if len(ref_paths) >= 2:
+            break
+        for key in ("portrait_path", "portrait_url", "sheet_path", "sheet_url"):
+            raw = (row.get(key) or "").strip()
+            if not raw:
+                continue
+            try:
+                if raw.startswith("http"):
+                    local = fetch_to_local(raw, cache)
+                elif Path(raw).is_file():
+                    local = raw
+                else:
+                    continue
+                if local and Path(local).is_file():
+                    ref_paths.append(local)
+                    break
+            except Exception as e:
+                print(f"[storyboard] thumb cast ref skip: {e}")
+
+    # Optional channel/user refs (cap total 3)
+    for ref in refs or []:
+        if len(ref_paths) >= 3:
+            break
+        try:
+            dest = cache / f"user_{int(time.time())}_{ref.filename or 'ref.png'}"
+            with open(dest, "wb") as f:
+                f.write(await ref.read())
+            if dest.is_file() and dest.stat().st_size > 100:
+                ref_paths.append(str(dest))
+        except Exception as e:
+            print(f"[storyboard] user thumb ref failed: {e}")
+
+    out_dir = str(OUTPUT_DIR / "thumbnails" / str(admin["id"]) / str(int(time.time())))
+    try:
+        if ref_paths:
+            paths = await asyncio.to_thread(
+                generate_thumbnails,
+                title,
+                ref_paths,
+                style_prompt,
+                "",
+                n,
+                out_dir,
+            )
+        else:
+            paths = await asyncio.to_thread(
+                generate_thumbnail_no_refs,
+                title,
+                style_prompt,
+                "",
+                out_dir,
+                n,
+            )
+        if not paths:
+            raise ValueError("No thumbnails generated")
+        staged_paths, urls = [], []
+        for i, p in enumerate(paths[:n]):
+            sp, su = _stage_user_media(p, admin["id"], f"sb_thumb_{i}", "image/png")
+            staged_paths.append(sp)
+            urls.append(su)
+        return {
+            "thumbnails": urls,
+            "paths": staged_paths,
+            "brief": {
+                "hook": brief.get("hook"),
+                "emotion": brief.get("emotion"),
+                "cast_focus": brief.get("cast_focus"),
+                "composition": brief.get("composition"),
+            },
+            "visual_style": style_id,
+        }
+    except Exception as e:
+        raise HTTPException(_provider_http_status(e), f"Thumbnail generation failed: {e}")
+
+
 @app.post("/api/storyboard/suggest-morals")
 async def storyboard_suggest_morals(
     req: StoryboardSuggestMoralsRequest,
@@ -3313,24 +3468,33 @@ async def get_storyboard_job(job_id: str, admin: dict = Depends(require_admin)):
             raise HTTPException(404, "Job not found.")
         if row.get("user_id") != admin["id"] and not _is_admin_email(admin.get("email", "")):
             raise HTTPException(403, "Access denied")
-        if (row.get("recipe") or "") != "storyboard_pack":
+        recipe = (row.get("recipe") or "")
+        if recipe not in ("storyboard_pack", "storyboard_assemble"):
             raise HTTPException(404, "Not a storyboard job.")
         job = hydrate_job_from_row(row)
         _jobs[job_id] = job
 
     result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    kind = result.get("kind") or ((job.get("request") or {}).get("recipe") or "storyboard_pack")
     return {
         "job_id": job_id,
         "status": job.get("status") or "queued",
         "progress": list(job.get("progress") or [])[-40:],
         "error": job.get("error") or "",
+        "kind": kind,
         "zip_ready": bool(result.get("zip_url") or result.get("zip_path") or result.get("zip_ready")),
         "zip_url": result.get("zip_url") or "",
+        "video_ready": bool(result.get("video_url") or result.get("video_path") or result.get("video_ready")),
+        "video_url": result.get("video_url") or "",
+        "match_report": result.get("match_report") or [],
         "title": result.get("title") or (job.get("request") or {}).get("title") or "",
         "beat_count": result.get("beat_count") or len(result.get("beats") or []),
         "target_minutes": result.get("target_minutes") or 0,
+        "duration_sec": result.get("duration_sec") or 0,
+        "caption_count": result.get("caption_count") or 0,
         "beats": result.get("beats") or [],
         "pack_mode": result.get("pack_mode") or (job.get("request") or {}).get("pack_mode") or "full",
+        "parent_job_id": result.get("parent_job_id") or (job.get("request") or {}).get("parent_job_id") or "",
     }
 
 
@@ -3488,6 +3652,20 @@ async def download_storyboard_job(job_id: str, admin: dict = Depends(require_adm
         raise HTTPException(403, "Access denied")
 
     result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    # Assemble MP4
+    video_url = (result.get("video_url") or "").strip()
+    if video_url.startswith("http://") or video_url.startswith("https://"):
+        return RedirectResponse(video_url)
+    video_path = Path(result.get("video_path") or result.get("output_path") or "")
+    if video_path.is_file() and video_path.suffix.lower() in (".mp4", ".mov", ".webm", ".mkv"):
+        return FileResponse(
+            str(video_path),
+            media_type="video/mp4",
+            filename=video_path.name,
+        )
+    if video_url.startswith("/api/files/"):
+        return RedirectResponse(video_url)
+
     zip_url = (result.get("zip_url") or "").strip()
     if zip_url.startswith("http://") or zip_url.startswith("https://"):
         return RedirectResponse(zip_url)
@@ -3500,8 +3678,282 @@ async def download_storyboard_job(job_id: str, admin: dict = Depends(require_adm
         )
     if zip_url.startswith("/api/files/"):
         return RedirectResponse(zip_url)
-    raise HTTPException(404, "Zip not ready yet.")
+    raise HTTPException(404, "Download not ready yet.")
 
+
+def _storyboard_pack_job_or_404(job_id: str, admin: dict) -> dict:
+    job = _jobs.get(job_id)
+    if not job:
+        row = get_cook_job(job_id)
+        if not row:
+            raise HTTPException(404, "Job not found.")
+        job = hydrate_job_from_row(row)
+        _jobs[job_id] = job
+    else:
+        _refresh_job_from_db(job_id, job)
+    if job.get("user_id") != admin["id"] and not _is_admin_email(admin.get("email", "")):
+        raise HTTPException(403, "Access denied")
+    recipe = ((job.get("request") or {}).get("recipe") or "").strip()
+    row_recipe = (get_cook_job(job_id) or {}).get("recipe") or ""
+    if recipe not in ("storyboard_pack", "") and row_recipe not in ("storyboard_pack", ""):
+        # allow if result kind is pack
+        kind = ((job.get("result") or {}) if isinstance(job.get("result"), dict) else {}).get("kind")
+        if kind != "storyboard_pack":
+            raise HTTPException(400, "Assemble requires a completed Storyboard Pack job.")
+    return job
+
+
+async def _save_assemble_uploads(
+    files: list[UploadFile],
+    dest_dir: Path,
+) -> list[Path]:
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    saved: list[Path] = []
+    for f in files or []:
+        name = Path(f.filename or "clip.bin").name
+        dest = dest_dir / name
+        with open(dest, "wb") as out:
+            out.write(await f.read())
+        if dest.is_file() and dest.stat().st_size > 100:
+            saved.append(dest)
+    return saved
+
+
+@app.post("/api/storyboard/jobs/{job_id}/assemble/match")
+async def match_storyboard_assemble(
+    job_id: str,
+    clips: list[UploadFile] = File(default=[]),
+    admin: dict = Depends(require_admin),
+):
+    """Upload I2V clips (or a zip) and preview filename/pHash matching — no stitch yet."""
+    from core.storyboard_assemble import (
+        extract_clips_from_uploads,
+        load_pack_beats,
+        match_clips_to_beats,
+        parse_clip_index,
+    )
+
+    job = _storyboard_pack_job_or_404(job_id, admin)
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    if not (result.get("zip_ready") or result.get("beats") or job.get("status") == "complete"):
+        raise HTTPException(400, "Finish the storyboard pack first, then assemble.")
+
+    stamp = int(time.time())
+    stage = OUTPUT_DIR / "storyboard_assemble_uploads" / str(admin["id"]) / f"{job_id}_{stamp}"
+    saved = await _save_assemble_uploads(clips, stage)
+    if not saved:
+        raise HTTPException(400, "Upload at least one .mp4/.webm/.mov clip or a zip of clips.")
+
+    ready_dir = stage / "clips"
+    clip_paths = extract_clips_from_uploads(saved, ready_dir)
+    if not clip_paths:
+        raise HTTPException(400, "No video clips found in the upload.")
+
+    pack_dir = Path(result.get("pack_dir") or "")
+    if not pack_dir.is_dir():
+        pack_dir = None
+    beats = load_pack_beats(pack_dir=pack_dir, beats=result.get("beats") or [])
+    matched = match_clips_to_beats(
+        clip_paths, beats, pack_dir=pack_dir, work_dir=stage / "match",
+    )
+    # Also surface unmatched uploads for the UI
+    matched_names = {Path(m["clip"]).name for m in matched}
+    unmatched = [
+        {
+            "filename": c.name,
+            "guess_index": parse_clip_index(c.name),
+        }
+        for c in clip_paths
+        if c.name not in matched_names
+    ]
+    # Persist staging id for assemble start
+    staging_id = f"{job_id}_{stamp}"
+    meta_path = stage / "staging.json"
+    meta_path.write_text(json.dumps({
+        "staging_id": staging_id,
+        "clips_dir": str(ready_dir),
+        "parent_job_id": job_id,
+        "user_id": admin["id"],
+        "match_report": matched,
+    }), encoding="utf-8")
+
+    return {
+        "staging_id": staging_id,
+        "matched": [
+            {
+                "index": m["index"],
+                "filename": Path(m["clip"]).name,
+                "method": m.get("method"),
+                "confidence": m.get("confidence"),
+                "dialogue": (m.get("dialogue") or "")[:120],
+            }
+            for m in matched
+        ],
+        "unmatched": unmatched,
+        "beat_count": len(beats),
+        "matched_count": len(matched),
+    }
+
+
+@app.post("/api/storyboard/jobs/{job_id}/assemble")
+async def start_storyboard_assemble(
+    job_id: str,
+    staging_id: str = Form(""),
+    burn_captions: str = Form("1"),
+    clips: list[UploadFile] = File(default=[]),
+    admin: dict = Depends(require_admin),
+):
+    """Start assemble cook from a prior match staging_id and/or fresh clip uploads."""
+    from core.storyboard_assemble import extract_clips_from_uploads, load_pack_beats
+
+    job = _storyboard_pack_job_or_404(job_id, admin)
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    if not (result.get("zip_ready") or result.get("beats") or job.get("status") == "complete"):
+        raise HTTPException(400, "Finish the storyboard pack first, then assemble.")
+
+    clips_dir: Path | None = None
+    sid = (staging_id or "").strip()
+    if sid:
+        stage = OUTPUT_DIR / "storyboard_assemble_uploads" / str(admin["id"]) / sid
+        meta_path = stage / "staging.json"
+        if meta_path.is_file():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                cand = Path(meta.get("clips_dir") or "")
+                if cand.is_dir():
+                    clips_dir = cand
+            except Exception:
+                pass
+
+    if clips:
+        stamp = int(time.time())
+        stage = OUTPUT_DIR / "storyboard_assemble_uploads" / str(admin["id"]) / f"{job_id}_{stamp}"
+        saved = await _save_assemble_uploads(clips, stage)
+        ready = extract_clips_from_uploads(saved, stage / "clips")
+        if ready:
+            clips_dir = stage / "clips"
+            sid = f"{job_id}_{stamp}"
+
+    if not clips_dir or not clips_dir.is_dir() or not any(clips_dir.iterdir()):
+        raise HTTPException(
+            400,
+            "Upload your I2V clips (or run Match first), then assemble.",
+        )
+
+    # Zip + upload clips so Fly cooks can fetch them (local paths die with the web dyno).
+    clips_zip_local = clips_dir.parent / "clips_bundle.zip"
+    clips_zip_url = ""
+    try:
+        import zipfile as _zf
+        with _zf.ZipFile(clips_zip_local, "w", _zf.ZIP_DEFLATED) as zf:
+            for p in sorted(clips_dir.iterdir()):
+                if p.is_file() and p.suffix.lower() in (".mp4", ".webm", ".mov", ".mkv", ".m4v"):
+                    zf.write(p, arcname=p.name)
+        if clips_zip_local.is_file() and clips_zip_local.stat().st_size > 200:
+            from webapp import storage as _storage
+            clips_zip_url = _storage.store_file(
+                str(clips_zip_local),
+                f"storyboard/{admin['id']}/assemble_clips_{int(time.time())}_{job_id}.zip",
+            )
+    except Exception as e:
+        print(f"[sb-assemble] clips zip upload failed: {e}")
+        if not COOK_ON_WEB:
+            raise HTTPException(
+                500,
+                "Could not stage clips for assemble. Check storage and try again.",
+            )
+
+    pack_dir = Path(result.get("pack_dir") or "")
+    if not pack_dir.is_dir():
+        pack_dir_s = ""
+    else:
+        pack_dir_s = str(pack_dir)
+
+    beats = load_pack_beats(
+        pack_dir=Path(pack_dir_s) if pack_dir_s else None,
+        beats=result.get("beats") or [],
+    )
+    title = (
+        (result.get("title") or "")
+        or ((job.get("request") or {}).get("title") or "")
+        or "Storyboard"
+    ).strip()
+
+    assemble_id = str(uuid.uuid4())
+    req_payload = {
+        "recipe": "storyboard_assemble",
+        "parent_job_id": job_id,
+        "title": title,
+        "clips_dir": str(clips_dir),
+        "clips_zip_url": clips_zip_url or "",
+        "pack_dir": pack_dir_s,
+        "beats": beats,
+        "burn_captions": (burn_captions or "1").strip() not in ("0", "false", "no"),
+        "staging_id": sid,
+        "credits_charged": 0,
+        "is_admin": True,
+        "notify_email": admin.get("email") or "",
+    }
+    try:
+        create_cook_job(
+            job_id=assemble_id,
+            user_id=admin["id"],
+            recipe="storyboard_assemble",
+            title=f"Assemble · {title}"[:120],
+            request_json=json.dumps(req_payload),
+            credit_deducted=False,
+            lite_mode=False,
+            status="web_queued" if COOK_ON_WEB else "queued",
+        )
+    except Exception as e:
+        print(f"[sb-assemble] create_cook_job failed: {e}")
+        raise HTTPException(500, "Could not queue assemble.")
+
+    ajob = {
+        "status": "queued",
+        "progress": [{"time": time.time(), "message": "Queued assemble…", "phase": "queued"}],
+        "result": None,
+        "request": req_payload,
+        "user_id": admin["id"],
+        "credit_deducted": False,
+        "lite_mode": False,
+        "error": "",
+        "created_at": time.time(),
+    }
+    _jobs[assemble_id] = ajob
+
+    if COOK_ON_WEB:
+        job_queue.enqueue(assemble_id)
+    else:
+        if COOK_ON_FLY:
+            try:
+                from webapp.fly_bridge import spawn_cook as fly_spawn
+                if fly_spawn(assemble_id):
+                    ajob["progress"].append({
+                        "time": time.time(),
+                        "message": "Starting assemble on Fly…",
+                        "phase": "queued",
+                    })
+                else:
+                    print(f"[sb-assemble] Fly spawn failed for {assemble_id}")
+            except Exception as e:
+                print(f"[sb-assemble] Fly bridge error: {e}")
+        try:
+            update_cook_job(assemble_id, progress_json=json.dumps(ajob["progress"]), status="queued")
+        except Exception:
+            pass
+
+    track(admin["id"], "storyboard_assemble_queued", {
+        "job_id": assemble_id,
+        "parent_job_id": job_id,
+        "clip_count": len(list(clips_dir.iterdir())),
+    })
+    return {
+        "job_id": assemble_id,
+        "parent_job_id": job_id,
+        "status": "queued",
+        "staging_id": sid,
+    }
 
 @app.post("/api/internal/niche-finder/cron")
 def niche_finder_cron(

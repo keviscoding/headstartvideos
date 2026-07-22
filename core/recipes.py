@@ -55,7 +55,7 @@ RECIPES = {
         "label": "Storyboard Pack",
         "description": "Dialogue story → timed scene stills + image-to-video "
                        "prompts in a downloadable zip. Animate elsewhere, "
-                       "assemble later in ChannelRecipe.",
+                       "then assemble clips back into a captioned video.",
         "requires_keys": ["ATLASCLOUD_KEY"],
         "optional_keys": [],
         "inputs": ["script", "topic"],

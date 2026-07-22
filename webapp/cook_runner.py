@@ -21,6 +21,7 @@ _COST_PENCE_PER_MIN = {
     "broll_cinematic": 12.0,
     "avatar_plus_broll": 40.0,
     "storyboard_pack": 8.0,
+    "storyboard_assemble": 4.0,
 }
 
 
@@ -125,6 +126,14 @@ def run_cook_job(
     # Storyboard pack: stills + I2V prompts zip (no voiceover / video pipeline)
     if recipe == "storyboard_pack":
         return _run_storyboard_pack_job(
+            job_id,
+            job,
+            track=track,
+            capture_error=capture_error,
+            cancel_check=cancel_check,
+        )
+    if recipe == "storyboard_assemble":
+        return _run_storyboard_assemble_job(
             job_id,
             job,
             track=track,
@@ -747,3 +756,176 @@ def _run_storyboard_pack_job(
             "error_class": type(e).__name__,
         })
         print(f"[storyboard] job {job_id} failed: {e}")
+
+
+def _run_storyboard_assemble_job(
+    job_id: str,
+    job: dict[str, Any],
+    *,
+    track: Callable[..., None] | None = None,
+    capture_error: Callable[..., None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+) -> None:
+    """Match I2V clips to pack beats, stitch, burn dialogue captions → MP4."""
+    from webapp.database import update_cook_job
+    from webapp import storage
+
+    def _track(uid, event, props=None):
+        if track:
+            track(uid, event, props)
+
+    def _capture(exc, ctx=None):
+        if capture_error:
+            capture_error(exc, ctx)
+
+    req_data = job.get("request") or {}
+    user_id = job.get("user_id")
+    started_at = time.time()
+    job["status"] = "running"
+    clips_dir = Path(str(req_data.get("clips_dir") or ""))
+    pack_dir_s = str(req_data.get("pack_dir") or "").strip()
+    pack_dir = Path(pack_dir_s) if pack_dir_s else None
+    beats = req_data.get("beats") if isinstance(req_data.get("beats"), list) else []
+    title = (req_data.get("title") or "storyboard").strip()
+    burn_captions = bool(req_data.get("burn_captions", True))
+    parent_job_id = (req_data.get("parent_job_id") or "").strip()
+
+    _progress_persist_at = [0.0]
+
+    def on_progress(msg: str, phase: str = "running"):
+        if job.get("status") == "cancelled" or (cancel_check and cancel_check()):
+            job["status"] = "cancelled"
+            raise RuntimeError("Cancelled by user")
+        job["progress"].append({"time": time.time(), "message": msg, "phase": phase})
+        now = time.time()
+        if now - _progress_persist_at[0] >= 2.0:
+            _progress_persist_at[0] = now
+            try:
+                update_cook_job(
+                    job_id,
+                    status=job.get("status"),
+                    progress_json=json.dumps(job["progress"][-60:]),
+                    heartbeat=True,
+                )
+            except Exception as e:
+                print(f"[sb-assemble] persist progress failed: {e}")
+
+    try:
+        from core.storyboard_assemble import (
+            assemble_storyboard_video,
+            extract_clips_from_uploads,
+            load_pack_beats,
+            match_clips_to_beats,
+        )
+
+        on_progress("Loading clips…")
+        work = ROOT / "output" / "storyboard_assemble" / job_id
+        work.mkdir(parents=True, exist_ok=True)
+        local_clips = work / "clips"
+        local_clips.mkdir(parents=True, exist_ok=True)
+
+        clips_zip_url = (req_data.get("clips_zip_url") or "").strip()
+        if clips_zip_url:
+            from webapp.storage import fetch_to_local
+            try:
+                zip_local = fetch_to_local(clips_zip_url, work / "incoming")
+                clips = extract_clips_from_uploads([zip_local], local_clips)
+            except Exception as e:
+                raise RuntimeError(f"Could not download clips bundle: {e}") from e
+        elif clips_dir.is_dir():
+            clip_files = list(clips_dir.iterdir())
+            clips = extract_clips_from_uploads(clip_files, local_clips)
+        else:
+            raise RuntimeError("Clips folder missing — re-upload your I2V clips.")
+
+        if not clips:
+            raise RuntimeError("No video clips found. Upload .mp4/.webm/.mov or a zip.")
+
+        # Prefer local pack_dir; else fetch stills via beat image_urls during match
+        if pack_dir and not pack_dir.is_dir():
+            pack_dir = None
+        beat_rows = load_pack_beats(pack_dir=pack_dir, beats=beats)
+        if not beat_rows:
+            raise RuntimeError("No pack scenes found to match against.")
+
+        on_progress(f"Matching {len(clips)} clip(s) to {len(beat_rows)} scenes…")
+        matched = match_clips_to_beats(
+            clips, beat_rows, pack_dir=pack_dir, work_dir=work / "match",
+        )
+        if not matched:
+            raise RuntimeError(
+                "Could not match any clips. Keep filenames like 001_scene.mp4 "
+                "or upload clips that visually match the stills."
+            )
+        on_progress(f"Matched {len(matched)}/{len(beat_rows)} scenes — assembling…")
+
+        out_mp4 = work / f"{job_id}_assembled.mp4"
+        result = assemble_storyboard_video(
+            matched=matched,
+            output_path=out_mp4,
+            work_dir=work / "build",
+            progress=on_progress,
+            burn_captions=burn_captions,
+        )
+
+        video_local = result["output_path"]
+        video_url = ""
+        try:
+            video_url = storage.store_file(
+                video_local,
+                f"storyboard/{user_id or 'anon'}/{int(time.time())}_{job_id}_assembled.mp4",
+            )
+        except Exception as e:
+            print(f"[sb-assemble] Spaces upload failed (local path kept): {e}")
+
+        meta = {
+            "kind": "storyboard_assemble",
+            "title": title,
+            "parent_job_id": parent_job_id,
+            "video_path": video_local,
+            "video_url": video_url,
+            "output_path": video_local,
+            "match_report": result.get("match_report") or [],
+            "beat_count": result.get("beat_count") or len(matched),
+            "duration_sec": result.get("duration_sec") or 0,
+            "caption_count": result.get("caption_count") or 0,
+            "video_ready": True,
+        }
+        job["status"] = "complete"
+        job["result"] = meta
+        job["error"] = ""
+        update_cook_job(
+            job_id,
+            status="complete",
+            progress_json=json.dumps(job["progress"][-60:]),
+            result_json=json.dumps(meta),
+            finished=True,
+        )
+        on_progress("Video ready — download your MP4.")
+        _track(user_id or "anon", "storyboard_assemble_complete", {
+            "job_id": job_id,
+            "parent_job_id": parent_job_id,
+            "beat_count": meta["beat_count"],
+            "duration_sec": round(time.time() - started_at, 1),
+        })
+    except Exception as e:
+        if job.get("status") == "cancelled" or "Cancelled by user" in str(e):
+            job["status"] = "cancelled"
+            job["error"] = "Cancelled by user"
+            try:
+                update_cook_job(job_id, status="cancelled", error=job["error"], finished=True)
+            except Exception:
+                pass
+            return
+        job["status"] = "error"
+        job["error"] = str(e)
+        _capture(e, {"job_id": job_id, "recipe": "storyboard_assemble", "user_id": user_id})
+        try:
+            update_cook_job(job_id, status="error", error=str(e), finished=True)
+        except Exception:
+            pass
+        _track(user_id or "anon", "storyboard_assemble_failed", {
+            "job_id": job_id,
+            "error_class": type(e).__name__,
+        })
+        print(f"[sb-assemble] job {job_id} failed: {e}")

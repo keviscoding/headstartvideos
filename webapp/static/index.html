@@ -182,9 +182,11 @@
                     <div class="step-line"></div>
                     <div class="step-indicator" data-sb-step="2"><div class="step-dot" onclick="goToCompletedStep('sb-cast')">2</div><span class="step-label">Cast</span></div>
                     <div class="step-line"></div>
-                    <div class="step-indicator" data-sb-step="3"><div class="step-dot" onclick="goToCompletedStep('storyboard')">3</div><span class="step-label">Episode</span></div>
+                    <div class="step-indicator" data-sb-step="3"><div class="step-dot" onclick="goToCompletedStep('storyboard')">3</div><span class="step-label">Story</span></div>
                     <div class="step-line"></div>
-                    <div class="step-indicator" data-sb-step="4"><div class="step-dot" onclick="goToCompletedStep('sb-pack')">4</div><span class="step-label">Pack</span></div>
+                    <div class="step-indicator" data-sb-step="4"><div class="step-dot" onclick="goToCompletedStep('sb-pack')">4</div><span class="step-label">Board</span></div>
+                    <div class="step-line"></div>
+                    <div class="step-indicator" data-sb-step="5"><div class="step-dot" onclick="goToCompletedStep('sb-assemble')">5</div><span class="step-label">Assemble</span></div>
                 </div>
             </div>
         </div>
@@ -238,7 +240,7 @@
                     </p>
                     <div class="flex justify-between items-center mt-7 pt-5" style="border-top: 1px solid var(--app-border);">
                         <button class="btn-ghost" type="button" onclick="goToStep(1)">Recipe</button>
-                        <span class="cr-mono">Step 2 of 4</span>
+                        <span class="cr-mono">Step 2 of 5</span>
                         <button id="btn-sb-cast-next" class="btn-primary" type="button" onclick="sbGoToEpisode()">Next: Story</button>
                     </div>
                 </div>
@@ -331,7 +333,7 @@
                     </div>
                     <div class="flex justify-between items-center mt-7 pt-5" style="border-top: 1px solid var(--app-border);">
                         <button class="btn-ghost" type="button" onclick="goToStep('sb-cast')">Cast</button>
-                        <span class="cr-mono">Step 3 of 4</span>
+                        <span class="cr-mono">Step 3 of 5</span>
                         <span></span>
                     </div>
                 </div>
@@ -379,11 +381,66 @@
                     <div id="sb-progress" class="hidden cr-surface mt-4" style="padding: 14px; max-height: 140px; overflow: auto; font-family: var(--font-mono); font-size: 12px; color: var(--app-ink-2);"></div>
                     <div id="sb-result" class="hidden mt-5" style="padding: 16px; border: 1px solid var(--app-border); border-radius: var(--radius-md);">
                         <p id="sb-result-summary" style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink); margin-bottom: 12px;"></p>
-                        <a id="sb-download" class="btn-primary" href="#" download>Download pack zip</a>
+                        <div class="flex flex-wrap gap-2">
+                            <a id="sb-download" class="btn-primary" href="#" download>Download pack zip</a>
+                            <button id="btn-sb-goto-assemble" type="button" class="btn-secondary hidden" style="font-size:13px;padding:10px 16px;">
+                                Assemble video from clips
+                            </button>
+                        </div>
                     </div>
                     <div class="flex justify-between items-center mt-7 pt-5" style="border-top: 1px solid var(--app-border);">
-                        <button class="btn-ghost" type="button" onclick="goToStep('storyboard')">Episode</button>
-                        <span class="cr-mono">Step 4 of 4</span>
+                        <button class="btn-ghost" type="button" onclick="goToStep('storyboard')">Story</button>
+                        <span class="cr-mono">Step 4 of 5</span>
+                        <button class="btn-ghost" type="button" id="btn-sb-board-next-assemble" onclick="goToStep('sb-assemble')">Assemble →</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Storyboard: assemble I2V clips -->
+            <section id="step-sb-assemble" class="step-panel hidden">
+                <div class="cr-panel">
+                    <div class="sb-journey" aria-label="Craft journey">
+                        <span class="sb-journey-step is-done">1 Recipe</span>
+                        <span class="sb-journey-step is-done">2 Cast</span>
+                        <span class="sb-journey-step is-done">3 Story</span>
+                        <span class="sb-journey-step is-done">4 Board</span>
+                        <span class="sb-journey-step is-active">5 Assemble</span>
+                    </div>
+                    <div class="mb-6">
+                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Assemble your video</h2>
+                        <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">
+                            Animate the pack stills in Kling, Seedance, Wan, etc. Keep filenames like <span class="cr-mono">001_</span>, <span class="cr-mono">002_</span>…
+                            Then drop the clips here — we match scenes and stitch with dialogue captions.
+                        </p>
+                    </div>
+                    <div id="sb-assemble-drop" class="cr-surface" style="padding:28px;border:1px dashed var(--app-border);border-radius:var(--radius-md);text-align:center;cursor:pointer;">
+                        <p style="font-family:var(--font-body);font-size:15px;color:var(--app-ink);margin:0 0 8px;">Drop clips or a zip here</p>
+                        <p style="font-family:var(--font-body);font-size:13px;color:var(--app-ink-3);margin:0 0 14px;">.mp4 / .webm / .mov — or one zip of those</p>
+                        <label class="btn-secondary" style="font-size:13px;padding:8px 14px;cursor:pointer;display:inline-flex;">
+                            Choose files
+                            <input id="sb-assemble-files" type="file" accept="video/*,.zip" multiple class="hidden">
+                        </label>
+                        <p id="sb-assemble-file-hint" style="font-family:var(--font-mono);font-size:12px;color:var(--app-ink-3);margin-top:12px;"></p>
+                    </div>
+                    <div id="sb-assemble-match" class="hidden mt-5"></div>
+                    <div class="flex flex-wrap gap-2 mt-5">
+                        <button id="btn-sb-assemble-match" type="button" class="btn-secondary" style="font-size:13px;padding:10px 16px;" disabled>
+                            <span class="btn-text">Preview match</span>
+                            <span class="btn-loading hidden"><span class="cr-spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;"></span> Matching…</span>
+                        </button>
+                        <button id="btn-sb-assemble-run" type="button" class="btn-primary" style="font-size:13px;padding:10px 16px;" disabled>
+                            <span class="btn-text">Assemble video</span>
+                            <span class="btn-loading hidden"><span class="cr-spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;"></span> Assembling…</span>
+                        </button>
+                    </div>
+                    <div id="sb-assemble-progress" class="hidden cr-surface mt-4" style="padding: 14px; max-height: 140px; overflow: auto; font-family: var(--font-mono); font-size: 12px; color: var(--app-ink-2);"></div>
+                    <div id="sb-assemble-result" class="hidden mt-5" style="padding: 16px; border: 1px solid var(--app-border); border-radius: var(--radius-md);">
+                        <p id="sb-assemble-summary" style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink); margin-bottom: 12px;"></p>
+                        <a id="sb-assemble-download" class="btn-primary" href="#" download>Download MP4</a>
+                    </div>
+                    <div class="flex justify-between items-center mt-7 pt-5" style="border-top: 1px solid var(--app-border);">
+                        <button class="btn-ghost" type="button" onclick="goToStep('sb-pack')">Board</button>
+                        <span class="cr-mono">Step 5 of 5</span>
                         <span></span>
                     </div>
                 </div>

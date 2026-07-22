@@ -617,6 +617,101 @@ def suggest_morals_from_story(
     return out
 
 
+def suggest_storyboard_thumbnail_brief(
+    *,
+    title: str = "",
+    story: str = "",
+    script: str = "",
+    cast: list[dict[str, Any]] | None = None,
+    visual_style: str = "",
+    moral: str = "",
+) -> dict[str, Any]:
+    """Cheap LLM: one thumbnail concept from a short story gist + main cast (not full script)."""
+    from core.atlas_llm import generate_text
+
+    sid, style_lock, _ = resolve_visual_style(visual_style)
+    label = VISUAL_STYLE_PRESETS.get(sid, {}).get("label", "3D Pixar-lite")
+    gist_src = (story or "").strip() or (script or "").strip()
+    if len(gist_src) > 800:
+        gist_src = gist_src[:800] + "…"
+    cast_lines: list[str] = []
+    for row in normalize_cast(cast):
+        if not row.get("included", True):
+            continue
+        name = str(row.get("name") or row.get("id") or "").strip()
+        look = str(row.get("look_prompt") or "").strip()
+        if not name:
+            continue
+        cast_lines.append(f"- {name}: {look[:120]}" if look else f"- {name}")
+        if len(cast_lines) >= 6:
+            break
+    cast_block = "\n".join(cast_lines) if cast_lines else "(no cast listed)"
+    moral_line = (moral or "").strip()
+    raw = generate_text(
+        (
+            f"Title: {(title or 'Untitled').strip()}\n"
+            f"Visual style: {label}\n"
+            f"{'Optional takeaway: ' + moral_line + chr(10) if moral_line else ''}"
+            f"Story gist (truncated):\n{gist_src or '(title only)'}\n\n"
+            f"Cast:\n{cast_block}\n\n"
+            "Propose ONE YouTube thumbnail concept for this animated story. "
+            "Pick 1–2 main characters only. Keep it clickable and emotional.\n"
+            "Output ONLY JSON:\n"
+            '{"hook":"short hook line for the image mood",'
+            '"emotion":"one emotion word",'
+            '"cast_focus":["Name"],'
+            '"composition":"one sentence describing the thumbnail frame"}\n'
+        ),
+        system=(
+            f"You design {label} YouTube thumbnails for animation channels. "
+            "Output ONLY valid JSON. No markdown."
+        ),
+        max_tokens=400,
+        temperature=0.55,
+    )
+    data = _parse_json_obj(raw) or {}
+    hook = str(data.get("hook") or "").strip() or "Emotional character close-up"
+    emotion = str(data.get("emotion") or "").strip() or "dramatic"
+    composition = str(data.get("composition") or "").strip() or (
+        "Bold character faces filling the frame, cinematic lighting"
+    )
+    focus_raw = data.get("cast_focus") if isinstance(data, dict) else None
+    focus: list[str] = []
+    if isinstance(focus_raw, list):
+        for n in focus_raw:
+            s = str(n or "").strip()
+            if s and s not in focus:
+                focus.append(s)
+            if len(focus) >= 2:
+                break
+    if not focus and cast_lines:
+        # Fallback: first 1–2 included cast names
+        for row in normalize_cast(cast):
+            if not row.get("included", True):
+                continue
+            nm = str(row.get("name") or "").strip()
+            if nm:
+                focus.append(nm)
+            if len(focus) >= 2:
+                break
+    style_prompt = (
+        f"{label} animated YouTube thumbnail. {style_lock}. "
+        f"Hook: {hook}. Emotion: {emotion}. Composition: {composition}. "
+        f"Feature: {', '.join(focus) if focus else 'main characters'}. "
+        "Large expressive faces, high click appeal, clean 16:9, "
+        "bold readable title text if appropriate, no watermark, no logos."
+    )
+    return {
+        "hook": hook,
+        "emotion": emotion,
+        "cast_focus": focus,
+        "composition": composition,
+        "visual_style": sid,
+        "style_label": label,
+        "style_prompt": style_prompt,
+    }
+
+
 def generate_beat_sheet(
     *,
     title: str,

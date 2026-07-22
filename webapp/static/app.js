@@ -387,6 +387,7 @@ function updateStepperActive(n) {
         if (n === 'sb-cast') active = 2;
         else if (n === 'storyboard') active = 3;
         else if (n === 'sb-pack') active = 4;
+        else if (n === 'sb-assemble') active = 5;
         else if (n === 2) active = 3; // title ideas live inside episode flow
         else if (typeof n === 'number' && n >= 3) active = 4;
         document.querySelectorAll('#stepper-storyboard .step-indicator').forEach(ind => {
@@ -422,6 +423,7 @@ function goToStep(n) {
     if (n === 'storyboard') panelId = 'step-storyboard';
     else if (n === 'sb-cast') panelId = 'step-sb-cast';
     else if (n === 'sb-pack') panelId = 'step-sb-pack';
+    else if (n === 'sb-assemble') panelId = 'step-sb-assemble';
     else panelId = `step-${n}`;
     const panel = document.getElementById(panelId);
     if (panel) {
@@ -450,14 +452,19 @@ function goToStep(n) {
 }
 
 function goToCompletedStep(n) {
-    if (n === 'sb-cast' || n === 'storyboard' || n === 'sb-pack') {
+    if (n === 'sb-cast' || n === 'storyboard' || n === 'sb-pack' || n === 'sb-assemble') {
         if (!isStoryboardRecipe()) return;
-        if (n === 'storyboard' || n === 'sb-pack') {
+        if (n === 'storyboard' || n === 'sb-pack' || n === 'sb-assemble') {
             if (!_sbCastHasLook()) {
                 alert('Generate at least one character look first.');
                 goToStep('sb-cast');
                 return;
             }
+        }
+        if (n === 'sb-assemble' && !_sbJobId) {
+            alert('Generate a storyboard pack first, then assemble.');
+            goToStep('storyboard');
+            return;
         }
         goToStep(n);
         return;
@@ -5014,6 +5021,10 @@ async function openStripePortal() {
 // ---------------------------------------------------------------------------
 let _sbPollTimer = null;
 let _sbJobId = null;
+let _sbAssembleJobId = null;
+let _sbAssembleStagingId = '';
+let _sbAssembleFiles = [];
+let _sbAssemblePollTimer = null;
 let _sbThumbPath = '';
 let _sbThumbUrl = '';
 let _sbThumbRefs = [];
@@ -5392,6 +5403,209 @@ function bindStoryboardPackUI() {
     document.getElementById('btn-sb-generate')?.addEventListener('click', () => startStoryboardPack('full'));
     document.getElementById('btn-sb-continue-full')?.addEventListener('click', () => startStoryboardPack('full', { fromPreview: true }));
     document.getElementById('btn-sb-regen-beat')?.addEventListener('click', regenSelectedBeat);
+    document.getElementById('btn-sb-goto-assemble')?.addEventListener('click', () => goToStep('sb-assemble'));
+    document.getElementById('btn-sb-assemble-match')?.addEventListener('click', matchStoryboardAssemble);
+    document.getElementById('btn-sb-assemble-run')?.addEventListener('click', runStoryboardAssemble);
+    const drop = document.getElementById('sb-assemble-drop');
+    const fileIn = document.getElementById('sb-assemble-files');
+    fileIn?.addEventListener('change', (e) => {
+        _sbSetAssembleFiles([...(e.target.files || [])]);
+    });
+    if (drop) {
+        drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('is-drag'); });
+        drop.addEventListener('dragleave', () => drop.classList.remove('is-drag'));
+        drop.addEventListener('drop', (e) => {
+            e.preventDefault();
+            drop.classList.remove('is-drag');
+            _sbSetAssembleFiles([...(e.dataTransfer?.files || [])]);
+        });
+    }
+}
+
+function _sbSetAssembleFiles(files) {
+    _sbAssembleFiles = (files || []).filter(f => {
+        const n = (f.name || '').toLowerCase();
+        return n.endsWith('.mp4') || n.endsWith('.webm') || n.endsWith('.mov') || n.endsWith('.mkv') || n.endsWith('.m4v') || n.endsWith('.zip');
+    });
+    _sbAssembleStagingId = '';
+    const hint = document.getElementById('sb-assemble-file-hint');
+    if (hint) {
+        hint.textContent = _sbAssembleFiles.length
+            ? `${_sbAssembleFiles.length} file${_sbAssembleFiles.length === 1 ? '' : 's'}: ${_sbAssembleFiles.map(f => f.name).slice(0, 6).join(', ')}${_sbAssembleFiles.length > 6 ? '…' : ''}`
+            : '';
+    }
+    const matchBtn = document.getElementById('btn-sb-assemble-match');
+    const runBtn = document.getElementById('btn-sb-assemble-run');
+    if (matchBtn) matchBtn.disabled = !_sbAssembleFiles.length || !_sbJobId;
+    if (runBtn) runBtn.disabled = (!_sbAssembleFiles.length && !_sbAssembleStagingId) || !_sbJobId;
+    // Client-side filename preview
+    _sbRenderAssembleMatchLocal();
+}
+
+function _sbParseClipIndex(name) {
+    const m = String(name || '').match(/(?:^|[_\-\s])(?:scene[_\-\s]*)?0*(\d{1,4})(?:[_\-\s.]|$)/i)
+        || String(name || '').match(/^0*(\d{1,4})\b/);
+    return m ? parseInt(m[1], 10) : null;
+}
+
+function _sbRenderAssembleMatchLocal() {
+    const box = document.getElementById('sb-assemble-match');
+    if (!box || !_sbAssembleFiles.length) return;
+    const rows = _sbAssembleFiles
+        .filter(f => !/\.zip$/i.test(f.name))
+        .map(f => {
+            const idx = _sbParseClipIndex(f.name);
+            return `<tr>
+                <td class="cr-mono">${idx != null ? String(idx).padStart(3, '0') : '—'}</td>
+                <td>${esc(f.name)}</td>
+                <td style="color:var(--app-ink-3);">${idx != null ? 'filename (local)' : 'needs server match'}</td>
+            </tr>`;
+        }).join('');
+    box.classList.remove('hidden');
+    box.innerHTML = `
+        <p style="font-family:var(--font-body);font-size:13px;color:var(--app-ink-2);margin-bottom:8px;">Quick filename read — run Preview match for pHash fallback.</p>
+        <table style="width:100%;font-family:var(--font-body);font-size:13px;border-collapse:collapse;">
+            <thead><tr style="text-align:left;color:var(--app-ink-3);">
+                <th style="padding:6px 8px;">Scene</th><th style="padding:6px 8px;">File</th><th style="padding:6px 8px;">Method</th>
+            </tr></thead>
+            <tbody>${rows || '<tr><td colspan="3" style="padding:8px;">Zip selected — match on server.</td></tr>'}</tbody>
+        </table>`;
+}
+
+function _sbRenderAssembleMatchServer(matched, unmatched) {
+    const box = document.getElementById('sb-assemble-match');
+    if (!box) return;
+    const rows = (matched || []).map(m => {
+        const method = m.method === 'filename' ? 'filename' : `hash (${Math.round((m.confidence || 0) * 100)}%)`;
+        const color = m.method === 'filename' ? 'var(--success, #3a9)' : 'var(--warning, #c90)';
+        return `<tr>
+            <td class="cr-mono" style="padding:6px 8px;">${String(m.index).padStart(3, '0')}</td>
+            <td style="padding:6px 8px;">${esc(m.filename || '')}</td>
+            <td style="padding:6px 8px;color:${color};">${esc(method)}</td>
+        </tr>`;
+    }).join('');
+    const un = (unmatched || []).map(u =>
+        `<tr><td class="cr-mono" style="padding:6px 8px;color:var(--app-ink-3);">—</td>
+         <td style="padding:6px 8px;">${esc(u.filename || '')}</td>
+         <td style="padding:6px 8px;color:var(--error, #c55);">unmatched</td></tr>`
+    ).join('');
+    box.classList.remove('hidden');
+    box.innerHTML = `
+        <p style="font-family:var(--font-body);font-size:13px;color:var(--app-ink-2);margin-bottom:8px;">
+            Matched ${(matched || []).length} scene${(matched || []).length === 1 ? '' : 's'}${(unmatched || []).length ? ` · ${unmatched.length} unmatched` : ''}.
+        </p>
+        <table style="width:100%;font-family:var(--font-body);font-size:13px;border-collapse:collapse;">
+            <thead><tr style="text-align:left;color:var(--app-ink-3);">
+                <th style="padding:6px 8px;">Scene</th><th style="padding:6px 8px;">File</th><th style="padding:6px 8px;">Method</th>
+            </tr></thead>
+            <tbody>${rows}${un}</tbody>
+        </table>`;
+}
+
+async function matchStoryboardAssemble() {
+    if (!isAdminUser()) { alert('Storyboard Pack is admin-only while we test it.'); return; }
+    if (!_sbJobId) { alert('Generate a pack first.'); return; }
+    if (!_sbAssembleFiles.length) { alert('Drop your I2V clips first.'); return; }
+    const btn = document.getElementById('btn-sb-assemble-match');
+    setLoading(btn, true);
+    try {
+        const fd = new FormData();
+        _sbAssembleFiles.forEach(f => fd.append('clips', f));
+        const res = await fetch(`/api/storyboard/jobs/${_sbJobId}/assemble/match`, { method: 'POST', body: fd });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Match failed');
+        _sbAssembleStagingId = data.staging_id || '';
+        _sbRenderAssembleMatchServer(data.matched || [], data.unmatched || []);
+        const runBtn = document.getElementById('btn-sb-assemble-run');
+        if (runBtn) runBtn.disabled = !(data.matched_count > 0);
+        track('storyboard_assemble_match', { job_id: _sbJobId, matched: data.matched_count || 0 });
+    } catch (e) {
+        alert(e.message || 'Match failed');
+    } finally {
+        setLoading(btn, false);
+    }
+}
+
+async function runStoryboardAssemble() {
+    if (!isAdminUser()) { alert('Storyboard Pack is admin-only while we test it.'); return; }
+    if (!_sbJobId) { alert('Generate a pack first.'); return; }
+    if (!_sbAssembleStagingId && !_sbAssembleFiles.length) {
+        alert('Drop clips and preview match first.');
+        return;
+    }
+    const btn = document.getElementById('btn-sb-assemble-run');
+    setLoading(btn, true);
+    document.getElementById('sb-assemble-result')?.classList.add('hidden');
+    try {
+        const fd = new FormData();
+        if (_sbAssembleStagingId) fd.append('staging_id', _sbAssembleStagingId);
+        fd.append('burn_captions', '1');
+        if (!_sbAssembleStagingId) {
+            _sbAssembleFiles.forEach(f => fd.append('clips', f));
+        }
+        const res = await fetch(`/api/storyboard/jobs/${_sbJobId}/assemble`, { method: 'POST', body: fd });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Assemble failed to start');
+        _sbAssembleJobId = data.job_id;
+        if (_sbAssemblePollTimer) clearInterval(_sbAssemblePollTimer);
+        _sbAssemblePollTimer = setInterval(pollStoryboardAssemble, 2500);
+        pollStoryboardAssemble();
+        track('storyboard_assemble_queued', { job_id: _sbAssembleJobId, parent: _sbJobId });
+    } catch (e) {
+        setLoading(btn, false);
+        alert(e.message || 'Assemble failed');
+    }
+}
+
+async function pollStoryboardAssemble() {
+    if (!_sbAssembleJobId) return;
+    const prog = document.getElementById('sb-assemble-progress');
+    const btn = document.getElementById('btn-sb-assemble-run');
+    try {
+        const res = await fetch(`/api/storyboard/jobs/${_sbAssembleJobId}`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || 'Status failed');
+        const lines = (data.progress || []).map(p => p.message || '').filter(Boolean);
+        if (prog) {
+            prog.classList.remove('hidden');
+            prog.innerHTML = lines.slice(-12).map(m => `<div>${esc(m)}</div>`).join('') || 'Working…';
+            prog.scrollTop = prog.scrollHeight;
+        }
+        if (data.status === 'complete' || data.video_ready) {
+            if (_sbAssemblePollTimer) { clearInterval(_sbAssemblePollTimer); _sbAssemblePollTimer = null; }
+            setLoading(btn, false);
+            const box = document.getElementById('sb-assemble-result');
+            const summary = document.getElementById('sb-assemble-summary');
+            const dl = document.getElementById('sb-assemble-download');
+            if (summary) {
+                const mins = data.duration_sec ? (data.duration_sec / 60).toFixed(1) : '?';
+                summary.textContent = `Assembled — ${data.beat_count || '?'} scenes · ~${mins} min · ${data.caption_count || 0} captions`;
+            }
+            if (dl) {
+                dl.href = `/api/storyboard/jobs/${_sbAssembleJobId}/download`;
+                dl.download = '';
+            }
+            if (box) box.classList.remove('hidden');
+            if (Array.isArray(data.match_report) && data.match_report.length) {
+                _sbRenderAssembleMatchServer(
+                    data.match_report.map(m => ({
+                        index: m.index,
+                        filename: m.clip || m.filename,
+                        method: m.method,
+                        confidence: m.confidence,
+                    })),
+                    [],
+                );
+            }
+            track('storyboard_assemble_ready', { job_id: _sbAssembleJobId });
+        } else if (data.status === 'error' || data.status === 'cancelled') {
+            if (_sbAssemblePollTimer) { clearInterval(_sbAssemblePollTimer); _sbAssemblePollTimer = null; }
+            setLoading(btn, false);
+            alert(data.error || 'Assemble failed');
+        }
+    } catch (e) {
+        console.warn('assemble poll', e);
+    }
 }
 
 function _sbRenderThumbs(urls, paths) {
@@ -5422,26 +5636,19 @@ async function generateStoryboardThumbnail() {
     document.getElementById('sb-thumb-loading')?.classList.remove('hidden');
     setLoading(btn, true);
     try {
-        let data;
-        const style = _sbNicheThumbStyle();
-        if (_sbThumbRefs.length) {
-            const formData = new FormData();
-            formData.append('title', title);
-            formData.append('style', style);
-            formData.append('count', '2');
-            _sbThumbRefs.forEach(f => formData.append('refs', f));
-            const res = await fetch('/api/thumbnail/with-refs', { method: 'POST', body: formData });
-            data = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Thumbnail failed');
-        } else {
-            const res = await fetch('/api/thumbnail', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ title, niche_style: style, count: 2 }),
-            });
-            data = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Thumbnail failed');
-        }
+        const formData = new FormData();
+        formData.append('title', title);
+        formData.append('story', (document.getElementById('sb-story')?.value || '').trim());
+        formData.append('script', (document.getElementById('sb-script')?.value || '').trim());
+        formData.append('moral', (document.getElementById('sb-moral')?.value || '').trim());
+        formData.append('visual_style', _sbVisualStyle || 'pixar_lite');
+        formData.append('niche_style', _sbNicheThumbStyle());
+        formData.append('cast_json', JSON.stringify(_sbCast || []));
+        formData.append('count', '2');
+        (_sbThumbRefs || []).forEach(f => formData.append('refs', f));
+        const res = await fetch('/api/storyboard/thumbnail', { method: 'POST', body: formData });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Thumbnail failed');
         _sbRenderThumbs(data.thumbnails || [], data.paths || []);
     } catch (e) {
         document.getElementById('sb-thumb-loading')?.classList.add('hidden');
@@ -5727,11 +5934,14 @@ async function pollStoryboardPack() {
             }
             if (box) box.classList.remove('hidden');
             if (continueBtn) continueBtn.classList.toggle('hidden', mode !== 'preview');
+            const gotoAssemble = document.getElementById('btn-sb-goto-assemble');
+            if (gotoAssemble) gotoAssemble.classList.toggle('hidden', mode === 'preview');
             track('storyboard_pack_ready', { job_id: _sbJobId, beat_count: data.beat_count, pack_mode: mode });
         } else if (data.status === 'error' || data.status === 'cancelled') {
             if (_sbPollTimer) { clearInterval(_sbPollTimer); _sbPollTimer = null; }
             _sbSetPackLoading(false);
             if (continueBtn) continueBtn.classList.add('hidden');
+            document.getElementById('btn-sb-goto-assemble')?.classList.add('hidden');
             alert(data.error || 'Storyboard pack failed');
         }
     } catch (e) {
