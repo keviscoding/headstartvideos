@@ -14,15 +14,17 @@ Filters that work well for Easy English / family stories:
 
 Download ~12–20 instrumental MP3s. No live scraping — this folder is the catalog.
 
-## Mood tags (v1)
+## Mood tags
 
 | Tag | When we pick it |
 |-----|-----------------|
-| `warm` | Default family / home / cozy |
+| `warm` | Default family / home / cozy (main bed for most stories) |
 | `playful` | Fun, jokes, games |
 | `tension` | Worry, mistakes, trouble |
 | `sad` | Tears, sorry, lonely |
 | `resolve` | Lesson learned, hug, forgive |
+
+Edit `moods` on each track in `catalog.json` after registering — filenames alone are a weak signal.
 
 ## Add tracks
 
@@ -41,9 +43,11 @@ Files are copied to `assets/music/tracks/` and listed in `catalog.json`.
 
 ## Cook behavior
 
-- One bed per video (looped / trimmed to length).
-- Mixed quietly under dialogue (~10% volume).
-- If the catalog is empty, cooking skips music and still succeeds.
+1. Infer a **main mood** for the whole story (title + beat sheet).
+2. Score each scene’s dialogue for a local mood. Strong signals (worry, joke, tears…) can leave the main bed; short digressions stay on main so we don’t thrash.
+3. Collapse consecutive same-mood scenes into segments; **crossfade** (~1.4s) between beds, then return to the main track.
+4. Mix the finished bed quietly under dialogue (~10% volume).
+5. If the catalog is empty, cooking skips music and still succeeds.
 
 ## Attribution
 

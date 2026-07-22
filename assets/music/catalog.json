@@ -1,7 +1,94 @@
 {
   "version": 1,
-  "source": "YouTube Audio Library (curated offline)",
   "moods": ["warm", "playful", "tension", "sad", "resolve"],
-  "notes": "Prefer Attribution not required + instrumental. Drop MP3s in inbox/ and run scripts/register_music_tracks.py",
-  "tracks": []
+  "tracks": [
+    {
+      "id": "Calle_Calor_-_Quincas_Moreira_d607e7651a",
+      "title": "Calle Calor - Quincas Moreira",
+      "file": "tracks/Calle_Calor_-_Quincas_Moreira_d607e7651a.mp3",
+      "moods": ["playful", "warm"],
+      "attribution": "",
+      "source": "youtube_audio_library"
+    },
+    {
+      "id": "Circa_1983_-_Freedom_Trail_Studio_b833d014fe",
+      "title": "Circa 1983 - Freedom Trail Studio",
+      "file": "tracks/Circa_1983_-_Freedom_Trail_Studio_b833d014fe.mp3",
+      "moods": ["warm", "resolve"],
+      "attribution": "",
+      "source": "youtube_audio_library"
+    },
+    {
+      "id": "El_Tacata_-_Inaban___Nabani_5c314023f0",
+      "title": "El Tacata - Inaban / Nabani",
+      "file": "tracks/El_Tacata_-_Inaban___Nabani_5c314023f0.mp3",
+      "moods": ["playful"],
+      "attribution": "",
+      "source": "youtube_audio_library"
+    },
+    {
+      "id": "George_s_Lament_-_Go_By_Ocean___Ryan_McCaffrey_c203b7dd1f",
+      "title": "George's Lament - Go By Ocean / Ryan McCaffrey",
+      "file": "tracks/George_s_Lament_-_Go_By_Ocean___Ryan_McCaffrey_c203b7dd1f.mp3",
+      "moods": ["sad"],
+      "attribution": "",
+      "source": "youtube_audio_library"
+    },
+    {
+      "id": "Go_Down_Swinging_Instrumental_-_NEFFEX_2ec312cb1f",
+      "title": "Go Down Swinging (Instrumental) - NEFFEX",
+      "file": "tracks/Go_Down_Swinging_Instrumental_-_NEFFEX_2ec312cb1f.mp3",
+      "moods": ["tension", "playful"],
+      "attribution": "",
+      "source": "youtube_audio_library"
+    },
+    {
+      "id": "Gone_Away_-_Blue_Beat_Review_1996484095",
+      "title": "Gone Away - Blue Beat Review",
+      "file": "tracks/Gone_Away_-_Blue_Beat_Review_1996484095.mp3",
+      "moods": ["sad", "warm"],
+      "attribution": "",
+      "source": "youtube_audio_library"
+    },
+    {
+      "id": "G_zalo_-_Cumbia_Deli_3063f5b93e",
+      "title": "Gózalo - Cumbia Deli",
+      "file": "tracks/G_zalo_-_Cumbia_Deli_3063f5b93e.mp3",
+      "moods": ["playful", "warm"],
+      "attribution": "",
+      "source": "youtube_audio_library"
+    },
+    {
+      "id": "Lento_y_Cursi_-_Inaban___Nabani_aa002c7209",
+      "title": "Lento y Cursi - Inaban / Nabani",
+      "file": "tracks/Lento_y_Cursi_-_Inaban___Nabani_aa002c7209.mp3",
+      "moods": ["warm", "sad"],
+      "attribution": "",
+      "source": "youtube_audio_library"
+    },
+    {
+      "id": "Pienso_Viento_-_Casa_Rosa_4dec4e94b7",
+      "title": "Pienso Viento - Casa Rosa",
+      "file": "tracks/Pienso_Viento_-_Casa_Rosa_4dec4e94b7.mp3",
+      "moods": ["warm", "resolve"],
+      "attribution": "",
+      "source": "youtube_audio_library"
+    },
+    {
+      "id": "Ran_During_Time_-_Freedom_Trail_Studio_21bea58d88",
+      "title": "Ran During Time - Freedom Trail Studio",
+      "file": "tracks/Ran_During_Time_-_Freedom_Trail_Studio_21bea58d88.mp3",
+      "moods": ["tension", "warm"],
+      "attribution": "",
+      "source": "youtube_audio_library"
+    },
+    {
+      "id": "Sabor_a_la_Antigua_-_Cumbia_Deli_a7693094a5",
+      "title": "Sabor a la Antigua - Cumbia Deli",
+      "file": "tracks/Sabor_a_la_Antigua_-_Cumbia_Deli_a7693094a5.mp3",
+      "moods": ["playful", "warm"],
+      "attribution": "",
+      "source": "youtube_audio_library"
+    }
+  ]
 }

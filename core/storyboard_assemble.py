@@ -565,10 +565,24 @@ def assemble_storyboard_video(
             beat_rows = beats if isinstance(beats, list) else [
                 {"dialogue": m.get("dialogue") or ""} for m in matched
             ]
+            # Align beat rows to matched order for mood timeline
+            by_idx = {
+                int(b.get("index") or 0): b
+                for b in beat_rows if isinstance(b, dict)
+            }
+            ordered_beats = []
+            for m in matched:
+                b = by_idx.get(int(m.get("index") or 0))
+                if b:
+                    ordered_beats.append(b)
+                else:
+                    ordered_beats.append({"dialogue": m.get("dialogue") or "", "index": m.get("index")})
+            clip_durs = [_probe_duration_sec(p) for p in normalized]
             music_meta = apply_storyboard_music(
                 final,
                 title=title or "",
-                beats=beat_rows,
+                beats=ordered_beats,
+                clip_durations=clip_durs,
                 seed=music_seed or out.stem,
                 work_dir=work / "music",
                 progress=log,

@@ -456,6 +456,12 @@
   transition: color var(--dur-fast);
 }
 .btn-ghost:hover { color: var(--app-ink); }
+.btn-ghost:disabled,
+.btn-ghost.is-disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
 
 /* ---- Recipe Cards ---- */
 .niche-card {

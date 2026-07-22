@@ -40,5 +40,9 @@ test_*.py
 test_*.m4a
 *.m4a
 
+# Music inbox is a drop zone; registered copies live in assets/music/tracks/
+assets/music/inbox/*
+!assets/music/inbox/.gitkeep
+
 # Local frame audits
 tmp_explainer_v2_frames/

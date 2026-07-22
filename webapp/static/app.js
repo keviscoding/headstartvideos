@@ -416,6 +416,13 @@ function updateStepperActive(n) {
 }
 
 function goToStep(n) {
+    if (n === 'sb-assemble') {
+        const reason = _sbBoardCookBlockReason();
+        if (reason) {
+            alert(reason);
+            n = _sbJobId ? 'sb-pack' : 'storyboard';
+        }
+    }
     state.step = n;
     syncPipelineChrome();
     document.querySelectorAll('.step-panel').forEach(p => p.classList.add('hidden'));
@@ -451,6 +458,7 @@ function goToStep(n) {
         if (notify && !notify.value && currentUser?.email) notify.value = currentUser.email;
         _sbSyncAnimateUI();
     }
+    if (n === 'sb-pack') _sbSyncBoardCookControls();
 
     if (typeof n === 'number' && n >= 2) persistPipelineState();
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -466,12 +474,13 @@ function goToCompletedStep(n) {
                 return;
             }
         }
-        if (n === 'sb-assemble' && !_sbJobId) {
-            alert('Generate a storyboard pack first, then assemble.');
-            goToStep('storyboard');
-            return;
-        }
         if (n === 'sb-assemble') {
+            const reason = _sbBoardCookBlockReason();
+            if (reason) {
+                alert(reason);
+                goToStep('sb-pack');
+                return;
+            }
             const notify = document.getElementById('sb-assemble-notify');
             if (notify && !notify.value && currentUser?.email) notify.value = currentUser.email;
         }
@@ -5044,6 +5053,8 @@ let _sbSelectedBeatIndex = null;
 let _sbPackMode = 'full'; // preview | full
 let _sbLastEpisodePayload = null;
 let _sbBeats = [];
+let _sbPackStatus = ''; // queued | running | complete | error | …
+let _sbZipReady = false;
 let _sbVisualStyle = 'pixar_lite';
 let _sbTemplate = '';
 let _sbStyleOptions = [
@@ -5062,6 +5073,64 @@ function _sbDialogueMode() {
 
 function _sbCastHasLook() {
     return (_sbCast || []).some(c => c.included !== false && (c.portrait_url || c.sheet_url));
+}
+
+function _sbBeatHasStill(b) {
+    if (!b || typeof b !== 'object') return false;
+    return !!(b.image_url || b.image_path || b.still_url || b.still_path);
+}
+
+/** True when full pack finished and every scene has a still. */
+function _sbBoardCookReady() {
+    if (!_sbJobId) return false;
+    if ((_sbPackMode || 'full').toLowerCase() === 'preview') return false;
+    if (!_sbZipReady && _sbPackStatus !== 'complete') return false;
+    const beats = Array.isArray(_sbBeats) ? _sbBeats : [];
+    if (!beats.length) return false;
+    return beats.every(_sbBeatHasStill);
+}
+
+function _sbBoardCookBlockReason() {
+    if (!_sbJobId) return 'Generate your storyboard first.';
+    if ((_sbPackMode || 'full').toLowerCase() === 'preview') {
+        return 'Finish the full pack first — preview scenes alone aren’t enough to cook.';
+    }
+    if (!_sbZipReady && _sbPackStatus !== 'complete') {
+        return 'Wait until every scene still is ready before cooking.';
+    }
+    const beats = Array.isArray(_sbBeats) ? _sbBeats : [];
+    if (!beats.length) return 'Wait until your storyboard scenes are ready.';
+    const missing = beats.filter(b => !_sbBeatHasStill(b)).map(b => String(b.index).padStart(3, '0'));
+    if (missing.length) {
+        return `Still waiting on scene${missing.length === 1 ? '' : 's'} ${missing.join(', ')}.`;
+    }
+    return '';
+}
+
+function _sbSyncBoardCookControls() {
+    const ready = _sbBoardCookReady();
+    const reason = _sbBoardCookBlockReason();
+    const next = document.getElementById('btn-sb-board-next-assemble');
+    if (next) {
+        next.disabled = !ready;
+        next.title = ready ? 'Cook your video' : (reason || 'Storyboard not ready');
+        next.setAttribute('aria-disabled', ready ? 'false' : 'true');
+        next.classList.toggle('is-disabled', !ready);
+    }
+    const gotoAssemble = document.getElementById('btn-sb-goto-assemble');
+    if (gotoAssemble && !gotoAssemble.classList.contains('hidden')) {
+        gotoAssemble.disabled = !ready;
+        gotoAssemble.title = ready ? 'Cook your video' : (reason || 'Storyboard not ready');
+    }
+}
+
+function goToStoryboardCook() {
+    const reason = _sbBoardCookBlockReason();
+    if (reason) {
+        alert(reason);
+        return;
+    }
+    goToStep('sb-assemble');
 }
 
 function _sbNicheThumbStyle() {
@@ -5414,7 +5483,7 @@ function bindStoryboardPackUI() {
     document.getElementById('btn-sb-generate')?.addEventListener('click', () => startStoryboardPack('full'));
     document.getElementById('btn-sb-continue-full')?.addEventListener('click', () => startStoryboardPack('full', { fromPreview: true }));
     document.getElementById('btn-sb-regen-beat')?.addEventListener('click', regenSelectedBeat);
-    document.getElementById('btn-sb-goto-assemble')?.addEventListener('click', () => goToStep('sb-assemble'));
+    document.getElementById('btn-sb-goto-assemble')?.addEventListener('click', () => goToStoryboardCook());
     document.getElementById('btn-sb-assemble-match')?.addEventListener('click', matchStoryboardAssemble);
     document.getElementById('btn-sb-assemble-run')?.addEventListener('click', runStoryboardAssemble);
     document.getElementById('btn-sb-animate-run')?.addEventListener('click', runStoryboardAnimate);
@@ -5679,7 +5748,7 @@ function _sbUpdateCookingBar(msg) {
 async function _sbSyncAnimateUI() {
     const btn = document.getElementById('btn-sb-animate-run');
     const blurb = document.getElementById('sb-animate-blurb');
-    if (btn) btn.disabled = !_sbJobId;
+    if (btn) btn.disabled = !_sbBoardCookReady();
     let mins = 8;
     try {
         const slider = document.getElementById('sb-minutes');
@@ -5700,6 +5769,8 @@ async function _sbSyncAnimateUI() {
 async function runStoryboardAnimate() {
     if (!isAdminUser()) { alert('Storyboard Pack is admin-only while we test it.'); return; }
     if (!_sbJobId) { alert('Generate a pack first.'); return; }
+    const block = _sbBoardCookBlockReason();
+    if (block) { alert(block); return; }
     const btn = document.getElementById('btn-sb-animate-run');
     setLoading(btn, true);
     document.getElementById('sb-assemble-result')?.classList.add('hidden');
@@ -5890,6 +5961,7 @@ async function regenSelectedBeat() {
         } else if (data.beat) {
             showBeatDetail(data.beat);
         }
+        _sbSyncBoardCookControls();
         if (data.zip_url || data.zip_ready) {
             const dl = document.getElementById('sb-download');
             if (dl) dl.href = `/api/storyboard/jobs/${_sbJobId}/download`;
@@ -5961,11 +6033,15 @@ async function startStoryboardPack(packMode = 'full', opts = {}) {
     goToStep('sb-pack');
     _sbSelectedBeatIndex = null;
     _sbBeats = [];
+    _sbPackStatus = 'queued';
+    _sbZipReady = false;
+    _sbSyncBoardCookControls();
     const board = document.getElementById('sb-board');
     if (board) board.innerHTML = '';
     document.getElementById('sb-beat-detail')?.classList.add('hidden');
     document.getElementById('sb-result')?.classList.add('hidden');
     document.getElementById('btn-sb-continue-full')?.classList.add('hidden');
+    document.getElementById('btn-sb-goto-assemble')?.classList.add('hidden');
     const noteEl = document.getElementById('sb-regen-note');
     if (noteEl) noteEl.value = '';
     const status = document.getElementById('sb-pack-status');
@@ -6014,6 +6090,8 @@ async function pollStoryboardPack() {
         if (!res.ok) throw new Error(data.detail || 'Status failed');
         const mode = (data.pack_mode || _sbPackMode || 'full').toLowerCase();
         _sbPackMode = mode;
+        _sbPackStatus = data.status || _sbPackStatus;
+        _sbZipReady = !!(data.zip_ready || data.status === 'complete');
         const lines = (data.progress || []).map(p => p.message || p.msg || '').filter(Boolean);
         if (prog) {
             prog.classList.remove('hidden');
@@ -6023,18 +6101,25 @@ async function pollStoryboardPack() {
         if (Array.isArray(data.beats) && data.beats.length) {
             renderStoryboardBoard(data.beats);
             if (status && data.status !== 'complete' && !data.zip_ready) {
+                const withStill = data.beats.filter(_sbBeatHasStill).length;
                 status.textContent = mode === 'preview'
-                    ? `${data.beats.length} opening scene${data.beats.length === 1 ? '' : 's'} ready…`
-                    : `${data.beats.length} scene${data.beats.length === 1 ? '' : 's'} ready…`;
+                    ? `${withStill}/${data.beats.length} opening scenes ready…`
+                    : `${withStill}/${data.beats.length} scene stills ready…`;
             }
         }
+        _sbSyncBoardCookControls();
         if (data.status === 'complete' || data.zip_ready) {
             if (_sbPollTimer) { clearInterval(_sbPollTimer); _sbPollTimer = null; }
             _sbSetPackLoading(false);
+            const cookReady = _sbBoardCookReady();
             if (status) {
-                status.textContent = mode === 'preview'
-                    ? 'First minute ready — recreate any weak scenes, then generate the full pack.'
-                    : 'Pack ready — review stills, recreate any weak ones, then download.';
+                if (mode === 'preview') {
+                    status.textContent = 'First minute ready — recreate any weak scenes, then generate the full pack.';
+                } else if (cookReady) {
+                    status.textContent = 'Pack ready — review stills, recreate any weak ones, then cook.';
+                } else {
+                    status.textContent = _sbBoardCookBlockReason() || 'Finishing scene stills…';
+                }
             }
             const box = document.getElementById('sb-result');
             const summary = document.getElementById('sb-result-summary');
@@ -6051,7 +6136,8 @@ async function pollStoryboardPack() {
             if (box) box.classList.remove('hidden');
             if (continueBtn) continueBtn.classList.toggle('hidden', mode !== 'preview');
             const gotoAssemble = document.getElementById('btn-sb-goto-assemble');
-            if (gotoAssemble) gotoAssemble.classList.toggle('hidden', mode === 'preview');
+            if (gotoAssemble) gotoAssemble.classList.toggle('hidden', mode === 'preview' || !cookReady);
+            _sbSyncBoardCookControls();
             track('storyboard_pack_ready', { job_id: _sbJobId, beat_count: data.beat_count, pack_mode: mode });
         } else if (data.status === 'error' || data.status === 'cancelled') {
             if (_sbPollTimer) { clearInterval(_sbPollTimer); _sbPollTimer = null; }

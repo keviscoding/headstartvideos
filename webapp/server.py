@@ -3705,6 +3705,45 @@ def _storyboard_pack_job_or_404(job_id: str, admin: dict) -> dict:
     return job
 
 
+def _storyboard_beat_has_still(beat: dict) -> bool:
+    if not isinstance(beat, dict):
+        return False
+    return bool(
+        (beat.get("image_url") or beat.get("image_path")
+         or beat.get("still_url") or beat.get("still_path") or "").strip()
+    )
+
+
+def _require_storyboard_stills_ready(job: dict) -> list:
+    """Pack must be complete with a still for every scene before Cook."""
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    if not (result.get("zip_ready") or job.get("status") == "complete"):
+        raise HTTPException(400, "Wait until every scene still is ready before cooking.")
+    req = job.get("request") if isinstance(job.get("request"), dict) else {}
+    if str(result.get("pack_mode") or req.get("pack_mode") or "full").lower() == "preview":
+        raise HTTPException(400, "Finish the full pack first — preview scenes alone aren’t enough to cook.")
+    from core.storyboard_assemble import load_pack_beats
+    pack_dir = Path(result.get("pack_dir") or "")
+    beats = load_pack_beats(
+        pack_dir=pack_dir if pack_dir.is_dir() else None,
+        beats=result.get("beats") or [],
+    )
+    if not beats:
+        raise HTTPException(400, "No scenes in this pack to cook.")
+    missing = [
+        str(int(b.get("index") or 0)).zfill(3)
+        for b in beats if not _storyboard_beat_has_still(b)
+    ]
+    if missing:
+        label = ", ".join(missing[:8])
+        more = f" (+{len(missing) - 8} more)" if len(missing) > 8 else ""
+        raise HTTPException(
+            400,
+            f"Still waiting on scene{'s' if len(missing) != 1 else ''} {label}{more}.",
+        )
+    return beats
+
+
 async def _save_assemble_uploads(
     files: list[UploadFile],
     dest_dir: Path,
@@ -3811,8 +3850,7 @@ async def start_storyboard_assemble(
 
     job = _storyboard_pack_job_or_404(job_id, admin)
     result = job.get("result") if isinstance(job.get("result"), dict) else {}
-    if not (result.get("zip_ready") or result.get("beats") or job.get("status") == "complete"):
-        raise HTTPException(400, "Finish the storyboard pack first, then assemble.")
+    _require_storyboard_stills_ready(job)
 
     clips_dir: Path | None = None
     sid = (staging_id or "").strip()
@@ -3980,22 +4018,14 @@ async def start_storyboard_animate(
     admin: dict = Depends(require_admin),
 ):
     """Queue on-site Seedance I2V + assemble cook from a finished pack."""
-    from core.storyboard_assemble import load_pack_beats
     from webapp.database import get_user_atlas_key, deduct_credits
 
     job = _storyboard_pack_job_or_404(job_id, admin)
     result = job.get("result") if isinstance(job.get("result"), dict) else {}
-    if not (result.get("zip_ready") or result.get("beats") or job.get("status") == "complete"):
-        raise HTTPException(400, "Finish the storyboard pack first, then generate.")
+    beats = _require_storyboard_stills_ready(job)
 
     pack_dir = Path(result.get("pack_dir") or "")
     pack_dir_s = str(pack_dir) if pack_dir.is_dir() else ""
-    beats = load_pack_beats(
-        pack_dir=Path(pack_dir_s) if pack_dir_s else None,
-        beats=result.get("beats") or [],
-    )
-    if not beats:
-        raise HTTPException(400, "No scenes in this pack to animate.")
 
     title = (
         (result.get("title") or "")
