@@ -5215,7 +5215,7 @@ async function extractStoryboardCast() {
         const res = await fetch('/api/storyboard/cast/extract', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ story, script }),
+            body: JSON.stringify({ story, script, visual_style: _sbVisualStyle }),
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Extract failed');

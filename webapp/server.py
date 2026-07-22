@@ -1186,6 +1186,7 @@ class StoryboardLookRequest(BaseModel):
 class StoryboardExtractCastRequest(BaseModel):
     story: str = ""
     script: str = ""
+    visual_style: str = ""
 
 
 class StoryboardRegenBeatRequest(BaseModel):
@@ -3015,14 +3016,18 @@ async def extract_storyboard_cast(
     if not story and not script:
         raise HTTPException(400, "Paste a story or script first so we can find the characters.")
     try:
-        from core.storyboard_pack import extract_cast_from_text
+        from core.storyboard_pack import extract_cast_from_text, resolve_visual_style
+        style_id, _, _ = resolve_visual_style(req.visual_style or "")
         cast = await asyncio.to_thread(
-            extract_cast_from_text, story=story, script=script,
+            extract_cast_from_text,
+            story=story,
+            script=script,
+            visual_style=style_id,
         )
     except Exception as e:
         print(f"[storyboard] cast extract failed: {e}")
         raise HTTPException(500, "Could not extract characters. Add them manually.")
-    return {"cast": cast}
+    return {"cast": cast, "visual_style": style_id}
 
 
 @app.post("/api/storyboard/cast/generate-look")

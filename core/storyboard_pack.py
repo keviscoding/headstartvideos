@@ -213,6 +213,7 @@ def extract_cast_from_text(
     story: str = "",
     script: str = "",
     max_characters: int = 8,
+    visual_style: str = "",
 ) -> list[dict[str, Any]]:
     """LLM: propose recurring cast from the user's story and/or script."""
     from core.atlas_llm import generate_text
@@ -225,19 +226,33 @@ def extract_cast_from_text(
     if not body_parts:
         return []
     n = max(1, min(int(max_characters or 8), 12))
+    style_id, _, _ = resolve_visual_style(visual_style)
+    style_label = VISUAL_STYLE_PRESETS.get(style_id, {}).get("label", "3D Pixar-lite")
+    if style_id == "semi_realistic":
+        look_rules = (
+            f"Write each look_prompt for {style_label} animation (cinematic 3D, still stylized — "
+            "not a live-action photo). Include age, hair, outfit, distinctive features."
+        )
+    else:
+        look_rules = (
+            f"Write each look_prompt as a {style_label} ANIMATED character-design note "
+            f"(stylized proportions, expressive features, clear silhouette). "
+            f"Lead with '{style_label} animated character'. "
+            "Never write photoreal / live-action / real-person descriptions. "
+            "Include age, hair, outfit, distinctive features suited to that animation style."
+        )
     raw = generate_text(
         (
             f"Extract up to {n} RECURRING characters from this animation story/script.\n"
             "Only include characters who appear more than once or drive the plot.\n"
             "Skip one-off extras, crowds, and unnamed background people.\n"
-            "For each character invent a short visual look_prompt (age/species, hair, outfit, "
-            "distinctive features) suitable for consistent still-frame generation.\n"
+            f"{look_rules}\n"
             "Do NOT invent characters that are not in the text.\n"
             'Output ONLY JSON: {"characters": [{"name": "...", "look_prompt": "..."}]}\n\n'
             + "\n\n".join(body_parts)
         ),
         system=(
-            "You extract cast lists for animation storyboards. "
+            f"You extract cast lists for {style_label} animation storyboards. "
             "Output ONLY valid JSON. No markdown."
         ),
         max_tokens=1200,
@@ -376,6 +391,45 @@ def _cast_look_lock(cast: list[dict[str, Any]] | None) -> str:
     return " ".join(parts)
 
 
+def _anti_photo_clause(style_id: str) -> str:
+    if style_id == "semi_realistic":
+        return "Stylized 3D animation — not live-action photography."
+    return (
+        "Fully stylized ANIMATION character — NOT photorealistic, NOT a real photograph, "
+        "NOT a real person, NOT CGI that looks like a live human. Cartoon/animated look only."
+    )
+
+
+def _generate_cast_t2i(prompt: str, out_path: Path, *, aspect_ratio: str = "1:1") -> bool:
+    """Nano-banana T2I for cast art — respects stylized prompts far better than ERNIE/GPT Image."""
+    try:
+        from core.thumbnail_gen import _T2I_MODELS, _submit_and_download
+    except Exception as e:
+        print(f"[storyboard] cast T2I helpers unavailable: {e}")
+        return False
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    for model in _T2I_MODELS:
+        payload = {
+            "model": model,
+            "prompt": (prompt or "")[:1400],
+            "aspect_ratio": aspect_ratio,
+            "resolution": "1k",
+            "output_format": "png",
+            "enable_base64_output": False,
+        }
+        try:
+            _submit_and_download(payload, out_path, label=f"cast t2i/{model}")
+            if out_path.is_file():
+                return True
+        except Exception as e:
+            msg = str(e)
+            print(f"[storyboard] cast T2I failed ({model}): {msg[:120]}")
+            if "insufficient balance" in msg.lower():
+                break
+            continue
+    return False
+
+
 def generate_character_portrait(
     *,
     name: str,
@@ -384,19 +438,25 @@ def generate_character_portrait(
     visual_style: str = "",
 ) -> str:
     """Generate a hero portrait for Cast studio. Returns local path."""
-    from core.illustration_gen import generate_single_illustration
-
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    _, style_lock, style_short = resolve_visual_style(visual_style)
-    look = (look_prompt or "").strip() or "consistent animated character"
+    sid, style_lock, style_short = resolve_visual_style(visual_style)
+    label = VISUAL_STYLE_PRESETS.get(sid, {}).get("label", "3D Pixar-lite")
+    look = (look_prompt or "").strip() or f"{label} animated character"
     nm = (name or "Character").strip()
+    anti = _anti_photo_clause(sid)
     full = (
-        f"{style_lock}. Character portrait of {nm}. {look}. "
-        "Centered upper-body portrait, soft warm lighting, plain soft background, "
-        "expressive face, consistent character design sheet quality, no text, no watermark."
+        f"{label} animation character portrait of {nm}. {style_lock}. {look}. "
+        f"{anti} Centered upper-body portrait, soft warm lighting, plain soft background, "
+        "expressive animated face, character design sheet quality, no text, no watermark."
     )
-    short = f"{style_short}. Portrait of {nm}. {look}"[:480]
+    # Prefer nano-banana — ERNIE/GPT Image 2 often ignore style and spit photoreal faces.
+    if _generate_cast_t2i(full, out, aspect_ratio="1:1"):
+        return str(out)
+
+    from core.illustration_gen import generate_single_illustration
+
+    short = f"{label}. {style_short}. Portrait of {nm}. {look}. {anti}"[:480]
     result = generate_single_illustration(full, str(out), short_prompt=short)
     if not result.success or not out.is_file():
         raise RuntimeError(result.error or "Character portrait failed")
@@ -412,24 +472,60 @@ def generate_character_sheet(
     visual_style: str = "",
 ) -> str:
     """Multi-angle character sheet (consistency aid for I2V)."""
-    from core.illustration_gen import generate_single_illustration
-
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    _, style_lock, style_short = resolve_visual_style(visual_style)
-    look = (look_prompt or "").strip() or "consistent animated character"
+    sid, style_lock, style_short = resolve_visual_style(visual_style)
+    label = VISUAL_STYLE_PRESETS.get(sid, {}).get("label", "3D Pixar-lite")
+    look = (look_prompt or "").strip() or f"{label} animated character"
     nm = (name or "Character").strip()
+    anti = _anti_photo_clause(sid)
     full = (
-        f"{style_lock}. Character design sheet for {nm}. {look}. "
+        f"{label} animation character design sheet for {nm}. {style_lock}. {look}. {anti} "
         "Same character shown in multiple panels on one image: front view, 3/4 view, "
         "side profile, close-up face. Consistent face, hair, outfit across all panels. "
         "Clean white/light grey background, no text labels, no watermark."
     )
-    short = f"{style_short}. Character sheet {nm} multi-angle same outfit. {look}"[:480]
-    ref = portrait_path if portrait_path and Path(portrait_path).is_file() else None
-    result = generate_single_illustration(
-        full, str(out), style_ref_path=ref, short_prompt=short,
-    )
+
+    # If we have a portrait, edit from it so the sheet matches the approved look.
+    if portrait_path and Path(portrait_path).is_file():
+        try:
+            from core.thumbnail_gen import _EDIT_MODELS, _submit_and_download, _upload_media
+            ref_url = _upload_media(str(portrait_path))
+            if ref_url and ref_url.startswith("http"):
+                edit_prompt = (
+                    f"Using the reference portrait, create a {label} character design sheet for {nm}. "
+                    f"Keep face, hair, and outfit IDENTICAL to the reference. {look}. {anti} "
+                    "Multiple panels: front, 3/4, side profile, close-up face. "
+                    "Clean light background, no text, no watermark."
+                )
+                for model in _EDIT_MODELS:
+                    payload = {
+                        "model": model,
+                        "prompt": edit_prompt[:1400],
+                        "images": [ref_url],
+                        "aspect_ratio": "16:9",
+                        "resolution": "1k",
+                        "output_format": "png",
+                        "enable_base64_output": False,
+                    }
+                    try:
+                        _submit_and_download(payload, out, label=f"cast sheet edit/{model}")
+                        if out.is_file():
+                            return str(out)
+                    except Exception as e:
+                        print(f"[storyboard] cast sheet edit failed ({model}): {e}")
+                        if "insufficient balance" in str(e).lower():
+                            break
+        except Exception as e:
+            print(f"[storyboard] cast sheet edit path failed: {e}")
+
+    if _generate_cast_t2i(full, out, aspect_ratio="16:9"):
+        return str(out)
+
+    from core.illustration_gen import generate_single_illustration
+
+    short = f"{label}. {style_short}. Character sheet {nm}. {look}. {anti}"[:480]
+    result = generate_single_illustration(full, str(out), short_prompt=short)
     if not result.success or not out.is_file():
         raise RuntimeError(result.error or "Character sheet failed")
     return str(out)
