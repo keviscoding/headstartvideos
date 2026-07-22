@@ -1,0 +1,14 @@
+---
+description: Always push commits and redeploy cook when relevant
+alwaysApply: true
+---
+
+# Always push after commit
+
+When the user asks to commit, or when finishing a fix/update that should ship:
+
+1. **Commit** (only when asked, or when they already asked to ship/commit).
+2. **Immediately `git push` to origin** — do not wait for a separate "push" request. Default is push every time.
+3. If the change affects Fly cook workers (`core/storyboard_*`, `webapp/cook_runner.py`, `fly.cook.toml`, Dockerfile used by cooks), **redeploy** with `fly deploy -c fly.cook.toml --ha=false`, then destroy any always-on `app` process-group machine left behind.
+
+Do not leave the branch "ahead of origin" after a successful commit unless push fails — then report the failure.
