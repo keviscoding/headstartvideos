@@ -1806,7 +1806,7 @@ def build_storyboard_pack(
 
     pack_name = f"{_slug(out_title)}_{stamp}_pack"
     pack_dir = root / pack_name
-    log("Writing pack files…")
+    log("Saving your storyboard…")
     write_pack_files(
         pack_dir=pack_dir,
         title=out_title,
@@ -1817,7 +1817,7 @@ def build_storyboard_pack(
     )
 
     zip_path = root / f"{pack_name}.zip"
-    log("Zipping…")
+    log("Packing your scenes…")
     zip_pack(pack_dir, zip_path)
 
     ok = [b for b in beats if b.image_path]

@@ -3715,13 +3715,10 @@ def _storyboard_beat_has_still(beat: dict) -> bool:
 
 
 def _require_storyboard_stills_ready(job: dict) -> list:
-    """Pack must be complete with a still for every scene before Cook."""
+    """Preview or full pack must be complete with a still for every scene before Cook."""
     result = job.get("result") if isinstance(job.get("result"), dict) else {}
     if not (result.get("zip_ready") or job.get("status") == "complete"):
         raise HTTPException(400, "Wait until every scene still is ready before cooking.")
-    req = job.get("request") if isinstance(job.get("request"), dict) else {}
-    if str(result.get("pack_mode") or req.get("pack_mode") or "full").lower() == "preview":
-        raise HTTPException(400, "Finish the full pack first — preview scenes alone aren’t enough to cook.")
     from core.storyboard_assemble import load_pack_beats
     pack_dir = Path(result.get("pack_dir") or "")
     beats = load_pack_beats(

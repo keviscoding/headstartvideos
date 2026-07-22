@@ -5080,10 +5080,9 @@ function _sbBeatHasStill(b) {
     return !!(b.image_url || b.image_path || b.still_url || b.still_path);
 }
 
-/** True when full pack finished and every scene has a still. */
+/** True when this pack (preview or full) finished and every scene has a still. */
 function _sbBoardCookReady() {
     if (!_sbJobId) return false;
-    if ((_sbPackMode || 'full').toLowerCase() === 'preview') return false;
     if (!_sbZipReady && _sbPackStatus !== 'complete') return false;
     const beats = Array.isArray(_sbBeats) ? _sbBeats : [];
     if (!beats.length) return false;
@@ -5092,9 +5091,6 @@ function _sbBoardCookReady() {
 
 function _sbBoardCookBlockReason() {
     if (!_sbJobId) return 'Generate your storyboard first.';
-    if ((_sbPackMode || 'full').toLowerCase() === 'preview') {
-        return 'Finish the full pack first — preview scenes alone aren’t enough to cook.';
-    }
     if (!_sbZipReady && _sbPackStatus !== 'complete') {
         return 'Wait until every scene still is ready before cooking.';
     }
@@ -5710,8 +5706,35 @@ async function pollStoryboardAssemble() {
     }
 }
 
+function _friendlySbPackProgress(raw) {
+    const s = String(raw || '');
+    if (/Uploading pack|Zipping|Writing pack/i.test(s)) return 'Saving your storyboard…';
+    if (/Queued|queue/i.test(s)) return 'Queued — starting soon…';
+    if (/Planning first-minute|Planning ~/i.test(s)) return 'Planning your scenes…';
+    if (/Beat sheet ready|Planning/i.test(s)) return 'Planning your scenes…';
+    if (/Locked .* character|character reference/i.test(s)) return 'Matching your cast looks…';
+    if (/No character references/i.test(s)) return 'Drawing scenes from your story…';
+    if (/Generating .* scene stills|Stills \d/i.test(s)) {
+        const m = s.match(/Stills\s+(\d+)\s*\/\s*(\d+)/i) || s.match(/(\d+)\s*\/\s*(\d+)/);
+        if (m) return `Drawing scenes… ${m[1]} of ${m[2]}`;
+        return 'Drawing your scenes…';
+    }
+    if (/Scene \d+ ready/i.test(s)) {
+        const m = s.match(/Scene\s+(\d+)/i);
+        return m ? `Scene ${m[1]} ready` : 'Scene ready';
+    }
+    if (/Done —|Pack ready|zip/i.test(s)) return 'Storyboard ready…';
+    if (/Warning:.*stills failed/i.test(s)) return 'Some scenes need a redo…';
+    return s
+        .replace(/Seedance|Fly|Atlas|phash|I2V|ffmpeg|zip_path|Spaces/gi, '')
+        .replace(/\s{2,}/g, ' ')
+        .trim()
+        .slice(0, 72) || 'Working…';
+}
+
 function _friendlySbProgress(raw) {
     const s = String(raw || '');
+    if (/Uploading pack|Zipping|Writing pack/i.test(s)) return 'Saving your storyboard…';
     if (/Queued|queue/i.test(s)) return 'Queued — cooking soon…';
     if (/Starting|Joining/i.test(s)) return 'Starting your cook…';
     if (/Adding music/i.test(s)) return 'Adding music…';
@@ -6102,7 +6125,7 @@ async function pollStoryboardPack() {
         const lines = (data.progress || []).map(p => p.message || p.msg || '').filter(Boolean);
         if (prog) {
             prog.classList.remove('hidden');
-            prog.innerHTML = lines.slice(-12).map(m => `<div>${esc(m)}</div>`).join('') || 'Working…';
+            prog.innerHTML = lines.slice(-12).map(m => `<div>${esc(_friendlySbPackProgress(m))}</div>`).join('') || 'Working…';
             prog.scrollTop = prog.scrollHeight;
         }
         if (Array.isArray(data.beats) && data.beats.length) {
@@ -6120,8 +6143,10 @@ async function pollStoryboardPack() {
             _sbSetPackLoading(false);
             const cookReady = _sbBoardCookReady();
             if (status) {
-                if (mode === 'preview') {
-                    status.textContent = 'First minute ready — recreate any weak scenes, then generate the full pack.';
+                if (mode === 'preview' && cookReady) {
+                    status.textContent = 'First minute ready — cook this preview, or generate the full pack.';
+                } else if (mode === 'preview') {
+                    status.textContent = 'First minute almost ready — waiting on remaining scene stills…';
                 } else if (cookReady) {
                     status.textContent = 'Pack ready — review stills, recreate any weak ones, then cook.';
                 } else {
@@ -6143,7 +6168,7 @@ async function pollStoryboardPack() {
             if (box) box.classList.remove('hidden');
             if (continueBtn) continueBtn.classList.toggle('hidden', mode !== 'preview');
             const gotoAssemble = document.getElementById('btn-sb-goto-assemble');
-            if (gotoAssemble) gotoAssemble.classList.toggle('hidden', mode === 'preview' || !cookReady);
+            if (gotoAssemble) gotoAssemble.classList.toggle('hidden', !cookReady);
             _sbSyncBoardCookControls();
             track('storyboard_pack_ready', { job_id: _sbJobId, beat_count: data.beat_count, pack_mode: mode });
         } else if (data.status === 'error' || data.status === 'cancelled') {

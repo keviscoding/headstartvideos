@@ -679,7 +679,7 @@ def _run_storyboard_pack_job(
         if not zip_local or not Path(zip_local).is_file():
             raise RuntimeError("Storyboard zip was not created.")
 
-        on_progress("Uploading pack…")
+        on_progress("Saving your storyboard…")
         ts = int(time.time())
         import config as _cfg
         ephemeral = (
