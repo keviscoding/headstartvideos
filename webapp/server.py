@@ -3426,7 +3426,7 @@ async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(
                 if fly_spawn(job_id):
                     job["progress"].append({
                         "time": time.time(),
-                        "message": "Starting pack on Fly…",
+                        "message": "Starting your cook…",
                         "phase": "queued",
                     })
                 else:
@@ -3914,7 +3914,7 @@ async def start_storyboard_assemble(
 
     ajob = {
         "status": "queued",
-        "progress": [{"time": time.time(), "message": "Queued assemble…", "phase": "queued"}],
+        "progress": [{"time": time.time(), "message": "Queued — cooking soon…", "phase": "queued"}],
         "result": None,
         "request": req_payload,
         "user_id": admin["id"],
@@ -3934,7 +3934,7 @@ async def start_storyboard_assemble(
                 if fly_spawn(assemble_id):
                     ajob["progress"].append({
                         "time": time.time(),
-                        "message": "Starting assemble on Fly…",
+                        "message": "Starting your cook…",
                         "phase": "queued",
                     })
                 else:
@@ -4062,7 +4062,7 @@ async def start_storyboard_animate(
 
     ajob = {
         "status": "queued",
-        "progress": [{"time": time.time(), "message": "Queued Seedance animate…", "phase": "queued"}],
+        "progress": [{"time": time.time(), "message": "Queued — cooking soon…", "phase": "queued"}],
         "result": None,
         "request": req_payload,
         "user_id": admin["id"],
@@ -4082,7 +4082,7 @@ async def start_storyboard_animate(
                 if fly_spawn(animate_id):
                     ajob["progress"].append({
                         "time": time.time(),
-                        "message": "Starting animate on Fly…",
+                        "message": "Starting your cook…",
                         "phase": "queued",
                     })
                 else:

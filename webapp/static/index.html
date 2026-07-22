@@ -186,7 +186,7 @@
                     <div class="step-line"></div>
                     <div class="step-indicator" data-sb-step="4"><div class="step-dot" onclick="goToCompletedStep('sb-pack')">4</div><span class="step-label">Board</span></div>
                     <div class="step-line"></div>
-                    <div class="step-indicator" data-sb-step="5"><div class="step-dot" onclick="goToCompletedStep('sb-assemble')">5</div><span class="step-label">Assemble</span></div>
+                    <div class="step-indicator" data-sb-step="5"><div class="step-dot" onclick="goToCompletedStep('sb-assemble')">5</div><span class="step-label">Cook</span></div>
                 </div>
             </div>
         </div>
@@ -384,14 +384,14 @@
                         <div class="flex flex-wrap gap-2">
                             <a id="sb-download" class="btn-primary" href="#" download>Download pack zip</a>
                             <button id="btn-sb-goto-assemble" type="button" class="btn-secondary hidden" style="font-size:13px;padding:10px 16px;">
-                                Assemble video from clips
+                                Cook video
                             </button>
                         </div>
                     </div>
                     <div class="flex justify-between items-center mt-7 pt-5" style="border-top: 1px solid var(--app-border);">
                         <button class="btn-ghost" type="button" onclick="goToStep('storyboard')">Story</button>
                         <span class="cr-mono">Step 4 of 5</span>
-                        <button class="btn-ghost" type="button" id="btn-sb-board-next-assemble" onclick="goToStep('sb-assemble')">Assemble →</button>
+                        <button class="btn-ghost" type="button" id="btn-sb-board-next-assemble" onclick="goToStep('sb-assemble')">Cook →</button>
                     </div>
                 </div>
             </section>
@@ -404,30 +404,30 @@
                         <span class="sb-journey-step is-done">2 Cast</span>
                         <span class="sb-journey-step is-done">3 Story</span>
                         <span class="sb-journey-step is-done">4 Board</span>
-                        <span class="sb-journey-step is-active">5 Assemble</span>
+                        <span class="sb-journey-step is-active">5 Cook</span>
                     </div>
                     <div class="mb-6">
-                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Assemble your video</h2>
+                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Cook your video</h2>
                         <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">
-                            Generate motion on ChannelRecipe (Seedance with audio), or drop clips you animated elsewhere.
-                            Same cast looks flow through — reuse characters from Cast studio. Background cook; leave and check History.
+                            Cook the finished video here from your storyboard, or bring clips you made elsewhere.
+                            Your cast carries through. You can leave — we’ll save it to History when it’s done.
                         </p>
                     </div>
 
                     <div id="sb-animate-panel" class="cr-surface" style="padding:18px 20px;border-radius:var(--radius-md);margin-bottom:18px;">
-                        <p style="font-family:var(--font-body);font-size:15px;color:var(--app-ink);margin:0 0 6px;font-weight:600;">Generate on ChannelRecipe</p>
+                        <p style="font-family:var(--font-body);font-size:15px;color:var(--app-ink);margin:0 0 6px;font-weight:600;">Cook on ChannelRecipe</p>
                         <p id="sb-animate-blurb" style="font-family:var(--font-body);font-size:13px;color:var(--app-ink-3);margin:0 0 14px;">
-                            Animates every scene with Seedance (native audio), then stitches + captions. Uses your cast-locked stills.
+                            Turns every scene into motion, stitches them, and adds captions — using your cast.
                         </p>
                         <button id="btn-sb-animate-run" type="button" class="btn-primary" style="font-size:13px;padding:10px 16px;" disabled>
-                            <span class="btn-text">Generate video</span>
-                            <span class="btn-loading hidden"><span class="cr-spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;"></span> Generating…</span>
+                            <span class="btn-text">Cook video</span>
+                            <span class="btn-loading hidden"><span class="cr-spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;"></span> Cooking…</span>
                         </button>
                     </div>
 
                     <details id="sb-upload-panel" style="margin-bottom:8px;">
                         <summary style="cursor:pointer;font-family:var(--font-body);font-size:14px;font-weight:500;color:var(--app-ink-2);margin-bottom:12px;">
-                            I animated elsewhere — upload clips
+                            I already have clips — upload them
                         </summary>
                     <div id="sb-assemble-drop" class="cr-surface" style="padding:28px;border:1px dashed var(--app-border);border-radius:var(--radius-md);text-align:center;cursor:pointer;">
                         <p style="font-family:var(--font-body);font-size:15px;color:var(--app-ink);margin:0 0 8px;">Drop clips or a zip here</p>
@@ -445,8 +445,8 @@
                             <span class="btn-loading hidden"><span class="cr-spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;"></span> Matching…</span>
                         </button>
                         <button id="btn-sb-assemble-run" type="button" class="btn-primary" style="font-size:13px;padding:10px 16px;" disabled>
-                            <span class="btn-text">Assemble video</span>
-                            <span class="btn-loading hidden"><span class="cr-spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;"></span> Assembling…</span>
+                            <span class="btn-text">Cook from clips</span>
+                            <span class="btn-loading hidden"><span class="cr-spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;"></span> Cooking…</span>
                         </button>
                     </div>
                     </details>

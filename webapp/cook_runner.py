@@ -962,7 +962,7 @@ def _run_storyboard_assemble_job(
             result_json=json.dumps(meta),
             finished=True,
         )
-        on_progress("Video ready — download your MP4.")
+        on_progress("Video ready — saved to History.")
         _track(user_id or "anon", "storyboard_assemble_complete", {
             "job_id": job_id,
             "parent_job_id": parent_job_id,
@@ -993,17 +993,36 @@ def _run_storyboard_assemble_job(
 
 
 def _beat_i2v_prompt(beat: dict[str, Any]) -> str:
-    """Motion prompt + dialogue cue so Seedance audio can lip-sync."""
+    """Motion prompt + spoken line only (no 'Name:' labels for lip-sync)."""
     motion = (beat.get("i2v_prompt") or "").strip()
-    dialogue = (beat.get("dialogue") or "").strip()
+    dialogue = _spoken_dialogue_only(beat.get("dialogue") or "")
     parts = []
     if motion:
         parts.append(motion)
     else:
         parts.append("Subtle natural motion, gentle camera push-in, characters breathe and blink")
     if dialogue and dialogue.lower() not in ("(no dialogue)", "no dialogue"):
-        parts.append(f'Character speaks clearly: "{dialogue[:220]}"')
+        parts.append(f'The character in frame speaks clearly: "{dialogue[:220]}"')
     return ". ".join(parts)
+
+
+def _spoken_dialogue_only(raw: str) -> str:
+    """Strip mistaken 'Leo: …' speaker tags from spoken text for I2V audio."""
+    import re
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    lines = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        m = re.match(r"^([A-Za-z][A-Za-z0-9 _'-]{0,24})\s*:\s*(.+)$", line)
+        if m:
+            lines.append(m.group(2).strip())
+        else:
+            lines.append(line)
+    return " ".join(lines).strip()
 
 
 def _run_storyboard_animate_job(
@@ -1106,9 +1125,9 @@ def _run_storyboard_animate_job(
         still_cache = work / "stills"
         still_cache.mkdir(exist_ok=True)
 
-        concurrency = max(1, int(getattr(config, "ATLAS_I2V_CONCURRENCY", 3) or 3))
+        concurrency = max(1, int(getattr(config, "ATLAS_I2V_CONCURRENCY", 5) or 5))
         total = len(beat_rows)
-        on_progress(f"Animating {total} scene(s) with Seedance (audio on)…")
+        on_progress(f"Cooking scenes… 0/{total}")
 
         done_lock = __import__("threading").Lock()
         done_count = [0]
@@ -1129,7 +1148,7 @@ def _run_storyboard_animate_job(
             if out_clip.is_file() and out_clip.stat().st_size > 1000:
                 with done_lock:
                     done_count[0] += 1
-                    on_progress(f"Scene {idx:03d} already generated ({done_count[0]}/{total})")
+                    on_progress(f"Cooking scenes… {done_count[0]}/{total}")
                 return {
                     "index": idx,
                     "clip": str(out_clip),
@@ -1150,10 +1169,10 @@ def _run_storyboard_animate_job(
                 duration=dur,
             )
             if not ok or not out_clip.is_file():
-                raise RuntimeError(f"Seedance failed for scene {idx:03d}")
+                raise RuntimeError(f"Scene {idx:03d} motion failed")
             with done_lock:
                 done_count[0] += 1
-                on_progress(f"Animated scene {idx:03d} ({done_count[0]}/{total})")
+                on_progress(f"Cooking scenes… {done_count[0]}/{total}")
             return {
                 "index": idx,
                 "clip": str(out_clip),
@@ -1180,13 +1199,13 @@ def _run_storyboard_animate_job(
 
         if not matched:
             raise RuntimeError(
-                "No scenes animated. " + ("; ".join(errors[:3]) if errors else "Check Atlas key / Seedance.")
+                "Could not cook any scenes. " + ("; ".join(errors[:3]) if errors else "Please try again.")
             )
         matched.sort(key=lambda m: m["index"])
         if errors:
-            on_progress(f"Continuing with {len(matched)}/{total} scenes ({len(errors)} failed)…")
+            on_progress(f"Cooking scenes… {len(matched)}/{total} ready — finishing…")
 
-        on_progress(f"Stitching {len(matched)} clips…")
+        on_progress("Putting your video together…")
         out_mp4 = work / f"{job_id}_assembled.mp4"
         result = assemble_storyboard_video(
             matched=matched,
@@ -1269,7 +1288,7 @@ def _run_storyboard_animate_job(
             result_json=json.dumps(meta),
             finished=True,
         )
-        on_progress("Video ready — download your MP4.")
+        on_progress("Video ready — saved to History.")
         _track(user_id or "anon", "storyboard_animate_complete", {
             "job_id": job_id,
             "parent_job_id": parent_job_id,

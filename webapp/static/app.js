@@ -5550,6 +5550,7 @@ async function runStoryboardAssemble() {
     const btn = document.getElementById('btn-sb-assemble-run');
     setLoading(btn, true);
     document.getElementById('sb-assemble-result')?.classList.add('hidden');
+    _sbShowCookingBar('your video');
     try {
         const fd = new FormData();
         if (_sbAssembleStagingId) fd.append('staging_id', _sbAssembleStagingId);
@@ -5561,7 +5562,7 @@ async function runStoryboardAssemble() {
         }
         const res = await fetch(`/api/storyboard/jobs/${_sbJobId}/assemble`, { method: 'POST', body: fd });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Assemble failed to start');
+        if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Cook failed to start');
         _sbAssembleJobId = data.job_id;
         if (_sbAssemblePollTimer) clearInterval(_sbAssemblePollTimer);
         _sbAssemblePollTimer = setInterval(pollStoryboardAssemble, 2500);
@@ -5569,7 +5570,8 @@ async function runStoryboardAssemble() {
         track('storyboard_assemble_queued', { job_id: _sbAssembleJobId, parent: _sbJobId });
     } catch (e) {
         setLoading(btn, false);
-        alert(e.message || 'Assemble failed');
+        _sbHideCookingBar();
+        alert(e.message || 'Cook failed');
     }
 }
 
@@ -5583,23 +5585,25 @@ async function pollStoryboardAssemble() {
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.detail || 'Status failed');
         const lines = (data.progress || []).map(p => p.message || '').filter(Boolean);
+        const last = lines[lines.length - 1] || '';
+        if (last) _sbUpdateCookingBar(last);
         if (prog) {
             prog.classList.remove('hidden');
-            prog.innerHTML = lines.slice(-12).map(m => `<div>${esc(m)}</div>`).join('') || 'Working…';
+            prog.innerHTML = lines.slice(-12).map(m => `<div>${esc(_friendlySbProgress(m))}</div>`).join('') || 'Cooking…';
             prog.scrollTop = prog.scrollHeight;
         }
         if (data.status === 'complete' || data.video_ready) {
             if (_sbAssemblePollTimer) { clearInterval(_sbAssemblePollTimer); _sbAssemblePollTimer = null; }
             setLoading(btnAssemble, false);
             setLoading(btnAnimate, false);
+            _sbHideCookingBar();
             const box = document.getElementById('sb-assemble-result');
             const summary = document.getElementById('sb-assemble-summary');
             const dl = document.getElementById('sb-assemble-download');
             const kind = data.kind || '';
             if (summary) {
                 const mins = data.duration_sec ? (data.duration_sec / 60).toFixed(1) : '?';
-                const verb = kind === 'storyboard_animate' ? 'Generated' : 'Assembled';
-                summary.textContent = `${verb} — ${data.beat_count || '?'} scenes · ~${mins} min · ${data.caption_count || 0} captions · saved to History`;
+                summary.textContent = `Ready — ${data.beat_count || '?'} scenes · ~${mins} min · saved to History`;
             }
             if (dl) {
                 dl.href = `/api/storyboard/jobs/${_sbAssembleJobId}/download`;
@@ -5623,11 +5627,50 @@ async function pollStoryboardAssemble() {
             if (_sbAssemblePollTimer) { clearInterval(_sbAssemblePollTimer); _sbAssemblePollTimer = null; }
             setLoading(btnAssemble, false);
             setLoading(btnAnimate, false);
-            alert(data.error || 'Job failed');
+            _sbHideCookingBar();
+            alert(data.error || 'Cook failed');
         }
     } catch (e) {
         console.warn('assemble poll', e);
     }
+}
+
+function _friendlySbProgress(raw) {
+    const s = String(raw || '');
+    if (/Queued|queue/i.test(s)) return 'Queued — cooking soon…';
+    if (/Starting|Joining/i.test(s)) return 'Starting your cook…';
+    if (/Cooking scenes|Animating|Animated scene|scene\(s\)/i.test(s)) {
+        const m = s.match(/(\d+)\s*\/\s*(\d+)/);
+        if (m) return `Cooking scenes… ${m[1]} of ${m[2]}`;
+        return 'Cooking scenes…';
+    }
+    if (/Stitch|Normaliz|caption|Assemble|Building/i.test(s)) return 'Putting your video together…';
+    if (/ready|History|Download|complete|Done/i.test(s)) return 'Almost done…';
+    if (/Uploading|Saving/i.test(s)) return 'Saving your video…';
+    // Never show infra / model names to users
+    return s
+        .replace(/Seedance|Fly|Atlas|phash|I2V|ffmpeg/gi, '')
+        .replace(/\s{2,}/g, ' ')
+        .trim()
+        .slice(0, 72) || 'Cooking…';
+}
+
+function _sbShowCookingBar(title) {
+    const bar = document.getElementById('cooking-bar');
+    const t = document.getElementById('cooking-bar-title');
+    const st = document.getElementById('cooking-bar-status');
+    if (t) t.textContent = title || 'your video';
+    if (st) st.textContent = 'Starting your cook…';
+    if (bar) bar.classList.remove('hidden');
+}
+
+function _sbHideCookingBar() {
+    document.getElementById('cooking-bar')?.classList.add('hidden');
+}
+
+function _sbUpdateCookingBar(msg) {
+    const st = document.getElementById('cooking-bar-status');
+    if (st) st.textContent = _friendlySbProgress(msg);
 }
 
 async function _sbSyncAnimateUI() {
@@ -5645,8 +5688,8 @@ async function _sbSyncAnimateUI() {
         if (blurb && res.ok) {
             const c = Number(data.credits || 0);
             blurb.textContent = c > 0
-                ? `Animates every scene with Seedance (native audio), then stitches + captions. Uses ~${c} credit${c === 1 ? '' : 's'} for ~${mins} min.`
-                : 'Animates every scene with Seedance (native audio), then stitches + captions. Uses your cast-locked stills.';
+                ? `Turns every scene into motion, stitches them, and adds captions. About ${c} credit${c === 1 ? '' : 's'} for ~${mins} min.`
+                : 'Turns every scene into motion, stitches them, and adds captions — using your cast.';
         }
     } catch (_) {}
 }
@@ -5657,6 +5700,7 @@ async function runStoryboardAnimate() {
     const btn = document.getElementById('btn-sb-animate-run');
     setLoading(btn, true);
     document.getElementById('sb-assemble-result')?.classList.add('hidden');
+    _sbShowCookingBar('your video');
     try {
         const fd = new FormData();
         fd.append('burn_captions', '1');
@@ -5664,7 +5708,7 @@ async function runStoryboardAnimate() {
         if (notify) fd.append('notify_email', notify);
         const res = await fetch(`/api/storyboard/jobs/${_sbJobId}/animate`, { method: 'POST', body: fd });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Generate failed to start');
+        if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Cook failed to start');
         _sbAssembleJobId = data.job_id;
         if (_sbAssemblePollTimer) clearInterval(_sbAssemblePollTimer);
         _sbAssemblePollTimer = setInterval(pollStoryboardAssemble, 2500);
@@ -5672,7 +5716,8 @@ async function runStoryboardAnimate() {
         track('storyboard_animate_queued', { job_id: _sbAssembleJobId, parent: _sbJobId, credits: data.credits_charged || 0 });
     } catch (e) {
         setLoading(btn, false);
-        alert(e.message || 'Generate failed');
+        _sbHideCookingBar();
+        alert(e.message || 'Cook failed');
     }
 }
 

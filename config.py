@@ -40,7 +40,7 @@ ATLAS_I2V_RESOLUTION = os.getenv("ATLAS_I2V_RESOLUTION", "720p")
 ATLAS_I2V_GENERATE_AUDIO = os.getenv("ATLAS_I2V_GENERATE_AUDIO", "1").strip().lower() in (
     "1", "true", "yes", "on",
 )
-ATLAS_I2V_CONCURRENCY = max(1, int(os.getenv("ATLAS_I2V_CONCURRENCY", "3")))
+ATLAS_I2V_CONCURRENCY = max(1, int(os.getenv("ATLAS_I2V_CONCURRENCY", "5")))
 # Credit charge for on-site animate — 0 while admin-testing; tune in pricing pass.
 STORYBOARD_ANIMATE_CREDITS_PER_MIN = float(os.getenv("STORYBOARD_ANIMATE_CREDITS_PER_MIN", "0") or 0)
 STORYBOARD_ANIMATE_CREDITS_MIN = max(0, int(os.getenv("STORYBOARD_ANIMATE_CREDITS_MIN", "0") or 0))

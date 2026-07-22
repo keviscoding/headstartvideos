@@ -425,22 +425,49 @@ def _anti_photo_clause(style_id: str) -> str:
 
 
 def _generate_cast_t2i(prompt: str, out_path: Path, *, aspect_ratio: str = "1:1") -> bool:
-    """Nano-banana T2I for cast art — respects stylized prompts far better than ERNIE/GPT Image."""
+    """GPT Image 2 first (cheap ~$0.009), then Nano Banana fallbacks."""
+    # Prefer HQ GPT Image 2 for 16:9 scenes; for square portraits use edit/t2i models below.
+    if aspect_ratio in ("16:9", "16/9"):
+        try:
+            from core.atlas_llm import generate_hq_image_file
+            if generate_hq_image_file((prompt or "")[:1400], str(out_path)):
+                return True
+        except Exception as e:
+            print(f"[storyboard] cast GPT Image 2 failed: {e}")
     try:
-        from core.thumbnail_gen import _T2I_MODELS, _submit_and_download
+        from core.thumbnail_gen import _submit_and_download
     except Exception as e:
         print(f"[storyboard] cast T2I helpers unavailable: {e}")
         return False
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    for model in _T2I_MODELS:
-        payload = {
-            "model": model,
-            "prompt": (prompt or "")[:1400],
-            "aspect_ratio": aspect_ratio,
-            "resolution": "1k",
-            "output_format": "png",
-            "enable_base64_output": False,
-        }
+    size = "1024x1024" if aspect_ratio in ("1:1", "1/1") else "1536x864"
+    models = [
+        "openai/gpt-image-2-developer/text-to-image",
+        "openai/gpt-image-2/text-to-image",
+        "google/nano-banana-2-lite/text-to-image-developer",
+        "google/nano-banana-2/text-to-image-developer",
+    ]
+    for model in models:
+        if "gpt-image" in model:
+            payload = {
+                "model": model,
+                "prompt": (prompt or "")[:1400],
+                "quality": "low",
+                "size": size,
+                "output_format": "png",
+                "moderation": "low",
+                "enable_base64_output": False,
+                "enable_sync_mode": False,
+            }
+        else:
+            payload = {
+                "model": model,
+                "prompt": (prompt or "")[:1400],
+                "aspect_ratio": aspect_ratio,
+                "resolution": "1k",
+                "output_format": "png",
+                "enable_base64_output": False,
+            }
         try:
             _submit_and_download(payload, out_path, label=f"cast t2i/{model}")
             if out_path.is_file():
@@ -522,16 +549,33 @@ def generate_character_sheet(
                     "Multiple panels: front, 3/4, side profile, close-up face. "
                     "Clean light background, no text, no watermark."
                 )
-                for model in _EDIT_MODELS:
-                    payload = {
-                        "model": model,
-                        "prompt": edit_prompt[:1400],
-                        "images": [ref_url],
-                        "aspect_ratio": "16:9",
-                        "resolution": "1k",
-                        "output_format": "png",
-                        "enable_base64_output": False,
-                    }
+                for model in (
+                    "openai/gpt-image-2-developer/edit",
+                    "openai/gpt-image-2/edit",
+                    *_EDIT_MODELS,
+                ):
+                    if "gpt-image" in model:
+                        payload = {
+                            "model": model,
+                            "prompt": edit_prompt[:1400],
+                            "images": [ref_url],
+                            "quality": "low",
+                            "size": "1536x864",
+                            "output_format": "png",
+                            "moderation": "low",
+                            "enable_base64_output": False,
+                            "enable_sync_mode": False,
+                        }
+                    else:
+                        payload = {
+                            "model": model,
+                            "prompt": edit_prompt[:1400],
+                            "images": [ref_url],
+                            "aspect_ratio": "16:9",
+                            "resolution": "1k",
+                            "output_format": "png",
+                            "enable_base64_output": False,
+                        }
                     try:
                         _submit_and_download(payload, out, label=f"cast sheet edit/{model}")
                         if out.is_file():
@@ -714,6 +758,58 @@ def suggest_storyboard_thumbnail_brief(
     }
 
 
+def _clean_beat_dialogue(
+    dialogue: str,
+    *,
+    speaker: str = "",
+    characters: str = "",
+) -> str:
+    """
+    Normalize dialogue so captions/audio don't put the wrong Name: tag in someone's mouth.
+
+    - Prefer spoken words only.
+    - If LLM wrongly wrote "Leo: Where's your passport?" for a Dad beat, strip the
+      wrong prefix and keep the spoken line (optionally re-prefix with speaker).
+    """
+    import re
+
+    text = (dialogue or "").strip()
+    if not text:
+        return ""
+    speaker = (speaker or "").strip()
+    cast_names = [
+        n.strip()
+        for n in re.split(r"[,/&]| and ", characters or "")
+        if n and n.strip()
+    ]
+    known = {n.lower() for n in cast_names if n}
+    if speaker:
+        known.add(speaker.lower())
+
+    cleaned_lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        m = re.match(r"^([A-Za-z][A-Za-z0-9 _'-]{0,24})\s*:\s*(.+)$", line)
+        if m:
+            name, spoken = m.group(1).strip(), m.group(2).strip()
+            if known and name.lower() in known:
+                cleaned_lines.append(f"{name}: {spoken}")
+            else:
+                cleaned_lines.append(spoken)
+        else:
+            cleaned_lines.append(line)
+
+    out = "\n".join(cleaned_lines).strip()
+    if speaker and out and "\n" not in out:
+        first = out.split(":", 1)[0].strip()
+        if ":" not in out or first.lower() not in known:
+            spoken = out.split(":", 1)[-1].strip() if ":" in out else out
+            out = f"{speaker}: {spoken}"
+    return out
+
+
 def generate_beat_sheet(
     *,
     title: str,
@@ -794,7 +890,8 @@ def generate_beat_sheet(
         '    {',
         '      "index": 1,',
         '      "target_sec": 8,',
-        '      "dialogue": "Speaker lines for this beat",',
+        '      "dialogue": "ONLY the spoken words for this beat — never include Name: prefixes",',
+        '      "speaker": "Who is speaking (one name from cast; omit if several trade lines)",',
         '      "location": "short place",',
         '      "time_of_day": "morning|afternoon|dusk|night|indoor_evening (pick one; stay consistent across related beats)",',
         '      "outfit_continuity": "same outfits as previous beats unless this beat explicitly changes clothes",',
@@ -813,13 +910,16 @@ def generate_beat_sheet(
         "Only change clothes when the story says so (new day, costume change). Put that note in outfit_continuity.",
         "- image_prompt: who is in frame, expression, props, location, AND lighting matching time_of_day. "
         "No brand style words (Pixar, anime studio names, etc.).",
+        "- dialogue: ONLY spoken words. Never write 'Leo: …' or 'Mom: …' inside dialogue. "
+        "Put the speaker name in the speaker field instead. "
+        "If two people trade lines in one beat, use short lines separated by newlines WITHOUT name prefixes.",
         "- i2v_prompt: subtle motion only (turn head, speak, walk slowly, camera push-in).",
         "- Keep included cast visually consistent; omit characters the user turned off.",
         "- Prefer the user's title when given.",
     ]
     if family_mode:
         user_parts.append(
-            "- dialogue: CEFR A1–A2 per style bible. Short turns. Explicit feelings."
+            "- dialogue: CEFR A1–A2 per style bible. Short turns. Explicit feelings. Still NO Name: prefixes."
         )
         user_parts.append(
             "- Title may follow bible title patterns (question / mistake / hook) unless user title is given."
@@ -895,7 +995,11 @@ def generate_beat_sheet(
     for i, row in enumerate(data["beats"], start=1):
         if not isinstance(row, dict):
             continue
-        dialogue = str(row.get("dialogue") or "").strip()
+        dialogue = _clean_beat_dialogue(
+            str(row.get("dialogue") or "").strip(),
+            speaker=str(row.get("speaker") or "").strip(),
+            characters=str(row.get("characters") or "").strip(),
+        )
         image_prompt = str(row.get("image_prompt") or "").strip()
         i2v_prompt = str(row.get("i2v_prompt") or "").strip()
         if not image_prompt:
@@ -1187,27 +1291,46 @@ def _generate_still_edit(
     *,
     visual_style: str = "",
 ) -> bool:
-    """Reference-conditioned scene generation via nano-banana edit. Returns success."""
+    """Reference-conditioned scene via GPT Image 2 edit (~$0.005–0.01), then Nano Banana."""
     if not ref_urls:
         return False
     try:
-        from core.thumbnail_gen import _EDIT_MODELS, _submit_and_download
+        from core.thumbnail_gen import _submit_and_download
     except Exception as e:
         print(f"[storyboard] edit helpers unavailable: {e}")
         return False
     style_label = _style_label(visual_style)
     prompt = _scene_edit_prompt(beat, style_label, visual_style)
     jpg = out_path if out_path.suffix.lower() in (".jpg", ".jpeg") else out_path.with_suffix(".jpg")
-    for model in _EDIT_MODELS:
-        payload = {
-            "model": model,
-            "prompt": prompt,
-            "images": ref_urls[:4],
-            "aspect_ratio": "16:9",
-            "resolution": "1k",
-            "output_format": "jpeg",
-            "enable_base64_output": False,
-        }
+    edit_models = [
+        ("openai/gpt-image-2-developer/edit", True),
+        ("openai/gpt-image-2/edit", True),
+        ("google/nano-banana-2-lite/edit-developer", False),
+        ("google/nano-banana-2/edit-developer", False),
+    ]
+    for model, is_gpt in edit_models:
+        if is_gpt:
+            payload = {
+                "model": model,
+                "prompt": prompt,
+                "images": ref_urls[:4],
+                "quality": "low",
+                "size": "1536x864",
+                "output_format": "jpeg",
+                "moderation": "low",
+                "enable_base64_output": False,
+                "enable_sync_mode": False,
+            }
+        else:
+            payload = {
+                "model": model,
+                "prompt": prompt,
+                "images": ref_urls[:4],
+                "aspect_ratio": "16:9",
+                "resolution": "1k",
+                "output_format": "jpeg",
+                "enable_base64_output": False,
+            }
         try:
             _submit_and_download(payload, jpg, label=f"scene {beat.index:03d} edit/{model}")
             if jpg.is_file():
@@ -1230,7 +1353,7 @@ def _generate_still_t2i(
     cast_lock: str = "",
     visual_style: str = "",
 ) -> bool:
-    """Nano-banana T2I fallback that keeps the chosen style (avoids ERNIE anime drift)."""
+    """GPT Image 2 T2I first (~$0.009), then Nano Banana."""
     sid, style_lock, _ = resolve_visual_style(visual_style)
     label = VISUAL_STYLE_PRESETS.get(sid, {}).get("label", "3D Pixar-lite")
     parts = [
@@ -1251,21 +1374,45 @@ def _generate_still_t2i(
         parts.append(f"Cast look lock: {cast_lock}")
     prompt = " ".join(p for p in parts if p)[:1400]
     jpg = out_path if out_path.suffix.lower() in (".jpg", ".jpeg") else out_path.with_suffix(".jpg")
+    jpg.parent.mkdir(parents=True, exist_ok=True)
     try:
-        from core.thumbnail_gen import _T2I_MODELS, _submit_and_download
+        from core.atlas_llm import generate_hq_image_file
+        if generate_hq_image_file(prompt, str(jpg)):
+            beat.image_path = str(jpg)
+            beat.error = ""
+            return True
+    except Exception as e:
+        print(f"[storyboard] scene {beat.index:03d} GPT Image 2 failed: {e}")
+    try:
+        from core.thumbnail_gen import _submit_and_download
     except Exception as e:
         print(f"[storyboard] still T2I helpers unavailable: {e}")
         return False
-    jpg.parent.mkdir(parents=True, exist_ok=True)
-    for model in _T2I_MODELS:
-        payload = {
-            "model": model,
-            "prompt": prompt,
-            "aspect_ratio": "16:9",
-            "resolution": "1k",
-            "output_format": "jpeg",
-            "enable_base64_output": False,
-        }
+    for model in (
+        "openai/gpt-image-2-developer/text-to-image",
+        "google/nano-banana-2-lite/text-to-image-developer",
+        "google/nano-banana-2/text-to-image-developer",
+    ):
+        if "gpt-image" in model:
+            payload = {
+                "model": model,
+                "prompt": prompt,
+                "quality": "low",
+                "size": "1536x864",
+                "output_format": "jpeg",
+                "moderation": "low",
+                "enable_base64_output": False,
+                "enable_sync_mode": False,
+            }
+        else:
+            payload = {
+                "model": model,
+                "prompt": prompt,
+                "aspect_ratio": "16:9",
+                "resolution": "1k",
+                "output_format": "jpeg",
+                "enable_base64_output": False,
+            }
         try:
             _submit_and_download(payload, jpg, label=f"scene {beat.index:03d} t2i/{model}")
             if jpg.is_file():
