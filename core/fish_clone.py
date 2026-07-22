@@ -236,13 +236,15 @@ def create_voice_model(
 def tts_with_clone(text: str, fish_model_id: str, output_path: str) -> str:
     """Generate speech with a Fish reference_id (JSON path).
 
-    Callers must pass chunks ≤ ~4000 chars. We refuse silent truncation —
-    that previously cut ~8 min scripts down to ~3.5 min without error.
+    Callers should pass short chunks (~280 chars). Fish's default
+    max_new_tokens=1024 only covers ~10–15s of audio per generation window —
+    we raise it and set chunk_length so long scripts aren't silently truncated.
     """
     text = (text or "").strip()
     if not text:
         raise ValueError("Empty script")
-    FISH_HARD_MAX = 4500
+    # Keep in sync with voiceover_gen Fish client chunk size
+    FISH_HARD_MAX = 400
     if len(text) > FISH_HARD_MAX:
         raise ValueError(
             f"Fish TTS chunk too long ({len(text)} chars; max {FISH_HARD_MAX}). "
@@ -260,12 +262,20 @@ def tts_with_clone(text: str, fish_model_id: str, output_path: str) -> str:
             "text": text,
             "reference_id": fish_model_id,
             "format": "wav",
+            # Long-form settings — defaults silently stop around ~12s.
+            "chunk_length": 300,
+            "max_new_tokens": 4096,
+            "latency": "normal",
+            "normalize": True,
+            "condition_on_previous_chunks": True,
         },
-        timeout=180,
+        timeout=300,
     )
     if resp.status_code >= 400:
         raise RuntimeError(f"Fish TTS failed ({resp.status_code}): {resp.text[:400]}")
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "wb") as f:
         f.write(resp.content)
+    if not Path(output_path).is_file() or Path(output_path).stat().st_size < 500:
+        raise RuntimeError("Fish TTS returned empty audio")
     return output_path

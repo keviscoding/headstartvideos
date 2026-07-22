@@ -352,12 +352,22 @@
                         <div>
                             <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Your storyboard</h2>
                             <p id="sb-pack-status" style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">
-                                Stills appear here as they’re ready. Click any scene to recreate it.
+                                Stills appear here as they’re ready. Click any scene to recreate it. Drag across scenes to cook just that stretch.
                             </p>
                         </div>
                         <button id="btn-sb-continue-full" type="button" class="btn-primary hidden" style="font-size:13px;padding:10px 16px;">
                             Looks good — generate full pack
                         </button>
+                    </div>
+                    <div id="sb-range-bar" class="hidden sb-range-bar">
+                        <p id="sb-range-label" style="font-family:var(--font-body);font-size:14px;color:var(--app-ink);margin:0;">
+                            All scenes selected
+                        </p>
+                        <div class="flex flex-wrap gap-2">
+                            <button type="button" id="btn-sb-range-all" class="btn-ghost" style="font-size:13px;">Select all</button>
+                            <button type="button" id="btn-sb-range-clear" class="btn-ghost hidden" style="font-size:13px;">Clear stretch</button>
+                            <button type="button" id="btn-sb-range-cook" class="btn-secondary hidden" style="font-size:13px;padding:8px 12px;">Cook this stretch →</button>
+                        </div>
                     </div>
                     <div class="sb-board-wrap">
                         <div id="sb-board" class="sb-board"></div>

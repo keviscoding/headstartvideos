@@ -658,6 +658,31 @@
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
 }
+.sb-board-card.is-in-range {
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--app-border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--app-surface-2));
+}
+.sb-board-card.is-in-range.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.sb-board.is-drag-selecting {
+  user-select: none;
+  -webkit-user-select: none;
+}
+.sb-range-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--radius-md);
+  background: var(--app-surface-2);
+}
 .sb-board-card img,
 .sb-board-card .sb-board-ph {
   width: 100%;

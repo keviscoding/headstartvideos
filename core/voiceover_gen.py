@@ -62,17 +62,55 @@ ATLAS_MAX_CHARS = 2500  # Keep chunks small — Atlas stalls on 5k+ char request
 ATLAS_BASE = "https://api.atlascloud.ai/api/v1"
 
 
+def _hard_split_text(text: str, max_chars: int) -> list[str]:
+    """Split oversized text on word boundaries when sentence split isn't enough."""
+    text = (text or "").strip()
+    if not text:
+        return []
+    if len(text) <= max_chars:
+        return [text]
+    parts: list[str] = []
+    rest = text
+    while rest:
+        if len(rest) <= max_chars:
+            parts.append(rest.strip())
+            break
+        window = rest[:max_chars]
+        # Prefer breaking on whitespace near the end of the window
+        cut = window.rfind(" ")
+        if cut < max(40, max_chars // 4):
+            cut = max_chars
+        piece = rest[:cut].strip()
+        if piece:
+            parts.append(piece)
+        rest = rest[cut:].strip()
+    return parts
+
+
 def _chunk_script(script: str, max_chars: int = ATLAS_MAX_CHARS) -> list[str]:
-    """Split a long script into chunks at sentence boundaries."""
+    """Split a long script into chunks at sentence boundaries (hard-split if needed)."""
+    script = (script or "").strip()
+    if not script:
+        return []
     if len(script) <= max_chars:
         return [script]
 
     import re
-    sentences = re.split(r'(?<=[.!?])\s+', script.strip())
+    sentences = re.split(r'(?<=[.!?])\s+', script)
     chunks: list[str] = []
     current = ""
 
     for sent in sentences:
+        sent = (sent or "").strip()
+        if not sent:
+            continue
+        # Single sentence longer than max → hard split
+        if len(sent) > max_chars:
+            if current.strip():
+                chunks.append(current.strip())
+                current = ""
+            chunks.extend(_hard_split_text(sent, max_chars))
+            continue
         if len(current) + len(sent) + 1 > max_chars and current:
             chunks.append(current.strip())
             current = sent
@@ -82,7 +120,14 @@ def _chunk_script(script: str, max_chars: int = ATLAS_MAX_CHARS) -> list[str]:
     if current.strip():
         chunks.append(current.strip())
 
-    return chunks
+    # Final safety: no chunk may exceed max_chars
+    flat: list[str] = []
+    for c in chunks:
+        if len(c) <= max_chars:
+            flat.append(c)
+        else:
+            flat.extend(_hard_split_text(c, max_chars))
+    return flat or [script[:max_chars]]
 
 
 def _ffmpeg_err(result: subprocess.CompletedProcess) -> str:
@@ -387,19 +432,18 @@ def generate_voiceover(
         fish_id = voice_key.split(":", 1)[1].strip()
         if not fish_id:
             raise ValueError("Invalid cloned voice id")
-        from core.fish_clone import tts_with_clone
+        from core.fish_clone import tts_with_clone, _probe_duration
         out_dir = Path(output_dir) if output_dir else Path(tempfile.mkdtemp(prefix="vo_"))
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = str(out_dir / "voiceover.wav")
-        # Fish silently used to truncate at 4500 chars (~3–4 min). Chunk + concat.
-        FISH_MAX = 4000
+        # Fish max_new_tokens defaults to ~12s per window. Keep client chunks short
+        # (within Fish chunk_length 100–300) and concat so long scripts stay full-length.
+        FISH_MAX = 280
         chunks = _chunk_script(script.strip(), max_chars=FISH_MAX)
         print(
             f"[voiceover] Fish clone TTS — {len(chunks)} chunk(s), "
             f"model={fish_id[:12]}…, total_chars={len(script.strip())}"
         )
-        if len(chunks) == 1:
-            return tts_with_clone(chunks[0], fish_id, out_path)
         wav_paths: list[str] = []
         try:
             for i, chunk in enumerate(chunks):
@@ -407,7 +451,28 @@ def generate_voiceover(
                 print(f"[voiceover] Fish chunk {i + 1}/{len(chunks)} ({len(chunk)} chars)...")
                 tts_with_clone(chunk, fish_id, chunk_path)
                 wav_paths.append(chunk_path)
-            return _concat_wavs(wav_paths, out_path)
+            if len(wav_paths) == 1:
+                src = Path(wav_paths[0])
+                dest = Path(out_path)
+                if src.resolve() != dest.resolve():
+                    import shutil
+                    shutil.move(str(src), str(dest))
+                result_path = out_path
+            else:
+                result_path = _concat_wavs(wav_paths, out_path)
+
+            # Fail loud if Fish still truncated — don't hand a 12s clip to cook.
+            words = len(script.split())
+            if words >= 80:
+                expected_sec = words / 150.0 * 60.0
+                actual_sec = _probe_duration(result_path)
+                if actual_sec > 1 and expected_sec > 0 and actual_sec < expected_sec * 0.55:
+                    raise RuntimeError(
+                        f"Cloned voiceover came back too short "
+                        f"({actual_sec / 60:.1f} min for ~{expected_sec / 60:.1f} min / {words} words). "
+                        "Please try generating the voiceover again."
+                    )
+            return result_path
         except Exception:
             for p in wav_paths:
                 Path(p).unlink(missing_ok=True)

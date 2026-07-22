@@ -5055,6 +5055,11 @@ let _sbLastEpisodePayload = null;
 let _sbBeats = [];
 let _sbPackStatus = ''; // queued | running | complete | error | …
 let _sbZipReady = false;
+/** Contiguous cook range (beat indexes). null/null = all scenes. */
+let _sbRangeFrom = null;
+let _sbRangeTo = null;
+let _sbDragSelecting = false;
+let _sbDragAnchor = null;
 let _sbVisualStyle = 'pixar_lite';
 let _sbTemplate = '';
 let _sbStyleOptions = [
@@ -5080,21 +5085,105 @@ function _sbBeatHasStill(b) {
     return !!(b.image_url || b.image_path || b.still_url || b.still_path);
 }
 
-/** True when this pack (preview or full) finished and every scene has a still. */
+function _sbHasCookRange() {
+    return _sbRangeFrom != null && _sbRangeTo != null;
+}
+
+/** Contiguous beat rows in the current cook range (or all beats). */
+function _sbCookBeats() {
+    const beats = Array.isArray(_sbBeats) ? [..._sbBeats].sort((a, b) => (a.index || 0) - (b.index || 0)) : [];
+    if (!_sbHasCookRange()) return beats;
+    const lo = Math.min(_sbRangeFrom, _sbRangeTo);
+    const hi = Math.max(_sbRangeFrom, _sbRangeTo);
+    return beats.filter(b => (b.index || 0) >= lo && (b.index || 0) <= hi);
+}
+
+function _sbIsInCookRange(idx) {
+    if (!_sbHasCookRange()) return false;
+    const lo = Math.min(_sbRangeFrom, _sbRangeTo);
+    const hi = Math.max(_sbRangeFrom, _sbRangeTo);
+    return idx >= lo && idx <= hi;
+}
+
+function _sbSetCookRange(a, b) {
+    const beats = Array.isArray(_sbBeats) ? _sbBeats : [];
+    if (!beats.length) {
+        _sbRangeFrom = null;
+        _sbRangeTo = null;
+        return;
+    }
+    const indexes = beats.map(x => +x.index).filter(n => Number.isFinite(n));
+    const minI = Math.min(...indexes);
+    const maxI = Math.max(...indexes);
+    let lo = Math.min(+a, +b);
+    let hi = Math.max(+a, +b);
+    lo = Math.max(minI, Math.min(maxI, lo));
+    hi = Math.max(minI, Math.min(maxI, hi));
+    // Selecting the entire board clears the special range (cook all).
+    if (lo === minI && hi === maxI) {
+        _sbRangeFrom = null;
+        _sbRangeTo = null;
+    } else {
+        _sbRangeFrom = lo;
+        _sbRangeTo = hi;
+    }
+}
+
+function _sbClearCookRange() {
+    _sbRangeFrom = null;
+    _sbRangeTo = null;
+    _sbSyncRangeBar();
+    renderStoryboardBoard(_sbBeats);
+}
+
+function _sbSelectAllCookRange() {
+    _sbClearCookRange();
+}
+
+function _sbSyncRangeBar() {
+    const bar = document.getElementById('sb-range-bar');
+    const label = document.getElementById('sb-range-label');
+    const clearBtn = document.getElementById('btn-sb-range-clear');
+    const cookBtn = document.getElementById('btn-sb-range-cook');
+    const beats = Array.isArray(_sbBeats) ? _sbBeats : [];
+    if (!bar) return;
+    if (!beats.length) {
+        bar.classList.add('hidden');
+        return;
+    }
+    bar.classList.remove('hidden');
+    const selected = _sbCookBeats();
+    const ready = selected.length && selected.every(_sbBeatHasStill);
+    if (_sbHasCookRange()) {
+        const lo = Math.min(_sbRangeFrom, _sbRangeTo);
+        const hi = Math.max(_sbRangeFrom, _sbRangeTo);
+        if (label) {
+            label.textContent = `Scenes ${String(lo).padStart(3, '0')}–${String(hi).padStart(3, '0')} · ${selected.length} of ${beats.length}`;
+        }
+        clearBtn?.classList.remove('hidden');
+        cookBtn?.classList.toggle('hidden', !ready);
+    } else {
+        if (label) label.textContent = `All ${beats.length} scenes · drag across the board to cook a shorter stretch`;
+        clearBtn?.classList.add('hidden');
+        cookBtn?.classList.add('hidden');
+    }
+}
+
+/** True when cook-target scenes (range or all) have stills. Full-board needs pack finished. */
 function _sbBoardCookReady() {
     if (!_sbJobId) return false;
-    if (!_sbZipReady && _sbPackStatus !== 'complete') return false;
-    const beats = Array.isArray(_sbBeats) ? _sbBeats : [];
+    if (!_sbHasCookRange() && !_sbZipReady && _sbPackStatus !== 'complete') return false;
+    const beats = _sbCookBeats();
     if (!beats.length) return false;
     return beats.every(_sbBeatHasStill);
 }
 
 function _sbBoardCookBlockReason() {
     if (!_sbJobId) return 'Generate your storyboard first.';
-    if (!_sbZipReady && _sbPackStatus !== 'complete') {
-        return 'Wait until every scene still is ready before cooking.';
+    if (!_sbHasCookRange() && !_sbZipReady && _sbPackStatus !== 'complete') {
+        return 'Wait until every scene still is ready before cooking — or drag a ready stretch.';
     }
-    const beats = Array.isArray(_sbBeats) ? _sbBeats : [];
+    const beats = _sbCookBeats();
     if (!beats.length) return 'Wait until your storyboard scenes are ready.';
     const missing = beats.filter(b => !_sbBeatHasStill(b)).map(b => String(b.index).padStart(3, '0'));
     if (missing.length) {
@@ -5480,6 +5569,9 @@ function bindStoryboardPackUI() {
     document.getElementById('btn-sb-continue-full')?.addEventListener('click', () => startStoryboardPack('full', { fromPreview: true }));
     document.getElementById('btn-sb-regen-beat')?.addEventListener('click', regenSelectedBeat);
     document.getElementById('btn-sb-goto-assemble')?.addEventListener('click', () => goToStoryboardCook());
+    document.getElementById('btn-sb-range-cook')?.addEventListener('click', () => goToStoryboardCook());
+    document.getElementById('btn-sb-range-clear')?.addEventListener('click', () => _sbClearCookRange());
+    document.getElementById('btn-sb-range-all')?.addEventListener('click', () => _sbSelectAllCookRange());
     document.getElementById('btn-sb-assemble-match')?.addEventListener('click', matchStoryboardAssemble);
     document.getElementById('btn-sb-assemble-run')?.addEventListener('click', runStoryboardAssemble);
     document.getElementById('btn-sb-animate-run')?.addEventListener('click', runStoryboardAnimate);
@@ -5774,25 +5866,42 @@ function _sbUpdateCookingBar(msg) {
     if (st) st.textContent = _friendlySbProgress(msg);
 }
 
+function _sbCookTargetMinutes() {
+    const selected = _sbCookBeats();
+    const all = Array.isArray(_sbBeats) ? _sbBeats : [];
+    let fullMins = 8;
+    try {
+        const slider = document.getElementById('sb-minutes');
+        if (slider) fullMins = Number(slider.value) || fullMins;
+    } catch (_) {}
+    if ((_sbPackMode || 'full').toLowerCase() === 'preview') fullMins = Math.min(fullMins, 1.2);
+    if (!_sbHasCookRange() || !all.length || !selected.length) return fullMins;
+    return Math.max(0.5, Math.round((fullMins * selected.length / all.length) * 10) / 10);
+}
+
 async function _sbSyncAnimateUI() {
     const btn = document.getElementById('btn-sb-animate-run');
     const blurb = document.getElementById('sb-animate-blurb');
     if (btn) btn.disabled = !_sbBoardCookReady();
-    let mins = 8;
-    try {
-        const slider = document.getElementById('sb-minutes');
-        if (slider) mins = Number(slider.value) || mins;
-    } catch (_) {}
+    const mins = _sbCookTargetMinutes();
+    const selected = _sbCookBeats();
+    const stretch = _sbHasCookRange()
+        ? `scenes ${String(Math.min(_sbRangeFrom, _sbRangeTo)).padStart(3, '0')}–${String(Math.max(_sbRangeFrom, _sbRangeTo)).padStart(3, '0')}`
+        : `${selected.length || 'all'} scenes`;
     try {
         const res = await fetch(`/api/storyboard/animate-cost?minutes=${encodeURIComponent(mins)}`);
         const data = await res.json().catch(() => ({}));
         if (blurb && res.ok) {
             const c = Number(data.credits || 0);
             blurb.textContent = c > 0
-                ? `Turns every scene into motion, stitches them, and adds captions. About ${c} credit${c === 1 ? '' : 's'} for ~${mins} min.`
-                : 'Turns every scene into motion, stitches them, and adds captions — using your cast.';
+                ? `Cook ${stretch} into motion with captions. About ${c} credit${c === 1 ? '' : 's'} for ~${mins} min.`
+                : `Cook ${stretch} into motion, stitch them, and add captions — using your cast.`;
+        } else if (blurb) {
+            blurb.textContent = `Cook ${stretch} into motion, stitch them, and add captions — using your cast.`;
         }
-    } catch (_) {}
+    } catch (_) {
+        if (blurb) blurb.textContent = `Cook ${stretch} into motion, stitch them, and add captions — using your cast.`;
+    }
 }
 
 async function runStoryboardAnimate() {
@@ -5808,6 +5917,10 @@ async function runStoryboardAnimate() {
         const fd = new FormData();
         fd.append('burn_captions', '1');
         fd.append('add_music', _sbAddMusicEnabled() ? '1' : '0');
+        if (_sbHasCookRange()) {
+            fd.append('beat_from', String(Math.min(_sbRangeFrom, _sbRangeTo)));
+            fd.append('beat_to', String(Math.max(_sbRangeFrom, _sbRangeTo)));
+        }
         const notify = (document.getElementById('sb-assemble-notify')?.value || '').trim();
         if (notify) fd.append('notify_email', notify);
         const res = await fetch(`/api/storyboard/jobs/${_sbJobId}/animate`, { method: 'POST', body: fd });
@@ -5908,6 +6021,18 @@ async function suggestStoryboardMorals() {
     }
 }
 
+function _sbPaintBoardSelection() {
+    const board = document.getElementById('sb-board');
+    if (!board) return;
+    board.querySelectorAll('.sb-board-card').forEach(c => {
+        const i = +c.dataset.idx;
+        c.classList.toggle('is-selected', i === _sbSelectedBeatIndex);
+        c.classList.toggle('is-in-range', _sbIsInCookRange(i));
+    });
+    _sbSyncRangeBar();
+    _sbSyncBoardCookControls();
+}
+
 function renderStoryboardBoard(beats) {
     const board = document.getElementById('sb-board');
     if (!board) return;
@@ -5918,8 +6043,9 @@ function renderStoryboardBoard(beats) {
             ? `<img src="${esc(b.image_url)}" alt="Scene ${b.index}">`
             : `<div class="sb-board-ph"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;margin:auto;"></div></div>`;
         const sel = _sbSelectedBeatIndex === b.index ? ' is-selected' : '';
+        const inRange = _sbIsInCookRange(b.index) ? ' is-in-range' : '';
         const chars = (b.characters || '').trim();
-        return `<button type="button" class="sb-board-card${sel}" data-idx="${b.index}">
+        return `<button type="button" class="sb-board-card${sel}${inRange}" data-idx="${b.index}">
             ${img}
             <div class="sb-board-meta">
                 <span>${String(b.index).padStart(3, '0')}</span>
@@ -5927,15 +6053,61 @@ function renderStoryboardBoard(beats) {
             </div>
         </button>`;
     }).join('');
+
     board.querySelectorAll('.sb-board-card').forEach(card => {
-        card.addEventListener('click', () => {
+        card.addEventListener('click', (e) => {
+            // Ignore click after a drag-range gesture
+            if (board._sbDidDragRange) {
+                e.preventDefault();
+                e.stopPropagation();
+                board._sbDidDragRange = false;
+                return;
+            }
             const idx = +card.dataset.idx;
+            if (e.shiftKey && _sbSelectedBeatIndex != null) {
+                _sbSetCookRange(_sbSelectedBeatIndex, idx);
+                _sbPaintBoardSelection();
+                return;
+            }
             _sbSelectedBeatIndex = idx;
-            const beat = list.find(x => x.index === idx);
-            showBeatDetail(beat);
-            renderStoryboardBoard(list);
+            showBeatDetail(list.find(x => x.index === idx));
+            _sbPaintBoardSelection();
+        });
+        card.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
+            _sbDragSelecting = true;
+            board._sbDidDragRange = false;
+            _sbDragAnchor = +card.dataset.idx;
+            board.classList.add('is-drag-selecting');
+            try { board.setPointerCapture(e.pointerId); } catch (_) {}
         });
     });
+    if (!board._sbRangeBound) {
+        board._sbRangeBound = true;
+        board.addEventListener('pointermove', (e) => {
+            if (!_sbDragSelecting || _sbDragAnchor == null) return;
+            const el = document.elementFromPoint(e.clientX, e.clientY);
+            const card = el?.closest?.('.sb-board-card');
+            if (!card || !board.contains(card)) return;
+            const idx = +card.dataset.idx;
+            if (!Number.isFinite(idx)) return;
+            if (idx === _sbDragAnchor && !board._sbDidDragRange) return;
+            board._sbDidDragRange = true;
+            _sbSetCookRange(_sbDragAnchor, idx);
+            _sbPaintBoardSelection();
+        });
+        const endDrag = (e) => {
+            if (!_sbDragSelecting) return;
+            _sbDragSelecting = false;
+            _sbDragAnchor = null;
+            board.classList.remove('is-drag-selecting');
+            try { if (e?.pointerId != null) board.releasePointerCapture(e.pointerId); } catch (_) {}
+            if (board._sbDidDragRange) _sbPaintBoardSelection();
+        };
+        board.addEventListener('pointerup', endDrag);
+        board.addEventListener('pointercancel', endDrag);
+    }
+    _sbSyncRangeBar();
 }
 
 function showBeatDetail(beat) {
@@ -6065,7 +6237,10 @@ async function startStoryboardPack(packMode = 'full', opts = {}) {
     _sbBeats = [];
     _sbPackStatus = 'queued';
     _sbZipReady = false;
+    _sbRangeFrom = null;
+    _sbRangeTo = null;
     _sbSyncBoardCookControls();
+    _sbSyncRangeBar();
     const board = document.getElementById('sb-board');
     if (board) board.innerHTML = '';
     document.getElementById('sb-beat-detail')?.classList.add('hidden');

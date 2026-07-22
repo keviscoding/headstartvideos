@@ -3714,10 +3714,19 @@ def _storyboard_beat_has_still(beat: dict) -> bool:
     )
 
 
-def _require_storyboard_stills_ready(job: dict) -> list:
-    """Preview or full pack must be complete with a still for every scene before Cook."""
+def _require_storyboard_stills_ready(
+    job: dict,
+    *,
+    beat_from: int | None = None,
+    beat_to: int | None = None,
+) -> list:
+    """
+    Selected contiguous scenes must have stills.
+    Full-board cook (no range) also requires the pack job to be finished.
+    """
     result = job.get("result") if isinstance(job.get("result"), dict) else {}
-    if not (result.get("zip_ready") or job.get("status") == "complete"):
+    ranged = beat_from is not None and beat_to is not None
+    if not ranged and not (result.get("zip_ready") or job.get("status") == "complete"):
         raise HTTPException(400, "Wait until every scene still is ready before cooking.")
     from core.storyboard_assemble import load_pack_beats
     pack_dir = Path(result.get("pack_dir") or "")
@@ -3727,6 +3736,20 @@ def _require_storyboard_stills_ready(job: dict) -> list:
     )
     if not beats:
         raise HTTPException(400, "No scenes in this pack to cook.")
+    beats = sorted(beats, key=lambda b: int(b.get("index") or 0))
+    if ranged:
+        lo, hi = (beat_from, beat_to) if beat_from <= beat_to else (beat_to, beat_from)
+        sliced = [b for b in beats if lo <= int(b.get("index") or 0) <= hi]
+        if not sliced:
+            raise HTTPException(400, "That scene stretch isn’t in this storyboard.")
+        present = {int(b.get("index") or 0) for b in sliced}
+        gaps = [i for i in range(lo, hi + 1) if i not in present]
+        if gaps:
+            raise HTTPException(
+                400,
+                "That stretch has gaps in the storyboard — pick a continuous run of scenes.",
+            )
+        beats = sliced
     missing = [
         str(int(b.get("index") or 0)).zfill(3)
         for b in beats if not _storyboard_beat_has_still(b)
@@ -4015,6 +4038,8 @@ async def start_storyboard_animate(
     burn_captions: str = Form("1"),
     add_music: str = Form("1"),
     notify_email: str = Form(""),
+    beat_from: str = Form(""),
+    beat_to: str = Form(""),
     admin: dict = Depends(require_admin),
 ):
     """Queue on-site Seedance I2V + assemble cook from a finished pack."""
@@ -4022,7 +4047,27 @@ async def start_storyboard_animate(
 
     job = _storyboard_pack_job_or_404(job_id, admin)
     result = job.get("result") if isinstance(job.get("result"), dict) else {}
-    beats = _require_storyboard_stills_ready(job)
+
+    range_from = range_to = None
+    bf = (beat_from or "").strip()
+    bt = (beat_to or "").strip()
+    if bf and bt:
+        try:
+            range_from = int(bf)
+            range_to = int(bt)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Scene stretch must be whole scene numbers.")
+
+    beats = _require_storyboard_stills_ready(
+        job, beat_from=range_from, beat_to=range_to,
+    )
+    # Full beat list (for credit scaling) — may include unfinished scenes
+    from core.storyboard_assemble import load_pack_beats as _load_beats
+    _pack = Path((result.get("pack_dir") or ""))
+    all_beats = _load_beats(
+        pack_dir=_pack if _pack.is_dir() else None,
+        beats=result.get("beats") or [],
+    ) or beats
 
     pack_dir = Path(result.get("pack_dir") or "")
     pack_dir_s = str(pack_dir) if pack_dir.is_dir() else ""
@@ -4040,6 +4085,11 @@ async def start_storyboard_animate(
         )
     except (TypeError, ValueError):
         target_minutes = 8.0
+    pack_mode = str(result.get("pack_mode") or (job.get("request") or {}).get("pack_mode") or "full").lower()
+    if pack_mode == "preview":
+        target_minutes = min(target_minutes, 1.2)
+    if range_from is not None and all_beats and len(beats) < len(all_beats):
+        target_minutes = max(0.5, round(target_minutes * len(beats) / max(1, len(all_beats)), 1))
 
     byok = False
     try:
@@ -4063,6 +4113,8 @@ async def start_storyboard_animate(
         "title": title,
         "pack_dir": pack_dir_s,
         "beats": beats,
+        "beat_from": range_from,
+        "beat_to": range_to,
         "burn_captions": (burn_captions or "1").strip() not in ("0", "false", "no"),
         "add_music": (add_music or "1").strip() not in ("0", "false", "no"),
         "credits_charged": credit_cost,
@@ -4071,11 +4123,14 @@ async def start_storyboard_animate(
         "target_minutes": target_minutes,
     }
     try:
+        stretch = ""
+        if range_from is not None and range_to is not None:
+            stretch = f" · {min(range_from, range_to):03d}–{max(range_from, range_to):03d}"
         create_cook_job(
             job_id=animate_id,
             user_id=admin["id"],
             recipe="storyboard_animate",
-            title=f"Animate · {title}"[:120],
+            title=f"Animate · {title}{stretch}"[:120],
             request_json=json.dumps(req_payload),
             credit_deducted=credit_deducted,
             lite_mode=False,
