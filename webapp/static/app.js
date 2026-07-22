@@ -4970,6 +4970,61 @@ function bindStoryboardPackUI() {
     }
     const btn = document.getElementById('btn-sb-generate');
     if (btn) btn.addEventListener('click', startStoryboardPack);
+    const ideasBtn = document.getElementById('btn-sb-ideas');
+    if (ideasBtn) ideasBtn.addEventListener('click', suggestStoryboardIdeas);
+}
+
+async function suggestStoryboardIdeas() {
+    if (!isAdminUser()) {
+        alert('Storyboard Pack is admin-only while we test it.');
+        return;
+    }
+    const btn = document.getElementById('btn-sb-ideas');
+    const seed = (document.getElementById('sb-topic')?.value || '').trim()
+        || (document.getElementById('sb-title')?.value || '').trim();
+    const list = document.getElementById('sb-ideas-list');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Thinking…';
+    }
+    try {
+        const res = await fetch('/api/storyboard/ideas', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ seed, count: 8 }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || 'Ideas failed');
+        const ideas = data.ideas || [];
+        if (!list) return;
+        list.innerHTML = ideas.map((idea, i) => `
+            <button type="button" class="sb-idea-card cr-surface" data-idx="${i}"
+                style="display:block;width:100%;text-align:left;padding:12px 14px;cursor:pointer;border:1px solid var(--app-border);border-radius:var(--radius-md);">
+                <div style="font-family:var(--font-display);font-weight:700;font-size:15px;color:var(--app-ink);">${esc(idea.title)}</div>
+                <div style="font-family:var(--font-body);font-size:13px;color:var(--app-ink-2);margin-top:4px;">${esc(idea.premise)}</div>
+                ${idea.moral ? `<div style="font-family:var(--font-mono);font-size:11px;color:var(--app-ink-3);margin-top:6px;">Moral: ${esc(idea.moral)}</div>` : ''}
+            </button>
+        `).join('');
+        list.querySelectorAll('.sb-idea-card').forEach((el, i) => {
+            el.addEventListener('click', () => {
+                const idea = ideas[i];
+                if (!idea) return;
+                const titleEl = document.getElementById('sb-title');
+                const topicEl = document.getElementById('sb-topic');
+                if (titleEl) titleEl.value = idea.title || '';
+                if (topicEl) topicEl.value = [idea.premise, idea.moral ? `Moral: ${idea.moral}` : ''].filter(Boolean).join('\n');
+                track('storyboard_idea_picked', { title: idea.title });
+            });
+        });
+        track('storyboard_ideas_shown', { count: ideas.length });
+    } catch (e) {
+        alert(e.message || 'Could not suggest ideas');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Suggest ideas';
+        }
+    }
 }
 
 async function startStoryboardPack() {

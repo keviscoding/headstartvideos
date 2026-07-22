@@ -30,6 +30,22 @@ MAX_FREE_MINUTES = 8
 MAX_PAID_MINUTES = 30
 SEC_PER_BEAT = 8.0  # target hold / I2V clip length
 
+_BIBLE_PATH = Path(__file__).resolve().parent / "storyboard_family_english_bible.txt"
+_BIBLE_CACHE: str | None = None
+
+
+def load_style_bible() -> str:
+    """Competitor-distilled A1–A2 family-story style guide (not a fine-tune)."""
+    global _BIBLE_CACHE
+    if _BIBLE_CACHE is not None:
+        return _BIBLE_CACHE
+    try:
+        _BIBLE_CACHE = _BIBLE_PATH.read_text(encoding="utf-8").strip()
+    except Exception:
+        _BIBLE_CACHE = ""
+    return _BIBLE_CACHE
+
+
 STYLE_LOCK = (
     "3D Pixar-lite animation style, soft global illumination, large expressive eyes, "
     "smooth skin, clean textures, shallow depth of field, 16:9 widescreen, "
@@ -139,16 +155,28 @@ def generate_beat_sheet(
 
     system = (
         "You write A1–A2 easy-English family dialogue storyboards for YouTube. "
+        "Match the STYLE BIBLE voice, structure, and dialogue craft exactly. "
+        "Invent NEW plots — never copy competitor stories. "
         "Output ONLY valid JSON. No markdown."
     )
+    bible = load_style_bible()
     user_parts = [
         f"Target runtime: {target_minutes:.1f} minutes.",
         f"Produce exactly {n_beats} beats (scenes).",
         f"Each beat target_sec should be about {SEC_PER_BEAT:.0f} seconds (5–12 ok).",
         "Sum of target_sec should be close to the target runtime.",
-        "Style: slow clear dialogue, moral/school life lesson, recurring cast Max/Mia/Mom/Dad.",
         f"Default cast look: {DEFAULT_CAST}",
         "",
+    ]
+    if bible:
+        # Cap inject size to keep Atlas calls cheap
+        user_parts += [
+            "=== STYLE BIBLE (follow this; distilled from winning Easy English family channels) ===",
+            bible[:4500],
+            "=== END STYLE BIBLE ===",
+            "",
+        ]
+    user_parts += [
         "JSON shape:",
         '{',
         '  "title": "string",',
@@ -168,8 +196,9 @@ def generate_beat_sheet(
         "Rules:",
         "- image_prompt: who is in frame, expression, props, location. No 'Pixar' word.",
         "- i2v_prompt: subtle motion only (turn head, speak, walk slowly, camera push-in).",
-        "- dialogue: CEFR A1–A2. Include speaker names when useful.",
+        "- dialogue: CEFR A1–A2 per style bible. Short turns. Explicit feelings. Clear moral ending.",
         "- Keep Max/Mia/Mom/Dad visually consistent with the cast look.",
+        "- Title should follow the bible title patterns (question / mistake / hook).",
     ]
     if (title or "").strip():
         user_parts.append(f"Working title: {title.strip()}")
@@ -230,6 +259,51 @@ def generate_beat_sheet(
 
     log(f"Beat sheet ready: {len(beats)} scenes — {out_title}")
     return out_title, beats
+
+
+def generate_story_ideas(
+    *,
+    seed: str = "",
+    count: int = 8,
+) -> list[dict[str, str]]:
+    """
+    Cheap ideation for Storyboard Pack — title + one-line premise.
+    Grounded on the same style bible (prompt distill, not fine-tune).
+    """
+    from core.atlas_llm import generate_text
+    from core.script_gen import _extract_json_array
+
+    n = max(3, min(int(count or 8), 12))
+    bible = load_style_bible()
+    parts = [
+        f"Generate exactly {n} NEW Easy English family dialogue story ideas for YouTube.",
+        "Each idea needs: title (bible title patterns), premise (1–2 sentences), moral (one short line).",
+        "Cast can use Max, Mia, Mom, Dad (or Leo/Maya-style kids).",
+        "Do not copy known competitor plots.",
+        "Return ONLY a JSON array of objects: {\"title\",\"premise\",\"moral\"}.",
+    ]
+    if bible:
+        parts += ["", "STYLE BIBLE:", bible[:3500], ""]
+    if (seed or "").strip():
+        parts.append(f"Optional creative seed from the user: {seed.strip()[:500]}")
+
+    raw = generate_text(
+        "\n".join(parts),
+        system="You invent viral-ready A1–A2 family story hooks. Output JSON array only.",
+        max_tokens=2500,
+        temperature=0.7,
+    )
+    arr = _extract_json_array(raw) or []
+    out: list[dict[str, str]] = []
+    for row in arr:
+        if not isinstance(row, dict):
+            continue
+        title = str(row.get("title") or "").strip()
+        premise = str(row.get("premise") or "").strip()
+        moral = str(row.get("moral") or "").strip()
+        if title and premise:
+            out.append({"title": title, "premise": premise, "moral": moral})
+    return out[:n]
 
 
 def _compact_image_prompt(beat: Beat) -> str:

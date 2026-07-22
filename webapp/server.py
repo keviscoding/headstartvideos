@@ -1143,6 +1143,11 @@ class StoryboardJobRequest(BaseModel):
     script: str = ""
     target_minutes: float = 8
 
+
+class StoryboardIdeasRequest(BaseModel):
+    seed: str = ""
+    count: int = 8
+
 class KeyTestRequest(BaseModel):
     key_name: str
     key_value: str = ""
@@ -2887,6 +2892,21 @@ def download_niche_intel_job(job_id: str, admin: dict = Depends(require_admin)):
 # ---------------------------------------------------------------------------
 # Storyboard Pack (admin-only v1 — stills + I2V prompts zip)
 # ---------------------------------------------------------------------------
+@app.post("/api/storyboard/ideas")
+async def storyboard_ideas(req: StoryboardIdeasRequest, admin: dict = Depends(require_admin)):
+    """Cheap style-bible ideation (not a fine-tune)."""
+    try:
+        from core.storyboard_pack import generate_story_ideas
+        ideas = generate_story_ideas(seed=req.seed or "", count=int(req.count or 8))
+    except Exception as e:
+        print(f"[storyboard] ideas failed: {e}")
+        raise HTTPException(500, f"Could not generate ideas: {e}")
+    if not ideas:
+        raise HTTPException(500, "No ideas came back. Try again.")
+    track(admin["id"], "storyboard_ideas", {"count": len(ideas), "has_seed": bool((req.seed or "").strip())})
+    return {"ideas": ideas}
+
+
 @app.post("/api/storyboard/jobs")
 async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(require_admin)):
     """Queue a storyboard pack build (0 credits while admin-testing)."""
