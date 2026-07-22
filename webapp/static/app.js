@@ -366,11 +366,11 @@ function syncPipelineChrome() {
     const nextBtn = document.getElementById('btn-next-2');
     const topicInput = document.getElementById('topic-input');
     if (sb) {
-        if (heading) heading.textContent = 'Pick a story title';
-        if (sub) sub.textContent = 'Generate titles in the Easy English family-story style. Pick one — next we build your scene pack.';
+        if (heading) heading.textContent = 'Pick a title (or write your own)';
+        if (sub) sub.textContent = 'Optional help: generate title ideas in this niche style. You choose the title — then you’ll describe the story you want to make.';
         if (progress) progress.textContent = 'Step 2 of 3';
-        if (nextBtn) nextBtn.textContent = 'Next: Build pack';
-        if (topicInput) topicInput.placeholder = 'Optional: exam results, lying, jealousy…';
+        if (nextBtn) nextBtn.textContent = 'Next: Your story';
+        if (topicInput) topicInput.placeholder = 'Optional seed for title ideas: exams, lying, jealousy…';
     } else {
         if (heading) heading.textContent = 'Pick a title';
         if (sub) sub.textContent = 'We drafted a few from proven patterns. Pick one or write your own.';
@@ -5015,9 +5015,8 @@ function initStoryboardPackUI() {
     }
     const title = state.title || '';
     const titleInput = document.getElementById('sb-title');
-    const titleDisplay = document.getElementById('sb-title-display');
     if (titleInput) titleInput.value = title;
-    if (titleDisplay) titleDisplay.textContent = title || '—';
+    // Carry topic seed from title step into the story box if empty
     const topicHint = (document.getElementById('topic-input')?.value || '').trim();
     const topicEl = document.getElementById('sb-topic');
     if (topicEl && topicHint && !topicEl.value.trim()) topicEl.value = topicHint;
@@ -5057,10 +5056,15 @@ async function startStoryboardPack() {
     const topic = (document.getElementById('sb-topic')?.value || '').trim();
     const script = (document.getElementById('sb-script')?.value || '').trim();
     const minutes = parseFloat(document.getElementById('sb-minutes')?.value || '8');
-    if (!title && !topic && !script) {
-        alert('Enter a story idea, title, or paste a script.');
+    if (!title) {
+        alert('Add a title for this video.');
         return;
     }
+    if (!topic && !script) {
+        alert('Describe the story you want to make, or paste a script.');
+        return;
+    }
+    state.title = title;
     const btn = document.getElementById('btn-sb-generate');
     const prog = document.getElementById('sb-progress');
     const resBox = document.getElementById('sb-result');

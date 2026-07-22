@@ -203,41 +203,38 @@
             <section id="step-storyboard" class="step-panel hidden">
                 <div class="cr-panel">
                     <div class="mb-6">
-                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Build your pack</h2>
+                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Your story + pack</h2>
                         <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">
-                            We write the Easy English dialogue, split it into scenes, and generate a still + motion prompt for each scene.
-                            You download a zip, animate the stills in any image-to-video tool, then come back later to stitch.
+                            Tell us the story you want. We format it into scenes, stills, and image-to-video prompts — you stay in control of what the video is about.
                         </p>
                     </div>
                     <div class="max-w-3xl space-y-5">
-                        <div class="cr-surface" style="padding: 14px 16px;">
-                            <p class="cr-eyebrow" style="margin-bottom: 6px;">Your title</p>
-                            <p id="sb-title-display" style="font-family: var(--font-display); font-weight: 700; font-size: 18px; color: var(--app-ink);">—</p>
-                            <input id="sb-title" type="hidden" value="">
+                        <div>
+                            <label class="cr-label" for="sb-title">Title</label>
+                            <input id="sb-title" type="text" class="cr-input" placeholder="Why did Max hide his exam results?">
+                            <p id="sb-title-display" class="hidden"></p>
                         </div>
                         <div>
-                            <label class="cr-label" for="sb-minutes">How long should the finished video feel?</label>
+                            <label class="cr-label" for="sb-topic">The story you want to make</label>
+                            <textarea id="sb-topic" class="cr-input" rows="5" placeholder="Describe the story in your own words. Example: Max finished a test first and bragged to Mia. He stopped studying and played games. On result day he failed and had to apologize…"></textarea>
+                            <p style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-3); margin-top: 8px;">
+                                This is the main input. Characters, conflict, and ending — whatever you want the episode to be.
+                            </p>
+                        </div>
+                        <div>
+                            <label class="cr-label" for="sb-script">Paste a full script (optional)</label>
+                            <textarea id="sb-script" class="cr-input" rows="8" placeholder="If you already wrote the dialogue, paste it here. We’ll follow it for the scenes. Otherwise leave blank and we’ll write A1–A2 dialogue from your story."></textarea>
+                        </div>
+                        <div>
+                            <label class="cr-label" for="sb-minutes">Target video length</label>
                             <div class="flex items-center gap-4">
                                 <input id="sb-minutes" type="range" min="3" max="30" value="8" class="flex-1" style="accent-color: var(--accent);">
                                 <span id="sb-minutes-label" class="cr-mono" style="width: 4rem; text-align: right;">8 min</span>
                             </div>
                             <p id="sb-hint" style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-3); margin-top: 8px;">
-                                We create about one scene every ~8 seconds. Longer = more images in the zip.
+                                About one scene every ~8 seconds. Longer packs = more stills to animate.
                             </p>
                         </div>
-                        <details style="border-top: 1px solid var(--app-border); padding-top: 14px;">
-                            <summary style="cursor: pointer; font-family: var(--font-body); font-size: 14px; font-weight: 500; color: var(--app-ink-2);">Advanced (optional)</summary>
-                            <div class="space-y-3" style="margin-top: 12px;">
-                                <div>
-                                    <label class="cr-label" for="sb-topic">Extra story notes</label>
-                                    <textarea id="sb-topic" class="cr-input" rows="2" placeholder="Optional: add a premise or moral if the title isn’t enough…"></textarea>
-                                </div>
-                                <div>
-                                    <label class="cr-label" for="sb-script">Paste your own script</label>
-                                    <textarea id="sb-script" class="cr-input" rows="6" placeholder="Only if you already wrote the dialogue — otherwise we write it for you."></textarea>
-                                </div>
-                            </div>
-                        </details>
                         <button id="btn-sb-generate" class="btn-primary w-full" type="button">
                             <span class="btn-text">Generate pack</span>
                             <span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;"></div>Writing scenes &amp; images…</span>
@@ -250,7 +247,7 @@
                                 <li>Open each <code>NNN_scene</code> image in your image-to-video tool.</li>
                                 <li>Paste the matching <code>NNN_prompt.txt</code> as the motion prompt.</li>
                                 <li>Keep clip names numbered (<code>001</code>, <code>002</code>…) when you download them.</li>
-                                <li>Assemble comes next in ChannelRecipe (soon) — for now stitch in any editor.</li>
+                                <li>Assemble in ChannelRecipe comes next — for now stitch in any editor.</li>
                             </ol>
                         </div>
                     </div>

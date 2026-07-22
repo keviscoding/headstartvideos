@@ -2905,8 +2905,10 @@ async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(
     topic = (req.topic or "").strip()
     script = (req.script or "").strip()
     title = (req.title or "").strip()
-    if not topic and not script and not title:
-        raise HTTPException(400, "Enter a story idea, title, or paste a script.")
+    if not title:
+        raise HTTPException(400, "Add a title for this video.")
+    if not topic and not script:
+        raise HTTPException(400, "Describe the story you want to make, or paste a script.")
 
     try:
         mins = float(req.target_minutes or 8)
