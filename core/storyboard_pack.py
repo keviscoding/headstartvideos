@@ -63,6 +63,69 @@ DEFAULT_CAST = (
     "Dad: curly dark hair short beard blue shirt."
 )
 
+DEFAULT_LOOKS: dict[str, str] = {
+    "max": "boy ~8 years old, messy black hair, large expressive eyes, blue polo shirt, grey pants, Pixar-lite 3D",
+    "mia": "girl ~7 years old, black hair in pigtails with pink ties, large expressive eyes, yellow sweater, Pixar-lite 3D",
+    "mom": "woman mid-30s, long wavy brown hair, warm smile, light cardigan over soft top, Pixar-lite 3D",
+    "dad": "man mid-30s, curly dark hair, short beard, blue shirt, kind eyes, Pixar-lite 3D",
+}
+
+
+def default_series_cast() -> list[dict[str, Any]]:
+    """Starter Max/Mia/Mom/Dad series cast (no portraits yet)."""
+    names = {"max": "Max", "mia": "Mia", "mom": "Mom", "dad": "Dad"}
+    return [
+        {
+            "id": cid,
+            "name": names[cid],
+            "included": True,
+            "look_prompt": DEFAULT_LOOKS[cid],
+            "portrait_url": "",
+            "sheet_url": "",
+            "portrait_path": "",
+            "sheet_path": "",
+        }
+        for cid in ("max", "mia", "mom", "dad")
+    ]
+
+
+def normalize_cast(cast: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Merge user cast with defaults; keep known ids stable."""
+    base = {c["id"]: dict(c) for c in default_series_cast()}
+    for row in cast or []:
+        if not isinstance(row, dict):
+            continue
+        cid = str(row.get("id") or "").strip().lower()
+        if not cid:
+            continue
+        cur = base.get(cid, {
+            "id": cid,
+            "name": cid.title(),
+            "included": True,
+            "look_prompt": "",
+            "portrait_url": "",
+            "sheet_url": "",
+            "portrait_path": "",
+            "sheet_path": "",
+        })
+        for key in (
+            "name", "included", "look_prompt",
+            "portrait_url", "sheet_url", "portrait_path", "sheet_path",
+        ):
+            if key in row and row[key] is not None:
+                cur[key] = row[key]
+        cur["id"] = cid
+        cur["included"] = bool(cur.get("included", True))
+        if not (cur.get("look_prompt") or "").strip():
+            cur["look_prompt"] = DEFAULT_LOOKS.get(cid, "consistent Pixar-lite 3D family character")
+        base[cid] = cur
+    # Preserve default order then any extras
+    ordered = [base[c] for c in ("max", "mia", "mom", "dad") if c in base]
+    for cid, row in base.items():
+        if cid not in ("max", "mia", "mom", "dad"):
+            ordered.append(row)
+    return ordered
+
 
 @dataclass
 class Beat:
@@ -132,31 +195,195 @@ def clamp_minutes(
     return min(mins, float(MAX_FREE_MINUTES))
 
 
-def _beat_count_for_minutes(minutes: float) -> int:
+def _beat_count_for_minutes(minutes: float, *, pack_mode: str = "full") -> int:
+    mode = (pack_mode or "full").strip().lower()
+    if mode == "preview":
+        # First ~minute: ~8 scenes @ 8s — dopamine sample before full pack
+        return 8
     total_sec = max(60.0, minutes * 60.0)
     n = int(round(total_sec / SEC_PER_BEAT))
     return max(8, min(n, 240))  # hard ceiling ~32 min @ 8s
 
 
+def _format_cast_constraint(cast: list[dict[str, Any]] | None) -> str:
+    """Human-readable cast line for the beat-sheet prompt."""
+    rows = normalize_cast(cast)
+    included: list[str] = []
+    for row in rows:
+        if not row.get("included", True):
+            continue
+        cid = str(row.get("id") or "").strip().lower()
+        name = str(row.get("name") or cid or "Character").strip() or "Character"
+        look = str(row.get("look_prompt") or DEFAULT_LOOKS.get(cid, "")).strip()
+        has_art = bool(row.get("portrait_url") or row.get("sheet_url") or row.get("portrait_path"))
+        art = " (has reference portrait — match look exactly)" if has_art else ""
+        included.append(f"{name} (id={cid or 'custom'}): {look}{art}")
+    if not included:
+        return "Cast: use only characters clearly named in the user's story/script."
+    return "Cast (ONLY these characters, use their names and looks exactly):\n" + "\n".join(
+        f"- {x}" for x in included
+    )
+
+
+def _cast_look_lock(cast: list[dict[str, Any]] | None) -> str:
+    rows = [r for r in normalize_cast(cast) if r.get("included", True)]
+    if not rows:
+        return DEFAULT_CAST
+    parts = []
+    for r in rows:
+        name = (r.get("name") or r.get("id") or "Character").strip()
+        look = (r.get("look_prompt") or "").strip()
+        parts.append(f"{name}: {look}" if look else name)
+    return " ".join(parts) or DEFAULT_CAST
+
+
+def generate_character_portrait(
+    *,
+    name: str,
+    look_prompt: str,
+    out_path: str | Path,
+) -> str:
+    """Generate a hero portrait for Cast studio. Returns local path."""
+    from core.illustration_gen import generate_single_illustration
+
+    out = Path(out_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    look = (look_prompt or "").strip() or "Pixar-lite 3D family character"
+    nm = (name or "Character").strip()
+    full = (
+        f"{STYLE_LOCK}. Character portrait of {nm}. {look}. "
+        "Centered upper-body portrait, soft warm lighting, plain soft background, "
+        "expressive face, consistent character design sheet quality, no text, no watermark."
+    )
+    short = f"{STYLE_SHORT}. Portrait of {nm}. {look}"[:480]
+    result = generate_single_illustration(full, str(out), short_prompt=short)
+    if not result.success or not out.is_file():
+        raise RuntimeError(result.error or "Character portrait failed")
+    return str(out)
+
+
+def generate_character_sheet(
+    *,
+    name: str,
+    look_prompt: str,
+    out_path: str | Path,
+    portrait_path: str = "",
+) -> str:
+    """Multi-angle character sheet (Kieft-style consistency aid)."""
+    from core.illustration_gen import generate_single_illustration
+
+    out = Path(out_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    look = (look_prompt or "").strip() or "Pixar-lite 3D family character"
+    nm = (name or "Character").strip()
+    full = (
+        f"{STYLE_LOCK}. Character design sheet for {nm}. {look}. "
+        "Same character shown in multiple panels on one image: front view, 3/4 view, "
+        "side profile, close-up face. Consistent face, hair, outfit across all panels. "
+        "Clean white/light grey background, no text labels, no watermark."
+    )
+    short = f"{STYLE_SHORT}. Character sheet {nm} multi-angle same outfit. {look}"[:480]
+    ref = portrait_path if portrait_path and Path(portrait_path).is_file() else None
+    result = generate_single_illustration(
+        full, str(out), style_ref_path=ref, short_prompt=short,
+    )
+    if not result.success or not out.is_file():
+        raise RuntimeError(result.error or "Character sheet failed")
+    return str(out)
+
+
+def _format_mistake_constraint(mistake_by: str, cast: list[dict[str, Any]] | None) -> str:
+    raw = (mistake_by or "").strip()
+    if not raw:
+        return ""
+    name_map: dict[str, str] = {}
+    for row in cast or []:
+        if isinstance(row, dict) and row.get("id"):
+            name_map[str(row["id"]).strip().lower()] = str(row.get("name") or row["id"]).strip()
+    key = raw.lower()
+    if key == "max":
+        who = name_map.get("max", "Max")
+    elif key == "mia":
+        who = name_map.get("mia", "Mia")
+    elif key == "both":
+        who = f"{name_map.get('max', 'Max')} and {name_map.get('mia', 'Mia')}"
+    else:
+        who = raw
+    return f"Who makes the mistake / drives the conflict: {who}."
+
+
+def suggest_morals_from_story(story: str, *, count: int = 4) -> list[str]:
+    """Cheap LLM: a few one-line morals grounded in the user's story."""
+    from core.atlas_llm import generate_text
+
+    body = (story or "").strip()
+    if not body:
+        return []
+    if len(body) > 4000:
+        body = body[:4000] + "\n…[truncated]"
+    n = max(2, min(int(count or 4), 6))
+    raw = generate_text(
+        (
+            f"Given this children's Easy English family story, suggest {n} short morals "
+            "(one sentence each) the viewer should learn at the end.\n"
+            "Output ONLY JSON: {\"morals\": [\"...\", \"...\"]}\n\n"
+            f"STORY:\n{body}"
+        ),
+        system="You write clear A1–A2 kids morals. Output ONLY valid JSON. No markdown.",
+        max_tokens=600,
+        temperature=0.5,
+    )
+    data = _parse_json_obj(raw) or {}
+    morals = data.get("morals") if isinstance(data, dict) else None
+    if not isinstance(morals, list):
+        return []
+    out: list[str] = []
+    for m in morals:
+        s = str(m or "").strip()
+        if s and s not in out:
+            out.append(s)
+        if len(out) >= n:
+            break
+    return out
+
+
 def generate_beat_sheet(
     *,
     title: str,
-    topic: str,
-    script: str,
+    topic: str = "",
+    script: str = "",
     target_minutes: float,
+    story: str = "",
+    moral: str = "",
+    cast: list[dict[str, Any]] | None = None,
+    mistake_by: str = "",
+    dialogue_mode: str = "generate",
+    pack_mode: str = "full",
     progress: ProgressFn | None = None,
 ) -> tuple[str, list[Beat]]:
-    """LLM → title + ordered beats."""
+    """LLM → title + ordered beats. User craft fields are hard constraints."""
     from core.atlas_llm import generate_text
 
     log = progress or (lambda _m: None)
-    n_beats = _beat_count_for_minutes(target_minutes)
-    log(f"Planning ~{n_beats} scenes for {target_minutes:.0f} min…")
+    pmode = (pack_mode or "full").strip().lower()
+    if pmode not in ("preview", "full"):
+        pmode = "full"
+    n_beats = _beat_count_for_minutes(target_minutes, pack_mode=pmode)
+    if pmode == "preview":
+        log(f"Planning first-minute preview — {n_beats} opening scenes…")
+    else:
+        log(f"Planning ~{n_beats} scenes for {target_minutes:.0f} min…")
+
+    story_text = (story or topic or "").strip()
+    mode = (dialogue_mode or "generate").strip().lower()
+    if mode not in ("generate", "paste"):
+        mode = "paste" if (script or "").strip() else "generate"
 
     system = (
         "You write A1–A2 easy-English family dialogue storyboards for YouTube. "
         "Match the STYLE BIBLE voice, structure, and dialogue craft exactly. "
-        "Invent NEW plots — never copy competitor stories. "
+        "NEVER invent a different plot than the user's story. "
+        "Never copy competitor stories. "
         "Output ONLY valid JSON. No markdown."
     )
     bible = load_style_bible()
@@ -165,7 +392,7 @@ def generate_beat_sheet(
         f"Produce exactly {n_beats} beats (scenes).",
         f"Each beat target_sec should be about {SEC_PER_BEAT:.0f} seconds (5–12 ok).",
         "Sum of target_sec should be close to the target runtime.",
-        f"Default cast look: {DEFAULT_CAST}",
+        _format_cast_constraint(cast),
         "",
     ]
     if bible:
@@ -193,25 +420,55 @@ def generate_beat_sheet(
         '  ]',
         '}',
         "",
-        "Rules:",
+        "HARD CONSTRAINTS (do not violate):",
+        "- Follow the user's story / script. Do NOT invent a different plot, conflict, or ending.",
         "- image_prompt: who is in frame, expression, props, location. No 'Pixar' word.",
         "- i2v_prompt: subtle motion only (turn head, speak, walk slowly, camera push-in).",
-        "- dialogue: CEFR A1–A2 per style bible. Short turns. Explicit feelings. Clear moral ending.",
-        "- Keep Max/Mia/Mom/Dad visually consistent with the cast look.",
-        "- Title should follow the bible title patterns (question / mistake / hook).",
+        "- dialogue: CEFR A1–A2 per style bible. Short turns. Explicit feelings.",
+        "- Keep included cast visually consistent; omit characters the user turned off.",
+        "- Title should follow the bible title patterns (question / mistake / hook) unless user title is given — then keep/prefer it.",
     ]
+    if pmode == "preview":
+        user_parts += [
+            "",
+            "PACK MODE: FIRST-MINUTE PREVIEW ONLY.",
+            f"- Produce exactly {n_beats} beats covering ONLY the opening (~1 minute).",
+            "- Setup + first conflict beat. Do NOT rush to the full moral ending yet.",
+            "- Leave room for the rest of the episode later — tease the problem, don’t resolve it.",
+            "- Do NOT state the moral yet in this preview.",
+        ]
+    else:
+        user_parts.append(
+            "- End with the user's moral stated clearly in dialogue (kids learn it)."
+        )
     if (title or "").strip():
         user_parts.append(f"Working title: {title.strip()}")
-    if (topic or "").strip():
-        user_parts.append(f"Story idea / topic: {topic.strip()}")
-    if (script or "").strip():
-        # Cap huge pastes
+    if story_text:
+        user_parts.append(f"USER STORY (plot they chose — source of truth for what happens):\n{story_text}")
+    if (moral or "").strip():
+        user_parts.append(f"REQUIRED MORAL (viewer must learn this by the end):\n{moral.strip()}")
+    mistake_line = _format_mistake_constraint(mistake_by, cast)
+    if mistake_line:
+        user_parts.append(mistake_line)
+    if mode == "paste" and (script or "").strip():
+        body = script.strip()
+        if len(body) > 12000:
+            body = body[:12000] + "\n…[truncated]"
+        user_parts.append(
+            "DIALOGUE MODE: paste. Use this script as the source of truth for dialogue. "
+            "Split it into beats; story/moral/cast still guide scene splits and image prompts:\n"
+            + body
+        )
+    elif (script or "").strip() and not story_text:
         body = script.strip()
         if len(body) > 12000:
             body = body[:12000] + "\n…[truncated]"
         user_parts.append("Use this script as the source of truth:\n" + body)
     else:
-        user_parts.append("No full script provided — invent a complete dialogue story from the idea.")
+        user_parts.append(
+            "DIALOGUE MODE: generate. Write A1–A2 dialogue FROM the user's story + moral + cast. "
+            "Do not change the plot. Expand into the requested beat count with natural scene pacing."
+        )
 
     raw = generate_text(
         "\n".join(user_parts),
@@ -223,7 +480,7 @@ def generate_beat_sheet(
     if not data or not isinstance(data.get("beats"), list):
         raise RuntimeError("Storyboard LLM did not return a valid beat sheet JSON.")
 
-    out_title = (data.get("title") or title or topic or "Storyboard Pack").strip()
+    out_title = (data.get("title") or title or story_text or topic or "Storyboard Pack").strip()
     beats: list[Beat] = []
     for i, row in enumerate(data["beats"], start=1):
         if not isinstance(row, dict):
@@ -306,18 +563,21 @@ def generate_story_ideas(
     return out[:n]
 
 
-def _compact_image_prompt(beat: Beat) -> str:
+def _compact_image_prompt(beat: Beat, cast_lock: str = "") -> str:
     """ERNIE ~500 char hard limit."""
     cast = (beat.characters or "Max Mia").strip()
     loc = (beat.location or "indoor").strip()
     scene = beat.image_prompt.strip()
+    lock = (cast_lock or "")[:120]
     base = f"{STYLE_SHORT}. {cast} at {loc}. {scene}"
+    if lock:
+        base = f"{base} Looks: {lock}"
     if len(base) <= 480:
         return base
     return (STYLE_SHORT + ". " + scene)[:480]
 
 
-def _full_image_prompt(beat: Beat) -> str:
+def _full_image_prompt(beat: Beat, cast_lock: str = "") -> str:
     cast = (beat.characters or "").strip()
     loc = (beat.location or "").strip()
     parts = [STYLE_LOCK]
@@ -326,15 +586,20 @@ def _full_image_prompt(beat: Beat) -> str:
     if loc:
         parts.append(f"Location: {loc}.")
     parts.append(beat.image_prompt.strip())
-    parts.append(f"Cast look lock: {DEFAULT_CAST}")
+    parts.append(f"Cast look lock: {cast_lock or DEFAULT_CAST}")
     return " ".join(parts)[:1200]
 
 
-def _generate_still(beat: Beat, out_path: Path) -> Beat:
+def _generate_still(
+    beat: Beat,
+    out_path: Path,
+    *,
+    cast_lock: str = "",
+) -> Beat:
     from core.illustration_gen import generate_single_illustration
 
-    short = _compact_image_prompt(beat)
-    full = _full_image_prompt(beat)
+    short = _compact_image_prompt(beat, cast_lock)
+    full = _full_image_prompt(beat, cast_lock)
     result = generate_single_illustration(
         full,
         str(out_path),
@@ -348,27 +613,31 @@ def _generate_still(beat: Beat, out_path: Path) -> Beat:
     return beat
 
 
+StillReadyFn = Callable[[Beat], None]
+
+
 def generate_stills(
     beats: list[Beat],
     images_dir: Path,
     *,
     progress: ProgressFn | None = None,
     max_workers: int = 4,
+    cast: list[dict[str, Any]] | None = None,
+    on_still: StillReadyFn | None = None,
 ) -> list[Beat]:
     log = progress or (lambda _m: None)
     images_dir.mkdir(parents=True, exist_ok=True)
     total = len(beats)
+    cast_lock = _cast_look_lock(cast)
     log(f"Generating {total} scene stills…")
 
     done = 0
 
     def _one(b: Beat) -> Beat:
         path = images_dir / f"{b.index:03d}_scene.jpg"
-        # Prefer png from generator then convert? illustration_gen writes whatever path — use .png then rename
         png = images_dir / f"{b.index:03d}_scene.png"
-        updated = _generate_still(b, png)
+        updated = _generate_still(b, png, cast_lock=cast_lock)
         if updated.image_path and Path(updated.image_path).suffix.lower() == ".png":
-            # Convert to jpg for smaller packs if pillow available
             try:
                 from PIL import Image
                 im = Image.open(updated.image_path).convert("RGB")
@@ -376,7 +645,6 @@ def generate_stills(
                 Path(updated.image_path).unlink(missing_ok=True)
                 updated.image_path = str(path)
             except Exception:
-                # Keep png; rename to expected stem
                 if png.is_file() and not path.is_file():
                     png.rename(path.with_suffix(".png"))
                     updated.image_path = str(path.with_suffix(".png"))
@@ -392,7 +660,12 @@ def generate_stills(
                     beats[i] = updated
                     break
             done += 1
-            if done % 5 == 0 or done == total:
+            if on_still and updated.image_path:
+                try:
+                    on_still(updated)
+                except Exception as cb_err:
+                    print(f"[storyboard] on_still callback failed: {cb_err}")
+            if done % 5 == 0 or done == total or (on_still and updated.image_path):
                 ok = sum(1 for b in beats if b.image_path)
                 log(f"Stills {done}/{total} ({ok} ok)…")
 
@@ -402,6 +675,36 @@ def generate_stills(
     if failed:
         log(f"Warning: {len(failed)} stills failed — pack will skip those indices.")
     return beats
+
+
+def regenerate_beat_still(
+    beat: Beat,
+    out_path: Path,
+    *,
+    cast: list[dict[str, Any]] | None = None,
+    note: str = "",
+) -> Beat:
+    """Regenerate a single scene still (UI: fix one weak frame)."""
+    direction = (note or "").strip()
+    if direction:
+        beat.image_prompt = (
+            f"{(beat.image_prompt or '').strip()} "
+            f"REVISION REQUEST (follow this): {direction}"
+        ).strip()
+    cast_lock = _cast_look_lock(cast)
+    png = out_path if out_path.suffix.lower() == ".png" else out_path.with_suffix(".png")
+    updated = _generate_still(beat, png, cast_lock=cast_lock)
+    if updated.image_path and Path(updated.image_path).suffix.lower() == ".png":
+        try:
+            from PIL import Image
+            jpg = out_path.with_suffix(".jpg")
+            im = Image.open(updated.image_path).convert("RGB")
+            im.save(jpg, "JPEG", quality=88)
+            Path(updated.image_path).unlink(missing_ok=True)
+            updated.image_path = str(jpg)
+        except Exception:
+            pass
+    return updated
 
 
 def _prompt_txt(beat: Beat) -> str:
@@ -419,6 +722,11 @@ def _prompt_txt(beat: Beat) -> str:
         "",
         "## Still description (reference)",
         beat.image_prompt,
+        "",
+        "## Continuity tip (Kling start/end frame)",
+        "Use this still as the start frame. For a seamless take into the next scene, "
+        "use the next scene's still as the end frame (or extract the last frame of this clip "
+        "as the next clip's start frame).",
     ]
     return "\n".join(lines) + "\n"
 
@@ -429,6 +737,8 @@ def write_pack_files(
     title: str,
     beats: list[Beat],
     target_minutes: float,
+    thumbnail_path: str = "",
+    cast: list[dict] | None = None,
 ) -> None:
     pack_dir.mkdir(parents=True, exist_ok=True)
     ok_beats = [b for b in beats if b.image_path and Path(b.image_path).is_file()]
@@ -444,6 +754,37 @@ def write_pack_files(
             dest.write_bytes(src.read_bytes())
             b.image_path = str(dest)
         (pack_dir / f"{b.index:03d}_prompt.txt").write_text(_prompt_txt(b), encoding="utf-8")
+
+    thumb_name = ""
+    if thumbnail_path and Path(thumbnail_path).is_file():
+        src = Path(thumbnail_path)
+        ext = src.suffix.lower() if src.suffix else ".png"
+        if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+            ext = ".png"
+        dest = pack_dir / f"thumbnail{ext}"
+        dest.write_bytes(src.read_bytes())
+        thumb_name = dest.name
+
+    cast_sheet_names: list[str] = []
+    sheets_dir = pack_dir / "cast"
+    for row in normalize_cast(cast):
+        if not row.get("included", True):
+            continue
+        cid = str(row.get("id") or "char").strip().lower() or "char"
+        name = str(row.get("name") or cid).strip() or cid
+        for kind, key in (("portrait", "portrait_path"), ("sheet", "sheet_path")):
+            src_s = (row.get(key) or "").strip()
+            if not src_s or not Path(src_s).is_file():
+                # try fetching later is cook_runner's job; skip missing local
+                continue
+            sheets_dir.mkdir(parents=True, exist_ok=True)
+            src = Path(src_s)
+            ext = src.suffix.lower() if src.suffix else ".png"
+            if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+                ext = ".png"
+            dest = sheets_dir / f"{cid}_{kind}{ext}"
+            dest.write_bytes(src.read_bytes())
+            cast_sheet_names.append(f"cast/{dest.name}")
 
     # MANIFEST.csv
     manifest = pack_dir / "MANIFEST.csv"
@@ -478,6 +819,12 @@ def write_pack_files(
         ]
     (pack_dir / "ALL_PROMPTS.txt").write_text("\n".join(all_lines), encoding="utf-8")
 
+    thumb_line = f"- `{thumb_name}` — YouTube thumbnail\n" if thumb_name else ""
+    cast_line = ""
+    if cast_sheet_names:
+        cast_line = "- `cast/` — character portraits & sheets for I2V consistency\n"
+        for n in cast_sheet_names:
+            cast_line += f"- `{n}`\n"
     readme = f"""# {title}
 
 Storyboard Pack for image-to-video batching.
@@ -489,13 +836,14 @@ Storyboard Pack for image-to-video batching.
    - Paste the **Image-to-video prompt** from `NNN_prompt.txt` (or from `ALL_PROMPTS.txt`).
 3. Keep download filenames starting with `001_`, `002_`, … if the tool allows — ChannelRecipe assemble will sort by that number.
 4. Target length per clip is in `MANIFEST.csv` (`target_sec`). Clips may come back shorter/longer; that is OK.
+5. Upload `{thumb_name or "thumbnail.png"}` as the YouTube thumbnail (if included).
 
 ## Files
 - `MANIFEST.csv` — index, filenames, dialogue, prompts, timings
 - `NNN_scene.*` — still frame
 - `NNN_prompt.txt` — dialogue + I2V prompt for that scene
 - `ALL_PROMPTS.txt` — all I2V prompts in one file
-
+{thumb_line}{cast_line}
 Generated {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}.
 """
     (pack_dir / "README.md").write_text(readme, encoding="utf-8")
@@ -505,6 +853,8 @@ Generated {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}.
         "title": title,
         "target_minutes": target_minutes,
         "beat_count": len(ok_beats),
+        "thumbnail": thumb_name,
+        "cast_sheets": cast_sheet_names,
         "beats": [
             {
                 "index": b.index,
@@ -539,8 +889,16 @@ def build_storyboard_pack(
     topic: str = "",
     script: str = "",
     target_minutes: float = 8,
+    story: str = "",
+    moral: str = "",
+    cast: list[dict[str, Any]] | None = None,
+    mistake_by: str = "",
+    dialogue_mode: str = "generate",
+    thumbnail_path: str = "",
+    pack_mode: str = "full",
     out_root: str | Path | None = None,
     progress: ProgressFn | None = None,
+    on_still: StillReadyFn | None = None,
     is_admin: bool = True,
     is_paid: bool = False,
     max_workers: int = 4,
@@ -549,11 +907,17 @@ def build_storyboard_pack(
     Full pack build. Returns paths + summary for cook_runner / API.
     """
     log = progress or (lambda _m: None)
-    mins = clamp_minutes(target_minutes, is_admin=is_admin, is_paid=is_paid)
+    pmode = (pack_mode or "full").strip().lower()
+    if pmode not in ("preview", "full"):
+        pmode = "full"
+    # Preview always targets ~1 minute of scenes regardless of slider
+    mins_in = 1.0 if pmode == "preview" else target_minutes
+    mins = clamp_minutes(mins_in, is_admin=is_admin, is_paid=is_paid)
+    cast_norm = normalize_cast(cast)
     root = Path(out_root or (Path(__file__).resolve().parents[1] / "output" / "storyboard_packs"))
     root.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    work = root / f"_work_{stamp}_{_slug(title or topic or 'pack')}"
+    work = root / f"_work_{stamp}_{_slug(title or story or topic or 'pack')}"
     work.mkdir(parents=True, exist_ok=True)
 
     t0 = time.time()
@@ -562,15 +926,35 @@ def build_storyboard_pack(
         topic=topic,
         script=script,
         target_minutes=mins,
+        story=story or topic,
+        moral=moral,
+        cast=cast_norm,
+        mistake_by=mistake_by,
+        dialogue_mode=dialogue_mode,
+        pack_mode=pmode,
         progress=log,
     )
     images_dir = work / "raw_images"
-    beats = generate_stills(beats, images_dir, progress=log, max_workers=max_workers)
+    beats = generate_stills(
+        beats,
+        images_dir,
+        progress=log,
+        max_workers=max_workers,
+        cast=cast_norm,
+        on_still=on_still,
+    )
 
     pack_name = f"{_slug(out_title)}_{stamp}_pack"
     pack_dir = root / pack_name
     log("Writing pack files…")
-    write_pack_files(pack_dir=pack_dir, title=out_title, beats=beats, target_minutes=mins)
+    write_pack_files(
+        pack_dir=pack_dir,
+        title=out_title,
+        beats=beats,
+        target_minutes=mins,
+        thumbnail_path=thumbnail_path,
+        cast=cast_norm,
+    )
 
     zip_path = root / f"{pack_name}.zip"
     log("Zipping…")
@@ -579,7 +963,7 @@ def build_storyboard_pack(
     ok = [b for b in beats if b.image_path]
     log(f"Done — {len(ok)} scenes in {time.time() - t0:.0f}s")
 
-    # Cleanup work dir (best effort)
+    # Cleanup work dir (best effort) — keep beat files that were copied into pack_dir
     try:
         import shutil
         shutil.rmtree(work, ignore_errors=True)
@@ -592,7 +976,23 @@ def build_storyboard_pack(
         "zip_path": str(zip_path),
         "beat_count": len(ok),
         "target_minutes": mins,
+        "pack_mode": pmode,
         "scene_files": [Path(b.image_path).name for b in ok],
         "manifest_path": str(pack_dir / "MANIFEST.csv"),
-        "output_path": str(zip_path),  # alias for cook_runner upload path
+        "output_path": str(zip_path),
+        "beats": [
+            {
+                "index": b.index,
+                "target_sec": b.target_sec,
+                "dialogue": b.dialogue,
+                "i2v_prompt": b.i2v_prompt,
+                "image_prompt": b.image_prompt,
+                "location": b.location,
+                "characters": b.characters,
+                "filename": Path(b.image_path).name if b.image_path else "",
+                "image_path": b.image_path,
+            }
+            for b in ok
+        ],
+        "cast": cast_norm,
     }

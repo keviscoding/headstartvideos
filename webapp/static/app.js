@@ -366,11 +366,11 @@ function syncPipelineChrome() {
     const nextBtn = document.getElementById('btn-next-2');
     const topicInput = document.getElementById('topic-input');
     if (sb) {
-        if (heading) heading.textContent = 'Pick a title (or write your own)';
-        if (sub) sub.textContent = 'Optional help: generate title ideas in this niche style. You choose the title — then you’ll describe the story you want to make.';
-        if (progress) progress.textContent = 'Step 2 of 3';
-        if (nextBtn) nextBtn.textContent = 'Next: Your story';
-        if (topicInput) topicInput.placeholder = 'Optional seed for title ideas: exams, lying, jealousy…';
+        if (heading) heading.textContent = 'Optional: pick a title';
+        if (sub) sub.textContent = 'Skip or pick a title — you’ll refine it on the episode step.';
+        if (progress) progress.textContent = 'Optional';
+        if (nextBtn) nextBtn.textContent = 'Back to episode';
+        if (topicInput) topicInput.placeholder = 'Optional seed: exams, lying, jealousy…';
     } else {
         if (heading) heading.textContent = 'Pick a title';
         if (sub) sub.textContent = 'We drafted a few from proven patterns. Pick one or write your own.';
@@ -384,9 +384,11 @@ function updateStepperActive(n) {
     const sb = isStoryboardRecipe();
     if (sb) {
         let active = 1;
-        if (n === 2) active = 2;
-        else if (n === 'storyboard' || n === 3) active = 3;
-        else if (typeof n === 'number' && n >= 3) active = 3;
+        if (n === 'sb-cast') active = 2;
+        else if (n === 'storyboard') active = 3;
+        else if (n === 'sb-pack') active = 4;
+        else if (n === 2) active = 3; // title ideas live inside episode flow
+        else if (typeof n === 'number' && n >= 3) active = 4;
         document.querySelectorAll('#stepper-storyboard .step-indicator').forEach(ind => {
             const s = parseInt(ind.dataset.sbStep);
             const dot = ind.querySelector('.step-dot');
@@ -416,7 +418,11 @@ function goToStep(n) {
     state.step = n;
     syncPipelineChrome();
     document.querySelectorAll('.step-panel').forEach(p => p.classList.add('hidden'));
-    const panelId = n === 'storyboard' ? 'step-storyboard' : `step-${n}`;
+    let panelId;
+    if (n === 'storyboard') panelId = 'step-storyboard';
+    else if (n === 'sb-cast') panelId = 'step-sb-cast';
+    else if (n === 'sb-pack') panelId = 'step-sb-pack';
+    else panelId = `step-${n}`;
     const panel = document.getElementById(panelId);
     if (panel) {
         panel.classList.remove('hidden');
@@ -427,7 +433,6 @@ function goToStep(n) {
 
     updateStepperActive(n);
 
-    // Always ensure voices / avatar studio ready when entering step 4
     if (n === 4) {
         if (isAvatarRecipe()) {
             setupAvatarStep();
@@ -437,23 +442,30 @@ function goToStep(n) {
             loadVoices();
         }
     }
+    if (n === 'sb-cast') initStoryboardCastUI();
+    if (n === 'storyboard') initStoryboardPackUI();
 
     if (typeof n === 'number' && n >= 2) persistPipelineState();
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function goToCompletedStep(n) {
-    if (n === 'storyboard') {
-        if (isStoryboardRecipe() && state.title) {
-            initStoryboardPackUI();
-            goToStep('storyboard');
+    if (n === 'sb-cast' || n === 'storyboard' || n === 'sb-pack') {
+        if (!isStoryboardRecipe()) return;
+        if (n === 'storyboard' || n === 'sb-pack') {
+            if (!_sbCastHasLook()) {
+                alert('Generate at least one character look first.');
+                goToStep('sb-cast');
+                return;
+            }
         }
+        goToStep(n);
         return;
     }
     if (isStoryboardRecipe() && typeof n === 'number' && n > 2) {
         n = 2;
     }
-    const cur = state.step === 'storyboard' ? 3 : state.step;
+    const cur = typeof state.step === 'number' ? state.step : 1;
     if (n < cur || n === cur) goToStep(n);
 }
 
@@ -473,7 +485,6 @@ function bindEvents() {
         if (!ensureSignedIn()) return;
         if (!state.title) return;
         if (isStoryboardRecipe()) {
-            initStoryboardPackUI();
             goToStep('storyboard');
             return;
         }
@@ -674,7 +685,7 @@ function selectNiche(niche, card) {
     syncPipelineChrome();
 
     if ((niche.recipe || niche.id) === 'storyboard_pack') {
-        setTimeout(() => goToStep(2), 200);
+        setTimeout(() => goToStep('sb-cast'), 200);
         return;
     }
     setTimeout(() => goToStep(2), 300);
@@ -4999,10 +5010,194 @@ async function openStripePortal() {
 }
 
 // ---------------------------------------------------------------------------
-// Storyboard Pack (admin-only recipe)
+// Storyboard Pack — Cast studio → Episode → live board
 // ---------------------------------------------------------------------------
 let _sbPollTimer = null;
 let _sbJobId = null;
+let _sbThumbPath = '';
+let _sbThumbUrl = '';
+let _sbThumbRefs = [];
+let _sbCast = [];
+let _sbSelectedBeatIndex = null;
+let _sbPackMode = 'full'; // preview | full
+let _sbLastEpisodePayload = null;
+let _sbBeats = [];
+
+function _sbDialogueMode() {
+    const el = document.querySelector('input[name="sb-dialogue-mode"]:checked');
+    return (el?.value || 'generate').trim();
+}
+
+function _sbMistakeBy() {
+    const el = document.querySelector('input[name="sb-mistake"]:checked');
+    const v = (el?.value || 'max').trim();
+    if (v === 'other') {
+        return (document.getElementById('sb-mistake-other')?.value || '').trim() || 'other';
+    }
+    return v;
+}
+
+function _sbCastHasLook() {
+    return (_sbCast || []).some(c => c.included !== false && (c.portrait_url || c.sheet_url));
+}
+
+function _sbNicheThumbStyle() {
+    return (
+        state.nicheData?.thumbnail_style
+        || '3D Pixar-lite family characters, warm lighting, large yellow caption, emotional story moment'
+    );
+}
+
+function _sbSyncDialogueUI() {
+    const wrap = document.getElementById('sb-script-wrap');
+    if (!wrap) return;
+    wrap.classList.toggle('hidden', _sbDialogueMode() !== 'paste');
+}
+
+function _sbSyncMistakeUI() {
+    const other = document.getElementById('sb-mistake-other');
+    if (!other) return;
+    const el = document.querySelector('input[name="sb-mistake"]:checked');
+    other.classList.toggle('hidden', (el?.value || '') !== 'other');
+}
+
+function sbGoToEpisode() {
+    if (!_sbCastHasLook()) {
+        alert('Generate at least one character look — see them before the story.');
+        return;
+    }
+    saveStoryboardCast(true).then(() => goToStep('storyboard'));
+}
+
+async function loadStoryboardCast() {
+    try {
+        const res = await fetch('/api/storyboard/cast');
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && Array.isArray(data.cast)) _sbCast = data.cast;
+    } catch (e) {
+        console.warn('cast load', e);
+    }
+    if (!_sbCast.length) {
+        _sbCast = [
+            { id: 'max', name: 'Max', included: true, look_prompt: 'boy messy black hair blue polo grey pants, Pixar-lite 3D', portrait_url: '', sheet_url: '' },
+            { id: 'mia', name: 'Mia', included: true, look_prompt: 'girl black pigtails pink ties yellow sweater, Pixar-lite 3D', portrait_url: '', sheet_url: '' },
+            { id: 'mom', name: 'Mom', included: true, look_prompt: 'long wavy brown hair light cardigan, Pixar-lite 3D', portrait_url: '', sheet_url: '' },
+            { id: 'dad', name: 'Dad', included: true, look_prompt: 'curly dark hair short beard blue shirt, Pixar-lite 3D', portrait_url: '', sheet_url: '' },
+        ];
+    }
+    renderStoryboardCastGrid();
+}
+
+function renderStoryboardCastGrid() {
+    const grid = document.getElementById('sb-cast-grid');
+    if (!grid) return;
+    grid.innerHTML = (_sbCast || []).map((c, i) => {
+        const hasLook = !!(c.portrait_url || c.sheet_url);
+        const img = c.portrait_url
+            ? `<img src="${esc(c.portrait_url)}" alt="${esc(c.name)}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:12px;background:var(--app-surface);">`
+            : `<div style="width:100%;aspect-ratio:1;border-radius:12px;background:var(--app-surface);display:flex;align-items:center;justify-content:center;color:var(--app-ink-3);font-family:var(--font-body);font-size:13px;">No look yet</div>`;
+        return `<div class="sb-cast-card${hasLook ? ' has-look' : ''}" data-cast-i="${i}">
+            ${img}
+            <div style="margin-top:10px;display:flex;align-items:center;gap:8px;">
+                <input type="checkbox" class="sb-cast-inc" data-i="${i}" ${c.included !== false ? 'checked' : ''}>
+                <input type="text" class="cr-input sb-cast-name-in" data-i="${i}" value="${esc(c.name || '')}" style="padding:8px 10px;">
+            </div>
+            <textarea class="cr-input sb-cast-look" data-i="${i}" rows="2" style="margin-top:8px;font-size:13px;" placeholder="Describe their look…">${esc(c.look_prompt || '')}</textarea>
+            <button type="button" class="btn-primary sb-cast-gen" data-i="${i}" style="width:100%;margin-top:10px;font-size:13px;padding:10px;">
+                <span class="btn-text">${hasLook ? 'Recreate look' : 'Generate look'}</span>
+                <span class="btn-loading hidden"><span class="cr-spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;"></span> Generating…</span>
+            </button>
+        </div>`;
+    }).join('');
+    grid.querySelectorAll('.sb-cast-inc').forEach(el => {
+        el.addEventListener('change', () => {
+            const i = +el.dataset.i;
+            if (_sbCast[i]) _sbCast[i].included = el.checked;
+        });
+    });
+    grid.querySelectorAll('.sb-cast-name-in').forEach(el => {
+        el.addEventListener('input', () => {
+            const i = +el.dataset.i;
+            if (_sbCast[i]) _sbCast[i].name = el.value.trim();
+        });
+    });
+    grid.querySelectorAll('.sb-cast-look').forEach(el => {
+        el.addEventListener('input', () => {
+            const i = +el.dataset.i;
+            if (_sbCast[i]) _sbCast[i].look_prompt = el.value.trim();
+        });
+    });
+    grid.querySelectorAll('.sb-cast-gen').forEach(el => {
+        el.addEventListener('click', () => generateCastLook(+el.dataset.i, el));
+    });
+    const next = document.getElementById('btn-sb-cast-next');
+    if (next) next.disabled = !_sbCastHasLook();
+}
+
+async function generateCastLook(i, btn) {
+    if (!isAdminUser()) {
+        alert('Storyboard Pack is admin-only while we test it.');
+        return;
+    }
+    const c = _sbCast[i];
+    if (!c) return;
+    setLoading(btn, true);
+    try {
+        const res = await fetch('/api/storyboard/cast/generate-look', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                id: c.id,
+                name: c.name,
+                look_prompt: c.look_prompt,
+                make_sheet: true,
+            }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Look generation failed');
+        if (Array.isArray(data.cast)) _sbCast = data.cast;
+        else if (data.member) {
+            _sbCast[i] = { ...c, ...data.member };
+        }
+        renderStoryboardCastGrid();
+        track('storyboard_cast_look', { id: c.id });
+    } catch (e) {
+        alert(e.message || 'Look generation failed');
+    } finally {
+        setLoading(btn, false);
+    }
+}
+
+async function saveStoryboardCast(silent) {
+    try {
+        const res = await fetch('/api/storyboard/cast', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cast: _sbCast }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && Array.isArray(data.cast)) _sbCast = data.cast;
+        if (!silent && !res.ok) throw new Error(data.detail || 'Save failed');
+    } catch (e) {
+        if (!silent) alert(e.message || 'Could not save cast');
+    }
+}
+
+function renderEpisodeCastStrip() {
+    const strip = document.getElementById('sb-episode-cast-strip');
+    if (!strip) return;
+    const shown = (_sbCast || []).filter(c => c.included !== false);
+    strip.innerHTML = shown.map(c => {
+        const face = c.portrait_url
+            ? `<img src="${esc(c.portrait_url)}" alt="" style="width:48px;height:48px;border-radius:50%;object-fit:cover;">`
+            : `<div style="width:48px;height:48px;border-radius:50%;background:var(--app-surface);"></div>`;
+        return `<div style="display:flex;align-items:center;gap:8px;font-family:var(--font-body);font-size:13px;color:var(--app-ink);">${face}<span>${esc(c.name)}</span></div>`;
+    }).join('') + `<button type="button" class="btn-ghost" style="font-size:12px;padding:6px 10px;" onclick="goToStep('sb-cast')">Edit cast</button>`;
+}
+
+async function initStoryboardCastUI() {
+    await loadStoryboardCast();
+}
 
 function initStoryboardPackUI() {
     const mins = state.nicheData?.default_minutes || state.targetMinutes || 8;
@@ -5013,132 +5208,385 @@ function initStoryboardPackUI() {
         slider.value = mins;
         if (label) label.textContent = mins + ' min';
     }
-    const title = state.title || '';
     const titleInput = document.getElementById('sb-title');
-    if (titleInput) titleInput.value = title;
-    // Carry topic seed from title step into the story box if empty
-    const topicHint = (document.getElementById('topic-input')?.value || '').trim();
-    const topicEl = document.getElementById('sb-topic');
-    if (topicEl && topicHint && !topicEl.value.trim()) topicEl.value = topicHint;
-
-    const res = document.getElementById('sb-result');
-    const prog = document.getElementById('sb-progress');
-    if (res) res.classList.add('hidden');
-    if (prog) {
-        prog.classList.add('hidden');
-        prog.innerHTML = '';
-    }
-    _sbJobId = null;
-    if (_sbPollTimer) {
-        clearInterval(_sbPollTimer);
-        _sbPollTimer = null;
-    }
+    if (titleInput && state.title) titleInput.value = state.title;
+    _sbSyncDialogueUI();
+    _sbSyncMistakeUI();
+    renderEpisodeCastStrip();
+    const moralsList = document.getElementById('sb-morals-list');
+    if (moralsList) moralsList.innerHTML = '';
 }
 
 function bindStoryboardPackUI() {
     const slider = document.getElementById('sb-minutes');
     const label = document.getElementById('sb-minutes-label');
     if (slider && label) {
-        slider.addEventListener('input', () => {
-            label.textContent = slider.value + ' min';
-        });
+        slider.addEventListener('input', () => { label.textContent = slider.value + ' min'; });
     }
-    const btn = document.getElementById('btn-sb-generate');
-    if (btn) btn.addEventListener('click', startStoryboardPack);
+    document.querySelectorAll('input[name="sb-dialogue-mode"]').forEach(el => {
+        el.addEventListener('change', _sbSyncDialogueUI);
+    });
+    document.querySelectorAll('input[name="sb-mistake"]').forEach(el => {
+        el.addEventListener('change', _sbSyncMistakeUI);
+    });
+    document.getElementById('btn-sb-suggest-morals')?.addEventListener('click', suggestStoryboardMorals);
+    document.getElementById('btn-sb-thumb')?.addEventListener('click', generateStoryboardThumbnail);
+    document.getElementById('sb-thumb-refs')?.addEventListener('change', (e) => {
+        const preview = document.getElementById('sb-thumb-refs-preview');
+        if (preview) preview.innerHTML = '';
+        _sbThumbRefs = [...(e.target.files || [])];
+        _sbThumbRefs.forEach(f => {
+            if (!preview) return;
+            const img = document.createElement('img');
+            img.className = 'ref-thumb';
+            img.src = URL.createObjectURL(f);
+            preview.appendChild(img);
+        });
+    });
+    document.getElementById('btn-sb-preview')?.addEventListener('click', () => startStoryboardPack('preview'));
+    document.getElementById('btn-sb-generate')?.addEventListener('click', () => startStoryboardPack('full'));
+    document.getElementById('btn-sb-continue-full')?.addEventListener('click', () => startStoryboardPack('full', { fromPreview: true }));
+    document.getElementById('btn-sb-regen-beat')?.addEventListener('click', regenSelectedBeat);
 }
 
-async function startStoryboardPack() {
-    if (!isAdminUser()) {
-        alert('Storyboard Pack is admin-only while we test it.');
-        return;
-    }
-    const title = (document.getElementById('sb-title')?.value || '').trim();
-    const topic = (document.getElementById('sb-topic')?.value || '').trim();
-    const script = (document.getElementById('sb-script')?.value || '').trim();
-    const minutes = parseFloat(document.getElementById('sb-minutes')?.value || '8');
-    if (!title) {
-        alert('Add a title for this video.');
-        return;
-    }
-    if (!topic && !script) {
-        alert('Describe the story you want to make, or paste a script.');
-        return;
-    }
-    state.title = title;
-    const btn = document.getElementById('btn-sb-generate');
-    const prog = document.getElementById('sb-progress');
-    const resBox = document.getElementById('sb-result');
-    if (resBox) resBox.classList.add('hidden');
+function _sbRenderThumbs(urls, paths) {
+    const grid = document.getElementById('sb-thumb-grid');
+    if (!grid) return;
+    grid.innerHTML = '';
+    document.getElementById('sb-thumb-loading')?.classList.add('hidden');
+    urls.forEach((url, i) => {
+        const card = document.createElement('div');
+        card.className = 'thumb-card';
+        card.innerHTML = `<img src="${url}" alt="Thumbnail ${i + 1}">`;
+        card.addEventListener('click', () => {
+            grid.querySelectorAll('.thumb-card').forEach(c => c.classList.remove('selected'));
+            card.classList.add('selected');
+            _sbThumbUrl = url;
+            _sbThumbPath = paths[i] || '';
+        });
+        grid.appendChild(card);
+    });
+    if (urls.length) grid.querySelector('.thumb-card')?.click();
+}
+
+async function generateStoryboardThumbnail() {
+    if (!isAdminUser()) { alert('Storyboard Pack is admin-only while we test it.'); return; }
+    const title = (document.getElementById('sb-title')?.value || state.title || '').trim();
+    if (!title) { alert('Add a title first.'); return; }
+    const btn = document.getElementById('btn-sb-thumb');
+    document.getElementById('sb-thumb-loading')?.classList.remove('hidden');
     setLoading(btn, true);
-    if (prog) {
-        prog.classList.remove('hidden');
-        prog.innerHTML = 'Queuing…';
+    try {
+        let data;
+        const style = _sbNicheThumbStyle();
+        if (_sbThumbRefs.length) {
+            const formData = new FormData();
+            formData.append('title', title);
+            formData.append('style', style);
+            formData.append('count', '2');
+            _sbThumbRefs.forEach(f => formData.append('refs', f));
+            const res = await fetch('/api/thumbnail/with-refs', { method: 'POST', body: formData });
+            data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Thumbnail failed');
+        } else {
+            const res = await fetch('/api/thumbnail', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title, niche_style: style, count: 2 }),
+            });
+            data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Thumbnail failed');
+        }
+        _sbRenderThumbs(data.thumbnails || [], data.paths || []);
+    } catch (e) {
+        document.getElementById('sb-thumb-loading')?.classList.add('hidden');
+        alert(e.message || 'Thumbnail generation failed');
+    } finally {
+        setLoading(btn, false);
     }
+}
+
+async function suggestStoryboardMorals() {
+    if (!isAdminUser()) { alert('Storyboard Pack is admin-only while we test it.'); return; }
+    const story = (document.getElementById('sb-story')?.value || '').trim();
+    if (!story) { alert('Describe what happens first.'); return; }
+    const btn = document.getElementById('btn-sb-suggest-morals');
+    const list = document.getElementById('sb-morals-list');
+    if (btn) { btn.disabled = true; btn.textContent = 'Suggesting…'; }
+    try {
+        const res = await fetch('/api/storyboard/suggest-morals', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ story }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || 'Could not suggest morals');
+        const morals = Array.isArray(data.morals) ? data.morals : [];
+        if (!list) return;
+        list.innerHTML = morals.map((m, i) => (
+            `<button type="button" class="btn-ghost sb-moral-pick" style="display:block;width:100%;text-align:left;font-size:13px;padding:10px 12px;white-space:normal;">${esc(m)}</button>`
+        )).join('');
+        list.querySelectorAll('.sb-moral-pick').forEach((b, i) => {
+            b.addEventListener('click', () => {
+                const moralEl = document.getElementById('sb-moral');
+                if (moralEl) moralEl.value = morals[i] || '';
+            });
+        });
+    } catch (e) {
+        alert(e.message || 'Could not suggest morals');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Suggest morals from my story'; }
+    }
+}
+
+function renderStoryboardBoard(beats) {
+    const board = document.getElementById('sb-board');
+    if (!board) return;
+    const list = Array.isArray(beats) ? [...beats].sort((a, b) => (a.index || 0) - (b.index || 0)) : [];
+    _sbBeats = list;
+    board.innerHTML = list.map(b => {
+        const img = b.image_url
+            ? `<img src="${esc(b.image_url)}" alt="Scene ${b.index}">`
+            : `<div class="sb-board-ph"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;margin:auto;"></div></div>`;
+        const sel = _sbSelectedBeatIndex === b.index ? ' is-selected' : '';
+        const chars = (b.characters || '').trim();
+        return `<button type="button" class="sb-board-card${sel}" data-idx="${b.index}">
+            ${img}
+            <div class="sb-board-meta">
+                <span>${String(b.index).padStart(3, '0')}</span>
+                <span>${esc(chars ? chars.split(',')[0].trim() : 'scene')}</span>
+            </div>
+        </button>`;
+    }).join('');
+    board.querySelectorAll('.sb-board-card').forEach(card => {
+        card.addEventListener('click', () => {
+            const idx = +card.dataset.idx;
+            _sbSelectedBeatIndex = idx;
+            const beat = list.find(x => x.index === idx);
+            showBeatDetail(beat);
+            renderStoryboardBoard(list);
+        });
+    });
+}
+
+function showBeatDetail(beat) {
+    const box = document.getElementById('sb-beat-detail');
+    if (!box || !beat) return;
+    box.classList.remove('hidden');
+    const img = document.getElementById('sb-beat-detail-img');
+    if (img) {
+        if (beat.image_url) {
+            img.src = beat.image_url;
+            img.classList.remove('hidden');
+        } else {
+            img.removeAttribute('src');
+            img.classList.add('hidden');
+        }
+    }
+    document.getElementById('sb-beat-detail-meta').textContent =
+        `Scene ${String(beat.index).padStart(3, '0')} · ${(beat.characters || '')} · ${(beat.location || '')}`;
+    document.getElementById('sb-beat-detail-dialogue').textContent = beat.dialogue || '';
+    document.getElementById('sb-beat-detail-i2v').textContent = beat.i2v_prompt || '';
+    const note = document.getElementById('sb-regen-note');
+    if (note && !note.value) note.placeholder = 'e.g. Make Max look more scared. Wider shot. Mom on the left.';
+}
+
+function _sbSetPackLoading(loading) {
+    setLoading(document.getElementById('btn-sb-generate'), loading);
+    setLoading(document.getElementById('btn-sb-preview'), loading);
+    const cont = document.getElementById('btn-sb-continue-full');
+    if (cont) cont.disabled = !!loading;
+}
+
+async function regenSelectedBeat() {
+    if (!_sbJobId || _sbSelectedBeatIndex == null) return;
+    const btn = document.getElementById('btn-sb-regen-beat');
+    const note = (document.getElementById('sb-regen-note')?.value || '').trim();
+    setLoading(btn, true);
+    try {
+        const res = await fetch(`/api/storyboard/jobs/${_sbJobId}/regen-beat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ index: _sbSelectedBeatIndex, note }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Regen failed');
+        if (Array.isArray(data.beats)) {
+            renderStoryboardBoard(data.beats);
+            const updated = data.beat || data.beats.find(b => b.index === _sbSelectedBeatIndex);
+            if (updated) showBeatDetail(updated);
+        } else if (data.beat) {
+            showBeatDetail(data.beat);
+        }
+        if (data.zip_url || data.zip_ready) {
+            const dl = document.getElementById('sb-download');
+            if (dl) dl.href = `/api/storyboard/jobs/${_sbJobId}/download`;
+        }
+        track('storyboard_beat_regen', { job_id: _sbJobId, index: _sbSelectedBeatIndex, has_note: !!note });
+    } catch (e) {
+        alert(e.message || 'Regen failed');
+    } finally {
+        setLoading(btn, false);
+    }
+}
+
+async function startStoryboardPack(packMode = 'full', opts = {}) {
+    if (!isAdminUser()) { alert('Storyboard Pack is admin-only while we test it.'); return; }
+    if (!_sbCastHasLook()) {
+        alert('Generate at least one character look in Cast studio first.');
+        goToStep('sb-cast');
+        return;
+    }
+    await saveStoryboardCast(true);
+
+    const fromPreview = !!opts.fromPreview;
+    let payload;
+    if (fromPreview && _sbLastEpisodePayload) {
+        payload = { ..._sbLastEpisodePayload, cast: _sbCast, thumbnail_path: _sbThumbPath || _sbLastEpisodePayload.thumbnail_path || '' };
+    } else {
+        const title = (document.getElementById('sb-title')?.value || '').trim();
+        const story = (document.getElementById('sb-story')?.value || '').trim();
+        const moral = (document.getElementById('sb-moral')?.value || '').trim();
+        const dialogue_mode = _sbDialogueMode();
+        const script = (document.getElementById('sb-script')?.value || '').trim();
+        const minutes = parseFloat(document.getElementById('sb-minutes')?.value || '8');
+        const mistake_by = _sbMistakeBy();
+
+        if (!title) { alert('Add a title for this video.'); return; }
+        if (!moral) { alert('What should the viewer learn? Add a moral.'); return; }
+        if (dialogue_mode === 'paste') {
+            if (!script) { alert('Paste your script, or switch to “Write dialogue for me”.'); return; }
+        } else if (!story) {
+            alert('Describe what happens in this episode.');
+            return;
+        }
+        if (document.querySelector('input[name="sb-mistake"]:checked')?.value === 'other'
+            && !(document.getElementById('sb-mistake-other')?.value || '').trim()) {
+            alert('Say who makes the mistake.');
+            return;
+        }
+
+        payload = {
+            title,
+            story,
+            topic: story,
+            moral,
+            cast: _sbCast,
+            mistake_by,
+            dialogue_mode,
+            script: dialogue_mode === 'paste' ? script : '',
+            target_minutes: minutes,
+            thumbnail_path: _sbThumbPath || '',
+        };
+        state.title = title;
+    }
+
+    const mode = (packMode === 'preview') ? 'preview' : 'full';
+    _sbPackMode = mode;
+    _sbLastEpisodePayload = { ...payload };
+    payload = { ...payload, pack_mode: mode };
+
+    goToStep('sb-pack');
+    _sbSelectedBeatIndex = null;
+    _sbBeats = [];
+    const board = document.getElementById('sb-board');
+    if (board) board.innerHTML = '';
+    document.getElementById('sb-beat-detail')?.classList.add('hidden');
+    document.getElementById('sb-result')?.classList.add('hidden');
+    document.getElementById('btn-sb-continue-full')?.classList.add('hidden');
+    const noteEl = document.getElementById('sb-regen-note');
+    if (noteEl) noteEl.value = '';
+    const status = document.getElementById('sb-pack-status');
+    if (status) {
+        status.textContent = mode === 'preview'
+            ? 'Queuing first-minute preview — ~8 opening scenes…'
+            : 'Queuing full pack — stills will appear as they’re ready…';
+    }
+    const prog = document.getElementById('sb-progress');
+    if (prog) { prog.classList.remove('hidden'); prog.innerHTML = 'Queuing…'; }
+    _sbSetPackLoading(true);
+
     try {
         const res = await fetch('/api/storyboard/jobs', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                title,
-                topic,
-                script,
-                target_minutes: minutes,
-            }),
+            body: JSON.stringify(payload),
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.detail || 'Could not start pack');
+        if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : (data.detail || 'Could not start pack'));
         _sbJobId = data.job_id;
-        track('storyboard_pack_started', { job_id: _sbJobId, target_minutes: minutes });
+        track('storyboard_pack_started', {
+            job_id: _sbJobId,
+            target_minutes: payload.target_minutes,
+            dialogue_mode: payload.dialogue_mode,
+            pack_mode: mode,
+        });
         if (_sbPollTimer) clearInterval(_sbPollTimer);
-        _sbPollTimer = setInterval(pollStoryboardPack, 2000);
+        _sbPollTimer = setInterval(pollStoryboardPack, 1500);
         await pollStoryboardPack();
     } catch (e) {
-        setLoading(btn, false);
+        _sbSetPackLoading(false);
         alert(e.message || 'Storyboard pack failed');
+        goToStep('storyboard');
     }
 }
 
 async function pollStoryboardPack() {
     if (!_sbJobId) return;
-    const btn = document.getElementById('btn-sb-generate');
     const prog = document.getElementById('sb-progress');
+    const status = document.getElementById('sb-pack-status');
+    const continueBtn = document.getElementById('btn-sb-continue-full');
     try {
         const res = await fetch(`/api/storyboard/jobs/${_sbJobId}`);
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.detail || 'Status failed');
+        const mode = (data.pack_mode || _sbPackMode || 'full').toLowerCase();
+        _sbPackMode = mode;
         const lines = (data.progress || []).map(p => p.message || p.msg || '').filter(Boolean);
         if (prog) {
             prog.classList.remove('hidden');
-            prog.innerHTML = lines.slice(-20).map(m => `<div>${esc(m)}</div>`).join('') || 'Working…';
+            prog.innerHTML = lines.slice(-12).map(m => `<div>${esc(m)}</div>`).join('') || 'Working…';
             prog.scrollTop = prog.scrollHeight;
         }
-        if (data.status === 'complete' || data.zip_ready) {
-            if (_sbPollTimer) {
-                clearInterval(_sbPollTimer);
-                _sbPollTimer = null;
+        if (Array.isArray(data.beats) && data.beats.length) {
+            renderStoryboardBoard(data.beats);
+            if (status && data.status !== 'complete' && !data.zip_ready) {
+                status.textContent = mode === 'preview'
+                    ? `${data.beats.length} opening scene${data.beats.length === 1 ? '' : 's'} ready…`
+                    : `${data.beats.length} scene${data.beats.length === 1 ? '' : 's'} ready…`;
             }
-            setLoading(btn, false);
+        }
+        if (data.status === 'complete' || data.zip_ready) {
+            if (_sbPollTimer) { clearInterval(_sbPollTimer); _sbPollTimer = null; }
+            _sbSetPackLoading(false);
+            if (status) {
+                status.textContent = mode === 'preview'
+                    ? 'First minute ready — recreate any weak scenes, then generate the full pack.'
+                    : 'Pack ready — review stills, recreate any weak ones, then download.';
+            }
             const box = document.getElementById('sb-result');
             const summary = document.getElementById('sb-result-summary');
             const dl = document.getElementById('sb-download');
             if (summary) {
-                summary.textContent = `${data.title || 'Pack ready'} — ${data.beat_count || '?'} scenes (~${data.target_minutes || '?'} min)`;
+                const label = mode === 'preview' ? 'First-minute preview' : (data.title || 'Pack ready');
+                summary.textContent = `${label} — ${data.beat_count || data.beats?.length || '?'} scenes (~${data.target_minutes || (mode === 'preview' ? 1 : '?')} min)`;
             }
             if (dl) {
                 dl.href = `/api/storyboard/jobs/${_sbJobId}/download`;
                 dl.download = '';
+                dl.textContent = mode === 'preview' ? 'Download preview zip' : 'Download pack zip';
             }
             if (box) box.classList.remove('hidden');
-            track('storyboard_pack_ready', { job_id: _sbJobId, beat_count: data.beat_count });
+            if (continueBtn) continueBtn.classList.toggle('hidden', mode !== 'preview');
+            track('storyboard_pack_ready', { job_id: _sbJobId, beat_count: data.beat_count, pack_mode: mode });
         } else if (data.status === 'error' || data.status === 'cancelled') {
-            if (_sbPollTimer) {
-                clearInterval(_sbPollTimer);
-                _sbPollTimer = null;
-            }
-            setLoading(btn, false);
+            if (_sbPollTimer) { clearInterval(_sbPollTimer); _sbPollTimer = null; }
+            _sbSetPackLoading(false);
+            if (continueBtn) continueBtn.classList.add('hidden');
             alert(data.error || 'Storyboard pack failed');
         }
     } catch (e) {
         console.warn('storyboard poll', e);
     }
 }
+

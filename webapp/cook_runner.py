@@ -118,7 +118,7 @@ def run_cook_job(
     script = req_data.get("script") or ""
     voiceover_path = req_data.get("voiceover_path") or ""
     title = req_data.get("title") or ""
-    recipe = req_data.get("recipe") or "animated_explainer"
+    recipe = (req_data.get("recipe") or "").strip() or "animated_explainer"
     thumbnail_path = req_data.get("thumbnail_path") or ""
     notify_email = req_data.get("notify_email") or ""
 
@@ -296,6 +296,12 @@ def run_cook_job(
                     heygen_api_key=heygen_key,
                 )
             else:
+                # Defensive: storyboard should have returned above; keep message clear.
+                if recipe == "storyboard_pack":
+                    raise ValueError(
+                        "storyboard_pack reached the video pipeline — deploy webapp/cook_runner.py "
+                        "with the storyboard branch (or rebuild the Fly cook image)."
+                    )
                 raise ValueError(f"Unknown recipe: {recipe}")
 
         if job.get("status") == "cancelled" or (cancel_check and cancel_check()):
@@ -479,7 +485,14 @@ def _run_storyboard_pack_job(
     req_data = job.get("request") or {}
     title = (req_data.get("title") or "").strip()
     topic = (req_data.get("topic") or "").strip()
+    story = (req_data.get("story") or topic or "").strip()
+    moral = (req_data.get("moral") or "").strip()
+    mistake_by = (req_data.get("mistake_by") or "").strip()
+    dialogue_mode = (req_data.get("dialogue_mode") or "generate").strip().lower()
+    pack_mode = (req_data.get("pack_mode") or "full").strip().lower()
+    cast = req_data.get("cast") if isinstance(req_data.get("cast"), list) else []
     script = (req_data.get("script") or "").strip()
+    thumbnail_path = (req_data.get("thumbnail_path") or "").strip()
     try:
         target_minutes = float(req_data.get("target_minutes") or 8)
     except (TypeError, ValueError):
@@ -522,15 +535,118 @@ def _run_storyboard_pack_job(
             atlas_cm = nullcontext()
 
     try:
+        from webapp.storage import fetch_to_local
+        cache_dir = ROOT / "output" / "job_inputs" / job_id
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        if thumbnail_path:
+            try:
+                thumbnail_path = fetch_to_local(thumbnail_path, cache_dir)
+            except Exception as e:
+                print(f"[storyboard] thumbnail fetch failed (continuing without): {e}")
+                thumbnail_path = ""
+
+        # Resolve cast portrait/sheet URLs → local paths for pack inclusion + look lock
+        resolved_cast: list[dict] = []
+        for row in cast:
+            if not isinstance(row, dict):
+                continue
+            r = dict(row)
+            for url_key, path_key in (
+                ("portrait_url", "portrait_path"),
+                ("sheet_url", "sheet_path"),
+            ):
+                url = (r.get(url_key) or r.get(path_key) or "").strip()
+                if not url:
+                    continue
+                try:
+                    local = fetch_to_local(url, cache_dir / "cast")
+                    r[path_key] = local
+                    if url_key.endswith("_url") and not r.get(url_key):
+                        r[url_key] = url
+                except Exception as e:
+                    print(f"[storyboard] cast asset fetch failed ({url_key}): {e}")
+            resolved_cast.append(r)
+
+        live_beats: list[dict] = []
+        job["result"] = {
+            "kind": "storyboard_pack",
+            "title": title,
+            "beats": live_beats,
+            "beat_count": 0,
+            "zip_ready": False,
+        }
+
+        def _persist_live():
+            try:
+                update_cook_job(
+                    job_id,
+                    status=job.get("status") or "running",
+                    progress_json=json.dumps(job["progress"][-60:]),
+                    result_json=json.dumps(job.get("result") or {}),
+                    heartbeat=True,
+                )
+            except Exception as e:
+                print(f"[storyboard] live persist failed: {e}")
+
+        def on_still(beat):
+            local = beat.image_path
+            if not local or not Path(local).is_file():
+                return
+            ts_u = int(time.time())
+            ext = Path(local).suffix or ".jpg"
+            try:
+                url = storage.store_file(
+                    local,
+                    f"storyboard/{user_id or 'anon'}/{job_id}/beats/{beat.index:03d}_{ts_u}{ext}",
+                    "image/jpeg" if ext.lower() in (".jpg", ".jpeg") else "image/png",
+                )
+            except Exception as e:
+                print(f"[storyboard] still upload failed: {e}")
+                url = f"/api/files/{os.path.relpath(local, str(ROOT))}"
+            entry = {
+                "index": beat.index,
+                "image_url": url,
+                "dialogue": beat.dialogue,
+                "i2v_prompt": beat.i2v_prompt,
+                "image_prompt": beat.image_prompt,
+                "location": beat.location,
+                "characters": beat.characters,
+                "target_sec": beat.target_sec,
+                "filename": Path(local).name,
+            }
+            # upsert by index
+            found = False
+            for i, existing in enumerate(live_beats):
+                if existing.get("index") == beat.index:
+                    live_beats[i] = entry
+                    found = True
+                    break
+            if not found:
+                live_beats.append(entry)
+            live_beats.sort(key=lambda x: int(x.get("index") or 0))
+            job["result"]["beats"] = live_beats
+            job["result"]["beat_count"] = len(live_beats)
+            on_progress(f"Scene {beat.index:03d} ready", phase="still")
+            _persist_live()
+
         with atlas_cm:
             on_progress("Starting storyboard pack…")
             from core.storyboard_pack import build_storyboard_pack
             result = build_storyboard_pack(
                 title=title,
-                topic=topic,
+                topic=topic or story,
+                story=story,
+                moral=moral,
+                cast=resolved_cast,
+                mistake_by=mistake_by,
+                dialogue_mode=dialogue_mode,
                 script=script,
                 target_minutes=target_minutes,
+                thumbnail_path=thumbnail_path,
+                pack_mode=pack_mode,
                 progress=lambda m: on_progress(m),
+                on_still=on_still,
                 is_admin=is_admin,
                 is_paid=is_paid,
             )
@@ -558,15 +674,34 @@ def _run_storyboard_pack_job(
             print(f"[storyboard] upload failed, local fallback: {up_err}")
             zip_url = f"/api/files/{os.path.relpath(zip_local, str(ROOT))}"
 
+        # Prefer streamed beats; fill any missing from pack files
+        final_beats = list(live_beats)
+        if not final_beats:
+            for b in result.get("beats") or []:
+                final_beats.append({
+                    "index": b.get("index"),
+                    "image_url": "",
+                    "dialogue": b.get("dialogue"),
+                    "i2v_prompt": b.get("i2v_prompt"),
+                    "image_prompt": b.get("image_prompt"),
+                    "location": b.get("location"),
+                    "characters": b.get("characters"),
+                    "target_sec": b.get("target_sec"),
+                    "filename": b.get("filename"),
+                })
+
         pack_meta = {
             "title": result.get("title") or title,
             "zip_url": zip_url,
             "zip_path": zip_local,
             "pack_dir": result.get("pack_dir") or "",
-            "beat_count": result.get("beat_count") or 0,
+            "beat_count": result.get("beat_count") or len(final_beats),
             "target_minutes": result.get("target_minutes") or target_minutes,
+            "pack_mode": result.get("pack_mode") or pack_mode,
             "scene_files": result.get("scene_files") or [],
+            "beats": final_beats,
             "kind": "storyboard_pack",
+            "zip_ready": True,
         }
         job["status"] = "complete"
         job["result"] = pack_meta

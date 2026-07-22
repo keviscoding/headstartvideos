@@ -371,6 +371,7 @@ def _init_db():
                 _ensure_column(cur, "users", "trial_used", "INTEGER NOT NULL DEFAULT 0")
                 _ensure_column(cur, "users", "heygen_key_enc", "TEXT DEFAULT ''")
                 _ensure_column(cur, "users", "atlas_key_enc", "TEXT DEFAULT ''")
+                _ensure_column(cur, "users", "storyboard_cast_json", "TEXT DEFAULT ''")
                 _ensure_column(cur, "cook_jobs", "lite_mode", "INTEGER NOT NULL DEFAULT 0")
                 _ensure_column(cur, "cook_jobs", "worker_id", "TEXT DEFAULT ''")
                 _ensure_column(cur, "cook_jobs", "heartbeat_at", "DOUBLE PRECISION DEFAULT 0")
@@ -394,6 +395,7 @@ def _init_db():
             _ensure_column(cur, "users", "trial_used", "INTEGER NOT NULL DEFAULT 0")
             _ensure_column(cur, "users", "heygen_key_enc", "TEXT DEFAULT ''")
             _ensure_column(cur, "users", "atlas_key_enc", "TEXT DEFAULT ''")
+            _ensure_column(cur, "users", "storyboard_cast_json", "TEXT DEFAULT ''")
             _ensure_column(cur, "cook_jobs", "lite_mode", "INTEGER NOT NULL DEFAULT 0")
             _ensure_column(cur, "cook_jobs", "worker_id", "TEXT DEFAULT ''")
             _ensure_column(cur, "cook_jobs", "heartbeat_at", "REAL DEFAULT 0")
@@ -802,6 +804,27 @@ def user_atlas_status(user_id: int) -> dict:
     if not plain:
         return {"configured": False, "last4": ""}
     return {"configured": True, "last4": secret_last4(plain)}
+
+
+def get_user_storyboard_cast(user_id: int) -> list[dict]:
+    """Persistent series cast for Storyboard Pack (JSON list)."""
+    user = get_user_by_id(user_id)
+    if not user:
+        return []
+    raw = (user.get("storyboard_cast_json") or "").strip()
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return []
+    return data if isinstance(data, list) else []
+
+
+def set_user_storyboard_cast(user_id: int, cast: list[dict] | None) -> None:
+    """Save series cast JSON on the user row."""
+    payload = json.dumps(cast or [], ensure_ascii=False)
+    update_user(user_id, storyboard_cast_json=payload)
 
 
 # -- Verification codes -----------------------------------------------------

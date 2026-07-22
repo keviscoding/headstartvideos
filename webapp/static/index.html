@@ -180,9 +180,11 @@
                 <div class="flex items-center justify-between hidden" id="stepper-storyboard">
                     <div class="step-indicator" data-sb-step="1"><div class="step-dot active" onclick="goToCompletedStep(1)">1</div><span class="step-label">Recipe</span></div>
                     <div class="step-line"></div>
-                    <div class="step-indicator" data-sb-step="2"><div class="step-dot" onclick="goToCompletedStep(2)">2</div><span class="step-label">Title</span></div>
+                    <div class="step-indicator" data-sb-step="2"><div class="step-dot" onclick="goToCompletedStep('sb-cast')">2</div><span class="step-label">Cast</span></div>
                     <div class="step-line"></div>
-                    <div class="step-indicator" data-sb-step="3"><div class="step-dot" onclick="goToCompletedStep('storyboard')">3</div><span class="step-label">Pack</span></div>
+                    <div class="step-indicator" data-sb-step="3"><div class="step-dot" onclick="goToCompletedStep('storyboard')">3</div><span class="step-label">Episode</span></div>
+                    <div class="step-line"></div>
+                    <div class="step-indicator" data-sb-step="4"><div class="step-dot" onclick="goToCompletedStep('sb-pack')">4</div><span class="step-label">Pack</span></div>
                 </div>
             </div>
         </div>
@@ -199,64 +201,183 @@
                 </div>
             </section>
 
-            <!-- Storyboard Pack — 3-step journey: Recipe → Title → Pack -->
-            <section id="step-storyboard" class="step-panel hidden">
+            <!-- Storyboard: Cast studio -->
+            <section id="step-sb-cast" class="step-panel hidden">
                 <div class="cr-panel">
+                    <div class="sb-journey" aria-label="Craft journey">
+                        <span class="sb-journey-step is-done">1 Recipe</span>
+                        <span class="sb-journey-step is-active">2 Cast</span>
+                        <span class="sb-journey-step">3 Episode</span>
+                        <span class="sb-journey-step">4 Board</span>
+                    </div>
                     <div class="mb-6">
-                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Your story + pack</h2>
+                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Meet your cast</h2>
                         <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">
-                            Tell us the story you want. We format it into scenes, stills, and image-to-video prompts — you stay in control of what the video is about.
+                            See them first. Rename, tweak looks, generate portraits — then reuse this family every episode.
                         </p>
                     </div>
-                    <div class="max-w-3xl space-y-5">
+                    <div id="sb-cast-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-4xl"></div>
+                    <p id="sb-cast-hint" style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-3); margin-top: 14px;">
+                        Generate at least one look to continue. Saved to your account automatically.
+                    </p>
+                    <div class="flex justify-between items-center mt-7 pt-5" style="border-top: 1px solid var(--app-border);">
+                        <button class="btn-ghost" type="button" onclick="goToStep(1)">Recipe</button>
+                        <span class="cr-mono">Step 2 of 4</span>
+                        <button id="btn-sb-cast-next" class="btn-primary" type="button" onclick="sbGoToEpisode()">Next: Episode</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Storyboard: Episode craft -->
+            <section id="step-storyboard" class="step-panel hidden">
+                <div class="cr-panel">
+                    <div class="sb-journey" aria-label="Craft journey">
+                        <span class="sb-journey-step is-done">1 Recipe</span>
+                        <span class="sb-journey-step is-done">2 Cast</span>
+                        <span class="sb-journey-step is-active">3 Episode</span>
+                        <span class="sb-journey-step">4 Board</span>
+                    </div>
+                    <div class="mb-6">
+                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">This episode</h2>
+                        <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">
+                            You choose the story. Preview the first minute, then generate the full pack when it feels right.
+                        </p>
+                    </div>
+                    <div id="sb-episode-cast-strip" class="flex flex-wrap gap-3 mb-5" style="align-items:center;"></div>
+                    <div class="max-w-3xl space-y-6">
                         <div>
                             <label class="cr-label" for="sb-title">Title</label>
                             <input id="sb-title" type="text" class="cr-input" placeholder="Why did Max hide his exam results?">
-                            <p id="sb-title-display" class="hidden"></p>
+                            <button type="button" class="btn-ghost" style="margin-top:8px;font-size:13px;padding:6px 12px;" onclick="goToStep(2)">Or pick from title ideas</button>
                         </div>
                         <div>
-                            <label class="cr-label" for="sb-topic">The story you want to make</label>
-                            <textarea id="sb-topic" class="cr-input" rows="5" placeholder="Describe the story in your own words. Example: Max finished a test first and bragged to Mia. He stopped studying and played games. On result day he failed and had to apologize…"></textarea>
-                            <p style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-3); margin-top: 8px;">
-                                This is the main input. Characters, conflict, and ending — whatever you want the episode to be.
-                            </p>
+                            <label class="cr-label" for="sb-story">1. What happens? <span style="color: var(--error);">*</span></label>
+                            <textarea id="sb-story" class="cr-input" rows="5" placeholder="Describe the story you want…"></textarea>
                         </div>
                         <div>
-                            <label class="cr-label" for="sb-script">Paste a full script (optional)</label>
-                            <textarea id="sb-script" class="cr-input" rows="8" placeholder="If you already wrote the dialogue, paste it here. We’ll follow it for the scenes. Otherwise leave blank and we’ll write A1–A2 dialogue from your story."></textarea>
+                            <label class="cr-label">2. Who makes the mistake?</label>
+                            <div class="space-y-2" style="margin-top: 8px; font-family: var(--font-body); font-size: 14px; color: var(--app-ink);">
+                                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="radio" name="sb-mistake" value="max" checked> Max (or renamed boy)</label>
+                                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="radio" name="sb-mistake" value="mia"> Mia (or renamed girl)</label>
+                                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="radio" name="sb-mistake" value="both"> Both kids</label>
+                                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="radio" name="sb-mistake" value="other"> Someone else</label>
+                                <input id="sb-mistake-other" type="text" class="cr-input hidden" placeholder="Who makes the mistake?" style="margin-top:6px;">
+                            </div>
                         </div>
                         <div>
-                            <label class="cr-label" for="sb-minutes">Target video length</label>
+                            <label class="cr-label" for="sb-moral">3. What should the viewer learn? <span style="color: var(--error);">*</span></label>
+                            <textarea id="sb-moral" class="cr-input" rows="2" placeholder="e.g. Always tell the truth."></textarea>
+                            <button id="btn-sb-suggest-morals" type="button" class="btn-ghost" style="margin-top:10px;font-size:13px;padding:8px 14px;">Suggest morals from my story</button>
+                            <div id="sb-morals-list" class="space-y-2 mt-3"></div>
+                        </div>
+                        <div>
+                            <label class="cr-label">4. Dialogue</label>
+                            <div class="space-y-2" style="margin-top: 8px; font-family: var(--font-body); font-size: 14px; color: var(--app-ink);">
+                                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                                    <input type="radio" name="sb-dialogue-mode" value="generate" checked> Write dialogue for me
+                                </label>
+                                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                                    <input type="radio" name="sb-dialogue-mode" value="paste"> I’ll paste my script
+                                </label>
+                            </div>
+                            <div id="sb-script-wrap" class="hidden" style="margin-top: 12px;">
+                                <label class="cr-label" for="sb-script">Your script <span style="color: var(--error);">*</span></label>
+                                <textarea id="sb-script" class="cr-input" rows="8" placeholder="Paste the full dialogue…"></textarea>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="cr-label" for="sb-minutes">5. How long?</label>
                             <div class="flex items-center gap-4">
                                 <input id="sb-minutes" type="range" min="3" max="30" value="8" class="flex-1" style="accent-color: var(--accent);">
                                 <span id="sb-minutes-label" class="cr-mono" style="width: 4rem; text-align: right;">8 min</span>
                             </div>
-                            <p id="sb-hint" style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-3); margin-top: 8px;">
-                                About one scene every ~8 seconds. Longer packs = more stills to animate.
-                            </p>
                         </div>
-                        <button id="btn-sb-generate" class="btn-primary w-full" type="button">
-                            <span class="btn-text">Generate pack</span>
-                            <span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;"></div>Writing scenes &amp; images…</span>
-                        </button>
-                        <div id="sb-progress" class="hidden cr-surface" style="padding: 14px; max-height: 220px; overflow: auto; font-family: var(--font-mono); font-size: 12px; color: var(--app-ink-2);"></div>
-                        <div id="sb-result" class="hidden" style="padding: 16px; border: 1px solid var(--app-border); border-radius: var(--radius-md);">
-                            <p id="sb-result-summary" style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink); margin-bottom: 12px;"></p>
-                            <a id="sb-download" class="btn-primary" href="#" download>Download pack zip</a>
-                            <ol style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-2); margin-top: 14px; padding-left: 1.2rem; line-height: 1.55;">
-                                <li>Open each <code>NNN_scene</code> image in your image-to-video tool.</li>
-                                <li>Paste the matching <code>NNN_prompt.txt</code> as the motion prompt.</li>
-                                <li>Keep clip names numbered (<code>001</code>, <code>002</code>…) when you download them.</li>
-                                <li>Assemble in ChannelRecipe comes next — for now stitch in any editor.</li>
-                            </ol>
+                        <div>
+                            <label class="cr-label">6. Thumbnail</label>
+                            <div class="flex flex-wrap gap-2" style="margin-bottom: 10px;">
+                                <button id="btn-sb-thumb" type="button" class="btn-secondary" style="font-size:13px;padding:8px 14px;">
+                                    <span class="btn-text">Generate thumbnail</span>
+                                    <span class="btn-loading hidden"><span class="cr-spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;"></span> Generating…</span>
+                                </button>
+                                <label class="btn-ghost" style="font-size:13px;padding:8px 14px;cursor:pointer;display:inline-flex;align-items:center;">
+                                    Optional: add reference
+                                    <input id="sb-thumb-refs" type="file" accept="image/*" multiple class="hidden">
+                                </label>
+                            </div>
+                            <div id="sb-thumb-refs-preview" class="flex flex-wrap gap-2" style="margin-bottom:8px;"></div>
+                            <div id="sb-thumb-loading" class="hidden text-center py-4"><div class="cr-spinner mx-auto mb-2"></div></div>
+                            <div id="sb-thumb-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
                         </div>
+                        <textarea id="sb-topic" class="hidden" aria-hidden="true"></textarea>
+                        <div class="sb-cta-row">
+                            <button id="btn-sb-preview" class="btn-secondary w-full" type="button">
+                                <span class="btn-text">Preview first minute</span>
+                                <span class="btn-loading hidden"><div class="cr-spinner" style="width:18px;height:18px;border-width:2px;"></div>Starting…</span>
+                            </button>
+                            <button id="btn-sb-generate" class="btn-primary w-full" type="button">
+                                <span class="btn-text">Generate full pack</span>
+                                <span class="btn-loading hidden"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;"></div>Starting…</span>
+                            </button>
+                        </div>
+                        <p style="font-family:var(--font-body);font-size:13px;color:var(--app-ink-3);margin-top:8px;">
+                            First minute = ~8 opening scenes so you can judge look &amp; pacing before the long run.
+                        </p>
                     </div>
                     <div class="flex justify-between items-center mt-7 pt-5" style="border-top: 1px solid var(--app-border);">
-                        <button class="btn-ghost" type="button" onclick="goToStep(2)">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-                            Title
+                        <button class="btn-ghost" type="button" onclick="goToStep('sb-cast')">Cast</button>
+                        <span class="cr-mono">Step 3 of 4</span>
+                        <span></span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Storyboard: live pack board -->
+            <section id="step-sb-pack" class="step-panel hidden">
+                <div class="cr-panel">
+                    <div class="sb-journey" aria-label="Craft journey">
+                        <span class="sb-journey-step is-done">1 Recipe</span>
+                        <span class="sb-journey-step is-done">2 Cast</span>
+                        <span class="sb-journey-step is-done">3 Episode</span>
+                        <span class="sb-journey-step is-active">4 Board</span>
+                    </div>
+                    <div class="mb-6 flex flex-wrap items-end justify-between gap-3">
+                        <div>
+                            <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Your storyboard</h2>
+                            <p id="sb-pack-status" style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">
+                                Stills appear here as they’re ready. Click any scene to recreate it.
+                            </p>
+                        </div>
+                        <button id="btn-sb-continue-full" type="button" class="btn-primary hidden" style="font-size:13px;padding:10px 16px;">
+                            Looks good — generate full pack
                         </button>
-                        <span class="cr-mono">Step 3 of 3</span>
+                    </div>
+                    <div class="sb-board-wrap">
+                        <div id="sb-board" class="sb-board"></div>
+                        <div id="sb-beat-detail" class="sb-beat-detail hidden">
+                            <img id="sb-beat-detail-img" alt="" class="hidden">
+                            <p id="sb-beat-detail-meta" class="cr-mono" style="font-size:12px;color:var(--app-ink-3);margin-bottom:8px;"></p>
+                            <p style="font-family:var(--font-body);font-size:12px;color:var(--app-ink-3);margin-bottom:4px;">Dialogue</p>
+                            <p id="sb-beat-detail-dialogue" style="font-family:var(--font-body);font-size:14px;color:var(--app-ink);white-space:pre-wrap;margin-bottom:12px;"></p>
+                            <p style="font-family:var(--font-body);font-size:12px;color:var(--app-ink-3);margin-bottom:4px;">Image-to-video prompt</p>
+                            <p id="sb-beat-detail-i2v" style="font-family:var(--font-mono);font-size:12px;color:var(--app-ink-2);white-space:pre-wrap;margin-bottom:12px;"></p>
+                            <label class="cr-label" for="sb-regen-note">What should change?</label>
+                            <textarea id="sb-regen-note" class="cr-input" rows="2" placeholder="e.g. Make Max look more scared. Wider shot. Mom on the left."></textarea>
+                            <div class="flex flex-wrap gap-2" style="margin-top:12px;">
+                                <button id="btn-sb-regen-beat" type="button" class="btn-primary" style="font-size:13px;padding:10px 14px;">
+                                    <span class="btn-text">Recreate this still</span>
+                                    <span class="btn-loading hidden"><span class="cr-spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;"></span> Recreating…</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="sb-progress" class="hidden cr-surface mt-4" style="padding: 14px; max-height: 140px; overflow: auto; font-family: var(--font-mono); font-size: 12px; color: var(--app-ink-2);"></div>
+                    <div id="sb-result" class="hidden mt-5" style="padding: 16px; border: 1px solid var(--app-border); border-radius: var(--radius-md);">
+                        <p id="sb-result-summary" style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink); margin-bottom: 12px;"></p>
+                        <a id="sb-download" class="btn-primary" href="#" download>Download pack zip</a>
+                    </div>
+                    <div class="flex justify-between items-center mt-7 pt-5" style="border-top: 1px solid var(--app-border);">
+                        <button class="btn-ghost" type="button" onclick="goToStep('storyboard')">Episode</button>
+                        <span class="cr-mono">Step 4 of 4</span>
                         <span></span>
                     </div>
                 </div>

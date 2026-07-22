@@ -1137,11 +1137,49 @@ class NicheIntelJobRequest(BaseModel):
     frames_per_video: int = 8
 
 
+class StoryboardCastMember(BaseModel):
+    id: str = ""
+    name: str = ""
+    included: bool = True
+    look_prompt: str = ""
+    portrait_url: str = ""
+    sheet_url: str = ""
+    portrait_path: str = ""
+    sheet_path: str = ""
+
+
 class StoryboardJobRequest(BaseModel):
     title: str = ""
-    topic: str = ""
+    topic: str = ""  # legacy alias for story
+    story: str = ""
+    moral: str = ""
+    cast: list[StoryboardCastMember] = []
+    mistake_by: str = ""
+    dialogue_mode: str = "generate"  # generate | paste
     script: str = ""
     target_minutes: float = 8
+    thumbnail_path: str = ""
+    pack_mode: str = "full"  # preview = first ~1 min · full = full length
+
+
+class StoryboardSuggestMoralsRequest(BaseModel):
+    story: str = ""
+
+
+class StoryboardCastSaveRequest(BaseModel):
+    cast: list[StoryboardCastMember] = []
+
+
+class StoryboardLookRequest(BaseModel):
+    id: str = ""
+    name: str = ""
+    look_prompt: str = ""
+    make_sheet: bool = True
+
+
+class StoryboardRegenBeatRequest(BaseModel):
+    index: int
+    note: str = ""  # optional direction: "make Max look sadder", etc.
 
 class KeyTestRequest(BaseModel):
     key_name: str
@@ -2899,16 +2937,192 @@ def download_niche_intel_job(job_id: str, admin: dict = Depends(require_admin)):
 # ---------------------------------------------------------------------------
 # Storyboard Pack (admin-only v1 — stills + I2V prompts zip)
 # ---------------------------------------------------------------------------
+@app.get("/api/storyboard/cast")
+async def get_storyboard_cast(admin: dict = Depends(require_admin)):
+    """Load persistent series cast (defaults if empty)."""
+    from core.storyboard_pack import default_series_cast, normalize_cast
+    from webapp.database import get_user_storyboard_cast
+    saved = get_user_storyboard_cast(int(admin["id"]))
+    cast = normalize_cast(saved) if saved else default_series_cast()
+    return {"cast": cast}
+
+
+@app.put("/api/storyboard/cast")
+async def save_storyboard_cast(req: StoryboardCastSaveRequest, admin: dict = Depends(require_admin)):
+    from core.storyboard_pack import normalize_cast
+    from webapp.database import set_user_storyboard_cast
+    rows = []
+    for m in req.cast or []:
+        rows.append({
+            "id": (m.id or "").strip().lower(),
+            "name": (m.name or m.id or "").strip(),
+            "included": bool(m.included),
+            "look_prompt": (m.look_prompt or "").strip(),
+            "portrait_url": (m.portrait_url or "").strip(),
+            "sheet_url": (m.sheet_url or "").strip(),
+            "portrait_path": (m.portrait_path or "").strip(),
+            "sheet_path": (m.sheet_path or "").strip(),
+        })
+    cast = normalize_cast(rows)
+    set_user_storyboard_cast(int(admin["id"]), cast)
+    return {"cast": cast, "saved": True}
+
+
+@app.post("/api/storyboard/cast/generate-look")
+async def generate_storyboard_cast_look(
+    req: StoryboardLookRequest,
+    admin: dict = Depends(require_admin),
+):
+    """Generate portrait (+ optional sheet) for one cast member — Cast studio dopamine."""
+    from core.storyboard_pack import (
+        DEFAULT_LOOKS,
+        generate_character_portrait,
+        generate_character_sheet,
+        normalize_cast,
+    )
+    from webapp.database import get_user_storyboard_cast, set_user_storyboard_cast
+
+    cid = (req.id or "").strip().lower()
+    if not cid:
+        raise HTTPException(400, "Character id required.")
+    name = (req.name or cid).strip() or cid
+    look = (req.look_prompt or "").strip() or DEFAULT_LOOKS.get(cid, "Pixar-lite 3D family character")
+
+    out_dir = OUTPUT_DIR / "storyboard_cast" / str(admin["id"]) / cid
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = int(time.time())
+
+    try:
+        portrait_local = await asyncio.to_thread(
+            generate_character_portrait,
+            name=name,
+            look_prompt=look,
+            out_path=out_dir / f"portrait_{stamp}.png",
+        )
+        portrait_path, portrait_url = _stage_user_media(
+            portrait_local, admin["id"], f"cast_{cid}_portrait", "image/png",
+        )
+        sheet_path, sheet_url = "", ""
+        if req.make_sheet:
+            sheet_local = await asyncio.to_thread(
+                generate_character_sheet,
+                name=name,
+                look_prompt=look,
+                out_path=out_dir / f"sheet_{stamp}.png",
+                portrait_path=portrait_local,
+            )
+            sheet_path, sheet_url = _stage_user_media(
+                sheet_local, admin["id"], f"cast_{cid}_sheet", "image/png",
+            )
+    except Exception as e:
+        raise HTTPException(_provider_http_status(e), f"Look generation failed: {e}")
+
+    # Merge into saved cast
+    saved = get_user_storyboard_cast(int(admin["id"])) or []
+    cast = normalize_cast(saved)
+    for row in cast:
+        if row.get("id") == cid:
+            row["name"] = name
+            row["look_prompt"] = look
+            row["portrait_url"] = portrait_url
+            row["portrait_path"] = portrait_path
+            if sheet_url:
+                row["sheet_url"] = sheet_url
+                row["sheet_path"] = sheet_path
+            row["included"] = True
+            break
+    else:
+        cast.append({
+            "id": cid,
+            "name": name,
+            "included": True,
+            "look_prompt": look,
+            "portrait_url": portrait_url,
+            "sheet_url": sheet_url,
+            "portrait_path": portrait_path,
+            "sheet_path": sheet_path,
+        })
+        cast = normalize_cast(cast)
+    set_user_storyboard_cast(int(admin["id"]), cast)
+    member = next((c for c in cast if c.get("id") == cid), cast[0])
+    return {"member": member, "cast": cast}
+
+
+@app.post("/api/storyboard/suggest-morals")
+async def storyboard_suggest_morals(
+    req: StoryboardSuggestMoralsRequest,
+    admin: dict = Depends(require_admin),
+):
+    """Cheap moral suggestions from the user's story (admin-only)."""
+    story = (req.story or "").strip()
+    if not story:
+        raise HTTPException(400, "Describe the story first, then suggest morals.")
+    try:
+        from core.storyboard_pack import suggest_morals_from_story
+        morals = suggest_morals_from_story(story)
+    except Exception as e:
+        print(f"[storyboard] suggest-morals failed: {e}")
+        raise HTTPException(500, "Could not suggest morals. Try writing one yourself.")
+    return {"morals": morals}
+
+
 @app.post("/api/storyboard/jobs")
 async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(require_admin)):
     """Queue a storyboard pack build (0 credits while admin-testing)."""
-    topic = (req.topic or "").strip()
-    script = (req.script or "").strip()
     title = (req.title or "").strip()
+    story = (req.story or req.topic or "").strip()
+    topic = story  # keep topic for older cook workers
+    script = (req.script or "").strip()
+    moral = (req.moral or "").strip()
+    dialogue_mode = (req.dialogue_mode or "generate").strip().lower()
+    if dialogue_mode not in ("generate", "paste"):
+        dialogue_mode = "paste" if script else "generate"
+    mistake_by = (req.mistake_by or "").strip()
+
+    cast_rows: list[dict] = []
+    for m in req.cast or []:
+        cast_rows.append({
+            "id": (m.id or "").strip().lower(),
+            "name": (m.name or m.id or "").strip(),
+            "included": bool(m.included),
+            "look_prompt": (m.look_prompt or "").strip(),
+            "portrait_url": (m.portrait_url or "").strip(),
+            "sheet_url": (m.sheet_url or "").strip(),
+            "portrait_path": (m.portrait_path or "").strip(),
+            "sheet_path": (m.sheet_path or "").strip(),
+        })
+    from core.storyboard_pack import normalize_cast
+    cast_rows = normalize_cast(cast_rows)
+    has_look = any(
+        c.get("included") and (c.get("portrait_url") or c.get("portrait_path") or c.get("sheet_url"))
+        for c in cast_rows
+    )
+    if not has_look:
+        raise HTTPException(
+            400,
+            "Generate at least one character look in Cast studio before packing.",
+        )
+
     if not title:
         raise HTTPException(400, "Add a title for this video.")
-    if not topic and not script:
+    if not moral:
+        raise HTTPException(400, "What should the viewer learn? Add a moral.")
+    if dialogue_mode == "paste":
+        if not script:
+            raise HTTPException(400, "Paste your script, or switch to “Write dialogue for me”.")
+        if not story:
+            # Allow paste-only: script is enough for plot; story optional but preferred
+            pass
+    else:
+        if not story:
+            raise HTTPException(400, "Describe what happens in this episode.")
+
+    if not story and not script:
         raise HTTPException(400, "Describe the story you want to make, or paste a script.")
+
+    thumb_path = (req.thumbnail_path or "").strip()
+    if thumb_path:
+        _safe_user_path(thumb_path, "thumbnail")
 
     try:
         mins = float(req.target_minutes or 8)
@@ -2919,16 +3133,27 @@ async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(
     if mins > MAX_PAID_MINUTES:
         raise HTTPException(400, f"Max length is {MAX_PAID_MINUTES} minutes.")
 
+    pack_mode = (req.pack_mode or "full").strip().lower()
+    if pack_mode not in ("preview", "full"):
+        pack_mode = "full"
+
     plan = (admin.get("plan") or "free").strip()
     is_paid = plan in ("starter", "daily", "pro")
 
     job_id = str(uuid.uuid4())
     req_payload = {
         "recipe": "storyboard_pack",
-        "title": title or topic[:80] or "Storyboard Pack",
+        "title": title or (story[:80] if story else "Storyboard Pack"),
         "topic": topic,
-        "script": script,
+        "story": story,
+        "moral": moral,
+        "cast": cast_rows,
+        "mistake_by": mistake_by,
+        "dialogue_mode": dialogue_mode,
+        "script": script if dialogue_mode == "paste" else (script or ""),
         "target_minutes": mins,
+        "thumbnail_path": thumb_path,
+        "pack_mode": pack_mode,
         "is_admin": True,
         "is_paid": is_paid,
         "credits_charged": 0,
@@ -2952,7 +3177,9 @@ async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(
 
     job = {
         "status": "queued",
-        "progress": [{"time": time.time(), "message": "Queued storyboard pack…", "phase": "queued"}],
+        "progress": [{"time": time.time(), "message": (
+            "Queued first-minute preview…" if pack_mode == "preview" else "Queued storyboard pack…"
+        ), "phase": "queued"}],
         "result": None,
         "request": req_payload,
         "user_id": admin["id"],
@@ -2988,8 +3215,10 @@ async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(
         "job_id": job_id,
         "target_minutes": mins,
         "has_script": bool(script),
+        "dialogue_mode": dialogue_mode,
         "cook_on_fly": bool(COOK_ON_FLY),
         "cook_on_web": bool(COOK_ON_WEB),
+        "has_thumbnail": bool(req_payload.get("thumbnail_path")),
     })
     return {
         "job_id": job_id,
@@ -3023,12 +3252,123 @@ async def get_storyboard_job(job_id: str, admin: dict = Depends(require_admin)):
         "status": job.get("status") or "queued",
         "progress": list(job.get("progress") or [])[-40:],
         "error": job.get("error") or "",
-        "zip_ready": bool(result.get("zip_url") or result.get("zip_path")),
+        "zip_ready": bool(result.get("zip_url") or result.get("zip_path") or result.get("zip_ready")),
         "zip_url": result.get("zip_url") or "",
         "title": result.get("title") or (job.get("request") or {}).get("title") or "",
-        "beat_count": result.get("beat_count") or 0,
+        "beat_count": result.get("beat_count") or len(result.get("beats") or []),
         "target_minutes": result.get("target_minutes") or 0,
+        "beats": result.get("beats") or [],
+        "pack_mode": result.get("pack_mode") or (job.get("request") or {}).get("pack_mode") or "full",
     }
+
+
+@app.post("/api/storyboard/jobs/{job_id}/regen-beat")
+async def regen_storyboard_beat(
+    job_id: str,
+    req: StoryboardRegenBeatRequest,
+    admin: dict = Depends(require_admin),
+):
+    """Regenerate one weak still; updates live board + re-zips when pack_dir exists."""
+    job = _jobs.get(job_id)
+    if not job:
+        row = get_cook_job(job_id)
+        if not row:
+            raise HTTPException(404, "Job not found.")
+        job = hydrate_job_from_row(row)
+        _jobs[job_id] = job
+    else:
+        _refresh_job_from_db(job_id, job)
+
+    if job.get("user_id") != admin["id"] and not _is_admin_email(admin.get("email", "")):
+        raise HTTPException(403, "Access denied")
+    if (job.get("request") or {}).get("recipe") != "storyboard_pack" and (
+        get_cook_job(job_id) or {}
+    ).get("recipe") not in ("storyboard_pack", None):
+        pass
+
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    beats = list(result.get("beats") or [])
+    target = None
+    for b in beats:
+        if int(b.get("index") or 0) == int(req.index):
+            target = b
+            break
+    if not target:
+        raise HTTPException(404, f"Beat {req.index} not found on this job.")
+
+    cast = (job.get("request") or {}).get("cast") or []
+    from core.storyboard_pack import Beat, regenerate_beat_still, zip_pack
+    from webapp import storage as _storage
+
+    out_dir = OUTPUT_DIR / "storyboard_regen" / job_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    beat_obj = Beat(
+        index=int(target.get("index") or req.index),
+        target_sec=float(target.get("target_sec") or 8),
+        dialogue=str(target.get("dialogue") or ""),
+        image_prompt=str(target.get("image_prompt") or ""),
+        i2v_prompt=str(target.get("i2v_prompt") or ""),
+        location=str(target.get("location") or ""),
+        characters=str(target.get("characters") or ""),
+    )
+
+    try:
+        updated = await asyncio.to_thread(
+            regenerate_beat_still,
+            beat_obj,
+            out_dir / f"{beat_obj.index:03d}_scene.jpg",
+            cast=cast,
+            note=(req.note or "").strip(),
+        )
+    except Exception as e:
+        raise HTTPException(_provider_http_status(e), f"Regen failed: {e}")
+    if not updated.image_path or not Path(updated.image_path).is_file():
+        raise HTTPException(500, updated.error or "Regen produced no image")
+
+    url_path, url = _stage_user_media(
+        updated.image_path, admin["id"], f"regen_{job_id}_{beat_obj.index}", "image/jpeg",
+    )
+    target.update({
+        "image_url": url,
+        "filename": Path(updated.image_path).name,
+        "dialogue": updated.dialogue,
+        "i2v_prompt": updated.i2v_prompt,
+    })
+    for i, b in enumerate(beats):
+        if int(b.get("index") or 0) == beat_obj.index:
+            beats[i] = target
+            break
+    result["beats"] = beats
+    job["result"] = result
+
+    # Best-effort: replace in pack_dir and rezip
+    pack_dir = Path(result.get("pack_dir") or "")
+    if pack_dir.is_dir():
+        try:
+            ext = Path(updated.image_path).suffix or ".jpg"
+            dest = pack_dir / f"{beat_obj.index:03d}_scene{ext}"
+            dest.write_bytes(Path(updated.image_path).read_bytes())
+            zip_local = Path(result.get("zip_path") or (pack_dir.parent / f"{pack_dir.name}.zip"))
+            zip_pack(pack_dir, zip_local)
+            try:
+                zip_url = _storage.store_file(
+                    str(zip_local),
+                    f"storyboard/{admin['id']}/{int(time.time())}_{job_id}.zip",
+                    "application/zip",
+                )
+                result["zip_url"] = zip_url
+                result["zip_path"] = str(zip_local)
+            except Exception as up_e:
+                print(f"[storyboard] regen zip upload failed: {up_e}")
+        except Exception as e:
+            print(f"[storyboard] pack_dir regen update failed: {e}")
+
+    job["result"] = result
+    try:
+        update_cook_job(job_id, result_json=json.dumps(result), heartbeat=True)
+    except Exception:
+        pass
+    return {"beat": target, "beats": beats, "zip_url": result.get("zip_url") or ""}
 
 
 @app.get("/api/storyboard/jobs/{job_id}/download")

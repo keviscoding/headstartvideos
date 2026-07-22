@@ -1,3 +1,9 @@
+## Packaging / thumbnails
+*   **Look:** 3D Pixar-lite family faces filling the frame; warm soft lighting.
+*   **Text:** Oversized bold yellow or white title with thick outline (Emily Family English / Family Story English style).
+*   **Moment:** One clear emotion — shock, fear, tears, apology, or pride — tied to the episode title.
+*   **Cast:** Max / Mia / Mom / Dad look consistent with the still-frame bible.
+
 ## Voice & CEFR
 *   **Level:** A1–A2 (High-frequency vocabulary, simple sentence structures).
 *   **Tone:** Gentle, didactic, and moralistic.
