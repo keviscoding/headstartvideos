@@ -391,6 +391,28 @@ def _cast_look_lock(cast: list[dict[str, Any]] | None) -> str:
     return " ".join(parts)
 
 
+def _style_exclusivity(visual_style: str = "") -> str:
+    """Hard ban on common drift styles so one scene doesn't flip to anime/photo."""
+    sid, _, _ = resolve_visual_style(visual_style)
+    label = VISUAL_STYLE_PRESETS.get(sid, {}).get("label", "3D Pixar-lite")
+    bans = [
+        "photorealistic", "real photograph", "real people", "live-action",
+    ]
+    if sid != "anime_2d":
+        bans += [
+            "2D anime", "Japanese anime", "manga", "anime eyes", "cel-shaded anime",
+        ]
+    if sid != "comic_cartoon":
+        bans.append("flat comic book ink")
+    if sid != "storybook_watercolor":
+        bans.append("watercolor illustration")
+    ban_txt = ", ".join(bans)
+    return (
+        f"CRITICAL STYLE LOCK: render ONLY as {label}. "
+        f"Do NOT switch styles. Forbidden: {ban_txt}."
+    )
+
+
 def _anti_photo_clause(style_id: str) -> str:
     if style_id == "semi_realistic":
         return "Stylized 3D animation — not live-action photography."
@@ -942,23 +964,42 @@ def _cast_ref_local_paths(cast: list[dict[str, Any]] | None) -> dict[str, str]:
     return refs
 
 
+def _http_url(value: str) -> str:
+    u = (value or "").strip()
+    return u if u.startswith("http://") or u.startswith("https://") else ""
+
+
 def _upload_cast_refs(cast: list[dict[str, Any]] | None) -> dict[str, str]:
-    """Upload each cast reference once → {cid: remote_url}. Best-effort."""
-    local = _cast_ref_local_paths(cast)
-    if not local:
-        return {}
-    try:
-        from core.thumbnail_gen import _upload_media
-    except Exception:
-        return {}
+    """Resolve cast references → {cid: remote_url}.
+
+    Prefer existing public portrait/sheet URLs (regen on web has these).
+    Otherwise upload local sheet/portrait paths (cook machines).
+    """
     out: dict[str, str] = {}
-    for cid, path in local.items():
-        try:
-            url = _upload_media(path)
-            if url and url.startswith("http"):
+    for row in normalize_cast(cast):
+        if not row.get("included", True):
+            continue
+        cid = str(row.get("id") or "").strip().lower()
+        if not cid:
+            continue
+        for key in ("sheet_url", "portrait_url"):
+            url = _http_url(str(row.get(key) or ""))
+            if url:
                 out[cid] = url
-        except Exception as e:
-            print(f"[storyboard] cast ref upload failed ({cid}): {e}")
+                break
+        if cid in out:
+            continue
+        for key in ("sheet_path", "portrait_path"):
+            p = (row.get(key) or "").strip()
+            if p and Path(p).is_file():
+                try:
+                    from core.thumbnail_gen import _upload_media
+                    url = _upload_media(p)
+                    if url and url.startswith("http"):
+                        out[cid] = url
+                except Exception as e:
+                    print(f"[storyboard] cast ref upload failed ({cid}): {e}")
+                break
     return out
 
 
@@ -989,8 +1030,10 @@ def _scene_edit_prompt(beat: Beat, style_label: str, visual_style: str) -> str:
     sid, _, _ = resolve_visual_style(visual_style)
     parts = [
         f"Create a single {style_label} animation still (16:9).",
-        "The provided images are CHARACTER REFERENCES.",
-        "Keep every character's face, hair, body, and outfit IDENTICAL to their reference image.",
+        _style_exclusivity(visual_style),
+        "The provided images include CHARACTER REFERENCES and may include STYLE ANCHOR stills "
+        "from the same episode — match that exact look.",
+        "Keep every character's face, hair, body, and outfit IDENTICAL to their character reference.",
     ]
     if sid != "semi_realistic":
         parts.append(
@@ -1028,7 +1071,7 @@ def _generate_still_edit(
         payload = {
             "model": model,
             "prompt": prompt,
-            "images": ref_urls,
+            "images": ref_urls[:4],
             "aspect_ratio": "16:9",
             "resolution": "1k",
             "output_format": "jpeg",
@@ -1044,6 +1087,59 @@ def _generate_still_edit(
             msg = str(e)
             print(f"[storyboard] scene {beat.index:03d} edit failed ({model}): {msg[:120]}")
             if "insufficient balance" in msg.lower():
+                break
+            continue
+    return False
+
+
+def _generate_still_t2i(
+    beat: Beat,
+    out_path: Path,
+    *,
+    cast_lock: str = "",
+    visual_style: str = "",
+) -> bool:
+    """Nano-banana T2I fallback that keeps the chosen style (avoids ERNIE anime drift)."""
+    sid, style_lock, _ = resolve_visual_style(visual_style)
+    label = VISUAL_STYLE_PRESETS.get(sid, {}).get("label", "3D Pixar-lite")
+    parts = [
+        f"{label} animation still, 16:9.",
+        style_lock,
+        _style_exclusivity(visual_style),
+    ]
+    if (beat.characters or "").strip():
+        parts.append(f"Characters: {beat.characters.strip()}.")
+    if (beat.location or "").strip():
+        parts.append(f"Location: {beat.location.strip()}.")
+    parts.append((beat.image_prompt or "").strip())
+    if cast_lock:
+        parts.append(f"Cast look lock: {cast_lock}")
+    prompt = " ".join(p for p in parts if p)[:1400]
+    jpg = out_path if out_path.suffix.lower() in (".jpg", ".jpeg") else out_path.with_suffix(".jpg")
+    try:
+        from core.thumbnail_gen import _T2I_MODELS, _submit_and_download
+    except Exception as e:
+        print(f"[storyboard] still T2I helpers unavailable: {e}")
+        return False
+    jpg.parent.mkdir(parents=True, exist_ok=True)
+    for model in _T2I_MODELS:
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "aspect_ratio": "16:9",
+            "resolution": "1k",
+            "output_format": "jpeg",
+            "enable_base64_output": False,
+        }
+        try:
+            _submit_and_download(payload, jpg, label=f"scene {beat.index:03d} t2i/{model}")
+            if jpg.is_file():
+                beat.image_path = str(jpg)
+                beat.error = ""
+                return True
+        except Exception as e:
+            print(f"[storyboard] scene {beat.index:03d} T2I failed ({model}): {e}")
+            if "insufficient balance" in str(e).lower():
                 break
             continue
     return False
@@ -1080,7 +1176,10 @@ def generate_stills(
         beat_refs = _beat_ref_urls(b, cast, ref_urls)
         if beat_refs and _generate_still_edit(b, path, beat_refs, visual_style=visual_style):
             return b
-        # 2) Fallback: text-only still
+        # 2) Style-locked nano-banana T2I (avoids ERNIE anime/photo drift)
+        if _generate_still_t2i(b, path, cast_lock=cast_lock, visual_style=visual_style):
+            return b
+        # 3) Last resort: ERNIE / GPT Image text-only
         png = images_dir / f"{b.index:03d}_scene.png"
         updated = _generate_still(b, png, cast_lock=cast_lock, visual_style=visual_style)
         if updated.image_path and Path(updated.image_path).suffix.lower() == ".png":
@@ -1130,6 +1229,7 @@ def regenerate_beat_still(
     cast: list[dict[str, Any]] | None = None,
     note: str = "",
     visual_style: str = "",
+    style_anchor_urls: list[str] | None = None,
 ) -> Beat:
     """Regenerate a single scene still (UI: fix one weak frame)."""
     direction = (note or "").strip()
@@ -1141,10 +1241,22 @@ def regenerate_beat_still(
     cast_lock = _cast_look_lock(cast)
     jpg = out_path if out_path.suffix.lower() in (".jpg", ".jpeg") else out_path.with_suffix(".jpg")
 
-    # Preferred: reference-conditioned edit so the recreated frame matches the cast.
+    # Character refs (public URLs or uploaded locals) + neighbor stills as style anchors.
     ref_urls = _upload_cast_refs(cast)
     beat_refs = _beat_ref_urls(beat, cast, ref_urls)
-    if beat_refs and _generate_still_edit(beat, jpg, beat_refs, visual_style=visual_style):
+    anchors: list[str] = []
+    for u in style_anchor_urls or []:
+        hu = _http_url(str(u))
+        if hu and hu not in beat_refs and hu not in anchors:
+            anchors.append(hu)
+        if len(anchors) >= 2:
+            break
+    edit_refs = (beat_refs + anchors)[:4]
+    if edit_refs and _generate_still_edit(beat, jpg, edit_refs, visual_style=visual_style):
+        return beat
+
+    # Style-locked nano-banana T2I — do NOT fall straight to ERNIE (anime drift).
+    if _generate_still_t2i(beat, jpg, cast_lock=cast_lock, visual_style=visual_style):
         return beat
 
     png = out_path if out_path.suffix.lower() == ".png" else out_path.with_suffix(".png")

@@ -1192,6 +1192,7 @@ class StoryboardExtractCastRequest(BaseModel):
 class StoryboardRegenBeatRequest(BaseModel):
     index: int
     note: str = ""  # optional direction: "make them look sadder", etc.
+    visual_style: str = ""
 
 class KeyTestRequest(BaseModel):
     key_name: str
@@ -3368,7 +3369,33 @@ async def regen_storyboard_beat(
         raise HTTPException(404, f"Beat {req.index} not found on this job.")
 
     cast = (job.get("request") or {}).get("cast") or []
-    visual_style = ((job.get("request") or {}).get("visual_style") or "").strip()
+    # Prefer live Cast studio settings — job cast often has Fly-local paths that
+    # don't exist on the web dyno; settings keep portrait_url/sheet_url.
+    try:
+        from webapp.database import get_user_storyboard_settings
+        settings = get_user_storyboard_settings(int(admin["id"]))
+        live_cast = settings.get("cast") if isinstance(settings.get("cast"), list) else []
+        if live_cast:
+            cast = live_cast
+        settings_style = (settings.get("visual_style") or "").strip()
+    except Exception:
+        settings_style = ""
+    visual_style = (
+        (req.visual_style or "").strip()
+        or ((job.get("request") or {}).get("visual_style") or "").strip()
+        or settings_style
+        or "pixar_lite"
+    )
+    # Neighbor stills as style anchors so recreate matches the rest of the board.
+    style_anchors: list[str] = []
+    for b in beats:
+        if int(b.get("index") or 0) == int(req.index):
+            continue
+        u = (b.get("image_url") or "").strip()
+        if u.startswith("http"):
+            style_anchors.append(u)
+        if len(style_anchors) >= 2:
+            break
     from core.storyboard_pack import Beat, regenerate_beat_still, zip_pack
     from webapp import storage as _storage
 
@@ -3392,6 +3419,7 @@ async def regen_storyboard_beat(
             cast=cast,
             note=(req.note or "").strip(),
             visual_style=visual_style,
+            style_anchor_urls=style_anchors,
         )
     except Exception as e:
         raise HTTPException(_provider_http_status(e), f"Regen failed: {e}")

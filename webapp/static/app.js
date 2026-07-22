@@ -5533,7 +5533,7 @@ function showBeatDetail(beat) {
     document.getElementById('sb-beat-detail-dialogue').textContent = beat.dialogue || '';
     document.getElementById('sb-beat-detail-i2v').textContent = beat.i2v_prompt || '';
     const note = document.getElementById('sb-regen-note');
-    if (note && !note.value) note.placeholder = 'e.g. Make Max look more scared. Wider shot. Mom on the left.';
+    if (note && !note.value) note.placeholder = 'e.g. Wider shot. More worried expression. Match the other scenes.';
 }
 
 function _sbSetPackLoading(loading) {
@@ -5552,7 +5552,11 @@ async function regenSelectedBeat() {
         const res = await fetch(`/api/storyboard/jobs/${_sbJobId}/regen-beat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ index: _sbSelectedBeatIndex, note }),
+            body: JSON.stringify({
+                index: _sbSelectedBeatIndex,
+                note,
+                visual_style: _sbVisualStyle,
+            }),
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Regen failed');
