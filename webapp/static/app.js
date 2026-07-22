@@ -5042,6 +5042,13 @@ function _sbCastHasLook() {
     return (_sbCast || []).some(c => c.included !== false && (c.portrait_url || c.sheet_url));
 }
 
+function _sbNicheThumbStyle() {
+    return (
+        state.nicheData?.thumbnail_style
+        || 'animated story characters, cinematic lighting, bold emotional moment, clean 16:9'
+    );
+}
+
 function _sbSlugId(name) {
     const base = String(name || 'character').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'character';
     const used = new Set((_sbCast || []).map(c => c.id));

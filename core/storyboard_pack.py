@@ -800,9 +800,16 @@ def _generate_still(
 ) -> Beat:
     from core.illustration_gen import generate_single_illustration
 
-    _, style_lock, style_short = resolve_visual_style(visual_style)
+    sid, style_lock, style_short = resolve_visual_style(visual_style)
+    label = VISUAL_STYLE_PRESETS.get(sid, {}).get("label", "animation")
     short = _compact_image_prompt(beat, cast_lock, style_short=style_short)
     full = _full_image_prompt(beat, cast_lock, style_lock=style_lock)
+    if sid != "semi_realistic":
+        neg = (
+            "Fully stylized animation — NOT photorealistic, NOT a real photograph, NOT real people."
+        )
+        full = f"{label} animation still. {full} {neg}"
+        short = f"{label}. {short}"[:480]
     result = generate_single_illustration(
         full,
         str(out_path),
@@ -819,6 +826,133 @@ def _generate_still(
 StillReadyFn = Callable[[Beat], None]
 
 
+def _style_label(visual_style: str = "") -> str:
+    sid, _, _ = resolve_visual_style(visual_style)
+    return VISUAL_STYLE_PRESETS.get(sid, {}).get("label", "3D Pixar-lite")
+
+
+def _cast_ref_local_paths(cast: list[dict[str, Any]] | None) -> dict[str, str]:
+    """Map cast id → best local reference image (sheet preferred, else portrait)."""
+    refs: dict[str, str] = {}
+    for row in normalize_cast(cast):
+        if not row.get("included", True):
+            continue
+        cid = str(row.get("id") or "").strip().lower()
+        for key in ("sheet_path", "portrait_path"):
+            p = (row.get(key) or "").strip()
+            if p and Path(p).is_file():
+                refs[cid] = p
+                break
+    return refs
+
+
+def _upload_cast_refs(cast: list[dict[str, Any]] | None) -> dict[str, str]:
+    """Upload each cast reference once → {cid: remote_url}. Best-effort."""
+    local = _cast_ref_local_paths(cast)
+    if not local:
+        return {}
+    try:
+        from core.thumbnail_gen import _upload_media
+    except Exception:
+        return {}
+    out: dict[str, str] = {}
+    for cid, path in local.items():
+        try:
+            url = _upload_media(path)
+            if url and url.startswith("http"):
+                out[cid] = url
+        except Exception as e:
+            print(f"[storyboard] cast ref upload failed ({cid}): {e}")
+    return out
+
+
+def _beat_ref_urls(beat: Beat, cast: list[dict[str, Any]] | None, ref_urls: dict[str, str]) -> list[str]:
+    """Pick reference URLs for the characters present in this beat (max 3)."""
+    if not ref_urls:
+        return []
+    chars = (beat.characters or "").lower()
+    picked: list[str] = []
+    name_to_cid = {}
+    for row in normalize_cast(cast):
+        cid = str(row.get("id") or "").strip().lower()
+        name = str(row.get("name") or "").strip().lower()
+        if name:
+            name_to_cid[name] = cid
+    # Match by name mentioned in beat.characters
+    for name, cid in name_to_cid.items():
+        if name and name in chars and cid in ref_urls and ref_urls[cid] not in picked:
+            picked.append(ref_urls[cid])
+    # Fallback: if nothing matched, use all refs (cap 3)
+    if not picked:
+        picked = list(ref_urls.values())
+    return picked[:3]
+
+
+def _scene_edit_prompt(beat: Beat, style_label: str, visual_style: str) -> str:
+    """Prompt for the reference-conditioned edit model — locks style + identity."""
+    sid, _, _ = resolve_visual_style(visual_style)
+    parts = [
+        f"Create a single {style_label} animation still (16:9).",
+        "The provided images are CHARACTER REFERENCES.",
+        "Keep every character's face, hair, body, and outfit IDENTICAL to their reference image.",
+    ]
+    if sid != "semi_realistic":
+        parts.append(
+            "Render fully in the animated style — NOT photorealistic, NOT a real photograph, "
+            "NOT real people. Stylized animation only."
+        )
+    if (beat.characters or "").strip():
+        parts.append(f"Characters in frame: {beat.characters.strip()}.")
+    if (beat.location or "").strip():
+        parts.append(f"Location: {beat.location.strip()}.")
+    parts.append(f"Scene: {beat.image_prompt.strip()}")
+    parts.append("No text, no subtitles, no watermark, no logos.")
+    return " ".join(parts)[:1400]
+
+
+def _generate_still_edit(
+    beat: Beat,
+    out_path: Path,
+    ref_urls: list[str],
+    *,
+    visual_style: str = "",
+) -> bool:
+    """Reference-conditioned scene generation via nano-banana edit. Returns success."""
+    if not ref_urls:
+        return False
+    try:
+        from core.thumbnail_gen import _EDIT_MODELS, _submit_and_download
+    except Exception as e:
+        print(f"[storyboard] edit helpers unavailable: {e}")
+        return False
+    style_label = _style_label(visual_style)
+    prompt = _scene_edit_prompt(beat, style_label, visual_style)
+    jpg = out_path if out_path.suffix.lower() in (".jpg", ".jpeg") else out_path.with_suffix(".jpg")
+    for model in _EDIT_MODELS:
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "images": ref_urls,
+            "aspect_ratio": "16:9",
+            "resolution": "1k",
+            "output_format": "jpeg",
+            "enable_base64_output": False,
+        }
+        try:
+            _submit_and_download(payload, jpg, label=f"scene {beat.index:03d} edit/{model}")
+            if jpg.is_file():
+                beat.image_path = str(jpg)
+                beat.error = ""
+                return True
+        except Exception as e:
+            msg = str(e)
+            print(f"[storyboard] scene {beat.index:03d} edit failed ({model}): {msg[:120]}")
+            if "insufficient balance" in msg.lower():
+                break
+            continue
+    return False
+
+
 def generate_stills(
     beats: list[Beat],
     images_dir: Path,
@@ -833,12 +967,24 @@ def generate_stills(
     images_dir.mkdir(parents=True, exist_ok=True)
     total = len(beats)
     cast_lock = _cast_look_lock(cast)
+
+    # Upload cast references once so every scene can lock to the same faces/style.
+    ref_urls = _upload_cast_refs(cast)
+    if ref_urls:
+        log(f"Locked {len(ref_urls)} character reference(s) — scenes will match them…")
+    else:
+        log("No character references uploaded — falling back to text-only stills.")
     log(f"Generating {total} scene stills…")
 
     done = 0
 
     def _one(b: Beat) -> Beat:
         path = images_dir / f"{b.index:03d}_scene.jpg"
+        # 1) Preferred: reference-conditioned edit (locks style + identity)
+        beat_refs = _beat_ref_urls(b, cast, ref_urls)
+        if beat_refs and _generate_still_edit(b, path, beat_refs, visual_style=visual_style):
+            return b
+        # 2) Fallback: text-only still
         png = images_dir / f"{b.index:03d}_scene.png"
         updated = _generate_still(b, png, cast_lock=cast_lock, visual_style=visual_style)
         if updated.image_path and Path(updated.image_path).suffix.lower() == ".png":
@@ -897,12 +1043,19 @@ def regenerate_beat_still(
             f"REVISION REQUEST (follow this): {direction}"
         ).strip()
     cast_lock = _cast_look_lock(cast)
+    jpg = out_path if out_path.suffix.lower() in (".jpg", ".jpeg") else out_path.with_suffix(".jpg")
+
+    # Preferred: reference-conditioned edit so the recreated frame matches the cast.
+    ref_urls = _upload_cast_refs(cast)
+    beat_refs = _beat_ref_urls(beat, cast, ref_urls)
+    if beat_refs and _generate_still_edit(beat, jpg, beat_refs, visual_style=visual_style):
+        return beat
+
     png = out_path if out_path.suffix.lower() == ".png" else out_path.with_suffix(".png")
     updated = _generate_still(beat, png, cast_lock=cast_lock, visual_style=visual_style)
     if updated.image_path and Path(updated.image_path).suffix.lower() == ".png":
         try:
             from PIL import Image
-            jpg = out_path.with_suffix(".jpg")
             im = Image.open(updated.image_path).convert("RGB")
             im.save(jpg, "JPEG", quality=88)
             Path(updated.image_path).unlink(missing_ok=True)
