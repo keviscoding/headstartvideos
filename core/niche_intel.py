@@ -239,6 +239,11 @@ def _pick_videos(
     return metadata, picked
 
 
+def _channel_display_name(metadata: dict[str, Any], fallback: str) -> str:
+    name = (metadata.get("channel_name") or "").strip()
+    return name or fallback
+
+
 def _process_channel(
     *,
     channel_url: str,
@@ -250,19 +255,23 @@ def _process_channel(
     pack_root: Path,
     log: ProgressFn,
 ) -> dict[str, Any]:
-    label = f"channel_{channel_index:02d}"
-    log(f"[{label}] Resolving {channel_url}…")
+    tag = f"ch{channel_index:02d}"
+    log(f"[{tag}] Resolving {channel_url}…")
     channel_id = _extract_channel_id(channel_url, yt_api_key)
     metadata, videos = _pick_videos(
-        channel_id, yt_api_key, max_videos=videos_per_channel, log=lambda m: log(f"[{label}] {m}"),
+        channel_id, yt_api_key, max_videos=videos_per_channel, log=lambda m: log(f"[{tag}] {m}"),
     )
+    channel_name = _channel_display_name(metadata, f"Channel {channel_index}")
+    channel_slug = _slug(channel_name)[:40]
+    log(f"[{tag}] {channel_name}")
 
-    raw_dir = pack_root / "raw" / label
+    # Downloads stay under _admin (NOT in the LLM zip)
+    raw_dir = pack_root / "_admin" / "raw" / channel_slug
     raw_dir.mkdir(parents=True, exist_ok=True)
-    frames_llm = pack_root / "for_llm" / "frames"
+    frames_llm = pack_root / "llm" / "frames"
     frames_llm.mkdir(parents=True, exist_ok=True)
 
-    # Anonymized video numbers 1..N within this channel
+    # Video titles anonymized as Video 1..N (channel names stay real)
     video_entries = []
     for i, v in enumerate(videos, start=1):
         video_entries.append({
@@ -272,15 +281,13 @@ def _process_channel(
             "url": f"https://www.youtube.com/watch?v={v['video_id']}",
         })
 
-    # Transcripts (full — no 5000 cap)
-    log(f"[{label}] Fetching transcripts…")
+    log(f"[{tag}] Fetching transcripts…")
     for i, entry in enumerate(video_entries, start=1):
-        log(f"[{label}] Transcript {i}/{len(video_entries)}…")
+        log(f"[{tag}] Transcript {i}/{len(video_entries)}…")
         text = _fetch_transcript(entry["video_id"], downsub_key) or ""
         entry["transcript"] = text.strip()
         time.sleep(0.25)
 
-    # Comments on top 2 by views
     by_views = sorted(video_entries, key=lambda e: e.get("views") or 0, reverse=True)
     comment_targets = by_views[:2]
     for entry in video_entries:
@@ -288,11 +295,11 @@ def _process_channel(
 
     comments_by_num: dict[int, list[dict]] = {}
     for entry in comment_targets:
-        log(f"[{label}] Comments for {entry['anon_id']} ({entry['views']} views)…")
+        log(f"[{tag}] Comments for {entry['anon_id']} ({entry['views']} views)…")
         try:
             comments = fetch_comments(entry["video_id"], yt_api_key)
         except Exception as e:
-            log(f"[{label}] Comments failed for {entry['anon_id']}: {e}")
+            log(f"[{tag}] Comments failed for {entry['anon_id']}: {e}")
             comments = []
         comments_by_num[entry["video_num"]] = comments
         (raw_dir / f"comments_video_{entry['video_num']:02d}.json").write_text(
@@ -300,34 +307,33 @@ def _process_channel(
         )
         time.sleep(0.2)
 
-    # Visual: one Short (most viewed Short among picked; else most viewed overall)
     shorts_picked = [e for e in video_entries if e.get("is_short")]
     visual = (
         max(shorts_picked, key=lambda e: e.get("views") or 0)
         if shorts_picked
         else max(video_entries, key=lambda e: e.get("views") or 0)
     )
-    visual["is_visual_source"] = True
     for entry in video_entries:
         entry["is_visual_source"] = entry["video_id"] == visual["video_id"]
 
     frame_paths: list[str] = []
     video_file = raw_dir / f"video_{visual['video_num']:02d}.mp4"
     try:
-        log(f"[{label}] Downloading visual source {visual['anon_id']}…")
+        log(f"[{tag}] Downloading visual source {visual['anon_id']}…")
         download_short_video(visual["video_id"], video_file)
-        log(f"[{label}] Extracting {frames_per_video} frames…")
+        log(f"[{tag}] Extracting {frames_per_video} frames…")
         frames = extract_even_frames(video_file, raw_dir / "frames", count=frames_per_video)
         for fp in frames:
-            dest_name = f"{label}_video_{visual['video_num']:02d}_{fp.stem}.jpg"
+            dest_name = f"{channel_slug}__Video{visual['video_num']:02d}__{fp.stem}.jpg"
             dest = frames_llm / dest_name
             shutil.copy2(fp, dest)
             frame_paths.append(dest_name)
     except Exception as e:
-        log(f"[{label}] Visual pack failed: {e}")
+        log(f"[{tag}] Visual pack failed: {e}")
 
     return {
-        "label": label,
+        "channel_name": channel_name,
+        "channel_slug": channel_slug,
         "input_url": channel_url,
         "metadata": metadata,
         "videos": video_entries,
@@ -337,127 +343,112 @@ def _process_channel(
     }
 
 
-def _write_pack_documents(pack_root: Path, niche: str, channels: list[dict[str, Any]]) -> None:
-    for_llm = pack_root / "for_llm"
-    private = pack_root / "private"
-    for_llm.mkdir(parents=True, exist_ok=True)
-    private.mkdir(parents=True, exist_ok=True)
+def _write_llm_folder(pack_root: Path, niche: str, channels: list[dict[str, Any]]) -> Path:
+    """
+    Write a single clean `llm/` folder meant to be uploaded/pasted as-is:
+      llm/README.md   — one-line how-to
+      llm/ALL.md      — overview + transcripts + comments (real channel names, anon videos)
+      llm/frames/     — stills
+    Admin-only title map goes under `_admin/` (excluded from zip).
+    """
+    llm = pack_root / "llm"
+    admin = pack_root / "_admin"
+    llm.mkdir(parents=True, exist_ok=True)
+    (llm / "frames").mkdir(parents=True, exist_ok=True)
+    admin.mkdir(parents=True, exist_ok=True)
 
+    # Title map for you only (not in zip)
     video_map = []
-    channels_meta = []
     for ch in channels:
-        meta = ch["metadata"]
-        channels_meta.append({
-            "label": ch["label"],
-            "channel_name": meta.get("channel_name"),
-            "channel_id": meta.get("channel_id"),
-            "subscribers": meta.get("subscribers"),
-            "total_views": meta.get("total_views"),
-            "video_count": meta.get("video_count"),
-            "input_url": ch["input_url"],
-        })
         for v in ch["videos"]:
             video_map.append({
-                "channel_label": ch["label"],
+                "channel_name": ch["channel_name"],
                 "anon_id": v["anon_id"],
-                "video_num": v["video_num"],
                 "title": v["title"],
                 "video_id": v["video_id"],
                 "url": v["url"],
                 "views": v.get("views"),
                 "likes": v.get("likes"),
                 "comments": v.get("comments"),
-                "duration_sec": v.get("duration_sec"),
-                "is_short": v.get("is_short"),
-                "has_comments_pack": v.get("has_comments_pack"),
-                "is_visual_source": v.get("is_visual_source"),
             })
+    (admin / "video_titles.json").write_text(json.dumps(video_map, indent=2), encoding="utf-8")
 
-    (private / "video_map.json").write_text(json.dumps(video_map, indent=2), encoding="utf-8")
-    (private / "channels.json").write_text(json.dumps(channels_meta, indent=2), encoding="utf-8")
-
-    # BRIEFING
-    briefing_lines = [
-        f"# Niche Intel Briefing — {niche}",
+    lines: list[str] = [
+        f"# Niche Intel — {niche}",
         "",
-        "Labels are anonymized (Video 1, Video 2, …). Real titles are in `private/video_map.json` — omit that folder when feeding an LLM if you want zero title bias.",
+        "Upload this **entire folder** to your LLM (or paste `ALL.md` and attach everything in `frames/`).",
+        "",
+        "- **Channel names are real.**",
+        "- **Video titles are hidden** — use Video 1, Video 2, … only.",
+        "",
+        "---",
+        "",
+        "# Overview",
         "",
     ]
-    for ci, ch in enumerate(channels, start=1):
+
+    for ch in channels:
         meta = ch["metadata"]
-        briefing_lines += [
-            f"## Channel {ci}",
+        name = ch["channel_name"]
+        lines += [
+            f"## {name}",
             f"- Subscribers: {meta.get('subscribers', 0):,}",
             f"- Channel total views: {meta.get('total_views', 0):,}",
-            f"- Videos in pack: {len(ch['videos'])}",
-            f"- Visual source: Video {ch['visual_video_num']} ({len(ch.get('frame_files') or [])} frames)",
+            f"- Videos in this pack: {len(ch['videos'])}",
+            f"- Frames from: Video {ch['visual_video_num']} ({len(ch.get('frame_files') or [])} stills)",
             "",
-            "| Video | Views | Likes | Comments | Duration(s) | Short | Comments pack | Visual |",
+            "| Label | Views | Likes | Comment count | Duration (s) | Short? | Comments included | Has frames |",
             "|---|---:|---:|---:|---:|:---:|:---:|:---:|",
         ]
         for v in ch["videos"]:
-            briefing_lines.append(
+            lines.append(
                 f"| {v['anon_id']} | {v.get('views', 0):,} | {v.get('likes', 0):,} | "
                 f"{v.get('comments', 0):,} | {int(v.get('duration_sec') or 0)} | "
-                f"{'Y' if v.get('is_short') else ''} | "
-                f"{'Y' if v.get('has_comments_pack') else ''} | "
-                f"{'Y' if v.get('is_visual_source') else ''} |"
+                f"{'yes' if v.get('is_short') else ''} | "
+                f"{'yes' if v.get('has_comments_pack') else ''} | "
+                f"{'yes' if v.get('is_visual_source') else ''} |"
             )
-        briefing_lines.append("")
+        lines.append("")
         if ch.get("frame_files"):
-            briefing_lines.append("Frames in `for_llm/frames/`:")
+            lines.append("Frame files:")
             for fn in ch["frame_files"]:
-                briefing_lines.append(f"- `{fn}`")
-            briefing_lines.append("")
+                lines.append(f"- `frames/{fn}`")
+            lines.append("")
 
-    (for_llm / "BRIEFING.md").write_text("\n".join(briefing_lines), encoding="utf-8")
-
-    # TRANSCRIPTS
-    tr_lines = [f"# Transcripts — {niche}", ""]
-    for ci, ch in enumerate(channels, start=1):
-        tr_lines += [f"## Channel {ci}", ""]
+    lines += ["---", "", "# Transcripts", ""]
+    for ch in channels:
+        lines += [f"## {ch['channel_name']}", ""]
         for v in ch["videos"]:
-            tr_lines += [f"### {v['anon_id']}", ""]
             body = (v.get("transcript") or "").strip() or "(no transcript available)"
-            tr_lines += [body, "", "---", ""]
-    (for_llm / "TRANSCRIPTS.md").write_text("\n".join(tr_lines), encoding="utf-8")
+            lines += [f"### {v['anon_id']}", "", body, "", "---", ""]
 
-    # COMMENTS
-    cm_lines = [f"# Comments — {niche}", "", "Top 2 videos by views per channel (as many comments as the API returned).", ""]
-    for ci, ch in enumerate(channels, start=1):
-        cm_lines += [f"## Channel {ci}", ""]
+    lines += ["# Comments", "", "Top 2 videos by views per channel.", ""]
+    for ch in channels:
+        lines += [f"## {ch['channel_name']}", ""]
         by_num = ch.get("comments_by_num") or {}
         if not by_num:
-            cm_lines += ["(no comments packed)", ""]
+            lines += ["(no comments packed)", ""]
             continue
         for num in sorted(by_num.keys()):
             comments = by_num[num]
-            cm_lines += [f"### Video {num} — {len(comments)} comments", ""]
+            lines += [f"### Video {num} — {len(comments)} comments", ""]
             for c in comments:
                 likes = c.get("likes") or 0
                 text = (c.get("text") or "").replace("\n", " ").strip()
-                if not text:
-                    continue
-                cm_lines.append(f"- ({likes} likes) {text}")
-            cm_lines.append("")
-    (for_llm / "COMMENTS.md").write_text("\n".join(cm_lines), encoding="utf-8")
+                if text:
+                    lines.append(f"- ({likes} likes) {text}")
+            lines.append("")
 
-    readme = f"""# Niche Intel Pack — {niche}
-
-## Drag into an LLM
-Use the **`for_llm/`** folder (or this whole zip). Prefer uploading:
-1. `for_llm/BRIEFING.md`
-2. `for_llm/TRANSCRIPTS.md`
-3. `for_llm/COMMENTS.md`
-4. images in `for_llm/frames/`
-
-## Privacy / bias
-- LLM-facing files use **Video 1 / Video 2** labels only (no titles).
-- Real titles & channel names are under **`private/`** — leave those out if you want zero title skew.
-
-Generated {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}.
-"""
-    (pack_root / "README.md").write_text(readme, encoding="utf-8")
+    (llm / "ALL.md").write_text("\n".join(lines), encoding="utf-8")
+    (llm / "README.md").write_text(
+        f"# {niche} — LLM pack\n\n"
+        "Upload **this whole folder** to your LLM.\n\n"
+        "1. Paste or attach `ALL.md` (stats + transcripts + comments)\n"
+        "2. Attach every image in `frames/`\n\n"
+        "Channel names are real. Video titles are labeled Video 1, Video 2, … only.\n",
+        encoding="utf-8",
+    )
+    return llm
 
 
 def build_pack(
@@ -494,11 +485,13 @@ def build_pack(
     videos_per_channel = max(1, min(int(videos_per_channel or DEFAULT_VIDEOS), 30))
     frames_per_video = max(2, min(int(frames_per_video or DEFAULT_FRAMES), 24))
 
+    niche_clean = (niche or "niche").strip() or "niche"
     root = Path(out_root or (Path(__file__).resolve().parents[1] / "output" / "niche_intel"))
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
-    pack_dir = root / f"{_slug(niche)}_{stamp}"
+    pack_dir = root / f"{_slug(niche_clean)}_{stamp}"
     pack_dir.mkdir(parents=True, exist_ok=True)
-    (pack_dir / "for_llm" / "frames").mkdir(parents=True, exist_ok=True)
+    (pack_dir / "llm" / "frames").mkdir(parents=True, exist_ok=True)
+    (pack_dir / "_admin").mkdir(parents=True, exist_ok=True)
 
     channels_out: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
@@ -517,7 +510,7 @@ def build_pack(
             )
             channels_out.append(ch)
         except Exception as e:
-            log(f"[channel_{i:02d}] FAILED: {e}")
+            log(f"[ch{i:02d}] FAILED: {e}")
             errors.append({"channel_url": url, "error": str(e)})
 
     if not channels_out:
@@ -525,21 +518,25 @@ def build_pack(
             "No channels succeeded. " + "; ".join(f"{e['channel_url']}: {e['error']}" for e in errors)
         )
 
-    log("Writing LLM pack documents…")
-    _write_pack_documents(pack_dir, niche.strip() or "niche", channels_out)
+    log("Writing LLM folder…")
+    llm_dir = _write_llm_folder(pack_dir, niche_clean, channels_out)
 
-    zip_path = pack_dir.with_suffix(".zip")
+    # Zip ONLY llm/ — one clean folder to upload (no _admin / raw mess)
+    zip_name = f"{_slug(niche_clean)}_llm_{stamp}.zip"
+    zip_path = root / zip_name
+    folder_in_zip = f"{_slug(niche_clean)}_llm"
     log(f"Zipping → {zip_path.name}")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path in pack_dir.rglob("*"):
+        for path in llm_dir.rglob("*"):
             if path.is_file():
-                zf.write(path, arcname=str(path.relative_to(pack_dir.parent)))
+                zf.write(path, arcname=str(Path(folder_in_zip) / path.relative_to(llm_dir)))
 
     log("Done.")
     return {
         "pack_dir": str(pack_dir),
+        "llm_dir": str(llm_dir),
         "zip_path": str(zip_path),
         "channels_ok": len(channels_out),
         "errors": errors,
-        "niche": niche.strip() or "niche",
+        "niche": niche_clean,
     }
