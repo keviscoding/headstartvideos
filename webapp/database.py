@@ -806,25 +806,64 @@ def user_atlas_status(user_id: int) -> dict:
     return {"configured": True, "last4": secret_last4(plain)}
 
 
-def get_user_storyboard_cast(user_id: int) -> list[dict]:
-    """Persistent series cast for Storyboard Pack (JSON list)."""
+def get_user_storyboard_settings(user_id: int) -> dict:
+    """Persistent Storyboard Pack settings: {cast, visual_style, template}.
+
+    Backward compatible with older rows that stored a bare cast list.
+    """
     user = get_user_by_id(user_id)
     if not user:
-        return []
+        return {"cast": [], "visual_style": "pixar_lite", "template": ""}
     raw = (user.get("storyboard_cast_json") or "").strip()
     if not raw:
-        return []
+        return {"cast": [], "visual_style": "pixar_lite", "template": ""}
     try:
         data = json.loads(raw)
     except Exception:
-        return []
-    return data if isinstance(data, list) else []
+        return {"cast": [], "visual_style": "pixar_lite", "template": ""}
+    if isinstance(data, list):
+        return {"cast": data, "visual_style": "pixar_lite", "template": ""}
+    if isinstance(data, dict):
+        cast = data.get("cast") if isinstance(data.get("cast"), list) else []
+        style = str(data.get("visual_style") or "pixar_lite").strip() or "pixar_lite"
+        template = str(data.get("template") or "").strip()
+        return {"cast": cast, "visual_style": style, "template": template}
+    return {"cast": [], "visual_style": "pixar_lite", "template": ""}
+
+
+def get_user_storyboard_cast(user_id: int) -> list[dict]:
+    """Persistent series cast for Storyboard Pack (JSON list)."""
+    return list(get_user_storyboard_settings(user_id).get("cast") or [])
+
+
+def set_user_storyboard_settings(
+    user_id: int,
+    *,
+    cast: list[dict] | None = None,
+    visual_style: str = "pixar_lite",
+    template: str = "",
+) -> None:
+    """Save cast + visual style + optional template on the user row."""
+    payload = json.dumps(
+        {
+            "cast": cast or [],
+            "visual_style": (visual_style or "pixar_lite").strip() or "pixar_lite",
+            "template": (template or "").strip(),
+        },
+        ensure_ascii=False,
+    )
+    update_user(user_id, storyboard_cast_json=payload)
 
 
 def set_user_storyboard_cast(user_id: int, cast: list[dict] | None) -> None:
-    """Save series cast JSON on the user row."""
-    payload = json.dumps(cast or [], ensure_ascii=False)
-    update_user(user_id, storyboard_cast_json=payload)
+    """Save series cast JSON on the user row (preserves style/template if present)."""
+    settings = get_user_storyboard_settings(user_id)
+    set_user_storyboard_settings(
+        user_id,
+        cast=cast or [],
+        visual_style=settings.get("visual_style") or "pixar_lite",
+        template=settings.get("template") or "",
+    )
 
 
 # -- Verification codes -----------------------------------------------------

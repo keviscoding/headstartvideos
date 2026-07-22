@@ -5010,7 +5010,7 @@ async function openStripePortal() {
 }
 
 // ---------------------------------------------------------------------------
-// Storyboard Pack — Cast studio → Episode → live board
+// Storyboard Pack — Cast studio → Story → live board
 // ---------------------------------------------------------------------------
 let _sbPollTimer = null;
 let _sbJobId = null;
@@ -5022,30 +5022,36 @@ let _sbSelectedBeatIndex = null;
 let _sbPackMode = 'full'; // preview | full
 let _sbLastEpisodePayload = null;
 let _sbBeats = [];
+let _sbVisualStyle = 'pixar_lite';
+let _sbTemplate = '';
+let _sbStyleOptions = [
+    { id: 'pixar_lite', label: '3D Pixar-lite' },
+    { id: 'anime_2d', label: '2D anime' },
+    { id: 'storybook_watercolor', label: 'Storybook watercolor' },
+    { id: 'comic_cartoon', label: 'Comic cartoon' },
+    { id: 'semi_realistic', label: 'Semi-realistic 3D' },
+];
+let _sbFamilyTemplateCast = null;
 
 function _sbDialogueMode() {
     const el = document.querySelector('input[name="sb-dialogue-mode"]:checked');
     return (el?.value || 'generate').trim();
 }
 
-function _sbMistakeBy() {
-    const el = document.querySelector('input[name="sb-mistake"]:checked');
-    const v = (el?.value || 'max').trim();
-    if (v === 'other') {
-        return (document.getElementById('sb-mistake-other')?.value || '').trim() || 'other';
-    }
-    return v;
-}
-
 function _sbCastHasLook() {
     return (_sbCast || []).some(c => c.included !== false && (c.portrait_url || c.sheet_url));
 }
 
-function _sbNicheThumbStyle() {
-    return (
-        state.nicheData?.thumbnail_style
-        || '3D Pixar-lite family characters, warm lighting, large yellow caption, emotional story moment'
-    );
+function _sbSlugId(name) {
+    const base = String(name || 'character').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'character';
+    const used = new Set((_sbCast || []).map(c => c.id));
+    let cid = base.slice(0, 32);
+    let n = 2;
+    while (used.has(cid)) {
+        cid = `${base.slice(0, 28)}_${n}`;
+        n += 1;
+    }
+    return cid;
 }
 
 function _sbSyncDialogueUI() {
@@ -5054,16 +5060,22 @@ function _sbSyncDialogueUI() {
     wrap.classList.toggle('hidden', _sbDialogueMode() !== 'paste');
 }
 
-function _sbSyncMistakeUI() {
-    const other = document.getElementById('sb-mistake-other');
-    if (!other) return;
-    const el = document.querySelector('input[name="sb-mistake"]:checked');
-    other.classList.toggle('hidden', (el?.value || '') !== 'other');
+function _sbRenderStyleSelect() {
+    const sel = document.getElementById('sb-visual-style');
+    if (!sel) return;
+    const opts = _sbStyleOptions.length ? _sbStyleOptions : [{ id: 'pixar_lite', label: '3D Pixar-lite' }];
+    sel.innerHTML = opts.map(o =>
+        `<option value="${esc(o.id)}"${o.id === _sbVisualStyle ? ' selected' : ''}>${esc(o.label || o.id)}</option>`
+    ).join('');
 }
 
 function sbGoToEpisode() {
+    if (!_sbCast.length) {
+        alert('Add at least one character — or extract them from your story/script.');
+        return;
+    }
     if (!_sbCastHasLook()) {
-        alert('Generate at least one character look — see them before the story.');
+        alert('Generate at least one character look so scenes stay consistent.');
         return;
     }
     saveStoryboardCast(true).then(() => goToStep('storyboard'));
@@ -5073,42 +5085,51 @@ async function loadStoryboardCast() {
     try {
         const res = await fetch('/api/storyboard/cast');
         const data = await res.json().catch(() => ({}));
-        if (res.ok && Array.isArray(data.cast)) _sbCast = data.cast;
+        if (res.ok) {
+            if (Array.isArray(data.cast)) _sbCast = data.cast;
+            if (data.visual_style) _sbVisualStyle = data.visual_style;
+            if (typeof data.template === 'string') _sbTemplate = data.template;
+            if (Array.isArray(data.styles) && data.styles.length) _sbStyleOptions = data.styles;
+            if (Array.isArray(data.family_template_cast)) _sbFamilyTemplateCast = data.family_template_cast;
+        }
     } catch (e) {
         console.warn('cast load', e);
     }
-    if (!_sbCast.length) {
-        _sbCast = [
-            { id: 'max', name: 'Max', included: true, look_prompt: 'boy messy black hair blue polo grey pants, Pixar-lite 3D', portrait_url: '', sheet_url: '' },
-            { id: 'mia', name: 'Mia', included: true, look_prompt: 'girl black pigtails pink ties yellow sweater, Pixar-lite 3D', portrait_url: '', sheet_url: '' },
-            { id: 'mom', name: 'Mom', included: true, look_prompt: 'long wavy brown hair light cardigan, Pixar-lite 3D', portrait_url: '', sheet_url: '' },
-            { id: 'dad', name: 'Dad', included: true, look_prompt: 'curly dark hair short beard blue shirt, Pixar-lite 3D', portrait_url: '', sheet_url: '' },
-        ];
-    }
+    if (!Array.isArray(_sbCast)) _sbCast = [];
+    _sbRenderStyleSelect();
     renderStoryboardCastGrid();
 }
 
 function renderStoryboardCastGrid() {
     const grid = document.getElementById('sb-cast-grid');
     if (!grid) return;
-    grid.innerHTML = (_sbCast || []).map((c, i) => {
-        const hasLook = !!(c.portrait_url || c.sheet_url);
-        const img = c.portrait_url
-            ? `<img src="${esc(c.portrait_url)}" alt="${esc(c.name)}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:12px;background:var(--app-surface);">`
-            : `<div style="width:100%;aspect-ratio:1;border-radius:12px;background:var(--app-surface);display:flex;align-items:center;justify-content:center;color:var(--app-ink-3);font-family:var(--font-body);font-size:13px;">No look yet</div>`;
-        return `<div class="sb-cast-card${hasLook ? ' has-look' : ''}" data-cast-i="${i}">
-            ${img}
-            <div style="margin-top:10px;display:flex;align-items:center;gap:8px;">
-                <input type="checkbox" class="sb-cast-inc" data-i="${i}" ${c.included !== false ? 'checked' : ''}>
-                <input type="text" class="cr-input sb-cast-name-in" data-i="${i}" value="${esc(c.name || '')}" style="padding:8px 10px;">
-            </div>
-            <textarea class="cr-input sb-cast-look" data-i="${i}" rows="2" style="margin-top:8px;font-size:13px;" placeholder="Describe their look…">${esc(c.look_prompt || '')}</textarea>
-            <button type="button" class="btn-primary sb-cast-gen" data-i="${i}" style="width:100%;margin-top:10px;font-size:13px;padding:10px;">
-                <span class="btn-text">${hasLook ? 'Recreate look' : 'Generate look'}</span>
-                <span class="btn-loading hidden"><span class="cr-spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;"></span> Generating…</span>
-            </button>
+    if (!_sbCast.length) {
+        grid.innerHTML = `<div class="cr-surface" style="padding:18px;grid-column:1/-1;">
+            <p style="font-family:var(--font-body);font-size:14px;color:var(--app-ink-2);margin:0;">
+                No cast yet. Add a character, extract from your story/script, or start from the optional Easy English family template.
+            </p>
         </div>`;
-    }).join('');
+    } else {
+        grid.innerHTML = (_sbCast || []).map((c, i) => {
+            const hasLook = !!(c.portrait_url || c.sheet_url);
+            const img = c.portrait_url
+                ? `<img src="${esc(c.portrait_url)}" alt="${esc(c.name)}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:12px;background:var(--app-surface);">`
+                : `<div style="width:100%;aspect-ratio:1;border-radius:12px;background:var(--app-surface);display:flex;align-items:center;justify-content:center;color:var(--app-ink-3);font-family:var(--font-body);font-size:13px;">No look yet</div>`;
+            return `<div class="sb-cast-card${hasLook ? ' has-look' : ''}" data-cast-i="${i}">
+                ${img}
+                <div style="margin-top:10px;display:flex;align-items:center;gap:8px;">
+                    <input type="checkbox" class="sb-cast-inc" data-i="${i}" ${c.included !== false ? 'checked' : ''}>
+                    <input type="text" class="cr-input sb-cast-name-in" data-i="${i}" value="${esc(c.name || '')}" style="padding:8px 10px;" placeholder="Name">
+                    <button type="button" class="btn-ghost sb-cast-remove" data-i="${i}" style="font-size:12px;padding:6px 8px;" title="Remove">✕</button>
+                </div>
+                <textarea class="cr-input sb-cast-look" data-i="${i}" rows="2" style="margin-top:8px;font-size:13px;" placeholder="Describe their look…">${esc(c.look_prompt || '')}</textarea>
+                <button type="button" class="btn-primary sb-cast-gen" data-i="${i}" style="width:100%;margin-top:10px;font-size:13px;padding:10px;">
+                    <span class="btn-text">${hasLook ? 'Recreate look' : 'Generate look'}</span>
+                    <span class="btn-loading hidden"><span class="cr-spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;"></span> Generating…</span>
+                </button>
+            </div>`;
+        }).join('');
+    }
     grid.querySelectorAll('.sb-cast-inc').forEach(el => {
         el.addEventListener('change', () => {
             const i = +el.dataset.i;
@@ -5130,8 +5151,108 @@ function renderStoryboardCastGrid() {
     grid.querySelectorAll('.sb-cast-gen').forEach(el => {
         el.addEventListener('click', () => generateCastLook(+el.dataset.i, el));
     });
+    grid.querySelectorAll('.sb-cast-remove').forEach(el => {
+        el.addEventListener('click', () => {
+            const i = +el.dataset.i;
+            _sbCast.splice(i, 1);
+            renderStoryboardCastGrid();
+            saveStoryboardCast(true);
+        });
+    });
     const next = document.getElementById('btn-sb-cast-next');
     if (next) next.disabled = !_sbCastHasLook();
+    const hint = document.getElementById('sb-cast-hint');
+    if (hint) {
+        hint.textContent = _sbCastHasLook()
+            ? 'Looks ready — continue when you are happy with the cast.'
+            : 'Add at least one character and generate a look to continue. Saved to your account.';
+    }
+}
+
+function addStoryboardCastMember() {
+    const name = prompt('Character name?');
+    if (!name || !name.trim()) return;
+    const cid = _sbSlugId(name.trim());
+    _sbCast.push({
+        id: cid,
+        name: name.trim(),
+        included: true,
+        look_prompt: '',
+        portrait_url: '',
+        sheet_url: '',
+        portrait_path: '',
+        sheet_path: '',
+    });
+    _sbTemplate = '';
+    renderStoryboardCastGrid();
+    saveStoryboardCast(true);
+}
+
+async function extractStoryboardCast() {
+    if (!isAdminUser()) {
+        alert('Storyboard Pack is admin-only while we test it.');
+        return;
+    }
+    const story = (
+        (document.getElementById('sb-extract-source')?.value || '')
+        || (document.getElementById('sb-story')?.value || '')
+    ).trim();
+    const script = (document.getElementById('sb-script')?.value || '').trim();
+    if (!story && !script) {
+        alert('Paste a story or script above, then extract characters.');
+        return;
+    }
+    const btn = document.getElementById('btn-sb-extract-cast');
+    setLoading(btn, true);
+    try {
+        const res = await fetch('/api/storyboard/cast/extract', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ story, script }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Extract failed');
+        const proposed = Array.isArray(data.cast) ? data.cast : [];
+        if (!proposed.length) {
+            alert('No recurring characters found. Add them manually.');
+            return;
+        }
+        const byId = new Map((_sbCast || []).map(c => [c.id, c]));
+        const merged = proposed.map(p => {
+            const prev = byId.get(p.id) || [...byId.values()].find(x =>
+                (x.name || '').toLowerCase() === (p.name || '').toLowerCase()
+            );
+            return prev ? { ...p, ...prev, name: p.name || prev.name, look_prompt: p.look_prompt || prev.look_prompt } : p;
+        });
+        _sbCast = merged;
+        _sbTemplate = '';
+        const src = (document.getElementById('sb-extract-source')?.value || '').trim();
+        const storyEl = document.getElementById('sb-story');
+        if (src && storyEl && !(storyEl.value || '').trim()) storyEl.value = src;
+        renderStoryboardCastGrid();
+        await saveStoryboardCast(true);
+        track('storyboard_cast_extract', { count: merged.length });
+    } catch (e) {
+        alert(e.message || 'Could not extract cast');
+    } finally {
+        setLoading(btn, false);
+    }
+}
+
+function applyFamilyTemplateCast() {
+    const tmpl = Array.isArray(_sbFamilyTemplateCast) && _sbFamilyTemplateCast.length
+        ? _sbFamilyTemplateCast
+        : [
+            { id: 'max', name: 'Max', included: true, look_prompt: 'boy ~8 years old, messy black hair, blue polo, grey pants', portrait_url: '', sheet_url: '' },
+            { id: 'mia', name: 'Mia', included: true, look_prompt: 'girl ~7 years old, black pigtails pink ties, yellow sweater', portrait_url: '', sheet_url: '' },
+            { id: 'mom', name: 'Mom', included: true, look_prompt: 'woman mid-30s, long wavy brown hair, light cardigan', portrait_url: '', sheet_url: '' },
+            { id: 'dad', name: 'Dad', included: true, look_prompt: 'man mid-30s, curly dark hair, short beard, blue shirt', portrait_url: '', sheet_url: '' },
+        ];
+    if (_sbCast.length && !confirm('Replace your current cast with the Easy English family template?')) return;
+    _sbCast = tmpl.map(c => ({ ...c, portrait_url: '', sheet_url: '', portrait_path: '', sheet_path: '' }));
+    _sbTemplate = 'easy_english_family';
+    renderStoryboardCastGrid();
+    saveStoryboardCast(true);
 }
 
 async function generateCastLook(i, btn) {
@@ -5141,16 +5262,21 @@ async function generateCastLook(i, btn) {
     }
     const c = _sbCast[i];
     if (!c) return;
+    if (!(c.name || '').trim()) {
+        alert('Give this character a name first.');
+        return;
+    }
     setLoading(btn, true);
     try {
         const res = await fetch('/api/storyboard/cast/generate-look', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                id: c.id,
+                id: c.id || _sbSlugId(c.name),
                 name: c.name,
                 look_prompt: c.look_prompt,
                 make_sheet: true,
+                visual_style: _sbVisualStyle,
             }),
         });
         const data = await res.json().catch(() => ({}));
@@ -5159,6 +5285,7 @@ async function generateCastLook(i, btn) {
         else if (data.member) {
             _sbCast[i] = { ...c, ...data.member };
         }
+        if (data.visual_style) _sbVisualStyle = data.visual_style;
         renderStoryboardCastGrid();
         track('storyboard_cast_look', { id: c.id });
     } catch (e) {
@@ -5173,10 +5300,18 @@ async function saveStoryboardCast(silent) {
         const res = await fetch('/api/storyboard/cast', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ cast: _sbCast }),
+            body: JSON.stringify({
+                cast: _sbCast,
+                visual_style: _sbVisualStyle,
+                template: _sbTemplate,
+            }),
         });
         const data = await res.json().catch(() => ({}));
-        if (res.ok && Array.isArray(data.cast)) _sbCast = data.cast;
+        if (res.ok) {
+            if (Array.isArray(data.cast)) _sbCast = data.cast;
+            if (data.visual_style) _sbVisualStyle = data.visual_style;
+            if (typeof data.template === 'string') _sbTemplate = data.template;
+        }
         if (!silent && !res.ok) throw new Error(data.detail || 'Save failed');
     } catch (e) {
         if (!silent) alert(e.message || 'Could not save cast');
@@ -5211,7 +5346,6 @@ function initStoryboardPackUI() {
     const titleInput = document.getElementById('sb-title');
     if (titleInput && state.title) titleInput.value = state.title;
     _sbSyncDialogueUI();
-    _sbSyncMistakeUI();
     renderEpisodeCastStrip();
     const moralsList = document.getElementById('sb-morals-list');
     if (moralsList) moralsList.innerHTML = '';
@@ -5226,9 +5360,13 @@ function bindStoryboardPackUI() {
     document.querySelectorAll('input[name="sb-dialogue-mode"]').forEach(el => {
         el.addEventListener('change', _sbSyncDialogueUI);
     });
-    document.querySelectorAll('input[name="sb-mistake"]').forEach(el => {
-        el.addEventListener('change', _sbSyncMistakeUI);
+    document.getElementById('sb-visual-style')?.addEventListener('change', (e) => {
+        _sbVisualStyle = e.target.value || 'pixar_lite';
+        saveStoryboardCast(true);
     });
+    document.getElementById('btn-sb-add-cast')?.addEventListener('click', addStoryboardCastMember);
+    document.getElementById('btn-sb-extract-cast')?.addEventListener('click', extractStoryboardCast);
+    document.getElementById('btn-sb-family-template')?.addEventListener('click', applyFamilyTemplateCast);
     document.getElementById('btn-sb-suggest-morals')?.addEventListener('click', suggestStoryboardMorals);
     document.getElementById('btn-sb-thumb')?.addEventListener('click', generateStoryboardThumbnail);
     document.getElementById('sb-thumb-refs')?.addEventListener('change', (e) => {
@@ -5317,10 +5455,10 @@ async function suggestStoryboardMorals() {
         const res = await fetch('/api/storyboard/suggest-morals', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ story }),
+            body: JSON.stringify({ story, template: _sbTemplate }),
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.detail || 'Could not suggest morals');
+        if (!res.ok) throw new Error(data.detail || 'Could not suggest takeaways');
         const morals = Array.isArray(data.morals) ? data.morals : [];
         if (!list) return;
         list.innerHTML = morals.map((m, i) => (
@@ -5333,9 +5471,9 @@ async function suggestStoryboardMorals() {
             });
         });
     } catch (e) {
-        alert(e.message || 'Could not suggest morals');
+        alert(e.message || 'Could not suggest takeaways');
     } finally {
-        if (btn) { btn.disabled = false; btn.textContent = 'Suggest morals from my story'; }
+        if (btn) { btn.disabled = false; btn.textContent = 'Suggest takeaways from my story'; }
     }
 }
 
@@ -5442,7 +5580,13 @@ async function startStoryboardPack(packMode = 'full', opts = {}) {
     const fromPreview = !!opts.fromPreview;
     let payload;
     if (fromPreview && _sbLastEpisodePayload) {
-        payload = { ..._sbLastEpisodePayload, cast: _sbCast, thumbnail_path: _sbThumbPath || _sbLastEpisodePayload.thumbnail_path || '' };
+        payload = {
+            ..._sbLastEpisodePayload,
+            cast: _sbCast,
+            thumbnail_path: _sbThumbPath || _sbLastEpisodePayload.thumbnail_path || '',
+            visual_style: _sbVisualStyle,
+            template: _sbTemplate,
+        };
     } else {
         const title = (document.getElementById('sb-title')?.value || '').trim();
         const story = (document.getElementById('sb-story')?.value || '').trim();
@@ -5450,19 +5594,12 @@ async function startStoryboardPack(packMode = 'full', opts = {}) {
         const dialogue_mode = _sbDialogueMode();
         const script = (document.getElementById('sb-script')?.value || '').trim();
         const minutes = parseFloat(document.getElementById('sb-minutes')?.value || '8');
-        const mistake_by = _sbMistakeBy();
 
         if (!title) { alert('Add a title for this video.'); return; }
-        if (!moral) { alert('What should the viewer learn? Add a moral.'); return; }
         if (dialogue_mode === 'paste') {
             if (!script) { alert('Paste your script, or switch to “Write dialogue for me”.'); return; }
         } else if (!story) {
-            alert('Describe what happens in this episode.');
-            return;
-        }
-        if (document.querySelector('input[name="sb-mistake"]:checked')?.value === 'other'
-            && !(document.getElementById('sb-mistake-other')?.value || '').trim()) {
-            alert('Say who makes the mistake.');
+            alert('Describe what happens in this story.');
             return;
         }
 
@@ -5472,11 +5609,12 @@ async function startStoryboardPack(packMode = 'full', opts = {}) {
             topic: story,
             moral,
             cast: _sbCast,
-            mistake_by,
             dialogue_mode,
             script: dialogue_mode === 'paste' ? script : '',
             target_minutes: minutes,
             thumbnail_path: _sbThumbPath || '',
+            visual_style: _sbVisualStyle,
+            template: _sbTemplate,
         };
         state.title = title;
     }

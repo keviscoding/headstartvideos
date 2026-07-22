@@ -1152,22 +1152,27 @@ class StoryboardJobRequest(BaseModel):
     title: str = ""
     topic: str = ""  # legacy alias for story
     story: str = ""
-    moral: str = ""
+    moral: str = ""  # optional takeaway
     cast: list[StoryboardCastMember] = []
-    mistake_by: str = ""
+    mistake_by: str = ""  # legacy / unused
     dialogue_mode: str = "generate"  # generate | paste
     script: str = ""
     target_minutes: float = 8
     thumbnail_path: str = ""
     pack_mode: str = "full"  # preview = first ~1 min · full = full length
+    visual_style: str = ""
+    template: str = ""  # e.g. easy_english_family | ""
 
 
 class StoryboardSuggestMoralsRequest(BaseModel):
     story: str = ""
+    template: str = ""
 
 
 class StoryboardCastSaveRequest(BaseModel):
     cast: list[StoryboardCastMember] = []
+    visual_style: str = ""
+    template: str = ""
 
 
 class StoryboardLookRequest(BaseModel):
@@ -1175,11 +1180,17 @@ class StoryboardLookRequest(BaseModel):
     name: str = ""
     look_prompt: str = ""
     make_sheet: bool = True
+    visual_style: str = ""
+
+
+class StoryboardExtractCastRequest(BaseModel):
+    story: str = ""
+    script: str = ""
 
 
 class StoryboardRegenBeatRequest(BaseModel):
     index: int
-    note: str = ""  # optional direction: "make Max look sadder", etc.
+    note: str = ""  # optional direction: "make them look sadder", etc.
 
 class KeyTestRequest(BaseModel):
     key_name: str
@@ -2939,18 +2950,36 @@ def download_niche_intel_job(job_id: str, admin: dict = Depends(require_admin)):
 # ---------------------------------------------------------------------------
 @app.get("/api/storyboard/cast")
 async def get_storyboard_cast(admin: dict = Depends(require_admin)):
-    """Load persistent series cast (defaults if empty)."""
-    from core.storyboard_pack import default_series_cast, normalize_cast
-    from webapp.database import get_user_storyboard_cast
-    saved = get_user_storyboard_cast(int(admin["id"]))
-    cast = normalize_cast(saved) if saved else default_series_cast()
-    return {"cast": cast}
+    """Load persistent cast settings (empty cast by default — no forced family)."""
+    from core.storyboard_pack import (
+        VISUAL_STYLE_PRESETS,
+        family_template_cast,
+        normalize_cast,
+        resolve_visual_style,
+    )
+    from webapp.database import get_user_storyboard_settings
+    settings = get_user_storyboard_settings(int(admin["id"]))
+    cast = normalize_cast(settings.get("cast") or [])
+    style_id, _, _ = resolve_visual_style(settings.get("visual_style") or "")
+    template = (settings.get("template") or "").strip()
+    styles = [
+        {"id": sid, "label": meta.get("label") or sid}
+        for sid, meta in VISUAL_STYLE_PRESETS.items()
+    ]
+    return {
+        "cast": cast,
+        "visual_style": style_id,
+        "template": template,
+        "styles": styles,
+        "family_template_available": True,
+        "family_template_cast": family_template_cast(),
+    }
 
 
 @app.put("/api/storyboard/cast")
 async def save_storyboard_cast(req: StoryboardCastSaveRequest, admin: dict = Depends(require_admin)):
-    from core.storyboard_pack import normalize_cast
-    from webapp.database import set_user_storyboard_cast
+    from core.storyboard_pack import normalize_cast, resolve_visual_style
+    from webapp.database import set_user_storyboard_settings
     rows = []
     for m in req.cast or []:
         rows.append({
@@ -2964,8 +2993,36 @@ async def save_storyboard_cast(req: StoryboardCastSaveRequest, admin: dict = Dep
             "sheet_path": (m.sheet_path or "").strip(),
         })
     cast = normalize_cast(rows)
-    set_user_storyboard_cast(int(admin["id"]), cast)
-    return {"cast": cast, "saved": True}
+    style_id, _, _ = resolve_visual_style(req.visual_style or "")
+    template = (req.template or "").strip()
+    set_user_storyboard_settings(
+        int(admin["id"]),
+        cast=cast,
+        visual_style=style_id,
+        template=template,
+    )
+    return {"cast": cast, "visual_style": style_id, "template": template, "saved": True}
+
+
+@app.post("/api/storyboard/cast/extract")
+async def extract_storyboard_cast(
+    req: StoryboardExtractCastRequest,
+    admin: dict = Depends(require_admin),
+):
+    """Propose recurring cast from story/script — user confirms before looks."""
+    story = (req.story or "").strip()
+    script = (req.script or "").strip()
+    if not story and not script:
+        raise HTTPException(400, "Paste a story or script first so we can find the characters.")
+    try:
+        from core.storyboard_pack import extract_cast_from_text
+        cast = await asyncio.to_thread(
+            extract_cast_from_text, story=story, script=script,
+        )
+    except Exception as e:
+        print(f"[storyboard] cast extract failed: {e}")
+        raise HTTPException(500, "Could not extract characters. Add them manually.")
+    return {"cast": cast}
 
 
 @app.post("/api/storyboard/cast/generate-look")
@@ -2975,18 +3032,22 @@ async def generate_storyboard_cast_look(
 ):
     """Generate portrait (+ optional sheet) for one cast member — Cast studio dopamine."""
     from core.storyboard_pack import (
-        DEFAULT_LOOKS,
         generate_character_portrait,
         generate_character_sheet,
         normalize_cast,
+        resolve_visual_style,
     )
-    from webapp.database import get_user_storyboard_cast, set_user_storyboard_cast
+    from webapp.database import get_user_storyboard_settings, set_user_storyboard_settings
 
     cid = (req.id or "").strip().lower()
-    if not cid:
-        raise HTTPException(400, "Character id required.")
     name = (req.name or cid).strip() or cid
-    look = (req.look_prompt or "").strip() or DEFAULT_LOOKS.get(cid, "Pixar-lite 3D family character")
+    if not cid and not name:
+        raise HTTPException(400, "Character name required.")
+    if not cid:
+        from core.storyboard_pack import _cast_id_from_name
+        cid = _cast_id_from_name(name)
+    look = (req.look_prompt or "").strip() or f"consistent animated character named {name}"
+    style_id, _, _ = resolve_visual_style(req.visual_style or "")
 
     out_dir = OUTPUT_DIR / "storyboard_cast" / str(admin["id"]) / cid
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -2998,6 +3059,7 @@ async def generate_storyboard_cast_look(
             name=name,
             look_prompt=look,
             out_path=out_dir / f"portrait_{stamp}.png",
+            visual_style=style_id,
         )
         portrait_path, portrait_url = _stage_user_media(
             portrait_local, admin["id"], f"cast_{cid}_portrait", "image/png",
@@ -3010,6 +3072,7 @@ async def generate_storyboard_cast_look(
                 look_prompt=look,
                 out_path=out_dir / f"sheet_{stamp}.png",
                 portrait_path=portrait_local,
+                visual_style=style_id,
             )
             sheet_path, sheet_url = _stage_user_media(
                 sheet_local, admin["id"], f"cast_{cid}_sheet", "image/png",
@@ -3017,9 +3080,8 @@ async def generate_storyboard_cast_look(
     except Exception as e:
         raise HTTPException(_provider_http_status(e), f"Look generation failed: {e}")
 
-    # Merge into saved cast
-    saved = get_user_storyboard_cast(int(admin["id"])) or []
-    cast = normalize_cast(saved)
+    settings = get_user_storyboard_settings(int(admin["id"]))
+    cast = normalize_cast(settings.get("cast") or [])
     for row in cast:
         if row.get("id") == cid:
             row["name"] = name
@@ -3043,9 +3105,14 @@ async def generate_storyboard_cast_look(
             "sheet_path": sheet_path,
         })
         cast = normalize_cast(cast)
-    set_user_storyboard_cast(int(admin["id"]), cast)
-    member = next((c for c in cast if c.get("id") == cid), cast[0])
-    return {"member": member, "cast": cast}
+    set_user_storyboard_settings(
+        int(admin["id"]),
+        cast=cast,
+        visual_style=style_id or settings.get("visual_style") or "pixar_lite",
+        template=settings.get("template") or "",
+    )
+    member = next((c for c in cast if c.get("id") == cid), cast[0] if cast else {})
+    return {"member": member, "cast": cast, "visual_style": style_id}
 
 
 @app.post("/api/storyboard/suggest-morals")
@@ -3053,16 +3120,16 @@ async def storyboard_suggest_morals(
     req: StoryboardSuggestMoralsRequest,
     admin: dict = Depends(require_admin),
 ):
-    """Cheap moral suggestions from the user's story (admin-only)."""
+    """Optional takeaway suggestions from the user's story (admin-only)."""
     story = (req.story or "").strip()
     if not story:
-        raise HTTPException(400, "Describe the story first, then suggest morals.")
+        raise HTTPException(400, "Describe the story first, then suggest takeaways.")
     try:
         from core.storyboard_pack import suggest_morals_from_story
-        morals = suggest_morals_from_story(story)
+        morals = suggest_morals_from_story(story, template=(req.template or "").strip())
     except Exception as e:
         print(f"[storyboard] suggest-morals failed: {e}")
-        raise HTTPException(500, "Could not suggest morals. Try writing one yourself.")
+        raise HTTPException(500, "Could not suggest takeaways. Try writing one yourself.")
     return {"morals": morals}
 
 
@@ -3078,6 +3145,9 @@ async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(
     if dialogue_mode not in ("generate", "paste"):
         dialogue_mode = "paste" if script else "generate"
     mistake_by = (req.mistake_by or "").strip()
+    from core.storyboard_pack import normalize_cast, resolve_visual_style
+    style_id, _, _ = resolve_visual_style(req.visual_style or "")
+    template = (req.template or "").strip()
 
     cast_rows: list[dict] = []
     for m in req.cast or []:
@@ -3091,7 +3161,6 @@ async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(
             "portrait_path": (m.portrait_path or "").strip(),
             "sheet_path": (m.sheet_path or "").strip(),
         })
-    from core.storyboard_pack import normalize_cast
     cast_rows = normalize_cast(cast_rows)
     has_look = any(
         c.get("included") and (c.get("portrait_url") or c.get("portrait_path") or c.get("sheet_url"))
@@ -3105,17 +3174,12 @@ async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(
 
     if not title:
         raise HTTPException(400, "Add a title for this video.")
-    if not moral:
-        raise HTTPException(400, "What should the viewer learn? Add a moral.")
     if dialogue_mode == "paste":
         if not script:
             raise HTTPException(400, "Paste your script, or switch to “Write dialogue for me”.")
-        if not story:
-            # Allow paste-only: script is enough for plot; story optional but preferred
-            pass
     else:
         if not story:
-            raise HTTPException(400, "Describe what happens in this episode.")
+            raise HTTPException(400, "Describe what happens in this story.")
 
     if not story and not script:
         raise HTTPException(400, "Describe the story you want to make, or paste a script.")
@@ -3154,6 +3218,8 @@ async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(
         "target_minutes": mins,
         "thumbnail_path": thumb_path,
         "pack_mode": pack_mode,
+        "visual_style": style_id,
+        "template": template,
         "is_admin": True,
         "is_paid": is_paid,
         "credits_charged": 0,
@@ -3297,6 +3363,7 @@ async def regen_storyboard_beat(
         raise HTTPException(404, f"Beat {req.index} not found on this job.")
 
     cast = (job.get("request") or {}).get("cast") or []
+    visual_style = ((job.get("request") or {}).get("visual_style") or "").strip()
     from core.storyboard_pack import Beat, regenerate_beat_still, zip_pack
     from webapp import storage as _storage
 
@@ -3319,6 +3386,7 @@ async def regen_storyboard_beat(
             out_dir / f"{beat_obj.index:03d}_scene.jpg",
             cast=cast,
             note=(req.note or "").strip(),
+            visual_style=visual_style,
         )
     except Exception as e:
         raise HTTPException(_provider_http_status(e), f"Regen failed: {e}")

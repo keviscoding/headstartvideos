@@ -1,9 +1,9 @@
 {
   "id": "storyboard_pack",
   "name": "Storyboard Pack",
-  "tagline": "Dialogue storyboards ready for image-to-video",
-  "description": "Turn a story idea or script into numbered scene stills + motion prompts you can batch into any image-to-video tool. Built for long AI family / English-listening story channels.",
-  "category": "Education & Story",
+  "tagline": "Any story → scene stills + image-to-video prompts",
+  "description": "Turn your own story or script into numbered scene stills and motion prompts you can batch into Kling, Seedance, Wan, or any image-to-video tool. Bring your cast — we keep looks consistent.",
+  "category": "Animation & Story",
   "difficulty": "Beginner",
   "rpm_range": "$3 - $10",
   "demand": "High",
@@ -13,11 +13,11 @@
   "max_free_minutes": 8,
   "max_paid_minutes": 30,
   "style_preset": "pixar_lite",
-  "thumbnail_style": "YouTube thumbnail for Easy English family 3D Pixar-lite kids channel: Max (messy black hair, blue polo) and/or Mia (black pigtails, yellow sweater) with huge emotional faces filling the frame, warm soft lighting, one dramatic story moment (shock, tears, apology, or exam fear), oversized bold yellow or white title text with thick outline like Emily Family English / Family Story English packaging, clean 16:9, no watermark, no logos, high click appeal",
+  "thumbnail_style": "YouTube thumbnail for an animated story channel: bold emotional character faces filling the frame, cinematic lighting matching the episode mood, oversized bold title text with thick outline, clean 16:9, high click appeal, no watermark, no logos",
   "example_topics": [
-    "Max made a big mistake before his exams",
-    "Mia tried to help but Max would not listen",
-    "Result day arrived and Max was afraid to open the door"
+    "Two friends get lost on the way to a festival",
+    "A quiet inventor builds a machine that talks back",
+    "Siblings race to fix a mistake before sunset"
   ],
   "color": "#E8A838",
   "preview_gif": "/static/previews/storyboard_pack.gif",

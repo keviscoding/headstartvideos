@@ -490,6 +490,8 @@ def _run_storyboard_pack_job(
     mistake_by = (req_data.get("mistake_by") or "").strip()
     dialogue_mode = (req_data.get("dialogue_mode") or "generate").strip().lower()
     pack_mode = (req_data.get("pack_mode") or "full").strip().lower()
+    visual_style = (req_data.get("visual_style") or "").strip()
+    template = (req_data.get("template") or "").strip()
     cast = req_data.get("cast") if isinstance(req_data.get("cast"), list) else []
     script = (req_data.get("script") or "").strip()
     thumbnail_path = (req_data.get("thumbnail_path") or "").strip()
@@ -645,6 +647,8 @@ def _run_storyboard_pack_job(
                 target_minutes=target_minutes,
                 thumbnail_path=thumbnail_path,
                 pack_mode=pack_mode,
+                visual_style=visual_style,
+                template=template,
                 progress=lambda m: on_progress(m),
                 on_still=on_still,
                 is_admin=is_admin,
@@ -698,6 +702,8 @@ def _run_storyboard_pack_job(
             "beat_count": result.get("beat_count") or len(final_beats),
             "target_minutes": result.get("target_minutes") or target_minutes,
             "pack_mode": result.get("pack_mode") or pack_mode,
+            "visual_style": result.get("visual_style") or visual_style,
+            "template": result.get("template") or template,
             "scene_files": result.get("scene_files") or [],
             "beats": final_beats,
             "kind": "storyboard_pack",
