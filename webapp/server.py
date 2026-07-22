@@ -3841,6 +3841,7 @@ async def start_storyboard_assemble(
     job_id: str,
     staging_id: str = Form(""),
     burn_captions: str = Form("1"),
+    add_music: str = Form("1"),
     notify_email: str = Form(""),
     clips: list[UploadFile] = File(default=[]),
     admin: dict = Depends(require_admin),
@@ -3930,6 +3931,7 @@ async def start_storyboard_assemble(
         "pack_dir": pack_dir_s,
         "beats": beats,
         "burn_captions": (burn_captions or "1").strip() not in ("0", "false", "no"),
+        "add_music": (add_music or "1").strip() not in ("0", "false", "no"),
         "staging_id": sid,
         "credits_charged": 0,
         "is_admin": True,
@@ -4014,6 +4016,7 @@ def _storyboard_animate_credit_cost(target_minutes: float, *, byok: bool = False
 async def start_storyboard_animate(
     job_id: str,
     burn_captions: str = Form("1"),
+    add_music: str = Form("1"),
     notify_email: str = Form(""),
     admin: dict = Depends(require_admin),
 ):
@@ -4064,6 +4067,7 @@ async def start_storyboard_animate(
         "pack_dir": pack_dir_s,
         "beats": beats,
         "burn_captions": (burn_captions or "1").strip() not in ("0", "false", "no"),
+        "add_music": (add_music or "1").strip() not in ("0", "false", "no"),
         "credits_charged": credit_cost,
         "is_admin": True,
         "notify_email": (notify_email or "").strip() or (admin.get("email") or ""),

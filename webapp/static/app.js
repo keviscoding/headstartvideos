@@ -5609,6 +5609,11 @@ async function matchStoryboardAssemble() {
     }
 }
 
+function _sbAddMusicEnabled() {
+    const el = document.getElementById('sb-add-music');
+    return !el || !!el.checked;
+}
+
 async function runStoryboardAssemble() {
     if (!isAdminUser()) { alert('Storyboard Pack is admin-only while we test it.'); return; }
     if (!_sbJobId) { alert('Generate a pack first.'); return; }
@@ -5624,6 +5629,7 @@ async function runStoryboardAssemble() {
         const fd = new FormData();
         if (_sbAssembleStagingId) fd.append('staging_id', _sbAssembleStagingId);
         fd.append('burn_captions', '1');
+        fd.append('add_music', _sbAddMusicEnabled() ? '1' : '0');
         const notify = (document.getElementById('sb-assemble-notify')?.value || '').trim();
         if (notify) fd.append('notify_email', notify);
         if (!_sbAssembleStagingId) {
@@ -5778,6 +5784,7 @@ async function runStoryboardAnimate() {
     try {
         const fd = new FormData();
         fd.append('burn_captions', '1');
+        fd.append('add_music', _sbAddMusicEnabled() ? '1' : '0');
         const notify = (document.getElementById('sb-assemble-notify')?.value || '').trim();
         if (notify) fd.append('notify_email', notify);
         const res = await fetch(`/api/storyboard/jobs/${_sbJobId}/animate`, { method: 'POST', body: fd });

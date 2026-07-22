@@ -801,6 +801,7 @@ def _run_storyboard_assemble_job(
     beats = req_data.get("beats") if isinstance(req_data.get("beats"), list) else []
     title = (req_data.get("title") or "storyboard").strip()
     burn_captions = bool(req_data.get("burn_captions", True))
+    add_music = bool(req_data.get("add_music", True))
     parent_job_id = (req_data.get("parent_job_id") or "").strip()
 
     _progress_persist_at = [0.0]
@@ -887,6 +888,7 @@ def _run_storyboard_assemble_job(
             title=title,
             beats=beat_rows,
             music_seed=job_id,
+            add_music=add_music,
         )
 
         video_local = result["output_path"]
@@ -1061,6 +1063,7 @@ def _run_storyboard_animate_job(
     beats = req_data.get("beats") if isinstance(req_data.get("beats"), list) else []
     title = (req_data.get("title") or "storyboard").strip()
     burn_captions = bool(req_data.get("burn_captions", True))
+    add_music = bool(req_data.get("add_music", True))
     parent_job_id = (req_data.get("parent_job_id") or "").strip()
     notify_email = (req_data.get("notify_email") or "").strip()
     credits_charged = 0
@@ -1220,6 +1223,7 @@ def _run_storyboard_animate_job(
             title=title,
             beats=beat_rows,
             music_seed=job_id,
+            add_music=add_music,
         )
 
         video_local = result["output_path"]
