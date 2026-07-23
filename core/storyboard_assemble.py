@@ -30,6 +30,53 @@ _AHASH_SIZE = 8
 _AHASH_MAX_DISTANCE = 18  # of 64 bits — loose enough for I2V drift
 
 
+def beat_duration_sec(beat: dict[str, Any] | None, *, default: float = 8.0) -> float:
+    if not isinstance(beat, dict):
+        return float(default)
+    try:
+        return max(1.0, float(beat.get("target_sec") or default))
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def beats_duration_minutes(beats: list[dict[str, Any]] | None) -> float:
+    rows = [b for b in (beats or []) if isinstance(b, dict)]
+    if not rows:
+        return 0.0
+    return sum(beat_duration_sec(b) for b in rows) / 60.0
+
+
+def clip_beats_to_max_minutes(
+    beats: list[dict[str, Any]] | None,
+    max_minutes: float,
+) -> list[dict[str, Any]]:
+    """
+    Keep a contiguous prefix of beats whose target_sec sum stays within max_minutes.
+    Used to enforce on-site cook caps while allowing longer stills packs.
+    """
+    rows = sorted(
+        [b for b in (beats or []) if isinstance(b, dict)],
+        key=lambda b: int(b.get("index") or 0),
+    )
+    if not rows:
+        return []
+    try:
+        budget = max(30.0, float(max_minutes) * 60.0)  # at least 30s
+    except (TypeError, ValueError):
+        budget = 8.0 * 60.0
+    out: list[dict[str, Any]] = []
+    used = 0.0
+    for b in rows:
+        sec = beat_duration_sec(b)
+        if out and (used + sec) > budget + 0.25:
+            break
+        out.append(b)
+        used += sec
+        if used >= budget:
+            break
+    return out or rows[:1]
+
+
 def _probe_duration_sec(path: str) -> float:
     try:
         from core.assembler import _probe_duration_sec as _p

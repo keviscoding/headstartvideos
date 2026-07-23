@@ -41,6 +41,10 @@ ATLAS_I2V_GENERATE_AUDIO = os.getenv("ATLAS_I2V_GENERATE_AUDIO", "1").strip().lo
     "1", "true", "yes", "on",
 )
 ATLAS_I2V_CONCURRENCY = max(1, int(os.getenv("ATLAS_I2V_CONCURRENCY", "5")))
+# On-site Seedance cook hard cap (pack/stills may be longer; cook first N minutes only).
+STORYBOARD_COOK_MAX_MINUTES = max(1.0, float(os.getenv("STORYBOARD_COOK_MAX_MINUTES", "8") or 8))
+# Pack stills slider ceiling (users can generate long boards; cook stays capped above).
+STORYBOARD_PACK_MAX_MINUTES = max(STORYBOARD_COOK_MAX_MINUTES, float(os.getenv("STORYBOARD_PACK_MAX_MINUTES", "30") or 30))
 # Credit charge for on-site animate — 0 while admin-testing; tune in pricing pass.
 STORYBOARD_ANIMATE_CREDITS_PER_MIN = float(os.getenv("STORYBOARD_ANIMATE_CREDITS_PER_MIN", "0") or 0)
 STORYBOARD_ANIMATE_CREDITS_MIN = max(0, int(os.getenv("STORYBOARD_ANIMATE_CREDITS_MIN", "0") or 0))

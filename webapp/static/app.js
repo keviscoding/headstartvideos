@@ -5093,6 +5093,37 @@ function _sbHasCookRange() {
     return _sbRangeFrom != null && _sbRangeTo != null;
 }
 
+function _sbBeatDurationSec(b) {
+    const n = Number(b?.target_sec);
+    return Number.isFinite(n) && n > 0 ? n : 8;
+}
+
+function _sbBeatsDurationMinutes(beats) {
+    const rows = Array.isArray(beats) ? beats : [];
+    if (!rows.length) return 0;
+    return rows.reduce((sum, b) => sum + _sbBeatDurationSec(b), 0) / 60;
+}
+
+/** On-site Seedance cook hard cap (pack/stills may be longer). */
+function _sbCookMaxMinutes() {
+    return 8;
+}
+
+function _sbClipBeatsToCookCap(beats, maxMinutes) {
+    const rows = [...(Array.isArray(beats) ? beats : [])].sort((a, b) => (a.index || 0) - (b.index || 0));
+    const budget = Math.max(30, (maxMinutes || 8) * 60);
+    const out = [];
+    let used = 0;
+    for (const b of rows) {
+        const sec = _sbBeatDurationSec(b);
+        if (out.length && used + sec > budget + 0.25) break;
+        out.push(b);
+        used += sec;
+        if (used >= budget) break;
+    }
+    return out.length ? out : rows.slice(0, 1);
+}
+
 /** Contiguous beat rows in the current cook range (or all beats). */
 function _sbCookBeats() {
     const beats = Array.isArray(_sbBeats) ? [..._sbBeats].sort((a, b) => (a.index || 0) - (b.index || 0)) : [];
@@ -5100,6 +5131,15 @@ function _sbCookBeats() {
     const lo = Math.min(_sbRangeFrom, _sbRangeTo);
     const hi = Math.max(_sbRangeFrom, _sbRangeTo);
     return beats.filter(b => (b.index || 0) >= lo && (b.index || 0) <= hi);
+}
+
+/** Scenes that will actually be sent to on-site cook (respects 8-min cap). */
+function _sbCookBeatsEffective() {
+    const selected = _sbCookBeats();
+    const cap = _sbCookMaxMinutes();
+    if (_sbHasCookRange()) return selected;
+    if (_sbBeatsDurationMinutes(selected) <= cap + 0.05) return selected;
+    return _sbClipBeatsToCookCap(selected, cap);
 }
 
 function _sbIsInCookRange(idx) {
@@ -5157,17 +5197,33 @@ function _sbSyncRangeBar() {
     }
     bar.classList.remove('hidden');
     const selected = _sbCookBeats();
-    const ready = selected.length && selected.every(_sbBeatHasStill);
+    const effective = _sbCookBeatsEffective();
+    const selectedMins = _sbBeatsDurationMinutes(selected);
+    const effMins = _sbBeatsDurationMinutes(effective);
+    const cap = _sbCookMaxMinutes();
+    const ready = effective.length && effective.every(_sbBeatHasStill);
+    const stretchTooLong = _sbHasCookRange() && selectedMins > cap + 0.05;
     if (_sbHasCookRange()) {
         const lo = Math.min(_sbRangeFrom, _sbRangeTo);
         const hi = Math.max(_sbRangeFrom, _sbRangeTo);
         if (label) {
-            label.textContent = `Scenes ${String(lo).padStart(3, '0')}–${String(hi).padStart(3, '0')} · ${selected.length} of ${beats.length}`;
+            label.textContent = stretchTooLong
+                ? `Scenes ${String(lo).padStart(3, '0')}–${String(hi).padStart(3, '0')} · ~${selectedMins.toFixed(1)} min (over ${cap} min cook cap — shorten stretch)`
+                : `Scenes ${String(lo).padStart(3, '0')}–${String(hi).padStart(3, '0')} · ${selected.length} scenes · ~${selectedMins.toFixed(1)} min`;
         }
         clearBtn?.classList.remove('hidden');
-        cookBtn?.classList.toggle('hidden', !ready);
+        cookBtn?.classList.toggle('hidden', !ready || stretchTooLong);
     } else {
-        if (label) label.textContent = `All ${beats.length} scenes · drag across the board to cook a shorter stretch`;
+        const packMins = _sbBeatsDurationMinutes(beats);
+        if (label) {
+            if (packMins > cap + 0.05 && effective.length) {
+                const lo = effective[0]?.index;
+                const hi = effective[effective.length - 1]?.index;
+                label.textContent = `Pack ~${packMins.toFixed(0)} min · on-site cook first ~${effMins.toFixed(0)} min (scenes ${String(lo).padStart(3, '0')}–${String(hi).padStart(3, '0')})`;
+            } else {
+                label.textContent = `All ${beats.length} scenes · ~${packMins.toFixed(1)} min · drag to cook a shorter stretch`;
+            }
+        }
         clearBtn?.classList.add('hidden');
         cookBtn?.classList.add('hidden');
     }
@@ -5177,8 +5233,9 @@ function _sbSyncRangeBar() {
 function _sbBoardCookReady() {
     if (!_sbJobId) return false;
     if (!_sbHasCookRange() && !_sbZipReady && _sbPackStatus !== 'complete') return false;
-    const beats = _sbCookBeats();
+    const beats = _sbCookBeatsEffective();
     if (!beats.length) return false;
+    if (_sbHasCookRange() && _sbBeatsDurationMinutes(_sbCookBeats()) > _sbCookMaxMinutes() + 0.05) return false;
     return beats.every(_sbBeatHasStill);
 }
 
@@ -5187,7 +5244,12 @@ function _sbBoardCookBlockReason() {
     if (!_sbHasCookRange() && !_sbZipReady && _sbPackStatus !== 'complete') {
         return 'Wait until every scene still is ready before cooking — or drag a ready stretch.';
     }
-    const beats = _sbCookBeats();
+    const selected = _sbCookBeats();
+    const cap = _sbCookMaxMinutes();
+    if (_sbHasCookRange() && _sbBeatsDurationMinutes(selected) > cap + 0.05) {
+        return `On-site cook is limited to ${cap} minutes. Shorten your stretch.`;
+    }
+    const beats = _sbCookBeatsEffective();
     if (!beats.length) return 'Wait until your storyboard scenes are ready.';
     const missing = beats.filter(b => !_sbBeatHasStill(b)).map(b => String(b.index).padStart(3, '0'));
     if (missing.length) {
@@ -5871,16 +5933,17 @@ function _sbUpdateCookingBar(msg) {
 }
 
 function _sbCookTargetMinutes() {
-    const selected = _sbCookBeats();
-    const all = Array.isArray(_sbBeats) ? _sbBeats : [];
+    const effective = _sbCookBeatsEffective();
+    const cap = _sbCookMaxMinutes();
+    const mins = _sbBeatsDurationMinutes(effective);
+    if (mins > 0) return Math.min(cap, Math.max(0.5, Math.round(mins * 10) / 10));
     let fullMins = 8;
     try {
         const slider = document.getElementById('sb-minutes');
         if (slider) fullMins = Number(slider.value) || fullMins;
     } catch (_) {}
     if ((_sbPackMode || 'full').toLowerCase() === 'preview') fullMins = Math.min(fullMins, 1.2);
-    if (!_sbHasCookRange() || !all.length || !selected.length) return fullMins;
-    return Math.max(0.5, Math.round((fullMins * selected.length / all.length) * 10) / 10);
+    return Math.min(cap, fullMins);
 }
 
 async function _sbSyncAnimateUI() {
@@ -5889,22 +5952,30 @@ async function _sbSyncAnimateUI() {
     if (btn) btn.disabled = !_sbBoardCookReady();
     const mins = _sbCookTargetMinutes();
     const selected = _sbCookBeats();
-    const stretch = _sbHasCookRange()
-        ? `scenes ${String(Math.min(_sbRangeFrom, _sbRangeTo)).padStart(3, '0')}–${String(Math.max(_sbRangeFrom, _sbRangeTo)).padStart(3, '0')}`
-        : `${selected.length || 'all'} scenes`;
+    const effective = _sbCookBeatsEffective();
+    const cap = _sbCookMaxMinutes();
+    let stretch;
+    if (_sbHasCookRange()) {
+        stretch = `scenes ${String(Math.min(_sbRangeFrom, _sbRangeTo)).padStart(3, '0')}–${String(Math.max(_sbRangeFrom, _sbRangeTo)).padStart(3, '0')}`;
+    } else if (_sbBeatsDurationMinutes(selected) > cap + 0.05 && effective.length) {
+        stretch = `first ~${mins} min (scenes ${String(effective[0].index).padStart(3, '0')}–${String(effective[effective.length - 1].index).padStart(3, '0')})`;
+    } else {
+        stretch = `${effective.length || 'all'} scenes`;
+    }
     try {
         const res = await fetch(`/api/storyboard/animate-cost?minutes=${encodeURIComponent(mins)}`);
         const data = await res.json().catch(() => ({}));
         if (blurb && res.ok) {
             const c = Number(data.credits || 0);
+            const capNote = ` On-site cook max ${Number(data.cook_max_minutes || cap)} min.`;
             blurb.textContent = c > 0
-                ? `Cook ${stretch} into motion with captions. About ${c} credit${c === 1 ? '' : 's'} for ~${mins} min.`
-                : `Cook ${stretch} into motion, stitch them, and add captions — using your cast.`;
+                ? `Cook ${stretch} into motion with captions. About ${c} credit${c === 1 ? '' : 's'} for ~${mins} min.${capNote}`
+                : `Cook ${stretch} into motion, stitch them, and add captions — using your cast.${capNote}`;
         } else if (blurb) {
-            blurb.textContent = `Cook ${stretch} into motion, stitch them, and add captions — using your cast.`;
+            blurb.textContent = `Cook ${stretch} into motion, stitch them, and add captions — using your cast. On-site cook max ${cap} min.`;
         }
     } catch (_) {
-        if (blurb) blurb.textContent = `Cook ${stretch} into motion, stitch them, and add captions — using your cast.`;
+        if (blurb) blurb.textContent = `Cook ${stretch} into motion, stitch them, and add captions — using your cast. On-site cook max ${cap} min.`;
     }
 }
 

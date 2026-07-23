@@ -4061,13 +4061,39 @@ async def start_storyboard_animate(
     beats = _require_storyboard_stills_ready(
         job, beat_from=range_from, beat_to=range_to,
     )
-    # Full beat list (for credit scaling) — may include unfinished scenes
-    from core.storyboard_assemble import load_pack_beats as _load_beats
+    # Full beat list (for credit scaling / cook-cap messaging)
+    from core.storyboard_assemble import (
+        load_pack_beats as _load_beats,
+        beats_duration_minutes,
+        clip_beats_to_max_minutes,
+    )
     _pack = Path((result.get("pack_dir") or ""))
     all_beats = _load_beats(
         pack_dir=_pack if _pack.is_dir() else None,
         beats=result.get("beats") or [],
     ) or beats
+
+    cook_cap = float(getattr(config, "STORYBOARD_COOK_MAX_MINUTES", 8) or 8)
+    selected_mins = beats_duration_minutes(beats)
+    cook_clipped = False
+    if range_from is not None:
+        # Explicit stretch — must fit under the cook cap (clever multi-pass ok;
+        # we just won't run a single on-site cook past the cap).
+        if selected_mins > cook_cap + 0.05:
+            raise HTTPException(
+                400,
+                f"On-site cook is limited to {cook_cap:.0f} minutes. "
+                f"That stretch is ~{selected_mins:.1f} min — select fewer scenes.",
+            )
+    elif selected_mins > cook_cap + 0.05:
+        # Full-board cook on a long pack → only the opening window
+        beats = clip_beats_to_max_minutes(beats, cook_cap)
+        cook_clipped = True
+        if not beats:
+            raise HTTPException(400, "No scenes available within the cook limit.")
+        range_from = int(beats[0].get("index") or 0)
+        range_to = int(beats[-1].get("index") or 0)
+        selected_mins = beats_duration_minutes(beats)
 
     pack_dir = Path(result.get("pack_dir") or "")
     pack_dir_s = str(pack_dir) if pack_dir.is_dir() else ""
@@ -4088,8 +4114,11 @@ async def start_storyboard_animate(
     pack_mode = str(result.get("pack_mode") or (job.get("request") or {}).get("pack_mode") or "full").lower()
     if pack_mode == "preview":
         target_minutes = min(target_minutes, 1.2)
-    if range_from is not None and all_beats and len(beats) < len(all_beats):
-        target_minutes = max(0.5, round(target_minutes * len(beats) / max(1, len(all_beats)), 1))
+    # Bill / ETA from the scenes we will actually cook (never above cook cap)
+    target_minutes = min(cook_cap, max(0.5, round(selected_mins or target_minutes, 1)))
+    if range_from is not None and all_beats and len(beats) < len(all_beats) and not cook_clipped:
+        # Manual stretch shorter than pack — keep proportional estimate already in selected_mins
+        target_minutes = min(cook_cap, max(0.5, round(selected_mins, 1)))
 
     byok = False
     try:
@@ -4121,11 +4150,15 @@ async def start_storyboard_animate(
         "is_admin": True,
         "notify_email": (notify_email or "").strip() or (admin.get("email") or ""),
         "target_minutes": target_minutes,
+        "cook_max_minutes": cook_cap,
+        "cook_clipped": cook_clipped,
     }
     try:
         stretch = ""
         if range_from is not None and range_to is not None:
             stretch = f" · {min(range_from, range_to):03d}–{max(range_from, range_to):03d}"
+            if cook_clipped:
+                stretch += f" · first {cook_cap:.0f} min"
         create_cook_job(
             job_id=animate_id,
             user_id=admin["id"],
@@ -4146,9 +4179,17 @@ async def start_storyboard_animate(
         print(f"[sb-animate] create_cook_job failed: {e}")
         raise HTTPException(500, "Could not queue on-site generate.")
 
+    first_msg = "Queued — cooking soon…"
+    if cook_clipped:
+        lo = min(range_from, range_to) if range_from is not None else 0
+        hi = max(range_from, range_to) if range_to is not None else 0
+        first_msg = (
+            f"Queued — cooking first ~{target_minutes:.0f} min "
+            f"(scenes {lo:03d}–{hi:03d}; on-site cook capped at {cook_cap:.0f} min)…"
+        )
     ajob = {
         "status": "queued",
-        "progress": [{"time": time.time(), "message": "Queued — cooking soon…", "phase": "queued"}],
+        "progress": [{"time": time.time(), "message": first_msg, "phase": "queued"}],
         "result": None,
         "request": req_payload,
         "user_id": admin["id"],
@@ -4185,6 +4226,8 @@ async def start_storyboard_animate(
         "parent_job_id": job_id,
         "beat_count": len(beats),
         "credits": credit_cost,
+        "cook_clipped": cook_clipped,
+        "target_minutes": target_minutes,
     })
     return {
         "job_id": animate_id,
@@ -4192,6 +4235,11 @@ async def start_storyboard_animate(
         "status": "queued",
         "credits_charged": credit_cost,
         "beat_count": len(beats),
+        "beat_from": range_from,
+        "beat_to": range_to,
+        "target_minutes": target_minutes,
+        "cook_max_minutes": cook_cap,
+        "cook_clipped": cook_clipped,
     }
 
 
@@ -4207,8 +4255,15 @@ async def storyboard_animate_cost(
         byok = bool(get_user_atlas_key(int(admin["id"])))
     except Exception:
         byok = False
-    cost = _storyboard_animate_credit_cost(float(minutes or 8), byok=byok)
-    return {"credits": cost, "byok": byok, "minutes": float(minutes or 8)}
+    cook_cap = float(getattr(config, "STORYBOARD_COOK_MAX_MINUTES", 8) or 8)
+    mins = min(cook_cap, max(0.5, float(minutes or 8)))
+    cost = _storyboard_animate_credit_cost(mins, byok=byok)
+    return {
+        "credits": cost,
+        "byok": byok,
+        "minutes": mins,
+        "cook_max_minutes": cook_cap,
+    }
 
 @app.post("/api/internal/niche-finder/cron")
 def niche_finder_cron(

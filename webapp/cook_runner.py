@@ -1138,7 +1138,21 @@ def _run_storyboard_animate_job(
         total = len(beat_rows)
         on_progress(f"Cooking scenes… 0/{total}")
 
-        done_lock = __import__("threading").Lock()
+        # Keep heartbeat alive during long Seedance waits (stale reclaim is ~3 min)
+        import threading
+        _hb_stop = threading.Event()
+
+        def _hb_loop():
+            while not _hb_stop.wait(40.0):
+                try:
+                    update_cook_job(job_id, heartbeat=True)
+                except Exception:
+                    pass
+
+        _hb_thread = threading.Thread(target=_hb_loop, name=f"sb-hb-{job_id[:8]}", daemon=True)
+        _hb_thread.start()
+
+        done_lock = threading.Lock()
         done_count = [0]
         errors: list[str] = []
         matched: list[dict[str, Any]] = []
@@ -1196,21 +1210,24 @@ def _run_storyboard_animate_job(
                 "dialogue": beat.get("dialogue") or "",
             }
 
-        with atlas_cm:
-            with ThreadPoolExecutor(max_workers=concurrency) as pool:
-                futs = {pool.submit(_one, b): b for b in beat_rows}
-                for fut in as_completed(futs):
-                    if job.get("status") == "cancelled" or (cancel_check and cancel_check()):
-                        raise RuntimeError("Cancelled by user")
-                    beat = futs[fut]
-                    try:
-                        row = fut.result()
-                        if row:
-                            matched.append(row)
-                    except Exception as e:
-                        idx = int(beat.get("index") or 0)
-                        errors.append(f"{idx:03d}: {e}")
-                        print(f"[sb-animate] scene {idx} failed: {e}")
+        try:
+            with atlas_cm:
+                with ThreadPoolExecutor(max_workers=concurrency) as pool:
+                    futs = {pool.submit(_one, b): b for b in beat_rows}
+                    for fut in as_completed(futs):
+                        if job.get("status") == "cancelled" or (cancel_check and cancel_check()):
+                            raise RuntimeError("Cancelled by user")
+                        beat = futs[fut]
+                        try:
+                            row = fut.result()
+                            if row:
+                                matched.append(row)
+                        except Exception as e:
+                            idx = int(beat.get("index") or 0)
+                            errors.append(f"{idx:03d}: {e}")
+                            print(f"[sb-animate] scene {idx} failed: {e}")
+        finally:
+            _hb_stop.set()
 
         if not matched:
             raise RuntimeError(
