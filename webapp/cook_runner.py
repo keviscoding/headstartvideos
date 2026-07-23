@@ -1133,6 +1133,8 @@ def _run_storyboard_animate_job(
         still_cache.mkdir(exist_ok=True)
 
         concurrency = max(1, int(getattr(config, "ATLAS_I2V_CONCURRENCY", 5) or 5))
+        # Soft cap — too many parallel Seedance polls overload Atlas and flake out
+        concurrency = min(concurrency, 4)
         total = len(beat_rows)
         on_progress(f"Cooking scenes… 0/{total}")
 
@@ -1169,14 +1171,20 @@ def _run_storyboard_animate_job(
                 image_in = still
             dur = int(round(float(beat.get("target_sec") or 5)))
             prompt = _beat_i2v_prompt(beat)
+            # Seedance + audio often needs 3–8+ minutes; poll flakes are retried inside
             ok = generate_video_file(
                 prompt,
                 image_in,
                 out_clip,
                 duration=dur,
+                timeout_sec=900,
+                max_attempts=3,
             )
             if not ok or not out_clip.is_file():
-                raise RuntimeError(f"Scene {idx:03d} motion failed")
+                raise RuntimeError(
+                    f"Scene {idx:03d} motion failed "
+                    f"(Seedance timed out or Atlas was busy — try again)"
+                )
             with done_lock:
                 done_count[0] += 1
                 on_progress(f"Cooking scenes… {done_count[0]}/{total}")

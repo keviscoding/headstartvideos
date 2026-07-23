@@ -311,6 +311,21 @@ def _image_payload_for_atlas(image: str | Path) -> str:
     return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
 
 
+def _is_transient_http_err(exc: BaseException) -> bool:
+    if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)):
+        return True
+    name = type(exc).__name__.lower()
+    msg = str(exc).lower()
+    return (
+        "timed out" in msg
+        or "timeout" in msg
+        or "temporarily" in msg
+        or "connection reset" in msg
+        or "connecterror" in name
+        or "readtimeout" in name
+    )
+
+
 def generate_video_file(
     prompt: str,
     image: str | Path,
@@ -324,14 +339,20 @@ def generate_video_file(
     camera_fixed: bool = False,
     seed: int = -1,
     last_image: str | Path | None = None,
-    timeout_sec: float = 360,
+    timeout_sec: float = 720,
+    max_attempts: int = 3,
 ) -> bool:
     """
     Image-to-video via Atlas generateVideo (Seedance etc.).
     Returns True on success; writes MP4 to output_path.
+
+    Seedance often stays "processing" for minutes; Atlas poll GETs also
+    flake with read timeouts. We retry transient network errors and keep
+    polling the same prediction instead of aborting the scene.
     """
     key = _atlas_key()
     if not key:
+        print("[atlas] generateVideo: no ATLASCLOUD_KEY")
         return False
 
     model = (model or getattr(config, "ATLAS_I2V_MODEL", None) or
@@ -344,6 +365,8 @@ def generate_video_file(
     except (TypeError, ValueError):
         duration = 5
     duration = max(4, min(12, duration))
+    attempts = max(1, int(max_attempts or 1))
+    wall = max(120.0, float(timeout_sec or 720))
 
     clipped = (prompt or "").strip() or "Subtle natural motion, characters breathe and blink"
     try:
@@ -371,76 +394,156 @@ def generate_video_file(
 
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    t0 = time.time()
-    try:
-        with httpx.Client(timeout=60) as client:
-            resp = client.post(
-                f"{ATLAS_MEDIA_BASE}/model/generateVideo",
-                headers={
-                    "Authorization": f"Bearer {key}",
-                    "Content-Type": "application/json",
-                },
-                json=body,
-            )
-            data = resp.json() if resp.content else {}
-            if resp.status_code >= 400:
-                print(f"[atlas] generateVideo HTTP {resp.status_code}: {str(data)[:300]}")
-                return False
-            pred_id = None
-            if isinstance(data.get("data"), dict):
-                pred_id = data["data"].get("id")
-            pred_id = pred_id or data.get("id") or data.get("prediction_id")
-            if not pred_id:
-                print(f"[atlas] generateVideo no id: {str(data)[:240]}")
-                return False
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+    # Generous read timeout — Atlas occasionally stalls mid-response under load
+    client_timeout = httpx.Timeout(connect=30.0, read=120.0, write=120.0, pool=30.0)
+    last_err = ""
 
-            sleep_s = 2.0
-            while time.time() - t0 < timeout_sec:
-                time.sleep(sleep_s)
-                sleep_s = min(5.0, sleep_s + 0.25)
-                poll = client.get(
-                    f"{ATLAS_MEDIA_BASE}/model/prediction/{pred_id}",
-                    headers={"Authorization": f"Bearer {key}"},
-                    timeout=45,
-                )
-                inner = poll.json().get("data", poll.json())
-                status = str(inner.get("status", "")).lower()
-                if status in ("succeeded", "completed", "done"):
-                    outputs = inner.get("outputs") or inner.get("output") or []
-                    if isinstance(outputs, str):
-                        vid_url = outputs
-                    elif isinstance(outputs, list) and outputs:
-                        first = outputs[0]
-                        vid_url = first if isinstance(first, str) else (
-                            (first or {}).get("url") or (first or {}).get("video") or ""
+    for attempt in range(1, attempts + 1):
+        t0 = time.time()
+        pred_id = None
+        try:
+            with httpx.Client(timeout=client_timeout) as client:
+                # Create prediction (retry soft failures inside this attempt)
+                for create_try in range(1, 4):
+                    try:
+                        resp = client.post(
+                            f"{ATLAS_MEDIA_BASE}/model/generateVideo",
+                            headers=headers,
+                            json=body,
                         )
-                    elif isinstance(outputs, dict):
-                        vid_url = outputs.get("url") or outputs.get("video") or ""
-                    else:
-                        print(f"[atlas] generateVideo no outputs: {str(inner)[:240]}")
-                        return False
-                    if not vid_url:
-                        return False
-                    vid = client.get(vid_url, follow_redirects=True, timeout=120)
-                    vid.raise_for_status()
-                    with open(out, "wb") as f:
-                        f.write(vid.content)
-                    if out.stat().st_size < 1000:
-                        print("[atlas] generateVideo empty download")
-                        return False
-                    print(
-                        f"[atlas] video ok model={model} {duration}s "
-                        f"{time.time() - t0:.1f}s → {out.name}"
-                    )
-                    return True
-                if status in ("failed", "error", "cancelled"):
-                    err = inner.get("error") or inner.get("message") or inner
-                    print(f"[atlas] generateVideo failed: {err}")
+                    except Exception as e:
+                        last_err = f"create timed out/network: {e}"
+                        print(f"[atlas] generateVideo create try {create_try}: {e}")
+                        if create_try < 3 and _is_transient_http_err(e):
+                            time.sleep(2.0 * create_try)
+                            continue
+                        raise
+                    data = resp.json() if resp.content else {}
+                    if resp.status_code in (429, 500, 502, 503, 504):
+                        last_err = f"create HTTP {resp.status_code}: {str(data)[:200]}"
+                        print(f"[atlas] generateVideo {last_err}")
+                        if create_try < 3:
+                            time.sleep(3.0 * create_try)
+                            continue
+                        break
+                    if resp.status_code >= 400:
+                        last_err = f"create HTTP {resp.status_code}: {str(data)[:300]}"
+                        print(f"[atlas] generateVideo {last_err}")
+                        break
+                    if isinstance(data.get("data"), dict):
+                        pred_id = data["data"].get("id")
+                    pred_id = pred_id or data.get("id") or data.get("prediction_id")
+                    if not pred_id:
+                        last_err = f"no prediction id: {str(data)[:240]}"
+                        print(f"[atlas] generateVideo {last_err}")
+                    break
+
+                if not pred_id:
+                    if attempt < attempts:
+                        time.sleep(2.0 * attempt)
+                        continue
                     return False
-    except Exception as e:
-        print(f"[atlas] generateVideo error: {e}")
+
+                sleep_s = 2.0
+                while time.time() - t0 < wall:
+                    time.sleep(sleep_s)
+                    sleep_s = min(6.0, sleep_s + 0.35)
+                    try:
+                        poll = client.get(
+                            f"{ATLAS_MEDIA_BASE}/model/prediction/{pred_id}",
+                            headers={"Authorization": f"Bearer {key}"},
+                            timeout=httpx.Timeout(connect=20.0, read=90.0, write=30.0, pool=20.0),
+                        )
+                    except Exception as e:
+                        # Transient poll flake — keep waiting on the same prediction
+                        last_err = f"poll: {e}"
+                        print(f"[atlas] generateVideo poll retry ({pred_id[:8]}…): {e}")
+                        if _is_transient_http_err(e):
+                            sleep_s = min(8.0, sleep_s + 1.0)
+                            continue
+                        raise
+                    try:
+                        inner = poll.json().get("data", poll.json())
+                    except Exception as e:
+                        last_err = f"poll bad json: {e}"
+                        print(f"[atlas] generateVideo {last_err}")
+                        continue
+                    if not isinstance(inner, dict):
+                        continue
+                    status = str(inner.get("status", "")).lower()
+                    if status in ("succeeded", "completed", "done"):
+                        outputs = inner.get("outputs") or inner.get("output") or []
+                        if isinstance(outputs, str):
+                            vid_url = outputs
+                        elif isinstance(outputs, list) and outputs:
+                            first = outputs[0]
+                            vid_url = first if isinstance(first, str) else (
+                                (first or {}).get("url") or (first or {}).get("video") or ""
+                            )
+                        elif isinstance(outputs, dict):
+                            vid_url = outputs.get("url") or outputs.get("video") or ""
+                        else:
+                            last_err = f"no outputs: {str(inner)[:240]}"
+                            print(f"[atlas] generateVideo {last_err}")
+                            break
+                        if not vid_url:
+                            last_err = "empty video url"
+                            break
+                        try:
+                            vid = client.get(
+                                vid_url,
+                                follow_redirects=True,
+                                timeout=httpx.Timeout(connect=30.0, read=180.0, write=30.0, pool=30.0),
+                            )
+                            vid.raise_for_status()
+                        except Exception as e:
+                            last_err = f"download: {e}"
+                            print(f"[atlas] generateVideo download retry: {e}")
+                            if _is_transient_http_err(e):
+                                continue
+                            break
+                        with open(out, "wb") as f:
+                            f.write(vid.content)
+                        if out.stat().st_size < 1000:
+                            last_err = "empty download"
+                            print("[atlas] generateVideo empty download")
+                            break
+                        print(
+                            f"[atlas] video ok model={model} {duration}s "
+                            f"{time.time() - t0:.1f}s attempt={attempt} → {out.name}"
+                        )
+                        return True
+                    if status in ("failed", "error", "cancelled"):
+                        err = inner.get("error") or inner.get("message") or inner
+                        last_err = f"provider {status}: {err}"
+                        print(f"[atlas] generateVideo failed: {err}")
+                        break
+                else:
+                    last_err = f"timeout after {wall:.0f}s (pred={pred_id})"
+                    print(f"[atlas] generateVideo {last_err}")
+        except Exception as e:
+            last_err = str(e)
+            print(f"[atlas] generateVideo error attempt {attempt}/{attempts}: {e}")
+            if attempt < attempts and _is_transient_http_err(e):
+                time.sleep(2.0 * attempt)
+                continue
+            if attempt < attempts:
+                time.sleep(2.0 * attempt)
+                continue
+            return False
+
+        if attempt < attempts:
+            print(f"[atlas] generateVideo retrying scene ({attempt}/{attempts}): {last_err}")
+            time.sleep(2.0 * attempt)
+            continue
+        print(f"[atlas] generateVideo giving up: {last_err}")
         return False
-    print(f"[atlas] generateVideo timeout after {timeout_sec}s")
+
+    print(f"[atlas] generateVideo giving up: {last_err}")
     return False
 
 
