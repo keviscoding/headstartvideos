@@ -24,8 +24,15 @@ TRACKS_DIR = MUSIC_DIR / "tracks"
 
 MOODS = ("warm", "playful", "tension", "sad", "resolve")
 
-# Soft bed relative to dialogue (matches explainer BGM ballpark)
-_BGM_VOLUME = float(os.getenv("STORYBOARD_BGM_VOLUME", "0.10") or 0.10)
+# Soft bed under dialogue. Catalog masters vary wildly, so we loudnorm every
+# track to a quiet target LUFS (the bed level itself), optional fine-tune gain,
+# then hard-limit peaks so nothing can blast over dialogue.
+# Target ~-34 LUFS ≈ the quieter catalog tracks that already sounded right.
+_BGM_TARGET_LUFS = float(os.getenv("STORYBOARD_BGM_LUFS", "-34") or -34)
+# Fine-tune after loudnorm (1.0 = use LUFS target as-is). Not the old 0.10 gain.
+_BGM_VOLUME = float(os.getenv("STORYBOARD_BGM_VOLUME", "1.0") or 1.0)
+# Absolute sample peak ceiling on the bed (0.18 ≈ -15 dBFS)
+_BGM_PEAK_LIMIT = float(os.getenv("STORYBOARD_BGM_PEAK_LIMIT", "0.18") or 0.18)
 _CROSSFADE_SEC = float(os.getenv("STORYBOARD_BGM_CROSSFADE", "1.4") or 1.4)
 # Ignore brief mood digressions (stay on main bed) unless this long
 _MIN_ALT_SEC = float(os.getenv("STORYBOARD_BGM_MIN_ALT_SEC", "8.0") or 8.0)
@@ -252,6 +259,14 @@ def plan_mood_segments(
     return segments
 
 
+def _loudnorm_af(*, target_i: float | None = None) -> str:
+    """Single-pass loudnorm so hot/quiet catalog masters land at the same level."""
+    i = _BGM_TARGET_LUFS if target_i is None else float(target_i)
+    # Clamp to a quiet-bed range; never allow a "hot" target that defeats ducking
+    i = max(-36.0, min(-22.0, i))
+    return f"loudnorm=I={i:.1f}:TP=-3.0:LRA=7:linear=true"
+
+
 def _render_looped_segment(
     music_path: Path,
     duration: float,
@@ -259,6 +274,7 @@ def _render_looped_segment(
     *,
     timeout: int = 120,
 ) -> bool:
+    """Loop/trim one catalog track and loudnorm it so mood crossfades stay even."""
     out_wav.parent.mkdir(parents=True, exist_ok=True)
     dur = max(0.2, float(duration))
     cmd = [
@@ -266,6 +282,7 @@ def _render_looped_segment(
         "-stream_loop", "-1",
         "-i", str(music_path),
         "-t", f"{dur:.3f}",
+        "-af", _loudnorm_af(),
         "-ac", "2", "-ar", "44100",
         "-c:a", "pcm_s16le",
         str(out_wav),
@@ -427,6 +444,9 @@ def mix_bgm_under_dialogue(
 ) -> bool:
     """
     Loop/trim music to video length and mix under existing dialogue audio.
+
+    Catalog tracks are not level-matched. We loudnorm the bed to a quiet
+    target, apply a soft gain, then hard-limit peaks so no master can blast.
     Returns True on success.
     """
     vin = Path(video_in)
@@ -435,12 +455,20 @@ def mix_bgm_under_dialogue(
     if not vin.is_file() or not music.is_file():
         return False
     vol = _BGM_VOLUME if volume is None else float(volume)
-    vol = max(0.02, min(0.35, vol))
+    # Fine-tune only — loudness is owned by LUFS target + peak ceiling
+    vol = max(0.5, min(1.25, vol))
+    peak = max(0.08, min(0.25, _BGM_PEAK_LIMIT))
+    # ffmpeg alimiter rejects limit < 0.0625
+    peak = max(0.0625, peak)
     vout.parent.mkdir(parents=True, exist_ok=True)
 
     # Dialogue = 0:a, music = 1:a (looped via -stream_loop). Mix under dialogue.
+    # loudnorm equalizes hot vs quiet masters to the soft bed LUFS;
+    # alimiter is the never-too-loud ceiling.
     filter_complex = (
-        f"[1:a]volume={vol:.3f},aformat=sample_fmts=fltp:channel_layouts=stereo[bg];"
+        f"[1:a]{_loudnorm_af()},volume={vol:.3f},"
+        f"alimiter=limit={peak:.3f}:level=disabled,"
+        f"aformat=sample_fmts=fltp:channel_layouts=stereo[bg];"
         f"[0:a]aformat=sample_fmts=fltp:channel_layouts=stereo[dlg];"
         f"[dlg][bg]amix=inputs=2:duration=first:dropout_transition=2[aout]"
     )

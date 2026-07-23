@@ -5060,6 +5060,10 @@ let _sbRangeFrom = null;
 let _sbRangeTo = null;
 let _sbDragSelecting = false;
 let _sbDragAnchor = null;
+let _sbDragPointerId = null;
+let _sbDragStartX = 0;
+let _sbDragStartY = 0;
+let _sbDragShift = false;
 let _sbVisualStyle = 'pixar_lite';
 let _sbTemplate = '';
 let _sbStyleOptions = [
@@ -6033,14 +6037,149 @@ function _sbPaintBoardSelection() {
     _sbSyncBoardCookControls();
 }
 
+function _sbBoardCardAtPoint(clientX, clientY) {
+    const board = document.getElementById('sb-board');
+    if (!board) return null;
+    const el = document.elementFromPoint(clientX, clientY);
+    const card = el?.closest?.('.sb-board-card');
+    if (!card || !board.contains(card)) return null;
+    return card;
+}
+
+function _sbUpdateBoardCardContent(card, beat) {
+    if (!card || !beat) return;
+    const chars = (beat.characters || '').trim();
+    const metaName = chars ? chars.split(',')[0].trim() : 'scene';
+    const meta = card.querySelector('.sb-board-meta');
+    if (meta) {
+        meta.innerHTML = `<span>${String(beat.index).padStart(3, '0')}</span><span>${esc(metaName)}</span>`;
+    }
+    const url = beat.image_url || '';
+    let img = card.querySelector('img');
+    const ph = card.querySelector('.sb-board-ph');
+    if (url) {
+        if (!img) {
+            ph?.remove();
+            img = document.createElement('img');
+            img.alt = `Scene ${beat.index}`;
+            img.draggable = false;
+            card.insertBefore(img, card.firstChild);
+        }
+        if (img.dataset.src !== url) {
+            img.dataset.src = url;
+            img.src = url;
+        }
+    } else if (!ph && !img) {
+        const holder = document.createElement('div');
+        holder.className = 'sb-board-ph';
+        holder.innerHTML = '<div class="cr-spinner" style="width:20px;height:20px;border-width:2px;margin:auto;"></div>';
+        card.insertBefore(holder, card.firstChild);
+    }
+}
+
+function _sbBindBoardGestures(board) {
+    if (!board || board._sbRangeBound) return;
+    board._sbRangeBound = true;
+
+    const onMove = (e) => {
+        if (!_sbDragSelecting || _sbDragAnchor == null) return;
+        if (_sbDragPointerId != null && e.pointerId !== _sbDragPointerId) return;
+        const dx = e.clientX - _sbDragStartX;
+        const dy = e.clientY - _sbDragStartY;
+        const card = _sbBoardCardAtPoint(e.clientX, e.clientY);
+        const idx = card ? +card.dataset.idx : NaN;
+        const moved = (dx * dx + dy * dy) >= 36;
+        if (!board._sbDidDragRange) {
+            if (!moved && !(Number.isFinite(idx) && idx !== _sbDragAnchor)) return;
+            board._sbDidDragRange = true;
+            board.classList.add('is-drag-selecting');
+        }
+        if (!Number.isFinite(idx)) return;
+        _sbSetCookRange(_sbDragAnchor, idx);
+        _sbPaintBoardSelection();
+    };
+
+    const onEnd = (e) => {
+        if (!_sbDragSelecting) return;
+        if (_sbDragPointerId != null && e.pointerId !== _sbDragPointerId) return;
+        const wasDrag = !!board._sbDidDragRange;
+        const anchor = _sbDragAnchor;
+        const shift = _sbDragShift;
+        _sbDragSelecting = false;
+        _sbDragAnchor = null;
+        _sbDragPointerId = null;
+        _sbDragShift = false;
+        board.classList.remove('is-drag-selecting');
+        document.removeEventListener('pointermove', onMove, true);
+        document.removeEventListener('pointerup', onEnd, true);
+        document.removeEventListener('pointercancel', onEnd, true);
+
+        if (wasDrag) {
+            board._sbDidDragRange = false;
+            _sbPaintBoardSelection();
+            return;
+        }
+        // Tap — open recreate panel (click is unreliable after pointer gestures)
+        if (anchor == null || !Number.isFinite(anchor)) return;
+        if (shift && _sbSelectedBeatIndex != null && _sbSelectedBeatIndex !== anchor) {
+            _sbSetCookRange(_sbSelectedBeatIndex, anchor);
+            _sbPaintBoardSelection();
+            return;
+        }
+        _sbSelectedBeatIndex = anchor;
+        const beat = (Array.isArray(_sbBeats) ? _sbBeats : []).find(x => x.index === anchor);
+        showBeatDetail(beat);
+        _sbPaintBoardSelection();
+    };
+
+    board._sbOnPointerMove = onMove;
+    board._sbOnPointerEnd = onEnd;
+}
+
+function _sbAttachCardPointerDown(board, card) {
+    if (!card || card._sbPointerBound) return;
+    card._sbPointerBound = true;
+    card.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        // Kill native image-drag / text-select so board gestures work
+        e.preventDefault();
+        _sbDragSelecting = true;
+        board._sbDidDragRange = false;
+        _sbDragAnchor = +card.dataset.idx;
+        _sbDragPointerId = e.pointerId;
+        _sbDragStartX = e.clientX;
+        _sbDragStartY = e.clientY;
+        _sbDragShift = !!e.shiftKey;
+        document.addEventListener('pointermove', board._sbOnPointerMove, true);
+        document.addEventListener('pointerup', board._sbOnPointerEnd, true);
+        document.addEventListener('pointercancel', board._sbOnPointerEnd, true);
+    });
+}
+
 function renderStoryboardBoard(beats) {
     const board = document.getElementById('sb-board');
     if (!board) return;
     const list = Array.isArray(beats) ? [...beats].sort((a, b) => (a.index || 0) - (b.index || 0)) : [];
     _sbBeats = list;
+    _sbBindBoardGestures(board);
+
+    const existing = [...board.querySelectorAll('.sb-board-card')];
+    const sameCards = existing.length === list.length
+        && list.every((b, i) => existing[i] && +existing[i].dataset.idx === b.index);
+
+    // Never wipe the DOM mid drag-select — only refresh stills in place
+    if (_sbDragSelecting || sameCards) {
+        list.forEach((b) => {
+            const card = board.querySelector(`.sb-board-card[data-idx="${b.index}"]`);
+            if (card) _sbUpdateBoardCardContent(card, b);
+        });
+        _sbPaintBoardSelection();
+        return;
+    }
+
     board.innerHTML = list.map(b => {
         const img = b.image_url
-            ? `<img src="${esc(b.image_url)}" alt="Scene ${b.index}">`
+            ? `<img src="${esc(b.image_url)}" data-src="${esc(b.image_url)}" alt="Scene ${b.index}" draggable="false">`
             : `<div class="sb-board-ph"><div class="cr-spinner" style="width:20px;height:20px;border-width:2px;margin:auto;"></div></div>`;
         const sel = _sbSelectedBeatIndex === b.index ? ' is-selected' : '';
         const inRange = _sbIsInCookRange(b.index) ? ' is-in-range' : '';
@@ -6054,60 +6193,9 @@ function renderStoryboardBoard(beats) {
         </button>`;
     }).join('');
 
-    board.querySelectorAll('.sb-board-card').forEach(card => {
-        card.addEventListener('click', (e) => {
-            // Ignore click after a drag-range gesture
-            if (board._sbDidDragRange) {
-                e.preventDefault();
-                e.stopPropagation();
-                board._sbDidDragRange = false;
-                return;
-            }
-            const idx = +card.dataset.idx;
-            if (e.shiftKey && _sbSelectedBeatIndex != null) {
-                _sbSetCookRange(_sbSelectedBeatIndex, idx);
-                _sbPaintBoardSelection();
-                return;
-            }
-            _sbSelectedBeatIndex = idx;
-            showBeatDetail(list.find(x => x.index === idx));
-            _sbPaintBoardSelection();
-        });
-        card.addEventListener('pointerdown', (e) => {
-            if (e.button !== 0) return;
-            _sbDragSelecting = true;
-            board._sbDidDragRange = false;
-            _sbDragAnchor = +card.dataset.idx;
-            board.classList.add('is-drag-selecting');
-            try { board.setPointerCapture(e.pointerId); } catch (_) {}
-        });
-    });
-    if (!board._sbRangeBound) {
-        board._sbRangeBound = true;
-        board.addEventListener('pointermove', (e) => {
-            if (!_sbDragSelecting || _sbDragAnchor == null) return;
-            const el = document.elementFromPoint(e.clientX, e.clientY);
-            const card = el?.closest?.('.sb-board-card');
-            if (!card || !board.contains(card)) return;
-            const idx = +card.dataset.idx;
-            if (!Number.isFinite(idx)) return;
-            if (idx === _sbDragAnchor && !board._sbDidDragRange) return;
-            board._sbDidDragRange = true;
-            _sbSetCookRange(_sbDragAnchor, idx);
-            _sbPaintBoardSelection();
-        });
-        const endDrag = (e) => {
-            if (!_sbDragSelecting) return;
-            _sbDragSelecting = false;
-            _sbDragAnchor = null;
-            board.classList.remove('is-drag-selecting');
-            try { if (e?.pointerId != null) board.releasePointerCapture(e.pointerId); } catch (_) {}
-            if (board._sbDidDragRange) _sbPaintBoardSelection();
-        };
-        board.addEventListener('pointerup', endDrag);
-        board.addEventListener('pointercancel', endDrag);
-    }
+    board.querySelectorAll('.sb-board-card').forEach(card => _sbAttachCardPointerDown(board, card));
     _sbSyncRangeBar();
+    _sbSyncBoardCookControls();
 }
 
 function showBeatDetail(beat) {
@@ -6239,10 +6327,17 @@ async function startStoryboardPack(packMode = 'full', opts = {}) {
     _sbZipReady = false;
     _sbRangeFrom = null;
     _sbRangeTo = null;
+    _sbDragSelecting = false;
+    _sbDragAnchor = null;
+    _sbDragPointerId = null;
     _sbSyncBoardCookControls();
     _sbSyncRangeBar();
     const board = document.getElementById('sb-board');
-    if (board) board.innerHTML = '';
+    if (board) {
+        board.innerHTML = '';
+        board.classList.remove('is-drag-selecting');
+        board._sbDidDragRange = false;
+    }
     document.getElementById('sb-beat-detail')?.classList.add('hidden');
     document.getElementById('sb-result')?.classList.add('hidden');
     document.getElementById('btn-sb-continue-full')?.classList.add('hidden');

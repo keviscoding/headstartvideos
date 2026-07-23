@@ -648,6 +648,7 @@
   border-radius: 12px;
   overflow: hidden;
   cursor: pointer;
+  touch-action: none;
   transition: border-color var(--dur-fast), box-shadow var(--dur-fast), transform var(--dur-fast);
 }
 .sb-board-card:hover {
@@ -670,6 +671,7 @@
 .sb-board.is-drag-selecting {
   user-select: none;
   -webkit-user-select: none;
+  cursor: crosshair;
 }
 .sb-range-bar {
   display: flex;
@@ -692,6 +694,10 @@
   align-items: center;
   justify-content: center;
   background: var(--app-surface);
+  /* Native image drag was swallowing board tap + stretch-select */
+  -webkit-user-drag: none;
+  user-drag: none;
+  pointer-events: none;
 }
 .sb-board-card .sb-board-meta {
   display: flex;
