@@ -1975,17 +1975,25 @@ const cookingManager = {
     title: '',
     result: null,
     msgCount: 0,
+    kind: 'pipeline', // 'pipeline' | 'storyboard'
+    activeCount: 0,
+    slotLimit: 1,
 
     get isCooking() { return this.jobId && !this.result; },
 
     async start() {
-        if (this.isCooking) {
+        if (this.isCooking && this.slotLimit <= 1) {
             alert('A video is already cooking. Wait for it to finish or cancel it.');
+            return;
+        }
+        if (this.isCooking && this.activeCount >= this.slotLimit) {
+            alert(`You're already cooking ${this.activeCount} video${this.activeCount === 1 ? '' : 's'}. Your plan allows ${this.slotLimit} at a time.`);
             return;
         }
 
         this.result = null;
         this.msgCount = 0;
+        this.kind = 'pipeline';
         this.title = state.title;
 
         document.getElementById('build-start').classList.add('hidden');
@@ -2022,12 +2030,14 @@ const cookingManager = {
                     showCreditsNeededModal({ need, have: currentUser?.credits ?? 0, reason: 'credits' });
                 }
                 else if (res.status === 402) { showPricingModal({ reason: 'cook' }); }
+                else if (res.status === 409) { alert(errMsg); }
                 else { alert(errMsg); }
                 throw new Error(errMsg);
             }
             this.jobId = data.job_id;
             this.queuePosition = data.queue_position || 0;
             this.estWaitMinutes = data.est_wait_minutes || 0;
+            this.activeCount = Math.max(1, this.activeCount + 1);
             this._persist();
             this._showCookingBar();
             // Immediate honest queue state before SSE connects
@@ -2064,6 +2074,18 @@ const cookingManager = {
             document.getElementById('build-start').classList.remove('hidden');
             document.getElementById('build-progress').classList.add('hidden');
         }
+    },
+
+    /** Track a storyboard animate/assemble cook so the sticky bar survives refresh. */
+    adoptStoryboard(jobId, title) {
+        if (!jobId) return;
+        this.jobId = jobId;
+        this.title = title || 'your video';
+        this.kind = 'storyboard';
+        this.result = null;
+        this.activeCount = Math.max(1, this.activeCount);
+        this._persist();
+        this._showCookingBar();
     },
 
     _connect() {
@@ -2138,7 +2160,6 @@ const cookingManager = {
                 try { err = JSON.parse(e.data).error || err; } catch (_) {}
                 try { this.evtSrc && this.evtSrc.close(); } catch (_) {}
                 this.evtSrc = null;
-                this.jobId = null;
                 this._clear();
                 this._hideCookingBar();
                 alert('Build failed: ' + err);
@@ -2157,28 +2178,85 @@ const cookingManager = {
 
     _persist() {
         try {
-            localStorage.setItem('cr_active_job', JSON.stringify({ jobId: this.jobId, title: this.title }));
+            localStorage.setItem('cr_active_job', JSON.stringify({
+                jobId: this.jobId,
+                title: this.title,
+                kind: this.kind || 'pipeline',
+            }));
         } catch (_) {}
     },
 
     _clear() {
+        this.jobId = null;
+        this.kind = 'pipeline';
+        this.activeCount = Math.max(0, (this.activeCount || 1) - 1);
         try { localStorage.removeItem('cr_active_job'); } catch (_) {}
     },
 
     // Re-attach to an in-flight (or just-finished) render after a page refresh.
     async restore() {
+        // Prefer server truth so cleared localStorage still shows the bar.
+        let serverJobs = [];
+        try {
+            const res = await fetch('/api/cooks/active');
+            if (res.ok) {
+                const data = await res.json();
+                serverJobs = Array.isArray(data.jobs) ? data.jobs : [];
+                this.slotLimit = Math.max(1, Number(data.limit) || 1);
+                this.activeCount = Number(data.count) || serverJobs.length;
+            }
+        } catch (_) {}
+
         let saved;
         try { saved = JSON.parse(localStorage.getItem('cr_active_job') || 'null'); } catch (_) { saved = null; }
-        if (!saved || !saved.jobId) return;
-        this.jobId = saved.jobId;
-        this.title = saved.title || 'your video';
-        this._reattach();
+
+        let pick = null;
+        if (serverJobs.length) {
+            const savedId = saved && saved.jobId;
+            pick = serverJobs.find(j => j.job_id === savedId) || serverJobs[0];
+        } else if (saved && saved.jobId) {
+            pick = { job_id: saved.jobId, title: saved.title, kind: saved.kind || 'pipeline' };
+        }
+        if (!pick || !pick.job_id) return;
+
+        this.jobId = pick.job_id;
+        this.title = pick.title || (saved && saved.title) || 'your video';
+        this.kind = pick.kind || (saved && saved.kind) || 'pipeline';
+        this.result = null;
+        this._persist();
+        if (this.kind === 'storyboard') {
+            this._reattachStoryboard(pick.last_message || '');
+        } else {
+            this._reattach();
+        }
+    },
+
+    _reattachStoryboard(lastMessage) {
+        if (typeof _sbAssembleJobId !== 'undefined') _sbAssembleJobId = this.jobId;
+        this._showCookingBar();
+        if (lastMessage) {
+            const statusEl = document.getElementById('cooking-bar-status');
+            if (statusEl) statusEl.textContent = (typeof _friendlySbProgress === 'function'
+                ? _friendlySbProgress(lastMessage)
+                : lastMessage).substring(0, 60);
+        }
+        if (typeof _sbAssemblePollTimer !== 'undefined' && _sbAssemblePollTimer) {
+            clearInterval(_sbAssemblePollTimer);
+        }
+        if (typeof pollStoryboardAssemble === 'function') {
+            _sbAssemblePollTimer = setInterval(pollStoryboardAssemble, 2500);
+            pollStoryboardAssemble();
+        }
     },
 
     // Check the job's real state, then either finish, stop, or reconnect the
     // live stream. Shared by page-load restore and transient SSE reconnects.
     async _reattach() {
         if (!this.jobId || this.result) return;
+        if (this.kind === 'storyboard') {
+            this._reattachStoryboard('');
+            return;
+        }
         let res;
         try {
             res = await fetch(`/api/build/${this.jobId}/result`);
@@ -2190,7 +2268,6 @@ const cookingManager = {
 
         if (res.status === 404) {
             // Job no longer exists (server restarted/redeployed) — truly lost.
-            this.jobId = null;
             this._clear();
             this._hideCookingBar();
             showRenderLostNotice();
@@ -2211,7 +2288,6 @@ const cookingManager = {
             return;
         }
         if (data && (data.status === 'error' || data.status === 'cancelled')) {
-            this.jobId = null;
             this._clear();
             this._hideCookingBar();
             return;
@@ -2232,16 +2308,24 @@ const cookingManager = {
 
     _showCookingBar() {
         const bar = document.getElementById('cooking-bar');
-        document.getElementById('cooking-bar-title').textContent = this.title || 'your video';
+        const titleEl = document.getElementById('cooking-bar-title');
+        if (titleEl) {
+            const n = this.activeCount || 1;
+            titleEl.textContent = n > 1
+                ? `${n} videos`
+                : (this.title || 'your video');
+        }
         const statusEl = document.getElementById('cooking-bar-status');
         if (statusEl && (!statusEl.textContent || statusEl.textContent === 'Starting...')) {
-            statusEl.textContent = 'Joining cook queue...';
+            statusEl.textContent = this.kind === 'storyboard'
+                ? 'Starting your cook…'
+                : 'Joining cook queue...';
         }
-        bar.classList.remove('hidden');
+        if (bar) bar.classList.remove('hidden');
     },
 
     _hideCookingBar() {
-        document.getElementById('cooking-bar').classList.add('hidden');
+        document.getElementById('cooking-bar')?.classList.add('hidden');
     },
 
     _showToast() {
@@ -2251,6 +2335,13 @@ const cookingManager = {
     },
 
     viewProgress() {
+        if (this.kind === 'storyboard') {
+            navigateTo('pipeline');
+            if (typeof isStoryboardRecipe === 'function' && isStoryboardRecipe()) {
+                goToStep('sb-assemble');
+            }
+            return;
+        }
         navigateTo('pipeline');
         goToStep(6);
         document.getElementById('build-start').classList.add('hidden');
@@ -2266,10 +2357,13 @@ const cookingManager = {
 
     cancel() {
         if (this.evtSrc) { this.evtSrc.close(); this.evtSrc = null; }
+        if (typeof _sbAssemblePollTimer !== 'undefined' && _sbAssemblePollTimer) {
+            clearInterval(_sbAssemblePollTimer);
+            _sbAssemblePollTimer = null;
+        }
         if (this.jobId) {
             fetch(`/api/build/${this.jobId}`, { method: 'DELETE' }).catch(() => {});
         }
-        this.jobId = null;
         this.result = null;
         this._clear();
         this._hideCookingBar();
@@ -2277,6 +2371,10 @@ const cookingManager = {
             document.getElementById('build-start').classList.remove('hidden');
             document.getElementById('build-progress').classList.add('hidden');
         }
+        const btnAssemble = document.getElementById('btn-sb-assemble-run');
+        const btnAnimate = document.getElementById('btn-sb-animate-run');
+        if (btnAssemble) setLoading(btnAssemble, false);
+        if (btnAnimate) setLoading(btnAnimate, false);
     },
 };
 
@@ -3867,25 +3965,95 @@ async function loadResourcesPage() {
         }
         list.innerHTML = items.map(r => {
             const id = String(r.id || '').replace(/[^a-zA-Z0-9_-]/g, '');
+            const cost = Number(r.credit_cost || 0);
+            const paid = cost > 0;
+            const unlocked = !!r.unlocked || !paid;
+            let cta;
+            if (!paid) {
+                cta = `<button type="button" class="btn-primary" style="font-size: 14px;" data-resource-id="${id}" onclick="downloadResource(this.dataset.resourceId)">Download free</button>
+                <p style="font-size: 12px; color: var(--app-ink-3); margin: 10px 0 0;">Account required · no card needed</p>`;
+            } else if (unlocked) {
+                cta = `<button type="button" class="btn-primary" style="font-size: 14px;" data-resource-id="${id}" onclick="unlockResource(this.dataset.resourceId)">Open guide</button>
+                <p style="font-size: 12px; color: var(--app-ink-3); margin: 10px 0 0;">Unlocked · yours forever</p>`;
+            } else {
+                cta = `<button type="button" class="btn-primary" style="font-size: 14px;" data-resource-id="${id}" onclick="unlockResource(this.dataset.resourceId)">Unlock · ${cost} credits</button>
+                <p style="font-size: 12px; color: var(--app-ink-3); margin: 10px 0 0;">One-time unlock · opens the private Google Doc</p>`;
+            }
             return `
             <article class="cr-surface" style="padding: 20px; position: relative;">
                 <div class="flex items-start justify-between gap-3" style="flex-wrap: wrap; margin-bottom: 8px;">
                     <div class="flex items-center gap-2" style="flex-wrap: wrap;">
                         <h3 style="font-family: var(--font-display); font-size: 20px; margin: 0; color: var(--app-ink);">${escapeHtml(r.title)}</h3>
                         ${r.is_new ? '<span class="cr-new-badge" style="position:static;">New</span>' : ''}
+                        ${paid ? '<span class="cr-mono" style="font-size:11px;color:var(--accent);border:1px solid var(--accent);padding:2px 6px;border-radius:4px;">Pro</span>' : ''}
                     </div>
                     <span class="cr-mono" style="font-size: 12px; color: var(--app-ink-3);">${escapeHtml(_formatResourceDate(r.date))}</span>
                 </div>
                 <p style="font-size: 14px; color: var(--app-ink); margin: 0 0 6px; font-weight: 500;">${escapeHtml(r.tagline || '')}</p>
                 <p style="font-size: 14px; color: var(--app-ink-2); margin: 0 0 16px;">${escapeHtml(r.description || '')}</p>
-                <button type="button" class="btn-primary" style="font-size: 14px;" data-resource-id="${id}" onclick="downloadResource(this.dataset.resourceId)">
-                    Download free
-                </button>
-                <p style="font-size: 12px; color: var(--app-ink-3); margin: 10px 0 0;">Account required · no card needed</p>
+                ${cta}
             </article>`;
         }).join('');
     } catch (_) {
         list.innerHTML = '<p style="font-size: 14px; color: var(--app-ink-3);">Could not load resources.</p>';
+    }
+}
+
+async function unlockResource(resourceId) {
+    if (!ensureSignedIn(() => unlockResource(resourceId))) return;
+    const id = String(resourceId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!id) {
+        showSoftPrompt('Unlock failed. Try again.');
+        return;
+    }
+    try {
+        let res = await _origFetch(`/api/sauce/${encodeURIComponent(id)}/unlock`, { method: 'POST' });
+        if (res.status === 404) {
+            res = await _origFetch(`/api/resources/${encodeURIComponent(id)}/unlock`, { method: 'POST' });
+        }
+        const data = await readJson(res, {});
+        if (res.status === 401 || res.status === 403) {
+            showAuthModal();
+            return;
+        }
+        if (res.status === 402) {
+            const errMsg = typeof data.detail === 'string' ? data.detail : 'Not enough credits';
+            const needMatch = String(errMsg).match(/Need\s+(\d+)/i);
+            const need = needMatch ? parseInt(needMatch[1], 10) : 55;
+            if (isPaidUser() && !isTrialUser()) {
+                showCreditsNeededModal({ need, have: currentUser?.credits ?? 0, reason: 'credits' });
+            } else if (isTrialUser()) {
+                showTrialExhaustedModal();
+            } else {
+                showPricingModal({ reason: 'credits' });
+            }
+            try { track('resource_unlock_blocked', { resource_id: id, need }); } catch (_) {}
+            return;
+        }
+        if (!res.ok) {
+            showSoftPrompt((data && data.detail) || 'Unlock failed. Try again.');
+            return;
+        }
+        const charged = Number(data.credits_charged || 0);
+        if (charged > 0 && currentUser && typeof currentUser.credits === 'number') {
+            currentUser.credits = Math.max(0, currentUser.credits - charged);
+            updateAuthUI();
+        }
+        try {
+            track('resource_unlocked', {
+                resource_id: id,
+                credits: charged,
+                already_owned: !!data.already_owned,
+                purchase_count: data.purchase_count || 0,
+            });
+        } catch (_) {}
+        if (data.url) {
+            window.open(data.url, '_blank', 'noopener');
+        }
+        try { loadResourcesPage(); } catch (_) {}
+        refreshUserData();
+    } catch (_) {
+        showSoftPrompt('Unlock failed. Try again.');
     }
 }
 
@@ -5768,6 +5936,11 @@ function _sbAddMusicEnabled() {
     return !el || !!el.checked;
 }
 
+function _sbBurnCaptionsEnabled() {
+    const el = document.getElementById('sb-burn-captions');
+    return !el || !!el.checked;
+}
+
 async function runStoryboardAssemble() {
     if (!isAdminUser()) { alert('Storyboard Pack is admin-only while we test it.'); return; }
     if (!_sbJobId) { alert('Generate a pack first.'); return; }
@@ -5775,14 +5948,18 @@ async function runStoryboardAssemble() {
         alert('Drop clips and preview match first.');
         return;
     }
+    if (cookingManager.isCooking && cookingManager.slotLimit <= 1) {
+        alert('A video is already cooking. Wait for it to finish or cancel it.');
+        return;
+    }
     const btn = document.getElementById('btn-sb-assemble-run');
     setLoading(btn, true);
     document.getElementById('sb-assemble-result')?.classList.add('hidden');
-    _sbShowCookingBar('your video');
+    cookingManager._showCookingBar();
     try {
         const fd = new FormData();
         if (_sbAssembleStagingId) fd.append('staging_id', _sbAssembleStagingId);
-        fd.append('burn_captions', '1');
+        fd.append('burn_captions', _sbBurnCaptionsEnabled() ? '1' : '0');
         fd.append('add_music', _sbAddMusicEnabled() ? '1' : '0');
         const notify = (document.getElementById('sb-assemble-notify')?.value || '').trim();
         if (notify) fd.append('notify_email', notify);
@@ -5793,13 +5970,14 @@ async function runStoryboardAssemble() {
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Cook failed to start');
         _sbAssembleJobId = data.job_id;
+        cookingManager.adoptStoryboard(_sbAssembleJobId, 'your video');
         if (_sbAssemblePollTimer) clearInterval(_sbAssemblePollTimer);
         _sbAssemblePollTimer = setInterval(pollStoryboardAssemble, 2500);
         pollStoryboardAssemble();
         track('storyboard_assemble_queued', { job_id: _sbAssembleJobId, parent: _sbJobId });
     } catch (e) {
         setLoading(btn, false);
-        _sbHideCookingBar();
+        if (!cookingManager.isCooking) cookingManager._hideCookingBar();
         alert(e.message || 'Cook failed');
     }
 }
@@ -5825,7 +6003,12 @@ async function pollStoryboardAssemble() {
             if (_sbAssemblePollTimer) { clearInterval(_sbAssemblePollTimer); _sbAssemblePollTimer = null; }
             setLoading(btnAssemble, false);
             setLoading(btnAnimate, false);
-            _sbHideCookingBar();
+            if (cookingManager.jobId === _sbAssembleJobId) {
+                cookingManager._clear();
+                cookingManager._hideCookingBar();
+            } else {
+                _sbHideCookingBar();
+            }
             const box = document.getElementById('sb-assemble-result');
             const summary = document.getElementById('sb-assemble-summary');
             const dl = document.getElementById('sb-assemble-download');
@@ -5856,7 +6039,12 @@ async function pollStoryboardAssemble() {
             if (_sbAssemblePollTimer) { clearInterval(_sbAssemblePollTimer); _sbAssemblePollTimer = null; }
             setLoading(btnAssemble, false);
             setLoading(btnAnimate, false);
-            _sbHideCookingBar();
+            if (cookingManager.jobId === _sbAssembleJobId) {
+                cookingManager._clear();
+                cookingManager._hideCookingBar();
+            } else {
+                _sbHideCookingBar();
+            }
             alert(data.error || 'Cook failed');
         }
     } catch (e) {
@@ -5866,6 +6054,10 @@ async function pollStoryboardAssemble() {
 
 function _friendlySbPackProgress(raw) {
     const s = String(raw || '');
+    if (/Keeping .* preview|Continuing from preview|continuing the rest/i.test(s)) {
+        const m = s.match(/Keeping\s+(\d+)/i);
+        return m ? `Keeping ${m[1]} preview scenes, generating the rest…` : 'Continuing from your preview…';
+    }
     if (/Uploading pack|Zipping|Writing pack/i.test(s)) return 'Saving your storyboard…';
     if (/Queued|queue/i.test(s)) return 'Queued — starting soon…';
     if (/Planning first-minute|Planning ~/i.test(s)) return 'Planning your scenes…';
@@ -5900,6 +6092,8 @@ function _friendlySbProgress(raw) {
     if (/Preparing scene|Putting your video/i.test(s)) return 'Putting your video together…';
     if (/Cooking scenes|Animating|Animated scene|scene\(s\)/i.test(s)) {
         const m = s.match(/(\d+)\s*\/\s*(\d+)/);
+        const cooking = s.match(/\((\d+)\s*cooking\)/i);
+        if (m && cooking) return `Cooking scenes… ${m[1]} of ${m[2]} (${cooking[1]} in parallel)`;
         if (m) return `Cooking scenes… ${m[1]} of ${m[2]}`;
         return 'Cooking scenes…';
     }
@@ -5915,16 +6109,14 @@ function _friendlySbProgress(raw) {
 }
 
 function _sbShowCookingBar(title) {
-    const bar = document.getElementById('cooking-bar');
-    const t = document.getElementById('cooking-bar-title');
-    const st = document.getElementById('cooking-bar-status');
-    if (t) t.textContent = title || 'your video';
-    if (st) st.textContent = 'Starting your cook…';
-    if (bar) bar.classList.remove('hidden');
+    cookingManager.title = title || cookingManager.title || 'your video';
+    cookingManager.kind = cookingManager.kind || 'storyboard';
+    cookingManager._showCookingBar();
 }
 
 function _sbHideCookingBar() {
-    document.getElementById('cooking-bar')?.classList.add('hidden');
+    // Only hide if this tab isn't still tracking another cook
+    if (!cookingManager.isCooking) cookingManager._hideCookingBar();
 }
 
 function _sbUpdateCookingBar(msg) {
@@ -5969,13 +6161,13 @@ async function _sbSyncAnimateUI() {
             const c = Number(data.credits || 0);
             const capNote = ` On-site cook max ${Number(data.cook_max_minutes || cap)} min.`;
             blurb.textContent = c > 0
-                ? `Cook ${stretch} into motion with captions. About ${c} credit${c === 1 ? '' : 's'} for ~${mins} min.${capNote}`
-                : `Cook ${stretch} into motion, stitch them, and add captions — using your cast.${capNote}`;
+                ? `Cook ${stretch} into motion. About ${c} credit${c === 1 ? '' : 's'} for ~${mins} min.${capNote}`
+                : `Cook ${stretch} into motion, stitch them, and optionally add captions + music — using your cast.${capNote}`;
         } else if (blurb) {
-            blurb.textContent = `Cook ${stretch} into motion, stitch them, and add captions — using your cast. On-site cook max ${cap} min.`;
+            blurb.textContent = `Cook ${stretch} into motion, stitch them, and optionally add captions + music — using your cast. On-site cook max ${cap} min.`;
         }
     } catch (_) {
-        if (blurb) blurb.textContent = `Cook ${stretch} into motion, stitch them, and add captions — using your cast. On-site cook max ${cap} min.`;
+        if (blurb) blurb.textContent = `Cook ${stretch} into motion, stitch them, and optionally add captions + music — using your cast. On-site cook max ${cap} min.`;
     }
 }
 
@@ -5984,13 +6176,17 @@ async function runStoryboardAnimate() {
     if (!_sbJobId) { alert('Generate a pack first.'); return; }
     const block = _sbBoardCookBlockReason();
     if (block) { alert(block); return; }
+    if (cookingManager.isCooking && cookingManager.slotLimit <= 1) {
+        alert('A video is already cooking. Wait for it to finish or cancel it.');
+        return;
+    }
     const btn = document.getElementById('btn-sb-animate-run');
     setLoading(btn, true);
     document.getElementById('sb-assemble-result')?.classList.add('hidden');
-    _sbShowCookingBar('your video');
+    cookingManager._showCookingBar();
     try {
         const fd = new FormData();
-        fd.append('burn_captions', '1');
+        fd.append('burn_captions', _sbBurnCaptionsEnabled() ? '1' : '0');
         fd.append('add_music', _sbAddMusicEnabled() ? '1' : '0');
         if (_sbHasCookRange()) {
             fd.append('beat_from', String(Math.min(_sbRangeFrom, _sbRangeTo)));
@@ -6002,13 +6198,14 @@ async function runStoryboardAnimate() {
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Cook failed to start');
         _sbAssembleJobId = data.job_id;
+        cookingManager.adoptStoryboard(_sbAssembleJobId, data.title || 'your video');
         if (_sbAssemblePollTimer) clearInterval(_sbAssemblePollTimer);
         _sbAssemblePollTimer = setInterval(pollStoryboardAssemble, 2500);
         pollStoryboardAssemble();
         track('storyboard_animate_queued', { job_id: _sbAssembleJobId, parent: _sbJobId, credits: data.credits_charged || 0 });
     } catch (e) {
         setLoading(btn, false);
-        _sbHideCookingBar();
+        if (!cookingManager.isCooking) cookingManager._hideCookingBar();
         alert(e.message || 'Cook failed');
     }
 }
@@ -6389,11 +6586,25 @@ async function startStoryboardPack(packMode = 'full', opts = {}) {
     const mode = (packMode === 'preview') ? 'preview' : 'full';
     _sbPackMode = mode;
     _sbLastEpisodePayload = { ...payload };
-    payload = { ...payload, pack_mode: mode };
+    const parentPreviewId = (fromPreview && mode === 'full' && _sbJobId) ? _sbJobId : '';
+    payload = {
+        ...payload,
+        pack_mode: mode,
+        ...(parentPreviewId ? { parent_job_id: parentPreviewId } : {}),
+    };
 
     goToStep('sb-pack');
     _sbSelectedBeatIndex = null;
-    _sbBeats = [];
+    // Continue-from-preview: keep opening stills on the board while the rest generate
+    if (!(fromPreview && parentPreviewId && Array.isArray(_sbBeats) && _sbBeats.length)) {
+        _sbBeats = [];
+        const board = document.getElementById('sb-board');
+        if (board) {
+            board.innerHTML = '';
+            board.classList.remove('is-drag-selecting');
+            board._sbDidDragRange = false;
+        }
+    }
     _sbPackStatus = 'queued';
     _sbZipReady = false;
     _sbRangeFrom = null;
@@ -6403,12 +6614,6 @@ async function startStoryboardPack(packMode = 'full', opts = {}) {
     _sbDragPointerId = null;
     _sbSyncBoardCookControls();
     _sbSyncRangeBar();
-    const board = document.getElementById('sb-board');
-    if (board) {
-        board.innerHTML = '';
-        board.classList.remove('is-drag-selecting');
-        board._sbDidDragRange = false;
-    }
     document.getElementById('sb-beat-detail')?.classList.add('hidden');
     document.getElementById('sb-result')?.classList.add('hidden');
     document.getElementById('btn-sb-continue-full')?.classList.add('hidden');
@@ -6417,12 +6622,19 @@ async function startStoryboardPack(packMode = 'full', opts = {}) {
     if (noteEl) noteEl.value = '';
     const status = document.getElementById('sb-pack-status');
     if (status) {
-        status.textContent = mode === 'preview'
-            ? 'Queuing first-minute preview — ~8 opening scenes…'
-            : 'Queuing full pack — stills will appear as they’re ready…';
+        if (parentPreviewId) {
+            status.textContent = `Continuing from preview: keeping ${_sbBeats.length || '~8'} opening scenes, generating the rest…`;
+        } else if (mode === 'preview') {
+            status.textContent = 'Queuing first-minute preview — ~8 opening scenes…';
+        } else {
+            status.textContent = 'Queuing full pack — stills will appear as they’re ready…';
+        }
     }
     const prog = document.getElementById('sb-progress');
-    if (prog) { prog.classList.remove('hidden'); prog.innerHTML = 'Queuing…'; }
+    if (prog) {
+        prog.classList.remove('hidden');
+        prog.innerHTML = parentPreviewId ? 'Continuing from preview…' : 'Queuing…';
+    }
     _sbSetPackLoading(true);
 
     try {
@@ -6439,6 +6651,8 @@ async function startStoryboardPack(packMode = 'full', opts = {}) {
             target_minutes: payload.target_minutes,
             dialogue_mode: payload.dialogue_mode,
             pack_mode: mode,
+            continued_from_preview: !!parentPreviewId,
+            parent_job_id: parentPreviewId || undefined,
         });
         if (_sbPollTimer) clearInterval(_sbPollTimer);
         _sbPollTimer = setInterval(pollStoryboardPack, 1500);

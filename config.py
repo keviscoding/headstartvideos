@@ -41,6 +41,8 @@ ATLAS_I2V_GENERATE_AUDIO = os.getenv("ATLAS_I2V_GENERATE_AUDIO", "1").strip().lo
     "1", "true", "yes", "on",
 )
 ATLAS_I2V_CONCURRENCY = max(1, int(os.getenv("ATLAS_I2V_CONCURRENCY", "5")))
+# Soft ceiling on parallel Seedance scenes (Atlas overload). Raise via env if stable.
+ATLAS_I2V_SOFT_CAP = max(1, int(os.getenv("ATLAS_I2V_SOFT_CAP", "6")))
 # On-site Seedance cook hard cap (pack/stills may be longer; cook first N minutes only).
 STORYBOARD_COOK_MAX_MINUTES = max(1.0, float(os.getenv("STORYBOARD_COOK_MAX_MINUTES", "8") or 8))
 # Pack stills slider ceiling (users can generate long boards; cook stays capped above).
@@ -85,6 +87,20 @@ MAX_CONCURRENT_VOICEOVERS = max(1, int(os.getenv("MAX_CONCURRENT_VOICEOVERS", "2
 WEB_THREADPOOL_SIZE = max(8, int(os.getenv("WEB_THREADPOOL_SIZE", "32")))
 # Fallback queue ETA when we lack recent render_events (minutes).
 EST_MINUTES_PER_COOK = float(os.getenv("EST_MINUTES_PER_COOK", "7"))
+# Per-user concurrent video cooks (plan-based). Pack stills don't count.
+COOK_CONCURRENCY_DEFAULT = max(1, int(os.getenv("COOK_CONCURRENCY_DEFAULT", "1")))
+COOK_CONCURRENCY_DAILY = max(1, int(os.getenv("COOK_CONCURRENCY_DAILY", "2")))
+COOK_CONCURRENCY_PRO = max(1, int(os.getenv("COOK_CONCURRENCY_PRO", "3")))
+
+
+def cook_concurrency_for_plan(plan: str | None) -> int:
+    """How many video cooks a user may run at once."""
+    p = (plan or "").strip().lower()
+    if p == "pro":
+        return COOK_CONCURRENCY_PRO
+    if p == "daily":
+        return COOK_CONCURRENCY_DAILY
+    return COOK_CONCURRENCY_DEFAULT
 
 # Recipe Brain chat (starter pack API always works; chat gated).
 RECIPE_BRAIN_ENABLED = os.getenv("RECIPE_BRAIN_ENABLED", "0").strip().lower() in (

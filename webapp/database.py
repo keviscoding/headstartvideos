@@ -115,6 +115,14 @@ CREATE TABLE IF NOT EXISTS voice_clones (
     consent_at      REAL NOT NULL,
     created_at      REAL NOT NULL DEFAULT (strftime('%s','now'))
 );
+CREATE TABLE IF NOT EXISTS user_resource_unlocks (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER NOT NULL,
+    resource_id  TEXT NOT NULL,
+    credits      INTEGER NOT NULL DEFAULT 0,
+    created_at   REAL NOT NULL DEFAULT (strftime('%s','now')),
+    UNIQUE(user_id, resource_id)
+);
 CREATE TABLE IF NOT EXISTS user_notices (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     email       TEXT NOT NULL,
@@ -253,6 +261,14 @@ CREATE TABLE IF NOT EXISTS voice_clones (
     source          TEXT NOT NULL DEFAULT 'upload',
     consent_at      DOUBLE PRECISION NOT NULL,
     created_at      DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now())
+);
+CREATE TABLE IF NOT EXISTS user_resource_unlocks (
+    id           BIGSERIAL PRIMARY KEY,
+    user_id      BIGINT NOT NULL,
+    resource_id  TEXT NOT NULL,
+    credits      INTEGER NOT NULL DEFAULT 0,
+    created_at   DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now()),
+    UNIQUE(user_id, resource_id)
 );
 CREATE TABLE IF NOT EXISTS user_notices (
     id          BIGSERIAL PRIMARY KEY,
@@ -691,6 +707,71 @@ def create_voice_clone(
         "source": source,
         "consent_at": consent_at,
     }
+
+
+def list_user_resource_unlocks(user_id: int) -> set[str]:
+    if not user_id:
+        return set()
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            _q("SELECT resource_id FROM user_resource_unlocks WHERE user_id = ?"),
+            (int(user_id),),
+        )
+        rows = cur.fetchall() or []
+        out = set()
+        for row in rows:
+            rid = row["resource_id"] if isinstance(row, dict) else row[0]
+            if rid:
+                out.add(str(rid))
+        return out
+
+
+def user_has_resource_unlock(user_id: int, resource_id: str) -> bool:
+    if not user_id or not resource_id:
+        return False
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            _q(
+                "SELECT 1 AS ok FROM user_resource_unlocks "
+                "WHERE user_id = ? AND resource_id = ? LIMIT 1"
+            ),
+            (int(user_id), str(resource_id)),
+        )
+        return cur.fetchone() is not None
+
+
+def unlock_user_resource(user_id: int, resource_id: str, *, credits: int = 0) -> bool:
+    """Record a paid resource unlock. Returns True if newly inserted."""
+    if not user_id or not resource_id:
+        return False
+    with _conn() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                _q(
+                    "INSERT INTO user_resource_unlocks (user_id, resource_id, credits) "
+                    "VALUES (?, ?, ?)"
+                ),
+                (int(user_id), str(resource_id), int(credits or 0)),
+            )
+            return True
+        except Exception:
+            return False
+
+
+def count_resource_unlocks(resource_id: str) -> int:
+    if not resource_id:
+        return 0
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            _q("SELECT COUNT(*) AS c FROM user_resource_unlocks WHERE resource_id = ?"),
+            (str(resource_id),),
+        )
+        row = cur.fetchone()
+        return _row_count(row) if row is not None else 0
 
 
 def get_voice_clone(clone_id: int, user_id: int) -> dict | None:
@@ -1200,6 +1281,56 @@ def get_cook_job(job_id: str) -> dict | None:
         cur.execute(_q("SELECT * FROM cook_jobs WHERE job_id = ?"), (job_id,))
         row = cur.fetchone()
         return dict(row) if row else None
+
+
+# Video-producing cooks count toward per-user concurrency (not stills packs).
+_VIDEO_COOK_RECIPES = (
+    "animated_explainer",
+    "cinematic",
+    "broll",
+    "broll_narration",
+    "avatar_plus_broll",
+    "storyboard_animate",
+    "storyboard_assemble",
+)
+_ACTIVE_COOK_STATUSES = ("queued", "web_queued", "running")
+
+
+def list_user_active_cooks(user_id: int, *, video_only: bool = True) -> list[dict]:
+    """Active cooks for a user, newest first."""
+    if not user_id:
+        return []
+    with _conn() as conn:
+        cur = conn.cursor()
+        placeholders = ",".join(["?"] * len(_ACTIVE_COOK_STATUSES))
+        sql = f"""
+            SELECT job_id, user_id, status, recipe, title, created_at, started_at,
+                   progress_json, result_json, error
+            FROM cook_jobs
+            WHERE user_id = ? AND status IN ({placeholders})
+        """
+        params: list = [int(user_id), *_ACTIVE_COOK_STATUSES]
+        if video_only:
+            rph = ",".join(["?"] * len(_VIDEO_COOK_RECIPES))
+            sql += f" AND recipe IN ({rph})"
+            params.extend(_VIDEO_COOK_RECIPES)
+        sql += " ORDER BY COALESCE(started_at, created_at) DESC"
+        cur.execute(_q(sql), tuple(params))
+        rows = cur.fetchall() or []
+        out = []
+        for row in rows:
+            d = dict(row)
+            try:
+                d["progress"] = json.loads(d.pop("progress_json") or "[]")
+            except Exception:
+                d["progress"] = []
+            d.pop("result_json", None)
+            out.append(d)
+        return out
+
+
+def count_user_active_cooks(user_id: int, *, video_only: bool = True) -> int:
+    return len(list_user_active_cooks(user_id, video_only=video_only))
 
 
 def _row_count(row) -> int:

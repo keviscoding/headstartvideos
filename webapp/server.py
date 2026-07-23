@@ -219,6 +219,7 @@ from webapp.database import (
     log_render_event, render_stats, backend_name, cleanup_expired,
     create_video, list_videos, get_video, update_video_kit, delete_video,
     create_cook_job, update_cook_job, get_cook_job,
+    list_user_active_cooks, count_user_active_cooks,
     cook_queue_stats, announce_queued_jobs,
     set_user_heygen_key, get_user_heygen_key, user_heygen_status,
     set_user_atlas_key, get_user_atlas_key, user_atlas_status,
@@ -1160,6 +1161,7 @@ class StoryboardJobRequest(BaseModel):
     target_minutes: float = 8
     thumbnail_path: str = ""
     pack_mode: str = "full"  # preview = first ~1 min · full = full length
+    parent_job_id: str = ""  # continue full pack from a finished preview job
     visual_style: str = ""
     template: str = ""  # e.g. easy_english_family | ""
 
@@ -1894,6 +1896,66 @@ def _queue_info_for(job_id: str) -> dict:
                 "running_count": 0, "est_wait_minutes": 0}
 
 
+def _enforce_user_cook_slot(user: dict) -> None:
+    """Block a new video cook when the user is already at their plan concurrency."""
+    if not user or not user.get("id"):
+        return
+    email = user.get("email") or ""
+    if _is_admin_email(email):
+        limit = int(config.cook_concurrency_for_plan("pro"))
+    else:
+        limit = int(config.cook_concurrency_for_plan(user.get("plan")))
+    active = count_user_active_cooks(int(user["id"]))
+    if active >= limit:
+        raise HTTPException(
+            409,
+            f"You're already cooking {active} video{'s' if active != 1 else ''}. "
+            f"Your plan allows {limit} at a time — wait for one to finish before starting another.",
+        )
+
+
+@app.get("/api/cooks/active")
+async def list_active_cooks(request: Request):
+    """Active video cooks for the signed-in user (survives refresh / cleared localStorage)."""
+    user = _current_user(request)
+    if not user:
+        raise HTTPException(401, "Sign in to continue.")
+    email = user.get("email") or ""
+    if _is_admin_email(email):
+        limit = int(config.cook_concurrency_for_plan("pro"))
+    else:
+        limit = int(config.cook_concurrency_for_plan(user.get("plan")))
+    jobs = list_user_active_cooks(int(user["id"]))
+    out = []
+    for j in jobs:
+        recipe = (j.get("recipe") or "")
+        kind = "storyboard" if recipe.startswith("storyboard_") else "pipeline"
+        progress = j.get("progress") or []
+        last = ""
+        if isinstance(progress, list) and progress:
+            last_item = progress[-1]
+            if isinstance(last_item, dict):
+                last = last_item.get("message") or ""
+            else:
+                last = str(last_item)
+        out.append({
+            "job_id": j.get("job_id"),
+            "status": j.get("status") or "queued",
+            "recipe": recipe,
+            "kind": kind,
+            "title": (j.get("title") or "").strip() or "your video",
+            "last_message": last,
+            "created_at": j.get("created_at"),
+            "started_at": j.get("started_at"),
+        })
+    return {
+        "jobs": out,
+        "count": len(out),
+        "limit": limit,
+        "slots_remaining": max(0, limit - len(out)),
+    }
+
+
 def _refresh_job_from_db(job_id: str, job: dict) -> None:
     """Pull latest status/progress from DB into the in-memory view (worker mode)."""
     row = get_cook_job(job_id)
@@ -1969,6 +2031,8 @@ async def start_build(req: BuildRequest, request: Request):
 
     if not is_admin and user.get("plan") not in ("starter", "daily", "pro", "starter_trial", "daily_trial"):
         raise HTTPException(402, "Start your free trial to cook this video.")
+
+    _enforce_user_cook_slot(user)
 
     # Trial/free: hard-cap finished video length (~150 wpm)
     if not is_admin:
@@ -2214,7 +2278,7 @@ async def build_progress(job_id: str, request: Request):
 @app.delete("/api/build/{job_id}")
 async def cancel_build(job_id: str, request: Request):
     job = _get_user_job(job_id, request)
-    if job["status"] not in ("queued", "running"):
+    if job["status"] not in ("queued", "web_queued", "running"):
         return {"status": job["status"]}
 
     was_queued = False
@@ -3362,6 +3426,24 @@ async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(
     if pack_mode not in ("preview", "full"):
         pack_mode = "full"
 
+    parent_job_id = (req.parent_job_id or "").strip()
+    if parent_job_id:
+        if pack_mode != "full":
+            raise HTTPException(400, "Continue-from-preview only applies to a full pack.")
+        parent = get_cook_job(parent_job_id)
+        if not parent or parent.get("user_id") != admin["id"]:
+            raise HTTPException(404, "Preview pack not found.")
+        if (parent.get("recipe") or "") != "storyboard_pack":
+            raise HTTPException(400, "Can only continue from a storyboard preview pack.")
+        try:
+            parent_req = json.loads(parent.get("request_json") or "{}")
+        except Exception:
+            parent_req = {}
+        if (parent_req.get("pack_mode") or "").strip().lower() != "preview":
+            raise HTTPException(400, "That pack was not a first-minute preview.")
+        if (parent.get("status") or "") != "complete":
+            raise HTTPException(400, "Wait until the preview pack finishes before continuing.")
+
     plan = (admin.get("plan") or "free").strip()
     is_paid = plan in ("starter", "daily", "pro")
 
@@ -3379,6 +3461,7 @@ async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(
         "target_minutes": mins,
         "thumbnail_path": thumb_path,
         "pack_mode": pack_mode,
+        "parent_job_id": parent_job_id,
         "visual_style": style_id,
         "template": template,
         "is_admin": True,
@@ -3902,6 +3985,8 @@ async def start_storyboard_assemble(
             "Upload your I2V clips (or run Match first), then assemble.",
         )
 
+    _enforce_user_cook_slot(admin)
+
     # Zip + upload clips so Fly cooks can fetch them (local paths die with the web dyno).
     clips_zip_local = clips_dir.parent / "clips_bundle.zip"
     clips_zip_url = ""
@@ -4047,6 +4132,8 @@ async def start_storyboard_animate(
 
     job = _storyboard_pack_job_or_404(job_id, admin)
     result = job.get("result") if isinstance(job.get("result"), dict) else {}
+
+    _enforce_user_cook_slot(admin)
 
     range_from = range_to = None
     bf = (beat_from or "").strip()
@@ -4390,9 +4477,16 @@ def brain_chat(req: BrainChatRequest, user: dict = Depends(require_user)):
 # Sauce / free resources (account to download, no paid plan)
 # Paths avoid "/api/resources" — some ad blockers swallow that URL pattern.
 # ---------------------------------------------------------------------------
-def _sauce_catalog_payload() -> dict:
+def _sauce_catalog_payload(user: dict | None = None) -> dict:
     from webapp.resources_catalog import any_new_resources, list_resources
-    items = list_resources()
+    from webapp.database import list_user_resource_unlocks
+    unlocked = set()
+    if user and user.get("id"):
+        try:
+            unlocked = list_user_resource_unlocks(int(user["id"]))
+        except Exception:
+            unlocked = set()
+    items = list_resources(unlocked_ids=unlocked)
     return {"resources": items, "has_new": any_new_resources()}
 
 
@@ -4401,6 +4495,8 @@ def _sauce_file_response(resource_id: str):
     item = get_resource(resource_id)
     if not item:
         raise HTTPException(404, "Resource not found")
+    if int(item.get("credit_cost") or 0) > 0:
+        raise HTTPException(400, "This resource is unlocked via credits, not file download.")
     path = resource_file_path(item)
     if not path.is_file():
         raise HTTPException(404, "Resource file missing")
@@ -4413,9 +4509,9 @@ def _sauce_file_response(resource_id: str):
 
 
 @app.get("/api/sauce")
-def api_list_sauce():
-    """Public catalog. Download still requires a signed-in account."""
-    return _sauce_catalog_payload()
+def api_list_sauce(request: Request):
+    """Public catalog. Download / unlock still requires a signed-in account."""
+    return _sauce_catalog_payload(_current_user(request))
 
 
 @app.get("/api/sauce/{resource_id}/download")
@@ -4424,15 +4520,81 @@ def api_download_sauce(resource_id: str, user: dict = Depends(require_user)):
     return _sauce_file_response(resource_id)
 
 
+@app.post("/api/sauce/{resource_id}/unlock")
+def api_unlock_sauce(resource_id: str, user: dict = Depends(require_user)):
+    """Spend credits to unlock a paid guide / doc. Idempotent if already unlocked."""
+    from webapp.resources_catalog import get_resource
+    from webapp.database import (
+        deduct_credits,
+        user_has_resource_unlock,
+        unlock_user_resource,
+        count_resource_unlocks,
+    )
+
+    item = get_resource(resource_id)
+    if not item:
+        raise HTTPException(404, "Resource not found")
+    cost = int(item.get("credit_cost") or 0)
+    unlock_url = (item.get("unlock_url") or "").strip()
+    if cost <= 0 or not unlock_url:
+        raise HTTPException(400, "This resource does not need an unlock.")
+
+    uid = int(user["id"])
+    already = user_has_resource_unlock(uid, resource_id)
+    if already:
+        track(uid, "resource_unlock_opened", {
+            "resource_id": resource_id,
+            "credits": 0,
+            "already_owned": True,
+        })
+        return {
+            "unlocked": True,
+            "already_owned": True,
+            "credits_charged": 0,
+            "url": unlock_url,
+            "title": item.get("title") or resource_id,
+            "purchase_count": count_resource_unlocks(resource_id),
+        }
+
+    if not deduct_credits(uid, cost):
+        have = int(user.get("credits") or 0)
+        raise HTTPException(
+            402,
+            f"Need {cost} credits. You have {have}. Top up to unlock this guide.",
+        )
+
+    unlock_user_resource(uid, resource_id, credits=cost)
+    purchase_count = count_resource_unlocks(resource_id)
+    track(uid, "resource_unlocked", {
+        "resource_id": resource_id,
+        "credits": cost,
+        "title": item.get("title") or resource_id,
+        "purchase_count": purchase_count,
+    })
+    return {
+        "unlocked": True,
+        "already_owned": False,
+        "credits_charged": cost,
+        "url": unlock_url,
+        "title": item.get("title") or resource_id,
+        "purchase_count": purchase_count,
+    }
+
+
 # Back-compat aliases (may be blocked by ad blockers in some browsers)
 @app.get("/api/resources")
-def api_list_resources_legacy():
-    return _sauce_catalog_payload()
+def api_list_resources_legacy(request: Request):
+    return _sauce_catalog_payload(_current_user(request))
 
 
 @app.get("/api/resources/{resource_id}/download")
 def api_download_resource_legacy(resource_id: str, user: dict = Depends(require_user)):
     return _sauce_file_response(resource_id)
+
+
+@app.post("/api/resources/{resource_id}/unlock")
+def api_unlock_resource_legacy(resource_id: str, user: dict = Depends(require_user)):
+    return api_unlock_sauce(resource_id, user)
 
 
 # ---------------------------------------------------------------------------

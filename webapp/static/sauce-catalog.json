@@ -1,14 +1,30 @@
 {
   "resources": [
     {
+      "id": "3d-kids-animation-pro-system",
+      "title": "Pro System: 3D Kids Animation (Private Guide)",
+      "tagline": "The advanced playbook we don't put in public videos: cheap production at scale.",
+      "description": "A private AI 3D animation strategy guide built for creators who want to outcompete in this niche. Inside: how to produce animations as cheaply as they get, how to ship 100+ animations a month for a fraction of typical costs, how we do ideation that actually gets views, and how to optimize trust so viewers stick. This is the advanced version of the strategy, not the free public tips.",
+      "date": "2026-07-23",
+      "kind": "guide",
+      "is_new": true,
+      "requires_plan": false,
+      "credit_cost": 55,
+      "unlocked": false,
+      "is_paid": true
+    },
+    {
       "id": "blue-ocean-niche-prompt",
       "title": "Blue Ocean Niche Prompt",
       "tagline": "Stop copy-pasting viral channels. Combine niches into your own blue ocean.",
-      "description": "Most people see a viral video and clone it. This prompt does the opposite: it uses winning channel data + live research to bend niches together and invent adjacent, unsaturated territory \u2014 your own blue ocean, not someone else's red one. Attach titles/transcripts/outliers, paste today's date, get a ranked idea slate.",
+      "description": "Most people see a viral video and clone it. This prompt does the opposite: it uses winning channel data + live research to bend niches together and invent adjacent, unsaturated territory — your own blue ocean, not someone else's red one. Attach titles/transcripts/outliers, paste today's date, get a ranked idea slate.",
       "date": "2026-07-15",
       "kind": "prompt",
-      "is_new": true,
-      "requires_plan": false
+      "is_new": false,
+      "requires_plan": false,
+      "credit_cost": 0,
+      "unlocked": true,
+      "is_paid": false
     }
   ],
   "has_new": true

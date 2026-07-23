@@ -810,6 +810,38 @@ def _clean_beat_dialogue(
     return out
 
 
+def beats_from_dicts(rows: list[dict[str, Any]] | None) -> list[Beat]:
+    """Hydrate Beat objects from pack/API beat dicts (preview → full continue)."""
+    out: list[Beat] = []
+    for i, row in enumerate(rows or [], start=1):
+        if not isinstance(row, dict):
+            continue
+        image_prompt = str(row.get("image_prompt") or "").strip()
+        if not image_prompt and not (row.get("image_path") or row.get("image_url") or row.get("filename")):
+            continue
+        try:
+            tsec = float(row.get("target_sec") or SEC_PER_BEAT)
+        except (TypeError, ValueError):
+            tsec = SEC_PER_BEAT
+        out.append(
+            Beat(
+                index=int(row.get("index") or i),
+                target_sec=max(4.0, min(tsec, 15.0)),
+                dialogue=str(row.get("dialogue") or "").strip(),
+                image_prompt=image_prompt or f"Scene {int(row.get('index') or i)}",
+                i2v_prompt=str(row.get("i2v_prompt") or "").strip()
+                or "Subtle natural motion, gentle camera push-in, characters breathe and blink",
+                location=str(row.get("location") or "").strip(),
+                characters=str(row.get("characters") or "").strip(),
+                time_of_day=str(row.get("time_of_day") or "").strip(),
+                outfit_continuity=str(row.get("outfit_continuity") or "").strip(),
+                image_path=str(row.get("image_path") or "").strip(),
+            )
+        )
+    out.sort(key=lambda b: b.index)
+    return out
+
+
 def generate_beat_sheet(
     *,
     title: str,
@@ -824,6 +856,7 @@ def generate_beat_sheet(
     pack_mode: str = "full",
     visual_style: str = "",
     template: str = "",
+    locked_beats: list[Beat] | None = None,
     progress: ProgressFn | None = None,
 ) -> tuple[str, list[Beat]]:
     """LLM → title + ordered beats. User craft fields are hard constraints."""
@@ -835,10 +868,19 @@ def generate_beat_sheet(
         pmode = "full"
     tmpl = (template or "").strip().lower()
     family_mode = tmpl == "easy_english_family"
-    n_beats = _beat_count_for_minutes(target_minutes, pack_mode=pmode)
-    if pmode == "preview":
+    locked = list(locked_beats or [])
+    locked.sort(key=lambda b: b.index)
+    n_total = _beat_count_for_minutes(target_minutes, pack_mode=pmode)
+    n_locked = len(locked)
+    # Continue-from-preview: only invent the remaining scenes
+    if locked and pmode == "full" and n_locked < n_total:
+        n_beats = n_total - n_locked
+        log(f"Continuing from preview — keeping {n_locked} scenes, planning {n_beats} more…")
+    elif pmode == "preview":
+        n_beats = n_total
         log(f"Planning first-minute preview — {n_beats} opening scenes…")
     else:
+        n_beats = n_total
         log(f"Planning ~{n_beats} scenes for {target_minutes:.0f} min…")
 
     story_text = (story or topic or "").strip()
@@ -873,6 +915,25 @@ def generate_beat_sheet(
         _format_cast_constraint(cast),
         "",
     ]
+    if locked and pmode == "full":
+        start_idx = (locked[-1].index if locked else 0) + 1
+        user_parts += [
+            "PACK MODE: CONTINUE FROM FIRST-MINUTE PREVIEW.",
+            f"- The first {n_locked} beats are ALREADY LOCKED (do not rewrite them).",
+            f"- Produce ONLY the next {n_beats} beats, indexed {start_idx} through {start_idx + n_beats - 1}.",
+            "- Continue the same plot, cast, outfits, and time_of_day continuity from the locked opening.",
+            "- Do NOT restart the story. Do NOT regenerate opening scenes.",
+            "",
+            "LOCKED OPENING (already filmed as stills — continue after this):",
+        ]
+        for b in locked:
+            user_parts.append(
+                f"  [{b.index:03d}] {b.time_of_day or '?'} @ {b.location or '?'} | "
+                f"{(b.characters or '').strip() or 'cast'} | "
+                f"dialogue: {(b.dialogue or '')[:160]} | "
+                f"prompt: {(b.image_prompt or '')[:200]}"
+            )
+        user_parts.append("")
     if family_mode:
         bible = load_style_bible()
         if bible:
@@ -1022,6 +1083,19 @@ def generate_beat_sheet(
                 outfit_continuity=str(row.get("outfit_continuity") or "").strip(),
             )
         )
+
+    if locked and pmode == "full":
+        # Accept shorter tails if the model under-delivers, but need some continuation
+        if len(beats) < 2:
+            raise RuntimeError(f"Continuation too short ({len(beats)} scenes). Try again.")
+        start_idx = (locked[-1].index if locked else 0) + 1
+        for i, b in enumerate(beats):
+            b.index = start_idx + i
+        merged = list(locked) + beats
+        for i, b in enumerate(merged, start=1):
+            b.index = i
+        log(f"Beat sheet ready: {len(merged)} scenes ({n_locked} kept + {len(beats)} new) — {out_title}")
+        return out_title, merged
 
     if len(beats) < 4:
         raise RuntimeError(f"Beat sheet too short ({len(beats)} scenes). Try again.")
@@ -1451,6 +1525,28 @@ def generate_stills(
     log(f"Generating {total} scene stills…")
 
     done = 0
+    # Keep already-rendered preview stills (continue-from-preview)
+    pending: list[Beat] = []
+    for b in beats:
+        if b.image_path and Path(b.image_path).is_file():
+            dest = images_dir / f"{b.index:03d}_scene{Path(b.image_path).suffix.lower() or '.jpg'}"
+            try:
+                if Path(b.image_path).resolve() != dest.resolve():
+                    import shutil
+                    shutil.copy2(b.image_path, dest)
+                    b.image_path = str(dest)
+            except Exception:
+                pass
+            done += 1
+            if on_still:
+                try:
+                    on_still(b)
+                except Exception as cb_err:
+                    print(f"[storyboard] on_still callback failed: {cb_err}")
+        else:
+            pending.append(b)
+    if done:
+        log(f"Kept {done} preview stills — generating {len(pending)} more…")
 
     def _one(b: Beat) -> Beat:
         path = images_dir / f"{b.index:03d}_scene.jpg"
@@ -1478,7 +1574,7 @@ def generate_stills(
         return updated
 
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futs = {ex.submit(_one, b): b.index for b in beats}
+        futs = {ex.submit(_one, b): b.index for b in pending}
         for fut in as_completed(futs):
             updated = fut.result()
             idx = updated.index
@@ -1751,6 +1847,8 @@ def build_storyboard_pack(
     pack_mode: str = "full",
     visual_style: str = "",
     template: str = "",
+    locked_beats: list[Beat] | None = None,
+    parent_job_id: str = "",
     out_root: str | Path | None = None,
     progress: ProgressFn | None = None,
     on_still: StillReadyFn | None = None,
@@ -1777,6 +1875,7 @@ def build_storyboard_pack(
     work = root / f"_work_{stamp}_{_slug(title or story or topic or 'pack')}"
     work.mkdir(parents=True, exist_ok=True)
 
+    locked = list(locked_beats or []) if pmode == "full" else []
     t0 = time.time()
     out_title, beats = generate_beat_sheet(
         title=title,
@@ -1791,6 +1890,7 @@ def build_storyboard_pack(
         pack_mode=pmode,
         visual_style=style_id,
         template=tmpl,
+        locked_beats=locked or None,
         progress=log,
     )
     images_dir = work / "raw_images"
@@ -1837,9 +1937,11 @@ def build_storyboard_pack(
         "beat_count": len(ok),
         "target_minutes": mins,
         "pack_mode": pmode,
+        "parent_job_id": (parent_job_id or "").strip(),
+        "continued_from_preview": bool(locked),
         "visual_style": style_id,
         "template": tmpl,
-        "scene_files": [Path(b.image_path).name for b in ok],
+        "scene_files": [Path(b.image_path).name for b in ok if b.image_path],
         "manifest_path": str(pack_dir / "MANIFEST.csv"),
         "output_path": str(zip_path),
         "beats": [

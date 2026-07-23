@@ -510,6 +510,7 @@ def _run_storyboard_pack_job(
     pack_mode = (req_data.get("pack_mode") or "full").strip().lower()
     visual_style = (req_data.get("visual_style") or "").strip()
     template = (req_data.get("template") or "").strip()
+    parent_job_id = (req_data.get("parent_job_id") or "").strip()
     cast = req_data.get("cast") if isinstance(req_data.get("cast"), list) else []
     script = (req_data.get("script") or "").strip()
     thumbnail_path = (req_data.get("thumbnail_path") or "").strip()
@@ -588,6 +589,46 @@ def _run_storyboard_pack_job(
                     print(f"[storyboard] cast asset fetch failed ({url_key}): {e}")
             resolved_cast.append(r)
 
+        # Continue-from-preview: reuse opening stills instead of regenerating them
+        locked_beats = []
+        if parent_job_id and pack_mode == "full":
+            try:
+                from webapp.database import get_cook_job
+                from core.storyboard_pack import beats_from_dicts
+                parent = get_cook_job(parent_job_id) or {}
+                try:
+                    parent_result = json.loads(parent.get("result_json") or "{}")
+                except Exception:
+                    parent_result = {}
+                parent_beats = parent_result.get("beats") if isinstance(parent_result, dict) else []
+                if isinstance(parent_beats, list) and parent_beats:
+                    locked_dir = cache_dir / "locked_preview"
+                    locked_dir.mkdir(parents=True, exist_ok=True)
+                    hydrated = []
+                    for row in parent_beats:
+                        if not isinstance(row, dict):
+                            continue
+                        r = dict(row)
+                        url = (r.get("image_url") or "").strip()
+                        local = (r.get("image_path") or "").strip()
+                        if url.startswith("http"):
+                            try:
+                                local = fetch_to_local(url, locked_dir)
+                            except Exception as e:
+                                print(f"[storyboard] locked still fetch failed: {e}")
+                                local = ""
+                        if local and Path(local).is_file():
+                            r["image_path"] = local
+                            hydrated.append(r)
+                    locked_beats = beats_from_dicts(hydrated)
+                    if locked_beats:
+                        on_progress(
+                            f"Keeping {len(locked_beats)} preview scenes — continuing the rest…"
+                        )
+            except Exception as e:
+                print(f"[storyboard] continue-from-preview load failed: {e}")
+                locked_beats = []
+
         live_beats: list[dict] = []
         job["result"] = {
             "kind": "storyboard_pack",
@@ -595,7 +636,38 @@ def _run_storyboard_pack_job(
             "beats": live_beats,
             "beat_count": 0,
             "zip_ready": False,
+            "parent_job_id": parent_job_id,
         }
+
+        # Seed the live board with locked preview stills immediately
+        for b in locked_beats:
+            entry = {
+                "index": b.index,
+                "image_url": "",
+                "dialogue": b.dialogue,
+                "i2v_prompt": b.i2v_prompt,
+                "image_prompt": b.image_prompt,
+                "location": b.location,
+                "characters": b.characters,
+                "time_of_day": getattr(b, "time_of_day", "") or "",
+                "outfit_continuity": getattr(b, "outfit_continuity", "") or "",
+                "target_sec": b.target_sec,
+                "filename": Path(b.image_path).name if b.image_path else "",
+            }
+            if b.image_path and Path(b.image_path).is_file():
+                try:
+                    ext = Path(b.image_path).suffix or ".jpg"
+                    entry["image_url"] = storage.store_file(
+                        b.image_path,
+                        f"storyboard/{user_id or 'anon'}/{job_id}/beats/{b.index:03d}_locked{ext}",
+                        "image/jpeg" if ext.lower() in (".jpg", ".jpeg") else "image/png",
+                    )
+                except Exception:
+                    try:
+                        entry["image_url"] = f"/api/files/{os.path.relpath(b.image_path, str(ROOT))}"
+                    except Exception:
+                        pass
+            live_beats.append(entry)
 
         def _persist_live():
             try:
@@ -608,6 +680,10 @@ def _run_storyboard_pack_job(
                 )
             except Exception as e:
                 print(f"[storyboard] live persist failed: {e}")
+
+        if live_beats:
+            job["result"]["beat_count"] = len(live_beats)
+            _persist_live()
 
         def on_still(beat):
             local = beat.image_path
@@ -669,6 +745,8 @@ def _run_storyboard_pack_job(
                 pack_mode=pack_mode,
                 visual_style=visual_style,
                 template=template,
+                locked_beats=locked_beats or None,
+                parent_job_id=parent_job_id,
                 progress=lambda m: on_progress(m),
                 on_still=on_still,
                 is_admin=is_admin,
@@ -724,6 +802,8 @@ def _run_storyboard_pack_job(
             "beat_count": result.get("beat_count") or len(final_beats),
             "target_minutes": result.get("target_minutes") or target_minutes,
             "pack_mode": result.get("pack_mode") or pack_mode,
+            "parent_job_id": parent_job_id or result.get("parent_job_id") or "",
+            "continued_from_preview": bool(result.get("continued_from_preview")),
             "visual_style": result.get("visual_style") or visual_style,
             "template": result.get("template") or template,
             "scene_files": result.get("scene_files") or [],
@@ -1133,10 +1213,10 @@ def _run_storyboard_animate_job(
         still_cache.mkdir(exist_ok=True)
 
         concurrency = max(1, int(getattr(config, "ATLAS_I2V_CONCURRENCY", 5) or 5))
-        # Soft cap — too many parallel Seedance polls overload Atlas and flake out
-        concurrency = min(concurrency, 4)
+        soft_cap = max(1, int(getattr(config, "ATLAS_I2V_SOFT_CAP", 6) or 6))
+        concurrency = min(concurrency, soft_cap)
         total = len(beat_rows)
-        on_progress(f"Cooking scenes… 0/{total}")
+        on_progress(f"Cooking scenes… 0/{total} (up to {concurrency} at once)")
 
         # Keep heartbeat alive during long Seedance waits (stale reclaim is ~3 min)
         import threading
@@ -1154,8 +1234,14 @@ def _run_storyboard_animate_job(
 
         done_lock = threading.Lock()
         done_count = [0]
+        active_count = [0]
         errors: list[str] = []
         matched: list[dict[str, Any]] = []
+
+        def _progress_line():
+            cooking = active_count[0]
+            suffix = f" ({cooking} cooking)" if cooking > 0 else ""
+            on_progress(f"Cooking scenes… {done_count[0]}/{total}{suffix}")
 
         def _one(beat: dict[str, Any]) -> dict[str, Any] | None:
             idx = int(beat["index"])
@@ -1171,7 +1257,7 @@ def _run_storyboard_animate_job(
             if out_clip.is_file() and out_clip.stat().st_size > 1000:
                 with done_lock:
                     done_count[0] += 1
-                    on_progress(f"Cooking scenes… {done_count[0]}/{total}")
+                    _progress_line()
                 return {
                     "index": idx,
                     "clip": str(out_clip),
@@ -1185,15 +1271,22 @@ def _run_storyboard_animate_job(
                 image_in = still
             dur = int(round(float(beat.get("target_sec") or 5)))
             prompt = _beat_i2v_prompt(beat)
-            # Seedance + audio often needs 3–8+ minutes; poll flakes are retried inside
-            ok = generate_video_file(
-                prompt,
-                image_in,
-                out_clip,
-                duration=dur,
-                timeout_sec=900,
-                max_attempts=3,
-            )
+            with done_lock:
+                active_count[0] += 1
+                _progress_line()
+            try:
+                # Seedance + audio often needs 3–8+ minutes; poll flakes are retried inside
+                ok = generate_video_file(
+                    prompt,
+                    image_in,
+                    out_clip,
+                    duration=dur,
+                    timeout_sec=900,
+                    max_attempts=3,
+                )
+            finally:
+                with done_lock:
+                    active_count[0] = max(0, active_count[0] - 1)
             if not ok or not out_clip.is_file():
                 raise RuntimeError(
                     f"Scene {idx:03d} motion failed "
@@ -1201,7 +1294,7 @@ def _run_storyboard_animate_job(
                 )
             with done_lock:
                 done_count[0] += 1
-                on_progress(f"Cooking scenes… {done_count[0]}/{total}")
+                _progress_line()
             return {
                 "index": idx,
                 "clip": str(out_clip),
