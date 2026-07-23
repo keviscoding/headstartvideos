@@ -45,9 +45,25 @@ ATLAS_I2V_CONCURRENCY = max(1, int(os.getenv("ATLAS_I2V_CONCURRENCY", "5")))
 ATLAS_I2V_SOFT_CAP = max(1, int(os.getenv("ATLAS_I2V_SOFT_CAP", "6")))
 # On-site Seedance cook hard cap (pack/stills may be longer; cook first N minutes only).
 STORYBOARD_COOK_MAX_MINUTES = max(1.0, float(os.getenv("STORYBOARD_COOK_MAX_MINUTES", "8") or 8))
-# Pack stills slider ceiling (users can generate long boards; cook stays capped above).
-STORYBOARD_PACK_MAX_MINUTES = max(STORYBOARD_COOK_MAX_MINUTES, float(os.getenv("STORYBOARD_PACK_MAX_MINUTES", "30") or 30))
-# Credit charge for on-site animate — 0 while admin-testing; tune in pricing pass.
+# Pack stills slider ceiling for paying users (trial capped separately).
+STORYBOARD_PACK_MAX_MINUTES = max(
+    STORYBOARD_COOK_MAX_MINUTES,
+    float(os.getenv("STORYBOARD_PACK_MAX_MINUTES", "25") or 25),
+)
+# Trial pack length + quota (free packs, no on-site cook).
+STORYBOARD_TRIAL_PACK_MAX_MINUTES = max(
+    1.0,
+    float(os.getenv("STORYBOARD_TRIAL_PACK_MAX_MINUTES", "8") or 8),
+)
+STORYBOARD_TRIAL_PACK_LIMIT = max(0, int(os.getenv("STORYBOARD_TRIAL_PACK_LIMIT", "2") or 2))
+# Pack credits: ceil(minutes / divisor). Preview (~1 min) → 1 credit when paid.
+STORYBOARD_PACK_CREDITS_PER_2_MIN = max(
+    1,
+    int(os.getenv("STORYBOARD_PACK_CREDITS_PER_2_MIN", "1") or 1),
+)  # credits charged per 2 minutes (ceil)
+STORYBOARD_PACK_CREDITS_MIN = max(0, int(os.getenv("STORYBOARD_PACK_CREDITS_MIN", "1") or 1))
+# On-site animate: flat charge (preferred) or per-minute fallback.
+STORYBOARD_ANIMATE_CREDITS_FLAT = max(0, int(os.getenv("STORYBOARD_ANIMATE_CREDITS_FLAT", "12") or 12))
 STORYBOARD_ANIMATE_CREDITS_PER_MIN = float(os.getenv("STORYBOARD_ANIMATE_CREDITS_PER_MIN", "0") or 0)
 STORYBOARD_ANIMATE_CREDITS_MIN = max(0, int(os.getenv("STORYBOARD_ANIMATE_CREDITS_MIN", "0") or 0))
 # Concept segmentation model (kept configurable so we can trade speed/quality).

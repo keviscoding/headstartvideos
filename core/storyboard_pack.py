@@ -27,7 +27,7 @@ from typing import Any, Callable
 ProgressFn = Callable[[str], None]
 
 MAX_FREE_MINUTES = 8
-MAX_PAID_MINUTES = 30
+MAX_PAID_MINUTES = 25
 SEC_PER_BEAT = 8.0  # target hold / I2V clip length
 
 _BIBLE_PATH = Path(__file__).resolve().parent / "storyboard_family_english_bible.txt"
@@ -338,14 +338,16 @@ def clamp_minutes(
     *,
     is_admin: bool = False,
     is_paid: bool = False,
+    paid_max: float | None = None,
+    free_max: float | None = None,
 ) -> float:
     mins = float(target_minutes or 8)
     mins = max(1.0, mins)
-    if is_admin:
-        return min(mins, float(MAX_PAID_MINUTES))
-    if is_paid:
-        return min(mins, float(MAX_PAID_MINUTES))
-    return min(mins, float(MAX_FREE_MINUTES))
+    paid_cap = float(paid_max if paid_max is not None else MAX_PAID_MINUTES)
+    free_cap = float(free_max if free_max is not None else MAX_FREE_MINUTES)
+    if is_admin or is_paid:
+        return min(mins, paid_cap)
+    return min(mins, free_cap)
 
 
 def _beat_count_for_minutes(minutes: float, *, pack_mode: str = "full") -> int:

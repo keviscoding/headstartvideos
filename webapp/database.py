@@ -1333,6 +1333,31 @@ def count_user_active_cooks(user_id: int, *, video_only: bool = True) -> int:
     return len(list_user_active_cooks(user_id, video_only=video_only))
 
 
+def count_user_storyboard_packs(
+    user_id: int,
+    *,
+    statuses: tuple[str, ...] | None = None,
+) -> int:
+    """How many storyboard pack jobs a user has (for trial quota)."""
+    if not user_id:
+        return 0
+    st = statuses or ("queued", "web_queued", "running", "complete")
+    with _conn() as conn:
+        cur = conn.cursor()
+        placeholders = ",".join(["?"] * len(st))
+        cur.execute(
+            _q(
+                f"""
+                SELECT COUNT(*) AS c FROM cook_jobs
+                WHERE user_id = ? AND recipe = 'storyboard_pack'
+                  AND status IN ({placeholders})
+                """
+            ),
+            (int(user_id), *st),
+        )
+        return _row_count(cur.fetchone())
+
+
 def _row_count(row) -> int:
     if row is None:
         return 0

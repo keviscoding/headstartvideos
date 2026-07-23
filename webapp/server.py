@@ -220,6 +220,7 @@ from webapp.database import (
     create_video, list_videos, get_video, update_video_kit, delete_video,
     create_cook_job, update_cook_job, get_cook_job,
     list_user_active_cooks, count_user_active_cooks,
+    count_user_storyboard_packs,
     cook_queue_stats, announce_queued_jobs,
     set_user_heygen_key, get_user_heygen_key, user_heygen_status,
     set_user_atlas_key, get_user_atlas_key, user_atlas_status,
@@ -1256,6 +1257,11 @@ async def get_client_config():
         "max_voiceover_words": int(getattr(config, "MAX_VOICEOVER_WORDS", 3750) or 3750),
         "hq_credit_cost": int(getattr(config, "HQ_CREDIT_COST", 3) or 3),
         "hq_max_minutes": int(getattr(config, "HQ_MAX_MINUTES", 12) or 12),
+        "storyboard_pack_max_minutes": float(getattr(config, "STORYBOARD_PACK_MAX_MINUTES", 25) or 25),
+        "storyboard_trial_pack_max_minutes": float(getattr(config, "STORYBOARD_TRIAL_PACK_MAX_MINUTES", 8) or 8),
+        "storyboard_trial_pack_limit": int(getattr(config, "STORYBOARD_TRIAL_PACK_LIMIT", 2) or 2),
+        "storyboard_cook_max_minutes": float(getattr(config, "STORYBOARD_COOK_MAX_MINUTES", 8) or 8),
+        "storyboard_animate_credits_flat": int(getattr(config, "STORYBOARD_ANIMATE_CREDITS_FLAT", 12) or 12),
     }
 
 
@@ -1264,12 +1270,20 @@ async def get_niches(request: Request):
     niches = []
     user = _current_user(request)
     is_admin = bool(user and _is_admin_email(user.get("email", "")))
+    has_plan = bool(
+        user and (
+            is_admin
+            or (user.get("plan") or "") in (
+                "starter", "daily", "pro", "starter_trial", "daily_trial",
+            )
+        )
+    )
     for f in sorted(NICHES_DIR.glob("*.json")):
         with open(f) as fh:
             niche = json.load(fh)
-        # Storyboard Pack: admin-only while testing (everyone else sees Coming soon)
+        # Storyboard Pack: available on trial/paid (not free/anonymous)
         if niche.get("id") == "storyboard_pack" or niche.get("recipe") == "storyboard_pack":
-            if is_admin:
+            if has_plan:
                 niche["status"] = niche.get("status") or "new"
                 niche["available"] = True
             else:
@@ -3015,7 +3029,7 @@ def download_niche_intel_job(job_id: str, admin: dict = Depends(require_admin)):
 # Storyboard Pack (admin-only v1 — stills + I2V prompts zip)
 # ---------------------------------------------------------------------------
 @app.get("/api/storyboard/cast")
-async def get_storyboard_cast(admin: dict = Depends(require_admin)):
+async def get_storyboard_cast(admin: dict = Depends(require_active_plan)):
     """Load persistent cast settings (empty cast by default — no forced family)."""
     from core.storyboard_pack import (
         VISUAL_STYLE_PRESETS,
@@ -3043,7 +3057,7 @@ async def get_storyboard_cast(admin: dict = Depends(require_admin)):
 
 
 @app.put("/api/storyboard/cast")
-async def save_storyboard_cast(req: StoryboardCastSaveRequest, admin: dict = Depends(require_admin)):
+async def save_storyboard_cast(req: StoryboardCastSaveRequest, admin: dict = Depends(require_active_plan)):
     from core.storyboard_pack import normalize_cast, resolve_visual_style
     from webapp.database import set_user_storyboard_settings
     rows = []
@@ -3073,7 +3087,7 @@ async def save_storyboard_cast(req: StoryboardCastSaveRequest, admin: dict = Dep
 @app.post("/api/storyboard/cast/extract")
 async def extract_storyboard_cast(
     req: StoryboardExtractCastRequest,
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_active_plan),
 ):
     """Propose recurring cast from story/script — user confirms before looks."""
     story = (req.story or "").strip()
@@ -3098,7 +3112,7 @@ async def extract_storyboard_cast(
 @app.post("/api/storyboard/cast/generate-look")
 async def generate_storyboard_cast_look(
     req: StoryboardLookRequest,
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_active_plan),
 ):
     """Generate portrait (+ optional sheet) for one cast member — Cast studio dopamine."""
     from core.storyboard_pack import (
@@ -3199,7 +3213,7 @@ async def storyboard_thumbnail(
     cast_json: str = Form("[]"),
     count: int = Form(2),
     refs: list[UploadFile] = File(default=[]),
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_active_plan),
 ):
     """Story-aware thumbnail: cheap gist + main cast portraits as edit refs."""
     from core.storyboard_pack import (
@@ -3343,7 +3357,7 @@ async def storyboard_thumbnail(
 @app.post("/api/storyboard/suggest-morals")
 async def storyboard_suggest_morals(
     req: StoryboardSuggestMoralsRequest,
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_active_plan),
 ):
     """Optional takeaway suggestions from the user's story (admin-only)."""
     story = (req.story or "").strip()
@@ -3359,8 +3373,8 @@ async def storyboard_suggest_morals(
 
 
 @app.post("/api/storyboard/jobs")
-async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(require_admin)):
-    """Queue a storyboard pack build (0 credits while admin-testing)."""
+async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(require_active_plan)):
+    """Queue a storyboard pack build (credits for paying users; trial packs free but capped)."""
     title = (req.title or "").strip()
     story = (req.story or req.topic or "").strip()
     topic = story  # keep topic for older cook workers
@@ -3413,18 +3427,56 @@ async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(
     if thumb_path:
         _safe_user_path(thumb_path, "thumbnail")
 
+    is_admin = _is_admin_email(admin.get("email", ""))
+    plan = (admin.get("plan") or "free").strip()
+    is_paid = plan in ("starter", "daily", "pro")
+    is_trial = plan in ("starter_trial", "daily_trial")
+    paid_max = float(getattr(config, "STORYBOARD_PACK_MAX_MINUTES", 25) or 25)
+    trial_max = float(getattr(config, "STORYBOARD_TRIAL_PACK_MAX_MINUTES", 8) or 8)
+    trial_limit = int(getattr(config, "STORYBOARD_TRIAL_PACK_LIMIT", 2) or 2)
+
     try:
         mins = float(req.target_minutes or 8)
     except (TypeError, ValueError):
         mins = 8.0
-    from core.storyboard_pack import clamp_minutes, MAX_PAID_MINUTES
-    mins = clamp_minutes(mins, is_admin=True, is_paid=True)
-    if mins > MAX_PAID_MINUTES:
-        raise HTTPException(400, f"Max length is {MAX_PAID_MINUTES} minutes.")
 
     pack_mode = (req.pack_mode or "full").strip().lower()
     if pack_mode not in ("preview", "full"):
         pack_mode = "full"
+    # Preview always targets ~1 minute of scenes
+    if pack_mode == "preview":
+        mins = min(mins, 1.2)
+
+    from core.storyboard_pack import clamp_minutes
+    if is_trial and not is_admin and mins > trial_max + 0.05:
+        raise HTTPException(
+            402,
+            f"Trial packs are limited to {trial_max:.0f} minutes. "
+            "Start your plan to unlock longer storyboards.",
+        )
+    mins = clamp_minutes(
+        mins,
+        is_admin=is_admin,
+        is_paid=is_paid,
+        paid_max=paid_max,
+        free_max=trial_max,
+    )
+    if not is_admin and not is_paid and mins > trial_max + 0.05:
+        raise HTTPException(
+            402,
+            f"Packs over {trial_max:.0f} minutes require a paid plan.",
+        )
+    if mins > paid_max + 0.05:
+        raise HTTPException(400, f"Max pack length is {paid_max:.0f} minutes.")
+
+    if is_trial and not is_admin:
+        used = count_user_storyboard_packs(int(admin["id"]))
+        if used >= trial_limit:
+            raise HTTPException(
+                402,
+                f"Trial includes {trial_limit} storyboard packs. "
+                "Start your plan to generate more.",
+            )
 
     parent_job_id = (req.parent_job_id or "").strip()
     if parent_job_id:
@@ -3444,8 +3496,19 @@ async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(
         if (parent.get("status") or "") != "complete":
             raise HTTPException(400, "Wait until the preview pack finishes before continuing.")
 
-    plan = (admin.get("plan") or "free").strip()
-    is_paid = plan in ("starter", "daily", "pro")
+    credit_cost = 0 if is_admin else _storyboard_pack_credit_cost(
+        mins, pack_mode=pack_mode, is_trial=is_trial and not is_paid,
+    )
+    credit_deducted = False
+    if credit_cost > 0:
+        if not deduct_credits(admin["id"], credit_cost):
+            have = int(admin.get("credits") or 0)
+            raise HTTPException(
+                402,
+                f"Need {credit_cost} credit{'s' if credit_cost != 1 else ''} for this pack. "
+                f"You have {have}. Top up or upgrade to continue.",
+            )
+        credit_deducted = True
 
     job_id = str(uuid.uuid4())
     req_payload = {
@@ -3464,9 +3527,9 @@ async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(
         "parent_job_id": parent_job_id,
         "visual_style": style_id,
         "template": template,
-        "is_admin": True,
+        "is_admin": is_admin,
         "is_paid": is_paid,
-        "credits_charged": 0,
+        "credits_charged": credit_cost,
         "notify_email": admin.get("email") or "",
     }
 
@@ -3477,12 +3540,17 @@ async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(
             recipe="storyboard_pack",
             title=req_payload["title"],
             request_json=json.dumps(req_payload),
-            credit_deducted=False,
-            lite_mode=False,
+            credit_deducted=credit_deducted,
+            lite_mode=is_trial and not is_admin,
             status="web_queued" if COOK_ON_WEB else "queued",
         )
     except Exception as e:
         print(f"[storyboard] create_cook_job failed: {e}")
+        if credit_deducted:
+            try:
+                add_credits(admin["id"], credit_cost)
+            except Exception:
+                pass
         raise HTTPException(500, "Could not queue storyboard pack.")
 
     job = {
@@ -3493,8 +3561,8 @@ async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(
         "result": None,
         "request": req_payload,
         "user_id": admin["id"],
-        "credit_deducted": False,
-        "lite_mode": False,
+        "credit_deducted": credit_deducted,
+        "lite_mode": is_trial and not is_admin,
         "error": "",
         "created_at": time.time(),
     }
@@ -3526,6 +3594,9 @@ async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(
         "target_minutes": mins,
         "has_script": bool(script),
         "dialogue_mode": dialogue_mode,
+        "pack_mode": pack_mode,
+        "credits": credit_cost,
+        "is_trial": is_trial,
         "cook_on_fly": bool(COOK_ON_FLY),
         "cook_on_web": bool(COOK_ON_WEB),
         "has_thumbnail": bool(req_payload.get("thumbnail_path")),
@@ -3535,11 +3606,13 @@ async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(
         "status": "queued",
         "target_minutes": mins,
         "title": req_payload["title"],
+        "credits_charged": credit_cost,
+        "pack_mode": pack_mode,
     }
 
 
 @app.get("/api/storyboard/jobs/{job_id}")
-async def get_storyboard_job(job_id: str, admin: dict = Depends(require_admin)):
+async def get_storyboard_job(job_id: str, admin: dict = Depends(require_active_plan)):
     job = _jobs.get(job_id)
     if job:
         if job.get("user_id") != admin["id"] and not _is_admin_email(admin.get("email", "")):
@@ -3585,7 +3658,7 @@ async def get_storyboard_job(job_id: str, admin: dict = Depends(require_admin)):
 async def regen_storyboard_beat(
     job_id: str,
     req: StoryboardRegenBeatRequest,
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_active_plan),
 ):
     """Regenerate one weak still; updates live board + re-zips when pack_dir exists."""
     job = _jobs.get(job_id)
@@ -3722,7 +3795,7 @@ async def regen_storyboard_beat(
 
 
 @app.get("/api/storyboard/jobs/{job_id}/download")
-async def download_storyboard_job(job_id: str, admin: dict = Depends(require_admin)):
+async def download_storyboard_job(job_id: str, admin: dict = Depends(require_active_plan)):
     job = _jobs.get(job_id)
     if not job:
         row = get_cook_job(job_id)
@@ -3867,7 +3940,7 @@ async def _save_assemble_uploads(
 async def match_storyboard_assemble(
     job_id: str,
     clips: list[UploadFile] = File(default=[]),
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_active_plan),
 ):
     """Upload I2V clips (or a zip) and preview filename/pHash matching — no stitch yet."""
     from core.storyboard_assemble import (
@@ -3947,7 +4020,7 @@ async def start_storyboard_assemble(
     add_music: str = Form("1"),
     notify_email: str = Form(""),
     clips: list[UploadFile] = File(default=[]),
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_active_plan),
 ):
     """Start assemble cook from a prior match staging_id and/or fresh clip uploads."""
     from core.storyboard_assemble import extract_clips_from_uploads, load_pack_beats
@@ -4104,17 +4177,42 @@ async def start_storyboard_assemble(
     }
 
 
-def _storyboard_animate_credit_cost(target_minutes: float, *, byok: bool = False) -> int:
-    """Placeholder credit math — 0 while admin-testing; knobs in config for pricing pass."""
+def _storyboard_pack_credit_cost(
+    target_minutes: float,
+    *,
+    pack_mode: str = "full",
+    is_trial: bool = False,
+) -> int:
+    """Credits for a stills pack. Trial packs are free (quota-limited)."""
     import math
-    per_min = float(getattr(config, "STORYBOARD_ANIMATE_CREDITS_PER_MIN", 0) or 0)
-    floor = int(getattr(config, "STORYBOARD_ANIMATE_CREDITS_MIN", 0) or 0)
-    if per_min <= 0 and floor <= 0:
+    if is_trial:
         return 0
-    raw = max(floor, int(math.ceil(max(target_minutes, 0.5) * per_min)))
+    mins = float(target_minutes or 8)
+    if (pack_mode or "").strip().lower() == "preview":
+        mins = min(mins, 1.2)
+    # ceil(minutes / 2) * rate — default rate 1 → 8 min = 4, 25 min = 13
+    per_2 = max(1, int(getattr(config, "STORYBOARD_PACK_CREDITS_PER_2_MIN", 1) or 1))
+    floor = max(0, int(getattr(config, "STORYBOARD_PACK_CREDITS_MIN", 1) or 1))
+    raw = int(math.ceil(max(mins, 0.5) / 2.0)) * per_2
+    return max(floor, raw)
+
+
+def _storyboard_animate_credit_cost(target_minutes: float, *, byok: bool = False) -> int:
+    """Credits for on-site Seedance cook. Flat charge preferred (default 12)."""
+    import math
+    flat = int(getattr(config, "STORYBOARD_ANIMATE_CREDITS_FLAT", 12) or 0)
+    if flat > 0:
+        cost = flat
+    else:
+        per_min = float(getattr(config, "STORYBOARD_ANIMATE_CREDITS_PER_MIN", 0) or 0)
+        floor = int(getattr(config, "STORYBOARD_ANIMATE_CREDITS_MIN", 0) or 0)
+        if per_min <= 0 and floor <= 0:
+            return 0
+        cost = max(floor, int(math.ceil(max(target_minutes, 0.5) * per_min)))
     if byok:
-        return max(0, min(raw, max(1, int(math.ceil(max(target_minutes, 0.5) / 4.0)))))
-    return raw
+        # BYOK still pays platform fee (half, min 1) — Seedance is on their Atlas key
+        return max(1, int(math.ceil(cost / 2.0)))
+    return cost
 
 
 @app.post("/api/storyboard/jobs/{job_id}/animate")
@@ -4125,10 +4223,19 @@ async def start_storyboard_animate(
     notify_email: str = Form(""),
     beat_from: str = Form(""),
     beat_to: str = Form(""),
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_active_plan),
 ):
     """Queue on-site Seedance I2V + assemble cook from a finished pack."""
     from webapp.database import get_user_atlas_key, deduct_credits
+
+    is_admin = _is_admin_email(admin.get("email", ""))
+    plan = (admin.get("plan") or "free").strip()
+    is_paid = plan in ("starter", "daily", "pro")
+    if not is_admin and not is_paid:
+        raise HTTPException(
+            402,
+            "On-site cook is for paid plans. Start your plan to animate your storyboard.",
+        )
 
     job = _storyboard_pack_job_or_404(job_id, admin)
     result = job.get("result") if isinstance(job.get("result"), dict) else {}
@@ -4212,13 +4319,15 @@ async def start_storyboard_animate(
         byok = bool(get_user_atlas_key(int(admin["id"])))
     except Exception:
         byok = False
-    credit_cost = _storyboard_animate_credit_cost(target_minutes, byok=byok)
+    credit_cost = 0 if is_admin else _storyboard_animate_credit_cost(target_minutes, byok=byok)
     credit_deducted = False
     if credit_cost > 0:
         if not deduct_credits(admin["id"], credit_cost):
+            have = int(admin.get("credits") or 0)
             raise HTTPException(
                 402,
-                f"Need {credit_cost} credit{'s' if credit_cost != 1 else ''} to generate on ChannelRecipe.",
+                f"Need {credit_cost} credit{'s' if credit_cost != 1 else ''} to cook on ChannelRecipe. "
+                f"You have {have}. Top up to continue.",
             )
         credit_deducted = True
 
@@ -4234,7 +4343,8 @@ async def start_storyboard_animate(
         "burn_captions": (burn_captions or "1").strip() not in ("0", "false", "no"),
         "add_music": (add_music or "1").strip() not in ("0", "false", "no"),
         "credits_charged": credit_cost,
-        "is_admin": True,
+        "is_admin": is_admin,
+        "is_paid": is_paid,
         "notify_email": (notify_email or "").strip() or (admin.get("email") or ""),
         "target_minutes": target_minutes,
         "cook_max_minutes": cook_cap,
@@ -4333,10 +4443,14 @@ async def start_storyboard_animate(
 @app.get("/api/storyboard/animate-cost")
 async def storyboard_animate_cost(
     minutes: float = 8,
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_active_plan),
 ):
     """Preview credit cost for on-site animate (UI blurb)."""
     from webapp.database import get_user_atlas_key
+    is_admin = _is_admin_email(admin.get("email", ""))
+    plan = (admin.get("plan") or "free").strip()
+    is_paid = plan in ("starter", "daily", "pro")
+    is_trial = plan in ("starter_trial", "daily_trial")
     byok = False
     try:
         byok = bool(get_user_atlas_key(int(admin["id"])))
@@ -4344,13 +4458,69 @@ async def storyboard_animate_cost(
         byok = False
     cook_cap = float(getattr(config, "STORYBOARD_COOK_MAX_MINUTES", 8) or 8)
     mins = min(cook_cap, max(0.5, float(minutes or 8)))
-    cost = _storyboard_animate_credit_cost(mins, byok=byok)
+    cost = 0 if is_admin else _storyboard_animate_credit_cost(mins, byok=byok)
     return {
         "credits": cost,
         "byok": byok,
         "minutes": mins,
         "cook_max_minutes": cook_cap,
+        "allowed": bool(is_admin or is_paid),
+        "is_trial": is_trial and not is_paid,
+        "pack_max_minutes": float(getattr(config, "STORYBOARD_PACK_MAX_MINUTES", 25) or 25),
+        "trial_pack_max_minutes": float(getattr(config, "STORYBOARD_TRIAL_PACK_MAX_MINUTES", 8) or 8),
+        "trial_pack_limit": int(getattr(config, "STORYBOARD_TRIAL_PACK_LIMIT", 2) or 2),
     }
+
+
+@app.get("/api/storyboard/pack-cost")
+async def storyboard_pack_cost(
+    minutes: float = 8,
+    pack_mode: str = "full",
+    admin: dict = Depends(require_active_plan),
+):
+    """Preview credit cost + limits for a stills pack."""
+    is_admin = _is_admin_email(admin.get("email", ""))
+    plan = (admin.get("plan") or "free").strip()
+    is_paid = plan in ("starter", "daily", "pro")
+    is_trial = plan in ("starter_trial", "daily_trial")
+    paid_max = float(getattr(config, "STORYBOARD_PACK_MAX_MINUTES", 25) or 25)
+    trial_max = float(getattr(config, "STORYBOARD_TRIAL_PACK_MAX_MINUTES", 8) or 8)
+    trial_limit = int(getattr(config, "STORYBOARD_TRIAL_PACK_LIMIT", 2) or 2)
+    mode = (pack_mode or "full").strip().lower()
+    if mode not in ("preview", "full"):
+        mode = "full"
+    try:
+        mins = float(minutes or 8)
+    except (TypeError, ValueError):
+        mins = 8.0
+    if mode == "preview":
+        mins = min(mins, 1.2)
+    max_allowed = paid_max if (is_admin or is_paid) else trial_max
+    mins = min(max_allowed, max(1.0, mins))
+    used = 0
+    if is_trial and not is_admin:
+        try:
+            used = count_user_storyboard_packs(int(admin["id"]))
+        except Exception:
+            used = 0
+    cost = 0 if is_admin else _storyboard_pack_credit_cost(
+        mins, pack_mode=mode, is_trial=is_trial and not is_paid,
+    )
+    return {
+        "credits": cost,
+        "minutes": mins,
+        "pack_mode": mode,
+        "is_trial": is_trial and not is_paid,
+        "is_paid": is_paid or is_admin,
+        "pack_max_minutes": paid_max,
+        "trial_pack_max_minutes": trial_max,
+        "trial_pack_limit": trial_limit,
+        "trial_packs_used": used,
+        "trial_packs_remaining": max(0, trial_limit - used) if (is_trial and not is_admin) else None,
+        "cook_allowed": bool(is_admin or is_paid),
+        "animate_credits_flat": int(getattr(config, "STORYBOARD_ANIMATE_CREDITS_FLAT", 12) or 12),
+    }
+
 
 @app.post("/api/internal/niche-finder/cron")
 def niche_finder_cron(

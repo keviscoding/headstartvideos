@@ -225,6 +225,11 @@ let _featureFlags = {
     max_voiceover_words: 3750,
     hq_credit_cost: 3,
     hq_max_minutes: 12,
+    storyboard_pack_max_minutes: 25,
+    storyboard_trial_pack_max_minutes: 8,
+    storyboard_trial_pack_limit: 2,
+    storyboard_cook_max_minutes: 8,
+    storyboard_animate_credits_flat: 12,
 };
 
 function applyFeatureFlags(cfg) {
@@ -236,6 +241,11 @@ function applyFeatureFlags(cfg) {
     _featureFlags.max_voiceover_words = Number(cfg.max_voiceover_words || 3750);
     _featureFlags.hq_credit_cost = Number(cfg.hq_credit_cost || 3);
     _featureFlags.hq_max_minutes = Number(cfg.hq_max_minutes || 12);
+    _featureFlags.storyboard_pack_max_minutes = Number(cfg.storyboard_pack_max_minutes || 25);
+    _featureFlags.storyboard_trial_pack_max_minutes = Number(cfg.storyboard_trial_pack_max_minutes || 8);
+    _featureFlags.storyboard_trial_pack_limit = Number(cfg.storyboard_trial_pack_limit || 2);
+    _featureFlags.storyboard_cook_max_minutes = Number(cfg.storyboard_cook_max_minutes || 8);
+    _featureFlags.storyboard_animate_credits_flat = Number(cfg.storyboard_animate_credits_flat || 12);
     const cloneBtn = document.getElementById('vo-mode-clone');
     if (cloneBtn) cloneBtn.classList.toggle('hidden', !_featureFlags.voice_clone_enabled);
 }
@@ -5274,7 +5284,107 @@ function _sbBeatsDurationMinutes(beats) {
 
 /** On-site Seedance cook hard cap (pack/stills may be longer). */
 function _sbCookMaxMinutes() {
-    return 8;
+    return Number(_featureFlags.storyboard_cook_max_minutes || 8);
+}
+
+function _sbPackMaxMinutes() {
+    if (isAdminUser() || hasFullLengthAccess()) {
+        return Number(_featureFlags.storyboard_pack_max_minutes || 25);
+    }
+    return Number(_featureFlags.storyboard_trial_pack_max_minutes || 8);
+}
+
+function _sbAnimateCreditsFlat() {
+    return Math.max(0, Number(_featureFlags.storyboard_animate_credits_flat || 12));
+}
+
+function _sbRequireAccess() {
+    if (!currentUser) {
+        showAuthModal();
+        return false;
+    }
+    if (isAdminUser()) return true;
+    if (!isPaidUser()) {
+        showPricingModal({ reason: 'storyboard' });
+        return false;
+    }
+    return true;
+}
+
+function _sbHandleBillingError(res, data, { needFallback = 1 } = {}) {
+    const errMsg = typeof data?.detail === 'string'
+        ? data.detail
+        : (data?.detail?.message || data?.detail || 'Something went wrong');
+    if (res.status === 401) {
+        showAuthModal();
+        return true;
+    }
+    if (res.status === 402) {
+        if (isTrialUser() && /plan|paid|trial|unlock|longer|cook/i.test(String(errMsg))) {
+            if (typeof endTrialNow === 'function') {
+                // Soft prompt toward converting trial
+                showSoftPrompt(String(errMsg), 'Start plan now', () => {
+                    try { endTrialNow(); } catch (_) { showPricingModal({ reason: 'storyboard' }); }
+                });
+            } else {
+                showPricingModal({ reason: 'storyboard' });
+            }
+            return true;
+        }
+        if (isPaidUser() && !isTrialUser()) {
+            const needMatch = String(errMsg).match(/Need\s+(\d+)/i);
+            const need = needMatch ? parseInt(needMatch[1], 10) : needFallback;
+            showCreditsNeededModal({ need, have: currentUser?.credits ?? 0, reason: 'credits' });
+            return true;
+        }
+        if (isTrialUser()) {
+            showTrialExhaustedModal();
+            return true;
+        }
+        showPricingModal({ reason: 'storyboard' });
+        return true;
+    }
+    return false;
+}
+
+function _sbPackCreditEstimate(minutes, packMode = 'full') {
+    if (isTrialUser() && !isAdminUser()) return 0;
+    let mins = Number(minutes) || 8;
+    if (packMode === 'preview') mins = Math.min(mins, 1.2);
+    return Math.max(1, Math.ceil(mins / 2));
+}
+
+async function _sbSyncPackCostUI() {
+    const blurb = document.getElementById('sb-pack-cost-blurb');
+    if (!blurb) return;
+    const slider = document.getElementById('sb-minutes');
+    const mins = Number(slider?.value || 8);
+    const maxMins = _sbPackMaxMinutes();
+    try {
+        const res = await fetch(`/api/storyboard/pack-cost?minutes=${encodeURIComponent(mins)}&pack_mode=full`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            blurb.textContent = `Packs up to ${maxMins} min. On-site cook is ${_sbAnimateCreditsFlat()} credits (paid plans).`;
+            return;
+        }
+        const c = Number(data.credits || 0);
+        const trialLeft = data.trial_packs_remaining;
+        if (data.is_trial) {
+            const left = trialLeft == null ? '' : ` · ${trialLeft} of ${data.trial_pack_limit} free packs left`;
+            blurb.textContent = `Trial: free packs up to ${data.trial_pack_max_minutes || 8} min${left}. On-site cook unlocks when you start your plan.`;
+        } else {
+            blurb.textContent = c > 0
+                ? `This pack: ~${c} credit${c === 1 ? '' : 's'} for ~${data.minutes || mins} min (max ${data.pack_max_minutes || maxMins}). On-site cook: ${_sbAnimateCreditsFlat()} credits.`
+                : `Packs up to ${data.pack_max_minutes || maxMins} min. On-site cook: ${_sbAnimateCreditsFlat()} credits.`;
+        }
+    } catch (_) {
+        const c = _sbPackCreditEstimate(mins);
+        if (isTrialUser() && !isAdminUser()) {
+            blurb.textContent = `Trial: free packs up to ${maxMins} min (max ${_featureFlags.storyboard_trial_pack_limit || 2}). On-site cook needs a paid plan.`;
+        } else {
+            blurb.textContent = `This pack: ~${c} credit${c === 1 ? '' : 's'}. On-site cook: ${_sbAnimateCreditsFlat()} credits.`;
+        }
+    }
 }
 
 function _sbClipBeatsToCookCap(beats, maxMinutes) {
@@ -5606,10 +5716,7 @@ function addStoryboardCastMember() {
 }
 
 async function extractStoryboardCast() {
-    if (!isAdminUser()) {
-        alert('Storyboard Pack is admin-only while we test it.');
-        return;
-    }
+    if (!_sbRequireAccess()) return;
     const story = (
         (document.getElementById('sb-extract-source')?.value || '')
         || (document.getElementById('sb-story')?.value || '')
@@ -5673,10 +5780,7 @@ function applyFamilyTemplateCast() {
 }
 
 async function generateCastLook(i, btn) {
-    if (!isAdminUser()) {
-        alert('Storyboard Pack is admin-only while we test it.');
-        return;
-    }
+    if (!_sbRequireAccess()) return;
     const c = _sbCast[i];
     if (!c) return;
     if (!(c.name || '').trim()) {
@@ -5755,10 +5859,13 @@ function initStoryboardPackUI() {
     const mins = state.nicheData?.default_minutes || state.targetMinutes || 8;
     const slider = document.getElementById('sb-minutes');
     const label = document.getElementById('sb-minutes-label');
+    const maxMins = _sbPackMaxMinutes();
     if (slider) {
-        slider.max = 30;
-        slider.value = mins;
-        if (label) label.textContent = mins + ' min';
+        slider.min = 3;
+        slider.max = String(maxMins);
+        const clamped = Math.min(maxMins, Math.max(3, Number(mins) || 8));
+        slider.value = clamped;
+        if (label) label.textContent = clamped + ' min';
     }
     const titleInput = document.getElementById('sb-title');
     if (titleInput && state.title) titleInput.value = state.title;
@@ -5766,13 +5873,30 @@ function initStoryboardPackUI() {
     renderEpisodeCastStrip();
     const moralsList = document.getElementById('sb-morals-list');
     if (moralsList) moralsList.innerHTML = '';
+    _sbSyncPackCostUI();
 }
 
 function bindStoryboardPackUI() {
     const slider = document.getElementById('sb-minutes');
     const label = document.getElementById('sb-minutes-label');
     if (slider && label) {
-        slider.addEventListener('input', () => { label.textContent = slider.value + ' min'; });
+        slider.addEventListener('input', () => {
+            const maxMins = _sbPackMaxMinutes();
+            let v = Number(slider.value) || 8;
+            if (v > maxMins) {
+                v = maxMins;
+                slider.value = v;
+                if (isTrialUser() && !isAdminUser()) {
+                    showSoftPrompt(
+                        `Trial packs max out at ${maxMins} minutes. Start your plan to unlock up to ${_featureFlags.storyboard_pack_max_minutes || 25} minutes.`,
+                        'Start plan now',
+                        () => { try { endTrialNow(); } catch (_) { showPricingModal({ reason: 'storyboard' }); } },
+                    );
+                }
+            }
+            label.textContent = v + ' min';
+            _sbSyncPackCostUI();
+        });
     }
     document.querySelectorAll('input[name="sb-dialogue-mode"]').forEach(el => {
         el.addEventListener('change', _sbSyncDialogueUI);
@@ -5908,7 +6032,7 @@ function _sbRenderAssembleMatchServer(matched, unmatched) {
 }
 
 async function matchStoryboardAssemble() {
-    if (!isAdminUser()) { alert('Storyboard Pack is admin-only while we test it.'); return; }
+    if (!_sbRequireAccess()) return;
     if (!_sbJobId) { alert('Generate a pack first.'); return; }
     if (!_sbAssembleFiles.length) { alert('Drop your I2V clips first.'); return; }
     const btn = document.getElementById('btn-sb-assemble-match');
@@ -5942,7 +6066,7 @@ function _sbBurnCaptionsEnabled() {
 }
 
 async function runStoryboardAssemble() {
-    if (!isAdminUser()) { alert('Storyboard Pack is admin-only while we test it.'); return; }
+    if (!_sbRequireAccess()) return;
     if (!_sbJobId) { alert('Generate a pack first.'); return; }
     if (!_sbAssembleStagingId && !_sbAssembleFiles.length) {
         alert('Drop clips and preview match first.');
@@ -6141,7 +6265,8 @@ function _sbCookTargetMinutes() {
 async function _sbSyncAnimateUI() {
     const btn = document.getElementById('btn-sb-animate-run');
     const blurb = document.getElementById('sb-animate-blurb');
-    if (btn) btn.disabled = !_sbBoardCookReady();
+    const cookAllowed = isAdminUser() || hasFullLengthAccess();
+    if (btn) btn.disabled = !_sbBoardCookReady() || !cookAllowed;
     const mins = _sbCookTargetMinutes();
     const selected = _sbCookBeats();
     const effective = _sbCookBeatsEffective();
@@ -6154,25 +6279,39 @@ async function _sbSyncAnimateUI() {
     } else {
         stretch = `${effective.length || 'all'} scenes`;
     }
+    if (!cookAllowed) {
+        if (blurb) {
+            blurb.textContent = `On-site cook is for paid plans (${_sbAnimateCreditsFlat()} credits, max ${cap} min). Start your plan to animate ${stretch}.`;
+        }
+        return;
+    }
     try {
         const res = await fetch(`/api/storyboard/animate-cost?minutes=${encodeURIComponent(mins)}`);
         const data = await res.json().catch(() => ({}));
         if (blurb && res.ok) {
-            const c = Number(data.credits || 0);
+            const c = Number(data.credits || _sbAnimateCreditsFlat() || 0);
             const capNote = ` On-site cook max ${Number(data.cook_max_minutes || cap)} min.`;
             blurb.textContent = c > 0
-                ? `Cook ${stretch} into motion. About ${c} credit${c === 1 ? '' : 's'} for ~${mins} min.${capNote}`
-                : `Cook ${stretch} into motion, stitch them, and optionally add captions + music — using your cast.${capNote}`;
+                ? `Cook ${stretch} into motion · ${c} credit${c === 1 ? '' : 's'}.${capNote}`
+                : `Cook ${stretch} into motion, stitch them, and optionally add captions + music.${capNote}`;
         } else if (blurb) {
-            blurb.textContent = `Cook ${stretch} into motion, stitch them, and optionally add captions + music — using your cast. On-site cook max ${cap} min.`;
+            blurb.textContent = `Cook ${stretch} into motion · ${_sbAnimateCreditsFlat()} credits. On-site cook max ${cap} min.`;
         }
     } catch (_) {
-        if (blurb) blurb.textContent = `Cook ${stretch} into motion, stitch them, and optionally add captions + music — using your cast. On-site cook max ${cap} min.`;
+        if (blurb) blurb.textContent = `Cook ${stretch} into motion · ${_sbAnimateCreditsFlat()} credits. On-site cook max ${cap} min.`;
     }
 }
 
 async function runStoryboardAnimate() {
-    if (!isAdminUser()) { alert('Storyboard Pack is admin-only while we test it.'); return; }
+    if (!_sbRequireAccess()) return;
+    if (!isAdminUser() && !hasFullLengthAccess()) {
+        showSoftPrompt(
+            'On-site cook is for paid plans. Start your plan to animate your storyboard.',
+            'Start plan now',
+            () => { try { endTrialNow(); } catch (_) { showPricingModal({ reason: 'storyboard' }); } },
+        );
+        return;
+    }
     if (!_sbJobId) { alert('Generate a pack first.'); return; }
     const block = _sbBoardCookBlockReason();
     if (block) { alert(block); return; }
@@ -6196,17 +6335,27 @@ async function runStoryboardAnimate() {
         if (notify) fd.append('notify_email', notify);
         const res = await fetch(`/api/storyboard/jobs/${_sbJobId}/animate`, { method: 'POST', body: fd });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Cook failed to start');
+        if (!res.ok) {
+            if (_sbHandleBillingError(res, data, { needFallback: _sbAnimateCreditsFlat() })) {
+                throw new Error('__billing__');
+            }
+            throw new Error(typeof data.detail === 'string' ? data.detail : 'Cook failed to start');
+        }
         _sbAssembleJobId = data.job_id;
+        const charged = Number(data.credits_charged || 0);
+        if (charged > 0 && currentUser && typeof currentUser.credits === 'number') {
+            currentUser.credits = Math.max(0, currentUser.credits - charged);
+            updateAuthUI();
+        }
         cookingManager.adoptStoryboard(_sbAssembleJobId, data.title || 'your video');
         if (_sbAssemblePollTimer) clearInterval(_sbAssemblePollTimer);
         _sbAssemblePollTimer = setInterval(pollStoryboardAssemble, 2500);
         pollStoryboardAssemble();
-        track('storyboard_animate_queued', { job_id: _sbAssembleJobId, parent: _sbJobId, credits: data.credits_charged || 0 });
+        track('storyboard_animate_queued', { job_id: _sbAssembleJobId, parent: _sbJobId, credits: charged });
     } catch (e) {
         setLoading(btn, false);
         if (!cookingManager.isCooking) cookingManager._hideCookingBar();
-        alert(e.message || 'Cook failed');
+        if (!e || e.message !== '__billing__') alert(e.message || 'Cook failed');
     }
 }
 
@@ -6231,7 +6380,7 @@ function _sbRenderThumbs(urls, paths) {
 }
 
 async function generateStoryboardThumbnail() {
-    if (!isAdminUser()) { alert('Storyboard Pack is admin-only while we test it.'); return; }
+    if (!_sbRequireAccess()) return;
     const title = (document.getElementById('sb-title')?.value || state.title || '').trim();
     if (!title) { alert('Add a title first.'); return; }
     const btn = document.getElementById('btn-sb-thumb');
@@ -6261,7 +6410,7 @@ async function generateStoryboardThumbnail() {
 }
 
 async function suggestStoryboardMorals() {
-    if (!isAdminUser()) { alert('Storyboard Pack is admin-only while we test it.'); return; }
+    if (!_sbRequireAccess()) return;
     const story = (document.getElementById('sb-story')?.value || '').trim();
     if (!story) { alert('Describe what happens first.'); return; }
     const btn = document.getElementById('btn-sb-suggest-morals');
@@ -6533,7 +6682,7 @@ async function regenSelectedBeat() {
 }
 
 async function startStoryboardPack(packMode = 'full', opts = {}) {
-    if (!isAdminUser()) { alert('Storyboard Pack is admin-only while we test it.'); return; }
+    if (!_sbRequireAccess()) return;
     if (!_sbCastHasLook()) {
         alert('Generate at least one character look in Cast studio first.');
         goToStep('sb-cast');
@@ -6557,7 +6706,15 @@ async function startStoryboardPack(packMode = 'full', opts = {}) {
         const moral = (document.getElementById('sb-moral')?.value || '').trim();
         const dialogue_mode = _sbDialogueMode();
         const script = (document.getElementById('sb-script')?.value || '').trim();
-        const minutes = parseFloat(document.getElementById('sb-minutes')?.value || '8');
+        const minutes = Math.min(_sbPackMaxMinutes(), parseFloat(document.getElementById('sb-minutes')?.value || '8'));
+        if (isTrialUser() && !isAdminUser() && parseFloat(document.getElementById('sb-minutes')?.value || '8') > _sbPackMaxMinutes() + 0.05) {
+            showSoftPrompt(
+                `Trial packs max out at ${_sbPackMaxMinutes()} minutes. Start your plan to unlock longer storyboards.`,
+                'Start plan now',
+                () => { try { endTrialNow(); } catch (_) { showPricingModal({ reason: 'storyboard' }); } },
+            );
+            return;
+        }
 
         if (!title) { alert('Add a title for this video.'); return; }
         if (dialogue_mode === 'paste') {
@@ -6644,13 +6801,24 @@ async function startStoryboardPack(packMode = 'full', opts = {}) {
             body: JSON.stringify(payload),
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : (data.detail || 'Could not start pack'));
+        if (!res.ok) {
+            if (_sbHandleBillingError(res, data, { needFallback: _sbPackCreditEstimate(payload.target_minutes || 8, mode) })) {
+                throw new Error('__billing__');
+            }
+            throw new Error(typeof data.detail === 'string' ? data.detail : (data.detail || 'Could not start pack'));
+        }
         _sbJobId = data.job_id;
+        const charged = Number(data.credits_charged || 0);
+        if (charged > 0 && currentUser && typeof currentUser.credits === 'number') {
+            currentUser.credits = Math.max(0, currentUser.credits - charged);
+            updateAuthUI();
+        }
         track('storyboard_pack_started', {
             job_id: _sbJobId,
             target_minutes: payload.target_minutes,
             dialogue_mode: payload.dialogue_mode,
             pack_mode: mode,
+            credits: charged,
             continued_from_preview: !!parentPreviewId,
             parent_job_id: parentPreviewId || undefined,
         });
@@ -6659,7 +6827,7 @@ async function startStoryboardPack(packMode = 'full', opts = {}) {
         await pollStoryboardPack();
     } catch (e) {
         _sbSetPackLoading(false);
-        alert(e.message || 'Storyboard pack failed');
+        if (e && e.message !== '__billing__') alert(e.message || 'Storyboard pack failed');
         goToStep('storyboard');
     }
 }
