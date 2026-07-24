@@ -650,14 +650,17 @@ async function loadNiches() {
 
         niches.forEach(niche => {
             const card = document.createElement('div');
-            const unavailable = niche.available === false || niche.status === 'coming_soon';
+            const needsTrial = niche.requires_trial || niche.status === 'requires_trial';
+            const unavailable = niche.available === false || niche.status === 'coming_soon' || needsTrial;
             card.className = unavailable ? 'niche-card niche-card--soon' : 'niche-card';
             const previewHtml = niche.preview_gif
                 ? `<div class="niche-preview">
                        <img src="${niche.preview_gif}" alt="${niche.name} preview" loading="lazy">
                    </div>`
                 : '';
-            const statusChip = unavailable
+            const statusChip = needsTrial
+                ? `<span class="status-chip new">Start free trial</span>`
+                : unavailable
                 ? `<span class="status-chip new">Coming soon</span>`
                 : niche.status === 'proven'
                 ? `<span class="status-chip proven"><svg width="11" height="11" viewBox="0 0 12 12"><path d="M1 9 L4 5 L6.5 7 L11 1" fill="none" stroke="var(--success)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Proven</span>`
@@ -682,11 +685,16 @@ async function loadNiches() {
                 </div>
             `;
             if (unavailable) {
-                card.style.opacity = '0.55';
-                card.style.cursor = 'not-allowed';
-                card.title = 'Coming soon';
+                card.style.opacity = needsTrial ? '0.85' : '0.55';
+                card.style.cursor = 'pointer';
+                card.title = needsTrial ? 'Start your free trial to unlock Storyboard Pack' : 'Coming soon';
                 card.addEventListener('click', (e) => {
                     e.preventDefault();
+                    if (needsTrial) {
+                        if (!ensureSignedIn(() => showPricingModal({ reason: 'storyboard' }))) return;
+                        showPricingModal({ reason: 'storyboard' });
+                        return;
+                    }
                     alert('This recipe is coming soon. Pick another recipe for now.');
                 });
             } else {

@@ -1281,14 +1281,17 @@ async def get_niches(request: Request):
     for f in sorted(NICHES_DIR.glob("*.json")):
         with open(f) as fh:
             niche = json.load(fh)
-        # Storyboard Pack: available on trial/paid (not free/anonymous)
+        # Storyboard Pack: unlocked once they start a trial or paid plan (card required).
+        # Free / signed-out accounts see a trial CTA — not a fake "coming soon".
         if niche.get("id") == "storyboard_pack" or niche.get("recipe") == "storyboard_pack":
             if has_plan:
                 niche["status"] = niche.get("status") or "new"
                 niche["available"] = True
+                niche.pop("requires_trial", None)
             else:
-                niche["status"] = "coming_soon"
+                niche["status"] = "requires_trial"
                 niche["available"] = False
+                niche["requires_trial"] = True
         niches.append(niche)
     return niches
 
