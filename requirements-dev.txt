@@ -1,0 +1,2 @@
+# Dev / CI test deps (optional — keep prod requirements lean)
+pytest>=8.0.0

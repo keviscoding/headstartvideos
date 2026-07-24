@@ -480,6 +480,9 @@ function goToStep(n) {
     if (n === 'sb-pack') _sbSyncBoardCookControls();
 
     if (typeof n === 'number' && n >= 2) persistPipelineState();
+    if (typeof n === 'string' && (n === 'storyboard' || String(n).startsWith('sb-'))) {
+        persistPipelineState();
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -695,9 +698,9 @@ async function loadNiches() {
                     <h3 style="font-family: var(--font-display); font-weight: 800; font-size: 22px; line-height: 1.3; letter-spacing: -0.01em; color: var(--app-ink); max-width: 88%; margin-bottom: 6px;">${niche.name}</h3>
                     <p style="font-family: var(--font-body); font-size: 15px; line-height: 1.5; color: var(--app-ink-2); margin-bottom: 12px;">${niche.tagline || niche.description || ''}</p>
                     <div style="display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin-top: auto; font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.01em; color: var(--app-ink-3);">
-                        <span>~15 min</span>
+                        <span>${(niche.recipe || niche.id) === 'storyboard_pack' ? 'Up to 25 min' : '~15 min'}</span>
                         <span style="opacity: 0.5;">·</span>
-                        <span>1 credit</span>
+                        <span>${(niche.recipe || niche.id) === 'storyboard_pack' ? 'Pack + cook credits' : '1 credit'}</span>
                         <span style="opacity: 0.5;">·</span>
                         <span>RPM ${niche.rpm_range || 'N/A'}</span>
                     </div>
@@ -810,7 +813,7 @@ function updateScriptLimitMsg() {
         if (isTrialUser()) {
             body.innerHTML = `Trial caps at <span id="limit-minutes">${cap}</span> min. Start your plan for up to 20 min videos.`;
         } else {
-            body.innerHTML = `Free plan caps at <span id="limit-minutes">${cap}</span> min and watermarks output. Go Pro: up to 20 min, no watermark, 15 videos/mo.`;
+            body.innerHTML = `Free plan caps at <span id="limit-minutes">${cap}</span> min. Starter &amp; Daily unlock up to 20 min.`;
         }
     }
     msg.classList.add('hidden');
@@ -828,7 +831,7 @@ function showLengthUpgradePrompt() {
         if (isTrialUser()) {
             body.innerHTML = `Trial caps at <span id="limit-minutes">${cap}</span> min. Start your plan for up to 20 min videos.`;
         } else {
-            body.innerHTML = `Free plan caps at <span id="limit-minutes">${cap}</span> min and watermarks output. Go Pro: up to 20 min, no watermark, 15 videos/mo.`;
+            body.innerHTML = `Free plan caps at <span id="limit-minutes">${cap}</span> min. Starter &amp; Daily unlock up to 20 min.`;
         }
     }
     msg.classList.remove('hidden');
@@ -845,8 +848,29 @@ function hideLengthUpgradePrompt() {
 
 let _pricingBillingCycle = 'monthly';
 
+/** Trial users must end trial early — Stripe checkout rejects active trials. */
+function openUpgradeFlow(opts = {}) {
+    if (!currentUser) { showAuthModal(); return; }
+    if (isTrialUser()) {
+        const msg = opts.trialMessage
+            || 'Start your plan now to unlock this. This ends your free trial early and begins billing.';
+        showSoftPrompt(msg, 'Start plan now', () => {
+            endTrialNow().then(() => {
+                if (typeof opts.afterEndTrial === 'function') opts.afterEndTrial();
+            });
+        });
+        return;
+    }
+    showPricingModal(opts);
+}
+
 function showPricingModal(opts = {}) {
     if (!currentUser) { showAuthModal(); return; }
+    // Active trial: never show “trial already used” + Stripe checkout (server rejects it).
+    if (isTrialUser()) {
+        openUpgradeFlow(opts);
+        return;
+    }
     const modal = document.getElementById('pricing-modal');
     if (!modal) return;
     modal.classList.remove('hidden');
@@ -861,7 +885,8 @@ function showPricingModal(opts = {}) {
     const subtitle = document.getElementById('pricing-subtitle');
     const starterBtn = document.getElementById('pricing-cta-starter');
     const dailyBtn = document.getElementById('pricing-cta-daily');
-    const usedTrial = !!currentUser.trial_used;
+    // trial_used is set when a trial *starts* — only treat as spent if they're not on trial now
+    const usedTrial = !!currentUser.trial_used && !isTrialUser();
     const need = Math.max(1, Number(opts.need || 1));
     const have = Math.max(0, Number(opts.have ?? currentUser.credits ?? 0));
     const paidSubscriber = isPaidUser() && !isTrialUser();
@@ -875,12 +900,12 @@ function showPricingModal(opts = {}) {
         if (heading) heading.textContent = 'Not enough credits';
         if (subtitle) {
             subtitle.textContent = need === 1
-                ? `You need 1 credit to cook. You have ${have}.`
-                : `You need ${need} credits for this cook. You have ${have}.`;
+                ? `You need 1 credit. You have ${have}.`
+                : `You need ${need} credits. You have ${have}.`;
         }
         const summary = document.getElementById('credits-needed-summary');
         if (summary) {
-            summary.textContent = `Top up to continue — Pro visuals costs ${hqCreditCost()} credits, Standard costs 1.`;
+            summary.textContent = `Top up to continue — high-quality stills cost ${hqCreditCost()} credits, Standard cooks cost 1.`;
         }
         if (creditsPanel) creditsPanel.classList.remove('hidden');
         if (pricingGrid) pricingGrid.style.display = 'none';
@@ -904,7 +929,7 @@ function showPricingModal(opts = {}) {
     if (dailyBtn) dailyBtn.textContent = ctaText;
 
     if (opts.reason === 'hq' && !paidSubscriber) {
-        if (heading) heading.textContent = 'Unlock Pro visuals';
+        if (heading) heading.textContent = 'Unlock high-quality stills';
         if (subtitle) subtitle.textContent = 'High quality stills are on paid plans. Subscribe to use them.';
     } else if (opts.reason === 'storyboard' && !usedTrial) {
         if (heading) heading.textContent = 'Ready to build your storyboard';
@@ -913,7 +938,7 @@ function showPricingModal(opts = {}) {
         }
     } else if (opts.reason === 'cook' && !usedTrial) {
         if (heading) heading.textContent = 'Your video is ready to cook';
-        if (subtitle) subtitle.textContent = `Start your free trial to cook this video — ${trialCredits()} videos included.`;
+        if (subtitle) subtitle.textContent = `Start your free trial to cook this video — ${trialCredits()} credits included.`;
     } else if (usedTrial) {
         if (heading) heading.textContent = 'Choose your plan';
         if (subtitle) subtitle.textContent = 'Your free trial was already used. Subscribe to keep creating.';
@@ -999,10 +1024,13 @@ function hideCelebration() {
         overlay.classList.remove('show');
         overlay.style.display = 'none';
         // After celebrating trial/upgrade, resume where they left off in the pipeline
-        if (state.step >= 2) {
+        const step = state.step;
+        const isSb = typeof step === 'string' && (step === 'storyboard' || String(step).startsWith('sb-'));
+        const isNum = typeof step === 'number' && Number.isFinite(step) && step >= 2;
+        if (isSb || isNum) {
             navigateTo('pipeline');
-            goToStep(state.step);
-            if (state.step === 6) populateBuildSummary();
+            goToStep(step);
+            if (step === 6) populateBuildSummary();
         }
     }, 350);
 }
@@ -1117,12 +1145,12 @@ function showTrialExhaustedModal() {
         <div style="background:var(--bg-card,#1a1a2e);border-radius:16px;padding:32px;max-width:420px;width:90%;text-align:center;position:relative;">
             <button onclick="hideTrialExhaustedModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;color:var(--text-secondary,#aaa);font-size:20px;cursor:pointer;">&times;</button>
             <div style="font-size:40px;margin-bottom:12px;">🎬</div>
-            <h3 style="margin:0 0 8px;color:var(--text-primary,#fff);font-size:20px;">You've used your ${trialN} trial videos</h3>
+            <h3 style="margin:0 0 8px;color:var(--text-primary,#fff);font-size:20px;">You've used your ${trialN} trial credits</h3>
             <p style="color:var(--text-secondary,#aaa);margin:0 0 24px;font-size:14px;line-height:1.5;">
-                Start your <strong>${tierLabel}</strong> plan now to unlock <strong>${credits} videos/month</strong> at ${price}/mo, or wait until your trial ends.
+                Start your <strong>${tierLabel}</strong> plan now to unlock <strong>${credits} credits/month</strong> at ${price}/mo, or wait until your trial ends.
             </p>
             <button onclick="endTrialNow()" style="width:100%;padding:14px;border:none;border-radius:10px;background:var(--accent,#6c5ce7);color:#fff;font-size:16px;font-weight:600;cursor:pointer;margin-bottom:10px;">
-                Start plan now — ${credits} videos
+                Start plan now — ${credits} credits
             </button>
             <button onclick="hideTrialExhaustedModal()" style="width:100%;padding:12px;border:1px solid var(--border,#333);border-radius:10px;background:transparent;color:var(--text-secondary,#aaa);font-size:14px;cursor:pointer;">
                 I'll wait
@@ -1191,27 +1219,31 @@ function setPricingPlan(cycle) {
         document.getElementById('starter-price').textContent = '$22.50';
         document.getElementById('starter-period').textContent = '/mo';
         document.getElementById('starter-note').textContent = 'Billed $270/year · 2 months free';
-        document.getElementById('starter-videos').innerHTML = '<strong>180 videos</strong>/year';
+        document.getElementById('starter-videos').innerHTML = '<strong>180 credits</strong>/year';
         document.getElementById('daily-price').textContent = '$40.83';
         document.getElementById('daily-period').textContent = '/mo';
         document.getElementById('daily-note').textContent = 'Billed $490/year · 2 months free';
-        document.getElementById('daily-videos').innerHTML = '<strong>420 videos</strong>/year';
+        document.getElementById('daily-videos').innerHTML = '<strong>420 credits</strong>/year';
     } else {
         aBtn.style.background = 'transparent'; aBtn.style.color = 'var(--app-ink-3)';
         mBtn.style.background = 'var(--accent)'; mBtn.style.color = 'white';
         document.getElementById('starter-price').textContent = '$27';
         document.getElementById('starter-period').textContent = '/mo';
-        document.getElementById('starter-note').textContent = '~$1.80 per video';
-        document.getElementById('starter-videos').innerHTML = '<strong>15 videos</strong>/month';
+        document.getElementById('starter-note').textContent = '15 credits / month · cancel anytime';
+        document.getElementById('starter-videos').innerHTML = '<strong>15 credits</strong>/month';
         document.getElementById('daily-price').textContent = '$49';
         document.getElementById('daily-period').textContent = '/mo';
-        document.getElementById('daily-note').textContent = '~$1.40/video · save 22%';
-        document.getElementById('daily-videos').innerHTML = '<strong>35 videos</strong>/month';
+        document.getElementById('daily-note').textContent = '35 credits / month · cancel anytime';
+        document.getElementById('daily-videos').innerHTML = '<strong>35 credits</strong>/month';
     }
 }
 
 async function proceedToCheckout(tier = 'starter') {
     hidePricingModal();
+    if (isTrialUser()) {
+        openUpgradeFlow({ trialMessage: 'Start your plan now to continue. This ends your free trial early.' });
+        return;
+    }
     const plan = `${tier}_${_pricingBillingCycle}`;
     await _doCheckout(plan);
 }
@@ -1236,11 +1268,15 @@ async function proceedToTopup(amount) {
 
 function upgradeToPro(plan = 'monthly') {
     if (!currentUser) { showAuthModal(); return; }
-    showPricingModal();
+    openUpgradeFlow();
 }
 
 async function _doCheckout(plan = 'monthly') {
     if (!currentUser) { showAuthModal(); return; }
+    if (isTrialUser()) {
+        openUpgradeFlow({ trialMessage: 'Start your plan now to continue. This ends your free trial early.' });
+        return;
+    }
     // Save pipeline progress so Stripe redirect doesn't wipe their work
     persistPipelineState();
     track('checkout_started', { plan });
@@ -2503,8 +2539,8 @@ async function showUploadKit(buildResult) {
         document.getElementById('kit-thumb-wrap').classList.add('hidden');
     }
     document.getElementById('kit-title').textContent = state.title;
-    const isFree = !currentUser || currentUser.plan === 'free';
-    document.getElementById('trial-watermark-note')?.classList.toggle('hidden', !isFree);
+    // Watermark upsell was misleading (watermark not applied in cook path) — keep hidden.
+    document.getElementById('trial-watermark-note')?.classList.add('hidden');
     const videoId = buildResult.video_id || null;
     try {
         const res = await fetch('/api/upload-kit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: state.title, script: state.script, niche: state.niche }) });
@@ -3465,6 +3501,9 @@ async function initNicheFinderPage() {
                     ? 'Start your plan'
                     : 'View plans';
                 cta.classList.remove('hidden');
+                cta.onclick = () => openUpgradeFlow({
+                    trialMessage: 'Niche Finder unlocks on Starter and Daily. Start your plan now — this ends your trial early.',
+                });
             }
         }
     } catch (e) {
@@ -4034,7 +4073,7 @@ async function loadResourcesPage() {
                     <div class="flex items-center gap-2" style="flex-wrap: wrap;">
                         <h3 style="font-family: var(--font-display); font-size: 20px; margin: 0; color: var(--app-ink);">${escapeHtml(r.title)}</h3>
                         ${r.is_new ? '<span class="cr-new-badge" style="position:static;">New</span>' : ''}
-                        ${paid ? '<span class="cr-mono" style="font-size:11px;color:var(--accent);border:1px solid var(--accent);padding:2px 6px;border-radius:4px;">Pro</span>' : ''}
+                        ${paid ? '<span class="cr-mono" style="font-size:11px;color:var(--accent);border:1px solid var(--accent);padding:2px 6px;border-radius:4px;">Guide</span>' : ''}
                     </div>
                     <span class="cr-mono" style="font-size: 12px; color: var(--app-ink-3);">${escapeHtml(_formatResourceDate(r.date))}</span>
                 </div>
@@ -4069,12 +4108,17 @@ async function unlockResource(resourceId) {
             const errMsg = typeof data.detail === 'string' ? data.detail : 'Not enough credits';
             const needMatch = String(errMsg).match(/Need\s+(\d+)/i);
             const need = needMatch ? parseInt(needMatch[1], 10) : 55;
+            const have = currentUser?.credits ?? 0;
             if (isPaidUser() && !isTrialUser()) {
-                showCreditsNeededModal({ need, have: currentUser?.credits ?? 0, reason: 'credits' });
+                showCreditsNeededModal({ need, have, reason: 'credits' });
             } else if (isTrialUser()) {
-                showTrialExhaustedModal();
+                showSoftPrompt(
+                    `Need ${need} credits to unlock this guide. You have ${have}. Start your plan for monthly credits (and top-ups).`,
+                    'Start plan now',
+                    () => endTrialNow(),
+                );
             } else {
-                showPricingModal({ reason: 'credits' });
+                showPricingModal({ reason: 'credits', need, have });
             }
             try { track('resource_unlock_blocked', { resource_id: id, need }); } catch (_) {}
             return;
@@ -4852,6 +4896,9 @@ function persistPipelineState() {
             thumbnailUrl: state.thumbnailUrl,
             voiceMode: state.voiceMode,
             uploadedVoPath: state.uploadedVoPath,
+            sbJobId: (typeof _sbJobId !== 'undefined' && _sbJobId) ? _sbJobId : null,
+            sbPackMode: (typeof _sbPackMode !== 'undefined' && _sbPackMode) ? _sbPackMode : null,
+            sbAssembleJobId: (typeof _sbAssembleJobId !== 'undefined' && _sbAssembleJobId) ? _sbAssembleJobId : null,
             savedAt: Date.now(),
         };
         localStorage.setItem(PIPELINE_STORAGE_KEY, JSON.stringify(draft));
@@ -4910,8 +4957,23 @@ function restorePipelineState() {
 
     // Storyboard steps are strings — never run them through Math.min/max (that became NaN
     // and left Recipe empty / unclickable after Stripe trial redirect).
+    if (draft.sbJobId) {
+        try { _sbJobId = draft.sbJobId; } catch (_) {}
+    }
+    if (draft.sbPackMode) {
+        try { _sbPackMode = draft.sbPackMode; } catch (_) {}
+    }
+    if (draft.sbAssembleJobId) {
+        try { _sbAssembleJobId = draft.sbAssembleJobId; } catch (_) {}
+    }
     if (isSbStep) {
         goToStep(rawStep);
+        if (draft.sbJobId && (rawStep === 'sb-pack' || rawStep === 'sb-assemble')) {
+            try { pollStoryboardPack(); } catch (_) {}
+        }
+        if (draft.sbAssembleJobId && rawStep === 'sb-assemble') {
+            try { pollStoryboardAssemble(); } catch (_) {}
+        }
         return true;
     }
     const n = Number(rawStep);
@@ -5047,7 +5109,10 @@ function updateAuthUI() {
         creditsDisplay.classList.remove('hidden');
         // Show Upgrade for free users AND trial users (so they can convert early)
         const showUpgrade = (!isPaidUser() || isTrialUser()) && !currentUser.is_admin;
-        if (navUpgrade) navUpgrade.classList.toggle('hidden', !showUpgrade);
+        if (navUpgrade) {
+            navUpgrade.classList.toggle('hidden', !showUpgrade);
+            navUpgrade.textContent = isTrialUser() ? 'Start plan' : 'Upgrade';
+        }
         if (cookingUpgrade) cookingUpgrade.classList.toggle('hidden', !showUpgrade);
         applyLengthSliderLimits();
         const billingBtn = document.getElementById('menu-billing-btn');
@@ -5068,8 +5133,8 @@ function updateAuthUI() {
         userBtn.classList.add('hidden');
         const cc = document.getElementById('credits-count');
         const cp = document.getElementById('credits-plan');
-        if (cc) cc.textContent = trialCredits() + ' free';
-        if (cp) cp.textContent = 'trial';
+        if (cc) cc.textContent = 'Sign in';
+        if (cp) cp.textContent = '';
         creditsDisplay.classList.remove('hidden');
         if (navUpgrade) navUpgrade.classList.add('hidden');
         if (cookingUpgrade) cookingUpgrade.classList.add('hidden');

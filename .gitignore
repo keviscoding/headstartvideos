@@ -35,9 +35,9 @@ data/
 # Uploads
 webapp/uploads/
 
-# Dev/test files
-test_*.py
-test_*.m4a
+# Manual smoke scripts at repo root (not the tests/ unit suite)
+/test_*.py
+/test_*.m4a
 *.m4a
 
 # Music inbox is a drop zone; registered copies live in assets/music/tracks/

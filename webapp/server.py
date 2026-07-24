@@ -2559,10 +2559,11 @@ _niche_scrape_lock = __import__("threading").Lock()
 
 
 def _niche_finder_can_browse(user: dict) -> bool:
-    if _is_admin_email(user.get("email", "")):
-        return True
-    plan = (user.get("plan") or "free").lower()
-    return plan in ("starter", "daily", "pro")
+    from webapp.storyboard_billing import niche_finder_can_browse
+    return niche_finder_can_browse(
+        user.get("plan") or "free",
+        is_admin=_is_admin_email(user.get("email", "")),
+    )
 
 
 def _niche_finder_can_run(user: dict) -> bool:
@@ -4175,35 +4176,26 @@ def _storyboard_pack_credit_cost(
     is_trial: bool = False,
 ) -> int:
     """Credits for a stills pack. Trial packs are free (quota-limited)."""
-    import math
-    if is_trial:
-        return 0
-    mins = float(target_minutes or 8)
-    if (pack_mode or "").strip().lower() == "preview":
-        mins = min(mins, 1.2)
-    # ceil(minutes / 2) * rate — default rate 1 → 8 min = 4, 25 min = 13
-    per_2 = max(1, int(getattr(config, "STORYBOARD_PACK_CREDITS_PER_2_MIN", 1) or 1))
-    floor = max(0, int(getattr(config, "STORYBOARD_PACK_CREDITS_MIN", 1) or 1))
-    raw = int(math.ceil(max(mins, 0.5) / 2.0)) * per_2
-    return max(floor, raw)
+    from webapp.storyboard_billing import pack_credit_cost
+    return pack_credit_cost(
+        target_minutes,
+        pack_mode=pack_mode,
+        is_trial=is_trial,
+        credits_per_2_min=int(getattr(config, "STORYBOARD_PACK_CREDITS_PER_2_MIN", 1) or 1),
+        credits_min=int(getattr(config, "STORYBOARD_PACK_CREDITS_MIN", 1) or 1),
+    )
 
 
 def _storyboard_animate_credit_cost(target_minutes: float, *, byok: bool = False) -> int:
     """Credits for on-site Seedance cook. Flat charge preferred (default 12)."""
-    import math
-    flat = int(getattr(config, "STORYBOARD_ANIMATE_CREDITS_FLAT", 12) or 0)
-    if flat > 0:
-        cost = flat
-    else:
-        per_min = float(getattr(config, "STORYBOARD_ANIMATE_CREDITS_PER_MIN", 0) or 0)
-        floor = int(getattr(config, "STORYBOARD_ANIMATE_CREDITS_MIN", 0) or 0)
-        if per_min <= 0 and floor <= 0:
-            return 0
-        cost = max(floor, int(math.ceil(max(target_minutes, 0.5) * per_min)))
-    if byok:
-        # BYOK still pays platform fee (half, min 1) — Seedance is on their Atlas key
-        return max(1, int(math.ceil(cost / 2.0)))
-    return cost
+    from webapp.storyboard_billing import animate_credit_cost
+    return animate_credit_cost(
+        target_minutes,
+        byok=byok,
+        flat=int(getattr(config, "STORYBOARD_ANIMATE_CREDITS_FLAT", 12) or 0),
+        per_min=float(getattr(config, "STORYBOARD_ANIMATE_CREDITS_PER_MIN", 0) or 0),
+        floor=int(getattr(config, "STORYBOARD_ANIMATE_CREDITS_MIN", 0) or 0),
+    )
 
 
 @app.post("/api/storyboard/jobs/{job_id}/animate")
