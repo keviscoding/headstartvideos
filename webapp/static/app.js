@@ -5292,11 +5292,74 @@ function _sbCookMaxMinutes() {
     return Number(_featureFlags.storyboard_cook_max_minutes || 8);
 }
 
+function _sbPaidPackMaxMinutes() {
+    return Number(_featureFlags.storyboard_pack_max_minutes || 25);
+}
+
 function _sbPackMaxMinutes() {
     if (isAdminUser() || hasFullLengthAccess()) {
-        return Number(_featureFlags.storyboard_pack_max_minutes || 25);
+        return _sbPaidPackMaxMinutes();
     }
     return Number(_featureFlags.storyboard_trial_pack_max_minutes || 8);
+}
+
+function _sbHasFullPackLength() {
+    return isAdminUser() || hasFullLengthAccess();
+}
+
+let _sbMinutesPromptTimer = null;
+
+function _sbSyncMinutesCapUI() {
+    const paidMax = _sbPaidPackMaxMinutes();
+    const cap = _sbPackMaxMinutes();
+    const cookMax = _sbCookMaxMinutes();
+    const note = document.getElementById('sb-minutes-label-note');
+    const hint = document.getElementById('sb-minutes-cap-hint');
+    const limitMsg = document.getElementById('sb-minutes-limit-msg');
+    const limitBody = document.getElementById('sb-minutes-limit-body');
+    const full = _sbHasFullPackLength();
+
+    if (note) {
+        note.textContent = full
+            ? `(stills pack up to ${paidMax} min · on-site cook max ${cookMax} min)`
+            : `(free trial max ${cap} min · paid up to ${paidMax} min)`;
+    }
+    if (hint) {
+        if (full) {
+            hint.textContent = `Stills packs up to ${paidMax} min. On-site cook max ${cookMax} min.`;
+        } else if (isTrialUser()) {
+            hint.textContent = `Free trial max: ${cap} min. Start your plan for packs up to ${paidMax} min.`;
+        } else {
+            hint.textContent = `Free trial max: ${cap} min. Paid plans unlock packs up to ${paidMax} min.`;
+        }
+    }
+    if (limitBody) {
+        limitBody.textContent = isTrialUser()
+            ? `Start your plan to unlock stills packs up to ${paidMax} min. On-site cook stays capped at ${cookMax} min.`
+            : `Paid plans unlock stills packs up to ${paidMax} min. On-site cook stays capped at ${cookMax} min.`;
+    }
+    if (limitMsg && full) {
+        limitMsg.classList.add('hidden');
+        limitMsg.style.display = 'none';
+    }
+}
+
+function showSbMinutesUpgradePrompt() {
+    const msg = document.getElementById('sb-minutes-limit-msg');
+    if (!msg || _sbHasFullPackLength()) return;
+    _sbSyncMinutesCapUI();
+    msg.classList.remove('hidden');
+    msg.style.display = 'flex';
+    msg.classList.add('limit-pop');
+    clearTimeout(_sbMinutesPromptTimer);
+    _sbMinutesPromptTimer = setTimeout(() => msg.classList.remove('limit-pop'), 400);
+}
+
+function hideSbMinutesUpgradePrompt() {
+    const msg = document.getElementById('sb-minutes-limit-msg');
+    if (!msg) return;
+    msg.classList.add('hidden');
+    msg.style.display = 'none';
 }
 
 function _sbAnimateCreditsFlat() {
@@ -5373,7 +5436,9 @@ async function _sbSyncPackCostUI() {
     const mins = Number(slider?.value || 8);
     const maxMins = _sbPackMaxMinutes();
     if (currentUser && !isPaidUser() && !isAdminUser()) {
-        blurb.textContent = `Cast & story are free. Start a free trial to generate stills — first ${Number(_featureFlags.storyboard_trial_pack_limit || 2)} packs free (up to ${Number(_featureFlags.storyboard_trial_pack_max_minutes || 8)} min).`;
+        const trialMax = Number(_featureFlags.storyboard_trial_pack_max_minutes || 8);
+        const paidMax = _sbPaidPackMaxMinutes();
+        blurb.textContent = `Cast & story are free. Start a free trial to generate stills — first ${Number(_featureFlags.storyboard_trial_pack_limit || 2)} packs free (max ${trialMax} min; paid unlocks up to ${paidMax} min).`;
         return;
     }
     try {
@@ -5384,14 +5449,15 @@ async function _sbSyncPackCostUI() {
             return;
         }
         if (data.requires_trial) {
-            blurb.textContent = `Cast & story are free. Start a free trial to generate stills — first ${data.trial_pack_limit || 2} packs free (up to ${data.trial_pack_max_minutes || 8} min).`;
+            blurb.textContent = `Cast & story are free. Start a free trial to generate stills — first ${data.trial_pack_limit || 2} packs free (max ${data.trial_pack_max_minutes || 8} min; paid unlocks up to ${data.pack_max_minutes || _sbPaidPackMaxMinutes()} min).`;
             return;
         }
         const c = Number(data.credits || 0);
         const trialLeft = data.trial_packs_remaining;
         if (data.is_trial) {
             const left = trialLeft == null ? '' : ` · ${trialLeft} of ${data.trial_pack_limit} free packs left`;
-            blurb.textContent = `Trial: free packs up to ${data.trial_pack_max_minutes || 8} min${left}. On-site cook unlocks when you start your plan.`;
+            const paidMax = data.pack_max_minutes || _sbPaidPackMaxMinutes();
+            blurb.textContent = `Trial max ${data.trial_pack_max_minutes || 8} min${left}. Paid plans unlock up to ${paidMax} min. On-site cook unlocks when you start your plan.`;
         } else {
             blurb.textContent = c > 0
                 ? `This pack: ~${c} credit${c === 1 ? '' : 's'} for ~${data.minutes || mins} min (max ${data.pack_max_minutes || maxMins}). On-site cook: ${_sbAnimateCreditsFlat()} credits.`
@@ -5879,14 +5945,18 @@ function initStoryboardPackUI() {
     const mins = state.nicheData?.default_minutes || state.targetMinutes || 8;
     const slider = document.getElementById('sb-minutes');
     const label = document.getElementById('sb-minutes-label');
-    const maxMins = _sbPackMaxMinutes();
+    const userMax = _sbPackMaxMinutes();
+    const paidMax = _sbPaidPackMaxMinutes();
     if (slider) {
+        // Keep Pro range on the track so free/trial users can drag past 8 and see why it snaps back.
         slider.min = 3;
-        slider.max = String(maxMins);
-        const clamped = Math.min(maxMins, Math.max(3, Number(mins) || 8));
+        slider.max = String(paidMax);
+        const clamped = Math.min(userMax, Math.max(3, Number(mins) || 8));
         slider.value = clamped;
         if (label) label.textContent = clamped + ' min';
     }
+    hideSbMinutesUpgradePrompt();
+    _sbSyncMinutesCapUI();
     const titleInput = document.getElementById('sb-title');
     if (titleInput && state.title) titleInput.value = state.title;
     _sbSyncDialogueUI();
@@ -5901,23 +5971,25 @@ function bindStoryboardPackUI() {
     const label = document.getElementById('sb-minutes-label');
     if (slider && label) {
         slider.addEventListener('input', () => {
-            const maxMins = _sbPackMaxMinutes();
+            const userMax = _sbPackMaxMinutes();
             let v = Number(slider.value) || 8;
-            if (v > maxMins) {
-                v = maxMins;
+            if (!_sbHasFullPackLength() && v > userMax) {
+                v = userMax;
                 slider.value = v;
-                if (isTrialUser() && !isAdminUser()) {
-                    showSoftPrompt(
-                        `Trial packs max out at ${maxMins} minutes. Start your plan to unlock up to ${_featureFlags.storyboard_pack_max_minutes || 25} minutes.`,
-                        'Start plan now',
-                        () => { try { endTrialNow(); } catch (_) { showPricingModal({ reason: 'storyboard' }); } },
-                    );
-                }
+                showSbMinutesUpgradePrompt();
+            } else {
+                hideSbMinutesUpgradePrompt();
             }
             label.textContent = v + ' min';
             _sbSyncPackCostUI();
         });
     }
+    document.getElementById('btn-sb-minutes-upgrade')?.addEventListener('click', () => {
+        if (isTrialUser() && typeof endTrialNow === 'function') {
+            try { endTrialNow(); return; } catch (_) { /* fall through */ }
+        }
+        showPricingModal({ reason: 'storyboard' });
+    });
     document.querySelectorAll('input[name="sb-dialogue-mode"]').forEach(el => {
         el.addEventListener('change', _sbSyncDialogueUI);
     });
