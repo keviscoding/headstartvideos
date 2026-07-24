@@ -2764,15 +2764,18 @@ def niche_finder_access(user: dict = Depends(require_user)):
     can_browse = _niche_finder_can_browse(user)
     can_run = _niche_finder_can_run(user)
     plan = (user.get("plan") or "free").lower()
-    if can_browse:
+    if (can_browse):
         access = "ok"
         message = None
-    elif plan in ("starter_trial", "daily_trial", "free"):
-        access = "pro_only"
-        message = "Niche Finder is only available on Pro."
+    elif plan in ("starter_trial", "daily_trial"):
+        access = "plan_required"
+        message = (
+            "Niche Finder is on Starter and Daily. "
+            "Start your plan to browse the niche library."
+        )
     else:
-        access = "pro_only"
-        message = "Niche Finder is only available on Pro."
+        access = "plan_required"
+        message = "Niche Finder is available on Starter and Daily plans."
 
     active_job_id = None
     if can_run:
@@ -2812,7 +2815,7 @@ def niche_finder_channels(
     user: dict = Depends(require_user),
 ):
     if not _niche_finder_can_browse(user):
-        raise HTTPException(402, "Niche Finder is only available on Pro.")
+        raise HTTPException(402, "Niche Finder is available on Starter and Daily plans.")
     filters = dict(
         min_recent_avg=min_recent_avg or None,
         max_recent_avg=max_recent_avg or None,

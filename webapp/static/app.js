@@ -316,7 +316,15 @@ function navigateTo(page) {
     const toolPages = ['script-studio', 'voiceover-studio', 'thumbnail-studio', 'niche-screener', 'channel-analyzer', 'resources'];
     if (page === 'pipeline') {
         document.querySelector('[data-page="pipeline"]')?.classList.add('active');
-        goToStep(state.step);
+        // Recover from corrupted step (NaN) left by older Stripe restore bug
+        if (typeof state.step === 'number' && !Number.isFinite(state.step)) {
+            state.step = 1;
+        }
+        goToStep(state.step || 1);
+        if (state.step === 1) {
+            const grid = document.getElementById('niche-grid');
+            if (grid && !grid.children.length) loadNiches();
+        }
     } else if (toolPages.includes(page)) {
         document.querySelector('[data-page="tools"]')?.classList.add('active');
     } else {
@@ -426,6 +434,7 @@ function updateStepperActive(n) {
 }
 
 function goToStep(n) {
+    if (typeof n === 'number' && !Number.isFinite(n)) n = 1;
     if (n === 'sb-assemble') {
         const reason = _sbBoardCookBlockReason();
         if (reason) {
@@ -497,10 +506,23 @@ function goToCompletedStep(n) {
         goToStep(n);
         return;
     }
+    // Recipe picker — always reachable (fixes NaN/stuck state after Stripe restore)
+    if (n === 1) {
+        goToStep(1);
+        const grid = document.getElementById('niche-grid');
+        if (grid && !grid.children.length) loadNiches();
+        return;
+    }
     if (isStoryboardRecipe() && typeof n === 'number' && n > 2) {
         n = 2;
     }
-    const cur = typeof state.step === 'number' ? state.step : 1;
+    // Storyboard steps are strings ('sb-cast', …). Don't treat them as numeric cur=1
+    // or Math-corrupted NaN — that blocked Recipe clicks after trial checkout.
+    if (typeof state.step === 'string' || !Number.isFinite(Number(state.step))) {
+        goToStep(n);
+        return;
+    }
+    const cur = Number(state.step);
     if (n < cur || n === cur) goToStep(n);
 }
 
@@ -3429,9 +3451,21 @@ async function initNicheFinderPage() {
             const title = document.getElementById('nf-gate-title');
             const body = document.getElementById('nf-gate-body');
             const cta = document.getElementById('nf-gate-cta');
-            if (title) title.textContent = 'Only available on Pro';
-            if (body) body.textContent = data.message || 'Upgrade to Pro to browse the niche library.';
-            cta?.classList.remove('hidden');
+            if (title) {
+                title.textContent = (currentUser?.plan || '').includes('trial')
+                    ? 'Unlock with Starter or Daily'
+                    : 'Available on Starter & Daily';
+            }
+            if (body) {
+                body.textContent = data.message
+                    || 'Niche Finder is available on Starter and Daily plans.';
+            }
+            if (cta) {
+                cta.textContent = (currentUser?.plan || '').includes('trial')
+                    ? 'Start your plan'
+                    : 'View plans';
+                cta.classList.remove('hidden');
+            }
         }
     } catch (e) {
         gate?.classList.remove('hidden');
@@ -4837,8 +4871,10 @@ function restorePipelineState() {
         clearPipelineDraft();
         return false;
     }
+    const rawStep = draft.step || 1;
+    const isSbStep = typeof rawStep === 'string' && (rawStep === 'storyboard' || String(rawStep).startsWith('sb-'));
     Object.assign(state, {
-        step: draft.step || 1,
+        step: rawStep,
         niche: draft.niche || null,
         nicheData: draft.nicheData || null,
         title: draft.title || '',
@@ -4870,9 +4906,19 @@ function restorePipelineState() {
     if (state.thumbnailUrl) {
         // Will re-render when they land on step 5/6
     }
-    if (state.step >= 2) updateNextBtn2();
-    goToStep(Math.min(Math.max(state.step, 1), 6));
-    if (state.step === 6) populateBuildSummary();
+    if (typeof state.step === 'number' && state.step >= 2) updateNextBtn2();
+
+    // Storyboard steps are strings — never run them through Math.min/max (that became NaN
+    // and left Recipe empty / unclickable after Stripe trial redirect).
+    if (isSbStep) {
+        goToStep(rawStep);
+        return true;
+    }
+    const n = Number(rawStep);
+    const safe = Number.isFinite(n) ? Math.min(Math.max(n, 1), 6) : 1;
+    state.step = safe;
+    goToStep(safe);
+    if (safe === 6) populateBuildSummary();
     return true;
 }
 
