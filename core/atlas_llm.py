@@ -19,6 +19,15 @@ import config
 ATLAS_LLM_BASE = "https://api.atlascloud.ai/v1"
 ATLAS_MEDIA_BASE = "https://api.atlascloud.ai/api/v1"
 
+
+class AtlasContentFiltered(RuntimeError):
+    """Model refused output via safety/content filter (not a server bug)."""
+
+    def __init__(self, message: str = "", *, finish_reason: str = "content_filter"):
+        super().__init__(message or "Atlas LLM content filtered")
+        self.finish_reason = finish_reason or "content_filter"
+
+
 # Cheap text default — titles/scripts/segmenter (not gemini-3.5).
 ATLAS_TEXT_MODEL = os.getenv(
     "ATLAS_TEXT_MODEL",
@@ -246,8 +255,12 @@ def _atlas_chat(
                 f"(finish_reason={finish!r} model={body.get('model')} "
                 f"max_tokens={attempt_tokens} usage={usage})"
             )
+            finish_l = str(finish).lower()
+            # Safety filter — don't burn retries; caller may soften the prompt.
+            if "content_filter" in finish_l or finish_l in ("safety", "blocked", "content_filtered"):
+                raise AtlasContentFiltered(last_err, finish_reason=str(finish))
             # Only worth retrying when the model hit the length wall / omitted message.
-            if str(finish).lower() not in ("length", "max_tokens", ""):
+            if finish_l not in ("length", "max_tokens", ""):
                 break
             print(f"[atlas] {last_err} — retrying with more tokens")
 

@@ -3086,6 +3086,7 @@ async def extract_storyboard_cast(
     script = (req.script or "").strip()
     if not story and not script:
         raise HTTPException(400, "Paste a story or script first so we can find the characters.")
+    from core.atlas_llm import AtlasContentFiltered
     try:
         from core.storyboard_pack import extract_cast_from_text, resolve_visual_style
         style_id, _, _ = resolve_visual_style(req.visual_style or "")
@@ -3095,9 +3096,16 @@ async def extract_storyboard_cast(
             script=script,
             visual_style=style_id,
         )
+    except AtlasContentFiltered as e:
+        print(f"[storyboard] cast extract content_filter: {e}")
+        raise HTTPException(
+            422,
+            "That story hit the safety filter. Soften the wording, or add characters manually.",
+        )
     except Exception as e:
         print(f"[storyboard] cast extract failed: {e}")
-        raise HTTPException(500, "Could not extract characters. Add them manually.")
+        # Recoverable UX path — not a 500 (avoids Sentry noise for LLM flakiness).
+        raise HTTPException(422, "Could not extract characters. Add them manually.")
     return {"cast": cast, "visual_style": style_id}
 
 

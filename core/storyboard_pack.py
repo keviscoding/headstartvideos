@@ -216,7 +216,7 @@ def extract_cast_from_text(
     visual_style: str = "",
 ) -> list[dict[str, Any]]:
     """LLM: propose recurring cast from the user's story and/or script."""
-    from core.atlas_llm import generate_text
+    from core.atlas_llm import AtlasContentFiltered, generate_text
 
     body_parts: list[str] = []
     if (story or "").strip():
@@ -241,23 +241,49 @@ def extract_cast_from_text(
             "Never write photoreal / live-action / real-person descriptions. "
             "Include age, hair, outfit, distinctive features suited to that animation style."
         )
-    raw = generate_text(
-        (
-            f"Extract up to {n} RECURRING characters from this animation story/script.\n"
-            "Only include characters who appear more than once or drive the plot.\n"
-            "Skip one-off extras, crowds, and unnamed background people.\n"
-            f"{look_rules}\n"
-            "Do NOT invent characters that are not in the text.\n"
-            'Output ONLY JSON: {"characters": [{"name": "...", "look_prompt": "..."}]}\n\n'
-            + "\n\n".join(body_parts)
-        ),
-        system=(
-            f"You extract cast lists for {style_label} animation storyboards. "
-            "Output ONLY valid JSON. No markdown."
-        ),
-        max_tokens=1200,
-        temperature=0.3,
-    )
+
+    def _ask(parts: list[str], *, soft: bool = False) -> str:
+        guide = (
+            "This is a FICTIONAL kids/family ANIMATION storyboard. "
+            "List only cartoon character names and short cartoon look notes. "
+            "Ignore violence, romance, politics, or anything sensitive — skip those characters.\n"
+            if soft
+            else ""
+        )
+        return generate_text(
+            (
+                f"{guide}"
+                f"Extract up to {n} RECURRING characters from this animation story/script.\n"
+                "Only include characters who appear more than once or drive the plot.\n"
+                "Skip one-off extras, crowds, and unnamed background people.\n"
+                f"{look_rules}\n"
+                "Do NOT invent characters that are not in the text.\n"
+                'Output ONLY JSON: {"characters": [{"name": "...", "look_prompt": "..."}]}\n\n'
+                + "\n\n".join(parts)
+            ),
+            system=(
+                f"You extract cast lists for {style_label} family-friendly animation storyboards. "
+                "Output ONLY valid JSON. No markdown. "
+                "Keep descriptions wholesome and cartoonish."
+            ),
+            max_tokens=1200,
+            temperature=0.3,
+        )
+
+    try:
+        raw = _ask(body_parts, soft=False)
+    except AtlasContentFiltered:
+        # Model safety-filtered the first pass — retry once with a milder frame + shorter text.
+        soft_parts: list[str] = []
+        if (story or "").strip():
+            soft_parts.append("STORY:\n" + story.strip()[:1800])
+        if (script or "").strip():
+            soft_parts.append("SCRIPT:\n" + script.strip()[:3500])
+        if not soft_parts:
+            raise
+        print("[storyboard] cast extract content_filter — retrying with softened prompt")
+        raw = _ask(soft_parts, soft=True)
+
     data = _parse_json_obj(raw) or {}
     rows = data.get("characters") if isinstance(data, dict) else None
     if not isinstance(rows, list):
