@@ -220,7 +220,7 @@ from webapp.database import (
     create_video, list_videos, get_video, update_video_kit, delete_video,
     create_cook_job, update_cook_job, get_cook_job,
     list_user_active_cooks, count_user_active_cooks,
-    count_user_storyboard_packs,
+    count_user_storyboard_packs, list_user_active_storyboard_packs,
     cook_queue_stats, announce_queued_jobs,
     set_user_heygen_key, get_user_heygen_key, user_heygen_status,
     set_user_atlas_key, get_user_atlas_key, user_atlas_status,
@@ -3601,6 +3601,37 @@ async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(
         "credits_charged": credit_cost,
         "pack_mode": pack_mode,
     }
+
+
+@app.get("/api/storyboard/jobs/active")
+async def list_active_storyboard_pack_jobs(user: dict = Depends(require_user)):
+    """In-flight stills packs for the signed-in user (close-tab / refresh resume)."""
+    jobs = list_user_active_storyboard_packs(int(user["id"]))
+    out = []
+    for j in jobs:
+        progress = j.get("progress") or []
+        last = ""
+        if isinstance(progress, list) and progress:
+            last_item = progress[-1]
+            if isinstance(last_item, dict):
+                last = last_item.get("message") or ""
+            else:
+                last = str(last_item)
+        out.append({
+            "job_id": j.get("job_id"),
+            "status": j.get("status") or "queued",
+            "recipe": "storyboard_pack",
+            "kind": "storyboard_pack",
+            "title": (j.get("title") or "").strip() or "Storyboard pack",
+            "last_message": last,
+            "beat_count": int(j.get("beat_count") or 0),
+            "stills_ready": int(j.get("stills_ready") or 0),
+            "pack_mode": j.get("pack_mode") or "full",
+            "target_minutes": j.get("target_minutes"),
+            "created_at": j.get("created_at"),
+            "started_at": j.get("started_at"),
+        })
+    return {"jobs": out, "count": len(out)}
 
 
 @app.get("/api/storyboard/jobs/{job_id}")

@@ -1333,6 +1333,54 @@ def count_user_active_cooks(user_id: int, *, video_only: bool = True) -> int:
     return len(list_user_active_cooks(user_id, video_only=video_only))
 
 
+def list_user_active_storyboard_packs(user_id: int) -> list[dict]:
+    """In-flight stills packs (not video cooks) — for close-tab resume."""
+    if not user_id:
+        return []
+    with _conn() as conn:
+        cur = conn.cursor()
+        placeholders = ",".join(["?"] * len(_ACTIVE_COOK_STATUSES))
+        cur.execute(
+            _q(
+                f"""
+                SELECT job_id, user_id, status, recipe, title, created_at, started_at,
+                       progress_json, result_json, error
+                FROM cook_jobs
+                WHERE user_id = ? AND recipe = 'storyboard_pack'
+                  AND status IN ({placeholders})
+                ORDER BY COALESCE(started_at, created_at) DESC
+                """
+            ),
+            (int(user_id), *_ACTIVE_COOK_STATUSES),
+        )
+        rows = cur.fetchall() or []
+        out = []
+        for row in rows:
+            d = dict(row)
+            try:
+                d["progress"] = json.loads(d.pop("progress_json") or "[]")
+            except Exception:
+                d["progress"] = []
+            try:
+                result = json.loads(d.pop("result_json") or "{}")
+            except Exception:
+                result = {}
+            beats = result.get("beats") if isinstance(result, dict) else []
+            if not isinstance(beats, list):
+                beats = []
+            d["beat_count"] = len(beats)
+            d["stills_ready"] = sum(
+                1 for b in beats
+                if isinstance(b, dict) and (
+                    b.get("image_url") or b.get("image_path") or b.get("still_url")
+                )
+            )
+            d["pack_mode"] = (result.get("pack_mode") if isinstance(result, dict) else None) or "full"
+            d["target_minutes"] = (result.get("target_minutes") if isinstance(result, dict) else None)
+            out.append(d)
+        return out
+
+
 def count_user_storyboard_packs(
     user_id: int,
     *,
