@@ -6404,7 +6404,9 @@ async function _sbSyncAnimateUI() {
     const btn = document.getElementById('btn-sb-animate-run');
     const blurb = document.getElementById('sb-animate-blurb');
     const cookAllowed = isAdminUser() || hasFullLengthAccess();
-    if (btn) btn.disabled = !_sbBoardCookReady() || !cookAllowed;
+    // Keep the button clickable for trial users — click prompts them to start their plan.
+    // Only grey out when the pack isn't ready to cook yet.
+    if (btn) btn.disabled = !_sbBoardCookReady();
     const mins = _sbCookTargetMinutes();
     const selected = _sbCookBeats();
     const effective = _sbCookBeatsEffective();
@@ -6419,7 +6421,7 @@ async function _sbSyncAnimateUI() {
     }
     if (!cookAllowed) {
         if (blurb) {
-            blurb.textContent = `On-site cook is for paid plans (${_sbAnimateCreditsFlat()} credits, max ${cap} min). Start your plan to animate ${stretch}.`;
+            blurb.textContent = `On-site cook needs a paid plan (${_sbAnimateCreditsFlat()} credits, max ${cap} min). Click Cook video to start your plan and animate ${stretch}.`;
         }
         return;
     }
@@ -6444,9 +6446,15 @@ async function runStoryboardAnimate() {
     if (!_sbRequirePlan()) return;
     if (!isAdminUser() && !hasFullLengthAccess()) {
         showSoftPrompt(
-            'On-site cook is for paid plans. Start your plan to animate your storyboard.',
+            'Your storyboard is ready to cook. Start your plan now to animate it on ChannelRecipe — this ends your trial early and unlocks on-site cook.',
             'Start plan now',
-            () => { try { endTrialNow(); } catch (_) { showPricingModal({ reason: 'storyboard' }); } },
+            () => {
+                endTrialNow().then(() => {
+                    if (isAdminUser() || hasFullLengthAccess()) {
+                        runStoryboardAnimate();
+                    }
+                });
+            },
         );
         return;
     }
