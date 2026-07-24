@@ -1268,30 +1268,15 @@ async def get_client_config():
 @app.get("/api/niches")
 async def get_niches(request: Request):
     niches = []
-    user = _current_user(request)
-    is_admin = bool(user and _is_admin_email(user.get("email", "")))
-    has_plan = bool(
-        user and (
-            is_admin
-            or (user.get("plan") or "") in (
-                "starter", "daily", "pro", "starter_trial", "daily_trial",
-            )
-        )
-    )
     for f in sorted(NICHES_DIR.glob("*.json")):
         with open(f) as fh:
             niche = json.load(fh)
-        # Storyboard Pack: unlocked once they start a trial or paid plan (card required).
-        # Free / signed-out accounts see a trial CTA — not a fake "coming soon".
+        # Storyboard Pack: open for everyone to build cast + story.
+        # Trial/paid is required later — only when they start stills.
         if niche.get("id") == "storyboard_pack" or niche.get("recipe") == "storyboard_pack":
-            if has_plan:
-                niche["status"] = niche.get("status") or "new"
-                niche["available"] = True
-                niche.pop("requires_trial", None)
-            else:
-                niche["status"] = "requires_trial"
-                niche["available"] = False
-                niche["requires_trial"] = True
+            niche["status"] = niche.get("status") or "new"
+            niche["available"] = True
+            niche.pop("requires_trial", None)
         niches.append(niche)
     return niches
 
@@ -3032,7 +3017,7 @@ def download_niche_intel_job(job_id: str, admin: dict = Depends(require_admin)):
 # Storyboard Pack (admin-only v1 — stills + I2V prompts zip)
 # ---------------------------------------------------------------------------
 @app.get("/api/storyboard/cast")
-async def get_storyboard_cast(admin: dict = Depends(require_active_plan)):
+async def get_storyboard_cast(admin: dict = Depends(require_user)):
     """Load persistent cast settings (empty cast by default — no forced family)."""
     from core.storyboard_pack import (
         VISUAL_STYLE_PRESETS,
@@ -3060,7 +3045,7 @@ async def get_storyboard_cast(admin: dict = Depends(require_active_plan)):
 
 
 @app.put("/api/storyboard/cast")
-async def save_storyboard_cast(req: StoryboardCastSaveRequest, admin: dict = Depends(require_active_plan)):
+async def save_storyboard_cast(req: StoryboardCastSaveRequest, admin: dict = Depends(require_user)):
     from core.storyboard_pack import normalize_cast, resolve_visual_style
     from webapp.database import set_user_storyboard_settings
     rows = []
@@ -3090,7 +3075,7 @@ async def save_storyboard_cast(req: StoryboardCastSaveRequest, admin: dict = Dep
 @app.post("/api/storyboard/cast/extract")
 async def extract_storyboard_cast(
     req: StoryboardExtractCastRequest,
-    admin: dict = Depends(require_active_plan),
+    admin: dict = Depends(require_user),
 ):
     """Propose recurring cast from story/script — user confirms before looks."""
     story = (req.story or "").strip()
@@ -3115,7 +3100,7 @@ async def extract_storyboard_cast(
 @app.post("/api/storyboard/cast/generate-look")
 async def generate_storyboard_cast_look(
     req: StoryboardLookRequest,
-    admin: dict = Depends(require_active_plan),
+    admin: dict = Depends(require_user),
 ):
     """Generate portrait (+ optional sheet) for one cast member — Cast studio dopamine."""
     from core.storyboard_pack import (
@@ -3216,7 +3201,7 @@ async def storyboard_thumbnail(
     cast_json: str = Form("[]"),
     count: int = Form(2),
     refs: list[UploadFile] = File(default=[]),
-    admin: dict = Depends(require_active_plan),
+    admin: dict = Depends(require_user),
 ):
     """Story-aware thumbnail: cheap gist + main cast portraits as edit refs."""
     from core.storyboard_pack import (
@@ -3360,9 +3345,9 @@ async def storyboard_thumbnail(
 @app.post("/api/storyboard/suggest-morals")
 async def storyboard_suggest_morals(
     req: StoryboardSuggestMoralsRequest,
-    admin: dict = Depends(require_active_plan),
+    admin: dict = Depends(require_user),
 ):
-    """Optional takeaway suggestions from the user's story (admin-only)."""
+    """Optional takeaway suggestions from the user's story."""
     story = (req.story or "").strip()
     if not story:
         raise HTTPException(400, "Describe the story first, then suggest takeaways.")
@@ -4479,9 +4464,9 @@ async def storyboard_animate_cost(
 async def storyboard_pack_cost(
     minutes: float = 8,
     pack_mode: str = "full",
-    admin: dict = Depends(require_active_plan),
+    admin: dict = Depends(require_user),
 ):
-    """Preview credit cost + limits for a stills pack."""
+    """Preview credit cost + limits for a stills pack (free users can see trial offer)."""
     is_admin = _is_admin_email(admin.get("email", ""))
     plan = (admin.get("plan") or "free").strip()
     is_paid = plan in ("starter", "daily", "pro")
@@ -4515,6 +4500,7 @@ async def storyboard_pack_cost(
         "pack_mode": mode,
         "is_trial": is_trial and not is_paid,
         "is_paid": is_paid or is_admin,
+        "requires_trial": not (is_admin or is_paid or is_trial),
         "pack_max_minutes": paid_max,
         "trial_pack_max_minutes": trial_max,
         "trial_pack_limit": trial_limit,

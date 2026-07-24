@@ -650,17 +650,14 @@ async function loadNiches() {
 
         niches.forEach(niche => {
             const card = document.createElement('div');
-            const needsTrial = niche.requires_trial || niche.status === 'requires_trial';
-            const unavailable = niche.available === false || niche.status === 'coming_soon' || needsTrial;
+            const unavailable = niche.available === false || niche.status === 'coming_soon';
             card.className = unavailable ? 'niche-card niche-card--soon' : 'niche-card';
             const previewHtml = niche.preview_gif
                 ? `<div class="niche-preview">
                        <img src="${niche.preview_gif}" alt="${niche.name} preview" loading="lazy">
                    </div>`
                 : '';
-            const statusChip = needsTrial
-                ? `<span class="status-chip new">Start free trial</span>`
-                : unavailable
+            const statusChip = unavailable
                 ? `<span class="status-chip new">Coming soon</span>`
                 : niche.status === 'proven'
                 ? `<span class="status-chip proven"><svg width="11" height="11" viewBox="0 0 12 12"><path d="M1 9 L4 5 L6.5 7 L11 1" fill="none" stroke="var(--success)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Proven</span>`
@@ -685,16 +682,11 @@ async function loadNiches() {
                 </div>
             `;
             if (unavailable) {
-                card.style.opacity = needsTrial ? '0.85' : '0.55';
-                card.style.cursor = 'pointer';
-                card.title = needsTrial ? 'Start your free trial to unlock Storyboard Pack' : 'Coming soon';
+                card.style.opacity = '0.55';
+                card.style.cursor = 'not-allowed';
+                card.title = 'Coming soon';
                 card.addEventListener('click', (e) => {
                     e.preventDefault();
-                    if (needsTrial) {
-                        if (!ensureSignedIn(() => showPricingModal({ reason: 'storyboard' }))) return;
-                        showPricingModal({ reason: 'storyboard' });
-                        return;
-                    }
                     alert('This recipe is coming soon. Pick another recipe for now.');
                 });
             } else {
@@ -892,6 +884,11 @@ function showPricingModal(opts = {}) {
     if (opts.reason === 'hq' && !paidSubscriber) {
         if (heading) heading.textContent = 'Unlock Pro visuals';
         if (subtitle) subtitle.textContent = 'High quality stills are on paid plans. Subscribe to use them.';
+    } else if (opts.reason === 'storyboard' && !usedTrial) {
+        if (heading) heading.textContent = 'Ready to build your storyboard';
+        if (subtitle) {
+            subtitle.textContent = 'Start your free trial to generate stills — your first 2 storyboards are free (up to 8 min).';
+        }
     } else if (opts.reason === 'cook' && !usedTrial) {
         if (heading) heading.textContent = 'Your video is ready to cook';
         if (subtitle) subtitle.textContent = `Start your free trial to cook this video — ${trialCredits()} videos included.`;
@@ -5306,14 +5303,21 @@ function _sbAnimateCreditsFlat() {
     return Math.max(0, Number(_featureFlags.storyboard_animate_credits_flat || 12));
 }
 
-function _sbRequireAccess() {
+/** Cast + story helpers: signed-in free users allowed. Stills/cook need a plan. */
+function _sbRequireSignedIn() {
     if (!currentUser) {
         showAuthModal();
         return false;
     }
+    return true;
+}
+
+/** Stills pack / assemble / on-site cook — trial or paid (card) required. */
+function _sbRequirePlan(opts = {}) {
+    if (!_sbRequireSignedIn()) return false;
     if (isAdminUser()) return true;
     if (!isPaidUser()) {
-        showPricingModal({ reason: 'storyboard' });
+        showPricingModal({ reason: opts.reason || 'storyboard' });
         return false;
     }
     return true;
@@ -5368,11 +5372,19 @@ async function _sbSyncPackCostUI() {
     const slider = document.getElementById('sb-minutes');
     const mins = Number(slider?.value || 8);
     const maxMins = _sbPackMaxMinutes();
+    if (currentUser && !isPaidUser() && !isAdminUser()) {
+        blurb.textContent = `Cast & story are free. Start a free trial to generate stills — first ${Number(_featureFlags.storyboard_trial_pack_limit || 2)} packs free (up to ${Number(_featureFlags.storyboard_trial_pack_max_minutes || 8)} min).`;
+        return;
+    }
     try {
         const res = await fetch(`/api/storyboard/pack-cost?minutes=${encodeURIComponent(mins)}&pack_mode=full`);
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
             blurb.textContent = `Packs up to ${maxMins} min. On-site cook is ${_sbAnimateCreditsFlat()} credits (paid plans).`;
+            return;
+        }
+        if (data.requires_trial) {
+            blurb.textContent = `Cast & story are free. Start a free trial to generate stills — first ${data.trial_pack_limit || 2} packs free (up to ${data.trial_pack_max_minutes || 8} min).`;
             return;
         }
         const c = Number(data.credits || 0);
@@ -5724,7 +5736,7 @@ function addStoryboardCastMember() {
 }
 
 async function extractStoryboardCast() {
-    if (!_sbRequireAccess()) return;
+    if (!_sbRequireSignedIn()) return;
     const story = (
         (document.getElementById('sb-extract-source')?.value || '')
         || (document.getElementById('sb-story')?.value || '')
@@ -5788,7 +5800,7 @@ function applyFamilyTemplateCast() {
 }
 
 async function generateCastLook(i, btn) {
-    if (!_sbRequireAccess()) return;
+    if (!_sbRequireSignedIn()) return;
     const c = _sbCast[i];
     if (!c) return;
     if (!(c.name || '').trim()) {
@@ -6040,7 +6052,7 @@ function _sbRenderAssembleMatchServer(matched, unmatched) {
 }
 
 async function matchStoryboardAssemble() {
-    if (!_sbRequireAccess()) return;
+    if (!_sbRequirePlan()) return;
     if (!_sbJobId) { alert('Generate a pack first.'); return; }
     if (!_sbAssembleFiles.length) { alert('Drop your I2V clips first.'); return; }
     const btn = document.getElementById('btn-sb-assemble-match');
@@ -6074,7 +6086,7 @@ function _sbBurnCaptionsEnabled() {
 }
 
 async function runStoryboardAssemble() {
-    if (!_sbRequireAccess()) return;
+    if (!_sbRequirePlan()) return;
     if (!_sbJobId) { alert('Generate a pack first.'); return; }
     if (!_sbAssembleStagingId && !_sbAssembleFiles.length) {
         alert('Drop clips and preview match first.');
@@ -6311,7 +6323,7 @@ async function _sbSyncAnimateUI() {
 }
 
 async function runStoryboardAnimate() {
-    if (!_sbRequireAccess()) return;
+    if (!_sbRequirePlan()) return;
     if (!isAdminUser() && !hasFullLengthAccess()) {
         showSoftPrompt(
             'On-site cook is for paid plans. Start your plan to animate your storyboard.',
@@ -6388,7 +6400,7 @@ function _sbRenderThumbs(urls, paths) {
 }
 
 async function generateStoryboardThumbnail() {
-    if (!_sbRequireAccess()) return;
+    if (!_sbRequireSignedIn()) return;
     const title = (document.getElementById('sb-title')?.value || state.title || '').trim();
     if (!title) { alert('Add a title first.'); return; }
     const btn = document.getElementById('btn-sb-thumb');
@@ -6418,7 +6430,7 @@ async function generateStoryboardThumbnail() {
 }
 
 async function suggestStoryboardMorals() {
-    if (!_sbRequireAccess()) return;
+    if (!_sbRequireSignedIn()) return;
     const story = (document.getElementById('sb-story')?.value || '').trim();
     if (!story) { alert('Describe what happens first.'); return; }
     const btn = document.getElementById('btn-sb-suggest-morals');
@@ -6690,12 +6702,14 @@ async function regenSelectedBeat() {
 }
 
 async function startStoryboardPack(packMode = 'full', opts = {}) {
-    if (!_sbRequireAccess()) return;
+    if (!_sbRequireSignedIn()) return;
     if (!_sbCastHasLook()) {
         alert('Generate at least one character look in Cast studio first.');
         goToStep('sb-cast');
         return;
     }
+    // Commitment first: cast + story done → then ask for trial (first 2 packs free).
+    if (!_sbRequirePlan({ reason: 'storyboard' })) return;
     await saveStoryboardCast(true);
 
     const fromPreview = !!opts.fromPreview;
