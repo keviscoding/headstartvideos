@@ -234,11 +234,34 @@ class TestPriceForTier:
         assert server._price_for_tier("mystery", "monthly") == ""
 
 
-class _FakeStripe:
-    """Minimal Stripe stand-in recording the modify call."""
+def _real_subscription(payload: dict):
+    """A genuine stripe.Subscription, not a dict that merely looks like one.
 
-    def __init__(self, price_id, item_id="si_1"):
-        self._sub = {"items": {"data": [{"id": item_id, "price": {"id": price_id}}]}}
+    stripe-python v15 dropped the dict base class, so a resource has no .get().
+    Faking these as plain dicts is what let "Subscription has no billable items"
+    reach production green-tested, so the fake now returns the real type.
+    """
+    import stripe
+    return stripe.Subscription.construct_from(payload, "sk_test")
+
+
+class _FakeStripe:
+    """Minimal Stripe stand-in recording the modify call.
+
+    `as_dict` covers the older SDK shape, so both object models stay tested.
+    """
+
+    def __init__(self, price_id, item_id="si_1", as_dict=False, items=None):
+        payload = {
+            "id": "sub_1",
+            "object": "subscription",
+            "items": {"object": "list", "data": (
+                [{"id": item_id, "object": "subscription_item",
+                  "price": {"id": price_id, "object": "price"}}]
+                if items is None else items
+            )},
+        }
+        self._sub = payload if as_dict else _real_subscription(payload)
         self.modified = []
 
         outer = self
@@ -469,8 +492,69 @@ class TestSubscriptionInterval:
         assert server._subscription_interval(fake, "sub_1") == "monthly"
         assert fake.modified == []
 
-    def test_legacy_or_empty_subscription_defaults_to_monthly(self):
-        fake = _FakeStripe(STARTER_M)
-        fake.sub = {"items": {"data": []}}
+    def test_subscription_with_no_items_defaults_to_monthly(self):
+        fake = _FakeStripe(STARTER_M, items=[])
         assert server._subscription_interval(fake, "sub_1") == "monthly"
+        assert fake.modified == []
+
+    def test_older_sdk_dict_shape_still_works(self):
+        fake = _FakeStripe(DAILY_A, as_dict=True)
+        assert server._subscription_interval(fake, "sub_1") == "annual"
+
+
+class TestRealStripeObjectShape:
+    """Regression: stripe-python v15 resources are not dicts.
+
+    Reading them with .get()/isinstance(x, dict) produced "Subscription has no
+    billable items" for every plan choice, which blocked all conversions.
+    """
+
+    @pytest.fixture(autouse=True)
+    def no_db(self, monkeypatch):
+        monkeypatch.setattr(server, "update_user", lambda uid, **f: None)
+
+    def test_resource_is_not_a_dict(self):
+        """Guard the assumption itself, so an SDK bump cannot re-break this quietly."""
+        import stripe
+        sub = _real_subscription({"id": "sub_1", "object": "subscription",
+                                  "items": {"object": "list", "data": []}})
+        assert not isinstance(sub, dict)
+        assert not hasattr(sub, "get")
+
+    def test_items_are_read_from_a_real_resource(self):
+        sub = _real_subscription({
+            "id": "sub_1", "object": "subscription",
+            "items": {"object": "list", "data": [
+                {"id": "si_9", "object": "subscription_item",
+                 "price": {"id": DAILY_A, "object": "price"}},
+            ]},
+        })
+        item = server._first_subscription_item(sub)
+        assert item.get("id") == "si_9"
+        assert server._line_price_id(item) == DAILY_A
+
+    def test_switching_plans_works_against_a_real_resource(self):
+        fake = _FakeStripe(STARTER_M)
+
+        interval = server._switch_trial_price(fake, "sub_1", "daily", 7, "annual")
+
+        assert interval == "annual"
+        assert fake.modified[0][1]["items"][0]["price"] == DAILY_A
+        assert fake.modified[0][1]["items"][0]["id"] == "si_1"
+
+    def test_keeping_the_same_plan_needs_no_item_id(self):
+        """The common case must not depend on reading an item id at all."""
+        fake = _FakeStripe(STARTER_M, items=[
+            {"object": "subscription_item", "price": {"id": STARTER_M, "object": "price"}},
+        ])
+
+        assert server._switch_trial_price(fake, "sub_1", "starter", 7, "monthly") == "monthly"
+        assert fake.modified == []
+
+    def test_unreadable_subscription_refuses_rather_than_mischarging(self):
+        fake = _FakeStripe(STARTER_M, items=[])
+
+        with pytest.raises(HTTPException) as e:
+            server._switch_trial_price(fake, "sub_1", "daily", 7, "annual")
+        assert e.value.status_code == 400
         assert fake.modified == []

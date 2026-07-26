@@ -641,6 +641,21 @@ def _interval_from_price_id(price_id: str) -> str:
     return "annual" if (price_id or "").strip() in _annual_price_ids() else "monthly"
 
 
+def _first_subscription_item(sub: Any) -> dict:
+    """The priced item on a subscription, as a plain dict.
+
+    stripe-python dropped the dict base class in v15, so a retrieved resource
+    has no .get() and an isinstance(sub, dict) test reads as "no items at all".
+    Everything is normalized through _stripe_obj_to_dict before being indexed.
+    """
+    data = ((_stripe_obj_to_dict(sub).get("items") or {}).get("data")) or []
+    for item in data:
+        item = _stripe_obj_to_dict(item)
+        if item:
+            return item
+    return {}
+
+
 def _subscription_interval(stripe, sub_id: str) -> str:
     """Billing interval of a subscription, without touching it.
 
@@ -649,12 +664,8 @@ def _subscription_interval(stripe, sub_id: str) -> str:
     price must not be rewritten, or a legacy trial price would be quietly
     migrated to the current one.
     """
-    sub = stripe.Subscription.retrieve(sub_id)
-    items = ((sub.get("items") or {}).get("data") or []) if isinstance(sub, dict) else []
-    if not items:
-        return "monthly"
-    price = _stripe_id((items[0].get("price") or {}).get("id") or items[0].get("price"))
-    return _interval_from_price_id(price)
+    item = _first_subscription_item(stripe.Subscription.retrieve(sub_id))
+    return _interval_from_price_id(_line_price_id(item)) if item else "monthly"
 
 
 def _switch_trial_price(stripe, sub_id: str, want_tier: str, user_id: int,
@@ -668,19 +679,26 @@ def _switch_trial_price(stripe, sub_id: str, want_tier: str, user_id: int,
     Also writes the matching *_trial plan locally, so if the charge that follows
     fails the account is not left claiming a tier Stripe is not billing.
     """
-    sub = stripe.Subscription.retrieve(sub_id)
-    items = ((sub.get("items") or {}).get("data") or []) if isinstance(sub, dict) else []
-    if not items:
-        raise HTTPException(400, "Subscription has no billable items.")
-
-    item = items[0]
-    current_price = _stripe_id((item.get("price") or {}).get("id") or item.get("price"))
+    item = _first_subscription_item(stripe.Subscription.retrieve(sub_id))
+    current_price = _line_price_id(item)
     interval = want_interval or _interval_from_price_id(current_price)
+
+    # The UI sends the interval on every conversion, so the overwhelmingly
+    # common "keep the plan I'm on" case arrives here as an explicit request.
+    # Recognizing it up front means that path never writes to Stripe.
+    if _tier_from_price_id(current_price) == want_tier \
+            and _interval_from_price_id(current_price) == interval:
+        return interval
+
     target_price = _price_for_tier(want_tier, interval)
     if not target_price:
         raise HTTPException(400, f"The {want_tier} {interval} plan is not configured.")
+    # Already on the requested plan, so there is nothing to move. Checked before
+    # the item id, so "keep my plan" never depends on reading one.
     if target_price == current_price:
         return interval
+    if not item.get("id"):
+        raise HTTPException(400, "Could not read your subscription. Please try again.")
 
     stripe.Subscription.modify(
         sub_id,
@@ -1300,7 +1318,9 @@ async def admin_billing_health(sync: int = 0, admin: dict = Depends(require_admi
             db_plan = u.get("plan") or "free"
             if status == "active" and db_plan in ("starter_trial", "daily_trial"):
                 new_plan = "daily" if "daily" in db_plan else "starter"
-                credits = 35 if new_plan == "daily" else 15
+                credits = _tier_allowance(
+                    new_plan, _interval_from_price_id(_line_price_id(_first_subscription_item(sub)))
+                )
                 update_user(u["id"], plan=new_plan, credits=credits, trial_used=1)
                 healed += 1
                 mismatches.append({
