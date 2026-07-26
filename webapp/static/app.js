@@ -914,9 +914,10 @@ function showPricingModal(opts = {}) {
     }
 
     if (topupRow) {
-        // Trial users see it too: knowing credits can be topped up is the answer
-        // to "is one plan's worth enough", which is what stalls the decision.
-        if (paidSubscriber || isTrialUser()) { topupRow.classList.remove('hidden'); }
+        // Buying top-ups needs an active subscription — the server returns 403
+        // during a trial — so trial users are told they exist in the subtitle
+        // rather than handed buttons that would fail.
+        if (paidSubscriber) { topupRow.classList.remove('hidden'); }
         else { topupRow.classList.add('hidden'); }
     }
 

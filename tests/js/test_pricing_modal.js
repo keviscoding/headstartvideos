@@ -107,8 +107,8 @@ console.log('\nTrial user sees both plans, with the real charge on the button');
     check('annual toggle is offered', () => {
         eq(doc.getElementById('pricing-toggle').style.display, 'inline-flex', 'toggle');
     });
-    check('top-ups are advertised so the allowance does not read as a hard cap', () => {
-        eq(doc.getElementById('topup-row').classList.contains('hidden'), false, 'topup row hidden');
+    check('no top-up buttons, which 403 without an active subscription', () => {
+        eq(doc.getElementById('topup-row').classList.contains('hidden'), true, 'topup row hidden');
     });
     check('subtitle sells the refresh and top-ups, not "1 video a month"', () => {
         const sub = doc.getElementById('pricing-subtitle').textContent;
@@ -178,6 +178,15 @@ console.log('\nChoosing a plan converts the trial onto that exact plan');
             eq(run('currentUser.credits'), 420, 'credits after convert');
         });
     }, 30);
+}
+
+console.log('\nA paid subscriber does get the top-up buttons');
+{
+    const { run, sandbox } = makeEnv({ plan: 'daily', credits: 3, trialUsed: true });
+    run('showPricingModal({})');
+    check('top-up row is offered to someone who can actually buy one', () => {
+        eq(sandbox.document.getElementById('topup-row').classList.contains('hidden'), false, 'topup row hidden');
+    });
 }
 
 console.log('\nA paid, non-trial user still goes through Stripe Checkout');
