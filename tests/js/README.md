@@ -1,19 +1,19 @@
-# Plan chooser test
+# Frontend tests
 
-Covers the trial-conversion plan chooser in `webapp/static/app.js` — the dialog
-that decides what a customer is charged. It slices the chooser block out of
-`app.js` and runs it against a real DOM, so it exercises the shipped code rather
-than a reimplementation that could drift.
+`test_pricing_modal.js` loads the real `index.html` and `app.js` into a DOM and
+exercises the trial paywall, which is the path every paying customer walks
+through. It covers what the CTA promises to charge, that both tiers and both
+billing intervals are reachable, that a trial converts in place instead of
+hitting Stripe Checkout (which the server refuses for anyone already
+subscribed), and that the action a customer was blocked on resumes after the
+charge lands.
 
-`jsdom` is not a project dependency (there is no `package.json` here), so install
-it anywhere and point the test at it:
+`jsdom` is a test-only dependency and is deliberately not in the project's
+requirements, so install it on demand:
 
 ```bash
-mkdir -p /tmp/uitest && cd /tmp/uitest && npm install jsdom
-JSDOM_PATH=/tmp/uitest/node_modules/jsdom node tests/js/test_plan_chooser.js
+npm i --no-save jsdom
+node tests/js/test_pricing_modal.js
 ```
 
 Exit code is non-zero if any check fails.
-
-If it reports `slice missed the chooser`, the chooser moved within `app.js` —
-update the `lines.slice(...)` bounds to the new range.

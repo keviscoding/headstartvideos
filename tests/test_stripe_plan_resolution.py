@@ -313,3 +313,164 @@ class TestSwitchTrialPrice:
             server._switch_trial_price(fake, "sub_1", "daily", 7)
         assert e.value.status_code == 400
         assert fake.modified == []
+
+
+def _priced_invoice(*lines):
+    """Stripe invoice shape: (price_id, amount) per line."""
+    return {"lines": {"data": [{"price": {"id": p}, "amount": a} for p, a in lines]}}
+
+
+class TestAnnualAllowance:
+    """An annual invoice buys twelve months, so it must grant twelve months.
+
+    The flat 15/35 meant a $270 annual customer received one month of credits
+    for the whole year while the pricing page promised 180.
+    """
+
+    def test_monthly_is_one_month(self):
+        assert server._tier_allowance("starter") == 15
+        assert server._tier_allowance("daily") == 35
+
+    def test_annual_is_the_whole_year(self):
+        assert server._tier_allowance("starter", "annual") == 180
+        assert server._tier_allowance("daily", "annual") == 420
+
+    def test_explicit_monthly_matches_the_default(self):
+        assert server._tier_allowance("daily", "monthly") == 35
+
+    def test_unknown_interval_does_not_multiply(self):
+        assert server._tier_allowance("daily", "weekly") == 35
+
+    def test_checkout_plan_keys_agree_with_the_allowance(self):
+        """The signup grant and the renewal grant must not disagree."""
+        assert server._PLAN_CREDITS["starter_annual"] == server._tier_allowance("starter", "annual")
+        assert server._PLAN_CREDITS["daily_annual"] == server._tier_allowance("daily", "annual")
+        assert server._PLAN_CREDITS["starter_monthly"] == server._tier_allowance("starter")
+        assert server._PLAN_CREDITS["daily_monthly"] == server._tier_allowance("daily")
+
+
+class TestIntervalFromInvoice:
+    def test_monthly_invoice(self):
+        assert server._interval_from_invoice(_priced_invoice((STARTER_M, 2700))) == "monthly"
+
+    def test_annual_invoice(self):
+        assert server._interval_from_invoice(_priced_invoice((DAILY_A, 49000))) == "annual"
+
+    def test_upgrade_proration_uses_the_line_being_charged(self):
+        """The negative proration line must not decide tier or interval."""
+        inv = _priced_invoice((STARTER_A, -12000), (DAILY_A, 49000))
+        assert server._tier_from_invoice(inv) == "daily"
+        assert server._interval_from_invoice(inv) == "annual"
+
+    def test_unrecognized_lines_fall_back_to_monthly(self):
+        inv = _priced_invoice(("price_mystery", 999))
+        assert server._interval_from_invoice(inv) == "monthly"
+        assert server._tier_from_invoice(inv) == ""
+
+    def test_empty_invoice_is_safe(self):
+        assert server._interval_from_invoice({}) == "monthly"
+
+
+class TestIntervalFromSubscription:
+    def _sub(self, price_id):
+        return {"items": {"data": [{"price": {"id": price_id}}]}}
+
+    def test_annual_subscription(self):
+        assert server._interval_from_subscription(self._sub(STARTER_A)) == "annual"
+
+    def test_monthly_subscription(self):
+        assert server._interval_from_subscription(self._sub(DAILY_M)) == "monthly"
+
+    def test_missing_items_is_safe(self):
+        assert server._interval_from_subscription({}) == "monthly"
+        assert server._tier_from_subscription({}) == ""
+
+
+class TestAnnualUpgradeGrant:
+    """Upgrades must compare like with like, or annual grants collapse to a month."""
+
+    def test_annual_starter_to_daily_grants_the_yearly_difference(self):
+        row = {"period_tier": "starter"}
+        assert server._upgrade_grant(row, "starter", "daily", "annual") == 420 - 180
+
+    def test_monthly_upgrade_is_unchanged(self):
+        row = {"period_tier": "starter"}
+        assert server._upgrade_grant(row, "starter", "daily") == 35 - 15
+
+    def test_annual_downgrade_grants_nothing(self):
+        row = {"period_tier": "daily"}
+        assert server._upgrade_grant(row, "daily", "starter", "annual") == 0
+
+    def test_annual_re_upgrade_in_the_same_period_grants_nothing(self):
+        """The farming ratchet still holds at annual scale."""
+        row = {"period_tier": "daily"}
+        assert server._upgrade_grant(row, "starter", "daily", "annual") == 0
+
+
+class TestSwitchTrialInterval:
+    @pytest.fixture(autouse=True)
+    def no_db(self, monkeypatch):
+        self.updates = []
+        monkeypatch.setattr(server, "update_user",
+                            lambda uid, **f: self.updates.append((uid, f)))
+
+    def test_monthly_trial_can_choose_annual(self):
+        fake = _FakeStripe(STARTER_M)
+
+        interval = server._switch_trial_price(fake, "sub_1", "starter", 7, "annual")
+
+        assert interval == "annual"
+        assert fake.modified[0][1]["items"][0]["price"] == STARTER_A
+
+    def test_tier_and_interval_can_change_together(self):
+        fake = _FakeStripe(STARTER_M)
+
+        interval = server._switch_trial_price(fake, "sub_1", "daily", 7, "annual")
+
+        assert interval == "annual"
+        assert fake.modified[0][1]["items"][0]["price"] == DAILY_A
+
+    def test_annual_trial_can_choose_monthly(self):
+        fake = _FakeStripe(DAILY_A)
+
+        interval = server._switch_trial_price(fake, "sub_1", "daily", 7, "monthly")
+
+        assert interval == "monthly"
+        assert fake.modified[0][1]["items"][0]["price"] == DAILY_M
+
+    def test_no_requested_interval_keeps_the_current_one(self):
+        fake = _FakeStripe(STARTER_A)
+
+        interval = server._switch_trial_price(fake, "sub_1", "daily", 7)
+
+        assert interval == "annual"
+        assert fake.modified[0][1]["items"][0]["price"] == DAILY_A
+
+    def test_noop_still_reports_the_interval_for_the_grant(self):
+        """Same price means no Stripe write, but the caller still needs the interval."""
+        fake = _FakeStripe(STARTER_A)
+
+        interval = server._switch_trial_price(fake, "sub_1", "starter", 7, "annual")
+
+        assert interval == "annual"
+        assert fake.modified == []
+
+
+class TestSubscriptionInterval:
+    """Reading the interval must never rewrite the subscription."""
+
+    def test_annual_is_reported(self):
+        fake = _FakeStripe(DAILY_A)
+        assert server._subscription_interval(fake, "sub_1") == "annual"
+        assert fake.modified == []
+
+    def test_monthly_is_reported(self):
+        fake = _FakeStripe(STARTER_M)
+        assert server._subscription_interval(fake, "sub_1") == "monthly"
+        assert fake.modified == []
+
+    def test_legacy_or_empty_subscription_defaults_to_monthly(self):
+        fake = _FakeStripe(STARTER_M)
+        fake.sub = {"items": {"data": []}}
+        assert server._subscription_interval(fake, "sub_1") == "monthly"
+        assert fake.modified == []

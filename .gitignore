@@ -46,3 +46,7 @@ assets/music/inbox/*
 
 # Local frame audits
 tmp_explainer_v2_frames/
+
+# Test-only JS deps (jsdom), installed on demand — see tests/js/README.md
+node_modules/
+package-lock.json

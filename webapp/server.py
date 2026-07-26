@@ -604,6 +604,7 @@ class TopupRequest(BaseModel):
 
 class EndTrialRequest(BaseModel):
     tier: str | None = None
+    interval: str | None = None
 
 _PLAN_PRICE_MAP = {
     "starter_monthly": lambda: config.STRIPE_PRICE_STARTER_MONTHLY or config.STRIPE_PRICE_ID,
@@ -614,10 +615,16 @@ _PLAN_PRICE_MAP = {
     "annual": lambda: config.STRIPE_PRICE_STARTER_ANNUAL or config.STRIPE_PRICE_ID_ANNUAL,
 }
 
+# Annual bills 12 months at once and the pricing page promises the year's
+# credits up front ("180 credits/year"), so the grant must be 12x. There is no
+# scheduler to drip them monthly, and the old flat 15 meant an annual customer
+# paid $270 for one month's worth.
+_ANNUAL_MONTHS = 12
+
 _PLAN_CREDITS = {
-    "starter_monthly": 15, "starter_annual": 15,
-    "daily_monthly": 35, "daily_annual": 35,
-    "monthly": 15, "annual": 15,
+    "starter_monthly": 15, "starter_annual": 15 * _ANNUAL_MONTHS,
+    "daily_monthly": 35, "daily_annual": 35 * _ANNUAL_MONTHS,
+    "monthly": 15, "annual": 15 * _ANNUAL_MONTHS,
 }
 
 
@@ -634,8 +641,29 @@ def _interval_from_price_id(price_id: str) -> str:
     return "annual" if (price_id or "").strip() in _annual_price_ids() else "monthly"
 
 
-def _switch_trial_price(stripe, sub_id: str, want_tier: str, user_id: int) -> None:
+def _subscription_interval(stripe, sub_id: str) -> str:
+    """Billing interval of a subscription, without touching it.
+
+    Used when the customer keeps the plan they already have: the grant still
+    needs to know whether this is a monthly or annual subscription, but the
+    price must not be rewritten, or a legacy trial price would be quietly
+    migrated to the current one.
+    """
+    sub = stripe.Subscription.retrieve(sub_id)
+    items = ((sub.get("items") or {}).get("data") or []) if isinstance(sub, dict) else []
+    if not items:
+        return "monthly"
+    price = _stripe_id((items[0].get("price") or {}).get("id") or items[0].get("price"))
+    return _interval_from_price_id(price)
+
+
+def _switch_trial_price(stripe, sub_id: str, want_tier: str, user_id: int,
+                        want_interval: str | None = None) -> str:
     """Move a still-trialing subscription onto `want_tier`'s price.
+
+    Returns the interval actually in force afterwards, which the caller needs to
+    size the credit grant. `want_interval` of None keeps the customer on the
+    interval they already have.
 
     Also writes the matching *_trial plan locally, so if the charge that follows
     fails the account is not left claiming a tier Stripe is not billing.
@@ -647,11 +675,12 @@ def _switch_trial_price(stripe, sub_id: str, want_tier: str, user_id: int) -> No
 
     item = items[0]
     current_price = _stripe_id((item.get("price") or {}).get("id") or item.get("price"))
-    target_price = _price_for_tier(want_tier, _interval_from_price_id(current_price))
+    interval = want_interval or _interval_from_price_id(current_price)
+    target_price = _price_for_tier(want_tier, interval)
     if not target_price:
-        raise HTTPException(400, f"Plan '{want_tier}' is not configured.")
+        raise HTTPException(400, f"The {want_tier} {interval} plan is not configured.")
     if target_price == current_price:
-        return
+        return interval
 
     stripe.Subscription.modify(
         sub_id,
@@ -659,7 +688,8 @@ def _switch_trial_price(stripe, sub_id: str, want_tier: str, user_id: int) -> No
         proration_behavior="none",
     )
     update_user(user_id, plan=f"{want_tier}_trial")
-    print(f"[stripe] Trial price swapped to {want_tier} for user {user_id}")
+    print(f"[stripe] Trial price swapped to {want_tier} {interval} for user {user_id}")
+    return interval
 
 
 def _price_for_tier(tier: str, interval: str) -> str:
@@ -678,8 +708,14 @@ _TIER_ALLOWANCE = {"starter": 15, "daily": 35}
 _PAID_TIERS = tuple(_TIER_ALLOWANCE)
 
 
-def _tier_allowance(tier: str) -> int:
-    return _TIER_ALLOWANCE.get(tier, 15)
+def _tier_allowance(tier: str, interval: str = "monthly") -> int:
+    """Credits one invoice at this tier buys.
+
+    An annual invoice covers 12 months, so it must grant 12 months of credits.
+    Defaults to monthly so existing callers keep their behaviour.
+    """
+    monthly = _TIER_ALLOWANCE.get(tier, 15)
+    return monthly * _ANNUAL_MONTHS if interval == "annual" else monthly
 
 
 def _tier_from_price_id(price_id: str) -> str:
@@ -721,33 +757,51 @@ def _line_price_id(line: dict) -> str:
     return _stripe_id(details.get("price"))
 
 
-def _tier_from_invoice(invoice: dict) -> str:
-    """Tier this invoice is actually billing for.
+def _billed_price_from_invoice(invoice: dict) -> str:
+    """Price id this invoice is actually billing for.
 
     Upgrade invoices carry a proration credit for the old plan alongside the new
-    one, so pick the recognized tier with the largest amount rather than the
+    one, so pick the recognized price with the largest amount rather than the
     first line, which is often the negative proration.
     """
-    best_tier, best_amount = "", None
+    best_price, best_amount = "", None
     for line in (invoice.get("lines") or {}).get("data") or []:
         if not isinstance(line, dict):
             continue
-        tier = _tier_from_price_id(_line_price_id(line))
-        if not tier:
+        price_id = _line_price_id(line)
+        if not _tier_from_price_id(price_id):
             continue
         amount = int(line.get("amount") or 0)
         if best_amount is None or amount > best_amount:
-            best_tier, best_amount = tier, amount
-    return best_tier
+            best_price, best_amount = price_id, amount
+    return best_price
+
+
+def _tier_from_invoice(invoice: dict) -> str:
+    """Tier this invoice is actually billing for."""
+    return _tier_from_price_id(_billed_price_from_invoice(invoice))
+
+
+def _interval_from_invoice(invoice: dict) -> str:
+    """'annual' or 'monthly' for the plan this invoice bills, defaulting monthly."""
+    return _interval_from_price_id(_billed_price_from_invoice(invoice))
+
+
+def _billed_price_from_subscription(sub: dict) -> str:
+    for item in (sub.get("items") or {}).get("data") or []:
+        if isinstance(item, dict):
+            price_id = _line_price_id(item)
+            if _tier_from_price_id(price_id):
+                return price_id
+    return ""
 
 
 def _tier_from_subscription(sub: dict) -> str:
-    for item in (sub.get("items") or {}).get("data") or []:
-        if isinstance(item, dict):
-            tier = _tier_from_price_id(_line_price_id(item))
-            if tier:
-                return tier
-    return ""
+    return _tier_from_price_id(_billed_price_from_subscription(sub))
+
+
+def _interval_from_subscription(sub: dict) -> str:
+    return _interval_from_price_id(_billed_price_from_subscription(sub))
 
 
 def _subscription_price_changed(previous: dict) -> bool:
@@ -761,7 +815,8 @@ def _subscription_price_changed(previous: dict) -> bool:
     return any(key in previous for key in ("items", "plan", "quantity"))
 
 
-def _upgrade_grant(row: dict, old_tier: str, new_tier: str) -> int:
+def _upgrade_grant(row: dict, old_tier: str, new_tier: str,
+                   interval: str = "monthly") -> int:
     """Credits to add for a mid-cycle upgrade, net of what this period already paid for.
 
     Granting the raw Daily−Starter difference let a customer downgrade and
@@ -769,12 +824,15 @@ def _upgrade_grant(row: dict, old_tier: str, new_tier: str) -> int:
     prorations. `period_tier` records the best tier already credited this
     period, so the second upgrade grants zero. Capping on credits held instead
     would have punished anyone holding top-up credits.
+
+    Both sides are priced at the same interval, so an annual upgrade compares
+    annual against annual rather than against a single month.
     """
-    already = _tier_allowance(old_tier)
+    already = _tier_allowance(old_tier, interval)
     ratchet = (row.get("period_tier") or "").strip()
     if ratchet:
-        already = max(already, _tier_allowance(ratchet))
-    return max(0, _tier_allowance(new_tier) - already)
+        already = max(already, _tier_allowance(ratchet, interval))
+    return max(0, _tier_allowance(new_tier, interval) - already)
 
 
 def _stripe_obj_to_dict(obj: Any) -> dict:
@@ -1046,7 +1104,7 @@ async def stripe_webhook(request: Request):
                         print(f"[stripe] Skipping $0 trial invoice for user {row['id']} (trial credits already granted)")
                     else:
                         new_plan = "daily" if "daily" in plan else "starter"
-                        credits = 35 if new_plan == "daily" else 15
+                        credits = _tier_allowance(new_plan, _interval_from_invoice(obj))
                         update_user(row["id"], plan=new_plan, credits=credits,
                                     trial_used=1, period_tier=new_plan)
                         print(f"[stripe] Trial converted: user {row['id']} → {new_plan} ({credits} credits)")
@@ -1060,10 +1118,12 @@ async def stripe_webhook(request: Request):
                     # Grant from the price on the invoice, not users.plan. A
                     # portal upgrade leaves the row stale, and trusting it meant
                     # a Daily customer was refilled 15 credits every month.
-                    billed_tier = _tier_from_invoice(obj)
+                    billed_price = _billed_price_from_invoice(obj)
+                    billed_tier = _tier_from_price_id(billed_price)
                     db_tier = "daily" if plan == "daily" else "starter"
                     tier = billed_tier or db_tier
-                    credits = _tier_allowance(tier)
+                    # An annual invoice covers the year, so it grants the year.
+                    credits = _tier_allowance(tier, _interval_from_price_id(billed_price))
                     # A paid invoice starts a fresh period, so reset the
                     # upgrade ratchet to what this invoice actually bought.
                     fields: dict[str, Any] = {"credits": credits, "period_tier": tier}
@@ -1125,7 +1185,7 @@ async def stripe_webhook(request: Request):
             row = _find_user_for_stripe(sub_id=sub_id, customer_id=customer_id)
             if row and row.get("plan") in ("starter_trial", "daily_trial"):
                 new_plan = "daily" if "daily" in row["plan"] else "starter"
-                credits = 35 if new_plan == "daily" else 15
+                credits = _tier_allowance(new_plan, _interval_from_subscription(obj))
                 update_user(row["id"], plan=new_plan, credits=credits,
                             trial_used=1, period_tier=new_plan)
                 print(f"[stripe] subscription.updated active — converted user {row['id']} → {new_plan}")
@@ -1142,7 +1202,8 @@ async def stripe_webhook(request: Request):
                 new_tier = _tier_from_subscription(obj)
                 changed = _subscription_price_changed(data.get("previous_attributes"))
                 if new_tier and new_tier != old_tier and changed:
-                    delta = _upgrade_grant(row, old_tier, new_tier)
+                    delta = _upgrade_grant(row, old_tier, new_tier,
+                                           _interval_from_subscription(obj))
                     fields = {"plan": new_tier}
                     if delta > 0:
                         # Ratchet up so a later re-upgrade in the same period
@@ -1304,9 +1365,10 @@ async def create_portal_session(request: Request):
 async def end_trial_early(request: Request, req: EndTrialRequest | None = None):
     """End the 7-day trial immediately, charge the card, grant full credits.
 
-    `tier` lets the customer convert onto the other plan. Without it a Starter
-    trial could only ever become Starter, so the paywall had nothing to offer
-    anyone who wanted more than one animated video a month.
+    `tier` and `interval` let the customer convert onto any advertised plan.
+    Without them a Starter monthly trial could only ever become Starter monthly,
+    so the paywall had nothing to offer anyone who wanted more than one animated
+    video a month, and the annual option was unreachable.
     """
     import stripe
     if not config.STRIPE_SECRET_KEY:
@@ -1328,16 +1390,23 @@ async def end_trial_early(request: Request, req: EndTrialRequest | None = None):
     if want_tier not in _PAID_TIERS:
         raise HTTPException(400, f"Unknown plan '{want_tier}'.")
 
+    want_interval = ((req.interval if req else "") or "").strip().lower() or None
+    if want_interval and want_interval not in ("monthly", "annual"):
+        raise HTTPException(400, f"Unknown billing interval '{want_interval}'.")
+
     try:
         import asyncio
 
-        if want_tier != trial_tier:
+        if want_tier != trial_tier or want_interval:
             # Swap the price while still trialing: no invoice exists yet, so
-            # there is nothing to prorate and the charge below bills the new
-            # tier. Done first so a failure here cannot charge the old price.
-            await asyncio.to_thread(
-                _switch_trial_price, stripe, sub_id, want_tier, user["id"]
+            # there is nothing to prorate and the charge below bills the chosen
+            # plan. Done first so a failure here cannot charge the old price.
+            interval = await asyncio.to_thread(
+                _switch_trial_price, stripe, sub_id, want_tier, user["id"], want_interval
             )
+        else:
+            # Keeping the same plan: read the interval, change nothing.
+            interval = await asyncio.to_thread(_subscription_interval, stripe, sub_id)
 
         # End trial and create the first real invoice immediately
         await asyncio.to_thread(stripe.Subscription.modify, sub_id, trial_end="now")
@@ -1358,7 +1427,7 @@ async def end_trial_early(request: Request, req: EndTrialRequest | None = None):
 
         if sub_status == "active":
             new_plan = want_tier
-            credits = _tier_allowance(new_plan)
+            credits = _tier_allowance(new_plan, interval)
             update_user(user["id"], plan=new_plan, credits=credits,
                         trial_used=1, period_tier=new_plan)
             print(f"[stripe] Converted user {user['id']} → {new_plan} ({credits} credits)")
@@ -1649,6 +1718,11 @@ async def get_client_config():
         "storyboard_trial_pack_limit": int(getattr(config, "STORYBOARD_TRIAL_PACK_LIMIT", 2) or 2),
         "storyboard_cook_max_minutes": float(getattr(config, "STORYBOARD_COOK_MAX_MINUTES", 8) or 8),
         "storyboard_animate_credits_flat": int(getattr(config, "STORYBOARD_ANIMATE_CREDITS_FLAT", 12) or 12),
+        # Both tiers must have an annual price, or the toggle would offer a plan
+        # that can only 400 at checkout.
+        "annual_plans_available": bool(
+            _price_for_tier("starter", "annual") and _price_for_tier("daily", "annual")
+        ),
     }
 
 
