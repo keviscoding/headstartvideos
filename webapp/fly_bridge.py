@@ -271,7 +271,9 @@ def find_cook_machine(job_id: str) -> dict | None:
         return None
     machines = _request("GET", f"/v1/apps/{app}/machines")
     if not isinstance(machines, list):
-        return None
+        # Not "no machines" — we simply do not know. Returning None here would
+        # read as confirmed-dead and fail a cook that is still rendering.
+        raise RuntimeError(f"unexpected machines payload: {type(machines).__name__}")
     for m in machines:
         if not isinstance(m, dict):
             continue

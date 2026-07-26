@@ -461,3 +461,42 @@ class TestCookSweepReason:
 
         row = {"job_id": "j1", "status": "running"}
         assert reason(row, 600) == ""
+
+
+class TestUnknownFlyPayload:
+    """An unreadable Fly response is "we don't know", never "confirmed gone"."""
+
+    @pytest.mark.parametrize("payload", [None, {}, {"error": "bad gateway"}, "nope", 0])
+    def test_non_list_payload_raises_instead_of_reporting_gone(self, payload, monkeypatch):
+        import config as cfg
+        from webapp import fly_bridge
+
+        monkeypatch.setattr(cfg, "FLY_COOK_APP", "cook-app")
+        monkeypatch.setattr(fly_bridge, "_request", lambda *a, **k: payload)
+
+        with pytest.raises(RuntimeError):
+            fly_bridge.find_cook_machine("job-1")
+
+    def test_a_quiet_cook_survives_an_unreadable_payload(self, monkeypatch):
+        """The regression this guards: mass-failing live cooks during an outage."""
+        import config as cfg
+        import webapp.server as server
+        from webapp import fly_bridge
+
+        monkeypatch.setattr(cfg, "FLY_COOK_APP", "cook-app")
+        monkeypatch.setattr(cfg, "COOK_HUNG_SECONDS", 3600)
+        monkeypatch.setattr(server, "COOK_ON_FLY", True)
+        monkeypatch.setattr(fly_bridge, "_request", lambda *a, **k: {"error": "gateway"})
+
+        assert server._cook_death_reason("job-1", 700) == ""
+        assert "unreachable" in server._cook_death_reason("job-1", 3601)
+
+    def test_empty_list_still_means_gone(self, monkeypatch):
+        """A real, readable "no machines" answer must still be actionable."""
+        import config as cfg
+        from webapp import fly_bridge
+
+        monkeypatch.setattr(cfg, "FLY_COOK_APP", "cook-app")
+        monkeypatch.setattr(fly_bridge, "_request", lambda *a, **k: [])
+
+        assert fly_bridge.find_cook_machine("job-1") is None
