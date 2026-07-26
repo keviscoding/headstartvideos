@@ -99,9 +99,15 @@ WORKER_STALE_SECONDS = int(os.getenv("WORKER_STALE_SECONDS", "180"))
 WORKER_DRAIN_SECONDS = int(os.getenv("WORKER_DRAIN_SECONDS", "1200"))
 # Abandoned-cook sweeper (runs on the web dyno). One-shot Machines that die
 # without SIGTERM leave rows stuck in running/queued with the credit taken and
-# nothing to finish them. These must stay well above WORKER_STALE_SECONDS —
-# cooks heartbeat throughout, so a short value would kill healthy long renders.
-COOK_ABANDON_RUNNING_SECONDS = max(300, int(os.getenv("COOK_ABANDON_RUNNING_SECONDS", "900")))
+# nothing to finish them.
+#
+# Silence is NOT proof of death: heartbeats come from progress callbacks, and a
+# long ffmpeg assembly emits none for many minutes on shared-cpu-2x. So silence
+# only makes a cook a *candidate*; it is failed either because Fly confirms the
+# Machine is gone/stopped, or because it has been silent past COOK_HUNG_SECONDS.
+# Never lower COOK_HUNG_SECONDS near a plausible assembly time.
+COOK_SILENT_SECONDS = max(120, int(os.getenv("COOK_SILENT_SECONDS", "600")))
+COOK_HUNG_SECONDS = max(1200, int(os.getenv("COOK_HUNG_SECONDS", "3600")))
 COOK_ABANDON_QUEUED_SECONDS = max(300, int(os.getenv("COOK_ABANDON_QUEUED_SECONDS", "1800")))
 COOK_SWEEP_INTERVAL_SECONDS = max(15, int(os.getenv("COOK_SWEEP_INTERVAL_SECONDS", "60")))
 # Cap parallel Atlas TTS calls on the web dyno (each can take 30–90s).

@@ -254,6 +254,65 @@ def spawn_cook(job_id: str) -> bool:
         return False
 
 
+def find_cook_machine(job_id: str) -> dict | None:
+    """The Machine bound to this cook, or None if Fly no longer has it.
+
+    `spawn_cook` bakes the job id into the Machine's init command and never
+    reuses a Machine for a second job, so an exact match on that argv cannot
+    resolve to somebody else's cook. Requiring `webapp.fly_oneshot` in the same
+    command also keeps niche-scrape Machines out of scope.
+
+    Raises on API failure — callers must treat "unknown" differently from
+    "confirmed gone", or an outage would look like every cook had died.
+    """
+    app = (getattr(config, "FLY_COOK_APP", "") or "").strip()
+    job_id = (job_id or "").strip()
+    if not app or not job_id:
+        return None
+    machines = _request("GET", f"/v1/apps/{app}/machines")
+    if not isinstance(machines, list):
+        return None
+    for m in machines:
+        if not isinstance(m, dict):
+            continue
+        cmd = ((m.get("config") or {}).get("init") or {}).get("cmd") or []
+        if not isinstance(cmd, list):
+            continue
+        if "webapp.fly_oneshot" in cmd and job_id in cmd:
+            return m
+    return None
+
+
+# Fly states that mean the cook process is definitively not running any more.
+DEAD_MACHINE_STATES = ("stopped", "failed", "destroyed", "destroying", "suspended")
+
+
+def destroy_cook_machine(job_id: str) -> str:
+    """Destroy the Machine for an abandoned cook. Returns a log-friendly result.
+
+    Only ever called for a job the sweeper has already failed. Never raises —
+    a Fly outage must not stop the refund that accompanies it.
+    """
+    app = (getattr(config, "FLY_COOK_APP", "") or "").strip()
+    if not app:
+        return "no cook app configured"
+    try:
+        machine = find_cook_machine(job_id)
+    except Exception as e:
+        return f"lookup failed: {e}"
+    if not machine:
+        return "already gone"
+    mid = machine.get("id")
+    state = (machine.get("state") or "unknown").lower()
+    if not mid:
+        return "no machine id"
+    try:
+        _request("DELETE", f"/v1/apps/{app}/machines/{mid}?force=true")
+        return f"destroyed {mid} (was {state})"
+    except Exception as e:
+        return f"destroy {mid} failed: {e}"
+
+
 def spawn_niche_scrape(job_id: str) -> bool:
     """
     Ephemeral Fly Machine for Niche Finder scroll scrape (not a cook).

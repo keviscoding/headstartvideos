@@ -176,6 +176,67 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 _jobs: dict[str, dict[str, Any]] = {}
 
+_COOK_DIED_MSG = (
+    "This cook stopped responding and was ended automatically. "
+    "Your credits have been returned — please try again."
+)
+_COOK_NEVER_STARTED_MSG = (
+    "This cook never started because no worker picked it up. "
+    "Your credits have been returned — please try again."
+)
+
+
+def _cook_death_reason(job_id: str, quiet_sec: float) -> str:
+    """Why this running cook should be failed, or "" to leave it alone.
+
+    Silence is weak evidence. Heartbeats only advance when a progress callback
+    fires, and the final ffmpeg assembly of a long video emits none for many
+    minutes on shared-cpu-2x — so treating a quiet cook as dead would kill
+    healthy renders right before they finish.
+
+    We therefore act on one of two things:
+      * Fly confirms the Machine is gone or no longer running. Machines are
+        one-shot per job, so this is proof the cook cannot resume.
+      * The cook has been quiet past COOK_HUNG_SECONDS, far longer than any
+        plausible assembly, which covers a genuinely wedged process.
+
+    If Fly cannot be reached we fall back to the long timer only. Guessing
+    during an API outage would fail every in-flight cook at once.
+    """
+    hung = quiet_sec >= config.COOK_HUNG_SECONDS
+
+    if not COOK_ON_FLY:
+        return "silent past hung threshold" if hung else ""
+
+    from webapp import fly_bridge
+
+    try:
+        machine = fly_bridge.find_cook_machine(job_id)
+    except Exception as e:
+        print(f"[sweeper] fly lookup failed for {job_id}: {e}")
+        return "silent past hung threshold (fly unreachable)" if hung else ""
+
+    if machine is None:
+        return "machine no longer exists"
+    state = (machine.get("state") or "unknown").lower()
+    if state in fly_bridge.DEAD_MACHINE_STATES:
+        return f"machine is {state}"
+    return "silent past hung threshold" if hung else ""
+
+
+def _cook_sweep_reason(row: dict, quiet_sec: float) -> str:
+    """Why this stale row should be failed, or '' to leave it alone."""
+    status = row.get("status") or ""
+    if status == "running":
+        return _cook_death_reason(row.get("job_id") or "", quiet_sec)
+    if status == "queued" and not COOK_ON_WEB:
+        # A Machine is spawned per job at request time, so a long-queued row
+        # means the spawn failed and nothing will ever claim it.
+        return "no worker ever claimed it"
+    # 'web_queued' belongs to the in-process FIFO, where waiting behind another
+    # cook is normal and expected — sweeping it would cancel a valid job.
+    return ""
+
 
 @app.on_event("startup")
 async def _startup_tasks():
@@ -211,29 +272,75 @@ async def _startup_tasks():
     asyncio.create_task(_periodic_cleanup())
 
     async def _periodic_cook_sweeper():
-        """Fail + refund cooks whose worker died.
+        """Fail + refund cooks whose Machine died, and stop the Machine billing.
 
         One-shot Machines have restart policy "no" and an OOM/host loss sends no
         SIGTERM, so without this a dead cook sits at its last percentage forever
-        with the user's credit gone.
+        with the user's credit gone and the VM still on the meter.
+
+        The bar for acting is deliberately high, because a healthy cook can go
+        quiet for a long time during ffmpeg assembly. See _cook_death_reason.
         """
-        from webapp.database import fail_abandoned_cook_jobs
+        from webapp.database import (
+            cook_silence_seconds,
+            fail_cook_job_with_refund,
+            list_stale_cook_jobs,
+        )
+
+        def _sweep_once() -> list[dict]:
+            candidates = list_stale_cook_jobs(
+                config.COOK_SILENT_SECONDS,
+                config.COOK_ABANDON_QUEUED_SECONDS,
+            )
+            done: list[dict] = []
+            for row in candidates:
+                job_id = row.get("job_id")
+                prev = row.get("status")
+                if not job_id or not prev:
+                    continue
+                quiet = cook_silence_seconds(row)
+                reason = _cook_sweep_reason(row, quiet)
+                if not reason:
+                    continue
+
+                message = (
+                    _COOK_DIED_MSG if prev == "running" else _COOK_NEVER_STARTED_MSG
+                )
+                failed, refunded = fail_cook_job_with_refund(job_id, prev, message)
+                if not failed:
+                    continue
+
+                destroyed = ""
+                if prev == "running" and COOK_ON_FLY:
+                    from webapp import fly_bridge
+
+                    destroyed = fly_bridge.destroy_cook_machine(job_id)
+
+                done.append({
+                    "job_id": job_id,
+                    "user_id": row.get("user_id"),
+                    "prev_status": prev,
+                    "recipe": row.get("recipe") or "",
+                    "refunded": refunded,
+                    "reason": reason,
+                    "quiet_sec": int(quiet),
+                    "machine": destroyed,
+                    "error_message": message,
+                })
+            return done
 
         while True:
             await asyncio.sleep(config.COOK_SWEEP_INTERVAL_SECONDS)
             try:
-                swept = await asyncio.to_thread(
-                    fail_abandoned_cook_jobs,
-                    config.COOK_ABANDON_RUNNING_SECONDS,
-                    config.COOK_ABANDON_QUEUED_SECONDS,
-                )
+                swept = await asyncio.to_thread(_sweep_once)
             except Exception as e:
                 print(f"[sweeper] cook sweep failed: {e}")
                 continue
             for job in swept:
                 print(
-                    f"[sweeper] failed abandoned cook {job['job_id']} "
-                    f"(was {job['prev_status']}, refunded {job['refunded']})"
+                    f"[sweeper] failed cook {job['job_id']}: {job['reason']} "
+                    f"(quiet {job['quiet_sec']}s, refunded {job['refunded']})"
+                    + (f" — {job['machine']}" if job["machine"] else "")
                 )
                 # Keep the in-memory view in step; COOK_ON_WEB=1 never refreshes from DB.
                 mem = _jobs.get(job["job_id"])
@@ -246,6 +353,8 @@ async def _startup_tasks():
                         "prev_status": job["prev_status"],
                         "recipe": job["recipe"],
                         "credits_refunded": job["refunded"],
+                        "reason": job["reason"],
+                        "quiet_sec": job["quiet_sec"],
                     })
                 except Exception:
                     pass
@@ -477,6 +586,9 @@ def _safe_user(u: dict) -> dict:
         "atlas_connected": bool(atlas.get("configured")),
         "trial_used": bool(u.get("trial_used")),
         "trial_credits": int(getattr(config, "TRIAL_CREDITS", 2) or 2),
+        # A failed renewal forces plan='free' but leaves the Stripe subscription
+        # live, so the UI must still offer the portal or they cannot cancel.
+        "has_billing_account": bool((u.get("stripe_customer_id") or "").strip()),
     }
 
 
@@ -503,6 +615,93 @@ _PLAN_CREDITS = {
     "daily_monthly": 35, "daily_annual": 35,
     "monthly": 15, "annual": 15,
 }
+
+# Monthly credit allowance per paid tier, independent of billing interval.
+_TIER_ALLOWANCE = {"starter": 15, "daily": 35}
+_PAID_TIERS = tuple(_TIER_ALLOWANCE)
+
+
+def _tier_allowance(tier: str) -> int:
+    return _TIER_ALLOWANCE.get(tier, 15)
+
+
+def _tier_from_price_id(price_id: str) -> str:
+    """Map a Stripe price id to a plan tier, or '' when unrecognized.
+
+    Renewal credits must follow what the customer is actually paying for. A
+    portal upgrade changes the Stripe price but historically left users.plan
+    untouched, so trusting the DB row under-granted that customer every month
+    for the life of the subscription.
+    """
+    pid = (price_id or "").strip()
+    if not pid:
+        return ""
+    daily = {
+        (config.STRIPE_PRICE_DAILY_MONTHLY or "").strip(),
+        (config.STRIPE_PRICE_DAILY_ANNUAL or "").strip(),
+    } - {""}
+    starter = {
+        (config.STRIPE_PRICE_STARTER_MONTHLY or "").strip(),
+        (config.STRIPE_PRICE_STARTER_ANNUAL or "").strip(),
+        (config.STRIPE_PRICE_ID or "").strip(),
+        (config.STRIPE_PRICE_ID_ANNUAL or "").strip(),
+    } - {""}
+    if pid in daily:
+        return "daily"
+    if pid in starter:
+        return "starter"
+    return ""
+
+
+def _line_price_id(line: dict) -> str:
+    """Price id from an invoice line or subscription item, across API versions."""
+    for key in ("price", "plan"):
+        pid = _stripe_id(line.get(key))
+        if pid:
+            return pid
+    # Basil (2025-03-31+) moved the price under pricing.price_details.
+    details = (line.get("pricing") or {}).get("price_details") or {}
+    return _stripe_id(details.get("price"))
+
+
+def _tier_from_invoice(invoice: dict) -> str:
+    """Tier this invoice is actually billing for.
+
+    Upgrade invoices carry a proration credit for the old plan alongside the new
+    one, so pick the recognized tier with the largest amount rather than the
+    first line, which is often the negative proration.
+    """
+    best_tier, best_amount = "", None
+    for line in (invoice.get("lines") or {}).get("data") or []:
+        if not isinstance(line, dict):
+            continue
+        tier = _tier_from_price_id(_line_price_id(line))
+        if not tier:
+            continue
+        amount = int(line.get("amount") or 0)
+        if best_amount is None or amount > best_amount:
+            best_tier, best_amount = tier, amount
+    return best_tier
+
+
+def _tier_from_subscription(sub: dict) -> str:
+    for item in (sub.get("items") or {}).get("data") or []:
+        if isinstance(item, dict):
+            tier = _tier_from_price_id(_line_price_id(item))
+            if tier:
+                return tier
+    return ""
+
+
+def _subscription_price_changed(previous: dict) -> bool:
+    """Did this update actually change the priced items?
+
+    Gating on this keeps unrelated updates — a new card, a renewal date shift —
+    from re-granting upgrade credits every time Stripe pings us.
+    """
+    if not isinstance(previous, dict):
+        return False
+    return any(key in previous for key in ("items", "plan", "quantity"))
 
 
 def _stripe_obj_to_dict(obj: Any) -> dict:
@@ -784,10 +983,28 @@ async def stripe_webhook(request: Request):
                             "source": "invoice.paid",
                         })
                 else:
-                    credits = 35 if plan == "daily" else 15
-                    update_user(row["id"], credits=credits)
-                    print(f"[stripe] Refilled {credits} credits for user {row['id']} ({plan})")
-                    track(row["id"], "credits_refilled", {"plan": plan, "credits": credits, "amount_paid": amount_paid})
+                    # Grant from the price on the invoice, not users.plan. A
+                    # portal upgrade leaves the row stale, and trusting it meant
+                    # a Daily customer was refilled 15 credits every month.
+                    billed_tier = _tier_from_invoice(obj)
+                    db_tier = "daily" if plan == "daily" else "starter"
+                    tier = billed_tier or db_tier
+                    credits = _tier_allowance(tier)
+                    fields: dict[str, Any] = {"credits": credits}
+                    # Never overwrite 'pro' — that is the admin grant, not Stripe's.
+                    if billed_tier and plan != billed_tier and plan in _PAID_TIERS + ("free",):
+                        fields["plan"] = billed_tier
+                    update_user(row["id"], **fields)
+                    if "plan" in fields:
+                        print(f"[stripe] Plan corrected {plan} → {billed_tier} "
+                              f"from invoice price for user {row['id']}")
+                    print(f"[stripe] Refilled {credits} credits for user {row['id']} ({tier})")
+                    identify_user(row["id"], {"plan": fields.get("plan", plan), "credits": credits})
+                    track(row["id"], "credits_refilled", {
+                        "plan": fields.get("plan", plan), "credits": credits,
+                        "amount_paid": amount_paid, "billed_tier": billed_tier,
+                        "plan_corrected": "plan" in fields,
+                    })
 
     elif evt_type == "customer.subscription.deleted":
         sub_id = _stripe_id(obj.get("id"))
@@ -833,6 +1050,27 @@ async def stripe_webhook(request: Request):
                     "from_plan": row["plan"], "to_plan": new_plan,
                     "credits": credits, "source": "subscription.updated",
                 })
+            elif row and row.get("plan") in _PAID_TIERS:
+                # Checkout refuses existing subscribers, so the portal is the
+                # only upgrade path and it lands here. Without this the plan row
+                # never moves and every later renewal under-grants.
+                old_tier = row["plan"]
+                new_tier = _tier_from_subscription(obj)
+                changed = _subscription_price_changed(data.get("previous_attributes"))
+                if new_tier and new_tier != old_tier and changed:
+                    update_user(row["id"], plan=new_tier)
+                    # Grant only the difference, and never on downgrade —
+                    # otherwise toggling Daily/Starter each month farms credits.
+                    delta = _tier_allowance(new_tier) - _tier_allowance(old_tier)
+                    if delta > 0:
+                        add_credits(row["id"], delta)
+                    print(f"[stripe] Plan change {old_tier} → {new_tier} for "
+                          f"user {row['id']} (+{max(0, delta)} credits)")
+                    identify_user(row["id"], {"plan": new_tier})
+                    track(row["id"], "plan_changed", {
+                        "from_plan": old_tier, "to_plan": new_tier,
+                        "credits_granted": max(0, delta),
+                    })
 
     return {"ok": True}
 

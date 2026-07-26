@@ -1629,39 +1629,20 @@ def _credits_charged_for_row(row: dict) -> int:
     return max(0, n)
 
 
-_ABANDONED_RUNNING_MSG = (
-    "This cook stopped responding and was ended automatically. "
-    "Your credits have been returned — please try again."
-)
-_ABANDONED_QUEUED_MSG = (
-    "This cook never started because no worker picked it up. "
-    "Your credits have been returned — please try again."
-)
-
-
-def fail_abandoned_cook_jobs(
-    running_stale_seconds: int = 900,
-    queued_stale_seconds: int = 1800,
+def list_stale_cook_jobs(
+    running_silence_seconds: int = 600,
+    queued_silence_seconds: int = 1800,
 ) -> list[dict]:
-    """Fail cooks whose worker died, refunding each job's credits exactly once.
+    """Cook rows that *might* be abandoned. Read-only — the caller decides.
 
-    Cook Machines are one-shot with restart policy "no", so an OOM or host loss
-    delivers no SIGTERM and nothing ever marks the job finished — the user
-    watches a frozen progress bar indefinitely. A failed spawn is worse: the row
-    stays 'queued' with the credit already taken and no worker to claim it.
-
-    The refund is guarded by flipping `credit_deducted` in its own UPDATE and is
-    applied in the same transaction, so concurrent sweepers (or a sweeper racing
-    a late worker) can neither double-pay nor drop a credit part-way.
-
-    Thresholds must stay well above any legitimate silent gap — cooks heartbeat
-    throughout, so do not reuse the much shorter WORKER_STALE_SECONDS here.
+    Silence alone is not proof of death: heartbeats come from progress
+    callbacks, and a long ffmpeg assembly emits none for many minutes. The
+    caller is expected to corroborate with the machine's actual state before
+    failing anything.
     """
     now = time.time()
-    run_cutoff = now - max(300, int(running_stale_seconds))
-    queue_cutoff = now - max(300, int(queued_stale_seconds))
-    swept: list[dict] = []
-
+    run_cutoff = now - max(60, int(running_silence_seconds))
+    queue_cutoff = now - max(60, int(queued_silence_seconds))
     with _conn() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -1673,48 +1654,65 @@ def fail_abandoned_cook_jobs(
                      OR (status IN ('queued', 'web_queued') AND created_at < ?)"""),
             (run_cutoff, queue_cutoff),
         )
-        rows = [dict(r) for r in cur.fetchall()]
+        return [dict(r) for r in cur.fetchall()]
 
-        for row in rows:
-            jid = row.get("job_id")
-            prev = row.get("status")
-            if not jid:
-                continue
-            msg = _ABANDONED_RUNNING_MSG if prev == "running" else _ABANDONED_QUEUED_MSG
 
-            # Claim the job by transitioning its status; skip if someone beat us.
+def cook_silence_seconds(row: dict) -> float:
+    """Seconds since this cook last showed any sign of life."""
+    last = (
+        float(row.get("heartbeat_at") or 0)
+        or float(row.get("started_at") or 0)
+        or float(row.get("created_at") or 0)
+    )
+    if last <= 0:
+        return 0.0
+    return max(0.0, time.time() - last)
+
+
+def fail_cook_job_with_refund(
+    job_id: str, expected_status: str, message: str
+) -> tuple[bool, int]:
+    """Fail one cook and refund its credits, each exactly once.
+
+    Returns (failed, credits_refunded). `failed` is False when the job already
+    moved out of `expected_status` — a worker that finished late, or another
+    sweeper, wins the race and we touch nothing.
+
+    The refund is guarded by flipping `credit_deducted` in its own UPDATE and
+    applied in the same transaction, so we can neither double-pay nor leave a
+    credit half-returned.
+    """
+    now = time.time()
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(_q("SELECT * FROM cook_jobs WHERE job_id = ?"), (job_id,))
+        found = cur.fetchone()
+        if not found:
+            return False, 0
+        row = dict(found)
+
+        cur.execute(
+            _q("""UPDATE cook_jobs SET status = 'error', error = ?, finished_at = ?
+                  WHERE job_id = ? AND status = ?"""),
+            (message, now, job_id, expected_status),
+        )
+        if (cur.rowcount or 0) != 1:
+            return False, 0
+
+        cur.execute(
+            _q("""UPDATE cook_jobs SET credit_deducted = 0
+                  WHERE job_id = ? AND credit_deducted = 1"""),
+            (job_id,),
+        )
+        refunded = _credits_charged_for_row(row) if (cur.rowcount or 0) == 1 else 0
+        if refunded > 0 and row.get("user_id"):
             cur.execute(
-                _q("""UPDATE cook_jobs SET status = 'error', error = ?, finished_at = ?
-                      WHERE job_id = ? AND status = ?"""),
-                (msg, now, jid, prev),
+                _q("UPDATE users SET credits = credits + ? WHERE id = ?"),
+                (refunded, int(row["user_id"])),
             )
-            if (cur.rowcount or 0) != 1:
-                continue
-
-            cur.execute(
-                _q("""UPDATE cook_jobs SET credit_deducted = 0
-                      WHERE job_id = ? AND credit_deducted = 1"""),
-                (jid,),
-            )
-            refunded = _credits_charged_for_row(row) if (cur.rowcount or 0) == 1 else 0
-            if refunded > 0 and row.get("user_id"):
-                cur.execute(
-                    _q("UPDATE users SET credits = credits + ? WHERE id = ?"),
-                    (refunded, int(row["user_id"])),
-                )
-            else:
-                refunded = 0
-
-            swept.append({
-                "job_id": jid,
-                "user_id": row.get("user_id"),
-                "prev_status": prev,
-                "recipe": row.get("recipe") or "",
-                "refunded": refunded,
-                "error_message": msg,
-            })
-
-    return swept
+        else:
+            refunded = 0
+        return True, refunded
 
 
 def append_cook_progress(job_id: str, message: str, phase: str = "running") -> None:

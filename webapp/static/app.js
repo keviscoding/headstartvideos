@@ -5438,7 +5438,9 @@ function loadBillingPage() {
         if (trialSec) trialSec.style.display = '';
     } else {
         topupSec.classList.add('hidden');
-        manageSec.classList.add('hidden');
+        // A failed renewal drops them to 'free' without cancelling Stripe, so
+        // hiding this would leave a live subscription with no way to cancel.
+        manageSec.classList.toggle('hidden', !currentUser.has_billing_account);
         upgradeSec.style.display = '';
         if (trialSec) trialSec.style.display = 'none';
         // Returning free users who already used a trial
