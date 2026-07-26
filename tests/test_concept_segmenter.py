@@ -14,6 +14,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -24,6 +26,7 @@ from core.concept_segmenter import (
     _enforce_duration_constraints,
     _fallback_concept_dicts,
     _format_words_with_timestamps,
+    _resegment_overlong,
     _word_windows,
     coverage_ratio,
 )
@@ -131,6 +134,74 @@ class TestBackfill:
 
         before = len(dicts)
         assert len(_backfill_uncovered_spans(dicts, words, target_sec=4.0)) == before
+
+
+class TestResegmentOverlong:
+    """A concept claiming a huge span is 100% 'covered' but still one image."""
+
+    def test_whole_script_in_one_concept_is_split(self):
+        words = _words(600.0)
+        dicts = [{
+            "start_word_idx": 0, "end_word_idx": len(words) - 1,
+            "text": "everything", "illustration_prompt": "one prompt",
+        }]
+        out = _resegment_overlong(dicts, words, target_sec=4.0)
+        assert len(out) > 100
+        assert len({d["illustration_prompt"] for d in out}) > 100
+
+    def test_normal_length_concepts_are_left_alone(self):
+        words = _words(60.0)
+        dicts = [
+            {"start_word_idx": 0, "end_word_idx": 10, "text": "a", "illustration_prompt": "p1"},
+            {"start_word_idx": 11, "end_word_idx": 22, "text": "b", "illustration_prompt": "p2"},
+        ]
+        assert _resegment_overlong(dicts, words, target_sec=4.0) == dicts
+
+    def test_resegmented_span_keeps_global_indices(self):
+        words = _words(300.0)
+        start = 100
+        dicts = [{
+            "start_word_idx": start, "end_word_idx": len(words) - 1,
+            "text": "tail", "illustration_prompt": "p",
+        }]
+        out = _resegment_overlong(dicts, words, target_sec=4.0)
+        assert out[0]["start_word_idx"] == start
+        assert out[-1]["end_word_idx"] == len(words) - 1
+
+    def test_malformed_indices_are_passed_through(self):
+        words = _words(600.0)
+        dicts = [
+            {"start_word_idx": None, "end_word_idx": 5, "text": "a", "illustration_prompt": "p"},
+            {"start_word_idx": 900, "end_word_idx": 100, "text": "b", "illustration_prompt": "p"},
+        ]
+        assert _resegment_overlong(dicts, words, target_sec=4.0) == dicts
+
+    def test_empty_words_is_a_noop(self):
+        dicts = [{"start_word_idx": 0, "end_word_idx": 9, "text": "a", "illustration_prompt": "p"}]
+        assert _resegment_overlong(dicts, [], target_sec=4.0) == dicts
+
+    @pytest.mark.parametrize("plan_name,plan_fn", [
+        ("one concept for everything", lambda n: [
+            {"start_word_idx": 0, "end_word_idx": n - 1, "text": "a", "illustration_prompt": "p"}]),
+        ("indices out of range", lambda n: [
+            {"start_word_idx": -50, "end_word_idx": n + 9999, "text": "a", "illustration_prompt": "p"}]),
+        ("twelve tiny concepts", lambda n: [
+            {"start_word_idx": i * 5, "end_word_idx": i * 5 + 4,
+             "text": f"c{i}", "illustration_prompt": f"p{i}"} for i in range(12)]),
+    ])
+    def test_no_lazy_plan_survives_as_repeated_images(self, plan_name, plan_fn):
+        """20-minute narration: no model output may yield a wall of clones."""
+        words = _words(1200.0)
+        dicts = _resegment_overlong(plan_fn(len(words)), words, target_sec=4.0)
+        dicts = _backfill_uncovered_spans(dicts, words, target_sec=4.0)
+        concepts = _enforce_duration_constraints(_build_concepts(dicts, words))
+
+        prompts = [c.illustration_prompt for c in concepts]
+        worst = max(prompts.count(p) for p in set(prompts))
+        assert worst <= 2, f"{plan_name}: one image repeated {worst}x"
+
+        span = words[-1]["end"] - words[0]["start"]
+        assert sum(c.duration_sec for c in concepts) == pytest.approx(span, abs=1.0)
 
 
 class TestRepeatedImageRegression:

@@ -704,6 +704,22 @@ def _subscription_price_changed(previous: dict) -> bool:
     return any(key in previous for key in ("items", "plan", "quantity"))
 
 
+def _upgrade_grant(row: dict, old_tier: str, new_tier: str) -> int:
+    """Credits to add for a mid-cycle upgrade, net of what this period already paid for.
+
+    Granting the raw Daily−Starter difference let a customer downgrade and
+    re-upgrade inside one period to mint 20 credits for roughly nothing in
+    prorations. `period_tier` records the best tier already credited this
+    period, so the second upgrade grants zero. Capping on credits held instead
+    would have punished anyone holding top-up credits.
+    """
+    already = _tier_allowance(old_tier)
+    ratchet = (row.get("period_tier") or "").strip()
+    if ratchet:
+        already = max(already, _tier_allowance(ratchet))
+    return max(0, _tier_allowance(new_tier) - already)
+
+
 def _stripe_obj_to_dict(obj: Any) -> dict:
     """Normalize Stripe webhook objects to plain dicts."""
     if obj is None:
@@ -974,7 +990,8 @@ async def stripe_webhook(request: Request):
                     else:
                         new_plan = "daily" if "daily" in plan else "starter"
                         credits = 35 if new_plan == "daily" else 15
-                        update_user(row["id"], plan=new_plan, credits=credits, trial_used=1)
+                        update_user(row["id"], plan=new_plan, credits=credits,
+                                    trial_used=1, period_tier=new_plan)
                         print(f"[stripe] Trial converted: user {row['id']} → {new_plan} ({credits} credits)")
                         identify_user(row["id"], {"plan": new_plan, "credits": credits})
                         track(row["id"], "trial_converted", {
@@ -990,9 +1007,17 @@ async def stripe_webhook(request: Request):
                     db_tier = "daily" if plan == "daily" else "starter"
                     tier = billed_tier or db_tier
                     credits = _tier_allowance(tier)
-                    fields: dict[str, Any] = {"credits": credits}
+                    # A paid invoice starts a fresh period, so reset the
+                    # upgrade ratchet to what this invoice actually bought.
+                    fields: dict[str, Any] = {"credits": credits, "period_tier": tier}
+                    # Restoring 'free' is for the unpaid→recovered case, which
+                    # keeps stripe_sub_id. subscription.deleted clears it, so a
+                    # late invoice on a cancelled sub must not revive the plan.
+                    restorable = plan in _PAID_TIERS or (
+                        plan == "free" and bool((row.get("stripe_sub_id") or "").strip())
+                    )
                     # Never overwrite 'pro' — that is the admin grant, not Stripe's.
-                    if billed_tier and plan != billed_tier and plan in _PAID_TIERS + ("free",):
+                    if billed_tier and plan != billed_tier and restorable:
                         fields["plan"] = billed_tier
                     update_user(row["id"], **fields)
                     if "plan" in fields:
@@ -1014,7 +1039,8 @@ async def stripe_webhook(request: Request):
             if row:
                 prev_plan = row.get("plan", "unknown")
                 # Keep trial_used=1 so they cannot start another free trial
-                update_user(row["id"], plan="free", credits=0, stripe_sub_id="")
+                update_user(row["id"], plan="free", credits=0,
+                            stripe_sub_id="", period_tier="")
                 print(f"[stripe] Subscription deleted — user {row['id']} downgraded to free (trial_used preserved)")
                 identify_user(row["id"], {"plan": "free", "credits": 0})
                 track(row["id"], "subscription_canceled", {"from_plan": prev_plan})
@@ -1029,7 +1055,7 @@ async def stripe_webhook(request: Request):
             row = _find_user_for_stripe(sub_id=sub_id, customer_id=customer_id)
             if row and row.get("plan") not in ("starter_trial", "daily_trial"):
                 prev_plan = row.get("plan", "unknown")
-                update_user(row["id"], plan="free", credits=0)
+                update_user(row["id"], plan="free", credits=0, period_tier="")
                 print(f"[stripe] Subscription {status} — user {row['id']} downgraded to free")
                 identify_user(row["id"], {"plan": "free", "credits": 0})
                 track(row["id"], "subscription_canceled", {"from_plan": prev_plan, "status": status})
@@ -1043,7 +1069,8 @@ async def stripe_webhook(request: Request):
             if row and row.get("plan") in ("starter_trial", "daily_trial"):
                 new_plan = "daily" if "daily" in row["plan"] else "starter"
                 credits = 35 if new_plan == "daily" else 15
-                update_user(row["id"], plan=new_plan, credits=credits, trial_used=1)
+                update_user(row["id"], plan=new_plan, credits=credits,
+                            trial_used=1, period_tier=new_plan)
                 print(f"[stripe] subscription.updated active — converted user {row['id']} → {new_plan}")
                 identify_user(row["id"], {"plan": new_plan, "credits": credits})
                 track(row["id"], "trial_converted", {
@@ -1058,18 +1085,21 @@ async def stripe_webhook(request: Request):
                 new_tier = _tier_from_subscription(obj)
                 changed = _subscription_price_changed(data.get("previous_attributes"))
                 if new_tier and new_tier != old_tier and changed:
-                    update_user(row["id"], plan=new_tier)
-                    # Grant only the difference, and never on downgrade —
-                    # otherwise toggling Daily/Starter each month farms credits.
-                    delta = _tier_allowance(new_tier) - _tier_allowance(old_tier)
+                    delta = _upgrade_grant(row, old_tier, new_tier)
+                    fields = {"plan": new_tier}
+                    if delta > 0:
+                        # Ratchet up so a later re-upgrade in the same period
+                        # cannot claim this allowance a second time.
+                        fields["period_tier"] = new_tier
+                    update_user(row["id"], **fields)
                     if delta > 0:
                         add_credits(row["id"], delta)
                     print(f"[stripe] Plan change {old_tier} → {new_tier} for "
-                          f"user {row['id']} (+{max(0, delta)} credits)")
+                          f"user {row['id']} (+{delta} credits)")
                     identify_user(row["id"], {"plan": new_tier})
                     track(row["id"], "plan_changed", {
                         "from_plan": old_tier, "to_plan": new_tier,
-                        "credits_granted": max(0, delta),
+                        "credits_granted": delta,
                     })
 
     return {"ok": True}

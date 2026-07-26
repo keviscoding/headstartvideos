@@ -378,6 +378,63 @@ def _backfill_uncovered_spans(
     return out
 
 
+# Beyond this, a "concept" is really an unsegmented block: _enforce_duration_constraints
+# would split it into chunks that all copy its single illustration_prompt.
+_MAX_TRUSTED_CONCEPT_SEC = MAX_CONCEPT_DURATION * 2
+
+
+def _resegment_overlong(
+    concept_dicts: list[dict],
+    all_words: list[dict],
+    *,
+    niche_hint: str = "",
+    target_sec: float = 4.0,
+) -> list[dict]:
+    """Replace concepts that span far too long with real per-beat prompts.
+
+    A lazy model sometimes answers with a single concept covering the entire
+    script. That satisfies the coverage check, so the gap backfill never fires,
+    yet _enforce_duration_constraints still splits it into hundreds of chunks
+    that all share one illustration_prompt — the same repeated-image failure as
+    an uncovered gap, arrived at from the other direction.
+    """
+    n = len(all_words)
+    if n == 0:
+        return concept_dicts
+
+    out: list[dict] = []
+    replaced = 0
+    for cd in concept_dicts:
+        s, e = cd.get("start_word_idx"), cd.get("end_word_idx")
+        try:
+            s, e = int(s), int(e)
+        except (TypeError, ValueError):
+            out.append(cd)
+            continue
+        s = max(0, min(s, n - 1))
+        e = max(0, min(e, n - 1))
+        if e < s:
+            out.append(cd)
+            continue
+        span = float(all_words[e]["end"]) - float(all_words[s]["start"])
+        if span <= _MAX_TRUSTED_CONCEPT_SEC:
+            out.append(cd)
+            continue
+        out.extend(_fallback_concept_dicts(
+            all_words[s:e + 1],
+            target_sec=target_sec,
+            hook_sec=HOOK_CUTOFF_SEC,
+            niche_hint=niche_hint or (cd.get("section_topic") or ""),
+            index_offset=s,
+        ))
+        replaced += 1
+
+    if replaced:
+        print(f"[concept_segmenter] Re-segmented {replaced} over-long concept(s) "
+              f"the model never split")
+    return out
+
+
 def _parse_concepts_json(raw: str) -> list[dict]:
     """Extract JSON array from LLM response."""
     raw = raw.strip()
@@ -608,8 +665,15 @@ def segment_into_concepts(
 
     concept_dicts: list[dict] = [cd for chunk in per_window for cd in chunk]
 
-    # Any stretch the model silently dropped gets real beats rather than being
-    # swallowed by a neighbour and duplicated into hundreds of identical frames.
+    # Two ways the model produces one image for a long stretch: leaving a gap
+    # (backfill) or claiming it all in a single unsegmented concept (resegment).
+    # Both end up duplicated by _enforce_duration_constraints, so fix both.
+    concept_dicts = _resegment_overlong(
+        concept_dicts,
+        all_words,
+        niche_hint=niche_hint,
+        target_sec=fallback_target,
+    )
     concept_dicts = _backfill_uncovered_spans(
         concept_dicts,
         all_words,

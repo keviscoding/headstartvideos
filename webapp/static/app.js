@@ -1177,13 +1177,17 @@ function trialPlanInfo() {
     };
 }
 
+let _chargeConfirmPromise = null;
+
 /**
  * Ask before charging. Resolves true only on explicit confirmation.
  * Ending a trial bills the card immediately, so this must never be skippable.
+ * A second click reuses the open prompt rather than stacking another modal.
  */
 function confirmTrialCharge() {
+    if (_chargeConfirmPromise) return _chargeConfirmPromise;
     const { tier, price, credits } = trialPlanInfo();
-    return new Promise((resolve) => {
+    _chargeConfirmPromise = new Promise((resolve) => {
         document.getElementById('confirm-charge-modal')?.remove();
         const modal = document.createElement('div');
         modal.id = 'confirm-charge-modal';
@@ -1213,6 +1217,7 @@ function confirmTrialCharge() {
 
         const close = (ok) => {
             modal.remove();
+            _chargeConfirmPromise = null;
             track(ok ? 'trial_charge_confirmed' : 'trial_charge_declined', { tier, price });
             resolve(ok);
         };
@@ -1220,6 +1225,7 @@ function confirmTrialCharge() {
         modal.querySelector('#confirm-charge-no').onclick = () => close(false);
         modal.onclick = (e) => { if (e.target === modal) close(false); };
     });
+    return _chargeConfirmPromise;
 }
 
 let _endTrialInFlight = false;
@@ -1230,7 +1236,10 @@ let _endTrialInFlight = false;
  */
 async function endTrialNow() {
     if (_endTrialInFlight) return false;
-    if (isTrialUser() && !(await confirmTrialCharge())) return false;
+    // Unconditional on purpose: if our cached plan were stale we would skip the
+    // prompt while the server still charged. The server rejects anyone without
+    // an active trial, so an extra dialog is the safe side to err on.
+    if (!(await confirmTrialCharge())) return false;
     return _doEndTrial();
 }
 

@@ -388,6 +388,9 @@ def _init_db():
                 _ensure_column(cur, "users", "heygen_key_enc", "TEXT DEFAULT ''")
                 _ensure_column(cur, "users", "atlas_key_enc", "TEXT DEFAULT ''")
                 _ensure_column(cur, "users", "storyboard_cast_json", "TEXT DEFAULT ''")
+                # Highest tier already credited in the current billing period —
+                # stops Daily→Starter→Daily portal toggling from minting credits.
+                _ensure_column(cur, "users", "period_tier", "TEXT DEFAULT ''")
                 _ensure_column(cur, "cook_jobs", "lite_mode", "INTEGER NOT NULL DEFAULT 0")
                 _ensure_column(cur, "cook_jobs", "worker_id", "TEXT DEFAULT ''")
                 _ensure_column(cur, "cook_jobs", "heartbeat_at", "DOUBLE PRECISION DEFAULT 0")
@@ -412,6 +415,7 @@ def _init_db():
             _ensure_column(cur, "users", "heygen_key_enc", "TEXT DEFAULT ''")
             _ensure_column(cur, "users", "atlas_key_enc", "TEXT DEFAULT ''")
             _ensure_column(cur, "users", "storyboard_cast_json", "TEXT DEFAULT ''")
+            _ensure_column(cur, "users", "period_tier", "TEXT DEFAULT ''")
             _ensure_column(cur, "cook_jobs", "lite_mode", "INTEGER NOT NULL DEFAULT 0")
             _ensure_column(cur, "cook_jobs", "worker_id", "TEXT DEFAULT ''")
             _ensure_column(cur, "cook_jobs", "heartbeat_at", "REAL DEFAULT 0")

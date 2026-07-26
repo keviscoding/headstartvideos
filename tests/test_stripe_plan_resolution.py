@@ -152,29 +152,60 @@ class TestTierAllowance:
         assert server._tier_allowance("mystery") == 15
 
 
-class TestUpgradeDelta:
-    """Upgrades must grant the difference only — never the full allowance."""
+class TestUpgradeGrant:
+    """Upgrades grant the difference only, net of what this period already bought."""
 
     def test_starter_to_daily_grants_twenty(self):
-        delta = server._tier_allowance("daily") - server._tier_allowance("starter")
-        assert delta == 20
+        assert server._upgrade_grant({"period_tier": "starter"}, "starter", "daily") == 20
 
-    def test_downgrade_delta_is_negative_so_nothing_is_granted(self):
-        delta = server._tier_allowance("starter") - server._tier_allowance("daily")
-        assert delta < 0, "guarded by `if delta > 0` at the call site"
+    def test_downgrade_grants_nothing(self):
+        assert server._upgrade_grant({"period_tier": "daily"}, "daily", "starter") == 0
 
     def test_same_tier_grants_nothing(self):
-        assert server._tier_allowance("daily") - server._tier_allowance("daily") == 0
+        assert server._upgrade_grant({"period_tier": "daily"}, "daily", "daily") == 0
 
-    def test_toggling_cannot_farm_credits(self):
-        """Starter→Daily→Starter→Daily nets one upgrade grant, not two."""
+    def test_missing_ratchet_falls_back_to_current_plan(self):
+        """Rows predating the period_tier column must still upgrade correctly."""
+        for row in ({}, {"period_tier": ""}, {"period_tier": None}, {"period_tier": "  "}):
+            assert server._upgrade_grant(row, "starter", "daily") == 20
+
+    def test_top_up_credits_do_not_block_the_grant(self):
+        """Capping on credits held would have starved anyone holding top-ups."""
+        row = {"period_tier": "starter", "credits": 500}
+
+        assert server._upgrade_grant(row, "starter", "daily") == 20
+
+    def test_downgrade_then_reupgrade_grants_nothing(self):
+        """The farming exploit: pay ~nothing in prorations, mint 20 credits."""
+        row = {"period_tier": "daily"}  # already credited Daily this period
+
+        assert server._upgrade_grant(row, "starter", "daily") == 0
+
+    def test_toggling_all_period_cannot_farm_credits(self):
+        """Full simulation: Daily user toggling plans nets zero extra credits."""
+        row = {"plan": "daily", "period_tier": "daily"}
         granted = 0
-        tier = "starter"
-        for nxt in ("daily", "starter", "daily"):
-            delta = server._tier_allowance(nxt) - server._tier_allowance(tier)
-            granted += max(0, delta)
-            tier = nxt
+        for nxt in ("starter", "daily", "starter", "daily", "starter", "daily"):
+            delta = server._upgrade_grant(row, row["plan"], nxt)
+            granted += delta
+            row["plan"] = nxt
+            if delta > 0:
+                row["period_tier"] = nxt
 
-        assert granted == 40, "two upgrades at +20; downgrade grants nothing"
-        # The real protection is that a full-allowance grant would have been 105.
-        assert granted < 3 * server._tier_allowance("daily")
+        assert granted == 0, f"toggling farmed {granted} credits"
+
+    def test_one_upgrade_per_period_is_granted_once(self):
+        row = {"plan": "starter", "period_tier": "starter"}
+        first = server._upgrade_grant(row, "starter", "daily")
+        row["plan"] = row["period_tier"] = "daily"
+        second = server._upgrade_grant(row, "daily", "daily")
+
+        assert (first, second) == (20, 0)
+
+    def test_renewal_resets_the_ratchet(self):
+        """Next month's invoice sets period_tier, so upgrades work again."""
+        row = {"plan": "starter", "period_tier": "daily"}
+        assert server._upgrade_grant(row, "starter", "daily") == 0
+
+        row["period_tier"] = "starter"  # invoice.paid for the new period
+        assert server._upgrade_grant(row, "starter", "daily") == 20
