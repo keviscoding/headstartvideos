@@ -210,6 +210,48 @@ async def _startup_tasks():
 
     asyncio.create_task(_periodic_cleanup())
 
+    async def _periodic_cook_sweeper():
+        """Fail + refund cooks whose worker died.
+
+        One-shot Machines have restart policy "no" and an OOM/host loss sends no
+        SIGTERM, so without this a dead cook sits at its last percentage forever
+        with the user's credit gone.
+        """
+        from webapp.database import fail_abandoned_cook_jobs
+
+        while True:
+            await asyncio.sleep(config.COOK_SWEEP_INTERVAL_SECONDS)
+            try:
+                swept = await asyncio.to_thread(
+                    fail_abandoned_cook_jobs,
+                    config.COOK_ABANDON_RUNNING_SECONDS,
+                    config.COOK_ABANDON_QUEUED_SECONDS,
+                )
+            except Exception as e:
+                print(f"[sweeper] cook sweep failed: {e}")
+                continue
+            for job in swept:
+                print(
+                    f"[sweeper] failed abandoned cook {job['job_id']} "
+                    f"(was {job['prev_status']}, refunded {job['refunded']})"
+                )
+                # Keep the in-memory view in step; COOK_ON_WEB=1 never refreshes from DB.
+                mem = _jobs.get(job["job_id"])
+                if isinstance(mem, dict):
+                    mem["status"] = "error"
+                    mem["error"] = job["error_message"]
+                try:
+                    track(job.get("user_id") or "system", "cook_abandoned_swept", {
+                        "job_id": job["job_id"],
+                        "prev_status": job["prev_status"],
+                        "recipe": job["recipe"],
+                        "credits_refunded": job["refunded"],
+                    })
+                except Exception:
+                    pass
+
+    asyncio.create_task(_periodic_cook_sweeper())
+
 from webapp.database import (
     get_user_by_email, create_user, get_user_by_id, update_user,
     get_user_by_sub_id, get_user_by_customer_id, billing_plan_counts, list_billing_users,

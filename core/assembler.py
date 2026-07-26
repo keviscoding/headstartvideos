@@ -390,6 +390,27 @@ def _concat_file_line(path: str) -> str:
     return f"file '{abs_path}'\n"
 
 
+def _stretch_last_to_cover_audio(
+    durations: list[float], voiceover_path: str
+) -> list[float]:
+    """Hold the final still until the narration ends.
+
+    Both slideshow mux paths use `-shortest`, so visuals that fall short of the
+    voiceover truncate the narration rather than the video — the user hears
+    their script stop mid-sentence. Extending the last image costs no extra
+    encode pass, unlike re-padding the finished video.
+    """
+    a_dur = _probe_duration_sec(voiceover_path)
+    v_dur = sum(max(0.04, float(d)) for d in durations)
+    if a_dur <= 0 or v_dur <= 0 or a_dur - v_dur < 0.5:
+        return durations
+    out = list(durations)
+    out[-1] = max(0.04, float(out[-1])) + (a_dur - v_dur) + 0.15
+    print(f"[assembler] visuals {v_dur:.1f}s short of narration {a_dur:.1f}s — "
+          f"holding final still for {out[-1]:.1f}s so no narration is cut")
+    return out
+
+
 def _slideshow_from_images(
     image_paths: list[str],
     durations: list[float],
@@ -407,6 +428,9 @@ def _slideshow_from_images(
     if not image_paths or not durations or len(image_paths) != len(durations):
         print("[assembler] slideshow: empty or mismatched image/duration lists")
         return False
+
+    if with_audio:
+        durations = _stretch_last_to_cover_audio(durations, voiceover_path)
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
         for img, dur in zip(image_paths, durations):
@@ -489,6 +513,10 @@ def _slideshow_chunked(
         return _slideshow_from_images(
             image_paths, durations, voiceover_path, output_path, bg_music_path
         )
+
+    # Segments are built silent, so the deficit has to be absorbed here — the
+    # final mux below is also `-shortest` and would otherwise clip the narration.
+    durations = _stretch_last_to_cover_audio(durations, voiceover_path)
 
     out_dir = Path(output_path).parent
     segment_paths: list[str] = []

@@ -9,6 +9,7 @@ Each concept gets an illustration prompt in a consistent hand-drawn art style.
 from __future__ import annotations
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
 from config import GEMINI_KEY, GEMINI_TEXT_MODEL
@@ -177,25 +178,73 @@ Each object:
 """
 
 
-def _format_words_with_timestamps(words: list[dict]) -> str:
+def _format_words_with_timestamps(words: list[dict], offset: int = 0) -> str:
     """Format word list with per-word timestamps and indices for precise alignment.
 
     Every word gets its index and start timestamp so the LLM can make exact cuts.
     Format: [idx:start_sec] word
+
+    `offset` keeps indices global when only a window of the script is shown, so
+    returned indices need no translation back to the full word list.
     """
     parts = []
     for i, w in enumerate(words):
-        parts.append(f'[{i}:{w["start"]:.2f}]')
+        parts.append(f'[{i + offset}:{w["start"]:.2f}]')
         parts.append(w["word"])
     return " ".join(parts)
 
 
-def _format_words_compact(words: list[dict]) -> str:
+def _format_words_compact(words: list[dict], offset: int = 0) -> str:
     """Denser timestamp block for retries when the full list is huge."""
     parts = []
     for i, w in enumerate(words):
-        parts.append(f"{i}:{w['start']:.1f}:{w['word']}")
+        parts.append(f"{i + offset}:{w['start']:.1f}:{w['word']}")
     return " ".join(parts)
+
+
+# Segment long scripts in time windows so the LLM JSON isn't truncated mid-video.
+# A single 8192-token pass over a 20 min script routinely returned ~12 concepts
+# covering only the first minute; the rest of the audio then collapsed onto one
+# stretched concept (see _backfill_uncovered_spans).
+_CONCEPT_WINDOW_SEC = 120.0
+_CONCEPT_WINDOW_MAX_WORDS = 340
+# Kept modest so a long script can't trip Atlas rate limits mid-cook.
+_SEGMENT_WINDOW_WORKERS = 4
+# Uncovered stretches longer than this get deterministic beats instead of being
+# absorbed by a neighbouring concept.
+_MIN_BACKFILL_SEC = 5.0
+
+
+def _word_windows(
+    all_words: list[dict],
+    *,
+    window_sec: float = _CONCEPT_WINDOW_SEC,
+    max_words: int = _CONCEPT_WINDOW_MAX_WORDS,
+) -> list[tuple[int, int]]:
+    """Return (start_idx, end_idx) half-open windows over the word list."""
+    n = len(all_words)
+    if n == 0:
+        return []
+    if n <= max_words:
+        span = float(all_words[-1]["end"]) - float(all_words[0]["start"])
+        if span <= window_sec * 1.25:
+            return [(0, n)]
+
+    windows: list[tuple[int, int]] = []
+    i = 0
+    while i < n:
+        start_t = float(all_words[i]["start"])
+        j = i + 1
+        while j < n:
+            span = float(all_words[j - 1]["end"]) - start_t
+            if (j - i) >= max_words or span >= window_sec:
+                break
+            j += 1
+        if j <= i:
+            j = min(n, i + 1)
+        windows.append((i, j))
+        i = j
+    return windows
 
 
 def _fallback_concept_dicts(
@@ -204,6 +253,7 @@ def _fallback_concept_dicts(
     target_sec: float = 4.0,
     hook_sec: float = HOOK_CUTOFF_SEC,
     niche_hint: str = "",
+    index_offset: int = 0,
 ) -> list[dict]:
     """
     Deterministic segmentation when Atlas returns empty / unusable JSON.
@@ -237,8 +287,8 @@ def _fallback_concept_dicts(
         ).strip()
         beat = re.sub(r"\s+", " ", text)[:80]
         out.append({
-            "start_word_idx": start_idx,
-            "end_word_idx": end_idx,
+            "start_word_idx": start_idx + index_offset,
+            "end_word_idx": end_idx + index_offset,
             "text": text,
             "illustration_prompt": (
                 f"Stick figure scene about {topic}: visual metaphor for '{beat}'. "
@@ -250,6 +300,81 @@ def _fallback_concept_dicts(
             "section_topic": topic,
         })
         start_idx = end_idx + 1
+    return out
+
+
+def _covered_word_flags(concept_dicts: list[dict], n_words: int) -> list[bool]:
+    """Mark which words any concept claims, for coverage checks."""
+    covered = [False] * n_words
+    for cd in concept_dicts:
+        s, e = cd.get("start_word_idx"), cd.get("end_word_idx")
+        if s is None or e is None:
+            continue
+        try:
+            s, e = int(s), int(e)
+        except (TypeError, ValueError):
+            continue
+        s = max(0, min(s, n_words - 1))
+        e = max(0, min(e, n_words - 1))
+        if e < s:
+            continue
+        for k in range(s, e + 1):
+            covered[k] = True
+    return covered
+
+
+def coverage_ratio(concept_dicts: list[dict], all_words: list[dict]) -> float:
+    """Fraction of words claimed by at least one concept."""
+    n = len(all_words)
+    if n == 0:
+        return 1.0
+    return sum(_covered_word_flags(concept_dicts, n)) / n
+
+
+def _backfill_uncovered_spans(
+    concept_dicts: list[dict],
+    all_words: list[dict],
+    *,
+    niche_hint: str = "",
+    target_sec: float = 4.0,
+) -> list[dict]:
+    """Generate beats for stretches the LLM skipped.
+
+    Without this, _build_concepts extends the final concept all the way to the
+    end of the audio and _enforce_duration_constraints then splits that one
+    concept into hundreds of chunks that all share a single illustration_prompt
+    — the "same picture repeats for fifteen minutes" failure users reported.
+    """
+    n = len(all_words)
+    if n == 0:
+        return concept_dicts
+
+    covered = _covered_word_flags(concept_dicts, n)
+    out = list(concept_dicts)
+    spans = 0
+    i = 0
+    while i < n:
+        if covered[i]:
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and not covered[j + 1]:
+            j += 1
+        span_sec = float(all_words[j]["end"]) - float(all_words[i]["start"])
+        if span_sec >= _MIN_BACKFILL_SEC:
+            out.extend(_fallback_concept_dicts(
+                all_words[i:j + 1],
+                target_sec=target_sec,
+                hook_sec=HOOK_CUTOFF_SEC,
+                niche_hint=niche_hint,
+                index_offset=i,
+            ))
+            spans += 1
+        i = j + 1
+
+    if spans:
+        print(f"[concept_segmenter] Backfilled {spans} uncovered span(s) "
+              f"the model skipped ({len(out) - len(concept_dicts)} extra beats)")
     return out
 
 
@@ -296,6 +421,76 @@ def _parse_concepts_json(raw: str) -> list[dict]:
     raise ValueError(f"Could not parse concept JSON: {text[:300]}")
 
 
+def _segmenter_model() -> str:
+    """Configured segmenter model, mapped onto an Atlas-prefixed id when needed."""
+    import config as _cfg
+
+    model = getattr(_cfg, "CONCEPT_SEGMENTER_MODEL", GEMINI_TEXT_MODEL)
+    if model and not model.startswith(("google/", "openai/", "anthropic/")):
+        atlas_default = getattr(_cfg, "ATLAS_TEXT_MODEL", None) or "google/gemini-3.1-flash-lite"
+        if "gemini" in model.lower():
+            model = atlas_default
+    return model
+
+
+def _segment_window_concept_dicts(
+    excerpt: str,
+    window_words: list[dict],
+    *,
+    index_offset: int,
+    window_label: str,
+    window_target: int,
+    hook_dur: float,
+    context: str = "",
+) -> list[dict]:
+    """Segment one time window. Returns [] when the LLM stays unusable.
+
+    Word indices in the prompt are global, so results need no re-indexing.
+    """
+    from core.atlas_llm import generate_text
+
+    w_start = float(window_words[0]["start"])
+    w_end = float(window_words[-1]["end"])
+    words_formatted = _format_words_with_timestamps(window_words, index_offset)
+    zone = (
+        "HOOK ZONE — fast cuts, 1.5-3s each"
+        if w_start < hook_dur else "BODY ZONE — natural pacing, 2-6s each"
+    )
+    last_error = None
+
+    for attempt in range(3):
+        try:
+            max_tok = 8192 if attempt == 0 else 12288
+            words_block = words_formatted
+            if attempt >= 1 and len(words_formatted) > 12000:
+                words_block = _format_words_compact(window_words, index_offset)
+            raw = generate_text(
+                CONCEPT_SEGMENTER_PROMPT + "\n\n" + (
+                    f"SCRIPT EXCERPT ({window_label}):\n{excerpt}\n\n"
+                    f"WORD-LEVEL TIMESTAMPS:\n{words_block}\n\n"
+                    f"This excerpt spans {w_start:.0f}s–{w_end:.0f}s "
+                    f"({w_end - w_start:.0f}s of audio). {zone}.\n"
+                    f"Target: ~{window_target} concepts for this excerpt.\n"
+                    f"You MUST cover every word from index {index_offset} to "
+                    f"{index_offset + len(window_words) - 1} with no gaps.\n"
+                    f"{context}\n"
+                    f"Segment into visual concepts now. JSON array only."
+                ),
+                model=_segmenter_model(),
+                max_tokens=max_tok,
+                temperature=0.2 if attempt == 0 else 0.4,
+            )
+            parsed = _parse_concepts_json(raw)
+            if parsed:
+                return parsed
+            last_error = "empty concept array"
+        except Exception as e:
+            last_error = e
+        print(f"  [concept_segmenter] {window_label} attempt {attempt + 1} failed: {last_error}")
+
+    return []
+
+
 def segment_into_concepts(
     script: str,
     all_words: list[dict],
@@ -318,14 +513,12 @@ def segment_into_concepts(
     Returns:
         list of Concept objects with exact timing and illustration prompts
     """
-    from core.atlas_llm import generate_text, has_atlas
+    from core.atlas_llm import has_atlas
 
     if not GEMINI_KEY and not has_atlas():
         raise ValueError("ATLASCLOUD_KEY or GEMINI_KEY required for concept segmentation")
     if not all_words:
         raise ValueError("No word timestamps provided")
-
-    words_formatted = _format_words_with_timestamps(all_words)
 
     total_duration = all_words[-1]["end"] - all_words[0]["start"]
 
@@ -348,61 +541,85 @@ def segment_into_concepts(
     if niche_hint:
         context = f"\nVIDEO TOPIC: {niche_hint}\n"
 
-    prompt = CONCEPT_SEGMENTER_PROMPT
+    fallback_target = 7.0 if lite_mode else (5.5 if hq_mode else 4.0)
+    windows = _word_windows(all_words)
 
-    print(f"[concept_segmenter] Segmenting {total_duration:.1f}s script into ~{target_concepts} concepts...")
+    print(f"[concept_segmenter] Segmenting {total_duration:.1f}s script into "
+          f"~{target_concepts} concepts across {len(windows)} window(s)...")
 
-    concept_dicts = None
-    last_error = None
+    def _segment_one(w_i: int, lo: int, hi: int) -> list[dict]:
+        window_words = all_words[lo:hi]
+        w_start = float(window_words[0]["start"])
+        w_end = float(window_words[-1]["end"])
+        label = f"window {w_i + 1}/{len(windows)} ({w_start:.0f}s–{w_end:.0f}s)"
+        # Pro-rate the concept target so each window keeps the intended pacing.
+        share = (w_end - w_start) / total_duration if total_duration > 0 else 1.0
+        window_target = max(2, round(target_concepts * share))
+        excerpt = " ".join(str(w.get("word") or "") for w in window_words).strip()
 
-    for attempt in range(3):
-        try:
-            import config as _cfg
-            model = getattr(_cfg, "CONCEPT_SEGMENTER_MODEL", GEMINI_TEXT_MODEL)
-            # Prefer Atlas-prefixed id when a bare Gemini short name is configured.
-            if model and not model.startswith(("google/", "openai/", "anthropic/")):
-                atlas_default = getattr(_cfg, "ATLAS_TEXT_MODEL", None) or "google/gemini-3.1-flash-lite"
-                if "gemini" in model.lower():
-                    model = atlas_default
-            # Later retries: denser prompt + more output room (empty content often = truncated)
-            max_tok = 8192 if attempt == 0 else 12288
-            words_block = words_formatted
-            if attempt >= 1 and len(words_formatted) > 12000:
-                words_block = _format_words_compact(all_words)
-            raw = generate_text(
-                prompt + "\n\n" + (
-                    f"FULL SCRIPT:\n{script}\n\n"
-                    f"WORD-LEVEL TIMESTAMPS:\n{words_block}\n\n"
-                    f"Total duration: {total_duration:.1f}s\n"
-                    f"HOOK ZONE (0-{hook_dur:.0f}s): ~{hook_concepts} concepts "
-                    f"(fast cuts, 1.5-3s each)\n"
-                    f"BODY ZONE ({hook_dur:.0f}s-{total_duration:.0f}s): ~{body_concepts} concepts "
-                    f"(natural pacing, 2-6s each)\n"
-                    f"Total target: ~{target_concepts} concepts\n"
-                    f"{context}\n"
-                    f"Segment into visual concepts now. JSON array only."
-                ),
-                model=model,
-                max_tokens=max_tok,
-                temperature=0.2 if attempt == 0 else 0.4,
+        window_dicts = _segment_window_concept_dicts(
+            excerpt,
+            window_words,
+            index_offset=lo,
+            window_label=label,
+            window_target=window_target,
+            hook_dur=hook_dur,
+            context=context,
+        )
+        if not window_dicts:
+            print(f"  [concept_segmenter] {label}: LLM unusable — timed fallback")
+            return _fallback_concept_dicts(
+                window_words,
+                target_sec=fallback_target,
+                hook_sec=HOOK_CUTOFF_SEC,
+                niche_hint=niche_hint,
+                index_offset=lo,
             )
-            concept_dicts = _parse_concepts_json(raw)
-            break
-        except Exception as e:
-            last_error = e
-            print(f"  [concept_segmenter] Attempt {attempt + 1} failed: {e}")
+        print(f"  [concept_segmenter] {label}: {len(window_dicts)} concepts")
+        return window_dicts
 
-    if concept_dicts is None:
-        print(
-            f"[concept_segmenter] LLM failed after 3 attempts ({last_error}); "
-            "using timed word-chunk fallback so the cook can continue"
-        )
-        concept_dicts = _fallback_concept_dicts(
-            all_words,
-            target_sec=7.0 if lite_mode else (5.5 if hq_mode else 4.0),
-            hook_sec=HOOK_CUTOFF_SEC,
-            niche_hint=niche_hint,
-        )
+    # Windows are independent (indices are global), so segment them in parallel.
+    # Sequential calls added minutes to long cooks, which risked pushing them
+    # past the cook timeout — the very hang we're trying to eliminate.
+    if len(windows) == 1:
+        per_window = [_segment_one(0, *windows[0])]
+    else:
+        workers = min(_SEGMENT_WINDOW_WORKERS, len(windows))
+        per_window = [[] for _ in windows]
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(_segment_one, w_i, lo, hi): w_i
+                for w_i, (lo, hi) in enumerate(windows)
+            }
+            for fut in as_completed(futures):
+                w_i = futures[fut]
+                lo, hi = windows[w_i]
+                try:
+                    per_window[w_i] = fut.result()
+                except Exception as e:
+                    print(f"  [concept_segmenter] window {w_i + 1} raised ({e}) — timed fallback")
+                    per_window[w_i] = _fallback_concept_dicts(
+                        all_words[lo:hi],
+                        target_sec=fallback_target,
+                        hook_sec=HOOK_CUTOFF_SEC,
+                        niche_hint=niche_hint,
+                        index_offset=lo,
+                    )
+
+    concept_dicts: list[dict] = [cd for chunk in per_window for cd in chunk]
+
+    # Any stretch the model silently dropped gets real beats rather than being
+    # swallowed by a neighbour and duplicated into hundreds of identical frames.
+    concept_dicts = _backfill_uncovered_spans(
+        concept_dicts,
+        all_words,
+        niche_hint=niche_hint,
+        target_sec=fallback_target,
+    )
+    covered = coverage_ratio(concept_dicts, all_words)
+    if covered < 0.98:
+        print(f"[concept_segmenter] WARNING: only {covered:.1%} of words covered "
+              f"after backfill — expect stretched visuals")
 
     concepts = _build_concepts(concept_dicts, all_words)
     concepts = _enforce_duration_constraints(concepts)

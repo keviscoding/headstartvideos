@@ -97,6 +97,13 @@ WORKER_POLL_SECONDS = float(os.getenv("WORKER_POLL_SECONDS", "2"))
 WORKER_STALE_SECONDS = int(os.getenv("WORKER_STALE_SECONDS", "180"))
 # How long a worker waits for in-flight cooks after SIGTERM before re-queueing them.
 WORKER_DRAIN_SECONDS = int(os.getenv("WORKER_DRAIN_SECONDS", "1200"))
+# Abandoned-cook sweeper (runs on the web dyno). One-shot Machines that die
+# without SIGTERM leave rows stuck in running/queued with the credit taken and
+# nothing to finish them. These must stay well above WORKER_STALE_SECONDS —
+# cooks heartbeat throughout, so a short value would kill healthy long renders.
+COOK_ABANDON_RUNNING_SECONDS = max(300, int(os.getenv("COOK_ABANDON_RUNNING_SECONDS", "900")))
+COOK_ABANDON_QUEUED_SECONDS = max(300, int(os.getenv("COOK_ABANDON_QUEUED_SECONDS", "1800")))
+COOK_SWEEP_INTERVAL_SECONDS = max(15, int(os.getenv("COOK_SWEEP_INTERVAL_SECONDS", "60")))
 # Cap parallel Atlas TTS calls on the web dyno (each can take 30–90s).
 MAX_CONCURRENT_VOICEOVERS = max(1, int(os.getenv("MAX_CONCURRENT_VOICEOVERS", "2")))
 # Threadpool size for sync FastAPI routes (voiceover/thumbnail/Gemini).

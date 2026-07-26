@@ -1611,6 +1611,112 @@ def reclaim_stale_cook_jobs(stale_seconds: int = 180) -> int:
         return cur.rowcount or 0
 
 
+def _credits_charged_for_row(row: dict) -> int:
+    """Credits to refund for a cook row (HQ cooks charge more than 1)."""
+    try:
+        req = json.loads(row.get("request_json") or "{}")
+    except Exception:
+        req = {}
+    raw = req.get("credits_charged") if isinstance(req, dict) else None
+    if raw is None:
+        raw = row.get("credit_deducted")
+    try:
+        n = int(raw or 0)
+    except (TypeError, ValueError):
+        n = 1 if raw else 0
+    if n <= 0 and row.get("credit_deducted"):
+        return 1
+    return max(0, n)
+
+
+_ABANDONED_RUNNING_MSG = (
+    "This cook stopped responding and was ended automatically. "
+    "Your credits have been returned — please try again."
+)
+_ABANDONED_QUEUED_MSG = (
+    "This cook never started because no worker picked it up. "
+    "Your credits have been returned — please try again."
+)
+
+
+def fail_abandoned_cook_jobs(
+    running_stale_seconds: int = 900,
+    queued_stale_seconds: int = 1800,
+) -> list[dict]:
+    """Fail cooks whose worker died, refunding each job's credits exactly once.
+
+    Cook Machines are one-shot with restart policy "no", so an OOM or host loss
+    delivers no SIGTERM and nothing ever marks the job finished — the user
+    watches a frozen progress bar indefinitely. A failed spawn is worse: the row
+    stays 'queued' with the credit already taken and no worker to claim it.
+
+    The refund is guarded by flipping `credit_deducted` in its own UPDATE and is
+    applied in the same transaction, so concurrent sweepers (or a sweeper racing
+    a late worker) can neither double-pay nor drop a credit part-way.
+
+    Thresholds must stay well above any legitimate silent gap — cooks heartbeat
+    throughout, so do not reuse the much shorter WORKER_STALE_SECONDS here.
+    """
+    now = time.time()
+    run_cutoff = now - max(300, int(running_stale_seconds))
+    queue_cutoff = now - max(300, int(queued_stale_seconds))
+    swept: list[dict] = []
+
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            _q("""SELECT * FROM cook_jobs
+                  WHERE (status = 'running'
+                         AND COALESCE(NULLIF(heartbeat_at, 0),
+                                      NULLIF(started_at, 0),
+                                      created_at) < ?)
+                     OR (status IN ('queued', 'web_queued') AND created_at < ?)"""),
+            (run_cutoff, queue_cutoff),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+
+        for row in rows:
+            jid = row.get("job_id")
+            prev = row.get("status")
+            if not jid:
+                continue
+            msg = _ABANDONED_RUNNING_MSG if prev == "running" else _ABANDONED_QUEUED_MSG
+
+            # Claim the job by transitioning its status; skip if someone beat us.
+            cur.execute(
+                _q("""UPDATE cook_jobs SET status = 'error', error = ?, finished_at = ?
+                      WHERE job_id = ? AND status = ?"""),
+                (msg, now, jid, prev),
+            )
+            if (cur.rowcount or 0) != 1:
+                continue
+
+            cur.execute(
+                _q("""UPDATE cook_jobs SET credit_deducted = 0
+                      WHERE job_id = ? AND credit_deducted = 1"""),
+                (jid,),
+            )
+            refunded = _credits_charged_for_row(row) if (cur.rowcount or 0) == 1 else 0
+            if refunded > 0 and row.get("user_id"):
+                cur.execute(
+                    _q("UPDATE users SET credits = credits + ? WHERE id = ?"),
+                    (refunded, int(row["user_id"])),
+                )
+            else:
+                refunded = 0
+
+            swept.append({
+                "job_id": jid,
+                "user_id": row.get("user_id"),
+                "prev_status": prev,
+                "recipe": row.get("recipe") or "",
+                "refunded": refunded,
+                "error_message": msg,
+            })
+
+    return swept
+
+
 def append_cook_progress(job_id: str, message: str, phase: str = "running") -> None:
     """Append one progress line and bump heartbeat (worker → web SSE via DB)."""
     row = get_cook_job(job_id)

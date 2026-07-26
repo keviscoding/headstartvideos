@@ -852,11 +852,12 @@ let _pricingBillingCycle = 'monthly';
 function openUpgradeFlow(opts = {}) {
     if (!currentUser) { showAuthModal(); return; }
     if (isTrialUser()) {
-        const msg = opts.trialMessage
-            || 'Start your plan now to unlock this. This ends your free trial early and begins billing.';
+        const { price } = trialPlanInfo();
+        const base = opts.trialMessage || 'Start your plan now to unlock this.';
+        const msg = `${base} This ends your free trial and charges ${price} today.`;
         showSoftPrompt(msg, 'Start plan now', () => {
-            endTrialNow().then(() => {
-                if (typeof opts.afterEndTrial === 'function') opts.afterEndTrial();
+            endTrialNow().then((charged) => {
+                if (charged && typeof opts.afterEndTrial === 'function') opts.afterEndTrial();
             });
         });
         return;
@@ -1150,7 +1151,7 @@ function showTrialExhaustedModal() {
                 Start your <strong>${tierLabel}</strong> plan now to unlock <strong>${credits} credits/month</strong> at ${price}/mo, or wait until your trial ends.
             </p>
             <button onclick="endTrialNow()" style="width:100%;padding:14px;border:none;border-radius:10px;background:var(--accent,#6c5ce7);color:#fff;font-size:16px;font-weight:600;cursor:pointer;margin-bottom:10px;">
-                Start plan now — ${credits} credits
+                Start ${tierLabel} — ${price} today
             </button>
             <button onclick="hideTrialExhaustedModal()" style="width:100%;padding:12px;border:1px solid var(--border,#333);border-radius:10px;background:transparent;color:var(--text-secondary,#aaa);font-size:14px;cursor:pointer;">
                 I'll wait
@@ -1166,9 +1167,75 @@ function hideTrialExhaustedModal() {
     if (modal) modal.style.display = 'none';
 }
 
+/** Tier label, monthly price and credit grant for the signed-in user's trial. */
+function trialPlanInfo() {
+    const isDaily = currentUser && currentUser.plan === 'daily_trial';
+    return {
+        tier: isDaily ? 'Daily' : 'Starter',
+        price: isDaily ? '$49' : '$27',
+        credits: isDaily ? 35 : 15,
+    };
+}
+
+/**
+ * Ask before charging. Resolves true only on explicit confirmation.
+ * Ending a trial bills the card immediately, so this must never be skippable.
+ */
+function confirmTrialCharge() {
+    const { tier, price, credits } = trialPlanInfo();
+    return new Promise((resolve) => {
+        document.getElementById('confirm-charge-modal')?.remove();
+        const modal = document.createElement('div');
+        modal.id = 'confirm-charge-modal';
+        modal.style.cssText = 'position:fixed;inset:0;z-index:300;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.7);';
+        modal.innerHTML = `
+            <div style="background:var(--bg-card,#1a1a2e);border-radius:16px;padding:28px;max-width:420px;width:90%;position:relative;">
+                <h3 style="margin:0 0 10px;color:var(--text-primary,#fff);font-family:var(--font-display);font-size:19px;">Start your ${tier} plan now?</h3>
+                <p style="color:var(--text-secondary,#aaa);margin:0 0 8px;font-family:var(--font-body);font-size:14px;line-height:1.5;">
+                    Your card will be charged <strong style="color:var(--text-primary,#fff);">${price} today</strong> and your free trial ends immediately.
+                    You'll get <strong style="color:var(--text-primary,#fff);">${credits} credits</strong> right away, then ${price}/month.
+                </p>
+                <p style="color:var(--app-ink-3,#777);margin:0 0 22px;font-family:var(--font-body);font-size:12px;line-height:1.5;">
+                    Billed in your local currency. Cancel anytime from Billing.
+                </p>
+                <div style="display:flex;flex-direction:column;gap:10px;">
+                    <button id="confirm-charge-yes" style="width:100%;padding:14px;border:none;border-radius:10px;background:var(--accent,#6c5ce7);color:#fff;font-size:15px;font-weight:600;cursor:pointer;">
+                        Charge ${price} and start
+                    </button>
+                    <button id="confirm-charge-no" style="width:100%;padding:12px;border:1px solid var(--border,#333);border-radius:10px;background:transparent;color:var(--text-secondary,#aaa);font-size:14px;cursor:pointer;">
+                        Keep my free trial
+                    </button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        track('trial_charge_confirm_shown', { tier, price });
+
+        const close = (ok) => {
+            modal.remove();
+            track(ok ? 'trial_charge_confirmed' : 'trial_charge_declined', { tier, price });
+            resolve(ok);
+        };
+        modal.querySelector('#confirm-charge-yes').onclick = () => close(true);
+        modal.querySelector('#confirm-charge-no').onclick = () => close(false);
+        modal.onclick = (e) => { if (e.target === modal) close(false); };
+    });
+}
+
 let _endTrialInFlight = false;
+
+/**
+ * Guarded entry point — always confirms the charge first. Resolves true only
+ * when the card was actually charged, so callers can gate follow-up actions.
+ */
 async function endTrialNow() {
-    if (_endTrialInFlight) return;
+    if (_endTrialInFlight) return false;
+    if (isTrialUser() && !(await confirmTrialCharge())) return false;
+    return _doEndTrial();
+}
+
+async function _doEndTrial() {
+    if (_endTrialInFlight) return false;
     _endTrialInFlight = true;
 
     const modalBtn = document.querySelector('#trial-exhausted-modal button');
@@ -1178,17 +1245,10 @@ async function endTrialNow() {
 
     try {
         const resp = await fetch('/api/billing/end-trial', { method: 'POST' });
-        const data = await resp.json().catch(() => ({}));
+        const data = await readJson(resp, {});
         if (!resp.ok) {
-            const msg = data.detail || 'Could not end trial. Please try again.';
-            if (resp.status === 503) {
-                alert(msg);
-            } else if (resp.status === 402) {
-                alert(msg);
-            } else {
-                alert(msg);
-            }
-            return;
+            alert(data.detail || 'Could not end trial. Please try again.');
+            return false;
         }
         if (data.plan && data.credits != null) {
             currentUser.plan = data.plan;
@@ -1200,8 +1260,10 @@ async function endTrialNow() {
         loadBillingPage();
         showCelebration('upgrade');
         track('trial_ended_early');
+        return true;
     } catch (e) {
         alert('Network error. Please try again.');
+        return false;
     } finally {
         _endTrialInFlight = false;
         buttons.forEach(b => { b.disabled = false; b.textContent = b.dataset.origText || 'Start plan now'; });
@@ -1241,7 +1303,7 @@ function setPricingPlan(cycle) {
 async function proceedToCheckout(tier = 'starter') {
     hidePricingModal();
     if (isTrialUser()) {
-        openUpgradeFlow({ trialMessage: 'Start your plan now to continue. This ends your free trial early.' });
+        openUpgradeFlow({ trialMessage: 'Start your plan now to continue.' });
         return;
     }
     const plan = `${tier}_${_pricingBillingCycle}`;
@@ -1274,7 +1336,7 @@ function upgradeToPro(plan = 'monthly') {
 async function _doCheckout(plan = 'monthly') {
     if (!currentUser) { showAuthModal(); return; }
     if (isTrialUser()) {
-        openUpgradeFlow({ trialMessage: 'Start your plan now to continue. This ends your free trial early.' });
+        openUpgradeFlow({ trialMessage: 'Start your plan now to continue.' });
         return;
     }
     // Save pipeline progress so Stripe redirect doesn't wipe their work
@@ -3570,7 +3632,7 @@ async function initNicheFinderPage() {
                     : 'View plans';
                 cta.classList.remove('hidden');
                 cta.onclick = () => openUpgradeFlow({
-                    trialMessage: 'Niche Finder unlocks on Starter and Daily. Start your plan now — this ends your trial early.',
+                    trialMessage: 'Niche Finder unlocks on Starter and Daily.',
                 });
             }
         }
@@ -6228,10 +6290,10 @@ function bindStoryboardPackUI() {
         });
     }
     document.getElementById('btn-sb-minutes-upgrade')?.addEventListener('click', () => {
-        if (isTrialUser() && typeof endTrialNow === 'function') {
-            try { endTrialNow(); return; } catch (_) { /* fall through */ }
-        }
-        showPricingModal({ reason: 'storyboard' });
+        openUpgradeFlow({
+            reason: 'storyboard',
+            trialMessage: 'Paid plans unlock stills packs up to 25 minutes.',
+        });
     });
     document.querySelectorAll('input[name="sb-dialogue-mode"]').forEach(el => {
         el.addEventListener('change', _sbSyncDialogueUI);
@@ -6643,7 +6705,7 @@ async function runStoryboardAnimate() {
     if (!_sbRequirePlan()) return;
     if (!isAdminUser() && !hasFullLengthAccess()) {
         showSoftPrompt(
-            'Your storyboard is ready to cook. Start your plan now to animate it on ChannelRecipe — this ends your trial early and unlocks on-site cook.',
+            'Your storyboard is ready to cook. Starting your plan unlocks on-site cook.',
             'Start plan now',
             () => {
                 endTrialNow().then(() => {
