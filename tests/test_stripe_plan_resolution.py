@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -209,3 +210,106 @@ class TestUpgradeGrant:
 
         row["period_tier"] = "starter"  # invoice.paid for the new period
         assert server._upgrade_grant(row, "starter", "daily") == 20
+
+
+class TestIntervalFromPriceId:
+    @pytest.mark.parametrize("pid", [STARTER_A, DAILY_A])
+    def test_annual_prices_are_annual(self, pid):
+        assert server._interval_from_price_id(pid) == "annual"
+
+    @pytest.mark.parametrize("pid", [STARTER_M, DAILY_M, "", "price_unknown", None])
+    def test_everything_else_is_monthly(self, pid):
+        assert server._interval_from_price_id(pid) == "monthly"
+
+
+class TestPriceForTier:
+    @pytest.mark.parametrize("tier,interval,want", [
+        ("starter", "monthly", STARTER_M), ("starter", "annual", STARTER_A),
+        ("daily", "monthly", DAILY_M), ("daily", "annual", DAILY_A),
+    ])
+    def test_resolves_each_combination(self, tier, interval, want):
+        assert server._price_for_tier(tier, interval) == want
+
+    def test_unknown_tier_is_blank(self):
+        assert server._price_for_tier("mystery", "monthly") == ""
+
+
+class _FakeStripe:
+    """Minimal Stripe stand-in recording the modify call."""
+
+    def __init__(self, price_id, item_id="si_1"):
+        self._sub = {"items": {"data": [{"id": item_id, "price": {"id": price_id}}]}}
+        self.modified = []
+
+        outer = self
+
+        class Subscription:
+            @staticmethod
+            def retrieve(sub_id):
+                return outer._sub
+
+            @staticmethod
+            def modify(sub_id, **kwargs):
+                outer.modified.append((sub_id, kwargs))
+                return outer._sub
+
+        self.Subscription = Subscription
+
+
+class TestSwitchTrialPrice:
+    @pytest.fixture(autouse=True)
+    def no_db(self, monkeypatch):
+        self.updates = []
+        monkeypatch.setattr(server, "update_user",
+                            lambda uid, **f: self.updates.append((uid, f)))
+
+    def test_monthly_starter_trial_moves_to_monthly_daily(self):
+        fake = _FakeStripe(STARTER_M)
+
+        server._switch_trial_price(fake, "sub_1", "daily", 7)
+
+        assert len(fake.modified) == 1
+        _, kwargs = fake.modified[0]
+        assert kwargs["items"][0]["price"] == DAILY_M
+        assert kwargs["proration_behavior"] == "none"
+
+    def test_annual_trial_stays_annual(self):
+        """Switching tier must not quietly move an annual customer to monthly."""
+        fake = _FakeStripe(STARTER_A)
+
+        server._switch_trial_price(fake, "sub_1", "daily", 7)
+
+        assert fake.modified[0][1]["items"][0]["price"] == DAILY_A
+
+    def test_local_plan_is_written_so_state_matches_stripe(self):
+        fake = _FakeStripe(STARTER_M)
+
+        server._switch_trial_price(fake, "sub_1", "daily", 7)
+
+        assert self.updates == [(7, {"plan": "daily_trial"})]
+
+    def test_same_price_is_a_noop(self):
+        """Confirming the tier you already have must not touch Stripe."""
+        fake = _FakeStripe(DAILY_M)
+
+        server._switch_trial_price(fake, "sub_1", "daily", 7)
+
+        assert fake.modified == []
+        assert self.updates == []
+
+    def test_subscription_without_items_is_rejected(self):
+        fake = _FakeStripe(STARTER_M)
+        fake._sub = {"items": {"data": []}}
+
+        with pytest.raises(HTTPException) as e:
+            server._switch_trial_price(fake, "sub_1", "daily", 7)
+        assert e.value.status_code == 400
+
+    def test_unconfigured_target_price_is_rejected(self, monkeypatch):
+        monkeypatch.setattr(config, "STRIPE_PRICE_DAILY_MONTHLY", "")
+        fake = _FakeStripe(STARTER_M)
+
+        with pytest.raises(HTTPException) as e:
+            server._switch_trial_price(fake, "sub_1", "daily", 7)
+        assert e.value.status_code == 400
+        assert fake.modified == []

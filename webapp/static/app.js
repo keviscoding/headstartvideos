@@ -852,13 +852,11 @@ let _pricingBillingCycle = 'monthly';
 function openUpgradeFlow(opts = {}) {
     if (!currentUser) { showAuthModal(); return; }
     if (isTrialUser()) {
-        const { price } = trialPlanInfo();
-        const base = opts.trialMessage || 'Start your plan now to unlock this.';
-        const msg = `${base} This ends your free trial and charges ${price} today.`;
-        showSoftPrompt(msg, 'Start plan now', () => {
-            endTrialNow().then((charged) => {
-                if (charged && typeof opts.afterEndTrial === 'function') opts.afterEndTrial();
-            });
+        // Straight to the plan chooser. The old soft prompt quoted a single
+        // price before the real dialog, which both added a step and named the
+        // wrong amount for anyone who then picked the other plan.
+        endTrialNow({ reason: opts.trialMessage || '' }).then((charged) => {
+            if (charged && typeof opts.afterEndTrial === 'function') opts.afterEndTrial();
         });
         return;
     }
@@ -1134,9 +1132,6 @@ function showTrialExhaustedModal() {
     const existing = document.getElementById('trial-exhausted-modal');
     if (existing) { existing.style.display = 'flex'; return; }
 
-    const tierLabel = currentUser.plan === 'daily_trial' ? 'Daily' : 'Starter';
-    const credits = currentUser.plan === 'daily_trial' ? 35 : 15;
-    const price = currentUser.plan === 'daily_trial' ? '$49' : '$27';
     const trialN = trialCredits();
 
     const modal = document.createElement('div');
@@ -1148,10 +1143,10 @@ function showTrialExhaustedModal() {
             <div style="font-size:40px;margin-bottom:12px;">🎬</div>
             <h3 style="margin:0 0 8px;color:var(--text-primary,#fff);font-size:20px;">You've used your ${trialN} trial credits</h3>
             <p style="color:var(--text-secondary,#aaa);margin:0 0 24px;font-size:14px;line-height:1.5;">
-                Start your <strong>${tierLabel}</strong> plan now to unlock <strong>${credits} credits/month</strong> at ${price}/mo, or wait until your trial ends.
+                Pick a plan to keep going. ${planCoverageCopy()} Or wait until your trial ends.
             </p>
-            <button onclick="endTrialNow()" style="width:100%;padding:14px;border:none;border-radius:10px;background:var(--accent,#6c5ce7);color:#fff;font-size:16px;font-weight:600;cursor:pointer;margin-bottom:10px;">
-                Start ${tierLabel} — ${price} today
+            <button onclick="endTrialNow({ reason: 'Pick the plan that fits how much you publish.' })" style="width:100%;padding:14px;border:none;border-radius:10px;background:var(--accent,#6c5ce7);color:#fff;font-size:16px;font-weight:600;cursor:pointer;margin-bottom:10px;">
+                Choose your plan
             </button>
             <button onclick="hideTrialExhaustedModal()" style="width:100%;padding:12px;border:1px solid var(--border,#333);border-radius:10px;background:transparent;color:var(--text-secondary,#aaa);font-size:14px;cursor:pointer;">
                 I'll wait
@@ -1167,65 +1162,143 @@ function hideTrialExhaustedModal() {
     if (modal) modal.style.display = 'none';
 }
 
-/** Tier label, monthly price and credit grant for the signed-in user's trial. */
-function trialPlanInfo() {
-    const isDaily = currentUser && currentUser.plan === 'daily_trial';
-    return {
-        tier: isDaily ? 'Daily' : 'Starter',
-        price: isDaily ? '$49' : '$27',
-        credits: isDaily ? 35 : 15,
-    };
+/** Credits a single on-site animated cook costs. */
+function animatedCookCredits() {
+    return Math.max(1, Number(_featureFlags.storyboard_animate_credits_flat || 12));
 }
 
-let _chargeConfirmPromise = null;
+const PLAN_CATALOG = [
+    { tier: 'starter', label: 'Starter', price: '$27', credits: 15, cooks: 1 },
+    { tier: 'daily', label: 'Daily', price: '$49', credits: 35, cooks: 2, popular: true },
+];
 
 /**
- * Ask before charging. Resolves true only on explicit confirmation.
- * Ending a trial bills the card immediately, so this must never be skippable.
- * A second click reuses the open prompt rather than stacking another modal.
+ * Plans with credits translated into outcomes.
+ *
+ * Credits are an internal unit. Showing "12 credits" against a 15-credit plan
+ * invited arithmetic that made every plan look like it bought one video, so
+ * each plan states what it actually produces instead.
  */
-function confirmTrialCharge() {
-    if (_chargeConfirmPromise) return _chargeConfirmPromise;
-    const { tier, price, credits } = trialPlanInfo();
-    _chargeConfirmPromise = new Promise((resolve) => {
+function planOptions() {
+    const per = animatedCookCredits();
+    return PLAN_CATALOG.map(p => ({
+        ...p,
+        cooks: Math.max(1, Math.floor(p.credits / per)),
+        videos: p.credits,
+    }));
+}
+
+/**
+ * What each plan buys in animated videos, for paywall copy.
+ *
+ * Quoting the cook's credit price next to a plan's monthly credits was the
+ * problem: 12 against 15 reads as "this plan buys one thing and I'm nearly out".
+ * Stating the monthly allowance in videos answers the same question without
+ * handing the reader arithmetic that undersells the plan.
+ */
+function planCoverageCopy() {
+    const [starter, daily] = planOptions();
+    return `${starter.label} includes ${starter.cooks} animated video${starter.cooks === 1 ? '' : 's'} `
+        + `a month, ${daily.label} includes ${daily.cooks}.`;
+}
+
+/** The tier the current trial would convert to if the user changes nothing. */
+function trialTier() {
+    return currentUser && currentUser.plan === 'daily_trial' ? 'daily' : 'starter';
+}
+
+let _planChoicePromise = null;
+
+/**
+ * Let the customer pick a plan, then confirm the exact charge.
+ *
+ * Resolves the chosen tier, or null if they backed out. Previously this offered
+ * only the tier their trial started on, so anyone who wanted more than one
+ * animated video a month had no way to say so and simply left.
+ */
+function chooseTrialPlan(opts = {}) {
+    if (_planChoicePromise) return _planChoicePromise;
+    const plans = planOptions();
+    // Default to the plan they signed up for. Pre-selecting the dearer one
+    // would charge more than the trial led them to expect.
+    let picked = trialTier();
+    const reason = opts.reason || '';
+
+    _planChoicePromise = new Promise((resolve) => {
         document.getElementById('confirm-charge-modal')?.remove();
         const modal = document.createElement('div');
         modal.id = 'confirm-charge-modal';
-        modal.style.cssText = 'position:fixed;inset:0;z-index:300;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.7);';
+        modal.style.cssText = 'position:fixed;inset:0;z-index:300;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.7);padding:16px;overflow:auto;';
+
+        const card = (p) => `
+            <button class="plan-pick" data-tier="${p.tier}" style="all:unset;box-sizing:border-box;cursor:pointer;display:block;width:100%;text-align:left;padding:14px 16px;border-radius:12px;border:1.5px solid var(--border,#333);background:rgba(255,255,255,.02);position:relative;">
+                ${p.popular ? `<span style="position:absolute;top:-9px;right:12px;background:var(--accent,#6c5ce7);color:#fff;font-family:var(--font-mono);font-size:9px;letter-spacing:.06em;padding:3px 7px;border-radius:5px;">MOST POPULAR</span>` : ''}
+                <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;">
+                    <span style="color:var(--text-primary,#fff);font-family:var(--font-display);font-size:16px;">${p.label}</span>
+                    <span style="color:var(--text-primary,#fff);font-family:var(--font-display);font-size:16px;">${p.price}<span style="font-size:11px;color:var(--app-ink-3,#777);">/mo</span></span>
+                </div>
+                <div style="color:var(--text-secondary,#aaa);font-family:var(--font-body);font-size:12.5px;line-height:1.6;margin-top:5px;">
+                    ${p.cooks} animated video${p.cooks === 1 ? '' : 's'} a month<br>
+                    or up to ${p.videos} standard videos<br>
+                    ${p.cooks > 1 ? '2 videos cooking at once' : '1 video cooking at a time'}
+                </div>
+            </button>`;
+
         modal.innerHTML = `
-            <div style="background:var(--bg-card,#1a1a2e);border-radius:16px;padding:28px;max-width:420px;width:90%;position:relative;">
-                <h3 style="margin:0 0 10px;color:var(--text-primary,#fff);font-family:var(--font-display);font-size:19px;">Start your ${tier} plan now?</h3>
-                <p style="color:var(--text-secondary,#aaa);margin:0 0 8px;font-family:var(--font-body);font-size:14px;line-height:1.5;">
-                    Your card will be charged <strong style="color:var(--text-primary,#fff);">${price} today</strong> and your free trial ends immediately.
-                    You'll get <strong style="color:var(--text-primary,#fff);">${credits} credits</strong> right away, then ${price}/month.
+            <div style="background:var(--bg-card,#1a1a2e);border-radius:16px;padding:26px;max-width:430px;width:100%;">
+                <h3 style="margin:0 0 6px;color:var(--text-primary,#fff);font-family:var(--font-display);font-size:19px;">Choose your plan</h3>
+                <p style="color:var(--text-secondary,#aaa);margin:0 0 18px;font-family:var(--font-body);font-size:13px;line-height:1.5;">
+                    ${reason ? reason + ' ' : ''}Your free trial ends and your card is charged today. Credits refresh every month.
                 </p>
-                <p style="color:var(--app-ink-3,#777);margin:0 0 22px;font-family:var(--font-body);font-size:12px;line-height:1.5;">
-                    Billed in your local currency. Cancel anytime from Billing.
+                <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:16px;">
+                    ${plans.map(card).join('')}
+                </div>
+                <p style="color:var(--app-ink-3,#777);margin:0 0 16px;font-family:var(--font-body);font-size:11.5px;line-height:1.5;">
+                    Billed in your local currency. Cancel anytime from Billing — you keep the credits you've already been given.
                 </p>
-                <div style="display:flex;flex-direction:column;gap:10px;">
-                    <button id="confirm-charge-yes" style="width:100%;padding:14px;border:none;border-radius:10px;background:var(--accent,#6c5ce7);color:#fff;font-size:15px;font-weight:600;cursor:pointer;">
-                        Charge ${price} and start
-                    </button>
-                    <button id="confirm-charge-no" style="width:100%;padding:12px;border:1px solid var(--border,#333);border-radius:10px;background:transparent;color:var(--text-secondary,#aaa);font-size:14px;cursor:pointer;">
+                <div style="display:flex;flex-direction:column;gap:9px;">
+                    <button id="confirm-charge-yes" style="width:100%;padding:14px;border:none;border-radius:10px;background:var(--accent,#6c5ce7);color:#fff;font-size:15px;font-weight:600;cursor:pointer;"></button>
+                    <button id="confirm-charge-no" style="width:100%;padding:12px;border:1px solid var(--border,#333);border-radius:10px;background:transparent;color:var(--text-secondary,#aaa);font-size:13.5px;cursor:pointer;">
                         Keep my free trial
                     </button>
                 </div>
             </div>
         `;
         document.body.appendChild(modal);
-        track('trial_charge_confirm_shown', { tier, price });
+
+        const cta = modal.querySelector('#confirm-charge-yes');
+        const paint = () => {
+            modal.querySelectorAll('.plan-pick').forEach((el) => {
+                const on = el.dataset.tier === picked;
+                el.style.borderColor = on ? 'var(--accent,#6c5ce7)' : 'var(--border,#333)';
+                el.style.background = on ? 'rgba(108,92,231,.10)' : 'rgba(255,255,255,.02)';
+            });
+            const p = plans.find(x => x.tier === picked);
+            cta.textContent = `Start ${p.label} — charge ${p.price} today`;
+        };
+        modal.querySelectorAll('.plan-pick').forEach((el) => {
+            el.onclick = () => {
+                picked = el.dataset.tier;
+                track('trial_plan_selected', { tier: picked });
+                paint();
+            };
+        });
+        paint();
+        track('trial_charge_confirm_shown', { tier: picked, reason });
 
         const close = (ok) => {
             modal.remove();
-            _chargeConfirmPromise = null;
-            track(ok ? 'trial_charge_confirmed' : 'trial_charge_declined', { tier, price });
-            resolve(ok);
+            _planChoicePromise = null;
+            track(ok ? 'trial_charge_confirmed' : 'trial_charge_declined', {
+                tier: picked, switched: ok && picked !== trialTier(),
+            });
+            resolve(ok ? picked : null);
         };
-        modal.querySelector('#confirm-charge-yes').onclick = () => close(true);
+        cta.onclick = () => close(true);
         modal.querySelector('#confirm-charge-no').onclick = () => close(false);
         modal.onclick = (e) => { if (e.target === modal) close(false); };
     });
-    return _chargeConfirmPromise;
+    return _planChoicePromise;
 }
 
 let _endTrialInFlight = false;
@@ -1234,18 +1307,21 @@ let _endTrialInFlight = false;
  * Guarded entry point — always confirms the charge first. Resolves true only
  * when the card was actually charged, so callers can gate follow-up actions.
  */
-async function endTrialNow() {
+async function endTrialNow(opts = {}) {
     if (_endTrialInFlight) return false;
     // Unconditional on purpose: if our cached plan were stale we would skip the
     // prompt while the server still charged. The server rejects anyone without
     // an active trial, so an extra dialog is the safe side to err on.
-    if (!(await confirmTrialCharge())) return false;
-    return _doEndTrial();
+    const tier = await chooseTrialPlan(opts);
+    if (!tier) return false;
+    return _doEndTrial(tier);
 }
 
-async function _doEndTrial() {
+async function _doEndTrial(tier) {
     if (_endTrialInFlight) return false;
     _endTrialInFlight = true;
+    // Read before the response overwrites currentUser.plan.
+    const startedOn = trialTier();
 
     const modalBtn = document.querySelector('#trial-exhausted-modal button');
     const billingBtn = document.querySelector('#billing-trial-section .btn-primary');
@@ -1253,7 +1329,11 @@ async function _doEndTrial() {
     buttons.forEach(b => { b.disabled = true; b.dataset.origText = b.textContent; b.textContent = 'Activating…'; });
 
     try {
-        const resp = await fetch('/api/billing/end-trial', { method: 'POST' });
+        const resp = await fetch('/api/billing/end-trial', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tier: tier || startedOn }),
+        });
         const data = await readJson(resp, {});
         if (!resp.ok) {
             alert(data.detail || 'Could not end trial. Please try again.');
@@ -1268,7 +1348,10 @@ async function _doEndTrial() {
         hideTrialExhaustedModal();
         loadBillingPage();
         showCelebration('upgrade');
-        track('trial_ended_early');
+        track('trial_ended_early', {
+            tier: data.plan || tier || '',
+            switched: !!tier && tier !== startedOn,
+        });
         return true;
     } catch (e) {
         alert('Network error. Please try again.');
@@ -4251,11 +4334,9 @@ async function unlockResource(resourceId) {
             if (isPaidUser() && !isTrialUser()) {
                 showCreditsNeededModal({ need, have, reason: 'credits' });
             } else if (isTrialUser()) {
-                showSoftPrompt(
-                    `Need ${need} credits to unlock this guide. You have ${have}. Start your plan for monthly credits (and top-ups).`,
-                    'Start plan now',
-                    () => endTrialNow(),
-                );
+                endTrialNow({
+                    reason: `This guide needs ${need} credits and you have ${have}.`,
+                });
             } else {
                 showPricingModal({ reason: 'credits', need, have });
             }
@@ -5761,7 +5842,9 @@ async function _sbSyncPackCostUI() {
         const res = await fetch(`/api/storyboard/pack-cost?minutes=${encodeURIComponent(mins)}&pack_mode=full`);
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-            blurb.textContent = `Packs up to ${maxMins} min. On-site cook is ${_sbAnimateCreditsFlat()} credits (paid plans).`;
+            blurb.textContent = isTrialUser() && !isAdminUser()
+                ? `Packs up to ${maxMins} min. ${planCoverageCopy()}`
+                : `Packs up to ${maxMins} min. On-site cook is ${_sbAnimateCreditsFlat()} credits.`;
             return;
         }
         if (data.requires_trial) {
@@ -6691,7 +6774,8 @@ async function _sbSyncAnimateUI() {
     }
     if (!cookAllowed) {
         if (blurb) {
-            blurb.textContent = `On-site cook needs a paid plan (${_sbAnimateCreditsFlat()} credits, max ${cap} min). Click Cook video to start your plan and animate ${stretch}.`;
+            blurb.textContent = `Cook ${stretch} into motion — up to ${cap} min. `
+                + `${planCoverageCopy()} Click Cook video to pick your plan.`;
         }
         return;
     }

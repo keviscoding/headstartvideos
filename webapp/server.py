@@ -601,6 +601,10 @@ class CheckoutRequest(BaseModel):
 class TopupRequest(BaseModel):
     credits: int = 5
 
+
+class EndTrialRequest(BaseModel):
+    tier: str | None = None
+
 _PLAN_PRICE_MAP = {
     "starter_monthly": lambda: config.STRIPE_PRICE_STARTER_MONTHLY or config.STRIPE_PRICE_ID,
     "starter_annual": lambda: config.STRIPE_PRICE_STARTER_ANNUAL or config.STRIPE_PRICE_ID_ANNUAL,
@@ -615,6 +619,59 @@ _PLAN_CREDITS = {
     "daily_monthly": 35, "daily_annual": 35,
     "monthly": 15, "annual": 15,
 }
+
+
+def _annual_price_ids() -> tuple[str, ...]:
+    return tuple(p for p in (
+        config.STRIPE_PRICE_STARTER_ANNUAL,
+        config.STRIPE_PRICE_DAILY_ANNUAL,
+        config.STRIPE_PRICE_ID_ANNUAL,
+    ) if (p or "").strip())
+
+
+def _interval_from_price_id(price_id: str) -> str:
+    """'annual' or 'monthly' for an existing price, defaulting to monthly."""
+    return "annual" if (price_id or "").strip() in _annual_price_ids() else "monthly"
+
+
+def _switch_trial_price(stripe, sub_id: str, want_tier: str, user_id: int) -> None:
+    """Move a still-trialing subscription onto `want_tier`'s price.
+
+    Also writes the matching *_trial plan locally, so if the charge that follows
+    fails the account is not left claiming a tier Stripe is not billing.
+    """
+    sub = stripe.Subscription.retrieve(sub_id)
+    items = ((sub.get("items") or {}).get("data") or []) if isinstance(sub, dict) else []
+    if not items:
+        raise HTTPException(400, "Subscription has no billable items.")
+
+    item = items[0]
+    current_price = _stripe_id((item.get("price") or {}).get("id") or item.get("price"))
+    target_price = _price_for_tier(want_tier, _interval_from_price_id(current_price))
+    if not target_price:
+        raise HTTPException(400, f"Plan '{want_tier}' is not configured.")
+    if target_price == current_price:
+        return
+
+    stripe.Subscription.modify(
+        sub_id,
+        items=[{"id": item.get("id"), "price": target_price, "quantity": 1}],
+        proration_behavior="none",
+    )
+    update_user(user_id, plan=f"{want_tier}_trial")
+    print(f"[stripe] Trial price swapped to {want_tier} for user {user_id}")
+
+
+def _price_for_tier(tier: str, interval: str) -> str:
+    """Stripe price id for a tier at the billing interval the customer is already on.
+
+    Converting a trial to the other tier must not silently move somebody from
+    annual to monthly billing, so the interval is carried over rather than
+    assumed.
+    """
+    key = f"{(tier or '').strip().lower()}_{'annual' if interval == 'annual' else 'monthly'}"
+    resolver = _PLAN_PRICE_MAP.get(key)
+    return (resolver() or "").strip() if resolver else ""
 
 # Monthly credit allowance per paid tier, independent of billing interval.
 _TIER_ALLOWANCE = {"starter": 15, "daily": 35}
@@ -1244,8 +1301,13 @@ async def create_portal_session(request: Request):
 
 
 @app.post("/api/billing/end-trial")
-async def end_trial_early(request: Request):
-    """End the 7-day trial immediately, charge the card, grant full credits."""
+async def end_trial_early(request: Request, req: EndTrialRequest | None = None):
+    """End the 7-day trial immediately, charge the card, grant full credits.
+
+    `tier` lets the customer convert onto the other plan. Without it a Starter
+    trial could only ever become Starter, so the paywall had nothing to offer
+    anyone who wanted more than one animated video a month.
+    """
     import stripe
     if not config.STRIPE_SECRET_KEY:
         raise HTTPException(500, "Stripe not configured")
@@ -1261,9 +1323,23 @@ async def end_trial_early(request: Request):
     if not sub_id:
         raise HTTPException(400, "No subscription found.")
 
+    trial_tier = "daily" if "daily" in user["plan"] else "starter"
+    want_tier = ((req.tier if req else "") or trial_tier).strip().lower()
+    if want_tier not in _PAID_TIERS:
+        raise HTTPException(400, f"Unknown plan '{want_tier}'.")
+
     try:
-        # End trial and create the first real invoice immediately
         import asyncio
+
+        if want_tier != trial_tier:
+            # Swap the price while still trialing: no invoice exists yet, so
+            # there is nothing to prorate and the charge below bills the new
+            # tier. Done first so a failure here cannot charge the old price.
+            await asyncio.to_thread(
+                _switch_trial_price, stripe, sub_id, want_tier, user["id"]
+            )
+
+        # End trial and create the first real invoice immediately
         await asyncio.to_thread(stripe.Subscription.modify, sub_id, trial_end="now")
         print(f"[stripe] Trial end requested for user {user['id']} (sub {sub_id})")
 
@@ -1281,9 +1357,10 @@ async def end_trial_early(request: Request):
         print(f"[stripe] End-trial poll result: user {user['id']} status={sub_status}")
 
         if sub_status == "active":
-            new_plan = "daily" if "daily" in user["plan"] else "starter"
-            credits = 35 if new_plan == "daily" else 15
-            update_user(user["id"], plan=new_plan, credits=credits, trial_used=1)
+            new_plan = want_tier
+            credits = _tier_allowance(new_plan)
+            update_user(user["id"], plan=new_plan, credits=credits,
+                        trial_used=1, period_tier=new_plan)
             print(f"[stripe] Converted user {user['id']} → {new_plan} ({credits} credits)")
             identify_user(user["id"], {"plan": new_plan, "credits": credits})
             track(user["id"], "trial_converted", {
