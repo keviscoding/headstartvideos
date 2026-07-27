@@ -2896,6 +2896,27 @@ function _showChannelResult(payload, { batch = false } = {}) {
         pre.textContent = note + JSON.stringify(payload, null, 2);
     }
     document.getElementById('ss-channel-result')?.classList.remove('hidden');
+
+    // Surface empty/partial transcripts — previously the JSON just said []
+    // and looked like a silent bug.
+    const channels = batch
+        ? (payload.channels || [])
+        : (payload ? [payload] : []);
+    const warnings = [];
+    for (const ch of channels) {
+        const st = ch && ch.transcript_status;
+        if (st && st.warning) {
+            const name = (ch.metadata && ch.metadata.channel_name) || 'Channel';
+            warnings.push(`${name}: ${st.warning}`);
+        } else if (ch && Array.isArray(ch.videos) && ch.videos.length
+                   && Array.isArray(ch.transcripts) && !ch.transcripts.length) {
+            const name = (ch.metadata && ch.metadata.channel_name) || 'Channel';
+            warnings.push(`${name}: no transcripts returned for ${ch.videos.length} videos.`);
+        }
+    }
+    if (warnings.length) {
+        showSoftPrompt(warnings.join('\n').slice(0, 420));
+    }
 }
 
 async function fetchChannelData() {

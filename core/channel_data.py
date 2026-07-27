@@ -2,14 +2,20 @@
 Automated channel data collection.
 
 Uses YouTube Data API v3 to list a channel's videos (title, views, publish date)
-and DownSub API to fetch transcripts. Combines into structured channel data
-for use in Script Studio.
+and multiple caption sources for transcripts. Combines into structured channel
+data for use in Script Studio.
 """
 
 from __future__ import annotations
+import html
 import re
 import time
 import httpx
+
+# DownSub returns 403 once the key is exhausted. Calling it for every video in
+# a channel burn ~1s each and still fails, so one hard deny disables it for the
+# rest of the process.
+_downsub_disabled_reason: str | None = None
 
 
 def _extract_channel_id(url: str, yt_api_key: str) -> str:
@@ -297,32 +303,172 @@ def _get_video_stats(video_ids: list[str], yt_api_key: str) -> dict[str, dict]:
     return stats
 
 
-def _fetch_transcript(video_id: str, downsub_key: str = "") -> str | None:
-    """
-    Fetch transcript for a video.
-    Primary: DownSub API (if key provided) — more reliable.
-    Fallback: youtube-transcript-api (free, no key).
-    """
-    if downsub_key:
-        text = _fetch_transcript_downsub(video_id, downsub_key)
-        if text:
-            return text
+def _clean_caption_text(text: str) -> str:
+    text = html.unescape(text or "")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
+
+def _json3_to_text(payload: dict) -> str:
+    """YouTube json3 captions: newlines drop the leading space of the next word."""
+    parts: list[str] = []
+    for event in payload.get("events") or []:
+        for seg in event.get("segs") or []:
+            utf8 = seg.get("utf8")
+            if utf8 is None:
+                continue
+            if utf8 == "\n":
+                parts.append(" ")
+                continue
+            parts.append(utf8)
+    return _clean_caption_text("".join(parts))
+
+
+def _vtt_to_text(body: str) -> str:
+    lines: list[str] = []
+    for raw in (body or "").splitlines():
+        line = raw.strip()
+        if (
+            not line
+            or line.startswith("WEBVTT")
+            or line.startswith("NOTE")
+            or line.startswith("Kind:")
+            or line.startswith("Language:")
+            or "-->" in line
+            or line.isdigit()
+        ):
+            continue
+        line = re.sub(r"<[^>]+>", "", line)
+        line = html.unescape(line).strip()
+        if line and (not lines or lines[-1] != line):
+            lines.append(line)
+    return _clean_caption_text(" ".join(lines))
+
+
+def _fetch_transcript_ytdlp(video_id: str) -> str | None:
+    """Pull auto/manual captions through yt-dlp's player response.
+
+    More reliable from cloud IPs than youtube-transcript-api, which YouTube
+    often blocks from datacenter ranges.
+    """
+    try:
+        import yt_dlp
+    except ImportError:
+        return None
+
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    opts = {
+        "skip_download": True,
+        "quiet": True,
+        "no_warnings": True,
+        "extract_flat": False,
+    }
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False) or {}
+    except Exception as e:
+        print(f"[channel_data] yt-dlp caption lookup failed for {video_id}: {e}")
+        return None
+
+    buckets = [
+        info.get("subtitles") or {},
+        info.get("automatic_captions") or {},
+    ]
+    preferred_langs = ("en", "en-US", "en-GB", "en-AU", "a.en")
+    preferred_exts = ("json3", "vtt", "srv3", "srv1", "ttml")
+
+    candidates: list[tuple[str, str]] = []
+    for bucket in buckets:
+        for lang in preferred_langs:
+            for track in bucket.get(lang) or []:
+                ext = (track.get("ext") or "").lower()
+                track_url = track.get("url") or ""
+                if ext in preferred_exts and track_url:
+                    candidates.append((ext, track_url))
+        if candidates:
+            break
+    if not candidates:
+        # Any English-ish lang we missed, or first available track.
+        for bucket in buckets:
+            for lang, tracks in bucket.items():
+                if not str(lang).lower().startswith("en"):
+                    continue
+                for track in tracks or []:
+                    ext = (track.get("ext") or "").lower()
+                    track_url = track.get("url") or ""
+                    if ext in preferred_exts and track_url:
+                        candidates.append((ext, track_url))
+            if candidates:
+                break
+
+    # Prefer formats in preferred_exts order.
+    candidates.sort(key=lambda c: preferred_exts.index(c[0]) if c[0] in preferred_exts else 99)
+
+    for ext, track_url in candidates[:4]:
+        try:
+            resp = httpx.get(track_url, timeout=30, follow_redirects=True)
+            if resp.status_code != 200 or not (resp.text or "").strip():
+                continue
+            if ext == "json3":
+                text = _json3_to_text(resp.json())
+            elif ext == "vtt":
+                text = _vtt_to_text(resp.text)
+            else:
+                # srv1 / srv3 / ttml share <text>…</text> payloads enough for our use.
+                chunks = re.findall(r"<text[^>]*>(.*?)</text>", resp.text, flags=re.S)
+                text = _clean_caption_text(
+                    " ".join(re.sub(r"<[^>]+>", "", html.unescape(c)) for c in chunks)
+                )
+            if text and len(text) > 20:
+                return text
+        except Exception as e:
+            print(f"[channel_data] yt-dlp {ext} fetch failed for {video_id}: {e}")
+            continue
+    return None
+
+
+def _fetch_transcript_official(video_id: str) -> str | None:
+    """Free youtube-transcript-api path. Fast when YouTube allows the IP."""
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
         api = YouTubeTranscriptApi()
         transcript = api.fetch(video_id)
-        text = " ".join(s.text for s in transcript.snippets)
-        if text.strip():
-            return text
+        text = _clean_caption_text(" ".join(s.text for s in transcript.snippets))
+        return text or None
     except Exception as e:
-        print(f"[channel_data] Fallback transcript failed for {video_id}: {e}")
+        print(f"[channel_data] youtube-transcript-api failed for {video_id}: {e}")
+        return None
+
+
+def _fetch_transcript(video_id: str, downsub_key: str = "") -> str | None:
+    """
+    Fetch transcript for a video.
+
+    Order matters for reliability from cloud hosts:
+      1. youtube-transcript-api (fast, free)
+      2. yt-dlp caption URLs (survives most datacenter blocks)
+      3. DownSub (paid; skipped once the key is denied/exhausted)
+    """
+    text = _fetch_transcript_official(video_id)
+    if text:
+        return text
+
+    text = _fetch_transcript_ytdlp(video_id)
+    if text:
+        return text
+
+    global _downsub_disabled_reason
+    if downsub_key and not _downsub_disabled_reason:
+        text = _fetch_transcript_downsub(video_id, downsub_key)
+        if text:
+            return text
 
     return None
 
 
 def _fetch_transcript_downsub(video_id: str, downsub_key: str) -> str | None:
     """Fetch transcript via DownSub API. Returns plain text or None."""
+    global _downsub_disabled_reason
     url = f"https://www.youtube.com/watch?v={video_id}"
 
     try:
@@ -335,6 +481,15 @@ def _fetch_transcript_downsub(video_id: str, downsub_key: str) -> str | None:
             json={"url": url},
             timeout=30,
         )
+
+        if resp.status_code in (401, 403):
+            body = (resp.text or "")[:200]
+            _downsub_disabled_reason = f"HTTP {resp.status_code}: {body}"
+            print(
+                f"[channel_data] DownSub disabled for this process "
+                f"({_downsub_disabled_reason})"
+            )
+            return None
 
         if resp.status_code != 200:
             print(f"[channel_data] DownSub HTTP {resp.status_code} for {video_id}")
@@ -390,7 +545,8 @@ def fetch_channel_data(
     {
         "metadata": {...},
         "videos": [{"title": str, "views": int, "video_id": str, ...}],
-        "transcripts": [{"title": str, "text": str}]
+        "transcripts": [{"title": str, "text": str}],
+        "transcript_status": {"requested": int, "fetched": int, "warning": str}
     }
     """
     def _log(msg):
@@ -433,6 +589,7 @@ def fetch_channel_data(
         v["duration"] = s.get("duration", "")
 
     transcripts = []
+    transcript_warning = ""
     if fetch_transcripts:
         _log(f"Fetching transcripts for {len(videos)} videos...")
         for i, v in enumerate(videos):
@@ -446,11 +603,31 @@ def fetch_channel_data(
                 })
             time.sleep(0.3)
         _log(f"Got {len(transcripts)}/{len(videos)} transcripts")
+        if videos and not transcripts:
+            reasons = []
+            if _downsub_disabled_reason:
+                reasons.append(f"DownSub unavailable ({_downsub_disabled_reason})")
+            reasons.append(
+                "YouTube caption providers returned nothing for these videos "
+                "(auto-captions missing, disabled, or blocked from this host)"
+            )
+            transcript_warning = "; ".join(reasons)
+            _log(f"WARNING: {transcript_warning}")
+        elif videos and len(transcripts) < len(videos):
+            transcript_warning = (
+                f"Fetched {len(transcripts)}/{len(videos)} transcripts — "
+                "some videos have no public captions."
+            )
 
     result = {
         "metadata": metadata,
         "videos": videos,
         "transcripts": transcripts,
+        "transcript_status": {
+            "requested": len(videos) if fetch_transcripts else 0,
+            "fetched": len(transcripts),
+            "warning": transcript_warning,
+        },
     }
 
     _log("Channel data fetch complete!")
