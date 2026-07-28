@@ -5706,6 +5706,14 @@ async def save_settings(keys: dict, admin: dict = Depends(require_admin)):
             existing[env_name] = value
             os.environ[env_name] = value
             setattr(config, env_name, value)
+            # Renewing DownSub after an unpaid 403 used to leave the process
+            # latch stuck off until redeploy — clear it when the key changes.
+            if short == "downsub":
+                try:
+                    from core.channel_data import reset_downsub_circuit
+                    reset_downsub_circuit("settings key updated")
+                except Exception as e:
+                    print(f"[settings] could not reset DownSub circuit: {e}")
 
     with open(env_path, "w") as f:
         for k, v in existing.items():
@@ -5767,6 +5775,33 @@ async def test_key(req: KeyTestRequest, admin: dict = Depends(require_admin)):
             )
             if r.status_code >= 400:
                 return {"ok": False, "error": r.text[:200]}
+            return {"ok": True}
+
+        elif req.key_name == "downsub":
+            import httpx
+            # Real probe — previously this fell through to "ok if non-empty",
+            # so a denied key looked fine in Settings.
+            r = httpx.post(
+                "https://api.downsub.com/download",
+                headers={
+                    "Authorization": f"Bearer {key_val}",
+                    "Content-Type": "application/json",
+                },
+                json={"url": "https://www.youtube.com/watch?v=jNQXAC9IVRw"},
+                timeout=45,
+            )
+            if r.status_code in (401, 403):
+                return {"ok": False, "error": (r.text or f"HTTP {r.status_code}")[:200]}
+            if r.status_code != 200:
+                return {"ok": False, "error": (r.text or f"HTTP {r.status_code}")[:200]}
+            data = r.json() if r.content else {}
+            if (data.get("status") or "").lower() == "error":
+                return {"ok": False, "error": str(data.get("error") or data)[:200]}
+            try:
+                from core.channel_data import reset_downsub_circuit
+                reset_downsub_circuit("settings key test ok")
+            except Exception:
+                pass
             return {"ok": True}
 
         else:

@@ -20,9 +20,9 @@ SAMPLE_JSON3 = {
 
 @pytest.fixture(autouse=True)
 def _reset_downsub_flag():
-    cd._downsub_disabled_reason = None
+    cd.reset_downsub_circuit("test setup")
     yield
-    cd._downsub_disabled_reason = None
+    cd.reset_downsub_circuit("test teardown")
 
 
 class TestCaptionParsers:
@@ -50,49 +50,56 @@ from YouTube
 
 
 class TestFetchOrder:
-    def test_official_wins_when_available(self, monkeypatch):
+    def test_downsub_wins_when_key_present(self, monkeypatch):
         calls = []
 
+        monkeypatch.setattr(cd, "_fetch_transcript_downsub",
+                            lambda vid, key: calls.append("downsub") or "from downsub")
         monkeypatch.setattr(cd, "_fetch_transcript_official",
                             lambda vid: calls.append("official") or "from official")
         monkeypatch.setattr(cd, "_fetch_transcript_ytdlp",
                             lambda vid: calls.append("ytdlp") or "from ytdlp")
-        monkeypatch.setattr(cd, "_fetch_transcript_downsub",
-                            lambda vid, key: calls.append("downsub") or "from downsub")
-        monkeypatch.setattr(cd, "_downsub_disabled_reason", None)
 
-        assert cd._fetch_transcript("abc", "key") == "from official"
-        assert calls == ["official"]
+        assert cd._fetch_transcript("abc", "key") == "from downsub"
+        assert calls == ["downsub"]
 
-    def test_ytdlp_used_when_official_fails(self, monkeypatch):
+    def test_ytdlp_used_when_downsub_and_official_fail(self, monkeypatch):
         calls = []
+        monkeypatch.setattr(cd, "_fetch_transcript_downsub",
+                            lambda vid, key: calls.append("downsub") or None)
         monkeypatch.setattr(cd, "_fetch_transcript_official",
                             lambda vid: calls.append("official") or None)
         monkeypatch.setattr(cd, "_fetch_transcript_ytdlp",
                             lambda vid: calls.append("ytdlp") or "from ytdlp")
-        monkeypatch.setattr(cd, "_fetch_transcript_downsub",
-                            lambda vid, key: calls.append("downsub") or "from downsub")
-        monkeypatch.setattr(cd, "_downsub_disabled_reason", None)
 
         assert cd._fetch_transcript("abc", "key") == "from ytdlp"
-        assert calls == ["official", "ytdlp"]
+        assert calls == ["downsub", "official", "ytdlp"]
 
-    def test_downsub_skipped_once_disabled(self, monkeypatch):
+    def test_downsub_skipped_once_disabled_for_same_key(self, monkeypatch):
         calls = []
         monkeypatch.setattr(cd, "_fetch_transcript_official", lambda vid: None)
         monkeypatch.setattr(cd, "_fetch_transcript_ytdlp", lambda vid: None)
         monkeypatch.setattr(cd, "_fetch_transcript_downsub",
                             lambda vid, key: calls.append("downsub") or "x")
-        monkeypatch.setattr(cd, "_downsub_disabled_reason", "HTTP 403: exhausted")
+        cd._disable_downsub("key", "HTTP 403: exhausted")
 
         assert cd._fetch_transcript("abc", "key") is None
         assert calls == []
 
+    def test_new_key_re_enables_downsub(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(cd, "_fetch_transcript_official", lambda vid: None)
+        monkeypatch.setattr(cd, "_fetch_transcript_ytdlp", lambda vid: None)
+        monkeypatch.setattr(cd, "_fetch_transcript_downsub",
+                            lambda vid, key: calls.append(key) or f"ok:{key}")
+        cd._disable_downsub("old-key", "HTTP 403: exhausted")
+
+        assert cd._fetch_transcript("abc", "new-key") == "ok:new-key"
+        assert calls == ["new-key"]
+
 
 class TestDownsubCircuitBreaker:
-    def test_403_disables_further_calls(self, monkeypatch):
-        cd._downsub_disabled_reason = None
-
+    def test_403_disables_further_calls_for_that_key(self, monkeypatch):
         class FakeResp:
             status_code = 403
             text = '{"status":"error","error":"Access denied or usage limit exceeded"}'
@@ -103,9 +110,9 @@ class TestDownsubCircuitBreaker:
         monkeypatch.setattr(cd.httpx, "post", lambda *a, **k: FakeResp())
 
         assert cd._fetch_transcript_downsub("vid", "key") is None
-        assert cd._downsub_disabled_reason and "403" in cd._downsub_disabled_reason
+        assert cd._downsub_is_disabled("key")
+        assert "403" in (cd._downsub_disabled_reason or "")
 
-        # Second call via _fetch_transcript must not hit DownSub again.
         hits = {"n": 0}
 
         def boom(*a, **k):
@@ -117,6 +124,25 @@ class TestDownsubCircuitBreaker:
         monkeypatch.setattr(cd, "_fetch_transcript_ytdlp", lambda vid: None)
         assert cd._fetch_transcript("vid2", "key") is None
         assert hits["n"] == 0
+
+
+class TestPickTxtUrl:
+    def test_prefers_txt_format_field(self):
+        subs = [{
+            "language": "English (auto-generated)",
+            "formats": [
+                {"format": "srt", "url": "https://download.downsub.com/srt/x"},
+                {"format": "txt", "url": "https://download.downsub.com/txt/x"},
+            ],
+        }]
+        assert cd._pick_downsub_txt_url(subs).endswith("/txt/x")
+
+    def test_prefers_english_track(self):
+        subs = [
+            {"language": "Spanish", "formats": [{"format": "txt", "url": "https://x/es"}]},
+            {"language": "English", "formats": [{"format": "txt", "url": "https://x/en"}]},
+        ]
+        assert cd._pick_downsub_txt_url(subs).endswith("/en")
 
 
 class TestYtdlpPath:

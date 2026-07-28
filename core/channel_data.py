@@ -12,10 +12,31 @@ import re
 import time
 import httpx
 
-# DownSub returns 403 once the key is exhausted. Calling it for every video in
-# a channel burn ~1s each and still fails, so one hard deny disables it for the
-# rest of the process.
+# DownSub returns 401/403 when the key is invalid or the account is unpaid.
+# Disable only for that exact key so renewing/pasting a new key re-enables it
+# without waiting for a process restart.
+_downsub_disabled_for_key: str = ""
 _downsub_disabled_reason: str | None = None
+
+
+def reset_downsub_circuit(reason: str = "manual") -> None:
+    """Clear a DownSub outage latch (e.g. after the API key is updated)."""
+    global _downsub_disabled_for_key, _downsub_disabled_reason
+    if _downsub_disabled_reason:
+        print(f"[channel_data] DownSub re-enabled ({reason}; was: {_downsub_disabled_reason})")
+    _downsub_disabled_for_key = ""
+    _downsub_disabled_reason = None
+
+
+def _downsub_is_disabled(key: str) -> bool:
+    return bool(_downsub_disabled_reason) and _downsub_disabled_for_key == (key or "")
+
+
+def _disable_downsub(key: str, reason: str) -> None:
+    global _downsub_disabled_for_key, _downsub_disabled_reason
+    _downsub_disabled_for_key = key or ""
+    _downsub_disabled_reason = reason
+    print(f"[channel_data] DownSub disabled for this key ({reason})")
 
 
 def _extract_channel_id(url: str, yt_api_key: str) -> str:
@@ -440,15 +461,49 @@ def _fetch_transcript_official(video_id: str) -> str | None:
         return None
 
 
+def _pick_downsub_txt_url(subs: list) -> str | None:
+    """Prefer plain-text English track URLs from a DownSub payload."""
+    if not subs:
+        return None
+
+    def lang_rank(track: dict) -> int:
+        lang = str(track.get("language") or track.get("lang") or "").lower()
+        if lang.startswith("en") or "english" in lang:
+            return 0
+        return 1
+
+    for track in sorted(subs, key=lang_rank):
+        formats = track.get("formats") or []
+        for fmt in formats:
+            if not isinstance(fmt, dict):
+                continue
+            url = (fmt.get("url") or "").strip()
+            kind = str(fmt.get("format") or fmt.get("ext") or "").lower()
+            if not url:
+                continue
+            if kind == "txt" or "/txt/" in url or url.rstrip("/").endswith(".txt"):
+                return url
+        # Last resort on this track: any downloadable format we can strip later.
+        for fmt in reversed(formats):
+            if isinstance(fmt, dict) and (fmt.get("url") or "").strip():
+                return fmt["url"].strip()
+    return None
+
+
 def _fetch_transcript(video_id: str, downsub_key: str = "") -> str | None:
     """
     Fetch transcript for a video.
 
-    Order matters for reliability from cloud hosts:
-      1. youtube-transcript-api (fast, free)
-      2. yt-dlp caption URLs (survives most datacenter blocks)
-      3. DownSub (paid; skipped once the key is denied/exhausted)
+    When a DownSub key is configured, try it first — paid accounts are the
+    reliable path and used to be the primary. Free sources follow as backup
+    so an unpaid/denied key still does not empty the transcripts array.
     """
+    key = (downsub_key or "").strip()
+    if key and not _downsub_is_disabled(key):
+        text = _fetch_transcript_downsub(video_id, key)
+        if text:
+            return text
+
     text = _fetch_transcript_official(video_id)
     if text:
         return text
@@ -457,18 +512,11 @@ def _fetch_transcript(video_id: str, downsub_key: str = "") -> str | None:
     if text:
         return text
 
-    global _downsub_disabled_reason
-    if downsub_key and not _downsub_disabled_reason:
-        text = _fetch_transcript_downsub(video_id, downsub_key)
-        if text:
-            return text
-
     return None
 
 
 def _fetch_transcript_downsub(video_id: str, downsub_key: str) -> str | None:
     """Fetch transcript via DownSub API. Returns plain text or None."""
-    global _downsub_disabled_reason
     url = f"https://www.youtube.com/watch?v={video_id}"
 
     try:
@@ -479,50 +527,60 @@ def _fetch_transcript_downsub(video_id: str, downsub_key: str) -> str | None:
                 "Content-Type": "application/json",
             },
             json={"url": url},
-            timeout=30,
+            timeout=45,
         )
 
         if resp.status_code in (401, 403):
             body = (resp.text or "")[:200]
-            _downsub_disabled_reason = f"HTTP {resp.status_code}: {body}"
-            print(
-                f"[channel_data] DownSub disabled for this process "
-                f"({_downsub_disabled_reason})"
-            )
+            _disable_downsub(downsub_key, f"HTTP {resp.status_code}: {body}")
             return None
 
         if resp.status_code != 200:
-            print(f"[channel_data] DownSub HTTP {resp.status_code} for {video_id}")
+            print(f"[channel_data] DownSub HTTP {resp.status_code} for {video_id}: {(resp.text or '')[:160]}")
             return None
 
         data = resp.json()
+        if (data.get("status") or "").lower() == "error":
+            err = data.get("error") or data
+            print(f"[channel_data] DownSub error payload for {video_id}: {err}")
+            # Some account-limit errors arrive as 200 + status:error.
+            err_l = str(err).lower()
+            if any(s in err_l for s in ("denied", "limit", "unauthorized", "invalid api", "quota")):
+                _disable_downsub(downsub_key, f"payload: {str(err)[:160]}")
+            return None
+
         inner = data.get("data", data)
 
         if inner.get("state") != "subtitles_found":
-            print(f"[channel_data] DownSub: no subs for {video_id}")
+            print(f"[channel_data] DownSub: no subs for {video_id} (state={inner.get('state')})")
             return None
 
-        subs = inner.get("subtitles", [])
-        if not subs:
-            return None
-
-        # Find the .txt download URL (plain text format)
-        formats = subs[0].get("formats", [])
-        txt_url = None
-        for fmt in formats:
-            dl_url = fmt.get("url", "")
-            if "/txt/" in dl_url:
-                txt_url = dl_url
-                break
-        if not txt_url and formats:
-            txt_url = formats[-1].get("url", "")
-
+        txt_url = _pick_downsub_txt_url(inner.get("subtitles") or [])
         if not txt_url:
+            print(f"[channel_data] DownSub: no downloadable formats for {video_id}")
             return None
 
-        text_resp = httpx.get(txt_url, timeout=30, follow_redirects=True)
+        text_resp = httpx.get(txt_url, timeout=45, follow_redirects=True)
         if text_resp.status_code == 200 and text_resp.text.strip():
-            return text_resp.text.strip()
+            # TXT is already plain; VTT/SRT fallbacks need a light cleanup.
+            body = text_resp.text.strip()
+            if "-->" in body or body.startswith("WEBVTT"):
+                return _vtt_to_text(body) or None
+            if body.lstrip().startswith("1\n") or body.lstrip().startswith("1\r"):
+                # crude SRT → text
+                lines = []
+                for line in body.splitlines():
+                    line = line.strip()
+                    if not line or line.isdigit() or "-->" in line:
+                        continue
+                    lines.append(line)
+                return _clean_caption_text(" ".join(lines)) or None
+            return body
+
+        print(
+            f"[channel_data] DownSub download HTTP {text_resp.status_code} "
+            f"for {video_id}"
+        )
 
     except Exception as e:
         print(f"[channel_data] DownSub error for {video_id}: {e}")
@@ -605,8 +663,10 @@ def fetch_channel_data(
         _log(f"Got {len(transcripts)}/{len(videos)} transcripts")
         if videos and not transcripts:
             reasons = []
-            if _downsub_disabled_reason:
+            if _downsub_is_disabled(downsub_key or ""):
                 reasons.append(f"DownSub unavailable ({_downsub_disabled_reason})")
+            elif not (downsub_key or "").strip():
+                reasons.append("DOWNSUB_KEY is not configured on this server")
             reasons.append(
                 "YouTube caption providers returned nothing for these videos "
                 "(auto-captions missing, disabled, or blocked from this host)"
