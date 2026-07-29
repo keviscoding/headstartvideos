@@ -19,7 +19,7 @@ _COST_PENCE_PER_MIN = {
     "animated_explainer": 15.0,
     "broll_only": 5.0,
     "broll_cinematic": 12.0,
-    "avatar_plus_broll": 40.0,
+    "avatar_plus_broll": 55.0,
     "storyboard_pack": 8.0,
     "storyboard_assemble": 4.0,
     "storyboard_animate": 25.0,
@@ -308,6 +308,26 @@ def run_cook_job(
                     raise ValueError(
                         "HeyGen API key missing — reconnect it in Settings → Integrations."
                     )
+
+                def _persist_heygen_id(video_id: str):
+                    try:
+                        req_data["heygen_video_id"] = video_id
+                        update_cook_job(
+                            job_id,
+                            request_json=json.dumps(req_data),
+                            heartbeat=True,
+                        )
+                        on_progress(f"HeyGen job {video_id} queued — render can take 15–45+ min")
+                    except Exception as e:
+                        print(f"[cook] persist heygen_video_id failed: {e}")
+
+                bg = req_data.get("heygen_background") or req_data.get("background")
+                scenes = req_data.get("heygen_scenes") or req_data.get("scenes")
+                if isinstance(scenes, str):
+                    try:
+                        scenes = json.loads(scenes)
+                    except Exception:
+                        scenes = None
                 result = run_avatar_pipeline(
                     script=script,
                     avatar_id=avatar_id,
@@ -316,6 +336,18 @@ def run_cook_job(
                     output_name="pipeline_video.mp4",
                     progress_callback=on_progress,
                     heygen_api_key=heygen_key,
+                    background=bg,
+                    scenes=scenes if isinstance(scenes, list) else None,
+                    aspect_ratio=(req_data.get("heygen_aspect_ratio") or "16:9"),
+                    resolution=(req_data.get("heygen_resolution") or "1080p"),
+                    caption=bool(req_data.get("heygen_caption")),
+                    voice_speed=req_data.get("heygen_voice_speed"),
+                    voice_pitch=req_data.get("heygen_voice_pitch"),
+                    engine=(req_data.get("heygen_engine") or None),
+                    motion_prompt=(req_data.get("heygen_motion_prompt") or None),
+                    expressiveness=(req_data.get("heygen_expressiveness") or None),
+                    title=(job.get("title") or req_data.get("title") or None),
+                    on_heygen_created=_persist_heygen_id,
                 )
             else:
                 # Defensive: storyboard should have returned above; keep message clear.

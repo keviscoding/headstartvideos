@@ -1558,6 +1558,17 @@ class BuildRequest(BaseModel):
     voice_id: str = ""
     # standard (1 credit) | high (HQ_CREDIT_COST, paid plans only, max HQ_MAX_MINUTES)
     image_quality: str = "standard"
+    # HeyGen Studio personalization (avatar_plus_broll)
+    heygen_background: str = ""
+    heygen_aspect_ratio: str = "16:9"
+    heygen_resolution: str = "1080p"
+    heygen_caption: bool = False
+    heygen_voice_speed: float | None = None
+    heygen_voice_pitch: float | None = None
+    heygen_engine: str = ""
+    heygen_motion_prompt: str = ""
+    heygen_expressiveness: str = ""
+    heygen_scenes: list[dict] = []
 
 
 class HeyGenKeyRequest(BaseModel):

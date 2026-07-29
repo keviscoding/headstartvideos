@@ -1233,6 +1233,7 @@ def update_cook_job(
     status: str | None = None,
     progress_json: str | None = None,
     result_json: str | None = None,
+    request_json: str | None = None,
     error: str | None = None,
     started: bool = False,
     finished: bool = False,
@@ -1251,6 +1252,9 @@ def update_cook_job(
     if result_json is not None:
         fields.append("result_json = ?")
         vals.append(result_json)
+    if request_json is not None:
+        fields.append("request_json = ?")
+        vals.append(request_json)
     if error is not None:
         fields.append("error = ?")
         vals.append(error)

@@ -12,8 +12,9 @@ from pathlib import Path
 from config import HEYGEN_KEY, HEYGEN_API
 
 POLL_INTERVAL = 10
-MAX_WAIT = 1200  # Multi-scene long scripts can take longer than 10 min
+MAX_WAIT = 3600  # Long multi-scene scripts often need 20–45+ min
 HEYGEN_MAX_CHARS_PER_SCENE = 4800  # Hard limit is 5000; leave headroom
+HEYGEN_MAX_SCENES = 50
 
 
 @dataclass
@@ -299,16 +300,257 @@ def _chunk_script_for_heygen(script_text: str, max_chars: int = HEYGEN_MAX_CHARS
     if buf.strip():
         chunks.append(buf.strip())
 
-    if len(chunks) > 50:
+    if len(chunks) > HEYGEN_MAX_SCENES:
         # HeyGen allows max 50 scenes — merge overflow into last allowed scenes
-        head, tail = chunks[:49], chunks[49:]
+        head, tail = chunks[: HEYGEN_MAX_SCENES - 1], chunks[HEYGEN_MAX_SCENES - 1 :]
         merged = " ".join(tail)
         # Re-chunk overflow if still huge
-        while merged and len(head) < 50:
+        while merged and len(head) < HEYGEN_MAX_SCENES:
             head.append(merged[:max_chars])
             merged = merged[max_chars:]
-        chunks = head[:50]
+        chunks = head[:HEYGEN_MAX_SCENES]
     return chunks
+
+
+def _normalize_background(background: dict | str | None) -> dict | None:
+    """Accept a color hex or HeyGen background object."""
+    if not background:
+        return None
+    if isinstance(background, str):
+        color = background.strip()
+        if not color:
+            return None
+        if not color.startswith("#"):
+            color = f"#{color}"
+        return {"type": "color", "value": color}
+    if isinstance(background, dict):
+        # v2 used {"type":"color","value":"#fff"}; v3 studio docs use "color"
+        out = dict(background)
+        if out.get("type") == "color":
+            color = (out.get("color") or out.get("value") or "").strip()
+            if color and not color.startswith("#"):
+                color = f"#{color}"
+            if color:
+                # Send both keys — v2 expects value, v3 studio accepts color
+                return {"type": "color", "color": color, "value": color}
+        return out
+    return None
+
+
+def _voice_settings_payload(
+    voice_speed: float | None = None,
+    voice_pitch: float | None = None,
+) -> dict | None:
+    settings: dict = {}
+    if voice_speed is not None:
+        settings["speed"] = max(0.5, min(1.5, float(voice_speed)))
+    if voice_pitch is not None:
+        settings["pitch"] = max(-50.0, min(50.0, float(voice_pitch)))
+    return settings or None
+
+
+def _engine_payload(engine: str | None) -> dict | None:
+    raw = (engine or "").strip().lower().replace("-", "_")
+    if not raw or raw in ("default", "avatar_iv", "iv"):
+        return None  # HeyGen defaults to Avatar IV
+    if raw in ("avatar_v", "v", "v5"):
+        return {"type": "avatar_v"}
+    if raw in ("avatar_iii", "iii", "v3", "3"):
+        return {"type": "avatar_iii"}
+    if raw.startswith("avatar_"):
+        return {"type": raw}
+    return {"type": f"avatar_{raw}"} if raw else None
+
+
+def _aspect_to_dimensions(aspect_ratio: str) -> tuple[int, int]:
+    ar = (aspect_ratio or "16:9").strip()
+    if ar == "9:16":
+        return 1080, 1920
+    if ar == "1:1":
+        return 1080, 1080
+    return 1920, 1080
+
+
+def normalize_heygen_scenes(
+    scenes: list[dict] | None,
+    *,
+    script_text: str = "",
+    avatar_id: str = "",
+    voice_id: str = "",
+) -> list[dict]:
+    """Normalize user/API scenes or fall back to auto-chunked avatar scenes."""
+    out: list[dict] = []
+    if scenes:
+        for raw in scenes[:HEYGEN_MAX_SCENES]:
+            if not isinstance(raw, dict):
+                continue
+            stype = (raw.get("type") or "avatar").strip().lower()
+            if stype in ("avatar", "avatar_video"):
+                text = (raw.get("script") or raw.get("text") or "").strip()
+                if not text:
+                    continue
+                out.append({
+                    "type": "avatar",
+                    "script": text[:HEYGEN_MAX_CHARS_PER_SCENE],
+                    "avatar_id": (raw.get("avatar_id") or avatar_id or "").strip(),
+                    "voice_id": (raw.get("voice_id") or voice_id or "").strip(),
+                    "background": raw.get("background"),
+                    "image_url": "",
+                })
+            elif stype == "image":
+                url = (raw.get("image_url") or raw.get("url") or "").strip()
+                text = (raw.get("script") or raw.get("text") or "").strip()
+                if not url:
+                    continue
+                out.append({
+                    "type": "image",
+                    "script": text[:HEYGEN_MAX_CHARS_PER_SCENE],
+                    "avatar_id": "",
+                    "voice_id": (raw.get("voice_id") or voice_id or "").strip(),
+                    "background": None,
+                    "image_url": url,
+                    "duration": raw.get("duration"),
+                })
+            elif stype == "video":
+                url = (raw.get("video_url") or raw.get("url") or "").strip()
+                if not url:
+                    continue
+                out.append({
+                    "type": "video",
+                    "script": (raw.get("script") or "").strip()[:HEYGEN_MAX_CHARS_PER_SCENE],
+                    "avatar_id": "",
+                    "voice_id": (raw.get("voice_id") or voice_id or "").strip(),
+                    "background": None,
+                    "image_url": "",
+                    "video_url": url,
+                })
+    if out:
+        return out
+
+    chunks = _chunk_script_for_heygen(script_text)
+    return [
+        {
+            "type": "avatar",
+            "script": chunk,
+            "avatar_id": avatar_id,
+            "voice_id": voice_id,
+            "background": None,
+            "image_url": "",
+        }
+        for chunk in chunks
+    ]
+
+
+def scenes_need_studio_only(scenes: list[dict] | None) -> bool:
+    """True when the user mixed image/video scenes — skip CR illustration interleave."""
+    return any(
+        isinstance(s, dict) and (s.get("type") or "").lower() in ("image", "video")
+        for s in (scenes or [])
+    )
+
+
+def _build_v3_studio_scenes(
+    scenes: list[dict],
+    *,
+    default_background: dict | None,
+    voice_settings: dict | None,
+    engine: dict | None,
+    motion_prompt: str | None,
+    expressiveness: str | None,
+) -> list[dict]:
+    built: list[dict] = []
+    for scene in scenes:
+        stype = scene.get("type") or "avatar"
+        if stype == "avatar":
+            inp: dict = {
+                "type": "avatar",
+                "avatar_id": scene["avatar_id"],
+                "script": scene["script"],
+                "voice_id": scene["voice_id"],
+            }
+            bg = _normalize_background(scene.get("background") or default_background)
+            if bg:
+                # v3 studio background uses color key
+                inp["background"] = {"type": "color", "color": bg.get("color") or bg.get("value")}
+            if voice_settings:
+                inp["voice_settings"] = voice_settings
+            if engine:
+                inp["engine"] = engine
+            if motion_prompt:
+                inp["motion_prompt"] = motion_prompt.strip()
+            if expressiveness:
+                inp["expressiveness"] = expressiveness
+            built.append({"type": "avatar_video", "input": inp})
+        elif stype == "image":
+            img: dict = {
+                "type": "image",
+                "source": {"type": "url", "url": scene["image_url"]},
+            }
+            if scene.get("script") and scene.get("voice_id"):
+                img["script"] = scene["script"]
+                img["voice_id"] = scene["voice_id"]
+                if voice_settings:
+                    img["voice_settings"] = voice_settings
+            else:
+                dur = scene.get("duration")
+                img["duration"] = float(dur) if dur else 3.0
+            built.append(img)
+        elif stype == "video":
+            vid: dict = {
+                "type": "video",
+                "source": {"type": "url", "url": scene.get("video_url") or ""},
+            }
+            if scene.get("script") and scene.get("voice_id"):
+                vid["script"] = scene["script"]
+                vid["voice_id"] = scene["voice_id"]
+            built.append(vid)
+    return built
+
+
+def _build_v2_video_inputs(
+    scenes: list[dict],
+    *,
+    default_background: dict | None,
+) -> list[dict]:
+    """v2 only supports avatar speaking scenes — drop image/video."""
+    inputs: list[dict] = []
+    for scene in scenes:
+        if (scene.get("type") or "avatar") != "avatar":
+            continue
+        item = {
+            "character": {
+                "type": "avatar",
+                "avatar_id": scene["avatar_id"],
+                "avatar_style": "normal",
+            },
+            "voice": {
+                "type": "text",
+                "input_text": scene["script"],
+                "voice_id": scene["voice_id"],
+            },
+        }
+        bg = _normalize_background(scene.get("background") or default_background)
+        if bg:
+            item["background"] = {"type": "color", "value": bg.get("value") or bg.get("color")}
+        inputs.append(item)
+    return inputs
+
+
+def _parse_create_response(resp: httpx.Response) -> AvatarVideo:
+    try:
+        data = resp.json() if resp.content else {}
+    except Exception:
+        data = {}
+    if resp.status_code != 200 or data.get("error"):
+        err = data.get("error", {})
+        err_msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+        if not err_msg or err_msg == "{}":
+            err_msg = (resp.text or "")[:240] or f"HTTP {resp.status_code}"
+        return AvatarVideo(video_id="", status="failed", error=err_msg)
+    video_id = (data.get("data") or {}).get("video_id", "") or ""
+    if not video_id:
+        return AvatarVideo(video_id="", status="failed", error="HeyGen returned no video_id")
+    return AvatarVideo(video_id=video_id, status="pending")
 
 
 def create_avatar_video(
@@ -318,65 +560,107 @@ def create_avatar_video(
     width: int = 1920,
     height: int = 1080,
     caption: bool = False,
-    background: dict | None = None,
+    background: dict | str | None = None,
     api_key: str | None = None,
+    *,
+    scenes: list[dict] | None = None,
+    aspect_ratio: str = "16:9",
+    resolution: str = "1080p",
+    voice_speed: float | None = None,
+    voice_pitch: float | None = None,
+    engine: str | None = None,
+    motion_prompt: str | None = None,
+    expressiveness: str | None = None,
+    title: str | None = None,
 ) -> AvatarVideo:
     """
-    Create an avatar video from a script using HeyGen v2 Studio API.
-    Long scripts are split into multiple scenes (max 5000 chars each).
+    Create an avatar/studio video via HeyGen.
+
+    Prefers v3 `POST /v3/videos` with `type: studio` (multi-scene + knobs).
+    Falls back to legacy v2 `POST /v2/video/generate` when v3 rejects the body.
     """
-    chunks = _chunk_script_for_heygen(script_text)
-    if not chunks:
+    norm_scenes = normalize_heygen_scenes(
+        scenes, script_text=script_text, avatar_id=avatar_id, voice_id=voice_id,
+    )
+    if not norm_scenes:
         return AvatarVideo(video_id="", status="failed", error="Script is empty")
 
-    video_inputs = []
-    for chunk in chunks:
-        scene = {
-            "character": {
-                "type": "avatar",
-                "avatar_id": avatar_id,
-                "avatar_style": "normal",
-            },
-            "voice": {
-                "type": "text",
-                "input_text": chunk,
-                "voice_id": voice_id,
-            },
-        }
-        if background:
-            scene["background"] = background
-        video_inputs.append(scene)
+    bg = _normalize_background(background)
+    voice_settings = _voice_settings_payload(voice_speed, voice_pitch)
+    engine_obj = _engine_payload(engine)
+    ar = (aspect_ratio or "16:9").strip() or "16:9"
+    res = (resolution or "1080p").strip() or "1080p"
+    if width == 1920 and height == 1080 and ar:
+        width, height = _aspect_to_dimensions(ar)
 
-    print(f"[heygen] Creating video with {len(video_inputs)} scene(s), "
-          f"{len(script_text)} chars total")
-
-    payload = {
-        "video_inputs": video_inputs,
-        "dimension": {"width": width, "height": height},
-        "caption": caption,
-    }
-
-    resp = httpx.post(
-        f"{HEYGEN_API}/v2/video/generate",
-        headers=_headers(api_key),
-        json=payload,
-        timeout=60,
+    print(
+        f"[heygen] Creating video with {len(norm_scenes)} scene(s), "
+        f"aspect={ar} res={res} caption={bool(caption)}"
     )
-    data = resp.json()
 
-    if resp.status_code != 200 or data.get("error"):
-        err = data.get("error", {})
-        err_msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
-        print(f"[heygen] Error creating video: {err_msg}")
+    v3_scenes = _build_v3_studio_scenes(
+        norm_scenes,
+        default_background=bg,
+        voice_settings=voice_settings,
+        engine=engine_obj,
+        motion_prompt=motion_prompt,
+        expressiveness=expressiveness,
+    )
+    caption_obj = None
+    if caption:
+        caption_obj = {"file_format": "srt", "style": "default"}
+
+    v3_payload: dict = {
+        "type": "studio",
+        "scenes": v3_scenes,
+        "aspect_ratio": ar,
+        "resolution": res,
+    }
+    if title:
+        v3_payload["title"] = title
+    if caption_obj:
+        v3_payload["caption"] = caption_obj
+
+    try:
+        resp = httpx.post(
+            f"{HEYGEN_API}/v3/videos",
+            headers=_headers(api_key),
+            json=v3_payload,
+            timeout=60,
+        )
+        result = _parse_create_response(resp)
+        if result.status != "failed":
+            print(f"[heygen] Video created (v3 studio): {result.video_id}")
+            return result
+        print(f"[heygen] v3 studio create failed ({result.error}); trying v2 fallback")
+    except Exception as e:
+        print(f"[heygen] v3 studio request error: {e}; trying v2 fallback")
+
+    # v2 fallback — avatar scenes only
+    video_inputs = _build_v2_video_inputs(norm_scenes, default_background=bg)
+    if not video_inputs:
         return AvatarVideo(
             video_id="",
             status="failed",
-            error=err_msg,
+            error="HeyGen v3 create failed and v2 cannot render image/video scenes",
         )
-
-    video_id = data.get("data", {}).get("video_id", "")
-    print(f"[heygen] Video created: {video_id}")
-    return AvatarVideo(video_id=video_id, status="pending")
+    v2_payload = {
+        "video_inputs": video_inputs,
+        "dimension": {"width": width, "height": height},
+        "caption": bool(caption),
+    }
+    resp = httpx.post(
+        f"{HEYGEN_API}/v2/video/generate",
+        headers=_headers(api_key),
+        json=v2_payload,
+        timeout=60,
+    )
+    result = _parse_create_response(resp)
+    if result.status == "failed":
+        print(f"[heygen] Error creating video: {result.error}")
+        return result
+    print(f"[heygen] Video created (v2): {result.video_id}")
+    return result
 
 
 def create_avatar_video_with_audio(
@@ -387,6 +671,27 @@ def create_avatar_video_with_audio(
     api_key: str | None = None,
 ) -> AvatarVideo:
     """Create an avatar video from an audio URL (lip-sync mode)."""
+    # Prefer v3 single-avatar mode
+    try:
+        resp = httpx.post(
+            f"{HEYGEN_API}/v3/videos",
+            headers=_headers(api_key),
+            json={
+                "type": "avatar",
+                "avatar_id": avatar_id,
+                "audio_url": audio_url,
+                "aspect_ratio": "16:9" if width >= height else "9:16",
+                "resolution": "1080p",
+            },
+            timeout=30,
+        )
+        result = _parse_create_response(resp)
+        if result.status != "failed":
+            print(f"[heygen] Video created (v3 audio): {result.video_id}")
+            return result
+    except Exception as e:
+        print(f"[heygen] v3 audio create failed: {e}")
+
     payload = {
         "video_inputs": [
             {
@@ -410,36 +715,71 @@ def create_avatar_video_with_audio(
         json=payload,
         timeout=30,
     )
-    data = resp.json()
+    result = _parse_create_response(resp)
+    if result.status == "failed":
+        print(f"[heygen] Error creating video: {result.error}")
+    else:
+        print(f"[heygen] Video created (audio mode): {result.video_id}")
+    return result
 
-    if resp.status_code != 200 or data.get("error"):
-        err = data.get("error", {})
-        err_msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
-        print(f"[heygen] Error creating video: {err_msg}")
-        return AvatarVideo(video_id="", status="failed", error=err_msg)
 
-    video_id = data.get("data", {}).get("video_id", "")
-    print(f"[heygen] Video created (audio mode): {video_id}")
-    return AvatarVideo(video_id=video_id, status="pending")
+def _poll_interval_for_elapsed(elapsed: float, base: int = POLL_INTERVAL) -> float:
+    """Adaptive poll: snappy early, gentler after 10 minutes."""
+    if elapsed < 600:
+        return float(base)
+    if elapsed < 1800:
+        return float(max(base, 20))
+    return float(max(base, 30))
 
 
 def check_status(video_id: str, api_key: str | None = None) -> AvatarVideo:
-    """Check the rendering status of a HeyGen video."""
+    """Check the rendering status of a HeyGen video (v3, then legacy v1)."""
+    headers = _headers(api_key)
+
+    # v3
+    try:
+        resp = httpx.get(
+            f"{HEYGEN_API}/v3/videos/{video_id}",
+            headers=headers,
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            payload = resp.json() if resp.content else {}
+            data = payload.get("data") or payload
+            status = (data.get("status") or "unknown").lower()
+            # Normalize aliases
+            if status in ("success", "done"):
+                status = "completed"
+            err = data.get("error") or data.get("error_message") or ""
+            if isinstance(err, dict):
+                err = err.get("message") or str(err)
+            return AvatarVideo(
+                video_id=video_id,
+                status=status,
+                video_url=data.get("video_url") or data.get("url") or "",
+                duration=float(data.get("duration") or 0),
+                error=str(err or ""),
+            )
+    except Exception as e:
+        print(f"[heygen] v3 status failed, trying v1: {e}")
+
     resp = httpx.get(
         f"{HEYGEN_API}/v1/video_status.get",
         params={"video_id": video_id},
-        headers=_headers(api_key),
+        headers=headers,
         timeout=15,
     )
     resp.raise_for_status()
     data = resp.json().get("data", {})
-
+    err = data.get("error", "") or ""
+    if isinstance(err, dict):
+        err = err.get("message") or str(err)
     return AvatarVideo(
         video_id=video_id,
         status=data.get("status", "unknown"),
         video_url=data.get("video_url", ""),
-        duration=data.get("duration", 0),
-        error=data.get("error", "") or "",
+        duration=data.get("duration", 0) or 0,
+        error=str(err),
     )
 
 
@@ -450,24 +790,61 @@ def wait_for_completion(
     progress_callback=None,
     api_key: str | None = None,
 ) -> AvatarVideo:
-    """Poll HeyGen until the video is completed or fails."""
+    """Poll HeyGen until the video is completed or fails.
+
+    On wall-clock timeout, does one final status check — if HeyGen finished
+    just after our last poll, we still succeed. Otherwise raises TimeoutError
+    with the video id so the user can recover from HeyGen Recents.
+    """
     start = time.time()
-    while time.time() - start < timeout:
-        result = check_status(video_id, api_key=api_key)
+    last: AvatarVideo | None = None
+    while True:
         elapsed = time.time() - start
+        if elapsed >= timeout:
+            break
+        last = check_status(video_id, api_key=api_key)
         if progress_callback:
-            progress_callback(f"HeyGen status: {result.status} ({elapsed:.0f}s)")
+            mins = elapsed / 60.0
+            hint = ""
+            if elapsed >= 600:
+                hint = " — long scripts often need 15–45+ min"
+            progress_callback(
+                f"HeyGen status: {last.status} ({mins:.0f}m){hint}"
+            )
         else:
-            print(f"[heygen] Status: {result.status} ({elapsed:.0f}s)")
+            print(f"[heygen] Status: {last.status} ({elapsed:.0f}s)")
 
-        if result.status == "completed":
-            return result
-        if result.status == "failed":
-            raise RuntimeError(f"HeyGen video failed: {result.error}")
+        if last.status == "completed":
+            return last
+        if last.status == "failed":
+            raise RuntimeError(f"HeyGen video failed: {last.error}")
 
-        time.sleep(poll_interval)
+        sleep_for = _poll_interval_for_elapsed(elapsed, poll_interval)
+        # Don't sleep past the timeout window
+        remaining = timeout - (time.time() - start)
+        if remaining <= 0:
+            break
+        time.sleep(min(sleep_for, remaining))
 
-    raise TimeoutError(f"HeyGen video {video_id} timed out after {timeout}s")
+    # Final recovery check — render may have completed after last poll
+    try:
+        final = check_status(video_id, api_key=api_key)
+    except Exception as e:
+        print(f"[heygen] final status check failed: {e}")
+        final = last
+    if final and final.status == "completed":
+        if progress_callback:
+            progress_callback("HeyGen status: completed (recovered after wait window)")
+        return final
+    if final and final.status == "failed":
+        raise RuntimeError(f"HeyGen video failed: {final.error}")
+
+    raise TimeoutError(
+        f"HeyGen video {video_id} timed out after {timeout}s "
+        f"(still {getattr(final, 'status', 'processing')}). "
+        f"It may still finish in HeyGen — check Recents for {video_id}, "
+        f"or retry the cook once it shows completed."
+    )
 
 
 def download_video(video_url: str, output_path: str) -> str:
