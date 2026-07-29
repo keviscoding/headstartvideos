@@ -21,7 +21,7 @@ class TestSanitize:
         assert heygen.sanitize_api_key("X-Api-Key: hg_test_abcdefghijklmnop") == "hg_test_abcdefghijklmnop"
 
     def test_collapses_newlines_from_chat_paste(self):
-        assert heygen.sanitize_api_key("sk_live_\nabcdefghijklmnop") == "hg_test_abcdefghijklmnop"
+        assert heygen.sanitize_api_key("hg_test_\nabcdefghijklmnop") == "hg_test_abcdefghijklmnop"
 
 
 class TestValidate:
