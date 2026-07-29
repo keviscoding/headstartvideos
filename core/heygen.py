@@ -110,48 +110,159 @@ def test_api_key(api_key: str) -> tuple[bool, str]:
 
 
 def list_avatars(api_key: str | None = None) -> list[dict]:
-    """Fetch available avatars from HeyGen (public + account private)."""
-    resp = httpx.get(
-        f"{HEYGEN_API}/v2/avatars",
-        headers=_headers(api_key),
-        timeout=30,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    avatars = data.get("data", {}).get("avatars", [])
-    return [
-        {
-            "avatar_id": a.get("avatar_id", ""),
-            "avatar_name": a.get("avatar_name", "") or a.get("name", ""),
-            "preview_url": a.get("preview_image_url", "") or a.get("preview_url", ""),
-            "gender": a.get("gender", "") or "",
-            "default_voice_id": a.get("default_voice_id", "") or "",
+    """Fetch selectable HeyGen avatars (looks) for the picker.
+
+    `/v2/avatars` hangs/times out for many accounts while `/v2/voices` still
+    works — that is exactly the "voices load, avatars fail" failure mode.
+    v3 exposes *looks*; the look `id` is what video create expects as
+    `avatar_id` (not the group id).
+    """
+    headers = _headers(api_key)
+    looks: list[dict] = []
+
+    # Prefer classic studio talking-heads, then fill with photo/digital twins.
+    for avatar_type in ("studio_avatar", "photo_avatar", "digital_twin"):
+        token = None
+        for _ in range(4):  # up to 200 looks per type
+            params: dict[str, str | int] = {
+                "limit": 50,
+                "ownership": "public",
+                "avatar_type": avatar_type,
+            }
+            if token:
+                params["token"] = token
+            try:
+                resp = httpx.get(
+                    f"{HEYGEN_API}/v3/avatars/looks",
+                    headers=headers,
+                    params=params,
+                    timeout=30,
+                )
+            except httpx.TimeoutException as e:
+                print(f"[heygen] v3 looks timeout ({avatar_type}): {e}")
+                break
+            if resp.status_code != 200:
+                print(
+                    f"[heygen] v3 looks HTTP {resp.status_code} ({avatar_type}): "
+                    f"{(resp.text or '')[:160]}"
+                )
+                break
+            payload = resp.json() if resp.content else {}
+            batch = payload.get("data") or []
+            if not isinstance(batch, list):
+                break
+            looks.extend(b for b in batch if isinstance(b, dict))
+            if not payload.get("has_more"):
+                break
+            token = payload.get("next_token")
+            if not token:
+                break
+        if len(looks) >= 80:
+            break
+
+    # One card per character — keep the first look of each group.
+    by_group: dict[str, dict] = {}
+    for look in looks:
+        look_id = (look.get("id") or "").strip()
+        if not look_id:
+            continue
+        group = (look.get("group_id") or look_id).strip()
+        if group in by_group:
+            continue
+        status = (look.get("status") or "completed").lower()
+        if status and status not in ("completed", "active", ""):
+            continue
+        by_group[group] = {
+            "avatar_id": look_id,
+            "avatar_name": look.get("name") or look_id,
+            "preview_url": look.get("preview_image_url") or "",
+            "gender": look.get("gender") or "",
+            "default_voice_id": look.get("default_voice_id") or "",
+            "avatar_type": look.get("avatar_type") or "",
         }
-        for a in avatars
-        if a.get("avatar_id")
-    ]
+
+    avatars = list(by_group.values())
+    if avatars:
+        return avatars
+
+    # Last resort: legacy v2 (often times out — keep a short fuse).
+    try:
+        resp = httpx.get(
+            f"{HEYGEN_API}/v2/avatars",
+            headers=headers,
+            timeout=12,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        legacy = data.get("data", {}).get("avatars", [])
+        return [
+            {
+                "avatar_id": a.get("avatar_id", ""),
+                "avatar_name": a.get("avatar_name", "") or a.get("name", ""),
+                "preview_url": a.get("preview_image_url", "") or a.get("preview_url", ""),
+                "gender": a.get("gender", "") or "",
+                "default_voice_id": a.get("default_voice_id", "") or "",
+                "avatar_type": "legacy_v2",
+            }
+            for a in legacy
+            if a.get("avatar_id")
+        ]
+    except Exception as e:
+        print(f"[heygen] v2 avatars fallback failed: {e}")
+        raise RuntimeError(
+            "Could not load HeyGen avatars. Paste an avatar/look ID below, "
+            "or retry in a moment."
+        ) from e
 
 
 def list_voices(api_key: str | None = None) -> list[dict]:
     """Fetch available voices from HeyGen."""
+    # v2 voices still works and is what the UI already expects.
+    try:
+        resp = httpx.get(
+            f"{HEYGEN_API}/v2/voices",
+            headers=_headers(api_key),
+            timeout=45,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        voices = data.get("data", {}).get("voices", [])
+        out = [
+            {
+                "voice_id": v.get("voice_id", ""),
+                "display_name": v.get("display_name", "") or v.get("name", ""),
+                "language": v.get("language", ""),
+                "gender": v.get("gender", ""),
+                "preview_audio": v.get("preview_audio", "") or v.get("preview_audio_url", ""),
+            }
+            for v in voices
+            if v.get("voice_id")
+        ]
+        if out:
+            return out
+    except Exception as e:
+        print(f"[heygen] v2 voices failed, trying v3: {e}")
+
+    # v3 fallback (different field names / pagination)
     resp = httpx.get(
-        f"{HEYGEN_API}/v2/voices",
+        f"{HEYGEN_API}/v3/voices",
         headers=_headers(api_key),
+        params={"limit": 50},
         timeout=30,
     )
     resp.raise_for_status()
     data = resp.json()
-    voices = data.get("data", {}).get("voices", [])
+    voices = data.get("data") or []
     return [
         {
-            "voice_id": v.get("voice_id", ""),
-            "display_name": v.get("display_name", "") or v.get("name", ""),
-            "language": v.get("language", ""),
-            "gender": v.get("gender", ""),
-            "preview_audio": v.get("preview_audio", "") or v.get("preview_audio_url", ""),
+            "voice_id": v.get("id") or v.get("voice_id") or "",
+            "display_name": v.get("name") or v.get("display_name") or "",
+            "language": v.get("language") or "",
+            "gender": v.get("gender") or "",
+            "preview_audio": v.get("preview_audio_url") or v.get("preview_audio") or "",
         }
         for v in voices
-        if v.get("voice_id")
+        if (v.get("id") or v.get("voice_id"))
     ]
 
 

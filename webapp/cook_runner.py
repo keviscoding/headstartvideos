@@ -299,7 +299,11 @@ def run_cook_job(
                 voice_id = (req_data.get("voice_id") or "").strip()
                 if not avatar_id or not voice_id:
                     raise ValueError("Avatar recipe requires avatar_id and voice_id.")
-                heygen_key = get_user_heygen_key(user_id) if user_id else None
+                # Prefer the key snapshotted at enqueue (same process that could
+                # decrypt). Fall back to DB decrypt for older jobs / web cooks.
+                heygen_key = (req_data.get("heygen_api_key") or "").strip() or None
+                if not heygen_key and user_id:
+                    heygen_key = get_user_heygen_key(user_id)
                 if not heygen_key:
                     raise ValueError(
                         "HeyGen API key missing — reconnect it in Settings → Integrations."

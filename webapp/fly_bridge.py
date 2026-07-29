@@ -54,6 +54,10 @@ _INJECT_ENV_KEYS = (
     "PIXABAY_KEY",
     "FISH_API_KEY",
     "SECRETS_KEY",
+    # Used as the Fernet seed when SECRETS_KEY is unset. Without this, web encrypts
+    # BYOK keys with the Stripe webhook secret and Fly cooks decrypt with
+    # DATABASE_URL → empty key → "HeyGen API key missing" on avatar cooks.
+    "STRIPE_WEBHOOK_SECRET",
     "POSTHOG_KEY",
     "POSTHOG_HOST",
     "SENTRY_DSN",

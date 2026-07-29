@@ -4900,7 +4900,8 @@ async function loadHeygenAvatars() {
             grid.appendChild(card);
         });
     } catch (e) {
-        grid.innerHTML = `<p style="font-size:14px;color:var(--app-ink-2);">${esc(e.message)}</p>`;
+        grid.innerHTML = `<p style="font-size:14px;color:var(--app-ink-2);">${esc(e.message)}</p>`
+            + `<p style="font-size:13px;color:var(--app-ink-3);margin-top:8px;">Paste an avatar/look ID below to continue — cooking does not require the grid.</p>`;
     } finally {
         loading?.classList.add('hidden');
     }

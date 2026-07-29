@@ -2522,10 +2522,12 @@ async def start_build(req: BuildRequest, request: Request):
         _enforce_length_cap(user, _estimate_script_minutes(req.script), label="Video")
 
     recipe = req.recipe or "animated_explainer"
+    heygen_key_for_job = ""
     if recipe == "avatar_plus_broll":
         if not (req.avatar_id or "").strip() or not (req.voice_id or "").strip():
             raise HTTPException(400, "Pick a HeyGen avatar and voice (or paste their IDs) before cooking.")
-        if not get_user_heygen_key(user_id):
+        heygen_key_for_job = (get_user_heygen_key(user_id) or "").strip()
+        if not heygen_key_for_job:
             raise HTTPException(
                 400,
                 "Connect your HeyGen API key in Settings → Integrations before cooking an avatar video.",
@@ -2585,6 +2587,11 @@ async def start_build(req: BuildRequest, request: Request):
     req_payload = req.model_dump()
     req_payload["image_quality"] = image_quality
     req_payload["credits_charged"] = credit_deducted
+    # Snapshot the decrypted HeyGen key into the job so Fly cook Machines can
+    # use it even when their Fernet seed differs from the web dyno (missing
+    # STRIPE_WEBHOOK_SECRET historically broke get_user_heygen_key on cooks).
+    if heygen_key_for_job:
+        req_payload["heygen_api_key"] = heygen_key_for_job
     _jobs[job_id] = {
         "status": "queued",
         "progress": [],
@@ -5617,7 +5624,11 @@ def heygen_avatars(user: dict = Depends(require_user)):
     try:
         avatars = list_avatars(api_key=key)
     except Exception as e:
-        raise HTTPException(502, f"Could not load HeyGen avatars: {e}")
+        raise HTTPException(
+            502,
+            f"Could not load HeyGen avatars: {e}. "
+            "You can still paste an avatar/look ID below and cook.",
+        )
     return {"avatars": avatars, "guide": _HEYGEN_GUIDE}
 
 
