@@ -2294,16 +2294,29 @@ const cookingManager = {
     },
 
     _connect() {
+        // Close any prior stream before opening a new one. Without this, a
+        // reconnect leaves two EventSources alive; the stale one can fire
+        // `complete` after this.evtSrc was already nulled → TypeError on .close().
+        try { this.evtSrc && this.evtSrc.close(); } catch (_) {}
+        this.evtSrc = null;
+
         // Reset per-connection state so a reconnect replay doesn't duplicate the
         // log or inflate the progress bar (the server replays from the start).
         this.msgCount = 0;
-        this.evtSrc = new EventSource(`/api/build/${this.jobId}/progress`);
+        const es = new EventSource(`/api/build/${this.jobId}/progress`);
+        this.evtSrc = es;
         const progressBar = document.getElementById('progress-bar');
         const progressLog = document.getElementById('progress-log');
         // Keep any immediate queue line; only clear if empty
         if (progressLog && !progressLog.children.length) progressLog.innerHTML = '';
 
-        this.evtSrc.addEventListener('progress', (e) => {
+        const closeThis = () => {
+            try { es.close(); } catch (_) {}
+            if (this.evtSrc === es) this.evtSrc = null;
+        };
+
+        es.addEventListener('progress', (e) => {
+            if (this.evtSrc !== es) return; // stale connection after reconnect
             this.msgCount++;
             const msg = safeJsonParse(e.data);
             if (!msg || typeof msg !== 'object') return;
@@ -2334,9 +2347,13 @@ const cookingManager = {
                 else etaEl.textContent = 'about 3–7 minutes';
             }
         });
-        this.evtSrc.addEventListener('complete', (e) => {
-            this.evtSrc.close();
-            this.evtSrc = null;
+        es.addEventListener('complete', (e) => {
+            if (this.evtSrc !== es && this.evtSrc !== null) {
+                // A newer connection owns the slot; just retire this one.
+                try { es.close(); } catch (_) {}
+                return;
+            }
+            closeThis();
             this.result = safeJsonParse(e.data);
             if (!this.result || !this.result.output_url) {
                 this._reattach();
@@ -2358,13 +2375,16 @@ const cookingManager = {
             refreshUserData();
         });
 
-        this.evtSrc.addEventListener('error', (e) => {
+        es.addEventListener('error', (e) => {
+            if (this.evtSrc !== es && this.evtSrc !== null) {
+                try { es.close(); } catch (_) {}
+                return;
+            }
             // Explicit server-sent error event → the render genuinely failed.
             if (e && e.data) {
                 let err = 'Unknown error';
                 try { err = JSON.parse(e.data).error || err; } catch (_) {}
-                try { this.evtSrc && this.evtSrc.close(); } catch (_) {}
-                this.evtSrc = null;
+                closeThis();
                 this._clear();
                 this._hideCookingBar();
                 alert('Build failed: ' + err);
@@ -2372,8 +2392,7 @@ const cookingManager = {
             }
             // Transient disconnect (idle timeout / LB / network). The render keeps
             // running server-side — reconnect and replay instead of giving up.
-            try { this.evtSrc && this.evtSrc.close(); } catch (_) {}
-            this.evtSrc = null;
+            closeThis();
             if (this.jobId && !this.result) {
                 clearTimeout(this._reconnectTimer);
                 this._reconnectTimer = setTimeout(() => this._reattach(), 2500);

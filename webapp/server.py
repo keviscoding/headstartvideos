@@ -5417,13 +5417,13 @@ async def cleanup_history(request: Request, user: dict = Depends(require_user)):
 _HEYGEN_GUIDE = {
     "title": "Connect HeyGen",
     "steps": [
-        "Create a free account or sign in at app.heygen.com",
-        "Open Settings → API (or Account → API token) and create an API key",
+        "Sign in at app.heygen.com",
+        "Open the API page from the left sidebar (API / Developers) and create an API key",
         "Copy the key and paste it below, then Save & test",
-        "Optional: in HeyGen, copy an Avatar ID or Voice ID if you prefer pasting over the grid",
+        "Optional: copy an Avatar ID or Voice ID in HeyGen if you prefer pasting over the grid",
     ],
-    "docs_url": "https://docs.heygen.com/docs/quick-start",
-    "app_url": "https://app.heygen.com",
+    "docs_url": "https://developers.heygen.com/docs/api-key",
+    "app_url": "https://app.heygen.com/home?nav=API",
 }
 
 
@@ -5566,16 +5566,18 @@ def test_atlas_user_key(req: AtlasKeyRequest, user: dict = Depends(require_user)
 
 @app.post("/api/me/integrations/heygen")
 def save_heygen_key(req: HeyGenKeyRequest, user: dict = Depends(require_user)):
-    key = (req.api_key or "").strip()
+    from core.heygen import sanitize_api_key, test_api_key
+
+    key = sanitize_api_key(req.api_key or "")
     if not key:
         raise HTTPException(400, "Paste your HeyGen API key.")
     if req.test:
-        from core.heygen import test_api_key
-        if not test_api_key(key):
-            raise HTTPException(
-                400,
-                "HeyGen rejected that key. Double-check you copied the full API token from app.heygen.com → Settings → API.",
-            )
+        ok, detail = test_api_key(key)
+        if not ok:
+            raise HTTPException(400, detail or (
+                "HeyGen rejected that key. Generate a new one at "
+                "app.heygen.com → API (sidebar) and paste the full token."
+            ))
     set_user_heygen_key(user["id"], key)
     track(user["id"], "heygen_connected", {})
     return {"ok": True, "heygen": user_heygen_status(user["id"])}
@@ -5589,12 +5591,13 @@ async def delete_heygen_key(user: dict = Depends(require_user)):
 
 @app.post("/api/me/integrations/heygen/test")
 def test_heygen_key(req: HeyGenKeyRequest, user: dict = Depends(require_user)):
-    from core.heygen import test_api_key
-    key = (req.api_key or "").strip() or (get_user_heygen_key(user["id"]) or "")
+    from core.heygen import sanitize_api_key, test_api_key
+
+    key = sanitize_api_key(req.api_key or "") or (get_user_heygen_key(user["id"]) or "")
     if not key:
         return {"ok": False, "error": "No HeyGen key to test. Paste one first."}
-    ok = test_api_key(key)
-    return {"ok": ok, "error": "" if ok else "HeyGen rejected that key."}
+    ok, detail = test_api_key(key)
+    return {"ok": ok, "error": "" if ok else (detail or "HeyGen rejected that key.")}
 
 
 def _user_heygen_or_400(user: dict) -> str:
@@ -5754,9 +5757,11 @@ async def test_key(req: KeyTestRequest, admin: dict = Depends(require_admin)):
             return {"ok": r.status_code == 200}
 
         elif req.key_name == "heygen":
-            import httpx
-            r = httpx.get("https://api.heygen.com/v2/avatars", headers={"x-api-key": key_val}, timeout=10)
-            return {"ok": r.status_code == 200}
+            from core.heygen import test_api_key
+            ok, detail = test_api_key(key_val)
+            if not ok:
+                return {"ok": False, "error": detail or "HeyGen rejected that key."}
+            return {"ok": True}
 
         elif req.key_name == "atlascloud":
             import httpx

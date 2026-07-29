@@ -25,8 +25,23 @@ class AvatarVideo:
     error: str = ""
 
 
+def sanitize_api_key(raw: str) -> str:
+    """Strip paste junk (Bearer prefix, quotes, zero-width chars, whitespace)."""
+    key = (raw or "").strip()
+    for ch in ("\u200b", "\u200c", "\u200d", "\ufeff", "\xa0"):
+        key = key.replace(ch, "")
+    key = key.strip().strip('"').strip("'")
+    if key.lower().startswith("bearer "):
+        key = key[7:].strip()
+    if key.lower().startswith("x-api-key:"):
+        key = key.split(":", 1)[1].strip()
+    # Collapse accidental newlines/spaces from password managers / chat apps
+    key = "".join(key.split())
+    return key
+
+
 def _resolve_key(api_key: str | None = None) -> str:
-    key = (api_key or HEYGEN_KEY or "").strip()
+    key = sanitize_api_key(api_key or HEYGEN_KEY or "")
     if not key:
         raise ValueError(
             "HeyGen API key required — add yours in Settings → Integrations, "
@@ -40,6 +55,58 @@ def _headers(api_key: str | None = None) -> dict:
         "X-Api-Key": _resolve_key(api_key),
         "Content-Type": "application/json",
     }
+
+
+def test_api_key(api_key: str) -> tuple[bool, str]:
+    """
+    Validate a HeyGen API key.
+
+    Uses the official account probe first (`/v3/users/me`, then legacy
+    `/v1/user/me`). Listing avatars used to be the only check, which false-
+    failed when the key was valid but the avatars call timed out or the
+    account had API access without avatar catalog permissions.
+    Returns (ok, error_message).
+    """
+    key = sanitize_api_key(api_key)
+    if not key:
+        return False, "Paste your HeyGen API key first."
+    if len(key) < 16:
+        return False, "That doesn’t look like a full HeyGen API key. Paste the whole token."
+
+    headers = {"X-Api-Key": key, "Content-Type": "application/json"}
+    probes = (
+        f"{HEYGEN_API}/v3/users/me",
+        f"{HEYGEN_API}/v1/user/me",
+        f"{HEYGEN_API}/v2/avatars",
+    )
+    last_err = "HeyGen rejected that key."
+    for url in probes:
+        try:
+            resp = httpx.get(url, headers=headers, timeout=25)
+        except httpx.TimeoutException:
+            last_err = "HeyGen timed out while checking the key. Try again in a moment."
+            continue
+        except Exception as e:
+            last_err = f"Could not reach HeyGen ({e}). Try again."
+            continue
+
+        body = (resp.text or "").strip()
+        snippet = body.replace("\n", " ")[:180]
+        if resp.status_code in (401, 403):
+            return False, (
+                "HeyGen says this API key is invalid or revoked. "
+                "Generate a new key at app.heygen.com → API (sidebar), then paste it here."
+            )
+        if resp.status_code == 200:
+            return True, ""
+        # 429 / 5xx: key might still be fine — don't hard-fail on rate limits
+        if resp.status_code == 429:
+            return True, "Key looks accepted, but HeyGen is rate-limiting right now."
+        if resp.status_code >= 500:
+            last_err = f"HeyGen is having trouble ({resp.status_code}). Try again shortly."
+            continue
+        last_err = snippet or f"HeyGen returned HTTP {resp.status_code}."
+    return False, last_err
 
 
 def list_avatars(api_key: str | None = None) -> list[dict]:
@@ -86,15 +153,6 @@ def list_voices(api_key: str | None = None) -> list[dict]:
         for v in voices
         if v.get("voice_id")
     ]
-
-
-def test_api_key(api_key: str) -> bool:
-    """Return True if the key can list avatars."""
-    try:
-        list_avatars(api_key=api_key)
-        return True
-    except Exception:
-        return False
 
 
 def _chunk_script_for_heygen(script_text: str, max_chars: int = HEYGEN_MAX_CHARS_PER_SCENE) -> list[str]:
