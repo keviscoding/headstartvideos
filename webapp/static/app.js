@@ -28,16 +28,6 @@ const state = {
     voiceId: '',
     avatarName: '',
     heygenVoiceName: '',
-    heygenBackground: '#0b1220',
-    heygenAspectRatio: '16:9',
-    heygenResolution: '1080p',
-    heygenCaption: false,
-    heygenVoiceSpeed: 1,
-    heygenVoicePitch: 0,
-    heygenEngine: '',
-    heygenMotionPrompt: '',
-    heygenExpressiveness: '',
-    heygenScenes: [],
 };
 
 let previewAudio = null;
@@ -651,10 +641,6 @@ function resetPipeline() {
         thumbnailPath: '', thumbnailUrl: '', thumbnailRefs: [], videoUrl: '', videoPath: '',
         voiceMode: 'generate', uploadedVoPath: '',
         avatarId: '', voiceId: '', avatarName: '', heygenVoiceName: '',
-        heygenBackground: '#0b1220', heygenAspectRatio: '16:9', heygenResolution: '1080p',
-        heygenCaption: false, heygenVoiceSpeed: 1, heygenVoicePitch: 0,
-        heygenEngine: '', heygenMotionPrompt: '', heygenExpressiveness: '',
-        heygenScenes: [],
     });
     document.getElementById('topic-input').value = '';
     document.getElementById('custom-title').value = '';
@@ -1824,27 +1810,6 @@ async function handleVoiceNext() {
             setLoading(btn, false);
             return;
         }
-        onHeygenPresentationChange();
-        const scenes = (state.heygenScenes || []).filter(s => (s.script || '').trim() || (s.image_url || '').trim());
-        if (!scenes.length) {
-            alert('Add at least one scene with narration (or re-split from your script).');
-            setLoading(btn, false);
-            return;
-        }
-        for (let i = 0; i < scenes.length; i++) {
-            const s = scenes[i];
-            if ((s.type || 'avatar') === 'image' && !(s.image_url || '').trim()) {
-                alert(`Scene ${i + 1} is an image scene — paste a public image URL.`);
-                setLoading(btn, false);
-                return;
-            }
-            if ((s.type || 'avatar') === 'avatar' && !(s.script || '').trim()) {
-                alert(`Scene ${i + 1} needs narration text.`);
-                setLoading(btn, false);
-                return;
-            }
-        }
-        state.heygenScenes = scenes;
         state.voiceoverPath = '';
         state.voiceoverUrl = '';
         resetThumbnailStep();
@@ -2244,16 +2209,6 @@ const cookingManager = {
                     avatar_id: state.avatarId || '',
                     voice_id: state.voiceId || '',
                     image_quality: supportsImageQualityPicker() ? (state.imageQuality || 'standard') : 'standard',
-                    heygen_background: state.heygenBackground || '',
-                    heygen_aspect_ratio: state.heygenAspectRatio || '16:9',
-                    heygen_resolution: state.heygenResolution || '1080p',
-                    heygen_caption: !!state.heygenCaption,
-                    heygen_voice_speed: state.heygenVoiceSpeed,
-                    heygen_voice_pitch: state.heygenVoicePitch,
-                    heygen_engine: state.heygenEngine || '',
-                    heygen_motion_prompt: state.heygenMotionPrompt || '',
-                    heygen_expressiveness: state.heygenExpressiveness || '',
-                    heygen_scenes: Array.isArray(state.heygenScenes) ? state.heygenScenes : [],
                 }),
             });
             const data = await readJson(res, {});
@@ -4912,168 +4867,7 @@ async function setupAvatarStep() {
     }
     needKey?.classList.add('hidden');
     picker?.classList.remove('hidden');
-    syncHeygenPresentationControls();
-    if (!state.heygenScenes?.length) resetHeygenScenesFromScript();
-    else renderHeygenScenes();
     await Promise.all([loadHeygenAvatars(), loadHeygenVoices()]);
-}
-
-function syncHeygenPresentationControls() {
-    const bg = document.getElementById('heygen-bg-color');
-    const hex = document.getElementById('heygen-bg-hex');
-    const aspect = document.getElementById('heygen-aspect');
-    const res = document.getElementById('heygen-resolution');
-    const engine = document.getElementById('heygen-engine');
-    const speed = document.getElementById('heygen-voice-speed');
-    const pitch = document.getElementById('heygen-voice-pitch');
-    const caption = document.getElementById('heygen-caption');
-    const motion = document.getElementById('heygen-motion-prompt');
-    const expr = document.getElementById('heygen-expressiveness');
-    const color = state.heygenBackground || '#0b1220';
-    if (bg) bg.value = /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#0b1220';
-    if (hex) hex.value = color;
-    if (aspect) aspect.value = state.heygenAspectRatio || '16:9';
-    if (res) res.value = state.heygenResolution || '1080p';
-    if (engine) engine.value = state.heygenEngine || '';
-    if (speed) {
-        speed.value = String(state.heygenVoiceSpeed ?? 1);
-        const lab = document.getElementById('heygen-voice-speed-val');
-        if (lab) lab.textContent = `${Number(speed.value).toFixed(2)}×`;
-    }
-    if (pitch) {
-        pitch.value = String(state.heygenVoicePitch ?? 0);
-        const lab = document.getElementById('heygen-voice-pitch-val');
-        if (lab) lab.textContent = String(pitch.value);
-    }
-    if (caption) caption.checked = !!state.heygenCaption;
-    if (motion) motion.value = state.heygenMotionPrompt || '';
-    if (expr) expr.value = state.heygenExpressiveness || '';
-}
-
-function onHeygenPresentationChange() {
-    const bg = document.getElementById('heygen-bg-color')?.value;
-    const hex = document.getElementById('heygen-bg-hex')?.value?.trim();
-    state.heygenBackground = (hex || bg || '#0b1220').trim();
-    const picker = document.getElementById('heygen-bg-color');
-    if (picker && /^#[0-9a-fA-F]{6}$/.test(state.heygenBackground)) picker.value = state.heygenBackground;
-    state.heygenAspectRatio = document.getElementById('heygen-aspect')?.value || '16:9';
-    state.heygenResolution = document.getElementById('heygen-resolution')?.value || '1080p';
-    state.heygenEngine = document.getElementById('heygen-engine')?.value || '';
-    state.heygenCaption = !!document.getElementById('heygen-caption')?.checked;
-    state.heygenMotionPrompt = document.getElementById('heygen-motion-prompt')?.value?.trim() || '';
-    state.heygenExpressiveness = document.getElementById('heygen-expressiveness')?.value || '';
-    persistPipelineState();
-}
-
-function onHeygenBgHex(val) {
-    const v = (val || '').trim();
-    state.heygenBackground = v;
-    if (/^#[0-9a-fA-F]{6}$/.test(v)) {
-        const picker = document.getElementById('heygen-bg-color');
-        if (picker) picker.value = v;
-    }
-    persistPipelineState();
-}
-
-function onHeygenVoiceSpeed(val) {
-    state.heygenVoiceSpeed = Number(val) || 1;
-    const lab = document.getElementById('heygen-voice-speed-val');
-    if (lab) lab.textContent = `${state.heygenVoiceSpeed.toFixed(2)}×`;
-    persistPipelineState();
-}
-
-function onHeygenVoicePitch(val) {
-    state.heygenVoicePitch = Number(val) || 0;
-    const lab = document.getElementById('heygen-voice-pitch-val');
-    if (lab) lab.textContent = String(state.heygenVoicePitch);
-    persistPipelineState();
-}
-
-function _splitScriptIntoHeygenScenes(script, maxChars = 4800, maxScenes = 50) {
-    const text = String(script || '').trim();
-    if (!text) return [{ type: 'avatar', script: '', image_url: '' }];
-    const paras = text.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
-    const parts = paras.length > 1 ? paras : text.split(/(?<=[.!?])\s+/).map(p => p.trim()).filter(Boolean);
-    const chunks = [];
-    let buf = '';
-    for (const part of parts) {
-        if (part.length > maxChars) {
-            if (buf) { chunks.push(buf); buf = ''; }
-            for (let i = 0; i < part.length; i += maxChars) chunks.push(part.slice(i, i + maxChars));
-            continue;
-        }
-        const candidate = buf ? `${buf} ${part}` : part;
-        if (candidate.length <= maxChars) buf = candidate;
-        else { chunks.push(buf); buf = part; }
-    }
-    if (buf) chunks.push(buf);
-    return chunks.slice(0, maxScenes).map(s => ({ type: 'avatar', script: s, image_url: '' }));
-}
-
-function resetHeygenScenesFromScript() {
-    state.heygenScenes = _splitScriptIntoHeygenScenes(state.script || document.getElementById('script-editor')?.value || '');
-    renderHeygenScenes();
-    persistPipelineState();
-}
-
-function addHeygenScene() {
-    if (!Array.isArray(state.heygenScenes)) state.heygenScenes = [];
-    if (state.heygenScenes.length >= 50) {
-        alert('HeyGen allows at most 50 scenes.');
-        return;
-    }
-    state.heygenScenes.push({ type: 'avatar', script: '', image_url: '' });
-    renderHeygenScenes();
-    persistPipelineState();
-}
-
-function removeHeygenScene(idx) {
-    if (!Array.isArray(state.heygenScenes)) return;
-    state.heygenScenes.splice(idx, 1);
-    if (!state.heygenScenes.length) state.heygenScenes = [{ type: 'avatar', script: '', image_url: '' }];
-    renderHeygenScenes();
-    persistPipelineState();
-}
-
-function updateHeygenScene(idx, field, value) {
-    if (!Array.isArray(state.heygenScenes) || !state.heygenScenes[idx]) return;
-    state.heygenScenes[idx][field] = value;
-    if (field === 'type') renderHeygenScenes();
-    persistPipelineState();
-}
-
-function renderHeygenScenes() {
-    const list = document.getElementById('heygen-scenes-list');
-    if (!list) return;
-    const scenes = Array.isArray(state.heygenScenes) ? state.heygenScenes : [];
-    if (!scenes.length) {
-        list.innerHTML = '<p style="font-size:13px;color:var(--app-ink-3);">No scenes yet — click Re-split from script.</p>';
-        return;
-    }
-    list.innerHTML = scenes.map((s, i) => {
-        const type = s.type || 'avatar';
-        const imgField = type === 'image'
-            ? `<label class="cr-label" style="margin-top:8px;">Image URL</label>
-               <input type="url" class="cr-input" value="${esc(s.image_url || '')}" placeholder="https://…"
-                 oninput="updateHeygenScene(${i}, 'image_url', this.value)">`
-            : '';
-        return `<div class="cr-surface" style="padding:12px;border:1px solid var(--app-border);border-radius:10px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">
-                <span style="font-size:12px;font-weight:600;color:var(--app-ink-3);">Scene ${i + 1}</span>
-                <div style="display:flex;gap:8px;align-items:center;">
-                    <select class="cr-input" style="width:auto;padding:4px 8px;font-size:12px;"
-                        onchange="updateHeygenScene(${i}, 'type', this.value)">
-                        <option value="avatar" ${type === 'avatar' ? 'selected' : ''}>Avatar</option>
-                        <option value="image" ${type === 'image' ? 'selected' : ''}>Image + narration</option>
-                    </select>
-                    <button type="button" class="btn-ghost" style="font-size:12px;padding:4px 8px;" onclick="removeHeygenScene(${i})">Remove</button>
-                </div>
-            </div>
-            <textarea class="cr-textarea" rows="3" placeholder="Narration for this scene…"
-                oninput="updateHeygenScene(${i}, 'script', this.value)">${esc(s.script || '')}</textarea>
-            ${imgField}
-        </div>`;
-    }).join('');
 }
 
 async function loadHeygenAvatars() {
@@ -5332,16 +5126,6 @@ function persistPipelineState() {
             voiceId: state.voiceId,
             avatarName: state.avatarName,
             heygenVoiceName: state.heygenVoiceName,
-            heygenBackground: state.heygenBackground,
-            heygenAspectRatio: state.heygenAspectRatio,
-            heygenResolution: state.heygenResolution,
-            heygenCaption: state.heygenCaption,
-            heygenVoiceSpeed: state.heygenVoiceSpeed,
-            heygenVoicePitch: state.heygenVoicePitch,
-            heygenEngine: state.heygenEngine,
-            heygenMotionPrompt: state.heygenMotionPrompt,
-            heygenExpressiveness: state.heygenExpressiveness,
-            heygenScenes: state.heygenScenes,
             sbJobId: (typeof _sbJobId !== 'undefined' && _sbJobId) ? _sbJobId : null,
             sbPackMode: (typeof _sbPackMode !== 'undefined' && _sbPackMode) ? _sbPackMode : null,
             sbAssembleJobId: (typeof _sbAssembleJobId !== 'undefined' && _sbAssembleJobId) ? _sbAssembleJobId : null,
@@ -5384,16 +5168,6 @@ function restorePipelineState() {
         voiceId: draft.voiceId || '',
         avatarName: draft.avatarName || '',
         heygenVoiceName: draft.heygenVoiceName || '',
-        heygenBackground: draft.heygenBackground || '#0b1220',
-        heygenAspectRatio: draft.heygenAspectRatio || '16:9',
-        heygenResolution: draft.heygenResolution || '1080p',
-        heygenCaption: !!draft.heygenCaption,
-        heygenVoiceSpeed: draft.heygenVoiceSpeed ?? 1,
-        heygenVoicePitch: draft.heygenVoicePitch ?? 0,
-        heygenEngine: draft.heygenEngine || '',
-        heygenMotionPrompt: draft.heygenMotionPrompt || '',
-        heygenExpressiveness: draft.heygenExpressiveness || '',
-        heygenScenes: Array.isArray(draft.heygenScenes) ? draft.heygenScenes : [],
     });
 
     // Rehydrate UI fields

@@ -321,13 +321,6 @@ def run_cook_job(
                     except Exception as e:
                         print(f"[cook] persist heygen_video_id failed: {e}")
 
-                bg = req_data.get("heygen_background") or req_data.get("background")
-                scenes = req_data.get("heygen_scenes") or req_data.get("scenes")
-                if isinstance(scenes, str):
-                    try:
-                        scenes = json.loads(scenes)
-                    except Exception:
-                        scenes = None
                 result = run_avatar_pipeline(
                     script=script,
                     avatar_id=avatar_id,
@@ -336,17 +329,6 @@ def run_cook_job(
                     output_name="pipeline_video.mp4",
                     progress_callback=on_progress,
                     heygen_api_key=heygen_key,
-                    background=bg,
-                    scenes=scenes if isinstance(scenes, list) else None,
-                    aspect_ratio=(req_data.get("heygen_aspect_ratio") or "16:9"),
-                    resolution=(req_data.get("heygen_resolution") or "1080p"),
-                    caption=bool(req_data.get("heygen_caption")),
-                    voice_speed=req_data.get("heygen_voice_speed"),
-                    voice_pitch=req_data.get("heygen_voice_pitch"),
-                    engine=(req_data.get("heygen_engine") or None),
-                    motion_prompt=(req_data.get("heygen_motion_prompt") or None),
-                    expressiveness=(req_data.get("heygen_expressiveness") or None),
-                    title=(job.get("title") or req_data.get("title") or None),
                     on_heygen_created=_persist_heygen_id,
                 )
             else:

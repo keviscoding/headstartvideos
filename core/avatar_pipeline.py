@@ -2,9 +2,6 @@
 Avatar pipeline: orchestrates the avatar + illustration B-roll recipe.
 Flow: script -> segment -> HeyGen avatar -> illustration gen/search ->
       Ken Burns -> interleave avatar & illustration clips -> assemble.
-
-When the user supplies HeyGen Studio image/video scenes, we skip the
-illustration interleave and use the HeyGen MP4 as the final output.
 """
 
 from __future__ import annotations
@@ -24,7 +21,6 @@ from core.heygen import (
     create_avatar_video,
     wait_for_completion,
     download_video,
-    scenes_need_studio_only,
 )
 from config import OUTPUT_DIR, VIDEO_FPS
 
@@ -69,20 +65,10 @@ def run_avatar_pipeline(
     avatar_ratio: float = 0.5,
     use_ai_images: bool = True,
     niche_profile: dict | None = None,
-    background: dict | str | None = None,
+    background: dict | None = None,
     progress_callback=None,
     heygen_api_key: str | None = None,
     *,
-    scenes: list[dict] | None = None,
-    aspect_ratio: str = "16:9",
-    resolution: str = "1080p",
-    caption: bool = False,
-    voice_speed: float | None = None,
-    voice_pitch: float | None = None,
-    engine: str | None = None,
-    motion_prompt: str | None = None,
-    expressiveness: str | None = None,
-    title: str | None = None,
     on_heygen_created=None,
 ) -> dict:
     """
@@ -107,13 +93,8 @@ def run_avatar_pipeline(
             progress_callback(msg)
         print(f"[avatar_pipeline] {msg}")
 
-    studio_only = scenes_need_studio_only(scenes)
-
     # --- Step 1: Generate avatar video via HeyGen ---
-    _log(
-        "Step 1: Submitting to HeyGen"
-        + (" (Studio scenes)…" if studio_only or scenes else "…")
-    )
+    _log("Step 1/7: Generating avatar video via HeyGen...")
     _log("HeyGen often needs 15–45+ minutes for longer scripts — hanging on.")
     t0 = time.time()
     avatar_result = create_avatar_video(
@@ -121,17 +102,8 @@ def run_avatar_pipeline(
         avatar_id=avatar_id,
         voice_id=voice_id,
         background=background,
+        caption=False,
         api_key=heygen_api_key,
-        scenes=scenes,
-        aspect_ratio=aspect_ratio,
-        resolution=resolution,
-        caption=caption,
-        voice_speed=voice_speed,
-        voice_pitch=voice_pitch,
-        engine=engine,
-        motion_prompt=motion_prompt,
-        expressiveness=expressiveness,
-        title=title,
     )
     if avatar_result.status == "failed":
         raise RuntimeError(f"HeyGen video creation failed: {avatar_result.error}")
@@ -152,23 +124,6 @@ def run_avatar_pipeline(
     download_video(completed.video_url, avatar_path)
     timings["heygen"] = time.time() - t0
     _log(f"  -> Avatar video ready ({timings['heygen']:.1f}s)")
-
-    # Studio image/video scenes: HeyGen already composed the full piece.
-    if studio_only:
-        import shutil
-        output_path = str(job_dir / output_name)
-        shutil.copy2(avatar_path, output_path)
-        _log("Studio-only export — skipping ChannelRecipe illustration interleave.")
-        return {
-            "output_path": output_path,
-            "job_dir": str(job_dir),
-            "slots": [],
-            "avatar_slots": 0,
-            "illustration_slots": 0,
-            "timing": timings,
-            "heygen_video_id": avatar_result.video_id,
-            "studio_only": True,
-        }
 
     # --- Step 2: Segment script ---
     _log("Step 2/7: Segmenting script...")
@@ -356,5 +311,4 @@ def run_avatar_pipeline(
         "illustration_slots": len(illustration_slots),
         "timing": timings,
         "heygen_video_id": avatar_result.video_id,
-        "studio_only": False,
     }
