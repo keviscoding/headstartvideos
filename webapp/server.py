@@ -47,6 +47,29 @@ if config.SENTRY_DSN:
         from sentry_sdk.integrations.starlette import StarletteIntegration
         def _sentry_before_send(event, hint):
             """Drop expected client/user errors so Sentry stays signal-heavy."""
+            # Synthetic DSN spam (security scanners probing public ingest)
+            try:
+                msg = str(event.get("message") or "")
+                logger = str(event.get("logger") or "")
+                if logger == "security-test":
+                    return None
+                if "security test event" in msg.lower():
+                    return None
+                tags = event.get("tags") or {}
+                tag_items = (
+                    tags.items() if isinstance(tags, dict)
+                    else ((t[0], t[1]) for t in tags if isinstance(t, (list, tuple)) and len(t) >= 2)
+                )
+                for k, v in tag_items:
+                    if str(k) == "test" and "rate-limit" in str(v).lower():
+                        return None
+                    if str(k) == "logger" and str(v) == "security-test":
+                        return None
+                eid = str(event.get("event_id") or "")
+                if eid and set(eid) <= {"0"}:
+                    return None
+            except Exception:
+                pass
             exc_info = hint.get("exc_info")
             if exc_info:
                 exc = exc_info[1]

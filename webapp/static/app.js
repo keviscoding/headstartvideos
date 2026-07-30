@@ -181,14 +181,17 @@ async function initAnalytics() {
                     ],
                     beforeSend(event) {
                         try {
+                            const msg = String(event?.message || '');
+                            if (/security test event/i.test(msg)) return null;
+                            if (event?.logger === 'security-test') return null;
                             const values = event?.exception?.values || [];
                             for (const v of values) {
-                                const msg = String(v?.value || '');
+                                const vmsg = String(v?.value || '');
                                 const frames = (v?.stacktrace?.frames || [])
                                     .map(f => `${f?.filename || ''} ${f?.abs_path || ''}`)
                                     .join(' ');
-                                if (/nativeIframe/i.test(msg) || /has already been declared/i.test(msg)) return null;
-                                if (/reading ['\"]emit['\"]/i.test(msg)) return null;
+                                if (/nativeIframe/i.test(vmsg) || /has already been declared/i.test(vmsg)) return null;
+                                if (/reading ['\"]emit['\"]/i.test(vmsg)) return null;
                                 if (/chrome-extension:\/\//i.test(frames) || /moz-extension:\/\//i.test(frames)) return null;
                             }
                         } catch (_) {}
