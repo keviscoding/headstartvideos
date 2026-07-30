@@ -2131,6 +2131,33 @@ def count_niche_channels(
     return int(d.get("n") or d.get("count") or list(d.values())[0] or 0)
 
 
+def list_niche_keywords(*, limit: int = 40) -> list[dict]:
+    """Distinct source_keyword values present in niche_channels (MCP list_niches)."""
+    limit = max(1, min(int(limit or 40), 100))
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            _q(
+                "SELECT TRIM(source_keyword) AS keyword, COUNT(*) AS channel_count "
+                "FROM niche_channels "
+                "WHERE active = 1 AND TRIM(COALESCE(source_keyword, '')) != '' "
+                "GROUP BY TRIM(source_keyword) "
+                "ORDER BY channel_count DESC, keyword ASC "
+                "LIMIT ?"
+            ),
+            (limit,),
+        )
+        rows = cur.fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        out.append({
+            "niche": (d.get("keyword") or "").strip(),
+            "channel_count": int(d.get("channel_count") or 0),
+        })
+    return out
+
+
 def create_niche_hunt_run(
     *,
     job_id: str,

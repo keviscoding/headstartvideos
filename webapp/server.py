@@ -406,6 +406,36 @@ async def _startup_tasks():
 
     asyncio.create_task(_periodic_cook_sweeper())
 
+    async def _ensure_gta_niche_seed():
+        """If prod library has no GTA pack, seed it once in the background."""
+        await asyncio.sleep(3)
+
+        def _run() -> str:
+            try:
+                from webapp.database import count_niche_channels
+                n = count_niche_channels(q="gta 6", active_only=False)
+                if n >= 5:
+                    return f"gta pack already present ({n})"
+                if not config.YOUTUBE_API_KEY:
+                    return "skip seed — YOUTUBE_API_KEY missing"
+                from core.niche_seed import seed_gta6_into_db
+                out = seed_gta6_into_db(api_key=config.YOUTUBE_API_KEY)
+                return (
+                    f"seeded upserted={out.get('upserted')} "
+                    f"enriched={(out.get('meta') or {}).get('enriched')} "
+                    f"errors={len(out.get('errors') or [])}"
+                )
+            except Exception as e:
+                return f"seed failed: {e}"
+
+        try:
+            msg = await asyncio.to_thread(_run)
+            print(f"[niche_seed] startup: {msg}")
+        except Exception as e:
+            print(f"[niche_seed] startup task failed: {e}")
+
+    asyncio.create_task(_ensure_gta_niche_seed())
+
 _startup_fn = _startup_tasks
 
 from webapp.database import (

@@ -8,6 +8,7 @@ Combined into the main FastAPI process at domain root so OAuth discovery
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections import defaultdict
 from typing import Any
@@ -29,13 +30,14 @@ mcp = MCPServer(
         "ChannelRecipe helps YouTube cash-cow creators find live niche subjects, "
         "write scripts, and make thumbnails. Free tier is tutorial-thin — "
         "upgrade at channelrecipe.com for volume. "
-        "On Claude.ai, connect via Settings → Connectors. "
-        "On Claude Desktop, use the JSON from ChannelRecipe Settings → Claude / MCP."
+        "Start with list_niches to see what is loaded, then list_niche_subjects / "
+        "list_niche_channels, then generate_script / generate_thumbnail. "
+        "Auth is the Claude connector OAuth session (or Desktop Bearer key) — "
+        "do not ask the user for an api_key tool argument."
     ),
     website_url="https://channelrecipe.com",
     auth_server_provider=oauth_provider,
     auth=AuthSettings(
-        # Pass plain strings so issuer has no trailing slash (RFC 8414 exact match).
         issuer_url=public_base_url(),  # type: ignore[arg-type]
         resource_server_url=mcp_resource_url(),  # type: ignore[arg-type]
         client_registration_options=ClientRegistrationOptions(
@@ -50,6 +52,16 @@ mcp = MCPServer(
 _RATE: dict[str, list[float]] = defaultdict(list)
 _RATE_MAX = 30
 _RATE_WINDOW = 60.0
+
+THUMB_STYLES = (
+    "bold_dramatic",
+    "clean_minimal",
+    "high_contrast_face",
+    "gaming_neon",
+    "documentary",
+)
+
+_PRELOADED_NICHE = "gta 6"
 
 
 def _client_bucket(extra: str = "") -> str:
@@ -86,20 +98,8 @@ def _key_from_headers(headers: Any) -> str:
     return ""
 
 
-def _resolve_api_key(api_key: str | None = "", ctx: Context | None = None) -> str:
-    key = (api_key or "").strip()
-    if key:
-        return key
-    if ctx is not None:
-        try:
-            return _key_from_headers(ctx.headers)
-        except Exception:
-            return ""
-    return ""
-
-
-def _user_from_request(api_key: str | None = "", ctx: Context | None = None) -> dict | None:
-    """Resolve user from OAuth middleware, MCP API key, or tool arg."""
+def _user_from_request(ctx: Context | None = None) -> dict | None:
+    """Resolve user from OAuth middleware or Authorization Bearer MCP key."""
     from webapp.database import get_user_by_id, get_user_by_mcp_api_key
 
     try:
@@ -116,64 +116,158 @@ def _user_from_request(api_key: str | None = "", ctx: Context | None = None) -> 
     except Exception:
         pass
 
-    key = _resolve_api_key(api_key, ctx)
-    if not key:
-        return None
+    key = ""
+    if ctx is not None:
+        try:
+            key = _key_from_headers(ctx.headers)
+        except Exception:
+            key = ""
     if key.startswith("cr_mcp_"):
         return get_user_by_mcp_api_key(key)
-    return get_user_by_mcp_api_key(key)
+    return get_user_by_mcp_api_key(key) if key else None
 
 
 def _plan_of(user: dict | None) -> str:
     return (user or {}).get("plan") or "free"
 
 
+def _normalize_niche(niche: str) -> str:
+    raw = (niche or "").strip().lower()
+    if not raw:
+        return _PRELOADED_NICHE
+    # gta6 / gta-6 / GTA 6 → gta 6
+    if re.fullmatch(r"gta[\s_\-]*6", raw) or re.sub(r"[\s_\-]+", "", raw) == "gta6":
+        return _PRELOADED_NICHE
+    return raw
+
+
 def _channels_for_niche(niche: str, *, limit: int) -> list[dict]:
     from webapp.database import list_niche_channels
-    q = (niche or "gta 6").strip() or "gta 6"
+    q = _normalize_niche(niche)
     return list_niche_channels(sort="recent_revenue", limit=limit, offset=0, q=q)
 
 
-@mcp.tool()
-def list_niche_subjects(
-    niche: str = "gta 6",
-    api_key: str = "",
-    ctx: Context | None = None,
-) -> str:
-    """
-    List subjects currently pulling views in a niche (e.g. "gta 6").
+def _library_stats() -> dict[str, Any]:
+    from webapp.database import count_niche_channels, list_niche_keywords
 
-    Uses ChannelRecipe's live niche database (not training data). Free accounts
-    get a short tutorial list; paid plans get the full ranked set.
+    total = count_niche_channels(active_only=True)
+    niches = list_niche_keywords(limit=40)
+    return {"total_channels": total, "niches": niches}
+
+
+def _empty_niche_payload(niche: str, *, plan: str) -> dict[str, Any]:
+    """Distinguish empty library vs unknown niche vs known-but-empty."""
+    stats = _library_stats()
+    requested = _normalize_niche(niche)
+    known = {(n.get("niche") or "").lower() for n in stats["niches"]}
+    payload: dict[str, Any] = {
+        "niche": requested,
+        "subjects": [],
+        "channels": [],
+        "plan": plan,
+        "library_channels": stats["total_channels"],
+        "available_niches": [n.get("niche") for n in stats["niches"]],
+    }
+    if stats["total_channels"] <= 0:
+        payload["status"] = "empty_library"
+        payload["note"] = (
+            "ChannelRecipe niche library is empty in this environment — nothing is seeded yet. "
+            "Ops: wait for startup GTA seed or POST /api/internal/niche/seed-gta6. "
+            "Call list_niches after seed completes."
+        )
+    elif requested in known:
+        payload["status"] = "niche_empty"
+        payload["note"] = (
+            f"Niche '{requested}' is known but has no matching channels right now. "
+            "Try another niche from available_niches."
+        )
+    else:
+        payload["status"] = "niche_not_found"
+        if stats["niches"]:
+            payload["note"] = (
+                f"No niche matching '{requested}'. "
+                f"Call list_niches — loaded niches include: "
+                + ", ".join(n.get("niche") for n in stats["niches"][:8])
+            )
+        else:
+            payload["note"] = f"No niche matching '{requested}'."
+        # Only suggest GTA when it is actually loaded and the user didn't already ask for it
+        if _PRELOADED_NICHE in known and requested != _PRELOADED_NICHE:
+            payload["hint"] = f"Try niche='{_PRELOADED_NICHE}'."
+    payload["upgrade_url"] = billing.UPGRADE_URL
+    return payload
+
+
+@mcp.tool()
+def list_niches(ctx: Context | None = None) -> str:
     """
-    user = _user_from_request(api_key, ctx)
-    bucket = str((user or {}).get("id") or _resolve_api_key(api_key, ctx) or "anon")
+    List niches actually present in ChannelRecipe's live niche database.
+
+    Call this first. If it returns empty, the library is unseeded — do not guess
+    niche strings or invent research from training data.
+    """
+    user = _user_from_request(ctx)
+    bucket = str((user or {}).get("id") or "anon-niches")
     if not _rate_ok(_client_bucket(bucket)):
         return json.dumps({
             "error": "Rate limit — wait a minute and try again.",
             "upgrade": billing.UPGRADE_CTA,
         })
     plan = _plan_of(user)
+    stats = _library_stats()
+    limit = billing.discovery_channel_limit(plan)
+    niches = stats["niches"][:limit]
+    free_capped = not billing.is_paid_plan(plan)
+    payload = billing.with_upgrade_hint(
+        {
+            "niches": niches,
+            "library_channels": stats["total_channels"],
+            "plan": plan,
+            "status": "ok" if niches else "empty_library",
+        },
+        free_capped=free_capped,
+    )
+    if not niches:
+        payload["note"] = (
+            "Niche library is empty — seed has not run in this environment yet."
+        )
+    return json.dumps(payload, default=str)
+
+
+@mcp.tool()
+def list_niche_subjects(
+    niche: str = "gta 6",
+    ctx: Context | None = None,
+) -> str:
+    """
+    List subjects currently pulling views in a niche (e.g. "gta 6").
+
+    Uses ChannelRecipe's live niche database (not training data). Prefer
+    list_niches first so you pass a niche that exists. Free accounts get a
+    short tutorial list; paid plans get the full ranked set.
+    """
+    user = _user_from_request(ctx)
+    bucket = str((user or {}).get("id") or "anon")
+    if not _rate_ok(_client_bucket(bucket)):
+        return json.dumps({
+            "error": "Rate limit — wait a minute and try again.",
+            "upgrade": billing.UPGRADE_CTA,
+        })
+    plan = _plan_of(user)
+    requested = _normalize_niche(niche)
     subj_limit = billing.discovery_subject_limit(plan)
     ch_limit = billing.discovery_channel_limit(plan)
-    channels = _channels_for_niche(niche, limit=max(ch_limit, 14))
+    channels = _channels_for_niche(requested, limit=max(ch_limit, 14))
     if not channels:
-        return json.dumps({
-            "niche": niche,
-            "subjects": [],
-            "note": (
-                "No channels in the database for that niche yet. "
-                "GTA 6 is preloaded — try niche='gta 6'."
-            ),
-            "upgrade_url": billing.UPGRADE_URL,
-        })
+        return json.dumps(_empty_niche_payload(requested, plan=plan), default=str)
 
     from core.niche_subjects import list_subjects_from_channels
     subjects = list_subjects_from_channels(channels, limit=subj_limit)
     free_capped = not billing.is_paid_plan(plan)
     payload = billing.with_upgrade_hint(
         {
-            "niche": niche,
+            "status": "ok",
+            "niche": requested,
             "subjects": subjects,
             "channels_scanned": len(channels),
             "limit": subj_limit,
@@ -196,23 +290,25 @@ def list_niche_subjects(
 @mcp.tool()
 def list_niche_channels(
     niche: str = "gta 6",
-    api_key: str = "",
     ctx: Context | None = None,
 ) -> str:
     """
     List example channels in a niche from ChannelRecipe's database,
     with recent average views and recent video titles.
     """
-    user = _user_from_request(api_key, ctx)
-    bucket = str((user or {}).get("id") or _resolve_api_key(api_key, ctx) or "anon-ch")
+    user = _user_from_request(ctx)
+    bucket = str((user or {}).get("id") or "anon-ch")
     if not _rate_ok(_client_bucket(bucket)):
         return json.dumps({
             "error": "Rate limit — wait a minute and try again.",
             "upgrade": billing.UPGRADE_CTA,
         })
     plan = _plan_of(user)
+    requested = _normalize_niche(niche)
     limit = billing.discovery_channel_limit(plan)
-    rows = _channels_for_niche(niche, limit=limit)
+    rows = _channels_for_niche(requested, limit=limit)
+    if not rows:
+        return json.dumps(_empty_niche_payload(requested, plan=plan), default=str)
     free_capped = not billing.is_paid_plan(plan)
     cards = []
     for ch in rows:
@@ -227,7 +323,8 @@ def list_niche_channels(
         })
     payload = billing.with_upgrade_hint(
         {
-            "niche": niche,
+            "status": "ok",
+            "niche": requested,
             "channels": cards,
             "limit": limit,
             "plan": plan,
@@ -247,18 +344,18 @@ def generate_script(
     title: str,
     video_idea: str = "",
     target_minutes: int = 8,
-    api_key: str = "",
     ctx: Context | None = None,
 ) -> str:
     """
     Generate a YouTube narration script for the given title/subject.
 
     Free accounts get one tutorial script; paid plans unlock volume.
+    Identity comes from the connector OAuth session — no api_key argument.
     """
     from webapp.database import bump_mcp_free_script
     import config
 
-    user = _user_from_request(api_key, ctx)
+    user = _user_from_request(ctx)
     ok, msg = billing.script_allowed(user)
     if not ok:
         return json.dumps({"error": msg, "upgrade_url": billing.UPGRADE_URL})
@@ -298,20 +395,21 @@ def generate_script(
 @mcp.tool()
 def generate_thumbnail(
     title: str,
-    style: str = "",
-    api_key: str = "",
+    style: str = "bold_dramatic",
     ctx: Context | None = None,
 ) -> str:
     """
     Generate one YouTube thumbnail for the title.
 
     Free accounts get one tutorial thumbnail.
+    style must be one of: bold_dramatic, clean_minimal, high_contrast_face,
+    gaming_neon, documentary.
     """
     from webapp.database import bump_mcp_free_thumb
     from pathlib import Path
     import config
 
-    user = _user_from_request(api_key, ctx)
+    user = _user_from_request(ctx)
     ok, msg = billing.thumbnail_allowed(user)
     if not ok:
         return json.dumps({"error": msg, "upgrade_url": billing.UPGRADE_URL})
@@ -319,6 +417,20 @@ def generate_thumbnail(
     title = (title or "").strip()
     if not title:
         return json.dumps({"error": "Pass a title for the thumbnail."})
+
+    style_key = (style or "bold_dramatic").strip().lower().replace(" ", "_")
+    style_prompts = {
+        "bold_dramatic": "Bold, eye-catching YouTube thumbnail with dramatic lighting and strong contrast",
+        "clean_minimal": "Clean minimal YouTube thumbnail with simple composition and readable text space",
+        "high_contrast_face": "High-contrast face-forward YouTube thumbnail, expressive reaction, crisp subject",
+        "gaming_neon": "Gaming neon YouTube thumbnail, saturated colors, energetic composition",
+        "documentary": "Documentary-style YouTube thumbnail, cinematic lighting, serious tone",
+    }
+    if style_key not in style_prompts:
+        return json.dumps({
+            "error": f"Unknown style '{style}'.",
+            "available_styles": list(THUMB_STYLES),
+        })
 
     try:
         from core.thumbnail_gen import generate_thumbnail_no_refs
@@ -328,8 +440,7 @@ def generate_thumbnail(
         out_dir.mkdir(parents=True, exist_ok=True)
         paths = generate_thumbnail_no_refs(
             title=title,
-            style_description=style
-            or "Bold, eye-catching YouTube thumbnail with dramatic lighting",
+            style_description=style_prompts[style_key],
             output_dir=str(out_dir),
             count=1,
         )
@@ -345,8 +456,10 @@ def generate_thumbnail(
             bump_mcp_free_thumb(uid)
         payload: dict[str, Any] = {
             "title": title,
+            "style": style_key,
             "thumbnail_url": url,
             "plan": _plan_of(user),
+            "available_styles": list(THUMB_STYLES),
         }
         if not billing.is_paid_plan(_plan_of(user)):
             payload["note"] = "Free tutorial thumbnail used. " + billing.UPGRADE_CTA
@@ -382,7 +495,6 @@ def build_mcp_asgi():
             "http://127.0.0.1:*",
         ],
     )
-    # Path /mcp at app root (not mounted under /mcp) so /.well-known stays correct.
     return mcp.streamable_http_app(
         streamable_http_path="/mcp",
         stateless_http=True,
@@ -392,10 +504,7 @@ def build_mcp_asgi():
 
 
 def wrap_fastapi_with_mcp(fastapi_app):
-    """
-    Put MCP + OAuth routes beside FastAPI so Claude can discover
-    /.well-known/oauth-authorization-server at the domain root.
-    """
+    """Put MCP + OAuth routes beside FastAPI for Claude.ai discovery."""
     from contextlib import asynccontextmanager
     from starlette.applications import Starlette
     from starlette.routing import Mount
@@ -408,9 +517,8 @@ def wrap_fastapi_with_mcp(fastapi_app):
             yield
 
     routes = list(mcp_asgi.routes) + [Mount("/", app=fastapi_app)]
-    combined = Starlette(
+    return Starlette(
         routes=routes,
         middleware=list(mcp_asgi.user_middleware),
         lifespan=lifespan,
     )
-    return combined
