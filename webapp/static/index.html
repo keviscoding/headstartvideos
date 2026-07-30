@@ -1497,7 +1497,7 @@
                         <div>
                             <h4 style="font-family: var(--font-display); font-size: 16px; font-weight: 700;">Claude / MCP</h4>
                             <p style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2); margin-top: 4px;">
-                                Connect ChannelRecipe to Claude Desktop. Pull live niche subjects, write one tutorial script, and make one thumbnail — free is intentionally thin.
+                                Connect ChannelRecipe to Claude.ai or Claude Desktop. Pull live niche subjects, write scripts, and make thumbnails — free is intentionally thin.
                             </p>
                         </div>
                         <span id="mcp-status-chip" class="cr-mono" style="font-size: 12px; color: var(--app-ink-3);">Loading…</span>
@@ -1510,9 +1510,12 @@
                             <button type="button" class="btn-secondary" style="font-size: 13px; padding: 8px 14px;" onclick="copyMcpKey()">Copy key</button>
                             <button type="button" class="btn-ghost" style="font-size: 13px; padding: 8px 14px;" onclick="rotateMcpKey()">Rotate</button>
                         </div>
+                        <p style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-3); margin-top: 8px;">
+                            Claude.ai will ask you to paste this key when you click <strong>Connect</strong> on the connector.
+                        </p>
                     </div>
                     <div style="margin-bottom: 12px;">
-                        <label class="cr-label" for="mcp-claude-json">Claude Desktop config</label>
+                        <label class="cr-label" for="mcp-claude-json">Claude Desktop config (optional)</label>
                         <textarea id="mcp-claude-json" class="setting-input cr-mono" readonly rows="10" style="font-size: 12px; line-height: 1.45; resize: vertical;"></textarea>
                         <button type="button" class="btn-secondary" style="font-size: 13px; padding: 8px 14px; margin-top: 8px;" onclick="copyMcpClaudeJson()">Copy JSON</button>
                     </div>

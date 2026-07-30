@@ -207,7 +207,6 @@ async def _app_lifespan(app: FastAPI):
         await _startup_fn()
     try:
         from webapp.mcp_server import mcp as _cr_mcp
-        # session_manager exists only after streamable_http_app() was built
         async with _cr_mcp.session_manager.run():
             yield
     except Exception as e:
@@ -217,13 +216,8 @@ async def _app_lifespan(app: FastAPI):
 
 app = FastAPI(title="ChannelRecipe", docs_url="/docs", lifespan=_app_lifespan)
 
-# Mount MCP early so session_manager is created before lifespan starts.
-try:
-    from webapp.mcp_server import build_mcp_asgi
-    app.mount("/mcp", build_mcp_asgi())
-    print("[mcp] mounted at /mcp")
-except Exception as e:
-    print(f"[mcp] mount skipped: {e}")
+# MCP is wrapped at module end (wrap_fastapi_with_mcp) so OAuth
+# /.well-known routes live at the domain root for Claude.ai.
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 _jobs: dict[str, dict[str, Any]] = {}
@@ -5676,7 +5670,7 @@ def _mcp_public_base(request: Request) -> str:
 
 def _mcp_connect_payload(api_key: str, base: str) -> dict:
     from webapp import mcp_billing as billing
-    mcp_url = f"{base.rstrip('/')}/mcp/"
+    mcp_url = f"{base.rstrip('/')}/mcp"
     claude_config = {
         "mcpServers": {
             "channelrecipe": {
@@ -5701,9 +5695,9 @@ def _mcp_connect_payload(api_key: str, base: str) -> dict:
         "upgrade_url": billing.UPGRADE_URL,
         "upgrade_cta": billing.UPGRADE_CTA,
         "howto": [
-            "Copy the JSON below into Claude Desktop → Settings → Developer → Edit Config (merge under mcpServers).",
-            "Restart Claude Desktop, then ask: “Use ChannelRecipe to list GTA 6 subjects.”",
-            "Free tier is tutorial-thin (5 subjects, 3 channels, 1 script, 1 thumbnail). Upgrade for volume.",
+            "Claude.ai: Settings → Connectors → Add custom connector → Name “ChannelRecipe”, URL https://channelrecipe.com/mcp → Add → Connect → paste your MCP API key when asked.",
+            "Claude Desktop: copy the JSON below into Settings → Developer → Edit Config (merge under mcpServers), then restart.",
+            "Ask: “Use ChannelRecipe to list GTA 6 subjects.” Free tier is tutorial-thin (5 subjects, 3 channels, 1 script, 1 thumbnail).",
         ],
     }
 
@@ -6018,6 +6012,27 @@ def _load_niche(niche_key: str) -> dict | None:
         with open(path) as f:
             return json.load(f)
     return None
+
+
+@app.get("/oauth/mcp/login")
+async def oauth_mcp_login_get(request: Request):
+    from webapp.mcp_oauth import render_login
+    return await render_login(request)
+
+
+@app.post("/oauth/mcp/login")
+async def oauth_mcp_login_post(request: Request):
+    from webapp.mcp_oauth import handle_login_post
+    return await handle_login_post(request)
+
+
+# MCP + OAuth at domain root (/.well-known, /authorize, /token, /register, /mcp)
+try:
+    from webapp.mcp_server import wrap_fastapi_with_mcp
+    app = wrap_fastapi_with_mcp(app)
+    print("[mcp] OAuth + /mcp mounted at domain root")
+except Exception as e:
+    print(f"[mcp] wrap skipped: {e}")
 
 
 # ---------------------------------------------------------------------------

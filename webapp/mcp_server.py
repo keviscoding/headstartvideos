@@ -1,8 +1,8 @@
 """
 ChannelRecipe MCP server (Streamable HTTP).
 
-Mounted at /mcp on the main FastAPI app. Discovery tools are public with
-tutorial-thin caps; script/thumbnail require an MCP API key.
+Combined into the main FastAPI process at domain root so OAuth discovery
+(/.well-known/...) works for Claude.ai custom connectors. MCP endpoint: /mcp.
 """
 
 from __future__ import annotations
@@ -12,9 +12,16 @@ import time
 from collections import defaultdict
 from typing import Any
 
+from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
 from mcp.server.mcpserver import Context, MCPServer
 
 from webapp import mcp_billing as billing
+from webapp.mcp_oauth import (
+    MCP_SCOPE,
+    mcp_resource_url,
+    oauth_provider,
+    public_base_url,
+)
 
 mcp = MCPServer(
     name="ChannelRecipe",
@@ -22,20 +29,30 @@ mcp = MCPServer(
         "ChannelRecipe helps YouTube cash-cow creators find live niche subjects, "
         "write scripts, and make thumbnails. Free tier is tutorial-thin — "
         "upgrade at channelrecipe.com for volume. "
-        "Pass your MCP API key via Authorization: Bearer <key> (Settings → Claude / MCP) "
-        "or the api_key tool argument."
+        "On Claude.ai, connect via Settings → Connectors. "
+        "On Claude Desktop, use the JSON from ChannelRecipe Settings → Claude / MCP."
     ),
     website_url="https://channelrecipe.com",
+    auth_server_provider=oauth_provider,
+    auth=AuthSettings(
+        # Pass plain strings so issuer has no trailing slash (RFC 8414 exact match).
+        issuer_url=public_base_url(),  # type: ignore[arg-type]
+        resource_server_url=mcp_resource_url(),  # type: ignore[arg-type]
+        client_registration_options=ClientRegistrationOptions(
+            enabled=True,
+            valid_scopes=[MCP_SCOPE],
+            default_scopes=[MCP_SCOPE],
+        ),
+        required_scopes=[MCP_SCOPE],
+    ),
 )
 
-# Simple IP rate limit for anonymous discovery (in-process).
 _RATE: dict[str, list[float]] = defaultdict(list)
-_RATE_MAX = 30  # calls / window / bucket
+_RATE_MAX = 30
 _RATE_WINDOW = 60.0
 
 
 def _client_bucket(extra: str = "") -> str:
-    # Tools don't always have request IP; use a shared bucket + optional key.
     return (extra or "anon")[:120]
 
 
@@ -52,7 +69,7 @@ def _rate_ok(bucket: str) -> bool:
 def _key_from_headers(headers: Any) -> str:
     if not headers:
         return ""
-    # Starlette Headers are case-insensitive; Mapping may not be.
+
     def _get(name: str) -> str:
         try:
             return (headers.get(name) or headers.get(name.lower()) or "").strip()
@@ -81,11 +98,30 @@ def _resolve_api_key(api_key: str | None = "", ctx: Context | None = None) -> st
     return ""
 
 
-def _user_from_key(api_key: str | None) -> dict | None:
-    if not (api_key or "").strip():
+def _user_from_request(api_key: str | None = "", ctx: Context | None = None) -> dict | None:
+    """Resolve user from OAuth middleware, MCP API key, or tool arg."""
+    from webapp.database import get_user_by_id, get_user_by_mcp_api_key
+
+    try:
+        from mcp.server.auth.middleware.auth_context import get_access_token
+
+        tok = get_access_token()
+        if tok and tok.subject:
+            try:
+                user = get_user_by_id(int(tok.subject))
+                if user:
+                    return user
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    key = _resolve_api_key(api_key, ctx)
+    if not key:
         return None
-    from webapp.database import get_user_by_mcp_api_key
-    return get_user_by_mcp_api_key(api_key.strip())
+    if key.startswith("cr_mcp_"):
+        return get_user_by_mcp_api_key(key)
+    return get_user_by_mcp_api_key(key)
 
 
 def _plan_of(user: dict | None) -> str:
@@ -110,13 +146,13 @@ def list_niche_subjects(
     Uses ChannelRecipe's live niche database (not training data). Free accounts
     get a short tutorial list; paid plans get the full ranked set.
     """
-    api_key = _resolve_api_key(api_key, ctx)
-    if not _rate_ok(_client_bucket(api_key or "anon")):
+    user = _user_from_request(api_key, ctx)
+    bucket = str((user or {}).get("id") or _resolve_api_key(api_key, ctx) or "anon")
+    if not _rate_ok(_client_bucket(bucket)):
         return json.dumps({
             "error": "Rate limit — wait a minute and try again.",
             "upgrade": billing.UPGRADE_CTA,
         })
-    user = _user_from_key(api_key)
     plan = _plan_of(user)
     subj_limit = billing.discovery_subject_limit(plan)
     ch_limit = billing.discovery_channel_limit(plan)
@@ -167,13 +203,13 @@ def list_niche_channels(
     List example channels in a niche from ChannelRecipe's database,
     with recent average views and recent video titles.
     """
-    api_key = _resolve_api_key(api_key, ctx)
-    if not _rate_ok(_client_bucket(api_key or "anon-ch")):
+    user = _user_from_request(api_key, ctx)
+    bucket = str((user or {}).get("id") or _resolve_api_key(api_key, ctx) or "anon-ch")
+    if not _rate_ok(_client_bucket(bucket)):
         return json.dumps({
             "error": "Rate limit — wait a minute and try again.",
             "upgrade": billing.UPGRADE_CTA,
         })
-    user = _user_from_key(api_key)
     plan = _plan_of(user)
     limit = billing.discovery_channel_limit(plan)
     rows = _channels_for_niche(niche, limit=limit)
@@ -217,14 +253,12 @@ def generate_script(
     """
     Generate a YouTube narration script for the given title/subject.
 
-    Requires a ChannelRecipe MCP API key (Settings → Claude / MCP).
     Free accounts get one tutorial script; paid plans unlock volume.
     """
-    from webapp.database import bump_mcp_free_script, get_user_by_mcp_api_key
+    from webapp.database import bump_mcp_free_script
     import config
 
-    api_key = _resolve_api_key(api_key, ctx)
-    user = get_user_by_mcp_api_key(api_key) if api_key else None
+    user = _user_from_request(api_key, ctx)
     ok, msg = billing.script_allowed(user)
     if not ok:
         return json.dumps({"error": msg, "upgrade_url": billing.UPGRADE_URL})
@@ -271,14 +305,13 @@ def generate_thumbnail(
     """
     Generate one YouTube thumbnail for the title.
 
-    Requires MCP API key. Free accounts get one tutorial thumbnail.
+    Free accounts get one tutorial thumbnail.
     """
-    from webapp.database import bump_mcp_free_thumb, get_user_by_mcp_api_key
+    from webapp.database import bump_mcp_free_thumb
     from pathlib import Path
     import config
 
-    api_key = _resolve_api_key(api_key, ctx)
-    user = get_user_by_mcp_api_key(api_key) if api_key else None
+    user = _user_from_request(api_key, ctx)
     ok, msg = billing.thumbnail_allowed(user)
     if not ok:
         return json.dumps({"error": msg, "upgrade_url": billing.UPGRADE_URL})
@@ -324,11 +357,9 @@ def generate_thumbnail(
 
 
 def build_mcp_asgi():
-    """Starlette app for mounting at /mcp (stateless streamable HTTP)."""
+    """Starlette app with /mcp + OAuth routes at domain-root paths."""
     from mcp.server.transport_security import TransportSecuritySettings
 
-    # Default MCP security only allows localhost:* — that blocks channelrecipe.com
-    # and Host: localhost (no port). Explicit allowlist for prod + local.
     security = TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
         allowed_hosts=[
@@ -351,9 +382,35 @@ def build_mcp_asgi():
             "http://127.0.0.1:*",
         ],
     )
+    # Path /mcp at app root (not mounted under /mcp) so /.well-known stays correct.
     return mcp.streamable_http_app(
-        streamable_http_path="/",
+        streamable_http_path="/mcp",
         stateless_http=True,
         transport_security=security,
-        host="0.0.0.0",  # do not auto-swap to localhost-only security
+        host="0.0.0.0",
     )
+
+
+def wrap_fastapi_with_mcp(fastapi_app):
+    """
+    Put MCP + OAuth routes beside FastAPI so Claude can discover
+    /.well-known/oauth-authorization-server at the domain root.
+    """
+    from contextlib import asynccontextmanager
+    from starlette.applications import Starlette
+    from starlette.routing import Mount
+
+    mcp_asgi = build_mcp_asgi()
+
+    @asynccontextmanager
+    async def lifespan(app: Starlette):
+        async with fastapi_app.router.lifespan_context(fastapi_app):
+            yield
+
+    routes = list(mcp_asgi.routes) + [Mount("/", app=fastapi_app)]
+    combined = Starlette(
+        routes=routes,
+        middleware=list(mcp_asgi.user_middleware),
+        lifespan=lifespan,
+    )
+    return combined
