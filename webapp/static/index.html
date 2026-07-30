@@ -1491,6 +1491,35 @@
                     </div>
                     <p id="heygen-integ-status" class="cr-mono" style="font-size: 12px; margin-top: 10px; color: var(--app-ink-3);"></p>
                 </div>
+
+                <div class="cr-surface" style="padding: 24px; border-radius: var(--radius-card); border: 1px solid var(--app-border); margin-top: 16px;">
+                    <div class="flex items-start justify-between gap-4 flex-wrap" style="margin-bottom: 16px;">
+                        <div>
+                            <h4 style="font-family: var(--font-display); font-size: 16px; font-weight: 700;">Claude / MCP</h4>
+                            <p style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2); margin-top: 4px;">
+                                Connect ChannelRecipe to Claude Desktop. Pull live niche subjects, write one tutorial script, and make one thumbnail — free is intentionally thin.
+                            </p>
+                        </div>
+                        <span id="mcp-status-chip" class="cr-mono" style="font-size: 12px; color: var(--app-ink-3);">Loading…</span>
+                    </div>
+                    <ol id="mcp-howto" style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2); line-height: 1.6; margin: 0 0 16px 18px; padding: 0;"></ol>
+                    <div style="margin-bottom: 12px;">
+                        <label class="cr-label" for="mcp-api-key">Your MCP API key</label>
+                        <div class="flex flex-wrap gap-2 items-center">
+                            <input type="text" id="mcp-api-key" class="setting-input cr-mono" readonly style="flex: 1; min-width: 220px; font-size: 13px;" value="">
+                            <button type="button" class="btn-secondary" style="font-size: 13px; padding: 8px 14px;" onclick="copyMcpKey()">Copy key</button>
+                            <button type="button" class="btn-ghost" style="font-size: 13px; padding: 8px 14px;" onclick="rotateMcpKey()">Rotate</button>
+                        </div>
+                    </div>
+                    <div style="margin-bottom: 12px;">
+                        <label class="cr-label" for="mcp-claude-json">Claude Desktop config</label>
+                        <textarea id="mcp-claude-json" class="setting-input cr-mono" readonly rows="10" style="font-size: 12px; line-height: 1.45; resize: vertical;"></textarea>
+                        <button type="button" class="btn-secondary" style="font-size: 13px; padding: 8px 14px; margin-top: 8px;" onclick="copyMcpClaudeJson()">Copy JSON</button>
+                    </div>
+                    <p id="mcp-quota-note" style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-2); margin: 0 0 8px;"></p>
+                    <p id="mcp-integ-status" class="cr-mono" style="font-size: 12px; color: var(--app-ink-3);"></p>
+                    <a id="mcp-upgrade-link" href="/app#billing" class="btn-primary" style="display: inline-block; font-size: 13px; padding: 10px 16px; margin-top: 8px; text-decoration: none;">Upgrade for volume</a>
+                </div>
             </section>
 
             <!-- Admin platform keys -->

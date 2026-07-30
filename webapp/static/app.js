@@ -4757,6 +4757,103 @@ async function loadIntegrations() {
         const byok = !!(data.byok_enabled || currentUser.byok_enabled);
         renderAtlasStatus(data.atlas || {}, byok);
     } catch { /* best-effort */ }
+    loadMcpSettings();
+}
+
+function renderMcpSettings(data) {
+    const chip = document.getElementById('mcp-status-chip');
+    const keyEl = document.getElementById('mcp-api-key');
+    const jsonEl = document.getElementById('mcp-claude-json');
+    const howto = document.getElementById('mcp-howto');
+    const quota = document.getElementById('mcp-quota-note');
+    const upgrade = document.getElementById('mcp-upgrade-link');
+    if (!keyEl || !jsonEl) return;
+    const key = data.api_key || '';
+    keyEl.value = key;
+    jsonEl.value = data.claude_desktop_json_text
+        || JSON.stringify(data.claude_desktop_json || {}, null, 2);
+    if (chip) {
+        chip.textContent = key ? `Ready · ••••${data.last4 || key.slice(-4)}` : 'No key';
+        chip.style.color = key ? 'var(--success)' : 'var(--app-ink-3)';
+    }
+    if (howto) {
+        const steps = Array.isArray(data.howto) ? data.howto : [];
+        howto.innerHTML = steps.map((s) => `<li>${s}</li>`).join('');
+    }
+    if (quota) {
+        const lim = data.free_limits || {};
+        const plan = (data.plan || 'free').toLowerCase();
+        if (plan === 'free') {
+            quota.textContent =
+                `Free tutorial: ${lim.subjects || 5} subjects, ${lim.channels || 3} channels, `
+                + `${lim.scripts || 1} script (${data.free_scripts_used || 0} used), `
+                + `${lim.thumbnails || 1} thumbnail (${data.free_thumbs_used || 0} used).`;
+        } else {
+            quota.textContent = `Plan: ${plan} — MCP volume gates are lifted.`;
+        }
+    }
+    if (upgrade && data.upgrade_url) upgrade.href = data.upgrade_url;
+}
+
+async function loadMcpSettings() {
+    if (!currentUser) return;
+    const statusEl = document.getElementById('mcp-integ-status');
+    try {
+        const res = await fetch('/api/me/mcp');
+        const data = await readJson(res, {});
+        if (!res.ok) {
+            if (statusEl) statusEl.textContent = friendlyApiError(data, 'Could not load MCP settings');
+            return;
+        }
+        renderMcpSettings(data);
+        if (statusEl) statusEl.textContent = '';
+    } catch (e) {
+        if (statusEl) statusEl.textContent = 'MCP settings failed: ' + e.message;
+    }
+}
+
+async function copyMcpKey() {
+    const key = document.getElementById('mcp-api-key')?.value || '';
+    const statusEl = document.getElementById('mcp-integ-status');
+    if (!key) return;
+    try {
+        await navigator.clipboard.writeText(key);
+        if (statusEl) statusEl.textContent = 'API key copied.';
+        track('mcp_key_copied', {});
+    } catch {
+        if (statusEl) statusEl.textContent = 'Copy failed — select the key and copy manually.';
+    }
+}
+
+async function copyMcpClaudeJson() {
+    const text = document.getElementById('mcp-claude-json')?.value || '';
+    const statusEl = document.getElementById('mcp-integ-status');
+    if (!text) return;
+    try {
+        await navigator.clipboard.writeText(text);
+        if (statusEl) statusEl.textContent = 'Claude Desktop JSON copied.';
+        track('mcp_claude_json_copied', {});
+    } catch {
+        if (statusEl) statusEl.textContent = 'Copy failed — select the JSON and copy manually.';
+    }
+}
+
+async function rotateMcpKey() {
+    if (!confirm('Rotate your MCP API key? Claude Desktop will need the new config.')) return;
+    const statusEl = document.getElementById('mcp-integ-status');
+    try {
+        const res = await fetch('/api/me/mcp/rotate', { method: 'POST' });
+        const data = await readJson(res, {});
+        if (!res.ok) {
+            if (statusEl) statusEl.textContent = friendlyApiError(data, 'Could not rotate key');
+            return;
+        }
+        renderMcpSettings(data);
+        if (statusEl) statusEl.textContent = 'New MCP key issued — update Claude Desktop.';
+        track('mcp_key_rotated', {});
+    } catch (e) {
+        if (statusEl) statusEl.textContent = 'Rotate failed: ' + e.message;
+    }
 }
 
 async function saveAtlasKey() {

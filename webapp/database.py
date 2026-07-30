@@ -391,6 +391,9 @@ def _init_db():
                 # Highest tier already credited in the current billing period —
                 # stops Daily→Starter→Daily portal toggling from minting credits.
                 _ensure_column(cur, "users", "period_tier", "TEXT DEFAULT ''")
+                _ensure_column(cur, "users", "mcp_api_key", "TEXT DEFAULT ''")
+                _ensure_column(cur, "users", "mcp_free_scripts_used", "INTEGER NOT NULL DEFAULT 0")
+                _ensure_column(cur, "users", "mcp_free_thumbs_used", "INTEGER NOT NULL DEFAULT 0")
                 _ensure_column(cur, "cook_jobs", "lite_mode", "INTEGER NOT NULL DEFAULT 0")
                 _ensure_column(cur, "cook_jobs", "worker_id", "TEXT DEFAULT ''")
                 _ensure_column(cur, "cook_jobs", "heartbeat_at", "DOUBLE PRECISION DEFAULT 0")
@@ -416,6 +419,9 @@ def _init_db():
             _ensure_column(cur, "users", "atlas_key_enc", "TEXT DEFAULT ''")
             _ensure_column(cur, "users", "storyboard_cast_json", "TEXT DEFAULT ''")
             _ensure_column(cur, "users", "period_tier", "TEXT DEFAULT ''")
+            _ensure_column(cur, "users", "mcp_api_key", "TEXT DEFAULT ''")
+            _ensure_column(cur, "users", "mcp_free_scripts_used", "INTEGER NOT NULL DEFAULT 0")
+            _ensure_column(cur, "users", "mcp_free_thumbs_used", "INTEGER NOT NULL DEFAULT 0")
             _ensure_column(cur, "cook_jobs", "lite_mode", "INTEGER NOT NULL DEFAULT 0")
             _ensure_column(cur, "cook_jobs", "worker_id", "TEXT DEFAULT ''")
             _ensure_column(cur, "cook_jobs", "heartbeat_at", "REAL DEFAULT 0")
@@ -566,6 +572,61 @@ def get_user_by_id(user_id: int) -> dict | None:
         cur.execute(_q("SELECT * FROM users WHERE id = ?"), (user_id,))
         row = cur.fetchone()
         return dict(row) if row else None
+
+
+def get_user_by_mcp_api_key(api_key: str) -> dict | None:
+    key = (api_key or "").strip()
+    if not key or len(key) < 16:
+        return None
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(_q("SELECT * FROM users WHERE mcp_api_key = ?"), (key,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def ensure_user_mcp_api_key(user_id: int) -> str:
+    """Return existing MCP API key or mint a new one."""
+    import secrets as _secrets
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(_q("SELECT mcp_api_key FROM users WHERE id = ?"), (user_id,))
+        row = cur.fetchone()
+        if not row:
+            raise ValueError("User not found")
+        existing = (dict(row).get("mcp_api_key") or "").strip()
+        if existing:
+            return existing
+        key = "cr_mcp_" + _secrets.token_urlsafe(24)
+        cur.execute(_q("UPDATE users SET mcp_api_key = ? WHERE id = ?"), (key, user_id))
+        return key
+
+
+def rotate_user_mcp_api_key(user_id: int) -> str:
+    import secrets as _secrets
+    key = "cr_mcp_" + _secrets.token_urlsafe(24)
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(_q("UPDATE users SET mcp_api_key = ? WHERE id = ?"), (key, user_id))
+        if cur.rowcount == 0:
+            raise ValueError("User not found")
+    return key
+
+
+def bump_mcp_free_script(user_id: int) -> None:
+    with _conn() as conn:
+        conn.cursor().execute(
+            _q("UPDATE users SET mcp_free_scripts_used = COALESCE(mcp_free_scripts_used, 0) + 1 WHERE id = ?"),
+            (user_id,),
+        )
+
+
+def bump_mcp_free_thumb(user_id: int) -> None:
+    with _conn() as conn:
+        conn.cursor().execute(
+            _q("UPDATE users SET mcp_free_thumbs_used = COALESCE(mcp_free_thumbs_used, 0) + 1 WHERE id = ?"),
+            (user_id,),
+        )
 
 
 def create_user(email: str) -> dict:

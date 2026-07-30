@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
+from contextlib import asynccontextmanager
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -194,7 +195,35 @@ def capture_error(exc: Exception, context: dict | None = None) -> None:
         pass
 
 
-app = FastAPI(title="ChannelRecipe", docs_url="/docs")
+# ---------------------------------------------------------------------------
+# App + lifespan (MCP Streamable HTTP needs session_manager.run())
+# ---------------------------------------------------------------------------
+_startup_fn = None
+
+
+@asynccontextmanager
+async def _app_lifespan(app: FastAPI):
+    if _startup_fn is not None:
+        await _startup_fn()
+    try:
+        from webapp.mcp_server import mcp as _cr_mcp
+        # session_manager exists only after streamable_http_app() was built
+        async with _cr_mcp.session_manager.run():
+            yield
+    except Exception as e:
+        print(f"[mcp] running without session manager: {e}")
+        yield
+
+
+app = FastAPI(title="ChannelRecipe", docs_url="/docs", lifespan=_app_lifespan)
+
+# Mount MCP early so session_manager is created before lifespan starts.
+try:
+    from webapp.mcp_server import build_mcp_asgi
+    app.mount("/mcp", build_mcp_asgi())
+    print("[mcp] mounted at /mcp")
+except Exception as e:
+    print(f"[mcp] mount skipped: {e}")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 _jobs: dict[str, dict[str, Any]] = {}
@@ -261,7 +290,6 @@ def _cook_sweep_reason(row: dict, quiet_sec: float) -> str:
     return ""
 
 
-@app.on_event("startup")
 async def _startup_tasks():
     # Sync routes (voiceover/thumbnail/Gemini) run in this pool — keep it large
     # so a few 90s Atlas jobs don't starve the rest of the site.
@@ -384,6 +412,8 @@ async def _startup_tasks():
 
     asyncio.create_task(_periodic_cook_sweeper())
 
+_startup_fn = _startup_tasks
+
 from webapp.database import (
     get_user_by_email, create_user, get_user_by_id, update_user,
     get_user_by_sub_id, get_user_by_customer_id, billing_plan_counts, list_billing_users,
@@ -404,6 +434,7 @@ from webapp.database import (
     create_niche_hunt_run, finish_niche_hunt_run, list_niche_hunt_runs,
     append_niche_hunt_progress, get_niche_hunt_run_by_job_id, get_latest_running_niche_hunt,
     cancel_niche_hunt_run, cancel_all_running_niche_hunts,
+    ensure_user_mcp_api_key, rotate_user_mcp_api_key, get_user_by_mcp_api_key,
 )
 from webapp import storage
 from webapp import job_queue
@@ -5628,6 +5659,122 @@ def test_heygen_key(req: HeyGenKeyRequest, user: dict = Depends(require_user)):
         return {"ok": False, "error": "No HeyGen key to test. Paste one first."}
     ok, detail = test_api_key(key)
     return {"ok": ok, "error": "" if ok else (detail or "HeyGen rejected that key.")}
+
+
+def _mcp_public_base(request: Request) -> str:
+    """Public site origin for Claude Desktop connect snippets."""
+    configured = (getattr(config, "PUBLIC_BASE_URL", None) or os.getenv("PUBLIC_BASE_URL") or "").strip().rstrip("/")
+    if configured:
+        return configured
+    # Prefer Host from reverse proxy when available
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(",")[0].strip()
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
+    if host and "localhost" not in host and "127.0.0.1" not in host:
+        return f"{proto}://{host}".rstrip("/")
+    return "https://channelrecipe.com"
+
+
+def _mcp_connect_payload(api_key: str, base: str) -> dict:
+    from webapp import mcp_billing as billing
+    mcp_url = f"{base.rstrip('/')}/mcp/"
+    claude_config = {
+        "mcpServers": {
+            "channelrecipe": {
+                "type": "http",
+                "url": mcp_url,
+                "headers": {"Authorization": f"Bearer {api_key}"},
+            }
+        }
+    }
+    return {
+        "mcp_url": mcp_url,
+        "api_key": api_key,
+        "last4": api_key[-4:] if api_key else "",
+        "claude_desktop_json": claude_config,
+        "claude_desktop_json_text": json.dumps(claude_config, indent=2),
+        "free_limits": {
+            "subjects": billing.FREE_SUBJECTS,
+            "channels": billing.FREE_CHANNELS,
+            "scripts": billing.FREE_SCRIPTS,
+            "thumbnails": billing.FREE_THUMBS,
+        },
+        "upgrade_url": billing.UPGRADE_URL,
+        "upgrade_cta": billing.UPGRADE_CTA,
+        "howto": [
+            "Copy the JSON below into Claude Desktop → Settings → Developer → Edit Config (merge under mcpServers).",
+            "Restart Claude Desktop, then ask: “Use ChannelRecipe to list GTA 6 subjects.”",
+            "Free tier is tutorial-thin (5 subjects, 3 channels, 1 script, 1 thumbnail). Upgrade for volume.",
+        ],
+    }
+
+
+@app.get("/api/me/mcp")
+def get_my_mcp(request: Request, user: dict = Depends(require_user)):
+    key = ensure_user_mcp_api_key(int(user["id"]))
+    fresh = get_user_by_id(int(user["id"])) or user
+    payload = _mcp_connect_payload(key, _mcp_public_base(request))
+    payload["plan"] = (fresh.get("plan") or "free")
+    payload["free_scripts_used"] = int(fresh.get("mcp_free_scripts_used") or 0)
+    payload["free_thumbs_used"] = int(fresh.get("mcp_free_thumbs_used") or 0)
+    return payload
+
+
+@app.post("/api/me/mcp/rotate")
+def rotate_my_mcp(request: Request, user: dict = Depends(require_user)):
+    key = rotate_user_mcp_api_key(int(user["id"]))
+    track(user["id"], "mcp_api_key_rotated", {})
+    payload = _mcp_connect_payload(key, _mcp_public_base(request))
+    payload["plan"] = (user.get("plan") or "free")
+    return payload
+
+
+@app.post("/api/admin/niche/seed-gta6")
+def admin_seed_gta6(admin: dict = Depends(require_admin)):
+    """Resolve + upsert the 14 GTA pack channels (source_keyword='gta 6')."""
+    if not config.YOUTUBE_API_KEY:
+        raise HTTPException(400, "YOUTUBE_API_KEY not configured")
+    from core.niche_seed import seed_gta6_into_db
+
+    result = seed_gta6_into_db(api_key=config.YOUTUBE_API_KEY)
+    track(admin["id"], "niche_seed_gta6", {
+        "enriched": (result.get("meta") or {}).get("enriched"),
+        "upserted": result.get("upserted"),
+        "errors": len(result.get("errors") or []),
+    })
+    return {
+        "ok": True,
+        "upserted": result.get("upserted") or 0,
+        "meta": result.get("meta") or {},
+        "errors": result.get("errors") or [],
+        "sample": [
+            {"name": h.get("channel_name"), "url": h.get("channel_url")}
+            for h in (result.get("hits") or [])[:5]
+        ],
+    }
+
+
+@app.post("/api/internal/niche/seed-gta6")
+def internal_seed_gta6(authorization: str | None = Header(default=None)):
+    """Ops seed via CRON_SECRET (same auth as niche-finder cron)."""
+    secret = getattr(config, "CRON_SECRET", "") or ""
+    if not secret:
+        raise HTTPException(503, "CRON_SECRET not configured.")
+    token = ""
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+    if not token or token != secret:
+        raise HTTPException(401, "Invalid cron secret.")
+    if not config.YOUTUBE_API_KEY:
+        raise HTTPException(400, "YOUTUBE_API_KEY not configured")
+    from core.niche_seed import seed_gta6_into_db
+
+    result = seed_gta6_into_db(api_key=config.YOUTUBE_API_KEY)
+    return {
+        "ok": True,
+        "upserted": result.get("upserted") or 0,
+        "meta": result.get("meta") or {},
+        "errors": result.get("errors") or [],
+    }
 
 
 def _user_heygen_or_400(user: dict) -> str:
