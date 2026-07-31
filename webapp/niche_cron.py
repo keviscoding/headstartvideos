@@ -45,15 +45,15 @@ def maybe_start_daily_niche_hunt(*, start_hunt) -> dict | None:
     if not claim_daily_niche_cron(day):
         return {"skipped": "already ran today", "day": day}
 
-    keywords = daily_cron_keywords(when=now)
+    keywords = daily_cron_keywords(when=now, count=50)
     try:
         job_id = start_hunt(
             keywords=keywords,
-            max_per_keyword=12,
-            max_channels=60,
+            max_per_keyword=0,
+            max_channels=0,  # uncapped — keep everything discovered
             min_recent_avg_views=0,
             max_subscribers=150_000,
-            scroll_count=20,
+            scroll_count=80,  # high ceiling; stops early when results end
             max_video_age_days=180,
             trigger="cron",
             user_id=None,

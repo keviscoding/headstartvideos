@@ -4755,13 +4755,16 @@ async function loadIntegrations() {
 function renderMcpSettings(data) {
     const chip = document.getElementById('mcp-status-chip');
     const keyEl = document.getElementById('mcp-api-key');
+    const urlEl = document.getElementById('mcp-url');
     const jsonEl = document.getElementById('mcp-claude-json');
     const howto = document.getElementById('mcp-howto');
     const quota = document.getElementById('mcp-quota-note');
     const upgrade = document.getElementById('mcp-upgrade-link');
     if (!keyEl || !jsonEl) return;
     const key = data.api_key || '';
+    const mcpUrl = data.mcp_url || 'https://channelrecipe.com/mcp';
     keyEl.value = key;
+    if (urlEl) urlEl.value = mcpUrl;
     jsonEl.value = data.claude_desktop_json_text
         || JSON.stringify(data.claude_desktop_json || {}, null, 2);
     if (chip) {
@@ -4770,18 +4773,19 @@ function renderMcpSettings(data) {
     }
     if (howto) {
         const steps = Array.isArray(data.howto) ? data.howto : [];
-        howto.innerHTML = steps.map((s) => `<li>${s}</li>`).join('');
+        howto.innerHTML = steps.map((s) => `<li>${escapeHtml(s)}</li>`).join('');
     }
     if (quota) {
         const lim = data.free_limits || {};
         const plan = (data.plan || 'free').toLowerCase();
         if (plan === 'free') {
             quota.textContent =
-                `Free tutorial: ${lim.subjects || 5} subjects, ${lim.channels || 3} channels, `
-                + `${lim.scripts || 1} script (${data.free_scripts_used || 0} used), `
-                + `${lim.thumbnails || 1} thumbnail (${data.free_thumbs_used || 0} used).`;
+                `Free plan includes a short sample `
+                + `(${lim.subjects || 3} subjects, ${lim.channels || 2} channels, `
+                + `${lim.scripts || 1} script, ${lim.thumbnails || 1} thumbnail). `
+                + `Upgrade anytime for the full library.`;
         } else {
-            quota.textContent = `Plan: ${plan} — MCP volume gates are lifted.`;
+            quota.textContent = `You’re on ${plan} — full library access in Claude.`;
         }
     }
     if (upgrade && data.upgrade_url) upgrade.href = data.upgrade_url;
@@ -4794,13 +4798,26 @@ async function loadMcpSettings() {
         const res = await fetch('/api/me/mcp');
         const data = await readJson(res, {});
         if (!res.ok) {
-            if (statusEl) statusEl.textContent = friendlyApiError(data, 'Could not load MCP settings');
+            if (statusEl) statusEl.textContent = friendlyApiError(data, 'Could not load Claude settings');
             return;
         }
         renderMcpSettings(data);
         if (statusEl) statusEl.textContent = '';
     } catch (e) {
-        if (statusEl) statusEl.textContent = 'MCP settings failed: ' + e.message;
+        if (statusEl) statusEl.textContent = 'Claude settings failed: ' + e.message;
+    }
+}
+
+async function copyMcpUrl() {
+    const url = document.getElementById('mcp-url')?.value || '';
+    const statusEl = document.getElementById('mcp-integ-status');
+    if (!url) return;
+    try {
+        await navigator.clipboard.writeText(url);
+        if (statusEl) statusEl.textContent = 'Connector link copied.';
+        track('mcp_url_copied', {});
+    } catch {
+        if (statusEl) statusEl.textContent = 'Copy failed — select the link and copy manually.';
     }
 }
 
@@ -4810,7 +4827,7 @@ async function copyMcpKey() {
     if (!key) return;
     try {
         await navigator.clipboard.writeText(key);
-        if (statusEl) statusEl.textContent = 'API key copied.';
+        if (statusEl) statusEl.textContent = 'Connect key copied.';
         track('mcp_key_copied', {});
     } catch {
         if (statusEl) statusEl.textContent = 'Copy failed — select the key and copy manually.';
@@ -4823,28 +4840,28 @@ async function copyMcpClaudeJson() {
     if (!text) return;
     try {
         await navigator.clipboard.writeText(text);
-        if (statusEl) statusEl.textContent = 'Claude Desktop JSON copied.';
+        if (statusEl) statusEl.textContent = 'Desktop config copied.';
         track('mcp_claude_json_copied', {});
     } catch {
-        if (statusEl) statusEl.textContent = 'Copy failed — select the JSON and copy manually.';
+        if (statusEl) statusEl.textContent = 'Copy failed — select the config and copy manually.';
     }
 }
 
 async function rotateMcpKey() {
-    if (!confirm('Rotate your MCP API key? Claude Desktop will need the new config.')) return;
+    if (!confirm('Create a new connect key? You’ll need to paste the new key into Claude again.')) return;
     const statusEl = document.getElementById('mcp-integ-status');
     try {
         const res = await fetch('/api/me/mcp/rotate', { method: 'POST' });
         const data = await readJson(res, {});
         if (!res.ok) {
-            if (statusEl) statusEl.textContent = friendlyApiError(data, 'Could not rotate key');
+            if (statusEl) statusEl.textContent = friendlyApiError(data, 'Could not create a new key');
             return;
         }
         renderMcpSettings(data);
-        if (statusEl) statusEl.textContent = 'New MCP key issued — update Claude Desktop.';
+        if (statusEl) statusEl.textContent = 'New key ready — paste it into Claude when you reconnect.';
         track('mcp_key_rotated', {});
     } catch (e) {
-        if (statusEl) statusEl.textContent = 'Rotate failed: ' + e.message;
+        if (statusEl) statusEl.textContent = 'New key failed: ' + e.message;
     }
 }
 

@@ -27,13 +27,13 @@ from webapp.mcp_oauth import (
 mcp = MCPServer(
     name="ChannelRecipe",
     instructions=(
-        "ChannelRecipe helps YouTube cash-cow creators find live niche subjects, "
-        "write scripts, and make thumbnails. Free tier is tutorial-thin — "
-        "upgrade at channelrecipe.com for volume. "
-        "Start with list_niches to see what is loaded, then list_niche_subjects / "
+        "ChannelRecipe helps YouTube creators find live niche subjects, "
+        "write scripts, and make thumbnails. Free includes a short sample — "
+        "upgrade at channelrecipe.com for the full library. "
+        "Start with list_niches, then list_niche_subjects / "
         "list_niche_channels, then generate_script / generate_thumbnail. "
         "Paid plans also get get_video_transcript. "
-        "Auth is the Claude connector OAuth session (or Desktop Bearer key) — "
+        "Auth is the Claude connector session (or Desktop Bearer key) — "
         "do not ask the user for an api_key tool argument. "
         "When a tool returns upgrade_url, tell the user to upgrade at that link."
     ),

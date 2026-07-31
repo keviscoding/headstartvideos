@@ -1304,45 +1304,32 @@
     <div id="page-recipe-brain" class="page-container hidden">
         <main class="max-w-3xl mx-auto px-6 py-8">
             <div class="flex items-center gap-3 mb-2" style="flex-wrap: wrap;">
-                <h2 class="cr-display" style="font-size: 32px; margin: 0;">Claude + MCP</h2>
-                <span style="font-family: var(--font-mono); font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); background: var(--accent-soft-dark); border: 1px solid var(--accent); border-radius: 99px; padding: 4px 10px;">Supercharge</span>
+                <h2 class="cr-display" style="font-size: 32px; margin: 0;">Use Claude with ChannelRecipe</h2>
             </div>
             <p style="color: var(--app-ink-2); margin-bottom: 28px; max-width: 40rem;">
-                Connect Claude to ChannelRecipe’s live niche database and production tools.
-                Research subjects, pull competitor channels, fetch transcripts, write scripts,
-                and make thumbnails — inside the AI chat you already use.
+                Ask Claude for niches, subjects, scripts, and thumbnails — pulled from ChannelRecipe’s live library, not old training data.
             </p>
 
             <div class="cr-surface" style="padding: 22px; margin-bottom: 18px;">
-                <h3 style="font-family: var(--font-display); font-size: 18px; font-weight: 700; margin-bottom: 10px;">What you get</h3>
-                <ul style="margin: 0 0 0 18px; padding: 0; color: var(--app-ink-2); font-size: 14px; line-height: 1.7;">
-                    <li>Live niches from our daily YouTube discovery (not Claude’s training data)</li>
-                    <li>Subjects + competitor channels ranked by what’s working now</li>
-                    <li>Video transcripts, scripts, and thumbnails in the same loop</li>
-                    <li>Free = a short taste. Starter unlocks the niche database. Daily unlocks volume.</li>
-                </ul>
-            </div>
-
-            <div class="cr-surface" style="padding: 22px; margin-bottom: 18px;">
-                <h3 style="font-family: var(--font-display); font-size: 18px; font-weight: 700; margin-bottom: 10px;">Connect in 2 minutes</h3>
+                <h3 style="font-family: var(--font-display); font-size: 18px; font-weight: 700; margin-bottom: 10px;">Connect in a few steps</h3>
                 <ol style="margin: 0 0 16px 18px; padding: 0; color: var(--app-ink-2); font-size: 14px; line-height: 1.7;">
-                    <li>Sign in to ChannelRecipe (free works for the taste).</li>
-                    <li>Open <strong>Settings → Claude / MCP</strong> and copy your key + Claude Desktop JSON (optional).</li>
-                    <li><strong>Claude.ai:</strong> Settings → Connectors → Add custom connector → URL <code class="cr-mono" style="font-size:12px;">https://channelrecipe.com/mcp</code> → Connect.</li>
-                    <li>Ask Claude: <em>“Use ChannelRecipe to list niches, then pick a subject and draft a script.”</em></li>
+                    <li>Sign in to ChannelRecipe.</li>
+                    <li>Open <strong>Settings → Connect Claude</strong> and copy the connector link + your key.</li>
+                    <li>In Claude.ai go to <strong>Settings → Connectors → Add custom connector</strong>, paste the link, then paste your key when asked.</li>
+                    <li>Ask Claude: <em>“Use ChannelRecipe to list niches.”</em></li>
                 </ol>
                 <div class="flex flex-wrap gap-3">
-                    <button type="button" class="btn-primary" style="font-size: 14px;" onclick="navigateTo('settings')">Open Settings → MCP</button>
+                    <button type="button" class="btn-primary" style="font-size: 14px;" onclick="navigateTo('settings')">Open Settings</button>
                     <a class="btn-secondary" style="font-size: 14px; padding: 10px 16px; text-decoration: none; display: inline-flex; align-items: center;" href="https://claude.ai/settings/connectors" target="_blank" rel="noopener">Open Claude Connectors</a>
-                    <button type="button" class="btn-ghost" style="font-size: 14px;" onclick="openUpgradeFlow()">Upgrade for full database</button>
+                    <button type="button" class="btn-ghost" style="font-size: 14px;" onclick="openUpgradeFlow()">Upgrade for full access</button>
                 </div>
             </div>
 
             <div class="cr-surface" style="padding: 22px; margin-bottom: 18px;">
                 <h3 style="font-family: var(--font-display); font-size: 18px; font-weight: 700; margin-bottom: 10px;">Free vs paid</h3>
                 <p style="font-size: 14px; color: var(--app-ink-2); margin-bottom: 12px;">
-                    Free users can connect and sample. Hitting a limit returns an upgrade link Claude will show you —
-                    that’s intentional. Starter unlocks the full niche library; Daily is for publishing every day.
+                    Free lets you try it. When you hit the sample limit, Claude will show an upgrade link.
+                    Starter unlocks the full niche library; Daily is for publishing every day.
                 </p>
                 <p id="mcp-brain-plan-note" class="cr-mono" style="font-size: 12px; color: var(--app-ink-3);"></p>
             </div>
@@ -1519,33 +1506,58 @@
                 <div class="cr-surface" style="padding: 24px; border-radius: var(--radius-card); border: 1px solid var(--app-border); margin-top: 16px;">
                     <div class="flex items-start justify-between gap-4 flex-wrap" style="margin-bottom: 16px;">
                         <div>
-                            <h4 style="font-family: var(--font-display); font-size: 16px; font-weight: 700;">Claude / MCP</h4>
-                            <p style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2); margin-top: 4px;">
-                                Connect ChannelRecipe to Claude.ai or Claude Desktop. Pull live niche subjects, write scripts, and make thumbnails — free is intentionally thin.
+                            <h4 style="font-family: var(--font-display); font-size: 16px; font-weight: 700;">Connect Claude</h4>
+                            <p style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2); margin-top: 4px; max-width: 36rem;">
+                                Use ChannelRecipe inside Claude on the web — find niches, write scripts, and make thumbnails from chat.
                             </p>
                         </div>
                         <span id="mcp-status-chip" class="cr-mono" style="font-size: 12px; color: var(--app-ink-3);">Loading…</span>
                     </div>
-                    <ol id="mcp-howto" style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2); line-height: 1.6; margin: 0 0 16px 18px; padding: 0;"></ol>
-                    <div style="margin-bottom: 12px;">
-                        <label class="cr-label" for="mcp-api-key">Your MCP API key</label>
+
+                    <div style="margin-bottom: 18px;">
+                        <p class="cr-label" style="margin-bottom: 8px;">Setup (about 2 minutes)</p>
+                        <ol id="mcp-howto" style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2); line-height: 1.7; margin: 0 0 0 18px; padding: 0;"></ol>
+                    </div>
+
+                    <div style="margin-bottom: 14px;">
+                        <label class="cr-label" for="mcp-url">Claude connector link</label>
+                        <div class="flex flex-wrap gap-2 items-center">
+                            <input type="text" id="mcp-url" class="setting-input cr-mono" readonly style="flex: 1; min-width: 220px; font-size: 13px;" value="">
+                            <button type="button" class="btn-secondary" style="font-size: 13px; padding: 8px 14px;" onclick="copyMcpUrl()">Copy link</button>
+                        </div>
+                        <p style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-3); margin-top: 8px;">
+                            Paste this into Claude.ai when you add a custom connector.
+                        </p>
+                    </div>
+
+                    <div style="margin-bottom: 14px;">
+                        <label class="cr-label" for="mcp-api-key">Your connect key</label>
                         <div class="flex flex-wrap gap-2 items-center">
                             <input type="text" id="mcp-api-key" class="setting-input cr-mono" readonly style="flex: 1; min-width: 220px; font-size: 13px;" value="">
                             <button type="button" class="btn-secondary" style="font-size: 13px; padding: 8px 14px;" onclick="copyMcpKey()">Copy key</button>
-                            <button type="button" class="btn-ghost" style="font-size: 13px; padding: 8px 14px;" onclick="rotateMcpKey()">Rotate</button>
+                            <button type="button" class="btn-ghost" style="font-size: 13px; padding: 8px 14px;" onclick="rotateMcpKey()">New key</button>
                         </div>
                         <p style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-3); margin-top: 8px;">
-                            Claude.ai will ask you to paste this key when you click <strong>Connect</strong> on the connector.
+                            Claude will ask for this key when you click <strong>Connect</strong>.
                         </p>
                     </div>
-                    <div style="margin-bottom: 12px;">
-                        <label class="cr-label" for="mcp-claude-json">Claude Desktop config (optional)</label>
-                        <textarea id="mcp-claude-json" class="setting-input cr-mono" readonly rows="10" style="font-size: 12px; line-height: 1.45; resize: vertical;"></textarea>
-                        <button type="button" class="btn-secondary" style="font-size: 13px; padding: 8px 14px; margin-top: 8px;" onclick="copyMcpClaudeJson()">Copy JSON</button>
-                    </div>
+
+                    <details id="mcp-desktop-details" style="margin-bottom: 14px; border: 1px solid var(--app-border); border-radius: 10px; padding: 10px 14px;">
+                        <summary style="cursor: pointer; font-family: var(--font-body); font-size: 13px; color: var(--app-ink-2); user-select: none;">
+                            Using Claude Desktop instead? (advanced)
+                        </summary>
+                        <div style="margin-top: 12px;">
+                            <p style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-3); margin: 0 0 10px; line-height: 1.5;">
+                                Most people can ignore this. Only needed for the Claude Desktop app — copy the config into Settings → Developer → Edit Config, then restart Claude.
+                            </p>
+                            <textarea id="mcp-claude-json" class="setting-input cr-mono" readonly rows="8" style="font-size: 12px; line-height: 1.45; resize: vertical;"></textarea>
+                            <button type="button" class="btn-secondary" style="font-size: 13px; padding: 8px 14px; margin-top: 8px;" onclick="copyMcpClaudeJson()">Copy config</button>
+                        </div>
+                    </details>
+
                     <p id="mcp-quota-note" style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-2); margin: 0 0 8px;"></p>
                     <p id="mcp-integ-status" class="cr-mono" style="font-size: 12px; color: var(--app-ink-3);"></p>
-                    <a id="mcp-upgrade-link" href="/app#billing" class="btn-primary" style="display: inline-block; font-size: 13px; padding: 10px 16px; margin-top: 8px; text-decoration: none;">Upgrade for volume</a>
+                    <a id="mcp-upgrade-link" href="/app#billing" class="btn-primary" style="display: inline-block; font-size: 13px; padding: 10px 16px; margin-top: 8px; text-decoration: none;">Upgrade for more</a>
                 </div>
             </section>
 

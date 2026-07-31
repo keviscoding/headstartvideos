@@ -89,11 +89,12 @@ def main() -> int:
         result = run_niche_finder(
             api_key=config.YOUTUBE_API_KEY,
             keywords=kws,
-            max_per_keyword=max(3, min(int(req.get("max_per_keyword") or 12), 25)),
-            max_channels=max(5, min(int(req.get("max_channels") or 60), 100)),
+            max_per_keyword=0,
+            # 0 = uncapped — keep every channel the scroll scrape finds
+            max_channels=max(0, int(req.get("max_channels") or 0)),
             min_recent_avg_views=max(0, int(req.get("min_recent_avg_views") or 0)),
             max_subscribers=max(10_000, int(req.get("max_subscribers") or 150_000)),
-            scroll_count=max(5, min(int(req.get("scroll_count") or 20), 40)),
+            scroll_count=max(10, min(int(req.get("scroll_count") or 80), 150)),
             max_video_age_days=max(30, min(int(req.get("max_video_age_days") or 180), 365)),
             progress=_progress,
         )
@@ -109,6 +110,17 @@ def main() -> int:
             channels_upserted=n,
         )
         _progress(f"Saved {n} channels to the niche library")
+        try:
+            from webapp.email_service import send_niche_hunt_complete
+            send_niche_hunt_complete(
+                keywords=kws,
+                channels_upserted=n,
+                job_id=job_id,
+                trigger=str(run.get("trigger") or "cron"),
+                runner="fly",
+            )
+        except Exception as mail_err:
+            print(f"[fly-niche] admin email failed: {mail_err}")
         return 0
     except _SHUTDOWN:
         finish_niche_hunt_run(

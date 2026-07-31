@@ -136,7 +136,7 @@ curl -X POST https://channelrecipe.com/api/internal/niche-finder/cron \
 ```
 
 Empty body → today's spontaneous keyword pack (simple probes + niche anchors).
-Optional JSON: `keywords` (overrides daily pack), `scroll_count`, `max_video_age_days`, `max_channels`.
+Optional JSON: `keywords` (overrides daily pack), `scroll_count` (default 80; scrolls until results end), `max_video_age_days`, `max_channels` (0 = keep all).
 Admin can also hit **Add niches** in the Niche Finder UI.
 
 ## Architecture

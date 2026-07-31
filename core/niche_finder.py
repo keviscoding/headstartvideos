@@ -26,8 +26,8 @@ from googleapiclient.discovery import build
 MIN_DURATION_SEC = 240
 RECENT_VIDEO_COUNT = 8  # last N uploads for recent avg (ViewHunt-style)
 POPULAR_SCAN = 24  # pull enough long-form from uploads playlist
-DEFAULT_MAX_PER_KEYWORD = 12
-DEFAULT_MAX_CHANNELS = 60
+DEFAULT_MAX_PER_KEYWORD = 0  # unused historically — keep for API compat
+DEFAULT_MAX_CHANNELS = 0  # 0 = keep every channel discovered
 
 # Conservative faceless long-form RPM assumption for English markets.
 # Real RPM varies wildly ($1–$12+); we show a midpoint + band in the UI.
@@ -469,13 +469,14 @@ def run_niche_finder(
     kws = [k.strip() for k in (keywords or DEFAULT_KEYWORDS) if k and k.strip()]
     if not kws:
         raise ValueError("Add at least one keyword")
-    kws = kws[:40]
+    kws = kws[:80]
     age_limit = max_video_age_days or MAX_VIDEO_AGE_DAYS
 
     _log("Starting scroll discovery (real YouTube search pages)…")
     scraped = scrape_keywords(
         kws,
-        scroll_count=max(5, min(int(scroll_count or 20), 40)),
+        # High ceiling so each keyword can scroll to the real end of results.
+        scroll_count=max(10, min(int(scroll_count or 80), 150)),
         max_age_days=age_limit,
         progress=_log,
     )
@@ -694,7 +695,10 @@ def run_niche_finder(
         ),
         reverse=True,
     )
-    hits = hits[: max(1, max_channels)]
+    # max_channels <= 0 means keep everything the scrape found.
+    cap = int(max_channels or 0)
+    if cap > 0:
+        hits = hits[:cap]
     _log(f"Done — {len(hits)} niches ranked")
 
     return {

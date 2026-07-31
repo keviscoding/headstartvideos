@@ -22,7 +22,7 @@ from urllib.parse import quote_plus
 ProgressCb = Callable[[str], None]
 
 MAX_VIDEO_AGE_DAYS = 180  # 6 months — drop legacy music / dead virals
-DEFAULT_SCROLL_COUNT = 20
+DEFAULT_SCROLL_COUNT = 80
 SCROLL_DELAY_SEC = 1.6
 MIN_DURATION_SEC = 240  # long-form only (≥ 4 min)
 
@@ -208,7 +208,8 @@ def scrape_keyword_search(
 
             last_count = 0
             stagnant = 0
-            max_scrolls = max(3, int(scroll_count))
+            # Scroll until YouTube stops loading new cards (or hit the ceiling).
+            max_scrolls = max(10, int(scroll_count))
             for i in range(1, max_scrolls + 1):
                 page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
                 page.wait_for_timeout(int(SCROLL_DELAY_SEC * 1000))
@@ -217,7 +218,7 @@ def scrape_keyword_search(
                     _log(f"  scroll {i}/{max_scrolls} — {count} video cards")
                 if count <= last_count:
                     stagnant += 1
-                    if stagnant >= 3:
+                    if stagnant >= 4:
                         _log(f"  reached end of results (~{count} cards)")
                         break
                 else:

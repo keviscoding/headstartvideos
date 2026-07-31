@@ -3145,11 +3145,11 @@ def _niche_finder_can_run(user: dict) -> bool:
 
 class NicheFinderJobRequest(BaseModel):
     keywords: list[str] = []
-    max_per_keyword: int = 12
-    max_channels: int = 60
+    max_per_keyword: int = 0  # unused — kept for API compat
+    max_channels: int = 0  # 0 = keep every channel found
     min_recent_avg_views: int = 0
     max_subscribers: int = 150_000
-    scroll_count: int = 20
+    scroll_count: int = 80
     max_video_age_days: int = 180
 
 
@@ -3192,11 +3192,12 @@ def _run_niche_hunt_locally(
         result = run_niche_finder(
             api_key=config.YOUTUBE_API_KEY,
             keywords=kws,
-            max_per_keyword=max(3, min(int(max_per_keyword or 12), 25)),
-            max_channels=max(5, min(int(max_channels or 60), 100)),
+            max_per_keyword=0,
+            # 0 = uncapped — keep every channel the scroll scrape finds
+            max_channels=max(0, int(max_channels or 0)),
             min_recent_avg_views=max(0, int(min_recent_avg_views or 0)),
             max_subscribers=max(10_000, int(max_subscribers or 150_000)),
-            scroll_count=max(5, min(int(scroll_count or 20), 40)),
+            scroll_count=max(10, min(int(scroll_count or 80), 150)),
             max_video_age_days=max(30, min(int(max_video_age_days or 180), 365)),
             progress=_progress,
         )
@@ -3211,6 +3212,18 @@ def _run_niche_hunt_locally(
             channels_upserted=n,
         )
         _progress(f"Saved {n} channels to the niche library")
+        try:
+            from webapp.email_service import send_niche_hunt_complete
+            run_row = get_niche_hunt_run_by_job_id(job_id) or {}
+            send_niche_hunt_complete(
+                keywords=kws,
+                channels_upserted=n,
+                job_id=job_id,
+                trigger=str(run_row.get("trigger") or "manual"),
+                runner="web",
+            )
+        except Exception as mail_err:
+            print(f"[niche_finder] admin email failed: {mail_err}")
     except Exception as e:
         finish_niche_hunt_run(
             run_id,
@@ -5153,11 +5166,11 @@ def niche_finder_cron(
     kws = list(body.keywords or [])
     job_id = _start_niche_hunt(
         keywords=kws,
-        max_per_keyword=body.max_per_keyword or 12,
-        max_channels=body.max_channels or 60,
+        max_per_keyword=0,
+        max_channels=body.max_channels if body.max_channels is not None else 0,
         min_recent_avg_views=body.min_recent_avg_views or 0,
         max_subscribers=body.max_subscribers or 150_000,
-        scroll_count=body.scroll_count or 20,
+        scroll_count=body.scroll_count or 80,
         max_video_age_days=body.max_video_age_days or 180,
         trigger="cron",
         user_id=None,
@@ -5747,9 +5760,10 @@ def _mcp_connect_payload(api_key: str, base: str) -> dict:
         "upgrade_url": billing.UPGRADE_URL,
         "upgrade_cta": billing.UPGRADE_CTA,
         "howto": [
-            "Claude.ai: Settings → Connectors → Add custom connector → Name “ChannelRecipe”, URL https://channelrecipe.com/mcp → Add → Connect → paste your MCP API key when asked.",
-            "Claude Desktop: copy the JSON below into Settings → Developer → Edit Config (merge under mcpServers), then restart.",
-            "Ask: “Use ChannelRecipe to list GTA 6 subjects.” Free tier is tutorial-thin (5 subjects, 3 channels, 1 script, 1 thumbnail).",
+            f"In Claude.ai open Settings → Connectors → Add custom connector.",
+            f"Name it ChannelRecipe and paste this link: {mcp_url}",
+            "Click Add, then Connect, and paste your API key from below when Claude asks.",
+            "In Claude, try: “Use ChannelRecipe to list niches.”",
         ],
     }
 
