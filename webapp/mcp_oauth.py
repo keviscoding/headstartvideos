@@ -490,17 +490,19 @@ async def render_login(request: Request) -> Response:
     if not state or not oauth_provider.get_pending(state):
         raise HTTPException(400, "Invalid or expired login link. Click Connect again in Claude.")
 
-    # Never silent-auto-approve: user must click Authorize so account requirement is obvious.
-    logged_in_email = ""
+    # Silent approve when already logged into ChannelRecipe in this browser —
+    # fastest path for returning users. Strangers without a session still must
+    # create an account and paste an MCP API key.
     token = request.cookies.get("session")
     if token:
         from webapp.database import get_session_user
 
         user = get_session_user(token)
         if user:
-            logged_in_email = (user.get("email") or "").strip()
+            redirect = oauth_provider.complete_login(state, int(user["id"]))
+            return RedirectResponse(url=redirect, status_code=302)
 
-    return HTMLResponse(login_page_html(state=state, logged_in_email=logged_in_email))
+    return HTMLResponse(login_page_html(state=state, logged_in_email=""))
 
 
 async def handle_login_post(request: Request) -> Response:
@@ -516,7 +518,7 @@ async def handle_login_post(request: Request) -> Response:
     user = None
     if api_key:
         user = get_user_by_mcp_api_key(api_key)
-    if not user and use_session:
+    if not user and (use_session or not api_key):
         sess = request.cookies.get("session")
         if sess:
             user = get_session_user(sess)
@@ -524,19 +526,12 @@ async def handle_login_post(request: Request) -> Response:
                 ensure_user_mcp_api_key(int(user["id"]))
 
     if not user:
-        logged_in_email = ""
-        sess = request.cookies.get("session")
-        if sess:
-            su = get_session_user(sess)
-            if su:
-                logged_in_email = (su.get("email") or "").strip()
         return HTMLResponse(
             login_page_html(
                 state=state,
-                logged_in_email=logged_in_email,
                 error=(
-                    "Account required. Sign in at channelrecipe.com, copy your MCP API key "
-                    "from Settings, or click Authorize if you're already signed in."
+                    "Account required. Sign in at channelrecipe.com, then copy your "
+                    "MCP API key from Settings → Claude / MCP."
                 ),
             ),
             status_code=401,

@@ -63,7 +63,7 @@
                     </div>
                     <button class="nav-btn" data-page="history" onclick="navigateTo('history')">History</button>
                     <button id="nav-settings" class="nav-btn hidden" data-page="settings" onclick="navigateTo('settings')">Settings</button>
-                    <button class="nav-btn nav-brain-btn" data-page="recipe-brain" onclick="navigateTo('recipe-brain')" title="Recipe Brain" aria-label="Recipe Brain">
+                    <button class="nav-btn nav-brain-btn" data-page="recipe-brain" onclick="navigateTo('recipe-brain')" title="Claude MCP" aria-label="Claude MCP">
                         <span class="nav-brain-icon" aria-hidden="true">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
                                 <path d="M9.5 4.5c-1.8 0-3.2 1.3-3.4 3-.9.3-1.6 1.2-1.6 2.3 0 .7.3 1.3.7 1.7-.4.5-.7 1.2-.7 1.9 0 1.3.9 2.4 2.1 2.7v1.1c0 .9.7 1.6 1.6 1.6h1.2V8.2c0-.7.3-1.3.8-1.7-.1-.3-.2-.6-.2-1 0-.6.5-1 1-1z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -119,7 +119,7 @@
                 <span class="nav-brain-icon" style="width:22px;height:22px;" aria-hidden="true">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9.5 4.5c-1.8 0-3.2 1.3-3.4 3-.9.3-1.6 1.2-1.6 2.3 0 .7.3 1.3.7 1.7-.4.5-.7 1.2-.7 1.9 0 1.3.9 2.4 2.1 2.7v1.1c0 .9.7 1.6 1.6 1.6h1.2V8.2c0-.7.3-1.3.8-1.7-.1-.3-.2-.6-.2-1 0-.6.5-1 1-1z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M14.5 4.5c1.8 0 3.2 1.3 3.4 3 .9.3 1.6 1.2 1.6 2.3 0 .7-.3 1.3-.7 1.7.4.5.7 1.2.7 1.9 0 1.3-.9 2.4-2.1 2.7v1.1c0 .9-.7 1.6-1.6 1.6h-1.2V8.2c0-.7-.3-1.3-.8-1.7.1-.3.2-.6.2-1 0-.6-.5-1-1-1z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 8.5v9.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
                 </span>
-                Recipe Brain
+                Claude MCP
             </button>
         </div>
     </header>
@@ -1299,38 +1299,62 @@
     </div>
 
     <!-- ============================================================ -->
-    <!-- PAGE: Recipe Brain -->
+    <!-- PAGE: Claude MCP (brain icon) -->
     <!-- ============================================================ -->
     <div id="page-recipe-brain" class="page-container hidden">
         <main class="max-w-3xl mx-auto px-6 py-8">
             <div class="flex items-center gap-3 mb-2" style="flex-wrap: wrap;">
-                <h2 class="cr-display" style="font-size: 32px; margin: 0;">Recipe Brain</h2>
-                <span style="font-family: var(--font-mono); font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); background: var(--accent-soft-dark); border: 1px solid var(--accent); border-radius: 99px; padding: 4px 10px;">Coming soon</span>
+                <h2 class="cr-display" style="font-size: 32px; margin: 0;">Claude + MCP</h2>
+                <span style="font-family: var(--font-mono); font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); background: var(--accent-soft-dark); border: 1px solid var(--accent); border-radius: 99px; padding: 4px 10px;">Supercharge</span>
             </div>
-            <p style="color: var(--app-ink-2); margin-bottom: 28px; max-width: 36rem;">
-                Elite YouTube-automation advice trained on real channel data and operator lessons — not a generic chatbot.
-                Open with the starter pack below; full chat unlocks next.
+            <p style="color: var(--app-ink-2); margin-bottom: 28px; max-width: 40rem;">
+                Connect Claude to ChannelRecipe’s live niche database and production tools.
+                Research subjects, pull competitor channels, fetch transcripts, write scripts,
+                and make thumbnails — inside the AI chat you already use.
             </p>
 
-            <div class="cr-surface" style="padding: 20px; margin-bottom: 20px;">
-                <h3 class="cr-eyebrow mb-3">Starter pack</h3>
+            <div class="cr-surface" style="padding: 22px; margin-bottom: 18px;">
+                <h3 style="font-family: var(--font-display); font-size: 18px; font-weight: 700; margin-bottom: 10px;">What you get</h3>
+                <ul style="margin: 0 0 0 18px; padding: 0; color: var(--app-ink-2); font-size: 14px; line-height: 1.7;">
+                    <li>Live niches from our daily YouTube discovery (not Claude’s training data)</li>
+                    <li>Subjects + competitor channels ranked by what’s working now</li>
+                    <li>Video transcripts, scripts, and thumbnails in the same loop</li>
+                    <li>Free = a short taste. Starter unlocks the niche database. Daily unlocks volume.</li>
+                </ul>
+            </div>
+
+            <div class="cr-surface" style="padding: 22px; margin-bottom: 18px;">
+                <h3 style="font-family: var(--font-display); font-size: 18px; font-weight: 700; margin-bottom: 10px;">Connect in 2 minutes</h3>
+                <ol style="margin: 0 0 16px 18px; padding: 0; color: var(--app-ink-2); font-size: 14px; line-height: 1.7;">
+                    <li>Sign in to ChannelRecipe (free works for the taste).</li>
+                    <li>Open <strong>Settings → Claude / MCP</strong> and copy your key + Claude Desktop JSON (optional).</li>
+                    <li><strong>Claude.ai:</strong> Settings → Connectors → Add custom connector → URL <code class="cr-mono" style="font-size:12px;">https://channelrecipe.com/mcp</code> → Connect.</li>
+                    <li>Ask Claude: <em>“Use ChannelRecipe to list niches, then pick a subject and draft a script.”</em></li>
+                </ol>
+                <div class="flex flex-wrap gap-3">
+                    <button type="button" class="btn-primary" style="font-size: 14px;" onclick="navigateTo('settings')">Open Settings → MCP</button>
+                    <a class="btn-secondary" style="font-size: 14px; padding: 10px 16px; text-decoration: none; display: inline-flex; align-items: center;" href="https://claude.ai/settings/connectors" target="_blank" rel="noopener">Open Claude Connectors</a>
+                    <button type="button" class="btn-ghost" style="font-size: 14px;" onclick="openUpgradeFlow()">Upgrade for full database</button>
+                </div>
+            </div>
+
+            <div class="cr-surface" style="padding: 22px; margin-bottom: 18px;">
+                <h3 style="font-family: var(--font-display); font-size: 18px; font-weight: 700; margin-bottom: 10px;">Free vs paid</h3>
+                <p style="font-size: 14px; color: var(--app-ink-2); margin-bottom: 12px;">
+                    Free users can connect and sample. Hitting a limit returns an upgrade link Claude will show you —
+                    that’s intentional. Starter unlocks the full niche library; Daily is for publishing every day.
+                </p>
+                <p id="mcp-brain-plan-note" class="cr-mono" style="font-size: 12px; color: var(--app-ink-3);"></p>
+            </div>
+
+            <div class="cr-surface" style="padding: 22px; opacity: 0.85;">
+                <h3 class="cr-eyebrow mb-3">Still want the old starter pack?</h3>
                 <p style="font-size: 14px; color: var(--app-ink-2); margin-bottom: 14px;">20 mistakes not to make when starting YouTube automation.</p>
-                <button id="btn-brain-starter" class="btn-primary" style="font-size: 14px;" onclick="loadBrainStarter()">
+                <button id="btn-brain-starter" class="btn-secondary" style="font-size: 14px;" onclick="loadBrainStarter()">
                     <span class="btn-text">Show the 20 mistakes</span>
                     <span class="btn-loading hidden"><span class="cr-spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;"></span> Loading…</span>
                 </button>
                 <div id="brain-starter-list" class="hidden brain-mistakes" style="margin-top: 18px;"></div>
-            </div>
-
-            <div class="cr-surface" style="padding: 20px; opacity: 0.72;">
-                <h3 class="cr-eyebrow mb-3">Chat with Recipe Brain</h3>
-                <div id="brain-chat-log" style="min-height: 120px; margin-bottom: 12px; font-size: 14px; color: var(--app-ink-3);">
-                    Chat unlocks when Recipe Brain is enabled. Until then, use the starter pack.
-                </div>
-                <div class="flex gap-2" style="align-items: stretch;">
-                    <input id="brain-chat-input" type="text" class="cr-input" disabled placeholder="Ask about niches, hooks, retention…" style="flex:1;">
-                    <button id="btn-brain-chat" class="btn-secondary" style="font-size: 14px; padding: 8px 16px;" disabled onclick="sendBrainChat()">Send</button>
-                </div>
             </div>
         </main>
     </div>

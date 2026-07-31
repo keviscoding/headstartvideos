@@ -32,8 +32,10 @@ mcp = MCPServer(
         "upgrade at channelrecipe.com for volume. "
         "Start with list_niches to see what is loaded, then list_niche_subjects / "
         "list_niche_channels, then generate_script / generate_thumbnail. "
+        "Paid plans also get get_video_transcript. "
         "Auth is the Claude connector OAuth session (or Desktop Bearer key) — "
-        "do not ask the user for an api_key tool argument."
+        "do not ask the user for an api_key tool argument. "
+        "When a tool returns upgrade_url, tell the user to upgrade at that link."
     ),
     website_url="https://channelrecipe.com",
     auth_server_provider=oauth_provider,
@@ -473,6 +475,70 @@ def generate_thumbnail(
         return json.dumps(payload)
     except Exception as e:
         return json.dumps({"error": f"Thumbnail failed: {e}"})
+
+
+@mcp.tool()
+def get_video_transcript(
+    youtube_url: str,
+    ctx: Context | None = None,
+) -> str:
+    """
+    Fetch the transcript / captions for a YouTube video URL or ID.
+
+    Paid plans only (Starter or Daily). Use after picking a competitor video
+    from list_niche_channels to study hooks and structure.
+    """
+    import re
+    import config
+    from core.channel_data import _fetch_transcript
+
+    user = _user_from_request(ctx)
+    ok, msg = billing.paid_required(user, feature="Video transcripts")
+    if not ok:
+        return json.dumps({
+            "error": msg,
+            "upgrade_url": billing.UPGRADE_URL,
+            "upgrade": billing.UPGRADE_CTA,
+        })
+
+    raw = (youtube_url or "").strip()
+    if not raw:
+        return json.dumps({"error": "Pass a YouTube URL or video id."})
+
+    m = re.search(
+        r"(?:youtu\.be/|v=|/shorts/|/embed/|youtube\.com/watch\?.*?v=)([A-Za-z0-9_-]{6,})",
+        raw,
+    )
+    video_id = m.group(1) if m else raw
+    video_id = re.sub(r"[^A-Za-z0-9_-]", "", video_id)[:20]
+    if len(video_id) < 6:
+        return json.dumps({"error": "Could not parse a YouTube video id from that input."})
+
+    try:
+        text = _fetch_transcript(video_id, getattr(config, "DOWNSUB_KEY", "") or "")
+    except Exception as e:
+        return json.dumps({"error": f"Transcript fetch failed: {e}"})
+
+    if not text:
+        return json.dumps({
+            "video_id": video_id,
+            "transcript": "",
+            "status": "unavailable",
+            "note": "No captions found for this video.",
+        })
+
+    # Keep payloads reasonable for Claude context
+    max_chars = 24000 if billing._tier(user.get("plan") if user else None) == "daily" else 12000
+    truncated = len(text) > max_chars
+    body = text[:max_chars]
+    return json.dumps({
+        "status": "ok",
+        "video_id": video_id,
+        "transcript": body,
+        "truncated": truncated,
+        "char_count": len(body),
+        "plan": _plan_of(user),
+    })
 
 
 def build_mcp_asgi():

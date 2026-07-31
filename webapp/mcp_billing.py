@@ -117,19 +117,16 @@ def with_upgrade_hint(payload: dict, *, free_capped: bool) -> dict:
     return out
 
 
-def free_limit_reached_payload(*, kind: str, plan: str) -> dict:
-    """Hard stop message Claude should relay to the user."""
-    return {
-        "status": "limit_reached",
-        "plan": plan or "free",
-        "error": (
-            f"Free MCP {kind} limit reached. "
-            "Upgrade to unlock the full ChannelRecipe niche database in Claude."
-        ),
-        "upgrade": UPGRADE_CTA,
-        "upgrade_url": UPGRADE_URL,
-        "upgrade_plans": {
-            "starter": "Full niche database access.",
-            "daily": "Full database + higher daily volume.",
-        },
-    }
+def paid_required(user: dict | None, *, feature: str) -> tuple[bool, str]:
+    """Hard gate for paid-only MCP tools (transcripts, etc.)."""
+    if not user:
+        return False, (
+            f"{feature} requires a ChannelRecipe account. Sign up, connect MCP, "
+            f"then upgrade. {UPGRADE_CTA}"
+        )
+    if is_paid_plan(user.get("plan")):
+        return True, ""
+    return False, (
+        f"{feature} is a paid MCP feature. Free includes a taste of niche discovery only. "
+        + UPGRADE_CTA
+    )

@@ -436,6 +436,13 @@ async def _startup_tasks():
 
     asyncio.create_task(_ensure_gta_niche_seed())
 
+    async def _daily_niche_populator():
+        from webapp.niche_cron import run_daily_niche_cron_loop
+        await run_daily_niche_cron_loop(start_hunt=_start_niche_hunt)
+
+    # Defined later in module; resolved at task run time after import finishes.
+    asyncio.create_task(_daily_niche_populator())
+
 _startup_fn = _startup_tasks
 
 from webapp.database import (

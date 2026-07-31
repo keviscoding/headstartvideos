@@ -4424,27 +4424,19 @@ let _brainChatEnabled = false;
 let _brainMessages = [];
 
 async function initRecipeBrainPage() {
-    _brainMessages = [];
-    const log = document.getElementById('brain-chat-log');
-    const input = document.getElementById('brain-chat-input');
-    const sendBtn = document.getElementById('btn-brain-chat');
-    try {
-        const res = await fetch('/api/brain/starter', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-        if (res.ok) {
-            const data = await res.json();
-            _brainChatEnabled = !!data.chat_enabled;
+    const note = document.getElementById('mcp-brain-plan-note');
+    const plan = (currentUser && currentUser.plan) ? String(currentUser.plan) : 'free';
+    if (note) {
+        if (!currentUser) {
+            note.textContent = 'Sign in to connect Claude to your ChannelRecipe account.';
+        } else if (['starter', 'daily', 'pro'].includes(plan.toLowerCase())) {
+            note.textContent = `You’re on ${plan} — full niche database access in MCP.`;
+        } else {
+            note.textContent = 'Free plan: connect for a taste, then upgrade when Claude hits the limit.';
         }
-    } catch (_) {
-        _brainChatEnabled = false;
     }
-    if (input) input.disabled = !_brainChatEnabled;
-    if (sendBtn) sendBtn.disabled = !_brainChatEnabled;
-    if (log) {
-        log.style.color = 'var(--app-ink-3)';
-        log.textContent = _brainChatEnabled
-            ? 'Ask about niches, hooks, retention, or packaging.'
-            : 'Chat unlocks when Recipe Brain is enabled. Until then, use the starter pack.';
-    }
+    // Prefetch MCP key status so Settings is warm when they click through
+    try { if (currentUser) loadMcpSettings(); } catch (_) {}
 }
 
 async function loadBrainStarter() {

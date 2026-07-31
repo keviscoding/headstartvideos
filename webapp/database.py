@@ -2158,6 +2158,71 @@ def list_niche_keywords(*, limit: int = 40) -> list[dict]:
     return out
 
 
+def _ensure_niche_cron_table() -> None:
+    ddl = """
+    CREATE TABLE IF NOT EXISTS niche_cron_days (
+        day_key     TEXT PRIMARY KEY,
+        job_id      TEXT DEFAULT '',
+        keywords_json TEXT DEFAULT '[]',
+        started_at  REAL NOT NULL
+    );
+    """
+    with _conn() as conn:
+        if IS_PG:
+            with conn.cursor() as cur:
+                cur.execute(ddl)
+        else:
+            conn.executescript(ddl)
+
+
+def claim_daily_niche_cron(day_key: str) -> bool:
+    """
+    Atomically claim today's cron slot. Returns True if this process won
+    (so it should start the hunt). False if already claimed (another worker
+    or earlier run today).
+    """
+    _ensure_niche_cron_table()
+    day_key = (day_key or "").strip()
+    if not day_key:
+        return False
+    now = time.time()
+    with _conn() as conn:
+        cur = conn.cursor()
+        if IS_PG:
+            cur.execute(
+                "INSERT INTO niche_cron_days (day_key, job_id, keywords_json, started_at) "
+                "VALUES (%s, '', '[]', %s) ON CONFLICT (day_key) DO NOTHING RETURNING day_key",
+                (day_key, now),
+            )
+            return cur.fetchone() is not None
+        cur.execute(
+            "INSERT OR IGNORE INTO niche_cron_days (day_key, job_id, keywords_json, started_at) "
+            "VALUES (?, '', '[]', ?)",
+            (day_key, now),
+        )
+        return int(cur.rowcount or 0) == 1
+
+
+def finish_daily_niche_cron(day_key: str, *, job_id: str, keywords: list[str]) -> None:
+    _ensure_niche_cron_table()
+    with _conn() as conn:
+        conn.cursor().execute(
+            _q(
+                "UPDATE niche_cron_days SET job_id = ?, keywords_json = ? WHERE day_key = ?"
+            ),
+            (job_id or "", json.dumps(keywords or []), day_key),
+        )
+
+
+def get_daily_niche_cron(day_key: str) -> dict | None:
+    _ensure_niche_cron_table()
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(_q("SELECT * FROM niche_cron_days WHERE day_key = ?"), (day_key,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
 def create_niche_hunt_run(
     *,
     job_id: str,
