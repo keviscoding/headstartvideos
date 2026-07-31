@@ -215,7 +215,7 @@ def list_niches(ctx: Context | None = None) -> str:
         })
     plan = _plan_of(user)
     stats = _library_stats()
-    limit = billing.discovery_channel_limit(plan)
+    limit = billing.discovery_niche_limit(plan)
     niches = stats["niches"][:limit]
     free_capped = not billing.is_paid_plan(plan)
     payload = billing.with_upgrade_hint(
@@ -223,6 +223,7 @@ def list_niches(ctx: Context | None = None) -> str:
             "niches": niches,
             "library_channels": stats["total_channels"],
             "plan": plan,
+            "limit": limit,
             "status": "ok" if niches else "empty_library",
         },
         free_capped=free_capped,
@@ -230,6 +231,11 @@ def list_niches(ctx: Context | None = None) -> str:
     if not niches:
         payload["note"] = (
             "Niche library is empty — seed has not run in this environment yet."
+        )
+    elif free_capped:
+        payload["note"] = (
+            f"Free taste: showing {limit} niche(s) of {stats['total_channels']} channels in the library. "
+            "Upgrade to unlock the full live niche database in Claude."
         )
     return json.dumps(payload, default=str)
 

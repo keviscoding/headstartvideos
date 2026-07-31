@@ -3236,7 +3236,6 @@ def _start_niche_hunt(
     Job state is in Postgres so page refresh can keep polling.
     """
     import threading
-    from core.niche_finder import DEFAULT_KEYWORDS
 
     existing = get_latest_running_niche_hunt()
     if existing and existing.get("job_id"):
@@ -3259,7 +3258,13 @@ def _start_niche_hunt(
 
     kws = [k.strip() for k in (keywords or []) if k and str(k).strip()]
     if not kws:
-        kws = list(DEFAULT_KEYWORDS)
+        if trigger == "cron":
+            from core.niche_daily_keywords import daily_cron_keywords
+            kws = daily_cron_keywords()
+        else:
+            from core.niche_finder import DEFAULT_KEYWORDS
+            kws = list(DEFAULT_KEYWORDS)
+
 
     job_id = str(uuid.uuid4())
     request = {
@@ -5137,8 +5142,10 @@ def niche_finder_cron(
         raise HTTPException(400, "YouTube API key not configured.")
 
     body = req or NicheFinderJobRequest()
+    # Empty keywords → today's spontaneous pack (not the full static list).
+    kws = list(body.keywords or [])
     job_id = _start_niche_hunt(
-        keywords=body.keywords or [],
+        keywords=kws,
         max_per_keyword=body.max_per_keyword or 12,
         max_channels=body.max_channels or 60,
         min_recent_avg_views=body.min_recent_avg_views or 0,
@@ -5148,7 +5155,15 @@ def niche_finder_cron(
         trigger="cron",
         user_id=None,
     )
-    return {"job_id": job_id, "status": "running", "trigger": "cron"}
+    from core.niche_daily_keywords import daily_cron_keywords
+    used = kws if kws else daily_cron_keywords()
+    return {
+        "job_id": job_id,
+        "status": "running",
+        "trigger": "cron",
+        "keywords": used,
+        "keyword_count": len(used),
+    }
 
 
 # ---------------------------------------------------------------------------

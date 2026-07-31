@@ -119,9 +119,12 @@ Videos older than **6 months** are ignored. Results upsert into `niche_channels`
 
 Isolation: niche scrape prefers an ephemeral **Fly Machine** on the cook app image (`python -m webapp.fly_niche_oneshot`) — same image as cooks, different command, **not** the cook queue. Progress lives in `niche_hunt_runs` so refreshing the page can resume polling. If Fly is off, it falls back to a web-dyno background thread.
 
-1. Set `CRON_SECRET`, `YOUTUBE_API_KEY`, and (for Fly) `COOK_ON_FLY=1` + cook Fly secrets on the web app.
-2. Redeploy the cook image after niche code changes so Machines pick up `fly_niche_oneshot`.
-3. Call the endpoint **1–2×/day**:
+1. Create a `CRON_SECRET` (any long random string, e.g. `openssl rand -hex 32`).
+   Set it on the **web** DigitalOcean app env vars. Same value must be used in the scheduled job header.
+   This secret only authorizes our daily niche scrape — it is not Claude MCP auth.
+2. Set `YOUTUBE_API_KEY`, and (for Fly) `COOK_ON_FLY=1` + cook Fly secrets on the web app.
+3. Redeploy the cook image after niche code changes so Machines pick up `fly_niche_oneshot`.
+4. Schedule a job **1×/day** that POSTs (empty body → today's spontaneous keyword pack):
 
 ```bash
 curl -X POST https://channelrecipe.com/api/internal/niche-finder/cron \
@@ -130,7 +133,7 @@ curl -X POST https://channelrecipe.com/api/internal/niche-finder/cron \
   -d '{}'
 ```
 
-Optional JSON: `keywords`, `scroll_count` (default 20), `max_video_age_days` (default 180), `max_channels`.
+Optional JSON: `keywords` (overrides daily pack), `scroll_count` (default 20), `max_video_age_days` (default 180), `max_channels`.
 Admin can also hit **Add niches** in the Niche Finder UI.
 
 ## Architecture

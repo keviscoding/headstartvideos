@@ -407,9 +407,48 @@ class ChannelRecipeOAuthProvider(
 oauth_provider = ChannelRecipeOAuthProvider()
 
 
-def login_page_html(*, state: str, error: str = "", email_hint: str = "") -> str:
+def login_page_html(
+    *,
+    state: str,
+    error: str = "",
+    logged_in_email: str = "",
+) -> str:
     err = f'<p style="color:#b91c1c;margin:0 0 12px;">{error}</p>' if error else ""
-    hint = f'value="{email_hint}"' if email_hint else 'placeholder="cr_mcp_… from Settings → Claude / MCP"'
+    if logged_in_email:
+        account_block = f"""
+      <p><strong>ChannelRecipe account required.</strong> You're signed in as
+      <span style="color:var(--ink)">{logged_in_email}</span>.</p>
+      <form method="post" action="/oauth/mcp/login">
+        <input type="hidden" name="state" value="{state}"/>
+        <input type="hidden" name="use_session" value="1"/>
+        <button type="submit">Authorize Claude as {logged_in_email}</button>
+      </form>
+      <p class="alt">Not you? <a href="/app">Sign in with a different account</a>,
+      or paste an MCP API key below.</p>
+      <form method="post" action="/oauth/mcp/login" style="margin-top:18px">
+        <input type="hidden" name="state" value="{state}"/>
+        <label for="api_key">Or paste MCP API key</label>
+        <input id="api_key" name="api_key" type="password" autocomplete="off"
+               placeholder="cr_mcp_… from Settings → Claude / MCP"/>
+        <button type="submit" style="background:#0f172a">Authorize with API key</button>
+      </form>
+"""
+    else:
+        account_block = f"""
+      <p><strong>A free ChannelRecipe account is required</strong> before Claude
+      can use your niche library. Random URL visitors cannot connect without one.</p>
+      <p class="alt" style="margin:12px 0 0">
+        <a href="/app" target="_blank" rel="noopener">Create account / sign in</a>
+        → Settings → copy MCP API key → paste below.
+      </p>
+      <form method="post" action="/oauth/mcp/login">
+        <input type="hidden" name="state" value="{state}"/>
+        <label for="api_key">MCP API key</label>
+        <input id="api_key" name="api_key" type="password" autocomplete="off" required
+               placeholder="cr_mcp_… from Settings → Claude / MCP"/>
+        <button type="submit">Authorize Claude</button>
+      </form>
+"""
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -438,15 +477,8 @@ def login_page_html(*, state: str, error: str = "", email_hint: str = "") -> str
   <main>
     <div class="card">
       <h1>Connect ChannelRecipe</h1>
-      <p>Claude wants access to your niche subjects, scripts, and thumbnails. Paste your MCP API key from ChannelRecipe Settings.</p>
       {err}
-      <form method="post" action="/oauth/mcp/login">
-        <input type="hidden" name="state" value="{state}"/>
-        <label for="api_key">MCP API key</label>
-        <input id="api_key" name="api_key" type="password" autocomplete="off" required {hint}/>
-        <button type="submit">Authorize Claude</button>
-      </form>
-      <p class="alt">Or <a href="/app#settings">open Settings</a> while logged in, then refresh this page to approve with one click.</p>
+      {account_block}
     </div>
   </main>
 </body>
@@ -458,23 +490,24 @@ async def render_login(request: Request) -> Response:
     if not state or not oauth_provider.get_pending(state):
         raise HTTPException(400, "Invalid or expired login link. Click Connect again in Claude.")
 
-    # Auto-approve if ChannelRecipe session cookie is present
+    # Never silent-auto-approve: user must click Authorize so account requirement is obvious.
+    logged_in_email = ""
     token = request.cookies.get("session")
     if token:
         from webapp.database import get_session_user
 
         user = get_session_user(token)
         if user:
-            redirect = oauth_provider.complete_login(state, int(user["id"]))
-            return RedirectResponse(url=redirect, status_code=302)
+            logged_in_email = (user.get("email") or "").strip()
 
-    return HTMLResponse(login_page_html(state=state))
+    return HTMLResponse(login_page_html(state=state, logged_in_email=logged_in_email))
 
 
 async def handle_login_post(request: Request) -> Response:
     form = await request.form()
     state = str(form.get("state") or "").strip()
     api_key = str(form.get("api_key") or "").strip()
+    use_session = str(form.get("use_session") or "").strip() in ("1", "true", "yes")
     if not state or not oauth_provider.get_pending(state):
         raise HTTPException(400, "Invalid or expired login state.")
 
@@ -483,7 +516,7 @@ async def handle_login_post(request: Request) -> Response:
     user = None
     if api_key:
         user = get_user_by_mcp_api_key(api_key)
-    if not user:
+    if not user and use_session:
         sess = request.cookies.get("session")
         if sess:
             user = get_session_user(sess)
@@ -491,8 +524,21 @@ async def handle_login_post(request: Request) -> Response:
                 ensure_user_mcp_api_key(int(user["id"]))
 
     if not user:
+        logged_in_email = ""
+        sess = request.cookies.get("session")
+        if sess:
+            su = get_session_user(sess)
+            if su:
+                logged_in_email = (su.get("email") or "").strip()
         return HTMLResponse(
-            login_page_html(state=state, error="That MCP API key wasn’t recognized. Copy it from Settings → Claude / MCP."),
+            login_page_html(
+                state=state,
+                logged_in_email=logged_in_email,
+                error=(
+                    "Account required. Sign in at channelrecipe.com, copy your MCP API key "
+                    "from Settings, or click Authorize if you're already signed in."
+                ),
+            ),
             status_code=401,
         )
 
