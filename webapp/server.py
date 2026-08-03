@@ -731,6 +731,59 @@ _PLAN_CREDITS = {
 }
 
 
+def _channelrecipe_price_ids() -> set[str]:
+    """Price IDs that belong to ChannelRecipe (ignore other businesses on same Stripe)."""
+    return {
+        p.strip()
+        for p in (
+            config.STRIPE_PRICE_STARTER_MONTHLY,
+            config.STRIPE_PRICE_STARTER_ANNUAL,
+            config.STRIPE_PRICE_DAILY_MONTHLY,
+            config.STRIPE_PRICE_DAILY_ANNUAL,
+            config.STRIPE_PRICE_ID,
+            config.STRIPE_PRICE_ID_ANNUAL,
+            config.STRIPE_PRICE_TOPUP_5,
+            config.STRIPE_PRICE_TOPUP_15,
+        )
+        if (p or "").strip()
+    }
+
+
+def _money_track(
+    user_id: str | int,
+    event: str,
+    *,
+    amount_cents: int | None = None,
+    currency: str | None = None,
+    price_id: str = "",
+    plan: str = "",
+    plan_key: str = "",
+    source: str = "",
+    **extra,
+) -> None:
+    """PostHog money event — always tagged as ChannelRecipe so multi-biz Stripe stays clean."""
+    props: dict[str, Any] = {
+        "product": "channelrecipe",
+        "source": source or "stripe_webhook",
+    }
+    if plan:
+        props["plan"] = plan
+    if plan_key:
+        props["plan_key"] = plan_key
+    if price_id:
+        props["price_id"] = price_id
+        props["tier"] = _tier_from_price_id(price_id) or ""
+        props["interval"] = _interval_from_price_id(price_id)
+    if amount_cents is not None:
+        props["amount_cents"] = int(amount_cents)
+        props["amount_usd"] = round(int(amount_cents) / 100.0, 2)
+        # PostHog revenue analytics convention
+        props["revenue"] = round(int(amount_cents) / 100.0, 2)
+        props["currency"] = (currency or "usd").lower()
+    props.update({k: v for k, v in extra.items() if v is not None})
+    track(user_id, event, props)
+
+
 def _annual_price_ids() -> tuple[str, ...]:
     return tuple(p for p in (
         config.STRIPE_PRICE_STARTER_ANNUAL,
@@ -1169,11 +1222,31 @@ async def stripe_webhook(request: Request):
         if not user_id:
             print(f"[stripe] checkout.session.completed missing user_id metadata: {obj.get('id')}")
         else:
+            amount_total = obj.get("amount_total")
+            currency = obj.get("currency") or "usd"
+            session_id = obj.get("id") or ""
             topup = meta.get("topup_credits")
             if topup:
                 add_credits(int(user_id), int(topup))
                 print(f"[stripe] User {user_id} topped up {topup} credits")
-                track(user_id, "topup_completed", {"credits": int(topup)})
+                _money_track(
+                    user_id, "topup_completed",
+                    amount_cents=amount_total,
+                    currency=currency,
+                    source="checkout.session.completed",
+                    credits=int(topup),
+                    checkout_session_id=session_id,
+                )
+                _money_track(
+                    user_id, "checkout_completed",
+                    amount_cents=amount_total,
+                    currency=currency,
+                    source="checkout.session.completed",
+                    mode="payment",
+                    kind="topup",
+                    credits=int(topup),
+                    checkout_session_id=session_id,
+                )
             else:
                 plan_key = meta.get("plan", "starter_monthly")
                 skip_trial = meta.get("skip_trial") == "1"
@@ -1187,9 +1260,28 @@ async def stripe_webhook(request: Request):
                                 trial_used=1)
                     print(f"[stripe] User {user_id} subscribed (no trial) → {plan_label} ({credits} credits)")
                     identify_user(user_id, {"plan": plan_label, "credits": credits, "trial_used": True})
-                    track(user_id, "subscription_started", {
-                        "plan": plan_label, "plan_key": plan_key, "credits": credits, "had_trial": False,
-                    })
+                    _money_track(
+                        user_id, "subscription_started",
+                        amount_cents=amount_total,
+                        currency=currency,
+                        plan=plan_label,
+                        plan_key=plan_key,
+                        source="checkout.session.completed",
+                        credits=credits,
+                        had_trial=False,
+                        checkout_session_id=session_id,
+                    )
+                    _money_track(
+                        user_id, "checkout_completed",
+                        amount_cents=amount_total,
+                        currency=currency,
+                        plan=plan_label,
+                        plan_key=plan_key,
+                        source="checkout.session.completed",
+                        mode="subscription",
+                        kind="subscribe_no_trial",
+                        checkout_session_id=session_id,
+                    )
                 else:
                     plan_label = "daily_trial" if "daily" in plan_key else "starter_trial"
                     trial_credits = int(getattr(config, "TRIAL_CREDITS", 2) or 2)
@@ -1198,9 +1290,66 @@ async def stripe_webhook(request: Request):
                                 trial_used=1)
                     print(f"[stripe] User {user_id} started trial ({plan_label}, {trial_credits} credits)")
                     identify_user(user_id, {"plan": plan_label, "credits": trial_credits, "trial_used": True})
-                    track(user_id, "trial_started", {
-                        "plan": plan_label, "plan_key": plan_key, "credits": trial_credits,
-                    })
+                    _money_track(
+                        user_id, "trial_started",
+                        amount_cents=amount_total if amount_total else 0,
+                        currency=currency,
+                        plan=plan_label,
+                        plan_key=plan_key,
+                        source="checkout.session.completed",
+                        credits=trial_credits,
+                        checkout_session_id=session_id,
+                    )
+                    _money_track(
+                        user_id, "checkout_completed",
+                        amount_cents=amount_total if amount_total else 0,
+                        currency=currency,
+                        plan=plan_label,
+                        plan_key=plan_key,
+                        source="checkout.session.completed",
+                        mode="subscription",
+                        kind="trial_start",
+                        checkout_session_id=session_id,
+                    )
+
+    elif evt_type == "checkout.session.expired":
+        meta = obj.get("metadata") or {}
+        user_id = meta.get("user_id")
+        if user_id:
+            _money_track(
+                user_id, "checkout_abandoned",
+                amount_cents=obj.get("amount_total"),
+                currency=obj.get("currency") or "usd",
+                plan_key=meta.get("plan") or "",
+                source="checkout.session.expired",
+                checkout_session_id=obj.get("id") or "",
+                kind="topup" if meta.get("topup_credits") else "subscription",
+            )
+
+    elif evt_type == "invoice.payment_failed":
+        # Only ChannelRecipe customers (in our DB) — other businesses on the
+        # same Stripe account are ignored.
+        sub_id = _invoice_subscription_id(obj)
+        customer_id = _stripe_id(obj.get("customer"))
+        row = _find_user_for_stripe(sub_id=sub_id, customer_id=customer_id) if (sub_id or customer_id) else None
+        if row:
+            price_id = _billed_price_from_invoice(obj)
+            # Extra safety: if we somehow matched a foreign customer, drop it
+            if price_id and _channelrecipe_price_ids() and price_id not in _channelrecipe_price_ids():
+                print(f"[stripe] invoice.payment_failed ignored (non-CR price {price_id})")
+            else:
+                attempt = (obj.get("attempt_count") or 0)
+                _money_track(
+                    row["id"], "payment_failed",
+                    amount_cents=obj.get("amount_due") or obj.get("amount_remaining"),
+                    currency=obj.get("currency") or "usd",
+                    price_id=price_id,
+                    plan=row.get("plan") or "",
+                    source="invoice.payment_failed",
+                    invoice_id=obj.get("id") or "",
+                    attempt_count=attempt,
+                    billing_reason=obj.get("billing_reason") or "",
+                )
 
     elif evt_type == "invoice.paid":
         sub_id = _invoice_subscription_id(obj)
@@ -1220,6 +1369,8 @@ async def stripe_webhook(request: Request):
                 )
             else:
                 plan = row.get("plan", "starter")
+                price_id = _billed_price_from_invoice(obj)
+                currency = obj.get("currency") or "usd"
                 if plan in ("starter_trial", "daily_trial"):
                     if amount_paid == 0:
                         print(f"[stripe] Skipping $0 trial invoice for user {row['id']} (trial credits already granted)")
@@ -1230,16 +1381,31 @@ async def stripe_webhook(request: Request):
                                     trial_used=1, period_tier=new_plan)
                         print(f"[stripe] Trial converted: user {row['id']} → {new_plan} ({credits} credits)")
                         identify_user(row["id"], {"plan": new_plan, "credits": credits})
-                        track(row["id"], "trial_converted", {
-                            "from_plan": plan, "to_plan": new_plan,
-                            "credits": credits, "amount_paid": amount_paid,
-                            "source": "invoice.paid",
-                        })
+                        _money_track(
+                            row["id"], "trial_converted",
+                            amount_cents=amount_paid,
+                            currency=currency,
+                            price_id=price_id,
+                            plan=new_plan,
+                            source="invoice.paid",
+                            from_plan=plan,
+                            to_plan=new_plan,
+                            credits=credits,
+                        )
+                        _money_track(
+                            row["id"], "payment_succeeded",
+                            amount_cents=amount_paid,
+                            currency=currency,
+                            price_id=price_id,
+                            plan=new_plan,
+                            source="invoice.paid",
+                            kind="trial_conversion",
+                        )
                 else:
                     # Grant from the price on the invoice, not users.plan. A
                     # portal upgrade leaves the row stale, and trusting it meant
                     # a Daily customer was refilled 15 credits every month.
-                    billed_price = _billed_price_from_invoice(obj)
+                    billed_price = price_id
                     billed_tier = _tier_from_price_id(billed_price)
                     db_tier = "daily" if plan == "daily" else "starter"
                     tier = billed_tier or db_tier
@@ -1263,11 +1429,27 @@ async def stripe_webhook(request: Request):
                               f"from invoice price for user {row['id']}")
                     print(f"[stripe] Refilled {credits} credits for user {row['id']} ({tier})")
                     identify_user(row["id"], {"plan": fields.get("plan", plan), "credits": credits})
-                    track(row["id"], "credits_refilled", {
-                        "plan": fields.get("plan", plan), "credits": credits,
-                        "amount_paid": amount_paid, "billed_tier": billed_tier,
-                        "plan_corrected": "plan" in fields,
-                    })
+                    _money_track(
+                        row["id"], "credits_refilled",
+                        amount_cents=amount_paid,
+                        currency=currency,
+                        price_id=billed_price,
+                        plan=fields.get("plan", plan),
+                        source="invoice.paid",
+                        credits=credits,
+                        billed_tier=billed_tier,
+                        plan_corrected="plan" in fields,
+                    )
+                    if amount_paid > 0:
+                        _money_track(
+                            row["id"], "payment_succeeded",
+                            amount_cents=amount_paid,
+                            currency=currency,
+                            price_id=billed_price,
+                            plan=fields.get("plan", plan),
+                            source="invoice.paid",
+                            kind="renewal",
+                        )
 
     elif evt_type == "customer.subscription.deleted":
         sub_id = _stripe_id(obj.get("id"))
@@ -1281,7 +1463,12 @@ async def stripe_webhook(request: Request):
                             stripe_sub_id="", period_tier="")
                 print(f"[stripe] Subscription deleted — user {row['id']} downgraded to free (trial_used preserved)")
                 identify_user(row["id"], {"plan": "free", "credits": 0})
-                track(row["id"], "subscription_canceled", {"from_plan": prev_plan})
+                _money_track(
+                    row["id"], "subscription_canceled",
+                    plan=prev_plan,
+                    source="customer.subscription.deleted",
+                    from_plan=prev_plan,
+                )
             else:
                 print(f"[stripe] subscription.deleted no user for sub={sub_id} customer={customer_id}")
 
@@ -1296,7 +1483,13 @@ async def stripe_webhook(request: Request):
                 update_user(row["id"], plan="free", credits=0, period_tier="")
                 print(f"[stripe] Subscription {status} — user {row['id']} downgraded to free")
                 identify_user(row["id"], {"plan": "free", "credits": 0})
-                track(row["id"], "subscription_canceled", {"from_plan": prev_plan, "status": status})
+                _money_track(
+                    row["id"], "subscription_canceled",
+                    plan=prev_plan,
+                    source="customer.subscription.updated",
+                    from_plan=prev_plan,
+                    status=status,
+                )
             elif row:
                 print(f"[stripe] Ignoring {status} for trial user {row['id']} (handled by end-trial endpoint)")
             else:
@@ -1311,10 +1504,14 @@ async def stripe_webhook(request: Request):
                             trial_used=1, period_tier=new_plan)
                 print(f"[stripe] subscription.updated active — converted user {row['id']} → {new_plan}")
                 identify_user(row["id"], {"plan": new_plan, "credits": credits})
-                track(row["id"], "trial_converted", {
-                    "from_plan": row["plan"], "to_plan": new_plan,
-                    "credits": credits, "source": "subscription.updated",
-                })
+                _money_track(
+                    row["id"], "trial_converted",
+                    plan=new_plan,
+                    source="subscription.updated",
+                    from_plan=row["plan"],
+                    to_plan=new_plan,
+                    credits=credits,
+                )
             elif row and row.get("plan") in _PAID_TIERS:
                 # Checkout refuses existing subscribers, so the portal is the
                 # only upgrade path and it lands here. Without this the plan row
