@@ -521,6 +521,7 @@ class AuthSendCodeRequest(BaseModel):
 class AuthVerifyRequest(BaseModel):
     email: str
     code: str
+    attribution: dict | None = None
 
 
 # Deletes the lazy majority of trial-farming at zero cost to honest users.
@@ -565,14 +566,31 @@ async def auth_verify(req: AuthVerifyRequest, request: Request):
     is_new = user is None
     if not user:
         user = create_user(email)
+    attr = {}
+    if isinstance(req.attribution, dict):
+        # Only allow known marketing keys — never free-form PII dumps.
+        allow = {
+            "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term",
+            "gclid", "fbclid", "msclkid", "ttclid", "ref", "landing_path",
+            "initial_utm_source", "initial_utm_medium", "initial_utm_campaign",
+            "initial_utm_content", "initial_utm_term", "initial_gclid", "initial_fbclid",
+            "initial_msclkid", "initial_ttclid", "initial_ref", "initial_landing_path",
+        }
+        for k, v in req.attribution.items():
+            if k in allow and v is not None and str(v).strip():
+                attr[k] = str(v).strip()[:200]
+    person = {"email": email, "plan": user["plan"], **attr}
     if _posthog:
         try:
-            identify_user(user["id"], {"email": email, "plan": user["plan"]})
+            identify_user(user["id"], person)
         except Exception:
             pass
-    track(user["id"], "signup_completed" if is_new else "login", {"new_user": is_new})
+    track(user["id"], "signup_completed" if is_new else "login", {
+        "new_user": is_new,
+        **{k: attr[k] for k in ("utm_source", "utm_medium", "utm_campaign", "initial_utm_source", "initial_utm_campaign") if k in attr},
+    })
     token = create_session(user["id"])
-    resp = JSONResponse({"ok": True, "user": _safe_user(user)})
+    resp = JSONResponse({"ok": True, "user": _safe_user(user), "is_new": is_new})
     is_secure = request.url.scheme == "https" or os.getenv("FORCE_SECURE_COOKIES") == "1"
     resp.set_cookie("session", token, httponly=True, samesite="lax", secure=is_secure, max_age=30 * 86400, path="/")
     return resp

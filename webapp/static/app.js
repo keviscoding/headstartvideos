@@ -130,9 +130,48 @@ function ensureAuth(retry) {
 // Metadata only — we never send script/voiceover text.
 // ---------------------------------------------------------------------------
 let track = () => {}; // replaced with posthog.capture once loaded
+let _paywallContext = null;
+let _paywallOpenedAt = 0;
+let _posthogReady = false;
 
 function analyticsDeclined() {
     return localStorage.getItem('cr_cookie_consent') === 'declined';
+}
+
+function _attrProps() {
+    try {
+        return (window.CRTelemetry && window.CRTelemetry.attributionProps)
+            ? window.CRTelemetry.attributionProps()
+            : {};
+    } catch (_) {
+        return {};
+    }
+}
+
+function _track(event, props) {
+    try {
+        track(event, Object.assign({}, _attrProps(), props || {}));
+    } catch (_) {}
+}
+
+/** Classify why the pricing modal is open — critical for conversion forensics. */
+function paywallContextFromOpts(opts = {}) {
+    if (isTrialUser()) return 'trial_convert';
+    const usedTrial = !!(currentUser && currentUser.trial_used) && !isTrialUser();
+    const paidSubscriber = isPaidUser() && !isTrialUser();
+    if (paidSubscriber && (opts.reason === 'credits' || opts.reason === 'cook' || opts.reason === 'hq')) {
+        return 'credits_topup';
+    }
+    if (usedTrial) return 'subscribe_after_trial';
+    if (opts.reason === 'storyboard') return 'free_trial_storyboard';
+    if (opts.reason === 'cook') return 'free_trial_cook';
+    if (opts.reason === 'hq') return 'free_trial_hq';
+    if (opts.reason === 'trial_prompt') return 'trial_convert';
+    return 'free_trial_general';
+}
+
+function _loadPosthogSnippet() {
+    !function (t, e) { var o, n, p, r; e.__SV || (window.posthog = e, e._i = [], e.init = function (i, s, a) { function g(t, e) { var o = e.split("."); 2 == o.length && (t = t[o[0]], e = o[1]), t[e] = function () { t.push([e].concat(Array.prototype.slice.call(arguments, 0))) } } (p = t.createElement("script")).type = "text/javascript", p.async = !0, p.src = s.api_host + "/static/array.js", (r = t.getElementsByTagName("script")[0]).parentNode.insertBefore(p, r); var u = e; for (void 0 !== a ? u = e[a] = [] : a = "posthog", u.people = u.people || [], u.toString = function (t) { var e = "posthog"; return "posthog" !== a && (e += "." + a), t || (e += " (stub)"), e }, u.people.toString = function () { return u.toString(1) + ".people (stub)" }, o = "capture identify alias people.set people.set_once set_config register register_once unregister opt_out_capturing has_opted_out_capturing opt_in_capturing reset isFeatureEnabled onFeatureFlags getFeatureFlag getFeatureFlagPayload reloadFeatureFlags group updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures getActiveMatchingSurveys getSurveys onSessionId".split(" "), n = 0; n < o.length; n++)g(u, o[n]); e._i.push([i, s, a]) }, e.__SV = 1) }(document, window.posthog || []);
 }
 
 async function initAnalytics() {
@@ -142,6 +181,10 @@ async function initAnalytics() {
         cfg = await readJson(res, null);
         if (!cfg) return;
     } catch { return; }
+
+    try {
+        if (window.CRTelemetry) window.CRTelemetry.captureAttributionFromUrl();
+    } catch (_) {}
 
     // Sentry (error tracking) — legitimate interest, load regardless of consent.
     if (cfg.sentry_dsn) {
@@ -167,7 +210,6 @@ async function initAnalytics() {
                         'unexpected character at line',
                         'Unexpected token',
                         'is not valid JSON',
-                        // Browser-extension / media noise (not our app)
                         'addListener',
                         'Picture-in-Picture',
                         'requestPictureInPicture',
@@ -206,13 +248,32 @@ async function initAnalytics() {
         document.head.appendChild(s);
     }
 
-    // PostHog (product analytics) — only with cookie consent.
+    // PostHog — only with cookie consent.
     if (cfg.posthog_key && !analyticsDeclined()) {
-        !function (t, e) { var o, n, p, r; e.__SV || (window.posthog = e, e._i = [], e.init = function (i, s, a) { function g(t, e) { var o = e.split("."); 2 == o.length && (t = t[o[0]], e = o[1]), t[e] = function () { t.push([e].concat(Array.prototype.slice.call(arguments, 0))) } } (p = t.createElement("script")).type = "text/javascript", p.async = !0, p.src = s.api_host + "/static/array.js", (r = t.getElementsByTagName("script")[0]).parentNode.insertBefore(p, r); var u = e; for (void 0 !== a ? u = e[a] = [] : a = "posthog", u.people = u.people || [], u.toString = function (t) { var e = "posthog"; return "posthog" !== a && (e += "." + a), t || (e += " (stub)"), e }, u.people.toString = function () { return u.toString(1) + ".people (stub)" }, o = "capture identify alias people.set people.set_once set_config register register_once unregister opt_out_capturing has_opted_out_capturing opt_in_capturing reset isFeatureEnabled onFeatureFlags getFeatureFlag getFeatureFlagPayload reloadFeatureFlags group updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures getActiveMatchingSurveys getSurveys onSessionId".split(" "), n = 0; n < o.length; n++)g(u, o[n]); e._i.push([i, s, a]) }, e.__SV = 1) }(document, window.posthog || []);
+        _loadPosthogSnippet();
         try {
-            window.posthog.init(cfg.posthog_key, { api_host: cfg.posthog_host || 'https://us.i.posthog.com', capture_pageview: true, autocapture: true });
-            track = (event, props) => { try { window.posthog.capture(event, props || {}); } catch (_) {} };
-            if (currentUser) window.posthog.identify(String(currentUser.id), { email: currentUser.email, plan: currentUser.plan });
+            if (window.CRTelemetry && window.CRTelemetry.initPostHog) {
+                window.CRTelemetry.initPostHog(cfg.posthog_key, cfg.posthog_host);
+            } else {
+                window.posthog.init(cfg.posthog_key, {
+                    api_host: cfg.posthog_host || 'https://us.i.posthog.com',
+                    capture_pageview: true,
+                    autocapture: true,
+                });
+            }
+            track = (event, props) => {
+                try { window.posthog.capture(event, Object.assign({}, _attrProps(), props || {})); } catch (_) {}
+            };
+            _posthogReady = true;
+            if (currentUser) {
+                if (window.CRTelemetry) window.CRTelemetry.identifyUser(currentUser);
+                else window.posthog.identify(String(currentUser.id), { email: currentUser.email, plan: currentUser.plan });
+            }
+            _track('app_loaded', {
+                path: location.pathname || '/app',
+                hash: (location.hash || '').slice(0, 80),
+                plan: currentUser?.plan || 'anon',
+            });
         } catch (_) { /* ignore */ }
     }
 
@@ -264,13 +325,17 @@ function acceptCookies() {
     localStorage.setItem('cr_cookie_consent', 'accepted');
     const b = document.getElementById('cookie-banner');
     if (b) b.style.display = 'none';
-    initAnalytics();
+    // Fire after init so PostHog is live
+    initAnalytics().then(() => {
+        _track('cookie_consent', { choice: 'accepted' });
+    });
 }
 
 function declineCookies() {
     localStorage.setItem('cr_cookie_consent', 'declined');
     const b = document.getElementById('cookie-banner');
     if (b) b.style.display = 'none';
+    // No PostHog — can't capture here; landing decline is same.
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -302,6 +367,7 @@ function navigateTo(page) {
         showAuthModal();
         return;
     }
+    const from = state.page || '';
     state.page = page;
     document.querySelectorAll('.page-container').forEach(p => p.classList.add('hidden'));
 
@@ -333,6 +399,12 @@ function navigateTo(page) {
     } else {
         document.querySelector(`[data-page="${page}"]`)?.classList.add('active');
     }
+
+    try {
+        if (from !== page) {
+            _track('page_viewed', { page, from_page: from || null, plan: currentUser?.plan || 'anon' });
+        }
+    } catch (_) {}
 
     if (page === 'settings') {
         loadIntegrations();
@@ -486,6 +558,13 @@ function goToStep(n) {
     if (typeof n === 'string' && (n === 'storyboard' || String(n).startsWith('sb-'))) {
         persistPipelineState();
     }
+    try {
+        _track('pipeline_step_viewed', {
+            step: n,
+            recipe: state.niche || '',
+            plan: currentUser?.plan || 'anon',
+        });
+    } catch (_) {}
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -730,6 +809,7 @@ async function loadNiches() {
 function selectNiche(niche, card) {
     if (!ensureSignedIn(() => selectNiche(niche, card))) return;
     track('recipe_selected', { recipe: niche.id });
+    _track('activation_recipe_selected', { recipe: niche.id, plan: currentUser?.plan || 'anon' });
     document.querySelectorAll('.niche-card').forEach(c => c.classList.remove('selected'));
     card.classList.add('selected');
     state.niche = niche.id;
@@ -905,7 +985,16 @@ function showPricingModal(opts = {}) {
         if (pricingGrid) pricingGrid.style.display = 'none';
         if (pricingToggle) pricingToggle.style.display = 'none';
         if (topupRow) topupRow.classList.add('hidden');
-        track('credits_needed_viewed', { reason: opts.reason || 'credits', need, have });
+        track('credits_needed_viewed', { reason: opts.reason || 'credits', need, have, context: 'credits_topup' });
+        _paywallContext = 'credits_topup';
+        _paywallOpenedAt = Date.now();
+        _track('pricing_modal_shown', {
+            context: 'credits_topup',
+            reason: opts.reason || 'credits',
+            need,
+            have,
+            plan: currentUser?.plan || '',
+        });
         return;
     }
 
@@ -926,6 +1015,19 @@ function showPricingModal(opts = {}) {
 
     _refreshPricingCtas();
 
+    const context = paywallContextFromOpts(opts);
+    _paywallContext = context;
+    _paywallOpenedAt = Date.now();
+    const baseProps = {
+        context,
+        reason: opts.reason || '',
+        on_trial: isTrialUser(),
+        plan: currentUser?.plan || 'free',
+        need: Math.max(1, Number(opts.need || 1)),
+        have: Math.max(0, Number(opts.have ?? currentUser?.credits ?? 0)),
+        heading: heading?.textContent || '',
+    };
+
     if (isTrialUser()) {
         if (heading) heading.textContent = 'Choose your plan';
         if (subtitle) {
@@ -933,7 +1035,8 @@ function showPricingModal(opts = {}) {
                 ? `${opts.trialMessage} ${planValueCopy()}`
                 : planValueCopy();
         }
-        track('upgrade_viewed', { reason: opts.reason || 'trial', on_trial: true });
+        _track('pricing_modal_shown', baseProps);
+        _track('upgrade_viewed', { ...baseProps, reason: opts.reason || 'trial' });
         return;
     }
 
@@ -956,7 +1059,9 @@ function showPricingModal(opts = {}) {
         if (subtitle) subtitle.textContent = '7-day free trial on any plan. Cancel anytime.';
     }
 
-    track('upgrade_viewed', { reason: opts.reason || 'general', need, have });
+    baseProps.heading = heading?.textContent || '';
+    _track('pricing_modal_shown', baseProps);
+    _track('upgrade_viewed', { ...baseProps, reason: opts.reason || 'general' });
 }
 
 /**
@@ -991,11 +1096,24 @@ function showCreditsNeededModal({ need = 1, have = null, reason = 'credits' } = 
     });
 }
 
-function hidePricingModal() {
+function hidePricingModal(opts = {}) {
     const modal = document.getElementById('pricing-modal');
     if (!modal) return;
+    const wasOpen = !modal.classList.contains('hidden') && modal.style.display !== 'none';
     modal.classList.add('hidden');
     modal.style.display = 'none';
+    if (wasOpen && _paywallContext && opts.via !== 'cta') {
+        const openMs = _paywallOpenedAt ? Math.max(0, Date.now() - _paywallOpenedAt) : 0;
+        _track('pricing_modal_dismissed', {
+            context: _paywallContext,
+            open_ms: openMs,
+            via: opts.via || 'close',
+            plan: currentUser?.plan || 'free',
+            on_trial: isTrialUser(),
+        });
+    }
+    _paywallContext = null;
+    _paywallOpenedAt = 0;
 }
 
 /**
@@ -1197,7 +1315,7 @@ function showTrialExhaustedModal() {
         </div>
     `;
     document.body.appendChild(modal);
-    track('trial_exhausted_viewed');
+    _track('trial_exhausted_viewed', { plan: currentUser?.plan || '', credits: currentUser?.credits || 0 });
 }
 
 function hideTrialExhaustedModal() {
@@ -1326,6 +1444,7 @@ async function _doEndTrial(tier, interval = 'monthly') {
 }
 
 function setPricingPlan(cycle) {
+    const prev = _pricingBillingCycle;
     _pricingBillingCycle = cycle;
     const mBtn = document.getElementById('pricing-monthly-btn');
     const aBtn = document.getElementById('pricing-annual-btn');
@@ -1355,11 +1474,31 @@ function setPricingPlan(cycle) {
     }
     // A trial user's CTA names the charge, which differs per interval.
     _refreshPricingCtas();
+    if (prev && prev !== cycle) {
+        _track('pricing_interval_toggled', {
+            interval: cycle,
+            from_interval: prev,
+            context: _paywallContext || '',
+            on_trial: isTrialUser(),
+        });
+    }
 }
 
 async function proceedToCheckout(tier = 'starter') {
     const cycle = _pricingBillingCycle === 'annual' ? 'annual' : 'monthly';
-    hidePricingModal();
+    const context = _paywallContext || paywallContextFromOpts({});
+    _track('pricing_cta_clicked', {
+        context,
+        tier,
+        interval: cycle,
+        on_trial: isTrialUser(),
+        plan: currentUser?.plan || 'free',
+        cta_label: (tier === 'daily'
+            ? document.getElementById('pricing-cta-daily')?.textContent
+            : document.getElementById('pricing-cta-starter')?.textContent) || '',
+        open_ms: _paywallOpenedAt ? Math.max(0, Date.now() - _paywallOpenedAt) : 0,
+    });
+    hidePricingModal({ via: 'cta' });
     if (isTrialUser()) {
         // Checkout refuses anyone with a live subscription, so converting the
         // trial in place is the only route. The button they just pressed named
@@ -2738,7 +2877,13 @@ async function showUploadKit(buildResult) {
     const dl = document.getElementById('download-link');
     dl.href = videoUrl;
     dl.setAttribute('download', 'video.mp4');
-    if (thumbUrl) {
+    dl.onclick = () => {
+        _track('video_downloaded', {
+            recipe: state.niche || '',
+            plan: currentUser?.plan || '',
+            source: 'upload_kit',
+        });
+    };    if (thumbUrl) {
         state.thumbnailUrl = thumbUrl;
         document.getElementById('kit-thumb').src = thumbUrl;
         document.getElementById('kit-thumb-dl').href = thumbUrl;
@@ -2750,6 +2895,11 @@ async function showUploadKit(buildResult) {
     document.getElementById('kit-title').textContent = state.title;
     // Watermark upsell was misleading (watermark not applied in cook path) — keep hidden.
     document.getElementById('trial-watermark-note')?.classList.add('hidden');
+    _track('video_ready_viewed', {
+        recipe: state.niche || '',
+        plan: currentUser?.plan || '',
+        video_id: buildResult.video_id || null,
+    });
     const videoId = buildResult.video_id || null;
     try {
         const res = await fetch('/api/upload-kit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: state.title, script: state.script, niche: state.niche }) });
@@ -5475,7 +5625,8 @@ function updateAuthUI() {
         if (billingBtn) billingBtn.classList.remove('hidden');
         // Keep analytics person properties in sync
         try {
-            window.posthog?.identify(String(currentUser.id), {
+            if (window.CRTelemetry) window.CRTelemetry.identifyUser(currentUser);
+            else window.posthog?.identify(String(currentUser.id), {
                 email: currentUser.email,
                 plan: currentUser.plan,
                 credits: currentUser.credits,
@@ -5514,6 +5665,7 @@ function showAuthModal() {
     if (currentUser) return;
     const modal = document.getElementById('auth-modal');
     if (!modal) return;
+    const already = !modal.classList.contains('hidden') && modal.style.display !== 'none';
     modal.classList.remove('hidden');
     modal.style.display = 'flex';
     document.getElementById('auth-step-email')?.classList.remove('hidden');
@@ -5524,6 +5676,7 @@ function showAuthModal() {
     if (code) code.value = '';
     document.getElementById('auth-email-error')?.classList.add('hidden');
     document.getElementById('auth-code-error')?.classList.add('hidden');
+    if (!already) _track('auth_modal_shown', { page: state.page || '', plan: 'anon' });
     setTimeout(() => email?.focus(), 100);
 }
 
@@ -5554,6 +5707,7 @@ async function authSendCode() {
         document.getElementById('auth-step-email').classList.add('hidden');
         document.getElementById('auth-step-code').classList.remove('hidden');
         document.getElementById('auth-email-display').textContent = email;
+        _track('auth_code_sent', {});
         setTimeout(() => document.getElementById('auth-code').focus(), 100);
     } catch (e) {
         document.getElementById('auth-email-error').textContent = e.message;
@@ -5578,14 +5732,25 @@ async function authVerifyCode() {
     try {
         const res = await fetch('/api/auth/verify', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, code }),
+            body: JSON.stringify({
+                email,
+                code,
+                attribution: _attrProps(),
+            }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Invalid code');
         currentUser = data.user;
         updateAuthUI();
         loadNiches();
-        try { window.posthog?.identify(String(currentUser.id), { email: currentUser.email, plan: currentUser.plan }); } catch (_) {}
+        try {
+            if (window.CRTelemetry) window.CRTelemetry.identifyUser(currentUser);
+            else window.posthog?.identify(String(currentUser.id), { email: currentUser.email, plan: currentUser.plan });
+        } catch (_) {}
+        _track(data.user && data.is_new ? 'signup_completed_client' : 'login_client', {
+            new_user: !!data.is_new,
+            plan: currentUser.plan || 'free',
+        });
         hideAuthModal();
         cookingManager.restore();
         if (pendingAuthAction) {

@@ -798,6 +798,42 @@
             <button onclick="crAcceptCookies()" style="font-size: 13px; padding: 7px 14px; border: none; background: var(--accent); color: #fff; border-radius: 8px; cursor: pointer;">Accept</button>
         </div>
     </div>
+    <script src="/static/cr-telemetry.js"></script>
+    <script>
+    (function () {
+        try {
+            if (window.CRTelemetry) window.CRTelemetry.captureAttributionFromUrl();
+            var qs = window.location.search || '';
+            if (qs) {
+                document.querySelectorAll('a[href="/app"], a[href^="/app"]').forEach(function (a) {
+                    var href = a.getAttribute('href') || '/app';
+                    if (href.indexOf('?') >= 0) return;
+                    a.setAttribute('href', href + qs);
+                });
+            }
+            document.querySelectorAll('a[href*="/app"]').forEach(function (a) {
+                a.addEventListener('click', function () {
+                    var label = (a.textContent || '').trim().slice(0, 80);
+                    var placement = a.closest('header') ? 'nav'
+                        : a.closest('.hero') ? 'hero'
+                        : a.closest('.price-card') ? 'pricing'
+                        : a.closest('.final-cta') ? 'final'
+                        : a.closest('.recipe-card') ? 'recipe_card'
+                        : 'other';
+                    try {
+                        if (window.posthog) {
+                            var props = Object.assign(
+                                { label: label, placement: placement },
+                                window.CRTelemetry ? window.CRTelemetry.attributionProps() : {}
+                            );
+                            window.posthog.capture('landing_cta_clicked', props);
+                        }
+                    } catch (_) {}
+                });
+            });
+        } catch (_) {}
+    })();
+    </script>
     <script>
     (function () {
         const facade = document.getElementById('yt-facade');
@@ -811,6 +847,9 @@
             iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
             iframe.allowFullscreen = true;
             iframe.setAttribute('allowfullscreen', '');
+            try {
+                if (window.posthog) window.posthog.capture('landing_demo_played', { video_id: id });
+            } catch (_) {}
             facade.replaceWith(iframe);
         });
     })();
@@ -844,16 +883,39 @@
             };
             document.head.appendChild(s);
         }
+        function _loadPHSnippet() {
+            !function (t, e) { var o, n, p, r; e.__SV || (window.posthog = e, e._i = [], e.init = function (i, s, a) { function g(t, e) { var o = e.split("."); 2 == o.length && (t = t[o[0]], e = o[1]), t[e] = function () { t.push([e].concat(Array.prototype.slice.call(arguments, 0))) } } (p = t.createElement("script")).type = "text/javascript", p.async = !0, p.src = s.api_host + "/static/array.js", (r = t.getElementsByTagName("script")[0]).parentNode.insertBefore(p, r); var u = e; for (void 0 !== a ? u = e[a] = [] : a = "posthog", u.people = u.people || [], u.toString = function (t) { var e = "posthog"; return "posthog" !== a && (e += "." + a), t || (e += " (stub)"), e }, u.people.toString = function () { return u.toString(1) + ".people (stub)" }, o = "capture identify alias people.set people.set_once set_config register register_once unregister opt_out_capturing has_opted_out_capturing opt_in_capturing reset isFeatureEnabled onFeatureFlags getFeatureFlag getFeatureFlagPayload reloadFeatureFlags group updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures getActiveMatchingSurveys getSurveys onSessionId".split(" "), n = 0; n < o.length; n++)g(u, o[n]); e._i.push([i, s, a]) }, e.__SV = 1) }(document, window.posthog || []);
+        }
         function initPH() {
             if (!cfg.posthog_key) return;
-            !function (t, e) { var o, n, p, r; e.__SV || (window.posthog = e, e._i = [], e.init = function (i, s, a) { function g(t, e) { var o = e.split("."); 2 == o.length && (t = t[o[0]], e = o[1]), t[e] = function () { t.push([e].concat(Array.prototype.slice.call(arguments, 0))) } } (p = t.createElement("script")).type = "text/javascript", p.async = !0, p.src = s.api_host + "/static/array.js", (r = t.getElementsByTagName("script")[0]).parentNode.insertBefore(p, r); var u = e; for (void 0 !== a ? u = e[a] = [] : a = "posthog", u.people = u.people || [], u.toString = function (t) { var e = "posthog"; return "posthog" !== a && (e += "." + a), t || (e += " (stub)"), e }, u.people.toString = function () { return u.toString(1) + ".people (stub)" }, o = "capture identify alias people.set people.set_once set_config register register_once unregister opt_out_capturing has_opted_out_capturing opt_in_capturing reset isFeatureEnabled onFeatureFlags getFeatureFlag getFeatureFlagPayload reloadFeatureFlags group updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures getActiveMatchingSurveys getSurveys onSessionId".split(" "), n = 0; n < o.length; n++)g(u, o[n]); e._i.push([i, s, a]) }, e.__SV = 1) }(document, window.posthog || []);
-            try { window.posthog.init(cfg.posthog_key, { api_host: cfg.posthog_host || 'https://us.i.posthog.com', capture_pageview: true, autocapture: true }); } catch (_) {}
+            _loadPHSnippet();
+            try {
+                if (window.CRTelemetry && window.CRTelemetry.initPostHog) {
+                    window.CRTelemetry.initPostHog(cfg.posthog_key, cfg.posthog_host);
+                } else {
+                    window.posthog.init(cfg.posthog_key, {
+                        api_host: cfg.posthog_host || 'https://us.i.posthog.com',
+                        capture_pageview: true,
+                        autocapture: true,
+                    });
+                }
+                var props = window.CRTelemetry ? window.CRTelemetry.attributionProps() : {};
+                window.posthog.capture('landing_viewed', Object.assign({ path: location.pathname }, props));
+            } catch (_) {}
         }
         const consent = localStorage.getItem('cr_cookie_consent');
         if (consent === 'accepted') { initPH(); }
         else if (consent !== 'declined' && cfg.posthog_key) { document.getElementById('cookie-banner').style.display = 'flex'; }
-        window.crAcceptCookies = function () { localStorage.setItem('cr_cookie_consent', 'accepted'); document.getElementById('cookie-banner').style.display = 'none'; initPH(); };
-        window.crDeclineCookies = function () { localStorage.setItem('cr_cookie_consent', 'declined'); document.getElementById('cookie-banner').style.display = 'none'; };
+        window.crAcceptCookies = function () {
+            localStorage.setItem('cr_cookie_consent', 'accepted');
+            document.getElementById('cookie-banner').style.display = 'none';
+            initPH();
+            try { window.posthog && window.posthog.capture('cookie_consent', { choice: 'accepted' }); } catch (_) {}
+        };
+        window.crDeclineCookies = function () {
+            localStorage.setItem('cr_cookie_consent', 'declined');
+            document.getElementById('cookie-banner').style.display = 'none';
+        };
     })();
     </script>
 

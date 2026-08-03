@@ -76,7 +76,7 @@
                 </nav>
             </div>
             <div class="flex items-center gap-3">
-                <button id="nav-upgrade-btn" class="hidden" onclick="openUpgradeFlow()" style="background: var(--accent); color: white; border: none; border-radius: 99px; padding: 5px 14px; font-family: var(--font-body); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;">Upgrade</button>
+                <button id="nav-upgrade-btn" class="hidden" onclick="_track('nav_upgrade_clicked',{plan:currentUser?.plan||'',on_trial:!!(typeof isTrialUser==='function'&&isTrialUser())});openUpgradeFlow()" style="background: var(--accent); color: white; border: none; border-radius: 99px; padding: 5px 14px; font-family: var(--font-body); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;">Upgrade</button>
                 <div class="credits-chip" id="credits-display">
                     <span class="dot"></span>
                     <span id="credits-count" style="color: var(--app-ink); font-weight: 500;">Sign in</span>
@@ -135,7 +135,7 @@
                 <span id="cooking-bar-status" class="cr-mono" style="font-size: 11px; color: var(--app-ink-3);"></span>
             </div>
             <div class="flex items-center gap-2">
-                <button id="cooking-upgrade-btn" class="hidden" onclick="openUpgradeFlow({ trialMessage: 'Starting your plan skips the queue and unlocks more concurrent cooks.' })" style="background: transparent; border: 1px solid var(--accent); color: var(--accent); border-radius: 99px; padding: 4px 12px; font-family: var(--font-body); font-size: 11px; font-weight: 600; cursor: pointer; white-space: nowrap;">Skip the queue →</button>
+                <button id="cooking-upgrade-btn" class="hidden" onclick="_track('skip_queue_clicked',{plan:currentUser?.plan||''});openUpgradeFlow({ trialMessage: 'Starting your plan skips the queue and unlocks more concurrent cooks.' })" style="background: transparent; border: 1px solid var(--accent); color: var(--accent); border-radius: 99px; padding: 4px 12px; font-family: var(--font-body); font-size: 11px; font-weight: 600; cursor: pointer; white-space: nowrap;">Skip the queue →</button>
                 <button onclick="cookingManager.viewProgress()" class="btn-ghost" style="font-size: 12px; padding: 4px 10px;">View</button>
                 <button onclick="cookingManager.cancel()" class="btn-ghost" style="font-size: 12px; padding: 4px 10px; color: var(--error);">Cancel</button>
             </div>
@@ -1687,9 +1687,9 @@
 
     <!-- Pricing modal -->
     <div id="pricing-modal" class="hidden" style="position: fixed; inset: 0; z-index: 190; display: none; align-items: center; justify-content: center;">
-        <div style="position: absolute; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);" onclick="hidePricingModal()"></div>
+        <div style="position: absolute; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);" onclick="hidePricingModal({ via: 'backdrop' })"></div>
         <div style="position: relative; background: var(--app-surface); border: 1px solid var(--app-border); border-radius: var(--radius-card); padding: 0; width: 100%; max-width: 720px; margin: 16px; overflow: hidden;">
-            <button onclick="hidePricingModal()" style="position: absolute; top: 12px; right: 12px; background: none; border: none; color: var(--app-ink-3); cursor: pointer; z-index: 2;">
+            <button onclick="hidePricingModal({ via: 'x' })" style="position: absolute; top: 12px; right: 12px; background: none; border: none; color: var(--app-ink-3); cursor: pointer; z-index: 2;">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
             </button>
             <div style="padding: 28px 28px 16px; text-align: center;">
@@ -1799,6 +1799,7 @@
         </div>
     </div>
 
+    <script src="/static/cr-telemetry.js"></script>
     <script src="/static/app.js"></script>
 </body>
 </html>
