@@ -949,6 +949,10 @@ function showPricingModal(opts = {}) {
     if (!modal) return;
     modal.classList.remove('hidden');
     modal.style.display = 'flex';
+    // Mobile stacks both plans; reset so Daily CTA is one scroll away, not off a stuck offset.
+    modal.scrollTop = 0;
+    const panel = document.getElementById('pricing-modal-panel');
+    if (panel) panel.scrollTop = 0;
     setPricingPlan('monthly');
 
     const topupRow = document.getElementById('topup-row');
