@@ -687,10 +687,29 @@ def segment_into_concepts(
 
     concepts = _build_concepts(concept_dicts, all_words)
     concepts = _enforce_duration_constraints(concepts)
+    if not concepts and all_words:
+        # Alignment / LLM windows can all get filtered (e.g. every span < 1s).
+        # Fall back to timed chunks so the cook doesn't die on a log line.
+        print("[concept_segmenter] WARNING: zero concepts after build — timed fallback")
+        concept_dicts = _fallback_concept_dicts(
+            all_words,
+            target_sec=fallback_target,
+            hook_sec=HOOK_CUTOFF_SEC,
+            niche_hint=niche_hint,
+            index_offset=0,
+        )
+        concepts = _build_concepts(concept_dicts, all_words)
+        concepts = _enforce_duration_constraints(concepts)
+    if not concepts:
+        raise RuntimeError(
+            "Concept segmentation produced zero concepts — cannot continue cook "
+            "(no usable word timings / spans)."
+        )
     concepts = _enrich_illustration_context(concepts, niche_hint=niche_hint, script=script)
 
-    print(f"[concept_segmenter] Final: {len(concepts)} concepts, "
-          f"avg {sum(c.duration_sec for c in concepts)/len(concepts):.1f}s, "
+    n = len(concepts)
+    print(f"[concept_segmenter] Final: {n} concepts, "
+          f"avg {sum(c.duration_sec for c in concepts) / n:.1f}s, "
           f"moods: {_mood_summary(concepts)}")
 
     return concepts
