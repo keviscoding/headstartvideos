@@ -6,7 +6,7 @@
     <title>ChannelRecipe — Proven recipes for faceless YouTube channels</title>
     <link rel="icon" href="/static/favicon.svg">
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/styles.css?v=20260804a">
     <script>
         tailwind.config = {
             theme: {
@@ -1086,7 +1086,6 @@
                     <input type="hidden" id="nf-f-max-recent" value="">
                     <input type="hidden" id="nf-f-min-subs" value="">
                     <input type="hidden" id="nf-f-max-subs" value="">
-                    <input type="hidden" id="nf-f-min-videos" value="">
                     <input type="hidden" id="nf-f-max-videos" value="">
                     <input type="hidden" id="nf-f-min-rev" value="">
                     <input type="checkbox" id="nf-f-has-recent" class="nf-sr-only" checked>
@@ -1167,16 +1166,14 @@
                                 <span class="nf-filter-value" id="nf-videos-label">Any</span>
                             </div>
                             <div class="nf-presets" role="group" aria-label="Uploads presets">
-                                <button type="button" class="nf-preset is-active" data-min="0" data-max="">Any</button>
-                                <button type="button" class="nf-preset" data-min="0" data-max="50">≤50</button>
-                                <button type="button" class="nf-preset" data-min="0" data-max="100">≤100</button>
-                                <button type="button" class="nf-preset" data-min="0" data-max="250">≤250</button>
-                                <button type="button" class="nf-preset" data-min="0" data-max="500">≤500</button>
+                                <button type="button" class="nf-preset is-active" data-max="">Any</button>
+                                <button type="button" class="nf-preset" data-max="50">≤50</button>
+                                <button type="button" class="nf-preset" data-max="100">≤100</button>
+                                <button type="button" class="nf-preset" data-max="250">≤250</button>
+                                <button type="button" class="nf-preset" data-max="500">≤500</button>
                             </div>
-                            <div class="nf-dual-range" data-nf-dual="videos">
-                                <div class="nf-dual-track"><div class="nf-dual-fill" id="nf-videos-fill"></div></div>
-                                <input type="range" id="nf-videos-min" class="nf-range" min="0" max="2000" step="10" value="0" aria-label="Min uploads posted">
-                                <input type="range" id="nf-videos-max" class="nf-range" min="0" max="2000" step="10" value="2000" aria-label="Max uploads posted">
+                            <div class="nf-single-range">
+                                <input type="range" id="nf-videos-max" class="nf-range nf-range-single nf-range-max" min="0" max="2000" step="10" value="2000" aria-label="Max uploads posted">
                             </div>
                         </div>
 
@@ -1857,7 +1854,7 @@
         </div>
     </div>
 
-    <script src="/static/cr-telemetry.js"></script>
-    <script src="/static/app.js"></script>
+    <script src="/static/cr-telemetry.js?v=20260804a"></script>
+    <script src="/static/app.js?v=20260804a"></script>
 </body>
 </html>
