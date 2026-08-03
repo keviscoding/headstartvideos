@@ -3515,7 +3515,23 @@ let _nfFilterTimer = null;
 let _nfFiltersBound = false;
 const _NF_RECENT_MAX = 500000;
 const _NF_SUBS_MAX = 500000;
+const _NF_VIDEOS_MAX = 2000;
 const _NF_REV_MAX = 5000;
+
+const _NF_DUAL_CFG = {
+    recent: {
+        minId: 'nf-recent-min', maxId: 'nf-recent-max', fillId: 'nf-recent-fill', labelId: 'nf-recent-label',
+        ceiling: () => _NF_RECENT_MAX, hiddenMin: 'nf-f-min-recent', hiddenMax: 'nf-f-max-recent',
+    },
+    subs: {
+        minId: 'nf-subs-min', maxId: 'nf-subs-max', fillId: 'nf-subs-fill', labelId: 'nf-subs-label',
+        ceiling: () => _NF_SUBS_MAX, hiddenMin: 'nf-f-min-subs', hiddenMax: 'nf-f-max-subs',
+    },
+    videos: {
+        minId: 'nf-videos-min', maxId: 'nf-videos-max', fillId: 'nf-videos-fill', labelId: 'nf-videos-label',
+        ceiling: () => _NF_VIDEOS_MAX, hiddenMin: 'nf-f-min-videos', hiddenMax: 'nf-f-max-videos',
+    },
+};
 
 function _nfFmt(n) {
     const x = Number(n) || 0;
@@ -3546,12 +3562,13 @@ function _nfSetHidden(id, value) {
 }
 
 function _nfSyncDual(kind) {
-    const isRecent = kind === 'recent';
-    const minEl = document.getElementById(isRecent ? 'nf-recent-min' : 'nf-subs-min');
-    const maxEl = document.getElementById(isRecent ? 'nf-recent-max' : 'nf-subs-max');
-    const fill = document.getElementById(isRecent ? 'nf-recent-fill' : 'nf-subs-fill');
-    const label = document.getElementById(isRecent ? 'nf-recent-label' : 'nf-subs-label');
-    const ceiling = isRecent ? _NF_RECENT_MAX : _NF_SUBS_MAX;
+    const cfg = _NF_DUAL_CFG[kind];
+    if (!cfg) return { min: 0, max: 0 };
+    const minEl = document.getElementById(cfg.minId);
+    const maxEl = document.getElementById(cfg.maxId);
+    const fill = document.getElementById(cfg.fillId);
+    const label = document.getElementById(cfg.labelId);
+    const ceiling = cfg.ceiling();
     if (!minEl || !maxEl) return { min: 0, max: ceiling };
     let min = Number(minEl.value) || 0;
     let max = Number(maxEl.value) || 0;
@@ -3576,13 +3593,8 @@ function _nfSyncDual(kind) {
     else text = `${_nfFmt(min)} – ${_nfFmt(max)}`;
     if (label) label.textContent = text;
 
-    if (isRecent) {
-        _nfSetHidden('nf-f-min-recent', openMin ? '' : min);
-        _nfSetHidden('nf-f-max-recent', openMax ? '' : max);
-    } else {
-        _nfSetHidden('nf-f-min-subs', openMin ? '' : min);
-        _nfSetHidden('nf-f-max-subs', openMax ? '' : max);
-    }
+    _nfSetHidden(cfg.hiddenMin, openMin ? '' : min);
+    _nfSetHidden(cfg.hiddenMax, openMax ? '' : max);
     _nfSyncPresets(kind, min, openMax ? '' : max);
     return { min, max, openMin, openMax };
 }
@@ -3630,6 +3642,8 @@ function _nfActiveFilterCount() {
     if (document.getElementById('nf-f-max-recent')?.value) n += 1;
     if (document.getElementById('nf-f-min-subs')?.value) n += 1;
     if (document.getElementById('nf-f-max-subs')?.value) n += 1;
+    if (document.getElementById('nf-f-min-videos')?.value) n += 1;
+    if (document.getElementById('nf-f-max-videos')?.value) n += 1;
     if (document.getElementById('nf-f-min-rev')?.value) n += 1;
     if (!document.getElementById('nf-f-has-recent')?.checked) n += 1;
     if (document.getElementById('nf-f-active')?.checked) n += 1;
@@ -3657,6 +3671,12 @@ function _nfRenderFilterChips() {
         const t = !minS ? `Subs ≤ ${_nfFmt(maxS)}` : !maxS ? `Subs ${_nfFmt(minS)}+` : `Subs ${_nfFmt(minS)}–${_nfFmt(maxS)}`;
         chips.push({ key: 'subs', label: t });
     }
+    const minV = document.getElementById('nf-f-min-videos')?.value;
+    const maxV = document.getElementById('nf-f-max-videos')?.value;
+    if (minV || maxV) {
+        const t = !minV ? `Uploads ≤ ${_nfFmt(maxV)}` : !maxV ? `Uploads ${_nfFmt(minV)}+` : `Uploads ${_nfFmt(minV)}–${_nfFmt(maxV)}`;
+        chips.push({ key: 'videos', label: t });
+    }
     const minRev = document.getElementById('nf-f-min-rev')?.value;
     if (minRev) chips.push({ key: 'rev', label: `Earnings ${_nfMoney(minRev)}+` });
     if (!document.getElementById('nf-f-has-recent')?.checked) {
@@ -3680,6 +3700,7 @@ function _nfRenderFilterChips() {
 function scheduleNicheFilterApply() {
     _nfSyncDual('recent');
     _nfSyncDual('subs');
+    _nfSyncDual('videos');
     _nfSyncRevenue();
     _nfRenderFilterChips();
     clearTimeout(_nfFilterTimer);
@@ -3723,6 +3744,11 @@ function removeNicheFilterChip(key) {
         const maxEl = document.getElementById('nf-subs-max');
         if (minEl) minEl.value = '0';
         if (maxEl) maxEl.value = String(_NF_SUBS_MAX);
+    } else if (key === 'videos') {
+        const minEl = document.getElementById('nf-videos-min');
+        const maxEl = document.getElementById('nf-videos-max');
+        if (minEl) minEl.value = '0';
+        if (maxEl) maxEl.value = String(_NF_VIDEOS_MAX);
     } else if (key === 'rev') {
         const el = document.getElementById('nf-rev-min');
         if (el) el.value = '0';
@@ -3758,11 +3784,15 @@ function clearNicheFilters() {
     const recentMax = document.getElementById('nf-recent-max');
     const subsMin = document.getElementById('nf-subs-min');
     const subsMax = document.getElementById('nf-subs-max');
+    const videosMin = document.getElementById('nf-videos-min');
+    const videosMax = document.getElementById('nf-videos-max');
     const rev = document.getElementById('nf-rev-min');
     if (recentMin) recentMin.value = '0';
     if (recentMax) recentMax.value = String(_NF_RECENT_MAX);
     if (subsMin) subsMin.value = '0';
     if (subsMax) subsMax.value = String(_NF_SUBS_MAX);
+    if (videosMin) videosMin.value = '0';
+    if (videosMax) videosMax.value = String(_NF_VIDEOS_MAX);
     if (rev) rev.value = '0';
     const hasRecent = document.getElementById('nf-f-has-recent');
     const active = document.getElementById('nf-f-active');
@@ -3785,6 +3815,7 @@ function bindNicheFilters() {
     if (_nfFiltersBound) {
         _nfSyncDual('recent');
         _nfSyncDual('subs');
+        _nfSyncDual('videos');
         _nfSyncRevenue();
         _nfRenderFilterChips();
         return;
@@ -3793,8 +3824,9 @@ function bindNicheFilters() {
 
     const onDual = (kind, which) => (e) => {
         e.target.dataset.nfLast = which;
-        const minEl = document.getElementById(kind === 'recent' ? 'nf-recent-min' : 'nf-subs-min');
-        const maxEl = document.getElementById(kind === 'recent' ? 'nf-recent-max' : 'nf-subs-max');
+        const cfg = _NF_DUAL_CFG[kind];
+        const minEl = cfg ? document.getElementById(cfg.minId) : null;
+        const maxEl = cfg ? document.getElementById(cfg.maxId) : null;
         if (minEl && maxEl) {
             minEl.style.zIndex = which === 'min' ? '5' : '4';
             maxEl.style.zIndex = which === 'max' ? '5' : '4';
@@ -3805,6 +3837,8 @@ function bindNicheFilters() {
     document.getElementById('nf-recent-max')?.addEventListener('input', onDual('recent', 'max'));
     document.getElementById('nf-subs-min')?.addEventListener('input', onDual('subs', 'min'));
     document.getElementById('nf-subs-max')?.addEventListener('input', onDual('subs', 'max'));
+    document.getElementById('nf-videos-min')?.addEventListener('input', onDual('videos', 'min'));
+    document.getElementById('nf-videos-max')?.addEventListener('input', onDual('videos', 'max'));
     document.getElementById('nf-rev-min')?.addEventListener('input', () => {
         _nfPaintSingleRange();
         scheduleNicheFilterApply();
@@ -3821,10 +3855,11 @@ function bindNicheFilters() {
             if (kind === 'rev') {
                 const el = document.getElementById('nf-rev-min');
                 if (el) el.value = String(min);
-            } else if (kind === 'recent' || kind === 'subs') {
-                const ceiling = kind === 'recent' ? _NF_RECENT_MAX : _NF_SUBS_MAX;
-                const minEl = document.getElementById(kind === 'recent' ? 'nf-recent-min' : 'nf-subs-min');
-                const maxEl = document.getElementById(kind === 'recent' ? 'nf-recent-max' : 'nf-subs-max');
+            } else if (_NF_DUAL_CFG[kind]) {
+                const cfg = _NF_DUAL_CFG[kind];
+                const ceiling = cfg.ceiling();
+                const minEl = document.getElementById(cfg.minId);
+                const maxEl = document.getElementById(cfg.maxId);
                 const max = maxRaw === undefined || maxRaw === '' ? ceiling : Number(maxRaw);
                 if (minEl) minEl.value = String(min);
                 if (maxEl) maxEl.value = String(max);
@@ -3835,6 +3870,7 @@ function bindNicheFilters() {
 
     _nfSyncDual('recent');
     _nfSyncDual('subs');
+    _nfSyncDual('videos');
     _nfSyncRevenue();
     _nfRenderFilterChips();
 }
@@ -3921,12 +3957,16 @@ async function loadNicheFinderFeed(opts = {}) {
         const maxRecent = document.getElementById('nf-f-max-recent')?.value;
         const minSubs = document.getElementById('nf-f-min-subs')?.value;
         const maxSubs = document.getElementById('nf-f-max-subs')?.value;
+        const minVideos = document.getElementById('nf-f-min-videos')?.value;
+        const maxVideos = document.getElementById('nf-f-max-videos')?.value;
         const minRev = document.getElementById('nf-f-min-rev')?.value;
         const q = document.getElementById('nf-f-q')?.value?.trim();
         if (minRecent) params.set('min_recent_avg', minRecent);
         if (maxRecent) params.set('max_recent_avg', maxRecent);
         if (minSubs) params.set('min_subscribers', minSubs);
         if (maxSubs) params.set('max_subscribers', maxSubs);
+        if (minVideos) params.set('min_videos', minVideos);
+        if (maxVideos) params.set('max_videos', maxVideos);
         if (minRev) params.set('min_recent_revenue', minRev);
         if (q) params.set('q', q);
         if (document.getElementById('nf-f-has-recent')?.checked) params.set('has_recent_avg', 'true');

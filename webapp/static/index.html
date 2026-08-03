@@ -1086,6 +1086,8 @@
                     <input type="hidden" id="nf-f-max-recent" value="">
                     <input type="hidden" id="nf-f-min-subs" value="">
                     <input type="hidden" id="nf-f-max-subs" value="">
+                    <input type="hidden" id="nf-f-min-videos" value="">
+                    <input type="hidden" id="nf-f-max-videos" value="">
                     <input type="hidden" id="nf-f-min-rev" value="">
                     <input type="checkbox" id="nf-f-has-recent" class="nf-sr-only" checked>
                     <input type="checkbox" id="nf-f-active" class="nf-sr-only">
@@ -1156,6 +1158,25 @@
                                 <div class="nf-dual-track"><div class="nf-dual-fill" id="nf-subs-fill"></div></div>
                                 <input type="range" id="nf-subs-min" class="nf-range" min="0" max="500000" step="1000" value="0" aria-label="Min subscribers">
                                 <input type="range" id="nf-subs-max" class="nf-range" min="0" max="500000" step="1000" value="500000" aria-label="Max subscribers">
+                            </div>
+                        </div>
+
+                        <div class="nf-filter-block" data-nf-range="videos">
+                            <div class="nf-filter-block-head">
+                                <span class="nf-filter-title">Uploads posted</span>
+                                <span class="nf-filter-value" id="nf-videos-label">Any</span>
+                            </div>
+                            <div class="nf-presets" role="group" aria-label="Uploads presets">
+                                <button type="button" class="nf-preset is-active" data-min="0" data-max="">Any</button>
+                                <button type="button" class="nf-preset" data-min="0" data-max="50">≤50</button>
+                                <button type="button" class="nf-preset" data-min="0" data-max="100">≤100</button>
+                                <button type="button" class="nf-preset" data-min="0" data-max="250">≤250</button>
+                                <button type="button" class="nf-preset" data-min="0" data-max="500">≤500</button>
+                            </div>
+                            <div class="nf-dual-range" data-nf-dual="videos">
+                                <div class="nf-dual-track"><div class="nf-dual-fill" id="nf-videos-fill"></div></div>
+                                <input type="range" id="nf-videos-min" class="nf-range" min="0" max="2000" step="10" value="0" aria-label="Min uploads posted">
+                                <input type="range" id="nf-videos-max" class="nf-range" min="0" max="2000" step="10" value="2000" aria-label="Max uploads posted">
                             </div>
                         </div>
 
