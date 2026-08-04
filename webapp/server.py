@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -2073,6 +2074,10 @@ class RankingAssembleRequest(BaseModel):
     notify_email: str = ""
 
 
+class RankingImportUrlRequest(BaseModel):
+    url: str
+
+
 @app.get("/api/ranking/access")
 async def ranking_access(user: dict = Depends(require_user)):
     """Trial quota remaining for Ranking & Countdown cooks."""
@@ -2146,6 +2151,69 @@ async def ranking_upload(file: UploadFile = File(...), user: dict = Depends(requ
         "duration": duration,
         "width": width,
         "height": height,
+    }
+
+
+@app.post("/api/ranking/import-url")
+async def ranking_import_url(req: RankingImportUrlRequest, user: dict = Depends(require_user)):
+    """Download a TikTok / YouTube / Instagram clip into ranking uploads."""
+    from webapp.ranking_import import import_ranking_url, detect_platform, short_url_label
+
+    raw = (req.url or "").strip()
+    if not raw:
+        raise HTTPException(400, "URL required")
+    if not re.match(r"^https?://.+", raw, re.I):
+        raise HTTPException(400, "Invalid URL")
+
+    platform = detect_platform(raw)
+    out_dir = OUTPUT_DIR / "ranking_uploads" / str(user["id"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fname = f"{int(time.time())}_{uuid.uuid4().hex[:8]}.mp4"
+    local = out_dir / fname
+
+    try:
+        meta = await asyncio.to_thread(import_ranking_url, raw, local)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except RuntimeError as e:
+        msg = str(e)
+        tip = (
+            "Public TikTok/YouTube usually work. Private or deleted videos need a manual upload."
+            if getattr(config, "APIFY_TOKEN", "")
+            else "Add APIFY_TOKEN to the web app env for reliable TikTok/IG imports, or upload the file."
+        )
+        raise HTTPException(
+            422,
+            detail={"message": msg, "platform": platform, "tip": tip, "code": "ranking_import_failed"},
+        ) from e
+    except Exception as e:
+        print(f"[ranking] import-url failed: {e}")
+        raise HTTPException(500, "Import failed — try uploading the file instead.") from e
+
+    duration = 0.0
+    width = height = 0
+    try:
+        from core.ranking_pipeline import probe_video
+        info = probe_video(local)
+        duration = float(info.get("duration") or 0)
+        width = int(info.get("width") or 0)
+        height = int(info.get("height") or 0)
+    except Exception as e:
+        print(f"[ranking] import probe failed: {e}")
+
+    path_for_cook, url = _stage_user_media(str(local), user["id"], "ranking_clip", "video/mp4")
+    return {
+        "success": True,
+        "filename": fname,
+        "url": path_for_cook if str(path_for_cook).startswith("http") else url,
+        "browser_url": url,
+        "duration": duration,
+        "width": width,
+        "height": height,
+        "platform": meta.get("platform") or platform,
+        "watermark_free": meta.get("watermark_free"),
+        "source": meta.get("source"),
+        "label_hint": short_url_label(raw),
     }
 
 

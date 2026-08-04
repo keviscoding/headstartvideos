@@ -6,7 +6,7 @@
     <title>ChannelRecipe — Proven recipes for faceless YouTube channels</title>
     <link rel="icon" href="/static/favicon.svg">
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="/static/styles.css?v=20260804b">
+    <link rel="stylesheet" href="/static/styles.css?v=20260804c">
     <script>
         tailwind.config = {
             theme: {
@@ -224,10 +224,24 @@
                     <div class="mb-6">
                         <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Upload your clips</h2>
                         <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">
-                            Drop vertical clips for your ranking Short. Highest number plays first; #1 lands last.
+                            Paste TikTok / YouTube / Instagram links, or drop files. Highest number plays first; #1 lands last. Drag clips to reorder.
                         </p>
                     </div>
-                    <div id="rk-upload-zone" class="rk-upload-zone">
+                    <label class="cr-label" for="rk-url-input">Paste links</label>
+                    <textarea id="rk-url-input" class="cr-input rk-url-input" rows="3" placeholder="Paste TikTok / YouTube / Instagram links — one per line&#10;https://www.tiktok.com/@…&#10;https://youtube.com/shorts/…"></textarea>
+                    <div class="flex gap-3" style="justify-content:flex-end;margin:8px 0 4px;">
+                        <button type="button" id="rk-btn-import-url" class="btn-secondary" onclick="rkImportUrls()">Import links</button>
+                    </div>
+                    <div id="rk-url-status" class="rk-url-status hidden" aria-live="polite"></div>
+                    <div id="rk-import-progress" class="rk-import-progress hidden" aria-live="polite">
+                        <div class="rk-import-progress-top">
+                            <span id="rk-import-progress-label">Downloading…</span>
+                            <span id="rk-import-progress-count" class="cr-mono">0 / 0</span>
+                        </div>
+                        <div class="rk-import-progress-bar"><div id="rk-import-progress-fill" class="rk-import-progress-fill"></div></div>
+                        <div id="rk-import-progress-hint" class="rk-import-progress-hint">TikTok / YouTube imports can take 20–90s each — keep this tab open.</div>
+                    </div>
+                    <div id="rk-upload-zone" class="rk-upload-zone" style="margin-top:14px;">
                         <p style="font-weight:700;margin-bottom:6px;">Drop clips here or click to browse</p>
                         <p style="font-size:13px;color:var(--app-ink-3);">MP4 / MOV / WEBM · up to 120MB each</p>
                         <input id="rk-file-input" type="file" accept="video/*" multiple hidden>
@@ -247,14 +261,37 @@
                         <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Trim &amp; label</h2>
                         <p id="rk-trim-meta" style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">Clip 1</p>
                     </div>
-                    <div class="rk-trim-layout">
-                        <div>
-                            <video id="rk-trim-video" class="rk-trim-video" playsinline controls></video>
-                            <div class="rk-trim-controls">
-                                <label>In <input id="rk-trim-in" type="number" min="0" step="0.1" class="cr-input" style="width:90px;display:inline-block;"></label>
-                                <label>Out <input id="rk-trim-out" type="number" min="0" step="0.1" class="cr-input" style="width:90px;display:inline-block;"></label>
-                                <label style="flex:1;">Label <input id="rk-trim-label" type="text" class="cr-input" placeholder="e.g. Roof gap"></label>
+                    <div class="rk-trim-split">
+                        <div class="rk-trim-main">
+                            <div class="rk-trim-video-wrap" id="rk-trim-video-wrap">
+                                <video id="rk-trim-video" class="rk-trim-video" playsinline></video>
+                                <div class="rk-play-overlay" id="rk-play-overlay"><div class="rk-play-icon"></div></div>
                             </div>
+                            <div class="rk-timeline-wrap" id="rk-timeline-wrap">
+                                <div class="rk-timeline-track" id="rk-timeline-track">
+                                    <div class="rk-timeline-fill" id="rk-timeline-fill"></div>
+                                    <div class="rk-timeline-handle rk-handle-start" id="rk-handle-start"></div>
+                                    <div class="rk-timeline-handle rk-handle-end" id="rk-handle-end"></div>
+                                    <div class="rk-timeline-playhead" id="rk-timeline-playhead"></div>
+                                </div>
+                                <div class="rk-timeline-ticks" id="rk-timeline-ticks"></div>
+                            </div>
+                            <div class="rk-trim-info">
+                                <div class="rk-time-display">
+                                    <span class="rk-time-muted">In:</span> <span class="rk-time-val" id="rk-trim-start-display">0.0s</span>
+                                    <span class="rk-time-muted" style="margin-left:0.5rem;">Out:</span> <span class="rk-time-val" id="rk-trim-end-display">0.0s</span>
+                                </div>
+                                <div style="display:flex;align-items:center;gap:0.75rem;">
+                                    <div class="rk-duration-badge" id="rk-trim-duration-badge">0.0s selected</div>
+                                    <div style="font-size:13px;color:var(--app-ink-3);">Total: <span id="rk-trim-total-duration" style="color:var(--app-ink);font-weight:600;">0.0s</span></div>
+                                </div>
+                            </div>
+                            <label class="cr-label" for="rk-trim-label" style="margin-top:12px;">Clip label (shown next to number)</label>
+                            <input id="rk-trim-label" type="text" class="cr-input" placeholder="e.g. Roof gap" maxlength="40">
+                        </div>
+                        <div class="rk-trim-preview-col">
+                            <div class="rk-preview-frame" id="rk-preview-trim"></div>
+                            <div class="rk-preview-tag">Live preview — <span>overlay</span></div>
                         </div>
                     </div>
                     <div class="flex gap-3 mt-6" style="justify-content:space-between;flex-wrap:wrap;">
@@ -273,15 +310,15 @@
                     <div class="mb-6">
                         <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Title &amp; order</h2>
                         <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">
-                            Pick a viral title, style, and clip order — then cook on Fly.
+                            Pick a viral title, style, and drag clips to reorder — then cook on Fly.
                         </p>
                     </div>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="rk-title-split">
                         <div>
                             <label class="cr-label" for="rk-title-text">Video title</label>
-                            <input id="rk-title-text" class="cr-input" placeholder="Top 5 Parkour Moments" maxlength="80">
+                            <input id="rk-title-text" class="cr-input" placeholder="Top 5 Parkour Moments" maxlength="80" oninput="rkOnTitleChange()">
                             <label class="cr-label" for="rk-title-hl" style="margin-top:12px;">Highlight word (optional)</label>
-                            <input id="rk-title-hl" class="cr-input" placeholder="Parkour" maxlength="40">
+                            <input id="rk-title-hl" class="cr-input" placeholder="Parkour" maxlength="40" oninput="rkOnTitleChange()">
                             <div style="margin-top:14px;">
                                 <span class="cr-label">Style</span>
                                 <div class="rk-style-row">
@@ -290,10 +327,16 @@
                                 </div>
                             </div>
                             <p id="rk-trial-badge" class="cr-mono" style="font-size:12px;color:var(--app-ink-3);margin-top:14px;"></p>
-                        </div>
-                        <div>
-                            <span class="cr-label">Playback order (top = first)</span>
+                            <span class="cr-label" style="margin-top:18px;display:block;">Playback order (drag to reorder · top = first)</span>
                             <div id="rk-order-list" class="rk-order-list"></div>
+                            <div class="rk-order-meta">
+                                <span>Total: <strong id="rk-total-duration">0.0s</strong></span>
+                                <span><strong id="rk-total-clips">0</strong> clips</span>
+                            </div>
+                        </div>
+                        <div class="rk-title-preview-col">
+                            <div class="rk-preview-frame" id="rk-preview-dash"></div>
+                            <div class="rk-preview-tag">Live preview — <span>overlay</span></div>
                         </div>
                     </div>
                     <div class="flex gap-3 mt-6" style="justify-content:flex-end;flex-wrap:wrap;">
@@ -1975,7 +2018,7 @@
     </div>
 
     <script src="/static/cr-telemetry.js?v=20260804b"></script>
-    <script src="/static/ranking.js?v=20260804b"></script>
+    <script src="/static/ranking.js?v=20260804c"></script>
     <script src="/static/app.js?v=20260804b"></script>
 </body>
 </html>

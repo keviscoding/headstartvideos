@@ -59,6 +59,8 @@ STORYBOARD_TRIAL_PACK_LIMIT = max(0, int(os.getenv("STORYBOARD_TRIAL_PACK_LIMIT"
 # Ranking & Countdown short-form: free cooks during Stripe trial, then 1 credit.
 RANKING_TRIAL_COOK_LIMIT = max(0, int(os.getenv("RANKING_TRIAL_COOK_LIMIT", "2") or 2))
 RANKING_CREDIT_COST = max(1, int(os.getenv("RANKING_CREDIT_COST", "1") or 1))
+# Optional — makes TikTok/Instagram ranking link import reliable (ViewHunt path).
+APIFY_TOKEN = (os.getenv("APIFY_TOKEN", "") or "").strip()
 # Pack credits: ceil(minutes / divisor). Preview (~1 min) → 1 credit when paid.
 STORYBOARD_PACK_CREDITS_PER_2_MIN = max(
     1,

@@ -1,7 +1,6 @@
 /**
  * Ranking & Countdown short-form client flow (ChannelRecipe UI).
- * Depends on globals from app.js: goToStep, cookingManager, readJson,
- * ensureCanCook / openUpgradeFlow / endTrialNow / isTrialUser / showPricingModal, etc.
+ * Depends on globals from app.js: goToStep, cookingManager, readJson, etc.
  */
 /* global goToStep, cookingManager, readJson, isTrialUser, isPaidUser,
           showPricingModal, showTrialExhaustedModal, showCreditsNeededModal,
@@ -11,10 +10,22 @@ let _rkClips = [];
 let _rkTrimIdx = 0;
 let _rkStyle = 'viral';
 let _rkAccess = null;
+let _rkTimelineDuration = 0;
+let _rkDragging = null; // 'start' | 'end' | null
+let _rkTimelineBound = false;
+let _rkPlayBound = false;
 
 function isRankingRecipe() {
     const id = (window.state?.nicheData?.recipe || window.state?.niche || '');
     return id === 'ranking_countdown';
+}
+
+function rkEscapeHtml(s) {
+    return String(s || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
 }
 
 function rkResetState() {
@@ -44,10 +55,58 @@ function rkSaveDraft() {
     } catch (_) {}
 }
 
+function rkParseImportUrls(raw) {
+    const found = String(raw || '').match(/https?:\/\/[^\s<>"']+/gi) || [];
+    const seen = {};
+    const out = [];
+    for (const u0 of found) {
+        const u = u0.replace(/[),.;]+$/g, '');
+        if (seen[u]) continue;
+        seen[u] = true;
+        out.push(u);
+    }
+    return out;
+}
+
+function rkShortUrlLabel(url) {
+    try {
+        const u = new URL(url);
+        const host = u.hostname.replace(/^www\./, '');
+        const tail = u.pathname.replace(/\/$/, '').split('/').pop() || '';
+        return (tail ? `${host}/${tail}` : host).slice(0, 40);
+    } catch (_) {
+        return 'Imported clip';
+    }
+}
+
+function rkSetImportProgress(show, opts = {}) {
+    const wrap = document.getElementById('rk-import-progress');
+    if (!wrap) return;
+    if (!show) {
+        wrap.classList.add('hidden');
+        return;
+    }
+    wrap.classList.remove('hidden');
+    const done = opts.done || 0;
+    const total = opts.total || 0;
+    const label = document.getElementById('rk-import-progress-label');
+    const count = document.getElementById('rk-import-progress-count');
+    const fill = document.getElementById('rk-import-progress-fill');
+    const hint = document.getElementById('rk-import-progress-hint');
+    if (label) label.textContent = opts.label || 'Downloading…';
+    if (count) count.textContent = `${done} / ${total}`;
+    if (fill) fill.style.width = total ? `${Math.round((done / total) * 100)}%` : '0%';
+    if (hint && opts.hint) hint.textContent = opts.hint;
+}
+
 function rkInitUploadUI() {
     const zone = document.getElementById('rk-upload-zone');
     const input = document.getElementById('rk-file-input');
-    if (!zone || zone.dataset.bound) return;
+    if (!zone || zone.dataset.bound) {
+        rkRenderClipList();
+        rkRefreshAccess();
+        return;
+    }
     zone.dataset.bound = '1';
     zone.addEventListener('click', () => input?.click());
     zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('is-drag'); });
@@ -60,6 +119,13 @@ function rkInitUploadUI() {
     input?.addEventListener('change', () => {
         if (input.files?.length) rkHandleFiles(input.files);
         input.value = '';
+    });
+    const urlInput = document.getElementById('rk-url-input');
+    urlInput?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            rkImportUrls();
+        }
     });
     rkRenderClipList();
     rkRefreshAccess();
@@ -106,6 +172,184 @@ async function rkHandleFiles(fileList) {
     }
 }
 
+async function rkImportUrls() {
+    const input = document.getElementById('rk-url-input');
+    const btn = document.getElementById('rk-btn-import-url');
+    const status = document.getElementById('rk-url-status');
+    const urls = rkParseImportUrls(input?.value || '');
+    if (!urls.length) {
+        if (status) {
+            status.classList.remove('hidden');
+            status.className = 'rk-url-status is-err';
+            status.textContent = 'Paste one or more http(s) links first.';
+        }
+        return;
+    }
+    const readyCount = _rkClips.filter((c) => !c.importFailed).length;
+    if (readyCount >= 10) {
+        alert('Maximum 10 clips reached');
+        return;
+    }
+    let room = 10 - readyCount;
+    const batch = urls.slice(0, room);
+
+    if (btn) btn.disabled = true;
+    if (input) input.disabled = true;
+    if (status) status.classList.add('hidden');
+
+    const placeholders = [];
+    for (let p = 0; p < batch.length; p++) {
+        const ph = {
+            downloading: true,
+            originalName: rkShortUrlLabel(batch[p]),
+            importUrl: batch[p],
+            filename: '',
+            url: '',
+            browserUrl: '',
+            duration: 0,
+            originalDuration: 0,
+            startTime: 0,
+            endTime: 0,
+            label: '',
+        };
+        _rkClips.push(ph);
+        placeholders.push(_rkClips.length - 1);
+    }
+    rkRenderClipList();
+
+    let ok = 0;
+    let fail = 0;
+    const startedAll = Date.now();
+    rkSetImportProgress(true, {
+        done: 0,
+        total: batch.length,
+        label: 'Downloading clip 1 of ' + batch.length + '…',
+        hint: 'Still working — TikTok/YouTube imports often take 20–90 seconds each.',
+    });
+
+    for (let i = 0; i < batch.length; i++) {
+        const idx = placeholders[i];
+        const elapsedAll = Math.round((Date.now() - startedAll) / 1000);
+        if (btn) btn.textContent = `Downloading ${i + 1}/${batch.length}…`;
+        rkSetImportProgress(true, {
+            done: i,
+            total: batch.length,
+            label: `Downloading clip ${i + 1} of ${batch.length}…`,
+            hint: `Elapsed ${elapsedAll}s · keep this tab open.`,
+        });
+        try {
+            await rkImportOneUrl(batch[i], idx);
+            ok++;
+        } catch (err) {
+            fail++;
+            const failed = _rkClips[idx];
+            if (failed) {
+                failed.downloading = false;
+                failed.importFailed = true;
+                failed.importError = err.message || 'Import failed';
+                failed.originalName = rkShortUrlLabel(batch[i]);
+            }
+            rkRenderClipList();
+        }
+        rkSetImportProgress(true, {
+            done: i + 1,
+            total: batch.length,
+            label: i + 1 < batch.length
+                ? `Downloaded ${i + 1} of ${batch.length} — starting next…`
+                : `Finished ${i + 1} of ${batch.length}`,
+            hint: fail
+                ? `${ok} imported, ${fail} failed so far.`
+                : 'Previews appear below as each download completes.',
+        });
+    }
+
+    if (input) {
+        input.value = '';
+        input.disabled = false;
+    }
+    if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Import links';
+    }
+
+    const totalSec = Math.round((Date.now() - startedAll) / 1000);
+    if (status) {
+        status.classList.remove('hidden');
+        if (ok && !fail) {
+            status.className = 'rk-url-status is-ok';
+            status.textContent = `Imported ${ok} clip${ok === 1 ? '' : 's'} in ${totalSec}s.`;
+            setTimeout(() => rkSetImportProgress(false), 3500);
+        } else if (ok && fail) {
+            status.className = 'rk-url-status';
+            status.textContent = `Imported ${ok}, failed ${fail}.`;
+        } else {
+            rkSetImportProgress(false);
+            status.className = 'rk-url-status is-err';
+            status.textContent = 'All imports failed — try uploading the files instead.';
+        }
+    } else if (ok && !fail) {
+        setTimeout(() => rkSetImportProgress(false), 3500);
+    }
+    rkSaveDraft();
+}
+
+async function rkImportOneUrl(url, placeholderIndex) {
+    const res = await fetch('/api/ranking/import-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+    });
+    const data = await readJson(res, {});
+    if (!res.ok || !data.success) {
+        const detail = data.detail;
+        const msg = typeof detail === 'string'
+            ? detail
+            : (detail?.message || data.message || data.error || 'Import failed');
+        throw new Error(msg);
+    }
+    const clip = _rkClips[placeholderIndex];
+    if (!clip) return data;
+    Object.assign(clip, {
+        filename: data.filename,
+        url: data.url,
+        browserUrl: data.browser_url || data.url,
+        duration: data.duration || 0,
+        originalDuration: data.duration || 0,
+        startTime: 0,
+        endTime: data.duration || 0,
+        label: clip.label || data.label_hint || rkShortUrlLabel(url),
+        downloading: false,
+        uploading: false,
+        importFailed: false,
+    });
+    rkRenderClipList();
+    return data;
+}
+
+function rkInitDragReorder(listEl, onDrop) {
+    let dragItem = null;
+    listEl.querySelectorAll('[data-index]').forEach((item) => {
+        item.addEventListener('dragstart', (e) => {
+            dragItem = item;
+            item.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+        });
+        item.addEventListener('dragend', () => {
+            item.classList.remove('dragging');
+            dragItem = null;
+        });
+        item.addEventListener('dragover', (e) => e.preventDefault());
+        item.addEventListener('drop', (e) => {
+            e.preventDefault();
+            if (!dragItem || dragItem === item) return;
+            const from = parseInt(dragItem.dataset.index, 10);
+            const to = parseInt(item.dataset.index, 10);
+            if (!Number.isFinite(from) || !Number.isFinite(to)) return;
+            onDrop(from, to);
+        });
+    });
+}
+
 function rkRenderClipList() {
     const list = document.getElementById('rk-clip-list');
     const next = document.getElementById('rk-btn-to-trim');
@@ -114,19 +358,33 @@ function rkRenderClipList() {
     list.innerHTML = _rkClips.map((c, i) => {
         const num = n - i;
         const thumb = c.browserUrl
-            ? `<video class="rk-clip-thumb" src="${c.browserUrl}" muted></video>`
+            ? `<video class="rk-clip-thumb" src="${rkEscapeHtml(c.browserUrl)}" muted></video>`
             : `<div class="rk-clip-thumb"></div>`;
-        return `<div class="rk-clip-item">
+        let status = '';
+        if (c.uploading) status = 'Uploading…';
+        else if (c.downloading) status = 'Downloading…';
+        else if (c.importFailed) status = c.importError || 'Import failed';
+        else status = c.label || c.originalName || c.filename || 'Clip';
+        return `<div class="rk-clip-item" draggable="true" data-index="${i}">
+            <span class="rk-drag-handle" title="Drag to reorder">⠿</span>
             <span class="rk-clip-num">${num}</span>
             ${thumb}
             <div style="flex:1;min-width:0;">
-                <div style="font-weight:600;font-size:14px;">${c.uploading ? 'Uploading…' : (c.label || c.filename)}</div>
+                <div style="font-weight:600;font-size:14px;">${rkEscapeHtml(status)}</div>
                 <div class="cr-mono" style="font-size:11px;color:var(--app-ink-3);">${(c.duration || 0).toFixed(1)}s</div>
             </div>
-            <button type="button" class="btn-ghost" style="font-size:12px;padding:6px 10px;" onclick="rkRemoveClip(${i})">Remove</button>
+            <button type="button" class="btn-ghost" style="font-size:12px;padding:6px 10px;" onclick="event.stopPropagation();rkRemoveClip(${i})">${c.importFailed ? 'Dismiss' : 'Remove'}</button>
         </div>`;
     }).join('');
-    if (next) next.disabled = _rkClips.filter((c) => !c.uploading && c.url).length < 1;
+    rkInitDragReorder(list, (from, to) => {
+        const moved = _rkClips.splice(from, 1)[0];
+        _rkClips.splice(to, 0, moved);
+        rkRenderClipList();
+        rkSaveDraft();
+    });
+    if (next) {
+        next.disabled = _rkClips.filter((c) => !c.uploading && !c.downloading && !c.importFailed && c.url).length < 1;
+    }
 }
 
 function rkRemoveClip(i) {
@@ -136,41 +394,181 @@ function rkRemoveClip(i) {
 }
 
 function rkGoTrim() {
-    const ready = _rkClips.filter((c) => !c.uploading && c.url);
+    const ready = _rkClips.filter((c) => !c.uploading && !c.downloading && !c.importFailed && c.url);
     if (!ready.length) { alert('Upload at least one clip.'); return; }
     _rkClips = ready;
     _rkTrimIdx = 0;
     goToStep('rk-trim');
+    rkEnsureTimelineBound();
+    rkEnsurePlayBound();
     rkShowTrimClip();
+}
+
+function rkTimeToPercent(t) {
+    return _rkTimelineDuration <= 0 ? 0 : Math.max(0, Math.min(100, (t / _rkTimelineDuration) * 100));
+}
+function rkPercentToTime(pct) {
+    return Math.max(0, Math.min(_rkTimelineDuration, (pct / 100) * _rkTimelineDuration));
+}
+function rkGetTrackRect() {
+    return document.getElementById('rk-timeline-track')?.getBoundingClientRect();
+}
+function rkXToPercent(clientX) {
+    const r = rkGetTrackRect();
+    if (!r || !r.width) return 0;
+    return Math.max(0, Math.min(100, ((clientX - r.left) / r.width) * 100));
+}
+
+function rkUpdateTimelineUI() {
+    const clip = _rkClips[_rkTrimIdx];
+    if (!clip) return;
+    const sp = rkTimeToPercent(clip.startTime || 0);
+    const ep = rkTimeToPercent(clip.endTime || clip.duration || 0);
+    const fill = document.getElementById('rk-timeline-fill');
+    const hs = document.getElementById('rk-handle-start');
+    const he = document.getElementById('rk-handle-end');
+    if (fill) {
+        fill.style.left = sp + '%';
+        fill.style.width = Math.max(0, ep - sp) + '%';
+    }
+    if (hs) hs.style.left = `calc(${sp}% - 7px)`;
+    if (he) he.style.left = `calc(${ep}% - 7px)`;
+    const sd = document.getElementById('rk-trim-start-display');
+    const ed = document.getElementById('rk-trim-end-display');
+    const badge = document.getElementById('rk-trim-duration-badge');
+    if (sd) sd.textContent = (clip.startTime || 0).toFixed(1) + 's';
+    if (ed) ed.textContent = (clip.endTime || 0).toFixed(1) + 's';
+    if (badge) badge.textContent = Math.max(0, (clip.endTime || 0) - (clip.startTime || 0)).toFixed(1) + 's selected';
+    let total = 0;
+    _rkClips.forEach((c) => { total += Math.max(0, (c.endTime || c.duration || 0) - (c.startTime || 0)); });
+    const el = document.getElementById('rk-trim-total-duration');
+    if (el) el.textContent = total.toFixed(1) + 's';
+}
+
+function rkUpdatePlayhead() {
+    const v = document.getElementById('rk-trim-video');
+    const ph = document.getElementById('rk-timeline-playhead');
+    if (!v || !ph) return;
+    ph.style.left = `calc(${rkTimeToPercent(v.currentTime || 0)}% - 1.5px)`;
+}
+
+function rkRenderTicks() {
+    const ticks = document.getElementById('rk-timeline-ticks');
+    if (!ticks) return;
+    const count = Math.min(10, Math.max(3, Math.floor(_rkTimelineDuration / 5)));
+    let html = '';
+    for (let i = 0; i <= count; i++) {
+        html += `<span>${((_rkTimelineDuration / count) * i).toFixed(1)}s</span>`;
+    }
+    ticks.innerHTML = html;
+}
+
+function rkEnsureTimelineBound() {
+    if (_rkTimelineBound) return;
+    const track = document.getElementById('rk-timeline-track');
+    const hs = document.getElementById('rk-handle-start');
+    const he = document.getElementById('rk-handle-end');
+    const v = document.getElementById('rk-trim-video');
+    if (!track || !hs || !he || !v) return;
+    _rkTimelineBound = true;
+    v.addEventListener('timeupdate', rkUpdatePlayhead);
+    track.addEventListener('click', (e) => {
+        if (_rkDragging) return;
+        v.currentTime = rkPercentToTime(rkXToPercent(e.clientX));
+    });
+    hs.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); _rkDragging = 'start'; });
+    hs.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); _rkDragging = 'start'; }, { passive: false });
+    he.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); _rkDragging = 'end'; });
+    he.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); _rkDragging = 'end'; }, { passive: false });
+    function onMove(cx) {
+        if (!_rkDragging) return;
+        const clip = _rkClips[_rkTrimIdx];
+        if (!clip) return;
+        const t = Math.round(rkPercentToTime(rkXToPercent(cx)) * 10) / 10;
+        if (_rkDragging === 'start') {
+            clip.startTime = Math.max(0, Math.min(t, (clip.endTime || 0) - 0.5));
+            v.currentTime = clip.startTime;
+        } else {
+            clip.endTime = Math.min(_rkTimelineDuration, Math.max(t, (clip.startTime || 0) + 0.5));
+            v.currentTime = clip.endTime;
+        }
+        clip.duration = Math.max(0.3, (clip.endTime || 0) - (clip.startTime || 0));
+        rkUpdateTimelineUI();
+        rkSaveDraft();
+    }
+    document.addEventListener('mousemove', (e) => onMove(e.clientX));
+    document.addEventListener('touchmove', (e) => {
+        if (_rkDragging && e.touches.length) onMove(e.touches[0].clientX);
+    }, { passive: true });
+    document.addEventListener('mouseup', () => { _rkDragging = null; });
+    document.addEventListener('touchend', () => { _rkDragging = null; });
+}
+
+function rkUpdatePlayOverlay() {
+    const v = document.getElementById('rk-trim-video');
+    const o = document.getElementById('rk-play-overlay');
+    if (!v || !o) return;
+    if (v.paused || v.ended) o.classList.remove('is-playing');
+    else o.classList.add('is-playing');
+}
+
+function rkEnsurePlayBound() {
+    if (_rkPlayBound) return;
+    const wrap = document.getElementById('rk-trim-video-wrap');
+    const v = document.getElementById('rk-trim-video');
+    if (!wrap || !v) return;
+    _rkPlayBound = true;
+    wrap.addEventListener('click', (e) => {
+        if (e.target.closest('.rk-timeline-handle')) return;
+        if (v.paused) v.play();
+        else v.pause();
+    });
+    v.addEventListener('play', rkUpdatePlayOverlay);
+    v.addEventListener('pause', rkUpdatePlayOverlay);
+    v.addEventListener('ended', rkUpdatePlayOverlay);
 }
 
 function rkShowTrimClip() {
     const clip = _rkClips[_rkTrimIdx];
     const video = document.getElementById('rk-trim-video');
     const meta = document.getElementById('rk-trim-meta');
-    const inEl = document.getElementById('rk-trim-in');
-    const outEl = document.getElementById('rk-trim-out');
     const labelEl = document.getElementById('rk-trim-label');
     if (!clip || !video) return;
     if (meta) meta.textContent = `Clip ${_rkTrimIdx + 1} of ${_rkClips.length} · will be #${_rkClips.length - _rkTrimIdx}`;
     video.src = clip.browserUrl || clip.url;
-    if (inEl) inEl.value = String(clip.startTime || 0);
-    if (outEl) outEl.value = String(clip.endTime || clip.duration || 0);
-    if (labelEl) labelEl.value = clip.label || '';
+    video.load();
+    rkUpdatePlayOverlay();
+    _rkTimelineDuration = clip.originalDuration || clip.duration || 0;
+    if (labelEl) {
+        labelEl.value = clip.label || '';
+        labelEl.oninput = () => {
+            clip.label = labelEl.value.trim();
+            rkSaveDraft();
+            rkRenderPreview('rk-preview-trim');
+        };
+    }
+    video.onloadedmetadata = () => {
+        _rkTimelineDuration = video.duration || clip.originalDuration || clip.duration || 0;
+        clip.originalDuration = _rkTimelineDuration;
+        if (!clip.endTime || clip.endTime > _rkTimelineDuration) clip.endTime = _rkTimelineDuration;
+        if (clip.startTime == null) clip.startTime = 0;
+        rkUpdateTimelineUI();
+        rkRenderTicks();
+        video.currentTime = clip.startTime || 0;
+    };
     const prev = document.getElementById('rk-btn-trim-prev');
     const next = document.getElementById('rk-btn-trim-next');
     if (prev) prev.disabled = _rkTrimIdx <= 0;
     if (next) next.textContent = _rkTrimIdx >= _rkClips.length - 1 ? 'Next: Title' : 'Next clip';
+    rkRenderPreview('rk-preview-trim');
 }
 
 function rkCommitTrimFields() {
     const clip = _rkClips[_rkTrimIdx];
     if (!clip) return;
-    const inEl = document.getElementById('rk-trim-in');
-    const outEl = document.getElementById('rk-trim-out');
     const labelEl = document.getElementById('rk-trim-label');
-    let start = Math.max(0, parseFloat(inEl?.value) || 0);
-    let end = parseFloat(outEl?.value);
+    let start = Math.max(0, Number(clip.startTime) || 0);
+    let end = Number(clip.endTime);
     if (!Number.isFinite(end) || end <= start) end = clip.originalDuration || clip.duration || start + 1;
     clip.startTime = start;
     clip.endTime = end;
@@ -193,6 +591,7 @@ function rkTrimNext() {
         goToStep('rk-title');
         rkRenderOrderList();
         rkRefreshAccess();
+        rkRenderPreview('rk-preview-dash');
         return;
     }
     _rkTrimIdx += 1;
@@ -205,21 +604,60 @@ function rkSetStyle(style) {
         b.classList.toggle('is-active', b.dataset.style === _rkStyle);
     });
     rkSaveDraft();
+    rkRenderPreview('rk-preview-dash');
+    rkRenderPreview('rk-preview-trim');
+}
+
+function rkOnTitleChange() {
+    rkSaveDraft();
+    rkRenderPreview('rk-preview-dash');
 }
 
 function rkRenderOrderList() {
     const list = document.getElementById('rk-order-list');
     if (!list) return;
     const n = _rkClips.length;
+    let totalDur = 0;
     list.innerHTML = _rkClips.map((c, i) => {
         const num = n - i;
-        return `<div class="rk-order-item">
+        const dur = Math.max(0, (c.endTime || c.duration || 0) - (c.startTime || 0));
+        totalDur += dur;
+        const thumb = c.browserUrl
+            ? `<video class="rk-clip-thumb" src="${rkEscapeHtml(c.browserUrl)}" muted></video>`
+            : `<div class="rk-clip-thumb"></div>`;
+        return `<div class="rk-order-item" draggable="true" data-index="${i}">
+            <span class="rk-drag-handle" title="Drag to reorder">⠿</span>
             <span class="rk-clip-num">${num}</span>
-            <div style="flex:1;min-width:0;font-size:14px;font-weight:600;">${c.label || ('Clip ' + (i + 1))}</div>
+            ${thumb}
+            <div style="flex:1;min-width:0;">
+                <input type="text" class="cr-input rk-label-input" value="${rkEscapeHtml(c.label || '')}" placeholder="Label…" maxlength="40" data-label-idx="${i}">
+                <div class="cr-mono" style="font-size:11px;color:var(--app-ink-3);margin-top:4px;">${dur.toFixed(1)}s</div>
+            </div>
             <button type="button" class="btn-ghost" style="font-size:12px;padding:4px 8px;" onclick="rkMoveClip(${i},-1)" ${i === 0 ? 'disabled' : ''}>↑</button>
             <button type="button" class="btn-ghost" style="font-size:12px;padding:4px 8px;" onclick="rkMoveClip(${i},1)" ${i >= n - 1 ? 'disabled' : ''}>↓</button>
         </div>`;
     }).join('');
+    list.querySelectorAll('[data-label-idx]').forEach((input) => {
+        input.addEventListener('input', () => {
+            const idx = parseInt(input.dataset.labelIdx, 10);
+            if (_rkClips[idx]) {
+                _rkClips[idx].label = input.value.trim();
+                rkSaveDraft();
+                rkRenderPreview('rk-preview-dash');
+            }
+        });
+    });
+    rkInitDragReorder(list, (from, to) => {
+        const moved = _rkClips.splice(from, 1)[0];
+        _rkClips.splice(to, 0, moved);
+        rkRenderOrderList();
+        rkSaveDraft();
+        rkRenderPreview('rk-preview-dash');
+    });
+    const td = document.getElementById('rk-total-duration');
+    const tc = document.getElementById('rk-total-clips');
+    if (td) td.textContent = totalDur.toFixed(1) + 's';
+    if (tc) tc.textContent = String(n);
 }
 
 function rkMoveClip(i, dir) {
@@ -230,6 +668,69 @@ function rkMoveClip(i, dir) {
     _rkClips[j] = tmp;
     rkRenderOrderList();
     rkSaveDraft();
+    rkRenderPreview('rk-preview-dash');
+}
+
+function rkRenderPreview(targetId) {
+    const el = document.getElementById(targetId);
+    if (!el) return;
+    const isTrim = targetId === 'rk-preview-trim';
+    const titleText = (document.getElementById('rk-title-text')?.value || '').trim();
+    const hlWord = (document.getElementById('rk-title-hl')?.value || '').trim();
+    const totalClips = _rkClips.filter((c) => !c.uploading && !c.downloading && !c.importFailed).length;
+    if (totalClips < 1) {
+        el.innerHTML = '<div class="pv-bg"></div><div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#555;font-size:0.65rem;text-align:center;padding:1rem">Add clips to see preview</div>';
+        return;
+    }
+    const viral = _rkStyle !== 'classic';
+    let html = '<div class="pv-bars top"></div><div class="pv-bars bottom"></div><div class="pv-bg"></div>';
+    const activeIdx = isTrim ? _rkTrimIdx : 0;
+    const activeClip = _rkClips[Math.min(activeIdx, totalClips - 1)];
+    const rankNum = totalClips - Math.min(activeIdx, totalClips - 1);
+
+    if (viral) {
+        html += '<div style="position:absolute;top:0;left:0;right:0;height:14%;background:#000;z-index:2"></div>';
+        if (titleText) {
+            const words = titleText.split(/\s+/).filter(Boolean);
+            const viralColors = ['#ffffff', '#f472b6', '#f472b6', '#facc15', '#facc15', '#22d3ee'];
+            const titleHtml = words.map((w, i) => {
+                let col = viralColors[Math.min(i, viralColors.length - 1)];
+                if (hlWord && w.toLowerCase() === hlWord.toLowerCase()) col = '#facc15';
+                return `<span style="color:${col}">${rkEscapeHtml(w.toUpperCase())}</span>`;
+            }).join(' ');
+            html += `<div class="pv-title" style="top:2%;z-index:3"><div class="pv-title-text" style="font-weight:900">${titleHtml}</div></div>`;
+        }
+        const rankLab = (activeClip?.label || 'MOMENT').toUpperCase();
+        html += `<div style="position:absolute;top:15%;left:0;right:0;text-align:center;z-index:3;font-weight:900;font-size:0.78rem;color:#fff;text-shadow:0 0 2px #000">${rankNum}. ${rkEscapeHtml(rankLab)}</div>`;
+    } else {
+        if (titleText) {
+            let titleHtml = rkEscapeHtml(titleText);
+            if (hlWord) {
+                const re = new RegExp(`(${hlWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'i');
+                titleHtml = titleHtml.replace(re, '<span style="color:#facc15">$1</span>');
+            }
+            html += `<div class="pv-title" style="top:6%"><div class="pv-title-text">${titleHtml}</div></div>`;
+        }
+        html += '<div class="pv-list">';
+        for (let row = 0; row < totalClips; row++) {
+            const num = row + 1;
+            const clipIdx = totalClips - num;
+            const clip = _rkClips[clipIdx];
+            const label = clip?.label || '';
+            let numClass = 'dim';
+            let labelClass = 'dim';
+            if (isTrim) {
+                if (clipIdx < _rkTrimIdx) { numClass = 'done'; labelClass = ''; }
+                else if (clipIdx === _rkTrimIdx) { numClass = 'active'; labelClass = ''; }
+            } else if (clipIdx === 0) {
+                numClass = 'active';
+                labelClass = '';
+            }
+            html += `<div class="pv-row"><div class="pv-num ${numClass}">${num}.</div><div class="pv-label ${labelClass}">${rkEscapeHtml(label)}</div></div>`;
+        }
+        html += '</div>';
+    }
+    el.innerHTML = html;
 }
 
 async function rkRefreshAccess() {
@@ -265,7 +766,6 @@ async function rkAssemble() {
         return;
     }
 
-    // Gate: free plan / exhausted trial
     if (_rkAccess && !_rkAccess.can_cook) {
         showPricingModal({ reason: 'cook' });
         return;
@@ -328,7 +828,6 @@ async function rkAssemble() {
             cookingManager.adoptStoryboard(data.job_id, titleText);
             cookingManager.kind = 'ranking';
         }
-        // Poll until complete for in-panel preview
         rkPollResult(data.job_id);
     } catch (_) {
         /* alerted above */
@@ -343,11 +842,6 @@ async function rkPollResult(jobId) {
     const dl = document.getElementById('rk-result-download');
     for (let i = 0; i < 180; i++) {
         await new Promise((r) => setTimeout(r, 2000));
-        try {
-            const res = await fetch(`/api/build/${jobId}/progress`);
-            // Fallback: cook job endpoint used by cooking bar — try history status via SSE only.
-            // Use dedicated job fetch if available
-        } catch (_) {}
         try {
             const res = await fetch(`/api/build/${encodeURIComponent(jobId)}/result`);
             if (!res.ok) continue;
@@ -371,7 +865,6 @@ function rkStartOver() {
     rkInitUploadUI();
 }
 
-// Expose for onclick handlers
 window.isRankingRecipe = isRankingRecipe;
 window.rkResetState = rkResetState;
 window.rkInitUploadUI = rkInitUploadUI;
@@ -384,3 +877,5 @@ window.rkMoveClip = rkMoveClip;
 window.rkAssemble = rkAssemble;
 window.rkStartOver = rkStartOver;
 window.rkRefreshAccess = rkRefreshAccess;
+window.rkImportUrls = rkImportUrls;
+window.rkOnTitleChange = rkOnTitleChange;
