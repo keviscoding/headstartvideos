@@ -293,6 +293,19 @@
   white-space: nowrap;
   box-shadow: var(--shadow-accent);
 }
+
+/* Multi-line plan cards — must wrap; default btn nowrap overflows the modal. */
+.access-chooser-option.btn-primary,
+.access-chooser-option.btn-secondary {
+  white-space: normal;
+  align-items: flex-start;
+  justify-content: flex-start;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  height: auto;
+  min-width: 0;
+}
 .btn-primary:hover:not(:disabled) {
   background: var(--accent-hover);
 }

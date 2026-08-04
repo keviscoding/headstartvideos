@@ -357,13 +357,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     else if (restored) navigateTo('pipeline');
 
     maybeShowWelcomeCelebration();
-    // Free users who never picked paid vs trial (once per account via localStorage).
-    setTimeout(() => {
-        try {
-            if (document.getElementById('celebration-modal')?.style.display === 'flex') return;
-        } catch (_) {}
-        maybeShowAccessChooser();
-    }, 600);
 });
 
 // ---------------------------------------------------------------------------
@@ -1137,7 +1130,7 @@ function showPricingModal(opts = {}) {
         if (heading) heading.textContent = 'Start free trial';
         if (subtitle) {
             subtitle.textContent = opts.trialMessage
-                || '7 days with a limited niche database in Claude (5 niches) and limited cooks. Upgrade anytime for the full library.';
+                || '7 days free with 15 niches in Claude and trial cooks. Upgrade anytime for the full library.';
         }
     } else if (opts.reason === 'storyboard' && !usedTrial) {
         if (heading) heading.textContent = 'Ready to build your storyboard';
@@ -5196,9 +5189,9 @@ function renderMcpSettings(data) {
         } else if (data.is_trial || plan.endsWith('_trial')) {
             quota.textContent =
                 `Free trial niche library in Claude: up to `
-                + `${lim.niches || trialLim.niches || 5} niches, `
-                + `${lim.subjects || trialLim.subjects || 8} subjects, `
-                + `${lim.channels || trialLim.channels || 8} channels `
+                + `${lim.niches || trialLim.niches || 15} niches, `
+                + `${lim.subjects || trialLim.subjects || 24} subjects, `
+                + `${lim.channels || trialLim.channels || 24} channels `
                 + `(+ ${lim.scripts || 1} script / ${lim.thumbnails || 1} thumb). `
                 + `Upgrade for the full live database + Niche Finder.`;
         } else {
@@ -6040,9 +6033,9 @@ async function authVerifyCode() {
             const action = pendingAuthAction;
             pendingAuthAction = null;
             setTimeout(action, 150);
-        } else {
-            // New / free users: choose paid full access (default) vs limited trial.
-            setTimeout(() => maybeShowAccessChooser({ forceNew: !!data.is_new }), 200);
+        } else if (data.is_new) {
+            // First account creation only — never on every login.
+            setTimeout(() => maybeShowAccessChooser({ fromSignup: true }), 200);
         }
     } catch (e) {
         document.getElementById('auth-code-error').textContent = e.message;
@@ -6062,9 +6055,11 @@ function maybeShowAccessChooser(opts = {}) {
     if (!currentUser) return;
     if ((currentUser.plan || 'free') !== 'free') return;
     if (currentUser.trial_used) return;
+    // Signup path or explicit Settings reopen only — not every session boot/login.
+    if (!opts.fromSignup && !opts.force) return;
     const key = _accessChooserStorageKey();
     try {
-        if (!opts.force && !opts.forceNew && localStorage.getItem(key)) return;
+        if (!opts.force && localStorage.getItem(key)) return;
     } catch (_) {}
     showAccessChooserModal();
 }
@@ -6112,7 +6107,7 @@ function chooseAccessTrial() {
     showPricingModal({
         skipTrial: false,
         reason: 'access_chooser_trial',
-        trialMessage: '7 days with a limited niche database in Claude (5 niches) and limited cooks. Upgrade anytime for the full library.',
+        trialMessage: '7 days free with 15 niches in Claude and trial cooks. Upgrade anytime for the full library.',
     });
 }
 

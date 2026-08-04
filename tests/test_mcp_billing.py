@@ -20,6 +20,13 @@ from webapp.mcp_billing import (
 )
 
 
+def test_trial_is_triple_prior_mid_tier():
+    assert TRIAL_NICHES == 15
+    assert TRIAL_SUBJECTS == 24
+    assert TRIAL_CHANNELS == 24
+    assert STARTER_NICHES > TRIAL_NICHES
+
+
 def test_trial_is_not_paid_for_full_library():
     assert is_trial_plan("starter_trial")
     assert is_trial_plan("daily_trial")

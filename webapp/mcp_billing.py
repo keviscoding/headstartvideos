@@ -25,19 +25,19 @@ FREE_CHANNELS = 2
 FREE_SCRIPTS = 1  # lifetime per account
 FREE_THUMBS = 1  # lifetime per account
 
-# Trial = extended but clearly below Starter (conversion wedge)
-TRIAL_NICHES = 5
-TRIAL_SUBJECTS = 8
-TRIAL_CHANNELS = 8
+# Trial = 3× prior mid-tier (5/8/8 → 15/24/24). Starter stays clearly above.
+TRIAL_NICHES = 15
+TRIAL_SUBJECTS = 24
+TRIAL_CHANNELS = 24
 
 # Paid tiers (Starter / Daily). Legacy "pro" counts as Daily-level.
-STARTER_NICHES = 15
-STARTER_SUBJECTS = 15
-STARTER_CHANNELS = 15
+STARTER_NICHES = 30
+STARTER_SUBJECTS = 30
+STARTER_CHANNELS = 30
 
-DAILY_NICHES = 40
-DAILY_SUBJECTS = 40
-DAILY_CHANNELS = 40
+DAILY_NICHES = 50
+DAILY_SUBJECTS = 50
+DAILY_CHANNELS = 50
 
 PAID_PLANS = frozenset({"starter", "daily", "pro"})
 
