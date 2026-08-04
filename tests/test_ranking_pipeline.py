@@ -1,11 +1,16 @@
 """Tests for ranking ASS overlay + assemble helpers (no heavy cook)."""
 from pathlib import Path
+from unittest import mock
+
+import pytest
 
 from core.ranking_pipeline import (
     ass_time,
     generate_ass,
     _esc_ass,
+    _escape_ffmpeg_filter_path,
     _format_viral_title,
+    _run,
 )
 
 
@@ -48,3 +53,19 @@ def test_generate_ass_classic(tmp_path: Path):
     text = out.read_text(encoding="utf-8")
     assert "NumActive" in text
     assert "Dialogue:" in text
+
+
+def test_escape_ffmpeg_filter_path_escapes_colons(tmp_path: Path):
+    p = tmp_path / "overlay.ass"
+    p.write_text("x")
+    esc = _escape_ffmpeg_filter_path(p)
+    assert "overlay.ass" in esc
+    # Absolute paths on Windows need \:; Unix paths should still be absolute
+    assert esc.startswith("/") or ":\\" in str(p) or "\\" in esc
+
+
+def test_run_wraps_timeout_as_runtime_error():
+    import subprocess
+    with mock.patch("core.ranking_pipeline.subprocess.run", side_effect=subprocess.TimeoutExpired(cmd=["ffmpeg"], timeout=1)):
+        with pytest.raises(RuntimeError, match="timed out"):
+            _run(["ffmpeg", "-version"], timeout=1)

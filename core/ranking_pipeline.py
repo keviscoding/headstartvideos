@@ -31,10 +31,84 @@ def _ffprobe_bin() -> str:
 
 
 def _run(cmd: list[str], *, timeout: int = 600, cwd: str | None = None) -> None:
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd)
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(f"ffmpeg timed out after {timeout}s: {' '.join(cmd[:6])}…") from e
     if r.returncode != 0:
         err = (r.stderr or r.stdout or "")[-800:]
         raise RuntimeError(f"ffmpeg failed: {err}")
+
+
+def _escape_ffmpeg_filter_path(path: Path | str) -> str:
+    """Escape an absolute path for ffmpeg ass=/subtitles= filter args."""
+    s = str(Path(path).resolve()).replace("\\", "/")
+    # Windows drive letters; also harmless on Unix for any literal colons
+    s = s.replace(":", "\\:")
+    s = s.replace("'", "\\'")
+    s = s.replace(",", "\\,")
+    s = s.replace("[", "\\[").replace("]", "\\]")
+    return s
+
+
+def _ass_fontsdir() -> str | None:
+    """Prefer DejaVu on the cook image so fontconfig does not hang scanning."""
+    for candidate in (
+        Path("/usr/share/fonts/truetype/dejavu"),
+        Path("/usr/share/fonts/truetype/dejavu-core"),
+        Path("/System/Library/Fonts/Supplemental"),
+    ):
+        if candidate.is_dir():
+            return str(candidate)
+    return None
+
+
+def _burn_ass_overlay(concat_mp4: Path, ass_path: Path, subtitled: Path, *, work: Path) -> None:
+    """Burn ASS via libass. Prefer `ass=` + absolute path + fontsdir (ViewHunt-style)."""
+    escaped = _escape_ffmpeg_filter_path(ass_path)
+    fontsdir = _ass_fontsdir()
+    # Prefer ass= (libass direct). Fall back to subtitles= with same path.
+    candidates: list[str] = []
+    if _ffmpeg_has_filter("ass"):
+        filt = f"ass={escaped}"
+        if fontsdir:
+            filt += f":fontsdir={_escape_ffmpeg_filter_path(fontsdir)}"
+        candidates.append(filt)
+    if _ffmpeg_has_filter("subtitles"):
+        filt = f"subtitles={escaped}"
+        if fontsdir:
+            filt += f":fontsdir={_escape_ffmpeg_filter_path(fontsdir)}"
+        candidates.append(filt)
+    if not candidates:
+        raise RuntimeError("ffmpeg has neither ass nor subtitles filter")
+
+    last_err: Exception | None = None
+    for filt in candidates:
+        try:
+            # Cap burn time — shared-cpu should finish a ~2min short in well under this.
+            # On hang (fontconfig), fall through to drawtext instead of waiting 10 minutes.
+            _run([
+                _ffmpeg_bin(), "-y",
+                "-i", str(concat_mp4.resolve()),
+                "-vf", filt,
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                "-r", str(RANK_FPS),
+                "-c:a", "copy",
+                "-movflags", "+faststart",
+                "-threads", "2",
+                str(subtitled.resolve()),
+            ], timeout=180)
+            if subtitled.is_file() and subtitled.stat().st_size > 1000:
+                return
+            last_err = RuntimeError("burn produced empty output")
+        except Exception as e:
+            last_err = e
+            print(f"[ranking] ASS burn attempt failed ({filt[:48]}…): {e}")
+            try:
+                subtitled.unlink(missing_ok=True)
+            except OSError:
+                pass
+    raise RuntimeError(str(last_err) if last_err else "ASS burn failed")
 
 
 def probe_duration(path: str | Path) -> float:
@@ -437,12 +511,18 @@ def normalize_clip(src: Path, dst: Path, *, start: float = 0.0, end: float | Non
 
 
 def _ffmpeg_has_filter(name: str) -> bool:
+    """True if ffmpeg lists an exact filter name (avoid substring hits like 'ass' in 'allpass')."""
     try:
         r = subprocess.run(
             [_ffmpeg_bin(), "-hide_banner", "-filters"],
             capture_output=True, text=True, timeout=30,
         )
-        return f" {name} " in f" {r.stdout} " or f" {name}\n" in r.stdout or f" {name}\t" in r.stdout
+        for line in (r.stdout or "").splitlines():
+            parts = line.split()
+            # Typical: ".S ass  V->V  Render ASS subtitles…"
+            if len(parts) >= 2 and parts[1] == name:
+                return True
+        return False
     except Exception:
         return False
 
@@ -578,22 +658,11 @@ def assemble_ranking_video(
     )
     subtitled = work / "subtitled.mp4"
     burned = False
-    if _ffmpeg_has_filter("subtitles") or _ffmpeg_has_filter("ass"):
-        burn_ass = "overlay.ass"
-        filt = "subtitles" if _ffmpeg_has_filter("subtitles") else "ass"
-        try:
-            _run([
-                _ffmpeg_bin(), "-y", "-i", str(concat_mp4.resolve()),
-                "-vf", f"{filt}={burn_ass}",
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-                "-r", str(RANK_FPS),
-                "-c:a", "copy",
-                "-movflags", "+faststart",
-                str(subtitled.resolve()),
-            ], timeout=600, cwd=str(work))
-            burned = True
-        except RuntimeError as e:
-            print(f"[ranking] {filt} burn failed, drawtext fallback: {e}")
+    try:
+        _burn_ass_overlay(concat_mp4, ass_path, subtitled, work=work)
+        burned = True
+    except Exception as e:
+        print(f"[ranking] ASS burn failed, drawtext fallback: {e}")
     if not burned:
         try:
             _burn_drawtext_fallback(
@@ -601,7 +670,7 @@ def assemble_ranking_video(
                 style_preset=style_preset,
             )
             burned = True
-        except RuntimeError as e:
+        except Exception as e:
             print(f"[ranking] drawtext overlay unavailable ({e}); shipping concat without burn")
             shutil.copy2(concat_mp4, subtitled)
 
