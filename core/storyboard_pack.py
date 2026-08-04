@@ -454,6 +454,9 @@ def _anti_photo_clause(style_id: str) -> str:
 
 def _generate_cast_t2i(prompt: str, out_path: Path, *, aspect_ratio: str = "1:1") -> bool:
     """GPT Image 2 first (cheap ~$0.009), then Nano Banana fallbacks."""
+    from core.atlas_llm import is_atlas_image_transient_error
+    from core.thumbnail_gen import _is_transient_image_error
+
     # Prefer HQ GPT Image 2 for 16:9 scenes; for square portraits use edit/t2i models below.
     if aspect_ratio in ("16:9", "16/9"):
         try:
@@ -496,16 +499,23 @@ def _generate_cast_t2i(prompt: str, out_path: Path, *, aspect_ratio: str = "1:1"
                 "output_format": "png",
                 "enable_base64_output": False,
             }
-        try:
-            _submit_and_download(payload, out_path, label=f"cast t2i/{model}")
-            if out_path.is_file():
-                return True
-        except Exception as e:
-            msg = str(e)
-            print(f"[storyboard] cast T2I failed ({model}): {msg[:120]}")
-            if "insufficient balance" in msg.lower():
+        # One quick retry on Atlas HTML/rate-limit blips before next model.
+        for attempt in range(2):
+            try:
+                _submit_and_download(payload, out_path, label=f"cast t2i/{model}")
+                if out_path.is_file():
+                    return True
                 break
-            continue
+            except Exception as e:
+                msg = str(e)
+                print(f"[storyboard] cast T2I failed ({model}, try {attempt + 1}): {msg[:120]}")
+                if "insufficient balance" in msg.lower():
+                    return False
+                transient = is_atlas_image_transient_error(msg) or _is_transient_image_error(e)
+                if transient and attempt == 0:
+                    time.sleep(1.5 + attempt)
+                    continue
+                break
     return False
 
 
@@ -517,6 +527,8 @@ def generate_character_portrait(
     visual_style: str = "",
 ) -> str:
     """Generate a hero portrait for Cast studio. Returns local path."""
+    from core.atlas_llm import is_atlas_image_transient_error
+
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     sid, style_lock, style_short = resolve_visual_style(visual_style)
@@ -529,17 +541,28 @@ def generate_character_portrait(
         f"{anti} Centered upper-body portrait, soft warm lighting, plain soft background, "
         "expressive animated face, character design sheet quality, no text, no watermark."
     )
-    # Prefer nano-banana — ERNIE/GPT Image 2 often ignore style and spit photoreal faces.
-    if _generate_cast_t2i(full, out, aspect_ratio="1:1"):
-        return str(out)
+    last_err = "Character portrait failed"
+    # Two full passes: primary T2I models, then ERNIE/GPT fallback — retry once if Atlas is HTML-rate-limiting.
+    for pass_i in range(2):
+        if _generate_cast_t2i(full, out, aspect_ratio="1:1"):
+            return str(out)
 
-    from core.illustration_gen import generate_single_illustration
+        from core.illustration_gen import generate_single_illustration
 
-    short = f"{label}. {style_short}. Portrait of {nm}. {look}. {anti}"[:480]
-    result = generate_single_illustration(full, str(out), short_prompt=short)
-    if not result.success or not out.is_file():
-        raise RuntimeError(result.error or "Character portrait failed")
-    return str(out)
+        short = f"{label}. {style_short}. Portrait of {nm}. {look}. {anti}"[:480]
+        result = generate_single_illustration(full, str(out), short_prompt=short)
+        if result.success and out.is_file():
+            return str(out)
+        last_err = result.error or last_err
+        if pass_i == 0 and is_atlas_image_transient_error(last_err):
+            print(f"[storyboard] portrait provider busy — retrying once ({last_err[:100]})")
+            time.sleep(2.5)
+            continue
+        break
+
+    if is_atlas_image_transient_error(last_err):
+        raise RuntimeError("Image provider is busy — please try again in a moment.")
+    raise RuntimeError(last_err)
 
 
 def generate_character_sheet(

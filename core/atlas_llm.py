@@ -59,17 +59,30 @@ def _atlas_key() -> str:
     return get_atlas_key()
 
 
-def _ernie_is_rate_limit(err: str) -> bool:
-    e = (err or "").lower()
+def is_atlas_image_transient_error(err: str | BaseException) -> bool:
+    """True when Atlas/upstream returned HTML, rate-limit, or other retryable image failures."""
+    e = str(err or "").lower()
     return (
-        "过于频繁" in (err or "")
+        "过于频繁" in str(err or "")
+        or "访问过于" in str(err or "")
         or "too frequent" in e
         or "rate limit" in e
         or "ratelimit" in e
         or "invalid character '<'" in e
         or "parse upstream" in e
-        or "访问过于" in (err or "")
+        or "looking for beginning of value" in e
+        or "temporarily unavailable" in e
+        or "provider is busy" in e
+        or "image provider is busy" in e
+        or " 429" in e
+        or " 503" in e
+        or e.strip().startswith("429")
+        or e.strip().startswith("503")
     )
+
+
+def _ernie_is_rate_limit(err: str) -> bool:
+    return is_atlas_image_transient_error(err)
 
 
 def _ernie_wait_cooldown() -> None:

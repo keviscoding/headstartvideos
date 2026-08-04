@@ -2640,6 +2640,17 @@ def _provider_http_status(exc: Exception) -> int:
         return 503
     if "output path missing" in msg:
         return 503
+    # Atlas upstream HTML / rate-limit blips (ERNIE etc.) — not app bugs.
+    if (
+        "parse upstream" in msg
+        or "invalid character '<'" in msg
+        or "looking for beginning of value" in msg
+        or "image provider is busy" in msg
+        or "provider is busy" in msg
+        or "过于频繁" in str(exc)
+        or "rate limit" in msg
+    ):
+        return 503
     if "not found" in msg or "no youtube channel" in msg or "could not extract channel" in msg:
         return 400
     if "playlistnotfound" in msg or "httperror 404" in msg:
@@ -4363,7 +4374,16 @@ async def generate_storyboard_cast_look(
                 sheet_local, admin["id"], f"cast_{cid}_sheet", "image/png",
             )
     except Exception as e:
-        raise HTTPException(_provider_http_status(e), f"Look generation failed: {e}")
+        status = _provider_http_status(e)
+        detail = str(e)
+        if status == 503 and (
+            "parse upstream" in detail.lower()
+            or "invalid character" in detail.lower()
+            or "busy" in detail.lower()
+            or "rate limit" in detail.lower()
+        ):
+            detail = "Image provider is busy — please try again in a moment."
+        raise HTTPException(status, f"Look generation failed: {detail}")
 
     settings = get_user_storyboard_settings(int(admin["id"]))
     cast = normalize_cast(settings.get("cast") or [])

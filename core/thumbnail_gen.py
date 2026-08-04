@@ -139,6 +139,12 @@ def _poll_prediction(prediction_id: str, timeout: int = 120) -> dict:
 
 
 def _is_transient_image_error(err: Exception) -> bool:
+    try:
+        from core.atlas_llm import is_atlas_image_transient_error
+        if is_atlas_image_transient_error(err):
+            return True
+    except Exception:
+        pass
     msg = str(err).upper()
     return any(
         token in msg
@@ -151,6 +157,8 @@ def _is_transient_image_error(err: Exception) -> bool:
             "503",
             "429",
             "RATE",
+            "PARSE UPSTREAM",
+            "INVALID CHARACTER",
         )
     )
 

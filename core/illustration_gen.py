@@ -262,10 +262,14 @@ def generate_single_illustration(
             generation_time_sec=time.time() - t0, success=True,
         )
 
+    from core.atlas_llm import is_atlas_image_transient_error
+    err = result.error or "ERNIE + GPT Image 2 fallback failed"
+    if is_atlas_image_transient_error(err):
+        err = "Image provider is busy — please try again in a moment."
     return GeneratedIllustration(
         concept_id=-1, image_path="", model_used="",
         generation_time_sec=time.time() - t0, success=False,
-        error=result.error or "ERNIE + GPT Image 2 fallback failed",
+        error=err,
     )
 
 
