@@ -6,7 +6,7 @@
     <title>ChannelRecipe — Proven recipes for faceless YouTube channels</title>
     <link rel="icon" href="/static/favicon.svg">
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="/static/styles.css?v=20260804e">
+    <link rel="stylesheet" href="/static/styles.css?v=20260804f">
     <script>
         tailwind.config = {
             theme: {
@@ -413,12 +413,27 @@
 
             <!-- Ranking: result / cook progress lives in cooking bar; keep a light panel -->
             <section id="step-rk-cook" class="step-panel hidden">
-                <div class="cr-panel" style="text-align:center;padding:40px 24px;">
-                    <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Cooking your Short</h2>
-                    <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 8px; margin-bottom: 20px;">
-                        Assembling your Short — watch the cooking bar for live progress.
-                    </p>
-                    <div id="rk-result-wrap" class="hidden">
+                <div class="cr-panel max-w-xl mx-auto" style="padding:32px 24px;">
+                    <div class="flex items-center gap-3 mb-5">
+                        <img src="/static/glyph.svg" width="30" height="30" alt="">
+                        <div>
+                            <h2 class="cr-display" style="font-size: 24px; line-height: 1.12;">Cooking your Short</h2>
+                            <p style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2); margin-top: 4px;">
+                                You can leave this page — we'll keep cooking.
+                            </p>
+                        </div>
+                    </div>
+                    <div id="rk-cook-progress">
+                        <div class="progress-bar-track mb-2">
+                            <div id="rk-progress-bar" class="progress-bar-fill" style="width: 0%"></div>
+                        </div>
+                        <div class="flex justify-between mb-4">
+                            <span id="rk-progress-pct" class="cr-mono">0%</span>
+                            <span id="rk-progress-eta" class="cr-mono">starting…</span>
+                        </div>
+                        <div id="rk-progress-log" class="space-y-2" style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); text-align:left;"></div>
+                    </div>
+                    <div id="rk-result-wrap" class="hidden" style="margin-top:24px;text-align:center;">
                         <video id="rk-result-video" class="rk-result-video" controls playsinline></video>
                         <div class="flex gap-3 mt-4" style="justify-content:center;">
                             <a id="rk-result-download" class="btn-primary" href="#" download>Download</a>
@@ -2080,7 +2095,7 @@
     </div>
 
     <script src="/static/cr-telemetry.js?v=20260804b"></script>
-    <script src="/static/ranking.js?v=20260804e"></script>
-    <script src="/static/app.js?v=20260804e"></script>
+    <script src="/static/ranking.js?v=20260804f"></script>
+    <script src="/static/app.js?v=20260804f"></script>
 </body>
 </html>

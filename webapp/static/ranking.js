@@ -9,6 +9,7 @@
 let _rkClips = [];
 let _rkTrimIdx = 0;
 let _rkStyle = 'viral';
+let _rkAssembling = false;
 let _rkAccess = null;
 let _rkTimelineDuration = 0;
 let _rkDragging = null; // 'start' | 'end' | null
@@ -863,7 +864,7 @@ function rkRenderPreview(targetId) {
         el.innerHTML = '<div class="pv-bg"></div><div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#555;font-size:0.65rem;text-align:center;padding:1rem">Add clips to see preview</div>';
         return;
     }
-    const viral = !['classic', 'minimal', 'checkered'].includes(_rkStyle);
+    const viral = _rkCommentary || !['classic', 'minimal', 'checkered'].includes(_rkStyle);
     const colorMap = {
         yellow: '#facc15', cyan: '#22d3ee', green: '#34d399', red: '#f87171',
         pink: '#f472b6', orange: '#fb923c', white: '#ffffff',
@@ -880,16 +881,24 @@ function rkRenderPreview(targetId) {
         html += '<div style="position:absolute;top:0;left:0;right:0;height:14%;background:#000;z-index:2"></div>';
         if (titleText) {
             const words = titleText.split(/\s+/).filter(Boolean);
-            const viralColors = ['#ffffff', '#f472b6', '#f472b6', '#facc15', '#facc15', '#22d3ee'];
-            const titleHtml = words.map((w, i) => {
-                let col = viralColors[Math.min(i, viralColors.length - 1)];
+            const n = words.length;
+            const titleParts = words.map((w, i) => {
+                let col = '#facc15';
                 if (hlWord && w.toLowerCase() === hlWord.toLowerCase()) col = accent;
-                return `<span style="color:${col}">${rkEscapeHtml(w.toUpperCase())}</span>`;
-            }).join(' ');
-            html += `<div class="pv-title" style="top:${titleY}%;z-index:3"><div class="pv-title-text" style="font-weight:900;font-size:${titleSizeRem.toFixed(2)}rem">${titleHtml}</div></div>`;
+                else if (i === 0) col = '#ffffff';
+                else if (i === n - 1 && n > 2) col = '#22d3ee';
+                else if (i < Math.ceil(n * 0.4)) col = '#f472b6';
+                const br = ((i + 1) % 3 === 0 && i < n - 1) ? '<br>' : (i < n - 1 ? ' ' : '');
+                return `<span style="color:${col}">${rkEscapeHtml(w.toUpperCase())}</span>${br}`;
+            }).join('');
+            html += `<div class="pv-title" style="top:${titleY}%;z-index:3"><div class="pv-title-text" style="font-weight:900;font-size:${titleSizeRem.toFixed(2)}rem;line-height:1.15">${titleParts}</div></div>`;
         }
         const rankLab = (activeClip?.label || 'MOMENT').toUpperCase();
-        html += `<div style="position:absolute;top:15%;left:0;right:0;text-align:center;z-index:3;font-weight:900;font-size:0.78rem;color:#fff;text-shadow:0 0 2px #000">${rankNum}. ${rkEscapeHtml(rankLab)}</div>`;
+        const rankCol = (activeIdx === totalClips - 1) ? accent : '#fff';
+        html += `<div style="position:absolute;top:15%;left:0;right:0;text-align:center;z-index:3;font-weight:900;font-size:0.78rem;color:${rankCol};text-shadow:0 0 2px #000">${rankNum}. ${rkEscapeHtml(rankLab)}</div>`;
+        if (_rkCommentary && activeIdx > 0 && activeIdx < totalClips - 1) {
+            html += '<div style="position:absolute;inset:18% 8% 28% 8%;background:#fff;z-index:4;display:flex;align-items:center;justify-content:center;padding:8px;border-radius:2px"><div style="color:#111;font-weight:900;font-size:0.72rem;text-align:center;text-transform:uppercase;line-height:1.2">WHITE CARD<br><span style="color:#ca8a04;font-size:0.58rem">mid commentary beat</span></div></div>';
+        }
     } else {
         if (titleText) {
             let titleHtml = rkEscapeHtml(titleText);
@@ -964,6 +973,7 @@ async function rkRefreshAccess() {
 }
 
 async function rkAssemble() {
+    if (_rkAssembling) return;
     rkCommitTrimFields();
     const titleText = (document.getElementById('rk-title-text')?.value || '').trim();
     if (!titleText) {
@@ -987,6 +997,11 @@ async function rkAssemble() {
     }
 
     const btn = document.getElementById('rk-btn-assemble');
+    _rkAssembling = true;
+    // Instant cook scene so users don't spam the button during the network hop.
+    goToStep('rk-cook');
+    document.getElementById('rk-result-wrap')?.classList.add('hidden');
+    rkResetCookProgress('Starting your ranking short…');
     if (typeof setButtonLoading === 'function') setButtonLoading(btn, true);
     try {
         const n = _rkClips.length;
@@ -1038,21 +1053,65 @@ async function rkAssemble() {
             throw new Error(errMsg);
         }
         try { track('ranking_assemble_started', { job_id: data.job_id, clips: n }); } catch (_) {}
-        goToStep('rk-cook');
-        document.getElementById('rk-result-wrap')?.classList.add('hidden');
         if (cookingManager?.adoptRanking) {
             cookingManager.adoptRanking(data.job_id, titleText);
         } else if (cookingManager?.adoptStoryboard) {
-            // Fallback for older cached app.js
             cookingManager.adoptStoryboard(data.job_id, titleText);
             cookingManager.kind = 'ranking';
             try { cookingManager._persist(); cookingManager._connect(); } catch (_) {}
         }
         rkPollResult(data.job_id);
     } catch (_) {
-        /* alerted above */
+        // Failed before job started — return to title step so they can retry.
+        goToStep('rk-title');
     } finally {
+        _rkAssembling = false;
         if (typeof setButtonLoading === 'function') setButtonLoading(btn, false);
+    }
+}
+
+function rkResetCookProgress(firstLine) {
+    const wrapProg = document.getElementById('rk-cook-progress');
+    if (wrapProg) wrapProg.classList.remove('hidden');
+    const bar = document.getElementById('rk-progress-bar');
+    const pct = document.getElementById('rk-progress-pct');
+    const eta = document.getElementById('rk-progress-eta');
+    const log = document.getElementById('rk-progress-log');
+    if (bar) bar.style.width = '2%';
+    if (pct) pct.textContent = '0%';
+    if (eta) eta.textContent = 'starting…';
+    if (log) {
+        log.innerHTML = '';
+        if (firstLine) {
+            const line = document.createElement('div');
+            line.textContent = `> ${firstLine}`;
+            log.appendChild(line);
+        }
+    }
+}
+
+function rkUpdateCookProgress(friendly, pct) {
+    const bar = document.getElementById('rk-progress-bar');
+    const pctEl = document.getElementById('rk-progress-pct');
+    const eta = document.getElementById('rk-progress-eta');
+    const log = document.getElementById('rk-progress-log');
+    if (typeof pct === 'number') {
+        if (bar) bar.style.width = Math.max(2, Math.min(100, pct)) + '%';
+        if (pctEl) pctEl.textContent = Math.round(pct) + '%';
+        if (eta) {
+            if (pct >= 90) eta.textContent = 'almost done';
+            else if (pct >= 50) eta.textContent = 'cooking…';
+            else eta.textContent = 'working…';
+        }
+    }
+    if (log && friendly) {
+        const last = log.lastElementChild;
+        if (!last || last.textContent !== `> ${friendly}`) {
+            const line = document.createElement('div');
+            line.textContent = `> ${friendly}`;
+            log.appendChild(line);
+            log.scrollTop = log.scrollHeight;
+        }
     }
 }
 
@@ -1068,15 +1127,20 @@ async function rkPollResult(jobId) {
             if (!res.ok) continue;
             const data = await readJson(res, {});
             if (data.last_message && cookingManager?.jobId === jobId) {
+                const friendly = (typeof _friendlyProgress === 'function')
+                    ? _friendlyProgress(data.last_message)
+                    : String(data.last_message);
                 const statusEl = document.getElementById('cooking-bar-status');
-                if (statusEl && typeof _friendlyProgress === 'function') {
-                    statusEl.textContent = _friendlyProgress(data.last_message).substring(0, 60);
-                } else if (statusEl) {
-                    statusEl.textContent = String(data.last_message).substring(0, 60);
-                }
+                if (statusEl) statusEl.textContent = friendly.substring(0, 60);
+                const pct = (typeof _estimateCookPercent === 'function')
+                    ? _estimateCookPercent(data.last_message, i + 1)
+                    : 40;
+                rkUpdateCookProgress(friendly, pct);
             }
             const url = data.video_url || data.output_url || data.result?.video_url || data.result?.output_url;
             if (url) {
+                document.getElementById('rk-cook-progress')?.classList.add('hidden');
+                rkUpdateCookProgress('Done!', 100);
                 if (wrap) wrap.classList.remove('hidden');
                 if (video) video.src = url;
                 if (dl) { dl.href = url; dl.download = 'ranking-short.mp4'; }
@@ -1128,6 +1192,8 @@ window.rkOnSubtitleY = rkOnSubtitleY;
 window.rkCyclePreviewClip = rkCyclePreviewClip;
 window.rkMoveClip = rkMoveClip;
 window.rkAssemble = rkAssemble;
+window.rkUpdateCookProgress = rkUpdateCookProgress;
+window.rkResetCookProgress = rkResetCookProgress;
 window.rkStartOver = rkStartOver;
 window.rkRefreshAccess = rkRefreshAccess;
 window.rkImportUrls = rkImportUrls;

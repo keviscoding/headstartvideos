@@ -26,8 +26,10 @@ def test_esc_ass():
 
 def test_viral_title_colors():
     out = _format_viral_title("Top Parkour Moments", "Parkour")
-    assert "Parkour" in out
+    assert "PARKOUR" in out
+    assert "TOP" in out
     assert "\\c" in out
+    assert "\\N" in _format_viral_title("one two three four five six")
 
 
 def test_generate_ass_viral(tmp_path: Path):
@@ -42,8 +44,47 @@ def test_generate_ass_viral(tmp_path: Path):
     text = out.read_text(encoding="utf-8")
     assert "PlayResX: 1080" in text
     assert "PlayResY: 1920" in text
-    assert "3. Roof" in text or "Roof" in text
+    assert "3. ROOF" in text or "ROOF" in text
+    assert "TOP" in text  # uppercase viral title
     assert "Dialogue:" in text
+
+
+def test_generate_ass_white_card_karaoke(tmp_path: Path):
+    clips = [
+        {"number": 3, "label": "A"},
+        {"number": 2, "label": "B"},
+        {"number": 1, "label": "C"},
+    ]
+    durs = [1.0, 1.0, 1.0]
+    # Fake audio path that exists so karaoke is burned
+    wav = tmp_path / "vo.wav"
+    wav.write_bytes(b"RIFF" + b"\x00" * 100)
+    commentary = [{
+        "clipIndex": 1,
+        "line": "bro what",
+        "audioPath": str(wav),
+        "duration": 1.2,
+        "wordTimings": [
+            {"word": "bro", "start": 0.0, "end": 0.4},
+            {"word": "what", "start": 0.4, "end": 1.0},
+        ],
+    }]
+    out = tmp_path / "w.ass"
+    generate_ass(
+        out, clips, durs, {"text": "Funny Moments", "highlightWord": "Funny"},
+        style_preset="classic",  # commentary forces viral via force_viral
+        commentary_lines=commentary,
+        timeline={
+            "clipOffsets": [1.2, 2.4, 3.4],
+            "voiceOffsets": {0: 0.0, 1: 1.2, 2: 2.4},
+            "whiteMeta": {1: {"offset": 1.2, "duration": 1.2}},
+        },
+        force_viral=True,
+    )
+    text = out.read_text(encoding="utf-8")
+    assert "ComSubWhite" in text
+    assert "BRO" in text
+    assert "FUNNY" in text or "Funny" in text or "\\c" in text
 
 
 def test_generate_ass_classic(tmp_path: Path):

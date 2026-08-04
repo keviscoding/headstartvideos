@@ -2323,10 +2323,20 @@ function _friendlyProgress(raw) {
     if (/Queued/i.test(raw) || /You're next/i.test(raw)) return raw;
     if (/Starting your cook/i.test(raw)) return 'Starting your cook...';
     if (/Loading clips/i.test(raw)) return 'Loading clips...';
+    if (/Watching clip|Writing cold-open|Writing subscribe|Writing commentary|Voiceover for clip|Commentary ready/i.test(raw)) {
+        if (/Watching clip/i.test(raw)) return raw.replace(/…/g, '...').replace(/…/g, '...');
+        if (/Voiceover/i.test(raw)) return 'Generating voiceover...';
+        if (/Commentary ready/i.test(raw)) return 'Commentary ready...';
+        if (/cold-open/i.test(raw)) return 'Writing cold-open hook...';
+        if (/subscribe/i.test(raw)) return 'Writing subscribe CTA...';
+        return 'Writing commentary...';
+    }
+    if (/White card/i.test(raw)) return 'Building white cards...';
     if (/Normaliz/i.test(raw)) return 'Preparing clips...';
+    if (/Clip \d+\/\d+ ready/i.test(raw)) return raw.replace(/…/g, '...');
     if (/Burning ranking|Burning.*overlay/i.test(raw)) return 'Burning overlay...';
     if (/Mixing commentary/i.test(raw)) return 'Mixing commentary...';
-    if (/Ranking short ready|Generating AI commentary/i.test(raw)) {
+    if (/Ranking video ready|Ranking short ready|Generating AI commentary/i.test(raw)) {
         return /commentary/i.test(raw) ? 'Writing commentary...' : 'Ranking short ready!';
     }
     if (/Uploading your video/i.test(raw)) return 'Uploading your video...';
@@ -2368,16 +2378,21 @@ function _friendlyProgress(raw) {
 function _estimateCookPercent(raw, msgCount) {
     const r = raw || '';
     if (/Queued|You're next/i.test(r)) return 2;
-    if (/Starting your cook/i.test(r)) return 5;
-    if (/Loading clips/i.test(r)) return 12;
-    if (/Normaliz|Preparing clips|Clip \d+/i.test(r)) return 30;
-    if (/Concatenat/i.test(r)) return 45;
-    if (/Burning|overlay/i.test(r)) return 65;
-    if (/Mixing commentary|commentary/i.test(r)) return 80;
-    if (/Ranking short ready|Done!|Saving to your library/i.test(r)) return 97;
+    if (/Starting your cook|Starting your ranking/i.test(r)) return 5;
+    if (/Loading clips/i.test(r)) return 10;
+    if (/Watching clip|Writing cold-open|Writing subscribe|Generating AI commentary|Writing commentary/i.test(r)) return 22;
+    if (/Voiceover for clip|Generating voiceover/i.test(r)) return 32;
+    if (/Commentary ready/i.test(r)) return 38;
+    if (/White card/i.test(r)) return 42;
+    if (/Normaliz|Preparing clips|Clip \d+/i.test(r)) return 48;
+    if (/Concatenat/i.test(r)) return 55;
+    if (/Burning|overlay/i.test(r)) return 70;
+    if (/Mixing commentary/i.test(r)) return 85;
+    if (/Ranking video ready|Ranking short ready|Done!|Saving to your library/i.test(r)) return 97;
     if (/Uploading your video|Saving thumbnail|Upload slow/i.test(r)) return 92;
     if (/Total (cinematic )?pipeline|Assembly complete|Assembled/i.test(r)) return 85;
-    if (/Assembling|Building your video|Concatenat/i.test(r)) return 70;
+    if (/Assembling|Building your video|Concatenat/i.test(r)) return 62;
+    if (/Mixing commentary|commentary/i.test(r)) return 80;
     if (/assets resolved|clips? rendered|images? prepared/i.test(r)) return 55;
     if (/Resolving assets|Finding footage/i.test(r)) return 40;
     if (/Planning scenes|DirectorScore|Segment|concepts? planned/i.test(r)) return 25;
@@ -2581,6 +2596,9 @@ const cookingManager = {
             const pctEl = document.getElementById('progress-pct');
             if (progressBar) progressBar.style.width = pct + '%';
             if (pctEl) pctEl.textContent = pct + '%';
+            if (this.kind === 'ranking' && typeof rkUpdateCookProgress === 'function') {
+                rkUpdateCookProgress(friendly, pct);
+            }
             const etaEl = document.getElementById('progress-eta');
             if (etaEl) {
                 if (/Queued|You're next/i.test(msg.message || '')) {
