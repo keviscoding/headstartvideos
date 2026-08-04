@@ -35,3 +35,13 @@ def test_credit_cost_zero_during_trial_quota():
     assert ranking_credit_cost(is_trial=True, cooks_used=2, trial_limit=2) == 1
     assert ranking_credit_cost(is_trial=False, cooks_used=0, paid_cost=1) == 1
     assert ranking_credit_cost(is_trial=True, cooks_used=0, is_admin=True) == 0
+
+
+def test_commentary_adds_extra_credits_when_paid():
+    assert ranking_credit_cost(
+        is_trial=False, cooks_used=0, paid_cost=1, commentary=True, commentary_cost=1,
+    ) == 2
+    # Trial quota still free even with commentary
+    assert ranking_credit_cost(
+        is_trial=True, cooks_used=0, trial_limit=2, commentary=True, commentary_cost=1,
+    ) == 0

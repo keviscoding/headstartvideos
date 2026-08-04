@@ -34,10 +34,15 @@ def ranking_credit_cost(
     trial_limit: int = 2,
     is_admin: bool = False,
     paid_cost: int = 1,
+    commentary: bool = False,
+    commentary_cost: int = 1,
 ) -> int:
     """Credits to charge for one ranking cook. 0 while trial quota remains."""
     if is_admin:
         return 0
     if is_trial and int(cooks_used or 0) < int(trial_limit or 2):
         return 0
-    return max(1, int(paid_cost or 1))
+    base = max(1, int(paid_cost or 1))
+    if commentary:
+        base += max(0, int(commentary_cost or 0))
+    return base

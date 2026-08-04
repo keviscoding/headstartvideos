@@ -2071,6 +2071,13 @@ class RankingAssembleRequest(BaseModel):
     title: dict | None = None
     layout: dict | None = None
     style_preset: str = "viral"
+    color_palette: str = "yellow"
+    checkered_mode: bool = False
+    commentary: bool = False
+    voice_name: str = "Kore"
+    subtitle_font: str = "Arial"
+    subtitle_y: float = 50
+    subtitle_color: str = "yellow"
     notify_email: str = ""
 
 
@@ -2098,6 +2105,7 @@ async def ranking_access(user: dict = Depends(require_user)):
         is_admin=is_admin,
         paid_cost=int(getattr(config, "RANKING_CREDIT_COST", 1) or 1),
     )
+    commentary_extra = int(getattr(config, "RANKING_COMMENTARY_CREDIT_COST", 1) or 1)
     return {
         "can_cook": paid,
         "is_trial": trial,
@@ -2105,6 +2113,7 @@ async def ranking_access(user: dict = Depends(require_user)):
         "ranking_limit": limit,
         "ranking_free_left": free_left if trial else None,
         "credit_cost": cost,
+        "commentary_credit_cost": commentary_extra,
         "trial_allowed": trial_ranking_allowed(
             cooks_used=used, trial_limit=limit, is_trial=trial, is_admin=is_admin,
         ) if trial else True,
@@ -2236,6 +2245,8 @@ async def ranking_assemble(req: RankingAssembleRequest, user: dict = Depends(req
     used = count_user_ranking_cooks(int(user["id"]))
     limit = int(getattr(config, "RANKING_TRIAL_COOK_LIMIT", 2) or 2)
     paid_cost = int(getattr(config, "RANKING_CREDIT_COST", 1) or 1)
+    commentary_cost = int(getattr(config, "RANKING_COMMENTARY_CREDIT_COST", 1) or 1)
+    want_commentary = bool(req.commentary)
 
     if trial and not is_admin and not trial_ranking_allowed(
         cooks_used=used, trial_limit=limit, is_trial=True, is_admin=False,
@@ -2259,6 +2270,8 @@ async def ranking_assemble(req: RankingAssembleRequest, user: dict = Depends(req
         trial_limit=limit,
         is_admin=is_admin,
         paid_cost=paid_cost,
+        commentary=want_commentary,
+        commentary_cost=commentary_cost,
     )
 
     _enforce_user_cook_slot(user)
@@ -2317,7 +2330,7 @@ async def ranking_assemble(req: RankingAssembleRequest, user: dict = Depends(req
             if not COOK_ON_WEB and not any(
                 (c.get("url") or "").startswith("http") for c in clip_payload
             ):
-                raise HTTPException(500, "Could not stage clips for Fly cook. Check storage.")
+                raise HTTPException(500, "Could not stage clips for cook. Check storage.")
 
     credit_deducted = False
     if credit_cost > 0:
@@ -2342,6 +2355,13 @@ async def ranking_assemble(req: RankingAssembleRequest, user: dict = Depends(req
         "title": title_obj,
         "layout": req.layout or {},
         "style_preset": (req.style_preset or "viral").strip().lower(),
+        "color_palette": (req.color_palette or "yellow").strip().lower(),
+        "checkered_mode": bool(req.checkered_mode),
+        "commentary": want_commentary,
+        "voice_name": (req.voice_name or "Kore").strip() or "Kore",
+        "subtitle_font": (req.subtitle_font or "Arial").strip() or "Arial",
+        "subtitle_y": float(req.subtitle_y if req.subtitle_y is not None else 50),
+        "subtitle_color": (req.subtitle_color or "yellow").strip().lower(),
         "credits_charged": credit_cost,
         "is_trial": trial,
         "notify_email": (req.notify_email or "").strip() or (user.get("email") or ""),
@@ -2387,7 +2407,7 @@ async def ranking_assemble(req: RankingAssembleRequest, user: dict = Depends(req
                 if fly_spawn(job_id):
                     job["progress"].append({
                         "time": time.time(),
-                        "message": "Starting your cook on Fly…",
+                        "message": "Starting your cook…",
                         "phase": "queued",
                     })
                 else:

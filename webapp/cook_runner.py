@@ -1509,6 +1509,15 @@ def _run_ranking_countdown_job(
     title_text = (title_obj.get("text") or req_data.get("title_text") or "Ranking").strip()
     style_preset = (req_data.get("style_preset") or "viral").strip().lower()
     layout = req_data.get("layout") if isinstance(req_data.get("layout"), dict) else {}
+    color_palette = (req_data.get("color_palette") or req_data.get("colorPalette") or "yellow").strip().lower()
+    checkered_mode = bool(req_data.get("checkered_mode") or req_data.get("checkeredMode"))
+    want_commentary = bool(req_data.get("commentary"))
+    voice_name = (req_data.get("voice_name") or req_data.get("voiceName") or "Kore").strip() or "Kore"
+    subtitle_font = (req_data.get("subtitle_font") or req_data.get("subtitleFont") or "").strip() or None
+    subtitle_y = req_data.get("subtitle_y")
+    if subtitle_y is None:
+        subtitle_y = req_data.get("subtitleY")
+    subtitle_color = (req_data.get("subtitle_color") or req_data.get("subtitleColor") or "yellow").strip().lower()
     clips_meta = req_data.get("clips") if isinstance(req_data.get("clips"), list) else []
     clips_zip_url = (req_data.get("clips_zip_url") or "").strip()
 
@@ -1583,12 +1592,30 @@ def _run_ranking_countdown_job(
         if not resolved:
             raise RuntimeError("No clips available to assemble")
 
+        commentary_lines = None
+        if want_commentary:
+            on_progress("Generating AI commentary…")
+            from core.ranking_commentary import generate_ranking_commentary
+            commentary_lines = generate_ranking_commentary(
+                resolved,
+                title_text or "Ranking",
+                voice_name=voice_name,
+                work_dir=work / "commentary",
+                progress=lambda m: on_progress(m),
+            )
+
         on_progress(f"Assembling {len(resolved)} clip ranking…")
         result = run_ranking_pipeline(
             clips=resolved,
             title=title_obj if title_obj else {"text": title_text},
             style_preset=style_preset,
             layout=layout,
+            color_palette=color_palette,
+            checkered_mode=checkered_mode,
+            commentary_lines=commentary_lines,
+            subtitle_font=subtitle_font,
+            subtitle_y=float(subtitle_y) if subtitle_y is not None else None,
+            subtitle_color=subtitle_color,
             work_dir=work,
             output_name=f"{job_id}_ranking.mp4",
             progress_callback=lambda m: on_progress(m),

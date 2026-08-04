@@ -119,6 +119,55 @@ def _format_viral_title(text: str, highlight: str | None = None) -> str:
     return " ".join(out)
 
 
+def _overlay_is_viral(style_preset: str) -> bool:
+    """Map style presets to viral vs classic overlay (ViewHunt STYLE_PRESETS)."""
+    sp = (style_preset or "viral").strip().lower()
+    return sp not in ("classic", "minimal", "checkered")
+
+
+_COLOR_MAP = {
+    "yellow": {"active": "&H0015CCFA", "done": "&H0000AACC", "hl": "&H0015CCFA"},
+    "cyan": {"active": "&H00EED322", "done": "&H00B59A0E", "hl": "&H00EED322"},
+    "green": {"active": "&H0099D334", "done": "&H006E9A1A", "hl": "&H0099D334"},
+    "red": {"active": "&H007171F8", "done": "&H004040C4", "hl": "&H007171F8"},
+    "pink": {"active": "&H00B672F4", "done": "&H008A4AC4", "hl": "&H00B672F4"},
+    "orange": {"active": "&H003C92FB", "done": "&H00206AC8", "hl": "&H003C92FB"},
+    "white": {"active": "&H00FFFFFF", "done": "&H00CCCCCC", "hl": "&H00FFFFFF"},
+}
+
+
+def _char_weighted_timings(line: str, duration: float) -> list[dict[str, Any]]:
+    words = [w for w in re.split(r"\s+", (line or "").strip()) if w]
+    if not words:
+        return []
+    weights = [max(1, len(re.sub(r"[^a-zA-Z0-9]", "", w)) or 1) for w in words]
+    total_w = sum(weights) or 1
+    t = 0.0
+    out = []
+    for w, wt in zip(words, weights):
+        span = max(0.08, duration * (wt / total_w))
+        out.append({"word": w, "start": t, "end": t + span})
+        t += span
+    if out:
+        out[-1]["end"] = duration
+    return out
+
+
+def _karaoke_ass_text(line: str, word_timings: list[dict[str, Any]] | None, span: float) -> str:
+    timings = word_timings or _char_weighted_timings(line, span)
+    if not timings:
+        return _esc_ass(line)
+    parts = []
+    for i, wt in enumerate(timings):
+        start = float(wt.get("start") or 0)
+        end = float(wt.get("end") or start)
+        if i + 1 < len(timings):
+            end = max(end, float(timings[i + 1].get("start") or end))
+        cs = max(1, int(round((end - start) * 100)))  # centiseconds for \\k
+        parts.append(f"{{\\k{cs}}}{_esc_ass(str(wt.get('word') or ''))}")
+    return " ".join(parts)
+
+
 def generate_ass(
     output_path: Path,
     clips: list[dict[str, Any]],
@@ -127,13 +176,23 @@ def generate_ass(
     *,
     style_preset: str = "viral",
     layout: dict[str, Any] | None = None,
+    color_palette: str = "yellow",
+    checkered_mode: bool = False,
+    commentary_lines: list[dict[str, Any]] | None = None,
+    subtitle_font: str | None = None,
+    subtitle_y: float | None = None,
+    subtitle_color: str = "yellow",
 ) -> Path:
-    """Write ASS overlay for viral (title bar + rank line) or classic (left stack)."""
+    """Write ASS overlay for viral/classic ranking + optional commentary karaoke."""
     lo = layout or {}
-    viral = (style_preset or "viral").lower() != "classic"
+    viral = _overlay_is_viral(style_preset)
     font = _font_name()
     title_text = ((title or {}).get("text") or "").strip()
     highlight = ((title or {}).get("highlightWord") or "").strip()
+    colors = _COLOR_MAP.get((color_palette or "yellow").lower(), _COLOR_MAP["yellow"])
+    white_ass = "&H00FFFFFF"
+    sub_colors = {k: v["active"] for k, v in _COLOR_MAP.items()}
+    subtitle_ass = sub_colors.get((subtitle_color or "yellow").lower(), sub_colors["yellow"])
 
     offsets = [0.0]
     for i in range(len(durations) - 1):
@@ -141,6 +200,8 @@ def generate_ass(
     total = offsets[-1] + (durations[-1] if durations else 0)
 
     title_fs = int(lo.get("titleFontSize") or (52 if viral else 48))
+    if viral:
+        title_fs = max(title_fs, 52)
     num_size = int(lo.get("numSize") or 50)
     list_x_pct = float(lo.get("listXPercent") or 5)
     title_y_pct = float(lo.get("titleYPercent") or 6)
@@ -149,11 +210,11 @@ def generate_ass(
     title_y = 70 if viral else int((title_y_pct / 100) * RANK_H)
     bar_h = 210 if viral else 0
     rank_y = bar_h + 36 if viral else 0
-
-    yellow = "&H0015CCFA"
-    white = "&H00FFFFFF"
-    dim = "&H00888888"
-    done = "&H0000AACC"
+    sub_font = subtitle_font or (font if not viral else font)
+    sub_y_pct = float(subtitle_y if subtitle_y is not None else (50 if viral else 55))
+    sub_y = int((sub_y_pct / 100) * RANK_H)
+    sub_size = 68 if viral else 52
+    sub_outline = 6 if viral else 3
 
     lines = [
         "[Script Info]",
@@ -169,20 +230,24 @@ def generate_ass(
         "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
         f"Style: TitleBar,{font},20,&H00000000,&H000000FF,&H00000000,&H00000000,"
         "-1,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1",
-        f"Style: Title,{font},{title_fs},{white},&H000000FF,&H00000000,&H80000000,"
+        f"Style: Title,{font},{title_fs},{white_ass},&H000000FF,&H00000000,&H80000000,"
         f"-1,0,0,0,100,100,0,0,1,{'5' if viral else '4'},2,8,20,20,{title_y},1",
-        f"Style: RankLine,{font},56,{white},&H000000FF,&H00000000,&H80000000,"
+        f"Style: RankLine,{font},56,{white_ass},&H000000FF,&H00000000,&H80000000,"
         f"-1,0,0,0,100,100,0,0,1,6,0,8,40,40,{rank_y},1",
-        f"Style: RankLineYellow,{font},56,{yellow},&H000000FF,&H00000000,&H80000000,"
+        f"Style: RankLineYellow,{font},56,{colors['active']},&H000000FF,&H00000000,&H80000000,"
         f"-1,0,0,0,100,100,0,0,1,6,0,8,40,40,{rank_y},1",
-        f"Style: NumDim,{font},{num_size},{dim},&H000000FF,&H00000000,&H80000000,"
+        f"Style: NumDim,{font},{num_size},&H00888888,&H000000FF,&H00000000,&H80000000,"
         "-1,0,0,0,100,100,0,0,1,3,1,7,0,0,0,1",
-        f"Style: NumActive,{font},{num_size + 6},{yellow},&H000000FF,&H00000000,&H80000000,"
+        f"Style: NumActive,{font},{num_size + 6},{colors['active']},&H000000FF,&H00000000,&H80000000,"
         "-1,0,0,0,100,100,0,0,1,4,2,7,0,0,0,1",
-        f"Style: NumDone,{font},{num_size},{done},&H000000FF,&H00000000,&H80000000,"
+        f"Style: NumDone,{font},{num_size},{colors['done']},&H000000FF,&H00000000,&H80000000,"
         "-1,0,0,0,100,100,0,0,1,3,1,7,0,0,0,1",
-        f"Style: Label,{font},32,{white},&H000000FF,&H00000000,&H80000000,"
+        f"Style: NumDoneAlt,{font},{num_size},{white_ass},&H000000FF,&H00000000,&H80000000,"
+        "-1,0,0,0,100,100,0,0,1,3,1,7,0,0,0,1",
+        f"Style: Label,{font},32,{white_ass},&H000000FF,&H00000000,&H80000000,"
         "-1,0,0,0,100,100,0,0,1,2,1,7,0,0,0,1",
+        f"Style: ComSub,{sub_font},{sub_size},{subtitle_ass},&H000000FF,&H00000000,&H64000000,"
+        f"-1,0,0,0,100,100,0,0,1,{sub_outline},2,5,40,40,0,1",
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
@@ -190,6 +255,7 @@ def generate_ass(
 
     t0 = ass_time(0)
     t_end = ass_time(total)
+    hl_color = colors["hl"]
 
     if viral and bar_h > 0:
         lines.append(
@@ -212,7 +278,7 @@ def generate_ass(
                 before = _esc_ass(title_text[:idx])
                 hl = _esc_ass(title_text[idx: idx + len(highlight)])
                 after = _esc_ass(title_text[idx + len(highlight):])
-                tt = f"{before}{{\\c{yellow}}}{hl}{{\\c{white}}}{after}"
+                tt = f"{before}{{\\c{hl_color}}}{hl}{{\\c{white_ass}}}{after}"
             lines.append(f"Dialogue: 2,{t0},{t_end},Title,,0,0,0,,{tt}")
 
     numbers = [int(c.get("number") or (len(clips) - i)) for i, c in enumerate(clips)]
@@ -230,18 +296,16 @@ def generate_ass(
         ts, te = ass_time(start), ass_time(end)
 
         if viral:
-            # Centered "N. LABEL" under title bar for the active clip
             lines.append(
                 f"Dialogue: 3,{ts},{te},RankLineYellow,,0,0,0,,"
                 f"{{\\an8\\pos(540,{rank_y})}}{num}. {label}"
             )
         else:
-            # Left number stack: dim before, active now, done after
-            for j, other in enumerate(clips):
+            for j, _other in enumerate(clips):
                 on = numbers[j]
                 oy = number_y.get(on, list_start_y)
                 if j < i:
-                    style = "NumDone"
+                    style = "NumDoneAlt" if (checkered_mode and j % 2 == 1) else "NumDone"
                 elif j == i:
                     style = "NumActive"
                 else:
@@ -255,8 +319,92 @@ def generate_ass(
                 f"{{\\pos({label_x},{number_y.get(num, list_start_y)})}}{label}"
             )
 
+    for c_line in commentary_lines or []:
+        idx = int(c_line.get("clipIndex") or 0)
+        if idx < 0 or idx >= len(offsets):
+            continue
+        line_text = (c_line.get("line") or "").strip()
+        if not line_text:
+            continue
+        audio_path = c_line.get("audioPath")
+        if not audio_path:
+            continue
+        c_start = offsets[idx]
+        # Prefer TTS duration hint; else ~2.5s capped by clip
+        tts_dur = float(c_line.get("duration") or 0) or 0.0
+        if tts_dur <= 0 and audio_path:
+            tts_dur = probe_duration(audio_path) or 2.2
+        c_dur = max(0.8, min(float(durations[idx]), tts_dur + 0.15 if tts_dur else 2.5))
+        karaoke = _karaoke_ass_text(line_text, c_line.get("wordTimings"), c_dur)
+        lines.append(
+            f"Dialogue: 5,{ass_time(c_start)},{ass_time(c_start + c_dur)},ComSub,,0,0,0,,"
+            f"{{\\an5\\pos(540,{sub_y})}}{karaoke}"
+        )
+
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return output_path
+
+
+def mix_commentary_audio(
+    video_path: Path,
+    commentary_lines: list[dict[str, Any]],
+    durations: list[float],
+    output_path: Path,
+    work_dir: Path,
+) -> None:
+    """Duck bed audio and mix commentary VO clips at each clip start."""
+    usable = []
+    for c in commentary_lines or []:
+        ap = Path(str(c.get("audioPath") or ""))
+        if ap.is_file() and (c.get("line") or "").strip():
+            usable.append(c)
+    if not usable:
+        shutil.copy2(video_path, output_path)
+        return
+
+    offsets = [0.0]
+    for i in range(len(durations) - 1):
+        offsets.append(offsets[-1] + durations[i])
+
+    cmd = [_ffmpeg_bin(), "-y", "-i", str(video_path)]
+    for c in usable:
+        cmd.extend(["-i", str(c["audioPath"])])
+
+    filters = []
+    labels = []
+    for i, c in enumerate(usable):
+        idx = int(c.get("clipIndex") or 0)
+        delay_ms = int(max(0.0, offsets[idx] if idx < len(offsets) else 0) * 1000)
+        filters.append(
+            f"[{i + 1}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,"
+            f"volume=1.35,adelay={delay_ms}|{delay_ms}[c{i}]"
+        )
+        labels.append(f"[c{i}]")
+    filters.append("[0:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,volume=0.55[bed]")
+    if len(labels) == 1:
+        filters.append(f"{labels[0]}anull[cmix]")
+    else:
+        filters.append(
+            f"{''.join(labels)}amix=inputs={len(labels)}:duration=longest:normalize=0[cmix]"
+        )
+    filters.append(
+        "[bed][cmix]sidechaincompress=threshold=0.012:ratio=12:attack=12:release=220:makeup=1[ducked]"
+    )
+    filters.append(
+        "[ducked][cmix]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]"
+    )
+    cmd.extend([
+        "-filter_complex", ";".join(filters),
+        "-map", "0:v", "-map", "[aout]",
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "160k",
+        "-movflags", "+faststart",
+        str(output_path),
+    ])
+    try:
+        _run(cmd, timeout=600, cwd=str(work_dir))
+    except RuntimeError as e:
+        print(f"[ranking] commentary mix failed ({e}); shipping without VO mix")
+        shutil.copy2(video_path, output_path)
 
 
 def normalize_clip(src: Path, dst: Path, *, start: float = 0.0, end: float | None = None) -> float:
@@ -350,6 +498,12 @@ def assemble_ranking_video(
     title: dict[str, Any] | None = None,
     style_preset: str = "viral",
     layout: dict[str, Any] | None = None,
+    color_palette: str = "yellow",
+    checkered_mode: bool = False,
+    commentary_lines: list[dict[str, Any]] | None = None,
+    subtitle_font: str | None = None,
+    subtitle_y: float | None = None,
+    subtitle_color: str = "yellow",
     work_dir: str | Path,
     output_path: str | Path,
     progress: ProgressCb | None = None,
@@ -394,7 +548,6 @@ def assemble_ranking_video(
     concat_list = work / "concat.txt"
     with concat_list.open("w", encoding="utf-8") as f:
         for p in norm_paths:
-            # ffmpeg concat demuxer — escape single quotes
             esc = str(p).replace("'", "'\\''")
             f.write(f"file '{esc}'\n")
     concat_mp4 = work / "concat.mp4"
@@ -403,11 +556,25 @@ def assemble_ranking_video(
         "-i", str(concat_list), "-c", "copy", str(concat_mp4),
     ], timeout=300)
 
+    # Attach TTS durations for karaoke / mix
+    lines_out = list(commentary_lines or [])
+    for c in lines_out:
+        ap = c.get("audioPath")
+        if ap and not c.get("duration"):
+            c["duration"] = probe_duration(ap)
+
     prog("Burning ranking overlay…")
     ass_path = work / "overlay.ass"
     generate_ass(
         ass_path, clips, durations, title,
-        style_preset=style_preset, layout=layout,
+        style_preset=style_preset,
+        layout=layout,
+        color_palette=color_palette,
+        checkered_mode=checkered_mode,
+        commentary_lines=lines_out,
+        subtitle_font=subtitle_font,
+        subtitle_y=subtitle_y,
+        subtitle_color=subtitle_color,
     )
     subtitled = work / "subtitled.mp4"
     burned = False
@@ -438,7 +605,14 @@ def assemble_ranking_video(
             print(f"[ranking] drawtext overlay unavailable ({e}); shipping concat without burn")
             shutil.copy2(concat_mp4, subtitled)
 
-    shutil.copy2(subtitled, out)
+    if lines_out and any(Path(str(c.get("audioPath") or "")).is_file() for c in lines_out):
+        prog("Mixing commentary voiceover…")
+        mixed = work / "mixed.mp4"
+        mix_commentary_audio(subtitled, lines_out, durations, mixed, work)
+        shutil.copy2(mixed, out)
+    else:
+        shutil.copy2(subtitled, out)
+
     final_dur = probe_duration(out)
     prog(f"Ranking video ready ({final_dur:.1f}s)")
     return {
@@ -456,6 +630,12 @@ def run_ranking_pipeline(
     title: dict[str, Any] | None = None,
     style_preset: str = "viral",
     layout: dict[str, Any] | None = None,
+    color_palette: str = "yellow",
+    checkered_mode: bool = False,
+    commentary_lines: list[dict[str, Any]] | None = None,
+    subtitle_font: str | None = None,
+    subtitle_y: float | None = None,
+    subtitle_color: str = "yellow",
     output_name: str = "ranking_video.mp4",
     work_dir: str | Path | None = None,
     progress_callback: ProgressCb | None = None,
@@ -470,6 +650,12 @@ def run_ranking_pipeline(
         title=title,
         style_preset=style_preset,
         layout=layout,
+        color_palette=color_palette,
+        checkered_mode=checkered_mode,
+        commentary_lines=commentary_lines,
+        subtitle_font=subtitle_font,
+        subtitle_y=subtitle_y,
+        subtitle_color=subtitle_color,
         work_dir=work / "build",
         output_path=out,
         progress=progress_callback,

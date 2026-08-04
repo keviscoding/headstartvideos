@@ -6,7 +6,7 @@
     <title>ChannelRecipe — Proven recipes for faceless YouTube channels</title>
     <link rel="icon" href="/static/favicon.svg">
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="/static/styles.css?v=20260804c">
+    <link rel="stylesheet" href="/static/styles.css?v=20260804d">
     <script>
         tailwind.config = {
             theme: {
@@ -310,7 +310,7 @@
                     <div class="mb-6">
                         <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Title &amp; order</h2>
                         <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">
-                            Pick a viral title, style, and drag clips to reorder — then cook on Fly.
+                            Pick a viral title, style, and drag clips to reorder — then cook.
                         </p>
                     </div>
                     <div class="rk-title-split">
@@ -319,13 +319,75 @@
                             <input id="rk-title-text" class="cr-input" placeholder="Top 5 Parkour Moments" maxlength="80" oninput="rkOnTitleChange()">
                             <label class="cr-label" for="rk-title-hl" style="margin-top:12px;">Highlight word (optional)</label>
                             <input id="rk-title-hl" class="cr-input" placeholder="Parkour" maxlength="40" oninput="rkOnTitleChange()">
-                            <div style="margin-top:14px;">
-                                <span class="cr-label">Style</span>
-                                <div class="rk-style-row">
-                                    <button type="button" class="rk-style-btn is-active" data-style="viral" onclick="rkSetStyle('viral')">Viral</button>
-                                    <button type="button" class="rk-style-btn" data-style="classic" onclick="rkSetStyle('classic')">Classic</button>
+
+                            <span class="cr-label" style="margin-top:14px;display:block;">Ranking styles</span>
+                            <div class="rk-style-row" id="rk-style-presets">
+                                <button type="button" class="rk-style-btn is-active" data-style="viral" onclick="rkApplyPreset('viral')">Viral Shorts</button>
+                                <button type="button" class="rk-style-btn" data-style="classic" onclick="rkApplyPreset('classic')">Classic Yellow</button>
+                                <button type="button" class="rk-style-btn" data-style="bold" onclick="rkApplyPreset('bold')">Bold Impact</button>
+                                <button type="button" class="rk-style-btn" data-style="minimal" onclick="rkApplyPreset('minimal')">Minimal</button>
+                                <button type="button" class="rk-style-btn" data-style="checkered" onclick="rkApplyPreset('checkered')">Checkered Pro</button>
+                            </div>
+
+                            <div class="rk-pos-controls">
+                                <div class="rk-pos-title">Overlay position</div>
+                                <div class="rk-pos-row"><label>List X</label><input type="range" id="rk-pos-list-x" min="2" max="60" value="5" oninput="rkOnLayoutChange('listX', this.value)"><span class="rk-pos-val" id="rk-pos-list-x-val">5%</span></div>
+                                <div class="rk-pos-row"><label>Title Y</label><input type="range" id="rk-pos-title-y" min="2" max="30" value="6" oninput="rkOnLayoutChange('titleY', this.value)"><span class="rk-pos-val" id="rk-pos-title-y-val">6%</span></div>
+                                <div class="rk-pos-row"><label>Title Size</label><input type="range" id="rk-pos-title-size" min="30" max="70" value="48" oninput="rkOnLayoutChange('titleSize', this.value)"><span class="rk-pos-val" id="rk-pos-title-size-val">48</span></div>
+                                <div class="rk-pos-row"><label>Line Gap</label><input type="range" id="rk-pos-line-spacing" min="35" max="200" value="65" oninput="rkOnLayoutChange('lineSpacing', this.value)"><span class="rk-pos-val" id="rk-pos-line-spacing-val">65</span></div>
+                                <div class="rk-pos-row"><label>Number Size</label><input type="range" id="rk-pos-num-size" min="30" max="90" value="50" oninput="rkOnLayoutChange('numSize', this.value)"><span class="rk-pos-val" id="rk-pos-num-size-val">50</span></div>
+                            </div>
+
+                            <div class="rk-pos-controls" style="margin-top:12px;">
+                                <div class="rk-pos-title">Color &amp; style</div>
+                                <div class="rk-color-row" id="rk-color-swatches">
+                                    <button type="button" class="rk-color-swatch is-active" data-color="yellow" style="background:#facc15;" onclick="rkSetColor('yellow')" title="Yellow"></button>
+                                    <button type="button" class="rk-color-swatch" data-color="cyan" style="background:#22d3ee;" onclick="rkSetColor('cyan')" title="Cyan"></button>
+                                    <button type="button" class="rk-color-swatch" data-color="green" style="background:#34d399;" onclick="rkSetColor('green')" title="Green"></button>
+                                    <button type="button" class="rk-color-swatch" data-color="red" style="background:#f87171;" onclick="rkSetColor('red')" title="Red"></button>
+                                    <button type="button" class="rk-color-swatch" data-color="pink" style="background:#f472b6;" onclick="rkSetColor('pink')" title="Pink"></button>
+                                    <button type="button" class="rk-color-swatch" data-color="orange" style="background:#fb923c;" onclick="rkSetColor('orange')" title="Orange"></button>
+                                    <button type="button" class="rk-color-swatch" data-color="white" style="background:#ffffff;" onclick="rkSetColor('white')" title="White"></button>
+                                </div>
+                                <label class="rk-check-label"><input type="checkbox" id="rk-checkered-toggle" onchange="rkSetCheckered(this.checked)"> Checkered mode <span style="opacity:0.7;">(alternating colors)</span></label>
+                            </div>
+
+                            <div class="rk-pos-controls" style="margin-top:12px;">
+                                <label class="rk-check-label" style="margin-bottom:8px;">
+                                    <input type="checkbox" id="rk-commentary-toggle" onchange="rkSetCommentary(this.checked)">
+                                    AI Commentary
+                                    <span class="rk-cost-chip" id="rk-commentary-chip">+1 credit</span>
+                                </label>
+                                <select id="rk-voice-picker" class="cr-input" style="display:none;margin-bottom:8px;" onchange="rkSaveDraft()">
+                                    <option value="Kore">Kore (upbeat)</option>
+                                    <option value="Charon">Charon (deep)</option>
+                                    <option value="Puck">Puck (energetic)</option>
+                                    <option value="Fenrir">Fenrir (bold)</option>
+                                    <option value="Aoede">Aoede (warm)</option>
+                                </select>
+                                <div id="rk-subtitle-settings" style="display:none;">
+                                    <div class="rk-pos-title">Commentary subtitles</div>
+                                    <div class="rk-pos-row">
+                                        <label>Font</label>
+                                        <select id="rk-subtitle-font" class="cr-input" style="flex:1;" onchange="rkOnTitleChange()">
+                                            <option>Arial</option>
+                                            <option>Impact</option>
+                                            <option>Verdana</option>
+                                            <option>Georgia</option>
+                                            <option>Trebuchet MS</option>
+                                        </select>
+                                    </div>
+                                    <div class="rk-pos-row"><label>Sub Y</label><input type="range" id="rk-subtitle-y" min="40" max="80" value="50" oninput="rkOnSubtitleY(this.value)"><span class="rk-pos-val" id="rk-subtitle-y-val">50%</span></div>
+                                    <div class="rk-color-row" id="rk-sub-color-swatches" style="margin-top:6px;">
+                                        <button type="button" class="rk-color-swatch is-active" data-color="yellow" style="background:#facc15;" onclick="rkSetSubColor('yellow')"></button>
+                                        <button type="button" class="rk-color-swatch" data-color="white" style="background:#ffffff;" onclick="rkSetSubColor('white')"></button>
+                                        <button type="button" class="rk-color-swatch" data-color="cyan" style="background:#22d3ee;" onclick="rkSetSubColor('cyan')"></button>
+                                        <button type="button" class="rk-color-swatch" data-color="green" style="background:#34d399;" onclick="rkSetSubColor('green')"></button>
+                                        <button type="button" class="rk-color-swatch" data-color="pink" style="background:#f472b6;" onclick="rkSetSubColor('pink')"></button>
+                                    </div>
                                 </div>
                             </div>
+
                             <p id="rk-trial-badge" class="cr-mono" style="font-size:12px;color:var(--app-ink-3);margin-top:14px;"></p>
                             <span class="cr-label" style="margin-top:18px;display:block;">Playback order (drag to reorder · top = first)</span>
                             <div id="rk-order-list" class="rk-order-list"></div>
@@ -335,7 +397,7 @@
                             </div>
                         </div>
                         <div class="rk-title-preview-col">
-                            <div class="rk-preview-frame" id="rk-preview-dash"></div>
+                            <div class="rk-preview-frame" id="rk-preview-dash" onclick="rkCyclePreviewClip()" title="Click to preview next clip"></div>
                             <div class="rk-preview-tag">Live preview — <span>overlay</span></div>
                         </div>
                     </div>
@@ -354,7 +416,7 @@
                 <div class="cr-panel" style="text-align:center;padding:40px 24px;">
                     <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Cooking your Short</h2>
                     <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 8px; margin-bottom: 20px;">
-                        Assembling on Fly — watch the cooking bar for live progress.
+                        Assembling your Short — watch the cooking bar for live progress.
                     </p>
                     <div id="rk-result-wrap" class="hidden">
                         <video id="rk-result-video" class="rk-result-video" controls playsinline></video>
@@ -2018,7 +2080,7 @@
     </div>
 
     <script src="/static/cr-telemetry.js?v=20260804b"></script>
-    <script src="/static/ranking.js?v=20260804c"></script>
+    <script src="/static/ranking.js?v=20260804d"></script>
     <script src="/static/app.js?v=20260804b"></script>
 </body>
 </html>

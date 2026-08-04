@@ -14,6 +14,40 @@ let _rkTimelineDuration = 0;
 let _rkDragging = null; // 'start' | 'end' | null
 let _rkTimelineBound = false;
 let _rkPlayBound = false;
+let _rkColorPalette = 'yellow';
+let _rkCheckered = false;
+let _rkCommentary = false;
+let _rkSubtitleColor = 'yellow';
+let _rkPreviewActive = 0;
+let _rkLayout = { listX: 5, titleY: 6, titleSize: 48, lineSpacing: 65, numSize: 50 };
+
+const RK_STYLE_PRESETS = {
+    viral: {
+        colorPalette: 'yellow', checkeredMode: false,
+        layout: { listX: 5, titleY: 4, titleSize: 52, lineSpacing: 65, numSize: 50 },
+        subtitleFont: 'Arial', subtitleY: 50, subtitleColor: 'yellow',
+    },
+    classic: {
+        colorPalette: 'yellow', checkeredMode: false,
+        layout: { listX: 5, titleY: 6, titleSize: 48, lineSpacing: 65, numSize: 50 },
+        subtitleFont: 'Arial', subtitleY: 55, subtitleColor: 'yellow',
+    },
+    bold: {
+        colorPalette: 'orange', checkeredMode: false,
+        layout: { listX: 4, titleY: 5, titleSize: 58, lineSpacing: 72, numSize: 62 },
+        subtitleFont: 'Impact', subtitleY: 50, subtitleColor: 'yellow',
+    },
+    minimal: {
+        colorPalette: 'white', checkeredMode: false,
+        layout: { listX: 8, titleY: 8, titleSize: 40, lineSpacing: 58, numSize: 42 },
+        subtitleFont: 'Arial', subtitleY: 72, subtitleColor: 'white',
+    },
+    checkered: {
+        colorPalette: 'cyan', checkeredMode: true,
+        layout: { listX: 5, titleY: 6, titleSize: 48, lineSpacing: 68, numSize: 52 },
+        subtitleFont: 'Verdana', subtitleY: 58, subtitleColor: 'cyan',
+    },
+};
 
 function isRankingRecipe() {
     const id = (window.state?.nicheData?.recipe || window.state?.niche || '');
@@ -32,6 +66,12 @@ function rkResetState() {
     _rkClips = [];
     _rkTrimIdx = 0;
     _rkStyle = 'viral';
+    _rkColorPalette = 'yellow';
+    _rkCheckered = false;
+    _rkCommentary = false;
+    _rkSubtitleColor = 'yellow';
+    _rkPreviewActive = 0;
+    _rkLayout = { listX: 5, titleY: 6, titleSize: 48, lineSpacing: 65, numSize: 50 };
     try { localStorage.removeItem('cr_ranking_draft'); } catch (_) {}
 }
 
@@ -49,10 +89,161 @@ function rkSaveDraft() {
                 label: c.label,
             })),
             style: _rkStyle,
+            layout: _rkLayout,
+            colorPalette: _rkColorPalette,
+            checkered: _rkCheckered,
+            commentary: _rkCommentary,
+            subtitleColor: _rkSubtitleColor,
             title: document.getElementById('rk-title-text')?.value || '',
             highlight: document.getElementById('rk-title-hl')?.value || '',
         }));
     } catch (_) {}
+}
+
+function rkLayoutPayload() {
+    return {
+        listXPercent: _rkLayout.listX,
+        titleYPercent: _rkLayout.titleY,
+        titleFontSize: _rkLayout.titleSize,
+        lineSpacing: _rkLayout.lineSpacing,
+        numSize: _rkLayout.numSize,
+    };
+}
+
+function rkSyncLayoutSliders() {
+    const map = {
+        'list-x': ['listX', '%'],
+        'title-y': ['titleY', '%'],
+        'title-size': ['titleSize', ''],
+        'line-spacing': ['lineSpacing', ''],
+        'num-size': ['numSize', ''],
+    };
+    Object.entries(map).forEach(([suffix, [key, unit]]) => {
+        const el = document.getElementById('rk-pos-' + suffix);
+        const val = document.getElementById('rk-pos-' + suffix + '-val');
+        if (el) el.value = _rkLayout[key];
+        if (val) val.textContent = unit ? `${_rkLayout[key]}${unit}` : String(_rkLayout[key]);
+    });
+}
+
+function rkOnLayoutChange(key, value) {
+    _rkLayout[key] = parseInt(value, 10);
+    const unit = (key === 'listX' || key === 'titleY') ? '%' : '';
+    const idMap = {
+        listX: 'rk-pos-list-x-val',
+        titleY: 'rk-pos-title-y-val',
+        titleSize: 'rk-pos-title-size-val',
+        lineSpacing: 'rk-pos-line-spacing-val',
+        numSize: 'rk-pos-num-size-val',
+    };
+    const valEl = document.getElementById(idMap[key]);
+    if (valEl) valEl.textContent = unit ? `${_rkLayout[key]}${unit}` : String(_rkLayout[key]);
+    rkSaveDraft();
+    rkRenderPreview('rk-preview-dash');
+}
+
+function rkApplyPreset(id) {
+    const p = RK_STYLE_PRESETS[id];
+    if (!p) return;
+    _rkStyle = id;
+    _rkColorPalette = p.colorPalette;
+    _rkCheckered = !!p.checkeredMode;
+    _rkSubtitleColor = p.subtitleColor;
+    _rkLayout = { ...p.layout };
+    document.querySelectorAll('#rk-style-presets .rk-style-btn').forEach((b) => {
+        b.classList.toggle('is-active', b.dataset.style === id);
+    });
+    document.querySelectorAll('#rk-color-swatches .rk-color-swatch').forEach((b) => {
+        b.classList.toggle('is-active', b.dataset.color === _rkColorPalette);
+    });
+    document.querySelectorAll('#rk-sub-color-swatches .rk-color-swatch').forEach((b) => {
+        b.classList.toggle('is-active', b.dataset.color === _rkSubtitleColor);
+    });
+    const check = document.getElementById('rk-checkered-toggle');
+    if (check) check.checked = _rkCheckered;
+    const fontEl = document.getElementById('rk-subtitle-font');
+    if (fontEl) fontEl.value = p.subtitleFont;
+    const subY = document.getElementById('rk-subtitle-y');
+    const subYVal = document.getElementById('rk-subtitle-y-val');
+    if (subY) subY.value = p.subtitleY;
+    if (subYVal) subYVal.textContent = p.subtitleY + '%';
+    rkSyncLayoutSliders();
+    rkSaveDraft();
+    rkRenderPreview('rk-preview-dash');
+    rkRenderPreview('rk-preview-trim');
+    rkUpdateAssembleLabel();
+}
+
+function rkSetStyle(style) {
+    rkApplyPreset(style === 'classic' ? 'classic' : 'viral');
+}
+
+function rkSetColor(color) {
+    _rkColorPalette = color;
+    document.querySelectorAll('#rk-color-swatches .rk-color-swatch').forEach((b) => {
+        b.classList.toggle('is-active', b.dataset.color === color);
+    });
+    rkSaveDraft();
+    rkRenderPreview('rk-preview-dash');
+}
+
+function rkSetSubColor(color) {
+    _rkSubtitleColor = color;
+    document.querySelectorAll('#rk-sub-color-swatches .rk-color-swatch').forEach((b) => {
+        b.classList.toggle('is-active', b.dataset.color === color);
+    });
+    rkSaveDraft();
+    rkRenderPreview('rk-preview-dash');
+}
+
+function rkSetCheckered(on) {
+    _rkCheckered = !!on;
+    rkSaveDraft();
+    rkRenderPreview('rk-preview-dash');
+}
+
+function rkSetCommentary(on) {
+    _rkCommentary = !!on;
+    const vp = document.getElementById('rk-voice-picker');
+    const ss = document.getElementById('rk-subtitle-settings');
+    if (vp) vp.style.display = on ? '' : 'none';
+    if (ss) ss.style.display = on ? '' : 'none';
+    rkSaveDraft();
+    rkUpdateAssembleLabel();
+    rkRenderPreview('rk-preview-dash');
+}
+
+function rkOnSubtitleY(v) {
+    const val = document.getElementById('rk-subtitle-y-val');
+    if (val) val.textContent = v + '%';
+    rkSaveDraft();
+    rkRenderPreview('rk-preview-dash');
+}
+
+function rkCyclePreviewClip() {
+    const n = _rkClips.filter((c) => !c.uploading && !c.downloading && !c.importFailed).length;
+    if (n < 1) return;
+    _rkPreviewActive = (_rkPreviewActive + 1) % n;
+    rkRenderPreview('rk-preview-dash');
+}
+
+function rkUpdateAssembleLabel() {
+    const btn = document.getElementById('rk-btn-assemble');
+    const text = btn?.querySelector('.btn-text');
+    if (!text) return;
+    if (_rkAccess?.is_trial && (_rkAccess.ranking_free_left ?? 0) > 0) {
+        text.textContent = 'Cook ranking short (trial)';
+        return;
+    }
+    const base = _rkAccess?.credit_cost || 1;
+    const extra = _rkCommentary ? (_rkAccess?.commentary_credit_cost ?? 1) : 0;
+    const total = base + (_rkAccess?.is_trial ? 0 : extra);
+    // When trial quota remains cost is 0; when paid, show total including commentary.
+    if (_rkAccess?.is_trial) {
+        text.textContent = 'Cook ranking short';
+    } else {
+        text.textContent = `Cook ranking short (${total} credit${total === 1 ? '' : 's'})`;
+    }
 }
 
 function rkParseImportUrls(raw) {
@@ -598,16 +789,6 @@ function rkTrimNext() {
     rkShowTrimClip();
 }
 
-function rkSetStyle(style) {
-    _rkStyle = style === 'classic' ? 'classic' : 'viral';
-    document.querySelectorAll('.rk-style-btn').forEach((b) => {
-        b.classList.toggle('is-active', b.dataset.style === _rkStyle);
-    });
-    rkSaveDraft();
-    rkRenderPreview('rk-preview-dash');
-    rkRenderPreview('rk-preview-trim');
-}
-
 function rkOnTitleChange() {
     rkSaveDraft();
     rkRenderPreview('rk-preview-dash');
@@ -682,11 +863,18 @@ function rkRenderPreview(targetId) {
         el.innerHTML = '<div class="pv-bg"></div><div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#555;font-size:0.65rem;text-align:center;padding:1rem">Add clips to see preview</div>';
         return;
     }
-    const viral = _rkStyle !== 'classic';
+    const viral = !['classic', 'minimal', 'checkered'].includes(_rkStyle);
+    const colorMap = {
+        yellow: '#facc15', cyan: '#22d3ee', green: '#34d399', red: '#f87171',
+        pink: '#f472b6', orange: '#fb923c', white: '#ffffff',
+    };
+    const accent = colorMap[_rkColorPalette] || '#facc15';
     let html = '<div class="pv-bars top"></div><div class="pv-bars bottom"></div><div class="pv-bg"></div>';
-    const activeIdx = isTrim ? _rkTrimIdx : 0;
-    const activeClip = _rkClips[Math.min(activeIdx, totalClips - 1)];
-    const rankNum = totalClips - Math.min(activeIdx, totalClips - 1);
+    const activeIdx = isTrim ? _rkTrimIdx : Math.min(_rkPreviewActive, totalClips - 1);
+    const activeClip = _rkClips[activeIdx];
+    const rankNum = totalClips - activeIdx;
+    const titleY = viral ? 2 : _rkLayout.titleY;
+    const titleSizeRem = (_rkLayout.titleSize / 48) * 0.7;
 
     if (viral) {
         html += '<div style="position:absolute;top:0;left:0;right:0;height:14%;background:#000;z-index:2"></div>';
@@ -695,10 +883,10 @@ function rkRenderPreview(targetId) {
             const viralColors = ['#ffffff', '#f472b6', '#f472b6', '#facc15', '#facc15', '#22d3ee'];
             const titleHtml = words.map((w, i) => {
                 let col = viralColors[Math.min(i, viralColors.length - 1)];
-                if (hlWord && w.toLowerCase() === hlWord.toLowerCase()) col = '#facc15';
+                if (hlWord && w.toLowerCase() === hlWord.toLowerCase()) col = accent;
                 return `<span style="color:${col}">${rkEscapeHtml(w.toUpperCase())}</span>`;
             }).join(' ');
-            html += `<div class="pv-title" style="top:2%;z-index:3"><div class="pv-title-text" style="font-weight:900">${titleHtml}</div></div>`;
+            html += `<div class="pv-title" style="top:${titleY}%;z-index:3"><div class="pv-title-text" style="font-weight:900;font-size:${titleSizeRem.toFixed(2)}rem">${titleHtml}</div></div>`;
         }
         const rankLab = (activeClip?.label || 'MOMENT').toUpperCase();
         html += `<div style="position:absolute;top:15%;left:0;right:0;text-align:center;z-index:3;font-weight:900;font-size:0.78rem;color:#fff;text-shadow:0 0 2px #000">${rankNum}. ${rkEscapeHtml(rankLab)}</div>`;
@@ -707,11 +895,12 @@ function rkRenderPreview(targetId) {
             let titleHtml = rkEscapeHtml(titleText);
             if (hlWord) {
                 const re = new RegExp(`(${hlWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'i');
-                titleHtml = titleHtml.replace(re, '<span style="color:#facc15">$1</span>');
+                titleHtml = titleHtml.replace(re, `<span style="color:${accent}">$1</span>`);
             }
-            html += `<div class="pv-title" style="top:6%"><div class="pv-title-text">${titleHtml}</div></div>`;
+            html += `<div class="pv-title" style="top:${titleY}%"><div class="pv-title-text" style="font-size:${titleSizeRem.toFixed(2)}rem">${titleHtml}</div></div>`;
         }
-        html += '<div class="pv-list">';
+        const gap = Math.round((_rkLayout.lineSpacing / 65) * 3);
+        html += `<div class="pv-list" style="left:${_rkLayout.listX}%;gap:${gap}px">`;
         for (let row = 0; row < totalClips; row++) {
             const num = row + 1;
             const clipIdx = totalClips - num;
@@ -719,16 +908,28 @@ function rkRenderPreview(targetId) {
             const label = clip?.label || '';
             let numClass = 'dim';
             let labelClass = 'dim';
+            let numColor = '';
             if (isTrim) {
                 if (clipIdx < _rkTrimIdx) { numClass = 'done'; labelClass = ''; }
                 else if (clipIdx === _rkTrimIdx) { numClass = 'active'; labelClass = ''; }
-            } else if (clipIdx === 0) {
-                numClass = 'active';
-                labelClass = '';
+            } else if (clipIdx < activeIdx) {
+                numClass = 'done'; labelClass = '';
+            } else if (clipIdx === activeIdx) {
+                numClass = 'active'; labelClass = '';
             }
-            html += `<div class="pv-row"><div class="pv-num ${numClass}">${num}.</div><div class="pv-label ${labelClass}">${rkEscapeHtml(label)}</div></div>`;
+            if (numClass === 'active') numColor = `color:${accent};`;
+            else if (numClass === 'done') {
+                numColor = (_rkCheckered && row % 2 === 1) ? 'color:#ffffff;' : `color:${accent};opacity:0.75;`;
+            }
+            html += `<div class="pv-row"><div class="pv-num ${numClass}" style="${numColor}">${num}.</div><div class="pv-label ${labelClass}">${rkEscapeHtml(label)}</div></div>`;
         }
         html += '</div>';
+    }
+    if (_rkCommentary) {
+        const sample = viral ? 'watch this you need to see it' : 'number one hits different';
+        const subY = document.getElementById('rk-subtitle-y')?.value || 50;
+        const subCol = colorMap[_rkSubtitleColor] || '#facc15';
+        html += `<div style="position:absolute;left:6%;right:6%;top:${subY}%;transform:translateY(-50%);text-align:center;z-index:4;font-weight:800;font-size:0.55rem;text-transform:uppercase;color:${subCol};text-shadow:0 2px 8px rgba(0,0,0,0.9)">${rkEscapeHtml(sample)}</div>`;
     }
     el.innerHTML = html;
 }
@@ -745,10 +946,18 @@ async function rkRefreshAccess() {
                 ? `${left} free ranking short${left === 1 ? '' : 's'} left on your trial`
                 : 'Free ranking shorts used — upgrade to keep cooking';
         } else if (_rkAccess.can_cook) {
-            badge.textContent = `${_rkAccess.credit_cost || 1} credit per ranking short`;
+            const base = _rkAccess.credit_cost || 1;
+            const extra = _rkAccess.commentary_credit_cost ?? 1;
+            badge.textContent = `${base} credit per ranking short` + (extra ? ` · commentary +${extra}` : '');
         } else {
             badge.textContent = 'Start a free trial to cook ranking shorts';
         }
+        const chip = document.getElementById('rk-commentary-chip');
+        if (chip) {
+            const extra = _rkAccess.commentary_credit_cost ?? 1;
+            chip.textContent = _rkAccess.is_trial ? 'included on trial' : `+${extra} credit`;
+        }
+        rkUpdateAssembleLabel();
     } catch (_) {
         if (badge) badge.textContent = '';
     }
@@ -796,7 +1005,14 @@ async function rkAssemble() {
                 highlightWord: (document.getElementById('rk-title-hl')?.value || '').trim(),
             },
             style_preset: _rkStyle,
-            layout: {},
+            layout: rkLayoutPayload(),
+            color_palette: _rkColorPalette,
+            checkered_mode: _rkCheckered,
+            commentary: _rkCommentary,
+            voice_name: document.getElementById('rk-voice-picker')?.value || 'Kore',
+            subtitle_font: document.getElementById('rk-subtitle-font')?.value || 'Arial',
+            subtitle_y: parseFloat(document.getElementById('rk-subtitle-y')?.value || '50'),
+            subtitle_color: _rkSubtitleColor,
             notify_email: currentUser?.email || '',
         };
         const res = await fetch('/api/ranking/assemble', {
@@ -873,6 +1089,14 @@ window.rkGoTrim = rkGoTrim;
 window.rkTrimPrev = rkTrimPrev;
 window.rkTrimNext = rkTrimNext;
 window.rkSetStyle = rkSetStyle;
+window.rkApplyPreset = rkApplyPreset;
+window.rkOnLayoutChange = rkOnLayoutChange;
+window.rkSetColor = rkSetColor;
+window.rkSetSubColor = rkSetSubColor;
+window.rkSetCheckered = rkSetCheckered;
+window.rkSetCommentary = rkSetCommentary;
+window.rkOnSubtitleY = rkOnSubtitleY;
+window.rkCyclePreviewClip = rkCyclePreviewClip;
 window.rkMoveClip = rkMoveClip;
 window.rkAssemble = rkAssemble;
 window.rkStartOver = rkStartOver;
