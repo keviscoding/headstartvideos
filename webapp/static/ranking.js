@@ -986,12 +986,12 @@ async function rkAssemble() {
     }
 
     if (_rkAccess && !_rkAccess.can_cook) {
-        showPricingModal({ reason: 'cook' });
+        openUpgradeFlow({ reason: 'cook' });
         return;
     }
     if (_rkAccess?.is_trial && _rkAccess.trial_allowed === false) {
         if (typeof endTrialNow === 'function') endTrialNow();
-        else if (typeof openUpgradeFlow === 'function') openUpgradeFlow();
+        else if (typeof openUpgradeFlow === 'function') openUpgradeFlow({ reason: 'trial_exhausted' });
         else showTrialExhaustedModal();
         return;
     }
@@ -1046,7 +1046,7 @@ async function rkAssemble() {
             } else if (res.status === 402 && isPaidUser() && !isTrialUser()) {
                 showCreditsNeededModal({ need: detail?.need || 1, have: currentUser?.credits ?? 0, reason: 'credits' });
             } else if (res.status === 402) {
-                showPricingModal({ reason: 'cook' });
+                openUpgradeFlow({ reason: 'cook' });
             } else {
                 alert(errMsg);
             }

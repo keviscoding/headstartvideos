@@ -6,7 +6,7 @@
     <title>ChannelRecipe — Proven recipes for faceless YouTube channels</title>
     <link rel="icon" href="/static/favicon.svg">
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="/static/styles.css?v=20260805b">
+    <link rel="stylesheet" href="/static/styles.css?v=20260805c">
     <script>
         tailwind.config = {
             theme: {
@@ -800,7 +800,7 @@
                                 <p style="font-family: var(--font-display); font-weight: 700; font-size: 14px; color: var(--app-ink);">Want longer videos?</p>
                                 <p style="font-family: var(--font-body); font-size: 12px; color: var(--app-ink-2); margin-top: 1px;">Free plan caps at <span id="limit-minutes">8</span> min. Starter &amp; Daily unlock up to 20 min.</p>
                             </div>
-                            <button onclick="showPricingModal()" class="btn-primary" style="flex: none; font-size: 13px; padding: 8px 16px;">Upgrade</button>
+                            <button onclick="openUpgradeFlow({ reason: 'niche_finder' })" class="btn-primary" style="flex: none; font-size: 13px; padding: 8px 16px;">Upgrade</button>
                         </div>
                         <div id="script-loading" class="text-center py-12 hidden">
                             <div class="cr-spinner mx-auto mb-4"></div>
@@ -1679,7 +1679,7 @@
             <div id="billing-upgrade-section" style="background: var(--app-surface); border: 1px solid var(--app-border); border-radius: var(--radius-card); padding: 24px; margin-bottom: 20px;">
                 <h3 id="billing-upgrade-title" style="font-family: var(--font-display); font-size: 16px; font-weight: 700; margin-bottom: 4px;">Start your free trial</h3>
                 <p id="billing-upgrade-desc" style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-2); margin-bottom: 16px;">7 days free, then your chosen plan begins. Cancel anytime.</p>
-                <button id="billing-upgrade-btn" onclick="showPricingModal()" class="btn-primary" style="font-size: 14px; padding: 10px 20px;">Choose a plan</button>
+                <button id="billing-upgrade-btn" onclick="openUpgradeFlow({ reason: 'billing' })" class="btn-primary" style="font-size: 14px; padding: 10px 20px;">Choose how to start</button>
             </div>
         </main>
     </div>
@@ -1818,7 +1818,7 @@
                     <p id="mcp-integ-status" class="cr-mono" style="font-size: 12px; color: var(--app-ink-3);"></p>
                     <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; align-items:center;">
                         <a id="mcp-upgrade-link" href="/app#billing" class="btn-primary" style="display: inline-block; font-size: 13px; padding: 10px 16px; text-decoration: none;">Upgrade for more</a>
-                        <button type="button" id="mcp-access-chooser-btn" class="btn-secondary hidden" style="font-size: 13px; padding: 10px 16px;" onclick="maybeShowAccessChooser({ force: true })">Choose paid vs trial</button>
+                        <button type="button" id="mcp-access-chooser-btn" class="btn-secondary hidden" style="font-size: 13px; padding: 10px 16px;" onclick="openUpgradeFlow({ reason: 'mcp_settings' })">Choose paid vs trial</button>
                     </div>
                 </div>
             </section>
@@ -2128,7 +2128,7 @@
     </div>
 
     <script src="/static/cr-telemetry.js?v=20260804b"></script>
-    <script src="/static/ranking.js?v=20260804f"></script>
-    <script src="/static/app.js?v=20260805b"></script>
+    <script src="/static/ranking.js?v=20260805c"></script>
+    <script src="/static/app.js?v=20260805c"></script>
 </body>
 </html>

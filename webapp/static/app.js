@@ -65,8 +65,8 @@ window.fetch = async function (input, init) {
                         have: (typeof currentUser !== 'undefined' && currentUser) ? currentUser.credits : 0,
                         reason: 'credits',
                     });
-                } else if (typeof showPricingModal === 'function') {
-                    showPricingModal({ reason: 'cook' });
+                } else if (typeof openUpgradeFlow === 'function') {
+                    openUpgradeFlow({ reason: 'cook' });
                 }
             }
         }
@@ -110,7 +110,7 @@ function ensureCanCook(retry) {
     if (!isPaidUser()) {
         pendingAuthAction = typeof retry === 'function' ? retry : null;
         persistPipelineState(); // keep progress across Stripe redirect
-        showPricingModal({ reason: 'cook' });
+        openUpgradeFlow({ reason: 'cook' });
         return false;
     }
     if (isTrialUser() && (currentUser.credits || 0) <= 0) {
@@ -1002,14 +1002,83 @@ function hideLengthUpgradePrompt() {
 let _pricingBillingCycle = 'monthly';
 /** When true, checkout skips Stripe trial (charge today). Set by access chooser / used trial. */
 let _checkoutSkipTrial = false;
+/** Opts parked while the free-user access chooser is open (Upgrade → chooser → pricing). */
+let _pendingUpgradeOpts = null;
 
-/** Trial users must end trial early — Stripe checkout rejects active trials. */
+/** Free account that can still start a Stripe trial (not currently trialing). */
+function canStartFreeTrial() {
+    if (!currentUser) return false;
+    if (isTrialUser()) return false;
+    if ((currentUser.plan || 'free') !== 'free') return false;
+    return !currentUser.trial_used;
+}
+
+/**
+ * Single upgrade entry for nav / billing / feature gates.
+ *
+ * Matrix:
+ * - paid (non-trial) → credits top-up or Billing
+ * - on trial → plan picker that charges today (convert)
+ * - free + trial already used → plan picker, Subscribe now
+ * - free + trial available → access chooser (pay now vs free trial)
+ */
 function openUpgradeFlow(opts = {}) {
     if (!currentUser) { showAuthModal(); return; }
-    // One dialog for everyone. The old trial branch quoted a single price in a
-    // soft prompt before the real one, which added a step and named the wrong
-    // amount for anyone who then picked a different plan.
-    showPricingModal(opts);
+
+    // Paid subscribers: never show signup chooser / trial CTAs.
+    if (isPaidUser() && !isTrialUser()) {
+        const need = Math.max(1, Number(opts.need || 1));
+        const have = Math.max(0, Number(opts.have ?? currentUser.credits ?? 0));
+        if (opts.reason === 'credits' || have < need) {
+            showPricingModal({
+                ...opts,
+                reason: 'credits',
+                need,
+                have,
+            });
+            return;
+        }
+        try {
+            navigateTo('settings');
+            loadBillingPage();
+        } catch (_) {
+            showPricingModal({ reason: 'credits', need: 1, have });
+        }
+        return;
+    }
+
+    // Active trial → convert in place (button already says "Start plan").
+    if (isTrialUser()) {
+        showPricingModal({
+            ...opts,
+            reason: opts.reason || 'trial_convert',
+            trialMessage: opts.trialMessage
+                || 'Start your plan now — billed today. Cancel anytime.',
+        });
+        return;
+    }
+
+    // Free, trial already consumed → subscribe now only.
+    if (!canStartFreeTrial()) {
+        showPricingModal({
+            ...opts,
+            skipTrial: true,
+            reason: opts.reason || 'subscribe',
+            trialMessage: opts.trialMessage
+                || 'Your free trial was already used. Subscribe to keep creating — billed today.',
+        });
+        return;
+    }
+
+    // Free + trial still available → chooser (pay now vs trial).
+    _pendingUpgradeOpts = { ...opts };
+    try {
+        _track('upgrade_routed_to_chooser', {
+            reason: opts.reason || 'upgrade',
+            plan: currentUser.plan || 'free',
+        });
+    } catch (_) {}
+    maybeShowAccessChooser({ force: true });
 }
 
 function showPricingModal(opts = {}) {
@@ -2274,7 +2343,7 @@ function cookCreditCost() {
 function setImageQuality(q) {
     const next = q === 'high' ? 'high' : 'standard';
     if (next === 'high' && !canUseHighQuality()) {
-        showPricingModal({ reason: 'hq' });
+        openUpgradeFlow({ reason: 'hq' });
         return;
     }
     if (next === 'high') {
@@ -2480,7 +2549,7 @@ const cookingManager = {
                     const need = needMatch ? parseInt(needMatch[1], 10) : cookCreditCost();
                     showCreditsNeededModal({ need, have: currentUser?.credits ?? 0, reason: 'credits' });
                 }
-                else if (res.status === 402) { showPricingModal({ reason: 'cook' }); }
+                else if (res.status === 402) { openUpgradeFlow({ reason: 'cook' }); }
                 else if (res.status === 409) { alert(errMsg); }
                 else { alert(errMsg); }
                 throw new Error(errMsg);
@@ -3023,7 +3092,7 @@ async function startBuild() {
     }
     if (supportsImageQualityPicker() && state.imageQuality === 'high') {
         if (!canUseHighQuality()) {
-            showPricingModal({ reason: 'hq' });
+            openUpgradeFlow({ reason: 'hq' });
             return;
         }
         if (estMin > hqMaxMinutes() + 0.5) {
@@ -4746,7 +4815,12 @@ async function unlockResource(resourceId) {
                     reason: `This guide needs ${need} credits and you have ${have}.`,
                 });
             } else {
-                showPricingModal({ reason: 'credits', need, have });
+                openUpgradeFlow({
+                    reason: 'credits',
+                    need,
+                    have,
+                    trialMessage: `This guide needs ${need} credits. Start a plan to unlock it.`,
+                });
             }
             try { track('resource_unlock_blocked', { resource_id: id, need }); } catch (_) {}
             return;
@@ -5180,8 +5254,8 @@ function renderMcpSettings(data) {
         const steps = Array.isArray(data.howto) ? data.howto : [];
         howto.innerHTML = steps.map((s) => `<li>${escapeHtml(s)}</li>`).join('');
     }
+    const plan = String(data.plan || currentUser?.plan || 'free').toLowerCase();
     if (quota) {
-        const plan = (data.plan || 'free').toLowerCase();
         const lim = data.discovery_limits || data.free_limits || {};
         const trialLim = data.trial_limits || {};
         if (data.is_paid) {
@@ -5204,10 +5278,23 @@ function renderMcpSettings(data) {
                 + `Trial unlocks a larger limited library; paid unlocks the full database.`;
         }
     }
-    if (upgrade && data.upgrade_url) upgrade.href = data.upgrade_url;
+    if (upgrade) {
+        // Always route through the upgrade matrix (chooser / convert / subscribe).
+        upgrade.removeAttribute('href');
+        upgrade.setAttribute('role', 'button');
+        upgrade.onclick = (e) => {
+            try { e.preventDefault(); } catch (_) {}
+            openUpgradeFlow({ reason: 'mcp_settings' });
+        };
+        // Hide for true paid subscribers — they already have full MCP access.
+        const hideUpgrade = !!(data.is_paid) && !plan.endsWith('_trial');
+        upgrade.classList.toggle('hidden', hideUpgrade);
+    }
     const chooserBtn = document.getElementById('mcp-access-chooser-btn');
     if (chooserBtn) {
-        const showChooser = plan === 'free' && !currentUser?.trial_used;
+        // Chooser is only meaningful for free accounts that can still start a trial.
+        // (Upgrade link above already covers trial convert + subscribe-now.)
+        const showChooser = plan === 'free' && !currentUser?.trial_used && !data.is_paid && !data.is_trial;
         chooserBtn.classList.toggle('hidden', !showChooser);
     }
 }
@@ -6086,28 +6173,39 @@ function _markAccessChooserSeen() {
 function dismissAccessChooser() {
     _markAccessChooserSeen();
     hideAccessChooserModal();
+    _pendingUpgradeOpts = null;
     try { _track('access_chooser_dismissed', {}); } catch (_) {}
 }
 
 function chooseAccessPaid() {
+    const parked = _pendingUpgradeOpts || {};
+    _pendingUpgradeOpts = null;
     _markAccessChooserSeen();
     hideAccessChooserModal();
-    try { _track('access_chooser_paid', {}); } catch (_) {}
+    try { _track('access_chooser_paid', { reason: parked.reason || '' }); } catch (_) {}
     showPricingModal({
+        ...parked,
         skipTrial: true,
-        reason: 'access_chooser_paid',
-        trialMessage: 'Full niche database in Claude + Niche Finder. Billed today — cancel anytime.',
+        reason: parked.reason || 'access_chooser_paid',
+        trialMessage: parked.trialMessage
+            || 'Complete niche database in Claude, Niche Finder, and all recipes. Billed today — cancel anytime.',
+        afterEndTrial: parked.afterEndTrial,
     });
 }
 
 function chooseAccessTrial() {
+    const parked = _pendingUpgradeOpts || {};
+    _pendingUpgradeOpts = null;
     _markAccessChooserSeen();
     hideAccessChooserModal();
-    try { _track('access_chooser_trial', {}); } catch (_) {}
+    try { _track('access_chooser_trial', { reason: parked.reason || '' }); } catch (_) {}
     showPricingModal({
+        ...parked,
         skipTrial: false,
         reason: 'access_chooser_trial',
-        trialMessage: '7 days free with 15 niches in Claude and trial cooks. Upgrade anytime for the full library.',
+        trialMessage: parked.trialMessage
+            || '7 days free with 15 niches in Claude and trial cooks. Upgrade anytime for the full library.',
+        afterEndTrial: parked.afterEndTrial,
     });
 }
 
@@ -6175,9 +6273,9 @@ function loadBillingPage() {
             if (desc) desc.textContent = 'Your free trial was already used. Choose a plan to continue — billed immediately.';
             if (btn) btn.textContent = 'Choose a plan';
         } else {
-            if (title) title.textContent = 'Start your free trial';
-            if (desc) desc.textContent = '7 days free, then your chosen plan begins. Cancel anytime.';
-            if (btn) btn.textContent = 'Choose a plan';
+            if (title) title.textContent = 'Get full access or start a free trial';
+            if (desc) desc.textContent = 'Pay today for the full niche library, or explore with a 7-day free trial first.';
+            if (btn) btn.textContent = 'Choose how to start';
         }
     }
 }
@@ -6409,7 +6507,7 @@ function _sbRequirePlan(opts = {}) {
     if (!_sbRequireSignedIn()) return false;
     if (isAdminUser()) return true;
     if (!isPaidUser()) {
-        showPricingModal({ reason: opts.reason || 'storyboard' });
+        openUpgradeFlow({ reason: opts.reason || 'storyboard' });
         return false;
     }
     return true;
@@ -6425,7 +6523,7 @@ function _sbHandleBillingError(res, data, { needFallback = 1 } = {}) {
     }
     if (res.status === 402) {
         if (isTrialUser() && /plan|paid|trial|unlock|longer|cook/i.test(String(errMsg))) {
-            showPricingModal({ reason: 'storyboard', trialMessage: String(errMsg) });
+            openUpgradeFlow({ reason: 'storyboard', trialMessage: String(errMsg) });
             return true;
         }
         if (isPaidUser() && !isTrialUser()) {
@@ -6438,7 +6536,7 @@ function _sbHandleBillingError(res, data, { needFallback = 1 } = {}) {
             showTrialExhaustedModal();
             return true;
         }
-        showPricingModal({ reason: 'storyboard' });
+        openUpgradeFlow({ reason: 'storyboard' });
         return true;
     }
     return false;
@@ -7832,7 +7930,7 @@ async function startStoryboardPack(packMode = 'full', opts = {}) {
             showSoftPrompt(
                 `Trial packs max out at ${_sbPackMaxMinutes()} minutes. Start your plan to unlock longer storyboards.`,
                 'Start plan now',
-                () => { try { endTrialNow(); } catch (_) { showPricingModal({ reason: 'storyboard' }); } },
+                () => { try { endTrialNow(); } catch (_) { openUpgradeFlow({ reason: 'storyboard' }); } },
             );
             return;
         }

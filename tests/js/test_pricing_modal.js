@@ -78,7 +78,8 @@ function makeEnv({ plan = 'starter_trial', credits = 2, trialUsed = true } = {})
         track = (ev, props) => __calls.tracked.push([ev, props]);
         _doCheckout = (planKey) => { __calls.checkout.push(planKey); };
         updateAuthUI = () => {};
-        loadBillingPage = () => {};
+        loadBillingPage = () => { __calls.billingLoads = (__calls.billingLoads || 0) + 1; };
+        navigateTo = (page) => { __calls.nav = page; };
         showCelebration = () => {};
         loadIntegrations = () => {};
         window.alert = () => {};
@@ -97,6 +98,114 @@ console.log('\nPaid access chooser path skips trial CTA labels');
     });
     check('paid chooser heading is Full access', () => {
         has(doc.querySelector('#pricing-modal h2.cr-display')?.textContent || '', 'Full access', 'heading');
+    });
+}
+
+console.log('\nopenUpgradeFlow: free + trial available → access chooser');
+{
+    const { run, sandbox } = makeEnv({ plan: 'free', credits: 0, trialUsed: false });
+    run('openUpgradeFlow({ reason: "nav" })');
+    const doc = sandbox.document;
+    check('access chooser is shown', () => {
+        eq(doc.getElementById('access-chooser-modal').style.display, 'flex', 'display');
+    });
+    check('pricing stays closed until they pick a path', () => {
+        const pricing = doc.getElementById('pricing-modal');
+        eq(pricing.classList.contains('hidden') || pricing.style.display === 'none', true, 'pricing closed');
+    });
+    check('upgrade opts are parked for the chooser', () => {
+        eq(run('_pendingUpgradeOpts && _pendingUpgradeOpts.reason'), 'nav', 'parked reason');
+    });
+    check('canStartFreeTrial is true', () => {
+        eq(run('canStartFreeTrial()'), true, 'canStartFreeTrial');
+    });
+}
+
+console.log('\nopenUpgradeFlow: free + trial_used → Subscribe now (no chooser)');
+{
+    const { run, sandbox } = makeEnv({ plan: 'free', credits: 0, trialUsed: true });
+    run('openUpgradeFlow({ reason: "billing" })');
+    const doc = sandbox.document;
+    check('pricing opens directly', () => {
+        eq(doc.getElementById('pricing-modal').style.display, 'flex', 'pricing display');
+    });
+    check('access chooser stays closed', () => {
+        const chooser = doc.getElementById('access-chooser-modal');
+        eq(chooser.classList.contains('hidden') || chooser.style.display === 'none', true, 'chooser closed');
+    });
+    check('CTAs say Subscribe now', () => {
+        has(doc.getElementById('pricing-cta-starter').textContent, 'Subscribe now', 'starter CTA');
+    });
+    check('checkout will skip Stripe trial', () => {
+        eq(run('!!_checkoutSkipTrial'), true, 'skipTrial');
+    });
+}
+
+console.log('\nopenUpgradeFlow: active trial → convert pricing (no chooser)');
+{
+    const { run, sandbox } = makeEnv({ plan: 'starter_trial', credits: 2, trialUsed: true });
+    run('openUpgradeFlow({ reason: "nav" })');
+    const doc = sandbox.document;
+    check('pricing opens for convert', () => {
+        eq(doc.getElementById('pricing-modal').style.display, 'flex', 'pricing display');
+    });
+    check('access chooser stays closed', () => {
+        const chooser = doc.getElementById('access-chooser-modal');
+        eq(chooser.classList.contains('hidden') || chooser.style.display === 'none', true, 'chooser closed');
+    });
+    check('CTA names the charge today', () => {
+        has(doc.getElementById('pricing-cta-starter').textContent, '$27 today', 'starter CTA');
+    });
+    check('canStartFreeTrial is false while on trial', () => {
+        eq(run('canStartFreeTrial()'), false, 'canStartFreeTrial');
+    });
+}
+
+console.log('\nopenUpgradeFlow: paid non-trial → Billing, not trial chooser');
+{
+    const { run, calls, sandbox } = makeEnv({ plan: 'starter', credits: 10, trialUsed: true });
+    run('openUpgradeFlow({ reason: "billing" })');
+    check('navigates to settings/billing', () => {
+        eq(calls.nav, 'settings', 'nav');
+        eq(calls.billingLoads, 1, 'billing load');
+    });
+    check('does not open access chooser', () => {
+        const chooser = sandbox.document.getElementById('access-chooser-modal');
+        eq(chooser.classList.contains('hidden') || chooser.style.display === 'none', true, 'chooser closed');
+    });
+}
+
+console.log('\nChooser paid path keeps parked reason and skipTrial');
+{
+    const { run, sandbox } = makeEnv({ plan: 'free', credits: 0, trialUsed: false });
+    run('openUpgradeFlow({ reason: "cook" })');
+    run('chooseAccessPaid()');
+    const doc = sandbox.document;
+    check('chooser closes', () => {
+        const chooser = doc.getElementById('access-chooser-modal');
+        eq(chooser.classList.contains('hidden') || chooser.style.display === 'none', true, 'chooser closed');
+    });
+    check('pricing opens with Subscribe now', () => {
+        eq(doc.getElementById('pricing-modal').style.display, 'flex', 'pricing');
+        has(doc.getElementById('pricing-cta-starter').textContent, 'Subscribe now', 'CTA');
+    });
+    check('skipTrial is set for checkout', () => {
+        eq(run('!!_checkoutSkipTrial'), true, 'skipTrial');
+    });
+}
+
+console.log('\nChooser trial path keeps Start free trial CTAs');
+{
+    const { run, sandbox } = makeEnv({ plan: 'free', credits: 0, trialUsed: false });
+    run('openUpgradeFlow({ reason: "cook" })');
+    run('chooseAccessTrial()');
+    const doc = sandbox.document;
+    check('pricing opens with Start free trial', () => {
+        eq(doc.getElementById('pricing-modal').style.display, 'flex', 'pricing');
+        has(doc.getElementById('pricing-cta-starter').textContent, 'Start free trial', 'CTA');
+    });
+    check('skipTrial is off', () => {
+        eq(run('!!_checkoutSkipTrial'), false, 'skipTrial');
     });
 }
 
