@@ -1,0 +1,26 @@
+{
+  "id": "ranking_countdown",
+  "name": "Ranking & Countdown",
+  "tagline": "Viral 9:16 ranking shorts from your clips",
+  "description": "Upload clips, trim the best moments, add a title and numbered labels, then cook a vertical ranking Short — the format behind parkour moments and countdown channels.",
+  "category": "Short-form",
+  "difficulty": "Beginner",
+  "rpm_range": "$0.5 - $4",
+  "demand": "High",
+  "recipe": "ranking_countdown",
+  "format": "short",
+  "default_voice": "leo",
+  "default_minutes": 1,
+  "max_free_minutes": 1,
+  "max_paid_minutes": 3,
+  "style_preset": "viral",
+  "thumbnail_style": "Bold vertical ranking short thumbnail with big yellow numbers, black title bar, high-energy action still",
+  "example_topics": [
+    "Top 5 parkour fails",
+    "Ranking the craziest jumps",
+    "Worst to best clutch moments"
+  ],
+  "color": "#FACC15",
+  "preview_gif": "/static/previews/ranking_countdown.gif",
+  "status": "new"
+}

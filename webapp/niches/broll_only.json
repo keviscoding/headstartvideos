@@ -20,5 +20,6 @@
     "The secret history of everyday objects"
   ],
   "color": "#10B981",
-  "preview_gif": "/static/previews/broll_only.gif"
+  "preview_gif": "/static/previews/broll_only.gif",
+  "format": "long"
 }

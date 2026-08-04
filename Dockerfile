@@ -2,6 +2,8 @@ FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
+    libass9 \
+    fonts-dejavu-core \
     git \
     && rm -rf /var/lib/apt/lists/*
 

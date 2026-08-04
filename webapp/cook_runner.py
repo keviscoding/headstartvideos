@@ -23,6 +23,7 @@ _COST_PENCE_PER_MIN = {
     "storyboard_pack": 8.0,
     "storyboard_assemble": 4.0,
     "storyboard_animate": 25.0,
+    "ranking_countdown": 6.0,
 }
 
 
@@ -143,6 +144,14 @@ def run_cook_job(
         )
     if recipe == "storyboard_animate":
         return _run_storyboard_animate_job(
+            job_id,
+            job,
+            track=track,
+            capture_error=capture_error,
+            cancel_check=cancel_check,
+        )
+    if recipe == "ranking_countdown":
+        return _run_ranking_countdown_job(
             job_id,
             job,
             track=track,
@@ -1467,3 +1476,206 @@ def _run_storyboard_animate_job(
             "error_class": type(e).__name__,
         })
         print(f"[sb-animate] job {job_id} failed: {e}")
+
+
+def _run_ranking_countdown_job(
+    job_id: str,
+    job: dict[str, Any],
+    *,
+    track: Callable[..., None] | None = None,
+    capture_error: Callable[..., None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+) -> None:
+    """Download ranking clips from Spaces, assemble 9:16 short on Fly/web."""
+    from webapp.database import update_cook_job, create_video, refund_credits
+    from webapp import storage
+    from webapp.storage import fetch_to_local
+    from core.ranking_pipeline import run_ranking_pipeline
+
+    def _track(uid, event, props=None):
+        if track:
+            track(uid, event, props)
+
+    def _capture(exc, ctx=None):
+        if capture_error:
+            capture_error(exc, ctx)
+
+    req_data = job.get("request") or {}
+    user_id = job.get("user_id")
+    started_at = time.time()
+    job["status"] = "running"
+    credits_charged = int(req_data.get("credits_charged") or 0)
+    title_obj = req_data.get("title") if isinstance(req_data.get("title"), dict) else {}
+    title_text = (title_obj.get("text") or req_data.get("title_text") or "Ranking").strip()
+    style_preset = (req_data.get("style_preset") or "viral").strip().lower()
+    layout = req_data.get("layout") if isinstance(req_data.get("layout"), dict) else {}
+    clips_meta = req_data.get("clips") if isinstance(req_data.get("clips"), list) else []
+    clips_zip_url = (req_data.get("clips_zip_url") or "").strip()
+
+    _progress_persist_at = [0.0]
+
+    def on_progress(msg: str, phase: str = "running"):
+        if job.get("status") == "cancelled" or (cancel_check and cancel_check()):
+            job["status"] = "cancelled"
+            raise RuntimeError("Cancelled by user")
+        job["progress"].append({"time": time.time(), "message": msg, "phase": phase})
+        now = time.time()
+        if now - _progress_persist_at[0] >= 2.0:
+            _progress_persist_at[0] = now
+            try:
+                update_cook_job(
+                    job_id,
+                    status=job.get("status"),
+                    progress_json=json.dumps(job["progress"][-60:]),
+                    heartbeat=True,
+                )
+            except Exception as e:
+                print(f"[ranking] persist progress failed: {e}")
+
+    def _refund():
+        if credits_charged > 0 and user_id:
+            try:
+                refund_credits(int(user_id), credits_charged)
+            except Exception as e:
+                print(f"[ranking] refund failed: {e}")
+
+    try:
+        update_cook_job(job_id, status="running", started=True, heartbeat=True)
+        work = ROOT / "output" / "ranking" / job_id
+        work.mkdir(parents=True, exist_ok=True)
+        clips_dir = work / "clips"
+        clips_dir.mkdir(parents=True, exist_ok=True)
+
+        on_progress("Loading clips…")
+        if clips_zip_url:
+            zip_local = fetch_to_local(clips_zip_url, work)
+            import zipfile as _zf
+            with _zf.ZipFile(zip_local, "r") as zf:
+                zf.extractall(clips_dir)
+
+        resolved: list[dict[str, Any]] = []
+        for i, meta in enumerate(clips_meta):
+            if not isinstance(meta, dict):
+                continue
+            filename = (meta.get("filename") or "").strip()
+            url = (meta.get("url") or "").strip()
+            local = clips_dir / filename if filename else None
+            if local and local.is_file():
+                path = local
+            elif url:
+                path = Path(fetch_to_local(url, clips_dir))
+            elif filename:
+                # Direct Spaces key /api/files path may be in filename field as url
+                cand = clips_dir / Path(filename).name
+                if not cand.is_file():
+                    raise FileNotFoundError(f"Clip not found after extract: {filename}")
+                path = cand
+            else:
+                raise ValueError(f"Clip {i + 1} missing filename/url")
+            resolved.append({
+                "path": str(path),
+                "number": int(meta.get("number") or (len(clips_meta) - i)),
+                "label": (meta.get("label") or f"#{i + 1}").strip(),
+                "startTime": float(meta.get("startTime") or 0),
+                "endTime": meta.get("endTime"),
+            })
+
+        if not resolved:
+            raise RuntimeError("No clips available to assemble")
+
+        on_progress(f"Assembling {len(resolved)} clip ranking…")
+        result = run_ranking_pipeline(
+            clips=resolved,
+            title=title_obj if title_obj else {"text": title_text},
+            style_preset=style_preset,
+            layout=layout,
+            work_dir=work,
+            output_name=f"{job_id}_ranking.mp4",
+            progress_callback=lambda m: on_progress(m),
+        )
+
+        video_local = result["output_path"]
+        video_url = ""
+        try:
+            video_url = storage.store_file(
+                video_local,
+                f"ranking/{user_id or 'anon'}/{int(time.time())}_{job_id}.mp4",
+                "video/mp4",
+            )
+        except Exception as e:
+            print(f"[ranking] Spaces upload failed: {e}")
+            if not Path(video_local).is_file():
+                raise
+            try:
+                video_url = f"/api/files/{os.path.relpath(str(video_local), str(ROOT))}"
+            except Exception:
+                video_url = ""
+
+        video_id = None
+        if user_id and video_url:
+            try:
+                video_id = create_video(
+                    user_id=int(user_id),
+                    title=title_text or "Ranking short",
+                    recipe="ranking_countdown",
+                    video_url=video_url,
+                    thumbnail_url="",
+                )
+            except Exception as rec_err:
+                print(f"[ranking] create_video failed: {rec_err}")
+
+        notify_email = (req_data.get("notify_email") or "").strip()
+        if notify_email and video_url:
+            try:
+                from webapp.email_service import send_video_ready
+                send_video_ready(notify_email, title_text or "Your ranking short", video_url)
+            except Exception as email_err:
+                print(f"[ranking] notify email failed: {email_err}")
+
+        payload = {
+            "video_url": video_url,
+            "duration": result.get("duration"),
+            "clip_count": result.get("clip_count"),
+            "video_id": video_id,
+            "width": result.get("width"),
+            "height": result.get("height"),
+        }
+        job["status"] = "complete"
+        job["result"] = payload
+        update_cook_job(
+            job_id,
+            status="complete",
+            result_json=json.dumps(payload),
+            finished=True,
+        )
+        _track(user_id or "anon", "ranking_cook_succeeded", {
+            "job_id": job_id,
+            "clip_count": len(resolved),
+            "duration_sec": round(time.time() - started_at, 1),
+            "credits_charged": credits_charged,
+        })
+        on_progress("Ranking short ready!", phase="complete")
+        print(f"[ranking] job {job_id} complete → {video_url}")
+    except Exception as e:
+        if "Cancelled" in str(e):
+            job["status"] = "cancelled"
+            job["error"] = "Cancelled by user"
+            _refund()
+            try:
+                update_cook_job(job_id, status="cancelled", error=job["error"], finished=True)
+            except Exception:
+                pass
+            return
+        job["status"] = "error"
+        job["error"] = str(e)
+        _refund()
+        _capture(e, {"job_id": job_id, "recipe": "ranking_countdown", "user_id": user_id})
+        try:
+            update_cook_job(job_id, status="error", error=str(e), finished=True)
+        except Exception:
+            pass
+        _track(user_id or "anon", "ranking_cook_failed", {
+            "job_id": job_id,
+            "error_class": type(e).__name__,
+        })
+        print(f"[ranking] job {job_id} failed: {e}")

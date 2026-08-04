@@ -61,6 +61,16 @@ RECIPES = {
         "inputs": ["script", "topic"],
         "settings": ["target_minutes", "style"],
     },
+    "ranking_countdown": {
+        "pipeline": "ranking",
+        "label": "Ranking & Countdown",
+        "description": "Short-form 9:16 ranking videos — upload clips, trim, "
+                       "add title + numbered labels, assemble on Fly.",
+        "requires_keys": [],
+        "optional_keys": [],
+        "inputs": ["clips", "title"],
+        "settings": ["style_preset"],
+    },
 }
 
 

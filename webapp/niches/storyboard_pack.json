@@ -1,8 +1,8 @@
 {
   "id": "storyboard_pack",
   "name": "Storyboard Pack",
-  "tagline": "Any story → scene stills + image-to-video prompts",
-  "description": "Turn your own story or script into numbered scene stills and motion prompts you can batch into Kling, Seedance, Wan, or any image-to-video tool. Bring your cast — we keep looks consistent.",
+  "tagline": "Any story \u2192 scene stills + image-to-video prompts",
+  "description": "Turn your own story or script into numbered scene stills and motion prompts you can batch into Kling, Seedance, Wan, or any image-to-video tool. Bring your cast \u2014 we keep looks consistent.",
   "category": "Animation & Story",
   "difficulty": "Beginner",
   "rpm_range": "$3 - $10",
@@ -21,5 +21,6 @@
   ],
   "color": "#E8A838",
   "preview_gif": "/static/previews/storyboard_pack.gif",
-  "status": "new"
+  "status": "new",
+  "format": "long"
 }

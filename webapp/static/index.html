@@ -6,7 +6,7 @@
     <title>ChannelRecipe — Proven recipes for faceless YouTube channels</title>
     <link rel="icon" href="/static/favicon.svg">
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="/static/styles.css?v=20260804a">
+    <link rel="stylesheet" href="/static/styles.css?v=20260804b">
     <script>
         tailwind.config = {
             theme: {
@@ -188,6 +188,17 @@
                     <div class="step-line"></div>
                     <div class="step-indicator" data-sb-step="5"><div class="step-dot" onclick="goToCompletedStep('sb-assemble')">5</div><span class="step-label">Cook</span></div>
                 </div>
+                <div class="flex items-center justify-between hidden" id="stepper-ranking">
+                    <div class="step-indicator" data-rk-step="1"><div class="step-dot active" onclick="goToCompletedStep(1)">1</div><span class="step-label">Recipe</span></div>
+                    <div class="step-line"></div>
+                    <div class="step-indicator" data-rk-step="2"><div class="step-dot" onclick="goToCompletedStep('rk-upload')">2</div><span class="step-label">Clips</span></div>
+                    <div class="step-line"></div>
+                    <div class="step-indicator" data-rk-step="3"><div class="step-dot" onclick="goToCompletedStep('rk-trim')">3</div><span class="step-label">Trim</span></div>
+                    <div class="step-line"></div>
+                    <div class="step-indicator" data-rk-step="4"><div class="step-dot" onclick="goToCompletedStep('rk-title')">4</div><span class="step-label">Title</span></div>
+                    <div class="step-line"></div>
+                    <div class="step-indicator" data-rk-step="5"><div class="step-dot" onclick="goToCompletedStep('rk-cook')">5</div><span class="step-label">Cook</span></div>
+                </div>
             </div>
         </div>
 
@@ -199,7 +210,116 @@
                         <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Pick your first recipe</h2>
                         <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">Each one is proven on a real channel. A new recipe drops every week.</p>
                     </div>
+                    <div class="rk-form-toggle" role="group" aria-label="Video format">
+                        <button type="button" class="rk-form-btn is-active" data-form="long" onclick="setRecipeFormFilter('long')">Long-form</button>
+                        <button type="button" class="rk-form-btn" data-form="short" onclick="setRecipeFormFilter('short')">Short-form</button>
+                    </div>
                     <div id="niche-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+                </div>
+            </section>
+
+            <!-- Ranking: Upload clips -->
+            <section id="step-rk-upload" class="step-panel hidden">
+                <div class="cr-panel">
+                    <div class="mb-6">
+                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Upload your clips</h2>
+                        <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">
+                            Drop vertical clips for your ranking Short. Highest number plays first; #1 lands last.
+                        </p>
+                    </div>
+                    <div id="rk-upload-zone" class="rk-upload-zone">
+                        <p style="font-weight:700;margin-bottom:6px;">Drop clips here or click to browse</p>
+                        <p style="font-size:13px;color:var(--app-ink-3);">MP4 / MOV / WEBM · up to 120MB each</p>
+                        <input id="rk-file-input" type="file" accept="video/*" multiple hidden>
+                    </div>
+                    <div id="rk-clip-list" class="rk-clip-list" style="margin-top:16px;"></div>
+                    <div class="flex gap-3 mt-6" style="justify-content:flex-end;">
+                        <button type="button" class="btn-secondary" onclick="goToStep(1)">Back</button>
+                        <button type="button" id="rk-btn-to-trim" class="btn-primary" onclick="rkGoTrim()" disabled>Next: Trim</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Ranking: Trim -->
+            <section id="step-rk-trim" class="step-panel hidden">
+                <div class="cr-panel">
+                    <div class="mb-4">
+                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Trim &amp; label</h2>
+                        <p id="rk-trim-meta" style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">Clip 1</p>
+                    </div>
+                    <div class="rk-trim-layout">
+                        <div>
+                            <video id="rk-trim-video" class="rk-trim-video" playsinline controls></video>
+                            <div class="rk-trim-controls">
+                                <label>In <input id="rk-trim-in" type="number" min="0" step="0.1" class="cr-input" style="width:90px;display:inline-block;"></label>
+                                <label>Out <input id="rk-trim-out" type="number" min="0" step="0.1" class="cr-input" style="width:90px;display:inline-block;"></label>
+                                <label style="flex:1;">Label <input id="rk-trim-label" type="text" class="cr-input" placeholder="e.g. Roof gap"></label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="flex gap-3 mt-6" style="justify-content:space-between;flex-wrap:wrap;">
+                        <button type="button" class="btn-secondary" onclick="goToStep('rk-upload')">Back</button>
+                        <div class="flex gap-3">
+                            <button type="button" id="rk-btn-trim-prev" class="btn-secondary" onclick="rkTrimPrev()">Previous clip</button>
+                            <button type="button" id="rk-btn-trim-next" class="btn-primary" onclick="rkTrimNext()">Next clip</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Ranking: Title + cook -->
+            <section id="step-rk-title" class="step-panel hidden">
+                <div class="cr-panel">
+                    <div class="mb-6">
+                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Title &amp; order</h2>
+                        <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">
+                            Pick a viral title, style, and clip order — then cook on Fly.
+                        </p>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label class="cr-label" for="rk-title-text">Video title</label>
+                            <input id="rk-title-text" class="cr-input" placeholder="Top 5 Parkour Moments" maxlength="80">
+                            <label class="cr-label" for="rk-title-hl" style="margin-top:12px;">Highlight word (optional)</label>
+                            <input id="rk-title-hl" class="cr-input" placeholder="Parkour" maxlength="40">
+                            <div style="margin-top:14px;">
+                                <span class="cr-label">Style</span>
+                                <div class="rk-style-row">
+                                    <button type="button" class="rk-style-btn is-active" data-style="viral" onclick="rkSetStyle('viral')">Viral</button>
+                                    <button type="button" class="rk-style-btn" data-style="classic" onclick="rkSetStyle('classic')">Classic</button>
+                                </div>
+                            </div>
+                            <p id="rk-trial-badge" class="cr-mono" style="font-size:12px;color:var(--app-ink-3);margin-top:14px;"></p>
+                        </div>
+                        <div>
+                            <span class="cr-label">Playback order (top = first)</span>
+                            <div id="rk-order-list" class="rk-order-list"></div>
+                        </div>
+                    </div>
+                    <div class="flex gap-3 mt-6" style="justify-content:flex-end;flex-wrap:wrap;">
+                        <button type="button" class="btn-secondary" onclick="goToStep('rk-trim')">Back</button>
+                        <button type="button" id="rk-btn-assemble" class="btn-primary" onclick="rkAssemble()">
+                            <span class="btn-text">Cook ranking short</span>
+                            <span class="btn-loading hidden"><span class="cr-spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;"></span> Queuing…</span>
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Ranking: result / cook progress lives in cooking bar; keep a light panel -->
+            <section id="step-rk-cook" class="step-panel hidden">
+                <div class="cr-panel" style="text-align:center;padding:40px 24px;">
+                    <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Cooking your Short</h2>
+                    <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 8px; margin-bottom: 20px;">
+                        Assembling on Fly — watch the cooking bar for live progress.
+                    </p>
+                    <div id="rk-result-wrap" class="hidden">
+                        <video id="rk-result-video" class="rk-result-video" controls playsinline></video>
+                        <div class="flex gap-3 mt-4" style="justify-content:center;">
+                            <a id="rk-result-download" class="btn-primary" href="#" download>Download</a>
+                            <button type="button" class="btn-secondary" onclick="rkStartOver()">Make another</button>
+                        </div>
+                    </div>
                 </div>
             </section>
 
@@ -1854,7 +1974,8 @@
         </div>
     </div>
 
-    <script src="/static/cr-telemetry.js?v=20260804a"></script>
-    <script src="/static/app.js?v=20260804a"></script>
+    <script src="/static/cr-telemetry.js?v=20260804b"></script>
+    <script src="/static/ranking.js?v=20260804b"></script>
+    <script src="/static/app.js?v=20260804b"></script>
 </body>
 </html>

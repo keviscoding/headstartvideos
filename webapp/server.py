@@ -456,6 +456,7 @@ from webapp.database import (
     create_cook_job, update_cook_job, get_cook_job,
     list_user_active_cooks, count_user_active_cooks,
     count_user_storyboard_packs, list_user_active_storyboard_packs,
+    count_user_ranking_cooks,
     cook_queue_stats, announce_queued_jobs,
     set_user_heygen_key, get_user_heygen_key, user_heygen_status,
     set_user_atlas_key, get_user_atlas_key, user_atlas_status,
@@ -2058,8 +2059,294 @@ async def get_niches(request: Request):
             niche["status"] = niche.get("status") or "new"
             niche["available"] = True
             niche.pop("requires_trial", None)
+        if not niche.get("format"):
+            niche["format"] = "short" if (niche.get("recipe") or niche.get("id")) == "ranking_countdown" else "long"
         niches.append(niche)
     return niches
+
+
+class RankingAssembleRequest(BaseModel):
+    clips: list[dict]
+    title: dict | None = None
+    layout: dict | None = None
+    style_preset: str = "viral"
+    notify_email: str = ""
+
+
+@app.get("/api/ranking/access")
+async def ranking_access(user: dict = Depends(require_user)):
+    """Trial quota remaining for Ranking & Countdown cooks."""
+    from webapp.ranking_billing import (
+        is_trial_plan, is_paid_plan, trial_ranking_allowed, ranking_credit_cost,
+    )
+    plan = user.get("plan") or "free"
+    is_admin = _is_admin_email(user.get("email", ""))
+    used = count_user_ranking_cooks(int(user["id"])) if user.get("id") else 0
+    limit = int(getattr(config, "RANKING_TRIAL_COOK_LIMIT", 2) or 2)
+    trial = is_trial_plan(plan)
+    paid = is_paid_plan(plan, is_admin=is_admin)
+    free_left = max(0, limit - used) if trial else 0
+    cost = ranking_credit_cost(
+        is_trial=trial,
+        cooks_used=used,
+        trial_limit=limit,
+        is_admin=is_admin,
+        paid_cost=int(getattr(config, "RANKING_CREDIT_COST", 1) or 1),
+    )
+    return {
+        "can_cook": paid,
+        "is_trial": trial,
+        "ranking_used": used,
+        "ranking_limit": limit,
+        "ranking_free_left": free_left if trial else None,
+        "credit_cost": cost,
+        "trial_allowed": trial_ranking_allowed(
+            cooks_used=used, trial_limit=limit, is_trial=trial, is_admin=is_admin,
+        ) if trial else True,
+    }
+
+
+@app.post("/api/ranking/upload")
+async def ranking_upload(file: UploadFile = File(...), user: dict = Depends(require_user)):
+    """Upload a ranking clip; staged to Spaces for Fly cooks."""
+    allowed = {".mp4", ".mov", ".webm", ".mkv", ".m4v"}
+    ext = Path(file.filename or "clip.mp4").suffix.lower()
+    if ext not in allowed:
+        raise HTTPException(400, f"Unsupported format '{ext}'. Use MP4, MOV, or WEBM.")
+    content = await file.read()
+    if len(content) > 120 * 1024 * 1024:
+        raise HTTPException(400, "Clip too large (max 120MB).")
+    if len(content) < 1000:
+        raise HTTPException(400, "File looks empty.")
+
+    out_dir = OUTPUT_DIR / "ranking_uploads" / str(user["id"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fname = f"{int(time.time())}_{uuid.uuid4().hex[:8]}{ext}"
+    local = out_dir / fname
+    local.write_bytes(content)
+
+    # Probe duration / size via ffprobe
+    duration = 0.0
+    width = height = 0
+    try:
+        from core.ranking_pipeline import probe_video
+        info = probe_video(local)
+        duration = float(info.get("duration") or 0)
+        width = int(info.get("width") or 0)
+        height = int(info.get("height") or 0)
+    except Exception as e:
+        print(f"[ranking] probe failed: {e}")
+
+    path_for_cook, url = _stage_user_media(str(local), user["id"], "ranking_clip", "video/mp4")
+    return {
+        "success": True,
+        "filename": fname,
+        "url": path_for_cook if str(path_for_cook).startswith("http") else url,
+        "browser_url": url,
+        "duration": duration,
+        "width": width,
+        "height": height,
+    }
+
+
+@app.post("/api/ranking/assemble")
+async def ranking_assemble(req: RankingAssembleRequest, user: dict = Depends(require_active_plan)):
+    """Queue a ranking_countdown cook on Fly (or web) after trial/credit gate."""
+    from webapp.ranking_billing import (
+        is_trial_plan, trial_ranking_allowed, ranking_credit_cost,
+    )
+
+    clips = [c for c in (req.clips or []) if isinstance(c, dict)]
+    if len(clips) < 1:
+        raise HTTPException(400, "Add at least one clip before assembling.")
+    if len(clips) > 20:
+        raise HTTPException(400, "Maximum 20 clips per ranking video.")
+
+    is_admin = _is_admin_email(user.get("email", ""))
+    plan = user.get("plan") or "free"
+    trial = is_trial_plan(plan)
+    used = count_user_ranking_cooks(int(user["id"]))
+    limit = int(getattr(config, "RANKING_TRIAL_COOK_LIMIT", 2) or 2)
+    paid_cost = int(getattr(config, "RANKING_CREDIT_COST", 1) or 1)
+
+    if trial and not is_admin and not trial_ranking_allowed(
+        cooks_used=used, trial_limit=limit, is_trial=True, is_admin=False,
+    ):
+        raise HTTPException(
+            402,
+            detail={
+                "code": "ranking_trial_exhausted",
+                "message": (
+                    f"You've used your {limit} free ranking shorts. "
+                    "Upgrade to keep cooking."
+                ),
+                "ranking_used": used,
+                "ranking_limit": limit,
+            },
+        )
+
+    credit_cost = ranking_credit_cost(
+        is_trial=trial,
+        cooks_used=used,
+        trial_limit=limit,
+        is_admin=is_admin,
+        paid_cost=paid_cost,
+    )
+
+    _enforce_user_cook_slot(user)
+
+    # Bundle clips for Fly: zip any local files; prefer remote URLs in payload.
+    stamp = int(time.time())
+    stage = OUTPUT_DIR / "ranking_assemble" / str(user["id"]) / f"{stamp}_{uuid.uuid4().hex[:8]}"
+    stage.mkdir(parents=True, exist_ok=True)
+    clip_payload = []
+    local_files: list[Path] = []
+
+    for i, c in enumerate(clips):
+        filename = (c.get("filename") or "").strip()
+        url = (c.get("url") or "").strip()
+        label = (c.get("label") or f"#{len(clips) - i}").strip()
+        number = int(c.get("number") or (len(clips) - i))
+        start = float(c.get("startTime") or 0)
+        end = c.get("endTime")
+        # Resolve local upload if still on disk
+        local = OUTPUT_DIR / "ranking_uploads" / str(user["id"]) / filename if filename else None
+        if local and local.is_file():
+            local_files.append(local)
+            if not url or not url.startswith("http"):
+                try:
+                    path_for_cook, browser = _stage_user_media(
+                        str(local), user["id"], "ranking_clip", "video/mp4",
+                    )
+                    url = path_for_cook if str(path_for_cook).startswith("http") else browser
+                except Exception as e:
+                    print(f"[ranking] restage clip failed: {e}")
+        clip_payload.append({
+            "filename": filename or Path(url).name,
+            "url": url,
+            "number": number,
+            "label": label,
+            "startTime": start,
+            "endTime": end,
+            "originalDuration": c.get("originalDuration"),
+        })
+
+    clips_zip_url = ""
+    if local_files:
+        import zipfile as _zf
+        zip_path = stage / "clips_bundle.zip"
+        try:
+            with _zf.ZipFile(zip_path, "w", _zf.ZIP_DEFLATED) as zf:
+                for p in local_files:
+                    zf.write(p, arcname=p.name)
+            if zip_path.is_file() and zip_path.stat().st_size > 200:
+                clips_zip_url = storage.store_file(
+                    str(zip_path),
+                    f"ranking/{user['id']}/assemble_clips_{stamp}.zip",
+                )
+        except Exception as e:
+            print(f"[ranking] clips zip failed: {e}")
+            if not COOK_ON_WEB and not any(
+                (c.get("url") or "").startswith("http") for c in clip_payload
+            ):
+                raise HTTPException(500, "Could not stage clips for Fly cook. Check storage.")
+
+    credit_deducted = False
+    if credit_cost > 0:
+        if not deduct_credits(user["id"], credit_cost):
+            raise HTTPException(
+                402,
+                detail={
+                    "code": "credits",
+                    "message": f"Need {credit_cost} credit(s) to cook this ranking short.",
+                    "need": credit_cost,
+                    "have": user.get("credits"),
+                },
+            )
+        credit_deducted = True
+
+    job_id = str(uuid.uuid4())
+    title_obj = req.title if isinstance(req.title, dict) else {"text": str(req.title or "Ranking")}
+    req_payload = {
+        "recipe": "ranking_countdown",
+        "clips": clip_payload,
+        "clips_zip_url": clips_zip_url,
+        "title": title_obj,
+        "layout": req.layout or {},
+        "style_preset": (req.style_preset or "viral").strip().lower(),
+        "credits_charged": credit_cost,
+        "is_trial": trial,
+        "notify_email": (req.notify_email or "").strip() or (user.get("email") or ""),
+    }
+    try:
+        create_cook_job(
+            job_id=job_id,
+            user_id=user["id"],
+            recipe="ranking_countdown",
+            title=(title_obj.get("text") or "Ranking")[:120],
+            request_json=json.dumps(req_payload),
+            credit_deducted=credit_deducted,
+            lite_mode=False,
+            status="web_queued" if COOK_ON_WEB else "queued",
+        )
+    except Exception as e:
+        print(f"[ranking] create_cook_job failed: {e}")
+        if credit_deducted:
+            try:
+                add_credits(user["id"], credit_cost)
+            except Exception:
+                pass
+        raise HTTPException(500, "Could not queue ranking cook.")
+
+    job = {
+        "status": "queued",
+        "progress": [{"time": time.time(), "message": "Queued ranking short…", "phase": "queued"}],
+        "result": None,
+        "request": req_payload,
+        "user_id": user["id"],
+        "credit_deducted": credit_deducted,
+        "error": "",
+        "created_at": time.time(),
+    }
+    _jobs[job_id] = job
+
+    if COOK_ON_WEB:
+        job_queue.enqueue(job_id)
+    else:
+        if COOK_ON_FLY:
+            try:
+                from webapp.fly_bridge import spawn_cook as fly_spawn
+                if fly_spawn(job_id):
+                    job["progress"].append({
+                        "time": time.time(),
+                        "message": "Starting your cook on Fly…",
+                        "phase": "queued",
+                    })
+                else:
+                    print(f"[ranking] Fly spawn failed for {job_id}")
+            except Exception as e:
+                print(f"[ranking] Fly bridge error: {e}")
+        try:
+            update_cook_job(job_id, progress_json=json.dumps(job["progress"]), status="queued")
+        except Exception:
+            pass
+
+    track(user["id"], "ranking_assemble_queued", {
+        "job_id": job_id,
+        "clip_count": len(clip_payload),
+        "credits": credit_cost,
+        "is_trial": trial,
+        "style_preset": req_payload["style_preset"],
+        "cook_on_fly": bool(COOK_ON_FLY),
+    })
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "credits_charged": credit_cost,
+        "ranking_used": used + 1,
+        "ranking_limit": limit,
+        "using_trial": credit_cost == 0 and trial,
+    }
 
 
 # ---------------------------------------------------------------------------

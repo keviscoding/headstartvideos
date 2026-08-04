@@ -25,5 +25,6 @@
     "The morning routine of ultra-successful people"
   ],
   "color": "#F59E0B",
-  "preview_gif": "/static/previews/avatar_plus_broll.gif"
+  "preview_gif": "/static/previews/avatar_plus_broll.gif",
+  "format": "long"
 }

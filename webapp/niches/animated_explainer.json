@@ -20,5 +20,6 @@
     "The forgotten kingdom that ruled half of Africa"
   ],
   "color": "#3B82F6",
-  "preview_gif": "/static/previews/animated_explainer.gif"
+  "preview_gif": "/static/previews/animated_explainer.gif",
+  "format": "long"
 }

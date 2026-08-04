@@ -450,8 +450,10 @@ document.addEventListener('click', (e) => {
 // ---------------------------------------------------------------------------
 function syncPipelineChrome() {
     const sb = isStoryboardRecipe();
-    document.getElementById('stepper-default')?.classList.toggle('hidden', sb);
+    const rk = typeof isRankingRecipe === 'function' ? isRankingRecipe() : ((state.nicheData?.recipe || state.niche) === 'ranking_countdown');
+    document.getElementById('stepper-default')?.classList.toggle('hidden', sb || rk);
     document.getElementById('stepper-storyboard')?.classList.toggle('hidden', !sb);
+    document.getElementById('stepper-ranking')?.classList.toggle('hidden', !rk);
 
     const heading = document.getElementById('step2-heading');
     const sub = document.getElementById('step2-sub');
@@ -475,6 +477,25 @@ function syncPipelineChrome() {
 
 function updateStepperActive(n) {
     const sb = isStoryboardRecipe();
+    const rk = typeof isRankingRecipe === 'function' ? isRankingRecipe() : ((state.nicheData?.recipe || state.niche) === 'ranking_countdown');
+    if (rk) {
+        let active = 1;
+        if (n === 'rk-upload') active = 2;
+        else if (n === 'rk-trim') active = 3;
+        else if (n === 'rk-title') active = 4;
+        else if (n === 'rk-cook') active = 5;
+        document.querySelectorAll('#stepper-ranking .step-indicator').forEach(ind => {
+            const s = parseInt(ind.dataset.rkStep);
+            const dot = ind.querySelector('.step-dot');
+            dot.classList.remove('active', 'done');
+            if (s < active) dot.classList.add('done');
+            else if (s === active) dot.classList.add('active');
+        });
+        document.querySelectorAll('#stepper-ranking .step-line').forEach((line, i) => {
+            line.classList.toggle('done', i < active - 1);
+        });
+        return;
+    }
     if (sb) {
         let active = 1;
         if (n === 'sb-cast') active = 2;
@@ -525,6 +546,10 @@ function goToStep(n) {
     else if (n === 'sb-cast') panelId = 'step-sb-cast';
     else if (n === 'sb-pack') panelId = 'step-sb-pack';
     else if (n === 'sb-assemble') panelId = 'step-sb-assemble';
+    else if (n === 'rk-upload') panelId = 'step-rk-upload';
+    else if (n === 'rk-trim') panelId = 'step-rk-trim';
+    else if (n === 'rk-title') panelId = 'step-rk-title';
+    else if (n === 'rk-cook') panelId = 'step-rk-cook';
     else panelId = `step-${n}`;
     const panel = document.getElementById(panelId);
     if (panel) {
@@ -553,9 +578,11 @@ function goToStep(n) {
         _sbSyncAnimateUI();
     }
     if (n === 'sb-pack') _sbSyncBoardCookControls();
+    if (n === 'rk-upload' && typeof rkInitUploadUI === 'function') rkInitUploadUI();
+    if (n === 'rk-title' && typeof rkRefreshAccess === 'function') rkRefreshAccess();
 
     if (typeof n === 'number' && n >= 2) persistPipelineState();
-    if (typeof n === 'string' && (n === 'storyboard' || String(n).startsWith('sb-'))) {
+    if (typeof n === 'string' && (n === 'storyboard' || String(n).startsWith('sb-') || String(n).startsWith('rk-'))) {
         persistPipelineState();
     }
     try {
@@ -569,6 +596,12 @@ function goToStep(n) {
 }
 
 function goToCompletedStep(n) {
+    if (n === 'rk-upload' || n === 'rk-trim' || n === 'rk-title' || n === 'rk-cook') {
+        const isRk = typeof isRankingRecipe === 'function' ? isRankingRecipe() : ((state.nicheData?.recipe || state.niche) === 'ranking_countdown');
+        if (!isRk) return;
+        goToStep(n);
+        return;
+    }
     if (n === 'sb-cast' || n === 'storyboard' || n === 'sb-pack' || n === 'sb-assemble') {
         if (!isStoryboardRecipe()) return;
         if (n === 'storyboard' || n === 'sb-pack' || n === 'sb-assemble') {
@@ -747,6 +780,17 @@ function resetPipeline() {
 
 // ---------------------------------------------------------------------------
 // Step 1: Niches
+let _recipeFormFilter = 'long'; // 'long' | 'short'
+
+function setRecipeFormFilter(form) {
+    _recipeFormFilter = form === 'short' ? 'short' : 'long';
+    document.querySelectorAll('.rk-form-btn').forEach((b) => {
+        b.classList.toggle('is-active', b.dataset.form === _recipeFormFilter);
+    });
+    loadNiches();
+}
+window.setRecipeFormFilter = setRecipeFormFilter;
+
 // ---------------------------------------------------------------------------
 async function loadNiches() {
     try {
@@ -755,7 +799,17 @@ async function loadNiches() {
         const grid = document.getElementById('niche-grid');
         grid.innerHTML = '';
 
-        niches.forEach(niche => {
+        const filtered = (niches || []).filter((niche) => {
+            const fmt = (niche.format || ((niche.recipe || niche.id) === 'ranking_countdown' ? 'short' : 'long'));
+            return fmt === _recipeFormFilter;
+        });
+
+        if (!filtered.length) {
+            grid.innerHTML = `<p style="color:var(--app-ink-3);font-size:14px;grid-column:1/-1;">No ${_recipeFormFilter}-form recipes yet.</p>`;
+            return;
+        }
+
+        filtered.forEach(niche => {
             const card = document.createElement('div');
             const unavailable = niche.available === false || niche.status === 'coming_soon';
             card.className = unavailable ? 'niche-card niche-card--soon' : 'niche-card';
@@ -769,6 +823,10 @@ async function loadNiches() {
                 : niche.status === 'proven'
                 ? `<span class="status-chip proven"><svg width="11" height="11" viewBox="0 0 12 12"><path d="M1 9 L4 5 L6.5 7 L11 1" fill="none" stroke="var(--success)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Proven</span>`
                 : `<span class="status-chip new">New</span>`;
+            const isSb = (niche.recipe || niche.id) === 'storyboard_pack';
+            const isRk = (niche.recipe || niche.id) === 'ranking_countdown';
+            const durLabel = isRk ? '~30–90s · 9:16' : (isSb ? 'Up to 25 min' : '~15 min');
+            const creditLabel = isRk ? '2 free on trial' : (isSb ? 'Pack + cook credits' : '1 credit');
             card.innerHTML = `
                 ${previewHtml}
                 <svg class="fold-play" width="40" height="40" viewBox="0 0 40 40" aria-hidden="true">
@@ -780,9 +838,9 @@ async function loadNiches() {
                     <h3 style="font-family: var(--font-display); font-weight: 800; font-size: 22px; line-height: 1.3; letter-spacing: -0.01em; color: var(--app-ink); max-width: 88%; margin-bottom: 6px;">${niche.name}</h3>
                     <p style="font-family: var(--font-body); font-size: 15px; line-height: 1.5; color: var(--app-ink-2); margin-bottom: 12px;">${niche.tagline || niche.description || ''}</p>
                     <div style="display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin-top: auto; font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.01em; color: var(--app-ink-3);">
-                        <span>${(niche.recipe || niche.id) === 'storyboard_pack' ? 'Up to 25 min' : '~15 min'}</span>
+                        <span>${durLabel}</span>
                         <span style="opacity: 0.5;">·</span>
-                        <span>${(niche.recipe || niche.id) === 'storyboard_pack' ? 'Pack + cook credits' : '1 credit'}</span>
+                        <span>${creditLabel}</span>
                         <span style="opacity: 0.5;">·</span>
                         <span>RPM ${niche.rpm_range || 'N/A'}</span>
                     </div>
@@ -829,6 +887,11 @@ function selectNiche(niche, card) {
 
     if ((niche.recipe || niche.id) === 'storyboard_pack') {
         setTimeout(() => goToStep('sb-cast'), 200);
+        return;
+    }
+    if ((niche.recipe || niche.id) === 'ranking_countdown') {
+        if (typeof rkResetState === 'function') rkResetState();
+        setTimeout(() => goToStep('rk-upload'), 200);
         return;
     }
     setTimeout(() => goToStep(2), 300);
@@ -4785,6 +4848,7 @@ const RECIPE_LABELS = {
     storyboard_pack: 'Storyboard Pack',
     storyboard_assemble: 'Storyboard Assemble',
     storyboard_animate: 'Storyboard Video',
+    ranking_countdown: 'Ranking & Countdown',
     cinematic: 'Cinematic',
     avatar: 'Avatar',
     documentary: 'Documentary',
@@ -4903,6 +4967,10 @@ function isAvatarRecipe() {
 
 function isStoryboardRecipe() {
     return (state.nicheData?.recipe || state.niche) === 'storyboard_pack';
+}
+
+function isRankingRecipe() {
+    return (state.nicheData?.recipe || state.niche) === 'ranking_countdown';
 }
 
 function renderHeygenStatus(status) {
