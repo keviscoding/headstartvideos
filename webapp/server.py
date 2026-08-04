@@ -3087,7 +3087,12 @@ async def list_active_cooks(request: Request):
     out = []
     for j in jobs:
         recipe = (j.get("recipe") or "")
-        kind = "storyboard" if recipe.startswith("storyboard_") else "pipeline"
+        if recipe.startswith("storyboard_"):
+            kind = "storyboard"
+        elif recipe == "ranking_countdown":
+            kind = "ranking"
+        else:
+            kind = "pipeline"
         progress = j.get("progress") or []
         last = ""
         if isinstance(progress, list) and progress:
@@ -3487,9 +3492,18 @@ async def build_result(job_id: str, request: Request):
         if user and row.get("user_id") != user["id"]:
             raise HTTPException(403, "Access denied")
         if row["status"] != "complete":
+            last = ""
+            try:
+                prog = json.loads(row.get("progress_json") or "[]")
+                if isinstance(prog, list) and prog:
+                    last_item = prog[-1]
+                    last = last_item.get("message") if isinstance(last_item, dict) else str(last_item)
+            except Exception:
+                prog = []
             return {
                 "status": row["status"],
-                "progress": 0,
+                "progress": len(prog) if isinstance(prog, list) else 0,
+                "last_message": last,
                 **_queue_info_for(job_id),
             }
         try:
@@ -3499,9 +3513,15 @@ async def build_result(job_id: str, request: Request):
     if user and job.get("user_id") != user["id"]:
         raise HTTPException(403, "Access denied")
     if job["status"] != "complete":
+        last = ""
+        prog = job.get("progress") or []
+        if isinstance(prog, list) and prog:
+            last_item = prog[-1]
+            last = last_item.get("message") if isinstance(last_item, dict) else str(last_item)
         return {
             "status": job["status"],
-            "progress": len(job["progress"]),
+            "progress": len(prog) if isinstance(prog, list) else 0,
+            "last_message": last,
             **_queue_info_for(job_id),
         }
     return job["result"]

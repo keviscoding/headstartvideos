@@ -1661,6 +1661,7 @@ def _run_ranking_countdown_job(
 
         payload = {
             "video_url": video_url,
+            "output_url": video_url,
             "duration": result.get("duration"),
             "clip_count": result.get("clip_count"),
             "video_id": video_id,

@@ -1361,6 +1361,7 @@ _VIDEO_COOK_RECIPES = (
     "avatar_plus_broll",
     "storyboard_animate",
     "storyboard_assemble",
+    "ranking_countdown",
 )
 _ACTIVE_COOK_STATUSES = ("queued", "web_queued", "running")
 

@@ -1040,9 +1040,13 @@ async function rkAssemble() {
         try { track('ranking_assemble_started', { job_id: data.job_id, clips: n }); } catch (_) {}
         goToStep('rk-cook');
         document.getElementById('rk-result-wrap')?.classList.add('hidden');
-        if (cookingManager?.adoptStoryboard) {
+        if (cookingManager?.adoptRanking) {
+            cookingManager.adoptRanking(data.job_id, titleText);
+        } else if (cookingManager?.adoptStoryboard) {
+            // Fallback for older cached app.js
             cookingManager.adoptStoryboard(data.job_id, titleText);
             cookingManager.kind = 'ranking';
+            try { cookingManager._persist(); cookingManager._connect(); } catch (_) {}
         }
         rkPollResult(data.job_id);
     } catch (_) {
@@ -1053,23 +1057,48 @@ async function rkAssemble() {
 }
 
 async function rkPollResult(jobId) {
+    if (!jobId) return;
     const wrap = document.getElementById('rk-result-wrap');
     const video = document.getElementById('rk-result-video');
     const dl = document.getElementById('rk-result-download');
-    for (let i = 0; i < 180; i++) {
+    for (let i = 0; i < 240; i++) {
         await new Promise((r) => setTimeout(r, 2000));
         try {
             const res = await fetch(`/api/build/${encodeURIComponent(jobId)}/result`);
             if (!res.ok) continue;
             const data = await readJson(res, {});
-            const url = data.video_url || data.result?.video_url;
+            if (data.last_message && cookingManager?.jobId === jobId) {
+                const statusEl = document.getElementById('cooking-bar-status');
+                if (statusEl && typeof _friendlyProgress === 'function') {
+                    statusEl.textContent = _friendlyProgress(data.last_message).substring(0, 60);
+                } else if (statusEl) {
+                    statusEl.textContent = String(data.last_message).substring(0, 60);
+                }
+            }
+            const url = data.video_url || data.output_url || data.result?.video_url || data.result?.output_url;
             if (url) {
                 if (wrap) wrap.classList.remove('hidden');
                 if (video) video.src = url;
                 if (dl) { dl.href = url; dl.download = 'ranking-short.mp4'; }
+                if (cookingManager?.jobId === jobId) {
+                    cookingManager.result = { ...data, output_url: url, video_url: url };
+                    cookingManager._clear();
+                    cookingManager._hideCookingBar();
+                }
+                try { if (typeof loadHistory === 'function') loadHistory(); } catch (_) {}
+                try { if (typeof refreshUserData === 'function') refreshUserData(); } catch (_) {}
                 return;
             }
-            if (data.status === 'error' || data.status === 'cancelled') return;
+            if (data.status === 'error' || data.status === 'cancelled') {
+                if (cookingManager?.jobId === jobId) {
+                    cookingManager._clear();
+                    cookingManager._hideCookingBar();
+                }
+                if (data.status === 'error') {
+                    alert(data.error || 'Ranking cook failed.');
+                }
+                return;
+            }
         } catch (_) {}
     }
 }

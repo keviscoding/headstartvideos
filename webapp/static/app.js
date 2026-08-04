@@ -531,6 +531,13 @@ function updateStepperActive(n) {
 
 function goToStep(n) {
     if (typeof n === 'number' && !Number.isFinite(n)) n = 1;
+    // Ranking shorts never use long-form steps 2–6 (script / voice / Ready to cook).
+    const isRk = typeof isRankingRecipe === 'function'
+        ? isRankingRecipe()
+        : ((state.nicheData?.recipe || state.niche) === 'ranking_countdown');
+    if (isRk && typeof n === 'number' && n >= 2) {
+        n = (cookingManager?.kind === 'ranking' && cookingManager?.jobId) ? 'rk-cook' : 'rk-upload';
+    }
     if (n === 'sb-assemble') {
         const reason = _sbBoardCookBlockReason();
         if (reason) {
@@ -2211,6 +2218,7 @@ async function regenerateThumbnails() {
 // Step 6: Build
 // ---------------------------------------------------------------------------
 function populateBuildSummary() {
+    if (typeof isRankingRecipe === 'function' && isRankingRecipe()) return;
     document.getElementById('summary-niche').textContent = state.nicheData?.name || state.niche;
     document.getElementById('summary-title').textContent = state.title;
     const wc = state.script.split(/\s+/).length;
@@ -2314,6 +2322,13 @@ function syncImageQualityUI() {
 function _friendlyProgress(raw) {
     if (/Queued/i.test(raw) || /You're next/i.test(raw)) return raw;
     if (/Starting your cook/i.test(raw)) return 'Starting your cook...';
+    if (/Loading clips/i.test(raw)) return 'Loading clips...';
+    if (/Normaliz/i.test(raw)) return 'Preparing clips...';
+    if (/Burning ranking|Burning.*overlay/i.test(raw)) return 'Burning overlay...';
+    if (/Mixing commentary/i.test(raw)) return 'Mixing commentary...';
+    if (/Ranking short ready|Generating AI commentary/i.test(raw)) {
+        return /commentary/i.test(raw) ? 'Writing commentary...' : 'Ranking short ready!';
+    }
     if (/Uploading your video/i.test(raw)) return 'Uploading your video...';
     if (/Saving thumbnail/i.test(raw)) return 'Saving thumbnail...';
     if (/Saving to your library/i.test(raw)) return 'Saving to your library...';
@@ -2354,7 +2369,12 @@ function _estimateCookPercent(raw, msgCount) {
     const r = raw || '';
     if (/Queued|You're next/i.test(r)) return 2;
     if (/Starting your cook/i.test(r)) return 5;
-    if (/Done!|Saving to your library/i.test(r)) return 97;
+    if (/Loading clips/i.test(r)) return 12;
+    if (/Normaliz|Preparing clips|Clip \d+/i.test(r)) return 30;
+    if (/Concatenat/i.test(r)) return 45;
+    if (/Burning|overlay/i.test(r)) return 65;
+    if (/Mixing commentary|commentary/i.test(r)) return 80;
+    if (/Ranking short ready|Done!|Saving to your library/i.test(r)) return 97;
     if (/Uploading your video|Saving thumbnail|Upload slow/i.test(r)) return 92;
     if (/Total (cinematic )?pipeline|Assembly complete|Assembled/i.test(r)) return 85;
     if (/Assembling|Building your video|Concatenat/i.test(r)) return 70;
@@ -2477,6 +2497,21 @@ const cookingManager = {
         }
     },
 
+    /** Track a ranking short cook so the sticky bar survives refresh. */
+    adoptRanking(jobId, title) {
+        if (!jobId) return;
+        this.jobId = jobId;
+        this.title = title || 'your ranking short';
+        this.kind = 'ranking';
+        this.result = null;
+        this.activeCount = Math.max(1, this.activeCount);
+        this._persist();
+        this._showCookingBar();
+        const statusEl = document.getElementById('cooking-bar-status');
+        if (statusEl) statusEl.textContent = 'Starting your ranking short…';
+        this._connect();
+    },
+
     /** Track a storyboard animate/assemble cook so the sticky bar survives refresh. */
     adoptStoryboard(jobId, title) {
         if (!jobId) return;
@@ -2564,22 +2599,34 @@ const cookingManager = {
             }
             closeThis();
             this.result = safeJsonParse(e.data);
-            if (!this.result || !this.result.output_url) {
+            const outUrl = this.result?.output_url || this.result?.video_url;
+            if (!this.result || !outUrl) {
                 this._reattach();
                 return;
             }
+            this.result.output_url = outUrl;
+            const finishedKind = this.kind;
             this._clear();
-            state.videoUrl = this.result.output_url;
+            state.videoUrl = outUrl;
             state.videoPath = this.result.output_path;
             this._hideCookingBar();
             const pctEl = document.getElementById('progress-pct');
             if (progressBar) progressBar.style.width = '100%';
             if (pctEl) pctEl.textContent = '100%';
 
-            // Always surface the finished video on the Cook step
             if (state.page !== 'pipeline') navigateTo('pipeline');
-            if (state.step !== 6) goToStep(6);
-            setTimeout(() => showUploadKit(this.result), 400);
+            if (finishedKind === 'ranking') {
+                goToStep('rk-cook');
+                const wrap = document.getElementById('rk-result-wrap');
+                const video = document.getElementById('rk-result-video');
+                const dl = document.getElementById('rk-result-download');
+                if (wrap) wrap.classList.remove('hidden');
+                if (video) video.src = outUrl;
+                if (dl) { dl.href = outUrl; dl.download = 'ranking-short.mp4'; }
+            } else {
+                if (state.step !== 6) goToStep(6);
+                setTimeout(() => showUploadKit(this.result), 400);
+            }
             try { loadHistory(); } catch (_) {}
             refreshUserData();
         });
@@ -2670,6 +2717,8 @@ const cookingManager = {
             this._persist();
             if (this.kind === 'storyboard') {
                 this._reattachStoryboard(pick.last_message || '');
+            } else if (this.kind === 'ranking') {
+                this._reattachRanking(pick.last_message || '');
             } else {
                 this._reattach();
             }
@@ -2709,6 +2758,18 @@ const cookingManager = {
         }
     },
 
+    _reattachRanking(lastMessage) {
+        this._showCookingBar();
+        if (lastMessage) {
+            const statusEl = document.getElementById('cooking-bar-status');
+            if (statusEl) statusEl.textContent = _friendlyProgress(lastMessage).substring(0, 60);
+        }
+        this._connect();
+        if (typeof rkPollResult === 'function') {
+            rkPollResult(this.jobId);
+        }
+    },
+
     // Check the job's real state, then either finish, stop, or reconnect the
     // live stream. Shared by page-load restore and transient SSE reconnects.
     async _reattach() {
@@ -2721,6 +2782,10 @@ const cookingManager = {
         }
         if (this.kind === 'storyboard') {
             this._reattachStoryboard('');
+            return;
+        }
+        if (this.kind === 'ranking') {
+            this._reattachRanking('');
             return;
         }
         let res;
@@ -2741,15 +2806,28 @@ const cookingManager = {
         }
 
         const data = await res.json();
-        if (data && data.output_url) {
+        const outUrl = data && (data.output_url || data.video_url);
+        if (outUrl) {
             this.result = data;
-            state.videoUrl = data.output_url;
+            this.result.output_url = outUrl;
+            state.videoUrl = outUrl;
             state.videoPath = data.output_path;
+            const finishedKind = this.kind;
             this._clear();
             this._hideCookingBar();
             if (state.page !== 'pipeline') navigateTo('pipeline');
-            if (state.step !== 6) goToStep(6);
-            showUploadKit(data);
+            if (finishedKind === 'ranking') {
+                goToStep('rk-cook');
+                const wrap = document.getElementById('rk-result-wrap');
+                const video = document.getElementById('rk-result-video');
+                const dl = document.getElementById('rk-result-download');
+                if (wrap) wrap.classList.remove('hidden');
+                if (video) video.src = outUrl;
+                if (dl) { dl.href = outUrl; dl.download = 'ranking-short.mp4'; }
+            } else {
+                if (state.step !== 6) goToStep(6);
+                showUploadKit(data);
+            }
             try { loadHistory(); } catch (_) {}
             return;
         }
@@ -2767,6 +2845,9 @@ const cookingManager = {
                     ? `Queued — position ${data.queue_position} (~${wait} min)`
                     : `Queued (~${wait} min)`;
             }
+        } else if (data && data.last_message) {
+            const statusEl = document.getElementById('cooking-bar-status');
+            if (statusEl) statusEl.textContent = _friendlyProgress(data.last_message).substring(0, 60);
         }
         this._showCookingBar();
         this._connect();
@@ -2795,6 +2876,8 @@ const cookingManager = {
                 ? 'Stills generating…'
                 : this.kind === 'storyboard'
                 ? 'Starting your cook…'
+                : this.kind === 'ranking'
+                ? 'Starting your ranking short…'
                 : 'Joining cook queue...';
         }
         if (bar) bar.classList.remove('hidden');
@@ -2825,6 +2908,11 @@ const cookingManager = {
             }
             return;
         }
+        if (this.kind === 'ranking') {
+            navigateTo('pipeline');
+            goToStep('rk-cook');
+            return;
+        }
         navigateTo('pipeline');
         goToStep(6);
         document.getElementById('build-start').classList.add('hidden');
@@ -2834,6 +2922,19 @@ const cookingManager = {
     viewResult() {
         dismissToast();
         navigateTo('pipeline');
+        if (this.kind === 'ranking') {
+            goToStep('rk-cook');
+            const url = this.result?.output_url || this.result?.video_url || state.videoUrl;
+            if (url) {
+                const wrap = document.getElementById('rk-result-wrap');
+                const video = document.getElementById('rk-result-video');
+                const dl = document.getElementById('rk-result-download');
+                if (wrap) wrap.classList.remove('hidden');
+                if (video) video.src = url;
+                if (dl) { dl.href = url; dl.download = 'ranking-short.mp4'; }
+            }
+            return;
+        }
         goToStep(6);
         if (this.result) showUploadKit(this.result);
     },
@@ -2875,6 +2976,10 @@ function dismissToast() {
 }
 
 async function startBuild() {
+    if (typeof isRankingRecipe === 'function' && isRankingRecipe()) {
+        goToStep('rk-title');
+        return;
+    }
     if (!ensureCanCook(startBuild)) return;
     const cap = effectiveMinuteCap();
     const words = (state.script || '').trim().split(/\s+/).filter(Boolean).length;
@@ -5567,6 +5672,7 @@ function restorePipelineState() {
 
     // Storyboard steps are strings — never run them through Math.min/max (that became NaN
     // and left Recipe empty / unclickable after Stripe trial redirect).
+    const isRkStep = typeof rawStep === 'string' && String(rawStep).startsWith('rk-');
     if (draft.sbJobId) {
         try { _sbJobId = draft.sbJobId; } catch (_) {}
     }
@@ -5575,6 +5681,10 @@ function restorePipelineState() {
     }
     if (draft.sbAssembleJobId) {
         try { _sbAssembleJobId = draft.sbAssembleJobId; } catch (_) {}
+    }
+    if (isRkStep) {
+        goToStep(rawStep);
+        return true;
     }
     if (isSbStep) {
         goToStep(rawStep);
