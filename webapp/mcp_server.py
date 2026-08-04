@@ -219,7 +219,7 @@ def list_niches(ctx: Context | None = None) -> str:
     stats = _library_stats()
     limit = billing.discovery_niche_limit(plan)
     niches = stats["niches"][:limit]
-    free_capped = not billing.is_paid_plan(plan)
+    capped = billing.discovery_capped(plan)
     payload = billing.with_upgrade_hint(
         {
             "niches": niches,
@@ -228,17 +228,24 @@ def list_niches(ctx: Context | None = None) -> str:
             "limit": limit,
             "status": "ok" if niches else "empty_library",
         },
-        free_capped=free_capped,
+        free_capped=capped,
+        plan=plan,
     )
     if not niches:
         payload["note"] = (
             "Niche library is empty — seed has not run in this environment yet."
         )
-    elif free_capped:
-        payload["note"] = (
-            f"Free taste: showing {limit} niche(s) of {stats['total_channels']} channels in the library. "
-            "Upgrade to unlock the full live niche database in Claude."
-        )
+    elif capped:
+        if billing.is_trial_plan(plan):
+            payload["note"] = (
+                f"Trial library: showing {limit} niche(s). "
+                "Upgrade for the full live niche database in Claude + Niche Finder in the app."
+            )
+        else:
+            payload["note"] = (
+                f"Free taste: showing {limit} niche(s) of {stats['total_channels']} channels in the library. "
+                "Upgrade to unlock the full live niche database in Claude."
+            )
     return json.dumps(payload, default=str)
 
 
@@ -271,7 +278,7 @@ def list_niche_subjects(
 
     from core.niche_subjects import list_subjects_from_channels
     subjects = list_subjects_from_channels(channels, limit=subj_limit)
-    free_capped = not billing.is_paid_plan(plan)
+    capped = billing.discovery_capped(plan)
     payload = billing.with_upgrade_hint(
         {
             "status": "ok",
@@ -285,11 +292,13 @@ def list_niche_subjects(
                 "editions) — not one-off cheat-code fluff."
             ),
         },
-        free_capped=free_capped,
+        free_capped=capped,
+        plan=plan,
     )
-    if free_capped:
+    if capped:
+        label = "Trial" if billing.is_trial_plan(plan) else "Free tutorial"
         payload["note"] = (
-            f"Free tutorial view: top {subj_limit} subjects. "
+            f"{label} view: top {subj_limit} subjects. "
             "Upgrade for the full ranked list and coverage vs your channel."
         )
     return json.dumps(payload, default=str)
@@ -317,7 +326,7 @@ def list_niche_channels(
     rows = _channels_for_niche(requested, limit=limit)
     if not rows:
         return json.dumps(_empty_niche_payload(requested, plan=plan), default=str)
-    free_capped = not billing.is_paid_plan(plan)
+    capped = billing.discovery_capped(plan)
     cards = []
     for ch in rows:
         recent = ch.get("recent_videos") or []
@@ -337,11 +346,13 @@ def list_niche_channels(
             "limit": limit,
             "plan": plan,
         },
-        free_capped=free_capped,
+        free_capped=capped,
+        plan=plan,
     )
-    if free_capped:
+    if capped:
+        label = "Trial" if billing.is_trial_plan(plan) else "Free tutorial"
         payload["note"] = (
-            f"Free tutorial view: {limit} channels. "
+            f"{label} view: {limit} channels. "
             "Upgrade for the full Niche Finder library."
         )
     return json.dumps(payload, default=str)

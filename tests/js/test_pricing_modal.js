@@ -87,6 +87,19 @@ function makeEnv({ plan = 'starter_trial', credits = 2, trialUsed = true } = {})
     return { dom, sandbox, calls, run };
 }
 
+console.log('\nPaid access chooser path skips trial CTA labels');
+{
+    const { run, sandbox } = makeEnv({ plan: 'free', credits: 0, trialUsed: false });
+    run('showPricingModal({ skipTrial: true, reason: "access_chooser_paid" })');
+    const doc = sandbox.document;
+    check('paid chooser shows Subscribe now', () => {
+        has(doc.getElementById('pricing-cta-starter')?.textContent || '', 'Subscribe now', 'starter CTA');
+    });
+    check('paid chooser heading is Full access', () => {
+        has(doc.querySelector('#pricing-modal h2.cr-display')?.textContent || '', 'Full access', 'heading');
+    });
+}
+
 console.log('\nTrial user sees both plans, with the real charge on the button');
 {
     const { run, sandbox } = makeEnv({ plan: 'starter_trial' });

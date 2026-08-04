@@ -357,6 +357,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     else if (restored) navigateTo('pipeline');
 
     maybeShowWelcomeCelebration();
+    // Free users who never picked paid vs trial (once per account via localStorage).
+    setTimeout(() => {
+        try {
+            if (document.getElementById('celebration-modal')?.style.display === 'flex') return;
+        } catch (_) {}
+        maybeShowAccessChooser();
+    }, 600);
 });
 
 // ---------------------------------------------------------------------------
@@ -1000,6 +1007,8 @@ function hideLengthUpgradePrompt() {
 }
 
 let _pricingBillingCycle = 'monthly';
+/** When true, checkout skips Stripe trial (charge today). Set by access chooser / used trial. */
+let _checkoutSkipTrial = false;
 
 /** Trial users must end trial early — Stripe checkout rejects active trials. */
 function openUpgradeFlow(opts = {}) {
@@ -1015,6 +1024,7 @@ function showPricingModal(opts = {}) {
     // Reset every time so a callback from an earlier, abandoned prompt cannot
     // fire against whatever the customer is doing now.
     _afterUpgradeAction = typeof opts.afterEndTrial === 'function' ? opts.afterEndTrial : null;
+    _checkoutSkipTrial = !!opts.skipTrial;
     const modal = document.getElementById('pricing-modal');
     if (!modal) return;
     modal.classList.remove('hidden');
@@ -1034,7 +1044,7 @@ function showPricingModal(opts = {}) {
     const starterBtn = document.getElementById('pricing-cta-starter');
     const dailyBtn = document.getElementById('pricing-cta-daily');
     // trial_used is set when a trial *starts* — only treat as spent if they're not on trial now
-    const usedTrial = !!currentUser.trial_used && !isTrialUser();
+    const usedTrial = (!!currentUser.trial_used && !isTrialUser()) || _checkoutSkipTrial;
     const need = Math.max(1, Number(opts.need || 1));
     const have = Math.max(0, Number(opts.have ?? currentUser.credits ?? 0));
     const paidSubscriber = isPaidUser() && !isTrialUser();
@@ -1117,6 +1127,18 @@ function showPricingModal(opts = {}) {
     if (opts.reason === 'hq' && !paidSubscriber) {
         if (heading) heading.textContent = 'Unlock high-quality stills';
         if (subtitle) subtitle.textContent = 'High quality stills are on paid plans. Subscribe to use them.';
+    } else if (_checkoutSkipTrial && !isTrialUser()) {
+        if (heading) heading.textContent = 'Full access';
+        if (subtitle) {
+            subtitle.textContent = opts.trialMessage
+                || 'Full niche database in Claude + Niche Finder. Billed today — cancel anytime.';
+        }
+    } else if (opts.reason === 'access_chooser_trial' && !usedTrial) {
+        if (heading) heading.textContent = 'Start free trial';
+        if (subtitle) {
+            subtitle.textContent = opts.trialMessage
+                || '7 days with a limited niche database in Claude (5 niches) and limited cooks. Upgrade anytime for the full library.';
+        }
     } else if (opts.reason === 'storyboard' && !usedTrial) {
         if (heading) heading.textContent = 'Ready to build your storyboard';
         if (subtitle) {
@@ -1156,7 +1178,7 @@ function _refreshPricingCtas() {
         if (dailyBtn) dailyBtn.textContent = `Start Daily — ${planChargeToday('daily', cycle)} today`;
         return;
     }
-    const usedTrial = !!(currentUser && currentUser.trial_used) && !isTrialUser();
+    const usedTrial = (!!(currentUser && currentUser.trial_used) && !isTrialUser()) || !!_checkoutSkipTrial;
     const ctaText = usedTrial ? 'Subscribe now' : 'Start free trial';
     if (starterBtn) starterBtn.textContent = ctaText;
     if (dailyBtn) dailyBtn.textContent = ctaText;
@@ -1619,7 +1641,7 @@ async function _doCheckout(plan = 'monthly') {
         const res = await fetch('/api/billing/checkout', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ plan }),
+            body: JSON.stringify({ plan, skip_trial: !!_checkoutSkipTrial }),
         });
         let data;
         try { data = await res.json(); } catch (_) { data = {}; }
@@ -5166,19 +5188,35 @@ function renderMcpSettings(data) {
         howto.innerHTML = steps.map((s) => `<li>${escapeHtml(s)}</li>`).join('');
     }
     if (quota) {
-        const lim = data.free_limits || {};
         const plan = (data.plan || 'free').toLowerCase();
-        if (plan === 'free') {
+        const lim = data.discovery_limits || data.free_limits || {};
+        const trialLim = data.trial_limits || {};
+        if (data.is_paid) {
+            quota.textContent = `You’re on ${plan} — full niche library access in Claude.`;
+        } else if (data.is_trial || plan.endsWith('_trial')) {
+            quota.textContent =
+                `Free trial niche library in Claude: up to `
+                + `${lim.niches || trialLim.niches || 5} niches, `
+                + `${lim.subjects || trialLim.subjects || 8} subjects, `
+                + `${lim.channels || trialLim.channels || 8} channels `
+                + `(+ ${lim.scripts || 1} script / ${lim.thumbnails || 1} thumb). `
+                + `Upgrade for the full live database + Niche Finder.`;
+        } else {
+            const freeLim = data.free_limits || lim;
             quota.textContent =
                 `Free plan includes a short sample `
-                + `(${lim.subjects || 3} subjects, ${lim.channels || 2} channels, `
-                + `${lim.scripts || 1} script, ${lim.thumbnails || 1} thumbnail). `
-                + `Upgrade anytime for the full library.`;
-        } else {
-            quota.textContent = `You’re on ${plan} — full library access in Claude.`;
+                + `(${freeLim.niches || 1} niche, ${freeLim.subjects || 3} subjects, `
+                + `${freeLim.channels || 2} channels, `
+                + `${freeLim.scripts || 1} script, ${freeLim.thumbnails || 1} thumbnail). `
+                + `Trial unlocks a larger limited library; paid unlocks the full database.`;
         }
     }
     if (upgrade && data.upgrade_url) upgrade.href = data.upgrade_url;
+    const chooserBtn = document.getElementById('mcp-access-chooser-btn');
+    if (chooserBtn) {
+        const showChooser = plan === 'free' && !currentUser?.trial_used;
+        chooserBtn.classList.toggle('hidden', !showChooser);
+    }
 }
 
 async function loadMcpSettings() {
@@ -6002,6 +6040,9 @@ async function authVerifyCode() {
             const action = pendingAuthAction;
             pendingAuthAction = null;
             setTimeout(action, 150);
+        } else {
+            // New / free users: choose paid full access (default) vs limited trial.
+            setTimeout(() => maybeShowAccessChooser({ forceNew: !!data.is_new }), 200);
         }
     } catch (e) {
         document.getElementById('auth-code-error').textContent = e.message;
@@ -6010,6 +6051,69 @@ async function authVerifyCode() {
         btn.disabled = false;
         btn.textContent = 'Verify';
     }
+}
+
+function _accessChooserStorageKey() {
+    const id = currentUser?.id;
+    return id != null ? `cr_access_choice_seen_${id}` : 'cr_access_choice_seen';
+}
+
+function maybeShowAccessChooser(opts = {}) {
+    if (!currentUser) return;
+    if ((currentUser.plan || 'free') !== 'free') return;
+    if (currentUser.trial_used) return;
+    const key = _accessChooserStorageKey();
+    try {
+        if (!opts.force && !opts.forceNew && localStorage.getItem(key)) return;
+    } catch (_) {}
+    showAccessChooserModal();
+}
+
+function showAccessChooserModal() {
+    const modal = document.getElementById('access-chooser-modal');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+    modal.style.display = 'flex';
+    try { _track('access_chooser_shown', { plan: currentUser?.plan || 'free' }); } catch (_) {}
+}
+
+function hideAccessChooserModal() {
+    const modal = document.getElementById('access-chooser-modal');
+    if (!modal) return;
+    modal.classList.add('hidden');
+    modal.style.display = 'none';
+}
+
+function _markAccessChooserSeen() {
+    try { localStorage.setItem(_accessChooserStorageKey(), '1'); } catch (_) {}
+}
+
+function dismissAccessChooser() {
+    _markAccessChooserSeen();
+    hideAccessChooserModal();
+    try { _track('access_chooser_dismissed', {}); } catch (_) {}
+}
+
+function chooseAccessPaid() {
+    _markAccessChooserSeen();
+    hideAccessChooserModal();
+    try { _track('access_chooser_paid', {}); } catch (_) {}
+    showPricingModal({
+        skipTrial: true,
+        reason: 'access_chooser_paid',
+        trialMessage: 'Full niche database in Claude + Niche Finder. Billed today — cancel anytime.',
+    });
+}
+
+function chooseAccessTrial() {
+    _markAccessChooserSeen();
+    hideAccessChooserModal();
+    try { _track('access_chooser_trial', {}); } catch (_) {}
+    showPricingModal({
+        skipTrial: false,
+        reason: 'access_chooser_trial',
+        trialMessage: '7 days with a limited niche database in Claude (5 niches) and limited cooks. Upgrade anytime for the full library.',
+    });
 }
 
 function authBackToEmail() {

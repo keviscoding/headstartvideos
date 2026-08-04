@@ -702,6 +702,9 @@ def _safe_user(u: dict) -> dict:
 # ---------------------------------------------------------------------------
 class CheckoutRequest(BaseModel):
     plan: str = "starter_monthly"
+    # True = charge today (no Stripe trial), even if the account never trialled.
+    # Used by the post-verify "Full access (paid)" chooser.
+    skip_trial: bool = False
 
 class TopupRequest(BaseModel):
     credits: int = 5
@@ -1113,8 +1116,10 @@ async def create_checkout(req: CheckoutRequest, request: Request):
     if plan in ("starter", "daily", "pro"):
         raise HTTPException(400, "You already have an active subscription. Manage it from Billing.")
 
-    # One free trial per account — returning users pay immediately
+    # One free trial per account — returning users pay immediately.
+    # Access-chooser "Full access" also sets skip_trial so new users can pay today.
     already_trialed = bool(user.get("trial_used"))
+    want_skip_trial = bool(req.skip_trial) or already_trialed
 
     customer_id = user.get("stripe_customer_id")
     if not customer_id:
@@ -1133,7 +1138,7 @@ async def create_checkout(req: CheckoutRequest, request: Request):
         "cancel_url": f"{base_url}/app#pipeline",
         "metadata": {"user_id": str(user["id"]), "plan": req.plan},
     }
-    if not already_trialed:
+    if not want_skip_trial:
         session_kwargs["subscription_data"] = {"trial_period_days": 7}
         session_kwargs["success_url"] = f"{base_url}/app?welcome=trial#pipeline"
     else:
@@ -6382,8 +6387,16 @@ def _mcp_connect_payload(api_key: str, base: str) -> dict:
         "claude_desktop_json": claude_config,
         "claude_desktop_json_text": json.dumps(claude_config, indent=2),
         "free_limits": {
+            "niches": billing.FREE_NICHES,
             "subjects": billing.FREE_SUBJECTS,
             "channels": billing.FREE_CHANNELS,
+            "scripts": billing.FREE_SCRIPTS,
+            "thumbnails": billing.FREE_THUMBS,
+        },
+        "trial_limits": {
+            "niches": billing.TRIAL_NICHES,
+            "subjects": billing.TRIAL_SUBJECTS,
+            "channels": billing.TRIAL_CHANNELS,
             "scripts": billing.FREE_SCRIPTS,
             "thumbnails": billing.FREE_THUMBS,
         },
@@ -6400,10 +6413,17 @@ def _mcp_connect_payload(api_key: str, base: str) -> dict:
 
 @app.get("/api/me/mcp")
 def get_my_mcp(request: Request, user: dict = Depends(require_user)):
+    from webapp import mcp_billing as billing
     key = ensure_user_mcp_api_key(int(user["id"]))
     fresh = get_user_by_id(int(user["id"])) or user
     payload = _mcp_connect_payload(key, _mcp_public_base(request))
-    payload["plan"] = (fresh.get("plan") or "free")
+    plan = (fresh.get("plan") or "free")
+    payload["plan"] = plan
+    payload["discovery_limits"] = billing.discovery_limits(plan)
+    payload["discovery_capped"] = billing.discovery_capped(plan)
+    payload["is_trial"] = billing.is_trial_plan(plan)
+    payload["is_paid"] = billing.is_paid_plan(plan)
+    payload["upgrade_cta"] = billing.upgrade_cta_for(plan)
     payload["free_scripts_used"] = int(fresh.get("mcp_free_scripts_used") or 0)
     payload["free_thumbs_used"] = int(fresh.get("mcp_free_thumbs_used") or 0)
     return payload

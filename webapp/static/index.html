@@ -1566,6 +1566,7 @@
             </div>
             <p style="color: var(--app-ink-2); margin-bottom: 28px; max-width: 40rem;">
                 Ask Claude for niches, subjects, scripts, and thumbnails — pulled from ChannelRecipe’s live library, not old training data.
+                Free and trial accounts see a limited niche sample; paid unlocks the full database + Niche Finder in the app.
             </p>
 
             <div class="cr-surface" style="padding: 22px; margin-bottom: 18px;">
@@ -1815,7 +1816,10 @@
 
                     <p id="mcp-quota-note" style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-2); margin: 0 0 8px;"></p>
                     <p id="mcp-integ-status" class="cr-mono" style="font-size: 12px; color: var(--app-ink-3);"></p>
-                    <a id="mcp-upgrade-link" href="/app#billing" class="btn-primary" style="display: inline-block; font-size: 13px; padding: 10px 16px; margin-top: 8px; text-decoration: none;">Upgrade for more</a>
+                    <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; align-items:center;">
+                        <a id="mcp-upgrade-link" href="/app#billing" class="btn-primary" style="display: inline-block; font-size: 13px; padding: 10px 16px; text-decoration: none;">Upgrade for more</a>
+                        <button type="button" id="mcp-access-chooser-btn" class="btn-secondary hidden" style="font-size: 13px; padding: 10px 16px;" onclick="maybeShowAccessChooser({ force: true })">Choose paid vs trial</button>
+                    </div>
                 </div>
             </section>
 
@@ -2054,6 +2058,35 @@
         </div>
     </div>
 
+    <!-- Post-verify: choose Full access (paid, default) vs limited Free trial -->
+    <div id="access-chooser-modal" class="hidden" style="position: fixed; inset: 0; z-index: 195; display: none; align-items: center; justify-content: center;">
+        <div style="position: absolute; inset: 0; background: rgba(0,0,0,0.65); backdrop-filter: blur(4px);"></div>
+        <div style="position: relative; background: var(--app-surface); border: 1px solid var(--app-border); border-radius: var(--radius-card); padding: 28px 24px; width: 100%; max-width: 520px; margin: 16px;">
+            <div style="text-align: center; margin-bottom: 20px;">
+                <img src="/static/glyph.svg" width="32" height="32" alt="" style="margin: 0 auto 10px;">
+                <h2 class="cr-display" style="font-size: 22px; line-height: 1.2;">How do you want to start?</h2>
+                <p style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2); margin-top: 8px;">
+                    Full access unlocks the complete niche database in Claude. Free trial is limited on purpose.
+                </p>
+            </div>
+            <div style="display: grid; gap: 12px;">
+                <button type="button" id="access-choice-paid" onclick="chooseAccessPaid()" class="btn-primary" style="width:100%; text-align:left; padding:16px 18px; display:block;">
+                    <div style="font-weight:700; font-size:15px;">Full access — recommended</div>
+                    <div style="font-size:13px; opacity:0.9; margin-top:4px; font-weight:500;">
+                        Full niche database in Claude, Niche Finder, all recipes. Billed today — cancel anytime.
+                    </div>
+                </button>
+                <button type="button" id="access-choice-trial" onclick="chooseAccessTrial()" class="btn-secondary" style="width:100%; text-align:left; padding:16px 18px; display:block;">
+                    <div style="font-weight:700; font-size:15px;">Free trial — limited</div>
+                    <div style="font-size:13px; color: var(--app-ink-2); margin-top:4px; font-weight:500;">
+                        7 days with a limited niche database in Claude (5 niches), limited cooks. Upgrade anytime for the full library.
+                    </div>
+                </button>
+            </div>
+            <button type="button" class="btn-ghost" style="width:100%; margin-top:12px; font-size:13px;" onclick="dismissAccessChooser()">Decide later</button>
+        </div>
+    </div>
+
     <div id="auth-modal" class="hidden" style="position: fixed; inset: 0; z-index: 200; display: none; align-items: center; justify-content: center;">
         <div style="position: absolute; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);" onclick="hideAuthModal()"></div>
         <div style="position: relative; background: var(--app-surface); border: 1px solid var(--app-border); border-radius: var(--radius-card); padding: 32px; width: 100%; max-width: 380px; margin: 16px;">
@@ -2063,7 +2096,7 @@
             <div style="text-align: center; margin-bottom: 24px;">
                 <img src="/static/glyph.svg" width="36" height="36" alt="" style="margin: 0 auto 12px;">
                 <h2 class="cr-display" style="font-size: 22px;">Sign in to ChannelRecipe</h2>
-                <p style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2); margin-top: 6px;">7-day free trial. All recipes included.</p>
+                <p style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2); margin-top: 6px;">Paid full access or a limited free trial — you choose after verify.</p>
             </div>
             <!-- Step 1: Email -->
             <div id="auth-step-email">
@@ -2096,6 +2129,6 @@
 
     <script src="/static/cr-telemetry.js?v=20260804b"></script>
     <script src="/static/ranking.js?v=20260804f"></script>
-    <script src="/static/app.js?v=20260804f"></script>
+    <script src="/static/app.js?v=20260805a"></script>
 </body>
 </html>
