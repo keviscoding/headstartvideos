@@ -221,14 +221,9 @@ def _overlay_is_viral(style_preset: str) -> bool:
 
 def _effective_overlay_viral(
     style_preset: str,
-    commentary_lines: list[dict[str, Any]] | None,
+    commentary_lines: list[dict[str, Any]] | None = None,
 ) -> bool:
-    """Commentary forces viral overlay (white cards + punchy title) like ViewHunt."""
-    if commentary_lines and any(
-        (c.get("line") or "").strip() and Path(str(c.get("audioPath") or "")).is_file()
-        for c in commentary_lines
-    ):
-        return True
+    """Respect the user's style preset — commentary must not force Viral Shorts."""
     return _overlay_is_viral(style_preset)
 
 

@@ -1,4 +1,8 @@
-"""Ranking AI commentary: Atlas gemini-3.5-flash watches clip video + xAI TTS."""
+"""Ranking AI commentary: Gemini watches each clip, then xAI TTS speaks the line.
+
+Style is distilled from successful Keyos-style ranking transcripts (short casual
+reactions), not hard-coded per clip. The model must react to what it sees.
+"""
 from __future__ import annotations
 
 import base64
@@ -10,8 +14,40 @@ from typing import Any, Callable
 
 ProgressCb = Callable[[str], None]
 
-# Vision + punchy reactions — same class as ViewHunt / OzyRanks shorts.
+# Vision + punchy reactions — cheap Flash via Atlas.
 RANKING_VISION_MODEL = "google/gemini-3.5-flash"
+
+# Distilled from Keyos Ranks transcripts — vibe examples only (never copy verbatim).
+_STYLE_INTRO_EXAMPLES = [
+    "These are the funniest fishing moments.",
+    "These are the best lightning strike moments.",
+    "These are the dumbest criminal moments.",
+    "These are the best clear tape pranks.",
+]
+_STYLE_REACT_EXAMPLES = [
+    "She didn't expect that",
+    "Bro is so cooked",
+    "That was close",
+    "He didn't expect that",
+    "Bro's about to get in trouble",
+    "She didn't see it coming",
+    "That's got to hurt",
+    "Where was bro aiming",
+    "Poor guy didn't expect it",
+    "Bro got silenced",
+    "He miscalculated",
+    "Little bro celebration went wrong",
+]
+
+_META_BLEED_RE = re.compile(
+    r"(?i)\b("
+    r"output\s*format|specific\s*constraint|return\s*only|valid\s*json|"
+    r"spoken\s*voiceover|rank(?:ing)?\s*title|never\s*read|do\s*not\s*(?:say|use|guess)|"
+    r"critical|system\s*prompt|assistant|instructions?|"
+    r"watch\s+it\s+carefully|on-screen\s+rank|clip\s*filename|"
+    r"examples?\s+of\s+vibe|invent\s+a\s+fresh"
+    r")\b"
+)
 
 
 def _normalize_rank_label(label: str) -> str:
@@ -19,56 +55,105 @@ def _normalize_rank_label(label: str) -> str:
     s = re.sub(r"\s+", " ", s).strip().upper()
     if not s:
         return "MOMENT"
+    if _is_junk_label(s):
+        return "MOMENT"
     words = s.split()[:4]
     return " ".join(words)[:24]
 
 
 def _fallback_for_role(clip: dict, rank: int, total: int, role: str) -> dict[str, str]:
+    """Last-resort lines — only used when vision+TTS path cannot produce a line."""
     label = _normalize_rank_label(clip.get("label") or f"#{rank}")
     if role == "hook":
-        return {"line": "Watch this — you need to see it", "label": label}
+        return {"line": "These are the moments you need to see", "label": label}
     if role == "cta":
-        return {"line": "Subscribe before this goes wrong", "label": label}
-    reactions = [
-        "bro what",
-        "that was wild",
-        "no way",
-        "absolute cinema",
-        "that hurt to watch",
-        "pause. replay that.",
-    ]
+        return {"line": "Subscribe before the next one hits", "label": label}
+    # Prefer variety over the old repeating "that was wild" loop.
+    reactions = list(_STYLE_REACT_EXAMPLES)
     return {
         "line": reactions[(max(1, rank) - 1) % len(reactions)],
         "label": label,
     }
 
 
+def _strip_meta_prefixes(text: str) -> str:
+    s = str(text or "").strip().strip("\"'`")
+    s = re.sub(r"^```(?:json)?\s*", "", s, flags=re.I)
+    s = re.sub(r"\s*```$", "", s).strip()
+    # Drop / scrub common model preface lines without discarding the spoken bit.
+    lines = [ln.strip() for ln in s.splitlines() if ln.strip()]
+    kept = []
+    for ln in lines:
+        low = ln.lower()
+        if _META_BLEED_RE.search(ln):
+            # Keep trailing content after a meta label: "Output format: bro folded"
+            cleaned = _META_BLEED_RE.sub(" ", ln)
+            cleaned = re.sub(r"(?i)^\s*(line|commentary|voice|spoken|reaction|label)\s*[:=]\s*", "", cleaned)
+            cleaned = re.sub(r"^[\s:.\-–—]+", "", cleaned).strip()
+            if cleaned and not _META_BLEED_RE.search(cleaned):
+                kept.append(cleaned)
+            continue
+        if low.startswith(("here is", "here's", "sure,", "okay,", "json")):
+            continue
+        kept.append(ln)
+    if kept:
+        s = " ".join(kept)
+    s = re.sub(
+        r"(?i)^\s*(line|commentary|voice|spoken|reaction)\s*[:=]\s*",
+        "",
+        s,
+    ).strip()
+    return s.strip("\"'")
+
+
 def _parse_line_and_label(raw: str, fallback_line: str, fallback_label: str) -> dict[str, str]:
-    text = str(raw or "").strip().strip("\"'")
+    text = _strip_meta_prefixes(raw)
     if not text:
         return {"line": fallback_line, "label": _normalize_rank_label(fallback_label)}
-    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I)
-    text = re.sub(r"\s*```$", "", text).strip()
     try:
         m = re.search(r"\{[\s\S]*\}", text)
         if m:
             obj = json.loads(m.group(0))
-            line = str(obj.get("line") or obj.get("commentary") or obj.get("voice") or "").strip()
-            lab = str(obj.get("label") or obj.get("rankLabel") or obj.get("title") or "").strip()
-            if line:
+            line = str(
+                obj.get("line") or obj.get("commentary") or obj.get("voice") or ""
+            ).strip()
+            lab = str(
+                obj.get("label") or obj.get("rankLabel") or obj.get("title") or ""
+            ).strip()
+            line = _strip_meta_prefixes(line)
+            if line and not _is_junk_line(line):
                 return {
-                    "line": line.strip("\"'"),
+                    "line": line,
                     "label": _normalize_rank_label(lab or fallback_label),
                 }
     except Exception:
         pass
     parts = re.split(r"\s*\|\|\s*|\s*\|\s*", text)
     if len(parts) >= 2:
-        return {
-            "line": parts[0].strip("\"'").strip(),
-            "label": _normalize_rank_label(" ".join(parts[1:]) or fallback_label),
-        }
-    return {"line": text, "label": _normalize_rank_label(fallback_label)}
+        line = _strip_meta_prefixes(parts[0])
+        if line and not _is_junk_line(line):
+            return {
+                "line": line,
+                "label": _normalize_rank_label(" ".join(parts[1:]) or fallback_label),
+            }
+    # Plain prose — take first short sentence only
+    sentence = re.split(r"[\n.]", text)[0].strip()
+    sentence = _strip_meta_prefixes(sentence)
+    if sentence and not _is_junk_line(sentence) and len(sentence.split()) <= 16:
+        return {"line": sentence, "label": _normalize_rank_label(fallback_label)}
+    return {"line": fallback_line, "label": _normalize_rank_label(fallback_label)}
+
+
+def _is_junk_label(label: str) -> bool:
+    s = re.sub(r"\s+", " ", str(label or "")).strip()
+    if not s or len(s) < 2:
+        return True
+    if _META_BLEED_RE.search(s):
+        return True
+    low = s.lower()
+    if any(x in low for x in ("output", "format", "constraint", "json", "prompt", "role")):
+        return True
+    return False
 
 
 def _is_junk_line(line: str) -> bool:
@@ -78,6 +163,13 @@ def _is_junk_line(line: str) -> bool:
     if s.startswith("http"):
         return True
     if "{" in s or "}" in s or "```" in s:
+        return True
+    if _META_BLEED_RE.search(s):
+        return True
+    if re.search(r"\b(json|markdown|hashtag|emoji|voiceover script)\b", s):
+        return True
+    # Too long = model essay / instructions, not a ranking beat
+    if len(s.split()) > 16:
         return True
     return False
 
@@ -114,51 +206,37 @@ def _role_prompt(
 ) -> str:
     avoid = ""
     if prior_lines:
-        avoid = "\nDo NOT repeat or paraphrase any of these earlier lines: " + json.dumps(prior_lines[-4:])
-    shared = f"""You are a viral YouTube Shorts ranking narrator (OzyRanks / countdown style).
-A short VIDEO CLIP is attached — watch it carefully.
+        avoid = "\nDo not repeat or paraphrase: " + json.dumps(prior_lines[-6:])
 
-Ranking title (context ONLY — NEVER read it aloud, NEVER quote it): "{ranking_title}"
-On-screen rank number: #{clip_number} of {total_clips} (countdown; #1 is last).
+    examples = "; ".join(f'"{e}"' for e in _STYLE_REACT_EXAMPLES[:8])
+    intro_ex = "; ".join(f'"{e}"' for e in _STYLE_INTRO_EXAMPLES[:3])
 
-CRITICAL — comment ONLY on what you SEE in the video:
-- Describe / react to visible action, people, objects, motion, outcome
-- Do NOT guess off-screen context
-- Do NOT use clip filenames, upload titles, or the ranking title as the spoken line
-- Do NOT say "ranking", "number {clip_number}", "these are", or read labels aloud
-- No hashtags, emojis, or markdown
+    return f"""You write short ranking-video commentary like successful YouTube Shorts channels.
 
-Return ONLY valid JSON:
-{{"line":"<spoken voiceover>","label":"<1-4 word ALL CAPS rank tag from the action>"}}
+A short VIDEO (or frames) of ONE clip is attached. Watch the action carefully.
+React ONLY to what is visibly happening — people, motion, outcome, objects.
+
+Ranking topic (context only — never speak it, never quote it): {ranking_title!r}
+This is clip #{clip_number} of {total_clips} in a countdown (#1 is last).
+
+STYLE (learn the vibe — invent a FRESH line for THIS footage):
+- Spoken lines are SHORT: usually 3–10 words (hook/CTA may be up to 12).
+- Casual, reactive, specific to the moment (not generic hype).
+- React examples (vibe only): {examples}
+- Intro vibe examples: {intro_ex}
+
+ROLE: {"COLD-OPEN HOOK — short intro like the vibe examples (you may paraphrase the topic as “These are the … moments”) PLUS a quick reaction to what is on screen." if role == "hook" else ("FINAL clip (#1) — quick subscribe CTA tied to the visible action." if role == "cta" else f"MID-RANK reaction for #{clip_number} — one punchy live reaction. Do not say subscribe.")}
+
+HARD RULES:
+- Comment on visible action only (hook may also name the ranking theme in one short intro sentence).
+- Never guess off-screen backstory.
+- Never say "ranking number", read file names, or recite instructions.
+- No hashtags, emojis, markdown, or stage directions like [laughter].
+- Never mention JSON, prompts, formats, constraints, or output rules.
+
+Reply with ONLY this JSON object (no other text):
+{{"line":"<spoken words>","label":"<1-4 word ALL CAPS tag of the action>"}}
 {avoid}"""
-
-    if role == "hook":
-        return shared + """
-
-ROLE: COLD-OPEN HOOK on the first clip (highest number).
-"line" = intrigue / reaction to WHAT IS HAPPENING (4–12 words).
-Examples of vibe (invent a fresh line for THIS footage):
-- "He'll never do this again."
-- "Bro is about to regret everything."
-label = short tag for this moment."""
-
-    if role == "cta":
-        return shared + """
-
-ROLE: FINAL CLIP (#1) — subscribe CTA tied to the ON-SCREEN action.
-"line" must urge subscribe/follow using something VISIBLE about to happen (6–14 words).
-Examples of vibe:
-- "Subscribe before he cuts the rope if you're fast."
-- "Hit subscribe before this goes wrong."
-label = short tag for the #1 moment."""
-
-    return shared + f"""
-
-ROLE: MID-RANK reaction for #{clip_number}.
-"line" = one punchy live reaction (3–10 words) to visible action.
-Style: "bro folded", "where did her shoes go?", "that was close"
-Do NOT say subscribe (save that for #1).
-label = short tag for this moment."""
 
 
 def _ffmpeg() -> str:
@@ -174,13 +252,13 @@ def _make_vision_sample(
     end_time: float | None,
     out_path: Path,
 ) -> Path | None:
-    """Short scaled silent sample so Gemini can watch the action (ViewHunt-style)."""
-    ss = max(0.0, float(start_time or 0) + 0.35)
+    """Short scaled silent sample so Gemini can watch the action."""
+    ss = max(0.0, float(start_time or 0) + 0.25)
     if end_time is not None and float(end_time) > float(start_time or 0):
         avail = max(0.5, float(end_time) - ss)
-        dur = min(3.8, avail)
+        dur = min(4.2, avail)
     else:
-        dur = 3.8
+        dur = 4.2
     out_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         _ffmpeg(), "-y",
@@ -188,7 +266,7 @@ def _make_vision_sample(
         "-t", f"{dur:.3f}",
         "-vf", "scale=480:-2",
         "-an",
-        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
         str(out_path),
     ]
     try:
@@ -200,14 +278,14 @@ def _make_vision_sample(
     return None
 
 
-def _extract_vision_frames(sample_path: Path, work: Path, n: int = 4) -> list[Path]:
+def _extract_vision_frames(sample_path: Path, work: Path, n: int = 5) -> list[Path]:
     frames: list[Path] = []
     for i in range(n):
-        t = 0.2 + i * 0.85
+        t = 0.15 + i * 0.75
         fp = work / f"vf_{sample_path.stem}_{i}.jpg"
         cmd = [
             _ffmpeg(), "-y", "-ss", f"{t:.2f}", "-i", str(sample_path),
-            "-vframes", "1", "-q:v", "4", str(fp),
+            "-vframes", "1", "-q:v", "3", str(fp),
         ]
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
@@ -219,7 +297,7 @@ def _extract_vision_frames(sample_path: Path, work: Path, n: int = 4) -> list[Pa
 
 
 def _atlas_vision_comment(prompt: str, sample_path: Path, frames_dir: Path) -> str:
-    """Send clip video (or frames) to Atlas google/gemini-3.5-flash."""
+    """Send clip frames (primary) + optional video to Atlas google/gemini-3.5-flash."""
     import httpx
     from core.atlas_llm import ATLAS_LLM_BASE, _atlas_key, _extract_atlas_message_text
 
@@ -227,29 +305,10 @@ def _atlas_vision_comment(prompt: str, sample_path: Path, frames_dir: Path) -> s
     if not key:
         raise RuntimeError("ATLASCLOUD_KEY missing for ranking vision")
 
-    raw = sample_path.read_bytes()
-    if len(raw) > 4 * 1024 * 1024:
-        raise RuntimeError("Vision sample too large")
-
-    # Prefer native video payload; fall back to sampled frames.
-    video_b64 = base64.b64encode(raw).decode("ascii")
-    content_video: list[dict[str, Any]] = [
-        {"type": "text", "text": prompt},
-        {
-            "type": "video_url",
-            "video_url": {"url": f"data:video/mp4;base64,{video_b64}"},
-        },
-    ]
-    body = {
-        "model": RANKING_VISION_MODEL,
-        "messages": [{"role": "user", "content": content_video}],
-        "max_tokens": 220,
-        "temperature": 0.85,
-    }
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
     def _post(payload: dict) -> str:
-        with httpx.Client(timeout=60) as client:
+        with httpx.Client(timeout=75) as client:
             resp = client.post(
                 f"{ATLAS_LLM_BASE}/chat/completions",
                 headers=headers,
@@ -264,16 +323,13 @@ def _atlas_vision_comment(prompt: str, sample_path: Path, frames_dir: Path) -> s
             raise RuntimeError("Atlas vision returned empty content")
         return text
 
-    try:
-        return _post(body)
-    except Exception as e:
-        print(f"[ranking_commentary] video_url path failed ({e}); trying frames")
-
     frames = _extract_vision_frames(sample_path, frames_dir)
     if not frames:
-        raise RuntimeError(f"No frames for vision fallback: {e}")
+        raise RuntimeError("No frames extracted for vision")
+
+    # Frames first — more reliable on Atlas than large video_url payloads.
     parts: list[dict[str, Any]] = [
-        {"type": "text", "text": prompt + "\n\n(Frames sampled from the clip follow.)"},
+        {"type": "text", "text": prompt + "\n\nFrames from the clip follow. Describe what you see."},
     ]
     for fp in frames:
         b64 = base64.b64encode(fp.read_bytes()).decode("ascii")
@@ -281,16 +337,47 @@ def _atlas_vision_comment(prompt: str, sample_path: Path, frames_dir: Path) -> s
             "type": "image_url",
             "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
         })
-    return _post({
+    body_frames = {
         "model": RANKING_VISION_MODEL,
         "messages": [{"role": "user", "content": parts}],
-        "max_tokens": 220,
-        "temperature": 0.85,
+        "max_tokens": 160,
+        "temperature": 0.9,
+    }
+    try:
+        return _post(body_frames)
+    except Exception as e:
+        print(f"[ranking_commentary] frames path failed ({e}); trying video_url")
+
+    raw = sample_path.read_bytes()
+    if len(raw) > 3 * 1024 * 1024:
+        raise RuntimeError(f"Vision sample too large after frames failure: {e}")
+    video_b64 = base64.b64encode(raw).decode("ascii")
+    return _post({
+        "model": RANKING_VISION_MODEL,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "video_url",
+                    "video_url": {"url": f"data:video/mp4;base64,{video_b64}"},
+                },
+            ],
+        }],
+        "max_tokens": 160,
+        "temperature": 0.9,
     })
 
 
+def _tts_safe_text(line: str) -> str:
+    s = re.sub(r"\s+", " ", str(line or "")).strip()
+    s = re.sub(r"[^\w\s'.,!?\-]", "", s, flags=re.UNICODE)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s[:160]
+
+
 def _tts_line(line: str, voice_name: str, out_path: Path) -> Path | None:
-    """Synthesize via Atlas xAI TTS (same path as other recipes)."""
+    """Synthesize via Atlas xAI TTS. Retries with fallback voice if needed."""
     try:
         from core.atlas_runtime import get_atlas_key
         from core.voiceover_gen import _atlas_tts_chunk, _ATLAS_VOICE_MAP
@@ -299,20 +386,35 @@ def _tts_line(line: str, voice_name: str, out_path: Path) -> Path | None:
         return None
 
     if not get_atlas_key():
+        print("[ranking_commentary] ATLASCLOUD_KEY missing — cannot synthesize VO")
         return None
 
-    atlas_voice = (
+    text = _tts_safe_text(line)
+    if not text or _is_junk_line(text):
+        return None
+
+    primary = (
         _ATLAS_VOICE_MAP.get(voice_name)
         or _ATLAS_VOICE_MAP.get((voice_name or "").lower())
         or "rex"
     )
+    voices = [primary]
+    if primary != "rex":
+        voices.append("rex")
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        _atlas_tts_chunk(line, atlas_voice, str(out_path))
-        if out_path.is_file() and out_path.stat().st_size > 500:
-            return out_path
-    except Exception as e:
-        print(f"[ranking_commentary] TTS failed: {e}")
+    for atlas_voice in voices:
+        try:
+            if out_path.is_file():
+                try:
+                    out_path.unlink()
+                except Exception:
+                    pass
+            _atlas_tts_chunk(text, atlas_voice, str(out_path))
+            if out_path.is_file() and out_path.stat().st_size > 500:
+                return out_path
+        except Exception as e:
+            print(f"[ranking_commentary] TTS failed voice={atlas_voice}: {e}")
     return None
 
 
@@ -340,11 +442,13 @@ def generate_ranking_commentary(
     voice_name: str = "Kore",
     work_dir: str | Path,
     progress: ProgressCb | None = None,
+    require_audio: bool = True,
 ) -> list[dict[str, Any]]:
     """
     Returns list of {clipIndex, line, label, audioPath, wordTimings, duration}.
-    Mutates clip labels when vision returns a better short rank label (unless
-    the user already typed one).
+
+    When require_audio=True (default), raises if any clip fails TTS — so we never
+    ship silent "text-only" commentary cooks.
     """
     def prog(msg: str) -> None:
         if progress:
@@ -363,6 +467,9 @@ def generate_ranking_commentary(
         role = "hook" if i == 0 else ("cta" if i == n - 1 else "react")
         rank = int(clip.get("number") or (n - i))
         user_label = str(clip.get("label") or "").strip()
+        # Ignore placeholder "#3" style labels as "user typed"
+        if re.fullmatch(r"#?\d+", user_label or ""):
+            user_label = ""
         label = user_label or f"#{rank}"
         prog(
             "Writing cold-open hook…" if role == "hook"
@@ -370,7 +477,8 @@ def generate_ranking_commentary(
                   else f"Watching clip {i + 1}/{n}…")
         )
         fb = _fallback_for_role(clip, rank, n, role)
-        parsed = fb
+        parsed = dict(fb)
+        vision_ok = False
         clip_path = Path(str(clip.get("path") or ""))
         if clip_path.is_file():
             sample = _make_vision_sample(
@@ -386,26 +494,38 @@ def generate_ranking_commentary(
                         sample,
                         samples,
                     )
-                    parsed = _parse_line_and_label(raw, fb["line"], fb["label"])
-                    if _is_junk_line(parsed["line"]) or _is_repetitive_line(
-                        parsed["line"], prior, parsed.get("label") or ""
+                    candidate = _parse_line_and_label(raw, fb["line"], fb["label"])
+                    if (
+                        not _is_junk_line(candidate["line"])
+                        and not _is_repetitive_line(
+                            candidate["line"], prior, candidate.get("label") or ""
+                        )
                     ):
-                        parsed["line"] = fb["line"]
+                        parsed = candidate
+                        vision_ok = True
+                    else:
+                        print(
+                            f"[ranking_commentary] clip {i}: rejected vision line "
+                            f"{candidate.get('line')!r}; using fallback"
+                        )
                 except Exception as e:
                     print(f"[ranking_commentary] clip {i} vision failed: {e}")
-                    parsed = fb
             else:
                 print(f"[ranking_commentary] clip {i}: no vision sample; using fallback")
         else:
             print(f"[ranking_commentary] clip {i}: missing path {clip_path}")
 
-        # Prefer user-typed label over AI tag
+        # Prefer user-typed label; only apply AI tag when clean + vision succeeded
         if user_label:
             parsed["label"] = _normalize_rank_label(user_label)
-        elif parsed.get("label") and clips[i] is not None:
+        elif vision_ok and parsed.get("label") and not _is_junk_label(parsed["label"]):
             clips[i]["label"] = parsed["label"]
+        else:
+            parsed["label"] = _normalize_rank_label(label)
 
         line = (parsed.get("line") or fb["line"]).strip()
+        if _is_junk_line(line):
+            line = fb["line"]
         prior.append(line)
 
         audio_path = None
@@ -423,9 +543,14 @@ def generate_ranking_commentary(
                 duration = 2.0
             word_timings = _char_weighted_timings(line, duration)
         else:
-            # No orphan karaoke / white-card text without voice
+            # Never leave orphan karaoke / white-card text without voice
+            print(f"[ranking_commentary] clip {i}: TTS missing for line={line!r}")
+            if require_audio:
+                raise RuntimeError(
+                    f"AI commentary voiceover failed on clip {i + 1}/{n}. "
+                    "Try again in a moment — credits are refunded if the cook fails."
+                )
             line = ""
-            print(f"[ranking_commentary] clip {i}: TTS missing — skipping VO/karaoke")
 
         results.append({
             "clipIndex": i,
@@ -434,8 +559,13 @@ def generate_ranking_commentary(
             "audioPath": audio_path,
             "wordTimings": word_timings,
             "duration": duration,
+            "visionOk": vision_ok,
         })
 
     ok = sum(1 for r in results if r.get("audioPath"))
     prog(f"Commentary ready ({ok}/{n} with voice)")
+    if require_audio and ok < n:
+        raise RuntimeError(
+            f"AI commentary incomplete ({ok}/{n} voiceovers). Cook aborted so you aren't charged for silent text."
+        )
     return results

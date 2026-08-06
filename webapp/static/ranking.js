@@ -228,6 +228,27 @@ function rkCyclePreviewClip() {
     rkRenderPreview('rk-preview-dash');
 }
 
+function rkFormatCredits(n) {
+    const x = Number(n);
+    if (!Number.isFinite(x)) return '1';
+    if (Math.abs(x - Math.round(x)) < 1e-9) return String(Math.round(x));
+    return x.toFixed(1).replace(/\.0$/, '');
+}
+
+function rkCookCreditTotal() {
+    if (!_rkAccess) return _rkCommentary ? 1 : 0.5;
+    if (_rkAccess.is_trial && (_rkAccess.ranking_free_left ?? 0) > 0) return 0;
+    if (_rkCommentary) {
+        const c = Number(_rkAccess.credit_cost_commentary);
+        if (Number.isFinite(c)) return c;
+        const base = Number(_rkAccess.credit_cost) || 0.5;
+        const extra = Number(_rkAccess.commentary_credit_cost);
+        return base + (Number.isFinite(extra) ? extra : 0.5);
+    }
+    const base = Number(_rkAccess.credit_cost);
+    return Number.isFinite(base) ? base : 0.5;
+}
+
 function rkUpdateAssembleLabel() {
     const btn = document.getElementById('rk-btn-assemble');
     const text = btn?.querySelector('.btn-text');
@@ -236,15 +257,13 @@ function rkUpdateAssembleLabel() {
         text.textContent = 'Cook ranking short (trial)';
         return;
     }
-    const base = _rkAccess?.credit_cost || 1;
-    const extra = _rkCommentary ? (_rkAccess?.commentary_credit_cost ?? 1) : 0;
-    const total = base + (_rkAccess?.is_trial ? 0 : extra);
-    // When trial quota remains cost is 0; when paid, show total including commentary.
     if (_rkAccess?.is_trial) {
         text.textContent = 'Cook ranking short';
-    } else {
-        text.textContent = `Cook ranking short (${total} credit${total === 1 ? '' : 's'})`;
+        return;
     }
+    const total = rkCookCreditTotal();
+    const label = rkFormatCredits(total);
+    text.textContent = `Cook ranking short (${label} credit${total === 1 ? '' : 's'})`;
 }
 
 function rkParseImportUrls(raw) {
@@ -864,7 +883,8 @@ function rkRenderPreview(targetId) {
         el.innerHTML = '<div class="pv-bg"></div><div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#555;font-size:0.65rem;text-align:center;padding:1rem">Add clips to see preview</div>';
         return;
     }
-    const viral = _rkCommentary || !['classic', 'minimal', 'checkered'].includes(_rkStyle);
+    // Commentary must not force Viral Shorts — respect the selected style preset.
+    const viral = !['classic', 'minimal', 'checkered'].includes(_rkStyle);
     const colorMap = {
         yellow: '#facc15', cyan: '#22d3ee', green: '#34d399', red: '#f87171',
         pink: '#f472b6', orange: '#fb923c', white: '#ffffff',
@@ -955,16 +975,20 @@ async function rkRefreshAccess() {
                 ? `${left} free ranking short${left === 1 ? '' : 's'} left on your trial`
                 : 'Free ranking shorts used — upgrade to keep cooking';
         } else if (_rkAccess.can_cook) {
-            const base = _rkAccess.credit_cost || 1;
-            const extra = _rkAccess.commentary_credit_cost ?? 1;
-            badge.textContent = `${base} credit per ranking short` + (extra ? ` · commentary +${extra}` : '');
+            const base = rkFormatCredits(_rkAccess.credit_cost ?? 0.5);
+            const withVo = rkFormatCredits(_rkAccess.credit_cost_commentary ?? 1);
+            badge.textContent = `${base} credit without commentary · ${withVo} with AI commentary`;
         } else {
             badge.textContent = 'Start a free trial to cook ranking shorts';
         }
         const chip = document.getElementById('rk-commentary-chip');
         if (chip) {
-            const extra = _rkAccess.commentary_credit_cost ?? 1;
-            chip.textContent = _rkAccess.is_trial ? 'included on trial' : `+${extra} credit`;
+            if (_rkAccess.is_trial) {
+                chip.textContent = 'included on trial';
+            } else {
+                const withVo = rkFormatCredits(_rkAccess.credit_cost_commentary ?? 1);
+                chip.textContent = `${withVo} credit total`;
+            }
         }
         rkUpdateAssembleLabel();
     } catch (_) {

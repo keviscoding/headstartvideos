@@ -833,7 +833,7 @@ async function loadNiches() {
             const isSb = (niche.recipe || niche.id) === 'storyboard_pack';
             const isRk = (niche.recipe || niche.id) === 'ranking_countdown';
             const durLabel = isRk ? '~30–90s · 9:16' : (isSb ? 'Up to 25 min' : '~15 min');
-            const creditLabel = isRk ? '2 free on trial' : (isSb ? 'Pack + cook credits' : '1 credit');
+            const creditLabel = isRk ? '0.5 credit · 1 with commentary' : (isSb ? 'Pack + cook credits' : '1 credit');
             card.innerHTML = `
                 ${previewHtml}
                 <svg class="fold-play" width="40" height="40" viewBox="0 0 40 40" aria-hidden="true">

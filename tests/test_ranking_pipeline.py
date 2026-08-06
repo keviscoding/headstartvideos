@@ -72,19 +72,29 @@ def test_generate_ass_white_card_karaoke(tmp_path: Path):
     out = tmp_path / "w.ass"
     generate_ass(
         out, clips, durs, {"text": "Funny Moments", "highlightWord": "Funny"},
-        style_preset="classic",  # commentary forces viral via force_viral
+        style_preset="classic",
         commentary_lines=commentary,
         timeline={
             "clipOffsets": [1.2, 2.4, 3.4],
             "voiceOffsets": {0: 0.0, 1: 1.2, 2: 2.4},
             "whiteMeta": {1: {"offset": 1.2, "duration": 1.2}},
         },
+        # Caller may still request viral karaoke cards; style presets are independent.
         force_viral=True,
     )
     text = out.read_text(encoding="utf-8")
     assert "ComSubWhite" in text
     assert "BRO" in text
     assert "FUNNY" in text or "Funny" in text or "\\c" in text
+
+
+def test_commentary_does_not_force_viral_style():
+    from core.ranking_pipeline import _effective_overlay_viral
+    lines = [{"line": "bro folded", "audioPath": "/tmp/x.wav"}]
+    assert _effective_overlay_viral("classic", lines) is False
+    assert _effective_overlay_viral("minimal", lines) is False
+    assert _effective_overlay_viral("viral", lines) is True
+    assert _effective_overlay_viral("bold", lines) is True
 
 
 def test_generate_ass_classic(tmp_path: Path):

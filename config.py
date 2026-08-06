@@ -56,11 +56,19 @@ STORYBOARD_TRIAL_PACK_MAX_MINUTES = max(
     float(os.getenv("STORYBOARD_TRIAL_PACK_MAX_MINUTES", "8") or 8),
 )
 STORYBOARD_TRIAL_PACK_LIMIT = max(0, int(os.getenv("STORYBOARD_TRIAL_PACK_LIMIT", "2") or 2))
-# Ranking & Countdown short-form: free cooks during Stripe trial, then 1 credit.
+# Ranking & Countdown short-form: free cooks during Stripe trial, then 0.5 / 1.0.
 RANKING_TRIAL_COOK_LIMIT = max(0, int(os.getenv("RANKING_TRIAL_COOK_LIMIT", "2") or 2))
-RANKING_CREDIT_COST = max(1, int(os.getenv("RANKING_CREDIT_COST", "1") or 1))
-# Extra credits when AI commentary (VO + karaoke) is enabled on a paid cook.
-RANKING_COMMENTARY_CREDIT_COST = max(0, int(os.getenv("RANKING_COMMENTARY_CREDIT_COST", "1") or 1))
+RANKING_CREDIT_COST = max(0.0, float(os.getenv("RANKING_CREDIT_COST", "0.5") or 0.5))
+# Total credits when AI commentary (vision + VO + karaoke) is enabled.
+RANKING_CREDIT_COST_COMMENTARY = max(
+    0.0,
+    float(os.getenv("RANKING_CREDIT_COST_COMMENTARY", "1") or 1),
+)
+# Legacy alias (extra on top of base) — unused when commentary total is set.
+RANKING_COMMENTARY_CREDIT_COST = max(
+    0.0,
+    float(os.getenv("RANKING_COMMENTARY_CREDIT_COST", "0") or 0),
+)
 # Optional — makes TikTok/Instagram ranking link import reliable (ViewHunt path).
 APIFY_TOKEN = (os.getenv("APIFY_TOKEN", "") or "").strip()
 # Pack credits: ceil(minutes / divisor). Preview (~1 min) → 1 credit when paid.

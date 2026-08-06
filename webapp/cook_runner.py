@@ -63,19 +63,19 @@ def hydrate_job_from_row(row: dict) -> dict[str, Any]:
     }
 
 
-def job_credits_charged(job: dict) -> int:
-    """How many credits to refund for this job (HQ may be > 1)."""
+def job_credits_charged(job: dict) -> float:
+    """How many credits to refund for this job (HQ / ranking may be fractional)."""
     req = job.get("request") if isinstance(job.get("request"), dict) else {}
     raw = req.get("credits_charged")
     if raw is None:
         raw = job.get("credit_deducted")
     try:
-        n = int(raw or 0)
+        n = round(float(raw or 0), 2)
     except (TypeError, ValueError):
-        n = 1 if raw else 0
+        n = 1.0 if raw else 0.0
     if n <= 0 and job.get("credit_deducted"):
-        return 1
-    return max(0, n)
+        return 1.0
+    return max(0.0, n)
 
 
 def run_cook_job(
@@ -1504,7 +1504,10 @@ def _run_ranking_countdown_job(
     user_id = job.get("user_id")
     started_at = time.time()
     job["status"] = "running"
-    credits_charged = int(req_data.get("credits_charged") or 0)
+    try:
+        credits_charged = round(float(req_data.get("credits_charged") or 0), 2)
+    except (TypeError, ValueError):
+        credits_charged = 0.0
     title_obj = req_data.get("title") if isinstance(req_data.get("title"), dict) else {}
     title_text = (title_obj.get("text") or req_data.get("title_text") or "Ranking").strip()
     style_preset = (req_data.get("style_preset") or "viral").strip().lower()

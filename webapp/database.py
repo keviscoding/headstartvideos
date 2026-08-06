@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS users (
     email       TEXT UNIQUE NOT NULL,
     created_at  REAL NOT NULL DEFAULT (strftime('%s','now')),
     plan        TEXT NOT NULL DEFAULT 'free',
-    credits     INTEGER NOT NULL DEFAULT 0,
+    credits     REAL NOT NULL DEFAULT 0,
     stripe_customer_id TEXT DEFAULT '',
     stripe_sub_id      TEXT DEFAULT '',
     trial_used  INTEGER NOT NULL DEFAULT 0
@@ -186,7 +186,7 @@ CREATE TABLE IF NOT EXISTS users (
     email       TEXT UNIQUE NOT NULL,
     created_at  DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now()),
     plan        TEXT NOT NULL DEFAULT 'free',
-    credits     INTEGER NOT NULL DEFAULT 0,
+    credits     DOUBLE PRECISION NOT NULL DEFAULT 0,
     stripe_customer_id TEXT DEFAULT '',
     stripe_sub_id      TEXT DEFAULT '',
     trial_used  INTEGER NOT NULL DEFAULT 0
@@ -409,6 +409,14 @@ def _init_db():
                 cur.execute(_MIGRATIONS)
                 try:
                     cur.execute("ALTER TABLE users ALTER COLUMN credits SET DEFAULT 0")
+                except Exception:
+                    pass
+                # Ranking half-credits (0.5) need a non-integer column.
+                try:
+                    cur.execute(
+                        "ALTER TABLE users ALTER COLUMN credits "
+                        "TYPE DOUBLE PRECISION USING credits::double precision"
+                    )
                 except Exception:
                     pass
         else:
@@ -704,9 +712,18 @@ def deduct_credit(user_id: int) -> bool:
     return deduct_credits(user_id, 1)
 
 
-def deduct_credits(user_id: int, amount: int) -> bool:
-    """Atomically deduct N credits. Returns False if insufficient."""
-    amount = int(amount or 0)
+def _credit_amount(amount) -> float:
+    """Normalize credit deltas to cents-of-a-credit (2 dp)."""
+    try:
+        n = round(float(amount or 0), 2)
+    except (TypeError, ValueError):
+        n = 0.0
+    return n
+
+
+def deduct_credits(user_id: int, amount) -> bool:
+    """Atomically deduct credits (supports half-credits). Returns False if insufficient."""
+    amount = _credit_amount(amount)
     if amount <= 0:
         return True
     with _conn() as conn:
@@ -722,16 +739,19 @@ def refund_credit(user_id: int) -> None:
     add_credits(user_id, 1)
 
 
-def refund_credits(user_id: int, amount: int) -> None:
-    """Refund N credits (HQ cooks charge more than 1)."""
-    amount = int(amount or 0)
+def refund_credits(user_id: int, amount) -> None:
+    """Refund credits (HQ / ranking may charge fractional amounts)."""
+    amount = _credit_amount(amount)
     if amount <= 0:
         return
     add_credits(user_id, amount)
 
 
-def add_credits(user_id: int, amount: int) -> None:
-    """Atomically add N credits (for top-ups)."""
+def add_credits(user_id: int, amount) -> None:
+    """Atomically add credits (for top-ups / refunds)."""
+    amount = _credit_amount(amount)
+    if amount == 0:
+        return
     with _conn() as conn:
         conn.cursor().execute(
             _q("UPDATE users SET credits = credits + ? WHERE id = ?"),

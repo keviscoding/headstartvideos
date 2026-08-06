@@ -33,16 +33,25 @@ def ranking_credit_cost(
     cooks_used: int,
     trial_limit: int = 2,
     is_admin: bool = False,
-    paid_cost: int = 1,
+    paid_cost: float = 0.5,
     commentary: bool = False,
-    commentary_cost: int = 1,
-) -> int:
-    """Credits to charge for one ranking cook. 0 while trial quota remains."""
+    commentary_cost: float | None = None,
+    commentary_total: float = 1.0,
+) -> float:
+    """Credits to charge for one ranking cook. 0 while trial quota remains.
+
+    Defaults: 0.5 without AI commentary, 1.0 with commentary.
+    `commentary_cost` is legacy (added on top of paid_cost); prefer commentary_total.
+    """
     if is_admin:
-        return 0
+        return 0.0
     if is_trial and int(cooks_used or 0) < int(trial_limit or 2):
-        return 0
-    base = max(1, int(paid_cost or 1))
-    if commentary:
-        base += max(0, int(commentary_cost or 0))
-    return base
+        return 0.0
+    base = max(0.0, float(paid_cost if paid_cost is not None else 0.5))
+    if not commentary:
+        return round(base, 2)
+    if commentary_cost is not None:
+        # Legacy: base + extra
+        return round(base + max(0.0, float(commentary_cost or 0)), 2)
+    total = float(commentary_total if commentary_total is not None else 1.0)
+    return round(max(base, total), 2)

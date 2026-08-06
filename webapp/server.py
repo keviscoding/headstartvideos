@@ -2103,14 +2103,28 @@ async def ranking_access(user: dict = Depends(require_user)):
     trial = is_trial_plan(plan)
     paid = is_paid_plan(plan, is_admin=is_admin)
     free_left = max(0, limit - used) if trial else 0
+    base_cost = float(getattr(config, "RANKING_CREDIT_COST", 0.5) or 0.5)
+    with_commentary = float(getattr(config, "RANKING_CREDIT_COST_COMMENTARY", 1) or 1)
     cost = ranking_credit_cost(
         is_trial=trial,
         cooks_used=used,
         trial_limit=limit,
         is_admin=is_admin,
-        paid_cost=int(getattr(config, "RANKING_CREDIT_COST", 1) or 1),
+        paid_cost=base_cost,
+        commentary=False,
+        commentary_total=with_commentary,
     )
-    commentary_extra = int(getattr(config, "RANKING_COMMENTARY_CREDIT_COST", 1) or 1)
+    cost_commentary = ranking_credit_cost(
+        is_trial=trial,
+        cooks_used=used,
+        trial_limit=limit,
+        is_admin=is_admin,
+        paid_cost=base_cost,
+        commentary=True,
+        commentary_total=with_commentary,
+    )
+    # Extra shown in UI as the delta between commentary and base (paid non-trial).
+    commentary_extra = max(0.0, round(float(with_commentary) - float(base_cost), 2))
     return {
         "can_cook": paid,
         "is_trial": trial,
@@ -2118,6 +2132,7 @@ async def ranking_access(user: dict = Depends(require_user)):
         "ranking_limit": limit,
         "ranking_free_left": free_left if trial else None,
         "credit_cost": cost,
+        "credit_cost_commentary": cost_commentary,
         "commentary_credit_cost": commentary_extra,
         "trial_allowed": trial_ranking_allowed(
             cooks_used=used, trial_limit=limit, is_trial=trial, is_admin=is_admin,
@@ -2249,8 +2264,8 @@ async def ranking_assemble(req: RankingAssembleRequest, user: dict = Depends(req
     trial = is_trial_plan(plan)
     used = count_user_ranking_cooks(int(user["id"]))
     limit = int(getattr(config, "RANKING_TRIAL_COOK_LIMIT", 2) or 2)
-    paid_cost = int(getattr(config, "RANKING_CREDIT_COST", 1) or 1)
-    commentary_cost = int(getattr(config, "RANKING_COMMENTARY_CREDIT_COST", 1) or 1)
+    paid_cost = float(getattr(config, "RANKING_CREDIT_COST", 0.5) or 0.5)
+    commentary_total = float(getattr(config, "RANKING_CREDIT_COST_COMMENTARY", 1) or 1)
     want_commentary = bool(req.commentary)
 
     if trial and not is_admin and not trial_ranking_allowed(
@@ -2276,7 +2291,7 @@ async def ranking_assemble(req: RankingAssembleRequest, user: dict = Depends(req
         is_admin=is_admin,
         paid_cost=paid_cost,
         commentary=want_commentary,
-        commentary_cost=commentary_cost,
+        commentary_total=commentary_total,
     )
 
     _enforce_user_cook_slot(user)

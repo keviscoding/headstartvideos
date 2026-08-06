@@ -32,16 +32,21 @@ def test_trial_quota_two_free():
 def test_credit_cost_zero_during_trial_quota():
     assert ranking_credit_cost(is_trial=True, cooks_used=0, trial_limit=2) == 0
     assert ranking_credit_cost(is_trial=True, cooks_used=1, trial_limit=2) == 0
-    assert ranking_credit_cost(is_trial=True, cooks_used=2, trial_limit=2) == 1
-    assert ranking_credit_cost(is_trial=False, cooks_used=0, paid_cost=1) == 1
+    assert ranking_credit_cost(
+        is_trial=True, cooks_used=2, trial_limit=2, paid_cost=0.5, commentary_total=1.0,
+    ) == 0.5
+    assert ranking_credit_cost(is_trial=False, cooks_used=0, paid_cost=0.5) == 0.5
     assert ranking_credit_cost(is_trial=True, cooks_used=0, is_admin=True) == 0
 
 
-def test_commentary_adds_extra_credits_when_paid():
+def test_commentary_is_one_credit_not_two():
     assert ranking_credit_cost(
-        is_trial=False, cooks_used=0, paid_cost=1, commentary=True, commentary_cost=1,
-    ) == 2
+        is_trial=False, cooks_used=0, paid_cost=0.5, commentary=True, commentary_total=1.0,
+    ) == 1.0
+    assert ranking_credit_cost(
+        is_trial=False, cooks_used=0, paid_cost=0.5, commentary=False, commentary_total=1.0,
+    ) == 0.5
     # Trial quota still free even with commentary
     assert ranking_credit_cost(
-        is_trial=True, cooks_used=0, trial_limit=2, commentary=True, commentary_cost=1,
+        is_trial=True, cooks_used=0, trial_limit=2, commentary=True, commentary_total=1.0,
     ) == 0
