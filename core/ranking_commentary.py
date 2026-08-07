@@ -388,79 +388,13 @@ def _tts_safe_text(line: str) -> str:
     return s[:160]
 
 
-def _openai_api_key() -> str:
-    import os
-    import config as _cfg
-    return (
-        (os.getenv("OPENAI_API_KEY") or "").strip()
-        or (getattr(_cfg, "OPENAI_API_KEY", "") or "").strip()
-    )
-
-
-def _openai_voice_id(voice_name: str) -> str:
-    # ViewHunt ranking voice map (Gemini UI names → OpenAI TTS voices)
-    mapping = {
-        "kore": "nova", "puck": "onyx", "charon": "echo", "fenrir": "fable",
-        "aoede": "shimmer", "leda": "nova", "orus": "onyx", "zephyr": "alloy",
-        "nova": "nova", "onyx": "onyx", "echo": "echo", "fable": "fable",
-        "shimmer": "shimmer", "alloy": "alloy",
-    }
-    return mapping.get((voice_name or "").strip().lower(), "nova")
-
-
-def _tts_openai(line: str, voice_name: str, out_path: Path) -> Path | None:
-    """OpenAI tts-1-hd — ViewHunt's ranking VO path (not Gemini)."""
-    key = _openai_api_key()
-    if not key:
-        return None
-    try:
-        import httpx
-    except Exception as e:
-        print(f"[ranking_commentary] OpenAI TTS import failed: {e}")
+def _tts_line(line: str, voice_name: str, out_path: Path) -> Path | None:
+    """Speak the line via Atlas xAI TTS only (Gemini is vision-only)."""
+    text = _tts_safe_text(line)
+    if not text or _is_junk_line(text):
+        print(f"[ranking_commentary] TTS refused junk/empty line={line!r}")
         return None
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    # Prefer wav; fall back to mp3 then ffmpeg-convert if needed
-    for fmt, suffix in (("wav", ".wav"), ("mp3", ".mp3")):
-        dest = out_path if out_path.suffix.lower() == suffix else out_path.with_suffix(suffix)
-        try:
-            with httpx.Client(timeout=90) as client:
-                r = client.post(
-                    "https://api.openai.com/v1/audio/speech",
-                    headers={
-                        "Authorization": f"Bearer {key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": "tts-1-hd",
-                        "voice": _openai_voice_id(voice_name),
-                        "input": line,
-                        "speed": 1.2,
-                        "response_format": fmt,
-                    },
-                )
-            if r.status_code >= 400:
-                raise RuntimeError(f"OpenAI TTS {r.status_code}: {r.text[:240]}")
-            dest.write_bytes(r.content)
-            if dest.stat().st_size < 400:
-                raise RuntimeError("OpenAI TTS empty audio")
-            if dest.resolve() != out_path.resolve():
-                # Normalize to the requested wav path for the mixer
-                subprocess.run(
-                    [_ffmpeg(), "-y", "-i", str(dest), "-ar", "24000", "-ac", "1", str(out_path)],
-                    capture_output=True, text=True, timeout=60,
-                )
-                if out_path.is_file() and out_path.stat().st_size > 400:
-                    return out_path
-                return dest if dest.is_file() else None
-            return out_path
-        except Exception as e:
-            print(f"[ranking_commentary] OpenAI TTS ({fmt}) failed: {e}")
-    return None
-
-
-def _tts_atlas_xai(line: str, voice_name: str, out_path: Path) -> Path | None:
-    """Atlas Cloud xAI TTS — ChannelRecipe's standard voiceover path (not Gemini)."""
     try:
         from core.atlas_runtime import get_atlas_key
         from core.voiceover_gen import _atlas_tts_chunk, _ATLAS_VOICE_MAP
@@ -490,27 +424,13 @@ def _tts_atlas_xai(line: str, voice_name: str, out_path: Path) -> Path | None:
                     out_path.unlink()
                 except Exception:
                     pass
-            _atlas_tts_chunk(line, atlas_voice, str(out_path))
+            _atlas_tts_chunk(text, atlas_voice, str(out_path))
             if out_path.is_file() and out_path.stat().st_size > 500:
                 print(f"[ranking_commentary] Atlas xAI TTS ok voice={atlas_voice}")
                 return out_path
         except Exception as e:
             print(f"[ranking_commentary] Atlas TTS failed voice={atlas_voice}: {e}")
     return None
-
-
-def _tts_line(line: str, voice_name: str, out_path: Path) -> Path | None:
-    """Speak the line. Never Gemini TTS — OpenAI first (ViewHunt), then Atlas xAI."""
-    text = _tts_safe_text(line)
-    if not text or _is_junk_line(text):
-        print(f"[ranking_commentary] TTS refused junk/empty line={line!r}")
-        return None
-
-    # Prefer OpenAI when keyed (same as ViewHunt ranking). Else Atlas xAI.
-    tts = _tts_openai(text, voice_name or "Kore", out_path)
-    if tts:
-        return tts
-    return _tts_atlas_xai(text, voice_name or "Kore", out_path)
 
 
 def _char_weighted_timings(line: str, duration: float) -> list[dict[str, Any]]:

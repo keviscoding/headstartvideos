@@ -51,11 +51,10 @@ def test_role_prompt_is_vision_first_and_keyos_style():
     assert "formats, constraints" in p.lower() or "Never mention JSON" in p
 
 
-def test_tts_never_uses_gemini_and_prefers_openai_map():
-    from core.ranking_commentary import _openai_voice_id, _tts_line
-    assert _openai_voice_id("Kore") == "nova"
-    assert _openai_voice_id("Charon") == "echo"
-    # Smoke: function is the OpenAI→Atlas path (no gemini tts symbol in module call path)
+def test_tts_is_atlas_xai_only():
     import core.ranking_commentary as rc
-    assert "gemini" not in (rc._tts_line.__doc__ or "").lower() or "never" in (rc._tts_line.__doc__ or "").lower()
-    assert callable(_tts_line)
+    doc = (rc._tts_line.__doc__ or "").lower()
+    assert "atlas" in doc and "xai" in doc
+    assert "openai" not in doc
+    assert not hasattr(rc, "_tts_openai")
+    assert callable(rc._tts_line)

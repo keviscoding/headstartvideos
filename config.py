@@ -17,8 +17,6 @@ YOUTUBE_COOKIES_FILE = (os.getenv("YOUTUBE_COOKIES_FILE", "") or "").strip()
 DOWNSUB_KEY = os.getenv("DOWNSUB_KEY", "")
 PIXABAY_KEY = os.getenv("PIXABAY_KEY", "")
 ATLASCLOUD_KEY = os.getenv("ATLASCLOUD_KEY", "")
-# Optional — ViewHunt-style ranking commentary VO (tts-1-hd). Atlas xAI is the fallback.
-OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY", "") or "").strip()
 # Groq — fast, cheap Whisper transcription API. If set, word-level alignment is
 # offloaded here (large-v3-turbo) instead of running whisper on the local CPU.
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
