@@ -1,5 +1,6 @@
 """Light tests for ranking commentary helpers (no live Atlas)."""
 from core.ranking_commentary import (
+    _is_banned_line,
     _is_junk_label,
     _is_junk_line,
     _is_repetitive_line,
@@ -25,9 +26,9 @@ def test_parse_json_line():
 
 
 def test_strips_prompt_bleed():
-    raw = 'Output format: {"line":"she didn\'t expect that","label":"TAPE PRANK"}'
+    raw = 'Output format: {"line":"tape got her good","label":"TAPE PRANK"}'
     p = _parse_line_and_label(raw, "fallback", "X")
-    assert "expect" in p["line"].lower()
+    assert "tape got her good" in p["line"].lower()
     assert "output" not in p["line"].lower()
     assert _is_junk_line("specific constraint: be short")
     assert _is_junk_label("OUTPUT FORMAT")
@@ -49,6 +50,19 @@ def test_role_prompt_is_vision_first_and_keyos_style():
     assert "She didn't expect that" in p
     assert "ONLY this JSON" in p or "only this JSON" in p.lower()
     assert "formats, constraints" in p.lower() or "Never mention JSON" in p
+    assert "these are the … moments" in p.lower() or "these are the" in p.lower()
+    assert "Do NOT introduce" in p or "Never open with an intro" in p
+
+
+def test_no_cold_open_hook_role_and_bans_canned_lines():
+    first = _role_prompt("react", "worst airport moments", 3, 3, [])
+    assert "COLD-OPEN" not in first
+    assert "These are the moments you need to see" not in first
+    assert _is_banned_line("These are the worst ranking moments")
+    assert _is_banned_line("Bro is so cooked")
+    assert _is_banned_line("bro is cooked")
+    assert _is_junk_line("Bro is so cooked")
+    assert not _is_banned_line("that suitcase is fighting back")
 
 
 def test_tts_is_atlas_xai_only():

@@ -128,6 +128,26 @@ def probe_duration(path: str | Path) -> float:
         return 0.0
 
 
+def probe_audio_duration(path: str | Path) -> float:
+    """Audio stream duration (not container) — catches A/V mismatch after concat."""
+    try:
+        r = subprocess.run(
+            [
+                _ffprobe_bin(), "-v", "quiet",
+                "-select_streams", "a:0",
+                "-show_entries", "stream=duration",
+                "-of", "csv=p=0", str(path),
+            ],
+            capture_output=True, text=True, timeout=60,
+        )
+        out = (r.stdout or "").strip().splitlines()
+        if out and out[0] not in ("", "N/A"):
+            return float(out[0]) or 0.0
+    except Exception:
+        pass
+    return probe_duration(path)
+
+
 def probe_video(path: str | Path) -> dict[str, float | int]:
     try:
         r = subprocess.run(
@@ -560,6 +580,72 @@ def generate_ass(
     return output_path
 
 
+def _vo_start_sec(
+    c: dict[str, Any],
+    *,
+    vo_map: dict[Any, float],
+    offsets: list[float],
+) -> float:
+    idx = int(c.get("clipIndex") or 0)
+    if idx in vo_map:
+        return float(vo_map[idx])
+    if str(idx) in vo_map:
+        return float(vo_map[str(idx)])
+    return float(offsets[idx]) if idx < len(offsets) else 0.0
+
+
+def _assert_mixed_vo_audible(
+    mixed_path: Path,
+    usable: list[dict[str, Any]],
+    *,
+    vo_map: dict[Any, float],
+    offsets: list[float],
+    total_duration: float,
+) -> None:
+    """Fail the cook if VO windows are still near-silent (text-only karaoke)."""
+    v_dur = max(total_duration, probe_duration(mixed_path), probe_video(mixed_path)["duration"])
+    a_dur = probe_audio_duration(mixed_path)
+    if a_dur + 0.35 < v_dur:
+        raise RuntimeError(
+            f"Commentary mix audio shorter than video ({a_dur:.2f}s < {v_dur:.2f}s) — "
+            "refusing text-only export"
+        )
+    # Sample ~0.45s after each VO starts; mean volume must clear a floor.
+    for c in usable:
+        start = _vo_start_sec(c, vo_map=vo_map, offsets=offsets)
+        if start >= max(0.0, a_dur - 0.05):
+            raise RuntimeError(
+                f"Commentary VO for clip {int(c.get('clipIndex') or 0) + 1} "
+                f"starts past audio end ({start:.2f}s / {a_dur:.2f}s)"
+            )
+        ss = max(0.0, start + 0.05)
+        probe_t = min(0.45, max(0.2, a_dur - ss))
+        try:
+            r = subprocess.run(
+                [
+                    _ffmpeg_bin(), "-hide_banner", "-nostats",
+                    "-ss", f"{ss:.3f}", "-t", f"{probe_t:.3f}",
+                    "-i", str(mixed_path),
+                    "-af", "volumedetect", "-f", "null", "-",
+                ],
+                capture_output=True, text=True, timeout=60,
+            )
+            err = r.stderr or ""
+        except Exception as e:
+            raise RuntimeError(f"Could not verify commentary VO loudness: {e}") from e
+        m = re.search(r"mean_volume:\s*([-\d.]+)\s*dB", err)
+        if not m:
+            continue
+        mean_db = float(m.group(1))
+        # Near-digital silence is ~-90dB; TikTok beds are much louder. VO windows
+        # must not be empty even after ducking.
+        if mean_db < -55.0:
+            raise RuntimeError(
+                f"Commentary voiceover inaudible at t={start:.1f}s "
+                f"(mean {mean_db:.1f} dB) — refusing text-only export"
+            )
+
+
 def mix_commentary_audio(
     video_path: Path,
     commentary_lines: list[dict[str, Any]],
@@ -578,35 +664,43 @@ def mix_commentary_audio(
     if not usable:
         shutil.copy2(video_path, output_path)
         return
+    if not _probe_has_audio(video_path):
+        raise RuntimeError("Ranking video has no bed audio to mix commentary onto")
 
     offsets = [0.0]
     for i in range(len(durations) - 1):
         offsets.append(offsets[-1] + durations[i])
     vo_map = voice_offsets or {}
+    total_duration = max(
+        probe_duration(video_path),
+        float(probe_video(video_path).get("duration") or 0),
+        probe_audio_duration(video_path),
+    )
+    if total_duration <= 0.2:
+        raise RuntimeError("Cannot mix commentary — video duration unknown")
+    whole = f"{total_duration:.3f}"
+
+    def _build_vo_filters(volume: float) -> tuple[list[str], list[str]]:
+        filters: list[str] = []
+        labels: list[str] = []
+        for i, c in enumerate(usable):
+            delay_ms = int(max(0.0, _vo_start_sec(c, vo_map=vo_map, offsets=offsets)) * 1000)
+            filters.append(
+                f"[{i + 1}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,"
+                f"volume={volume:.2f},alimiter=limit=0.97:level=false,"
+                f"adelay={delay_ms}|{delay_ms},apad=whole_dur={whole}[c{i}]"
+            )
+            labels.append(f"[c{i}]")
+        return filters, labels
 
     cmd = [_ffmpeg_bin(), "-y", "-i", str(video_path)]
     for c in usable:
         cmd.extend(["-i", str(c["audioPath"])])
 
-    filters = []
-    labels = []
-    for i, c in enumerate(usable):
-        idx = int(c.get("clipIndex") or 0)
-        if idx in vo_map:
-            start_sec = float(vo_map[idx])
-        elif str(idx) in vo_map:
-            start_sec = float(vo_map[str(idx)])
-        else:
-            start_sec = offsets[idx] if idx < len(offsets) else 0.0
-        delay_ms = int(max(0.0, start_sec) * 1000)
-        filters.append(
-            f"[{i + 1}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,"
-            f"volume=2.4,alimiter=limit=0.97:level=false,"
-            f"adelay={delay_ms}|{delay_ms}[c{i}]"
-        )
-        labels.append(f"[c{i}]")
+    filters, labels = _build_vo_filters(2.8)
     filters.append(
-        "[0:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,volume=0.7[bed]"
+        f"[0:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,"
+        f"apad=whole_dur={whole},volume=0.85[bed]"
     )
     if len(labels) == 1:
         filters.append(f"{labels[0]}anull[cmix]")
@@ -615,26 +709,32 @@ def mix_commentary_audio(
             f"{''.join(labels)}amix=inputs={len(labels)}:duration=longest:normalize=0[cmix]"
         )
     filters.append(
-        "[bed][cmix]sidechaincompress=threshold=0.012:ratio=18:attack=12:release=220:makeup=1[ducked]"
+        "[bed][cmix]sidechaincompress=threshold=0.012:ratio=18:attack=12:release=220:"
+        "makeup=1:knee=2:link=average[ducked]"
     )
-    filters.append("[ducked]volume=0.75[ducked2]")
+    filters.append("[ducked]volume=0.7[ducked2]")
     filters.append(
-        "[ducked2][cmix]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]"
+        f"[ducked2][cmix]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
+        f"apad=whole_dur={whole},alimiter=limit=0.98:level=false[aout]"
     )
     cmd.extend([
         "-filter_complex", ";".join(filters),
         "-map", "0:v", "-map", "[aout]",
         "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+        "-t", whole,
         "-movflags", "+faststart",
         str(output_path),
     ])
     try:
         _run(cmd, timeout=600, cwd=str(work_dir))
-        if output_path.is_file() and output_path.stat().st_size > 1000:
-            return
-        raise RuntimeError("commentary mix produced empty output")
+        if not (output_path.is_file() and output_path.stat().st_size > 1000):
+            raise RuntimeError("commentary mix produced empty output")
+        _assert_mixed_vo_audible(
+            output_path, usable, vo_map=vo_map, offsets=offsets, total_duration=total_duration,
+        )
+        return
     except RuntimeError as e:
-        # Plain amix fallback — never ship a commentary cook with silent VO.
+        # Plain loud-VO amix fallback — never ship a commentary cook with silent VO.
         print(f"[ranking] commentary mix (ducked) failed ({e}); trying plain amix")
         try:
             if output_path.is_file():
@@ -644,33 +744,21 @@ def mix_commentary_audio(
         cmd2 = [_ffmpeg_bin(), "-y", "-i", str(video_path)]
         for c in usable:
             cmd2.extend(["-i", str(c["audioPath"])])
-        filters2: list[str] = []
-        labels2: list[str] = []
-        for i, c in enumerate(usable):
-            idx = int(c.get("clipIndex") or 0)
-            if idx in vo_map:
-                start_sec = float(vo_map[idx])
-            elif str(idx) in vo_map:
-                start_sec = float(vo_map[str(idx)])
-            else:
-                start_sec = offsets[idx] if idx < len(offsets) else 0.0
-            delay_ms = int(max(0.0, start_sec) * 1000)
-            filters2.append(
-                f"[{i + 1}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,"
-                f"volume=2.2,adelay={delay_ms}|{delay_ms}[c{i}]"
-            )
-            labels2.append(f"[c{i}]")
+        filters2, labels2 = _build_vo_filters(3.0)
         filters2.append(
-            "[0:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,volume=0.55[bed]"
+            f"[0:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,"
+            f"apad=whole_dur={whole},volume=0.22[bed]"
         )
         filters2.append(
             f"[bed]{''.join(labels2)}amix=inputs={1 + len(labels2)}:duration=first:"
-            f"dropout_transition=0:normalize=0[aout]"
+            f"dropout_transition=0:normalize=0,apad=whole_dur={whole},"
+            f"alimiter=limit=0.98:level=false[aout]"
         )
         cmd2.extend([
             "-filter_complex", ";".join(filters2),
             "-map", "0:v", "-map", "[aout]",
             "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+            "-t", whole,
             "-movflags", "+faststart",
             str(output_path),
         ])
@@ -678,6 +766,9 @@ def mix_commentary_audio(
             _run(cmd2, timeout=600, cwd=str(work_dir))
             if not (output_path.is_file() and output_path.stat().st_size > 1000):
                 raise RuntimeError("plain amix produced empty output")
+            _assert_mixed_vo_audible(
+                output_path, usable, vo_map=vo_map, offsets=offsets, total_duration=total_duration,
+            )
         except RuntimeError as e2:
             raise RuntimeError(
                 f"Commentary voiceover mix failed — refusing silent export. "
@@ -720,6 +811,12 @@ def normalize_clip(src: Path, dst: Path, *, start: float = 0.0, end: float | Non
         f"fps={RANK_FPS},setsar=1"
     )
     has_audio = _probe_has_audio(src)
+    # TikTok/source clips often have audio shorter than video. Pad to exact dur or
+    # concat+mix truncates the bed and voiceovers never land in the final file.
+    af = (
+        f"aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo,"
+        f"apad=whole_dur={dur:.3f}"
+    )
     cmd = [
         _ffmpeg_bin(), "-y",
         "-ss", f"{ss:.3f}", "-i", str(src), "-t", f"{dur:.3f}",
@@ -729,18 +826,20 @@ def normalize_clip(src: Path, dst: Path, *, start: float = 0.0, end: float | Non
             "-f", "lavfi", "-i",
             f"anullsrc=channel_layout=stereo:sample_rate=44100",
         ])
-    cmd.extend(["-vf", vf])
-    if has_audio:
         cmd.extend([
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-            "-c:a", "aac", "-b:a", "128k", "-ac", "2", "-ar", "44100",
-        ])
-    else:
-        cmd.extend([
+            "-vf", vf,
             "-map", "0:v:0", "-map", "1:a:0",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
             "-c:a", "aac", "-b:a", "128k", "-ac", "2", "-ar", "44100",
-            "-shortest",
+            "-t", f"{dur:.3f}",
+        ])
+    else:
+        cmd.extend([
+            "-vf", vf,
+            "-af", af,
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+            "-c:a", "aac", "-b:a", "128k", "-ac", "2", "-ar", "44100",
+            "-t", f"{dur:.3f}",
         ])
     cmd.extend([
         "-r", str(RANK_FPS),
@@ -748,7 +847,25 @@ def normalize_clip(src: Path, dst: Path, *, start: float = 0.0, end: float | Non
         str(dst),
     ])
     _run(cmd, timeout=300)
-    return probe_duration(dst) or dur
+    out_dur = probe_duration(dst) or dur
+    a_dur = probe_audio_duration(dst)
+    if a_dur + 0.25 < out_dur:
+        # Last-resort remux pad if ffmpeg still emitted short audio.
+        padded = dst.with_name(dst.stem + "-apad.mp4")
+        _run([
+            _ffmpeg_bin(), "-y", "-i", str(dst),
+            "-af", f"apad=whole_dur={out_dur:.3f}",
+            "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
+            "-t", f"{out_dur:.3f}",
+            str(padded),
+        ], timeout=120)
+        padded.replace(dst)
+        a_dur = probe_audio_duration(dst)
+        if a_dur + 0.25 < out_dur:
+            raise RuntimeError(
+                f"Normalized clip still has short audio ({a_dur:.2f}s < {out_dur:.2f}s video)"
+            )
+    return out_dur
 
 
 def _ffmpeg_has_filter(name: str) -> bool:
@@ -923,6 +1040,25 @@ def assemble_ranking_video(
         _ffmpeg_bin(), "-y", "-f", "concat", "-safe", "0",
         "-i", str(concat_list), "-c", "copy", str(concat_mp4),
     ], timeout=300)
+    cat_v = max(probe_duration(concat_mp4), float(probe_video(concat_mp4).get("duration") or 0))
+    cat_a = probe_audio_duration(concat_mp4)
+    if cat_a + 0.35 < cat_v:
+        # Copy-concat kept a short audio stream — re-encode with pad so VO can mix.
+        print(
+            f"[ranking] concat A/V mismatch (a={cat_a:.2f}s v={cat_v:.2f}s); re-encoding"
+        )
+        fixed = work / "concat-fixed.mp4"
+        _run([
+            _ffmpeg_bin(), "-y", "-f", "concat", "-safe", "0",
+            "-i", str(concat_list),
+            "-af", f"apad=whole_dur={cat_v:.3f}",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+            "-r", str(RANK_FPS),
+            "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
+            "-t", f"{cat_v:.3f}",
+            str(fixed),
+        ], timeout=600)
+        fixed.replace(concat_mp4)
 
     timeline = {
         "clipOffsets": clip_offsets,

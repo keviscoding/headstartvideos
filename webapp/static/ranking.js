@@ -235,18 +235,27 @@ function rkFormatCredits(n) {
     return x.toFixed(1).replace(/\.0$/, '');
 }
 
+function rkListedCredit(kind) {
+    // Prefer public list prices so admin/$0 charge never paints the button as free.
+    if (!_rkAccess) return kind === 'commentary' ? 1 : 0.5;
+    if (kind === 'commentary') {
+        const listed = Number(_rkAccess.list_price_commentary);
+        if (Number.isFinite(listed) && listed > 0) return listed;
+        const charged = Number(_rkAccess.credit_cost_commentary);
+        if (Number.isFinite(charged) && charged > 0) return charged;
+        return 1;
+    }
+    const listed = Number(_rkAccess.list_price);
+    if (Number.isFinite(listed) && listed > 0) return listed;
+    const charged = Number(_rkAccess.credit_cost);
+    if (Number.isFinite(charged) && charged > 0) return charged;
+    return 0.5;
+}
+
 function rkCookCreditTotal() {
     if (!_rkAccess) return _rkCommentary ? 1 : 0.5;
     if (_rkAccess.is_trial && (_rkAccess.ranking_free_left ?? 0) > 0) return 0;
-    if (_rkCommentary) {
-        const c = Number(_rkAccess.credit_cost_commentary);
-        if (Number.isFinite(c)) return c;
-        const base = Number(_rkAccess.credit_cost) || 0.5;
-        const extra = Number(_rkAccess.commentary_credit_cost);
-        return base + (Number.isFinite(extra) ? extra : 0.5);
-    }
-    const base = Number(_rkAccess.credit_cost);
-    return Number.isFinite(base) ? base : 0.5;
+    return rkListedCredit(_rkCommentary ? 'commentary' : 'base');
 }
 
 function rkUpdateAssembleLabel() {
@@ -971,8 +980,8 @@ async function rkRefreshAccess() {
                 ? `${left} free ranking short${left === 1 ? '' : 's'} left on your trial`
                 : 'Free ranking shorts used — upgrade to keep cooking';
         } else if (_rkAccess.can_cook) {
-            const base = rkFormatCredits(_rkAccess.credit_cost ?? 0.5);
-            const withVo = rkFormatCredits(_rkAccess.credit_cost_commentary ?? 1);
+            const base = rkFormatCredits(rkListedCredit('base'));
+            const withVo = rkFormatCredits(rkListedCredit('commentary'));
             badge.textContent = `${base} credit without commentary · ${withVo} with AI commentary`;
         } else {
             badge.textContent = 'Start a free trial to cook ranking shorts';
@@ -982,13 +991,7 @@ async function rkRefreshAccess() {
             if (_rkAccess.is_trial && (_rkAccess.ranking_free_left ?? 0) > 0) {
                 chip.textContent = 'included on trial';
             } else {
-                // Prefer list_price_commentary so admin/$0 charge never shows "0 credits".
-                const listed = Number(_rkAccess.list_price_commentary);
-                const charged = Number(_rkAccess.credit_cost_commentary);
-                const withVo = (Number.isFinite(listed) && listed > 0)
-                    ? listed
-                    : ((Number.isFinite(charged) && charged > 0) ? charged : 1);
-                chip.textContent = `${rkFormatCredits(withVo)} credit`;
+                chip.textContent = `${rkFormatCredits(rkListedCredit('commentary'))} credit`;
             }
         }
         rkUpdateAssembleLabel();

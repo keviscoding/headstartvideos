@@ -146,6 +146,29 @@ def test_normalize_clip_letterbox_filter_string():
     assert "pad=" in src and "black" in src
     assert "RANK_CONTENT_MAX_H" in src or "1440" in src
     assert "force_original_aspect_ratio=increase" not in src
+    assert "apad=whole_dur" in src
+
+
+def test_normalize_clip_pads_short_audio(tmp_path: Path):
+    """Source clips with short audio must not ship A/V mismatch into concat/mix."""
+    import subprocess
+    from core.ranking_pipeline import normalize_clip, probe_audio_duration, probe_duration, _ffprobe_bin
+
+    src = tmp_path / "short_a.mp4"
+    subprocess.check_call([
+        "ffmpeg", "-y",
+        "-f", "lavfi", "-i", "color=c=red:s=720x1280:r=30:d=5",
+        "-f", "lavfi", "-i", "sine=f=440:d=3",
+        "-map", "0:v", "-map", "1:a",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+        str(src),
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    dst = tmp_path / "norm.mp4"
+    normalize_clip(src, dst, start=0, end=5)
+    v = probe_duration(dst)
+    a = probe_audio_duration(dst)
+    assert v >= 4.7
+    assert a + 0.25 >= v
 
 
 def test_escape_ffmpeg_filter_path_escapes_colons(tmp_path: Path):

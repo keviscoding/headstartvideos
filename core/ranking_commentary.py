@@ -22,16 +22,9 @@ RANKING_VISION_MODELS = (
     "google/gemini-3.5-flash",
 )
 
-# Distilled from Keyos Ranks transcripts — vibe examples only (never copy verbatim).
-_STYLE_INTRO_EXAMPLES = [
-    "These are the funniest fishing moments.",
-    "These are the best lightning strike moments.",
-    "These are the dumbest criminal moments.",
-    "These are the best clear tape pranks.",
-]
+# Distilled from Keyos Ranks transcripts — vibe only (never copy verbatim).
 _STYLE_REACT_EXAMPLES = [
     "She didn't expect that",
-    "Bro is so cooked",
     "That was close",
     "He didn't expect that",
     "Bro's about to get in trouble",
@@ -39,10 +32,20 @@ _STYLE_REACT_EXAMPLES = [
     "That's got to hurt",
     "Where was bro aiming",
     "Poor guy didn't expect it",
-    "Bro got silenced",
     "He miscalculated",
     "Little bro celebration went wrong",
 ]
+
+# Old hook intros + sticky canned fallbacks — never speak these.
+_BANNED_LINE_RE = re.compile(
+    r"(?i)^\s*("
+    r"these are the .+ moments?.*"
+    r"|these are the moments you need to see"
+    r"|bro is so cooked"
+    r"|bro is cooked"
+    r"|subscribe before the next one hits"
+    r")\s*[.!]?\s*$"
+)
 
 _META_BLEED_RE = re.compile(
     r"(?i)\b("
@@ -66,19 +69,24 @@ def _normalize_rank_label(label: str) -> str:
     return " ".join(words)[:24]
 
 
-def _fallback_for_role(clip: dict, rank: int, total: int, role: str) -> dict[str, str]:
-    """Last-resort lines — only used when vision+TTS path cannot produce a line."""
-    label = _normalize_rank_label(clip.get("label") or f"#{rank}")
-    if role == "hook":
-        return {"line": "These are the moments you need to see", "label": label}
-    if role == "cta":
-        return {"line": "Subscribe before the next one hits", "label": label}
-    # Prefer variety over the old repeating "that was wild" loop.
-    reactions = list(_STYLE_REACT_EXAMPLES)
-    return {
-        "line": reactions[(max(1, rank) - 1) % len(reactions)],
-        "label": label,
-    }
+def _normalize_line_key(line: str) -> str:
+    s = re.sub(r"[^a-z0-9\s]", " ", str(line or "").lower())
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _is_banned_line(line: str) -> bool:
+    s = str(line or "").strip()
+    if not s:
+        return True
+    if _BANNED_LINE_RE.match(s):
+        return True
+    if re.search(r"(?i)^\s*these are the\b", s):
+        return True
+    key = _normalize_line_key(s)
+    for ex in _STYLE_REACT_EXAMPLES:
+        if key == _normalize_line_key(ex):
+            return True
+    return False
 
 
 def _strip_meta_prefixes(text: str) -> str:
@@ -126,7 +134,7 @@ def _parse_line_and_label(raw: str, fallback_line: str, fallback_label: str) -> 
                 obj.get("label") or obj.get("rankLabel") or obj.get("title") or ""
             ).strip()
             line = _strip_meta_prefixes(line)
-            if line and not _is_junk_line(line):
+            if line and not _is_junk_line(line) and not _is_banned_line(line):
                 return {
                     "line": line,
                     "label": _normalize_rank_label(lab or fallback_label),
@@ -136,7 +144,7 @@ def _parse_line_and_label(raw: str, fallback_line: str, fallback_label: str) -> 
     parts = re.split(r"\s*\|\|\s*|\s*\|\s*", text)
     if len(parts) >= 2:
         line = _strip_meta_prefixes(parts[0])
-        if line and not _is_junk_line(line):
+        if line and not _is_junk_line(line) and not _is_banned_line(line):
             return {
                 "line": line,
                 "label": _normalize_rank_label(" ".join(parts[1:]) or fallback_label),
@@ -144,7 +152,12 @@ def _parse_line_and_label(raw: str, fallback_line: str, fallback_label: str) -> 
     # Plain prose — take first short sentence only
     sentence = re.split(r"[\n.]", text)[0].strip()
     sentence = _strip_meta_prefixes(sentence)
-    if sentence and not _is_junk_line(sentence) and len(sentence.split()) <= 16:
+    if (
+        sentence
+        and not _is_junk_line(sentence)
+        and not _is_banned_line(sentence)
+        and len(sentence.split()) <= 16
+    ):
         return {"line": sentence, "label": _normalize_rank_label(fallback_label)}
     return {"line": fallback_line, "label": _normalize_rank_label(fallback_label)}
 
@@ -175,6 +188,8 @@ def _is_junk_line(line: str) -> bool:
         return True
     # Too long = model essay / instructions, not a ranking beat
     if len(s.split()) > 16:
+        return True
+    if _is_banned_line(s):
         return True
     return False
 
@@ -214,7 +229,17 @@ def _role_prompt(
         avoid = "\nDo not repeat or paraphrase: " + json.dumps(prior_lines[-6:])
 
     examples = "; ".join(f'"{e}"' for e in _STYLE_REACT_EXAMPLES[:8])
-    intro_ex = "; ".join(f'"{e}"' for e in _STYLE_INTRO_EXAMPLES[:3])
+    if role == "cta":
+        role_line = (
+            "FINAL clip (#1) — one short reaction to the visible action, "
+            "optionally ending with a tiny subscribe nudge (max 12 words)."
+        )
+    else:
+        role_line = (
+            f"Clip #{clip_number} of {total_clips} — one punchy live reaction "
+            "to what is on screen RIGHT NOW (3–10 words). "
+            "Do NOT introduce the ranking. Do NOT say “these are the … moments”."
+        )
 
     return f"""You write short ranking-video commentary like successful YouTube Shorts channels.
 
@@ -225,19 +250,20 @@ Ranking topic (context only — never speak it, never quote it): {ranking_title!
 This is clip #{clip_number} of {total_clips} in a countdown (#1 is last).
 
 STYLE (learn the vibe — invent a FRESH line for THIS footage):
-- Spoken lines are SHORT: usually 3–10 words (hook/CTA may be up to 12).
+- Spoken lines are SHORT: usually 3–10 words.
 - Casual, reactive, specific to the moment (not generic hype).
-- React examples (vibe only): {examples}
-- Intro vibe examples: {intro_ex}
+- Vibe examples (do NOT copy these words): {examples}
 
-ROLE: {"COLD-OPEN HOOK — short intro like the vibe examples (you may paraphrase the topic as “These are the … moments”) PLUS a quick reaction to what is on screen." if role == "hook" else ("FINAL clip (#1) — quick subscribe CTA tied to the visible action." if role == "cta" else f"MID-RANK reaction for #{clip_number} — one punchy live reaction. Do not say subscribe.")}
+ROLE: {role_line}
 
 HARD RULES:
-- Comment on visible action only (hook may also name the ranking theme in one short intro sentence).
+- Comment on visible action only.
+- Never open with an intro / cold-open / “these are the …” framing — not even on the first clip.
 - Never guess off-screen backstory.
 - Never say "ranking number", read file names, or recite instructions.
 - No hashtags, emojis, markdown, or stage directions like [laughter].
 - Never mention JSON, prompts, formats, constraints, or output rules.
+- Never reuse example phrases verbatim.
 
 Reply with ONLY this JSON object (no other text):
 {{"line":"<spoken words>","label":"<1-4 word ALL CAPS tag of the action>"}}
@@ -488,7 +514,8 @@ def generate_ranking_commentary(
     n = len(clips)
 
     for i, clip in enumerate(clips):
-        role = "hook" if i == 0 else ("cta" if i == n - 1 else "react")
+        # Every clip is a short on-screen reaction — no cold-open intro on clip 1.
+        role = "cta" if i == n - 1 else "react"
         rank = int(clip.get("number") or (n - i))
         user_label = str(clip.get("label") or "").strip()
         # Ignore placeholder "#3" style labels as "user typed"
@@ -496,60 +523,76 @@ def generate_ranking_commentary(
             user_label = ""
         label = user_label or f"#{rank}"
         prog(
-            "Writing cold-open hook…" if role == "hook"
-            else ("Writing subscribe CTA…" if role == "cta"
-                  else f"Watching clip {i + 1}/{n}…")
+            "Writing subscribe CTA…" if role == "cta"
+            else f"Watching clip {i + 1}/{n}…"
         )
-        fb = _fallback_for_role(clip, rank, n, role)
-        parsed = dict(fb)
+        parsed: dict[str, str] | None = None
         vision_ok = False
+        last_err = "no usable vision line"
         clip_path = Path(str(clip.get("path") or ""))
-        if clip_path.is_file():
-            sample = _make_vision_sample(
-                clip_path,
-                start_time=float(clip.get("startTime") or 0),
-                end_time=clip.get("endTime"),
-                out_path=samples / f"vision_{i:02d}.mp4",
+        if not clip_path.is_file():
+            raise RuntimeError(f"AI commentary missing clip file for clip {i + 1}/{n}")
+
+        sample = _make_vision_sample(
+            clip_path,
+            start_time=float(clip.get("startTime") or 0),
+            end_time=clip.get("endTime"),
+            out_path=samples / f"vision_{i:02d}.mp4",
+        )
+        if not sample:
+            raise RuntimeError(
+                f"AI commentary could not sample clip {i + 1}/{n} for vision. "
+                "Try again — credits are refunded if the cook fails."
             )
-            if sample:
-                try:
-                    raw = _atlas_vision_comment(
-                        _role_prompt(role, ranking_title, rank, n, prior),
-                        sample,
-                        samples,
+
+        for attempt in range(2):
+            prompt = _role_prompt(role, ranking_title, rank, n, prior)
+            if attempt == 1:
+                prompt += (
+                    "\nRETRY: previous line was unusable. "
+                    "Describe the single most obvious visible action in 3–8 words."
+                )
+            try:
+                raw = _atlas_vision_comment(prompt, sample, samples)
+                candidate = _parse_line_and_label(raw, "", label)
+                cand_line = (candidate.get("line") or "").strip()
+                if (
+                    cand_line
+                    and not _is_junk_line(cand_line)
+                    and not _is_banned_line(cand_line)
+                    and not _is_repetitive_line(
+                        cand_line, prior, candidate.get("label") or ""
                     )
-                    candidate = _parse_line_and_label(raw, fb["line"], fb["label"])
-                    if (
-                        not _is_junk_line(candidate["line"])
-                        and not _is_repetitive_line(
-                            candidate["line"], prior, candidate.get("label") or ""
-                        )
-                    ):
-                        parsed = candidate
-                        vision_ok = True
-                    else:
-                        print(
-                            f"[ranking_commentary] clip {i}: rejected vision line "
-                            f"{candidate.get('line')!r}; using fallback"
-                        )
-                except Exception as e:
-                    print(f"[ranking_commentary] clip {i} vision failed: {e}")
-            else:
-                print(f"[ranking_commentary] clip {i}: no vision sample; using fallback")
-        else:
-            print(f"[ranking_commentary] clip {i}: missing path {clip_path}")
+                ):
+                    parsed = candidate
+                    vision_ok = True
+                    break
+                last_err = f"rejected line {cand_line!r}"
+                print(f"[ranking_commentary] clip {i}: {last_err}")
+            except Exception as e:
+                last_err = str(e)
+                print(f"[ranking_commentary] clip {i} vision failed: {e}")
+
+        if not parsed or not vision_ok:
+            raise RuntimeError(
+                f"AI commentary could not read clip {i + 1}/{n} ({last_err}). "
+                "Try again — credits are refunded if the cook fails."
+            )
 
         # Prefer user-typed label; only apply AI tag when clean + vision succeeded
         if user_label:
             parsed["label"] = _normalize_rank_label(user_label)
-        elif vision_ok and parsed.get("label") and not _is_junk_label(parsed["label"]):
+        elif parsed.get("label") and not _is_junk_label(parsed["label"]):
             clips[i]["label"] = parsed["label"]
         else:
             parsed["label"] = _normalize_rank_label(label)
 
-        line = (parsed.get("line") or fb["line"]).strip()
-        if _is_junk_line(line):
-            line = fb["line"]
+        line = (parsed.get("line") or "").strip()
+        if _is_junk_line(line) or _is_banned_line(line):
+            raise RuntimeError(
+                f"AI commentary produced an unusable line on clip {i + 1}/{n}. "
+                "Try again — credits are refunded if the cook fails."
+            )
         prior.append(line)
 
         audio_path = None
