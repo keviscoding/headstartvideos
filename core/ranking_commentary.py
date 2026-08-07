@@ -14,8 +14,12 @@ from typing import Any, Callable
 
 ProgressCb = Callable[[str], None]
 
-# Vision + punchy reactions — cheap Flash via Atlas.
-RANKING_VISION_MODEL = "google/gemini-3.5-flash"
+# Vision only (watch the clip) — cheap Gemini Flash via Atlas. Never used for TTS.
+RANKING_VISION_MODELS = (
+    "google/gemini-3.5-flash",
+    "google/gemini-2.5-flash",
+    "google/gemini-3.1-flash-lite",
+)
 
 # Distilled from Keyos Ranks transcripts — vibe examples only (never copy verbatim).
 _STYLE_INTRO_EXAMPLES = [
@@ -297,7 +301,7 @@ def _extract_vision_frames(sample_path: Path, work: Path, n: int = 5) -> list[Pa
 
 
 def _atlas_vision_comment(prompt: str, sample_path: Path, frames_dir: Path) -> str:
-    """Send clip frames (primary) + optional video to Atlas google/gemini-3.5-flash."""
+    """Send clip frames to Atlas Gemini (vision only — never TTS)."""
     import httpx
     from core.atlas_llm import ATLAS_LLM_BASE, _atlas_key, _extract_atlas_message_text
 
@@ -327,7 +331,6 @@ def _atlas_vision_comment(prompt: str, sample_path: Path, frames_dir: Path) -> s
     if not frames:
         raise RuntimeError("No frames extracted for vision")
 
-    # Frames first — more reliable on Atlas than large video_url payloads.
     parts: list[dict[str, Any]] = [
         {"type": "text", "text": prompt + "\n\nFrames from the clip follow. Describe what you see."},
     ]
@@ -337,36 +340,45 @@ def _atlas_vision_comment(prompt: str, sample_path: Path, frames_dir: Path) -> s
             "type": "image_url",
             "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
         })
-    body_frames = {
-        "model": RANKING_VISION_MODEL,
-        "messages": [{"role": "user", "content": parts}],
-        "max_tokens": 160,
-        "temperature": 0.9,
-    }
-    try:
-        return _post(body_frames)
-    except Exception as e:
-        print(f"[ranking_commentary] frames path failed ({e}); trying video_url")
 
-    raw = sample_path.read_bytes()
-    if len(raw) > 3 * 1024 * 1024:
-        raise RuntimeError(f"Vision sample too large after frames failure: {e}")
-    video_b64 = base64.b64encode(raw).decode("ascii")
-    return _post({
-        "model": RANKING_VISION_MODEL,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt},
-                {
-                    "type": "video_url",
-                    "video_url": {"url": f"data:video/mp4;base64,{video_b64}"},
-                },
-            ],
-        }],
-        "max_tokens": 160,
-        "temperature": 0.9,
-    })
+    last_err: Exception | None = None
+    for model in RANKING_VISION_MODELS:
+        try:
+            return _post({
+                "model": model,
+                "messages": [{"role": "user", "content": parts}],
+                "max_tokens": 160,
+                "temperature": 0.9,
+            })
+        except Exception as e:
+            last_err = e
+            print(f"[ranking_commentary] vision model {model} failed: {e}")
+
+    # Last resort: short video_url payload with first model
+    try:
+        raw = sample_path.read_bytes()
+        if len(raw) <= 3 * 1024 * 1024:
+            video_b64 = base64.b64encode(raw).decode("ascii")
+            return _post({
+                "model": RANKING_VISION_MODELS[0],
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "video_url",
+                            "video_url": {"url": f"data:video/mp4;base64,{video_b64}"},
+                        },
+                    ],
+                }],
+                "max_tokens": 160,
+                "temperature": 0.9,
+            })
+    except Exception as e:
+        last_err = e
+        print(f"[ranking_commentary] video_url vision failed: {e}")
+
+    raise RuntimeError(f"Ranking vision failed: {last_err}")
 
 
 def _tts_safe_text(line: str) -> str:
@@ -376,21 +388,88 @@ def _tts_safe_text(line: str) -> str:
     return s[:160]
 
 
-def _tts_line(line: str, voice_name: str, out_path: Path) -> Path | None:
-    """Synthesize via Atlas xAI TTS. Retries with fallback voice if needed."""
+def _openai_api_key() -> str:
+    import os
+    import config as _cfg
+    return (
+        (os.getenv("OPENAI_API_KEY") or "").strip()
+        or (getattr(_cfg, "OPENAI_API_KEY", "") or "").strip()
+    )
+
+
+def _openai_voice_id(voice_name: str) -> str:
+    # ViewHunt ranking voice map (Gemini UI names → OpenAI TTS voices)
+    mapping = {
+        "kore": "nova", "puck": "onyx", "charon": "echo", "fenrir": "fable",
+        "aoede": "shimmer", "leda": "nova", "orus": "onyx", "zephyr": "alloy",
+        "nova": "nova", "onyx": "onyx", "echo": "echo", "fable": "fable",
+        "shimmer": "shimmer", "alloy": "alloy",
+    }
+    return mapping.get((voice_name or "").strip().lower(), "nova")
+
+
+def _tts_openai(line: str, voice_name: str, out_path: Path) -> Path | None:
+    """OpenAI tts-1-hd — ViewHunt's ranking VO path (not Gemini)."""
+    key = _openai_api_key()
+    if not key:
+        return None
+    try:
+        import httpx
+    except Exception as e:
+        print(f"[ranking_commentary] OpenAI TTS import failed: {e}")
+        return None
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    # Prefer wav; fall back to mp3 then ffmpeg-convert if needed
+    for fmt, suffix in (("wav", ".wav"), ("mp3", ".mp3")):
+        dest = out_path if out_path.suffix.lower() == suffix else out_path.with_suffix(suffix)
+        try:
+            with httpx.Client(timeout=90) as client:
+                r = client.post(
+                    "https://api.openai.com/v1/audio/speech",
+                    headers={
+                        "Authorization": f"Bearer {key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": "tts-1-hd",
+                        "voice": _openai_voice_id(voice_name),
+                        "input": line,
+                        "speed": 1.2,
+                        "response_format": fmt,
+                    },
+                )
+            if r.status_code >= 400:
+                raise RuntimeError(f"OpenAI TTS {r.status_code}: {r.text[:240]}")
+            dest.write_bytes(r.content)
+            if dest.stat().st_size < 400:
+                raise RuntimeError("OpenAI TTS empty audio")
+            if dest.resolve() != out_path.resolve():
+                # Normalize to the requested wav path for the mixer
+                subprocess.run(
+                    [_ffmpeg(), "-y", "-i", str(dest), "-ar", "24000", "-ac", "1", str(out_path)],
+                    capture_output=True, text=True, timeout=60,
+                )
+                if out_path.is_file() and out_path.stat().st_size > 400:
+                    return out_path
+                return dest if dest.is_file() else None
+            return out_path
+        except Exception as e:
+            print(f"[ranking_commentary] OpenAI TTS ({fmt}) failed: {e}")
+    return None
+
+
+def _tts_atlas_xai(line: str, voice_name: str, out_path: Path) -> Path | None:
+    """Atlas Cloud xAI TTS — ChannelRecipe's standard voiceover path (not Gemini)."""
     try:
         from core.atlas_runtime import get_atlas_key
         from core.voiceover_gen import _atlas_tts_chunk, _ATLAS_VOICE_MAP
     except Exception as e:
-        print(f"[ranking_commentary] TTS import failed: {e}")
+        print(f"[ranking_commentary] Atlas TTS import failed: {e}")
         return None
 
     if not get_atlas_key():
-        print("[ranking_commentary] ATLASCLOUD_KEY missing — cannot synthesize VO")
-        return None
-
-    text = _tts_safe_text(line)
-    if not text or _is_junk_line(text):
+        print("[ranking_commentary] ATLASCLOUD_KEY missing for Atlas TTS")
         return None
 
     primary = (
@@ -399,8 +478,9 @@ def _tts_line(line: str, voice_name: str, out_path: Path) -> Path | None:
         or "rex"
     )
     voices = [primary]
-    if primary != "rex":
-        voices.append("rex")
+    for v in ("rex", "leo", "eve"):
+        if v not in voices:
+            voices.append(v)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     for atlas_voice in voices:
@@ -410,12 +490,27 @@ def _tts_line(line: str, voice_name: str, out_path: Path) -> Path | None:
                     out_path.unlink()
                 except Exception:
                     pass
-            _atlas_tts_chunk(text, atlas_voice, str(out_path))
+            _atlas_tts_chunk(line, atlas_voice, str(out_path))
             if out_path.is_file() and out_path.stat().st_size > 500:
+                print(f"[ranking_commentary] Atlas xAI TTS ok voice={atlas_voice}")
                 return out_path
         except Exception as e:
-            print(f"[ranking_commentary] TTS failed voice={atlas_voice}: {e}")
+            print(f"[ranking_commentary] Atlas TTS failed voice={atlas_voice}: {e}")
     return None
+
+
+def _tts_line(line: str, voice_name: str, out_path: Path) -> Path | None:
+    """Speak the line. Never Gemini TTS — OpenAI first (ViewHunt), then Atlas xAI."""
+    text = _tts_safe_text(line)
+    if not text or _is_junk_line(text):
+        print(f"[ranking_commentary] TTS refused junk/empty line={line!r}")
+        return None
+
+    # Prefer OpenAI when keyed (same as ViewHunt ranking). Else Atlas xAI.
+    tts = _tts_openai(text, voice_name or "Kore", out_path)
+    if tts:
+        return tts
+    return _tts_atlas_xai(text, voice_name or "Kore", out_path)
 
 
 def _char_weighted_timings(line: str, duration: float) -> list[dict[str, Any]]:

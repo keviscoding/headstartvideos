@@ -18,6 +18,8 @@ from typing import Any, Callable
 RANK_W = 1080
 RANK_H = 1920
 RANK_FPS = 30
+# ViewHunt letterbox: scale to width, cap content height, pad black top/bottom.
+RANK_CONTENT_MAX_H = 1440
 
 ProgressCb = Callable[[str], None]
 
@@ -385,17 +387,16 @@ def generate_ass(
             if end_w > total:
                 total = end_w
 
-    title_fs = int(lo.get("titleFontSize") or (52 if viral else 48))
-    if viral:
-        title_fs = max(title_fs, 52)
-    num_size = int(lo.get("numSize") or 50)
+    # Honor preview sliders — do not hardcode viral title size/Y (preview parity).
+    title_fs = max(28, min(90, int(lo.get("titleFontSize") or (52 if viral else 48))))
+    num_size = max(24, min(100, int(lo.get("numSize") or 50)))
     list_x_pct = float(lo.get("listXPercent") or 5)
-    title_y_pct = float(lo.get("titleYPercent") or 6)
-    line_spacing = int(lo.get("lineSpacing") or 65)
+    title_y_pct = float(lo.get("titleYPercent") or (4 if viral else 6))
+    line_spacing = max(35, min(200, int(lo.get("lineSpacing") or 65)))
     list_x = int((list_x_pct / 100) * RANK_W)
-    title_y = 70 if viral else int((title_y_pct / 100) * RANK_H)
-    bar_h = 210 if viral else 0
-    rank_y = bar_h + 36 if viral else 0
+    title_y = max(40, min(420, int((title_y_pct / 100) * RANK_H)))
+    # Viral black title bar sits behind the title; size follows title placement.
+    bar_h = max(160, min(320, title_y + title_fs + 48)) if viral else 0
     sub_font = subtitle_font or font
     sub_size = 68 if viral else 52
     sub_outline = 6 if viral else 3
@@ -416,10 +417,6 @@ def generate_ass(
         "-1,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1",
         f"Style: Title,{font},{title_fs},{white_ass},&H000000FF,&H00000000,&H80000000,"
         f"-1,0,0,0,100,100,0,0,1,{'5' if viral else '4'},2,8,20,20,{title_y},1",
-        f"Style: RankLine,{font},56,{white_ass},&H000000FF,&H00000000,&H80000000,"
-        f"-1,0,0,0,100,100,0,0,1,6,0,8,40,40,{rank_y},1",
-        f"Style: RankLineYellow,{font},56,{colors['active']},&H000000FF,&H00000000,&H80000000,"
-        f"-1,0,0,0,100,100,0,0,1,6,0,8,40,40,{rank_y},1",
         f"Style: NumDim,{font},{num_size},&H00888888,&H000000FF,&H00000000,&H80000000,"
         "-1,0,0,0,100,100,0,0,1,3,1,7,0,0,0,1",
         f"Style: NumActive,{font},{num_size + 6},{colors['active']},&H000000FF,&H00000000,&H80000000,"
@@ -428,7 +425,7 @@ def generate_ass(
         "-1,0,0,0,100,100,0,0,1,3,1,7,0,0,0,1",
         f"Style: NumDoneAlt,{font},{num_size},{white_ass},&H000000FF,&H00000000,&H80000000,"
         "-1,0,0,0,100,100,0,0,1,3,1,7,0,0,0,1",
-        f"Style: Label,{font},32,{white_ass},&H000000FF,&H00000000,&H80000000,"
+        f"Style: Label,{font},{max(26, num_size - 14)},{white_ass},&H000000FF,&H00000000,&H80000000,"
         "-1,0,0,0,100,100,0,0,1,2,1,7,0,0,0,1",
         f"Style: ComSub,{sub_font},{sub_size},{subtitle_ass},&H000000FF,&H00000000,&H64000000,"
         f"-1,0,0,0,100,100,0,0,1,{sub_outline},2,5,40,40,0,1",
@@ -453,6 +450,7 @@ def generate_ass(
         )
 
     if title_text:
+        # Preview always shows UPPERCASE — burn must match for every style.
         if viral:
             tt = _format_viral_title(title_text, highlight)
             lines.append(
@@ -460,55 +458,62 @@ def generate_ass(
                 f"{{\\an8\\pos(540,{title_y})\\b1}}{tt}"
             )
         else:
-            tt = _esc_ass(title_text)
-            if highlight and highlight.lower() in title_text.lower():
-                idx = title_text.lower().index(highlight.lower())
-                before = _esc_ass(title_text[:idx])
-                hl = _esc_ass(title_text[idx: idx + len(highlight)])
-                after = _esc_ass(title_text[idx + len(highlight):])
-                tt = f"{before}{{\\c{hl_color}}}{hl}{{\\c{white_ass}}}{after}"
-            lines.append(f"Dialogue: 2,{t0},{t_end},Title,,0,0,0,,{tt}")
+            upper = title_text.upper()
+            tt = _esc_ass(upper)
+            if highlight:
+                hl_u = highlight.upper()
+                if hl_u and hl_u in upper:
+                    idx = upper.index(hl_u)
+                    before = _esc_ass(upper[:idx])
+                    hl = _esc_ass(upper[idx: idx + len(hl_u)])
+                    after = _esc_ass(upper[idx + len(hl_u):])
+                    tt = f"{before}{{\\c{hl_color}}}{hl}{{\\c{white_ass}}}{after}"
+            lines.append(
+                f"Dialogue: 2,{t0},{t_end},Title,,0,0,0,,"
+                f"{{\\an8\\pos(540,{title_y})\\b1}}{tt}"
+            )
 
     numbers = [int(c.get("number") or (len(clips) - i)) for i, c in enumerate(clips)]
     sorted_nums = sorted(numbers)
     list_h = len(sorted_nums) * line_spacing
-    list_start_y = max(400, int(960 - list_h / 2))
+    # Keep the stack inside the letterboxed content band (below title bar / top pad).
+    content_top = max(bar_h + 40, int(RANK_H * 0.14))
+    content_bot = int(RANK_H * 0.86)
+    list_start_y = max(content_top, min(
+        content_bot - list_h,
+        int((content_top + content_bot) / 2 - list_h / 2),
+    ))
     number_y = {n: list_start_y + i * line_spacing for i, n in enumerate(sorted_nums)}
-    label_x = list_x + 80
+    label_x = list_x + max(70, int(num_size * 1.4))
 
-    for i, clip in enumerate(clips):
+    # Persistent countdown for every style: once a rank is reached (3→2→1) it stays
+    # on screen until the video ends — numbers never disappear mid-countdown.
+    # Extend each window to the next clip start so white-card gaps keep the stack.
+    for i, _clip in enumerate(clips):
         start = offsets[i]
-        end = start + durations[i]
-        num = numbers[i]
-        raw_label = str(clip.get("label") or f"#{num}").strip()
-        label = _esc_ass(raw_label.upper() if viral else raw_label)
+        end = float(offsets[i + 1]) if i + 1 < len(offsets) else float(total)
         ts, te = ass_time(start), ass_time(end)
 
-        if viral:
-            # #1 (last clip) yellow; others white — ViewHunt pattern
-            style = "RankLineYellow" if i == len(clips) - 1 else "RankLine"
+        for j, _other in enumerate(clips):
+            on = numbers[j]
+            oy = number_y.get(on, list_start_y)
+            if j < i:
+                style = "NumDoneAlt" if (checkered_mode and j % 2 == 1) else "NumDone"
+            elif j == i:
+                style = "NumActive"
+            else:
+                style = "NumDim"
             lines.append(
-                f"Dialogue: 3,{ts},{te},{style},,0,0,0,,"
-                f"{{\\an8\\pos(540,{rank_y})\\fad(120,80)}}{num}. {label}"
+                f"Dialogue: 1,{ts},{te},{style},,0,0,0,,"
+                f"{{\\pos({list_x},{oy})}}{on}."
             )
-        else:
-            for j, _other in enumerate(clips):
-                on = numbers[j]
-                oy = number_y.get(on, list_start_y)
-                if j < i:
-                    style = "NumDoneAlt" if (checkered_mode and j % 2 == 1) else "NumDone"
-                elif j == i:
-                    style = "NumActive"
-                else:
-                    style = "NumDim"
+            # Show labels for every rank that has already been reached (including active).
+            if j <= i:
+                lab = _esc_ass(str(clips[j].get("label") or f"#{on}").strip().upper())
                 lines.append(
-                    f"Dialogue: 1,{ts},{te},{style},,0,0,0,,"
-                    f"{{\\pos({list_x},{oy})}}{on}"
+                    f"Dialogue: 2,{ts},{te},Label,,0,0,0,,"
+                    f"{{\\pos({label_x},{oy})}}{lab}"
                 )
-            lines.append(
-                f"Dialogue: 2,{ts},{te},Label,,0,0,0,,"
-                f"{{\\pos({label_x},{number_y.get(num, list_start_y)})}}{label}"
-            )
 
     for c_line in commentary_lines or []:
         idx = int(c_line.get("clipIndex") or 0)
@@ -624,8 +629,24 @@ def mix_commentary_audio(
         shutil.copy2(video_path, output_path)
 
 
+def _probe_has_audio(path: Path) -> bool:
+    try:
+        r = subprocess.run(
+            [
+                _ffprobe_bin(), "-v", "quiet",
+                "-select_streams", "a",
+                "-show_entries", "stream=index",
+                "-of", "csv=p=0", str(path),
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        return bool((r.stdout or "").strip())
+    except Exception:
+        return False
+
+
 def normalize_clip(src: Path, dst: Path, *, start: float = 0.0, end: float | None = None) -> float:
-    """Scale/crop to 1080x1920, 30fps, H.264 + AAC. Returns duration."""
+    """ViewHunt letterbox: scale to 1080, cap height 1440, pad black to 1080x1920."""
     info = probe_video(src)
     src_dur = float(info["duration"] or 0)
     ss = max(0.0, float(start or 0))
@@ -634,21 +655,42 @@ def normalize_clip(src: Path, dst: Path, *, start: float = 0.0, end: float | Non
     else:
         dur = max(0.3, src_dur - ss) if src_dur > 0 else 5.0
 
+    # scale → center-crop taller than 1440 → pad black top/bottom to 1920
+    max_h = RANK_CONTENT_MAX_H
     vf = (
-        f"scale={RANK_W}:{RANK_H}:force_original_aspect_ratio=increase,"
-        f"crop={RANK_W}:{RANK_H},fps={RANK_FPS},"
-        f"setsar=1"
+        f"scale={RANK_W}:-2,"
+        f"crop={RANK_W}:min(ih\\,{max_h}):0:(ih-min(ih\\,{max_h}))/2,"
+        f"pad={RANK_W}:{RANK_H}:0:(oh-ih)/2:black,"
+        f"fps={RANK_FPS},setsar=1"
     )
+    has_audio = _probe_has_audio(src)
     cmd = [
         _ffmpeg_bin(), "-y",
         "-ss", f"{ss:.3f}", "-i", str(src), "-t", f"{dur:.3f}",
-        "-vf", vf,
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-        "-c:a", "aac", "-b:a", "128k", "-ac", "2", "-ar", "44100",
+    ]
+    if not has_audio:
+        cmd.extend([
+            "-f", "lavfi", "-i",
+            f"anullsrc=channel_layout=stereo:sample_rate=44100",
+        ])
+    cmd.extend(["-vf", vf])
+    if has_audio:
+        cmd.extend([
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+            "-c:a", "aac", "-b:a", "128k", "-ac", "2", "-ar", "44100",
+        ])
+    else:
+        cmd.extend([
+            "-map", "0:v:0", "-map", "1:a:0",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+            "-c:a", "aac", "-b:a", "128k", "-ac", "2", "-ar", "44100",
+            "-shortest",
+        ])
+    cmd.extend([
         "-r", str(RANK_FPS),
         "-movflags", "+faststart",
         str(dst),
-    ]
+    ])
     _run(cmd, timeout=300)
     return probe_duration(dst) or dur
 
@@ -679,30 +721,34 @@ def _burn_drawtext_fallback(
     *,
     style_preset: str,
 ) -> None:
-    """Overlay title + active rank line with drawtext when libass is unavailable."""
+    """Overlay title + persistent rank stack when libass is unavailable."""
     title_text = ((title or {}).get("text") or "Ranking").replace(":", "\\:").replace("'", "")
+    title_fs = 52
     offsets = [0.0]
     for i in range(len(durations) - 1):
         offsets.append(offsets[-1] + durations[i])
-    # Stack enable expressions for each clip's label
+    total = offsets[-1] + (durations[-1] if durations else 0)
     parts = [
-        f"drawbox=x=0:y=0:w={RANK_W}:h=180:color=black@1:t=fill",
+        f"drawbox=x=0:y=0:w={RANK_W}:h=210:color=black@1:t=fill",
         (
-            f"drawtext=text='{title_text.upper()}':fontsize=48:fontcolor=yellow:"
-            f"x=(w-text_w)/2:y=40:borderw=3:bordercolor=black"
+            f"drawtext=text='{title_text.upper()}':fontsize={title_fs}:fontcolor=white:"
+            f"x=(w-text_w)/2:y=70:borderw=4:bordercolor=black"
         ),
     ]
     for i, clip in enumerate(clips):
         start = offsets[i]
-        end = start + durations[i]
-        num = int(clip.get("number") or (len(clips) - i))
-        label = str(clip.get("label") or f"#{num}").replace(":", "\\:").replace("'", "")
-        text = f"{num}. {label}"
-        parts.append(
-            f"drawtext=text='{text}':fontsize=56:fontcolor=yellow:"
-            f"x=(w-text_w)/2:y=220:borderw=4:bordercolor=black:"
-            f"enable='between(t\\,{start:.3f}\\,{end:.3f})'"
-        )
+        end = offsets[i + 1] if i + 1 < len(offsets) else total
+        # Persist this rank (and all earlier) until the end once reached
+        for j in range(0, i + 1):
+            num = int(clips[j].get("number") or (len(clips) - j))
+            label = str(clips[j].get("label") or f"#{num}").upper().replace(":", "\\:").replace("'", "")
+            y = 260 + j * 70
+            color = "yellow" if j == i else "white"
+            parts.append(
+                f"drawtext=text='{num}. {label}':fontsize=48:fontcolor={color}:"
+                f"x=60:y={y}:borderw=3:bordercolor=black:"
+                f"enable='between(t\\,{start:.3f}\\,{end:.3f})'"
+            )
     vf = ",".join(parts)
     _run([
         _ffmpeg_bin(), "-y", "-i", str(concat_mp4),

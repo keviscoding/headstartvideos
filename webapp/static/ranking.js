@@ -890,51 +890,47 @@ function rkRenderPreview(targetId) {
         pink: '#f472b6', orange: '#fb923c', white: '#ffffff',
     };
     const accent = colorMap[_rkColorPalette] || '#facc15';
+    // Match ViewHunt letterbox (≈12% black bars) + burn layout sliders 1:1.
     let html = '<div class="pv-bars top"></div><div class="pv-bars bottom"></div><div class="pv-bg"></div>';
     const activeIdx = isTrim ? _rkTrimIdx : Math.min(_rkPreviewActive, totalClips - 1);
-    const activeClip = _rkClips[activeIdx];
-    const rankNum = totalClips - activeIdx;
-    const titleY = viral ? 2 : _rkLayout.titleY;
-    const titleSizeRem = (_rkLayout.titleSize / 48) * 0.7;
+    const titleY = _rkLayout.titleY;
+    const titleSizeRem = (_rkLayout.titleSize / 48) * 0.72;
+    const numRem = (_rkLayout.numSize / 50) * 0.65;
 
     if (viral) {
         html += '<div style="position:absolute;top:0;left:0;right:0;height:14%;background:#000;z-index:2"></div>';
-        if (titleText) {
-            const words = titleText.split(/\s+/).filter(Boolean);
-            const n = words.length;
-            const titleParts = words.map((w, i) => {
-                let col = '#facc15';
-                if (hlWord && w.toLowerCase() === hlWord.toLowerCase()) col = accent;
-                else if (i === 0) col = '#ffffff';
+    }
+    if (titleText) {
+        const words = titleText.split(/\s+/).filter(Boolean);
+        const n = words.length;
+        const titleParts = words.map((w, i) => {
+            let col = '#ffffff';
+            if (hlWord && w.toLowerCase() === hlWord.toLowerCase()) col = accent;
+            else if (viral) {
+                if (i === 0) col = '#ffffff';
                 else if (i === n - 1 && n > 2) col = '#22d3ee';
                 else if (i < Math.ceil(n * 0.4)) col = '#f472b6';
-                const br = ((i + 1) % 3 === 0 && i < n - 1) ? '<br>' : (i < n - 1 ? ' ' : '');
-                return `<span style="color:${col}">${rkEscapeHtml(w.toUpperCase())}</span>${br}`;
-            }).join('');
-            html += `<div class="pv-title" style="top:${titleY}%;z-index:3"><div class="pv-title-text" style="font-weight:900;font-size:${titleSizeRem.toFixed(2)}rem;line-height:1.15">${titleParts}</div></div>`;
-        }
-        const rankLab = (activeClip?.label || 'MOMENT').toUpperCase();
-        const rankCol = (activeIdx === totalClips - 1) ? accent : '#fff';
-        html += `<div style="position:absolute;top:15%;left:0;right:0;text-align:center;z-index:3;font-weight:900;font-size:0.78rem;color:${rankCol};text-shadow:0 0 2px #000">${rankNum}. ${rkEscapeHtml(rankLab)}</div>`;
-        if (_rkCommentary && activeIdx > 0 && activeIdx < totalClips - 1) {
-            html += '<div style="position:absolute;inset:18% 8% 28% 8%;background:#fff;z-index:4;display:flex;align-items:center;justify-content:center;padding:8px;border-radius:2px"><div style="color:#111;font-weight:900;font-size:0.72rem;text-align:center;text-transform:uppercase;line-height:1.2">WHITE CARD<br><span style="color:#ca8a04;font-size:0.58rem">mid commentary beat</span></div></div>';
-        }
-    } else {
-        if (titleText) {
-            let titleHtml = rkEscapeHtml(titleText);
-            if (hlWord) {
-                const re = new RegExp(`(${hlWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'i');
-                titleHtml = titleHtml.replace(re, `<span style="color:${accent}">$1</span>`);
+                else col = '#facc15';
+            } else if (hlWord && w.toLowerCase() === hlWord.toLowerCase()) {
+                col = accent;
             }
-            html += `<div class="pv-title" style="top:${titleY}%"><div class="pv-title-text" style="font-size:${titleSizeRem.toFixed(2)}rem">${titleHtml}</div></div>`;
-        }
+            const br = (viral && (i + 1) % 3 === 0 && i < n - 1) ? '<br>' : (i < n - 1 ? ' ' : '');
+            return `<span style="color:${col}">${rkEscapeHtml(w.toUpperCase())}</span>${br}`;
+        }).join('');
+        html += `<div class="pv-title" style="top:${titleY}%;z-index:3"><div class="pv-title-text" style="font-weight:900;font-size:${titleSizeRem.toFixed(2)}rem;line-height:1.15;text-transform:uppercase">${titleParts}</div></div>`;
+    }
+    if (viral && _rkCommentary && activeIdx > 0 && activeIdx < totalClips - 1) {
+        html += '<div style="position:absolute;inset:18% 8% 28% 8%;background:#fff;z-index:4;display:flex;align-items:center;justify-content:center;padding:8px;border-radius:2px"><div style="color:#111;font-weight:900;font-size:0.72rem;text-align:center;text-transform:uppercase;line-height:1.2">WHITE CARD<br><span style="color:#ca8a04;font-size:0.58rem">mid commentary beat</span></div></div>';
+    }
+    {
+        // Persistent countdown stack for every style (3 stays while 2 and 1 play).
         const gap = Math.round((_rkLayout.lineSpacing / 65) * 3);
-        html += `<div class="pv-list" style="left:${_rkLayout.listX}%;gap:${gap}px">`;
+        html += `<div class="pv-list" style="left:${_rkLayout.listX}%;gap:${gap}px;top:52%">`;
         for (let row = 0; row < totalClips; row++) {
             const num = row + 1;
             const clipIdx = totalClips - num;
             const clip = _rkClips[clipIdx];
-            const label = clip?.label || '';
+            const label = (clip?.label || '').toUpperCase();
             let numClass = 'dim';
             let labelClass = 'dim';
             let numColor = '';
@@ -948,9 +944,9 @@ function rkRenderPreview(targetId) {
             }
             if (numClass === 'active') numColor = `color:${accent};`;
             else if (numClass === 'done') {
-                numColor = (_rkCheckered && row % 2 === 1) ? 'color:#ffffff;' : `color:${accent};opacity:0.75;`;
+                numColor = (_rkCheckered && row % 2 === 1) ? 'color:#ffffff;' : `color:${accent};opacity:0.85;`;
             }
-            html += `<div class="pv-row"><div class="pv-num ${numClass}" style="${numColor}">${num}.</div><div class="pv-label ${labelClass}">${rkEscapeHtml(label)}</div></div>`;
+            html += `<div class="pv-row"><div class="pv-num ${numClass}" style="${numColor};font-size:${numRem.toFixed(2)}rem">${num}.</div><div class="pv-label ${labelClass}" style="text-transform:uppercase">${rkEscapeHtml(label)}</div></div>`;
         }
         html += '</div>';
     }

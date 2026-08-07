@@ -40,13 +40,42 @@ def test_generate_ass_viral(tmp_path: Path):
     ]
     durs = [1.0, 1.2, 0.8]
     out = tmp_path / "o.ass"
-    generate_ass(out, clips, durs, {"text": "Top 3", "highlightWord": "Top"}, style_preset="viral")
+    generate_ass(
+        out, clips, durs, {"text": "Top 3", "highlightWord": "Top"},
+        style_preset="viral",
+        layout={"titleFontSize": 60, "titleYPercent": 5, "numSize": 55, "listXPercent": 8},
+    )
     text = out.read_text(encoding="utf-8")
     assert "PlayResX: 1080" in text
     assert "PlayResY: 1920" in text
-    assert "3. ROOF" in text or "ROOF" in text
+    assert "ROOF" in text
     assert "TOP" in text  # uppercase viral title
+    assert "NumActive" in text  # persistent countdown stack (not one-at-a-time RankLine)
+    assert "NumDone" in text
+    assert "Style: Title,Arial Black,60," in text or ",60," in text
     assert "Dialogue:" in text
+
+
+def test_classic_title_is_uppercase_like_preview(tmp_path: Path):
+    clips = [{"number": 2, "label": "A"}, {"number": 1, "label": "B"}]
+    out = tmp_path / "c.ass"
+    generate_ass(out, clips, [1.0, 1.0], {"text": "Best Moments"}, style_preset="classic")
+    text = out.read_text(encoding="utf-8")
+    assert "BEST MOMENTS" in text
+
+
+def test_countdown_keeps_earlier_ranks(tmp_path: Path):
+    clips = [
+        {"number": 3, "label": "Three"},
+        {"number": 2, "label": "Two"},
+        {"number": 1, "label": "One"},
+    ]
+    out = tmp_path / "p.ass"
+    generate_ass(out, clips, [1.0, 1.0, 1.0], {"text": "Rank"}, style_preset="viral")
+    text = out.read_text(encoding="utf-8")
+    # During the last clip window, earlier ranks must still appear as done.
+    assert text.count("THREE") >= 2
+    assert "NumDone" in text
 
 
 def test_generate_ass_white_card_karaoke(tmp_path: Path):
@@ -99,11 +128,22 @@ def test_commentary_does_not_force_viral_style():
 
 def test_generate_ass_classic(tmp_path: Path):
     clips = [{"number": 2, "label": "A"}, {"number": 1, "label": "B"}]
-    out = tmp_path / "c.ass"
+    out = tmp_path / "c2.ass"
     generate_ass(out, clips, [1.0, 1.0], {"text": "Classic"}, style_preset="classic")
     text = out.read_text(encoding="utf-8")
     assert "NumActive" in text
+    assert "CLASSIC" in text
     assert "Dialogue:" in text
+
+
+def test_normalize_clip_letterbox_filter_string():
+    """Guard the ViewHunt scale→crop→pad letterbox filter (no cover-crop fill)."""
+    import inspect
+    from core import ranking_pipeline as rp
+    src = inspect.getsource(rp.normalize_clip)
+    assert "pad=" in src and "black" in src
+    assert "RANK_CONTENT_MAX_H" in src or "1440" in src
+    assert "force_original_aspect_ratio=increase" not in src
 
 
 def test_escape_ffmpeg_filter_path_escapes_colons(tmp_path: Path):

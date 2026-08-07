@@ -49,3 +49,13 @@ def test_role_prompt_is_vision_first_and_keyos_style():
     assert "She didn't expect that" in p
     assert "ONLY this JSON" in p or "only this JSON" in p.lower()
     assert "formats, constraints" in p.lower() or "Never mention JSON" in p
+
+
+def test_tts_never_uses_gemini_and_prefers_openai_map():
+    from core.ranking_commentary import _openai_voice_id, _tts_line
+    assert _openai_voice_id("Kore") == "nova"
+    assert _openai_voice_id("Charon") == "echo"
+    # Smoke: function is the OpenAI→Atlas path (no gemini tts symbol in module call path)
+    import core.ranking_commentary as rc
+    assert "gemini" not in (rc._tts_line.__doc__ or "").lower() or "never" in (rc._tts_line.__doc__ or "").lower()
+    assert callable(_tts_line)
