@@ -32,7 +32,7 @@ mcp = MCPServer(
         "upgrade at channelrecipe.com for the full library. "
         "Start with list_niches, then list_niche_subjects / "
         "list_niche_channels, then generate_script / generate_thumbnail. "
-        "Paid plans also get get_video_transcript (transcript + title/views/author). "
+        "Admin accounts get get_video_transcript (transcript + title/views/author). "
         "Auth is the Claude connector session (or Desktop Bearer key) — "
         "do not ask the user for an api_key tool argument. "
         "When a tool returns upgrade_url, tell the user to upgrade at that link."
@@ -488,6 +488,14 @@ def generate_thumbnail(
         return json.dumps({"error": f"Thumbnail failed: {e}"})
 
 
+def _mcp_is_admin(user: dict | None) -> bool:
+    """Transcript MCP is admin-gated (token / provider cost)."""
+    import config
+    email = ((user or {}).get("email") or "").strip().lower()
+    admins = {e.strip().lower() for e in (getattr(config, "ADMIN_EMAILS", []) or []) if e}
+    return bool(email) and email in admins
+
+
 @mcp.tool()
 def get_video_transcript(
     youtube_url: str,
@@ -497,10 +505,10 @@ def get_video_transcript(
     Fetch transcript + metadata for a YouTube video URL or ID.
 
     Returns JSON with: transcript, title, author (channel), views,
-    transcript_source (downsub|youtube_api|ytdlp|asr), and status.
+    transcript_source (downsub|youtube_api|ytdlp), and status.
 
-    Paid plans only (Starter or Daily). Use after picking a competitor video
-    from list_niche_channels to study hooks and structure.
+    Admin-only (ChannelRecipe admin emails). Use after picking a competitor
+    video from list_niche_channels to study hooks and structure.
     """
     import time as _time
     import config
@@ -511,13 +519,20 @@ def get_video_transcript(
     )
 
     user = _user_from_request(ctx)
-    ok, msg = billing.paid_required(user, feature="Video transcripts")
-    if not ok:
+    if not user:
         return json.dumps({
-            "error": msg,
-            "code": "upgrade_required",
+            "error": "Video transcripts require a signed-in ChannelRecipe MCP account.",
+            "code": "auth_required",
             "upgrade_url": billing.UPGRADE_URL,
-            "upgrade": billing.UPGRADE_CTA,
+        })
+    if not _mcp_is_admin(user):
+        return json.dumps({
+            "error": (
+                "Video transcripts are temporarily limited to the ChannelRecipe admin account "
+                "while we keep caption fetching reliable and control token/provider cost."
+            ),
+            "code": "admin_only",
+            "email": (user.get("email") or ""),
         })
 
     raw = (youtube_url or "").strip()
@@ -555,7 +570,8 @@ def get_video_transcript(
         tr = {"text": "", "source": "", "error": f"transcript_failed:{e}"}
 
     text = (tr.get("text") or "").strip()
-    max_chars = 24000 if billing._tier(user.get("plan") if user else None) == "daily" else 12000
+    # Admin gets a large cap so long videos aren't silently chopped for Claude.
+    max_chars = 100_000
     truncated = len(text) > max_chars
     body = text[:max_chars] if text else ""
 
