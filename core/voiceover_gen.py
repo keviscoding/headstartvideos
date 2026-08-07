@@ -299,7 +299,8 @@ def _atlas_tts_chunk_once(text: str, voice_id: str, out_path: str, headers: dict
     payload = {
         "model": "xai/tts-v1",
         "text": text,
-        "language": "en",
+        # Atlas docs: BCP-47 or "auto". "auto" is the documented default for xai/tts-v1.
+        "language": "auto",
         "voice_id": voice_id,
         "codec": "wav",
         "sample_rate": 24000,

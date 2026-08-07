@@ -979,11 +979,16 @@ async function rkRefreshAccess() {
         }
         const chip = document.getElementById('rk-commentary-chip');
         if (chip) {
-            if (_rkAccess.is_trial) {
+            if (_rkAccess.is_trial && (_rkAccess.ranking_free_left ?? 0) > 0) {
                 chip.textContent = 'included on trial';
             } else {
-                const withVo = rkFormatCredits(_rkAccess.credit_cost_commentary ?? 1);
-                chip.textContent = `${withVo} credit total`;
+                // Prefer list_price_commentary so admin/$0 charge never shows "0 credits".
+                const listed = Number(_rkAccess.list_price_commentary);
+                const charged = Number(_rkAccess.credit_cost_commentary);
+                const withVo = (Number.isFinite(listed) && listed > 0)
+                    ? listed
+                    : ((Number.isFinite(charged) && charged > 0) ? charged : 1);
+                chip.textContent = `${rkFormatCredits(withVo)} credit`;
             }
         }
         rkUpdateAssembleLabel();
@@ -1044,7 +1049,7 @@ async function rkAssemble() {
             color_palette: _rkColorPalette,
             checkered_mode: _rkCheckered,
             commentary: _rkCommentary,
-            voice_name: document.getElementById('rk-voice-picker')?.value || 'Kore',
+            voice_name: document.getElementById('rk-voice-picker')?.value || 'eve',
             subtitle_font: document.getElementById('rk-subtitle-font')?.value || 'Arial',
             subtitle_y: parseFloat(document.getElementById('rk-subtitle-y')?.value || '50'),
             subtitle_color: _rkSubtitleColor,

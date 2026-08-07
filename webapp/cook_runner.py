@@ -1515,7 +1515,7 @@ def _run_ranking_countdown_job(
     color_palette = (req_data.get("color_palette") or req_data.get("colorPalette") or "yellow").strip().lower()
     checkered_mode = bool(req_data.get("checkered_mode") or req_data.get("checkeredMode"))
     want_commentary = bool(req_data.get("commentary"))
-    voice_name = (req_data.get("voice_name") or req_data.get("voiceName") or "Kore").strip() or "Kore"
+    voice_name = (req_data.get("voice_name") or req_data.get("voiceName") or "eve").strip() or "eve"
     subtitle_font = (req_data.get("subtitle_font") or req_data.get("subtitleFont") or "").strip() or None
     subtitle_y = req_data.get("subtitle_y")
     if subtitle_y is None:
@@ -1606,6 +1606,18 @@ def _run_ranking_countdown_job(
                 work_dir=work / "commentary",
                 progress=lambda m: on_progress(m),
             )
+            vo_ok = sum(1 for c in (commentary_lines or []) if c.get("audioPath"))
+            vision_ok = sum(1 for c in (commentary_lines or []) if c.get("visionOk"))
+            print(
+                f"[ranking] commentary ready job={job_id} "
+                f"vo={vo_ok}/{len(resolved)} vision={vision_ok}/{len(resolved)} "
+                f"voice={voice_name!r}"
+            )
+            if vo_ok < len(resolved):
+                raise RuntimeError(
+                    f"AI commentary voiceover incomplete ({vo_ok}/{len(resolved)}). "
+                    "Credits refunded — try again."
+                )
 
         on_progress(f"Assembling {len(resolved)} clip ranking…")
         result = run_ranking_pipeline(

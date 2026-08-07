@@ -207,7 +207,8 @@ def _format_viral_title(text: str, highlight: str | None = None) -> str:
             color = pink
         else:
             color = yellow
-        parts.append(f"{{\\c{color}}}{_esc_ass(w.upper())}")
+        # ASS colour overrides must close with '&' or libass can swallow glyphs.
+        parts.append(f"{{\\c{color}&}}{_esc_ass(w.upper())}")
         if (i + 1) % 3 == 0 and i < n - 1:
             parts.append("\\N")
         elif i < n - 1:
@@ -363,8 +364,13 @@ def generate_ass(
     tl = timeline or {}
     viral = bool(force_viral) if force_viral is not None else _overlay_is_viral(style_preset)
     font = _font_name()
+    # Preview is always UPPERCASE — normalize here so burn can never ship lowercase titles.
     title_text = ((title or {}).get("text") or "").strip()
     highlight = ((title or {}).get("highlightWord") or "").strip()
+    if title_text:
+        title_text = title_text.upper()
+    if highlight:
+        highlight = highlight.upper()
     colors = _COLOR_MAP.get((color_palette or "yellow").lower(), _COLOR_MAP["yellow"])
     white_ass = "&H00FFFFFF"
     sub_colors = {k: v["active"] for k, v in _COLOR_MAP.items()}
@@ -467,7 +473,7 @@ def generate_ass(
                     before = _esc_ass(upper[:idx])
                     hl = _esc_ass(upper[idx: idx + len(hl_u)])
                     after = _esc_ass(upper[idx + len(hl_u):])
-                    tt = f"{before}{{\\c{hl_color}}}{hl}{{\\c{white_ass}}}{after}"
+                    tt = f"{before}{{\\c{hl_color}&}}{hl}{{\\c{white_ass}&}}{after}"
             lines.append(
                 f"Dialogue: 2,{t0},{t_end},Title,,0,0,0,,"
                 f"{{\\an8\\pos(540,{title_y})\\b1}}{tt}"
@@ -624,9 +630,59 @@ def mix_commentary_audio(
     ])
     try:
         _run(cmd, timeout=600, cwd=str(work_dir))
+        if output_path.is_file() and output_path.stat().st_size > 1000:
+            return
+        raise RuntimeError("commentary mix produced empty output")
     except RuntimeError as e:
-        print(f"[ranking] commentary mix failed ({e}); shipping without VO mix")
-        shutil.copy2(video_path, output_path)
+        # Plain amix fallback — never ship a commentary cook with silent VO.
+        print(f"[ranking] commentary mix (ducked) failed ({e}); trying plain amix")
+        try:
+            if output_path.is_file():
+                output_path.unlink()
+        except OSError:
+            pass
+        cmd2 = [_ffmpeg_bin(), "-y", "-i", str(video_path)]
+        for c in usable:
+            cmd2.extend(["-i", str(c["audioPath"])])
+        filters2: list[str] = []
+        labels2: list[str] = []
+        for i, c in enumerate(usable):
+            idx = int(c.get("clipIndex") or 0)
+            if idx in vo_map:
+                start_sec = float(vo_map[idx])
+            elif str(idx) in vo_map:
+                start_sec = float(vo_map[str(idx)])
+            else:
+                start_sec = offsets[idx] if idx < len(offsets) else 0.0
+            delay_ms = int(max(0.0, start_sec) * 1000)
+            filters2.append(
+                f"[{i + 1}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,"
+                f"volume=2.2,adelay={delay_ms}|{delay_ms}[c{i}]"
+            )
+            labels2.append(f"[c{i}]")
+        filters2.append(
+            "[0:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,volume=0.55[bed]"
+        )
+        filters2.append(
+            f"[bed]{''.join(labels2)}amix=inputs={1 + len(labels2)}:duration=first:"
+            f"dropout_transition=0:normalize=0[aout]"
+        )
+        cmd2.extend([
+            "-filter_complex", ";".join(filters2),
+            "-map", "0:v", "-map", "[aout]",
+            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+            "-movflags", "+faststart",
+            str(output_path),
+        ])
+        try:
+            _run(cmd2, timeout=600, cwd=str(work_dir))
+            if not (output_path.is_file() and output_path.stat().st_size > 1000):
+                raise RuntimeError("plain amix produced empty output")
+        except RuntimeError as e2:
+            raise RuntimeError(
+                f"Commentary voiceover mix failed — refusing silent export. "
+                f"ducked={e}; amix={e2}"
+            ) from e2
 
 
 def _probe_has_audio(path: Path) -> bool:

@@ -14,11 +14,12 @@ from typing import Any, Callable
 
 ProgressCb = Callable[[str], None]
 
-# Vision only (watch the clip) — cheap Gemini Flash via Atlas. Never used for TTS.
+# Vision only (watch the clip) via Atlas Gemini. Never used for TTS.
+# 3.1-flash-lite is the reliable default on Atlas; 3.5-flash often truncates at low max_tokens.
 RANKING_VISION_MODELS = (
-    "google/gemini-3.5-flash",
-    "google/gemini-2.5-flash",
     "google/gemini-3.1-flash-lite",
+    "google/gemini-2.5-flash",
+    "google/gemini-3.5-flash",
 )
 
 # Distilled from Keyos Ranks transcripts — vibe examples only (never copy verbatim).
@@ -344,22 +345,27 @@ def _atlas_vision_comment(prompt: str, sample_path: Path, frames_dir: Path) -> s
     last_err: Exception | None = None
     for model in RANKING_VISION_MODELS:
         try:
-            return _post({
+            text = _post({
                 "model": model,
                 "messages": [{"role": "user", "content": parts}],
-                "max_tokens": 160,
+                "max_tokens": 256,
                 "temperature": 0.9,
             })
+            # Truncated JSON from flash models looks like '{"line":"' — reject & retry.
+            if not text or text.count("{") != text.count("}") or '"line"' not in text:
+                raise RuntimeError(f"truncated/invalid vision JSON from {model}: {text[:120]!r}")
+            print(f"[ranking_commentary] vision ok model={model} chars={len(text)}")
+            return text
         except Exception as e:
             last_err = e
             print(f"[ranking_commentary] vision model {model} failed: {e}")
 
-    # Last resort: short video_url payload with first model
+    # Last resort: short video_url payload with flash-lite
     try:
         raw = sample_path.read_bytes()
         if len(raw) <= 3 * 1024 * 1024:
             video_b64 = base64.b64encode(raw).decode("ascii")
-            return _post({
+            text = _post({
                 "model": RANKING_VISION_MODELS[0],
                 "messages": [{
                     "role": "user",
@@ -371,9 +377,12 @@ def _atlas_vision_comment(prompt: str, sample_path: Path, frames_dir: Path) -> s
                         },
                     ],
                 }],
-                "max_tokens": 160,
+                "max_tokens": 256,
                 "temperature": 0.9,
             })
+            if text and '"line"' in text:
+                return text
+            raise RuntimeError(f"video_url invalid JSON: {text[:120]!r}")
     except Exception as e:
         last_err = e
         print(f"[ranking_commentary] video_url vision failed: {e}")

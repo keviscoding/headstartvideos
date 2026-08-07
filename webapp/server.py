@@ -2079,7 +2079,7 @@ class RankingAssembleRequest(BaseModel):
     color_palette: str = "yellow"
     checkered_mode: bool = False
     commentary: bool = False
-    voice_name: str = "Kore"
+    voice_name: str = "eve"
     subtitle_font: str = "Arial"
     subtitle_y: float = 50
     subtitle_color: str = "yellow"
@@ -2134,6 +2134,9 @@ async def ranking_access(user: dict = Depends(require_user)):
         "credit_cost": cost,
         "credit_cost_commentary": cost_commentary,
         "commentary_credit_cost": commentary_extra,
+        # List prices for UI (ignore admin/trial $0 charge so the chip never says "0 credits").
+        "list_price": base_cost,
+        "list_price_commentary": with_commentary,
         "trial_allowed": trial_ranking_allowed(
             cooks_used=used, trial_limit=limit, is_trial=trial, is_admin=is_admin,
         ) if trial else True,
@@ -2378,7 +2381,7 @@ async def ranking_assemble(req: RankingAssembleRequest, user: dict = Depends(req
         "color_palette": (req.color_palette or "yellow").strip().lower(),
         "checkered_mode": bool(req.checkered_mode),
         "commentary": want_commentary,
-        "voice_name": (req.voice_name or "Kore").strip() or "Kore",
+        "voice_name": (req.voice_name or "eve").strip() or "eve",
         "subtitle_font": (req.subtitle_font or "Arial").strip() or "Arial",
         "subtitle_y": float(req.subtitle_y if req.subtitle_y is not None else 50),
         "subtitle_color": (req.subtitle_color or "yellow").strip().lower(),

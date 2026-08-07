@@ -356,14 +356,15 @@
                                 <label class="rk-check-label" style="margin-bottom:8px;">
                                     <input type="checkbox" id="rk-commentary-toggle" onchange="rkSetCommentary(this.checked)">
                                     AI Commentary
-                                    <span class="rk-cost-chip" id="rk-commentary-chip">1 credit total</span>
+                                    <span class="rk-cost-chip" id="rk-commentary-chip">1 credit</span>
                                 </label>
                                 <select id="rk-voice-picker" class="cr-input" style="display:none;margin-bottom:8px;" onchange="rkSaveDraft()">
-                                    <option value="Kore">Kore (upbeat)</option>
-                                    <option value="Charon">Charon (deep)</option>
-                                    <option value="Puck">Puck (energetic)</option>
-                                    <option value="Fenrir">Fenrir (bold)</option>
-                                    <option value="Aoede">Aoede (warm)</option>
+                                    <!-- Atlas xAI TTS voice_ids (not Gemini) -->
+                                    <option value="eve">Eve (upbeat)</option>
+                                    <option value="rex">Rex (professional)</option>
+                                    <option value="leo">Leo (narrator)</option>
+                                    <option value="ara">Ara (warm)</option>
+                                    <option value="sal">Sal (neutral)</option>
                                 </select>
                                 <div id="rk-subtitle-settings" style="display:none;">
                                     <div class="rk-pos-title">Commentary subtitles</div>
@@ -2128,7 +2129,7 @@
     </div>
 
     <script src="/static/cr-telemetry.js?v=20260804b"></script>
-    <script src="/static/ranking.js?v=20260807c"></script>
-    <script src="/static/app.js?v=20260807c"></script>
+    <script src="/static/ranking.js?v=20260807d"></script>
+    <script src="/static/app.js?v=20260807d"></script>
 </body>
 </html>

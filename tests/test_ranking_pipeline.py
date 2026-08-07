@@ -1,4 +1,5 @@
 """Tests for ranking ASS overlay + assemble helpers (no heavy cook)."""
+import re
 from pathlib import Path
 from unittest import mock
 
@@ -28,7 +29,8 @@ def test_viral_title_colors():
     out = _format_viral_title("Top Parkour Moments", "Parkour")
     assert "PARKOUR" in out
     assert "TOP" in out
-    assert "\\c" in out
+    # Closing '&' required so libass does not swallow title glyphs as hex.
+    assert re.search(r"\\c&H[0-9A-Fa-f]+&\}", out)
     assert "\\N" in _format_viral_title("one two three four five six")
 
 
