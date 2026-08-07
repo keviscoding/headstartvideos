@@ -8,6 +8,7 @@ data for use in Script Studio.
 
 from __future__ import annotations
 import html
+import json
 import os
 import re
 import tempfile
@@ -519,11 +520,95 @@ def _vtt_to_text(body: str) -> str:
     return _clean_caption_text(" ".join(lines))
 
 
+def _ytdlp_caption_opts() -> dict[str, Any]:
+    opts: dict[str, Any] = {
+        "skip_download": True,
+        "quiet": True,
+        "no_warnings": True,
+        "ignore_no_formats_error": True,
+        # Prefer clients that still expose caption tracks without PO tokens.
+        "extractor_args": {
+            "youtube": {"player_client": ["tv_simply", "android_vr", "mweb", "web"]},
+        },
+    }
+    try:
+        import config as _cfg
+        cookies = (getattr(_cfg, "YOUTUBE_COOKIES_FILE", "") or "").strip()
+    except Exception:
+        cookies = (os.environ.get("YOUTUBE_COOKIES_FILE") or "").strip()
+    if cookies and Path(cookies).is_file():
+        opts["cookiefile"] = cookies
+    return opts
+
+
+def _caption_track_to_text(ext: str, body: str, *, json_payload: Any = None) -> str:
+    ext = (ext or "").lower()
+    if ext == "json3":
+        data = json_payload
+        if data is None:
+            try:
+                data = json.loads(body)
+            except Exception:
+                return ""
+        return _json3_to_text(data if isinstance(data, dict) else {})
+    if ext == "vtt" or "-->" in (body or "") or (body or "").startswith("WEBVTT"):
+        return _vtt_to_text(body)
+    chunks = re.findall(r"<text[^>]*>(.*?)</text>", body or "", flags=re.S)
+    if chunks:
+        return _clean_caption_text(
+            " ".join(re.sub(r"<[^>]+>", "", html.unescape(c)) for c in chunks)
+        )
+    return _clean_caption_text(body or "")
+
+
+def _collect_ytdlp_caption_candidates(info: dict[str, Any]) -> list[tuple[int, int, str, str]]:
+    """
+    Rank caption tracks for download.
+
+    Score: lower is better.
+      0 = English auto-generated
+      1 = English manual
+      2 = any auto-generated
+      3 = any other manual
+    Then prefer json3/vtt over other formats.
+    """
+    preferred_exts = ("json3", "vtt", "srv3", "srv1", "ttml")
+    out: list[tuple[int, int, str, str]] = []
+
+    def lang_is_en(lang: str) -> bool:
+        l = str(lang or "").lower()
+        return l == "en" or l.startswith("en-") or l.startswith("a.en") or l == "en_US"
+
+    # Auto first — MCP callers want YouTube auto captions, not only manual subs.
+    for bucket_rank, bucket in (
+        (0, info.get("automatic_captions") or {}),
+        (1, info.get("subtitles") or {}),
+    ):
+        if not isinstance(bucket, dict):
+            continue
+        for lang, tracks in bucket.items():
+            en = lang_is_en(str(lang))
+            if bucket_rank == 0:
+                rank = 0 if en else 2
+            else:
+                rank = 1 if en else 3
+            for track in tracks or []:
+                if not isinstance(track, dict):
+                    continue
+                ext = (track.get("ext") or "").lower()
+                track_url = (track.get("url") or "").strip()
+                if not track_url or ext not in preferred_exts:
+                    continue
+                ext_rank = preferred_exts.index(ext)
+                out.append((rank, ext_rank, ext, track_url))
+    out.sort(key=lambda c: (c[0], c[1]))
+    return out
+
+
 def _fetch_transcript_ytdlp(video_id: str) -> str | None:
     """Pull auto/manual captions through yt-dlp's player response.
 
-    More reliable from cloud IPs than youtube-transcript-api, which YouTube
-    often blocks from datacenter ranges.
+    Tries auto-generated tracks first (any language), English preferred.
     """
     try:
         import yt_dlp
@@ -531,12 +616,7 @@ def _fetch_transcript_ytdlp(video_id: str) -> str | None:
         return None
 
     url = f"https://www.youtube.com/watch?v={video_id}"
-    opts = {
-        "skip_download": True,
-        "quiet": True,
-        "no_warnings": True,
-        "extract_flat": False,
-    }
+    opts = _ytdlp_caption_opts()
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False) or {}
@@ -544,55 +624,27 @@ def _fetch_transcript_ytdlp(video_id: str) -> str | None:
         print(f"[channel_data] yt-dlp caption lookup failed for {video_id}: {e}")
         return None
 
-    buckets = [
-        info.get("subtitles") or {},
-        info.get("automatic_captions") or {},
-    ]
-    preferred_langs = ("en", "en-US", "en-GB", "en-AU", "a.en")
-    preferred_exts = ("json3", "vtt", "srv3", "srv1", "ttml")
-
-    candidates: list[tuple[str, str]] = []
-    for bucket in buckets:
-        for lang in preferred_langs:
-            for track in bucket.get(lang) or []:
-                ext = (track.get("ext") or "").lower()
-                track_url = track.get("url") or ""
-                if ext in preferred_exts and track_url:
-                    candidates.append((ext, track_url))
-        if candidates:
-            break
+    candidates = _collect_ytdlp_caption_candidates(info)
     if not candidates:
-        # Any English-ish lang we missed, or first available track.
-        for bucket in buckets:
-            for lang, tracks in bucket.items():
-                if not str(lang).lower().startswith("en"):
-                    continue
-                for track in tracks or []:
-                    ext = (track.get("ext") or "").lower()
-                    track_url = track.get("url") or ""
-                    if ext in preferred_exts and track_url:
-                        candidates.append((ext, track_url))
-            if candidates:
-                break
+        print(f"[channel_data] yt-dlp: no caption tracks for {video_id}")
+        return None
 
-    # Prefer formats in preferred_exts order.
-    candidates.sort(key=lambda c: preferred_exts.index(c[0]) if c[0] in preferred_exts else 99)
-
-    for ext, track_url in candidates[:4]:
+    seen_urls: set[str] = set()
+    for _rank, _er, ext, track_url in candidates[:8]:
+        if track_url in seen_urls:
+            continue
+        seen_urls.add(track_url)
         try:
             resp = httpx.get(track_url, timeout=30, follow_redirects=True)
             if resp.status_code != 200 or not (resp.text or "").strip():
                 continue
+            payload = None
             if ext == "json3":
-                text = _json3_to_text(resp.json())
-            elif ext == "vtt":
-                text = _vtt_to_text(resp.text)
-            else:
-                # srv1 / srv3 / ttml share <text>…</text> payloads enough for our use.
-                chunks = re.findall(r"<text[^>]*>(.*?)</text>", resp.text, flags=re.S)
-                text = _clean_caption_text(
-                    " ".join(re.sub(r"<[^>]+>", "", html.unescape(c)) for c in chunks)
-                )
+                try:
+                    payload = resp.json()
+                except Exception:
+                    payload = None
+            text = _caption_track_to_text(ext, resp.text, json_payload=payload)
             if text and len(text) > 20:
                 return text
         except Exception as e:
@@ -601,17 +653,84 @@ def _fetch_transcript_ytdlp(video_id: str) -> str | None:
     return None
 
 
+def _official_snippets_to_text(fetched: Any) -> str:
+    snippets = getattr(fetched, "snippets", None)
+    if snippets is None and isinstance(fetched, list):
+        # Older API returned list of dicts / objects
+        parts = []
+        for s in fetched:
+            parts.append(getattr(s, "text", None) or (s.get("text") if isinstance(s, dict) else "") or "")
+        return _clean_caption_text(" ".join(parts))
+    return _clean_caption_text(" ".join(getattr(s, "text", "") or "" for s in (snippets or [])))
+
+
 def _fetch_transcript_official(video_id: str) -> str | None:
-    """Free youtube-transcript-api path. Fast when YouTube allows the IP."""
+    """youtube-transcript-api: prefer EN auto, then any auto-generated track."""
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
-        api = YouTubeTranscriptApi()
-        transcript = api.fetch(video_id)
-        text = _clean_caption_text(" ".join(s.text for s in transcript.snippets))
-        return text or None
     except Exception as e:
-        print(f"[channel_data] youtube-transcript-api failed for {video_id}: {e}")
+        print(f"[channel_data] youtube-transcript-api import failed: {e}")
         return None
+
+    api = YouTubeTranscriptApi()
+
+    # Fast path: English (covers many videos)
+    for langs in (("en",), ("en-US", "en-GB", "en-AU")):
+        try:
+            fetched = api.fetch(video_id, languages=list(langs))
+            text = _official_snippets_to_text(fetched)
+            if text and len(text) > 20:
+                return text
+        except Exception:
+            pass
+
+    # List every track — this is what was missing: non-English auto captions
+    # were previously ignored, so MCP looked "broken" on many videos.
+    try:
+        listing = api.list(video_id)
+    except Exception as e:
+        print(f"[channel_data] youtube-transcript-api list failed for {video_id}: {e}")
+        return None
+
+    tracks = list(listing)
+    if not tracks:
+        return None
+
+    def track_rank(t: Any) -> tuple[int, str]:
+        code = str(getattr(t, "language_code", "") or "").lower()
+        gen = bool(getattr(t, "is_generated", False))
+        en = code == "en" or code.startswith("en-")
+        if en and gen:
+            return (0, code)
+        if en:
+            return (1, code)
+        if gen:
+            return (2, code)
+        return (3, code)
+
+    for tr in sorted(tracks, key=track_rank):
+        try:
+            fetched = None
+            code = str(getattr(tr, "language_code", "") or "")
+            # If non-English but translatable, pull English translation of auto captions.
+            if not code.lower().startswith("en") and getattr(tr, "is_translatable", False):
+                try:
+                    fetched = tr.translate("en").fetch()
+                except Exception:
+                    fetched = None
+            if fetched is None:
+                fetched = tr.fetch()
+            text = _official_snippets_to_text(fetched)
+            if text and len(text) > 20:
+                print(
+                    f"[channel_data] youtube-transcript-api ok video={video_id} "
+                    f"lang={code} generated={getattr(tr, 'is_generated', False)}"
+                )
+                return text
+        except Exception as e:
+            print(f"[channel_data] youtube-transcript-api track failed for {video_id}: {e}")
+            continue
+    return None
 
 
 def _pick_downsub_txt_url(subs: list) -> str | None:
@@ -739,30 +858,39 @@ def fetch_transcript_detailed(
     max_asr_seconds: float = _ASR_MAX_SECONDS,
 ) -> dict[str, Any]:
     """
-    Fetch transcript with source attribution.
+    Fetch video-level captions with source attribution.
 
-    Order: DownSub → youtube-transcript-api → yt-dlp captions → optional ASR.
+    Order (captions only — auto-generated preferred inside each source):
+      DownSub → youtube-transcript-api → yt-dlp → optional ASR.
     Returns {text, source, error}.
     """
     key = (downsub_key or "").strip()
+    attempts: list[str] = []
+
     if key and not _downsub_is_disabled(key):
+        attempts.append("downsub")
         text = _fetch_transcript_downsub(video_id, key)
         if text:
             return {"text": text, "source": "downsub", "error": ""}
 
+    # Prefer listing-based official API (gets non-English auto captions) before yt-dlp.
+    attempts.append("youtube_api")
     text = _fetch_transcript_official(video_id)
     if text:
         return {"text": text, "source": "youtube_api", "error": ""}
 
+    attempts.append("ytdlp")
     text = _fetch_transcript_ytdlp(video_id)
     if text:
         return {"text": text, "source": "ytdlp", "error": ""}
 
     if allow_asr:
+        attempts.append("asr")
         text = _fetch_transcript_asr(video_id, max_seconds=max_asr_seconds)
         if text:
             return {"text": text, "source": "asr", "error": ""}
 
+    print(f"[channel_data] no transcript for {video_id} after {attempts}")
     return {"text": "", "source": "", "error": "no_transcript"}
 
 
@@ -807,9 +935,10 @@ def _fetch_transcript_downsub(video_id: str, downsub_key: str) -> str | None:
         if (data.get("status") or "").lower() == "error":
             err = data.get("error") or data
             print(f"[channel_data] DownSub error payload for {video_id}: {err}")
-            # Some account-limit errors arrive as 200 + status:error.
+            # Only hard-disable on auth failures. Soft "limit" errors must NOT
+            # latch — Premium bonus credits often still work after monthly 2k.
             err_l = str(err).lower()
-            if any(s in err_l for s in ("denied", "limit", "unauthorized", "invalid api", "quota")):
+            if any(s in err_l for s in ("unauthorized", "invalid api", "invalid key", "access denied")):
                 _disable_downsub(downsub_key, f"payload: {str(err)[:160]}")
             return None
 

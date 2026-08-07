@@ -248,3 +248,84 @@ class TestYtdlpPath:
 
         text = cd._fetch_transcript_ytdlp("za2VyvLl5T0")
         assert text == "This is my AI channel that blew up"
+
+    def test_falls_back_to_non_english_auto_captions(self, monkeypatch):
+        class FakeYDL:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def extract_info(self, url, download=False):
+                return {
+                    "subtitles": {},
+                    "automatic_captions": {
+                        "ko": [{"ext": "json3", "url": "https://example/ko.json3"}],
+                    },
+                }
+
+        class FakeMod:
+            class YoutubeDL:
+                def __init__(self, opts): pass
+                def __enter__(self): return FakeYDL()
+                def __exit__(self, *a): return False
+
+        class FakeGet:
+            status_code = 200
+            text = json.dumps(SAMPLE_JSON3)
+            def json(self): return SAMPLE_JSON3
+
+        monkeypatch.setitem(__import__("sys").modules, "yt_dlp", FakeMod)
+        monkeypatch.setattr(cd.httpx, "get", lambda *a, **k: FakeGet())
+        text = cd._fetch_transcript_ytdlp("9bZkp7q19f0")
+        assert "AI channel" in text
+
+
+class TestOfficialAutoCaptions:
+    def test_uses_non_english_generated_when_en_missing(self, monkeypatch):
+        class Snip:
+            def __init__(self, text): self.text = text
+
+        class Fetched:
+            def __init__(self, text):
+                self.snippets = [Snip(w) for w in text.split()]
+
+        class Track:
+            def __init__(self, code, generated=True, translatable=False):
+                self.language_code = code
+                self.is_generated = generated
+                self.is_translatable = translatable
+            def fetch(self):
+                return Fetched("korean auto caption words here that are long enough")
+            def translate(self, lang):
+                raise RuntimeError("no translate")
+
+        class Listing:
+            def __iter__(self):
+                return iter([Track("ko", generated=True)])
+
+        class FakeAPI:
+            def fetch(self, vid, languages=None):
+                raise RuntimeError("no en")
+            def list(self, vid):
+                return Listing()
+
+        class FakeMod:
+            YouTubeTranscriptApi = FakeAPI
+
+        monkeypatch.setitem(__import__("sys").modules, "youtube_transcript_api", FakeMod)
+        # Re-import path uses the module name at call time
+        import sys
+        sys.modules["youtube_transcript_api"] = FakeMod
+        text = cd._fetch_transcript_official("9bZkp7q19f0")
+        assert text and "korean auto caption" in text
+
+
+class TestDownsubSoftLimit:
+    def test_limit_payload_does_not_disable_bonus_credits(self, monkeypatch):
+        class FakeResp:
+            status_code = 200
+            text = '{"status":"error","error":"usage limit exceeded"}'
+            def json(self):
+                return json.loads(self.text)
+
+        monkeypatch.setattr(cd.httpx, "post", lambda *a, **k: FakeResp())
+        assert cd._fetch_transcript_downsub("vid", "key") is None
+        assert not cd._downsub_is_disabled("key")

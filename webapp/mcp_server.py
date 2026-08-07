@@ -543,10 +543,12 @@ def get_video_transcript(
 
     tr: dict = {"text": "", "source": "", "error": "no_transcript"}
     try:
+        # Captions only (auto-generated preferred). No slow ASR — Claude needs
+        # YouTube's existing auto captions, not a re-transcription.
         tr = fetch_transcript_detailed(
             video_id,
             getattr(config, "DOWNSUB_KEY", "") or "",
-            allow_asr=True,
+            allow_asr=False,
         )
     except Exception as e:
         print(f"[mcp] transcript failed video={video_id}: {e}")
