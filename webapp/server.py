@@ -2079,6 +2079,7 @@ class RankingAssembleRequest(BaseModel):
     color_palette: str = "yellow"
     checkered_mode: bool = False
     commentary: bool = False
+    ai_commentary: bool | None = None  # alias — some clients send this
     voice_name: str = "eve"
     subtitle_font: str = "Arial"
     subtitle_y: float = 50
@@ -2269,7 +2270,12 @@ async def ranking_assemble(req: RankingAssembleRequest, user: dict = Depends(req
     limit = int(getattr(config, "RANKING_TRIAL_COOK_LIMIT", 2) or 2)
     paid_cost = float(getattr(config, "RANKING_CREDIT_COST", 0.5) or 0.5)
     commentary_total = float(getattr(config, "RANKING_CREDIT_COST_COMMENTARY", 1) or 1)
-    want_commentary = bool(req.commentary)
+    want_commentary = bool(req.commentary) or bool(req.ai_commentary)
+    print(
+        f"[ranking] assemble user={user.get('id')} clips={len(clips)} "
+        f"commentary={want_commentary} (commentary={req.commentary!r} "
+        f"ai_commentary={req.ai_commentary!r}) voice={req.voice_name!r}"
+    )
 
     if trial and not is_admin and not trial_ranking_allowed(
         cooks_used=used, trial_limit=limit, is_trial=True, is_admin=False,

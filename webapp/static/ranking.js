@@ -203,12 +203,20 @@ function rkSetCheckered(on) {
     rkRenderPreview('rk-preview-dash');
 }
 
+function rkSyncCommentaryFromDom() {
+    const el = document.getElementById('rk-commentary-toggle');
+    if (el) _rkCommentary = !!el.checked;
+    return _rkCommentary;
+}
+
 function rkSetCommentary(on) {
     _rkCommentary = !!on;
+    const toggle = document.getElementById('rk-commentary-toggle');
+    if (toggle && toggle.checked !== _rkCommentary) toggle.checked = _rkCommentary;
     const vp = document.getElementById('rk-voice-picker');
     const ss = document.getElementById('rk-subtitle-settings');
-    if (vp) vp.style.display = on ? '' : 'none';
-    if (ss) ss.style.display = on ? '' : 'none';
+    if (vp) vp.style.display = _rkCommentary ? '' : 'none';
+    if (ss) ss.style.display = _rkCommentary ? '' : 'none';
     rkSaveDraft();
     rkUpdateAssembleLabel();
     rkRenderPreview('rk-preview-dash');
@@ -262,17 +270,19 @@ function rkUpdateAssembleLabel() {
     const btn = document.getElementById('rk-btn-assemble');
     const text = btn?.querySelector('.btn-text');
     if (!text) return;
+    rkSyncCommentaryFromDom();
+    const withVo = _rkCommentary ? ' with AI commentary' : '';
     if (_rkAccess?.is_trial && (_rkAccess.ranking_free_left ?? 0) > 0) {
-        text.textContent = 'Cook ranking short (trial)';
+        text.textContent = `Cook ranking short${withVo} (trial)`;
         return;
     }
     if (_rkAccess?.is_trial) {
-        text.textContent = 'Cook ranking short';
+        text.textContent = `Cook ranking short${withVo}`;
         return;
     }
     const total = rkCookCreditTotal();
     const label = rkFormatCredits(total);
-    text.textContent = `Cook ranking short (${label} credit${total === 1 ? '' : 's'})`;
+    text.textContent = `Cook ranking short${withVo} (${label} credit${total === 1 ? '' : 's'})`;
 }
 
 function rkParseImportUrls(raw) {
@@ -1025,39 +1035,48 @@ async function rkAssemble() {
     }
 
     const btn = document.getElementById('rk-btn-assemble');
+    // Read the checkbox at click-time (browser restore can check the box without
+    // firing onchange, which previously queued cooks with commentary:false).
+    const commentaryOn = rkSyncCommentaryFromDom();
+    rkSetCommentary(commentaryOn);
+    const n = _rkClips.length;
+    const body = {
+        clips: _rkClips.map((c, i) => ({
+            filename: c.filename,
+            url: c.url,
+            number: n - i,
+            label: c.label || `#${n - i}`,
+            startTime: c.startTime || 0,
+            endTime: c.endTime || c.duration,
+            originalDuration: c.originalDuration || c.duration,
+        })),
+        title: {
+            text: titleText,
+            highlightWord: (document.getElementById('rk-title-hl')?.value || '').trim(),
+        },
+        style_preset: _rkStyle,
+        layout: rkLayoutPayload(),
+        color_palette: _rkColorPalette,
+        checkered_mode: _rkCheckered,
+        commentary: commentaryOn,
+        ai_commentary: commentaryOn,
+        voice_name: document.getElementById('rk-voice-picker')?.value || 'eve',
+        subtitle_font: document.getElementById('rk-subtitle-font')?.value || 'Arial',
+        subtitle_y: parseFloat(document.getElementById('rk-subtitle-y')?.value || '50'),
+        subtitle_color: _rkSubtitleColor,
+        notify_email: currentUser?.email || '',
+    };
     _rkAssembling = true;
     // Instant cook scene so users don't spam the button during the network hop.
     goToStep('rk-cook');
     document.getElementById('rk-result-wrap')?.classList.add('hidden');
-    rkResetCookProgress('Starting your ranking short…');
+    rkResetCookProgress(
+        commentaryOn
+            ? 'Starting ranking short with AI commentary…'
+            : 'Starting your ranking short…'
+    );
     if (typeof setButtonLoading === 'function') setButtonLoading(btn, true);
     try {
-        const n = _rkClips.length;
-        const body = {
-            clips: _rkClips.map((c, i) => ({
-                filename: c.filename,
-                url: c.url,
-                number: n - i,
-                label: c.label || `#${n - i}`,
-                startTime: c.startTime || 0,
-                endTime: c.endTime || c.duration,
-                originalDuration: c.originalDuration || c.duration,
-            })),
-            title: {
-                text: titleText,
-                highlightWord: (document.getElementById('rk-title-hl')?.value || '').trim(),
-            },
-            style_preset: _rkStyle,
-            layout: rkLayoutPayload(),
-            color_palette: _rkColorPalette,
-            checkered_mode: _rkCheckered,
-            commentary: _rkCommentary,
-            voice_name: document.getElementById('rk-voice-picker')?.value || 'eve',
-            subtitle_font: document.getElementById('rk-subtitle-font')?.value || 'Arial',
-            subtitle_y: parseFloat(document.getElementById('rk-subtitle-y')?.value || '50'),
-            subtitle_color: _rkSubtitleColor,
-            notify_email: currentUser?.email || '',
-        };
         const res = await fetch('/api/ranking/assemble', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1080,7 +1099,13 @@ async function rkAssemble() {
             }
             throw new Error(errMsg);
         }
-        try { track('ranking_assemble_started', { job_id: data.job_id, clips: n }); } catch (_) {}
+        try {
+            track('ranking_assemble_started', {
+                job_id: data.job_id,
+                clips: n,
+                commentary: commentaryOn,
+            });
+        } catch (_) {}
         if (cookingManager?.adoptRanking) {
             cookingManager.adoptRanking(data.job_id, titleText);
         } else if (cookingManager?.adoptStoryboard) {
@@ -1216,6 +1241,7 @@ window.rkSetColor = rkSetColor;
 window.rkSetSubColor = rkSetSubColor;
 window.rkSetCheckered = rkSetCheckered;
 window.rkSetCommentary = rkSetCommentary;
+window.rkSyncCommentaryFromDom = rkSyncCommentaryFromDom;
 window.rkOnSubtitleY = rkOnSubtitleY;
 window.rkCyclePreviewClip = rkCyclePreviewClip;
 window.rkMoveClip = rkMoveClip;

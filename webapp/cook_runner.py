@@ -1514,7 +1514,7 @@ def _run_ranking_countdown_job(
     layout = req_data.get("layout") if isinstance(req_data.get("layout"), dict) else {}
     color_palette = (req_data.get("color_palette") or req_data.get("colorPalette") or "yellow").strip().lower()
     checkered_mode = bool(req_data.get("checkered_mode") or req_data.get("checkeredMode"))
-    want_commentary = bool(req_data.get("commentary"))
+    want_commentary = bool(req_data.get("commentary")) or bool(req_data.get("ai_commentary"))
     voice_name = (req_data.get("voice_name") or req_data.get("voiceName") or "eve").strip() or "eve"
     subtitle_font = (req_data.get("subtitle_font") or req_data.get("subtitleFont") or "").strip() or None
     subtitle_y = req_data.get("subtitle_y")
@@ -1523,6 +1523,10 @@ def _run_ranking_countdown_job(
     subtitle_color = (req_data.get("subtitle_color") or req_data.get("subtitleColor") or "yellow").strip().lower()
     clips_meta = req_data.get("clips") if isinstance(req_data.get("clips"), list) else []
     clips_zip_url = (req_data.get("clips_zip_url") or "").strip()
+    print(
+        f"[ranking] job={job_id} want_commentary={want_commentary} "
+        f"voice={voice_name!r} clips={len(clips_meta)}"
+    )
 
     _progress_persist_at = [0.0]
 
