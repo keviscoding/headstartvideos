@@ -62,6 +62,9 @@ class TestFetchOrder:
 
         assert cd._fetch_transcript("abc", "key") == "from downsub"
         assert calls == ["downsub"]
+        detailed = cd.fetch_transcript_detailed("abc", "key", allow_asr=False)
+        assert detailed["source"] == "downsub"
+        assert detailed["text"] == "from downsub"
 
     def test_ytdlp_used_when_downsub_and_official_fail(self, monkeypatch):
         calls = []
@@ -74,6 +77,26 @@ class TestFetchOrder:
 
         assert cd._fetch_transcript("abc", "key") == "from ytdlp"
         assert calls == ["downsub", "official", "ytdlp"]
+
+    def test_asr_used_when_captions_fail_and_allowed(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(cd, "_fetch_transcript_downsub",
+                            lambda vid, key: calls.append("downsub") or None)
+        monkeypatch.setattr(cd, "_fetch_transcript_official",
+                            lambda vid: calls.append("official") or None)
+        monkeypatch.setattr(cd, "_fetch_transcript_ytdlp",
+                            lambda vid: calls.append("ytdlp") or None)
+        monkeypatch.setattr(cd, "_fetch_transcript_asr",
+                            lambda vid, max_seconds=0: calls.append("asr") or "spoken words from asr audio")
+
+        # Bulk channel path must NOT call ASR
+        assert cd._fetch_transcript("abc", "key") is None
+        assert "asr" not in calls
+
+        detailed = cd.fetch_transcript_detailed("abc", "key", allow_asr=True)
+        assert detailed["source"] == "asr"
+        assert "spoken words" in detailed["text"]
+        assert calls[-1] == "asr"
 
     def test_downsub_skipped_once_disabled_for_same_key(self, monkeypatch):
         calls = []
@@ -96,6 +119,54 @@ class TestFetchOrder:
 
         assert cd._fetch_transcript("abc", "new-key") == "ok:new-key"
         assert calls == ["new-key"]
+
+
+class TestParseAndMeta:
+    def test_parse_youtube_video_id(self):
+        assert cd.parse_youtube_video_id("https://youtu.be/dQw4w9WgXcQ") == "dQw4w9WgXcQ"
+        assert cd.parse_youtube_video_id("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=10") == "dQw4w9WgXcQ"
+        assert cd.parse_youtube_video_id("dQw4w9WgXcQ") == "dQw4w9WgXcQ"
+        assert cd.parse_youtube_video_id("") is None
+        assert cd.parse_youtube_video_id("ab") is None
+
+    def test_fetch_video_meta_uses_api_then_cache(self, monkeypatch):
+        cd._meta_cache.clear()
+        calls = {"n": 0}
+
+        def fake_api(vid, key):
+            calls["n"] += 1
+            return {
+                "title": "Hello",
+                "author": "Channel",
+                "views": 42,
+                "source": "youtube_data_api",
+                "error": "",
+            }
+
+        monkeypatch.setattr(cd, "_fetch_video_meta_ytdata", fake_api)
+        monkeypatch.setattr(cd, "_fetch_video_meta_ytdlp", lambda vid: (_ for _ in ()).throw(AssertionError("no ytdlp")))
+
+        a = cd.fetch_video_meta("dQw4w9WgXcQ", "yt-key")
+        b = cd.fetch_video_meta("dQw4w9WgXcQ", "yt-key")
+        assert a["title"] == "Hello"
+        assert a["views"] == 42
+        assert a["author"] == "Channel"
+        assert b["title"] == "Hello"
+        assert calls["n"] == 1
+
+    def test_fetch_video_meta_falls_back_to_ytdlp(self, monkeypatch):
+        cd._meta_cache.clear()
+        monkeypatch.setattr(
+            cd, "_fetch_video_meta_ytdata",
+            lambda vid, key: {"title": "", "author": "", "views": None, "source": "youtube_data_api", "error": "quota_exceeded"},
+        )
+        monkeypatch.setattr(
+            cd, "_fetch_video_meta_ytdlp",
+            lambda vid: {"title": "FB", "author": "Up", "views": 9, "source": "ytdlp", "error": ""},
+        )
+        m = cd.fetch_video_meta("aaaaaaaaaaa", "yt-key")
+        assert m["source"] == "ytdlp"
+        assert m["views"] == 9
 
 
 class TestDownsubCircuitBreaker:

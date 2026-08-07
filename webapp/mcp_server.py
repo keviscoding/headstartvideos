@@ -32,7 +32,7 @@ mcp = MCPServer(
         "upgrade at channelrecipe.com for the full library. "
         "Start with list_niches, then list_niche_subjects / "
         "list_niche_channels, then generate_script / generate_thumbnail. "
-        "Paid plans also get get_video_transcript. "
+        "Paid plans also get get_video_transcript (transcript + title/views/author). "
         "Auth is the Claude connector session (or Desktop Bearer key) — "
         "do not ask the user for an api_key tool argument. "
         "When a tool returns upgrade_url, tell the user to upgrade at that link."
@@ -494,62 +494,124 @@ def get_video_transcript(
     ctx: Context | None = None,
 ) -> str:
     """
-    Fetch the transcript / captions for a YouTube video URL or ID.
+    Fetch transcript + metadata for a YouTube video URL or ID.
+
+    Returns JSON with: transcript, title, author (channel), views,
+    transcript_source (downsub|youtube_api|ytdlp|asr), and status.
 
     Paid plans only (Starter or Daily). Use after picking a competitor video
     from list_niche_channels to study hooks and structure.
     """
-    import re
+    import time as _time
     import config
-    from core.channel_data import _fetch_transcript
+    from core.channel_data import (
+        fetch_transcript_detailed,
+        fetch_video_meta,
+        parse_youtube_video_id,
+    )
 
     user = _user_from_request(ctx)
     ok, msg = billing.paid_required(user, feature="Video transcripts")
     if not ok:
         return json.dumps({
             "error": msg,
+            "code": "upgrade_required",
             "upgrade_url": billing.UPGRADE_URL,
             "upgrade": billing.UPGRADE_CTA,
         })
 
     raw = (youtube_url or "").strip()
     if not raw:
-        return json.dumps({"error": "Pass a YouTube URL or video id."})
+        return json.dumps({"error": "Pass a YouTube URL or video id.", "code": "invalid_url"})
 
-    m = re.search(
-        r"(?:youtu\.be/|v=|/shorts/|/embed/|youtube\.com/watch\?.*?v=)([A-Za-z0-9_-]{6,})",
-        raw,
-    )
-    video_id = m.group(1) if m else raw
-    video_id = re.sub(r"[^A-Za-z0-9_-]", "", video_id)[:20]
-    if len(video_id) < 6:
-        return json.dumps({"error": "Could not parse a YouTube video id from that input."})
-
-    try:
-        text = _fetch_transcript(video_id, getattr(config, "DOWNSUB_KEY", "") or "")
-    except Exception as e:
-        return json.dumps({"error": f"Transcript fetch failed: {e}"})
-
-    if not text:
+    video_id = parse_youtube_video_id(raw)
+    if not video_id:
         return json.dumps({
-            "video_id": video_id,
-            "transcript": "",
-            "status": "unavailable",
-            "note": "No captions found for this video.",
+            "error": "Could not parse a YouTube video id from that input.",
+            "code": "invalid_url",
         })
 
-    # Keep payloads reasonable for Claude context
+    watch_url = f"https://www.youtube.com/watch?v={video_id}"
+    t0 = _time.time()
+
+    meta: dict = {}
+    try:
+        meta = fetch_video_meta(video_id, getattr(config, "YOUTUBE_API_KEY", "") or "")
+    except Exception as e:
+        print(f"[mcp] video meta failed job video={video_id}: {e}")
+        meta = {"title": "", "author": "", "views": None, "source": "", "error": "meta_failed"}
+
+    tr: dict = {"text": "", "source": "", "error": "no_transcript"}
+    try:
+        tr = fetch_transcript_detailed(
+            video_id,
+            getattr(config, "DOWNSUB_KEY", "") or "",
+            allow_asr=True,
+        )
+    except Exception as e:
+        print(f"[mcp] transcript failed video={video_id}: {e}")
+        tr = {"text": "", "source": "", "error": f"transcript_failed:{e}"}
+
+    text = (tr.get("text") or "").strip()
     max_chars = 24000 if billing._tier(user.get("plan") if user else None) == "daily" else 12000
     truncated = len(text) > max_chars
-    body = text[:max_chars]
-    return json.dumps({
-        "status": "ok",
+    body = text[:max_chars] if text else ""
+
+    meta_err = (meta.get("error") or "").strip()
+    tr_err = (tr.get("error") or "").strip()
+    has_meta = bool(meta.get("title") or meta.get("author") or meta.get("views") is not None)
+    has_tr = bool(body)
+
+    if has_tr and has_meta:
+        status = "ok"
+    elif has_tr:
+        status = "partial_transcript"
+    elif has_meta:
+        status = "partial_meta"
+    else:
+        status = "unavailable"
+
+    code = ""
+    if not has_tr and tr_err:
+        code = tr_err if tr_err in (
+            "no_transcript", "private_video", "quota_exceeded", "invalid_url",
+        ) else "no_transcript"
+    if not has_meta and meta_err in ("private_video", "private_or_missing", "quota_exceeded"):
+        code = meta_err if meta_err != "private_or_missing" else "private_video"
+
+    elapsed_ms = int((_time.time() - t0) * 1000)
+    print(
+        f"[mcp] get_video_transcript video={video_id} status={status} "
+        f"tr_source={tr.get('source')!r} meta_source={meta.get('source')!r} "
+        f"ms={elapsed_ms}"
+    )
+
+    out = {
+        "status": status,
+        "url": watch_url,
         "video_id": video_id,
+        "title": meta.get("title") or "",
+        "author": meta.get("author") or "",
+        "views": meta.get("views"),
         "transcript": body,
+        "transcript_source": tr.get("source") or "",
+        "meta_source": meta.get("source") or "",
         "truncated": truncated,
         "char_count": len(body),
         "plan": _plan_of(user),
-    })
+    }
+    if code:
+        out["code"] = code
+    if status != "ok":
+        notes = []
+        if not has_tr:
+            notes.append(tr_err or "No captions or ASR transcript available.")
+        if not has_meta:
+            notes.append(meta_err or "Could not load title/views/author.")
+        out["note"] = " ".join(notes)
+        if status == "unavailable":
+            out["error"] = out["note"]
+    return json.dumps(out)
 
 
 def build_mcp_asgi():

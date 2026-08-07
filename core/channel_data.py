@@ -8,8 +8,13 @@ data for use in Script Studio.
 
 from __future__ import annotations
 import html
+import os
 import re
+import tempfile
 import time
+from pathlib import Path
+from typing import Any
+
 import httpx
 
 # DownSub returns 401/403 when the key is invalid or the account is unpaid.
@@ -17,6 +22,12 @@ import httpx
 # without waiting for a process restart.
 _downsub_disabled_for_key: str = ""
 _downsub_disabled_reason: str | None = None
+
+# In-process cache for video metadata (title/author/views).
+_meta_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_META_TTL_SEC = 3600.0
+# ASR for MCP: skip videos longer than this (latency / cost).
+_ASR_MAX_SECONDS = 45 * 60
 
 
 def reset_downsub_circuit(reason: str = "manual") -> None:
@@ -324,6 +335,148 @@ def _get_video_stats(video_ids: list[str], yt_api_key: str) -> dict[str, dict]:
     return stats
 
 
+def parse_youtube_video_id(raw: str) -> str | None:
+    """Extract a YouTube video id from a URL or bare id. None if unusable."""
+    s = (raw or "").strip()
+    if not s:
+        return None
+    m = re.search(
+        r"(?:youtu\.be/|v=|/shorts/|/embed/|youtube\.com/watch\?.*?v=)([A-Za-z0-9_-]{6,})",
+        s,
+    )
+    video_id = m.group(1) if m else s
+    video_id = re.sub(r"[^A-Za-z0-9_-]", "", video_id)[:20]
+    if len(video_id) < 6:
+        return None
+    return video_id
+
+
+def _fetch_video_meta_ytdata(video_id: str, yt_api_key: str) -> dict[str, Any] | None:
+    """Primary metadata via YouTube Data API v3."""
+    key = (yt_api_key or "").strip()
+    if not key:
+        return None
+    try:
+        from googleapiclient.discovery import build
+
+        youtube = build("youtube", "v3", developerKey=key)
+        resp = youtube.videos().list(
+            part="snippet,statistics",
+            id=video_id,
+        ).execute()
+        items = resp.get("items") or []
+        if not items:
+            return {
+                "title": "",
+                "author": "",
+                "views": None,
+                "source": "youtube_data_api",
+                "error": "private_or_missing",
+            }
+        item = items[0]
+        sn = item.get("snippet") or {}
+        st = item.get("statistics") or {}
+        views_raw = st.get("viewCount")
+        return {
+            "title": str(sn.get("title") or "").strip(),
+            "author": str(sn.get("channelTitle") or "").strip(),
+            "views": int(views_raw) if views_raw is not None else None,
+            "source": "youtube_data_api",
+            "error": "",
+        }
+    except Exception as e:
+        err_l = str(e).lower()
+        code = "quota_exceeded" if "quota" in err_l else "ytdata_failed"
+        print(f"[channel_data] YouTube Data API meta failed for {video_id}: {e}")
+        # HttpError 403 quota — surface code for MCP
+        try:
+            from googleapiclient.errors import HttpError
+            if isinstance(e, HttpError) and getattr(e, "resp", None) is not None:
+                if int(getattr(e.resp, "status", 0) or 0) == 403 and "quota" in err_l:
+                    code = "quota_exceeded"
+        except Exception:
+            pass
+        return {"title": "", "author": "", "views": None, "source": "youtube_data_api", "error": code}
+
+
+def _fetch_video_meta_ytdlp(video_id: str) -> dict[str, Any] | None:
+    """Fallback metadata via yt-dlp (no download)."""
+    try:
+        import yt_dlp
+    except ImportError:
+        return None
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    opts = {
+        "skip_download": True,
+        "quiet": True,
+        "no_warnings": True,
+    }
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False) or {}
+    except Exception as e:
+        err_l = str(e).lower()
+        code = "private_video" if any(x in err_l for x in ("private", "login", "unavailable")) else "ytdlp_failed"
+        print(f"[channel_data] yt-dlp meta failed for {video_id}: {e}")
+        return {"title": "", "author": "", "views": None, "source": "ytdlp", "error": code}
+
+    views = info.get("view_count")
+    try:
+        views_i = int(views) if views is not None else None
+    except (TypeError, ValueError):
+        views_i = None
+    return {
+        "title": str(info.get("title") or "").strip(),
+        "author": str(info.get("channel") or info.get("uploader") or "").strip(),
+        "views": views_i,
+        "source": "ytdlp",
+        "error": "",
+        "duration": float(info.get("duration") or 0) or 0.0,
+    }
+
+
+def fetch_video_meta(video_id: str, yt_api_key: str = "") -> dict[str, Any]:
+    """
+    Title / author / views for one video.
+
+    Primary: YouTube Data API. Fallback: yt-dlp. Cached ~1h in-process.
+    """
+    vid = (video_id or "").strip()
+    now = time.time()
+    cached = _meta_cache.get(vid)
+    if cached and (now - cached[0]) < _META_TTL_SEC:
+        return dict(cached[1])
+
+    def _usable(m: dict[str, Any] | None) -> bool:
+        if not m:
+            return False
+        return bool(m.get("title") or m.get("author") or m.get("views") is not None)
+
+    meta: dict[str, Any] = {
+        "title": "",
+        "author": "",
+        "views": None,
+        "source": "",
+        "error": "unavailable",
+    }
+    api = _fetch_video_meta_ytdata(vid, yt_api_key)
+    if _usable(api) and not (api or {}).get("error"):
+        meta = api  # type: ignore[assignment]
+    else:
+        fb = _fetch_video_meta_ytdlp(vid)
+        if _usable(fb) and not (fb or {}).get("error"):
+            meta = fb  # type: ignore[assignment]
+        elif _usable(api):
+            meta = api  # type: ignore[assignment]
+        elif api and api.get("error"):
+            meta = api
+        elif fb:
+            meta = fb
+
+    _meta_cache[vid] = (now, dict(meta))
+    return dict(meta)
+
+
 def _clean_caption_text(text: str) -> str:
     text = html.unescape(text or "")
     text = re.sub(r"\s+", " ", text).strip()
@@ -490,29 +643,140 @@ def _pick_downsub_txt_url(subs: list) -> str | None:
     return None
 
 
-def _fetch_transcript(video_id: str, downsub_key: str = "") -> str | None:
+def _fetch_transcript_asr(
+    video_id: str,
+    *,
+    max_seconds: float = _ASR_MAX_SECONDS,
+) -> str | None:
     """
-    Fetch transcript for a video.
+    Download audio via yt-dlp and transcribe with Groq Whisper (prod path).
 
-    When a DownSub key is configured, try it first — paid accounts are the
-    reliable path and used to be the primary. Free sources follow as backup
-    so an unpaid/denied key still does not empty the transcripts array.
+    Skips videos longer than max_seconds. Returns plain text or None.
+    """
+    try:
+        import config
+    except Exception:
+        config = None  # type: ignore
+
+    groq_key = ""
+    if config is not None:
+        groq_key = (getattr(config, "GROQ_API_KEY", "") or "").strip()
+    if not groq_key:
+        groq_key = (os.environ.get("GROQ_API_KEY") or "").strip()
+    if not groq_key:
+        print(f"[channel_data] ASR skipped for {video_id}: GROQ_API_KEY missing")
+        return None
+
+    try:
+        import yt_dlp
+    except ImportError:
+        print(f"[channel_data] ASR skipped for {video_id}: yt-dlp not installed")
+        return None
+
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    work = Path(tempfile.mkdtemp(prefix=f"yt_asr_{video_id}_"))
+    outtmpl = str(work / "audio.%(ext)s")
+    opts = {
+        "format": "bestaudio/best",
+        "outtmpl": outtmpl,
+        "quiet": True,
+        "no_warnings": True,
+        "noprogress": True,
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "m4a",
+            "preferredquality": "96",
+        }],
+    }
+    try:
+        # Probe duration first without downloading full media.
+        probe_opts = {"skip_download": True, "quiet": True, "no_warnings": True}
+        with yt_dlp.YoutubeDL(probe_opts) as ydl:
+            info = ydl.extract_info(url, download=False) or {}
+        duration = float(info.get("duration") or 0) or 0.0
+        if duration > float(max_seconds):
+            print(
+                f"[channel_data] ASR skipped for {video_id}: "
+                f"duration {duration:.0f}s > max {max_seconds:.0f}s"
+            )
+            return None
+
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([url])
+
+        audio_files = list(work.glob("audio.*"))
+        if not audio_files:
+            print(f"[channel_data] ASR: no audio file for {video_id}")
+            return None
+        audio_path = str(audio_files[0])
+
+        from core.segmenter import _transcribe_groq
+        words = _transcribe_groq(audio_path)
+        if not words:
+            return None
+        text = _clean_caption_text(" ".join(str(w.get("word") or "") for w in words))
+        return text if text and len(text) > 20 else None
+    except Exception as e:
+        print(f"[channel_data] ASR failed for {video_id}: {e}")
+        return None
+    finally:
+        try:
+            for p in work.glob("*"):
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+            work.rmdir()
+        except OSError:
+            pass
+
+
+def fetch_transcript_detailed(
+    video_id: str,
+    downsub_key: str = "",
+    *,
+    allow_asr: bool = False,
+    max_asr_seconds: float = _ASR_MAX_SECONDS,
+) -> dict[str, Any]:
+    """
+    Fetch transcript with source attribution.
+
+    Order: DownSub → youtube-transcript-api → yt-dlp captions → optional ASR.
+    Returns {text, source, error}.
     """
     key = (downsub_key or "").strip()
     if key and not _downsub_is_disabled(key):
         text = _fetch_transcript_downsub(video_id, key)
         if text:
-            return text
+            return {"text": text, "source": "downsub", "error": ""}
 
     text = _fetch_transcript_official(video_id)
     if text:
-        return text
+        return {"text": text, "source": "youtube_api", "error": ""}
 
     text = _fetch_transcript_ytdlp(video_id)
     if text:
-        return text
+        return {"text": text, "source": "ytdlp", "error": ""}
 
-    return None
+    if allow_asr:
+        text = _fetch_transcript_asr(video_id, max_seconds=max_asr_seconds)
+        if text:
+            return {"text": text, "source": "asr", "error": ""}
+
+    return {"text": "", "source": "", "error": "no_transcript"}
+
+
+def _fetch_transcript(video_id: str, downsub_key: str = "") -> str | None:
+    """
+    Fetch transcript for a video (captions only — no ASR).
+
+    When a DownSub key is configured, try it first — paid accounts are the
+    reliable path and used to be the primary. Free sources follow as backup
+    so an unpaid/denied key still does not empty the transcripts array.
+    """
+    result = fetch_transcript_detailed(video_id, downsub_key, allow_asr=False)
+    text = (result.get("text") or "").strip()
+    return text or None
 
 
 def _fetch_transcript_downsub(video_id: str, downsub_key: str) -> str | None:
