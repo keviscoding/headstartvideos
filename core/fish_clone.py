@@ -233,12 +233,48 @@ def create_voice_model(
     }
 
 
+def _fish_error_summary(status_code: int, body: str) -> str:
+    """User-safe Fish error — never dump Cloudflare/HTML gateway pages."""
+    raw = (body or "").strip()
+    low = raw.lower()
+    if (
+        status_code in (502, 503, 504)
+        or "bad gateway" in low
+        or "cloudflare" in low
+        or raw.lstrip().startswith("<!DOCTYPE")
+        or raw.lstrip().startswith("<html")
+    ):
+        return (
+            f"Fish Audio is temporarily unavailable ({status_code or 'gateway error'}). "
+            "Please try generating the voiceover again in a minute."
+        )
+    snippet = re.sub(r"\s+", " ", raw)[:180]
+    if "<" in snippet and ">" in snippet:
+        return (
+            f"Fish Audio returned an error ({status_code}). "
+            "Please try again in a moment."
+        )
+    return f"Fish TTS failed ({status_code}): {snippet or 'unknown error'}"
+
+
+def _fish_tts_transient(status_code: int, body: str = "") -> bool:
+    if status_code in (408, 425, 429, 500, 502, 503, 504):
+        return True
+    low = (body or "").lower()
+    return any(
+        s in low
+        for s in ("bad gateway", "timeout", "timed out", "temporarily unavailable", "cloudflare")
+    )
+
+
 def tts_with_clone(text: str, fish_model_id: str, output_path: str) -> str:
     """Generate speech with a Fish reference_id (JSON path).
 
     Callers should pass short chunks (~280 chars). Fish's default
     max_new_tokens=1024 only covers ~10–15s of audio per generation window —
     we raise it and set chunk_length so long scripts aren't silently truncated.
+
+    Retries transient 502/503 gateway blips (common on fish.audio).
     """
     text = (text or "").strip()
     if not text:
@@ -250,32 +286,77 @@ def tts_with_clone(text: str, fish_model_id: str, output_path: str) -> str:
             f"Fish TTS chunk too long ({len(text)} chars; max {FISH_HARD_MAX}). "
             "Chunk the script before calling tts_with_clone."
         )
-    # Prefer msgpack-free JSON for fewer deps; Fish accepts JSON for reference_id.
-    resp = httpx.post(
-        f"{FISH_API}/v1/tts",
-        headers={
-            **_headers(),
-            "Content-Type": "application/json",
-            "model": _tts_model(),
-        },
-        json={
-            "text": text,
-            "reference_id": fish_model_id,
-            "format": "wav",
-            # Long-form settings — defaults silently stop around ~12s.
-            "chunk_length": 300,
-            "max_new_tokens": 4096,
-            "latency": "normal",
-            "normalize": True,
-            "condition_on_previous_chunks": True,
-        },
-        timeout=300,
-    )
-    if resp.status_code >= 400:
-        raise RuntimeError(f"Fish TTS failed ({resp.status_code}): {resp.text[:400]}")
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "wb") as f:
-        f.write(resp.content)
-    if not Path(output_path).is_file() or Path(output_path).stat().st_size < 500:
-        raise RuntimeError("Fish TTS returned empty audio")
-    return output_path
+
+    attempts = 4
+    last_err: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            # Prefer msgpack-free JSON for fewer deps; Fish accepts JSON for reference_id.
+            resp = httpx.post(
+                f"{FISH_API}/v1/tts",
+                headers={
+                    **_headers(),
+                    "Content-Type": "application/json",
+                    "model": _tts_model(),
+                },
+                json={
+                    "text": text,
+                    "reference_id": fish_model_id,
+                    "format": "wav",
+                    # Long-form settings — defaults silently stop around ~12s.
+                    "chunk_length": 300,
+                    "max_new_tokens": 4096,
+                    "latency": "normal",
+                    "normalize": True,
+                    "condition_on_previous_chunks": True,
+                },
+                timeout=300,
+            )
+            if resp.status_code >= 400:
+                summary = _fish_error_summary(resp.status_code, resp.text or "")
+                if _fish_tts_transient(resp.status_code, resp.text or "") and attempt < attempts:
+                    delay = min(12.0, 1.2 * attempt)
+                    print(
+                        f"[fish] TTS transient {resp.status_code} "
+                        f"(attempt {attempt}/{attempts}) — retry in {delay:.1f}s"
+                    )
+                    time.sleep(delay)
+                    last_err = RuntimeError(summary)
+                    continue
+                raise RuntimeError(summary)
+
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            with open(output_path, "wb") as f:
+                f.write(resp.content)
+            if not Path(output_path).is_file() or Path(output_path).stat().st_size < 500:
+                raise RuntimeError("Fish TTS returned empty audio")
+            if attempt > 1:
+                print(f"[fish] TTS ok after {attempt} attempts → {output_path}")
+            return output_path
+        except httpx.TimeoutException as e:
+            last_err = RuntimeError(
+                "Fish Audio timed out. Please try generating the voiceover again."
+            )
+            if attempt < attempts:
+                delay = min(12.0, 1.2 * attempt)
+                print(f"[fish] TTS timeout (attempt {attempt}/{attempts}) — retry in {delay:.1f}s")
+                time.sleep(delay)
+                continue
+            raise last_err from e
+        except httpx.HTTPError as e:
+            last_err = RuntimeError(
+                "Fish Audio is temporarily unavailable. Please try again in a minute."
+            )
+            if attempt < attempts:
+                delay = min(12.0, 1.2 * attempt)
+                print(f"[fish] TTS HTTP error (attempt {attempt}/{attempts}): {e}")
+                time.sleep(delay)
+                continue
+            raise last_err from e
+        except RuntimeError:
+            raise
+        except Exception as e:
+            last_err = e
+            raise
+
+    raise last_err or RuntimeError("Fish TTS failed")

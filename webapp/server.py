@@ -2661,6 +2661,14 @@ def _provider_http_status(exc: Exception) -> int:
         return 429
     if "insufficient balance" in msg or "provider balance" in msg or "temporarily unavailable" in msg:
         return 503
+    # Fish Audio Cloudflare/gateway blips — not app bugs.
+    if (
+        "fish audio" in msg
+        or "fish tts" in msg
+        or "bad gateway" in msg
+        or "fish.audio" in msg
+    ):
+        return 503
     if "tts synthesis failed" in msg or "atlas tts" in msg or "internal error" in msg:
         return 503
     if "image_other" in msg or "no parts found" in msg or "no_image" in msg:
