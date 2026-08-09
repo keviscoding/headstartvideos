@@ -137,63 +137,14 @@ def test_fetch_channel_research_tries_next_when_top_has_no_captions(monkeypatch)
     assert pack["sample_transcript"]["video_id"] == "lo"
 
 
-def test_research_niche_channels_admin_returns_images(monkeypatch):
+def _patch_research(monkeypatch, fake_research):
+    import config
     monkeypatch.setattr(mcp, "_user_from_request", lambda ctx=None: {
-        "id": 1, "email": "nwalikelv@gmail.com", "plan": "pro",
+        "id": 1, "email": "nwalikelv@gmail.com", "plan": "starter",
     })
     monkeypatch.setattr(mcp, "_mcp_is_admin", lambda user: True)
-
-    import config
     monkeypatch.setattr(config, "YOUTUBE_API_KEY", "AIzaTESTKEY1234567890", raising=False)
     monkeypatch.setattr(config, "DOWNSUB_KEY", "", raising=False)
-
-    def fake_research(url, yt, downsub="", **kw):
-        return {
-            "status": "ok",
-            "channel_url": url,
-            "channel_name": "Pack",
-            "channel_id": "UCpack",
-            "subscribers": 1,
-            "total_views": 2,
-            "video_count": 2,
-            "videos": [
-                {
-                    "video_id": "new1",
-                    "title": "Newest",
-                    "published_at": "2026-08-02T00:00:00Z",
-                    "views": 5,
-                    "url": "https://www.youtube.com/watch?v=new1",
-                    "thumbnail_url": "https://i.ytimg.com/vi/new1/hqdefault.jpg",
-                },
-                {
-                    "video_id": "new2",
-                    "title": "Second",
-                    "published_at": "2026-08-01T00:00:00Z",
-                    "views": 9,
-                    "url": "https://www.youtube.com/watch?v=new2",
-                    "thumbnail_url": "https://i.ytimg.com/vi/new2/hqdefault.jpg",
-                },
-            ],
-            "sample_transcript": {
-                "video_id": "new2",
-                "title": "Second",
-                "views": 9,
-                "transcript": "sample",
-                "transcript_source": "youtube_api",
-                "truncated": False,
-                "char_count": 6,
-            },
-            "transcript_note": "",
-            "thumbnails_included": ["new1", "new2"],
-        }
-
-    monkeypatch.setattr(cd, "fetch_channel_research", fake_research)
-    monkeypatch.setattr(
-        cd,
-        "download_youtube_thumbnail",
-        lambda vid: b"\xff\xd8\xff" + (vid.encode() * 40),
-    )
-    # Tool imports download from core.channel_data at call time — patch module used inside tool
     import core.channel_data as core_cd
     monkeypatch.setattr(core_cd, "fetch_channel_research", fake_research)
     monkeypatch.setattr(
@@ -201,6 +152,51 @@ def test_research_niche_channels_admin_returns_images(monkeypatch):
         "download_youtube_thumbnail",
         lambda vid: b"\xff\xd8\xff" + (vid.encode() * 40),
     )
+
+
+def _fake_pack(url: str) -> dict:
+    return {
+        "status": "ok",
+        "channel_url": url,
+        "channel_name": "Pack",
+        "channel_id": "UCpack",
+        "subscribers": 1,
+        "total_views": 2,
+        "video_count": 2,
+        "videos": [
+            {
+                "video_id": "new1",
+                "title": "Newest",
+                "published_at": "2026-08-02T00:00:00Z",
+                "views": 5,
+                "url": "https://www.youtube.com/watch?v=new1",
+                "thumbnail_url": "https://i.ytimg.com/vi/new1/hqdefault.jpg",
+            },
+            {
+                "video_id": "new2",
+                "title": "Second",
+                "published_at": "2026-08-01T00:00:00Z",
+                "views": 9,
+                "url": "https://www.youtube.com/watch?v=new2",
+                "thumbnail_url": "https://i.ytimg.com/vi/new2/hqdefault.jpg",
+            },
+        ],
+        "sample_transcript": {
+            "video_id": "new2",
+            "title": "Second",
+            "views": 9,
+            "transcript": "sample",
+            "transcript_source": "youtube_api",
+            "truncated": False,
+            "char_count": 6,
+        },
+        "transcript_note": "",
+        "thumbnails_included": ["new1", "new2"],
+    }
+
+
+def test_research_niche_channels_admin_returns_images(monkeypatch):
+    _patch_research(monkeypatch, lambda url, yt, downsub="", **kw: _fake_pack(url))
 
     parts = mcp.research_niche_channels(
         "https://youtube.com/@pack",
@@ -213,8 +209,30 @@ def test_research_niche_channels_admin_returns_images(monkeypatch):
     payload = json.loads(parts[0])
     assert payload["ok_count"] == 1
     assert payload["channels"][0]["thumbnails_included"] == ["new1", "new2"]
+    assert payload["channels"][0]["thumbnail_meta"][0]["image_base64"]
     # JSON + (label + Image) * 2
     assert len(parts) == 1 + 4
     from mcp.server.mcpserver.utilities.types import Image
     assert isinstance(parts[2], Image)
     assert isinstance(parts[4], Image)
+
+
+def test_get_video_transcript_routes_channel_urls(monkeypatch):
+    """Claude.ai cache workaround: channel URLs via get_video_transcript."""
+    _patch_research(monkeypatch, lambda url, yt, downsub="", **kw: _fake_pack(url))
+    parts = mcp.get_video_transcript(
+        "https://www.youtube.com/@pack\nhttps://www.youtube.com/@other",
+        ctx=None,
+    )
+    assert isinstance(parts, list)
+    import json
+    payload = json.loads(parts[0])
+    assert payload["mode"] == "channel_research"
+    assert payload["channel_count"] == 2
+
+
+def test_looks_like_channel_input():
+    assert mcp._looks_like_channel_input("https://www.youtube.com/@foo")
+    assert mcp._looks_like_channel_input("@foo, @bar")
+    assert not mcp._looks_like_channel_input("https://www.youtube.com/watch?v=wVJxMF9GbCw")
+    assert not mcp._looks_like_channel_input("wVJxMF9GbCw")

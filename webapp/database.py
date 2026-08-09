@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import sqlite3
 import time
@@ -2177,9 +2178,46 @@ def count_niche_channels(
     return int(d.get("n") or d.get("count") or list(d.values())[0] or 0)
 
 
+# Junk tokens that niche-finder occasionally stored as source_keyword.
+_NICHE_KEYWORD_STOPWORDS = frozenset({
+    "a", "an", "the", "and", "or", "but", "if", "as", "at", "by", "for", "from",
+    "in", "into", "of", "on", "to", "with", "without", "about", "after", "before",
+    "between", "during", "than", "then", "that", "this", "these", "those", "it",
+    "its", "it's", "is", "are", "was", "were", "be", "been", "being", "have",
+    "has", "had", "having", "do", "does", "did", "doing", "will", "would",
+    "could", "should", "may", "might", "must", "shall", "can", "cannot",
+    "not", "no", "nor", "so", "too", "very", "just", "also", "only", "even",
+    "still", "already", "yet", "again", "once", "here", "there", "when",
+    "where", "why", "how", "what", "which", "who", "whom", "whose", "all",
+    "any", "both", "each", "few", "more", "most", "other", "some", "such",
+    "own", "same", "than", "too", "very", "s", "t", "don", "now", "i", "me",
+    "my", "we", "our", "you", "your", "he", "she", "they", "them", "their",
+    "hasn't", "haven't", "hadn't", "doesn't", "don't", "didn't", "isn't",
+    "aren't", "wasn't", "weren't", "won't", "wouldn't", "couldn't", "shouldn't",
+    "can't", "cannot", "mustn't", "mightn't", "needn't", "shan't",
+    "too early", "deny", "definitely", "allowed", "unless", "however",
+    "therefore", "meanwhile", "actually", "basically", "literally", "really",
+    "maybe", "perhaps", "probably", "certainly", "obviously", "clearly",
+})
+
+
+def _is_junk_niche_keyword(keyword: str) -> bool:
+    k = (keyword or "").strip().lower()
+    if not k or len(k) < 3:
+        return True
+    if k in _NICHE_KEYWORD_STOPWORDS:
+        return True
+    # Pure contraction / punctuation noise
+    if re.fullmatch(r"[\W_]+", k):
+        return True
+    return False
+
+
 def list_niche_keywords(*, limit: int = 40) -> list[dict]:
     """Distinct source_keyword values present in niche_channels (MCP list_niches)."""
     limit = max(1, min(int(limit or 40), 100))
+    # Over-fetch so stopword filtering still fills the requested limit.
+    fetch_n = min(400, max(limit * 8, limit + 40))
     with _conn() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -2191,16 +2229,21 @@ def list_niche_keywords(*, limit: int = 40) -> list[dict]:
                 "ORDER BY channel_count DESC, keyword ASC "
                 "LIMIT ?"
             ),
-            (limit,),
+            (fetch_n,),
         )
         rows = cur.fetchall()
     out = []
     for r in rows:
         d = dict(r)
+        niche = (d.get("keyword") or "").strip()
+        if _is_junk_niche_keyword(niche):
+            continue
         out.append({
-            "niche": (d.get("keyword") or "").strip(),
+            "niche": niche,
             "channel_count": int(d.get("channel_count") or 0),
         })
+        if len(out) >= limit:
+            break
     return out
 
 

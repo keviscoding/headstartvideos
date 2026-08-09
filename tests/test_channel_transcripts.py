@@ -170,7 +170,7 @@ class TestParseAndMeta:
 
 
 class TestDownsubCircuitBreaker:
-    def test_403_disables_further_calls_for_that_key(self, monkeypatch):
+    def test_soft_403_usage_limit_does_not_latch(self, monkeypatch):
         class FakeResp:
             status_code = 403
             text = '{"status":"error","error":"Access denied or usage limit exceeded"}'
@@ -178,11 +178,33 @@ class TestDownsubCircuitBreaker:
             def json(self):
                 return json.loads(self.text)
 
-        monkeypatch.setattr(cd.httpx, "post", lambda *a, **k: FakeResp())
+        hits = {"n": 0}
 
+        def fake_post(*a, **k):
+            hits["n"] += 1
+            return FakeResp()
+
+        monkeypatch.setattr(cd.httpx, "post", fake_post)
+        assert cd._fetch_transcript_downsub("vid", "key") is None
+        assert not cd._downsub_is_disabled("key")
+
+        # Soft 403 must leave the key usable for later attempts (bonus credits).
+        monkeypatch.setattr(cd, "_fetch_transcript_official", lambda vid: None)
+        monkeypatch.setattr(cd, "_fetch_transcript_ytdlp", lambda vid: None)
+        assert cd._fetch_transcript("vid2", "key") is None
+        assert hits["n"] >= 2
+
+    def test_401_hard_disables_further_calls_for_that_key(self, monkeypatch):
+        class FakeResp:
+            status_code = 401
+            text = '{"status":"error","error":"Unauthorized"}'
+
+            def json(self):
+                return json.loads(self.text)
+
+        monkeypatch.setattr(cd.httpx, "post", lambda *a, **k: FakeResp())
         assert cd._fetch_transcript_downsub("vid", "key") is None
         assert cd._downsub_is_disabled("key")
-        assert "403" in (cd._downsub_disabled_reason or "")
 
         hits = {"n": 0}
 

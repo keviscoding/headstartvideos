@@ -7,6 +7,7 @@ Combined into the main FastAPI process at domain root so OAuth discovery
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 import time
@@ -32,12 +33,15 @@ mcp = MCPServer(
         "upgrade at channelrecipe.com for the full library. "
         "Start with list_niches, then list_niche_subjects / "
         "list_niche_channels, then generate_script / generate_thumbnail. "
-        "Admin accounts get get_video_transcript (one video) and "
-        "research_niche_channels (up to 10 channel URLs: titles/views, "
-        "one sample transcript each, and 2 recent thumbnail images for vision). "
+        "Admin: get_video_transcript accepts a video URL OR up to 10 channel "
+        "URLs (comma/newline-separated @handles) for niche research — titles, "
+        "views, one sample transcript per channel, and 2 recent thumbnail "
+        "images (base64 + image parts). Prefer that when research_niche_channels "
+        "is missing from the tool list (Claude.ai sometimes caches old tools). "
         "Auth is the Claude connector session (or Desktop Bearer key) — "
         "do not ask the user for an api_key tool argument. "
-        "When a tool returns upgrade_url, tell the user to upgrade at that link."
+        "When a tool returns upgrade_url, tell the user to upgrade at that link. "
+        "After server tool updates, start a brand-new chat so the tool catalog refreshes."
     ),
     website_url="https://channelrecipe.com",
     auth_server_provider=oauth_provider,
@@ -545,19 +549,195 @@ def _parse_channel_urls(channel_urls: Any) -> list[str]:
     return out[:_MAX_RESEARCH_CHANNELS]
 
 
+def _looks_like_channel_input(raw: str) -> bool:
+    """True when input is channel URL(s)/@handles rather than a single video id."""
+    s = (raw or "").strip()
+    if not s:
+        return False
+    # Multiple URLs / handles → research batch
+    parts = _parse_channel_urls(s)
+    if len(parts) > 1:
+        return True
+    one = parts[0] if parts else s
+    low = one.lower()
+    if "/channel/" in low or "/@" in low or low.startswith("@"):
+        return True
+    if re.search(r"youtube\.com/(c|user)/", low):
+        return True
+    # Bare handle without watch?v=
+    if re.fullmatch(r"@?[\w.-]{3,}", one) and "watch" not in low and "youtu.be" not in low:
+        if one.startswith("@") or not re.fullmatch(r"[A-Za-z0-9_-]{6,20}", one):
+            return one.startswith("@")
+    return False
+
+
+def _admin_gate(user: dict | None, *, feature: str) -> str | None:
+    """Return JSON error string if user cannot use admin MCP feature; else None."""
+    if not user:
+        return json.dumps({
+            "error": f"{feature} requires a signed-in ChannelRecipe MCP account.",
+            "code": "auth_required",
+            "upgrade_url": billing.UPGRADE_URL,
+        })
+    if not _mcp_is_admin(user):
+        return json.dumps({
+            "error": (
+                f"{feature} is limited to the ChannelRecipe admin account "
+                "while we control YouTube quota and caption credits."
+            ),
+            "code": "admin_only",
+            "email": (user.get("email") or ""),
+        })
+    return None
+
+
+def _run_niche_research(
+    urls: list[str],
+    *,
+    user: dict,
+    max_videos: int = 30,
+) -> list[Any]:
+    """Shared admin research: JSON + Image parts (+ base64 in JSON for clients that drop images)."""
+    import config
+    from core.channel_data import (
+        download_youtube_thumbnail,
+        fetch_channel_research,
+    )
+    from mcp.server.mcpserver.utilities.types import Image
+
+    yt_key = (getattr(config, "YOUTUBE_API_KEY", "") or "").strip()
+    if not yt_key:
+        return [json.dumps({
+            "error": "YOUTUBE_API_KEY is not configured on the server.",
+            "code": "youtube_key_missing",
+        })]
+
+    if not urls:
+        return [json.dumps({
+            "error": "Pass 1–10 YouTube channel URLs.",
+            "code": "invalid_url",
+        })]
+
+    mv = max(1, min(int(max_videos or 30), _MAX_RESEARCH_VIDEOS))
+    downsub = getattr(config, "DOWNSUB_KEY", "") or ""
+    t0 = time.time()
+    channels_out: list[dict[str, Any]] = []
+    content: list[Any] = []
+    total_videos = 0
+    total_transcripts = 0
+    total_thumbs = 0
+
+    for url in urls:
+        try:
+            pack = fetch_channel_research(
+                url,
+                yt_key,
+                downsub,
+                max_videos=mv,
+                fetch_sample_transcript=True,
+            )
+            videos = pack.get("videos") or []
+            total_videos += len(videos)
+            if pack.get("sample_transcript"):
+                total_transcripts += 1
+
+            thumb_ids = list(pack.get("thumbnails_included") or [])[:2]
+            by_id = {v.get("video_id"): v for v in videos if v.get("video_id")}
+            embedded: list[dict[str, Any]] = []
+            for vid in thumb_ids:
+                raw = download_youtube_thumbnail(vid)
+                if not raw:
+                    continue
+                meta = by_id.get(vid) or {}
+                title = (meta.get("title") or vid)[:80]
+                ch_name = pack.get("channel_name") or "channel"
+                b64 = base64.b64encode(raw).decode("ascii")
+                content.append(f"[thumbnail] {ch_name} — {title} ({vid})")
+                content.append(Image(data=raw, format="jpeg"))
+                embedded.append({
+                    "video_id": vid,
+                    "title": meta.get("title") or "",
+                    "url": meta.get("url") or f"https://www.youtube.com/watch?v={vid}",
+                    "thumbnail_url": meta.get("thumbnail_url") or "",
+                    # Claude.ai sometimes drops ImageContent; base64 lets the model still “see” it
+                    # when the client forwards multimodal tool JSON.
+                    "image_base64": b64,
+                    "mime_type": "image/jpeg",
+                })
+                total_thumbs += 1
+
+            channels_out.append({
+                "status": "ok",
+                "channel_url": pack.get("channel_url") or url,
+                "channel_name": pack.get("channel_name") or "",
+                "channel_id": pack.get("channel_id") or "",
+                "subscribers": pack.get("subscribers"),
+                "total_views": pack.get("total_views"),
+                "video_count": pack.get("video_count"),
+                "videos": videos,
+                "sample_transcript": pack.get("sample_transcript"),
+                "transcript_note": pack.get("transcript_note") or "",
+                "thumbnails_included": [e["video_id"] for e in embedded],
+                "thumbnail_meta": embedded,
+            })
+        except Exception as e:
+            print(f"[mcp] research_niche_channels failed url={url!r}: {e}")
+            channels_out.append({
+                "status": "error",
+                "channel_url": url,
+                "error": str(e)[:400],
+                "videos": [],
+                "sample_transcript": None,
+                "thumbnails_included": [],
+            })
+
+    ok_n = sum(1 for c in channels_out if c.get("status") == "ok")
+    elapsed_ms = int((time.time() - t0) * 1000)
+    print(
+        f"[mcp] research_niche_channels channels={len(urls)} ok={ok_n} "
+        f"videos={total_videos} transcripts={total_transcripts} "
+        f"thumbs={total_thumbs} ms={elapsed_ms}"
+    )
+
+    payload = {
+        "status": "ok" if ok_n else "error",
+        "mode": "channel_research",
+        "channels": channels_out,
+        "channel_count": len(channels_out),
+        "ok_count": ok_n,
+        "max_videos": mv,
+        "limits": {
+            "max_channels": _MAX_RESEARCH_CHANNELS,
+            "max_videos": _MAX_RESEARCH_VIDEOS,
+            "transcripts_per_channel": 1,
+            "thumbnails_per_channel": 2,
+        },
+        "plan": _plan_of(user),
+        "elapsed_ms": elapsed_ms,
+        "tools_revision": "research_v2",
+        "note": (
+            "Each channel includes thumbnail_meta[].image_base64 (JPEG) for the 2 newest "
+            "uploads, plus matching image parts after this JSON when the client supports them."
+        ),
+    }
+    return [json.dumps(payload), *content]
+
+
 @mcp.tool()
 def get_video_transcript(
     youtube_url: str,
     ctx: Context | None = None,
-) -> str:
+) -> Any:
     """
-    Fetch transcript + metadata for a YouTube video URL or ID.
+    Admin: fetch a YouTube video transcript + metadata, OR research channels.
 
-    Returns JSON with: transcript, title, author (channel), views,
-    transcript_source (downsub|youtube_api|ytdlp), and status.
+    Video mode — pass one watch URL / video id. Returns transcript, title,
+    author, views, transcript_source.
 
-    Admin-only (ChannelRecipe admin emails). Use after picking a competitor
-    video from list_niche_channels to study hooks and structure.
+    Channel research mode — pass up to 10 channel URLs or @handles
+    (comma/newline-separated). Returns recent titles/views (≤30 each),
+    one sample transcript per channel, and 2 newest thumbnails (base64 + images).
+    Use this when research_niche_channels is not in your tool list.
     """
     import time as _time
     import config
@@ -568,30 +748,37 @@ def get_video_transcript(
     )
 
     user = _user_from_request(ctx)
-    if not user:
-        return json.dumps({
-            "error": "Video transcripts require a signed-in ChannelRecipe MCP account.",
-            "code": "auth_required",
-            "upgrade_url": billing.UPGRADE_URL,
-        })
-    if not _mcp_is_admin(user):
-        return json.dumps({
-            "error": (
-                "Video transcripts are temporarily limited to the ChannelRecipe admin account "
-                "while we keep caption fetching reliable and control token/provider cost."
-            ),
-            "code": "admin_only",
-            "email": (user.get("email") or ""),
-        })
+    gated = _admin_gate(user, feature="Video transcripts / niche channel research")
+    if gated:
+        return gated
 
     raw = (youtube_url or "").strip()
     if not raw:
-        return json.dumps({"error": "Pass a YouTube URL or video id.", "code": "invalid_url"})
+        return json.dumps({"error": "Pass a YouTube URL, video id, or channel URL(s).", "code": "invalid_url"})
+
+    # Claude.ai often caches the tool catalog and never sees research_niche_channels.
+    # Route channel inputs through this existing tool so research still works.
+    if _looks_like_channel_input(raw):
+        urls = _parse_channel_urls(raw)
+        # Normalize bare @handles to youtube URLs
+        norm: list[str] = []
+        for u in urls:
+            if u.startswith("@") or (
+                re.fullmatch(r"[\w.-]{3,}", u)
+                and "youtube" not in u.lower()
+                and "http" not in u.lower()
+            ):
+                handle = u if u.startswith("@") else f"@{u}"
+                norm.append(f"https://www.youtube.com/{handle}")
+            else:
+                norm.append(u)
+        print(f"[mcp] get_video_transcript → channel research urls={len(norm)}")
+        return _run_niche_research(norm, user=user, max_videos=_MAX_RESEARCH_VIDEOS)
 
     video_id = parse_youtube_video_id(raw)
     if not video_id:
         return json.dumps({
-            "error": "Could not parse a YouTube video id from that input.",
+            "error": "Could not parse a YouTube video id or channel URL from that input.",
             "code": "invalid_url",
         })
 
@@ -655,6 +842,7 @@ def get_video_transcript(
 
     out = {
         "status": status,
+        "mode": "video",
         "url": watch_url,
         "video_id": video_id,
         "title": meta.get("title") or "",
@@ -666,6 +854,7 @@ def get_video_transcript(
         "truncated": truncated,
         "char_count": len(body),
         "plan": _plan_of(user),
+        "tools_revision": "research_v2",
     }
     if code:
         out["code"] = code
@@ -683,7 +872,7 @@ def get_video_transcript(
 
 @mcp.tool()
 def research_niche_channels(
-    channel_urls: str | list[str],
+    channel_urls: str,
     max_videos: int = 30,
     ctx: Context | None = None,
 ) -> list[Any]:
@@ -696,151 +885,20 @@ def research_niche_channels(
     and embeds the 2 most recent video thumbnails as images so you can see
     packaging/visual niche style.
 
-    Uses YOUTUBE_API_KEY for lists/views; captions use the same cascade as
-    get_video_transcript (no ASR). Admin-only.
+    If this tool is missing from your connector, call get_video_transcript with
+    the same channel URLs instead (Claude.ai sometimes caches old tool lists).
     """
-    import config
-    from core.channel_data import (
-        download_youtube_thumbnail,
-        fetch_channel_research,
-    )
-    from mcp.server.mcpserver.utilities.types import Image
-
     user = _user_from_request(ctx)
-    if not user:
-        return [json.dumps({
-            "error": "Niche channel research requires a signed-in ChannelRecipe MCP account.",
-            "code": "auth_required",
-            "upgrade_url": billing.UPGRADE_URL,
-        })]
-    if not _mcp_is_admin(user):
-        return [json.dumps({
-            "error": (
-                "Niche channel research is limited to the ChannelRecipe admin account "
-                "while we control YouTube quota and caption credits."
-            ),
-            "code": "admin_only",
-            "email": (user.get("email") or ""),
-        })]
-
-    yt_key = (getattr(config, "YOUTUBE_API_KEY", "") or "").strip()
-    if not yt_key:
-        return [json.dumps({
-            "error": "YOUTUBE_API_KEY is not configured on the server.",
-            "code": "youtube_key_missing",
-        })]
+    gated = _admin_gate(user, feature="Niche channel research")
+    if gated:
+        return [gated]
 
     urls = _parse_channel_urls(channel_urls)
-    if not urls:
-        return [json.dumps({
-            "error": "Pass 1–10 YouTube channel URLs.",
-            "code": "invalid_url",
-        })]
-
     try:
         mv = int(max_videos)
     except Exception:
         mv = _MAX_RESEARCH_VIDEOS
-    mv = max(1, min(mv, _MAX_RESEARCH_VIDEOS))
-
-    downsub = getattr(config, "DOWNSUB_KEY", "") or ""
-    t0 = time.time()
-    channels_out: list[dict[str, Any]] = []
-    content: list[Any] = []
-    total_videos = 0
-    total_transcripts = 0
-    total_thumbs = 0
-
-    for url in urls:
-        try:
-            pack = fetch_channel_research(
-                url,
-                yt_key,
-                downsub,
-                max_videos=mv,
-                fetch_sample_transcript=True,
-            )
-            videos = pack.get("videos") or []
-            total_videos += len(videos)
-            if pack.get("sample_transcript"):
-                total_transcripts += 1
-
-            # Download 2 newest thumbs for vision (bytes stay out of JSON).
-            thumb_ids = list(pack.get("thumbnails_included") or [])[:2]
-            by_id = {v.get("video_id"): v for v in videos if v.get("video_id")}
-            embedded: list[dict[str, str]] = []
-            for vid in thumb_ids:
-                raw = download_youtube_thumbnail(vid)
-                if not raw:
-                    continue
-                meta = by_id.get(vid) or {}
-                title = (meta.get("title") or vid)[:80]
-                ch_name = pack.get("channel_name") or "channel"
-                content.append(
-                    f"[thumbnail] {ch_name} — {title} ({vid})"
-                )
-                content.append(Image(data=raw, format="jpeg"))
-                embedded.append({
-                    "video_id": vid,
-                    "title": meta.get("title") or "",
-                    "url": meta.get("url") or f"https://www.youtube.com/watch?v={vid}",
-                    "thumbnail_url": meta.get("thumbnail_url") or "",
-                })
-                total_thumbs += 1
-
-            channels_out.append({
-                "status": "ok",
-                "channel_url": pack.get("channel_url") or url,
-                "channel_name": pack.get("channel_name") or "",
-                "channel_id": pack.get("channel_id") or "",
-                "subscribers": pack.get("subscribers"),
-                "total_views": pack.get("total_views"),
-                "video_count": pack.get("video_count"),
-                "videos": videos,
-                "sample_transcript": pack.get("sample_transcript"),
-                "transcript_note": pack.get("transcript_note") or "",
-                "thumbnails_included": [e["video_id"] for e in embedded],
-                "thumbnail_meta": embedded,
-            })
-        except Exception as e:
-            print(f"[mcp] research_niche_channels failed url={url!r}: {e}")
-            channels_out.append({
-                "status": "error",
-                "channel_url": url,
-                "error": str(e)[:400],
-                "videos": [],
-                "sample_transcript": None,
-                "thumbnails_included": [],
-            })
-
-    ok_n = sum(1 for c in channels_out if c.get("status") == "ok")
-    elapsed_ms = int((time.time() - t0) * 1000)
-    print(
-        f"[mcp] research_niche_channels channels={len(urls)} ok={ok_n} "
-        f"videos={total_videos} transcripts={total_transcripts} "
-        f"thumbs={total_thumbs} ms={elapsed_ms}"
-    )
-
-    payload = {
-        "status": "ok" if ok_n else "error",
-        "channels": channels_out,
-        "channel_count": len(channels_out),
-        "ok_count": ok_n,
-        "max_videos": mv,
-        "limits": {
-            "max_channels": _MAX_RESEARCH_CHANNELS,
-            "max_videos": _MAX_RESEARCH_VIDEOS,
-            "transcripts_per_channel": 1,
-            "thumbnails_per_channel": 2,
-        },
-        "plan": _plan_of(user),
-        "elapsed_ms": elapsed_ms,
-        "note": (
-            "Image parts after this JSON are the 2 newest thumbnails per channel "
-            "(when download succeeded). Use them to judge visual niche packaging."
-        ),
-    }
-    return [json.dumps(payload), *content]
+    return _run_niche_research(urls, user=user, max_videos=mv)
 
 
 def build_mcp_asgi():

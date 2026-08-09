@@ -922,9 +922,33 @@ def _fetch_transcript_downsub(video_id: str, downsub_key: str) -> str | None:
             timeout=45,
         )
 
-        if resp.status_code in (401, 403):
+        if resp.status_code == 401:
             body = (resp.text or "")[:200]
-            _disable_downsub(downsub_key, f"HTTP {resp.status_code}: {body}")
+            _disable_downsub(downsub_key, f"HTTP 401: {body}")
+            return None
+
+        if resp.status_code == 403:
+            body = (resp.text or "")[:240]
+            body_l = body.lower()
+            # Soft quota / "access denied or usage limit" — do NOT latch the key.
+            # Premium bonus credits often still work after the monthly 2k cap.
+            soft = any(
+                s in body_l
+                for s in (
+                    "usage limit",
+                    "limit exceeded",
+                    "quota",
+                    "access denied or usage",
+                    "bonus",
+                )
+            )
+            if soft:
+                print(
+                    f"[channel_data] DownSub soft 403 for {video_id} "
+                    f"(not latching key): {body}"
+                )
+            else:
+                _disable_downsub(downsub_key, f"HTTP 403: {body}")
             return None
 
         if resp.status_code != 200:
@@ -935,10 +959,18 @@ def _fetch_transcript_downsub(video_id: str, downsub_key: str) -> str | None:
         if (data.get("status") or "").lower() == "error":
             err = data.get("error") or data
             print(f"[channel_data] DownSub error payload for {video_id}: {err}")
-            # Only hard-disable on auth failures. Soft "limit" errors must NOT
-            # latch — Premium bonus credits often still work after monthly 2k.
+            # Only hard-disable on clear auth failures. Soft limit / access-denied
+            # wording must NOT latch — Premium bonus credits often still work.
             err_l = str(err).lower()
-            if any(s in err_l for s in ("unauthorized", "invalid api", "invalid key", "access denied")):
+            hard = any(
+                s in err_l
+                for s in ("unauthorized", "invalid api", "invalid key", "invalid token")
+            )
+            soft = any(
+                s in err_l
+                for s in ("usage limit", "limit exceeded", "quota", "access denied", "bonus")
+            )
+            if hard and not soft:
                 _disable_downsub(downsub_key, f"payload: {str(err)[:160]}")
             return None
 
