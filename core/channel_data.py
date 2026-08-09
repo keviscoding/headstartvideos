@@ -1085,3 +1085,166 @@ def fetch_channel_data(
 
     _log("Channel data fetch complete!")
     return result
+
+
+def youtube_thumbnail_url(video_id: str, quality: str = "hqdefault") -> str:
+    """Public YouTube CDN thumbnail URL (no API quota)."""
+    vid = (video_id or "").strip()
+    q = (quality or "hqdefault").strip() or "hqdefault"
+    return f"https://i.ytimg.com/vi/{vid}/{q}.jpg"
+
+
+def download_youtube_thumbnail(video_id: str) -> bytes | None:
+    """Download a small JPEG thumbnail for MCP vision. Tries hq → mq → sd."""
+    vid = (video_id or "").strip()
+    if not vid:
+        return None
+    for quality in ("hqdefault", "mqdefault", "sddefault"):
+        url = youtube_thumbnail_url(vid, quality)
+        try:
+            r = httpx.get(url, timeout=20, follow_redirects=True)
+            if r.status_code == 200 and len(r.content) > 800:
+                return bytes(r.content)
+        except Exception as e:
+            print(f"[channel_data] thumb download failed {vid} {quality}: {e}")
+            continue
+    return None
+
+
+def newest_video_ids(videos: list[dict], n: int = 2) -> list[str]:
+    """Return up to n video_ids sorted by published_at descending (newest first)."""
+    ranked = sorted(
+        [v for v in (videos or []) if v.get("video_id")],
+        key=lambda v: str(v.get("published_at") or ""),
+        reverse=True,
+    )
+    out: list[str] = []
+    for v in ranked:
+        vid = str(v["video_id"])
+        if vid not in out:
+            out.append(vid)
+        if len(out) >= max(0, int(n)):
+            break
+    return out
+
+
+def fetch_channel_research(
+    channel_url: str,
+    yt_api_key: str,
+    downsub_key: str = "",
+    *,
+    max_videos: int = 30,
+    fetch_sample_transcript: bool = True,
+    max_transcript_chars: int = 100_000,
+    max_transcript_attempts: int = 3,
+    progress_callback=None,
+) -> dict[str, Any]:
+    """
+    Niche-research snapshot for one channel.
+
+    - Lists up to max_videos recent uploads with titles/views/thumb URLs
+    - Fetches at most ONE sample transcript (highest-view video with captions)
+    - Does not download thumbnail bytes (caller does for the 2 newest)
+    """
+    def _log(msg: str) -> None:
+        if progress_callback:
+            progress_callback(msg)
+        print(f"[channel_data] {msg}")
+
+    _validate_yt_key(yt_api_key)
+    max_videos = max(1, min(int(max_videos or 30), 30))
+    url = (channel_url or "").strip()
+    if not url:
+        raise ValueError("Pass a YouTube channel URL.")
+
+    _log("Resolving channel ID...")
+    channel_id = _extract_channel_id(url, yt_api_key)
+    playlist_id, metadata = _get_uploads_playlist(channel_id, yt_api_key)
+    _log(f"Channel: {metadata.get('channel_name')} — listing {max_videos} videos")
+
+    try:
+        videos = _list_videos(playlist_id, yt_api_key, max_videos)
+    except ValueError as playlist_err:
+        _log(f"Uploads playlist unavailable ({playlist_err}); falling back to search...")
+        videos = _list_videos_via_search(channel_id, yt_api_key, max_videos)
+        if not videos:
+            raise ValueError(
+                f"No public videos found for “{metadata.get('channel_name') or channel_id}”."
+            ) from playlist_err
+
+    video_ids = [v["video_id"] for v in videos]
+    stats = _get_video_stats(video_ids, yt_api_key) if video_ids else {}
+
+    enriched: list[dict[str, Any]] = []
+    for v in videos:
+        vid = v["video_id"]
+        s = stats.get(vid, {})
+        enriched.append({
+            "video_id": vid,
+            "title": v.get("title") or "",
+            "published_at": v.get("published_at") or "",
+            "views": int(s.get("views") or 0),
+            "likes": int(s.get("likes") or 0),
+            "comments": int(s.get("comments") or 0),
+            "duration": s.get("duration") or "",
+            "url": f"https://www.youtube.com/watch?v={vid}",
+            "thumbnail_url": youtube_thumbnail_url(vid),
+        })
+
+    thumb_ids = newest_video_ids(enriched, 2)
+
+    sample: dict[str, Any] | None = None
+    transcript_note = ""
+    if fetch_sample_transcript and enriched:
+        # Prefer highest views; try a few candidates so missing captions don't
+        # kill the research pack (still at most max_transcript_attempts calls).
+        candidates = sorted(
+            enriched,
+            key=lambda x: int(x.get("views") or 0),
+            reverse=True,
+        )
+        attempts = max(1, min(int(max_transcript_attempts or 3), 5))
+        tried = 0
+        for cand in candidates[:attempts]:
+            tried += 1
+            _log(f"Sample transcript attempt {tried}: {cand['title'][:50]}...")
+            tr = fetch_transcript_detailed(
+                cand["video_id"],
+                downsub_key,
+                allow_asr=False,
+            )
+            text = (tr.get("text") or "").strip()
+            if not text:
+                continue
+            truncated = len(text) > max_transcript_chars
+            body = text[:max_transcript_chars]
+            sample = {
+                "video_id": cand["video_id"],
+                "title": cand.get("title") or "",
+                "views": cand.get("views"),
+                "url": cand.get("url") or "",
+                "transcript": body,
+                "transcript_source": tr.get("source") or "",
+                "truncated": truncated,
+                "char_count": len(body),
+            }
+            break
+        if sample is None:
+            transcript_note = (
+                f"No captions found after trying {tried} highest-view recent video(s)."
+            )
+            _log(transcript_note)
+
+    return {
+        "status": "ok",
+        "channel_url": url,
+        "channel_name": metadata.get("channel_name") or "",
+        "channel_id": metadata.get("channel_id") or channel_id,
+        "subscribers": metadata.get("subscribers"),
+        "total_views": metadata.get("total_views"),
+        "video_count": metadata.get("video_count"),
+        "videos": enriched,
+        "sample_transcript": sample,
+        "transcript_note": transcript_note,
+        "thumbnails_included": thumb_ids,
+    }
