@@ -412,6 +412,9 @@ function navigateTo(page) {
         const adminKeys = document.getElementById('settings-admin-keys');
         if (adminKeys) adminKeys.classList.toggle('hidden', !(currentUser && currentUser.is_admin));
     }
+    if (page === 'analytics') {
+        try { loadAnalyticsDashboard(); } catch (_) {}
+    }
 
     // Close menus
     document.getElementById('tools-menu')?.classList.add('hidden');
@@ -3210,6 +3213,58 @@ function isAdminUser() {
     return !!(currentUser && currentUser.is_admin);
 }
 
+function canViewAnalytics() {
+    return !!(currentUser && (currentUser.can_view_analytics || currentUser.is_admin));
+}
+
+async function loadAnalyticsDashboard() {
+    const gate = document.getElementById('analytics-gate');
+    const workspace = document.getElementById('analytics-workspace');
+    const status = document.getElementById('analytics-status');
+    if (!canViewAnalytics()) {
+        gate?.classList.remove('hidden');
+        workspace?.classList.add('hidden');
+        return;
+    }
+    gate?.classList.add('hidden');
+    workspace?.classList.remove('hidden');
+    const days = parseInt(document.getElementById('analytics-days')?.value || '30', 10) || 30;
+    if (status) status.textContent = 'Loading…';
+    try {
+        const res = await fetch(`/api/admin/stats?days=${days}`);
+        const data = await readJson(res, {});
+        if (!res.ok) {
+            if (status) status.textContent = friendlyApiError(data, 'Could not load analytics');
+            return;
+        }
+        if (status) status.textContent = `Last ${data.days || days} days`;
+        const cards = document.getElementById('analytics-cards');
+        if (cards) {
+            const items = [
+                ['Renders', data.total ?? 0],
+                ['Succeeded', data.succeeded ?? 0],
+                ['Failed', data.failed ?? 0],
+                ['Success %', data.success_rate ?? 0],
+                ['Avg cost (p)', data.avg_cost_pence ?? 0],
+                ['Total cost (p)', data.total_cost_pence ?? 0],
+                ['Avg duration (s)', data.avg_duration_sec ?? 0],
+                ['p50 cook (min)', data.p50_cook_minutes ?? 0],
+            ];
+            cards.innerHTML = items.map(([label, val]) => `
+                <div class="cr-surface" style="padding: 16px;">
+                    <div style="font-size: 11px; color: var(--app-ink-2); text-transform: uppercase; letter-spacing: 0.04em;">${label}</div>
+                    <div class="cr-display" style="font-size: 22px; margin-top: 6px;">${val}</div>
+                </div>`).join('');
+        }
+        const by = document.getElementById('analytics-by-recipe');
+        if (by) by.textContent = JSON.stringify(data.by_recipe || {}, null, 2);
+        const q = document.getElementById('analytics-queue');
+        if (q) q.textContent = JSON.stringify(data.queue || {}, null, 2);
+    } catch (e) {
+        if (status) status.textContent = 'Load failed: ' + (e.message || e);
+    }
+}
+
 function syncAdminChannelUI() {
     const multi = document.getElementById('ss-channel-multi');
     const single = document.getElementById('ss-channel-single');
@@ -5954,6 +6009,9 @@ function updateAuthUI() {
     const isAdmin = !!(currentUser && currentUser.is_admin);
     document.getElementById('nav-niche-intel')?.classList.toggle('hidden', !isAdmin);
     document.getElementById('nav-niche-intel-mobile')?.classList.toggle('hidden', !isAdmin);
+    const showAnalytics = canViewAnalytics();
+    document.getElementById('nav-analytics')?.classList.toggle('hidden', !showAnalytics);
+    document.getElementById('nav-analytics-mobile')?.classList.toggle('hidden', !showAnalytics);
     if (!signedIn && state.page === 'settings') {
         navigateTo('pipeline');
     }

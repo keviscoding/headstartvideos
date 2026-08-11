@@ -215,6 +215,19 @@ _ADMIN_EMAILS_DEFAULT = {
 }
 ADMIN_EMAILS = sorted(_ADMIN_EMAILS_DEFAULT | set(_ADMIN_EMAILS_ENV))
 
+# Temporary / read-only analytics viewers (comma-separated).
+# Can open the in-app Analytics page + /api/admin/stats — NOT full admin
+# (no keys, credits, niche intel, billing heal, free pro plan, etc.).
+_ANALYTICS_EMAILS_ENV = [
+    e.strip().lower()
+    for e in (os.getenv("ANALYTICS_EMAILS", "") or "").split(",")
+    if e.strip()
+]
+_ANALYTICS_EMAILS_DEFAULT = {
+    "yourkingyami@gmail.com",
+}
+ANALYTICS_EMAILS = sorted(_ANALYTICS_EMAILS_DEFAULT | set(_ANALYTICS_EMAILS_ENV))
+
 # Secret for POST /api/internal/niche-finder/cron (Bearer token). Blank = cron disabled.
 CRON_SECRET = (os.getenv("CRON_SECRET", "") or "").strip().strip('"').strip("'")
 

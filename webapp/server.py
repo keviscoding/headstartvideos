@@ -514,6 +514,27 @@ def require_admin(request: Request) -> dict:
     return user
 
 
+def require_analytics(request: Request) -> dict:
+    """Admins or analytics-only viewers may read the analytics dashboard."""
+    user = require_user(request)
+    email = (user.get("email") or "").lower().strip()
+    admins = {e.strip().lower() for e in (getattr(config, "ADMIN_EMAILS", []) or []) if e}
+    viewers = {e.strip().lower() for e in (getattr(config, "ANALYTICS_EMAILS", []) or []) if e}
+    if email and (email in admins or email in viewers):
+        return user
+    raise HTTPException(403, "Analytics access required.")
+
+
+def _is_analytics_email(email: str) -> bool:
+    e = (email or "").lower().strip()
+    if not e:
+        return False
+    if _is_admin_email(e):
+        return True
+    viewers = getattr(config, "ANALYTICS_EMAILS", []) or []
+    return e in {x.strip().lower() for x in viewers if x}
+
+
 # ---------------------------------------------------------------------------
 # Auth endpoints
 # ---------------------------------------------------------------------------
@@ -687,6 +708,8 @@ def _safe_user(u: dict) -> dict:
         "credits": u["credits"],
         "created_at": u["created_at"],
         "is_admin": is_admin,
+        # Analytics-only viewers get the dashboard, not is_admin / free pro / ops tools.
+        "can_view_analytics": _is_analytics_email(u.get("email", "")),
         "byok_enabled": byok,
         "atlas_connected": bool(atlas.get("configured")),
         "trial_used": bool(u.get("trial_used")),
@@ -6570,8 +6593,8 @@ KEY_MAP = {
 
 
 @app.get("/api/admin/stats")
-async def admin_stats(days: int = 30, admin: dict = Depends(require_admin)):
-    """Lightweight COGS / render-health snapshot (admin only).
+async def admin_stats(days: int = 30, user: dict = Depends(require_analytics)):
+    """Lightweight COGS / render-health snapshot (admin or analytics viewers).
 
     PostHog owns the pretty funnels; this is the authoritative unit-economics
     view straight from our own render log.
