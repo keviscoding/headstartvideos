@@ -2,7 +2,7 @@
 
 A rebuilt engine for the hands-off Alex texting autopilot. It sits behind its **own toggle** and its **own page** (`/alex-v2`), so nothing on the main dashboard changes. **OFF means your current Alex texting runs exactly as before.**
 
-It's built for the fast, cheap Live model:
+It's built for one fast, cheap model call per reply. The Live 3.x models only speak (audio out) and v2 needs text back, so v2 uses a Flash text model. Set it with `ALEX_V2_MODEL` (e.g. `gemini-3.8-flash`); by default it uses wingman's quick/flash model.
 - **One model call per reply.** It returns both its reading of her message and 4 candidate texts.
 - **One extra "repair" call**, only when every candidate fails the checks.
 - **Timed follow-ups use no model call.** Double texts, day-of confirms and the takeaway ladder use Alex's exact lines, so they're free and instant.
@@ -67,7 +67,7 @@ alex_v2/
   moves.py         Alex's moves, each with the conditions that license it
   policy.py        guardrails -> timers -> legal moves
   prompt.py        the single, compact model prompt + tolerant parser
-  llm.py           Gemini adapter (Live API for "live" models, fallback model)
+  llm.py           Gemini adapter (text model, fallback model; Live API only if a Live model supports TEXT)
   critic.py        deterministic checks on every candidate
   templates.py     canon follow-up lines (no model call)
   timing.py        reply delays, follow-up timers, quiet hours

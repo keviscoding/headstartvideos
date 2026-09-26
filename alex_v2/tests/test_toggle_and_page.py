@@ -146,3 +146,56 @@ def test_v2_crash_falls_back_to_current_alex(monkeypatch):
     assert h.handled is False and h.arm == "v2-error"
     from alex_v2 import trace
     assert trace.recent_decisions(namespace="live")[0]["action"] == "error"
+
+
+def test_chatmessage_with_label_in_timestamp_keeps_times():
+    """WINGMAN OG's ChatMessage(sender, text, timestamp) puts the screen label in `timestamp`."""
+    from dataclasses import dataclass
+    from alex_v2.normalize import normalize_messages
+
+    @dataclass
+    class ChatMessage:
+        sender: str
+        text: str
+        timestamp: str
+
+    now = lon(2026, 9, 27, 12)
+    msgs, _ = normalize_messages([ChatMessage("them", "hey", "Saturday 6:52 PM"), ChatMessage("me", "Hey trouble", "Saturday 7:10 PM")],
+                                 now=now, user_tz=LON)
+    assert [m.speaker for m in msgs] == ["her", "me"]
+    assert msgs[0].sent_at == lon(2026, 9, 26, 18, 52) and msgs[0].time_known
+
+
+def test_default_model_is_a_text_model_not_live():
+    from alex_v2 import llm as LLM
+    primary, _ = LLM.resolve_model({"model": "", "fallback_model": ""})
+    assert "live" not in primary
+
+
+def test_lab_drills_stay_out_of_live_ab_stats():
+    from alex_v2 import trace
+    settings.save({"mode": "on"})
+    raw, last = thread([("me", "Hey trouble"), ("her", "just got home from work")], lon(2026, 9, 22, 18))
+    h = integration.maybe_handle("whatsapp:lab:run-1", raw, llm=FakeLLM(out([("answer_and_pivot", "Adulting I see")])),
+                                 her_tz=LON, now=last + timedelta(minutes=2))
+    assert h.handled and h.decision.should_send
+    assert trace.ab_summary() == {}
+    assert trace.recent_decisions(namespace="lab")[0]["text"] == "Adulting I see"
+
+
+def test_shadow_runs_in_background_without_delaying_the_reply():
+    import asyncio
+    from alex_v2 import trace
+    settings.save({"mode": "shadow"})
+    raw, last = thread([("me", "Hey trouble"), ("her", "just got home from work")], lon(2026, 9, 22, 18))
+
+    async def go():
+        h = await integration.maybe_handle_async("t1", raw, llm=FakeLLM(out([("answer_and_pivot", "Adulting I see")])),
+                                                 her_tz=LON, now=last + timedelta(minutes=2))
+        assert not h.handled and h.decision is None      # returned immediately
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            if not integration._BACKGROUND:
+                break
+    asyncio.run(go())
+    assert trace.recent_decisions(namespace="shadow")[0]["suggested"] == "Adulting I see"

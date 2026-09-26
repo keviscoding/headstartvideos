@@ -22,6 +22,7 @@ from .models import Msg
 from .timeparse import parse_time_label
 
 UTC = timezone.utc
+_NUMERIC = re.compile(r"^\d+(\.\d+)?$")
 
 _ME = {"me", "user", "you", "alex", "assistant", "self", "sent", "outgoing", "mine", "out", "right", "guy", "him"}
 _HER = {"them", "her", "she", "girl", "match", "received", "incoming", "in", "left", "contact", "other"}
@@ -123,6 +124,9 @@ def normalize_messages(
         seen_counts[base] = occ + 1
         fp = hashlib.sha1(f"{base}|{occ}".encode()).hexdigest()[:16]
         label = str(_get(it, "time_label", "time", "label", "date_label") or "").strip()
+        ts_raw = _get(it, "timestamp", "ts")
+        if not label and isinstance(ts_raw, str) and _as_dt(ts_raw) is None and not _NUMERIC.match(ts_raw.strip()):
+            label = ts_raw.strip()   # some scrapers put the screen label ("Saturday 6:52 PM") in `timestamp`
 
         sent_at: Optional[datetime] = None
         known = False

@@ -5,7 +5,8 @@ Any callable works as the model:  ``llm(system, user, **opts) -> str``
 already have a Live/Gemini wrapper you trust.
 
 The default adapter uses Gemini through ``google-genai``:
-- a model id containing "live" goes through the Live API (text out),
+- a model id containing "live" goes through the Live API (text out; note the
+  Live 3.x models are audio-only, so the default is a Flash text model),
 - anything else through ``generate_content``,
 - thinking is off by default (speed), safety filters are permissive (adult
   dating banter otherwise comes back empty),
@@ -43,20 +44,22 @@ def resolve_model(settings: dict[str, Any]) -> tuple[str, str]:
     """(primary, fallback) model ids.
 
     primary: Alex v2 page setting > ALEX_V2_MODEL (already merged into settings)
-             > wingman LIVE_MODEL > wingman QUICK_MODEL > FLASH_MODEL.
-    fallback: settings["fallback_model"] > wingman QUICK_MODEL > FLASH_MODEL.
+             > wingman QUICK_MODEL > FLASH_MODEL > "gemini-3.7-flash".
+    A Live model is never picked automatically: the Live 3.x models only speak
+    (audio out), and v2 needs text back. Set one explicitly only if it supports TEXT.
+    fallback: settings["fallback_model"] > wingman FLASH_MODEL > QUICK_MODEL.
     """
     wc = _wingman_config()
     primary = (settings.get("model") or "").strip()
     if not primary and wc is not None:
-        primary = getattr(wc, "LIVE_MODEL", "") or getattr(wc, "QUICK_MODEL", "") or getattr(wc, "FLASH_MODEL", "")
+        primary = getattr(wc, "QUICK_MODEL", "") or getattr(wc, "FLASH_MODEL", "")
     if not primary:
-        primary = os.getenv("WINGMAN_LIVE_MODEL") or os.getenv("WINGMAN_QUICK_MODEL") or "gemini-3.7-flash"
+        primary = os.getenv("WINGMAN_QUICK_MODEL") or os.getenv("WINGMAN_FLASH_MODEL") or "gemini-3.7-flash"
     fallback = (settings.get("fallback_model") or "").strip()
     if not fallback and wc is not None:
-        fallback = getattr(wc, "QUICK_MODEL", "") or getattr(wc, "FLASH_MODEL", "")
+        fallback = getattr(wc, "FLASH_MODEL", "") or getattr(wc, "QUICK_MODEL", "")
     if not fallback:
-        fallback = os.getenv("WINGMAN_QUICK_MODEL") or "gemini-3.7-flash"
+        fallback = os.getenv("WINGMAN_FLASH_MODEL") or "gemini-3.7-flash"
     if fallback == primary:
         fallback = ""
     return primary, fallback
@@ -180,9 +183,7 @@ class GeminiLLM:
         )
         if thinking_budget is not None:
             cfg["thinking_config"] = types.ThinkingConfig(thinking_budget=int(thinking_budget))
-        safety = _safety()
-        if safety:
-            cfg["safety_settings"] = safety
+        # no safety_settings here: the Live API rejects them in the connect config
         client = _client()
         chunks: list[str] = []
         async with client.aio.live.connect(model=model, config=types.LiveConnectConfig(**cfg)) as session:

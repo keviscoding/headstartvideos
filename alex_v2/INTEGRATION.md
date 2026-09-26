@@ -19,18 +19,14 @@ Put `alex_v2/` in the root of WINGMAN OG, next to `autopilot/` and `wingman/`. I
 
 On the server, set `ALEX_V2_DATA_DIR` to a folder **outside** `/opt/wingman-edge/current` so deploys don't wipe the toggle, facts or logs. Use the same value for `wingman-edge` and `wingman-control`: the page writes the toggle and the autopilot reads it.
 
-## 2. Use your Live 3.8 call
+## 2. The model
 
-Read `wingman/live_reply.py` and wrap its Live call as a function v2 can call:
+Live 3.8 (`gemini-3.8-live`) is audio-only. It rejects TEXT output ("The requested combination of response modalities (TEXT) is not supported"), and `live_reply.py` works by transcribing its speech. v2 needs a structured text reply, so:
 
-```python
-def alex_v2_llm(system: str, user: str, **opts) -> str:
-    # send `system` as the system instruction and `user` as the user turn to the SAME
-    # Live model/session setup live_reply.py uses; return the model's text reply.
-    ...
-```
+- Pass `llm=None` (v2 opens its own Gemini client through `wingman.config.make_genai_client`).
+- Set `ALEX_V2_MODEL=gemini-3.8-flash` for both services (or set the model on the `/alex-v2` page). Without it, v2 uses `wingman.config.QUICK_MODEL` / `FLASH_MODEL`. It never auto-picks a Live model.
 
-It can be sync or async. Pass it as `llm=alex_v2_llm` in step 3. Then v2 runs on exactly the Live path you already trust. (Without it, v2 opens its own Gemini client using `wingman.config`.)
+That's still one call per reply (about 2–3s measured on the Mac).
 
 ## 3. Hook `generate_reply` in `autopilot/main.py`
 
@@ -43,14 +39,15 @@ tid = thread_id_for(platform, contact_name, messages, match_id=match_id_or_empty
 #   ^ must be unique per girl AND per lab run. Never the display name alone.
 
 h = maybe_handle(tid, messages, contact_name=contact_name, platform=platform,
-                 her_profile=profile_text_or_empty, llm=alex_v2_llm)
+                 her_profile=profile_text_or_empty, llm=None, lab=is_lab_run)
 if h.handled:                           # v2 owns this chat: the existing Alex path must not run
     d = h.decision
     return d.text if d.should_send else None   # adapt to however generate_reply says "send this" / "send nothing"
 # ... existing Alex path, unchanged ...
 ```
 
-- `messages` can be the transcript's `Message` objects as they are (speaker `"me"`/`"them"`, `text`, `time_label`).
+- `messages` can be the transcript's message objects as they are: `speaker` or `sender` ("me"/"them"), `text`, and a time label in `time_label` or in `timestamp` (e.g. "Saturday 6:52 PM").
+- `lab=True` for lab drills keeps them out of the live A/B numbers.
 - v2 recognises its own message when it shows up in the chat. Calling `alex_v2.mark_sent(tid, text)` after sending is optional; it just records the exact send time.
 - Handoffs (serious news, address/call/photo requests, a cancel it wasn't sure about) return nothing to send and appear under **Needs you** on the page.
 
@@ -95,10 +92,9 @@ CLI: `python -m alex_v2 status | on | off | ab 50 | shadow`. Tests: `python -m p
 ```
 Work only in this folder. alex_v2/ is a finished, tested package. Don't rewrite it and don't create any other package, branch or toggle.
 Read alex_v2/INTEGRATION.md first, then wire it in:
-1. Read wingman/live_reply.py and write alex_v2_llm(system, user, **opts) -> str that makes the same Live call
-   with `system` as the system instruction and `user` as the user turn.
+1. Use llm=None (Live 3.8 is audio-only) and set ALEX_V2_MODEL=gemini-3.8-flash.
 2. In autopilot/main.py generate_reply, at the top of the Alex branch, call alex_v2.integration.maybe_handle
-   (or maybe_handle_async) exactly as INTEGRATION.md step 3 shows, with llm=alex_v2_llm and a thread id unique per
+   (or maybe_handle_async) exactly as INTEGRATION.md step 3 shows, with llm=None, lab=<True for lab runs> and a thread id unique per
    girl and per lab run. If .handled, return v2's text only when decision.should_send, otherwise send nothing,
    and skip the existing Alex path. If not handled, the existing code runs unchanged.
 3. In autopilot/control_app.py include alex_v2.dashboard.router, and add one "Alex v2" link to the nav in

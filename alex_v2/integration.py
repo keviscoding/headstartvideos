@@ -82,15 +82,20 @@ async def maybe_handle_async(
     now: Optional[datetime] = None,
     timestamps: str = "seen",
     on_handoff: Optional[Callable[[str, Decision], Any]] = None,
+    lab: bool = False,
+    shadow_background: bool = True,
 ) -> Handled:
+    """``lab=True`` (or a thread id containing "lab:") keeps lab drills out of the live A/B numbers.
+    In shadow mode v2 runs in the background by default, so the current Alex's reply isn't delayed."""
     try:
         arm = arm_for(thread_id)
     except Exception:  # unreadable settings / data folder: behave exactly as OFF
         return Handled(False, None, "off")
     if arm == "off":
         return Handled(False, None, "off")
+    is_lab = lab or thread_id.startswith("lab:") or ":lab:" in thread_id
     kw = dict(thread_id=thread_id, contact_name=contact_name, platform=platform, origin=origin, her_tz=her_tz,
-              her_profile=her_profile, llm=llm, now=now, timestamps=timestamps)
+              her_profile=her_profile, llm=llm, now=now, timestamps=timestamps, namespace="lab" if is_lab else None)
     if arm == "v2":
         try:
             d = await decide_async(messages, arm="v2", **kw)
@@ -106,14 +111,29 @@ async def maybe_handle_async(
                 pass
         return Handled(True, d, "v2")
     # v1 sends; measure it the same way, and in shadow mode also compute v2's answer
-    observe(thread_id, messages, arm="v1", now=now, her_tz=her_tz, platform=platform, timestamps=timestamps)
+    if not is_lab:
+        observe(thread_id, messages, arm="v1", now=now, her_tz=her_tz, platform=platform, timestamps=timestamps)
     if arm == "shadow":
-        try:
-            d = await decide_async(messages, arm="shadow", **kw)
-        except Exception:
-            d = None
-        return Handled(False, d, "shadow")
+        if not is_lab:
+            kw["namespace"] = None          # engine uses its own "shadow" store
+        if shadow_background:
+            task = asyncio.get_running_loop().create_task(_shadow(messages, kw))
+            _BACKGROUND.add(task)
+            task.add_done_callback(_BACKGROUND.discard)
+            return Handled(False, None, "shadow")
+        return Handled(False, await _shadow(messages, kw), "shadow")
     return Handled(False, None, "v1")
+
+
+_BACKGROUND: set = set()
+
+
+async def _shadow(messages: list[Any], kw: dict[str, Any]) -> Optional[Decision]:
+    try:
+        return await decide_async(messages, arm="shadow", **kw)
+    except Exception as exc:
+        _log_crash(kw.get("thread_id", ""), kw.get("contact_name", ""), exc)
+        return None
 
 
 def _log_crash(thread_id: str, contact_name: str, exc: Exception) -> None:
@@ -128,6 +148,7 @@ def _log_crash(thread_id: str, contact_name: str, exc: Exception) -> None:
 
 def maybe_handle(thread_id: str, messages: list[Any], **kw: Any) -> Handled:
     """Sync version of :func:`maybe_handle_async`."""
+    kw["shadow_background"] = False   # a sync call's event loop ends when it returns, so shadow runs inline here
     try:
         asyncio.get_running_loop()
     except RuntimeError:
