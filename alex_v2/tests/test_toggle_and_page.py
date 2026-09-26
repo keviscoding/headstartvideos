@@ -133,3 +133,16 @@ def test_page_thread_controls_and_needs_you(client):
     assert t["paused"] and not t["needs_you"]
     decs = client.get("/alex-v2/api/decisions").json()
     assert decs and decs[0]["action"] == "handoff"
+
+
+def test_v2_crash_falls_back_to_current_alex(monkeypatch):
+    settings.save({"mode": "on"})
+    import alex_v2.integration as I
+
+    async def boom(*a, **k):
+        raise RuntimeError("unexpected")
+    monkeypatch.setattr(I, "decide_async", boom)
+    h = integration.maybe_handle("t1", [{"speaker": "her", "text": "hey"}], llm=FakeLLM())
+    assert h.handled is False and h.arm == "v2-error"
+    from alex_v2 import trace
+    assert trace.recent_decisions(namespace="live")[0]["action"] == "error"

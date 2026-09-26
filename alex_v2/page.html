@@ -243,7 +243,7 @@ $('abReset').onclick = async () => { if (confirm('Reset the A/B counters?')) { a
 
 // --- decisions --------------------------------------------------------------
 let DECS = [];
-const ACT = {send: '<span class="ok">sent</span>', wait: 'waiting', handoff: '<span class="bad">needs you</span>', none: 'nothing'};
+const ACT = {send: '<span class="ok">sent</span>', wait: 'waiting', handoff: '<span class="bad">needs you</span>', none: 'nothing', error: '<span class="bad">v2 error (current Alex replied)</span>'};
 async function loadDecisions() {
   DECS = await api('api/decisions?limit=60&namespace=' + $('decNs').value);
   $('decBody').innerHTML = DECS.map((d, i) => {

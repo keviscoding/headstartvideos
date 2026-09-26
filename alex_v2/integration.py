@@ -83,13 +83,20 @@ async def maybe_handle_async(
     timestamps: str = "seen",
     on_handoff: Optional[Callable[[str, Decision], Any]] = None,
 ) -> Handled:
-    arm = arm_for(thread_id)
+    try:
+        arm = arm_for(thread_id)
+    except Exception:  # unreadable settings / data folder: behave exactly as OFF
+        return Handled(False, None, "off")
     if arm == "off":
         return Handled(False, None, "off")
     kw = dict(thread_id=thread_id, contact_name=contact_name, platform=platform, origin=origin, her_tz=her_tz,
               her_profile=her_profile, llm=llm, now=now, timestamps=timestamps)
     if arm == "v2":
-        d = await decide_async(messages, arm="v2", **kw)
+        try:
+            d = await decide_async(messages, arm="v2", **kw)
+        except Exception as exc:  # never break texting: an unexpected v2 error hands this reply back to the current Alex
+            _log_crash(thread_id, contact_name, exc)
+            return Handled(False, None, "v2-error")
         if d.action == "handoff" and on_handoff is not None:
             try:
                 r = on_handoff(thread_id, d)
@@ -107,6 +114,16 @@ async def maybe_handle_async(
             d = None
         return Handled(False, d, "shadow")
     return Handled(False, None, "v1")
+
+
+def _log_crash(thread_id: str, contact_name: str, exc: Exception) -> None:
+    import traceback
+    try:
+        TR.log_decision({"thread_key": TR.thread_key(thread_id), "contact": contact_name, "namespace": "live", "arm": "v2",
+                         "action": "error", "reason": f"v2 crashed, current Alex handled this reply: {type(exc).__name__}: {exc}"[:300],
+                         "error": traceback.format_exc()[-2000:]})
+    except Exception:
+        pass
 
 
 def maybe_handle(thread_id: str, messages: list[Any], **kw: Any) -> Handled:
