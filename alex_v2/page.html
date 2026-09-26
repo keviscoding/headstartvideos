@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alex v2</title>
+<style>
+:root {
+  --bg: #f6f6f4; --card: #ffffff; --ink: #1b1b1a; --muted: #6b6b66; --line: #e4e4df;
+  --on: #1f8a4c; --off: #8a8a85; --ab: #2f5fd0; --shadow: #8a5a00; --warn: #b3261e; --warnbg: #fdecea;
+  --chip: #efefeb; --accent: #1b1b1a;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141413; --card: #1d1d1c; --ink: #ececea; --muted: #9a9a94; --line: #2e2e2c;
+    --on: #3fbf74; --off: #7a7a75; --ab: #6d93f0; --shadow: #d9a441; --warn: #f28b82; --warnbg: #3a1f1d;
+    --chip: #272726; --accent: #ececea;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 980px; margin: 0 auto; padding: 20px 16px 60px; }
+h1 { font-size: 22px; margin: 0; }
+h2 { font-size: 16px; margin: 0 0 10px; }
+.sub { color: var(--muted); font-size: 13px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-top: 14px; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.spread { justify-content: space-between; }
+.seg { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+.seg button { border: 2px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px; padding: 12px 8px; cursor: pointer; text-align: left; }
+.seg button b { display: block; font-size: 15px; }
+.seg button span { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+.seg button.sel[data-m="off"] { border-color: var(--off); }
+.seg button.sel[data-m="on"] { border-color: var(--on); }
+.seg button.sel[data-m="ab"] { border-color: var(--ab); }
+.seg button.sel[data-m="shadow"] { border-color: var(--shadow); }
+.pill { display: inline-block; padding: 3px 10px; border-radius: 999px; font-weight: 600; font-size: 13px; color: #fff; }
+.pill.off { background: var(--off); } .pill.on { background: var(--on); } .pill.ab { background: var(--ab); } .pill.shadow { background: var(--shadow); }
+.warn { background: var(--warnbg); color: var(--warn); border-radius: 8px; padding: 8px 10px; font-size: 13px; margin-top: 10px; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; }
+tr.clickable { cursor: pointer; }
+tr.clickable:hover td { background: var(--chip); }
+.chip { display: inline-block; background: var(--chip); border-radius: 6px; padding: 1px 7px; font-size: 12px; margin: 1px 2px 1px 0; }
+.ok { color: var(--on); } .bad { color: var(--warn); }
+button.btn { border: 1px solid var(--line); background: var(--chip); color: var(--ink); border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 13px; }
+button.btn.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+input[type=text], input[type=number], select, textarea { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); font: inherit; }
+textarea { min-height: 150px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 3px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 14px; }
+details > summary { cursor: pointer; font-weight: 600; }
+.big { font-size: 18px; font-weight: 600; }
+.reply { font-size: 17px; background: var(--chip); border-radius: 12px; padding: 10px 14px; display: inline-block; margin: 6px 0; }
+.kv { display: grid; grid-template-columns: 150px 1fr; gap: 4px 10px; font-size: 13px; }
+.kv div:nth-child(odd) { color: var(--muted); }
+.ab-grid { display: grid; grid-template-columns: 1.4fr 1fr 1fr; font-size: 14px; }
+.ab-grid > div { padding: 7px 6px; border-bottom: 1px solid var(--line); }
+.ab-grid .h { color: var(--muted); font-weight: 600; }
+.hidden { display: none !important; }
+pre { white-space: pre-wrap; word-break: break-word; background: var(--chip); padding: 10px; border-radius: 8px; font-size: 12px; max-height: 420px; overflow: auto; }
+@media (max-width: 700px) {
+  .seg { grid-template-columns: 1fr 1fr; }
+  .grid2, .grid3 { grid-template-columns: 1fr; }
+  .kv { grid-template-columns: 110px 1fr; }
+  .hide-sm { display: none; }
+}
+</style>
+</head>
+<body>
+<main>
+  <div class="row spread">
+    <div>
+      <h1>Alex v2</h1>
+      <div class="sub">The rebuilt Alex texting engine. Separate from your main dashboard. OFF = your current Alex texting, exactly as before.</div>
+    </div>
+    <div id="modePill"></div>
+  </div>
+
+  <!-- MODE ------------------------------------------------------------ -->
+  <section class="card">
+    <h2>Who texts?</h2>
+    <div class="seg" id="seg">
+      <button data-m="off"><b>OFF</b><span>Current Alex texting (v1) handles every chat.</span></button>
+      <button data-m="on"><b>ON</b><span>v2 handles every Alex chat.</span></button>
+      <button data-m="ab"><b>A/B test</b><span>Each chat is permanently v1 or v2. Compare below.</span></button>
+      <button data-m="shadow"><b>Shadow</b><span>v1 sends. v2 only logs what it would have sent.</span></button>
+    </div>
+    <div id="abBox" class="hidden" style="margin-top:12px">
+      <label>Share of chats that get v2: <b id="abVal"></b></label>
+      <input type="range" id="abSplit" min="0" max="100" step="5" style="width:100%">
+      <div class="small muted">A chat never switches arms mid-conversation (the split is a stable hash of the chat id).</div>
+    </div>
+    <div id="envLock" class="warn hidden"></div>
+    <div class="small muted" style="margin-top:10px" id="modelLine"></div>
+    <div id="modelErr" class="warn hidden"></div>
+  </section>
+
+  <!-- NEEDS YOU --------------------------------------------------------- -->
+  <section class="card hidden" id="needsCard">
+    <h2>Needs you <span class="chip" id="needsCount"></span></h2>
+    <div class="small muted">v2 stepped back on these chats (serious news, address/calls/photos, a possible cancel it wasn't sure about, or a failure). Nobody texts them until the chat moves or you clear it.</div>
+    <div id="needsList"></div>
+  </section>
+
+  <!-- A/B --------------------------------------------------------------- -->
+  <section class="card">
+    <div class="row spread"><h2>Results: v1 vs v2</h2><button class="btn" id="abReset">Reset</button></div>
+    <div id="abTable" class="ab-grid"></div>
+    <div class="small muted" style="margin-top:8px">Measured the same way for both arms from the chats themselves: replies to your messages within 72h, and the furthest point each chat reached. Counts start when a chat is first seen in its arm.</div>
+  </section>
+
+  <!-- DECISIONS --------------------------------------------------------- -->
+  <section class="card">
+    <div class="row spread">
+      <h2>What v2 did</h2>
+      <div class="row">
+        <select id="decNs" style="width:auto"><option value="live">Live chats</option><option value="shadow">Shadow</option><option value="lab">Lab</option><option value="all">All</option></select>
+        <button class="btn" id="decRefresh">Refresh</button>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th class="hide-sm">When</th><th>Chat</th><th>Did</th><th>Message / reason</th></tr></thead>
+      <tbody id="decBody"></tbody>
+    </table>
+    <div id="decDetail"></div>
+  </section>
+
+  <!-- LAB ----------------------------------------------------------------- -->
+  <section class="card">
+    <h2>Try it</h2>
+    <div class="small muted">Paste any chat (yours or a PWF example). Nothing is sent and real chats aren't touched.</div>
+    <textarea id="labConv" style="margin-top:8px" placeholder="her: you look like trouble&#10;me: Guilty&#10;her: haha so what do you do for fun&#10;[2 days later]&#10;her: hellooo"></textarea>
+    <div class="grid3" style="margin-top:8px">
+      <div><label>Platform</label><select id="labPlat"><option>hinge</option><option>tinder</option><option>bumble</option><option>instagram</option><option>whatsapp</option><option>sms</option></select></div>
+      <div><label>Her timezone</label><input type="text" id="labTz" value="Europe/London"></div>
+      <div><label>"Now" (her time, optional)</label><input type="text" id="labNow" placeholder="2026-09-24T21:14"></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn primary" id="labRun">Run v2</button>
+      <button class="btn" id="labPrompt">Show prompt only (no model call)</button>
+      <span class="small muted" id="labStatus"></span>
+    </div>
+    <div id="labOut"></div>
+  </section>
+
+  <!-- THREADS -------------------------------------------------------------- -->
+  <section class="card">
+    <details>
+      <summary>Chats v2 is handling <span class="chip" id="thrCount">0</span></summary>
+      <table style="margin-top:8px">
+        <thead><tr><th>Chat</th><th class="hide-sm">Last decision</th><th>Next</th><th></th></tr></thead>
+        <tbody id="thrBody"></tbody>
+      </table>
+    </details>
+  </section>
+
+  <!-- FACTS ------------------------------------------------------------------ -->
+  <section class="card">
+    <details id="factsBox">
+      <summary>Your facts (the ONLY facts v2 may say about you)</summary>
+      <div class="small muted" style="margin:6px 0 10px">Empty = unknown = never mentioned. Alex's life (his husky, Miami balcony, podcast) is blocked unless it's also true for you.</div>
+      <div id="factsForm"></div>
+      <div class="row" style="margin-top:10px"><button class="btn primary" id="factsSave">Save facts</button><span class="small muted" id="factsStatus"></span></div>
+      <details style="margin-top:10px"><summary class="small">What the model sees</summary><pre id="factsPreview"></pre></details>
+    </details>
+  </section>
+
+  <!-- SETTINGS --------------------------------------------------------------- -->
+  <section class="card">
+    <details>
+      <summary>Advanced settings</summary>
+      <div id="setForm" class="grid2" style="margin-top:10px"></div>
+      <div class="row" style="margin-top:10px"><button class="btn primary" id="setSave">Save settings</button><span class="small muted" id="setStatus"></span></div>
+      <div class="small muted" style="margin-top:8px" id="dataDir"></div>
+    </details>
+  </section>
+</main>
+
+<script>
+const BASE = location.pathname.replace(/\/+$/, '') + '/';
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function api(path, body) {
+  const opt = body === undefined ? {} : {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)};
+  opt.credentials = 'same-origin';
+  const r = await fetch(BASE + path, opt);
+  if (!r.ok) { let t = await r.text(); try { t = JSON.parse(t).detail || t; } catch (e) {} throw new Error(t); }
+  return r.json();
+}
+const fmtTime = (iso) => { if (!iso) return ''; const d = new Date(iso); return d.toLocaleString([], {weekday: 'short', hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short'}); };
+const pct = (x) => x === null || x === undefined ? '–' : (100 * x).toFixed(0) + '%';
+
+const MODE_LABEL = {off: 'OFF', on: 'ON', ab: 'A/B', shadow: 'SHADOW'};
+let STATUS = null;
+
+async function loadStatus() {
+  STATUS = await api('api/status');
+  const s = STATUS.settings;
+  document.querySelectorAll('#seg button').forEach(b => b.classList.toggle('sel', b.dataset.m === s.mode));
+  $('modePill').innerHTML = `<span class="pill ${s.mode}">${MODE_LABEL[s.mode]}${s.mode === 'ab' ? ' ' + Math.round(s.ab_split * 100) + '% v2' : ''}</span>`;
+  $('abBox').classList.toggle('hidden', s.mode !== 'ab');
+  $('abSplit').value = Math.round(s.ab_split * 100); $('abVal').textContent = Math.round(s.ab_split * 100) + '%';
+  const locked = s._locked_by_env || [];
+  $('envLock').classList.toggle('hidden', !locked.length);
+  $('envLock').textContent = locked.length ? `Locked by environment variables on the server: ${locked.join(', ')}. Changes here won't take effect until those are removed.` : '';
+  $('modelLine').innerHTML = `Model: <b>${esc(s.resolved_model)}</b>${s.resolved_fallback ? ' · fallback: ' + esc(s.resolved_fallback) : ''} · one call per reply${s.repair_call ? ' (+1 repair call only if every candidate fails the checks)' : ''}${s.template_followups ? ' · follow-up texts use canon lines (no call)' : ''}`;
+  const errs = STATUS.model_errors || [];
+  $('modelErr').classList.toggle('hidden', !errs.length);
+  $('modelErr').innerHTML = errs.length ? 'Recent model errors:<br>' + errs.map(e => `${esc(e.at)} ${esc(e.model)}: ${esc(e.error)}`).join('<br>') : '';
+  $('dataDir').textContent = 'Data folder: ' + STATUS.data_dir + ' (settings.json, facts.json, threads/, logs/). Never touches runtime_flags.json.';
+  renderSettings();
+}
+
+document.querySelectorAll('#seg button').forEach(b => b.onclick = async () => {
+  const m = b.dataset.m;
+  if (m === 'on' && !confirm('Turn v2 ON for every Alex chat?')) return;
+  await api('api/mode', {mode: m}); await loadStatus(); loadAB();
+});
+$('abSplit').oninput = () => { $('abVal').textContent = $('abSplit').value + '%'; };
+$('abSplit').onchange = async () => { await api('api/mode', {ab_split: $('abSplit').value / 100}); loadStatus(); };
+
+// --- A/B ------------------------------------------------------------------
+async function loadAB() {
+  const r = await api('api/ab');
+  const a = r.arms, v1 = a.v1 || {}, v2 = a.v2 || {};
+  const rows = [
+    ['Chats measured', v1.threads ?? 0, v2.threads ?? 0],
+    ['Replies within 72h', pct(v1.reply_rate), pct(v2.reply_rate)],
+    ['Said yes to meeting', pct(v1.pct_interest), pct(v2.pct_interest)],
+    ['Date agreed', pct(v1.pct_agreed), pct(v2.pct_agreed)],
+    ['Date happened', pct(v1.pct_met), pct(v2.pct_met)],
+    ['Flakes (total)', v1.flakes ?? 0, v2.flakes ?? 0],
+  ];
+  $('abTable').innerHTML = '<div class="h">&nbsp;</div><div class="h">v1 (current)</div><div class="h">v2</div>' +
+    rows.map(r => `<div>${r[0]}</div><div>${r[1]}</div><div><b>${r[2]}</b></div>`).join('');
+}
+$('abReset').onclick = async () => { if (confirm('Reset the A/B counters?')) { await api('api/ab/reset', {}); loadAB(); } };
+
+// --- decisions --------------------------------------------------------------
+let DECS = [];
+const ACT = {send: '<span class="ok">sent</span>', wait: 'waiting', handoff: '<span class="bad">needs you</span>', none: 'nothing'};
+async function loadDecisions() {
+  DECS = await api('api/decisions?limit=60&namespace=' + $('decNs').value);
+  $('decBody').innerHTML = DECS.map((d, i) => {
+    const msg = d.text ? `<div class="big" style="font-size:14px">${esc(d.text)}</div>` : (d.suggested ? `<div>${esc(d.suggested)} <span class="chip">suggested</span></div>` : '');
+    return `<tr class="clickable" data-i="${i}"><td class="small hide-sm">${fmtTime(d.ts)}</td><td>${esc(d.contact || d.thread_key)}<div class="small muted">${esc(d.platform || '')} ${d.arm && d.arm !== 'v2' ? '· ' + esc(d.arm) : ''}</div></td>
+      <td>${ACT[d.action] || esc(d.action)}${d.move ? `<div><span class="chip">${esc(d.move)}</span></div>` : ''}</td>
+      <td>${msg}<div class="small muted">${esc(d.handoff_reason || d.reason || '')}</div></td></tr>`;
+  }).join('') || '<tr><td colspan="4" class="muted">No decisions yet.</td></tr>';
+  document.querySelectorAll('#decBody tr.clickable').forEach(tr => tr.onclick = () => showDecision(DECS[+tr.dataset.i]));
+}
+$('decRefresh').onclick = loadDecisions; $('decNs').onchange = loadDecisions;
+
+function stateBlock(st) {
+  if (!st) return '';
+  const ev = (st.date_evidence || []).map(e => `<div class="small">${esc(e.state)}: #${(e.msgs || []).join(', #')} “${esc(e.quote)}”</div>`).join('');
+  return `<div class="kv">
+    <div>Date state</div><div><b>${esc(st.date_state)}</b> ${st.date_when ? '· ' + esc(st.date_when) : ''} ${st.expired_plan ? '<span class="chip">old plan expired</span>' : ''}${ev}</div>
+    <div>Stage</div><div>${esc(st.stage)} · ${st.exchanges} back-and-forths</div>
+    <div>Her investment</div><div>${esc(st.investment)}</div>
+    <div>Her time now</div><div>${esc(st.her_local_now)}</div>
+    ${Object.keys(st.incidents || {}).length ? `<div>History</div><div>${Object.entries(st.incidents).map(([k, v]) => `<span class="chip">${esc(k)}: ${v}</span>`).join('')}</div>` : ''}
+    ${Object.keys(st.risk || {}).length ? `<div>Flags</div><div>${Object.keys(st.risk).map(k => `<span class="chip">${esc(k)}</span>`).join('')}</div>` : ''}
+  </div>`;
+}
+function candBlock(cands) {
+  if (!cands || !cands.length) return '';
+  return `<table style="margin-top:8px"><thead><tr><th></th><th>Candidate</th><th>Move</th><th>Checks</th></tr></thead><tbody>` +
+    cands.map(c => `<tr><td>${c.ok ? '<span class="ok">✓</span>' : '<span class="bad">✗</span>'}</td><td>${esc(c.text)}</td><td><span class="chip">${esc(c.move)}</span><div class="small muted">${esc(c.source)}</div></td>
+      <td class="small">${c.ok ? 'score ' + c.score + (c.notes && c.notes.length ? ' · ' + esc(c.notes.join('; ')) : '') : '<span class="bad">' + esc((c.fails || []).join('; ')) + '</span>'}</td></tr>`).join('') + '</tbody></table>';
+}
+function analysisBlock(a) {
+  if (!a || !Object.keys(a).length) return '';
+  const keys = ['her_msg_type', 'sexual_light', 'temperature', 'culture_mode', 'esl_level', 'date_view', 'thread_to_answer', 'flags', 'skip'];
+  return '<div style="margin-top:8px">' + keys.filter(k => a[k] !== undefined && a[k] !== '' && !(Array.isArray(a[k]) && !a[k].length)).map(k => `<span class="chip">${k}: ${esc(Array.isArray(a[k]) ? a[k].join(',') : a[k])}</span>`).join('') + '</div>';
+}
+function showDecision(d) {
+  $('decDetail').innerHTML = `<div class="card" style="margin-top:10px">
+    <div class="row spread"><b>${esc(d.contact || d.thread_key)}</b><span class="small muted">${fmtTime(d.ts)} · ${esc(d.trigger || '')} · ${d.llm_calls || 0} model call(s) · ${d.latency_ms || 0} ms ${d.model ? '· ' + esc(d.model) : ''}</span></div>
+    ${d.her_last ? `<div class="small muted" style="margin-top:6px">Her last message:</div><div>${esc(d.her_last)}</div>` : ''}
+    ${d.text ? `<div class="reply">${esc(d.text)}</div>` : ''}
+    <div class="small">${esc(d.reason || '')}</div>
+    ${d.due_at ? `<div class="small muted">Scheduled for ${fmtTime(d.due_at)}</div>` : ''}${d.follow_up_at ? `<div class="small muted">Next look: ${fmtTime(d.follow_up_at)} ${esc(d.follow_up_reason || '')}</div>` : ''}
+    ${d.error ? `<div class="warn">${esc(d.error)}</div>` : ''}
+    <div style="margin-top:10px">${stateBlock(d.state)}</div>
+    ${analysisBlock(d.analysis)}
+    ${d.menu ? `<div class="small muted" style="margin-top:8px">Moves offered: ${d.menu.map(m => `<span class="chip">${esc(m)}</span>`).join('')}</div>` : ''}
+    ${candBlock(d.candidates)}
+    ${d.prompt ? `<details style="margin-top:8px"><summary class="small">Prompt</summary><pre>${esc(d.prompt.system)}\n\n-----\n\n${esc(d.prompt.user)}</pre></details>` : ''}
+    ${d.raw ? `<details style="margin-top:4px"><summary class="small">Raw model output</summary><pre>${esc(d.raw)}</pre></details>` : ''}
+  </div>`;
+  $('decDetail').scrollIntoView({behavior: 'smooth', block: 'nearest'});
+}
+
+// --- threads / needs you --------------------------------------------------------
+async function loadThreads() {
+  const ts = await api('api/threads');
+  $('thrCount').textContent = ts.length;
+  const needs = ts.filter(t => t.needs_you);
+  $('needsCard').classList.toggle('hidden', !needs.length);
+  $('needsCount').textContent = needs.length;
+  $('needsList').innerHTML = needs.map(t => `<div style="border-top:1px solid var(--line);padding:10px 0">
+      <div class="row spread"><b>${esc(t.contact || t.thread_id)}</b><span class="small muted">${fmtTime(t.needs_you.at)}</span></div>
+      ${t.needs_you.her_last ? `<div class="small muted">She said: “${esc(t.needs_you.her_last)}”</div>` : ''}
+      <div>${esc(t.needs_you.reason)}</div>
+      ${t.needs_you.suggested ? `<div class="reply">${esc(t.needs_you.suggested)}</div>` : ''}
+      <div class="row"><button class="btn" data-a="clear_handoff" data-t="${esc(t.thread_id)}">Handled it</button>
+      <button class="btn" data-a="pause" data-t="${esc(t.thread_id)}">Pause v2 on this chat</button></div></div>`).join('');
+  $('thrBody').innerHTML = ts.map(t => {
+    const ld = t.last_decision || {};
+    const status = t.paused ? '<span class="chip">paused</span>' : t.closed ? '<span class="chip">closed</span>' : '';
+    const btn = t.paused ? ['resume', 'Resume'] : t.closed ? ['reopen', 'Reopen'] : ['pause', 'Pause'];
+    return `<tr><td>${esc(t.contact || t.thread_id)} ${status}<div class="small muted">${esc(t.platform)} · ${t.sent} sent</div></td>
+      <td class="hide-sm small">${esc(ld.action || '')} ${ld.text ? '“' + esc(ld.text) + '”' : ''}<div class="muted">${esc(ld.reason || '')}</div></td>
+      <td class="small">${t.pending ? 'reply at ' + fmtTime(t.pending.due_at) : (t.next_check_at ? fmtTime(t.next_check_at) : '–')}</td>
+      <td><button class="btn" data-a="${btn[0]}" data-t="${esc(t.thread_id)}">${btn[1]}</button></td></tr>`;
+  }).join('') || '<tr><td colspan="4" class="muted">None yet.</td></tr>';
+  document.querySelectorAll('button[data-a]').forEach(b => b.onclick = async () => { await api('api/thread', {thread_id: b.dataset.t, action: b.dataset.a}); loadThreads(); });
+}
+
+// --- lab ------------------------------------------------------------------------------
+async function runLab(callModel) {
+  $('labStatus').textContent = callModel ? 'Thinking…' : 'Building prompt…'; $('labOut').innerHTML = '';
+  try {
+    const r = await api('api/lab', {conversation: $('labConv').value, platform: $('labPlat').value, her_tz: $('labTz').value, now: $('labNow').value || null, call_model: callModel});
+    const d = r.decision, dbg = d.debug || {};
+    const txt = d.text || d.suggested_text;
+    $('labOut').innerHTML = `<div style="margin-top:12px">
+      <div class="row"><b>v2 would:</b> ${ACT[d.action] || esc(d.action)} ${d.move_id ? `<span class="chip">${esc(d.move_id)}</span>` : ''}
+        ${d.due_at && d.action === 'wait' && txt ? `<span class="small muted">at ${fmtTime(d.due_at)} (human-like delay)</span>` : ''}</div>
+      ${txt ? `<div class="reply">${esc(txt)}</div>` : ''}
+      <div class="small">${esc(d.handoff_reason || d.reason)}</div>
+      ${d.follow_up_at ? `<div class="small muted">Next look: ${fmtTime(d.follow_up_at)} ${esc(d.follow_up_reason || '')}</div>` : ''}
+      ${dbg.error ? `<div class="warn">${esc(dbg.error)}</div>` : ''}
+      <div style="margin-top:10px">${stateBlock(d.state)}</div>
+      ${analysisBlock(dbg.analysis)}
+      ${dbg.menu ? `<div class="small muted" style="margin-top:8px">Moves offered: ${dbg.menu.map(m => `<span class="chip">${esc(m)}</span>`).join('')}</div>` : ''}
+      ${candBlock(dbg.candidates)}
+      ${dbg.user ? `<details open style="margin-top:8px"><summary class="small">Prompt (${Math.round((dbg.system.length + dbg.user.length) / 4)} tokens approx)</summary><pre>${esc(dbg.system)}\n\n-----\n\n${esc(dbg.user)}</pre></details>` : ''}
+    </div>`;
+    $('labStatus').textContent = `${dbg.llm_calls || 0} model call(s), ${dbg.latency_ms || 0} ms`;
+  } catch (e) { $('labStatus').textContent = ''; $('labOut').innerHTML = `<div class="warn">${esc(e.message)}</div>`; }
+}
+$('labRun').onclick = () => runLab(true); $('labPrompt').onclick = () => runLab(false);
+
+// --- facts form ------------------------------------------------------------------------
+const FACT_HELP = {
+  first_name: 'Your first name', age: 'Your age', height: 'e.g. 6\'0 or 183cm', city: 'e.g. London', neighbourhood: 'e.g. Shoreditch',
+  timezone: 'Your timezone (IANA), e.g. Europe/London', languages: 'Comma separated, only ones you can text in', cultures_with_real_ties: 'Countries you genuinely have ties to',
+  work_line: 'A true, vague line, e.g. "finishing up some work"', activities: 'Comma separated, e.g. gym, boxing', own_place: 'She can come to yours',
+  roommates: 'You have roommates (v2 will never say you live alone)', place_feature: 'e.g. balcony (empty = never mention one)', drinks_at_home: 'e.g. wine, tequila',
+  near_bars: 'One per line: Bar name, minutes walk', free_evenings: 'e.g. Thu, Fri, Sat', constraints: 'e.g. early starts Mon-Wed',
+  tattoos: 'You have tattoos', car: 'You have a car', instagram: 'Handle you\'re happy to share (empty = never offer)', profile_gate: 'How sexual YOUR profile is',
+  bio_text: 'Your actual dating bio', photo_notes: 'What your photos show', sexual_comfort: '0-100, your personal ceiling', use_cuming_typo: 'Allow Alex\'s "Cuming" arrival joke',
+  banned_phrases: 'Comma separated phrases never to send', notes_for_v2: 'Anything else that is true about you',
+};
+let FACTS = null;
+function factInput(key, val) {
+  const help = esc(FACT_HELP[key] || key);
+  if (key === 'pet') {
+    return `<div><label>Pet</label><div class="row"><label style="margin:0"><input type="checkbox" id="f_pet_has" ${val.has_pet ? 'checked' : ''}> I have a pet</label>
+      <input type="text" id="f_pet_type" placeholder="type (dog)" value="${esc(val.type)}" style="width:40%"><input type="text" id="f_pet_name" placeholder="name" value="${esc(val.name)}" style="width:30%"></div></div>`;
+  }
+  if (key === 'travel') {
+    return `<div><label>Travel</label><div class="row"><label style="margin:0"><input type="checkbox" id="f_tr_away" ${val.away_now ? 'checked' : ''}> Away now</label>
+      <input type="text" id="f_tr_back" placeholder="back on" value="${esc(val.back_on)}" style="width:35%"><input type="text" id="f_tr_leave" placeholder="leaving on" value="${esc(val.leaving_on)}" style="width:35%"></div></div>`;
+  }
+  if (key === 'near_bars') {
+    const txt = (val || []).map(b => typeof b === 'string' ? b : `${b.name}${b.walk_min ? ', ' + b.walk_min : ''}`).join('\n');
+    return `<div><label>${help}</label><textarea id="f_near_bars" style="min-height:60px">${esc(txt)}</textarea></div>`;
+  }
+  if (key === 'profile_gate') {
+    return `<div><label>${help}</label><select id="f_profile_gate">${['vanilla', 'flirty', 'sexual'].map(o => `<option ${o === val ? 'selected' : ''}>${o}</option>`).join('')}</select></div>`;
+  }
+  if (typeof val === 'boolean') return `<div><label><input type="checkbox" id="f_${key}" ${val ? 'checked' : ''}> ${help}</label></div>`;
+  if (Array.isArray(val)) return `<div><label>${help}</label><input type="text" id="f_${key}" value="${esc(val.join(', '))}"></div>`;
+  if (typeof val === 'number' || key === 'age') return `<div><label>${help}</label><input type="number" id="f_${key}" value="${val ?? ''}"></div>`;
+  if (key === 'bio_text' || key === 'notes_for_v2' || key === 'photo_notes') return `<div style="grid-column:1/-1"><label>${help}</label><textarea id="f_${key}" style="min-height:60px">${esc(val)}</textarea></div>`;
+  return `<div><label>${help}</label><input type="text" id="f_${key}" value="${esc(val)}"></div>`;
+}
+async function loadFacts() {
+  const r = await api('api/facts'); FACTS = r.facts;
+  $('factsForm').innerHTML = '<div class="grid2">' + Object.keys(r.template).map(k => factInput(k, FACTS[k] ?? r.template[k])).join('') + '</div>';
+  $('factsPreview').textContent = r.prompt_preview;
+  if (!FACTS.first_name && !FACTS.city) $('factsBox').open = true;
+}
+$('factsSave').onclick = async () => {
+  const out = {};
+  for (const k of Object.keys(FACTS)) {
+    if (k === 'pet') { out.pet = {has_pet: $('f_pet_has').checked, type: $('f_pet_type').value.trim(), name: $('f_pet_name').value.trim()}; continue; }
+    if (k === 'travel') { out.travel = {away_now: $('f_tr_away').checked, back_on: $('f_tr_back').value.trim(), leaving_on: $('f_tr_leave').value.trim()}; continue; }
+    if (k === 'near_bars') { out.near_bars = $('f_near_bars').value.split('\n').map(l => l.trim()).filter(Boolean).map(l => { const [n, w] = l.split(','); return {name: n.trim(), walk_min: w ? parseInt(w) || null : null}; }); continue; }
+    const el = $('f_' + k); if (!el) continue;
+    const cur = FACTS[k];
+    if (typeof cur === 'boolean') out[k] = el.checked;
+    else if (Array.isArray(cur)) out[k] = el.value.split(',').map(x => x.trim()).filter(Boolean);
+    else if (typeof cur === 'number' || k === 'age') out[k] = el.value === '' ? null : Number(el.value);
+    else out[k] = el.value.trim();
+  }
+  const r = await api('api/facts', {facts: out}); FACTS = r.facts; $('factsPreview').textContent = r.prompt_preview;
+  $('factsStatus').textContent = 'Saved ' + new Date().toLocaleTimeString();
+};
+
+// --- settings form -----------------------------------------------------------------------
+const SET_HELP = {
+  model: 'Model id ("" = your Live model)', fallback_model: 'Fallback if the main model errors', candidates: 'Candidates per call', temperature: 'Temperature',
+  max_output_tokens: 'Max output tokens', thinking_budget: 'Thinking budget (0 = fastest)', repair_call: 'Allow one repair call', template_followups: 'Canon follow-up lines without a model call',
+  allow_skip: 'May leave a tiny "lol" unanswered for a while', timeout_s: 'Model timeout (s)', honor_timing: 'Human-like reply delays', followups: 'Double/triple texts, reminders, confirms',
+  sweep_days: 'Dormant sweep every N days', max_sweeps: 'Max sweeps before walking away', quiet_start: 'Quiet hours start (her time)', quiet_end: 'Quiet hours end (her time)',
+  sexual_cap: 'Sexual ceiling 0-100', handoff_address: 'Hand address requests to you', handoff_calls: 'Hand call/FaceTime requests to you', handoff_photos: 'Hand photo requests to you',
+  handoff_serious: 'Hand serious news to you', max_sends_per_thread_per_day: 'Max sends per chat per day', strip_trailing_period: 'Strip trailing period', context_messages: 'Messages shown to the model',
+  log_prompts: 'Keep full prompts in the log',
+};
+function renderSettings() {
+  const s = STATUS.settings, d = STATUS.defaults;
+  $('setForm').innerHTML = Object.keys(d).filter(k => !['mode', 'ab_split', 'namespace'].includes(k)).map(k => {
+    const v = s[k], help = esc(SET_HELP[k] || k);
+    if (typeof d[k] === 'boolean') return `<div><label><input type="checkbox" data-s="${k}" ${v ? 'checked' : ''}> ${help}</label></div>`;
+    return `<div><label>${help}</label><input type="${typeof d[k] === 'number' ? 'number' : 'text'}" step="any" data-s="${k}" value="${esc(v)}"></div>`;
+  }).join('');
+}
+$('setSave').onclick = async () => {
+  const patch = {};
+  document.querySelectorAll('[data-s]').forEach(el => { patch[el.dataset.s] = el.type === 'checkbox' ? el.checked : el.value; });
+  await api('api/settings', patch); await loadStatus(); $('setStatus').textContent = 'Saved ' + new Date().toLocaleTimeString();
+};
+
+// --- boot -------------------------------------------------------------------------------------
+(async () => {
+  try { await loadStatus(); } catch (e) { document.querySelector('main').insertAdjacentHTML('afterbegin', `<div class="warn">${esc(e.message)}</div>`); return; }
+  loadAB(); loadDecisions(); loadThreads(); loadFacts();
+  setInterval(() => { loadThreads(); if ($('decNs').value !== 'lab') loadDecisions(); }, 30000);
+})();
+</script>
+</body>
+</html>
