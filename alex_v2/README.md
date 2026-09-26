@@ -21,6 +21,8 @@ v2 splits the job so the model only does the part it's good at:
 | **Checks** | Code | Every candidate is checked before it can go out. It must not claim a date that doesn't exist, name a day that is wrong or stale, or use Alex's biography or any fact not in your fact sheet. It must not be needy, apologetic, assistant-like, an emoji pile-up, too long, over the sexual ceiling, or a repeat. The model's reading of her message can only **restrict** what's allowed. |
 | **Timing** | Code | Human reply delays (fast only for same-day logistics); double text at 48–72h, triple at ~a week, sweeps, then walk away; night-before reminder; day-of warm-up and confirm; quiet hours in her timezone. |
 
+Reply delays are off by default, so v2 replies straight away like today. Turn them on once the autopilot polls `due_threads()` (see INTEGRATION.md, step 6).
+
 Nothing the model says can make a line legal that the state doesn't allow. That's what stops the pendulum: no line can fire in the wrong situation, so the prompt no longer needs to be over-restrictive.
 
 ## The toggle

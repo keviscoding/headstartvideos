@@ -43,7 +43,7 @@ DEFAULTS: dict[str, Any] = {
     "context_messages": 30,     # messages shown to the model (older ones live in the computed state)
     "log_prompts": False,       # store full prompts in the decision log (lab runs always do)
     "timeout_s": 25,
-    "honor_timing": True,       # human-like reply delays (returned as due_at / send_after_s)
+    "honor_timing": False,      # human-like reply delays (needs due_threads() polling; off = reply straight away like today)
     "followups": True,          # v2 may send double/triple texts, reminders, confirms, sweeps
     "sweep_days": 10,           # dormant-thread sweep interval
     "max_sweeps": 3,
