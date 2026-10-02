@@ -87,9 +87,12 @@ def plan_motion_timeline(
     total_duration_sec: float,
     zoom_strategy: Literal["in", "out", "alternate"] = "alternate",
     still_pad_sec: float = 0.8,
-    still_min_hold_sec: float = 3.5,
-    still_max_hold_sec: float = 10.0,
-    first_still_min_hold_sec: float = 6.0,  # Kinetic hook: 6-10s first cut (Kevis prefers kinetic over 12s overhold)
+    still_min_hold_sec: float = 6.0,
+    still_max_hold_sec: float = 12.0,
+    first_cut_min_sec: float = 6.0,
+    first_cut_target_sec: float = 8.0,
+    # Cloud/Kevis kinetic hook (6–10s). Alias into first_cut_* when set.
+    first_still_min_hold_sec: float | None = 6.0,
     seed: int = 42,
 ) -> list[MotionSegment]:
     """
@@ -107,16 +110,19 @@ def plan_motion_timeline(
         total_duration_sec: Total video duration
         zoom_strategy: "in", "out", or "alternate" for stills/photos
         still_pad_sec: Hold still this many seconds past last spoken word
-        still_min_hold_sec: Minimum still duration
-        still_max_hold_sec: Maximum still duration
-        first_still_min_hold_sec: Minimum first still duration (kinetic hook, default 6s per Kevis;
-                                  formula measured Whop @ 16.9s but Kevis rejects that overhold feel)
+        still_min_hold_sec: Minimum still duration (style JSON may override; beds ~6–12s)
+        still_max_hold_sec: Maximum still duration (≤17s)
+        first_cut_min_sec: Min opener before first hard cut (Kevis kinetic ~6s)
+        first_cut_target_sec: Preferred opener hold (~8s; formula 16.9 felt dead)
+        first_still_min_hold_sec: Alias → first_cut_min_sec (cloud API; default 6s kinetic)
         seed: Random seed for Pexels selection
     
     Returns:
         List of MotionSegment objects in timeline order
     """
     rng = random.Random(seed)
+    if first_still_min_hold_sec is not None:
+        first_cut_min_sec = float(first_still_min_hold_sec)
     segments: list[MotionSegment] = []
     
     # Sort stills by start time
@@ -139,7 +145,7 @@ def plan_motion_timeline(
         raw_end = still["end_sec"] + still_pad_sec
         duration = raw_end - still["start_sec"]
         
-        # Clamp duration (hook lock for first still: ≥12s per formula)
+        # Clamp duration (kinetic opener: first still uses first_cut_* not still_min alone)
         min_hold = max(still_min_hold_sec, first_cut_min_sec) if i == 0 else still_min_hold_sec
         if duration < min_hold:
             duration = min_hold
@@ -348,8 +354,9 @@ def export_motion_plan_json(segments: list[MotionSegment]) -> list[dict]:
 
 # ── Whop / Dissect pacing locks (formula.md) ──────────────────────────────
 WHOP_PACING = {
-    "first_cut_min_sec": 12.0,
-    "first_cut_target_sec": 14.5,
+    # Kevis HARD: hook must feel kinetic — first hard cut ~6–10s (not 16.9 dead hallway)
+    "first_cut_min_sec": 6.0,
+    "first_cut_target_sec": 8.0,
     "bed_min_sec": 5.0,
     "bed_target_sec": 7.0,
     "bed_max_sec": 12.0,
@@ -395,10 +402,10 @@ def coalesce_short_segments(
 
 def enforce_first_hard_cut(
     segments: list[MotionSegment],
-    first_cut_min_sec: float = 12.0,
-    first_cut_target_sec: float = 14.5,
+    first_cut_min_sec: float = 6.0,
+    first_cut_target_sec: float = 8.0,
 ) -> list[MotionSegment]:
-    """Guarantee no path change before first_cut_min_sec (Whop hook breathe)."""
+    """Guarantee no path change before first_cut_min_sec (kinetic hook breathe)."""
     if not segments:
         return segments
     target = max(first_cut_min_sec, first_cut_target_sec)
@@ -432,14 +439,15 @@ def build_paced_bed_timeline(
     pexels_videos: list[Path | str],
     pexels_photos: list[Path | str],
     total_duration_sec: float,
-    first_cut_target_sec: float = 14.5,
+    first_cut_target_sec: float = 8.0,
     bed_target_sec: float = 7.0,
     seed: int = 42,
+    first_cut_min_sec: float = 6.0,
 ) -> list[MotionSegment]:
-    """Build a Whop-paced bed (no GFX yet): long opener + 5–9s stills/bridges.
+    """Build a paced bed (no GFX yet): kinetic opener + 5–9s stills/bridges.
 
-    Target ~6–10 hard cuts / min equivalent on short smokes via longer holds
-    (pic/min from captions + later GFX, not from chopping beds).
+    Opener first hard cut defaults ~8s (band 6–10). Caption/flash refresh ≤2s
+    inside the hold. Style-agnostic: callers pass first_cut_* per channel.
     """
     rng = random.Random(seed)
     stills = [str(p) for p in still_paths]
@@ -449,8 +457,8 @@ def build_paced_bed_timeline(
         raise ValueError("need at least one Atlas still for paced timeline")
     segs: list[MotionSegment] = []
     t = 0.0
-    # Opener still
-    cut1 = min(total_duration_sec, max(12.0, first_cut_target_sec))
+    # Kinetic opener still (Kevis: ~6–10s, not 12–17 dead hallway)
+    cut1 = min(total_duration_sec, max(float(first_cut_min_sec), float(first_cut_target_sec)))
     segs.append(MotionSegment("ai_still", stills[0], 0.0, cut1, "in", ""))
     t = cut1
     si = 1

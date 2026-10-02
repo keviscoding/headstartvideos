@@ -317,3 +317,15 @@ Overall 1:1 match with Jung Whop Frontier. Honest side-by-side comparison of ful
 ---
 
 **Mac: Run v4 smoke and report 4-pillar scores. Caption muting during GFX must be verified (HARD fail rule).**
+
+## v9 smoke (2026-10-02)
+
+| pillar | score | note |
+|--------|------:|------|
+| visual_bed | **8.1** | circular lightleak + denser dust |
+| motion_graphics | **8.2** | collage lane; never-overlay |
+| timing_pacing | **8.0** | **first hard cut 8.0s** (Kevis 6–10); mean 4.33 soft |
+| combined | **8.1** | >7.9; not ≥9.5 — no merge |
+
+Job: `output/frontier_20261002_122844/` · chat `/workspace/frontier_video_v9_chat.mp4`
+

@@ -471,7 +471,7 @@ def _convert_srt_to_ass(
     first_caption_max_sec: float = 2.0,
 ):
     """
-    Convert SRT to ASS with Whop Jung kinetic captions.
+    Convert SRT to ASS with kinetic karaoke captions (accent from style; default Whop yellow).
 
     Word highlight uses \1c + \t transforms (white → warm gold → white), NOT bare \k.
     Bottom-centre (Alignment=2) on beds per Dissect formula; fade + heavy outline/shadow.
@@ -778,29 +778,132 @@ def _apply_white_flashes(
     video_path: Path,
     flash_times: list[float],
     output_path: Path,
-    flash_dur: float = 0.42,
+    flash_dur: float = 0.95,
     peak_alpha: float = 0.85,
+    lightleak_path: str | Path | None = None,
+    leak_strength: float = 0.55,
 ):
-    """White-haze chapter commas (Whop). Picture changes without extra hard cuts."""
+    """Whop circular film-burn light-leak chapter commas (screen-blend in gbrp).
+
+    Falls back to brightness pulse only if lightleak.mp4 is missing.
+    """
     if not flash_times:
         import shutil
         shutil.copy2(video_path, output_path)
         return
+
     dur = _get_duration(video_path)
-    half = max(0.12, flash_dur / 2.0)
-    # Prefer brightness-pulse fallback first (more portable than alpha overlay expr)
-    enables = "+".join(
-        f"between(t\\,{max(0.0, t0 - half):.3f}\\,{min(dur, t0 + half):.3f})"
-        for t0 in flash_times
+    # Resolve Whop lightleak asset
+    candidates = []
+    if lightleak_path:
+        candidates.append(Path(lightleak_path))
+    root = Path(__file__).resolve().parent.parent
+    # Style-agnostic: channel/style packs may ship textures/lightleak.mp4
+    candidates += [
+        root / "assets" / "lightleak.mp4",
+        root / "frontier-gfx-kit" / "textures" / "lightleak.mp4",
+        root / "assets" / "whop-gfx" / "textures" / "lightleak.mp4",
+        root / "presets" / "styles" / "lightleak.mp4",
+    ]
+    leak = next((p for p in candidates if p.exists()), None)
+
+    if leak is None:
+        # Legacy brightness pulse fallback
+        half = max(0.12, 0.42 / 2.0)
+        parts = []
+        for t0 in flash_times:
+            a = max(0.0, t0 - half)
+            b = min(dur, t0 + half)
+            parts.append("between(t\\,%.3f\\,%.3f)" % (a, b))
+        enables = "+".join(parts)
+        vf = (
+            "eq=brightness='if(%s\\,0.62\\,0)':contrast='if(%s\\,1.08\\,1)':eval=frame"
+            % (enables, enables)
+        )
+        cmd = [
+            _ffmpeg_bin(), "-y", "-i", str(video_path), "-vf", vf,
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+            "-c:a", "copy", "-t", f"{dur:.4f}", str(output_path),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"white flash fallback failed: {(result.stderr or '')[-1200:]}")
+        return
+
+    # Build a black leak plate matching program size, then screen-pad each flash
+    # from lightleak[0:flash_dur] delayed to flash_time (Whop first-flash half ~0.95s).
+    import tempfile as _tf
+    import json as _json
+    tmp = Path(_tf.mkdtemp(prefix="frontier_leak_"))
+    plate = tmp / "leak_plate.mp4"
+    # Probe program dimensions so chat (1280) and master (1920) both work
+    ff = _ffmpeg_bin()
+    fp = str(Path(ff).with_name("ffprobe")) if "/" in ff else "ffprobe"
+    if not Path(fp).exists():
+        fp = "ffprobe"
+    probe = subprocess.run(
+        [fp, "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "json", str(video_path)],
+        capture_output=True, text=True,
     )
-    # Triangular-ish brightness via nested if is heavy; use flat pulse then soft eq
-    vf = (
-        f"eq=brightness='if({enables}\\,0.62\\,0)':contrast='if({enables}\\,1.08\\,1)':eval=frame"
+    try:
+        st = (_json.loads(probe.stdout or "{}").get("streams") or [{}])[0]
+        vw = int(st.get("width") or 1920)
+        vh = int(st.get("height") or 1080)
+    except Exception:
+        vw, vh = 1920, 1080
+    # Start with black plate at program size
+    subprocess.run([
+        _ffmpeg_bin(), "-y",
+        "-f", "lavfi", "-i", f"color=c=black:s={vw}x{vh}:d={dur:.3f}:r=30",
+        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+        str(plate),
+    ], check=True, capture_output=True)
+
+    s = max(0.25, min(0.85, float(leak_strength)))
+    clip_dur = min(float(flash_dur), 0.95)
+    current = plate
+    for i, t0 in enumerate(flash_times):
+        start_t = max(0.0, float(t0) - 0.08)
+        nxt = tmp / f"plate_{i:02d}.mp4"
+        # Delay leak clip to start_t via tpad, screen onto plate (scale to program)
+        fc = (
+            f"[0:v]format=gbrp[base];"
+            f"[1:v]scale={vw}:{vh}:force_original_aspect_ratio=increase,"
+            f"crop={vw}:{vh},fps=30,setsar=1,"
+            f"colorchannelmixer=rr={s:.3f}:gg={s:.3f}:bb={s:.3f},"
+            f"tpad=start_duration={start_t:.3f}:start_mode=add:color=black,"
+            f"tpad=stop_duration={dur:.3f}:color=black,format=gbrp[lk];"
+            f"[base][lk]blend=all_mode=screen:shortest=1,format=yuv420p[v]"
+        )
+        cmd = [
+            _ffmpeg_bin(), "-y",
+            "-i", str(current),
+            "-t", f"{clip_dur:.3f}", "-i", str(leak),
+            "-filter_complex", fc,
+            "-map", "[v]",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
+            "-t", f"{dur:.4f}",
+            str(nxt),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"leak plate flash {i} failed: {(result.stderr or '')[-1000:]}")
+        current = nxt
+
+    # Final screen-blend of leak plate onto the program video
+    fc = (
+        "[0:v]format=gbrp[base];"
+        "[1:v]format=gbrp[lk];"
+        "[base][lk]blend=all_mode=screen:shortest=1,format=yuv420p[v]"
     )
     cmd = [
         _ffmpeg_bin(), "-y",
         "-i", str(video_path),
-        "-vf", vf,
+        "-i", str(current),
+        "-filter_complex", fc,
+        "-map", "[v]",
+        "-map", "0:a?",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
         "-c:a", "copy",
         "-t", f"{dur:.4f}",
@@ -808,7 +911,14 @@ def _apply_white_flashes(
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(f"white flash failed: {(result.stderr or '')[-1200:]}")
+        raise RuntimeError(f"lightleak composite failed: {(result.stderr or '')[-1200:]}")
+    # cleanup best-effort
+    try:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+    except Exception:
+        pass
+
 
 
 def _apply_dust_overlay(
@@ -820,7 +930,7 @@ def _apply_dust_overlay(
 ):
     """Apply dust overlay with RGB screen blend (Whop path — YUV screen tints magenta).
 
-    dust_strength > 1.0 brightens the dust plate + raises film grain for Jung grit.
+    dust_strength > 1.0 brightens the dust plate + raises film grain (style grit; Jung ~2.2).
     no_dust_ranges: black-gate the dust during GFX windows (screen w/ black = noop).
     """
     dur = _get_duration(video_path)
@@ -834,15 +944,32 @@ def _apply_dust_overlay(
     contrast = 1.0 + 0.18 * (strength - 1.0)
     grain = int(round(8 + 10 * (strength - 1.0)))  # 8 @1.0 → 18 @2.0
     grain = max(6, min(24, grain))
+    # Match dust plate + gate to program frame size (style-agnostic res)
+    import json as _json
+    _ff = _ffmpeg_bin()
+    fp = str(Path(_ff).with_name("ffprobe")) if "/" in _ff else "ffprobe"
+    if not Path(fp).exists():
+        fp = "ffprobe"
+    probe = subprocess.run(
+        [fp, "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "json", str(video_path)],
+        capture_output=True, text=True,
+    )
+    try:
+        st = (_json.loads(probe.stdout or "{}").get("streams") or [{}])[0]
+        dw = int(st.get("width") or 1920)
+        dh = int(st.get("height") or 1080)
+    except Exception:
+        dw, dh = 1920, 1080
     gate = ""
     if no_dust_ranges:
         expr = "+".join(f"between(t,{s:.3f},{e:.3f})" for s, e in no_dust_ranges)
         gate = (
-            f",drawbox=x=0:y=0:w=1920:h=1080:color=black:t=fill:enable='{expr}'"
+            f",drawbox=x=0:y=0:w={dw}:h={dh}:color=black:t=fill:enable='{expr}'"
         )
     dust_chain = (
-        "scale=1920:1080:force_original_aspect_ratio=increase,"
-        "crop=1920:1080,fps=30,setsar=1,"
+        f"scale={dw}:{dh}:force_original_aspect_ratio=increase,"
+        f"crop={dw}:{dh},fps=30,setsar=1,"
         f"eq=brightness={bright:.4f}:contrast={contrast:.4f},"
         f"format=gbrp{gate}[dust]"
     )
@@ -850,7 +977,8 @@ def _apply_dust_overlay(
         f"[1:v]{dust_chain};"
         "[0:v]format=gbrp[base];"
         f"[base][dust]blend=all_mode=screen:shortest=1,format=yuv420p,"
-        f"noise=alls={grain}:allf=t+u[v]"
+        f"noise=alls={grain}:allf=t+u,"
+        f"eq=saturation={max(0.88, 1.0 - 0.06*(strength-1.0)):.3f}:contrast=1.04[v]"
     )
     cmd = [
         _ffmpeg_bin(), "-y",
@@ -873,9 +1001,12 @@ def _apply_dust_overlay(
 def _apply_vignette(video_path: Path, output_path: Path, strength: float = 0.55):
     """Darker edge vignette matching Whop (angle=PI/4). Avoid tiny angles (iris wipe)."""
     import math
-    # Whop uses PI/4. strength 0..1 maps PI/3.2 (mild) → PI/4.5 (deeper)
-    angle = (math.pi / 3.2) - strength * ((math.pi / 3.2) - (math.pi / 4.5))
-    angle = max(math.pi / 4.8, min(math.pi / 3.0, angle))
+    # Whop uses PI/4 exactly at high strength; mild → slightly wider
+    if strength >= 0.65:
+        angle = math.pi / 4.0
+    else:
+        angle = (math.pi / 3.2) - strength * ((math.pi / 3.2) - (math.pi / 4.5))
+        angle = max(math.pi / 4.8, min(math.pi / 3.0, angle))
     ff = _ffmpeg_bin()
     cmd = [
         ff, "-y",

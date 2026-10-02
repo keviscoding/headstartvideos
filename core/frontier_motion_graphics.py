@@ -49,7 +49,8 @@ PACING = {
     "graphic_ratio": 0.22,
     "graphic_dur_s": 3.4,
     "graphic_max_s": 4.5,
-    "first_gfx_min_sec": 14.0,  # after opener hard-cut breathe
+    # After kinetic opener (~8s first cut): first GFX ~10s (was 14 after 16.9 lock)
+    "first_gfx_min_sec": 10.0,
     "min_gap_between_gfx_sec": 8.0,
 }
 
@@ -81,7 +82,7 @@ def list_cutouts() -> List[Path]:
 
 
 
-# Keyword → cutout filename stems (script-matched stickers for Jung collage)
+# Keyword → cutout stems (script-matched stickers; per-style packs may replace list)
 CUTOUT_KEYWORDS: Dict[str, List[str]] = {
     "dark": ["vintage_moon", "vintage moon on hand", "vintage_eye", "vintage_cloud"],
     "night": ["vintage_moon", "vintage moon on hand", "vintage_alarm"],
@@ -524,9 +525,9 @@ def compose_collage_frame(
                 rd,
                 [W / 2 - rx, H / 2 - ry, W / 2 + rx, H / 2 + ry],
                 (*warn, op),
-                width=6,
-                dash=22,
-                gap=14,
+                width=7,
+                dash=20,
+                gap=12,
             )
             base = Image.alpha_composite(base, ring)
 
@@ -538,8 +539,8 @@ def compose_collage_frame(
             delay = 0.25 + i * 0.14
             q = _ease_out_back(_seg(t, delay, 0.48))
             settle = _seg(t, delay + 0.7, 0.8)
-            bob = math.sin(t * 1.55 + delay * 3) * 7 * settle
-            dx = (1 - q) * (190 if math.cos(a) >= 0 else -190)
+            bob = math.sin(t * 1.85 + delay * 2.6) * 9 * settle
+            dx = (1 - q) * (240 if math.cos(a) >= 0 else -240)
             x = int(W / 2 + math.cos(a) * rx - sw / 2 + dx)
             y = int(H / 2 + math.sin(a) * ry - sw / 2 + bob)
             sticker = _rotate(_make_sticker(cuts[i], sw, rng, True), (1 if i % 2 else -1) * (4 + i * 1.6) * q)
@@ -587,7 +588,7 @@ def compose_collage_frame(
             sway = math.sin(t * 0.8 + i) * 0.25 * _seg(t, d + 0.9, 0.6)
             raw = _make_sticker(cuts[i], ph, rng, False)
             # scaleY rise illusion via height lerp
-            cur_h = max(20, int(ph * (0.72 + 0.28 * p)))
+            cur_h = max(20, int(ph * (0.55 + 0.45 * p)))
             col_img = raw.resize((pw, cur_h), Image.Resampling.LANCZOS)
             col = _rotate(col_img, sway)
             dy = int((1 - p) * ph * 0.55)
@@ -927,7 +928,8 @@ def plan_gfx_insertions(
     dur = max(2.8, min(PACING["graphic_dur_s"], PACING["graphic_max_s"]))
 
     # Card count from ratio, but never before first_min; prefer fewer longer cards
-    usable_start = max(first_min, 12.0)
+    # Floor near first_gfx_min (was hard 12.0 from long-opener era)
+    usable_start = max(first_min, 8.0)
     usable_end = total_duration_sec - 1.5
     usable = max(1.0, usable_end - usable_start)
     max_by_ratio = max(1, int(round(total_duration_sec * target_ratio / dur)))
