@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """frontier_motion_graphics.py — Collage / cutout motion GFX for CR Frontier.
 
-Whop motion.py renders collage/scatter/pillars via Playwright. This module is a
-Pillow + ffmpeg port that pastes **real Whop cutout PNGs** (frontier-gfx-kit/
-or assets/whop-gfx/) onto collage_dark / noir grounds — not text-only cards.
+Whop motion.py renders collage/scatter/pillars/opener/photonote via Playwright.
+This module is a Pillow + ffmpeg port that pastes **real Whop cutout PNGs**
+(frontier-gfx-kit/ or assets/whop-gfx/) onto collage_dark / noir grounds —
+not text-only cards.
 """
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 try:
-    from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
+    from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
     PIL_AVAILABLE = True
 except ImportError:
     PIL_AVAILABLE = False
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 SKINS = {
     "collage_dark": {
         "bg": "#0d0d10",
-        "ink": "#ece5d6",
+        "ink": "#ece5d6",          # cream
         "ink_soft": "#9a9184",
         "warn": "#b5544a",
         "accent": ["#ece5d6", "#b5544a", "#7d9a86", "#c2a35f", "#7f8fa6"],
@@ -41,11 +42,12 @@ SKINS = {
     },
 }
 
+# Jung pacing: ~35% GFX ratio. Short smokes use more cards / shorter holds.
 PACING = {
     "graphic_every_min": 0.5,
     "graphic_ratio": 0.35,
-    "graphic_dur_s": 5.0,
-    "graphic_max_s": 8.0,
+    "graphic_dur_s": 3.2,
+    "graphic_max_s": 5.0,
 }
 
 FPS = 24
@@ -96,12 +98,18 @@ def _hex_to_rgb(hex_color: str) -> tuple:
 
 
 def _load_font(size: int, cursive: bool = False):
+    """Prefer Caveat Bold (Jung collage_dark), then system handwritten."""
     fonts_dir = _assets_root() / "fonts"
     candidates = []
     if cursive:
         candidates += [
+            fonts_dir / "Caveat-Bold.ttf",
+            fonts_dir / "Caveat-Bold-static.ttf",
+            fonts_dir / "Caveat[wght].ttf",
+            fonts_dir / "PermanentMarker-Regular.ttf",
             Path("/System/Library/Fonts/Supplemental/Bradley Hand Bold.ttf"),
-            Path("/System/Library/Fonts/Supplemental/Chalkboard.ttc"),
+            Path("/System/Library/Fonts/Supplemental/ChalkboardSE.ttc"),
+            Path("/System/Library/Fonts/Supplemental/Chalkduster.ttf"),
             Path("/Library/Fonts/Comic Sans MS.ttf"),
         ]
     candidates += [
@@ -115,7 +123,7 @@ def _load_font(size: int, cursive: bool = False):
     ]
     for fp in candidates:
         try:
-            if fp.exists():
+            if fp.exists() and fp.stat().st_size > 1000:
                 return ImageFont.truetype(str(fp), size=size)
         except Exception:
             continue
@@ -172,13 +180,38 @@ def _make_sticker(cutout: Path, target_h: int, rng: random.Random, with_card: bo
     return Image.alpha_composite(card, layer)
 
 
+def _photo_frame(src: Path, pw: int, ph: int, rng: random.Random, gray: float = 0.4) -> Image.Image:
+    """Taped aged-paper photo frame (opener / photonote)."""
+    img = Image.open(src).convert("RGB")
+    img = ImageOps.fit(img, (pw - 32, ph - 32), Image.Resampling.LANCZOS)
+    if gray > 0:
+        g = ImageOps.grayscale(img).convert("RGB")
+        img = Image.blend(img, g, gray)
+        img = ImageEnhance.Contrast(img).enhance(1.08)
+    pad = 16
+    card = _paper_card(pw, ph, rng)
+    layer = Image.new("RGBA", (pw, ph), (0, 0, 0, 0))
+    photo = img.convert("RGBA")
+    layer.paste(photo, (pad, pad), photo)
+    framed = Image.alpha_composite(card, layer)
+    # drop shadow
+    shadow = Image.new("RGBA", (pw + 40, ph + 40), (0, 0, 0, 0))
+    sh = Image.new("RGBA", (pw, ph), (0, 0, 0, 160))
+    shadow.paste(sh, (18, 22), sh)
+    shadow = shadow.filter(ImageFilter.GaussianBlur(14))
+    out = Image.new("RGBA", shadow.size, (0, 0, 0, 0))
+    out = Image.alpha_composite(out, shadow)
+    out.paste(framed, (8, 4), framed)
+    return out
+
+
 def _paste(base: Image.Image, overlay: Image.Image, xy, opacity: float = 1.0) -> Image.Image:
     if opacity < 0.99:
         a = overlay.split()[-1].point(lambda p: int(p * opacity))
         overlay = overlay.copy()
         overlay.putalpha(a)
     layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
-    layer.paste(overlay, xy, overlay)
+    layer.paste(overlay, (int(xy[0]), int(xy[1])), overlay)
     return Image.alpha_composite(base, layer)
 
 
@@ -202,15 +235,64 @@ def _wrap(draw, text, font, max_w):
     return lines
 
 
-def _text_block(draw, text, xy, font, fill, max_w):
+def _text_block(draw, text, xy, font, fill, max_w, align="center"):
     lines = _wrap(draw, text, font, max_w)
     x, y = xy
-    line_h = int(getattr(font, "size", 40) * 1.15)
+    line_h = int(getattr(font, "size", 40) * 1.18)
     for i, line in enumerate(lines):
         lw = draw.textlength(line, font=font)
-        lx = x - lw / 2
+        if align == "left":
+            lx = x
+        else:
+            lx = x - lw / 2
         draw.text((lx + 2, y + i * line_h + 2), line, font=font, fill=(0, 0, 0, 160))
         draw.text((lx, y + i * line_h), line, font=font, fill=fill)
+    return len(lines) * line_h
+
+
+def _dashed_ellipse(draw, bbox, fill, width=5, dash=18, gap=12):
+    """Approximate a scribbled ring with short arcs."""
+    x0, y0, x1, y1 = bbox
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    rx, ry = (x1 - x0) / 2, (y1 - y0) / 2
+    # walk the ellipse in dash/gap pattern
+    step = 0.04
+    t = 0.0
+    drawing = True
+    acc = 0.0
+    pts = []
+    while t < math.tau + step:
+        x = cx + rx * math.cos(t)
+        y = cy + ry * math.sin(t)
+        # arc length approx
+        dt_len = math.hypot(rx * math.sin(t), ry * math.cos(t)) * step
+        acc += dt_len
+        if drawing:
+            pts.append((x, y))
+            if acc >= dash:
+                if len(pts) >= 2:
+                    draw.line(pts, fill=fill, width=width, joint="curve")
+                pts = []
+                drawing = False
+                acc = 0.0
+        else:
+            if acc >= gap:
+                drawing = True
+                acc = 0.0
+                pts = [(x, y)]
+        t += step
+    if drawing and len(pts) >= 2:
+        draw.line(pts, fill=fill, width=width, joint="curve")
+
+
+def _draw_arrow(draw, x0, y0, x1, y1, fill, width=5):
+    draw.line([(x0, y0), (x1, y1)], fill=fill, width=width)
+    ang = math.atan2(y1 - y0, x1 - x0)
+    ah = 22
+    for da in (2.5, -2.5):
+        ax = x1 - ah * math.cos(ang + da * 0.35)
+        ay = y1 - ah * math.sin(ang + da * 0.35)
+        draw.line([(x1, y1), (ax, ay)], fill=fill, width=width)
 
 
 def _ground(skin: dict, rng: random.Random) -> Image.Image:
@@ -255,8 +337,9 @@ def compose_collage_frame(
     template: str = "collage",
     t: float = 2.5,
     seed: int = 42,
+    image_path: Optional[Path] = None,
 ) -> Image.Image:
-    """Compose one collage/scatter/pillars frame with real Whop cutouts."""
+    """Compose one collage/scatter/pillars/opener/photonote frame with real cutouts."""
     if not PIL_AVAILABLE:
         raise RuntimeError("PIL not available for motion graphics rendering")
 
@@ -276,7 +359,7 @@ def compose_collage_frame(
             )
         picks = lib[:]
         rng.shuffle(picks)
-        need = 8 if template == "scatter" else (3 if template == "pillars" else 3)
+        need = {"scatter": 8, "pillars": 3, "opener": 6, "photonote": 1, "collage": 3}.get(template, 3)
         cuts = picks[:need]
 
     items = items or []
@@ -287,18 +370,45 @@ def compose_collage_frame(
             {"label": "the self", "text": "the whole you"},
         ]
 
-    title_font = _load_font(68, cursive=True)
-    hand_font = _load_font(42, cursive=True)
-    soft_font = _load_font(32, cursive=True)
+    title_font = _load_font(72 if template in ("scatter", "opener") else 64, cursive=True)
+    hand_font = _load_font(44, cursive=True)
+    soft_font = _load_font(34, cursive=True)
 
-    p_title = _ease_out_back(_seg(t, 0.12, 0.55))
-    if p_title > 0.01 and title:
-        layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        td = ImageDraw.Draw(layer)
-        _text_block(td, title, (W // 2, int(70 + (1 - p_title) * -18)), title_font, (*ink, int(255 * p_title)), W - 320)
-        base = Image.alpha_composite(base, layer)
-
+    # ── SCATTER: title centered INSIDE scribbled ring, stickers around ──
     if template == "scatter":
+        # Title first so we know its block height for centering
+        p_title = _ease_out_back(_seg(t, 0.9, 0.7))
+        title_block_h = 0
+        if title and p_title > 0.01:
+            layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+            td = ImageDraw.Draw(layer)
+            # Measure wrap
+            probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+            lines = _wrap(probe, title, title_font, W - 640)
+            line_h = int(getattr(title_font, "size", 72) * 1.18)
+            title_block_h = len(lines) * line_h
+            ty = int(H * 0.5 - title_block_h / 2)
+            _text_block(td, title, (W // 2, ty), title_font, (*ink, int(255 * min(1.0, p_title * 1.2))), W - 640)
+            # slight scale pop via opacity only (Pillow)
+            base = Image.alpha_composite(base, layer)
+
+        # Dashed scribble ring around the title
+        if t > 1.4:
+            ring = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+            rd = ImageDraw.Draw(ring)
+            op = int(220 * min(1.0, (t - 1.4) / 0.5))
+            rx = min(W * 0.30, 420)
+            ry = max(110, (title_block_h or 120) * 0.85)
+            _dashed_ellipse(
+                rd,
+                [W / 2 - rx, H / 2 - ry, W / 2 + rx, H / 2 + ry],
+                (*warn, op),
+                width=6,
+                dash=22,
+                gap=14,
+            )
+            base = Image.alpha_composite(base, ring)
+
         N = min(8, len(cuts))
         for i in range(N):
             a = (i / max(1, N)) * math.tau + 0.4
@@ -315,21 +425,24 @@ def compose_collage_frame(
             op = _seg(t, delay, 0.28)
             if op > 0.01:
                 base = _paste(base, sticker, (x - (sticker.width - sw) // 2, y - (sticker.height - sw) // 2), op)
-        if t > 1.4:
-            ring = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-            rd = ImageDraw.Draw(ring)
-            op = int(200 * min(1.0, (t - 1.4) / 0.5))
-            rd.ellipse([W * 0.28, H * 0.32, W * 0.72, H * 0.68], outline=(*warn, op), width=6)
-            base = Image.alpha_composite(base, ring)
         if subtitle:
-            sp = _seg(t, 2.0, 0.5)
-            sl = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-            sd = ImageDraw.Draw(sl)
-            _text_block(sd, subtitle, (W // 2, H - 140), soft_font, (*ink_soft, int(255 * sp)), W - 520)
-            base = Image.alpha_composite(base, sl)
-        return base.convert("RGB").convert("RGBA")
+            sp = _seg(t, 2.0, 0.45)
+            if sp > 0.01:
+                sl = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+                sd = ImageDraw.Draw(sl)
+                _text_block(sd, subtitle, (W // 2, H - 120), soft_font, (*ink_soft, int(255 * sp)), W - 520)
+                base = Image.alpha_composite(base, sl)
+        return base
 
+    # ── PILLARS: three columns rise from a floor line ──
     if template == "pillars":
+        p_title = _ease_out_back(_seg(t, 0.12, 0.5))
+        if p_title > 0.01 and title:
+            layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+            td = ImageDraw.Draw(layer)
+            _text_block(td, title, (W // 2, int(70 + (1 - p_title) * -16)), title_font, (*ink, int(255 * p_title)), W - 300)
+            base = Image.alpha_composite(base, layer)
+
         n = max(1, min(3, len(cuts), len(items) or 3))
         cuts, items = cuts[:n], (items + [{"label": "", "text": ""}] * n)[:n]
         ph = int(H * 0.40)
@@ -351,10 +464,14 @@ def compose_collage_frame(
             d = 0.55 + i * 0.3
             p = _ease_out_back(_seg(t, d, 0.85))
             sway = math.sin(t * 0.8 + i) * 0.25 * _seg(t, d + 0.9, 0.6)
-            col = _rotate(_make_sticker(cuts[i], ph, rng, False).resize((pw, ph), Image.Resampling.LANCZOS), sway)
+            raw = _make_sticker(cuts[i], ph, rng, False)
+            # scaleY rise illusion via height lerp
+            cur_h = max(20, int(ph * (0.72 + 0.28 * p)))
+            col_img = raw.resize((pw, cur_h), Image.Resampling.LANCZOS)
+            col = _rotate(col_img, sway)
             dy = int((1 - p) * ph * 0.55)
             x = x0 + i * (pw + gap)
-            base = _paste(base, col, (x - (col.width - pw) // 2, base_y - ph + dy), _seg(t, d, 0.3))
+            base = _paste(base, col, (x - (col.width - pw) // 2, base_y - cur_h + dy), _seg(t, d, 0.3))
             lp = _seg(t, d + 0.5, 0.45)
             if lp > 0.01 and items[i].get("label"):
                 ll = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -364,9 +481,182 @@ def compose_collage_frame(
                 if items[i].get("text"):
                     _text_block(ld, items[i]["text"], (cx, base_y + 92), soft_font, (*ink_soft, int(255 * lp)), min(380, pw + gap - 24))
                 base = Image.alpha_composite(base, ll)
+        if subtitle:
+            sp = _seg(t, 1.9, 0.45)
+            if sp > 0.01:
+                sl = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+                sd = ImageDraw.Draw(sl)
+                _text_block(sd, subtitle, (W // 2, min(H - 80, base_y + 170)), soft_font, (*warn, int(255 * sp)), W - 440)
+                base = Image.alpha_composite(base, sl)
         return base
 
-    # collage default
+    # ── OPENER: portrait (optional) + edge stickers + title write-on ──
+    if template == "opener":
+        photo = Path(image_path) if image_path else None
+        if photo is None or not photo.exists():
+            # fall back: use a tall cutout as "portrait" stand-in is weak;
+            # prefer first still-like cutout with person words, else skip photo
+            photo = None
+
+        px = py = pw = ph = 0
+        if photo and photo.exists():
+            pw = int(W * 0.26)
+            ph = int(pw * 1.2)
+            px = int(W * 0.5 - pw / 2)
+            py = int(H * 0.18)
+            d = 0.18
+            q = _ease_out_back(_seg(t, d, 0.8))
+            op = _seg(t, d, 0.35)
+            if op > 0.01:
+                framed = _photo_frame(photo, pw, ph, rng, gray=0.45)
+                framed = _rotate(framed, -7 + 4.8 * q)
+                dy = int((1 - q) * -160)
+                base = _paste(base, framed, (px - (framed.width - pw) // 2, py + dy - (framed.height - ph) // 2), op)
+                # tape strips
+                if op > 0.3:
+                    tape_l = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+                    td = ImageDraw.Draw(tape_l)
+                    twape = int(pw * 0.42)
+                    td.rectangle(
+                        [px + pw * 0.3 - twape // 2, py - 18 + dy, px + pw * 0.3 + twape // 2, py + 14 + dy],
+                        fill=(*TAPE, 210),
+                    )
+                    base = Image.alpha_composite(base, tape_l)
+                # scribble ring
+                if t > 1.2:
+                    ring = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+                    rd = ImageDraw.Draw(ring)
+                    op_r = int(200 * min(1.0, (t - 1.2) / 0.4))
+                    _dashed_ellipse(
+                        rd,
+                        [px + pw * 0.05, py + ph * 0.05, px + pw * 0.95, py + ph * 0.95],
+                        (*warn, op_r),
+                        width=5,
+                    )
+                    base = Image.alpha_composite(base, ring)
+
+        # stickers from edges
+        N = min(6, len(cuts))
+        for i in range(N):
+            left = i % 2 == 0
+            sw = 104 + (i % 3) * 22
+            delay = 0.35 + i * 0.16
+            q = _ease_out_back(_seg(t, delay, 0.6))
+            yy = H * 0.16 + (i % 3) * H * 0.24 + (i % 2) * 40
+            xx_target = (W * 0.06 + (i % 2) * 40) if left else (W * 0.94 - sw - (i % 2) * 40)
+            dx = (1 - q) * (-220 if left else 220)
+            sticker = _rotate(_make_sticker(cuts[i], sw, rng, True), ( -1 if left else 1) * (5 + i * 2) * q)
+            op = _seg(t, delay, 0.28)
+            if op > 0.01:
+                base = _paste(base, sticker, (int(xx_target + dx) - (sticker.width - sw) // 2, int(yy) - (sticker.height - sw) // 2), op)
+
+        # title under photo / centered
+        p = _seg(t, 1.05, 0.8)
+        if p > 0.01 and title:
+            layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+            td = ImageDraw.Draw(layer)
+            probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+            lines = _wrap(probe, title, title_font, W - 400)
+            line_h = int(getattr(title_font, "size", 72) * 1.16)
+            th = len(lines) * line_h
+            if photo and photo.exists():
+                ty = int(py + ph + 58 + (1 - p) * 30)
+            else:
+                ty = int(H * 0.40 - th / 2 + (1 - p) * 30)
+            _text_block(td, title, (W // 2, ty), title_font, (*ink, int(255 * p)), W - 400)
+            # underline marker on last line
+            if p > 0.7:
+                last_w = probe.textlength(lines[-1], font=title_font) if lines else 200
+                uy = ty + (len(lines) - 1) * line_h + line_h * 0.85
+                ImageDraw.Draw(layer).rectangle(
+                    [W / 2 - last_w * 0.46, uy, W / 2 + last_w * 0.46, uy + 10],
+                    fill=(*warn, int(200 * min(1.0, (p - 0.7) / 0.3))),
+                )
+            base = Image.alpha_composite(base, layer)
+            if subtitle:
+                sp = _seg(t, 1.7, 0.45)
+                if sp > 0.01:
+                    sl = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+                    sd = ImageDraw.Draw(sl)
+                    _text_block(sd, subtitle, (W // 2, ty + th + 50), soft_font, (*ink_soft, int(255 * sp)), W - 480)
+                    base = Image.alpha_composite(base, sl)
+        return base
+
+    # ── PHOTONOTE: taped photo left + handwritten annotation + arrow ──
+    if template == "photonote":
+        photo = Path(image_path) if image_path else None
+        if photo is None or not photo.exists():
+            # use first cutout as faux "photo" on paper — better than blank
+            if cuts:
+                photo = cuts[0]
+        if photo and Path(photo).exists():
+            pw = int(W * 0.40)
+            ph = int(pw * 1.16)
+            x = int(W * 0.09)
+            y = int(H * 0.5 - ph / 2)
+            d = 0.25
+            q = _ease_out_back(_seg(t, d, 0.7))
+            op = _seg(t, d, 0.3)
+            if op > 0.01:
+                # if cutout PNG (transparent), composite onto paper differently
+                try:
+                    probe = Image.open(photo)
+                    is_cutout = probe.mode in ("RGBA", "LA", "P") and "cutouts" in str(photo)
+                except Exception:
+                    is_cutout = False
+                if is_cutout:
+                    framed = _make_sticker(Path(photo), int(ph * 0.85), rng, True)
+                    framed = _rotate(framed, -2.4 * q)
+                else:
+                    framed = _photo_frame(Path(photo), pw, ph, rng, gray=0.35)
+                    framed = _rotate(framed, -2.4 * q)
+                dy = int((1 - q) * 70)
+                base = _paste(base, framed, (x - (framed.width - pw) // 2, y + dy - (framed.height - ph) // 2), op)
+                if op > 0.3:
+                    tape_l = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+                    td = ImageDraw.Draw(tape_l)
+                    twape = int(pw * 0.4)
+                    td.rectangle([x + pw * 0.3 - twape // 2, y - 20 + dy, x + pw * 0.3 + twape // 2, y + 12 + dy], fill=(*TAPE, 210))
+                    td.rectangle([x + pw * 0.34 - twape // 2, y + ph - 10 + dy, x + pw * 0.34 + twape // 2, y + ph + 18 + dy], fill=(*TAPE, 200))
+                    base = Image.alpha_composite(base, tape_l)
+
+            tx = x + pw + 120
+            p = _seg(t, 0.7, 0.6)
+            if p > 0.01 and title:
+                layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+                td = ImageDraw.Draw(layer)
+                _text_block(td, title, (tx, y + 30), title_font, (*ink, int(255 * p)), W - tx - 140, align="left")
+                # shift from right
+                # (approx via opacity; positional slide omitted for speed)
+                base = Image.alpha_composite(base, layer)
+                # arrow
+                if t > 1.0:
+                    al = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+                    ad = ImageDraw.Draw(al)
+                    aop = int(230 * min(1.0, (t - 1.0) / 0.4))
+                    _draw_arrow(ad, tx - 30, y + ph * 0.36, tx - 150, y + ph * 0.36 + 40, (*warn, aop), width=6)
+                    base = Image.alpha_composite(base, al)
+            if subtitle:
+                sp = _seg(t, 1.3, 0.45)
+                if sp > 0.01:
+                    sl = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+                    sd = ImageDraw.Draw(sl)
+                    _text_block(sd, subtitle, (tx, y + 200), soft_font, (*ink_soft, int(255 * sp)), W - tx - 160, align="left")
+                    base = Image.alpha_composite(base, sl)
+        else:
+            # no photo — degrade to collage
+            template = "collage"
+        if template == "photonote":
+            return base
+
+    # ── COLLAGE default ──
+    p_title = _ease_out_back(_seg(t, 0.12, 0.55))
+    if p_title > 0.01 and title:
+        layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        td = ImageDraw.Draw(layer)
+        _text_block(td, title, (W // 2, int(70 + (1 - p_title) * -18)), title_font, (*ink, int(255 * p_title)), W - 320)
+        base = Image.alpha_composite(base, layer)
+
     n = max(2, min(4, len(cuts), len(items) or 3))
     cuts = cuts[:n]
     items = (items + [{"label": "", "text": ""}] * n)[:n]
@@ -445,8 +735,9 @@ def render_collage_card(
     items: Optional[List[Dict[str, str]]] = None,
     cutout_paths: Optional[List[Path]] = None,
     seed: int = 42,
+    image_path: Optional[Path] = None,
 ) -> Path:
-    """Render an animated collage/scatter/pillars card (real cutouts) to MP4."""
+    """Render an animated collage/scatter/pillars/opener/photonote card to MP4."""
     if not PIL_AVAILABLE:
         raise RuntimeError("PIL not available for motion graphics")
     if output_path is None:
@@ -454,7 +745,7 @@ def render_collage_card(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    duration_sec = max(3.0, min(8.0, float(duration_sec)))
+    duration_sec = max(2.4, min(PACING["graphic_max_s"], float(duration_sec)))
     n_frames = max(2, int(round(duration_sec * FPS)))
     tmp = Path(tempfile.mkdtemp(prefix="frontier_gfx_"))
     try:
@@ -469,8 +760,9 @@ def render_collage_card(
                 template=template,
                 t=t,
                 seed=seed,
+                image_path=image_path,
             )
-            zoom = 1.0 + 0.03 * (t / duration_sec)
+            zoom = 1.0 + 0.03 * (t / max(0.01, duration_sec))
             zw, zh = int(W * zoom), int(H * zoom)
             frame = frame.convert("RGB").resize((zw, zh), Image.Resampling.LANCZOS)
             left, top = (zw - W) // 2, (zh - H) // 2
@@ -487,7 +779,7 @@ def render_collage_card(
         r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode != 0:
             raise RuntimeError(f"Motion GFX encode failed: {(r.stderr or '')[-1200:]}")
-        logger.info("Rendered collage card with cutouts: %s (%.1fs)", output_path, duration_sec)
+        logger.info("Rendered %s card: %s (%.1fs)", template, output_path, duration_sec)
         return output_path
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -496,55 +788,86 @@ def render_collage_card(
 def plan_gfx_insertions(
     total_duration_sec: float,
     transcript_sentences: List[str] = None,
+    still_paths: Optional[List[Path]] = None,
 ) -> List[Dict[str, Any]]:
-    """Plan 2–4 mid-timeline collage cards (denser on short smokes)."""
+    """Plan denser mid-timeline GFX cards (~35% ratio, shorter holds).
+
+    Short smokes (~40–60s): 5 cards @ ~3.0s ≈ 35% of timeline, with opener
+    near the start and scatter/pillars/photonote/collage rotating.
+    """
     cards = []
-    dur = min(PACING["graphic_dur_s"], PACING["graphic_max_s"])
-    # Short videos: force 3–4 cards so motion_graphics actually reads on screen
+    target_ratio = PACING["graphic_ratio"]
+    # Prefer shorter holds so we get MORE cards (denser rhythm)
     if total_duration_sec < 90:
-        n = 4 if total_duration_sec >= 40 else 3
+        n = 5 if total_duration_sec >= 36 else 4
+        dur = max(2.6, min(PACING["graphic_dur_s"], (total_duration_sec * target_ratio) / n))
     else:
-        n = max(2, int(total_duration_sec * PACING["graphic_ratio"] / dur))
+        dur = min(PACING["graphic_dur_s"] + 1.0, PACING["graphic_max_s"])
+        n = max(2, int(total_duration_sec * target_ratio / dur))
         n = min(n, 12)
 
-    templates = ["collage", "scatter", "pillars", "collage"]
+    # Rotate templates — opener first for hook density
+    templates = ["opener", "collage", "scatter", "pillars", "photonote", "collage", "scatter"]
     default_items = [
+        [],  # opener
         [
-            {"label": "the hollow", "text": "where silence sits"},
-            {"label": "the ridge", "text": "what you climb alone"},
-            {"label": "the hearth", "text": "warmth you refuse"},
+            {"label": "do not answer", "text": "not once"},
+            {"label": "the woods learn", "text": "your voice"},
+            {"label": "keep walking", "text": "do not look back"},
+        ],
+        [],  # scatter
+        [
+            {"label": "alone", "text": "when light is low"},
+            {"label": "listening", "text": "for a friend"},
+            {"label": "spoken", "text": "soft. familiar."},
+        ],
+        [],  # photonote
+        [
+            {"label": "the rule", "text": "maps will not print"},
+            {"label": "the call", "text": "keep walking"},
         ],
         [],
-        [
-            {"label": "attention", "text": "stay with it"},
-            {"label": "honesty", "text": "name the cost"},
-            {"label": "return", "text": "come back daily"},
-        ],
-        [
-            {"label": "persona", "text": "who they need"},
-            {"label": "shadow", "text": "who you bury"},
-        ],
     ]
     default_titles = [
+        ("if the forest calls your name", "do not answer"),
         ("three things the body already knows", "before the mind invents a story"),
         ("it is not a breakdown", "it is a process asking to be named"),
-        ("what this rests on", ""),
+        ("what this rests on", "stay with it"),
+        ("old timers say it waits", "until you are already listening"),
         ("the mask that stuck", "take it off without burning the room"),
+        ("so if you ever walk", "after dark"),
     ]
 
+    stills = [Path(p) for p in (still_paths or []) if Path(p).exists()]
+
+    # Place cards evenly across the mid-body (avoid first 1.5s and last 2s)
+    usable_start = 1.2
+    usable_end = total_duration_sec - 2.0
+    usable = max(1.0, usable_end - usable_start)
     for i in range(n):
-        center = total_duration_sec * (0.14 + 0.72 * (i + 0.5) / n)
-        start = max(0.5, center - dur / 2)
-        end = min(total_duration_sec - 0.2, start + dur)
-        start = max(0.4, end - dur)
+        # evenly spaced centers
+        center = usable_start + usable * (i + 0.5) / n
+        start = max(usable_start, center - dur / 2)
+        end = min(usable_end, start + dur)
+        start = max(usable_start, end - dur)
+        # prevent overlap: nudge if previous card collides
+        if cards and start < cards[-1]["end_sec"] + 0.35:
+            start = cards[-1]["end_sec"] + 0.35
+            end = min(usable_end, start + dur)
+            if end - start < 2.2:
+                continue
         skin = "collage_dark" if i % 3 < 2 else "noir"
         title, subtitle = default_titles[i % len(default_titles)]
+        tpl = templates[i % len(templates)]
         if transcript_sentences:
             idx = int((center / total_duration_sec) * len(transcript_sentences))
             idx = max(0, min(idx, len(transcript_sentences) - 1))
             words = transcript_sentences[idx].split()
             if len(words) >= 4:
-                title = " ".join(words[:5]).lower()
+                title = " ".join(words[:6]).lower()
+        image = None
+        if tpl in ("opener", "photonote") and stills:
+            image = str(stills[i % len(stills)])
         cards.append({
             "start_sec": start,
             "end_sec": end,
@@ -552,11 +875,17 @@ def plan_gfx_insertions(
             "subtitle": subtitle,
             "skin": skin,
             "variant": i,
-            "template": templates[i % len(templates)],
+            "template": tpl,
             "items": default_items[i % len(default_items)],
             "seed": 11 + i * 11,
+            "image_path": image,
         })
-    logger.info("Planned %d GFX cards for %.1fs video", len(cards), total_duration_sec)
+    gfx_dur = sum(c["end_sec"] - c["start_sec"] for c in cards)
+    logger.info(
+        "Planned %d GFX cards for %.1fs video (%.1fs GFX = %.0f%%)",
+        len(cards), total_duration_sec, gfx_dur,
+        100.0 * gfx_dur / max(0.01, total_duration_sec),
+    )
     return cards
 
 
@@ -573,6 +902,7 @@ def render_gfx_lane(
     for i, spec in enumerate(gfx_specs):
         out = output_dir / f"gfx_card_{i:03d}.mp4"
         try:
+            img = spec.get("image_path")
             path = render_collage_card(
                 title=spec["title"],
                 subtitle=spec.get("subtitle", ""),
@@ -582,10 +912,11 @@ def render_gfx_lane(
                 template=spec.get("template", "collage"),
                 items=spec.get("items"),
                 seed=int(spec.get("seed", 40 + i)),
+                image_path=Path(img) if img else None,
             )
             rendered.append(path)
         except Exception as e:
-            logger.error("Failed to render GFX card %d: %s", i, e)
+            logger.error("Failed to render GFX card %d (%s): %s", i, spec.get("template"), e)
             rendered.append(None)
     return rendered
 
@@ -593,17 +924,18 @@ def render_gfx_lane(
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     print("cutouts", len(list_cutouts()))
-    test = render_collage_card(
-        title="three things the body already knows",
-        subtitle="before the mind invents a story",
-        skin_name="collage_dark",
-        template="collage",
-        duration_sec=4.0,
-        output_path=Path("/tmp/test_collage_cutouts.mp4"),
-        items=[
-            {"label": "the hollow", "text": "where silence sits"},
-            {"label": "the ridge", "text": "what you climb alone"},
-            {"label": "the hearth", "text": "warmth you refuse"},
-        ],
-    )
-    print("Rendered", test, test.stat().st_size)
+    for tpl in ("collage", "scatter", "pillars", "opener", "photonote"):
+        test = render_collage_card(
+            title="if the forest calls your name",
+            subtitle="do not answer",
+            skin_name="collage_dark",
+            template=tpl,
+            duration_sec=3.0,
+            output_path=Path(f"/tmp/test_{tpl}.mp4"),
+            items=[
+                {"label": "the hollow", "text": "where silence sits"},
+                {"label": "the ridge", "text": "what you climb alone"},
+                {"label": "the hearth", "text": "warmth you refuse"},
+            ],
+        )
+        print("Rendered", tpl, test, test.stat().st_size)
