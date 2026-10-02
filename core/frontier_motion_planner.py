@@ -89,7 +89,7 @@ def plan_motion_timeline(
     still_pad_sec: float = 0.8,
     still_min_hold_sec: float = 3.5,
     still_max_hold_sec: float = 10.0,
-    first_still_min_hold_sec: float = 12.0,  # Hook lock: first cut ≥12s (formula)
+    first_still_min_hold_sec: float = 6.0,  # Kinetic hook: 6-10s first cut (Kevis prefers kinetic over 12s overhold)
     seed: int = 42,
 ) -> list[MotionSegment]:
     """
@@ -109,7 +109,8 @@ def plan_motion_timeline(
         still_pad_sec: Hold still this many seconds past last spoken word
         still_min_hold_sec: Minimum still duration
         still_max_hold_sec: Maximum still duration
-        first_still_min_hold_sec: Minimum first still duration (hook lock, default 12s per formula)
+        first_still_min_hold_sec: Minimum first still duration (kinetic hook, default 6s per Kevis;
+                                  formula measured Whop @ 16.9s but Kevis rejects that overhold feel)
         seed: Random seed for Pexels selection
     
     Returns:

@@ -155,9 +155,9 @@
 5. **Overall flow** (comfortable, not rushed or sluggish)
 
 ### Formula Rules (Mandatory):
-- **Hook lock**: First hard cut ≥12s, first caption ≤2.0s
+- **Hook lock**: First hard cut 6-10s (kinetic hook per Kevis; formula measured Whop @ 16.9s but rejected as overhold), first caption ≤2.0s
 - **GFX cadence**: Auto-insert so gap ≤35s (collage ~3.2s, bar ~2.0s, UI ~4.0s)
-- **Whop targets**: ~18 pic/min (~3.3s mean shot), ~7.5s mean shot with GFX, first cut ~16.9s
+- **Whop targets**: ~18 pic/min (~3.3s mean shot), ~7.5s mean shot with GFX
 - **Gate**: timing_pacing ≥9.0 required for merge
 
 ### Mac v3 Score: Unknown (pillar not evaluated)
@@ -271,6 +271,13 @@ Overall 1:1 match with Jung Whop Frontier. Honest side-by-side comparison of ful
 
 ## Reference Material
 
+**Multi-Style Architecture** (Kevis mandate):
+- Frontier must work across styles via **style learner / per-channel JSON**
+- NOT Jung-only: after ≥9.5, PR #2 merges + deploys DO + Fly cook
+- Each channel has its own look JSON (e.g. `jung.json`, `divine.json`, `astro.json`)
+- Style parameters: fonts, colors, skins, GFX templates, grade, pacing
+- Current Jung smoke tests the architecture; must generalize before production
+
 **Whop Frontier Jung**: `jung-whop-ref-45s.mp4` (45s, 960x540)
 - Dark moody stills (books, coats, atmospheric scenes)
 - Collage GFX cards with aged-paper sticker cutouts
@@ -292,7 +299,7 @@ Overall 1:1 match with Jung Whop Frontier. Honest side-by-side comparison of ful
 **Whop Targets** (from formula dissection):
 - **~18 pic/min** (0.3 pics/sec, ~3.3s mean shot)
 - **~7.5s mean shot** (accounting for GFX cards)
-- **First cut ~16.9s** (hook lock, opening scene hold)
+- **First cut 6-10s** (kinetic hook per Kevis; formula measured Whop @ ~16.9s but rejected as overhold)
 - **First caption ≤2.0s** (hook lock timing)
 - **GFX gap ≤35s** (cadence scheduler auto-insert)
 - **GFX durations**: collage ~3.2s, bar ~2.0s, UI ~4.0s
