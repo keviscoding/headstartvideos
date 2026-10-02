@@ -5,11 +5,11 @@ Produces Frontier-style videos using:
 1. Word-level alignment (faster-whisper)
 2. Concept segmentation (LLM splits script into visual concepts)
 3. AI image generation (Atlas/ERNIE for stills)
-4. Ken Burns rendering (subtle zoom/pan on each still)
-5. Assembly with voiceover + optional captions
+4. Single-pass slideshow assembly (images + voiceover)
 
 This is a simplified pipeline similar to animated_explainer but configured
-for the Frontier style/workflow.
+for the Frontier style/workflow. Uses direct image slideshow rather than
+Ken Burns to match the existing explainer pattern.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ def run_frontier_pipeline(
         "timing": dict,
     }
     """
-    from core.segmenter import align_script_to_audio, split_sentences
+    from core.segmenter import align_script_to_audio
     from core.concept_segmenter import segment_into_concepts, HOOK_CUTOFF_SEC
     from core import illustration_gen
     from core.assembler import build_video
@@ -64,14 +64,12 @@ def run_frontier_pipeline(
     job_dir = str(OUTPUT_DIR / f"frontier_{timestamp}")
     os.makedirs(job_dir, exist_ok=True)
     assets_dir = os.path.join(job_dir, "illustrations")
-    clips_dir = os.path.join(job_dir, "clips")
     os.makedirs(assets_dir, exist_ok=True)
-    os.makedirs(clips_dir, exist_ok=True)
 
     # ------------------------------------------------------------------
     # STEP 1: Word-level alignment
     # ------------------------------------------------------------------
-    _log("Step 1/6: Aligning script to audio (word-level)...")
+    _log("Step 1/5: Aligning script to audio (word-level)...")
     t0 = time.time()
 
     sentence_times, all_words = align_script_to_audio(
@@ -91,7 +89,7 @@ def run_frontier_pipeline(
     # ------------------------------------------------------------------
     # STEP 2: Concept segmentation
     # ------------------------------------------------------------------
-    _log("Step 2/6: Segmenting into visual concepts...")
+    _log("Step 2/5: Segmenting into visual concepts...")
     t0 = time.time()
 
     niche_hint = ""
@@ -101,121 +99,150 @@ def run_frontier_pipeline(
     concepts = segment_into_concepts(
         script=script,
         all_words=all_words,
+        style_preset=style_preset,
         niche_hint=niche_hint,
-        target_clip_duration=4.0,
+        lite_mode=lite_mode,
+        hq_mode=(image_quality or "").strip().lower() in ("high", "hq", "pro"),
     )
 
     timing["segmentation"] = time.time() - t0
     _log(f"  {len(concepts)} concepts ({timing['segmentation']:.1f}s)")
 
     # ------------------------------------------------------------------
-    # STEP 3: Generate AI stills for each concept
+    # STEP 3: Generate style reference (optional)
     # ------------------------------------------------------------------
-    _log("Step 3/6: Generating AI stills (Frontier style)...")
+    _log("Step 3/5: Generating style reference...")
     t0 = time.time()
 
-    # Determine which concepts are hook (first few seconds)
-    hook_concepts = [c for c in concepts if c.start_sec <= HOOK_CUTOFF_SEC]
-    body_concepts = [c for c in concepts if c.start_sec > HOOK_CUTOFF_SEC]
+    style_ref_dir = os.path.join(job_dir, "style")
+    os.makedirs(style_ref_dir, exist_ok=True)
 
-    _log(f"  {len(hook_concepts)} hook concepts, {len(body_concepts)} body concepts")
+    style_ref_path = illustration_gen.generate_style_reference(
+        output_dir=style_ref_dir,
+        style_preset=style_preset,
+    )
 
-    # Generate style reference for consistency
-    style_ref_path = None
-    if not lite_mode and image_quality == "high":
-        try:
-            style_ref_path = illustration_gen.generate_style_reference(
-                script=script,
-                output_dir=assets_dir,
-                style_preset=style_preset,
-            )
-            if style_ref_path:
-                _log(f"  Style reference created: {Path(style_ref_path).name}")
-        except Exception as e:
-            _log(f"  Style reference skipped: {e}")
+    timing["style_ref"] = time.time() - t0
+    _log(f"  Style ref: {'generated' if style_ref_path else 'skipped'} "
+         f"({timing['style_ref']:.1f}s)")
 
-    # Generate images for all concepts
-    all_concepts = hook_concepts + body_concepts
-    slots = []
+    # ------------------------------------------------------------------
+    # STEP 4: Generate AI stills for each concept
+    # ------------------------------------------------------------------
+    hq = (image_quality or "").strip().lower() in ("high", "hq", "pro")
+    hook_count = sum(1 for c in concepts if c.start_sec < HOOK_CUTOFF_SEC)
+    body_count = len(concepts) - hook_count
     
-    for i, concept in enumerate(all_concepts):
-        _log(f"  Generating image {i+1}/{len(all_concepts)}: {concept.text[:60]}...")
-        
-        try:
-            img_path = illustration_gen.generate_illustration(
-                concept=concept,
-                output_dir=assets_dir,
-                index=i,
-                style_ref_path=style_ref_path,
-                style_preset=style_preset,
-                is_hook=(concept in hook_concepts),
-                lite_mode=lite_mode,
-                image_quality=image_quality,
+    if hq:
+        _log(f"Step 4/5: Generating {len(concepts)} HQ illustrations "
+             f"(GPT Image 2 Developer)...")
+    else:
+        _log(f"Step 4/5: Generating {len(concepts)} illustrations "
+             f"({hook_count} premium hook + {body_count} economy body)...")
+    t0 = time.time()
+
+    def _on_gen_progress(completed, total):
+        _log(f"  Illustrations: {completed}/{total}")
+
+    import config as _cfg
+    # Lite (trial) cooks: fewer parallel gens so one box stays healthy under queue
+    default_workers = getattr(_cfg, "ILLUSTRATION_WORKERS", 16)
+    lite_workers = getattr(_cfg, "ILLUSTRATION_WORKERS_LITE", 6)
+    workers = lite_workers if lite_mode else default_workers
+    if lite_mode:
+        _log(f"  Lite mode — using {workers} illustration workers")
+    
+    results = illustration_gen.generate_batch(
+        concepts=concepts,
+        output_dir=assets_dir,
+        style_ref_path=style_ref_path,
+        max_workers=workers,
+        progress_callback=_on_gen_progress,
+        hook_cutoff_sec=HOOK_CUTOFF_SEC,
+        image_quality=image_quality,
+    )
+
+    timing["illustration_gen"] = time.time() - t0
+    successes = sum(1 for r in results if r.success)
+    _log(f"  {successes}/{len(concepts)} illustrations generated "
+         f"({timing['illustration_gen']:.1f}s)")
+
+    # ------------------------------------------------------------------
+    # STEP 5: Prepare images and assemble video
+    # ------------------------------------------------------------------
+    _log("Step 5/5: Assembling video...")
+    t0 = time.time()
+
+    image_paths: list[str] = []
+    image_durations: list[float] = []
+    slot_dicts: list[dict] = []
+
+    failed_n = 0
+    for i, (concept, result) in enumerate(zip(concepts, results)):
+        if not result.success or not os.path.exists(result.image_path or ""):
+            err_hint = (result.error or "unknown")[:90]
+            _log(f"  WARNING: Concept {i} failed ({err_hint}) — retrying once")
+            retry_desc = concept.illustration_prompt or concept.text[:80]
+            if concept.section_topic and concept.section_topic.lower() not in retry_desc.lower():
+                retry_desc = f"{retry_desc}. Setting: {concept.section_topic}"
+            retry_path = os.path.join(assets_dir, f"illustration_{concept.id:04d}_retry.png")
+            retry_prompt = illustration_gen.build_prompt(
+                retry_desc,
+                concept.background_mood,
+                concept.has_character,
             )
-            
-            if img_path and os.path.exists(img_path):
-                slots.append({
-                    "concept": concept,
-                    "asset_path": img_path,
-                    "asset_type": "ai_image",
-                    "start_sec": concept.start_sec,
-                    "end_sec": concept.end_sec,
-                    "duration": concept.end_sec - concept.start_sec,
-                })
+            if hq:
+                retry = illustration_gen._generate_hq(retry_prompt, retry_path)
             else:
-                _log(f"  WARNING: Image generation failed for concept {i}")
-        except Exception as e:
-            _log(f"  ERROR generating image {i}: {e}")
+                retry = illustration_gen.generate_single_illustration(
+                    prompt=retry_prompt,
+                    output_path=retry_path,
+                    short_prompt=illustration_gen._build_short_prompt(
+                        retry_desc,
+                        concept.background_mood,
+                        concept.has_character,
+                    ),
+                )
+            if retry.success and os.path.exists(retry.image_path):
+                results[i] = retry
+                img_path = retry.image_path
+            else:
+                failed_n += 1
+                _log(f"  WARNING: Concept {i} still failed — silent placeholder")
+                placeholder_path = os.path.join(assets_dir, f"placeholder_{i:04d}.png")
+                _create_placeholder(placeholder_path, concept.background_mood)
+                img_path = placeholder_path
+        else:
+            img_path = result.image_path
 
-    timing["image_generation"] = time.time() - t0
-    _log(f"  Generated {len(slots)} images ({timing['image_generation']:.1f}s)")
+        _normalize_image(img_path, 1920, 1080)
+        image_paths.append(img_path)
+        image_durations.append(concept.duration_sec)
+        slot_dicts.append({
+            "id": concept.id,
+            "text": concept.text,
+            "start_sec": concept.start_sec,
+            "end_sec": concept.end_sec,
+        })
 
-    if not slots:
-        raise RuntimeError("No images were generated — cannot proceed")
+    if failed_n:
+        _log(f"  {len(image_paths)} images prepared — {failed_n} placeholders")
+    else:
+        _log(f"  {len(image_paths)} images prepared")
 
-    # ------------------------------------------------------------------
-    # STEP 4: Ken Burns rendering
-    # ------------------------------------------------------------------
-    _log("Step 4/6: Rendering Ken Burns effects...")
-    t0 = time.time()
-
-    from core.ken_burns import render_ken_burns_clip
-
-    for i, slot in enumerate(slots):
-        try:
-            clip_path = os.path.join(clips_dir, f"clip_{i:03d}.mp4")
-            render_ken_burns_clip(
-                image_path=slot["asset_path"],
-                output_path=clip_path,
-                duration=slot["duration"],
-                style="subtle",
-            )
-            slot["clip_path"] = clip_path
-            _log(f"  Rendered clip {i+1}/{len(slots)}")
-        except Exception as e:
-            _log(f"  ERROR rendering clip {i}: {e}")
-            raise
-
-    timing["ken_burns"] = time.time() - t0
-    _log(f"  Ken Burns complete ({timing['ken_burns']:.1f}s)")
-
-    # ------------------------------------------------------------------
-    # STEP 5: Assembly
-    # ------------------------------------------------------------------
-    _log("Step 5/6: Assembling final video...")
-    t0 = time.time()
+    if not image_paths:
+        raise RuntimeError("No images were prepared successfully")
 
     output_path = os.path.join(job_dir, output_name)
 
     build_video(
-        slots=slots,
+        clip_paths=[],  # Empty for slideshow mode
         voiceover_path=voiceover_path,
+        slots=slot_dicts,
         output_path=output_path,
-        all_words=all_words,
-        caption_style=caption_style,
-        caption_accent=caption_accent,
-        caption_font_size=caption_font_size,
-        caption_position=caption_position,
+        progress_callback=_log,
+        image_paths=image_paths,
+        durations=image_durations,
     )
 
     timing["assembly"] = time.time() - t0
@@ -225,18 +252,25 @@ def run_frontier_pipeline(
     # Return results
     # ------------------------------------------------------------------
     type_counts = {
-        "ai_image": len([s for s in slots if s.get("asset_type") == "ai_image"]),
+        "illustrations": successes,
+        "placeholders": len(concepts) - successes,
     }
 
     total_time = sum(timing.values())
     _log(f"✓ Frontier pipeline complete ({total_time:.1f}s total)")
 
+    # Build mood distribution for summary
+    mood_counts: dict[str, int] = {}
+    for c in concepts:
+        mood_counts[c.background_mood] = mood_counts.get(c.background_mood, 0) + 1
+
     return {
         "output_path": output_path,
         "job_dir": job_dir,
-        "slots": slots,
+        "slots": slot_dicts,
         "type_counts": type_counts,
         "timing": timing,
+        "mood_counts": mood_counts,
     }
 
 
@@ -277,3 +311,58 @@ def _estimate_word_timestamps(script: str, audio_path: str) -> list[dict]:
         })
     
     return result
+
+
+def _normalize_image(img_path: str, target_w: int, target_h: int) -> None:
+    """Normalize image to target resolution (same as explainer_pipeline)."""
+    import subprocess
+    from pathlib import Path
+    
+    if not os.path.exists(img_path):
+        return
+    
+    temp_out = str(Path(img_path).parent / f"_norm_{Path(img_path).name}")
+    cmd = [
+        "ffmpeg", "-y", "-i", img_path,
+        "-vf", f"scale={target_w}:{target_h}:force_original_aspect_ratio=increase,"
+               f"crop={target_w}:{target_h}",
+        "-frames:v", "1",
+        temp_out,
+    ]
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=30, check=True)
+        if os.path.exists(temp_out) and os.path.getsize(temp_out) > 1000:
+            os.replace(temp_out, img_path)
+        elif os.path.exists(temp_out):
+            os.remove(temp_out)
+    except Exception as e:
+        print(f"[frontier] normalize failed: {e}")
+        if os.path.exists(temp_out):
+            os.remove(temp_out)
+
+
+def _create_placeholder(path: str, mood: str) -> None:
+    """Create a colored placeholder image (same as explainer_pipeline)."""
+    from PIL import Image, ImageDraw
+    
+    # Map mood to color
+    mood_colors = {
+        "warm_earth": "#D4C5A9",
+        "cool_blue": "#B0C4DE",
+        "nature_green": "#8FBC8F",
+        "dark_serious": "#696969",
+        "clean_white": "#F5F5F5",
+        "golden_warm": "#DAA520",
+        "dusty_rose": "#C9A9A9",
+    }
+    
+    bg_color = mood_colors.get(mood, "#D4C5A9")
+    
+    img = Image.new("RGB", (1920, 1080), bg_color)
+    draw = ImageDraw.Draw(img)
+    
+    # Draw a simple shape to indicate placeholder
+    draw.rectangle([860, 490, 1060, 590], fill="#FFFFFF", outline="#000000", width=4)
+    
+    img.save(path)
+
