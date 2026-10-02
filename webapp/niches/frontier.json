@@ -1,0 +1,27 @@
+{
+  "id": "frontier",
+  "name": "Frontier",
+  "tagline": "AI faceless video factory (Admin testing)",
+  "description": "Frontier-style faceless videos with AI stills, voiceover, and assembly. Admin-only for testing before public release.",
+  "category": "Experimental",
+  "difficulty": "Beginner",
+  "rpm_range": "$4 - $12",
+  "demand": "Testing",
+  "recipe": "frontier",
+  "default_voice": "leo",
+  "default_minutes": 8,
+  "max_free_minutes": 8,
+  "max_paid_minutes": 20,
+  "style_preset": "default",
+  "thumbnail_style": "Bold cinematic thumbnail with AI-generated still, dramatic lighting, large text overlay",
+  "example_topics": [
+    "The mysterious island that disappeared overnight",
+    "Why scientists can't explain this ancient artifact",
+    "The lost city that no one has ever found"
+  ],
+  "color": "#8B5CF6",
+  "preview_gif": "/static/previews/animated_explainer.gif",
+  "format": "long",
+  "status": "new",
+  "available": true
+}

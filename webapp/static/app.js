@@ -5116,6 +5116,7 @@ const RECIPE_LABELS = {
     storyboard_assemble: 'Storyboard Assemble',
     storyboard_animate: 'Storyboard Video',
     ranking_countdown: 'Ranking & Countdown',
+    frontier: 'Frontier',
     cinematic: 'Cinematic',
     avatar: 'Avatar',
     documentary: 'Documentary',
