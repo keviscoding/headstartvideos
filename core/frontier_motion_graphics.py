@@ -77,6 +77,120 @@ def list_cutouts() -> List[Path]:
     return sorted(d.glob("*.png"))
 
 
+
+# Keyword → cutout filename stems (script-matched stickers for Jung collage)
+CUTOUT_KEYWORDS: Dict[str, List[str]] = {
+    "dark": ["vintage_moon", "vintage moon on hand", "vintage_eye", "vintage_cloud"],
+    "night": ["vintage_moon", "vintage moon on hand", "vintage_alarm"],
+    "moon": ["vintage_moon", "vintage moon on hand"],
+    "forest": ["vintage_tiger", "vintage_collage_bird_dove", "sisyphus_pushing_boulder_sketch"],
+    "woods": ["vintage_tiger", "vintage_collage_bird_dove", "sisyphus_pushing_boulder_sketch"],
+    "mountain": ["sisyphus_pushing_boulder_sketch", "ancient_pilar", "vintage_cloud"],
+    "appalachian": ["sisyphus_pushing_boulder_sketch", "vintage_cloud", "ancient_pilar"],
+    "trail": ["sisyphus_pushing_boulder_sketch", "vintage_boot", "vintage_key"],
+    "map": ["vintage_open_book", "vintage_hand writing", "vintage_information"],
+    "maps": ["vintage_open_book", "vintage_hand writing", "vintage_information"],
+    "call": ["vintage_man_talking_microfon", "vintage_angry_woman_yelling", "vintage_man_mad"],
+    "calls": ["vintage_man_talking_microfon", "vintage_angry_woman_yelling", "vintage_man_mad"],
+    "name": ["vintage_open_book", "vintage_information", "vintage_hand writing"],
+    "answer": ["vintage_lock", "vintage_key", "vintage_man_talking_microfon"],
+    "voice": ["vintage_man_talking_microfon", "vintage_angry_woman_yelling"],
+    "learn": ["vintage_open_book", "bible", "vintage_stack_of_books", "vintage_brain"],
+    "learns": ["vintage_open_book", "bible", "vintage_stack_of_books", "vintage_brain"],
+    "alone": ["vintage_alarm", "sisyphus_pushing_boulder_sketch", "vintage_heartbroken"],
+    "light": ["vintage_moon", "vintage_eye", "vintage_star"],
+    "listen": ["vintage_man_talking_microfon", "vintage_ear", "vintage_eye"],
+    "listening": ["vintage_man_talking_microfon", "vintage_eye"],
+    "friend": ["vintage_heart", "vintage_couple_kissing", "vintage_heartbroken"],
+    "body": ["vintage_heart", "vintage_brain", "vintage_eye"],
+    "brain": ["vintage_brain", "vintage_eye"],
+    "turn": ["vintage_recycle", "vintage_key"],
+    "speak": ["vintage_man_talking_microfon", "vintage_angry_woman_yelling"],
+    "speaks": ["vintage_man_talking_microfon", "vintage_angry_woman_yelling"],
+    "soft": ["vintage_cloud", "vintage_dove", "vintage_heart"],
+    "familiar": ["vintage_heart", "vintage_key", "vintage_home"],
+    "rule": ["vintage_information", "bible", "vintage_open_book", "vintage_lock"],
+    "print": ["vintage_hand writing", "vintage_open_book"],
+    "walk": ["sisyphus_pushing_boulder_sketch", "vintage_boot"],
+    "walking": ["sisyphus_pushing_boulder_sketch"],
+    "look": ["vintage_eye", "vintage_magnifying_glass_hand"],
+    "back": ["vintage_recycle", "vintage_eye"],
+    "shadow": ["vintage_moon", "vintage_eye", "vintage_man_mad"],
+    "mask": ["vintage_lock", "vintage_key", "vintage_eye"],
+    "persona": ["vintage_man_mad", "vintage_angry_woman_yelling"],
+    "self": ["vintage_mirror", "vintage_eye", "vintage_heart"],
+    "jesus": ["jesus", "vintage_jesus", "bible", "jesus and disciples drawing", "rising jesus drawing"],
+    "bible": ["bible", "vintage_open_book", "vintage_church"],
+    "church": ["vintage_church", "bible", "ancient_pilar"],
+    "fear": ["vintage_man_mad", "vintage_angry_woman_yelling", "vintage_eye"],
+    "wait": ["vintage_alarm", "vintage_moon"],
+    "waits": ["vintage_alarm", "vintage_moon"],
+    "old": ["vintage_alarm", "ancient_pilar", "vintage_open_book"],
+    "timer": ["vintage_alarm"],
+    "timers": ["vintage_alarm"],
+}
+
+
+def pick_cutouts_for_text(
+    text: str,
+    need: int = 3,
+    seed: int = 42,
+    pool: Optional[List[Path]] = None,
+) -> List[Path]:
+    """Prefer cutouts whose filenames match keywords in title/script text.
+
+    Falls back to seeded shuffle of the remainder so we always fill `need`.
+    """
+    lib = list(pool) if pool is not None else list_cutouts()
+    if not lib:
+        return []
+    rng = random.Random(seed)
+    words = set()
+    for raw in (text or "").lower().replace("-", " ").replace("'", " ").split():
+        w = "".join(ch for ch in raw if ch.isalnum())
+        if len(w) >= 3:
+            words.add(w)
+            if w.endswith("s") and len(w) > 4:
+                words.add(w[:-1])
+    scored: List[tuple] = []
+    for p in lib:
+        stem = p.stem.lower()
+        score = 0
+        matched = []
+        for w in words:
+            stems = CUTOUT_KEYWORDS.get(w, [])
+            for s in stems:
+                if s.lower() in stem or stem in s.lower():
+                    score += 3
+                    matched.append(w)
+                    break
+            # direct filename token hit
+            if w in stem.replace("_", " "):
+                score += 2
+                matched.append(w)
+        scored.append((score, rng.random(), p, matched))
+    scored.sort(key=lambda t: (-t[0], t[1]))
+    picked: List[Path] = []
+    used = set()
+    for score, _, p, matched in scored:
+        if p in used:
+            continue
+        if score > 0 or len(picked) < need:
+            picked.append(p)
+            used.add(p)
+            if score > 0:
+                logger.info("cutout match %s ← %s (score=%d)", p.name, matched, score)
+        if len(picked) >= need:
+            break
+    # If still short, fill randomly from unused
+    if len(picked) < need:
+        rest = [p for p in lib if p not in used]
+        rng.shuffle(rest)
+        picked.extend(rest[: max(0, need - len(picked))])
+    return picked[:need]
+
+
+
 def _ffmpeg() -> str:
     for c in (
         "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg",
@@ -357,10 +471,14 @@ def compose_collage_frame(
             raise FileNotFoundError(
                 "No cutouts in frontier-gfx-kit/cutouts — unpack Whop kit first"
             )
-        picks = lib[:]
-        rng.shuffle(picks)
         need = {"scatter": 8, "pillars": 3, "opener": 6, "photonote": 1, "collage": 3}.get(template, 3)
-        cuts = picks[:need]
+        # Script-matched stickers from title + subtitle (+ items if already provided)
+        label_blob = " ".join([title or "", subtitle or ""])
+        if items:
+            label_blob += " " + " ".join(
+                str(it.get("label", "")) + " " + str(it.get("text", "")) for it in items
+            )
+        cuts = pick_cutouts_for_text(label_blob, need=need, seed=seed, pool=lib)
 
     items = items or []
     if not items:
@@ -903,14 +1021,25 @@ def render_gfx_lane(
         out = output_dir / f"gfx_card_{i:03d}.mp4"
         try:
             img = spec.get("image_path")
+            tpl = spec.get("template", "collage")
+            need = {"scatter": 8, "pillars": 3, "opener": 6, "photonote": 1, "collage": 3}.get(tpl, 3)
+            blob = " ".join([
+                str(spec.get("title", "")),
+                str(spec.get("subtitle", "")),
+            ] + [
+                str(it.get("label", "")) + " " + str(it.get("text", ""))
+                for it in (spec.get("items") or [])
+            ])
+            cuts = pick_cutouts_for_text(blob, need=need, seed=int(spec.get("seed", 40 + i)))
             path = render_collage_card(
                 title=spec["title"],
                 subtitle=spec.get("subtitle", ""),
                 skin_name=spec.get("skin", "collage_dark"),
                 duration_sec=spec["end_sec"] - spec["start_sec"],
                 output_path=out,
-                template=spec.get("template", "collage"),
+                template=tpl,
                 items=spec.get("items"),
+                cutout_paths=cuts,
                 seed=int(spec.get("seed", 40 + i)),
                 image_path=Path(img) if img else None,
             )

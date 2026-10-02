@@ -80,6 +80,9 @@ def assemble_frontier_video(
     dust_overlay_path: str | Path | None = None,
     zoom_amount: float = 0.28,
     word_timings: list[dict] | None = None,
+    no_sub_ranges: list[tuple[float, float]] | None = None,
+    no_dust_ranges: list[tuple[float, float]] | None = None,
+    dust_strength: float = 1.0,
     progress_callback=None,
 ) -> dict:
     """
@@ -97,6 +100,9 @@ def assemble_frontier_video(
         dust_overlay_path: Path to dust overlay video (if add_dust=True)
         zoom_amount: Ken Burns zoom factor (0.1-0.3)
         word_timings: Optional list of {word, start, end} dicts for kinetic captions
+        no_sub_ranges: Mute burned captions over these [(start,end)] GFX windows
+        no_dust_ranges: Suppress dust in these windows (usually same as GFX)
+        dust_strength: 1.0 = baseline; >1 boosts dust brightness + film grain
         progress_callback: Optional callback(message: str)
     
     Returns:
@@ -148,15 +154,15 @@ def assemble_frontier_video(
     if progress_callback:
         progress_callback("Burning in subtitles...")
     
-    # Collect motion_gfx ranges to mute captions (prevent caption/GFX overlap)
-    no_sub_ranges = []
-    for seg in motion_segments:
-        if seg.type == "motion_gfx":
-            no_sub_ranges.append((seg.start_sec, seg.end_sec))
-    
-    if no_sub_ranges and progress_callback:
-        progress_callback(f"Muting captions during {len(no_sub_ranges)} GFX card ranges...")
-    
+    # Mute captions (and dust) over full-screen motion_gfx — Whop no_sub_ranges
+    gfx_ranges = [
+        (float(s.start_sec), float(s.end_sec))
+        for s in motion_segments
+        if getattr(s, "type", "") == "motion_gfx"
+    ]
+    mute_subs = list(no_sub_ranges) if no_sub_ranges is not None else list(gfx_ranges)
+    mute_dust = list(no_dust_ranges) if no_dust_ranges is not None else list(gfx_ranges)
+
     # Burn subtitles with ASS style (with word-level kinetic if available)
     subtitled_path = temp_dir / "subtitled.mp4"
     _burn_subtitles(
@@ -164,7 +170,7 @@ def assemble_frontier_video(
         subtitle_path=subtitle_path,
         output_path=subtitled_path,
         word_timings=word_timings,
-        no_sub_ranges=no_sub_ranges,
+        no_sub_ranges=mute_subs,
     )
     
     # Apply dust overlay if requested
@@ -173,7 +179,13 @@ def assemble_frontier_video(
             progress_callback("Adding dust overlay...")
         
         dust_path = temp_dir / "with_dust.mp4"
-        _apply_dust_overlay(subtitled_path, dust_overlay_path, dust_path)
+        _apply_dust_overlay(
+            subtitled_path,
+            dust_overlay_path,
+            dust_path,
+            no_dust_ranges=mute_dust,
+            dust_strength=dust_strength,
+        )
         subtitled_path = dust_path
     
     # Apply vignette if requested
@@ -397,7 +409,14 @@ def _burn_subtitles(
             sibling = srt.parent / "subtitles.srt"
             if sibling.exists():
                 srt = sibling
-        _convert_srt_to_ass(srt, tmp_ass, word_timings=word_timings, center=True, no_sub_ranges=no_sub_ranges)
+        _convert_srt_to_ass(
+            srt, tmp_ass, word_timings=word_timings, center=True,
+            no_sub_ranges=no_sub_ranges,
+        )
+
+    # Punch holes in ASS over GFX windows when source was already .ass
+    if no_sub_ranges and subtitle_path.suffix.lower() == ".ass" and not word_timings:
+        _mute_ass_dialogue_ranges(tmp_ass, no_sub_ranges)
 
     # Safety: never leave escaped override braces
     body = tmp_ass.read_text(encoding="utf-8")
@@ -470,7 +489,26 @@ Style: Default,{font},{size},&H00FFFFFF,&H000000FF,&H00121212,&H64000000,0,0,0,0
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
+    mute = list(no_sub_ranges or [])
+
+    def _audible_fragments(st: float, en: float):
+        """Pieces of [st, en] outside mute/GFX windows (Whop)."""
+        ranges = [(float(st), float(en))]
+        for ms, me in mute:
+            nxt = []
+            for a, b in ranges:
+                if b <= ms or a >= me:
+                    nxt.append((a, b))
+                    continue
+                if a < ms:
+                    nxt.append((a, ms))
+                if me < b:
+                    nxt.append((me, b))
+            ranges = nxt
+        return [(a, b) for a, b in ranges if b - a >= 0.25]
+
     events = []
+    dropped = 0
     blocks = [b.strip() for b in srt_content.strip().split("\n\n") if b.strip()]
 
     for idx, block in enumerate(blocks):
@@ -504,14 +542,32 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         start_ass = _srt_time_to_ass(start.strip())
         end_ass = _srt_time_to_ass(end.strip())
         plain = " ".join(text_lines).strip()
-        if word_timings:
-            body = _add_kinetic_color_flash(plain, start.strip(), end.strip(), word_timings, accent_color)
-        else:
-            body = _add_kinetic_color_flash_estimated(plain, start.strip(), end.strip(), accent_color)
-        events.append(
-            f"Dialogue: 0,{start_ass},{end_ass},Default,,0,0,0,,"
-            f"{{\\fad(170,170)}}{body}"
-        )
+        frags = _audible_fragments(st, en) if mute else [(st, en)]
+        if not frags:
+            dropped += 1
+            continue
+        for fst, fen in frags:
+            def _sec_to_srt(sec: float) -> str:
+                h = int(sec // 3600)
+                m = int((sec % 3600) // 60)
+                s = int(sec % 60)
+                ms = int(round((sec - int(sec)) * 1000))
+                if ms >= 1000:
+                    s += 1
+                    ms -= 1000
+                return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+            start_s = _sec_to_srt(fst)
+            end_s = _sec_to_srt(fen)
+            start_ass = _srt_time_to_ass(start_s)
+            end_ass = _srt_time_to_ass(end_s)
+            if word_timings:
+                body = _add_kinetic_color_flash(plain, start_s, end_s, word_timings, accent_color)
+            else:
+                body = _add_kinetic_color_flash_estimated(plain, start_s, end_s, accent_color)
+            events.append(
+                f"Dialogue: 0,{start_ass},{end_ass},Default,,0,0,0,,"
+                f"{{\\fad(170,170)}}{body}"
+            )
 
     ass_path.write_text(ass_header + "\n".join(events) + "\n", encoding="utf-8")
 
@@ -630,20 +686,109 @@ def _srt_time_to_ass(srt_time: str) -> str:
     return srt_time
 
 
-def _apply_dust_overlay(video_path: Path, dust_path: Path, output_path: Path):
-    """Apply dust overlay with RGB screen blend (Whop path — YUV screen tints magenta)."""
+
+def _mute_ass_dialogue_ranges(ass_path: Path, mute_ranges: list[tuple[float, float]]) -> None:
+    """Clip existing ASS Dialogue lines around mute windows (for pre-built .ass)."""
+    if not mute_ranges:
+        return
+    body = ass_path.read_text(encoding="utf-8")
+    out_lines = []
+    for line in body.splitlines():
+        if not line.startswith("Dialogue:"):
+            out_lines.append(line)
+            continue
+        # Dialogue: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+        try:
+            prefix, text = line.split(",,", 1)
+            parts = prefix.split(",")
+            start_ass, end_ass = parts[1], parts[2]
+            st = _srt_time_to_seconds(start_ass.replace(".", ","))
+            # ASS uses H:MM:SS.cs — handle via existing helper after normalizing
+            st = _ass_time_to_seconds(start_ass)
+            en = _ass_time_to_seconds(end_ass)
+        except Exception:
+            out_lines.append(line)
+            continue
+        ranges = [(st, en)]
+        for ms, me in mute_ranges:
+            nxt = []
+            for a, b in ranges:
+                if b <= ms or a >= me:
+                    nxt.append((a, b)); continue
+                if a < ms: nxt.append((a, ms))
+                if me < b: nxt.append((me, b))
+            ranges = nxt
+        for a, b in ranges:
+            if b - a < 0.25:
+                continue
+            # Rebuild Dialogue with new times, keep rest of prefix + text
+            new_prefix = ",".join([parts[0], _seconds_to_ass(a), _seconds_to_ass(b)] + parts[3:])
+            out_lines.append(f"{new_prefix},,{text}")
+    ass_path.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+
+
+def _ass_time_to_seconds(ass_time: str) -> float:
+    """ASS H:MM:SS.cs → seconds."""
+    ass_time = ass_time.strip()
+    if "." in ass_time:
+        time_part, frac = ass_time.split(".", 1)
+        h, m, s = map(int, time_part.split(":"))
+        cs = int(frac.ljust(2, "0")[:2])
+        return h * 3600 + m * 60 + s + cs / 100.0
+    h, m, s = map(int, ass_time.split(":"))
+    return h * 3600 + m * 60 + s
+
+
+def _seconds_to_ass(sec: float) -> str:
+    h = int(sec // 3600)
+    m = int((sec % 3600) // 60)
+    s = int(sec % 60)
+    cs = int(round((sec - int(sec)) * 100))
+    if cs >= 100:
+        s += 1
+        cs -= 100
+    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+
+def _apply_dust_overlay(
+    video_path: Path,
+    dust_path: Path,
+    output_path: Path,
+    no_dust_ranges: list[tuple[float, float]] | None = None,
+    dust_strength: float = 1.0,
+):
+    """Apply dust overlay with RGB screen blend (Whop path — YUV screen tints magenta).
+
+    dust_strength > 1.0 brightens the dust plate + raises film grain for Jung grit.
+    no_dust_ranges: black-gate the dust during GFX windows (screen w/ black = noop).
+    """
     dur = _get_duration(video_path)
     dust = Path(dust_path)
     alt = dust.with_name("overlay_dust_1080.mp4")
     if alt.exists():
         dust = alt
-    # Full-strength screen in gbrp (Whop). Optional soft grain after for film density.
+    strength = max(0.5, min(2.5, float(dust_strength)))
+    # Brighten dust plate so screen-blend reads denser; grain scales with strength
+    bright = 0.06 * (strength - 1.0)
+    contrast = 1.0 + 0.18 * (strength - 1.0)
+    grain = int(round(8 + 10 * (strength - 1.0)))  # 8 @1.0 → 18 @2.0
+    grain = max(6, min(24, grain))
+    gate = ""
+    if no_dust_ranges:
+        expr = "+".join(f"between(t,{s:.3f},{e:.3f})" for s, e in no_dust_ranges)
+        gate = (
+            f",drawbox=x=0:y=0:w=1920:h=1080:color=black:t=fill:enable='{expr}'"
+        )
+    dust_chain = (
+        "scale=1920:1080:force_original_aspect_ratio=increase,"
+        "crop=1920:1080,fps=30,setsar=1,"
+        f"eq=brightness={bright:.4f}:contrast={contrast:.4f},"
+        f"format=gbrp{gate}[dust]"
+    )
     fc = (
-        "[1:v]scale=1920:1080:force_original_aspect_ratio=increase,"
-        "crop=1920:1080,fps=30,setsar=1,format=gbrp[dust];"
+        f"[1:v]{dust_chain};"
         "[0:v]format=gbrp[base];"
-        "[base][dust]blend=all_mode=screen:shortest=1,format=yuv420p,"
-        "noise=alls=8:allf=t+u[v]"
+        f"[base][dust]blend=all_mode=screen:shortest=1,format=yuv420p,"
+        f"noise=alls={grain}:allf=t+u[v]"
     )
     cmd = [
         _ffmpeg_bin(), "-y",
