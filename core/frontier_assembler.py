@@ -403,6 +403,9 @@ def _add_kinetic_karaoke(
     Each word gets a \k duration tag, and we use color override to flash
     the accent color as each word is spoken (Frontier's kinetic style).
     
+    The \k tag duration is in centiseconds (100ths of a second).
+    Frontier uses precise word-level timing derived from Whisper alignment.
+    
     Returns ASS-formatted text with \k tags and color overrides.
     """
     # Convert SRT times to seconds
@@ -413,6 +416,7 @@ def _add_kinetic_karaoke(
     subtitle_words = []
     for word_timing in word_timings:
         word_start = word_timing["start"]
+        # Include words that start before subtitle end
         if sub_start_sec <= word_start < sub_end_sec:
             subtitle_words.append(word_timing)
     
@@ -421,20 +425,22 @@ def _add_kinetic_karaoke(
         return subtitle_text
     
     # Build text with \k tags
-    # \k<duration> makes the next word appear with karaoke timing
-    # {\\c&HCOLOR&} changes color
+    # \k<duration> makes the next syllable/word light up with karaoke timing
+    # The accent color flashes on each word as it's spoken
     result = ""
     
     for i, word_timing in enumerate(subtitle_words):
-        word = word_timing["word"]
+        word = word_timing["word"].strip()
         word_start = word_timing["start"]
         word_end = word_timing["end"]
         
         # Duration in centiseconds for \k tag
-        duration_cs = int((word_end - word_start) * 100)
+        # This is how long the word is highlighted in the accent color
+        duration_cs = max(1, int((word_end - word_start) * 100))
         
-        # Add word with kinetic color flash
-        # Primary color changes to accent during the word's duration
+        # Jung/Frontier style: Each word flashes gold as spoken
+        # The \k tag controls the karaoke sweep duration
+        # The color override makes it appear in accent during that duration
         result += f"{{\\k{duration_cs}\\c{accent_color}}}{word} "
     
     return result.strip()

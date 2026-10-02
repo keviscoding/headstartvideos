@@ -187,22 +187,23 @@ Karaoke tags present and syntactically correct.
 
 ## 7. Dust Overlay & Vignette
 
-**Score: 6/10** (PARTIAL - vignette works, dust missing)
+**Score: 7/10** (PARTIAL - vignette works, dust asset now present)
 
 ✅ **Validated in Smoke Test**:
 - Vignette applies correctly (dark edge fade, 0.35 strength)
 - `_apply_vignette()` works end-to-end
 
-❌ **Missing**:
-- No `overlay_dust.mp4` asset in repo
-- Dust code present but gracefully skips if file missing
-- Cannot verify screen blend look without asset
+✅ **Dust Overlay Asset**:
+- `assets/overlay_dust.mp4` now present (32MB, 10s loop, procedural particles)
+- Screen blend at 30% opacity coded and ready
+- FFmpeg `-stream_loop -1` ensures seamless looping
 
 ❌ **Cannot Verify Without Render**:
 - Whether vignette strength matches Jung reference darkness
-- Dust particle aesthetic (when asset added)
+- Dust particle aesthetic in final output
+- Whether dust opacity/blend matches Frontier subtlety
 
-**To Reach 9/10**: Add overlay_dust.mp4 asset, render, verify subtle particle effect matches Frontier.
+**To Reach 9/10**: Run real Atlas+Pexels render, verify dust/vignette look matches Frontier reference.
 
 ---
 
@@ -262,18 +263,18 @@ assert 'PEXELS_KEY' in frontier['optional_keys']
 1. Still Look: **5/10** (awaiting render)
 2. Pexels: **5/10** (awaiting render)
 3. Motion Timing: **6/10** (structure proven, output unknown)
-4. Captions: **8/10** (code complete, visual sync unverified)
+4. Captions: **8/10** (code hardened, visual sync unverified)
 5. Color Grade: **7/10** (string matches, output unknown)
 6. Ken Burns: **7/10** (math correct, smoothness unknown)
-7. Dust/Vignette: **6/10** (vignette works, dust missing)
+7. Dust/Vignette: **7/10** (both assets present, output unknown)
 
-**Visual Average: 6.3/10** ❌ (FAILS ≥9.5 requirement)
+**Visual Average: 6.4/10** ❌ (FAILS ≥9.5 requirement)
 
 ### Including Non-Visual:
 8. Pipeline: **9/10** (smoke test proves architecture)
 9. Admin Gating: **10/10** (verified)
 
-**Total Average: 7.0/10** ❌ (FAILS ≥9.5 requirement)
+**Total Average: 7.1/10** ❌ (FAILS ≥9.5 requirement)
 
 ---
 
@@ -282,14 +283,14 @@ assert 'PEXELS_KEY' in frontier['optional_keys']
 ### What's Ready:
 ✅ Architecture implements every Frontier system correctly  
 ✅ Smoke test proves pipeline executes end-to-end  
-✅ Word-level kinetic captions now implemented (was 8/10, now code-complete)  
+✅ Word-level kinetic captions hardened with precise timing  
 ✅ Code matches Whop Frontier patterns line-for-line  
+✅ Dust overlay asset now generated (`assets/overlay_dust.mp4`)  
 
 ### What's Blocking ≥9.5:
 ❌ **No real render with Atlas gpt-image-2 stills** (cannot score still look)  
 ❌ **No real render with Pexels b-roll** (cannot score integration)  
 ❌ **No visual comparison to Jung reference** (cannot score grade/feel)  
-❌ **Missing overlay_dust.mp4 asset** (dust feature incomplete)  
 
 ### Path to ≥9.5/10:
 
@@ -298,15 +299,15 @@ assert 'PEXELS_KEY' in frontier['optional_keys']
 2. Render 60-90s test video with real script+VO
 3. Extract frames every 5s, compare to Jung reference
 4. Watch side-by-side with Jung reference video
-5. Score visual dimensions honestly based on OUTPUT
-6. Fix anything <9 (likely: still prompt refinement, grade tweaks, dust asset)
+5. Score visual dimensions honestly based on OUTPUT (use `scripts/frontier_output_scorecard.md`)
+6. Fix anything <9 (likely: still prompt refinement, grade tweaks)
 7. Re-render and re-score until visual≥9.5
 
 **Optional Enhancements**:
-- Add overlay_dust.mp4 asset (+1 on dust dimension)
 - Fine-tune gpt-image-2 scene prompts based on actual output
 - Adjust color grade if too bright/saturated vs Jung
 - Tweak zoom amount if motion feels off
+- Refine dust overlay opacity/blend if too subtle or too heavy
 
 ---
 
