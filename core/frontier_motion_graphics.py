@@ -47,11 +47,11 @@ PACING = {
     "graphic_every_min": 0.5,
     # Whop Dissect: designed GFX ≈ 20–25% runtime (v5 35% caused bed rush)
     "graphic_ratio": 0.22,
-    "graphic_dur_s": 3.4,
+    "graphic_dur_s": 4.2,   # v10: fewer longer cards → mean shot back to 5–9
     "graphic_max_s": 4.5,
     # After kinetic opener (~8s first cut): first GFX ~10s (was 14 after 16.9 lock)
     "first_gfx_min_sec": 10.0,
-    "min_gap_between_gfx_sec": 8.0,
+    "min_gap_between_gfx_sec": 9.0,
 }
 
 FPS = 24

@@ -371,10 +371,13 @@ WHOP_PACING = {
 
 def coalesce_short_segments(
     segments: list[MotionSegment],
-    min_bed_sec: float = 5.0,
-    min_pexels_sec: float = 3.0,
+    min_bed_sec: float = 5.5,
+    min_pexels_sec: float = 3.5,
 ) -> list[MotionSegment]:
-    """Merge tiny bed crumbs into neighbours (fix rush / ~2s mean shots)."""
+    """Merge tiny bed crumbs into neighbours (fix rush / sub-5s mean shots).
+
+    Never touches motion_gfx or the opener segment start (caller keeps kinetic hook).
+    """
     if not segments:
         return []
     out: list[MotionSegment] = []
@@ -470,15 +473,16 @@ def build_paced_bed_timeline(
     while t < total_duration_sec - 0.35:
         remaining = total_duration_sec - t
         # Prefer stills for symbolic beds; sprinkle pexels bridges 3–7s
-        if use_video_next and videos and remaining > 4.0:
-            dur = min(remaining, rng.uniform(3.2, 5.8))
+        if use_video_next and videos and remaining > 5.5:
+            # Bridges stay 4–6.5s so mean shot stays in 5–9 after GFX weave
+            dur = min(remaining, rng.uniform(4.2, 6.5))
             path = videos[vi % len(videos)]
             vi += 1
             segs.append(MotionSegment("pexels_video", path, t, t + dur, "hold", ""))
             t += dur
             use_video_next = False
         elif stills:
-            dur = min(remaining, rng.uniform(5.0, min(8.5, bed_target_sec + 1.5)))
+            dur = min(remaining, rng.uniform(max(5.5, bed_target_sec - 0.5), min(9.0, bed_target_sec + 2.0)))
             if dur < 3.0 and remaining < 3.5:
                 # extend last
                 segs[-1].end_sec = total_duration_sec
@@ -501,6 +505,128 @@ def build_paced_bed_timeline(
     if segs:
         segs[-1].end_sec = total_duration_sec
     return coalesce_short_segments(segs)
+
+
+
+def heal_bed_durations(
+    segments: list[MotionSegment],
+    min_still_sec: float = 5.5,
+    min_pexels_sec: float = 4.0,
+    protect_first_sec: float = 6.0,
+) -> list[MotionSegment]:
+    """Absorb sub-min body crumbs into neighbours without touching the kinetic opener.
+
+    GFX cards stay fixed; short beds before/after them expand into adjacent beds
+    so mean shot returns to the 5–9s band.
+    """
+    if not segments:
+        return []
+    segs = [
+        MotionSegment(s.type, s.path, s.start_sec, s.end_sec, s.zoom, s.text)
+        for s in segments
+    ]
+    # Forward pass: merge short non-gfx into previous non-gfx
+    out: list[MotionSegment] = []
+    for seg in segs:
+        if seg.type == "motion_gfx":
+            out.append(seg)
+            continue
+        min_d = min_pexels_sec if seg.type.startswith("pexels") else min_still_sec
+        if (
+            out
+            and out[-1].type != "motion_gfx"
+            and seg.duration + 1e-6 < min_d
+            and out[-1].start_sec >= protect_first_sec - 1e-6  # don't eat into opener start
+        ):
+            # If previous is the opener (starts at 0), only absorb if we're not
+            # collapsing the first hard cut — require prev.start > 0.
+            if out[-1].start_sec > 0.05 or seg.duration < 2.0:
+                if out[-1].start_sec > 0.05:
+                    out[-1].end_sec = seg.end_sec
+                    continue
+        out.append(seg)
+    # Backward pass: short segment after GFX → merge into following bed
+    i = 0
+    while i < len(out):
+        seg = out[i]
+        if seg.type == "motion_gfx" or seg.start_sec < protect_first_sec:
+            i += 1
+            continue
+        min_d = min_pexels_sec if seg.type.startswith("pexels") else min_still_sec
+        if seg.duration + 1e-6 < min_d and i + 1 < len(out) and out[i + 1].type != "motion_gfx":
+            nxt = out[i + 1]
+            # Prefer keeping the longer / still path
+            if nxt.duration >= seg.duration or nxt.type == "ai_still":
+                nxt.start_sec = seg.start_sec
+                out.pop(i)
+                continue
+            else:
+                seg.end_sec = nxt.end_sec
+                seg.path = nxt.path
+                seg.type = nxt.type
+                seg.zoom = nxt.zoom
+                out.pop(i + 1)
+                continue
+        i += 1
+    # Ensure continuity
+    for j in range(1, len(out)):
+        if out[j].start_sec < out[j - 1].end_sec:
+            out[j].start_sec = out[j - 1].end_sec
+    return [s for s in out if s.end_sec - s.start_sec > 0.2]
+
+
+def build_body_still_timeline(
+    still_paths: list[Path | str],
+    pexels_videos: list[Path | str],
+    total_duration_sec: float,
+    first_cut_target_sec: float = 8.0,
+    bed_target_sec: float = 7.5,
+    seed: int = 42,
+    first_cut_min_sec: float = 6.0,
+) -> list[MotionSegment]:
+    """Kinetic opener + mostly long Atlas stills (pexels sparse) for 5–9s mean.
+
+    Style-agnostic: first_cut_* / bed_target come from channel pacing JSON.
+    """
+    rng = random.Random(seed)
+    stills = [str(p) for p in still_paths]
+    videos = [str(p) for p in pexels_videos]
+    if not stills:
+        raise ValueError("need at least one Atlas still")
+    segs: list[MotionSegment] = []
+    cut1 = min(total_duration_sec, max(float(first_cut_min_sec), float(first_cut_target_sec)))
+    segs.append(MotionSegment("ai_still", stills[0], 0.0, cut1, "in", ""))
+    t = cut1
+    si = 1
+    vi = 0
+    rng.shuffle(videos)
+    use_pexels = False  # start with still after opener for longer mean
+    while t < total_duration_sec - 0.35:
+        remaining = total_duration_sec - t
+        if remaining < 3.2:
+            segs[-1].end_sec = total_duration_sec
+            break
+        if use_pexels and videos and remaining > 6.0:
+            dur = min(remaining, rng.uniform(4.5, 6.2))
+            path = videos[vi % len(videos)]
+            vi += 1
+            segs.append(MotionSegment("pexels_video", path, t, t + dur, "hold", ""))
+            t += dur
+            use_pexels = False
+        else:
+            dur = min(remaining, rng.uniform(max(6.0, bed_target_sec - 0.8), min(9.0, bed_target_sec + 1.5)))
+            if dur < 5.0 and remaining < 5.5:
+                segs[-1].end_sec = total_duration_sec
+                break
+            path = stills[si % len(stills)]
+            zoom = "out" if si % 2 else "in"
+            si += 1
+            segs.append(MotionSegment("ai_still", path, t, t + dur, zoom, ""))
+            t += dur
+            use_pexels = True  # sprinkle one bridge occasionally
+    if segs:
+        segs[-1].end_sec = total_duration_sec
+    return coalesce_short_segments(segs, min_bed_sec=5.5, min_pexels_sec=4.0)
 
 
 def pacing_metrics(segments: list[MotionSegment]) -> dict:

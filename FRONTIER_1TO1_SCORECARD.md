@@ -329,3 +329,13 @@ Overall 1:1 match with Jung Whop Frontier. Honest side-by-side comparison of ful
 
 Job: `output/frontier_20261002_122844/` · chat `/workspace/frontier_video_v9_chat.mp4`
 
+## v10 smoke (2026-10-02)
+
+| pillar | score | note |
+|--------|------:|------|
+| visual_bed | **8.5** | style grade + denser dust + leak |
+| motion_graphics | **8.7** | Playwright collage/scatter |
+| timing_pacing | **8.9** | mean **7.21s**, first cut **8.0s**, cuts/min **6.93** |
+| combined | **8.7** | not ≥9.5 — draft only |
+
+

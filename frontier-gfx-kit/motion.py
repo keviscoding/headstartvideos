@@ -2153,8 +2153,20 @@ def build_html(scene: dict, w: int = W, h: int = H) -> str:
 # ════════════════════════════════════════════════════════════════════════════
 # RENDER  (same deterministic Chromium loop as mindmap.py)
 # ════════════════════════════════════════════════════════════════════════════
+def _ffmpeg_bin() -> str:
+    import os
+    for c in (
+        os.environ.get("FFMPEG_BIN"),
+        "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg",
+        "ffmpeg",
+    ):
+        if c and (c == "ffmpeg" or Path(c).exists()):
+            return c
+    return "ffmpeg"
+
+
 def _frames_to_mp4(frames_dir: Path, out_mp4: Path, fps: int) -> None:
-    subprocess.run(["ffmpeg", "-y", "-framerate", str(fps),
+    subprocess.run([_ffmpeg_bin(), "-y", "-framerate", str(fps),
                     "-i", str(frames_dir / "f_%05d.jpg"),
                     "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
                     "-pix_fmt", "yuv420p", "-color_range", "tv", "-r", str(fps),
