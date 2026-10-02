@@ -179,7 +179,8 @@ def run_frontier_pipeline(
             best_match = None
             best_score = 0
             for sent_idx, sent_time in enumerate(sentence_times):
-                sent_text = sent_time.get("text", "").lower()
+                # SentenceTimestamp is a dataclass with .text, .start_sec, .end_sec
+                sent_text = sent_time.text.lower() if hasattr(sent_time, 'text') else ""
                 # Simple word overlap score
                 scene_words = set(scene_text.split())
                 sent_words = set(sent_text.split())
@@ -192,8 +193,8 @@ def run_frontier_pipeline(
             if best_match:
                 ai_stills.append({
                     "path": result["path"],
-                    "start_sec": best_match["start"],
-                    "end_sec": best_match["end"],
+                    "start_sec": best_match.start_sec,
+                    "end_sec": best_match.end_sec,
                     "text": scene_text,
                 })
             else:

@@ -219,13 +219,12 @@ def _generate_atlas_image(
     max_retries: int = 3,
 ):
     """
-    Generate a single image using Atlas Cloud.
+    Generate a single image using Atlas Cloud (1:1 with Whop Frontier).
     
-    Atlas API returns either:
-    - data[0]["url"] → download PNG from URL
-    - data[0]["b64_json"] → base64-encoded PNG data
-    
-    This implementation handles both response formats (1:1 with Whop Frontier).
+    Uses Whop's create→poll pattern:
+    1. POST /api/v1/model/generateImage → get prediction_id
+    2. Poll prediction status until complete
+    3. Extract base64 PNG from prediction.output
     """
     import base64
     import requests
@@ -233,7 +232,8 @@ def _generate_atlas_image(
     if not ATLASCLOUD_KEY:
         raise RuntimeError("ATLASCLOUD_KEY not set")
     
-    url = "https://api.atlascloud.ai/v1/images/generations"
+    # Whop Frontier pattern: create prediction
+    create_url = "https://api.atlascloud.ai/api/v1/model/generateImage"
     headers = {
         "Authorization": f"Bearer {ATLASCLOUD_KEY}",
         "Content-Type": "application/json",
@@ -244,38 +244,67 @@ def _generate_atlas_image(
         "prompt": prompt,
         "width": width,
         "height": height,
-        "response_format": "url",  # Request URL, but accept b64_json fallback
     }
     
     last_error = None
     for attempt in range(max_retries):
         try:
-            response = requests.post(url, json=payload, headers=headers, timeout=120)
+            # Step 1: Create prediction
+            response = requests.post(create_url, json=payload, headers=headers, timeout=30)
             response.raise_for_status()
-            data = response.json()
+            create_data = response.json()
             
-            if "data" not in data or len(data["data"]) == 0:
-                raise RuntimeError(f"No data in Atlas response: {data}")
+            prediction_id = create_data.get("id")
+            if not prediction_id:
+                raise RuntimeError(f"No prediction ID in Atlas create response: {create_data}")
             
-            item = data["data"][0]
-            output_path = Path(output_path)
+            # Step 2: Poll until complete
+            poll_url = f"https://api.atlascloud.ai/api/v1/model/predictions/{prediction_id}"
+            poll_timeout = 120  # 2 minutes total
+            poll_interval = 2   # Check every 2 seconds
+            elapsed = 0
             
-            # Handle URL response (preferred)
-            if "url" in item and item["url"]:
-                image_url = item["url"]
-                img_response = requests.get(image_url, timeout=60)
-                img_response.raise_for_status()
-                output_path.write_bytes(img_response.content)
-                return
+            while elapsed < poll_timeout:
+                poll_response = requests.get(poll_url, headers=headers, timeout=10)
+                poll_response.raise_for_status()
+                prediction = poll_response.json()
+                
+                status = prediction.get("status")
+                
+                if status == "succeeded":
+                    # Step 3: Extract base64 PNG
+                    output_data = prediction.get("output")
+                    
+                    if isinstance(output_data, str):
+                        # Base64-encoded PNG
+                        png_bytes = base64.b64decode(output_data)
+                        output_path = Path(output_path)
+                        output_path.write_bytes(png_bytes)
+                        return
+                    
+                    elif isinstance(output_data, list) and len(output_data) > 0:
+                        # Array of outputs, take first
+                        first_output = output_data[0]
+                        if isinstance(first_output, str):
+                            png_bytes = base64.b64decode(first_output)
+                            output_path = Path(output_path)
+                            output_path.write_bytes(png_bytes)
+                            return
+                    
+                    raise RuntimeError(f"Unexpected output format: {type(output_data)}")
+                
+                elif status == "failed":
+                    error = prediction.get("error", "Unknown error")
+                    raise RuntimeError(f"Atlas prediction failed: {error}")
+                
+                elif status in ("starting", "processing"):
+                    # Still processing, wait and poll again
+                    time.sleep(poll_interval)
+                    elapsed += poll_interval
+                else:
+                    raise RuntimeError(f"Unknown Atlas prediction status: {status}")
             
-            # Handle base64 response (fallback, matches Whop Frontier behavior)
-            if "b64_json" in item and item["b64_json"]:
-                b64_data = item["b64_json"]
-                png_bytes = base64.b64decode(b64_data)
-                output_path.write_bytes(png_bytes)
-                return
-            
-            raise RuntimeError(f"No url or b64_json in Atlas response: {item.keys()}")
+            raise RuntimeError(f"Atlas prediction polling timeout after {poll_timeout}s")
         
         except Exception as e:
             last_error = e
