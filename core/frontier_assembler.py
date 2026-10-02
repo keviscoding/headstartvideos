@@ -33,6 +33,7 @@ def assemble_frontier_video(
     add_vignette: bool = False,
     dust_overlay_path: str | Path | None = None,
     zoom_amount: float = 0.15,
+    word_timings: list[dict] | None = None,
     progress_callback=None,
 ) -> dict:
     """
@@ -49,6 +50,7 @@ def assemble_frontier_video(
         add_vignette: Apply dark vignette
         dust_overlay_path: Path to dust overlay video (if add_dust=True)
         zoom_amount: Ken Burns zoom factor (0.1-0.3)
+        word_timings: Optional list of {word, start, end} dicts for kinetic captions
         progress_callback: Optional callback(message: str)
     
     Returns:
@@ -100,12 +102,13 @@ def assemble_frontier_video(
     if progress_callback:
         progress_callback("Burning in subtitles...")
     
-    # Burn subtitles with ASS style
+    # Burn subtitles with ASS style (with word-level kinetic if available)
     subtitled_path = temp_dir / "subtitled.mp4"
     _burn_subtitles(
         video_path=concat_path,
         subtitle_path=subtitle_path,
         output_path=subtitled_path,
+        word_timings=word_timings,
     )
     
     # Apply dust overlay if requested
@@ -290,11 +293,16 @@ def _concatenate_segments(segment_paths: list[Path], output_path: Path, fps: int
     concat_file.unlink()
 
 
-def _burn_subtitles(video_path: Path, subtitle_path: Path, output_path: Path):
+def _burn_subtitles(
+    video_path: Path,
+    subtitle_path: Path,
+    output_path: Path,
+    word_timings: list[dict] | None = None,
+):
     """Burn ASS subtitles with kinetic style."""
-    # Convert SRT to ASS with Frontier style
+    # Convert SRT to ASS with Frontier style (with word-level karaoke if available)
     ass_path = subtitle_path.parent / (subtitle_path.stem + "_frontier.ass")
-    _convert_srt_to_ass(subtitle_path, ass_path)
+    _convert_srt_to_ass(subtitle_path, ass_path, word_timings=word_timings)
     
     cmd = [
         "ffmpeg", "-y",
@@ -308,22 +316,31 @@ def _burn_subtitles(video_path: Path, subtitle_path: Path, output_path: Path):
     subprocess.run(cmd, check=True, capture_output=True)
 
 
-def _convert_srt_to_ass(srt_path: Path, ass_path: Path, accent_color: str = "&H96B8C9&"):
+def _convert_srt_to_ass(
+    srt_path: Path,
+    ass_path: Path,
+    accent_color: str = "&H96B8C9&",
+    word_timings: list[dict] | None = None,
+):
     """
     Convert SRT to ASS with Frontier kinetic caption style.
     
+    If word_timings provided, creates word-level karaoke effects where each
+    word flashes in accent color as it's spoken (Frontier's signature style).
+    
     ASS colors are in &HBBGGRR& format (BGR, not RGB).
     Default accent: #C9B896 (warm gold) -> &H96B8C9&
+    
+    Args:
+        srt_path: Input SRT file
+        ass_path: Output ASS file  
+        accent_color: ASS color for word flash (&HBBGGRR& format)
+        word_timings: Optional list of {word, start, end} dicts from Whisper
     """
     # Read SRT
     with open(srt_path, "r", encoding="utf-8") as f:
         srt_content = f.read()
     
-    # Basic SRT to ASS conversion
-    # For now, use ffmpeg's built-in conversion then style it
-    # Full kinetic word-level would require parsing and tagging each word
-    
-    # Simple approach: use subtitle filter with custom style
     ass_header = f"""[Script Info]
 Title: Frontier Subtitles
 ScriptType: v4.00+
@@ -339,7 +356,7 @@ Style: Default,Inter ExtraBold,73,&HFFFFFF&,{accent_color},&H000000&,&H64000000&
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     
-    # Parse SRT and convert to ASS events
+    # Parse SRT blocks
     events = []
     blocks = [b.strip() for b in srt_content.strip().split("\n\n") if b.strip()]
     
@@ -349,22 +366,89 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             timing_line = lines[1]
             text_lines = lines[2:]
             
-            # Parse timing: 00:00:01,000 --> 00:00:03,000
-            if " --> " in timing_line:
-                start, end = timing_line.split(" --> ")
-                start_ass = _srt_time_to_ass(start.strip())
-                end_ass = _srt_time_to_ass(end.strip())
-                
-                text = " ".join(text_lines).strip()
-                # Escape special characters
-                text = text.replace("{", "\\{").replace("}", "\\}")
-                
-                events.append(f"Dialogue: 0,{start_ass},{end_ass},Default,,0,0,0,,{text}")
+            if " --> " not in timing_line:
+                continue
+            
+            start, end = timing_line.split(" --> ")
+            start_ass = _srt_time_to_ass(start.strip())
+            end_ass = _srt_time_to_ass(end.strip())
+            
+            text = " ".join(text_lines).strip()
+            
+            # If we have word timings, create kinetic karaoke effect
+            if word_timings:
+                text = _add_kinetic_karaoke(text, start, end, word_timings, accent_color)
+            
+            # Escape special characters
+            text = text.replace("{", "\\{").replace("}", "\\}")
+            
+            events.append(f"Dialogue: 0,{start_ass},{end_ass},Default,,0,0,0,,{text}")
     
     ass_content = ass_header + "\n".join(events)
     
     with open(ass_path, "w", encoding="utf-8") as f:
         f.write(ass_content)
+
+
+def _add_kinetic_karaoke(
+    subtitle_text: str,
+    sub_start: str,
+    sub_end: str,
+    word_timings: list[dict],
+    accent_color: str,
+) -> str:
+    r"""
+    Add word-level karaoke effect using ASS \k tags.
+    
+    Each word gets a \k duration tag, and we use color override to flash
+    the accent color as each word is spoken (Frontier's kinetic style).
+    
+    Returns ASS-formatted text with \k tags and color overrides.
+    """
+    # Convert SRT times to seconds
+    sub_start_sec = _srt_time_to_seconds(sub_start)
+    sub_end_sec = _srt_time_to_seconds(sub_end)
+    
+    # Find words that fall in this subtitle's time range
+    subtitle_words = []
+    for word_timing in word_timings:
+        word_start = word_timing["start"]
+        if sub_start_sec <= word_start < sub_end_sec:
+            subtitle_words.append(word_timing)
+    
+    if not subtitle_words:
+        # No word timings in this range, return plain text
+        return subtitle_text
+    
+    # Build text with \k tags
+    # \k<duration> makes the next word appear with karaoke timing
+    # {\\c&HCOLOR&} changes color
+    result = ""
+    
+    for i, word_timing in enumerate(subtitle_words):
+        word = word_timing["word"]
+        word_start = word_timing["start"]
+        word_end = word_timing["end"]
+        
+        # Duration in centiseconds for \k tag
+        duration_cs = int((word_end - word_start) * 100)
+        
+        # Add word with kinetic color flash
+        # Primary color changes to accent during the word's duration
+        result += f"{{\\k{duration_cs}\\c{accent_color}}}{word} "
+    
+    return result.strip()
+
+
+def _srt_time_to_seconds(srt_time: str) -> float:
+    """Convert SRT timestamp to seconds."""
+    # SRT format: 00:00:01,000
+    if "," in srt_time:
+        time_part, ms_part = srt_time.split(",")
+        h, m, s = map(int, time_part.split(":"))
+        ms = int(ms_part)
+        return h * 3600 + m * 60 + s + ms / 1000.0
+    return 0.0
 
 
 def _srt_time_to_ass(srt_time: str) -> str:

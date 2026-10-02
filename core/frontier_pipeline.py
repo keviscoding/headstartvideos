@@ -255,6 +255,7 @@ def run_frontier_pipeline(
         add_dust=add_dust and dust_path is not None,
         add_vignette=add_vignette,
         dust_overlay_path=dust_path,
+        word_timings=all_words,  # Pass Whisper word timings for kinetic captions
         progress_callback=_log,
     )
 
