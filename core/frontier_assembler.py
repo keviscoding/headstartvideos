@@ -20,6 +20,52 @@ from typing import Literal
 from core.frontier_motion_planner import MotionSegment
 
 
+_FFMPEG_CANDIDATES = [
+    "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg",
+    "/opt/homebrew/bin/ffmpeg",
+    "ffmpeg",
+]
+_FFPROBE_CANDIDATES = [
+    "/opt/homebrew/opt/ffmpeg-full/bin/ffprobe",
+    "/opt/homebrew/bin/ffprobe",
+    "ffprobe",
+]
+
+
+def _ffmpeg_bin() -> str:
+    import shutil
+    for c in _FFMPEG_CANDIDATES:
+        if c in ("ffmpeg", "ffprobe"):
+            continue
+        if Path(c).exists():
+            return c
+    return shutil.which("ffmpeg") or "ffmpeg"
+
+
+def _ffprobe_bin() -> str:
+    import shutil
+    for c in _FFPROBE_CANDIDATES:
+        if c in ("ffmpeg", "ffprobe"):
+            continue
+        if Path(c).exists():
+            return c
+    return shutil.which("ffprobe") or "ffprobe"
+
+
+def _escape_ass_filter_path(path: Path) -> str:
+    """Escape path for ffmpeg ass= filter (spaces/colons safe)."""
+    s = str(path.resolve())
+    s = s.replace("\\", "\\\\")
+    s = s.replace(":", "\\:")
+    s = s.replace("'", "\\'")
+    s = s.replace("[", "\\[")
+    s = s.replace("]", "\\]")
+    s = s.replace(",", "\\,")
+    s = s.replace(";", "\\;")
+    return s
+
+
+
 def assemble_frontier_video(
     motion_segments: list[MotionSegment],
     voiceover_path: str | Path,
@@ -32,7 +78,7 @@ def assemble_frontier_video(
     add_dust: bool = False,
     add_vignette: bool = False,
     dust_overlay_path: str | Path | None = None,
-    zoom_amount: float = 0.15,
+    zoom_amount: float = 0.28,
     word_timings: list[dict] | None = None,
     progress_callback=None,
 ) -> dict:
@@ -182,7 +228,7 @@ def _build_segment_video(
             # Need to loop
             loop_count = int(duration / video_dur) + 1
             cmd = [
-                "ffmpeg", "-y",
+                _ffmpeg_bin(), "-y",
                 "-stream_loop", str(loop_count),
                 "-i", str(input_path),
                 "-t", str(duration),
@@ -194,7 +240,7 @@ def _build_segment_video(
             ]
         else:
             cmd = [
-                "ffmpeg", "-y",
+                _ffmpeg_bin(), "-y",
                 "-ss", "0",
                 "-i", str(input_path),
                 "-t", str(duration),
@@ -221,19 +267,21 @@ def _build_segment_video(
             vf += f",{color_grade}"
         
         cmd = [
-            "ffmpeg", "-y",
+            _ffmpeg_bin(), "-y",
             "-loop", "1",
             "-i", str(input_path),
             "-t", str(duration),
             "-vf", vf,
             "-r", str(fps),  # Normalize FPS
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
             "-pix_fmt", "yuv420p",
             "-an",
             str(output_path),
         ]
-    
-    subprocess.run(cmd, check=True, capture_output=True)
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"segment encode failed: {(result.stderr or '')[-1500:]}")
 
 
 def _ken_burns_filter(
@@ -242,38 +290,34 @@ def _ken_burns_filter(
     fps: int,
     width: int,
     height: int,
-    zoom_amount: float = 0.28,  # Mac hardened: ~0.28 for visible smooth motion
+    zoom_amount: float = 0.28,
 ) -> str:
-    """Generate ffmpeg filter for Ken Burns zoom effect (minimum 12% delta)."""
+    """Generate ffmpeg zoompan Ken Burns (hold gets subtle push-in so nothing is static)."""
+    # Remap hold -> subtle zoom-in (Frontier never fully freezes)
     if zoom_type == "hold":
-        # No zoom, just scale to fit
-        return f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"
-    
-    # Ensure minimum visible zoom
-    zoom_amount = max(zoom_amount, 0.12)
-    
-    total_frames = int(duration * fps)
-    
-    # Ken Burns: zoom from 1.0 to (1.0 + zoom_amount)
-    if zoom_type == "in":
-        # Zoom in: start at 1.0, end at 1.0 + zoom_amount
-        start_zoom = 1.0
-        end_zoom = 1.0 + zoom_amount
-    else:  # zoom_type == "out"
-        # Zoom out: start at 1.0 + zoom_amount, end at 1.0
+        zoom_type = "in"
+        zoom_amount = max(0.12, zoom_amount * 0.45)
+
+    zoom_amount = max(float(zoom_amount), 0.12)
+    total_frames = max(2, int(round(duration * fps)))
+
+    if zoom_type == "out":
         start_zoom = 1.0 + zoom_amount
         end_zoom = 1.0
-    
-    # Use zoompan filter for smooth zoom
-    # Linear zoom formula: interpolate from start_zoom to end_zoom over total_frames
-    zoom_expr = f"'if(lte(on,1),{start_zoom},{start_zoom}+({end_zoom}-{start_zoom})*(on-1)/({total_frames}-1))'"
-    
-    # Mac hardened: 2× scale headroom for smoother zoom
-    input_scale = int(width * 2.0)
-    
+    else:
+        start_zoom = 1.0
+        end_zoom = 1.0 + zoom_amount
+
+    zoom_expr = f"{start_zoom}+({end_zoom}-{start_zoom})*(on/{total_frames})"
+    scale_w = int(width * 2.0)
+    scale_h = int(height * 2.0)
+
     return (
-        f"scale={input_scale}:-1:force_original_aspect_ratio=increase,"
-        f"zoompan=z={zoom_expr}:d={total_frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={width}x{height}:fps={fps}"
+        f"scale={scale_w}:{scale_h}:force_original_aspect_ratio=increase,"
+        f"crop={scale_w}:{scale_h},"
+        f"zoompan=z='{zoom_expr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+        f":d={total_frames}:s={width}x{height}:fps={fps},"
+        f"setsar=1"
     )
 
 
@@ -286,7 +330,7 @@ def _concatenate_segments(segment_paths: list[Path], output_path: Path, fps: int
             f.write(f"file '{seg_path.absolute()}'\n")
     
     cmd = [
-        "ffmpeg", "-y",
+        _ffmpeg_bin(), "-y",
         "-f", "concat",
         "-safe", "0",
         "-i", str(concat_file),
@@ -305,26 +349,41 @@ def _burn_subtitles(
     word_timings: list[dict] | None = None,
 ):
     """Burn ASS subtitles with kinetic style using libass filter."""
-    # If input is already ASS, use it directly; otherwise convert SRT to ASS
-    if subtitle_path.suffix.lower() == ".ass":
-        ass_path = subtitle_path
+    import tempfile as _tempfile
+    ff = _ffmpeg_bin()
+    # Always materialize ASS into a space-free temp path for safe ass= filter
+    tmp_ass = Path(_tempfile.mkdtemp(prefix="frontier_ass_")) / "captions.ass"
+
+    if subtitle_path.suffix.lower() == ".ass" and not word_timings:
+        raw = subtitle_path.read_text(encoding="utf-8")
+        # Un-escape any wrongly escaped overrides from older runs
+        tmp_ass.write_text(raw.replace("\\{", "{").replace("\\}", "}"), encoding="utf-8")
     else:
-        # Convert SRT to ASS with Frontier style (with word-level karaoke if available)
-        ass_path = subtitle_path.parent / (subtitle_path.stem + "_frontier.ass")
-        _convert_srt_to_ass(subtitle_path, ass_path, word_timings=word_timings)
-    
-    # Burn with libass filter (handles \k karaoke tags correctly)
-    # CRITICAL: Use ass= filter, NOT subtitles= (subtitles doesn't support ASS karaoke)
+        srt = subtitle_path
+        if srt.suffix.lower() != ".srt":
+            sibling = srt.parent / "subtitles.srt"
+            if sibling.exists():
+                srt = sibling
+        _convert_srt_to_ass(srt, tmp_ass, word_timings=word_timings, center=True)
+
+    # Safety: never leave escaped override braces
+    body = tmp_ass.read_text(encoding="utf-8")
+    if "\\{\\k" in body or "\\{k" in body:
+        body = body.replace("\\{", "{").replace("\\}", "}")
+        tmp_ass.write_text(body, encoding="utf-8")
+
+    esc = _escape_ass_filter_path(tmp_ass)
     cmd = [
-        "ffmpeg", "-y",
+        ff, "-y",
         "-i", str(video_path),
-        "-vf", f"ass={str(ass_path)}",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        "-vf", f"ass={esc}",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
         "-c:a", "copy",
         str(output_path),
     ]
-    
-    subprocess.run(cmd, check=True, capture_output=True)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"ass burn failed: {(result.stderr or '')[-1500:]}")
 
 
 def _convert_srt_to_ass(
@@ -332,147 +391,161 @@ def _convert_srt_to_ass(
     ass_path: Path,
     accent_color: str = "&H96B8C9&",
     word_timings: list[dict] | None = None,
+    center: bool = True,
 ):
     """
-    Convert SRT to ASS with Frontier kinetic caption style.
-    
-    If word_timings provided, creates word-level karaoke effects where each
-    word flashes in accent color as it's spoken (Frontier's signature style).
-    
-    ASS colors are in &HBBGGRR& format (BGR, not RGB).
-    Default accent: #C9B896 (warm gold) -> &H96B8C9&
-    
-    Args:
-        srt_path: Input SRT file
-        ass_path: Output ASS file  
-        accent_color: ASS color for word flash (&HBBGGRR& format)
-        word_timings: Optional list of {word, start, end} dicts from Whisper
+    Convert SRT to ASS with Whop Jung kinetic captions.
+
+    Word highlight uses \\1c + \\t transforms (white → warm gold → white), NOT bare \\k.
+    Centered (Alignment=5) by default to match Jung; fade + heavy outline/shadow.
+    ASS colors are &HBBGGRR&. Accent #C9B896 (warm gold) -> &H96B8C9&.
     """
-    # Read SRT
     with open(srt_path, "r", encoding="utf-8") as f:
         srt_content = f.read()
-    
-    # Jung Frontier style: CENTER screen kinetic captions (not bottom)
-    # Alignment=5 = center screen (not 2 = bottom center)
-    # SecondaryColour = yellow/gold highlight that renders during karaoke
-    # Larger bold font for visibility
+
+    # Prefer Inter ExtraBold (Whop); fall back to Montserrat ExtraBold if missing
+    font = "Inter ExtraBold"
+    size = 78 if center else 73
+    align = 5 if center else 2
+    marginv = 0 if center else 96
+    # Heavy outline+shadow like Whop (scaled for ~73-78px)
+    k = size / 56.0
+    outline = round(5.2 * k, 2)
+    shadow = round(4.0 * k, 2)
+
     ass_header = f"""[Script Info]
 Title: Frontier Subtitles
 ScriptType: v4.00+
 PlayResX: 1920
 PlayResY: 1080
-WrapStyle: 0
+WrapStyle: 2
+ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Inter ExtraBold,84,&HFFFFFF&,{accent_color},&H000000&,&H64000000&,1,0,0,0,100,100,0,0,1,4.0,0,5,20,20,0,1
+Style: Default,{font},{size},&H00FFFFFF,&H000000FF,&H00121212,&H64000000,0,0,0,0,100,100,0,0,1,{outline},{shadow},{align},80,80,{marginv},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
-    
-    # Parse SRT blocks
+
     events = []
     blocks = [b.strip() for b in srt_content.strip().split("\n\n") if b.strip()]
-    
+
     for block in blocks:
         lines = block.split("\n")
-        if len(lines) >= 3:
-            timing_line = lines[1]
-            text_lines = lines[2:]
-            
-            if " --> " not in timing_line:
-                continue
-            
-            start, end = timing_line.split(" --> ")
-            start_ass = _srt_time_to_ass(start.strip())
-            end_ass = _srt_time_to_ass(end.strip())
-            
-            text = " ".join(text_lines).strip()
-            
-            # If we have word timings, create kinetic karaoke effect
-            if word_timings:
-                text = _add_kinetic_karaoke(text, start, end, word_timings, accent_color)
-            else:
-                # No karaoke: escape plain text braces that would be interpreted as overrides
-                text = text.replace("{", "\\{").replace("}", "\\}")
-            
-            # DO NOT escape after adding karaoke - {\k...} tags must remain literal
-            
-            events.append(f"Dialogue: 0,{start_ass},{end_ass},Default,,0,0,0,,{text}")
-    
-    ass_content = ass_header + "\n".join(events)
-    
-    with open(ass_path, "w", encoding="utf-8") as f:
-        f.write(ass_content)
+        if len(lines) < 3:
+            continue
+        timing_line = lines[1]
+        text_lines = lines[2:]
+        if " --> " not in timing_line:
+            continue
+        start, end = timing_line.split(" --> ")
+        start_ass = _srt_time_to_ass(start.strip())
+        end_ass = _srt_time_to_ass(end.strip())
+        plain = " ".join(text_lines).strip()
+        if word_timings:
+            body = _add_kinetic_color_flash(plain, start, end, word_timings, accent_color)
+        else:
+            body = _add_kinetic_color_flash_estimated(plain, start, end, accent_color)
+        events.append(
+            f"Dialogue: 0,{start_ass},{end_ass},Default,,0,0,0,,"
+            f"{{\\fad(170,170)}}{body}"
+        )
+
+    ass_path.write_text(ass_header + "\n".join(events) + "\n", encoding="utf-8")
 
 
-def _add_kinetic_karaoke(
+def _word_flash_tag(word: str, on_ms: int, off_ms: int, accent: str, cue_ms: int) -> str:
+    """One word: white → gold pop → white (Whop Jung \\1c+\\t grammar)."""
+    on = max(0, int(on_ms))
+    off = max(on + 40, int(off_ms))
+    off = min(off, max(on + 40, int(cue_ms)))
+    gold_end = min(off, on + 90)
+    back_end = min(int(cue_ms), off + 90)
+    w = word.replace("{", "(").replace("}", ")")
+    # Build with concatenation so % / braces never confuse printf
+    return (
+        "{\\1c&HFFFFFF&"
+        f"\\t({on},{gold_end},\\1c{accent}\\fscx108\\fscy108)"
+        f"\\t({off},{back_end},\\1c&HFFFFFF&\\fscx100\\fscy100)"
+        f"}}{w}"
+    )
+
+
+def _add_kinetic_color_flash(
     subtitle_text: str,
     sub_start: str,
     sub_end: str,
     word_timings: list[dict],
     accent_color: str,
 ) -> str:
-    r"""
-    Add word-level karaoke effect using ASS \k tags.
-    
-    Each word gets a \k duration tag, and we use color override to flash
-    the accent color as each word is spoken (Frontier's kinetic style).
-    
-    The \k tag duration is in centiseconds (100ths of a second).
-    Frontier uses precise word-level timing derived from Whisper alignment.
-    
-    Returns ASS-formatted text with \k tags and color overrides.
-    """
-    # Convert SRT times to seconds
+    """Whop Jung: each spoken word flashes warm gold via \\1c + \\t, with a tiny pop."""
     sub_start_sec = _srt_time_to_seconds(sub_start)
     sub_end_sec = _srt_time_to_seconds(sub_end)
-    
-    # Find words that fall in this subtitle's time range
+    cue_dur_ms = max(1, int((sub_end_sec - sub_start_sec) * 1000))
+
     subtitle_words = []
-    for word_timing in word_timings:
-        word_start = word_timing["start"]
-        # Include words that start before subtitle end
-        if sub_start_sec <= word_start < sub_end_sec:
-            subtitle_words.append(word_timing)
-    
+    for wt in word_timings:
+        ws = wt["start"]
+        if sub_start_sec - 0.05 <= ws < sub_end_sec:
+            subtitle_words.append(wt)
+
     if not subtitle_words:
-        # No word timings in this range, return plain text
-        return subtitle_text
-    
-    # Build text with \k tags
-    # \k<duration> makes the next syllable/word light up with karaoke timing
-    # The accent color flashes on each word as it's spoken
-    result = ""
-    
-    for i, word_timing in enumerate(subtitle_words):
-        word = word_timing["word"].strip()
-        word_start = word_timing["start"]
-        word_end = word_timing["end"]
-        
-        # Duration in centiseconds for \k tag
-        # This is how long the word is highlighted in the accent color
-        duration_cs = max(1, int((word_end - word_start) * 100))
-        
-        # Jung/Frontier style: Each word flashes gold as spoken
-        # The \k tag controls the karaoke sweep duration
-        # The color override makes it appear in accent during that duration
-        result += f"{{\\k{duration_cs}\\c{accent_color}}}{word} "
-    
-    return result.strip()
+        return _add_kinetic_color_flash_estimated(subtitle_text, sub_start, sub_end, accent_color)
+
+    chunks = []
+    for wt in subtitle_words:
+        word = wt["word"].strip()
+        on = int((wt["start"] - sub_start_sec) * 1000)
+        off = int((wt["end"] - sub_start_sec) * 1000)
+        chunks.append(_word_flash_tag(word, on, off, accent_color, cue_dur_ms))
+    return " ".join(chunks)
+
+
+def _add_kinetic_color_flash_estimated(
+    subtitle_text: str,
+    sub_start: str,
+    sub_end: str,
+    accent_color: str,
+) -> str:
+    """Fallback: share cue duration by word length (Whop estimate)."""
+    sub_start_sec = _srt_time_to_seconds(sub_start)
+    sub_end_sec = _srt_time_to_seconds(sub_end)
+    dur = max(0.2, sub_end_sec - sub_start_sec)
+    cue_ms = int(dur * 1000)
+    words = [w for w in subtitle_text.split() if w.strip()]
+    if not words:
+        return subtitle_text.replace("{", "(").replace("}", ")")
+    weights = [max(2, len(w)) for w in words]
+    tot = float(sum(weights)) or 1.0
+    marks, acc = [], 0.0
+    for wgt in weights:
+        marks.append(dur * 0.92 * (acc / tot))
+        acc += wgt
+    marks.append(dur * 0.92)
+    chunks = []
+    for wi, w in enumerate(words):
+        on = int(marks[wi] * 1000)
+        off = int(marks[wi + 1] * 1000)
+        chunks.append(_word_flash_tag(w, on, off, accent_color, cue_ms))
+    return " ".join(chunks)
 
 
 def _srt_time_to_seconds(srt_time: str) -> float:
     """Convert SRT timestamp to seconds."""
-    # SRT format: 00:00:01,000
     if "," in srt_time:
         time_part, ms_part = srt_time.split(",")
         h, m, s = map(int, time_part.split(":"))
         ms = int(ms_part)
         return h * 3600 + m * 60 + s + ms / 1000.0
-    return 0.0
-
+    # ASS-ish
+    if "." in srt_time:
+        time_part, frac = srt_time.split(".")
+        h, m, s = map(int, time_part.split(":"))
+        return h * 3600 + m * 60 + s + int(frac.ljust(3, "0")[:3]) / 1000.0
+    h, m, s = map(int, srt_time.split(":"))
+    return h * 3600 + m * 60 + s
 
 def _srt_time_to_ass(srt_time: str) -> str:
     """Convert SRT timestamp to ASS format."""
@@ -488,46 +561,62 @@ def _srt_time_to_ass(srt_time: str) -> str:
 
 
 def _apply_dust_overlay(video_path: Path, dust_path: Path, output_path: Path):
-    """Apply dust overlay with scale-safe blend (1080p dust asset)."""
+    """Apply dust overlay with RGB screen blend (Whop path — YUV screen tints magenta)."""
+    dur = _get_duration(video_path)
+    dust = Path(dust_path)
+    alt = dust.with_name("overlay_dust_1080.mp4")
+    if alt.exists():
+        dust = alt
+    # Full-strength screen in gbrp (Whop). Optional soft grain after for film density.
+    fc = (
+        "[1:v]scale=1920:1080:force_original_aspect_ratio=increase,"
+        "crop=1920:1080,fps=30,setsar=1,format=gbrp[dust];"
+        "[0:v]format=gbrp[base];"
+        "[base][dust]blend=all_mode=screen:shortest=1,format=yuv420p,"
+        "noise=alls=8:allf=t+u[v]"
+    )
     cmd = [
-        "ffmpeg", "-y",
+        _ffmpeg_bin(), "-y",
         "-i", str(video_path),
         "-stream_loop", "-1",
-        "-i", str(dust_path),
-        "-filter_complex",
-        # Scale dust to match video dimensions, then blend
-        "[1:v]scale=1920:1080[dust];[0:v][dust]blend=all_mode=screen:all_opacity=0.25[v]",
+        "-i", str(dust),
+        "-filter_complex", fc,
         "-map", "[v]",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-        "-t", str(_get_duration(video_path)),
+        "-map", "0:a?",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+        "-c:a", "copy",
+        "-t", f"{dur:.4f}",
         str(output_path),
     ]
-    
-    subprocess.run(cmd, check=True, capture_output=True)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"dust overlay failed: {(result.stderr or '')[-1500:]}")
 
 
-def _apply_vignette(video_path: Path, output_path: Path, strength: float = 0.35):
-    """Apply dark vignette around edges (mild angle-only, no iris wipe)."""
-    # Do NOT pass a={strength} - causes iris wipe artifact
-    # Use angle-only for mild corner darkening matching Jung
-    vignette_filter = "vignette=angle=PI/3:mode=forward:eval=frame"
-    
+def _apply_vignette(video_path: Path, output_path: Path, strength: float = 0.55):
+    """Darker edge vignette matching Whop (angle=PI/4). Avoid tiny angles (iris wipe)."""
+    import math
+    # Whop uses PI/4. strength 0..1 maps PI/3.2 (mild) → PI/4.5 (deeper)
+    angle = (math.pi / 3.2) - strength * ((math.pi / 3.2) - (math.pi / 4.5))
+    angle = max(math.pi / 4.8, min(math.pi / 3.0, angle))
+    ff = _ffmpeg_bin()
     cmd = [
-        "ffmpeg", "-y",
+        ff, "-y",
         "-i", str(video_path),
-        "-vf", vignette_filter,
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        "-vf", f"vignette=angle={angle}:mode=forward:eval=init",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
         "-c:a", "copy",
         str(output_path),
     ]
-    
-    subprocess.run(cmd, check=True, capture_output=True)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"vignette failed: {(result.stderr or '')[-1200:]}")
 
 
 def _mix_audio(video_path: Path, audio_path: Path, output_path: Path):
     """Mix video with voiceover audio."""
     cmd = [
-        "ffmpeg", "-y",
+        _ffmpeg_bin(), "-y",
         "-i", str(video_path),
         "-i", str(audio_path),
         "-c:v", "copy",
@@ -543,7 +632,7 @@ def _mix_audio(video_path: Path, audio_path: Path, output_path: Path):
 def _get_duration(path: Path) -> float:
     """Get duration of audio/video file in seconds."""
     cmd = [
-        "ffprobe", "-v", "error",
+        _ffprobe_bin(), "-v", "error",
         "-show_entries", "format=duration",
         "-of", "default=noprint_wrappers=1:nokey=1",
         str(path),
@@ -554,3 +643,4 @@ def _get_duration(path: Path) -> float:
         return float(result.stdout.strip())
     except:
         return 0.0
+

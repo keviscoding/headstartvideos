@@ -36,7 +36,7 @@ def run_frontier_pipeline(
     progress_callback=None,
     lite_mode: bool = False,
     image_quality: str = "standard",
-    color_grade: str = "eq=brightness=-0.06:saturation=0.62:contrast=1.10,colortemperature=temperature=5200",  # Jung look from jung.json (NO purple)
+    color_grade: str = "eq=brightness=-0.06:saturation=0.62:contrast=1.10,colortemperature=temperature=5200",  # Jung look EXACT from jung.json
     add_dust: bool = True,
     add_vignette: bool = True,
 ) -> dict:
@@ -267,6 +267,7 @@ def run_frontier_pipeline(
         add_dust=add_dust and dust_path is not None,
         add_vignette=add_vignette,
         dust_overlay_path=dust_path,
+        zoom_amount=0.28,
         word_timings=all_words,  # Pass Whisper word timings for kinetic captions
         progress_callback=_log,
     )
