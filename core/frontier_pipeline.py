@@ -246,10 +246,11 @@ def run_frontier_pipeline(
         # Extract transcript sentences for semantic GFX titles
         transcript_sentences = [sent.text for sent in sentence_times]
         
-        # Plan GFX insertions per jung.json pacing (~every 30s)
+        # Plan GFX insertions with VO-keyword-locking (Kevis mandate: ≤0.3s lag)
         gfx_specs = frontier_motion_graphics.plan_gfx_insertions(
             total_duration_sec=audio_dur,
             transcript_sentences=transcript_sentences,
+            word_timings=all_words,  # Whisper word-level timings for VO-locking
         )
         
         _log(f"  Rendering {len(gfx_specs)} collage cards...")

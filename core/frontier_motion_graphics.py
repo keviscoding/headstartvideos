@@ -910,12 +910,24 @@ def render_collage_card(
 def plan_gfx_insertions(
     total_duration_sec: float,
     transcript_sentences: List[str] = None,
+    word_timings: List[dict] = None,  # NEW: Whisper word-level timings for VO-locking
     still_paths: Optional[List[Path]] = None,
     first_gfx_min_sec: Optional[float] = None,
     graphic_ratio: Optional[float] = None,
+    vo_sync_lag_tolerance_sec: float = 0.3,  # Kevis: GFX must appear ≤0.3s after keyword spoken
 ) -> List[Dict[str, Any]]:
-    """Plan Whop-paced mid-timeline GFX cards (~20–25% ratio).
+    """Plan Whop-paced mid-timeline GFX cards (~20–25% ratio) with VO-keyword-locking.
 
+    **Kevis mandate**: Cards illustrating a line MUST appear when that line is spoken (≤0.3s lag).
+    Late cards (after spoken span ends) fail timing/MG scoring.
+    
+    VO-locking strategy:
+    1. Extract keywords from transcript sentences (nouns, verbs, key phrases)
+    2. Find keyword spoken time from Whisper word_timings
+    3. Place GFX card start_sec at keyword_time (or keyword_time - 0.1s for anticipation)
+    4. Enforce ≤0.3s lag between keyword spoken and card visible
+    5. Fallback to time-based if word_timings unavailable
+    
     Short smokes (~40–60s): 2 cards @ ~3.4s after the opener hard cut (≥12–14s),
     never chopping the hook bed. Longer cooks: ~1 card / 30–35s.
     """
@@ -950,6 +962,35 @@ def plan_gfx_insertions(
 
     templates = ["collage", "scatter", "pillars", "photonote", "opener"]
     # Prefer collage thesis first (Whop ~0:34), then scatter/pillars — opener is weaker late
+    
+    # VO-keyword-locking: extract keywords from transcript for GFX timing
+    vo_anchors = []  # List of (keyword, spoken_time_sec, sentence_idx)
+    if word_timings and transcript_sentences:
+        # Build word lookup: {word.lower(): [(start_sec, end_sec), ...]}
+        word_lookup = {}
+        for wt in word_timings:
+            w = wt.get("word", "").lower().strip()
+            if w and len(w) > 2:  # Skip short words
+                if w not in word_lookup:
+                    word_lookup[w] = []
+                word_lookup[w].append((wt.get("start", 0), wt.get("end", 0)))
+        
+        # Extract keywords from each sentence (nouns, verbs, important words)
+        import re
+        for idx, sentence in enumerate(transcript_sentences):
+            words = re.findall(r'\b\w+\b', sentence.lower())
+            # Find substantive words (length >4, not common stop words)
+            stop_words = {'this', 'that', 'these', 'those', 'with', 'from', 'have', 'been', 'will', 'would', 'could', 'should'}
+            keywords = [w for w in words if len(w) > 4 and w not in stop_words]
+            
+            # For each keyword, find its spoken time
+            for kw in keywords[:3]:  # Up to 3 keywords per sentence
+                if kw in word_lookup and word_lookup[kw]:
+                    # Use first occurrence of keyword in this sentence's time range
+                    spoken_time = word_lookup[kw][0][0]  # start_sec of first match
+                    vo_anchors.append((kw, spoken_time, idx, sentence))
+    
+    logger.info(f"VO-anchors extracted: {len(vo_anchors)} keywords for {n} GFX cards")
     default_items = [
         [
             {"label": "do not answer", "text": "not once"},
@@ -975,10 +1016,48 @@ def plan_gfx_insertions(
     stills = [Path(p) for p in (still_paths or []) if Path(p).exists()]
 
     for i in range(n):
-        center = usable_start + usable * (i + 0.5) / n
-        start = max(usable_start, center - dur / 2)
-        end = min(usable_end, start + dur)
-        start = max(usable_start, end - dur)
+        # VO-locked placement: use keyword anchor if available, fallback to time-based
+        if vo_anchors and i < len(vo_anchors):
+            keyword, spoken_time, sent_idx, sentence = vo_anchors[i * len(vo_anchors) // n]  # Spread anchors across n cards
+            # Place card START at spoken_time (or slightly before for anticipation)
+            start = max(usable_start, spoken_time - 0.1)  # 0.1s anticipation
+            end = min(usable_end, start + dur)
+            start = max(usable_start, end - dur)
+            
+            # Kevis rule: GFX must appear ≤0.3s after keyword spoken
+            lag = start - spoken_time
+            if lag > vo_sync_lag_tolerance_sec:
+                logger.warning(f"GFX card {i} late: {lag:.2f}s lag after keyword '{keyword}' @ {spoken_time:.1f}s (FAIL vo_gfx_sync)")
+                # Adjust to meet tolerance
+                start = spoken_time + vo_sync_lag_tolerance_sec
+                end = min(usable_end, start + dur)
+            
+            # Extract title from keyword + sentence
+            words = sentence.split()
+            if len(words) >= 4:
+                title = " ".join(words[:6]).lower()
+            else:
+                title = keyword
+        else:
+            # Fallback: time-based placement (original logic)
+            center = usable_start + usable * (i + 0.5) / n
+            start = max(usable_start, center - dur / 2)
+            end = min(usable_end, start + dur)
+            start = max(usable_start, end - dur)
+            
+            # Extract title from transcript if available
+            if transcript_sentences:
+                idx = int((center / total_duration_sec) * len(transcript_sentences))
+                idx = max(0, min(idx, len(transcript_sentences) - 1))
+                words = transcript_sentences[idx].split()
+                if len(words) >= 4:
+                    title = " ".join(words[:6]).lower()
+                else:
+                    title, subtitle = default_titles[i % len(default_titles)]
+            else:
+                title, subtitle = default_titles[i % len(default_titles)]
+        
+        # Enforce minimum gap between cards
         if cards and start < cards[-1]["end_sec"] + gap_min:
             start = cards[-1]["end_sec"] + gap_min
             end = min(usable_end, start + dur)

@@ -25,7 +25,14 @@
    - Pexels gaps filled appropriately
    - Overall flow matching Jung Whop reference tempo
 
-4. **combined** /10
+4. **vo_gfx_sync** /10 (NEW - Kevis mandate)
+   - GFX cards illustrating a line MUST appear when that line is spoken
+   - **≤0.3s lag tolerance** between keyword spoken (Whisper) and card visible
+   - VO-keyword-locking: cards sync to Whisper word times
+   - **FAIL**: Late cards (appearing after spoken span ends)
+   - Penalty: −2.0 per late card, −1.0 per card >0.3s lag
+
+5. **combined** /10
    - Overall 1:1 match with Jung Whop Frontier
    - No single soft pillar (<9.0)
    - Visual cohesion across all elements
@@ -36,9 +43,10 @@
 - **timing_pacing ≥9.0** /10 (mandatory per formula)
 - **visual_bed ≥9.0** /10 (mandatory per formula)
 - **motion_graphics ≥9.0** /10 (mandatory per formula)
-- **ALL 3 pillars ≥9.0** before combined can merge
+- **vo_gfx_sync ≥9.0** /10 (NEW - Kevis mandate)
+- **ALL 4 content pillars ≥9.0** before combined can merge
 
-**Formula mandate**: Ship only if timing + visual_bed + motion_graphics all ≥9 AND combined ≥9.5
+**Formula + Kevis mandate**: Ship only if timing + visual_bed + motion_graphics + vo_gfx_sync all ≥9 AND combined ≥9.5
 
 ---
 
@@ -189,7 +197,80 @@
 
 ---
 
-## Pillar 4: combined /10
+## Pillar 4: vo_gfx_sync /10 (NEW - Kevis Mandate)
+
+### Definition:
+**GFX cards illustrating a line MUST appear when that line is spoken (≤0.3s lag), not after.**
+
+### Components:
+1. **VO-keyword-locking**: Cards sync to Whisper word times
+2. **≤0.3s lag tolerance**: Card appears within 0.3s of keyword spoken
+3. **No late cards**: Cards appearing after spoken span ends = FAIL
+4. **Keyword extraction**: Substantive words (nouns, verbs, key phrases) from transcript
+5. **Anticipation allowed**: Card can appear 0.1s before keyword (feels instant)
+
+### Kevis Rule:
+"GFX must sync to spoken VO — cards illustrating a line must appear when that line is spoken (≤0.3s lag), not after. Late cards (after spoken span ends) fail timing/MG."
+
+### Scoring:
+- **10/10**: All GFX cards sync to VO within ≤0.3s lag, keywords matched perfectly
+- **9/10**: 1 card with 0.3-0.5s lag (acceptable)
+- **8/10**: 2 cards with minor lag
+- **7/10**: 1 card late (after spoken span) OR 3+ cards >0.5s lag
+- **<7/10**: Multiple late cards, no VO-locking visible
+
+### Penalty:
+- **−2.0 per late card** (appearing after spoken span ends)
+- **−1.0 per card** with >0.3s lag (but before span ends)
+- **−0.5 per card** with 0.3-0.5s lag (minor)
+
+### Implementation (core/frontier_motion_graphics.py):
+
+```python
+# VO-keyword-locking strategy:
+1. Extract keywords from transcript (nouns, verbs >4 chars, not stop words)
+2. Find keyword spoken time from Whisper word_timings
+3. Place GFX start_sec at keyword_time - 0.1s (anticipation)
+4. Enforce ≤0.3s lag between keyword spoken and card visible
+5. Warn if lag >0.3s: "FAIL vo_gfx_sync"
+6. Fallback to time-based if word_timings unavailable
+```
+
+### Example (Good):
+- Keyword "shadow" spoken @ 23.4s
+- GFX card appears @ 23.3s (0.1s anticipation)
+- Lag: −0.1s (anticipation) ✅ **10/10**
+
+### Example (Acceptable):
+- Keyword "persona" spoken @ 45.2s
+- GFX card appears @ 45.5s (0.3s lag)
+- Lag: 0.3s ✅ **9/10** (at tolerance limit)
+
+### Example (FAIL):
+- Keyword "individuation" spoken @ 67.8s
+- Spoken span ends @ 69.2s
+- GFX card appears @ 69.5s (0.3s after span ends)
+- Lag: 1.7s ❌ **−2.0 penalty** (late card)
+
+### Mac v4 Prediction: 7.0-8.0 /10
+
+**What's Implemented**:
+- ✅ VO-keyword extraction (substantive words >4 chars)
+- ✅ Whisper word_timings passed to plan_gfx_insertions
+- ✅ Lag tolerance check (≤0.3s)
+- ✅ Warning logged if lag >0.3s
+- ⚠️ Keyword matching heuristic (may need tuning)
+
+**What Needs Testing**:
+- ⚠️ Keyword extraction quality (are right words chosen?)
+- ⚠️ Lag measurement accuracy (Whisper timing precision)
+- ⚠️ Fallback to time-based when word_timings empty
+
+**Expected v4 score**: **7.0-8.0** (VO-locking present, needs smoke verification)
+
+---
+
+## Pillar 5: combined /10
 
 ### Definition:
 Overall 1:1 match with Jung Whop Frontier. Honest side-by-side comparison of full rendered output against `jung-whop-ref-45s.mp4`.
