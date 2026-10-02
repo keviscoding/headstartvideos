@@ -28,7 +28,7 @@ class MotionSegment:
     
     def __init__(
         self,
-        type: Literal["ai_still", "pexels_video", "pexels_photo"],
+        type: Literal["ai_still", "pexels_video", "pexels_photo", "motion_gfx"],
         path: str | Path,
         start_sec: float,
         end_sec: float,

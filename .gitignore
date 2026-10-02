@@ -50,3 +50,9 @@ tmp_explainer_v2_frames/
 # Test-only JS deps (jsdom), installed on demand — see tests/js/README.md
 node_modules/
 package-lock.json
+
+# Local Whop pack artifacts (kit dir committed; tarballs/symlink local-only)
+assets/whop-gfx-pack.tgz
+assets/whop-gfx-pack-full.tgz
+assets/whop-gfx
+frontier-gfx-kit.tgz
