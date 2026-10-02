@@ -445,31 +445,29 @@ def _convert_srt_to_ass(
     word_timings: list[dict] | None = None,
     center: bool = False,
     no_sub_ranges: list[tuple[float, float]] | None = None,
-    first_caption_delay_sec: float = 2.0,  # Hook lock: first caption ≤2.0s (formula)
+    first_caption_max_sec: float = 2.0,
 ):
     """
     Convert SRT to ASS with Whop Jung kinetic captions.
 
-    Word highlight uses \\1c + \\t transforms (white → warm gold → white), NOT bare \\k.
+    Word highlight uses \1c + \t transforms (white → warm gold → white), NOT bare \k.
     Bottom-centre (Alignment=2) on beds per Dissect formula; fade + heavy outline/shadow.
     Pass center=True only for rare mid-frame experiments — not default.
     ASS colors are &HBBGGRR&. Accent #C9B896 (warm gold) -> &H96B8C9&.
-    
+
     Args:
-        no_sub_ranges: List of (start_sec, end_sec) ranges to mute captions
-                       (e.g. during motion_gfx cards to prevent caption/GFX overlap)
-        first_caption_delay_sec: Hook lock timing - first caption appears at this timestamp
-                                 (default 2.0s per formula)
+        no_sub_ranges: Mute/clip cues over motion_gfx windows (Whop never-overlay).
+        first_caption_max_sec: Formula "first caption ≤2.0s" — if the first cue starts
+            AFTER this, pull it forward so the hook gets text by 2.0s. Early cues (0.0)
+            are left alone (already compliant).
     """
     with open(srt_path, "r", encoding="utf-8") as f:
         srt_content = f.read()
 
-    # Prefer Inter ExtraBold (Whop); fall back to Montserrat ExtraBold if missing
     font = "Inter ExtraBold"
     size = 78 if center else 73
     align = 5 if center else 2
     marginv = 0 if center else 96
-    # Heavy outline+shadow like Whop (scaled for ~73-78px)
     k = size / 56.0
     outline = round(5.2 * k, 2)
     shadow = round(4.0 * k, 2)
@@ -493,7 +491,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     mute = list(no_sub_ranges or [])
 
     def _audible_fragments(st: float, en: float):
-        """Pieces of [st, en] outside mute/GFX windows (Whop)."""
         ranges = [(float(st), float(en))]
         for ms, me in mute:
             nxt = []
@@ -508,11 +505,22 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             ranges = nxt
         return [(a, b) for a, b in ranges if b - a >= 0.25]
 
+    def _sec_to_srt(sec: float) -> str:
+        h = int(sec // 3600)
+        m = int((sec % 3600) // 60)
+        s = int(sec % 60)
+        ms = int(round((sec - int(sec)) * 1000))
+        if ms >= 1000:
+            s += 1
+            ms -= 1000
+        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
     events = []
     dropped = 0
     blocks = [b.strip() for b in srt_content.strip().split("\n\n") if b.strip()]
+    cue_idx = 0
 
-    for idx, block in enumerate(blocks):
+    for block in blocks:
         lines = block.split("\n")
         if len(lines) < 3:
             continue
@@ -521,42 +529,24 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if " --> " not in timing_line:
             continue
         start, end = timing_line.split(" --> ")
-        start_sec = _srt_time_to_seconds(start.strip())
-        end_sec = _srt_time_to_seconds(end.strip())
-        
-        # Hook lock: first caption appears at ≤2.0s (formula rule)
-        if idx == 0 and start_sec < first_caption_delay_sec:
-            start_sec = first_caption_delay_sec
-            start = _seconds_to_srt_time(start_sec)
-        
-        # Skip captions that overlap with motion_gfx ranges (HARD fail prevention)
-        if no_sub_ranges:
-            skip = False
-            for gfx_start, gfx_end in no_sub_ranges:
-                # Check if subtitle overlaps with GFX range
-                if start_sec < gfx_end and end_sec > gfx_start:
-                    skip = True
-                    break
-            if skip:
-                continue  # Mute this caption
-        
-        start_ass = _srt_time_to_ass(start.strip())
-        end_ass = _srt_time_to_ass(end.strip())
+        st = _srt_time_to_seconds(start.strip())
+        en = _srt_time_to_seconds(end.strip())
         plain = " ".join(text_lines).strip()
+        if not plain:
+            continue
+
+        # Formula: first caption must appear by ≤2.0s (pull late cues forward only)
+        if cue_idx == 0 and st > first_caption_max_sec:
+            shift = st - first_caption_max_sec
+            st = first_caption_max_sec
+            en = max(st + 0.35, en - shift)
+        cue_idx += 1
+
         frags = _audible_fragments(st, en) if mute else [(st, en)]
         if not frags:
             dropped += 1
             continue
         for fst, fen in frags:
-            def _sec_to_srt(sec: float) -> str:
-                h = int(sec // 3600)
-                m = int((sec % 3600) // 60)
-                s = int(sec % 60)
-                ms = int(round((sec - int(sec)) * 1000))
-                if ms >= 1000:
-                    s += 1
-                    ms -= 1000
-                return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
             start_s = _sec_to_srt(fst)
             end_s = _sec_to_srt(fen)
             start_ass = _srt_time_to_ass(start_s)
@@ -565,12 +555,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 body = _add_kinetic_color_flash(plain, start_s, end_s, word_timings, accent_color)
             else:
                 body = _add_kinetic_color_flash_estimated(plain, start_s, end_s, accent_color)
+            # Build ASS override with real backslash-fad
+            fad = "{" + "\\" + "fad(170,170)}"
             events.append(
                 f"Dialogue: 0,{start_ass},{end_ass},Default,,0,0,0,,"
-                f"{{\\fad(170,170)}}{body}"
+                f"{fad}{body}"
             )
 
     ass_path.write_text(ass_header + "\n".join(events) + "\n", encoding="utf-8")
+
 
 
 def _word_flash_tag(word: str, on_ms: int, off_ms: int, accent: str, cue_ms: int) -> str:

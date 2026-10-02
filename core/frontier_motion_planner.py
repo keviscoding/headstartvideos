@@ -91,6 +91,7 @@ def plan_motion_timeline(
     still_max_hold_sec: float = 12.0,
     first_cut_min_sec: float = 12.0,
     first_cut_target_sec: float = 14.5,
+    first_still_min_hold_sec: float | None = None,  # alias → first_cut_min_sec (cloud)
     seed: int = 42,
 ) -> list[MotionSegment]:
     """
@@ -118,6 +119,8 @@ def plan_motion_timeline(
         List of MotionSegment objects in timeline order
     """
     rng = random.Random(seed)
+    if first_still_min_hold_sec is not None:
+        first_cut_min_sec = float(first_still_min_hold_sec)
     segments: list[MotionSegment] = []
     
     # Sort stills by start time

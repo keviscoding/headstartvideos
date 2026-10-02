@@ -65,3 +65,10 @@ Timeline: opener still 0–16.93 → collage → still → scatter → pexels �
 3. Yellow `#F5D76E` karaoke (Whop) vs current warm-gold centre flash leftover.
 4. Playwright / richer collage motion; thematic cutout polish.
 5. Loudness QA → **−16 LUFS** explicit normalize if off.
+
+## Follow-up (post cloud a9fc6dd / 1fc8171 pull)
+- Rebased onto cloud formula locks; kept `build_paced_bed_timeline` + GFX gap scheduler (ratio 0.22, first_gfx≥14).
+- Aliased `first_still_min_hold_sec` → `first_cut_min_sec` for cloud API compat.
+- Fixed inverted first-caption clamp: formula is **≤2.0s** (pull late cues forward only; do not delay 0.0→2.0).
+- Cleaned broken merge hybrid in `_convert_srt_to_ass` (audible_fragments mute + bottom-centre).
+- Two-pass **loudnorm −16 LUFS** lives in `_mix_audio` for future cooks; v7 chat already measures **~−16.8 LUFS** in (no full reassemble required).
