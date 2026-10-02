@@ -221,8 +221,13 @@ def _generate_atlas_image(
     """
     Generate a single image using Atlas Cloud.
     
-    Uses the Atlas Cloud API directly for image generation.
+    Atlas API returns either:
+    - data[0]["url"] → download PNG from URL
+    - data[0]["b64_json"] → base64-encoded PNG data
+    
+    This implementation handles both response formats (1:1 with Whop Frontier).
     """
+    import base64
     import requests
     
     if not ATLASCLOUD_KEY:
@@ -239,7 +244,7 @@ def _generate_atlas_image(
         "prompt": prompt,
         "width": width,
         "height": height,
-        "response_format": "url",
+        "response_format": "url",  # Request URL, but accept b64_json fallback
     }
     
     last_error = None
@@ -249,22 +254,28 @@ def _generate_atlas_image(
             response.raise_for_status()
             data = response.json()
             
-            # Get image URL from response
-            image_url = None
-            if "data" in data and len(data["data"]) > 0:
-                image_url = data["data"][0].get("url")
+            if "data" not in data or len(data["data"]) == 0:
+                raise RuntimeError(f"No data in Atlas response: {data}")
             
-            if not image_url:
-                raise RuntimeError(f"No image URL in response: {data}")
-            
-            # Download the image
-            img_response = requests.get(image_url, timeout=60)
-            img_response.raise_for_status()
-            
+            item = data["data"][0]
             output_path = Path(output_path)
-            output_path.write_bytes(img_response.content)
             
-            return
+            # Handle URL response (preferred)
+            if "url" in item and item["url"]:
+                image_url = item["url"]
+                img_response = requests.get(image_url, timeout=60)
+                img_response.raise_for_status()
+                output_path.write_bytes(img_response.content)
+                return
+            
+            # Handle base64 response (fallback, matches Whop Frontier behavior)
+            if "b64_json" in item and item["b64_json"]:
+                b64_data = item["b64_json"]
+                png_bytes = base64.b64decode(b64_data)
+                output_path.write_bytes(png_bytes)
+                return
+            
+            raise RuntimeError(f"No url or b64_json in Atlas response: {item.keys()}")
         
         except Exception as e:
             last_error = e
