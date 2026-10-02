@@ -85,7 +85,8 @@ def assemble_frontier_video(
     dust_strength: float = 1.0,
     vignette_strength: float = 0.55,
     flash_times: list[float] | None = None,
-    leak_strength: float = 0.72,
+    leak_strength: float = 0.0,  # Kevis: no bright lightleak disk (0=off/soft)
+    use_lightleak: bool = False,  # True only if style explicitly wants Whop leak
     progress_callback=None,
 ) -> dict:
     """
@@ -107,7 +108,8 @@ def assemble_frontier_video(
         no_dust_ranges: Suppress dust in these windows (usually same as GFX)
         dust_strength: 1.0 = baseline; >1 boosts dust brightness + film grain
         vignette_strength: 0..1 edge crush (Whop ~0.7)
-        flash_times: White-haze chapter commas (pic changes without hard cuts)
+        flash_times: Optional soft chapter commas (default: ≤2-frame @15%; no lightleak disk)
+        use_lightleak: Opt-in Whop circular leak (Kevis: leave False — disk is annoying)
         progress_callback: Optional callback(message: str)
     
     Returns:
@@ -161,7 +163,7 @@ def assemble_frontier_video(
         if progress_callback:
             progress_callback(f"Applying {len(flash_times)} chapter flashes...")
         flashed = temp_dir / "flashed.mp4"
-        _apply_white_flashes(concat_path, list(flash_times), flashed, leak_strength=leak_strength)
+        _apply_white_flashes(concat_path, list(flash_times), flashed, leak_strength=leak_strength, use_lightleak=use_lightleak)
         concat_path = flashed
     
     if progress_callback:
@@ -782,12 +784,14 @@ def _apply_white_flashes(
     flash_dur: float = 0.95,
     peak_alpha: float = 0.85,
     lightleak_path: str | Path | None = None,
-    leak_strength: float = 0.72,
+    leak_strength: float = 0.0,
+    use_lightleak: bool = False,
 ):
-    """Whop circular film-burn light-leak chapter commas (screen-blend in gbrp).
+    """Chapter commas between beds.
 
-    Leak plate is radially vignetted so the burn reads as a disk/coma, not a
-    flat full-frame brightness wipe. Falls back to brightness pulse if missing.
+    Kevis HARD (2026-10-02): bright circular lightleak disk is annoying — default OFF.
+    Soft path: ≤2 frames (~1/15–1/30s) white dissolve at ≤15% brightness.
+    Legacy Whop lightleak only when use_lightleak=True and leak_strength>0.
     """
     if not flash_times:
         import shutil
@@ -795,32 +799,21 @@ def _apply_white_flashes(
         return
 
     dur = _get_duration(video_path)
-    # Resolve Whop lightleak asset
-    candidates = []
-    if lightleak_path:
-        candidates.append(Path(lightleak_path))
-    root = Path(__file__).resolve().parent.parent
-    # Style-agnostic: channel/style packs may ship textures/lightleak.mp4
-    candidates += [
-        root / "assets" / "lightleak.mp4",
-        root / "frontier-gfx-kit" / "textures" / "lightleak.mp4",
-        root / "assets" / "whop-gfx" / "textures" / "lightleak.mp4",
-        root / "presets" / "styles" / "lightleak.mp4",
-    ]
-    leak = next((p for p in candidates if p.exists()), None)
 
-    if leak is None:
-        # Legacy brightness pulse fallback
-        half = max(0.12, 0.42 / 2.0)
+    # --- Soft dissolve (default): Kevis-approved ---
+    if not use_lightleak or float(leak_strength) <= 0.0:
+        # ~2 frames at 30fps → 1/15s half-window each side of t0
+        half = 1.0 / 30.0
+        peak = min(0.15, max(0.0, float(peak_alpha) if peak_alpha <= 0.15 else 0.15))
         parts = []
         for t0 in flash_times:
-            a = max(0.0, t0 - half)
-            b = min(dur, t0 + half)
-            parts.append("between(t\\,%.3f\\,%.3f)" % (a, b))
+            a = max(0.0, float(t0) - half)
+            b = min(dur, float(t0) + half)
+            parts.append("between(t\\,%.4f\\,%.4f)" % (a, b))
         enables = "+".join(parts)
         vf = (
-            "eq=brightness='if(%s\\,0.62\\,0)':contrast='if(%s\\,1.08\\,1)':eval=frame"
-            % (enables, enables)
+            "eq=brightness='if(%s\\,%.3f\\,0)':eval=frame"
+            % (enables, peak)
         )
         cmd = [
             _ffmpeg_bin(), "-y", "-i", str(video_path), "-vf", vf,
@@ -829,16 +822,31 @@ def _apply_white_flashes(
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            raise RuntimeError(f"white flash fallback failed: {(result.stderr or '')[-1200:]}")
+            raise RuntimeError(f"soft chapter dissolve failed: {(result.stderr or '')[-1200:]}")
         return
 
-    # Build a black leak plate matching program size, then screen-pad each flash
-    # from lightleak[0:flash_dur] delayed to flash_time (Whop first-flash half ~0.95s).
+    # --- Legacy lightleak path (opt-in only) ---
     import tempfile as _tf
     import json as _json
+    candidates = []
+    if lightleak_path:
+        candidates.append(Path(lightleak_path))
+    root = Path(__file__).resolve().parent.parent
+    candidates += [
+        root / "assets" / "lightleak.mp4",
+        root / "frontier-gfx-kit" / "textures" / "lightleak.mp4",
+        root / "assets" / "whop-gfx" / "textures" / "lightleak.mp4",
+    ]
+    leak = next((p for p in candidates if p.exists()), None)
+    if leak is None:
+        # fall through to soft
+        return _apply_white_flashes(
+            video_path, flash_times, output_path,
+            leak_strength=0.0, use_lightleak=False, peak_alpha=0.15,
+        )
+
     tmp = Path(_tf.mkdtemp(prefix="frontier_leak_"))
     plate = tmp / "leak_plate.mp4"
-    # Probe program dimensions so chat (1280) and master (1920) both work
     ff = _ffmpeg_bin()
     fp = str(Path(ff).with_name("ffprobe")) if "/" in ff else "ffprobe"
     if not Path(fp).exists():
@@ -854,7 +862,6 @@ def _apply_white_flashes(
         vh = int(st.get("height") or 1080)
     except Exception:
         vw, vh = 1920, 1080
-    # Start with black plate at program size
     subprocess.run([
         _ffmpeg_bin(), "-y",
         "-f", "lavfi", "-i", f"color=c=black:s={vw}x{vh}:d={dur:.3f}:r=30",
@@ -868,8 +875,6 @@ def _apply_white_flashes(
     for i, t0 in enumerate(flash_times):
         start_t = max(0.0, float(t0) - 0.08)
         nxt = tmp / f"plate_{i:02d}.mp4"
-        # Delay leak clip to start_t via tpad, screen onto plate (scale to program)
-        # Circular disk: vignette crush edges of leak so center burns hotter
         fc = (
             f"[0:v]format=gbrp[base];"
             f"[1:v]scale={vw}:{vh}:force_original_aspect_ratio=increase,"
@@ -896,7 +901,6 @@ def _apply_white_flashes(
             raise RuntimeError(f"leak plate flash {i} failed: {(result.stderr or '')[-1000:]}")
         current = nxt
 
-    # Final screen-blend of leak plate onto the program video
     fc = (
         "[0:v]format=gbrp[base];"
         "[1:v]format=gbrp[lk];"
@@ -917,7 +921,6 @@ def _apply_white_flashes(
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"lightleak composite failed: {(result.stderr or '')[-1200:]}")
-    # cleanup best-effort
     try:
         import shutil
         shutil.rmtree(tmp, ignore_errors=True)

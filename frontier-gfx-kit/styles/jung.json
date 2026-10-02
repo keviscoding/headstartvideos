@@ -21,8 +21,10 @@
     "first_gfx_min_sec": 8.0,
     "dust_strength": 1.85,
     "vignette_strength": 0.7,
-    "leak_strength": 0.42,
+    "leak_strength": 0.0,
     "zoom_amount": 0.11,
-    "flash_mid_opener": true
+    "flash_mid_opener": false,
+    "use_lightleak": false,
+    "chapter_flash_mode": "off"
   }
 }

@@ -1,43 +1,52 @@
-# Frontier smoke FIXES_V12 — Whop-closer bed + thematic PW GFX (VO sync held)
+# Frontier FIXES_V12 — Kevis lightleak kill + Whop-closer bed/MG
 
-## Goal
-Close last ~0.6 combined: **visual_bed ≥9** and **MG ≥9** without regressing timing / vo_gfx_sync.
+## Kevis HARD (2026-10-02 interrupt)
+Circular **light-leak chapter flash is ANNOYING** — not clean.
+- **Removed entirely** for this render (`flash_times=None`, `use_lightleak=False`, `leak_strength=0`).
+- Assembler default: lightleak **OFF**. Soft path only if flashes requested: ≤2 frames @ ≤15% brightness (no bright disk).
+- Style `jung.json`: `leak_strength=0`, `flash_mid_opener=false`, `use_lightleak=false`, `chapter_flash_mode=off`.
+- Verified frames @1.75s / 8s: **0%** warm-hot orange disk pixels (vs prior `leak_1.8s.jpg` which had a clear amber burn).
 
-## Bed vs Jung Whop ref (side-by-side @2s / 8s)
-- **Ref:** cool olive-cream hallway / dirt hands; fine grain; muted desat; white LT karaoke.
-- **v12b ours:** cooler blue-grey Atlas ridges (desat↑), finer dust grit, slower KB (0.11), milder circular leak (0.42) so stills read; yellow karaoke held.
-- Gap remaining: Atlas mountain beds ≠ Whop hallway/hand prestige plates (content, not just grade).
+## Also held
+1. VO–GFX sync ≤0.3s (lead −0.1s on keyword)
+2. Kinetic opener first hard cut **8.0s** (6–10s band)
+3. Never-overlay GFX
+4. Loudness **−16.0 LUFS** (TP −1.6)
 
-## MG
-- Playwright collage/scatter with **thematic** stickers: Sisyphus/woods, shadow man + X eyes, halftone eye (no clover/rocket).
-- Labels VO-matched (“the woods / learn a voice”, “the shadow / what you refuse”).
-- Never-overlay + flashes skip GFX starts.
+## VO sync
+| card | spoken | gfx_start | lead | late |
+|---|---:|---:|---:|---:|
+| the woods can learn a voice | 13.24 | 13.14 | −0.1 | 0 |
+| your body wants to turn toward it | 26.84 | 26.74 | −0.1 | 0 |
 
-## VO sync (unchanged / held)
-| card | keyword spoken | card start | lead |
-|---|---:|---:|---:|
-| woods learn | **13.24** | **13.14** | **−0.1s** |
-| body wants | **26.84** | **26.74** | **−0.1s** |
+`vo_gfx_sync` PASS (`n_cards=2`, `late=[]`).
 
-`vo_gfx_sync` PASS. Opener **8.0s**. Mean **6.18s**. Cuts/min **8.32**. GFX **21%**.
+## Pacing
+- duration ~43.23s · first hard cut **8.0s** · mean shot **6.18s**
+- hard cuts 6 · cuts/min ~8.32 · pic/min ~9.71 (no flash padding)
+- GFX 2 cards / 9.0s (~21%) · flash_count **0**
 
-## Honest scores
+## Honest scores (post lightleak-kill re-render)
 
-| pillar | v11 | **v12** | notes |
-|--------|---:|------:|-------|
-| visual_bed | 8.6 | **9.0** | Cool olive-ish grade + finer dust + milder leak; still ≠ Whop hero plates |
-| motion_graphics | 8.8 | **9.1** | Thematic PW collage parity |
-| timing_pacing | 9.0 | **9.0** | held |
-| vo_gfx_sync | 9.2 | **9.2** | held |
-| **combined** | 8.9 | **9.1** | All content pillars ≥9 except combined soft of 9.5 |
+| pillar | v11 | v12 (w/ leak) | **v12c (no leak)** | notes |
+|--------|---:|---:|---:|-------|
+| visual_bed | 8.6 | 9.0 | **9.0** | Cleaner (no annoying disk); grade cool olive-ish; **still ≠ Whop hallway/hands hero plates** (Atlas mountains/trees) |
+| motion_graphics | 8.8 | 9.1 | **9.1** | Thematic PW collage (Sisyphus / X-eyes shadow / halftone eye); body scatter held |
+| timing_pacing | 9.0 | 9.0 | **9.0** | opener 8s; mean 6.18; no flash-inflated pic/min |
+| vo_gfx_sync | 9.2 | 9.2 | **9.2** | keyword −0.1s lock held |
+| **combined** | 8.9 | 9.1 | **9.1** | All content pillars ≥9; combined **9.1 < 9.5** |
 
-**Not READY TO MERGE** — combined **9.1 &lt; 9.5**. Need Whop-closer Atlas/prestige beds (or style-from-link stills) + maybe 3rd GFX beat / pic density for combined ≥9.5.
+**NOT READY TO MERGE** — need combined ≥9.5.
 
-## Paths
-- `output/frontier_20261002_122844/frontier_video_v12.mp4` + `_chat.mp4`
-- Box: `/workspace/frontier_video_v12_chat.mp4`
-- Frames: `frames_v12/` (ours_* vs ref_*), box `frames_v12b_*`
-- Style: `frontier-gfx-kit/styles/jung.json` (cool grade, leak 0.42)
+## Blockers for ≥9.5 (v13)
+1. **Atlas / prestige still content** closer to Whop hallway + dirt-hands symbolism (grade alone won’t close the gap).
+2. Optional 3rd thematic GFX beat without breaking mean-shot / never-overlay.
+3. Do **not** restore bright circular lightleak. Soft 2-frame dissolve only if pic/min genuinely needs a comma.
+4. Keep VO sync, 6–10s opener, −16 LUFS.
 
-## v13 if needed
-Generate/select stills closer to Whop hallway/hand symbolism; optional prestige art bed; raise combined via denser caption steps without mean-shot collapse.
+## Artifacts
+- `output/frontier_20261002_122844/frontier_video_v12.mp4` (full) + `frontier_video_v12_chat.mp4`
+- Frames: `frames_v12/no_leak_*.jpg`, `frames_v12c/`, compare `leak_1.8s.jpg` (old) vs `no_leak_1.8s.jpg`
+- Box: `/workspace/frontier_video_v12_chat.mp4` + frames
+- Metrics: `pacing_metrics_v12.json` (`use_lightleak: false`, `flash_count: 0`)
+- Code: `core/frontier_assembler.py` defaults; `frontier-gfx-kit/styles/jung.json`
