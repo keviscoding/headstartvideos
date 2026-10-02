@@ -24,6 +24,7 @@
    - GFX insert rhythm (~every 30s, semantic placement)
    - Pexels gaps filled appropriately
    - Overall flow matching Jung Whop reference tempo
+   - **NO lightleak chapter flash** (Kevis: "annoying" — prefer soft dissolve)
 
 4. **vo_gfx_sync** /10 (NEW - Kevis mandate)
    - GFX cards illustrating a line MUST appear when that line is spoken
@@ -167,6 +168,7 @@
 - **GFX cadence**: Auto-insert so gap ≤35s (collage ~3.2s, bar ~2.0s, UI ~4.0s)
 - **Whop targets**: ~18 pic/min (~3.3s mean shot), ~7.5s mean shot with GFX
 - **Gate**: timing_pacing ≥9.0 required for merge
+- **NO lightleak flash**: Kevis: "light-leak chapter flash is annoying — remove default circular lightleak or gate it off. Prefer soft short dissolve / no flash. Do not ship bright leak disks." DEFAULT: OFF (hard cuts between segments, no flash overlay)
 
 ### Mac v3 Score: Unknown (pillar not evaluated)
 

@@ -109,7 +109,7 @@ def assemble_frontier_video(
         dust_strength: 1.0 = baseline; >1 boosts dust brightness + film grain
         vignette_strength: 0..1 edge crush (Whop ~0.7)
         flash_times: Optional soft chapter commas (default: ≤2-frame @15%; no lightleak disk)
-        use_lightleak: Opt-in Whop circular leak (Kevis: leave False — disk is annoying)
+        use_lightleak: Opt-in Whop circular leak (Kevis: "annoying" — DEFAULT: False, prefer soft dissolve)
         progress_callback: Optional callback(message: str)
     
     Returns:
@@ -159,6 +159,8 @@ def assemble_frontier_video(
     _concatenate_segments(segment_paths, concat_path, fps)
 
     # White-haze chapter commas (Whop flash dissolves — pic changes w/o rushing cuts)
+    # Kevis: "light-leak chapter flash is annoying" — DEFAULT: OFF (prefer soft dissolve)
+    # Pass flash_times=[] explicitly to enable (not recommended for Jung/Frontier)
     if flash_times:
         if progress_callback:
             progress_callback(f"Applying {len(flash_times)} chapter flashes...")
@@ -789,9 +791,13 @@ def _apply_white_flashes(
 ):
     """Chapter commas between beds.
 
+<<<<<<< HEAD
     Kevis HARD (2026-10-02): bright circular lightleak disk is annoying — default OFF.
     Soft path: ≤2 frames (~1/15–1/30s) white dissolve at ≤15% brightness.
     Legacy Whop lightleak only when use_lightleak=True and leak_strength>0.
+    
+    Leak plate is radially vignetted so the burn reads as a disk/coma, not a flat full-frame brightness wipe.
+    Falls back to brightness pulse only if lightleak.mp4 is missing (legacy).
     """
     if not flash_times:
         import shutil
