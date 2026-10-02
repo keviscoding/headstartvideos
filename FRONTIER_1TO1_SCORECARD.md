@@ -1,46 +1,260 @@
-# Frontier 1:1 Scorecard - OUTPUT-BASED EVALUATION
+# Frontier 1:1 Scorecard - Kevis 4-Pillar Evaluation
 
-## Mac v4 Status: GFX Lane Shipped ✅
+## Mandatory Scoring Framework
 
-**Commit 5ef04ab** adds collage GFX production layer per jung.json pacing.
+### Pillars (Each /10):
 
-### Mac v3 Scores (2aea894):
-- **visual_bed**: 6.0 /10
-- **motion_graphics**: 5.0 /10 ❌ (NO GFX layer)
-- **combined**: 5.5 /10 ❌
+1. **visual_bed** /10
+   - AI stills quality (Atlas gpt-image-2 scenes)
+   - Pexels b-roll integration & density
+   - Ken Burns zoom smoothness
+   - Color grade (Jung warm desat, no purple)
+   - Dust overlay & vignette
 
-### Mac v4 Expected (With GFX):
-- **visual_bed**: 6.5-7.0 /10 (unchanged)
-- **motion_graphics**: 7.5-8.5 /10 ✅ (GFX lane present, text-only MVP)
-- **combined**: 7.0-7.5 /10 (both pillars improving)
+2. **motion_graphics** /10
+   - Collage GFX cards present & frequency (~every 30s per jung.json)
+   - Jung aesthetic (collage_dark/noir skins, Inter Black titles)
+   - Cutout sticker shapes (aged-paper, halftone)
+   - **HARD FAIL**: Captions covering GFX cards (motion_graphics = 0/10)
+   - Caption system (center kinetic, gold karaoke pop)
 
-### What v4 Adds:
-✅ **core/frontier_motion_graphics.py** (341 lines)
-- PIL-based collage card renderer
-- Jung skins: collage_dark + noir from jung.json
-- Inter Display Black titles, aged-paper aesthetic
-- Renders 6s MP4 clips @ 1920x1080, 30fps
-- **Interleaved ~every 30s** per jung.json pacing (graphic_every_min=0.5)
-- Merges GFX MotionSegments into timeline
+3. **timing_pacing** /10
+   - Cut speed & rhythm (not rushed, not sluggish vs Jung Whop)
+   - Still hold durations (3-6s typical, not too long)
+   - GFX insert rhythm (~every 30s, semantic placement)
+   - Pexels gaps filled appropriately
+   - Overall flow matching Jung Whop reference tempo
 
-### What v4 Still Needs for 9.0:
-❌ Cutout sticker shapes (aged-paper cutouts, PIL-drawn or vendored)
-❌ Center caption burn (_build_burn_ass from Whop make_video)
-❌ Chromium GFX renderer (full motion.py HTML/CSS/JS templates)
+4. **combined** /10
+   - Overall 1:1 match with Jung Whop Frontier
+   - No single soft pillar (<9.0)
+   - Visual cohesion across all elements
+   - Honest side-by-side comparison with jung-whop-ref-45s.mp4
 
-**Mac: Run v4 smoke and report scores.**
+### Gate for Merge:
+- **combined ≥9.5** /10
+- **NO pillar <~9.0** /10
 
 ---
 
-## Status: INCOMPLETE - Awaiting Full Render with Atlas + Pexels
+## Mac v4 Honest Scores (Awaiting Smoke Test)
 
-**Critical Gap**: This evaluation cannot achieve ≥9.5/10 without rendering a real CR Frontier video with Atlas gpt-image-2 stills and Pexels b-roll, then comparing side-by-side against Whop Frontier Jung reference output.
+### Prediction:
+- **visual_bed**: 6.5-7.0 /10 (unchanged from v3)
+- **motion_graphics**: 7.5-8.5 /10 (GFX lane present, text-only MVP)
+- **timing_pacing**: 6.0-7.0 /10 (new pillar, needs tuning)
+- **combined**: 7.0-7.5 /10 (all pillars improving)
 
-**What's Been Validated**:
-- ✅ Pipeline architecture implements all Frontier systems
-- ✅ Smoke test proves video assembly works end-to-end
-- ✅ Word-level kinetic ASS captions now implemented (was missing)
-- ⚠️ Cannot score visual output without API keys (ATLASCLOUD_KEY, PEXELS_KEY missing)
+### What v4 Adds (Commit 5ef04ab + 7fcf0d5 + caption muting):
+✅ **Collage GFX lane** (core/frontier_motion_graphics.py)
+- Text-only collage cards every ~30s
+- Jung skins: collage_dark + noir
+- 6s duration per jung.json pacing
+- Interleaved into timeline, overlaps trimmed
+
+✅ **Caption muting during GFX** (frontier_assembler.py)
+- Prevents caption/GFX overlap (HARD fail rule)
+- Filters ASS events overlapping with motion_gfx ranges
+- `no_sub_ranges` passed from assembler to _burn_subtitles
+
+### What v4 Still Needs for 9.0:
+
+**motion_graphics** (blocks 9.0):
+- ❌ Cutout sticker shapes (PIL-drawn or vendor Whop assets)
+- ❌ Center caption burn (_build_burn_ass: Alignment=5, Inter Black)
+- ❌ Visible gold karaoke pop (proper rendering)
+
+**timing_pacing** (blocks 9.0):
+- ⚠️ Still hold tuning (Mac v3 felt rushed, verify 3-6s comfortable)
+- ⚠️ GFX insert rhythm (semantic vs time-based, needs transcript analysis)
+- ⚠️ Cut speed matching Jung Whop tempo
+
+**visual_bed** (needs polish):
+- ⚠️ Ken Burns smoothness (0.28 zoom needs frame-by-frame verification)
+- ⚠️ Pexels density (denser than v2, verify comfortable vs rushed)
+- ⚠️ Grade warmth (Jung EXACT ported, verify no purple cast)
+
+---
+
+## Pillar 1: visual_bed /10
+
+### Components:
+1. AI stills quality (Atlas gpt-image-2)
+2. Pexels b-roll density & aesthetic
+3. Ken Burns zoom (smoothness, speed, 2x headroom)
+4. Color grade (Jung warm desat from jung.json)
+5. Dust overlay & vignette
+
+### Mac v3 Score: 6.0 /10
+
+**What Worked**:
+- ✅ Atlas stills generating (8/8 Mac success)
+- ✅ Jung grade ported (eq=brightness=-0.06:sat=0.62:contrast=1.10,colortemp=5200)
+- ✅ Dust overlay present (1080p procedural loop, 530KB)
+- ✅ Vignette angle-only (no iris wipe)
+
+**What Needs Work**:
+- ⚠️ Ken Burns smoothness (0.28 zoom, needs frame verification)
+- ⚠️ Pexels density (denser than v2, verify tempo)
+- ⚠️ Grade warmth (verify no purple cast in render)
+
+### Mac v4 Prediction: 6.5-7.0 /10 (unchanged pipeline)
+
+---
+
+## Pillar 2: motion_graphics /10
+
+### Components:
+1. **Collage GFX cards** (frequency, Jung aesthetic)
+2. **Cutout stickers** (aged-paper shapes, halftone)
+3. **Caption system** (center kinetic, gold karaoke)
+4. **HARD FAIL rule**: Captions covering GFX = 0/10
+
+### Mac v3 Score: 5.0 /10
+- ❌ NO GFX lane at all
+- ⚠️ Captions present but bottom-aligned (not center)
+
+### Mac v4 Prediction: 7.5-8.5 /10
+
+**What v4 Adds** (Commits 5ef04ab + caption muting):
+- ✅ **Collage GFX lane present** (~every 30s per jung.json)
+- ✅ **Jung skins** (collage_dark + noir)
+- ✅ **Text-only cards** (Inter Display Black titles, aged-paper aesthetic)
+- ✅ **Caption muting during GFX** (no overlap, HARD fail prevented)
+- ✅ **Interleaved timeline** (GFX segments merged, overlaps trimmed)
+
+**What v4 Still Missing**:
+- ❌ **Cutout sticker shapes** (aged-paper cutouts, halftone) → -1.0 to -1.5
+- ❌ **Center caption burn** (Alignment=5, Inter Black) → -0.5
+- ❌ **Visible gold karaoke** (proper rendering) → -0.5
+
+**Why 7.5-8.5 Not 9.0**:
+- Text-only GFX cards are MVP (no stickers yet)
+- Captions still bottom-aligned (not center kinetic)
+- Gold karaoke may not render visibly
+
+**Path to 9.0**:
+1. Add PIL-drawn cutout shapes OR vendor Whop assets
+2. Port Whop _build_burn_ass (center, Inter Black, proper karaoke)
+3. Verify gold highlight renders visibly on GFX cards
+
+---
+
+## Pillar 3: timing_pacing /10 (NEW)
+
+### Components:
+1. **Cut speed & rhythm** (Jung Whop tempo)
+2. **Still hold durations** (3-6s typical, not too long)
+3. **GFX insert rhythm** (~every 30s, semantic placement)
+4. **Pexels gaps** (filled appropriately, not jarring)
+5. **Overall flow** (comfortable, not rushed or sluggish)
+
+### Mac v3 Score: Unknown (pillar not evaluated)
+
+### Mac v4 Prediction: 6.0-7.0 /10
+
+**What's Implemented**:
+- ✅ GFX every ~30s (jung.json graphic_every_min=0.5)
+- ✅ Still holds 3-6s (still_min_hold=3.0, still_max_hold=6.0)
+- ✅ Still pad 0.5s (tighter than v2's 0.8s)
+- ✅ Pexels fills gaps between stills
+
+**What Needs Verification**:
+- ⚠️ Cut speed feels comfortable (not rushed from denser Pexels)
+- ⚠️ Still holds not too short (3-6s range, verify natural)
+- ⚠️ GFX placement semantic (vs pure time-based)
+- ⚠️ Overall tempo matches Jung Whop (side-by-side comparison)
+
+**Why 6.0-7.0 Not 9.0**:
+- Mac v2/v3 feedback: "felt rushed" → denser Pexels may need tuning
+- GFX placement is time-based (every 30s), not semantically anchored to script beats
+- No explicit tempo matching vs Jung Whop reference (just replicating parameters)
+
+**Path to 9.0**:
+1. Mac smoke: side-by-side Jung Whop tempo comparison
+2. Tune still_max_hold if holds feel too short
+3. Semantic GFX placement (match script beats, not clock time)
+4. Verify Pexels gaps feel natural (not jarring cuts)
+
+---
+
+## Pillar 4: combined /10
+
+### Definition:
+Overall 1:1 match with Jung Whop Frontier. Honest side-by-side comparison of full rendered output against `jung-whop-ref-45s.mp4`.
+
+### Gate:
+- **combined ≥9.5** AND **no pillar <~9.0**
+
+### Mac v3 Score: 5.5 /10
+- Visual bed okay (6.0)
+- Motion graphics missing (5.0)
+- Timing/pacing not evaluated
+
+### Mac v4 Prediction: 7.0-7.5 /10
+
+**Why 7.0-7.5**:
+- All pillars in 6.5-8.5 range (no strong pillar yet)
+- GFX lane present but text-only MVP
+- Timing/pacing needs verification
+- Still ~2.0 points from merge gate
+
+**Path to 9.5**:
+1. **motion_graphics 9.0+**: Add cutout shapes + center captions
+2. **timing_pacing 9.0+**: Tune tempo, semantic GFX placement
+3. **visual_bed 9.0+**: Verify Ken Burns + grade + Pexels density
+4. **combined 9.5+**: Honest side-by-side with Jung Whop reference
+
+---
+
+## HARD FAIL Rules
+
+### 1. Captions Covering GFX Cards
+**Rule**: If captions render on top of motion_gfx cards, **motion_graphics = 0/10** immediately.
+
+**Prevention** (v4):
+- ✅ `no_sub_ranges` collected from motion_gfx segments
+- ✅ ASS events filtered in `_convert_srt_to_ass`
+- ✅ Captions with `start_sec < gfx_end AND end_sec > gfx_start` are skipped
+
+**Verification**: Mac v4 smoke must confirm NO captions visible during GFX cards.
+
+### 2. Purple Color Cast
+**Rule**: If purple cast visible (vs Jung warm desat), **visual_bed penalty -2.0**.
+
+**Prevention** (v3/v4):
+- ✅ Jung grade EXACT: `eq=brightness=-0.06:saturation=0.62:contrast=1.10,colortemperature=temperature=5200`
+- ✅ No hue shift (was causing purple in v1/v2)
+
+**Verification**: Mac v4 smoke visual inspection vs Jung Whop reference.
+
+---
+
+## Mac v4 Summary
+
+### Expected Scores:
+- **visual_bed**: 6.5-7.0 /10
+- **motion_graphics**: 7.5-8.5 /10 ✅ (GFX lane present)
+- **timing_pacing**: 6.0-7.0 /10 ⚠️ (needs verification)
+- **combined**: 7.0-7.5 /10 (all pillars improving)
+
+### Delta from v3:
+- visual_bed: +0.5 to +1.0
+- motion_graphics: +2.5 to +3.5 ✅ (GFX lane vs none)
+- timing_pacing: NEW pillar, 6.0-7.0
+- combined: +1.5 to +2.0
+
+### Blockers to 9.5:
+1. **motion_graphics <9.0**: Text-only GFX (no cutouts), bottom captions
+2. **timing_pacing <9.0**: Needs tempo verification, semantic GFX placement
+3. **visual_bed <9.0**: Ken Burns/Pexels density needs polish
+
+### Next Steps:
+1. **Await Mac v4 smoke** (verify GFX lane + caption muting works)
+2. **If v4 ≥7.0**: Add PIL cutout shapes for v5
+3. **If v4 <7.0**: Debug GFX rendering/timeline
+4. **Port center captions** (_build_burn_ass) in parallel
+5. **Target v5**: 8.5-9.0 combined (all pillars ≥8.5)
 
 ---
 
@@ -48,433 +262,32 @@
 
 **Whop Frontier Jung**: `jung-whop-ref-45s.mp4` (45s, 960x540)
 - Dark moody stills (books, coats, atmospheric scenes)
-- Word-level kinetic captions - each word flashes gold as spoken  
-- Cold/desaturated grade
+- Collage GFX cards with aged-paper sticker cutouts
+- Word-level kinetic captions (centered, gold flash per word)
+- Cold/desaturated grade (Jung look)
 - Smooth Ken Burns zooms
 - Pexels b-roll filling gaps
+- Tempo: deliberate, not rushed (60-90s typical stills)
 
-**Jung Frame Samples**:
-- Frame 15s: Dark coat on hook, gold kinetic text "unacceptable, then **buried** so thoroughly that"
-- Frame 60s: Old book ("The Principles of Psychology"), warm lamp light
-- Frame 120s: (not provided)
-
-**Atlas Still Reference**: Old psychology book on wooden desk - warm cinematic lighting, shallow DoF, professional product shot quality
-
----
-
-## Evaluation Framework
-
-Score each dimension 0-10 based on **actual rendered output**:
-- **10**: Perfect 1:1 match with Whop Frontier
-- **9**: Visually indistinguishable in practice
-- **8**: Very close, small observable differences
-- **7**: Good, some noticeable differences
-- **<7**: Needs improvement
-
-**RULE**: Cannot score >5 on visual dimensions without comparing real MP4 outputs.
-
----
-
-## 1. Still Look & Quality (Atlas gpt-image-2)
-
-**Score: 5/10** (PROVISIONAL - awaiting real render)
-
-✅ **Code Implements**:
-- Atlas Cloud API calls to gpt-image-2 model
-- Scene-based prompts (not quote-on-paper)
-- Cinematic style suffix matching Frontier
-- 1920x1080 resolution
-- Parallel generation (12 workers default)
-
-❌ **Cannot Verify Without Render**:
-- Actual still aesthetic vs Jung reference (book, coat, atmospheric mood)
-- Whether gpt-image-2 scenes match Frontier's dark psychology look
-- Color palette match
-- Composition quality
-- Consistency across stills
-
-**To Reach 10/10**: Render with real ATLASCLOUD_KEY, extract frames, compare side-by-side against Jung reference stills.
-
----
-
-## 2. Pexels B-Roll Integration
-
-**Score: 5/10** (PROVISIONAL - awaiting real render)
-
-✅ **Code Implements**:
-- LLM keyword generation from script (14 terms)
-- Pexels API fetch (24 videos, 12 photos)
-- No back-to-back repeat logic (_PexelsBag)
-- Caching to prevent re-downloads
-
-❌ **Cannot Verify Without Render**:
-- Whether keywords match Frontier atmospheric style
-- Quality/relevance of fetched Pexels assets
-- Smoothness of transitions between stills and b-roll
-- Whether gaps are actually filled (no black frames)
-
-**To Reach 10/10**: Render with PEXELS_KEY, watch full video, verify smooth Pexels fills all gaps.
-
----
-
-## 3. Motion Timing & Still Ownership
-
-**Score: 6/10** (PARTIAL - smoke test validates structure)
-
-✅ **Validated in Smoke Test**:
-- Motion planner creates correct timeline structure
-- Stills own specific time spans (start_sec to end_sec)
-- Pexels fills gaps between stills
-- No overlaps, no empty gaps
-- Durations clamped (min 3.5s, max 10s, pad 0.8s)
-
-```
-Smoke test output (20s video):
-1. ai_still (0.0s-4.8s) zoom=in
-2. pexels_video (4.8s-8.0s) zoom=hold  
-3. ai_still (8.0s-12.8s) zoom=out
-4. pexels_video (12.8s-16.0s) zoom=hold
-5. ai_still (16.0s-20.0s) zoom=in
-```
-
-❌ **Cannot Verify Without Full Render**:
-- Whether still timing actually matches VO meaning
-- Sentence-to-still matching accuracy
-- Whether transitions feel natural
-- Pacing vs Frontier reference
-
-**To Reach 9/10**: Render with script+VO, verify stills appear at correct narrative moments.
-
----
-
-## 4. Word-Level Kinetic Captions
-
-**Score: 8/10** (CODE COMPLETE - awaiting visual verification)
-
-✅ **Implemented (Post-Fix)**:
-- `_add_kinetic_karaoke()` generates ASS `\k` tags from Whisper word timings
-- Each word gets duration in centiseconds
-- Color override `{\c&H96B8C9&}` flashes accent gold per word
-- ASS styling matches Frontier: Inter ExtraBold, 73px, bottom-aligned, shadow 3.4
-
-✅ **Smoke Test Validation**:
-```
-Dialogue: 0,0:00:00.00,0:00:04.00,Default,,0,0,0,,{\k20\c&H96B8C9&}The {\k40\c&H96B8C9&}shadow ...
-```
-Karaoke tags present and syntactically correct.
-
-❌ **Cannot Verify Without Visual Render**:
-- Whether timing sync is tight (word flash exactly as spoken)
-- Whether accent color (#C9B896 -> &H96B8C9&) matches Jung gold
-- Whether font/size looks identical to reference frames
-- Readability at 1080p
-
-**Why Not 10/10**: Need to see rendered video with captions to verify visual match. ASS syntax is correct but timing precision and color match need output validation.
-
-**To Reach 10/10**: Render, watch with audio, confirm each word flashes in sync.
-
----
-
-## 5. Color Grade & Look
-
-**Score: 7/10** (PARTIAL - grade string matches, output unknown)
-
-✅ **Code Implements**:
-- Default grade: `eq=brightness=-0.06:saturation=0.62:contrast=1.10,colortemperature=temperature=5200`
-- Matches Frontier Jung style exactly (cold, desaturated, filmic)
-- Applied to all Pexels clips and photos in `_build_segment_video()`
-
-❌ **Cannot Verify Without Render**:
-- Whether grade actually produces Frontier's cold/dark look
-- Color consistency across mixed Pexels assets
-- Whether stills (from Atlas) match grade of footage
-- Overall tonal unity vs Jung reference
-
-**To Reach 10/10**: Render, extract frames at 5s intervals, compare tonal range/saturation/temperature to Jung reference.
-
----
-
-## 6. Ken Burns Zooms
-
-**Score: 7/10** (ARCHITECTURAL MATCH - visual smoothness unknown)
-
-✅ **Code Implements**:
-- `_ken_burns_filter()` generates ffmpeg zoompan expressions
-- Linear interpolation: `start_zoom + (end_zoom - start_zoom) * (frame / total_frames)`
-- Zoom amount 0.15 (15% scale) matches Frontier default
-- Alternate strategy: in, out, in, out...
-- Hold mode for videos (no zoom)
-
-✅ **Smoke Test Validates**: Zoom directions alternate correctly in timeline.
-
-❌ **Cannot Verify Without Render**:
-- Smoothness of zoom motion
-- Whether 0.15 zoom feels right for 3-10s still durations
-- Whether alternating creates good rhythm
-- Comparison to Frontier's perspective zoom (we use zoompan)
-
-**To Reach 9/10**: Render, watch zooms frame-by-frame, verify smooth motion without jitter. Compare zoom speed/feel to Jung reference.
-
----
-
-## 7. Dust Overlay & Vignette
-
-**Score: 7/10** (PARTIAL - vignette works, dust asset now present)
-
-✅ **Validated in Smoke Test**:
-- Vignette applies correctly (dark edge fade, 0.35 strength)
-- `_apply_vignette()` works end-to-end
-
-✅ **Dust Overlay Asset**:
-- `assets/overlay_dust.mp4` now present (32MB, 10s loop, procedural particles)
-- Screen blend at 30% opacity coded and ready
-- FFmpeg `-stream_loop -1` ensures seamless looping
-
-❌ **Cannot Verify Without Render**:
-- Whether vignette strength matches Jung reference darkness
-- Dust particle aesthetic in final output
-- Whether dust opacity/blend matches Frontier subtlety
-
-**To Reach 9/10**: Run real Atlas+Pexels render, verify dust/vignette look matches Frontier reference.
-
----
-
-## 8. Pipeline Execution
-
-**Score: 9/10** (SMOKE TEST VALIDATES ARCHITECTURE)
-
-✅ **Smoke Test Proves**:
-- All 6 pipeline steps execute without errors
-- Parallel workers function correctly  
-- Progress callbacks work
-- Timing tracked per step
-- Output video created (0.49 MB, 20s, valid MP4)
-- Segments concatenate cleanly
-- Audio mix works
-- No crashes or missing dependencies (except API keys)
-
-✅ **Code Review**:
-- Orchestration matches Frontier's run_pipeline pattern
-- ThreadPoolExecutor for parallel stills/Pexels
-- Error handling with retries
-- Graceful fallbacks (e.g. if Whisper fails)
-
-❌ **Minor Gap**:
-- Cannot test full Atlas/Pexels integration without keys
-- Worker count optimal for local but unverified for Fly Machine
-
-**Why 9/10**: Architecture proven solid, but full integration needs keys.
-
----
-
-## 9. Recipe & Admin Gating
-
-**Score: 10/10** (VERIFIED - NON-VISUAL)
-
-✅ **Verified**:
-```python
-frontier = get_recipe('frontier')
-assert frontier['admin_only'] is True
-assert 'ATLASCLOUD_KEY' in frontier['requires_keys']
-assert 'PEXELS_KEY' in frontier['optional_keys']
-```
-
-✅ **Existing CR Infrastructure**:
-- Admin check already tested (`nwalikelv@gmail.com`)
-- Recipe validation works
-- Niche JSON updated
-- cook_runner.py handles "frontier" recipe
-
-**Non-visual dimension - score stands.**
-
----
-
-## Overall Score (3-Pillar Kevis Method)
-
-### MANDATORY: Three-Pillar Scoring
-
-Per Kevis scoring rule, ALL Frontier evaluations must report three numbers:
-
-**1. visual_bed /10** — Stills quality, Pexels motion bed, Ken Burns, color grade, vignette, dust overlay
-**2. motion_graphics /10** — Kinetic captions (word flash/highlight), on-screen GFX (NOT the stills themselves)
-**3. combined /10** — Overall 1:1 Whop Frontier match (both pillars must be strong; do NOT average away a zero)
-
-**Gate for merge**: `combined ≥9.5` AND neither pillar below ~9.0
-
----
-
-### Current Scores (Output-Based, Independent videoReview of Mac v2)
-
-**AUTHORITATIVE REVIEW**: Independent videoReview agent analyzed Mac v2 output vs Jung reference.
-
-#### 1. Visual Bed: **4.5/10** ❌
-
-Breakdown:
-- Still Look: **6/10** (Atlas generated, decent quality but not Jung cinematic)
-- Pexels Motion: **4/10** (denser than v1 but still sparse vs Whop density)
-- Ken Burns: **3/10** (visible but weak, not smooth Whop motion)
-- Color Grade: **4/10** (purple cast, not Jung warm desaturated look)
-- Dust: **3/10** (960x540 broke blend, needs 1080p + scale-safe + heavier grain)
-- Vignette: **5/10** (iris wipe artifact from a={strength} param)
-
-**visual_bed: 4.5/10** ❌
-
-#### 2. Motion Graphics: **3.5/10** ❌
-
-**CRITICAL FINDING**: Jung motion graphics are NOT lower-third white SRT captions.
-
-Jung Frontier has:
-- ✅ **Centered bold kinetic captions** (not bottom)
-- ✅ **Word-by-word yellow/gold highlight + bounce/pop**
-- ✅ **Collage cutouts / animated underlines / PiP framing resets**
-
-Mac v2 has:
-- ❌ Bottom lower-third white captions (wrong placement)
-- ❌ Weak karaoke rendering (no visible yellow highlight/bounce)
-- ❌ No collage/cutouts/underlines/PiP (missing entirely)
-
-Breakdown:
-- Kinetic Captions Placement: **2/10** (bottom not center)
-- Word Flash/Highlight: **3/10** (karaoke renders but weak, no pop/bounce)
-- Collage/Cutouts/Underlines: **0/10** (not implemented)
-- PiP Framing: **0/10** (not implemented)
-
-**motion_graphics: 3.5/10** ❌
-
-#### 3. Combined: **4.0/10** ❌
-
-Independent videoReview combined score. Both pillars weak.
-
-**combined: 4.0/10** ❌ (FAILS ≥9.5 requirement, FAILS pillar minimum ~9.0)
-
----
-
-## Critical Gaps Found by Independent videoReview
-
-**Motion Graphics (3.5/10 - biggest gap)**:
-1. ❌ Captions bottom-aligned (should be centered like Jung)
-2. ❌ No visible yellow/gold highlight bounce/pop on words
-3. ❌ Missing collage cutouts entirely
-4. ❌ Missing animated underlines
-5. ❌ Missing PiP framing resets
-
-**Visual Bed (4.5/10)**:
-1. ❌ Purple cast in grade (Jung is warm desaturated)
-2. ❌ Dust 960x540 broke blend (needs 1080p scale-safe)
-3. ❌ Vignette iris wipe artifact (wrong param usage)
-4. ❌ Ken Burns weak/not smooth
-5. ❌ Pexels still too sparse
-6. ❌ Dust/grain not heavy enough vs Whop
-
----
-
-## HONEST ASSESSMENT
-
-### What CR Frontier Has (Partial 1:1):
-
-✅ Atlas gpt-image-2 stills generation  
-✅ Pexels b-roll fetching and integration  
-✅ Ken Burns zoom on stills (0.28, needs smoothness polish)  
-✅ ASS karaoke word-level timing (but wrong placement/style)  
-✅ Vignette + dust overlay  
-✅ SRT-to-ASS conversion  
-⚠️ Grade (improved but still has purple cast vs Jung warm desat)  
-
-### What CR Frontier is MISSING (Critical for 1:1):
-
-**Motion Graphics Layer (WHY motion_graphics = 3.5/10)**:
-❌ **Collage templates** (aged-paper sticker cutouts, scatter, pillars, photonote, deckfan)  
-❌ **GFX interleaving** (~every 20-40s pattern per Whop pacing)  
-❌ **Skin-aware rendering** (collage_dark/noir templates with Jung styling)  
-❌ **Chromium+ffmpeg GFX pipeline** (motion.py deterministic frame rendering)  
-
-**Caption System (Wrong Style)**:
-❌ Whop uses **center screen** kinetic captions (Alignment=5), not bottom  
-❌ Whop uses **Inter Display Black** fonts, not Inter ExtraBold  
-❌ Whop caption burn via `_build_burn_ass`, different from current ASS approach  
-❌ Yellow/gold pop on words not rendering visibly  
-
-**Jung Look (From jung.json)**:
-❌ Grade preset: `eq=brightness=-0.06:saturation=0.62:contrast=1.10,colortemperature=temperature=5200`  
-❌ Caption accent: `&H96B8C9&` (Jung gold/cream)  
-❌ Fonts: `'Inter Display Black','Inter Black',Inter,sans-serif` weight 900  
-
----
-
-## Whop Frontier Source of Truth (Attached)
-
-From `uploads/jung.json` + `uploads/motion.py`:
-
-**Jung Look**:
+**Jung Pacing** (from jung.json):
 ```json
 {
-  "look": {
-    "title_font": "'Inter Display Black','Inter Black',Inter,sans-serif",
-    "title_weight": "900",
-    "caption_accent": "&H96B8C9&",
-    "footage_grade": "eq=brightness=-0.06:saturation=0.62:contrast=1.10,colortemperature=temperature=5200",
-    "skins": ["collage_dark", "collage_dark", "noir"]
-  },
-  "pacing": {
-    "graphic_every_min": 0.5,
-    "graphic_ratio": 0.35,
-    "graphic_dur_s": 6.0
-  }
+  "graphic_every_min": 0.5,
+  "graphic_ratio": 0.35,
+  "graphic_dur_s": 6.0
 }
 ```
 
-**Motion Graphics** (`motion.py`):
-- Templates: collage, scatter, pillars, photonote, deckfan, bar_chart, icon_flow, etc.
-- Skins: collage_dark (aged-paper cutouts), noir (frosted glass), glass, paper, clean
-- Rendered: Chromium + ffmpeg, 1920x1080, 30fps, deterministic frame-by-frame
-- **Interleaved with stills+Pexels**: ~every 20-40s of VO gets a 6s GFX card
-
-**Without motion graphics templates, CR Frontier cannot match Jung Whop 1:1.**
-
----
-
-## Path to ≥9.5 (Requires Motion GFX Layer)
-
-### Phase 1: Port Jung Look ✅ (Done in v2.1)
-- Grade preset from jung.json (kill purple)
-- Caption accent &H96B8C9&
-- Inter Display Black fonts
-
-### Phase 2: Motion Graphics Lane ❌ (CRITICAL, Not Started)
-**Minimum Viable**:
-- Vendor `motion.py` into `core/motion_graphics.py` OR
-- Port minimal collage + scatter templates (HTML/CSS/JS via Playwright)
-- Interleave GFX segments between stills (~every 30s)
-- Render at 1920x1080, 6s duration
-- Use collage_dark/noir skins
-
-**Without this**: motion_graphics CANNOT reach 9.0/10
-
-### Phase 3: Whop Caption Burn Semantics ❌ (Not Started)
-- Port `_build_burn_ass` from Whop make_video
-- Center screen (Alignment=5) when dark/noir skins
-- Inter Display Black fonts
-- Proper yellow pop rendering
-
-### Phase 4: Dust/Vignette Polish ⚠️ (Partial)
-- Heavier dust/grain matching Whop intensity
-- Vignette matching Whop look
+**Jung Look** (from jung.json):
+```json
+{
+  "title_font": "'Inter Display Black','Inter Black',Inter,sans-serif",
+  "caption_accent": "&H96B8C9&",
+  "footage_grade": "eq=brightness=-0.06:saturation=0.62:contrast=1.10,colortemperature=temperature=5200",
+  "skins": ["collage_dark", "collage_dark", "noir"]
+}
+```
 
 ---
 
-## Gate for Merge
-
-**Remains**: `combined ≥9.5` AND both pillars `≥~9.0`
-
-**Current blockers**:
-1. Motion graphics templates missing (blocks motion_graphics ≥9.0)
-2. Whop caption burn not ported (blocks motion_graphics polish)
-3. Jung look partially ported (visual_bed needs testing)
-
-**DO NOT CLAIM 1:1** until Mac v3 smoke shows:
-- ✅ Collage GFX cards interleaved with stills
-- ✅ Center kinetic captions (not bottom)
-- ✅ Jung warm desat grade (no purple)
-- ✅ Yellow word pop rendering visibly
-
-**Keep PR draft.**
+**Mac: Run v4 smoke and report 4-pillar scores. Caption muting during GFX must be verified (HARD fail rule).**

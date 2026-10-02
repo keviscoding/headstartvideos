@@ -148,6 +148,15 @@ def assemble_frontier_video(
     if progress_callback:
         progress_callback("Burning in subtitles...")
     
+    # Collect motion_gfx ranges to mute captions (prevent caption/GFX overlap)
+    no_sub_ranges = []
+    for seg in motion_segments:
+        if seg.type == "motion_gfx":
+            no_sub_ranges.append((seg.start_sec, seg.end_sec))
+    
+    if no_sub_ranges and progress_callback:
+        progress_callback(f"Muting captions during {len(no_sub_ranges)} GFX card ranges...")
+    
     # Burn subtitles with ASS style (with word-level kinetic if available)
     subtitled_path = temp_dir / "subtitled.mp4"
     _burn_subtitles(
@@ -155,6 +164,7 @@ def assemble_frontier_video(
         subtitle_path=subtitle_path,
         output_path=subtitled_path,
         word_timings=word_timings,
+        no_sub_ranges=no_sub_ranges,
     )
     
     # Apply dust overlay if requested
@@ -360,8 +370,18 @@ def _burn_subtitles(
     subtitle_path: Path,
     output_path: Path,
     word_timings: list[dict] | None = None,
+    no_sub_ranges: list[tuple[float, float]] | None = None,
 ):
-    """Burn ASS subtitles with kinetic style using libass filter."""
+    """Burn ASS subtitles with kinetic style using libass filter.
+    
+    Args:
+        video_path: Input video
+        subtitle_path: .srt or .ass subtitle file
+        output_path: Output video with burned subs
+        word_timings: Optional word-level timings for kinetic
+        no_sub_ranges: List of (start_sec, end_sec) ranges to mute captions
+                       (e.g. during motion_gfx cards to prevent overlap)
+    """
     import tempfile as _tempfile
     ff = _ffmpeg_bin()
     # Always materialize ASS into a space-free temp path for safe ass= filter
@@ -377,7 +397,7 @@ def _burn_subtitles(
             sibling = srt.parent / "subtitles.srt"
             if sibling.exists():
                 srt = sibling
-        _convert_srt_to_ass(srt, tmp_ass, word_timings=word_timings, center=True)
+        _convert_srt_to_ass(srt, tmp_ass, word_timings=word_timings, center=True, no_sub_ranges=no_sub_ranges)
 
     # Safety: never leave escaped override braces
     body = tmp_ass.read_text(encoding="utf-8")
@@ -405,6 +425,7 @@ def _convert_srt_to_ass(
     accent_color: str = "&H96B8C9&",
     word_timings: list[dict] | None = None,
     center: bool = True,
+    no_sub_ranges: list[tuple[float, float]] | None = None,
 ):
     """
     Convert SRT to ASS with Whop Jung kinetic captions.
@@ -412,6 +433,10 @@ def _convert_srt_to_ass(
     Word highlight uses \\1c + \\t transforms (white → warm gold → white), NOT bare \\k.
     Centered (Alignment=5) by default to match Jung; fade + heavy outline/shadow.
     ASS colors are &HBBGGRR&. Accent #C9B896 (warm gold) -> &H96B8C9&.
+    
+    Args:
+        no_sub_ranges: List of (start_sec, end_sec) ranges to mute captions
+                       (e.g. during motion_gfx cards to prevent caption/GFX overlap)
     """
     with open(srt_path, "r", encoding="utf-8") as f:
         srt_content = f.read()
@@ -454,13 +479,27 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if " --> " not in timing_line:
             continue
         start, end = timing_line.split(" --> ")
+        start_sec = _srt_time_to_seconds(start.strip())
+        end_sec = _srt_time_to_seconds(end.strip())
+        
+        # Skip captions that overlap with motion_gfx ranges (HARD fail prevention)
+        if no_sub_ranges:
+            skip = False
+            for gfx_start, gfx_end in no_sub_ranges:
+                # Check if subtitle overlaps with GFX range
+                if start_sec < gfx_end and end_sec > gfx_start:
+                    skip = True
+                    break
+            if skip:
+                continue  # Mute this caption
+        
         start_ass = _srt_time_to_ass(start.strip())
         end_ass = _srt_time_to_ass(end.strip())
         plain = " ".join(text_lines).strip()
         if word_timings:
-            body = _add_kinetic_color_flash(plain, start, end, word_timings, accent_color)
+            body = _add_kinetic_color_flash(plain, start.strip(), end.strip(), word_timings, accent_color)
         else:
-            body = _add_kinetic_color_flash_estimated(plain, start, end, accent_color)
+            body = _add_kinetic_color_flash_estimated(plain, start.strip(), end.strip(), accent_color)
         events.append(
             f"Dialogue: 0,{start_ass},{end_ass},Default,,0,0,0,,"
             f"{{\\fad(170,170)}}{body}"
