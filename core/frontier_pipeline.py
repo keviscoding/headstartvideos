@@ -36,7 +36,7 @@ def run_frontier_pipeline(
     progress_callback=None,
     lite_mode: bool = False,
     image_quality: str = "standard",
-    color_grade: str = "eq=brightness=-0.08:saturation=0.55:contrast=1.12,colortemperature=temperature=4800,hue=s=0.9:h=-5",  # Jung warm desat, kill purple
+    color_grade: str = "eq=brightness=-0.06:saturation=0.62:contrast=1.10,colortemperature=temperature=5200",  # Jung look from jung.json (NO purple)
     add_dust: bool = True,
     add_vignette: bool = True,
 ) -> dict:

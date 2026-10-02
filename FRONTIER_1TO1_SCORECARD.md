@@ -338,23 +338,111 @@ Independent videoReview combined score. Both pillars weak.
 
 ## HONEST ASSESSMENT
 
-### Fixes Pushed (v2):
+### What CR Frontier Has (Partial 1:1):
 
-1. ✅ ASS escape fix - only escape plain text, preserve `{\k...}` overrides
-2. ✅ Ken Burns zoom increased - 20% delta minimum, better zoompan expression
-3. ✅ Denser Pexels - reduced still_max_hold 10→6s, still_pad 0.8→0.5s
-4. ✅ FPS normalization - all segments now output at same fps before concat
-5. ✅ Dust path fallbacks - multiple locations checked with logging
-6. ✅ PEXELS_KEY live load - reads os.environ, not frozen config
+✅ Atlas gpt-image-2 stills generation  
+✅ Pexels b-roll fetching and integration  
+✅ Ken Burns zoom on stills (0.28, needs smoothness polish)  
+✅ ASS karaoke word-level timing (but wrong placement/style)  
+✅ Vignette + dust overlay  
+✅ SRT-to-ASS conversion  
+⚠️ Grade (improved but still has purple cast vs Jung warm desat)  
 
-### Path to ≥9.5:
+### What CR Frontier is MISSING (Critical for 1:1):
 
-**MANDATORY**:
-1. Mac smoke v2 with fixed assembler
-2. Verify kinetic captions render correctly (gold flash on words)
-3. Verify Ken Burns zoom is visible
-4. Verify denser Pexels motion bed
-5. Verify dust overlay applies
-6. Score honestly: visual_bed ≥9, motion_graphics ≥9, combined ≥9.5
+**Motion Graphics Layer (WHY motion_graphics = 3.5/10)**:
+❌ **Collage templates** (aged-paper sticker cutouts, scatter, pillars, photonote, deckfan)  
+❌ **GFX interleaving** (~every 20-40s pattern per Whop pacing)  
+❌ **Skin-aware rendering** (collage_dark/noir templates with Jung styling)  
+❌ **Chromium+ffmpeg GFX pipeline** (motion.py deterministic frame rendering)  
 
-**Cannot merge until both pillars strong.**
+**Caption System (Wrong Style)**:
+❌ Whop uses **center screen** kinetic captions (Alignment=5), not bottom  
+❌ Whop uses **Inter Display Black** fonts, not Inter ExtraBold  
+❌ Whop caption burn via `_build_burn_ass`, different from current ASS approach  
+❌ Yellow/gold pop on words not rendering visibly  
+
+**Jung Look (From jung.json)**:
+❌ Grade preset: `eq=brightness=-0.06:saturation=0.62:contrast=1.10,colortemperature=temperature=5200`  
+❌ Caption accent: `&H96B8C9&` (Jung gold/cream)  
+❌ Fonts: `'Inter Display Black','Inter Black',Inter,sans-serif` weight 900  
+
+---
+
+## Whop Frontier Source of Truth (Attached)
+
+From `uploads/jung.json` + `uploads/motion.py`:
+
+**Jung Look**:
+```json
+{
+  "look": {
+    "title_font": "'Inter Display Black','Inter Black',Inter,sans-serif",
+    "title_weight": "900",
+    "caption_accent": "&H96B8C9&",
+    "footage_grade": "eq=brightness=-0.06:saturation=0.62:contrast=1.10,colortemperature=temperature=5200",
+    "skins": ["collage_dark", "collage_dark", "noir"]
+  },
+  "pacing": {
+    "graphic_every_min": 0.5,
+    "graphic_ratio": 0.35,
+    "graphic_dur_s": 6.0
+  }
+}
+```
+
+**Motion Graphics** (`motion.py`):
+- Templates: collage, scatter, pillars, photonote, deckfan, bar_chart, icon_flow, etc.
+- Skins: collage_dark (aged-paper cutouts), noir (frosted glass), glass, paper, clean
+- Rendered: Chromium + ffmpeg, 1920x1080, 30fps, deterministic frame-by-frame
+- **Interleaved with stills+Pexels**: ~every 20-40s of VO gets a 6s GFX card
+
+**Without motion graphics templates, CR Frontier cannot match Jung Whop 1:1.**
+
+---
+
+## Path to ≥9.5 (Requires Motion GFX Layer)
+
+### Phase 1: Port Jung Look ✅ (Done in v2.1)
+- Grade preset from jung.json (kill purple)
+- Caption accent &H96B8C9&
+- Inter Display Black fonts
+
+### Phase 2: Motion Graphics Lane ❌ (CRITICAL, Not Started)
+**Minimum Viable**:
+- Vendor `motion.py` into `core/motion_graphics.py` OR
+- Port minimal collage + scatter templates (HTML/CSS/JS via Playwright)
+- Interleave GFX segments between stills (~every 30s)
+- Render at 1920x1080, 6s duration
+- Use collage_dark/noir skins
+
+**Without this**: motion_graphics CANNOT reach 9.0/10
+
+### Phase 3: Whop Caption Burn Semantics ❌ (Not Started)
+- Port `_build_burn_ass` from Whop make_video
+- Center screen (Alignment=5) when dark/noir skins
+- Inter Display Black fonts
+- Proper yellow pop rendering
+
+### Phase 4: Dust/Vignette Polish ⚠️ (Partial)
+- Heavier dust/grain matching Whop intensity
+- Vignette matching Whop look
+
+---
+
+## Gate for Merge
+
+**Remains**: `combined ≥9.5` AND both pillars `≥~9.0`
+
+**Current blockers**:
+1. Motion graphics templates missing (blocks motion_graphics ≥9.0)
+2. Whop caption burn not ported (blocks motion_graphics polish)
+3. Jung look partially ported (visual_bed needs testing)
+
+**DO NOT CLAIM 1:1** until Mac v3 smoke shows:
+- ✅ Collage GFX cards interleaved with stills
+- ✅ Center kinetic captions (not bottom)
+- ✅ Jung warm desat grade (no purple)
+- ✅ Yellow word pop rendering visibly
+
+**Keep PR draft.**
