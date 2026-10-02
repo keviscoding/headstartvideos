@@ -271,45 +271,68 @@ Per Kevis scoring rule, ALL Frontier evaluations must report three numbers:
 
 ---
 
-### Current Scores (Output-Based, Honest from Mac Smoke v1)
+### Current Scores (Output-Based, Independent videoReview of Mac v2)
 
-#### 1. Visual Bed: **3.0/10** ❌
+**AUTHORITATIVE REVIEW**: Independent videoReview agent analyzed Mac v2 output vs Jung reference.
 
-Breakdown:
-- Still Look: **5/10** (Atlas generated but quality not Jung-level)
-- Pexels Motion: **2/10** (only 2 videos + 2 photos vs 7 stills - too sparse, need denser gaps)
-- Ken Burns: **1/10** (not visible in v1 - static stills, zoom broken)
-- Color Grade: **4/10** (present but weak vs Jung cold/dark look)
-- Dust: **0/10** (missing from v1 render - file not found)
-- Vignette: **5/10** (present but weak)
-
-**visual_bed: 3.0/10** ❌
-
-#### 2. Motion Graphics: **0/10** ❌
+#### 1. Visual Bed: **4.5/10** ❌
 
 Breakdown:
-- Kinetic Captions: **0/10** (CRITICAL: v1 leaked raw `{\k...}` ASS tags on screen - not rendered)
-- Word Flash/Highlight: **0/10** (karaoke broken - tags visible as text)
-- On-Screen GFX: **0/10** (none implemented)
+- Still Look: **6/10** (Atlas generated, decent quality but not Jung cinematic)
+- Pexels Motion: **4/10** (denser than v1 but still sparse vs Whop density)
+- Ken Burns: **3/10** (visible but weak, not smooth Whop motion)
+- Color Grade: **4/10** (purple cast, not Jung warm desaturated look)
+- Dust: **3/10** (960x540 broke blend, needs 1080p + scale-safe + heavier grain)
+- Vignette: **5/10** (iris wipe artifact from a={strength} param)
 
-**motion_graphics: 0/10** ❌ (User says: "v1 has ZERO motion graphics")
+**visual_bed: 4.5/10** ❌
 
-#### 3. Combined: **3.0/10** ❌
+#### 2. Motion Graphics: **3.5/10** ❌
 
-With motion_graphics at ZERO, combined cannot exceed visual_bed. Both pillars must be strong.
+**CRITICAL FINDING**: Jung motion graphics are NOT lower-third white SRT captions.
 
-**combined: 3.0/10** ❌ (FAILS ≥9.5 requirement, FAILS pillar minimum ~9.0)
+Jung Frontier has:
+- ✅ **Centered bold kinetic captions** (not bottom)
+- ✅ **Word-by-word yellow/gold highlight + bounce/pop**
+- ✅ **Collage cutouts / animated underlines / PiP framing resets**
+
+Mac v2 has:
+- ❌ Bottom lower-third white captions (wrong placement)
+- ❌ Weak karaoke rendering (no visible yellow highlight/bounce)
+- ❌ No collage/cutouts/underlines/PiP (missing entirely)
+
+Breakdown:
+- Kinetic Captions Placement: **2/10** (bottom not center)
+- Word Flash/Highlight: **3/10** (karaoke renders but weak, no pop/bounce)
+- Collage/Cutouts/Underlines: **0/10** (not implemented)
+- PiP Framing: **0/10** (not implemented)
+
+**motion_graphics: 3.5/10** ❌
+
+#### 3. Combined: **4.0/10** ❌
+
+Independent videoReview combined score. Both pillars weak.
+
+**combined: 4.0/10** ❌ (FAILS ≥9.5 requirement, FAILS pillar minimum ~9.0)
 
 ---
 
-## Critical Bugs Found in Mac Smoke v1
+## Critical Gaps Found by Independent videoReview
 
-1. ❌ **ASS karaoke tags leaked** - `{\k20}` visible on screen (escape bug after adding overrides)
-2. ❌ **Ken Burns not visible** - zoom broken, stills appear static
-3. ❌ **Pexels too sparse** - only 2 videos + 2 photos for 7 stills (need denser motion bed)
-4. ❌ **Dust missing** - `overlay_dust.mp4` file not found at runtime
-5. ❌ **Grade weak** - not matching Jung's cold/dark cinematic look
-6. ❌ **FPS mismatch** - concat duration metadata wrong
+**Motion Graphics (3.5/10 - biggest gap)**:
+1. ❌ Captions bottom-aligned (should be centered like Jung)
+2. ❌ No visible yellow/gold highlight bounce/pop on words
+3. ❌ Missing collage cutouts entirely
+4. ❌ Missing animated underlines
+5. ❌ Missing PiP framing resets
+
+**Visual Bed (4.5/10)**:
+1. ❌ Purple cast in grade (Jung is warm desaturated)
+2. ❌ Dust 960x540 broke blend (needs 1080p scale-safe)
+3. ❌ Vignette iris wipe artifact (wrong param usage)
+4. ❌ Ken Burns weak/not smooth
+5. ❌ Pexels still too sparse
+6. ❌ Dust/grain not heavy enough vs Whop
 
 ---
 

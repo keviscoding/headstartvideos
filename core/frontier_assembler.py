@@ -242,7 +242,7 @@ def _ken_burns_filter(
     fps: int,
     width: int,
     height: int,
-    zoom_amount: float = 0.20,  # Increased from 0.15 to 0.20 for more visible zoom
+    zoom_amount: float = 0.28,  # Mac hardened: ~0.28 for visible smooth motion
 ) -> str:
     """Generate ffmpeg filter for Ken Burns zoom effect (minimum 12% delta)."""
     if zoom_type == "hold":
@@ -268,8 +268,8 @@ def _ken_burns_filter(
     # Linear zoom formula: interpolate from start_zoom to end_zoom over total_frames
     zoom_expr = f"'if(lte(on,1),{start_zoom},{start_zoom}+({end_zoom}-{start_zoom})*(on-1)/({total_frames}-1))'"
     
-    # Scale input larger to allow zoom headroom
-    input_scale = int(width * 1.5)  # 50% larger for zoom headroom
+    # Mac hardened: 2× scale headroom for smoother zoom
+    input_scale = int(width * 2.0)
     
     return (
         f"scale={input_scale}:-1:force_original_aspect_ratio=increase,"
@@ -352,6 +352,10 @@ def _convert_srt_to_ass(
     with open(srt_path, "r", encoding="utf-8") as f:
         srt_content = f.read()
     
+    # Jung Frontier style: CENTER screen kinetic captions (not bottom)
+    # Alignment=5 = center screen (not 2 = bottom center)
+    # SecondaryColour = yellow/gold highlight that renders during karaoke
+    # Larger bold font for visibility
     ass_header = f"""[Script Info]
 Title: Frontier Subtitles
 ScriptType: v4.00+
@@ -361,7 +365,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Inter ExtraBold,73,&HFFFFFF&,{accent_color},&H000000&,&H64000000&,1,0,0,0,100,100,0,0,1,3.4,0,2,20,20,60,1
+Style: Default,Inter ExtraBold,84,&HFFFFFF&,{accent_color},&H000000&,&H64000000&,1,0,0,0,100,100,0,0,1,4.0,0,5,20,20,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -484,14 +488,15 @@ def _srt_time_to_ass(srt_time: str) -> str:
 
 
 def _apply_dust_overlay(video_path: Path, dust_path: Path, output_path: Path):
-    """Apply dust overlay with screen blend."""
+    """Apply dust overlay with scale-safe blend (1080p dust asset)."""
     cmd = [
         "ffmpeg", "-y",
         "-i", str(video_path),
         "-stream_loop", "-1",
         "-i", str(dust_path),
         "-filter_complex",
-        "[0:v][1:v]blend=all_mode=screen:all_opacity=0.3[v]",
+        # Scale dust to match video dimensions, then blend
+        "[1:v]scale=1920:1080[dust];[0:v][dust]blend=all_mode=screen:all_opacity=0.25[v]",
         "-map", "[v]",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
         "-t", str(_get_duration(video_path)),
@@ -502,11 +507,10 @@ def _apply_dust_overlay(video_path: Path, dust_path: Path, output_path: Path):
 
 
 def _apply_vignette(video_path: Path, output_path: Path, strength: float = 0.35):
-    """Apply dark vignette around edges."""
-    vignette_filter = (
-        f"vignette=angle=PI/4:mode=forward:eval=frame:"
-        f"a={strength}:x0=0.5:y0=0.5"
-    )
+    """Apply dark vignette around edges (mild angle-only, no iris wipe)."""
+    # Do NOT pass a={strength} - causes iris wipe artifact
+    # Use angle-only for mild corner darkening matching Jung
+    vignette_filter = "vignette=angle=PI/3:mode=forward:eval=frame"
     
     cmd = [
         "ffmpeg", "-y",
