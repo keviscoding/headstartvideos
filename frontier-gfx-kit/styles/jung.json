@@ -1,0 +1,30 @@
+{
+  "name": "jung",
+  "label": "Carl Jung \u2014 Shadow Work",
+  "description": "Dark psychology. Cream-on-black collage, cold graded footage.",
+  "look": {
+    "skins": [
+      "collage_dark",
+      "collage_dark",
+      "noir"
+    ],
+    "caption_accent": "&H6ED7F5&",
+    "footage_grade": "eq=brightness=-0.04:saturation=0.58:contrast=1.12,colortemperature=temperature=5350,colorbalance=rs=0.02:gs=0.01:bs=-0.02:rm=0.01:gm=0.0:bm=-0.01,curves=all='0/0 0.35/0.32 0.65/0.68 1/0.97',unsharp=5:5:0.28:5:5:0.0",
+    "ground": "textures/background_dark.png"
+  },
+  "pacing": {
+    "first_cut_min_sec": 6.0,
+    "first_cut_target_sec": 8.0,
+    "bed_target_sec": 7.5,
+    "graphic_ratio": 0.22,
+    "graphic_dur_s": 4.5,
+    "first_gfx_min_sec": 8.0,
+    "dust_strength": 1.85,
+    "vignette_strength": 0.58,
+    "leak_strength": 0.0,
+    "zoom_amount": 0.11,
+    "flash_mid_opener": false,
+    "use_lightleak": false,
+    "chapter_flash_mode": "off"
+  }
+}

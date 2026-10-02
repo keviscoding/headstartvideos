@@ -50,6 +50,19 @@ RECIPES = {
         "inputs": ["voiceover", "script"],
         "settings": ["style"],
     },
+    "frontier": {
+        "pipeline": "frontier",
+        "label": "Frontier",
+        "description": "1:1 Whop Frontier port — AI faceless videos with Atlas gpt-image-2 stills, "
+                       "Pexels stock b-roll, word-locked motion plan, Ken Burns zooms, "
+                       "ASS kinetic captions, and Frontier color grade/dust/vignette. "
+                       "Full professional pipeline matching Whop Frontier visual output.",
+        "requires_keys": ["ATLASCLOUD_KEY"],
+        "optional_keys": ["PEXELS_KEY"],
+        "inputs": ["voiceover", "script"],
+        "settings": ["style_preset", "color_grade"],
+        "admin_only": True,
+    },
     "storyboard_pack": {
         "pipeline": "storyboard",
         "label": "Storyboard Pack",
@@ -70,17 +83,6 @@ RECIPES = {
         "optional_keys": [],
         "inputs": ["clips", "title"],
         "settings": ["style_preset"],
-    },
-    "frontier": {
-        "pipeline": "frontier",
-        "label": "Frontier",
-        "description": "AI faceless video factory: AI stills + VO + assembly. "
-                       "Admin-only for testing.",
-        "requires_keys": ["LLM"],
-        "optional_keys": ["PEXELS_KEY"],
-        "inputs": ["voiceover", "script"],
-        "settings": ["style"],
-        "admin_only": True,
     },
 }
 

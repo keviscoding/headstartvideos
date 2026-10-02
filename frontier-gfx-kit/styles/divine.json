@@ -1,0 +1,30 @@
+{
+  "name": "divine",
+  "label": "Divine Stillness",
+  "description": "Soft sacred-faceless essay. Cream type on charcoal, cloud/star stickers, warmer grade.",
+  "language": "English",
+  "look": {
+    "title_font": "'Inter Display Black','Inter Black',Inter,sans-serif",
+    "title_weight": "900",
+    "accent": ["#E8D5A3", "#C4A574", "#8FA89A", "#D9C9A6", "#A89880"],
+    "warn": "#C4553F",
+    "good": "#2F8F83",
+    "skins": ["noir", "paper", "collage_dark"],
+    "caption_accent": "&H6ED7F5&",
+    "footage_grade": "eq=brightness=-0.03:saturation=0.70:contrast=1.08,colortemperature=temperature=5600",
+    "ground": "textures/background_dark.png",
+    "people_dir": ""
+  },
+  "pacing": {
+    "first_cut_min_sec": 6.0,
+    "first_cut_target_sec": 8.0,
+    "bed_target_sec": 7.0,
+    "graphic_ratio": 0.22,
+    "graphic_dur_s": 4.2,
+    "first_gfx_min_sec": 10.0,
+    "dust_strength": 1.6,
+    "vignette_strength": 0.65,
+    "leak_strength": 0.55,
+    "zoom_amount": 0.16
+  }
+}
