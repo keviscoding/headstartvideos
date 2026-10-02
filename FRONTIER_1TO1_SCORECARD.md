@@ -429,4 +429,14 @@ Job: `output/frontier_20261002_122844/` · chat `/workspace/frontier_video_v9_ch
 | vo_gfx_sync | **9.2** | woods@13.24→card 13.14 (−0.1s) |
 | combined | **8.9** | not ≥9.5 — draft only |
 
+## v12 smoke (2026-10-02)
+
+| pillar | score | note |
+|--------|------:|------|
+| visual_bed | **9.0** | cooler Whop-olive grade + finer dust + milder leak |
+| motion_graphics | **9.1** | thematic PW collage (sisyphus/shadow/eye) |
+| timing_pacing | **9.0** | first cut 8.0 / mean 6.18 |
+| vo_gfx_sync | **9.2** | woods@13.24→13.14 |
+| combined | **9.1** | all ≥9 but combined &lt;9.5 — draft only |
+
 

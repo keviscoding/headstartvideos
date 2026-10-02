@@ -155,17 +155,17 @@ def render_playwright_gfx_lane(
             "photonote": "glass",
         }
         skin = skin_map.get(template, "collage_dark")
-        need = {"scatter": 8, "pillars": 3, "opener": 6, "photonote": 1, "collage": 3}.get(template, 3)
+        need = {"scatter": 8, "pillars": 4, "opener": 6, "photonote": 1, "collage": 5}.get(template, 3)
         names = _pick_names(mod, title + " " + subtitle, need, seed=11 + i * 17, style_name=style_name)
         items = []
         # Prefer curated Jung/shadow micro-labels over raw title fragments / sticker filenames
         curated = {
             "jung": [
+                ("the woods", "learn a voice"),
                 ("the shadow", "what you refuse"),
-                ("the persona", "the mask you wear"),
                 ("do not answer", "not once"),
+                ("the persona", "the mask you wear"),
                 ("keep walking", "do not look back"),
-                ("the forest", "learns your voice"),
             ],
             "astro": [
                 ("the chart", "what returns"),

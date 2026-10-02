@@ -945,10 +945,11 @@ def _apply_dust_overlay(
         dust = alt
     strength = max(0.5, min(2.5, float(dust_strength)))
     # Brighten dust plate so screen-blend reads denser; grain scales with strength
-    bright = 0.06 * (strength - 1.0)
-    contrast = 1.0 + 0.18 * (strength - 1.0)
-    grain = int(round(8 + 10 * (strength - 1.0)))  # 8 @1.0 → 18 @2.0
-    grain = max(6, min(24, grain))
+    # Whop grit: prefer fine grain over blown plate brightness
+    bright = 0.035 * (strength - 1.0)
+    contrast = 1.0 + 0.12 * (strength - 1.0)
+    grain = int(round(10 + 8 * (strength - 1.0)))  # 10 @1.0 → ~18 @2.0
+    grain = max(8, min(22, grain))
     # Match dust plate + gate to program frame size (style-agnostic res)
     import json as _json
     _ff = _ffmpeg_bin()
@@ -983,7 +984,7 @@ def _apply_dust_overlay(
         "[0:v]format=gbrp[base];"
         f"[base][dust]blend=all_mode=screen:shortest=1,format=yuv420p,"
         f"noise=alls={grain}:allf=t+u,"
-        f"eq=saturation={max(0.88, 1.0 - 0.06*(strength-1.0)):.3f}:contrast=1.04[v]"
+        f"eq=saturation={max(0.82, 0.95 - 0.08*(strength-1.0)):.3f}:contrast=1.03[v]"
     )
     cmd = [
         _ffmpeg_bin(), "-y",
