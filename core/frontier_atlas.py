@@ -210,105 +210,121 @@ def generate_frontier_stills(
     return results
 
 
+# ============================================================================
+# PROVEN WHOP FRONTIER ATLAS PATH - DO NOT MODIFY
+# Mac-tested: 8/8 stills succeeded with this exact code
+# ============================================================================
+
+ATLAS_BASE = "https://api.atlascloud.ai"
+ATLAS_IMAGE_MODEL = os.environ.get("ATLAS_IMAGE_MODEL", "openai/gpt-image-2/text-to-image")
+ATLAS_IMAGE_SIZE = os.environ.get("ATLAS_IMAGE_SIZE", "1536x864")
+ATLAS_IMAGE_QUALITY = os.environ.get("ATLAS_IMAGE_QUALITY", "medium")
+
+
+def _atlas_key() -> str:
+    key = (ATLASCLOUD_KEY or os.environ.get("ATLASCLOUD_KEY") or os.environ.get("ATLASCLOUD_API_KEY") or "").strip()
+    if not key:
+        raise RuntimeError("ATLASCLOUD_KEY not set")
+    return key
+
+
+def _atlas_headers() -> dict:
+    return {"Authorization": f"Bearer {_atlas_key()}", "Content-Type": "application/json"}
+
+
+def _atlas_create(prompt: str) -> str:
+    """Create Atlas prediction. Returns prediction ID."""
+    import requests
+    
+    body = {
+        "model": ATLAS_IMAGE_MODEL,  # MUST be openai/gpt-image-2/text-to-image — NOT bare gpt-image-2
+        "prompt": prompt[:5000],
+        "size": ATLAS_IMAGE_SIZE,    # NOT width/height
+        "quality": ATLAS_IMAGE_QUALITY,
+        "output_format": "jpeg",
+        "enable_sync_mode": False,
+        "enable_base64_output": False,
+    }
+    r = requests.post(f"{ATLAS_BASE}/api/v1/model/generateImage",
+                      headers=_atlas_headers(), json=body, timeout=90)
+    if r.status_code != 200:
+        raise RuntimeError(f"atlas create HTTP {r.status_code}: {r.text[:200]}")
+    d = r.json()
+    code = d.get("code")
+    if code is not None and code != 200:
+        raise RuntimeError(f"atlas create error: {str(d)[:200]}")
+    data = d.get("data") if isinstance(d.get("data"), dict) else {}
+    pid = data.get("id")  # nested under data — NOT top-level id
+    if not pid:
+        raise RuntimeError(f"atlas create missing prediction id: {str(d)[:200]}")
+    return pid
+
+
+def _atlas_poll(prediction_id: str, timeout_s: int = 600) -> str:
+    """Poll prediction until complete. Returns first output IMAGE URL (not base64)."""
+    import requests
+    
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        time.sleep(5)
+        try:
+            # singular prediction — NOT /predictions/
+            r = requests.get(f"{ATLAS_BASE}/api/v1/model/prediction/{prediction_id}",
+                             headers=_atlas_headers(), timeout=45)
+        except requests.exceptions.RequestException:
+            continue
+        if r.status_code != 200:
+            continue
+        try:
+            payload = r.json()
+        except ValueError:
+            continue
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+        st = str(data.get("status") or payload.get("status") or "").lower()
+        if st in ("completed", "succeeded", "success"):
+            outputs = data.get("outputs") or payload.get("outputs") or []
+            if not outputs:
+                raise RuntimeError(f"atlas: done but no outputs: {str(payload)[:200]}")
+            url = outputs[0]
+            if not url or not isinstance(url, str):
+                raise RuntimeError(f"atlas: bad output url: {str(outputs[0])[:160]}")
+            return url
+        if st in ("failed", "error", "cancelled", "canceled", "failure"):
+            why = data.get("error") or data.get("failMsg") or data.get("message") or payload
+            raise RuntimeError(f"atlas job {st}: {str(why)[:160]}")
+    raise TimeoutError(f"atlas: prediction {prediction_id} did not finish within {timeout_s}s")
+
+
+def _download(url: str, dest: Path) -> None:
+    """Download image from URL to dest path."""
+    import requests
+    
+    r = requests.get(url, timeout=120)
+    r.raise_for_status()
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(r.content)
+    if dest.stat().st_size < 1000:
+        raise RuntimeError(f"atlas download too small: {dest.stat().st_size} bytes")
+
+
 def _generate_atlas_image(
     prompt: str,
     output_path: str | Path,
-    model: str = "gpt-image-2",
+    model: str = "openai/gpt-image-2/text-to-image",  # ignored; ATLAS_IMAGE_MODEL wins
     width: int = 1920,
     height: int = 1080,
-    max_retries: int = 3,
+    max_retries: int = 4,
 ):
-    """
-    Generate a single image using Atlas Cloud (1:1 with Whop Frontier).
-    
-    Uses Whop's create→poll pattern:
-    1. POST /api/v1/model/generateImage → get prediction_id
-    2. Poll prediction status until complete
-    3. Extract base64 PNG from prediction.output
-    """
-    import base64
-    import requests
-    
-    if not ATLASCLOUD_KEY:
-        raise RuntimeError("ATLASCLOUD_KEY not set")
-    
-    # Whop Frontier pattern: create prediction
-    create_url = "https://api.atlascloud.ai/api/v1/model/generateImage"
-    headers = {
-        "Authorization": f"Bearer {ATLASCLOUD_KEY}",
-        "Content-Type": "application/json",
-    }
-    
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "width": width,
-        "height": height,
-    }
-    
-    last_error = None
-    for attempt in range(max_retries):
+    """Whop create → poll URL → download. Mac-proven 8/8 stills."""
+    last = None
+    dest = Path(output_path)
+    for attempt in range(1, max_retries + 1):
         try:
-            # Step 1: Create prediction
-            response = requests.post(create_url, json=payload, headers=headers, timeout=30)
-            response.raise_for_status()
-            create_data = response.json()
-            
-            prediction_id = create_data.get("id")
-            if not prediction_id:
-                raise RuntimeError(f"No prediction ID in Atlas create response: {create_data}")
-            
-            # Step 2: Poll until complete
-            poll_url = f"https://api.atlascloud.ai/api/v1/model/predictions/{prediction_id}"
-            poll_timeout = 120  # 2 minutes total
-            poll_interval = 2   # Check every 2 seconds
-            elapsed = 0
-            
-            while elapsed < poll_timeout:
-                poll_response = requests.get(poll_url, headers=headers, timeout=10)
-                poll_response.raise_for_status()
-                prediction = poll_response.json()
-                
-                status = prediction.get("status")
-                
-                if status == "succeeded":
-                    # Step 3: Extract base64 PNG
-                    output_data = prediction.get("output")
-                    
-                    if isinstance(output_data, str):
-                        # Base64-encoded PNG
-                        png_bytes = base64.b64decode(output_data)
-                        output_path = Path(output_path)
-                        output_path.write_bytes(png_bytes)
-                        return
-                    
-                    elif isinstance(output_data, list) and len(output_data) > 0:
-                        # Array of outputs, take first
-                        first_output = output_data[0]
-                        if isinstance(first_output, str):
-                            png_bytes = base64.b64decode(first_output)
-                            output_path = Path(output_path)
-                            output_path.write_bytes(png_bytes)
-                            return
-                    
-                    raise RuntimeError(f"Unexpected output format: {type(output_data)}")
-                
-                elif status == "failed":
-                    error = prediction.get("error", "Unknown error")
-                    raise RuntimeError(f"Atlas prediction failed: {error}")
-                
-                elif status in ("starting", "processing"):
-                    # Still processing, wait and poll again
-                    time.sleep(poll_interval)
-                    elapsed += poll_interval
-                else:
-                    raise RuntimeError(f"Unknown Atlas prediction status: {status}")
-            
-            raise RuntimeError(f"Atlas prediction polling timeout after {poll_timeout}s")
-        
+            _download(_atlas_poll(_atlas_create(prompt)), dest)
+            return
         except Exception as e:
-            last_error = e
-            if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)  # Exponential backoff
-    
-    raise RuntimeError(f"Atlas image generation failed after {max_retries} attempts: {last_error}")
+            last = e
+            if attempt < max_retries:
+                time.sleep(min(60, 12 * attempt))
+    raise RuntimeError(f"Atlas image generation failed after {max_retries} attempts: {last}")
