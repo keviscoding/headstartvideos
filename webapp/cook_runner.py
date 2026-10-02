@@ -24,6 +24,7 @@ _COST_PENCE_PER_MIN = {
     "storyboard_assemble": 4.0,
     "storyboard_animate": 25.0,
     "ranking_countdown": 6.0,
+    "frontier": 10.0,
 }
 
 
@@ -339,6 +340,17 @@ def run_cook_job(
                     progress_callback=on_progress,
                     heygen_api_key=heygen_key,
                     on_heygen_created=_persist_heygen_id,
+                )
+            elif recipe == "frontier":
+                from core.frontier_pipeline import run_frontier_pipeline
+                result = run_frontier_pipeline(
+                    script=script,
+                    voiceover_path=voiceover_path,
+                    output_name="pipeline_video.mp4",
+                    style_preset="default",
+                    progress_callback=on_progress,
+                    lite_mode=lite_mode,
+                    image_quality=image_quality,
                 )
             else:
                 # Defensive: storyboard should have returned above; keep message clear.

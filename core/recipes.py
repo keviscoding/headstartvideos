@@ -71,6 +71,17 @@ RECIPES = {
         "inputs": ["clips", "title"],
         "settings": ["style_preset"],
     },
+    "frontier": {
+        "pipeline": "frontier",
+        "label": "Frontier",
+        "description": "AI faceless video factory: AI stills + VO + assembly. "
+                       "Admin-only for testing.",
+        "requires_keys": ["LLM"],
+        "optional_keys": ["PEXELS_KEY"],
+        "inputs": ["voiceover", "script"],
+        "settings": ["style"],
+        "admin_only": True,
+    },
 }
 
 

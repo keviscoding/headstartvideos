@@ -2078,10 +2078,25 @@ async def get_client_config():
 
 @app.get("/api/niches")
 async def get_niches(request: Request):
+    user = _current_user(request)
+    is_admin = user and _is_admin_email(user.get("email", ""))
+    
     niches = []
     for f in sorted(NICHES_DIR.glob("*.json")):
         with open(f) as fh:
             niche = json.load(fh)
+        
+        # Skip admin-only recipes for non-admin users
+        recipe_id = niche.get("recipe") or niche.get("id")
+        if recipe_id:
+            try:
+                from core.recipes import get_recipe
+                recipe_def = get_recipe(recipe_id)
+                if recipe_def.get("admin_only") and not is_admin:
+                    continue
+            except KeyError:
+                pass
+        
         # Storyboard Pack: open for everyone to build cast + story.
         # Trial/paid is required later — only when they start stills.
         if niche.get("id") == "storyboard_pack" or niche.get("recipe") == "storyboard_pack":
@@ -3273,6 +3288,20 @@ async def start_build(req: BuildRequest, request: Request):
         _enforce_length_cap(user, _estimate_script_minutes(req.script), label="Video")
 
     recipe = req.recipe or "animated_explainer"
+    
+    # Admin-only recipes: gate access
+    from core.recipes import get_recipe
+    try:
+        recipe_def = get_recipe(recipe)
+        if recipe_def.get("admin_only") and not is_admin:
+            raise HTTPException(
+                403,
+                f"The {recipe_def.get('label', recipe)} recipe is not yet available. "
+                "Check back soon or try another recipe."
+            )
+    except KeyError:
+        raise HTTPException(400, f"Unknown recipe: {recipe}")
+    
     heygen_key_for_job = ""
     if recipe == "avatar_plus_broll":
         if not (req.avatar_id or "").strip() or not (req.voice_id or "").strip():
