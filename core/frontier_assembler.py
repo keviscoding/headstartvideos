@@ -410,7 +410,7 @@ def _burn_subtitles(
             if sibling.exists():
                 srt = sibling
         _convert_srt_to_ass(
-            srt, tmp_ass, word_timings=word_timings, center=True,
+            srt, tmp_ass, word_timings=word_timings, center=False,
             no_sub_ranges=no_sub_ranges,
         )
 
@@ -443,7 +443,7 @@ def _convert_srt_to_ass(
     ass_path: Path,
     accent_color: str = "&H96B8C9&",
     word_timings: list[dict] | None = None,
-    center: bool = True,
+    center: bool = False,
     no_sub_ranges: list[tuple[float, float]] | None = None,
     first_caption_delay_sec: float = 2.0,  # Hook lock: first caption ≤2.0s (formula)
 ):
@@ -451,7 +451,8 @@ def _convert_srt_to_ass(
     Convert SRT to ASS with Whop Jung kinetic captions.
 
     Word highlight uses \\1c + \\t transforms (white → warm gold → white), NOT bare \\k.
-    Centered (Alignment=5) by default to match Jung; fade + heavy outline/shadow.
+    Bottom-centre (Alignment=2) on beds per Dissect formula; fade + heavy outline/shadow.
+    Pass center=True only for rare mid-frame experiments — not default.
     ASS colors are &HBBGGRR&. Accent #C9B896 (warm gold) -> &H96B8C9&.
     
     Args:

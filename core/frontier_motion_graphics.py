@@ -45,9 +45,12 @@ SKINS = {
 # Jung pacing: ~35% GFX ratio. Short smokes use more cards / shorter holds.
 PACING = {
     "graphic_every_min": 0.5,
-    "graphic_ratio": 0.35,
-    "graphic_dur_s": 3.2,
-    "graphic_max_s": 5.0,
+    # Whop Dissect: designed GFX ≈ 20–25% runtime (v5 35% caused bed rush)
+    "graphic_ratio": 0.22,
+    "graphic_dur_s": 3.4,
+    "graphic_max_s": 4.5,
+    "first_gfx_min_sec": 14.0,  # after opener hard-cut breathe
+    "min_gap_between_gfx_sec": 8.0,
 }
 
 FPS = 24
@@ -907,72 +910,77 @@ def plan_gfx_insertions(
     total_duration_sec: float,
     transcript_sentences: List[str] = None,
     still_paths: Optional[List[Path]] = None,
+    first_gfx_min_sec: Optional[float] = None,
+    graphic_ratio: Optional[float] = None,
 ) -> List[Dict[str, Any]]:
-    """Plan denser mid-timeline GFX cards (~35% ratio, shorter holds).
+    """Plan Whop-paced mid-timeline GFX cards (~20–25% ratio).
 
-    Short smokes (~40–60s): 5 cards @ ~3.0s ≈ 35% of timeline, with opener
-    near the start and scatter/pillars/photonote/collage rotating.
+    Short smokes (~40–60s): 2 cards @ ~3.4s after the opener hard cut (≥12–14s),
+    never chopping the hook bed. Longer cooks: ~1 card / 30–35s.
     """
     cards = []
-    target_ratio = PACING["graphic_ratio"]
-    # Prefer shorter holds so we get MORE cards (denser rhythm)
+    target_ratio = float(graphic_ratio if graphic_ratio is not None else PACING["graphic_ratio"])
+    first_min = float(first_gfx_min_sec if first_gfx_min_sec is not None else PACING.get("first_gfx_min_sec", 14.0))
+    gap_min = float(PACING.get("min_gap_between_gfx_sec", 8.0))
     if total_duration_sec < 90:
-        n = 5 if total_duration_sec >= 36 else 4
-        dur = max(2.6, min(PACING["graphic_dur_s"], (total_duration_sec * target_ratio) / n))
-    else:
-        dur = min(PACING["graphic_dur_s"] + 1.0, PACING["graphic_max_s"])
-        n = max(2, int(total_duration_sec * target_ratio / dur))
-        n = min(n, 12)
+        gap_min = min(gap_min, 6.0)
+    dur = max(2.8, min(PACING["graphic_dur_s"], PACING["graphic_max_s"]))
 
-    # Rotate templates — opener first for hook density
-    templates = ["opener", "collage", "scatter", "pillars", "photonote", "collage", "scatter"]
+    # Card count from ratio, but never before first_min; prefer fewer longer cards
+    usable_start = max(first_min, 12.0)
+    usable_end = total_duration_sec - 1.5
+    usable = max(1.0, usable_end - usable_start)
+    max_by_ratio = max(1, int(round(total_duration_sec * target_ratio / dur)))
+    max_by_gap = max(1, int(usable / (dur + gap_min)) + 1)
+    # Whop: ≥1 card / ~35s; short smokes aim 2–3 cards inside 20–25% ratio
+    n = min(max_by_ratio, max_by_gap, 3 if total_duration_sec < 90 else 8)
+    # Prefer hitting ≥20% when room exists
+    while n < max_by_gap and n < (3 if total_duration_sec < 90 else 8):
+        if ((n + 1) * dur) / max(0.01, total_duration_sec) <= 0.26:
+            n += 1
+        else:
+            break
+    # Ensure ratio stays in 20–25% band when possible
+    while n > 1 and (n * dur) / max(0.01, total_duration_sec) > 0.26:
+        n -= 1
+    if n < 1:
+        n = 1
+
+    templates = ["collage", "scatter", "pillars", "photonote", "opener"]
+    # Prefer collage thesis first (Whop ~0:34), then scatter/pillars — opener is weaker late
     default_items = [
-        [],  # opener
         [
             {"label": "do not answer", "text": "not once"},
             {"label": "the woods learn", "text": "your voice"},
             {"label": "keep walking", "text": "do not look back"},
         ],
-        [],  # scatter
+        [],
         [
             {"label": "alone", "text": "when light is low"},
             {"label": "listening", "text": "for a friend"},
             {"label": "spoken", "text": "soft. familiar."},
         ],
-        [],  # photonote
-        [
-            {"label": "the rule", "text": "maps will not print"},
-            {"label": "the call", "text": "keep walking"},
-        ],
+        [],
         [],
     ]
     default_titles = [
-        ("if the forest calls your name", "do not answer"),
         ("three things the body already knows", "before the mind invents a story"),
         ("it is not a breakdown", "it is a process asking to be named"),
         ("what this rests on", "stay with it"),
         ("old timers say it waits", "until you are already listening"),
-        ("the mask that stuck", "take it off without burning the room"),
-        ("so if you ever walk", "after dark"),
+        ("if the forest calls your name", "do not answer"),
     ]
-
     stills = [Path(p) for p in (still_paths or []) if Path(p).exists()]
 
-    # Place cards evenly across the mid-body (avoid first 1.5s and last 2s)
-    usable_start = 1.2
-    usable_end = total_duration_sec - 2.0
-    usable = max(1.0, usable_end - usable_start)
     for i in range(n):
-        # evenly spaced centers
         center = usable_start + usable * (i + 0.5) / n
         start = max(usable_start, center - dur / 2)
         end = min(usable_end, start + dur)
         start = max(usable_start, end - dur)
-        # prevent overlap: nudge if previous card collides
-        if cards and start < cards[-1]["end_sec"] + 0.35:
-            start = cards[-1]["end_sec"] + 0.35
+        if cards and start < cards[-1]["end_sec"] + gap_min:
+            start = cards[-1]["end_sec"] + gap_min
             end = min(usable_end, start + dur)
-            if end - start < 2.2:
+            if end - start < 2.4:
                 continue
         skin = "collage_dark" if i % 3 < 2 else "noir"
         title, subtitle = default_titles[i % len(default_titles)]
@@ -1000,11 +1008,13 @@ def plan_gfx_insertions(
         })
     gfx_dur = sum(c["end_sec"] - c["start_sec"] for c in cards)
     logger.info(
-        "Planned %d GFX cards for %.1fs video (%.1fs GFX = %.0f%%)",
+        "Planned %d GFX cards for %.1fs video (%.1fs GFX = %.0f%%) first≥%.1fs",
         len(cards), total_duration_sec, gfx_dur,
         100.0 * gfx_dur / max(0.01, total_duration_sec),
+        usable_start,
     )
     return cards
+
 
 
 def render_gfx_lane(
