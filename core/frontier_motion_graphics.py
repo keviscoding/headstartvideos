@@ -86,7 +86,7 @@ CUTOUT_KEYWORDS: Dict[str, List[str]] = {
     "dark": ["vintage_moon", "vintage moon on hand", "vintage_eye", "vintage_cloud"],
     "night": ["vintage_moon", "vintage moon on hand", "vintage_alarm"],
     "moon": ["vintage_moon", "vintage moon on hand"],
-    "forest": ["vintage_tiger", "vintage_collage_bird_dove", "sisyphus_pushing_boulder_sketch"],
+    "forest": ["vintage_tiger", "vintage_collage_bird_dove", "sisyphus_pushing_boulder_sketch", "vintage_moon", "ancient_pilar"],
     "woods": ["vintage_tiger", "vintage_collage_bird_dove", "sisyphus_pushing_boulder_sketch"],
     "mountain": ["sisyphus_pushing_boulder_sketch", "ancient_pilar", "vintage_cloud"],
     "appalachian": ["sisyphus_pushing_boulder_sketch", "vintage_cloud", "ancient_pilar"],
@@ -428,7 +428,7 @@ def _ground(skin: dict, rng: random.Random) -> Image.Image:
             n = rng.randint(0, 18)
             gp[x, y] = (n, n, n)
     grain = grain.resize((W, H), Image.Resampling.BILINEAR)
-    g = Image.blend(g, grain, 0.08)
+    g = Image.blend(g, grain, 0.14)
     return g.convert("RGBA")
 
 
@@ -536,9 +536,9 @@ def compose_collage_frame(
             rx, ry = W * 0.40, H * 0.36
             sw = 112 + (i % 3) * 26
             delay = 0.25 + i * 0.14
-            q = _ease_out_back(_seg(t, delay, 0.62))
+            q = _ease_out_back(_seg(t, delay, 0.48))
             settle = _seg(t, delay + 0.7, 0.8)
-            bob = math.sin(t * 1.25 + delay * 3) * 4 * settle
+            bob = math.sin(t * 1.55 + delay * 3) * 7 * settle
             dx = (1 - q) * (190 if math.cos(a) >= 0 else -190)
             x = int(W / 2 + math.cos(a) * rx - sw / 2 + dx)
             y = int(H / 2 + math.sin(a) * ry - sw / 2 + bob)

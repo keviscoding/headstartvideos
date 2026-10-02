@@ -83,6 +83,8 @@ def assemble_frontier_video(
     no_sub_ranges: list[tuple[float, float]] | None = None,
     no_dust_ranges: list[tuple[float, float]] | None = None,
     dust_strength: float = 1.0,
+    vignette_strength: float = 0.55,
+    flash_times: list[float] | None = None,
     progress_callback=None,
 ) -> dict:
     """
@@ -103,6 +105,8 @@ def assemble_frontier_video(
         no_sub_ranges: Mute burned captions over these [(start,end)] GFX windows
         no_dust_ranges: Suppress dust in these windows (usually same as GFX)
         dust_strength: 1.0 = baseline; >1 boosts dust brightness + film grain
+        vignette_strength: 0..1 edge crush (Whop ~0.7)
+        flash_times: White-haze chapter commas (pic changes without hard cuts)
         progress_callback: Optional callback(message: str)
     
     Returns:
@@ -150,6 +154,14 @@ def assemble_frontier_video(
     # Concatenate segments
     concat_path = temp_dir / "concat.mp4"
     _concatenate_segments(segment_paths, concat_path, fps)
+
+    # White-haze chapter commas (Whop flash dissolves — pic changes w/o rushing cuts)
+    if flash_times:
+        if progress_callback:
+            progress_callback(f"Applying {len(flash_times)} chapter flashes...")
+        flashed = temp_dir / "flashed.mp4"
+        _apply_white_flashes(concat_path, list(flash_times), flashed)
+        concat_path = flashed
     
     if progress_callback:
         progress_callback("Burning in subtitles...")
@@ -194,7 +206,7 @@ def assemble_frontier_video(
             progress_callback("Adding vignette...")
         
         vignette_path = temp_dir / "with_vignette.mp4"
-        _apply_vignette(subtitled_path, vignette_path)
+        _apply_vignette(subtitled_path, vignette_path, strength=vignette_strength)
         subtitled_path = vignette_path
     
     if progress_callback:
@@ -438,10 +450,21 @@ def _burn_subtitles(
         raise RuntimeError(f"ass burn failed: {(result.stderr or '')[-1500:]}")
 
 
+
+def _chunk_caption_words(text: str, max_words: int = 6) -> list[str]:
+    """Whop beds: 2–6 words visible — split long cues for caption-step density."""
+    words = [w for w in text.split() if w.strip()]
+    if not words:
+        return []
+    if len(words) <= max_words:
+        return [" ".join(words)]
+    return [" ".join(words[i : i + max_words]) for i in range(0, len(words), max_words)]
+
+
 def _convert_srt_to_ass(
     srt_path: Path,
     ass_path: Path,
-    accent_color: str = "&H96B8C9&",
+    accent_color: str = "&H6ED7F5&",  # Whop #F5D76E yellow
     word_timings: list[dict] | None = None,
     center: bool = False,
     no_sub_ranges: list[tuple[float, float]] | None = None,
@@ -453,7 +476,7 @@ def _convert_srt_to_ass(
     Word highlight uses \1c + \t transforms (white → warm gold → white), NOT bare \k.
     Bottom-centre (Alignment=2) on beds per Dissect formula; fade + heavy outline/shadow.
     Pass center=True only for rare mid-frame experiments — not default.
-    ASS colors are &HBBGGRR&. Accent #C9B896 (warm gold) -> &H96B8C9&.
+    ASS colors are &HBBGGRR&. Accent Whop yellow #F5D76E -> &H6ED7F5&.
 
     Args:
         no_sub_ranges: Mute/clip cues over motion_gfx windows (Whop never-overlay).
@@ -542,25 +565,32 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             en = max(st + 0.35, en - shift)
         cue_idx += 1
 
-        frags = _audible_fragments(st, en) if mute else [(st, en)]
-        if not frags:
-            dropped += 1
+        # Caption-step density: ≤6 words per on-screen line (Whop beds)
+        pieces = _chunk_caption_words(plain, max_words=6)
+        if not pieces:
             continue
-        for fst, fen in frags:
-            start_s = _sec_to_srt(fst)
-            end_s = _sec_to_srt(fen)
-            start_ass = _srt_time_to_ass(start_s)
-            end_ass = _srt_time_to_ass(end_s)
-            if word_timings:
-                body = _add_kinetic_color_flash(plain, start_s, end_s, word_timings, accent_color)
-            else:
-                body = _add_kinetic_color_flash_estimated(plain, start_s, end_s, accent_color)
-            # Build ASS override with real backslash-fad
-            fad = "{" + "\\" + "fad(170,170)}"
-            events.append(
-                f"Dialogue: 0,{start_ass},{end_ass},Default,,0,0,0,,"
-                f"{fad}{body}"
-            )
+        span = max(0.35, (en - st) / len(pieces))
+        for pi, piece in enumerate(pieces):
+            pst = st + pi * span
+            pen = min(en, pst + span)
+            frags = _audible_fragments(pst, pen) if mute else [(pst, pen)]
+            if not frags:
+                dropped += 1
+                continue
+            for fst, fen in frags:
+                start_s = _sec_to_srt(fst)
+                end_s = _sec_to_srt(fen)
+                start_ass = _srt_time_to_ass(start_s)
+                end_ass = _srt_time_to_ass(end_s)
+                if word_timings:
+                    body = _add_kinetic_color_flash(piece, start_s, end_s, word_timings, accent_color)
+                else:
+                    body = _add_kinetic_color_flash_estimated(piece, start_s, end_s, accent_color)
+                fad = "{" + "\\" + "fad(120,120)}"
+                events.append(
+                    f"Dialogue: 0,{start_ass},{end_ass},Default,,0,0,0,,"
+                    f"{fad}{body}"
+                )
 
     ass_path.write_text(ass_header + "\n".join(events) + "\n", encoding="utf-8")
 
@@ -742,6 +772,44 @@ def _seconds_to_ass(sec: float) -> str:
         s += 1
         cs -= 100
     return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+
+
+def _apply_white_flashes(
+    video_path: Path,
+    flash_times: list[float],
+    output_path: Path,
+    flash_dur: float = 0.42,
+    peak_alpha: float = 0.85,
+):
+    """White-haze chapter commas (Whop). Picture changes without extra hard cuts."""
+    if not flash_times:
+        import shutil
+        shutil.copy2(video_path, output_path)
+        return
+    dur = _get_duration(video_path)
+    half = max(0.12, flash_dur / 2.0)
+    # Prefer brightness-pulse fallback first (more portable than alpha overlay expr)
+    enables = "+".join(
+        f"between(t\\,{max(0.0, t0 - half):.3f}\\,{min(dur, t0 + half):.3f})"
+        for t0 in flash_times
+    )
+    # Triangular-ish brightness via nested if is heavy; use flat pulse then soft eq
+    vf = (
+        f"eq=brightness='if({enables}\\,0.62\\,0)':contrast='if({enables}\\,1.08\\,1)':eval=frame"
+    )
+    cmd = [
+        _ffmpeg_bin(), "-y",
+        "-i", str(video_path),
+        "-vf", vf,
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+        "-c:a", "copy",
+        "-t", f"{dur:.4f}",
+        str(output_path),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"white flash failed: {(result.stderr or '')[-1200:]}")
+
 
 def _apply_dust_overlay(
     video_path: Path,
