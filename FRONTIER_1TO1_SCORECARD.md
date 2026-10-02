@@ -1,5 +1,37 @@
 # Frontier 1:1 Scorecard - OUTPUT-BASED EVALUATION
 
+## Mac v4 Status: GFX Lane Shipped ✅
+
+**Commit 5ef04ab** adds collage GFX production layer per jung.json pacing.
+
+### Mac v3 Scores (2aea894):
+- **visual_bed**: 6.0 /10
+- **motion_graphics**: 5.0 /10 ❌ (NO GFX layer)
+- **combined**: 5.5 /10 ❌
+
+### Mac v4 Expected (With GFX):
+- **visual_bed**: 6.5-7.0 /10 (unchanged)
+- **motion_graphics**: 7.5-8.5 /10 ✅ (GFX lane present, text-only MVP)
+- **combined**: 7.0-7.5 /10 (both pillars improving)
+
+### What v4 Adds:
+✅ **core/frontier_motion_graphics.py** (341 lines)
+- PIL-based collage card renderer
+- Jung skins: collage_dark + noir from jung.json
+- Inter Display Black titles, aged-paper aesthetic
+- Renders 6s MP4 clips @ 1920x1080, 30fps
+- **Interleaved ~every 30s** per jung.json pacing (graphic_every_min=0.5)
+- Merges GFX MotionSegments into timeline
+
+### What v4 Still Needs for 9.0:
+❌ Cutout sticker shapes (aged-paper cutouts, PIL-drawn or vendored)
+❌ Center caption burn (_build_burn_ass from Whop make_video)
+❌ Chromium GFX renderer (full motion.py HTML/CSS/JS templates)
+
+**Mac: Run v4 smoke and report scores.**
+
+---
+
 ## Status: INCOMPLETE - Awaiting Full Render with Atlas + Pexels
 
 **Critical Gap**: This evaluation cannot achieve ≥9.5/10 without rendering a real CR Frontier video with Atlas gpt-image-2 stills and Pexels b-roll, then comparing side-by-side against Whop Frontier Jung reference output.
