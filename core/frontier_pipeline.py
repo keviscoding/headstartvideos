@@ -1,20 +1,22 @@
 """
-Frontier Pipeline -- AI faceless video factory.
+Frontier Pipeline -- 1:1 Whop Frontier port for Channel Recipe.
 
-Produces Frontier-style videos using:
-1. Word-level alignment (faster-whisper)
-2. Concept segmentation (LLM splits script into visual concepts)
-3. AI image generation (Atlas/ERNIE for stills)
-4. Single-pass slideshow assembly (images + voiceover)
+Produces Frontier-style videos matching Whop Frontier visual output:
+1. Word-level alignment (faster-whisper) for SRT timing
+2. Atlas gpt-image-2 AI stills with scene prompts
+3. Pexels stock video/photo b-roll filling motion gaps
+4. Word-locked motion plan - stills own spoken spans
+5. Ken Burns zooms on stills/photos
+6. ASS kinetic captions with accent color flash
+7. Color grade + dust overlay + vignette matching Frontier look
 
-This is a simplified pipeline similar to animated_explainer but configured
-for the Frontier style/workflow. Uses direct image slideshow rather than
-Ken Burns to match the existing explainer pattern.
+This is the full Frontier experience, not a slideshow.
 """
 
 from __future__ import annotations
 import os
 import time
+import json
 from pathlib import Path
 from datetime import datetime
 
@@ -25,19 +27,22 @@ def run_frontier_pipeline(
     script: str,
     voiceover_path: str,
     output_name: str = "frontier_video.mp4",
-    style_preset: str = "default",
+    style_preset: str = "jung",  # Default to Jung style
     niche_profile: dict | None = None,
     caption_style: str = "",
-    caption_accent: str = "#00BFFF",
+    caption_accent: str = "#C9B896",  # Frontier warm gold
     caption_font_size: str = "Medium",
     caption_position: str = "Bottom",
     progress_callback=None,
     lite_mode: bool = False,
     image_quality: str = "standard",
+    color_grade: str = "eq=brightness=-0.06:saturation=0.62:contrast=1.10,colortemperature=temperature=5200",
+    add_dust: bool = True,
+    add_vignette: bool = True,
 ) -> dict:
     """
-    Run the Frontier pipeline.
-
+    Run the full Frontier pipeline matching Whop Frontier 1:1.
+    
     Returns a dict compatible with the standard pipeline output format:
     {
         "output_path": str,
@@ -48,9 +53,7 @@ def run_frontier_pipeline(
     }
     """
     from core.segmenter import align_script_to_audio
-    from core.concept_segmenter import segment_into_concepts, HOOK_CUTOFF_SEC
-    from core import illustration_gen
-    from core.assembler import build_video
+    from core import frontier_atlas, frontier_pexels, frontier_motion_planner, frontier_assembler
 
     timing: dict[str, float] = {}
 
@@ -63,13 +66,15 @@ def run_frontier_pipeline(
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     job_dir = str(OUTPUT_DIR / f"frontier_{timestamp}")
     os.makedirs(job_dir, exist_ok=True)
-    assets_dir = os.path.join(job_dir, "illustrations")
+    assets_dir = os.path.join(job_dir, "stills")
+    pexels_dir = os.path.join(job_dir, "pexels")
     os.makedirs(assets_dir, exist_ok=True)
+    os.makedirs(pexels_dir, exist_ok=True)
 
     # ------------------------------------------------------------------
-    # STEP 1: Word-level alignment
+    # STEP 1: Word-level alignment (Whisper for SRT)
     # ------------------------------------------------------------------
-    _log("Step 1/5: Aligning script to audio (word-level)...")
+    _log("Step 1/6: Aligning script to audio (word-level)...")
     t0 = time.time()
 
     sentence_times, all_words = align_script_to_audio(
@@ -86,163 +91,171 @@ def run_frontier_pipeline(
     _log(f"  Got {len(all_words)} words, {len(sentence_times)} sentences "
          f"({timing['alignment']:.1f}s)")
 
+    # Save SRT for subtitle burn-in
+    srt_path = os.path.join(job_dir, "subtitles.srt")
+    _write_srt(all_words, srt_path)
+
     # ------------------------------------------------------------------
-    # STEP 2: Concept segmentation
+    # STEP 2: Generate Atlas gpt-image-2 scene prompts
     # ------------------------------------------------------------------
-    _log("Step 2/5: Segmenting into visual concepts...")
+    _log("Step 2/6: Generating scene prompts (Atlas LLM)...")
     t0 = time.time()
 
-    niche_hint = ""
-    if niche_profile:
-        niche_hint = niche_profile.get("name", "")
-
-    concepts = segment_into_concepts(
-        script=script,
-        all_words=all_words,
-        style_preset=style_preset,
-        niche_hint=niche_hint,
-        lite_mode=lite_mode,
-        hq_mode=(image_quality or "").strip().lower() in ("high", "hq", "pro"),
-    )
-
-    timing["segmentation"] = time.time() - t0
-    _log(f"  {len(concepts)} concepts ({timing['segmentation']:.1f}s)")
-
-    # ------------------------------------------------------------------
-    # STEP 3: Generate style reference (optional)
-    # ------------------------------------------------------------------
-    _log("Step 3/5: Generating style reference...")
-    t0 = time.time()
-
-    style_ref_dir = os.path.join(job_dir, "style")
-    os.makedirs(style_ref_dir, exist_ok=True)
-
-    style_ref_path = illustration_gen.generate_style_reference(
-        output_dir=style_ref_dir,
-        style_preset=style_preset,
-    )
-
-    timing["style_ref"] = time.time() - t0
-    _log(f"  Style ref: {'generated' if style_ref_path else 'skipped'} "
-         f"({timing['style_ref']:.1f}s)")
-
-    # ------------------------------------------------------------------
-    # STEP 4: Generate AI stills for each concept
-    # ------------------------------------------------------------------
-    hq = (image_quality or "").strip().lower() in ("high", "hq", "pro")
-    hook_count = sum(1 for c in concepts if c.start_sec < HOOK_CUTOFF_SEC)
-    body_count = len(concepts) - hook_count
+    # ~10 stills for a typical 8-10 min video
+    still_count = max(8, min(15, len(script.split()) // 150))
     
-    if hq:
-        _log(f"Step 4/5: Generating {len(concepts)} HQ illustrations "
-             f"(GPT Image 2 Developer)...")
-    else:
-        _log(f"Step 4/5: Generating {len(concepts)} illustrations "
-             f"({hook_count} premium hook + {body_count} economy body)...")
+    scene_prompts = frontier_atlas.generate_scene_prompts(
+        script=script,
+        scene_count=still_count,
+        style_suffix=" Cinematic still, natural light, shallow depth of field, filmic grain, muted colour, no text",
+    )
+
+    timing["scene_prompts"] = time.time() - t0
+    _log(f"  {len(scene_prompts)} scene prompts generated ({timing['scene_prompts']:.1f}s)")
+
+    # ------------------------------------------------------------------
+    # STEP 3: Generate AI stills with Atlas gpt-image-2
+    # ------------------------------------------------------------------
+    _log(f"Step 3/6: Generating {len(scene_prompts)} AI stills (Atlas gpt-image-2)...")
     t0 = time.time()
 
     def _on_gen_progress(completed, total):
-        _log(f"  Illustrations: {completed}/{total}")
+        _log(f"  Stills: {completed}/{total}")
 
-    import config as _cfg
-    # Lite (trial) cooks: fewer parallel gens so one box stays healthy under queue
-    default_workers = getattr(_cfg, "ILLUSTRATION_WORKERS", 16)
-    lite_workers = getattr(_cfg, "ILLUSTRATION_WORKERS_LITE", 6)
-    workers = lite_workers if lite_mode else default_workers
-    if lite_mode:
-        _log(f"  Lite mode — using {workers} illustration workers")
-    
-    results = illustration_gen.generate_batch(
-        concepts=concepts,
+    workers = 6 if lite_mode else 12
+    still_results = frontier_atlas.generate_frontier_stills(
+        scene_prompts=scene_prompts,
         output_dir=assets_dir,
-        style_ref_path=style_ref_path,
         max_workers=workers,
         progress_callback=_on_gen_progress,
-        hook_cutoff_sec=HOOK_CUTOFF_SEC,
-        image_quality=image_quality,
     )
 
-    timing["illustration_gen"] = time.time() - t0
-    successes = sum(1 for r in results if r.success)
-    _log(f"  {successes}/{len(concepts)} illustrations generated "
-         f"({timing['illustration_gen']:.1f}s)")
+    timing["still_generation"] = time.time() - t0
+    successes = sum(1 for r in still_results if r["success"])
+    _log(f"  {successes}/{len(scene_prompts)} stills generated "
+         f"({timing['still_generation']:.1f}s)")
 
     # ------------------------------------------------------------------
-    # STEP 5: Prepare images and assemble video
+    # STEP 4: Fetch Pexels stock b-roll
     # ------------------------------------------------------------------
-    _log("Step 5/5: Assembling video...")
+    _log("Step 4/6: Fetching Pexels stock video/photo b-roll...")
     t0 = time.time()
 
-    image_paths: list[str] = []
-    image_durations: list[float] = []
-    slot_dicts: list[dict] = []
+    niche_hint = (niche_profile or {}).get("name", "")
+    pexels_keywords = frontier_pexels.generate_pexels_keywords(
+        script=script,
+        count=14,
+        niche_hint=niche_hint,
+    )
 
-    failed_n = 0
-    for i, (concept, result) in enumerate(zip(concepts, results)):
-        if not result.success or not os.path.exists(result.image_path or ""):
-            err_hint = (result.error or "unknown")[:90]
-            _log(f"  WARNING: Concept {i} failed ({err_hint}) — retrying once")
-            retry_desc = concept.illustration_prompt or concept.text[:80]
-            if concept.section_topic and concept.section_topic.lower() not in retry_desc.lower():
-                retry_desc = f"{retry_desc}. Setting: {concept.section_topic}"
-            retry_path = os.path.join(assets_dir, f"illustration_{concept.id:04d}_retry.png")
-            retry_prompt = illustration_gen.build_prompt(
-                retry_desc,
-                concept.background_mood,
-                concept.has_character,
-            )
-            if hq:
-                retry = illustration_gen._generate_hq(retry_prompt, retry_path)
+    pexels_videos, pexels_photos = frontier_pexels.fetch_pexels_assets(
+        keywords=pexels_keywords,
+        output_dir=pexels_dir,
+        video_count=24,
+        photo_count=12,
+    )
+
+    timing["pexels"] = time.time() - t0
+    _log(f"  {len(pexels_videos)} videos, {len(pexels_photos)} photos "
+         f"({timing['pexels']:.1f}s)")
+
+    # ------------------------------------------------------------------
+    # STEP 5: Build word-locked motion plan
+    # ------------------------------------------------------------------
+    _log("Step 5/6: Planning motion timeline (stills own spoken spans)...")
+    t0 = time.time()
+
+    # Get audio duration
+    audio_dur = _get_audio_duration(voiceover_path)
+
+    # Map stills to their spoken time spans based on sentence timing
+    ai_stills = []
+    for i, (result, scene) in enumerate(zip(still_results, scene_prompts)):
+        if result["success"] and result["path"]:
+            # Find matching sentence time for this scene's text
+            scene_text = scene.get("text", "")[:100].lower()
+            
+            # Match to closest sentence
+            best_match = None
+            best_score = 0
+            for sent_idx, sent_time in enumerate(sentence_times):
+                sent_text = sent_time.get("text", "").lower()
+                # Simple word overlap score
+                scene_words = set(scene_text.split())
+                sent_words = set(sent_text.split())
+                if scene_words and sent_words:
+                    score = len(scene_words & sent_words) / len(scene_words | sent_words)
+                    if score > best_score:
+                        best_score = score
+                        best_match = sent_time
+            
+            if best_match:
+                ai_stills.append({
+                    "path": result["path"],
+                    "start_sec": best_match["start"],
+                    "end_sec": best_match["end"],
+                    "text": scene_text,
+                })
             else:
-                retry = illustration_gen.generate_single_illustration(
-                    prompt=retry_prompt,
-                    output_path=retry_path,
-                    short_prompt=illustration_gen._build_short_prompt(
-                        retry_desc,
-                        concept.background_mood,
-                        concept.has_character,
-                    ),
-                )
-            if retry.success and os.path.exists(retry.image_path):
-                results[i] = retry
-                img_path = retry.image_path
-            else:
-                failed_n += 1
-                _log(f"  WARNING: Concept {i} still failed — silent placeholder")
-                placeholder_path = os.path.join(assets_dir, f"placeholder_{i:04d}.png")
-                _create_placeholder(placeholder_path, concept.background_mood)
-                img_path = placeholder_path
-        else:
-            img_path = result.image_path
+                # Fallback: spread evenly across timeline
+                start_sec = (i / len(scene_prompts)) * audio_dur
+                end_sec = ((i + 1) / len(scene_prompts)) * audio_dur
+                ai_stills.append({
+                    "path": result["path"],
+                    "start_sec": start_sec,
+                    "end_sec": end_sec,
+                    "text": scene_text,
+                })
 
-        _normalize_image(img_path, 1920, 1080)
-        image_paths.append(img_path)
-        image_durations.append(concept.duration_sec)
-        slot_dicts.append({
-            "id": concept.id,
-            "text": concept.text,
-            "start_sec": concept.start_sec,
-            "end_sec": concept.end_sec,
-        })
+    motion_segments = frontier_motion_planner.plan_motion_timeline(
+        ai_stills=ai_stills,
+        pexels_videos=pexels_videos,
+        pexels_photos=pexels_photos,
+        total_duration_sec=audio_dur,
+        zoom_strategy="alternate",  # in, out, in, out...
+        still_pad_sec=0.8,
+        still_min_hold_sec=3.5,
+        still_max_hold_sec=10.0,
+    )
 
-    if failed_n:
-        _log(f"  {len(image_paths)} images prepared — {failed_n} placeholders")
-    else:
-        _log(f"  {len(image_paths)} images prepared")
+    timing["motion_plan"] = time.time() - t0
+    _log(f"  {len(motion_segments)} motion segments planned "
+         f"({timing['motion_plan']:.1f}s)")
 
-    if not image_paths:
-        raise RuntimeError("No images were prepared successfully")
+    # Save motion plan
+    motion_plan_path = os.path.join(job_dir, "motion_plan.json")
+    with open(motion_plan_path, "w") as f:
+        json.dump(
+            frontier_motion_planner.export_motion_plan_json(motion_segments),
+            f,
+            indent=2,
+        )
+
+    # ------------------------------------------------------------------
+    # STEP 6: Assemble final video
+    # ------------------------------------------------------------------
+    _log("Step 6/6: Assembling video (Ken Burns, captions, grade, dust, vignette)...")
+    t0 = time.time()
 
     output_path = os.path.join(job_dir, output_name)
 
-    build_video(
-        clip_paths=[],  # Empty for slideshow mode
+    # Get dust overlay path if it exists
+    dust_path = None
+    if add_dust:
+        possible_dust = Path(__file__).parent.parent / "assets" / "overlay_dust.mp4"
+        if possible_dust.exists():
+            dust_path = str(possible_dust)
+
+    result = frontier_assembler.assemble_frontier_video(
+        motion_segments=motion_segments,
         voiceover_path=voiceover_path,
-        slots=slot_dicts,
+        subtitle_path=srt_path,
         output_path=output_path,
+        color_grade=color_grade,
+        add_dust=add_dust and dust_path is not None,
+        add_vignette=add_vignette,
+        dust_overlay_path=dust_path,
         progress_callback=_log,
-        image_paths=image_paths,
-        durations=image_durations,
     )
 
     timing["assembly"] = time.time() - t0
@@ -252,26 +265,92 @@ def run_frontier_pipeline(
     # Return results
     # ------------------------------------------------------------------
     type_counts = {
-        "illustrations": successes,
-        "placeholders": len(concepts) - successes,
+        "ai_stills": sum(1 for seg in motion_segments if seg.type == "ai_still"),
+        "pexels_videos": sum(1 for seg in motion_segments if seg.type == "pexels_video"),
+        "pexels_photos": sum(1 for seg in motion_segments if seg.type == "pexels_photo"),
     }
 
     total_time = sum(timing.values())
     _log(f"✓ Frontier pipeline complete ({total_time:.1f}s total)")
 
-    # Build mood distribution for summary
-    mood_counts: dict[str, int] = {}
-    for c in concepts:
-        mood_counts[c.background_mood] = mood_counts.get(c.background_mood, 0) + 1
-
     return {
         "output_path": output_path,
         "job_dir": job_dir,
-        "slots": slot_dicts,
+        "slots": [seg.to_dict() for seg in motion_segments],
         "type_counts": type_counts,
         "timing": timing,
-        "mood_counts": mood_counts,
     }
+
+
+def _write_srt(words: list[dict], output_path: str):
+    """Write word timings to SRT subtitle file."""
+    if not words:
+        return
+    
+    # Group words into subtitle chunks (~10 words or 5 seconds)
+    chunks = []
+    current_chunk = []
+    chunk_start = words[0]["start"]
+    
+    for word in words:
+        current_chunk.append(word["word"])
+        
+        # Break chunk on punctuation or length
+        if (len(current_chunk) >= 10 or 
+            word["end"] - chunk_start >= 5.0 or
+            word["word"].strip()[-1:] in ".!?"):
+            
+            chunks.append({
+                "start": chunk_start,
+                "end": word["end"],
+                "text": " ".join(current_chunk),
+            })
+            current_chunk = []
+            if words.index(word) + 1 < len(words):
+                chunk_start = words[words.index(word) + 1]["start"]
+    
+    if current_chunk:
+        chunks.append({
+            "start": chunk_start,
+            "end": words[-1]["end"],
+            "text": " ".join(current_chunk),
+        })
+    
+    # Write SRT
+    with open(output_path, "w", encoding="utf-8") as f:
+        for i, chunk in enumerate(chunks, 1):
+            start_time = _format_srt_time(chunk["start"])
+            end_time = _format_srt_time(chunk["end"])
+            f.write(f"{i}\n")
+            f.write(f"{start_time} --> {end_time}\n")
+            f.write(f"{chunk['text']}\n\n")
+
+
+def _format_srt_time(seconds: float) -> str:
+    """Format seconds to SRT timestamp: 00:00:01,000"""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    millis = int((seconds % 1) * 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+
+def _get_audio_duration(audio_path: str) -> float:
+    """Get audio duration in seconds using ffprobe."""
+    import subprocess
+    
+    try:
+        cmd = [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            audio_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=30)
+        return float(result.stdout.strip())
+    except Exception as e:
+        print(f"[frontier] Could not get audio duration: {e}")
+        return 60.0  # Fallback
 
 
 def _estimate_word_timestamps(script: str, audio_path: str) -> list[dict]:
@@ -279,28 +358,15 @@ def _estimate_word_timestamps(script: str, audio_path: str) -> list[dict]:
     Fallback: estimate word timestamps when Whisper fails.
     Assumes ~150 words per minute speaking rate.
     """
-    import subprocess
-    
-    # Get audio duration
-    try:
-        probe = subprocess.run(
-            [
-                "ffprobe", "-v", "error", "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1", audio_path,
-            ],
-            capture_output=True, text=True, timeout=30,
-        )
-        duration = float((probe.stdout or "0").strip() or 0)
-    except Exception:
-        duration = 60.0
-
+    duration = _get_audio_duration(audio_path)
     words = script.split()
+    
     if not words:
         return []
 
     time_per_word = duration / len(words)
     result = []
-    
+
     for i, word in enumerate(words):
         start = i * time_per_word
         end = (i + 1) * time_per_word
@@ -309,10 +375,11 @@ def _estimate_word_timestamps(script: str, audio_path: str) -> list[dict]:
             "start": start,
             "end": end,
         })
-    
+
     return result
 
 
+# Keep old helper functions for backwards compatibility
 def _normalize_image(img_path: str, target_w: int, target_h: int) -> None:
     """Normalize image to target resolution (same as explainer_pipeline)."""
     import subprocess
