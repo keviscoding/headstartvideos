@@ -215,7 +215,20 @@ def _build_segment_video(
     if not input_path.exists():
         raise FileNotFoundError(f"Segment asset not found: {input_path}")
     
-    if segment.type == "pexels_video":
+    if segment.type == "motion_gfx":
+        # Motion graphics card: pre-rendered MP4, just trim/normalize
+        cmd = [
+            _ffmpeg_bin(), "-y",
+            "-i", str(input_path),
+            "-t", str(duration),
+            "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2",
+            "-r", str(fps),  # Normalize FPS
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-an",  # No audio
+            str(output_path),
+        ]
+    
+    elif segment.type == "pexels_video":
         # Video: scale to fill, loop if needed, normalize FPS
         vf = f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"
         

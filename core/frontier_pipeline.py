@@ -233,9 +233,111 @@ def run_frontier_pipeline(
         )
 
     # ------------------------------------------------------------------
+    # STEP 5.5: Generate motion graphics cards (collage GFX lane)
+    # ------------------------------------------------------------------
+    _log("Step 5.5/7: Generating motion graphics cards (collage lane)...")
+    t0_gfx = time.time()
+    
+    gfx_cards = []
+    try:
+        from core import frontier_motion_graphics
+        
+        # Extract transcript sentences for semantic GFX titles
+        transcript_sentences = [sent.text for sent in sentence_times]
+        
+        # Plan GFX insertions per jung.json pacing (~every 30s)
+        gfx_specs = frontier_motion_graphics.plan_gfx_insertions(
+            total_duration_sec=audio_dur,
+            transcript_sentences=transcript_sentences,
+        )
+        
+        _log(f"  Rendering {len(gfx_specs)} collage cards...")
+        
+        gfx_dir = os.path.join(job_dir, "gfx_cards")
+        os.makedirs(gfx_dir, exist_ok=True)
+        
+        gfx_paths = frontier_motion_graphics.render_gfx_lane(
+            gfx_specs=gfx_specs,
+            output_dir=gfx_dir,
+        )
+        
+        # Add GFX cards to motion segments
+        for spec, path in zip(gfx_specs, gfx_paths):
+            if path and path.exists():
+                gfx_cards.append({
+                    "type": "motion_gfx",
+                    "path": str(path),
+                    "start_sec": spec["start_sec"],
+                    "end_sec": spec["end_sec"],
+                    "title": spec["title"],
+                    "subtitle": spec.get("subtitle", ""),
+                    "skin": spec["skin"],
+                })
+        
+        _log(f"  {len(gfx_cards)} GFX cards rendered successfully ({time.time() - t0_gfx:.1f}s)")
+        
+    except ImportError as e:
+        _log(f"  WARNING: Motion graphics module not available: {e}")
+        _log("  Proceeding without GFX cards (motion_graphics score will be lower)")
+    except Exception as e:
+        _log(f"  WARNING: Failed to generate GFX cards: {e}")
+        _log("  Proceeding without GFX cards")
+
+    timing["motion_gfx"] = time.time() - t0_gfx
+    
+    # Merge GFX cards into motion timeline
+    if gfx_cards:
+        _log(f"  Merging {len(gfx_cards)} GFX cards into motion timeline...")
+        
+        # Convert GFX cards to MotionSegment objects
+        from core.frontier_motion_planner import MotionSegment
+        
+        gfx_segments = []
+        for card in gfx_cards:
+            gfx_seg = MotionSegment(
+                type="motion_gfx",
+                path=card["path"],
+                start_sec=card["start_sec"],
+                end_sec=card["end_sec"],
+                zoom_direction="static",
+                zoom_amount=0.0,  # No Ken Burns on GFX
+            )
+            gfx_segments.append(gfx_seg)
+        
+        # Insert GFX segments into timeline (sorted by start time)
+        all_segments = motion_segments + gfx_segments
+        all_segments.sort(key=lambda s: s.start_sec)
+        
+        # Trim overlapping segments (GFX takes priority, shorten surrounding segments)
+        final_segments = []
+        for seg in all_segments:
+            if seg.type == "motion_gfx":
+                # GFX card - keep full duration, trim any overlaps
+                final_segments.append(seg)
+            else:
+                # Regular segment - trim if it overlaps with GFX
+                trimmed = True
+                for gfx in gfx_segments:
+                    if seg.start_sec < gfx.end_sec and seg.end_sec > gfx.start_sec:
+                        # Overlaps with GFX - trim or split
+                        if seg.start_sec < gfx.start_sec < seg.end_sec:
+                            # Trim end before GFX
+                            seg.end_sec = gfx.start_sec
+                        elif seg.start_sec < gfx.end_sec < seg.end_sec:
+                            # Trim start after GFX
+                            seg.start_sec = gfx.end_sec
+                
+                # Only keep if duration > 1s after trimming
+                if seg.end_sec - seg.start_sec > 1.0:
+                    final_segments.append(seg)
+        
+        motion_segments = final_segments
+        _log(f"  Timeline now has {len(motion_segments)} segments (including GFX)")
+
+    # ------------------------------------------------------------------
     # STEP 6: Assemble final video
     # ------------------------------------------------------------------
-    _log("Step 6/6: Assembling video (Ken Burns, captions, grade, dust, vignette)...")
+    _log("Step 6/7: Assembling video (Ken Burns, captions, grade, dust, vignette)...")
     t0 = time.time()
 
     output_path = os.path.join(job_dir, output_name)
