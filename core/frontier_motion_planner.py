@@ -387,9 +387,13 @@ def coalesce_short_segments(
             out.append(seg)
             continue
         if out and out[-1].type != "motion_gfx" and seg.duration < min_d:
-            # extend previous to cover this crumb if same-ish role, else absorb forward
             prev = out[-1]
-            if prev.type == seg.type or prev.type.startswith("ai_") or seg.duration < 1.2:
+            # Never absorb into kinetic opener (start≈0) — that kills the 6–10s first cut.
+            # Only merge same-path crumbs (not different Atlas stills).
+            if prev.start_sec > 0.05 and prev.path == seg.path:
+                prev.end_sec = seg.end_sec
+                continue
+            if prev.start_sec > 0.05 and seg.duration < 1.2:
                 prev.end_sec = seg.end_sec
                 continue
         out.append(MotionSegment(seg.type, seg.path, seg.start_sec, seg.end_sec, seg.zoom, seg.text))
@@ -536,14 +540,10 @@ def heal_bed_durations(
             out
             and out[-1].type != "motion_gfx"
             and seg.duration + 1e-6 < min_d
-            and out[-1].start_sec >= protect_first_sec - 1e-6  # don't eat into opener start
+            and out[-1].start_sec > 0.05  # NEVER absorb into kinetic opener (start≈0)
         ):
-            # If previous is the opener (starts at 0), only absorb if we're not
-            # collapsing the first hard cut — require prev.start > 0.
-            if out[-1].start_sec > 0.05 or seg.duration < 2.0:
-                if out[-1].start_sec > 0.05:
-                    out[-1].end_sec = seg.end_sec
-                    continue
+            out[-1].end_sec = seg.end_sec
+            continue
         out.append(seg)
     # Backward pass: short segment after GFX → merge into following bed
     i = 0

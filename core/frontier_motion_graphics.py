@@ -119,10 +119,23 @@ CUTOUT_KEYWORDS: Dict[str, List[str]] = {
     "walking": ["sisyphus_pushing_boulder_sketch"],
     "look": ["vintage_eye", "vintage_magnifying_glass_hand"],
     "back": ["vintage_recycle", "vintage_eye"],
-    "shadow": ["vintage_moon", "vintage_eye", "vintage_man_mad"],
+    "shadow": ["vintage_moon", "vintage moon on hand", "vintage_eye", "vintage_man_mad", "vintage_cloud"],
     "mask": ["vintage_lock", "vintage_key", "vintage_eye"],
-    "persona": ["vintage_man_mad", "vintage_angry_woman_yelling"],
-    "self": ["vintage_mirror", "vintage_eye", "vintage_heart"],
+    "persona": ["vintage_man_mad", "vintage_angry_woman_yelling", "vintage_eye", "vintage_lock"],
+    "self": ["vintage_eye", "vintage_heartbroken", "vintage_brain", "vintage_moon"],
+    "psyche": ["vintage_brain", "vintage_eye", "vintage_moon"],
+    "unconscious": ["vintage_moon", "vintage moon on hand", "vintage_eye", "vintage_cloud"],
+    "dream": ["vintage_moon", "vintage moon on hand", "vintage_cloud", "vintage_star"],
+    "dreams": ["vintage_moon", "vintage_cloud", "vintage_star"],
+    "ridge": ["sisyphus_pushing_boulder_sketch", "ancient_pilar", "vintage_cloud"],
+    "ridges": ["sisyphus_pushing_boulder_sketch", "ancient_pilar", "vintage_cloud"],
+    "silence": ["vintage_lock", "vintage_moon", "vintage_cloud"],
+    "beast": ["vintage_tiger", "vintage_eye"],
+    "animal": ["vintage_tiger", "vintage_collage_bird_dove"],
+    "bird": ["vintage_collage_bird_dove"],
+    "pillar": ["ancient_pilar"],
+    "fate": ["sisyphus_pushing_boulder_sketch", "vintage_lock", "vintage_key"],
+    "integration": ["vintage_key", "vintage_lock", "vintage_heart"],
     "jesus": ["jesus", "vintage_jesus", "bible", "jesus and disciples drawing", "rising jesus drawing"],
     "bible": ["bible", "vintage_open_book", "vintage_church"],
     "church": ["vintage_church", "bible", "ancient_pilar"],
@@ -135,19 +148,53 @@ CUTOUT_KEYWORDS: Dict[str, List[str]] = {
 }
 
 
+# Per-style cutout bans/forces (multi-style: keep kits shared, filter by channel)
+STYLE_CUTOUT_BAN: Dict[str, List[str]] = {
+    # Jung/shadow: no lucky-clover / rocket / diamond filler, no sermon art
+    "jung": [
+        "vintage_ctyrlistek", "vintage_diamond", "vintage_rocket", "vintage_recycle",
+        "vintage_guitar", "vintage_apple", "vintage_bin", "vintage_pin",
+        "jesus", "vintage_jesus", "bible", "rising jesus", "jesus and disciples",
+        "vintage_church", "vintage_holy_bible",
+    ],
+    "divine": ["vintage_rocket", "vintage_guitar", "vintage_bin"],
+    "astro": ["jesus", "bible", "vintage_church", "vintage_jesus"],
+}
+STYLE_CUTOUT_FORCE: Dict[str, List[str]] = {
+    "jung": [
+        "vintage_moon", "vintage moon on hand", "vintage_eye", "vintage_tiger",
+        "sisyphus_pushing_boulder_sketch", "ancient_pilar", "vintage_cloud",
+        "vintage_collage_bird_dove", "vintage_brain", "vintage_lock", "vintage_key",
+        "vintage_man_mad", "vintage_heartbroken", "vintage_alarm", "vintage_open_book",
+    ],
+    "astro": ["vintage_moon", "vintage_star", "vintage_cloud", "vintage moon on hand", "vintage_eye"],
+    "divine": ["vintage_cloud", "vintage_star", "ancient_pilar", "vintage_open_book", "vintage_dove", "vintage_collage_bird_dove"],
+}
+
+
+
+
 def pick_cutouts_for_text(
     text: str,
     need: int = 3,
     seed: int = 42,
     pool: Optional[List[Path]] = None,
+    style_name: str = "jung",
 ) -> List[Path]:
     """Prefer cutouts whose filenames match keywords in title/script text.
 
-    Falls back to seeded shuffle of the remainder so we always fill `need`.
+    Style-aware: bans off-theme stickers (e.g. clover/rocket for Jung) and
+    prefers STYLE_CUTOUT_FORCE pools. Falls back to seeded shuffle to fill `need`.
     """
     lib = list(pool) if pool is not None else list_cutouts()
     if not lib:
         return []
+    style = (style_name or "jung").lower().strip()
+    bans = [b.lower() for b in STYLE_CUTOUT_BAN.get(style, [])]
+    def _banned(path: Path) -> bool:
+        stem = path.stem.lower().replace("_", " ")
+        return any(b.replace("_", " ") in stem or b in path.name.lower() for b in bans)
+    lib = [p for p in lib if not _banned(p)] or list(pool or list_cutouts())
     rng = random.Random(seed)
     words = set()
     for raw in (text or "").lower().replace("-", " ").replace("'", " ").split():
@@ -172,6 +219,15 @@ def pick_cutouts_for_text(
             if w in stem.replace("_", " "):
                 score += 2
                 matched.append(w)
+        # Style force-list bonus (moon/tiger/sisyphus for Jung, etc.)
+        force = [f.lower() for f in STYLE_CUTOUT_FORCE.get(style, [])]
+        stem_l = stem.replace("_", " ")
+        for f in force:
+            fl = f.replace("_", " ")
+            if fl in stem_l or stem_l in fl or f.replace(" ", "_") in p.stem.lower():
+                score += 4
+                matched.append("force:" + f)
+                break
         scored.append((score, rng.random(), p, matched))
     scored.sort(key=lambda t: (-t[0], t[1]))
     picked: List[Path] = []
@@ -456,6 +512,7 @@ def compose_collage_frame(
     t: float = 2.5,
     seed: int = 42,
     image_path: Optional[Path] = None,
+    style_name: str = "jung",
 ) -> Image.Image:
     """Compose one collage/scatter/pillars/opener/photonote frame with real cutouts."""
     if not PIL_AVAILABLE:
@@ -482,7 +539,7 @@ def compose_collage_frame(
             label_blob += " " + " ".join(
                 str(it.get("label", "")) + " " + str(it.get("text", "")) for it in items
             )
-        cuts = pick_cutouts_for_text(label_blob, need=need, seed=seed, pool=lib)
+        cuts = pick_cutouts_for_text(label_blob, need=need, seed=seed, pool=lib, style_name=style_name or 'jung')
 
     items = items or []
     if not items:
@@ -858,6 +915,7 @@ def render_collage_card(
     cutout_paths: Optional[List[Path]] = None,
     seed: int = 42,
     image_path: Optional[Path] = None,
+    style_name: str = "jung",
 ) -> Path:
     """Render an animated collage/scatter/pillars/opener/photonote card to MP4."""
     if not PIL_AVAILABLE:
@@ -883,6 +941,7 @@ def render_collage_card(
                 t=t,
                 seed=seed,
                 image_path=image_path,
+                style_name=style_name,
             )
             zoom = 1.0 + 0.03 * (t / max(0.01, duration_sec))
             zw, zh = int(W * zoom), int(H * zoom)
@@ -907,193 +966,289 @@ def render_collage_card(
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def plan_gfx_vo_locked(
+    word_timings: List[Dict[str, Any]],
+    transcript_sentences: List[str] | None = None,
+    *,
+    total_duration_sec: float,
+    first_gfx_min_sec: float = 8.0,
+    graphic_dur_s: float = 4.5,
+    graphic_ratio: float = 0.22,
+    min_gap_sec: float = 8.0,
+    style_name: str = "jung",
+) -> List[Dict[str, Any]]:
+    """Place GFX cards VO-locked to Whisper keyword/clause starts (Kevis HARD).
+
+    start_sec = keyword_start - 0.1s (card reads while VO says it).
+    Never schedule a card that starts after its spoken span ends (late = fail).
+    Respects kinetic opener via first_gfx_min_sec (usually ≈ first hard cut).
+    """
+    words = list(word_timings or [])
+    if not words:
+        return plan_gfx_insertions(
+            total_duration_sec,
+            transcript_sentences or [],
+            first_gfx_min_sec=first_gfx_min_sec,
+            graphic_ratio=graphic_ratio,
+        )
+
+    def norm(w: str) -> str:
+        return "".join(ch for ch in (w or "").lower() if ch.isalnum())
+
+    # Thesis anchors: (match_words, title, subtitle, template)
+    # Ordered by narrative preference; first hit after first_gfx_min wins.
+    style = (style_name or "jung").lower()
+    if style in ("jung", "shadow", ""):
+        anchors = [
+            (["dark", "calls"], "if something in the dark calls your name", "do not answer", "collage"),
+            (["woods", "learn"], "the woods can learn a voice", "they can learn yours", "collage"),
+            (["learn", "yours"], "they can learn yours", "do not answer", "scatter"),
+            (["waits", "until"], "it waits until you are alone", "light is low", "scatter"),
+            (["body", "wants"], "your body wants to turn toward it", "before your brain can stop you", "pillars"),
+            (["moment", "answer"], "the moment you answer", "you have told it where you are", "collage"),
+            (["forest", "calls"], "if the forest calls your name", "keep walking", "scatter"),
+            (["keep", "walking"], "keep walking", "do not look back", "opener"),
+        ]
+    elif style == "astro":
+        anchors = [
+            (["moon"], "the moon pulls", "what returns", "scatter"),
+            (["star"], "the chart", "what it names", "collage"),
+        ]
+    else:  # divine / generic
+        anchors = [
+            (["listen", "still"], "listen", "stillness", "collage"),
+            (["remember", "rule"], "remember the rule", "maps will not print", "scatter"),
+            (["forest", "calls"], "if the forest calls your name", "keep walking", "collage"),
+        ]
+
+    # Build flat word list with norms
+    nw = [(norm(w.get("word", "")), float(w["start"]), float(w["end"]), w.get("word", "")) for w in words]
+
+    def find_span(keys: List[str]) -> tuple[float, float] | None:
+        """Find earliest contiguous-ish match of key sequence in word stream."""
+        keys_n = [norm(k) for k in keys]
+        for i in range(len(nw)):
+            if nw[i][0] != keys_n[0]:
+                continue
+            # allow up to 3 filler words between keys
+            j = i
+            ok = True
+            end_t = nw[i][2]
+            for k_idx, key in enumerate(keys_n):
+                found = None
+                for j2 in range(j, min(len(nw), j + 4)):
+                    if nw[j2][0] == key:
+                        found = j2
+                        break
+                if found is None:
+                    ok = False
+                    break
+                end_t = nw[found][2]
+                j = found + 1
+            if ok:
+                return nw[i][1], end_t
+        return None
+
+    hits = []
+    for keys, title, subtitle, template in anchors:
+        span = find_span(keys)
+        if not span:
+            continue
+        w0, w1 = span
+        start = max(0.0, w0 - 0.1)
+        # Must not be late: card start before spoken span ends
+        if start >= w1 - 1e-3:
+            continue
+        if start < float(first_gfx_min_sec) - 1e-3:
+            # Skip anchors inside kinetic opener (hard cut / GFX would kill hook)
+            continue
+        if start + graphic_dur_s > total_duration_sec - 0.4:
+            continue
+        hits.append({
+            "start_sec": round(start, 3),
+            "end_sec": round(start + graphic_dur_s, 3),
+            "title": title,
+            "subtitle": subtitle,
+            "template": template,
+            "vo_keyword_start": round(w0, 3),
+            "vo_keyword_end": round(w1, 3),
+            "vo_keys": keys,
+            "style_name": style_name,
+            "skin": "collage_dark" if template in ("collage", "scatter") else "noir",
+        })
+
+    # Greedy pick by start time with min gap + ratio cap
+    hits.sort(key=lambda h: h["start_sec"])
+    picked: List[Dict[str, Any]] = []
+    max_cards = max(1, int(round(total_duration_sec * graphic_ratio / graphic_dur_s)))
+    if total_duration_sec < 55:
+        max_cards = min(max_cards, 2)
+    for h in hits:
+        if len(picked) >= max_cards:
+            break
+        if any(abs(h["start_sec"] - p["start_sec"]) < min_gap_sec for p in picked):
+            continue
+        # vo_gfx_sync check
+        if h["start_sec"] > h["vo_keyword_end"]:
+            continue
+        picked.append(h)
+
+    # Fallback to cadence planner if Whisper missed everything
+    if not picked:
+        return plan_gfx_insertions(
+            total_duration_sec,
+            transcript_sentences or [],
+            first_gfx_min_sec=first_gfx_min_sec,
+            graphic_ratio=graphic_ratio,
+        )
+    return picked
+
+
+def vo_gfx_sync_report(cards: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """QA: late cards (start after spoken span ends) hard-fail."""
+    late = []
+    ok = []
+    for c in cards:
+        w0 = c.get("vo_keyword_start")
+        w1 = c.get("vo_keyword_end")
+        if w0 is None or w1 is None:
+            continue
+        lead = float(c["start_sec"]) - float(w0)
+        late_by = float(c["start_sec"]) - float(w1)
+        row = {
+            "title": c.get("title", "")[:48],
+            "gfx_start": c["start_sec"],
+            "vo_start": w0,
+            "vo_end": w1,
+            "lead_sec": round(lead, 3),
+            "late_by_sec": round(max(0.0, late_by), 3),
+            "keys": c.get("vo_keys"),
+        }
+        if late_by > 0.05:
+            late.append(row)
+        else:
+            ok.append(row)
+    return {
+        "pass": len(late) == 0 and len(ok) > 0,
+        "ok": ok,
+        "late": late,
+        "n_cards": len(cards),
+    }
+
+
+
 def plan_gfx_insertions(
     total_duration_sec: float,
     transcript_sentences: List[str] = None,
-    word_timings: List[dict] = None,  # NEW: Whisper word-level timings for VO-locking
+    word_timings: List[dict] = None,  # Whisper word-level timings for VO-locking
     still_paths: Optional[List[Path]] = None,
     first_gfx_min_sec: Optional[float] = None,
     graphic_ratio: Optional[float] = None,
-    vo_sync_lag_tolerance_sec: float = 0.3,  # Kevis: GFX must appear ≤0.3s after keyword spoken
+    vo_sync_lag_tolerance_sec: float = 0.3,  # Kevis: GFX ≤0.3s after keyword spoken
 ) -> List[Dict[str, Any]]:
-    """Plan Whop-paced mid-timeline GFX cards (~20–25% ratio) with VO-keyword-locking.
+    """Plan Whop-paced GFX cards (~20–25% ratio) with VO-keyword-locking.
 
-    **Kevis mandate**: Cards illustrating a line MUST appear when that line is spoken (≤0.3s lag).
-    Late cards (after spoken span ends) fail timing/MG scoring.
-    
-    VO-locking strategy:
-    1. Extract keywords from transcript sentences (nouns, verbs, key phrases)
-    2. Find keyword spoken time from Whisper word_timings
-    3. Place GFX card start_sec at keyword_time (or keyword_time - 0.1s for anticipation)
-    4. Enforce ≤0.3s lag between keyword spoken and card visible
-    5. Fallback to time-based if word_timings unavailable
-    
-    Short smokes (~40–60s): 2 cards @ ~3.4s after the opener hard cut (≥12–14s),
-    never chopping the hook bed. Longer cooks: ~1 card / 30–35s.
+    Kevis mandate: cards illustrating a line MUST appear when that line is spoken
+    (≤0.3s lag). Prefer start = keyword_start - 0.1s. Late cards (after spoken
+    span ends) fail vo_gfx_sync.
     """
-    cards = []
+    cards: List[Dict[str, Any]] = []
     target_ratio = float(graphic_ratio if graphic_ratio is not None else PACING["graphic_ratio"])
-    first_min = float(first_gfx_min_sec if first_gfx_min_sec is not None else PACING.get("first_gfx_min_sec", 14.0))
+    first_min = float(first_gfx_min_sec if first_gfx_min_sec is not None else PACING.get("first_gfx_min_sec", 10.0))
     gap_min = float(PACING.get("min_gap_between_gfx_sec", 8.0))
     if total_duration_sec < 90:
         gap_min = min(gap_min, 6.0)
     dur = max(2.8, min(PACING["graphic_dur_s"], PACING["graphic_max_s"]))
 
-    # Card count from ratio, but never before first_min; prefer fewer longer cards
-    # Floor near first_gfx_min (was hard 12.0 from long-opener era)
     usable_start = max(first_min, 8.0)
     usable_end = total_duration_sec - 1.5
     usable = max(1.0, usable_end - usable_start)
     max_by_ratio = max(1, int(round(total_duration_sec * target_ratio / dur)))
-    max_by_gap = max(1, int(usable / (dur + gap_min)) + 1)
-    # Whop: ≥1 card / ~35s; short smokes aim 2–3 cards inside 20–25% ratio
-    n = min(max_by_ratio, max_by_gap, 3 if total_duration_sec < 90 else 8)
-    # Prefer hitting ≥20% when room exists
-    while n < max_by_gap and n < (3 if total_duration_sec < 90 else 8):
-        if ((n + 1) * dur) / max(0.01, total_duration_sec) <= 0.26:
-            n += 1
-        else:
-            break
-    # Ensure ratio stays in 20–25% band when possible
-    while n > 1 and (n * dur) / max(0.01, total_duration_sec) > 0.26:
-        n -= 1
-    if n < 1:
-        n = 1
+    if total_duration_sec < 55:
+        max_by_ratio = min(max_by_ratio, 2)
+    n = max(1, max_by_ratio)
 
+    transcript_sentences = list(transcript_sentences or [])
     templates = ["collage", "scatter", "pillars", "photonote", "opener"]
-    # Prefer collage thesis first (Whop ~0:34), then scatter/pillars — opener is weaker late
-    
-    # VO-keyword-locking: extract keywords from transcript for GFX timing
-    vo_anchors = []  # List of (keyword, spoken_time_sec, sentence_idx)
-    if word_timings and transcript_sentences:
-        # Build word lookup: {word.lower(): [(start_sec, end_sec), ...]}
-        word_lookup = {}
-        for wt in word_timings:
-            w = wt.get("word", "").lower().strip()
-            if w and len(w) > 2:  # Skip short words
-                if w not in word_lookup:
-                    word_lookup[w] = []
-                word_lookup[w].append((wt.get("start", 0), wt.get("end", 0)))
-        
-        # Extract keywords from each sentence (nouns, verbs, important words)
-        import re
-        for idx, sentence in enumerate(transcript_sentences):
-            words = re.findall(r'\b\w+\b', sentence.lower())
-            # Find substantive words (length >4, not common stop words)
-            stop_words = {'this', 'that', 'these', 'those', 'with', 'from', 'have', 'been', 'will', 'would', 'could', 'should'}
-            keywords = [w for w in words if len(w) > 4 and w not in stop_words]
-            
-            # For each keyword, find its spoken time
-            for kw in keywords[:3]:  # Up to 3 keywords per sentence
-                if kw in word_lookup and word_lookup[kw]:
-                    # Use first occurrence of keyword in this sentence's time range
-                    spoken_time = word_lookup[kw][0][0]  # start_sec of first match
-                    vo_anchors.append((kw, spoken_time, idx, sentence))
-    
-    logger.info(f"VO-anchors extracted: {len(vo_anchors)} keywords for {n} GFX cards")
+
+    # If Whisper words available, prefer dedicated VO-locked planner (thesis anchors)
+    if word_timings:
+        locked = plan_gfx_vo_locked(
+            word_timings,
+            transcript_sentences,
+            total_duration_sec=total_duration_sec,
+            first_gfx_min_sec=usable_start,
+            graphic_dur_s=dur,
+            graphic_ratio=target_ratio,
+            min_gap_sec=gap_min,
+            style_name="jung",
+        )
+        if locked:
+            # Enforce ≤0.3s lag vs keyword start; never after keyword end
+            for c in locked:
+                w0 = float(c.get("vo_keyword_start", c["start_sec"]))
+                w1 = float(c.get("vo_keyword_end", w0 + 0.5))
+                start = max(usable_start, w0 - 0.1)
+                lag = start - w0
+                if lag > vo_sync_lag_tolerance_sec:
+                    logger.warning(
+                        "GFX late vs keyword: %.2fs lag (FAIL vo_gfx_sync) — clamping",
+                        lag,
+                    )
+                    start = w0 + vo_sync_lag_tolerance_sec
+                if start > w1 + 1e-3:
+                    logger.warning("GFX after spoken span ends — FAIL vo_gfx_sync; pulling back")
+                    start = max(usable_start, w0 - 0.1)
+                c["start_sec"] = round(start, 3)
+                c["end_sec"] = round(min(usable_end, start + dur), 3)
+                c["vo_sync_lag_sec"] = round(c["start_sec"] - w0, 3)
+            sync = vo_gfx_sync_report(locked)
+            if not sync["pass"]:
+                logger.warning("vo_gfx_sync FAIL: %s", sync.get("late"))
+            return locked[:n]
+
+    # Fallback: cadence-based (no Whisper)
     default_items = [
         [
             {"label": "do not answer", "text": "not once"},
             {"label": "the woods learn", "text": "your voice"},
             {"label": "keep walking", "text": "do not look back"},
         ],
-        [],
         [
-            {"label": "alone", "text": "when light is low"},
-            {"label": "listening", "text": "for a friend"},
-            {"label": "spoken", "text": "soft. familiar."},
+            {"label": "the shadow", "text": "what you refuse"},
+            {"label": "the persona", "text": "the mask that stuck"},
+            {"label": "the self", "text": "the whole you"},
         ],
-        [],
-        [],
-    ]
-    default_titles = [
-        ("three things the body already knows", "before the mind invents a story"),
-        ("it is not a breakdown", "it is a process asking to be named"),
-        ("what this rests on", "stay with it"),
-        ("old timers say it waits", "until you are already listening"),
-        ("if the forest calls your name", "do not answer"),
     ]
     stills = [Path(p) for p in (still_paths or []) if Path(p).exists()]
-
     for i in range(n):
-        # VO-locked placement: use keyword anchor if available, fallback to time-based
-        if vo_anchors and i < len(vo_anchors):
-            keyword, spoken_time, sent_idx, sentence = vo_anchors[i * len(vo_anchors) // n]  # Spread anchors across n cards
-            # Place card START at spoken_time (or slightly before for anticipation)
-            start = max(usable_start, spoken_time - 0.1)  # 0.1s anticipation
-            end = min(usable_end, start + dur)
-            start = max(usable_start, end - dur)
-            
-            # Kevis rule: GFX must appear ≤0.3s after keyword spoken
-            lag = start - spoken_time
-            if lag > vo_sync_lag_tolerance_sec:
-                logger.warning(f"GFX card {i} late: {lag:.2f}s lag after keyword '{keyword}' @ {spoken_time:.1f}s (FAIL vo_gfx_sync)")
-                # Adjust to meet tolerance
-                start = spoken_time + vo_sync_lag_tolerance_sec
-                end = min(usable_end, start + dur)
-            
-            # Extract title from keyword + sentence
-            words = sentence.split()
-            if len(words) >= 4:
-                title = " ".join(words[:6]).lower()
-            else:
-                title = keyword
-        else:
-            # Fallback: time-based placement (original logic)
-            center = usable_start + usable * (i + 0.5) / n
-            start = max(usable_start, center - dur / 2)
-            end = min(usable_end, start + dur)
-            start = max(usable_start, end - dur)
-            
-            # Extract title from transcript if available
-            if transcript_sentences:
-                idx = int((center / total_duration_sec) * len(transcript_sentences))
-                idx = max(0, min(idx, len(transcript_sentences) - 1))
-                words = transcript_sentences[idx].split()
-                if len(words) >= 4:
-                    title = " ".join(words[:6]).lower()
-                else:
-                    title, subtitle = default_titles[i % len(default_titles)]
-            else:
-                title, subtitle = default_titles[i % len(default_titles)]
-        
-        # Enforce minimum gap between cards
-        if cards and start < cards[-1]["end_sec"] + gap_min:
-            start = cards[-1]["end_sec"] + gap_min
-            end = min(usable_end, start + dur)
-            if end - start < 2.4:
-                continue
-        skin = "collage_dark" if i % 3 < 2 else "noir"
-        title, subtitle = default_titles[i % len(default_titles)]
+        center = usable_start + usable * (i + 0.5) / n
+        start = max(usable_start, center - dur / 2)
+        end = min(usable_end, start + dur)
+        start = max(usable_start, end - dur)
         tpl = templates[i % len(templates)]
+        if i == 0:
+            tpl = "collage"
+        title = "if the forest calls your name"
+        subtitle = "do not answer"
         if transcript_sentences:
             idx = int((center / total_duration_sec) * len(transcript_sentences))
             idx = max(0, min(idx, len(transcript_sentences) - 1))
             words = transcript_sentences[idx].split()
             if len(words) >= 4:
                 title = " ".join(words[:6]).lower()
-        image = None
-        if tpl in ("opener", "photonote") and stills:
-            image = str(stills[i % len(stills)])
+            subtitle = " ".join(words[6:12]).lower() if len(words) > 6 else subtitle
         cards.append({
-            "start_sec": start,
-            "end_sec": end,
+            "start_sec": round(start, 3),
+            "end_sec": round(end, 3),
+            "template": tpl,
             "title": title,
             "subtitle": subtitle,
-            "skin": skin,
-            "variant": i,
-            "template": tpl,
+            "skin": "collage_dark" if tpl in ("collage", "scatter") else "noir",
             "items": default_items[i % len(default_items)],
-            "seed": 11 + i * 11,
-            "image_path": image,
+            "still_path": str(stills[i % len(stills)]) if stills else None,
+            "seed": 40 + i * 7,
         })
-    gfx_dur = sum(c["end_sec"] - c["start_sec"] for c in cards)
-    logger.info(
-        "Planned %d GFX cards for %.1fs video (%.1fs GFX = %.0f%%) first≥%.1fs",
-        len(cards), total_duration_sec, gfx_dur,
-        100.0 * gfx_dur / max(0.01, total_duration_sec),
-        usable_start,
-    )
     return cards
 
 
@@ -1121,7 +1276,7 @@ def render_gfx_lane(
                 str(it.get("label", "")) + " " + str(it.get("text", ""))
                 for it in (spec.get("items") or [])
             ])
-            cuts = pick_cutouts_for_text(blob, need=need, seed=int(spec.get("seed", 40 + i)))
+            cuts = pick_cutouts_for_text(blob, need=need, seed=int(spec.get("seed", 40 + i)), style_name=str(spec.get("style_name") or spec.get("brand") or "jung"))
             path = render_collage_card(
                 title=spec["title"],
                 subtitle=spec.get("subtitle", ""),
@@ -1133,6 +1288,7 @@ def render_gfx_lane(
                 cutout_paths=cuts,
                 seed=int(spec.get("seed", 40 + i)),
                 image_path=Path(img) if img else None,
+                style_name=str(spec.get("style_name") or spec.get("brand") or "jung"),
             )
             rendered.append(path)
         except Exception as e:

@@ -85,6 +85,7 @@ def assemble_frontier_video(
     dust_strength: float = 1.0,
     vignette_strength: float = 0.55,
     flash_times: list[float] | None = None,
+    leak_strength: float = 0.72,
     progress_callback=None,
 ) -> dict:
     """
@@ -160,7 +161,7 @@ def assemble_frontier_video(
         if progress_callback:
             progress_callback(f"Applying {len(flash_times)} chapter flashes...")
         flashed = temp_dir / "flashed.mp4"
-        _apply_white_flashes(concat_path, list(flash_times), flashed)
+        _apply_white_flashes(concat_path, list(flash_times), flashed, leak_strength=leak_strength)
         concat_path = flashed
     
     if progress_callback:
@@ -781,11 +782,12 @@ def _apply_white_flashes(
     flash_dur: float = 0.95,
     peak_alpha: float = 0.85,
     lightleak_path: str | Path | None = None,
-    leak_strength: float = 0.55,
+    leak_strength: float = 0.72,
 ):
     """Whop circular film-burn light-leak chapter commas (screen-blend in gbrp).
 
-    Falls back to brightness pulse only if lightleak.mp4 is missing.
+    Leak plate is radially vignetted so the burn reads as a disk/coma, not a
+    flat full-frame brightness wipe. Falls back to brightness pulse if missing.
     """
     if not flash_times:
         import shutil
@@ -860,18 +862,21 @@ def _apply_white_flashes(
         str(plate),
     ], check=True, capture_output=True)
 
-    s = max(0.25, min(0.85, float(leak_strength)))
+    s = max(0.30, min(0.95, float(leak_strength)))
     clip_dur = min(float(flash_dur), 0.95)
     current = plate
     for i, t0 in enumerate(flash_times):
         start_t = max(0.0, float(t0) - 0.08)
         nxt = tmp / f"plate_{i:02d}.mp4"
         # Delay leak clip to start_t via tpad, screen onto plate (scale to program)
+        # Circular disk: vignette crush edges of leak so center burns hotter
         fc = (
             f"[0:v]format=gbrp[base];"
             f"[1:v]scale={vw}:{vh}:force_original_aspect_ratio=increase,"
             f"crop={vw}:{vh},fps=30,setsar=1,"
-            f"colorchannelmixer=rr={s:.3f}:gg={s:.3f}:bb={s:.3f},"
+            f"colorchannelmixer=rr={min(0.95, s*1.15):.3f}:gg={s:.3f}:bb={s*0.75:.3f},"
+            f"vignette=PI/3.2:mode=forward:eval=init,"
+            f"eq=brightness=0.08:contrast=1.15,"
             f"tpad=start_duration={start_t:.3f}:start_mode=add:color=black,"
             f"tpad=stop_duration={dur:.3f}:color=black,format=gbrp[lk];"
             f"[base][lk]blend=all_mode=screen:shortest=1,format=yuv420p[v]"

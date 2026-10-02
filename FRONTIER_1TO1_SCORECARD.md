@@ -419,4 +419,14 @@ Job: `output/frontier_20261002_122844/` · chat `/workspace/frontier_video_v9_ch
 | timing_pacing | **8.9** | mean **7.21s**, first cut **8.0s**, cuts/min **6.93** |
 | combined | **8.7** | not ≥9.5 — draft only |
 
+## v11 smoke (2026-10-02)
+
+| pillar | score | note |
+|--------|------:|------|
+| visual_bed | **8.6** | stronger circular leak |
+| motion_graphics | **8.8** | thematic PW + VO-lock |
+| timing_pacing | **9.0** | mean 6.18 / first cut 8.0 |
+| vo_gfx_sync | **9.2** | woods@13.24→card 13.14 (−0.1s) |
+| combined | **8.9** | not ≥9.5 — draft only |
+
 

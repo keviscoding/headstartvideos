@@ -47,24 +47,76 @@ def load_kit_motion(kit_root: Path | None = None):
     return mod
 
 
-def _pick_names(mod, text: str, n: int, seed: int) -> List[str]:
-    words = [w.strip(".,!?;:\"'").lower() for w in (text or "").split()]
-    names = []
-    if hasattr(mod, "pick_cutouts"):
+def _pick_names(mod, text: str, n: int, seed: int, style_name: str = "jung") -> List[str]:
+    """Thematic cutout names for the active style (Jung ≠ clover/rocket)."""
+    names: List[str] = []
+    # Prefer Channel Recipe thematic picker (style bans + force lists)
+    try:
+        from core.frontier_motion_graphics import pick_cutouts_for_text, list_cutouts
+        paths = pick_cutouts_for_text(text or "", need=n, seed=seed, style_name=style_name)
+        for path in paths:
+            # Map filesystem stem → kit CUTOUTS key
+            stem = path.stem
+            keys = getattr(mod, "CUTOUTS", {}) or {}
+            if stem in keys:
+                names.append(stem)
+                continue
+            # fuzzy: spaces vs underscores
+            alt = stem.replace(" ", "_")
+            alt2 = stem.replace("_", " ")
+            for k in keys:
+                if k == alt or k == alt2 or k.replace("_", " ") == stem.replace("_", " "):
+                    names.append(k)
+                    break
+    except Exception:
+        names = []
+    # Kit alias picker as secondary (still filter bans)
+    ban_sub = {
+        "jung": ["ctyrlistek", "diamond", "rocket", "recycle", "guitar", "apple", "bin", "jesus", "bible", "church"],
+        "astro": ["jesus", "bible", "church"],
+        "divine": ["rocket", "guitar", "bin"],
+    }.get((style_name or "jung").lower(), [])
+    if hasattr(mod, "pick_cutouts") and len(names) < n:
+        words = [w.strip(".,!?;:\"'").lower() for w in (text or "").split()]
         try:
-            names = list(mod.pick_cutouts(words, n=n, seed=seed) or [])
+            extra = list(mod.pick_cutouts(words, n=n, seed=seed) or [])
         except Exception:
-            names = []
+            extra = []
+        for k in extra:
+            if any(b in k.lower() for b in ban_sub):
+                continue
+            if k not in names:
+                names.append(k)
+    # Force-list fill from kit keys
+    force = {
+        "jung": ["vintage_moon", "vintage_eye", "vintage_tiger", "sisyphus_pushing_boulder_sketch",
+                 "ancient_pilar", "vintage_cloud", "vintage_collage_bird_dove", "vintage_brain",
+                 "vintage_lock", "vintage_key", "vintage_man_mad", "vintage_heartbroken", "vintage_alarm"],
+        "astro": ["vintage_moon", "vintage_star", "vintage_cloud", "vintage_eye"],
+        "divine": ["vintage_cloud", "vintage_star", "ancient_pilar", "vintage_open_book", "vintage_collage_bird_dove"],
+    }.get((style_name or "jung").lower(), [])
     keys = list(getattr(mod, "CUTOUTS", {}) or {})
+    for f in force:
+        if len(names) >= n:
+            break
+        # match kit key
+        hit = None
+        for k in keys:
+            if k == f or k.replace(" ", "_") == f.replace(" ", "_") or f.replace("_", " ") in k.replace("_", " "):
+                hit = k
+                break
+        if hit and hit not in names and not any(b in hit.lower() for b in ban_sub):
+            names.append(hit)
     i = 0
     while len(names) < n and keys:
         k = keys[(seed + i) % len(keys)]
-        if k not in names:
+        if k not in names and not any(b in k.lower() for b in ban_sub):
             names.append(k)
         i += 1
-        if i > len(keys) + 5:
+        if i > len(keys) + 8:
             break
     return names[:n]
+
 
 
 def render_playwright_gfx_lane(
@@ -104,20 +156,41 @@ def render_playwright_gfx_lane(
         }
         skin = skin_map.get(template, "collage_dark")
         need = {"scatter": 8, "pillars": 3, "opener": 6, "photonote": 1, "collage": 3}.get(template, 3)
-        names = _pick_names(mod, title + " " + subtitle, need, seed=11 + i * 17)
+        names = _pick_names(mod, title + " " + subtitle, need, seed=11 + i * 17, style_name=style_name)
         items = []
-        # Derive short item labels from title words if not provided
+        # Prefer curated Jung/shadow micro-labels over raw title fragments / sticker filenames
+        curated = {
+            "jung": [
+                ("the shadow", "what you refuse"),
+                ("the persona", "the mask you wear"),
+                ("do not answer", "not once"),
+                ("keep walking", "do not look back"),
+                ("the forest", "learns your voice"),
+            ],
+            "astro": [
+                ("the chart", "what returns"),
+                ("the transit", "now"),
+                ("the moon", "what it pulls"),
+            ],
+            "divine": [
+                ("listen", "stillness"),
+                ("the sign", "already here"),
+                ("faith", "without noise"),
+            ],
+        }.get((style_name or "jung").lower(), [])
+        for lab, sub in curated[:3]:
+            items.append({"label": lab, "text": sub})
         bits = [b.strip() for b in title.replace("—", ".").split(".") if b.strip()]
-        if not bits:
-            bits = title.split(",")
-        for j, b in enumerate(bits[:3] or ["listen", "wait", "walk"]):
+        for b in bits:
+            if len(items) >= 3:
+                break
             words = b.split()
             items.append({
                 "label": " ".join(words[:3])[:42],
                 "text": " ".join(words[3:6])[:40] if len(words) > 3 else "",
             })
         while len(items) < 3:
-            items.append({"label": names[len(items)] if len(items) < len(names) else "hold", "text": ""})
+            items.append({"label": "hold", "text": ""})
 
         sc = mod.scene_from_spec({
             "template": template if template in getattr(mod, "TEMPLATES", []) else "collage",
