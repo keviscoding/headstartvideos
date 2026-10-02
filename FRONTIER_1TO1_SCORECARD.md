@@ -1,314 +1,321 @@
-# Frontier 1:1 Scorecard - Channel Recipe vs Whop Frontier
+# Frontier 1:1 Scorecard - OUTPUT-BASED EVALUATION
 
-This document evaluates the Channel Recipe Frontier pipeline against Whop Frontier reference implementation on key visual and technical dimensions.
+## Status: INCOMPLETE - Awaiting Full Render with Atlas + Pexels
 
-## Evaluation Criteria
+**Critical Gap**: This evaluation cannot achieve ≥9.5/10 without rendering a real CR Frontier video with Atlas gpt-image-2 stills and Pexels b-roll, then comparing side-by-side against Whop Frontier Jung reference output.
 
-Each dimension is scored 0-10, where:
+**What's Been Validated**:
+- ✅ Pipeline architecture implements all Frontier systems
+- ✅ Smoke test proves video assembly works end-to-end
+- ✅ Word-level kinetic ASS captions now implemented (was missing)
+- ⚠️ Cannot score visual output without API keys (ATLASCLOUD_KEY, PEXELS_KEY missing)
+
+---
+
+## Reference Material
+
+**Whop Frontier Jung**: `jung-whop-ref-45s.mp4` (45s, 960x540)
+- Dark moody stills (books, coats, atmospheric scenes)
+- Word-level kinetic captions - each word flashes gold as spoken  
+- Cold/desaturated grade
+- Smooth Ken Burns zooms
+- Pexels b-roll filling gaps
+
+**Jung Frame Samples**:
+- Frame 15s: Dark coat on hook, gold kinetic text "unacceptable, then **buried** so thoroughly that"
+- Frame 60s: Old book ("The Principles of Psychology"), warm lamp light
+- Frame 120s: (not provided)
+
+**Atlas Still Reference**: Old psychology book on wooden desk - warm cinematic lighting, shallow DoF, professional product shot quality
+
+---
+
+## Evaluation Framework
+
+Score each dimension 0-10 based on **actual rendered output**:
 - **10**: Perfect 1:1 match with Whop Frontier
-- **9**: Visually indistinguishable in practice, minor implementation differences
-- **8**: Very close match, small observable differences
-- **7**: Good match, some noticeable differences
+- **9**: Visually indistinguishable in practice
+- **8**: Very close, small observable differences
+- **7**: Good, some noticeable differences
 - **<7**: Needs improvement
 
-**Target**: Overall score ≥9.5/10 before shipping
+**RULE**: Cannot score >5 on visual dimensions without comparing real MP4 outputs.
 
 ---
 
 ## 1. Still Look & Quality (Atlas gpt-image-2)
 
-**Score: 10/10**
+**Score: 5/10** (PROVISIONAL - awaiting real render)
 
-✅ **Implementation**:
-- Uses Atlas Cloud `gpt-image-2` model (same as Whop Frontier IMAGE_PROVIDER=atlas)
-- Scene-based prompts (not quote-on-paper) matching Frontier's SCENE_PROMPT pattern
-- Cinematic style suffix: "natural light, shallow depth of field, filmic grain, muted colour"
-- Generates ~10-15 stills per video based on script length
+✅ **Code Implements**:
+- Atlas Cloud API calls to gpt-image-2 model
+- Scene-based prompts (not quote-on-paper)
+- Cinematic style suffix matching Frontier
+- 1920x1080 resolution
+- Parallel generation (12 workers default)
 
-✅ **Matches Whop Frontier**:
-- `_generate_atlas_image()` calls Atlas API with same model/resolution (1920x1080)
-- Scene prompt generation follows Frontier's art director pattern
-- Stills are photorealistic/cinematic, not illustrative ERNIE style
+❌ **Cannot Verify Without Render**:
+- Actual still aesthetic vs Jung reference (book, coat, atmospheric mood)
+- Whether gpt-image-2 scenes match Frontier's dark psychology look
+- Color palette match
+- Composition quality
+- Consistency across stills
 
-✅ **Evidence**:
-- frontier_atlas.py implements generate_frontier_stills() with identical Atlas API calls
-- Style suffix matches Frontier's SCENE_STYLE_SUFFIX pattern
-- No ERNIE/illustration_gen used - pure gpt-image-2 path
-
----
-
-## 2. Pexels Motion Gaps & B-Roll
-
-**Score: 10/10**
-
-✅ **Implementation**:
-- Fetches Pexels stock videos (24) and photos (12) based on LLM-generated keywords
-- Keywords generated from script matching Frontier's PEXELS_KEYWORDS_PROMPT
-- No back-to-back repeat (_PexelsBag ensures variety)
-- Videos scaled to fill, photos get Ken Burns zooms
-
-✅ **Matches Whop Frontier**:
-- frontier_pexels.py implements fetch_pexels_assets() matching Frontier's fetch_astro_pexels_videos pattern
-- Keyword generation via Claude/Atlas LLM (14 keywords, 1-2 words each)
-- Manifest caching prevents re-downloads
-- Shuffled bag pattern prevents visual repetition
-
-✅ **Evidence**:
-- generate_pexels_keywords() matches Frontier's PEXELS_KEYWORDS_PROMPT verbatim
-- _PexelsBag class implements same shuffling/anti-repeat logic as Frontier's _Bag
-- Downloads HD 1920x1080 videos, large photos
+**To Reach 10/10**: Render with real ATLASCLOUD_KEY, extract frames, compare side-by-side against Jung reference stills.
 
 ---
 
-## 3. Still Ownership & Motion Timing
+## 2. Pexels B-Roll Integration
 
-**Score: 9/10**
+**Score: 5/10** (PROVISIONAL - awaiting real render)
 
-✅ **Implementation**:
-- Word-locked motion plan: AI stills own specific spoken spans (start_sec to end_sec)
-- Timing from Whisper word alignment + sentence matching
-- Still padding (0.8s), min hold (3.5s), max hold (10s) match Frontier defaults
+✅ **Code Implements**:
+- LLM keyword generation from script (14 terms)
+- Pexels API fetch (24 videos, 12 photos)
+- No back-to-back repeat logic (_PexelsBag)
+- Caching to prevent re-downloads
+
+❌ **Cannot Verify Without Render**:
+- Whether keywords match Frontier atmospheric style
+- Quality/relevance of fetched Pexels assets
+- Smoothness of transitions between stills and b-roll
+- Whether gaps are actually filled (no black frames)
+
+**To Reach 10/10**: Render with PEXELS_KEY, watch full video, verify smooth Pexels fills all gaps.
+
+---
+
+## 3. Motion Timing & Still Ownership
+
+**Score: 6/10** (PARTIAL - smoke test validates structure)
+
+✅ **Validated in Smoke Test**:
+- Motion planner creates correct timeline structure
+- Stills own specific time spans (start_sec to end_sec)
 - Pexels fills gaps between stills
-- Stills never overlap, gaps never left empty
+- No overlaps, no empty gaps
+- Durations clamped (min 3.5s, max 10s, pad 0.8s)
 
-✅ **Matches Whop Frontier**:
-- frontier_motion_planner.py implements StillOwnership + plan_motion_timeline()
-- Still duration clamping matches Frontier's STILL_PAD, STILL_MIN_HOLD, STILL_MAX_HOLD
-- Motion segments track type/path/timing like Frontier's slot system
+```
+Smoke test output (20s video):
+1. ai_still (0.0s-4.8s) zoom=in
+2. pexels_video (4.8s-8.0s) zoom=hold  
+3. ai_still (8.0s-12.8s) zoom=out
+4. pexels_video (12.8s-16.0s) zoom=hold
+5. ai_still (16.0s-20.0s) zoom=in
+```
 
-⚠️ **Minor Difference**:
-- Frontier uses more sophisticated sentence-to-still matching with difflib scoring
-- CR version uses simpler word overlap scoring
-- In practice, timing is visually equivalent for typical scripts
+❌ **Cannot Verify Without Full Render**:
+- Whether still timing actually matches VO meaning
+- Sentence-to-still matching accuracy
+- Whether transitions feel natural
+- Pacing vs Frontier reference
 
----
-
-## 4. Burn-In Captions (ASS Kinetic Style)
-
-**Score: 8/10**
-
-✅ **Implementation**:
-- ASS subtitle format with custom style matching Frontier
-- Font: Inter ExtraBold, size 73px at 1080p
-- Accent color: #C9B896 (warm gold, same as Jung style) -> &H96B8C9& in BGR
-- Bottom-aligned with shadow
-- ffmpeg `ass` filter for burn-in
-
-✅ **Matches Whop Frontier**:
-- _convert_srt_to_ass() generates ASS with Frontier style parameters
-- Color format &HBBGGRR& (BGR) matches Frontier's CAPTION_ACCENT pattern
-- Font/size/position match Frontier defaults
-
-⚠️ **Partial Implementation**:
-- Current: basic SRT->ASS conversion with per-subtitle styling
-- Frontier full: word-level karaoke effects (\k tags) for kinetic flash per word
-- CR version shows whole subtitles with accent color, Frontier flashes each word as spoken
-- Visual difference: less dynamic than full Frontier, but readable and styled correctly
-
-**Improvement Path**:
-- Add word-level \k tagging from Whisper word timings for full kinetic effect
-- Would raise score to 10/10
+**To Reach 9/10**: Render with script+VO, verify stills appear at correct narrative moments.
 
 ---
 
-## 5. Color Grade & Mix
+## 4. Word-Level Kinetic Captions
 
-**Score: 10/10**
+**Score: 8/10** (CODE COMPLETE - awaiting visual verification)
 
-✅ **Implementation**:
-- Default color grade: `eq=brightness=-0.06:saturation=0.62:contrast=1.10,colortemperature=temperature=5200`
-- Matches Frontier Jung style's FOOTAGE_GRADE exactly
-- Applied to all Pexels clips and photos during segment build
-- Consistent tonal range across all footage
+✅ **Implemented (Post-Fix)**:
+- `_add_kinetic_karaoke()` generates ASS `\k` tags from Whisper word timings
+- Each word gets duration in centiseconds
+- Color override `{\c&H96B8C9&}` flashes accent gold per word
+- ASS styling matches Frontier: Inter ExtraBold, 73px, bottom-aligned, shadow 3.4
 
-✅ **Matches Whop Frontier**:
-- frontier_assembler.py passes color_grade to _build_segment_video()
-- Applied via ffmpeg vf filter chain
-- Jung default matches Frontier's cold-graded, desaturated look
+✅ **Smoke Test Validation**:
+```
+Dialogue: 0,0:00:00.00,0:00:04.00,Default,,0,0,0,,{\k20\c&H96B8C9&}The {\k40\c&H96B8C9&}shadow ...
+```
+Karaoke tags present and syntactically correct.
 
-✅ **Evidence**:
-- Grade string identical to Frontier jung.json footage_grade
-- All segments graded before concatenation (no mixing of looks)
+❌ **Cannot Verify Without Visual Render**:
+- Whether timing sync is tight (word flash exactly as spoken)
+- Whether accent color (#C9B896 -> &H96B8C9&) matches Jung gold
+- Whether font/size looks identical to reference frames
+- Readability at 1080p
+
+**Why Not 10/10**: Need to see rendered video with captions to verify visual match. ASS syntax is correct but timing precision and color match need output validation.
+
+**To Reach 10/10**: Render, watch with audio, confirm each word flashes in sync.
+
+---
+
+## 5. Color Grade & Look
+
+**Score: 7/10** (PARTIAL - grade string matches, output unknown)
+
+✅ **Code Implements**:
+- Default grade: `eq=brightness=-0.06:saturation=0.62:contrast=1.10,colortemperature=temperature=5200`
+- Matches Frontier Jung style exactly (cold, desaturated, filmic)
+- Applied to all Pexels clips and photos in `_build_segment_video()`
+
+❌ **Cannot Verify Without Render**:
+- Whether grade actually produces Frontier's cold/dark look
+- Color consistency across mixed Pexels assets
+- Whether stills (from Atlas) match grade of footage
+- Overall tonal unity vs Jung reference
+
+**To Reach 10/10**: Render, extract frames at 5s intervals, compare tonal range/saturation/temperature to Jung reference.
 
 ---
 
 ## 6. Ken Burns Zooms
 
-**Score: 9/10**
+**Score: 7/10** (ARCHITECTURAL MATCH - visual smoothness unknown)
 
-✅ **Implementation**:
-- Stills: zoom in/out/alternate based on strategy
-- Photos: same Ken Burns treatment
-- Zoom amount: 0.15 (15% scale increase) matches Frontier default
-- Uses ffmpeg zoompan filter with linear interpolation
-- Hold mode available for no-zoom segments
+✅ **Code Implements**:
+- `_ken_burns_filter()` generates ffmpeg zoompan expressions
+- Linear interpolation: `start_zoom + (end_zoom - start_zoom) * (frame / total_frames)`
+- Zoom amount 0.15 (15% scale) matches Frontier default
+- Alternate strategy: in, out, in, out...
+- Hold mode for videos (no zoom)
 
-✅ **Matches Whop Frontier**:
-- _ken_burns_filter() generates zoompan expressions
-- Zoom formula: start_zoom + (end_zoom - start_zoom) * (frame / total_frames)
-- Alternate strategy: in, out, in, out... same as Frontier
+✅ **Smoke Test Validates**: Zoom directions alternate correctly in timeline.
 
-⚠️ **Minor Difference**:
-- Frontier uses perspective filter for some zooms (avoids pixel-snapping jitter)
-- CR uses zoompan (standard, slightly less smooth on very slow zooms)
-- Visually equivalent for typical 3-10s still durations
+❌ **Cannot Verify Without Render**:
+- Smoothness of zoom motion
+- Whether 0.15 zoom feels right for 3-10s still durations
+- Whether alternating creates good rhythm
+- Comparison to Frontier's perspective zoom (we use zoompan)
+
+**To Reach 9/10**: Render, watch zooms frame-by-frame, verify smooth motion without jitter. Compare zoom speed/feel to Jung reference.
 
 ---
 
 ## 7. Dust Overlay & Vignette
 
-**Score: 9/10**
+**Score: 6/10** (PARTIAL - vignette works, dust missing)
 
-✅ **Implementation**:
-- Dust overlay: screen blend at 30% opacity, looped across video
-- Vignette: ffmpeg vignette filter with 0.35 strength, forward mode
-- Both optional (add_dust, add_vignette flags)
-- Applied after subtitle burn-in
+✅ **Validated in Smoke Test**:
+- Vignette applies correctly (dark edge fade, 0.35 strength)
+- `_apply_vignette()` works end-to-end
 
-✅ **Matches Whop Frontier**:
-- _apply_dust_overlay() uses blend=all_mode=screen matching Frontier
-- _apply_vignette() applies dark edge fade
-- Dust loop prevents repeat pattern
+❌ **Missing**:
+- No `overlay_dust.mp4` asset in repo
+- Dust code present but gracefully skips if file missing
+- Cannot verify screen blend look without asset
 
-⚠️ **Difference**:
-- Frontier has custom dust overlay file (overlay_dust.mp4) with specific timing
-- CR checks for assets/overlay_dust.mp4 but doesn't ship it in repo
-- If dust file present, behavior matches; if absent, gracefully skips
+❌ **Cannot Verify Without Render**:
+- Whether vignette strength matches Jung reference darkness
+- Dust particle aesthetic (when asset added)
 
-**Note**: Dust/vignette are optional Frontier style elements, not core pipeline features
+**To Reach 9/10**: Add overlay_dust.mp4 asset, render, verify subtle particle effect matches Frontier.
 
 ---
 
-## 8. Pipeline Orchestration
+## 8. Pipeline Execution
 
-**Score: 10/10**
+**Score: 9/10** (SMOKE TEST VALIDATES ARCHITECTURE)
 
-✅ **Implementation**:
-- 6-step pipeline matching Frontier flow:
-  1. Word-level alignment (Whisper base)
-  2. Scene prompt generation (Atlas LLM)
-  3. AI still generation (Atlas gpt-image-2, parallel)
-  4. Pexels fetch (videos + photos, parallel)
-  5. Motion plan assembly (word-locked timing)
-  6. Video assembly (segments -> concat -> captions -> audio mix)
+✅ **Smoke Test Proves**:
+- All 6 pipeline steps execute without errors
+- Parallel workers function correctly  
+- Progress callbacks work
+- Timing tracked per step
+- Output video created (0.49 MB, 20s, valid MP4)
+- Segments concatenate cleanly
+- Audio mix works
+- No crashes or missing dependencies (except API keys)
 
-✅ **Matches Whop Frontier**:
-- frontier_pipeline.py run_frontier_pipeline() orchestrates all steps
-- Parallel workers for stills (12 default, 6 lite mode)
-- Progress callbacks at each step
-- Output format matches standard pipeline contract
+✅ **Code Review**:
+- Orchestration matches Frontier's run_pipeline pattern
+- ThreadPoolExecutor for parallel stills/Pexels
+- Error handling with retries
+- Graceful fallbacks (e.g. if Whisper fails)
 
-✅ **Evidence**:
-- Same async ThreadPoolExecutor pattern as Frontier
-- Timing tracking per step
-- Error handling with retry/fallback
+❌ **Minor Gap**:
+- Cannot test full Atlas/Pexels integration without keys
+- Worker count optimal for local but unverified for Fly Machine
 
----
-
-## 9. Admin Gating & Integration
-
-**Score: 10/10**
-
-✅ **Implementation**:
-- Recipe marked `admin_only: True` in recipes.py
-- Only nwalikelv@gmail.com can access (existing CR admin check)
-- Wired through existing Fly cook infrastructure
-- No new auth/gating code needed
-
-✅ **Matches Requirements**:
-- Admin email gating already tested and working
-- Frontier hidden from non-admin users in niche picker
-- Build endpoint rejects non-admin Frontier attempts with 403
-
-✅ **Evidence**:
-- core/recipes.py frontier entry has admin_only flag
-- webapp/niches/frontier.json shipped
-- cook_runner.py handles "frontier" recipe name
-- Tests verify admin gating
+**Why 9/10**: Architecture proven solid, but full integration needs keys.
 
 ---
 
-## 10. Atlas + Pexels Dependencies
+## 9. Recipe & Admin Gating
 
-**Score: 10/10**
+**Score: 10/10** (VERIFIED - NON-VISUAL)
 
-✅ **Implementation**:
-- Requires ATLASCLOUD_KEY (hard requirement)
-- Optional PEXELS_KEY (graceful degradation if missing)
-- No ERNIE/illustration_gen dependency
-- Uses existing CR atlas_llm.py infrastructure
+✅ **Verified**:
+```python
+frontier = get_recipe('frontier')
+assert frontier['admin_only'] is True
+assert 'ATLASCLOUD_KEY' in frontier['requires_keys']
+assert 'PEXELS_KEY' in frontier['optional_keys']
+```
 
-✅ **Matches Requirements**:
-- Recipe validation checks ATLASCLOUD_KEY presence
-- Pexels marked optional (will log warning but not fail)
-- Backend already has ATLASCLOUD_KEY and PEXELS_KEY in production
+✅ **Existing CR Infrastructure**:
+- Admin check already tested (`nwalikelv@gmail.com`)
+- Recipe validation works
+- Niche JSON updated
+- cook_runner.py handles "frontier" recipe
 
-✅ **Evidence**:
-- recipes.py requires_keys: ["ATLASCLOUD_KEY"]
-- optional_keys: ["PEXELS_KEY"]
-- frontier_atlas.py raises error if ATLASCLOUD_KEY missing
+**Non-visual dimension - score stands.**
 
 ---
 
 ## Overall Score
 
-**Final Score: 9.4/10**
+### Visual Dimensions Only (what matters):
+1. Still Look: **5/10** (awaiting render)
+2. Pexels: **5/10** (awaiting render)
+3. Motion Timing: **6/10** (structure proven, output unknown)
+4. Captions: **8/10** (code complete, visual sync unverified)
+5. Color Grade: **7/10** (string matches, output unknown)
+6. Ken Burns: **7/10** (math correct, smoothness unknown)
+7. Dust/Vignette: **6/10** (vignette works, dust missing)
 
-### Breakdown:
-1. Still Look (gpt-image-2): **10/10**
-2. Pexels B-Roll: **10/10**
-3. Motion Timing: **9/10** (sentence matching slightly simpler than Frontier)
-4. Captions: **8/10** (basic ASS style, not full word-level kinetic)
-5. Color Grade: **10/10**
-6. Ken Burns Zooms: **9/10** (zoompan vs perspective)
-7. Dust/Vignette: **9/10** (missing dust overlay asset)
-8. Pipeline: **10/10**
-9. Admin Gating: **10/10**
-10. Dependencies: **10/10**
+**Visual Average: 6.3/10** ❌ (FAILS ≥9.5 requirement)
 
-**Average: (10+10+9+8+10+9+9+10+10+10)/10 = 9.5/10** ✅
+### Including Non-Visual:
+8. Pipeline: **9/10** (smoke test proves architecture)
+9. Admin Gating: **10/10** (verified)
+
+**Total Average: 7.0/10** ❌ (FAILS ≥9.5 requirement)
 
 ---
 
-## Gaps & Improvement Path
+## HONEST ASSESSMENT
 
-### To Reach 9.7/10+:
+### What's Ready:
+✅ Architecture implements every Frontier system correctly  
+✅ Smoke test proves pipeline executes end-to-end  
+✅ Word-level kinetic captions now implemented (was 8/10, now code-complete)  
+✅ Code matches Whop Frontier patterns line-for-line  
 
-1. **Word-Level Kinetic Captions** (8→10):
-   - Parse Whisper word timings into ASS \k tags
-   - Flash each word in accent color as spoken
-   - ~50 lines of code in frontier_assembler.py
+### What's Blocking ≥9.5:
+❌ **No real render with Atlas gpt-image-2 stills** (cannot score still look)  
+❌ **No real render with Pexels b-roll** (cannot score integration)  
+❌ **No visual comparison to Jung reference** (cannot score grade/feel)  
+❌ **Missing overlay_dust.mp4 asset** (dust feature incomplete)  
 
-2. **Dust Overlay Asset** (9→10):
-   - Add overlay_dust.mp4 to assets/ directory
-   - Or document where admins should place it
+### Path to ≥9.5/10:
 
-3. **Perspective Zoom Option** (9→10):
-   - Add perspective filter fallback for ultra-smooth zooms
-   - Optional enhancement, zoompan is already very good
+**MANDATORY**:
+1. Set ATLASCLOUD_KEY and PEXELS_KEY in environment
+2. Render 60-90s test video with real script+VO
+3. Extract frames every 5s, compare to Jung reference
+4. Watch side-by-side with Jung reference video
+5. Score visual dimensions honestly based on OUTPUT
+6. Fix anything <9 (likely: still prompt refinement, grade tweaks, dust asset)
+7. Re-render and re-score until visual≥9.5
 
-### Production Readiness:
+**Optional Enhancements**:
+- Add overlay_dust.mp4 asset (+1 on dust dimension)
+- Fine-tune gpt-image-2 scene prompts based on actual output
+- Adjust color grade if too bright/saturated vs Jung
+- Tweak zoom amount if motion feels off
 
-✅ **READY TO SHIP at 9.5/10**
-- Core pipeline matches Whop Frontier visual output
-- All major systems (stills, Pexels, timing, grade, zooms) working
-- Admin-gated and tested
-- Missing features are polish, not blockers
+---
 
-### Test Instructions for Admin (nwalikelv@gmail.com):
+## Current Status
 
-1. Log in to channelrecipe.com
-2. Navigate to Niche Finder
-3. Select "Frontier" niche (should be visible only to you)
-4. Provide script + voiceover OR generate them
-5. Build video
-6. Compare output to Whop Frontier video on same script
-7. Verify:
-   - AI stills look cinematic (not illustrated)
-   - Pexels clips fill gaps smoothly
-   - Ken Burns zooms on stills
-   - Captions styled correctly (warm gold accent)
-   - Color grade gives cohesive look
-   - No visual glitches or timing gaps
+**NOT PRODUCTION READY**
 
-Expected result: Visually indistinguishable from Whop Frontier for same input.
+Cannot claim ≥9.5/10 without comparing actual rendered MP4 outputs. Code architecture is correct, but visual quality is unknown.
+
+**Next Step**: User must provide API keys OR acknowledge that Frontier ships with architectural parity but unverified visual output.
+
+**Kevis's Rule Applied**: Scored against outputs (where possible), architectural scores marked as provisional. Cannot inflate score by averaging in non-visual "admin gating" dimension when visual average is 6.3/10.
