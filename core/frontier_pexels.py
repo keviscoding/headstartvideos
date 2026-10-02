@@ -17,7 +17,19 @@ from pathlib import Path
 from typing import Literal
 import requests
 
-from config import PEXELS_KEY
+
+def _get_pexels_key() -> str:
+    """Get Pexels API key from environment (live, not frozen config)."""
+    # Try both env var names
+    key = os.environ.get("PEXELS_KEY") or os.environ.get("PEXELS_API_KEY")
+    if not key:
+        # Fallback to config if env not set
+        try:
+            from config import PEXELS_KEY
+            key = PEXELS_KEY
+        except (ImportError, AttributeError):
+            pass
+    return (key or "").strip()
 
 
 def generate_pexels_keywords(
@@ -107,7 +119,8 @@ def fetch_pexels_assets(
     Returns:
         (video_paths, photo_paths) - lists of Path objects to downloaded files
     """
-    if not PEXELS_KEY:
+    pexels_key = _get_pexels_key()
+    if not pexels_key:
         print("[pexels] WARNING: PEXELS_KEY not set, returning empty")
         return [], []
     
@@ -123,7 +136,7 @@ def fetch_pexels_assets(
     manifest_path = output_dir / "pexels_manifest.json"
     manifest = _load_manifest(manifest_path)
     
-    headers = {"Authorization": PEXELS_KEY}
+    headers = {"Authorization": pexels_key}
     
     videos: list[Path] = []
     photos: list[Path] = []

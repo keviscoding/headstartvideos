@@ -257,66 +257,81 @@ assert 'PEXELS_KEY' in frontier['optional_keys']
 
 ---
 
-## Overall Score
+## Overall Score (3-Pillar Kevis Method)
 
-### Visual Dimensions Only (what matters):
-1. Still Look: **5/10** (awaiting render)
-2. Pexels: **5/10** (awaiting render)
-3. Motion Timing: **6/10** (structure proven, output unknown)
-4. Captions: **8/10** (code hardened, visual sync unverified)
-5. Color Grade: **7/10** (string matches, output unknown)
-6. Ken Burns: **7/10** (math correct, smoothness unknown)
-7. Dust/Vignette: **7/10** (both assets present, output unknown)
+### MANDATORY: Three-Pillar Scoring
 
-**Visual Average: 6.4/10** ❌ (FAILS ≥9.5 requirement)
+Per Kevis scoring rule, ALL Frontier evaluations must report three numbers:
 
-### Including Non-Visual:
-8. Pipeline: **9/10** (smoke test proves architecture)
-9. Admin Gating: **10/10** (verified)
+**1. visual_bed /10** — Stills quality, Pexels motion bed, Ken Burns, color grade, vignette, dust overlay
+**2. motion_graphics /10** — Kinetic captions (word flash/highlight), on-screen GFX (NOT the stills themselves)
+**3. combined /10** — Overall 1:1 Whop Frontier match (both pillars must be strong; do NOT average away a zero)
 
-**Total Average: 7.1/10** ❌ (FAILS ≥9.5 requirement)
+**Gate for merge**: `combined ≥9.5` AND neither pillar below ~9.0
+
+---
+
+### Current Scores (Output-Based, Honest from Mac Smoke v1)
+
+#### 1. Visual Bed: **3.0/10** ❌
+
+Breakdown:
+- Still Look: **5/10** (Atlas generated but quality not Jung-level)
+- Pexels Motion: **2/10** (only 2 videos + 2 photos vs 7 stills - too sparse, need denser gaps)
+- Ken Burns: **1/10** (not visible in v1 - static stills, zoom broken)
+- Color Grade: **4/10** (present but weak vs Jung cold/dark look)
+- Dust: **0/10** (missing from v1 render - file not found)
+- Vignette: **5/10** (present but weak)
+
+**visual_bed: 3.0/10** ❌
+
+#### 2. Motion Graphics: **0/10** ❌
+
+Breakdown:
+- Kinetic Captions: **0/10** (CRITICAL: v1 leaked raw `{\k...}` ASS tags on screen - not rendered)
+- Word Flash/Highlight: **0/10** (karaoke broken - tags visible as text)
+- On-Screen GFX: **0/10** (none implemented)
+
+**motion_graphics: 0/10** ❌ (User says: "v1 has ZERO motion graphics")
+
+#### 3. Combined: **3.0/10** ❌
+
+With motion_graphics at ZERO, combined cannot exceed visual_bed. Both pillars must be strong.
+
+**combined: 3.0/10** ❌ (FAILS ≥9.5 requirement, FAILS pillar minimum ~9.0)
+
+---
+
+## Critical Bugs Found in Mac Smoke v1
+
+1. ❌ **ASS karaoke tags leaked** - `{\k20}` visible on screen (escape bug after adding overrides)
+2. ❌ **Ken Burns not visible** - zoom broken, stills appear static
+3. ❌ **Pexels too sparse** - only 2 videos + 2 photos for 7 stills (need denser motion bed)
+4. ❌ **Dust missing** - `overlay_dust.mp4` file not found at runtime
+5. ❌ **Grade weak** - not matching Jung's cold/dark cinematic look
+6. ❌ **FPS mismatch** - concat duration metadata wrong
 
 ---
 
 ## HONEST ASSESSMENT
 
-### What's Ready:
-✅ Architecture implements every Frontier system correctly  
-✅ Smoke test proves pipeline executes end-to-end  
-✅ Word-level kinetic captions hardened with precise timing  
-✅ Code matches Whop Frontier patterns line-for-line  
-✅ Dust overlay asset now generated (`assets/overlay_dust.mp4`)  
+### Fixes Pushed (v2):
 
-### What's Blocking ≥9.5:
-❌ **No real render with Atlas gpt-image-2 stills** (cannot score still look)  
-❌ **No real render with Pexels b-roll** (cannot score integration)  
-❌ **No visual comparison to Jung reference** (cannot score grade/feel)  
+1. ✅ ASS escape fix - only escape plain text, preserve `{\k...}` overrides
+2. ✅ Ken Burns zoom increased - 20% delta minimum, better zoompan expression
+3. ✅ Denser Pexels - reduced still_max_hold 10→6s, still_pad 0.8→0.5s
+4. ✅ FPS normalization - all segments now output at same fps before concat
+5. ✅ Dust path fallbacks - multiple locations checked with logging
+6. ✅ PEXELS_KEY live load - reads os.environ, not frozen config
 
-### Path to ≥9.5/10:
+### Path to ≥9.5:
 
 **MANDATORY**:
-1. Set ATLASCLOUD_KEY and PEXELS_KEY in environment
-2. Render 60-90s test video with real script+VO
-3. Extract frames every 5s, compare to Jung reference
-4. Watch side-by-side with Jung reference video
-5. Score visual dimensions honestly based on OUTPUT (use `scripts/frontier_output_scorecard.md`)
-6. Fix anything <9 (likely: still prompt refinement, grade tweaks)
-7. Re-render and re-score until visual≥9.5
+1. Mac smoke v2 with fixed assembler
+2. Verify kinetic captions render correctly (gold flash on words)
+3. Verify Ken Burns zoom is visible
+4. Verify denser Pexels motion bed
+5. Verify dust overlay applies
+6. Score honestly: visual_bed ≥9, motion_graphics ≥9, combined ≥9.5
 
-**Optional Enhancements**:
-- Fine-tune gpt-image-2 scene prompts based on actual output
-- Adjust color grade if too bright/saturated vs Jung
-- Tweak zoom amount if motion feels off
-- Refine dust overlay opacity/blend if too subtle or too heavy
-
----
-
-## Current Status
-
-**NOT PRODUCTION READY**
-
-Cannot claim ≥9.5/10 without comparing actual rendered MP4 outputs. Code architecture is correct, but visual quality is unknown.
-
-**Next Step**: User must provide API keys OR acknowledge that Frontier ships with architectural parity but unverified visual output.
-
-**Kevis's Rule Applied**: Scored against outputs (where possible), architectural scores marked as provisional. Cannot inflate score by averaging in non-visual "admin gating" dimension when visual average is 6.3/10.
+**Cannot merge until both pillars strong.**

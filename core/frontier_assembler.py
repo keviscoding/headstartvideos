@@ -170,7 +170,7 @@ def _build_segment_video(
         raise FileNotFoundError(f"Segment asset not found: {input_path}")
     
     if segment.type == "pexels_video":
-        # Video: scale to fill, loop if needed
+        # Video: scale to fill, loop if needed, normalize FPS
         vf = f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"
         
         if color_grade:
@@ -187,6 +187,7 @@ def _build_segment_video(
                 "-i", str(input_path),
                 "-t", str(duration),
                 "-vf", vf,
+                "-r", str(fps),  # Normalize FPS
                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
                 "-an",  # No audio
                 str(output_path),
@@ -198,6 +199,7 @@ def _build_segment_video(
                 "-i", str(input_path),
                 "-t", str(duration),
                 "-vf", vf,
+                "-r", str(fps),  # Normalize FPS
                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
                 "-an",
                 str(output_path),
@@ -224,6 +226,7 @@ def _build_segment_video(
             "-i", str(input_path),
             "-t", str(duration),
             "-vf", vf,
+            "-r", str(fps),  # Normalize FPS
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
             "-pix_fmt", "yuv420p",
             "-an",
@@ -239,36 +242,38 @@ def _ken_burns_filter(
     fps: int,
     width: int,
     height: int,
-    zoom_amount: float = 0.15,
+    zoom_amount: float = 0.20,  # Increased from 0.15 to 0.20 for more visible zoom
 ) -> str:
-    """Generate ffmpeg filter for Ken Burns zoom effect."""
+    """Generate ffmpeg filter for Ken Burns zoom effect (minimum 12% delta)."""
     if zoom_type == "hold":
         # No zoom, just scale to fit
         return f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"
     
+    # Ensure minimum visible zoom
+    zoom_amount = max(zoom_amount, 0.12)
+    
     total_frames = int(duration * fps)
     
-    # Ken Burns: start at 1.0, end at 1.0 + zoom_amount
-    start_zoom = 1.0
-    end_zoom = 1.0 + zoom_amount
-    
-    if zoom_type == "out":
-        # Swap start and end for zoom out
-        start_zoom, end_zoom = end_zoom, start_zoom
+    # Ken Burns: zoom from 1.0 to (1.0 + zoom_amount)
+    if zoom_type == "in":
+        # Zoom in: start at 1.0, end at 1.0 + zoom_amount
+        start_zoom = 1.0
+        end_zoom = 1.0 + zoom_amount
+    else:  # zoom_type == "out"
+        # Zoom out: start at 1.0 + zoom_amount, end at 1.0
+        start_zoom = 1.0 + zoom_amount
+        end_zoom = 1.0
     
     # Use zoompan filter for smooth zoom
-    # zoompan parameters:
-    #   z: zoom (1 = no zoom, 2 = 2x zoom)
-    #   x, y: pan position
-    #   d: duration in frames
-    #   s: output size
+    # Linear zoom formula: interpolate from start_zoom to end_zoom over total_frames
+    zoom_expr = f"'if(lte(on,1),{start_zoom},{start_zoom}+({end_zoom}-{start_zoom})*(on-1)/({total_frames}-1))'"
     
-    # Linear zoom formula: start_zoom + (end_zoom - start_zoom) * (on / d)
-    zoom_expr = f"{start_zoom}+({end_zoom}-{start_zoom})*(on/{total_frames})"
+    # Scale input larger to allow zoom headroom
+    input_scale = int(width * 1.5)  # 50% larger for zoom headroom
     
     return (
-        f"scale={int(width * 1.3)}:{int(height * 1.3)}:force_original_aspect_ratio=increase,"
-        f"zoompan=z='{zoom_expr}':d={total_frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={width}x{height}"
+        f"scale={input_scale}:-1:force_original_aspect_ratio=increase,"
+        f"zoompan=z={zoom_expr}:d={total_frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={width}x{height}:fps={fps}"
     )
 
 
@@ -299,11 +304,17 @@ def _burn_subtitles(
     output_path: Path,
     word_timings: list[dict] | None = None,
 ):
-    """Burn ASS subtitles with kinetic style."""
-    # Convert SRT to ASS with Frontier style (with word-level karaoke if available)
-    ass_path = subtitle_path.parent / (subtitle_path.stem + "_frontier.ass")
-    _convert_srt_to_ass(subtitle_path, ass_path, word_timings=word_timings)
+    """Burn ASS subtitles with kinetic style using libass filter."""
+    # If input is already ASS, use it directly; otherwise convert SRT to ASS
+    if subtitle_path.suffix.lower() == ".ass":
+        ass_path = subtitle_path
+    else:
+        # Convert SRT to ASS with Frontier style (with word-level karaoke if available)
+        ass_path = subtitle_path.parent / (subtitle_path.stem + "_frontier.ass")
+        _convert_srt_to_ass(subtitle_path, ass_path, word_timings=word_timings)
     
+    # Burn with libass filter (handles \k karaoke tags correctly)
+    # CRITICAL: Use ass= filter, NOT subtitles= (subtitles doesn't support ASS karaoke)
     cmd = [
         "ffmpeg", "-y",
         "-i", str(video_path),
@@ -378,9 +389,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             # If we have word timings, create kinetic karaoke effect
             if word_timings:
                 text = _add_kinetic_karaoke(text, start, end, word_timings, accent_color)
+            else:
+                # No karaoke: escape plain text braces that would be interpreted as overrides
+                text = text.replace("{", "\\{").replace("}", "\\}")
             
-            # Escape special characters
-            text = text.replace("{", "\\{").replace("}", "\\}")
+            # DO NOT escape after adding karaoke - {\k...} tags must remain literal
             
             events.append(f"Dialogue: 0,{start_ass},{end_ass},Default,,0,0,0,,{text}")
     

@@ -214,9 +214,9 @@ def run_frontier_pipeline(
         pexels_photos=pexels_photos,
         total_duration_sec=audio_dur,
         zoom_strategy="alternate",  # in, out, in, out...
-        still_pad_sec=0.8,
-        still_min_hold_sec=3.5,
-        still_max_hold_sec=10.0,
+        still_pad_sec=0.5,          # Reduced from 0.8 - tighter still holds
+        still_min_hold_sec=3.0,     # Reduced from 3.5 - allow shorter stills
+        still_max_hold_sec=6.0,     # Reduced from 10.0 - more Pexels gaps (Whop density)
     )
 
     timing["motion_plan"] = time.time() - t0
@@ -243,9 +243,20 @@ def run_frontier_pipeline(
     # Get dust overlay path if it exists
     dust_path = None
     if add_dust:
-        possible_dust = Path(__file__).parent.parent / "assets" / "overlay_dust.mp4"
-        if possible_dust.exists():
-            dust_path = str(possible_dust)
+        # Try multiple locations: repo root, package install, relative to this file
+        possible_paths = [
+            Path(__file__).parent.parent / "assets" / "overlay_dust.mp4",
+            Path("/workspace/assets/overlay_dust.mp4"),  # Absolute fallback
+            Path.cwd() / "assets" / "overlay_dust.mp4",  # CWD fallback
+        ]
+        for possible_dust in possible_paths:
+            if possible_dust.exists():
+                dust_path = str(possible_dust)
+                _log(f"  Found dust overlay: {dust_path}")
+                break
+        
+        if not dust_path:
+            _log(f"  WARNING: Dust overlay not found at any of: {[str(p) for p in possible_paths]}")
 
     result = frontier_assembler.assemble_frontier_video(
         motion_segments=motion_segments,
