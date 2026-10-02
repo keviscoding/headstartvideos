@@ -217,6 +217,7 @@ def run_frontier_pipeline(
         still_pad_sec=0.5,          # Reduced from 0.8 - tighter still holds
         still_min_hold_sec=3.0,     # Reduced from 3.5 - allow shorter stills
         still_max_hold_sec=6.0,     # Reduced from 10.0 - more Pexels gaps (Whop density)
+        first_still_min_hold_sec=12.0,  # Hook lock: first cut ≥12s (formula)
     )
 
     timing["motion_plan"] = time.time() - t0

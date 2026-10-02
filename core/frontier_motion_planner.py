@@ -89,6 +89,7 @@ def plan_motion_timeline(
     still_pad_sec: float = 0.8,
     still_min_hold_sec: float = 3.5,
     still_max_hold_sec: float = 10.0,
+    first_still_min_hold_sec: float = 12.0,  # Hook lock: first cut ≥12s (formula)
     seed: int = 42,
 ) -> list[MotionSegment]:
     """
@@ -108,6 +109,7 @@ def plan_motion_timeline(
         still_pad_sec: Hold still this many seconds past last spoken word
         still_min_hold_sec: Minimum still duration
         still_max_hold_sec: Maximum still duration
+        first_still_min_hold_sec: Minimum first still duration (hook lock, default 12s per formula)
         seed: Random seed for Pexels selection
     
     Returns:
@@ -136,9 +138,10 @@ def plan_motion_timeline(
         raw_end = still["end_sec"] + still_pad_sec
         duration = raw_end - still["start_sec"]
         
-        # Clamp duration
-        if duration < still_min_hold_sec:
-            duration = still_min_hold_sec
+        # Clamp duration (hook lock for first still: ≥12s per formula)
+        min_hold = first_still_min_hold_sec if i == 0 else still_min_hold_sec
+        if duration < min_hold:
+            duration = min_hold
         elif duration > still_max_hold_sec:
             duration = still_max_hold_sec
         

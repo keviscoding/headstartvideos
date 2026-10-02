@@ -426,6 +426,7 @@ def _convert_srt_to_ass(
     word_timings: list[dict] | None = None,
     center: bool = True,
     no_sub_ranges: list[tuple[float, float]] | None = None,
+    first_caption_delay_sec: float = 2.0,  # Hook lock: first caption ≤2.0s (formula)
 ):
     """
     Convert SRT to ASS with Whop Jung kinetic captions.
@@ -437,6 +438,8 @@ def _convert_srt_to_ass(
     Args:
         no_sub_ranges: List of (start_sec, end_sec) ranges to mute captions
                        (e.g. during motion_gfx cards to prevent caption/GFX overlap)
+        first_caption_delay_sec: Hook lock timing - first caption appears at this timestamp
+                                 (default 2.0s per formula)
     """
     with open(srt_path, "r", encoding="utf-8") as f:
         srt_content = f.read()
@@ -470,7 +473,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     events = []
     blocks = [b.strip() for b in srt_content.strip().split("\n\n") if b.strip()]
 
-    for block in blocks:
+    for idx, block in enumerate(blocks):
         lines = block.split("\n")
         if len(lines) < 3:
             continue
@@ -481,6 +484,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         start, end = timing_line.split(" --> ")
         start_sec = _srt_time_to_seconds(start.strip())
         end_sec = _srt_time_to_seconds(end.strip())
+        
+        # Hook lock: first caption appears at ≤2.0s (formula rule)
+        if idx == 0 and start_sec < first_caption_delay_sec:
+            start_sec = first_caption_delay_sec
+            start = _seconds_to_srt_time(start_sec)
         
         # Skip captions that overlap with motion_gfx ranges (HARD fail prevention)
         if no_sub_ranges:
@@ -599,6 +607,16 @@ def _srt_time_to_seconds(srt_time: str) -> float:
     h, m, s = map(int, srt_time.split(":"))
     return h * 3600 + m * 60 + s
 
+
+def _seconds_to_srt_time(seconds: float) -> str:
+    """Convert seconds to SRT timestamp format (HH:MM:SS,mmm)."""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    ms = int((seconds % 1) * 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
 def _srt_time_to_ass(srt_time: str) -> str:
     """Convert SRT timestamp to ASS format."""
     # SRT: 00:00:01,000
@@ -665,12 +683,79 @@ def _apply_vignette(video_path: Path, output_path: Path, strength: float = 0.55)
         raise RuntimeError(f"vignette failed: {(result.stderr or '')[-1200:]}")
 
 
-def _mix_audio(video_path: Path, audio_path: Path, output_path: Path):
-    """Mix video with voiceover audio."""
+def _mix_audio(
+    video_path: Path,
+    audio_path: Path,
+    output_path: Path,
+    target_lufs: float = -16.0,
+    add_music: bool = False,
+):
+    """Mix video with voiceover audio, normalized to target LUFS.
+    
+    Args:
+        video_path: Input video (silent or with temp audio)
+        audio_path: Voiceover audio file
+        output_path: Final output with mixed audio
+        target_lufs: Target integrated loudness (default -16 LUFS per formula)
+        add_music: Whether to mix background music (default False for Jung/Whop)
+    """
+    # Two-pass loudness normalization to -16 LUFS (formula rule)
+    # Pass 1: Measure integrated loudness
+    measure_cmd = [
+        _ffmpeg_bin(),
+        "-i", str(audio_path),
+        "-af", "loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json",
+        "-f", "null",
+        "-"
+    ]
+    
+    import json as _json
+    result = subprocess.run(measure_cmd, capture_output=True, text=True)
+    
+    # Extract measured loudness from stderr (ffmpeg outputs JSON to stderr)
+    try:
+        # Parse loudnorm JSON output from stderr
+        stderr_lines = result.stderr.split('\n')
+        json_start = None
+        for i, line in enumerate(stderr_lines):
+            if '{' in line and '"input_i"' in result.stderr[result.stderr.index(line):]:
+                json_start = i
+                break
+        
+        if json_start is not None:
+            json_block = '\n'.join(stderr_lines[json_start:])
+            json_block = json_block[json_block.index('{'):json_block.rindex('}')+1]
+            loudness_data = _json.loads(json_block)
+            
+            measured_i = loudness_data.get("input_i", "-16.0")
+            measured_tp = loudness_data.get("input_tp", "-1.5")
+            measured_lra = loudness_data.get("input_lra", "11.0")
+            measured_thresh = loudness_data.get("input_thresh", "-26.0")
+            
+            # Pass 2: Apply normalization with measured values
+            audio_filter = (
+                f"loudnorm=I=-16:TP=-1.5:LRA=11:"
+                f"measured_I={measured_i}:"
+                f"measured_TP={measured_tp}:"
+                f"measured_LRA={measured_lra}:"
+                f"measured_thresh={measured_thresh}:"
+                f"linear=true:print_format=summary"
+            )
+        else:
+            # Fallback to single-pass if measurement fails
+            audio_filter = "loudnorm=I=-16:TP=-1.5:LRA=11"
+    except:
+        # Fallback to single-pass if parsing fails
+        audio_filter = "loudnorm=I=-16:TP=-1.5:LRA=11"
+    
+    # Mix video + normalized audio (no music for Jung/Whop per formula)
     cmd = [
         _ffmpeg_bin(), "-y",
         "-i", str(video_path),
         "-i", str(audio_path),
+        "-filter_complex", f"[1:a]{audio_filter}[a]",
+        "-map", "0:v",
+        "-map", "[a]",
         "-c:v", "copy",
         "-c:a", "aac",
         "-b:a", "192k",

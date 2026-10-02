@@ -31,9 +31,14 @@
    - Visual cohesion across all elements
    - Honest side-by-side comparison with jung-whop-ref-45s.mp4
 
-### Gate for Merge:
+### Gate for Merge (Formula Rules):
 - **combined ≥9.5** /10
-- **NO pillar <~9.0** /10
+- **timing_pacing ≥9.0** /10 (mandatory per formula)
+- **visual_bed ≥9.0** /10 (mandatory per formula)
+- **motion_graphics ≥9.0** /10 (mandatory per formula)
+- **ALL 3 pillars ≥9.0** before combined can merge
+
+**Formula mandate**: Ship only if timing + visual_bed + motion_graphics all ≥9 AND combined ≥9.5
 
 ---
 
@@ -148,6 +153,12 @@
 3. **GFX insert rhythm** (~every 30s, semantic placement)
 4. **Pexels gaps** (filled appropriately, not jarring)
 5. **Overall flow** (comfortable, not rushed or sluggish)
+
+### Formula Rules (Mandatory):
+- **Hook lock**: First hard cut ≥12s, first caption ≤2.0s
+- **GFX cadence**: Auto-insert so gap ≤35s (collage ~3.2s, bar ~2.0s, UI ~4.0s)
+- **Whop targets**: ~18 pic/min (~3.3s mean shot), ~7.5s mean shot with GFX, first cut ~16.9s
+- **Gate**: timing_pacing ≥9.0 required for merge
 
 ### Mac v3 Score: Unknown (pillar not evaluated)
 
@@ -277,6 +288,14 @@ Overall 1:1 match with Jung Whop Frontier. Honest side-by-side comparison of ful
   "graphic_dur_s": 6.0
 }
 ```
+
+**Whop Targets** (from formula dissection):
+- **~18 pic/min** (0.3 pics/sec, ~3.3s mean shot)
+- **~7.5s mean shot** (accounting for GFX cards)
+- **First cut ~16.9s** (hook lock, opening scene hold)
+- **First caption ≤2.0s** (hook lock timing)
+- **GFX gap ≤35s** (cadence scheduler auto-insert)
+- **GFX durations**: collage ~3.2s, bar ~2.0s, UI ~4.0s
 
 **Jung Look** (from jung.json):
 ```json
