@@ -299,8 +299,8 @@ def run_frontier_pipeline(
                 path=card["path"],
                 start_sec=card["start_sec"],
                 end_sec=card["end_sec"],
-                zoom_direction="static",
-                zoom_amount=0.0,  # No Ken Burns on GFX
+                zoom="hold",  # No Ken Burns on GFX
+                text=card.get("title", ""),
             )
             gfx_segments.append(gfx_seg)
         
