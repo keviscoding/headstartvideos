@@ -446,6 +446,65 @@
                 </div>
             </section>
 
+            <!-- Avatar Generator: Script & Config -->
+            <section id="step-avatar-config" class="step-panel hidden">
+                <div class="cr-panel">
+                    <div class="mb-6">
+                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Configure your AI avatar video</h2>
+                        <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">
+                            Paste your script, choose your avatar, and pick the video length. We'll follow proven channel patterns.
+                        </p>
+                    </div>
+
+                    <label class="cr-label" for="avatar-title-input">Video Title</label>
+                    <input type="text" id="avatar-title-input" class="cr-input" placeholder="e.g. Top 10 Historical Events That Changed Everything" />
+
+                    <label class="cr-label" for="avatar-script-input" style="margin-top: 20px;">Script</label>
+                    <textarea id="avatar-script-input" class="cr-input" rows="12" placeholder="Paste your full script here...&#10;&#10;The AI avatar will speak this word-for-word while b-roll illustrates your points."></textarea>
+                    
+                    <label class="cr-label" style="margin-top: 20px;">Video Length</label>
+                    <div class="rk-form-toggle" role="group">
+                        <button type="button" class="rk-form-btn is-active" data-length="short" onclick="setAvatarLength('short')">Short (2min) · 3 credits</button>
+                        <button type="button" class="rk-form-btn" data-length="medium" onclick="setAvatarLength('medium')">Medium (5min) · 6 credits</button>
+                        <button type="button" class="rk-form-btn" data-length="long" onclick="setAvatarLength('long')">Long (8min) · 10 credits</button>
+                    </div>
+
+                    <label class="cr-label" style="margin-top: 20px;">Avatar Source</label>
+                    <div class="rk-form-toggle" role="group" style="margin-bottom: 16px;">
+                        <button type="button" class="rk-form-btn is-active" data-avatar-src="prompt" onclick="setAvatarSource('prompt')">Generate from prompt</button>
+                        <button type="button" class="rk-form-btn" data-avatar-src="upload" onclick="setAvatarSource('upload')">Upload image</button>
+                    </div>
+
+                    <div id="avatar-prompt-section">
+                        <label class="cr-label" for="avatar-prompt-input">Avatar Description</label>
+                        <input type="text" id="avatar-prompt-input" class="cr-input" placeholder="e.g. Professional male presenter in business casual, mid-30s, friendly smile" />
+                        <p style="font-family: var(--font-body); font-size: 12px; color: var(--app-ink-3); margin-top: 6px;">
+                            Describe the avatar you want. We'll generate it with AI.
+                        </p>
+                    </div>
+
+                    <div id="avatar-upload-section" class="hidden">
+                        <label class="cr-label" for="avatar-file-input">Upload Avatar Image</label>
+                        <input type="file" id="avatar-file-input" accept="image/*" style="display: block; margin-top: 8px;" />
+                        <p style="font-family: var(--font-body); font-size: 12px; color: var(--app-ink-3); margin-top: 6px;">
+                            Upload a photo of the face you want as your avatar. Best results with clear, front-facing portraits.
+                        </p>
+                    </div>
+
+                    <div id="avatar-cost-preview" style="margin-top: 24px; padding: 16px; background: var(--app-surface); border: 1px solid var(--app-border); border-radius: var(--radius-md);">
+                        <div class="flex items-center justify-between">
+                            <span style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2);">Estimated cost:</span>
+                            <span id="avatar-cost-amount" style="font-family: var(--font-display); font-size: 20px; font-weight: 700; color: var(--accent);">3 credits</span>
+                        </div>
+                    </div>
+
+                    <div class="flex gap-3" style="justify-content: flex-end; margin-top: 24px;">
+                        <button type="button" class="btn-ghost" onclick="goToStep(1)">← Back</button>
+                        <button type="button" id="btn-start-avatar-gen" class="btn-primary" onclick="startAvatarGeneration()">Generate Video →</button>
+                    </div>
+                </div>
+            </section>
+
             <!-- Storyboard: Cast studio -->
             <section id="step-sb-cast" class="step-panel hidden">
                 <div class="cr-panel">

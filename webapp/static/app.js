@@ -904,6 +904,10 @@ function selectNiche(niche, card) {
         setTimeout(() => goToStep('rk-upload'), 200);
         return;
     }
+    if ((niche.recipe || niche.id) === 'avatar_generator') {
+        setTimeout(() => goToStep('avatar-config'), 200);
+        return;
+    }
     setTimeout(() => goToStep(2), 300);
 }
 
@@ -8199,3 +8203,157 @@ async function pollStoryboardPack() {
     }
 }
 
+
+// ===========================================================================
+// Avatar Generator
+// ===========================================================================
+let avatarGenState = {
+    lengthPreset: 'short',
+    avatarSource: 'prompt',
+    cost: 3,
+};
+
+function setAvatarLength(preset) {
+    avatarGenState.lengthPreset = preset;
+    document.querySelectorAll('[data-length]').forEach(btn => {
+        btn.classList.toggle('is-active', btn.dataset.length === preset);
+    });
+    updateAvatarCost();
+}
+
+function setAvatarSource(source) {
+    avatarGenState.avatarSource = source;
+    document.querySelectorAll('[data-avatar-src]').forEach(btn => {
+        btn.classList.toggle('is-active', btn.dataset.avatarSrc === source);
+    });
+    document.getElementById('avatar-prompt-section').classList.toggle('hidden', source !== 'prompt');
+    document.getElementById('avatar-upload-section').classList.toggle('hidden', source !== 'upload');
+}
+
+async function updateAvatarCost() {
+    const scriptEl = document.getElementById('avatar-script-input');
+    const script = scriptEl ? scriptEl.value.trim() : '';
+    
+    try {
+        const res = await fetch('/api/avatar-gen/cost', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                script: script || 'placeholder',
+                length_preset: avatarGenState.lengthPreset,
+            }),
+        });
+        const data = await res.json();
+        if (res.ok && data.credits) {
+            avatarGenState.cost = data.credits;
+            const costEl = document.getElementById('avatar-cost-amount');
+            if (costEl) costEl.textContent = `${data.credits} credits`;
+        }
+    } catch (e) {
+        console.error('Cost fetch failed:', e);
+    }
+}
+
+async function startAvatarGeneration() {
+    if (!ensureSignedIn(startAvatarGeneration)) return;
+    
+    const title = document.getElementById('avatar-title-input').value.trim();
+    const script = document.getElementById('avatar-script-input').value.trim();
+    const avatarPrompt = document.getElementById('avatar-prompt-input').value.trim();
+    const avatarFile = document.getElementById('avatar-file-input').files[0];
+    
+    if (!title) {
+        alert('Please enter a video title');
+        return;
+    }
+    
+    if (!script) {
+        alert('Please paste your script');
+        return;
+    }
+    
+    const words = script.split(/\s+/).length;
+    if (words < 50) {
+        alert('Script is too short (minimum 50 words)');
+        return;
+    }
+    
+    if (avatarGenState.avatarSource === 'prompt' && !avatarPrompt) {
+        alert('Please describe your avatar or switch to upload');
+        return;
+    }
+    
+    if (avatarGenState.avatarSource === 'upload' && !avatarFile) {
+        alert('Please upload an avatar image');
+        return;
+    }
+    
+    const btn = document.getElementById('btn-start-avatar-gen');
+    setLoading(btn, true);
+    
+    try {
+        const formData = new FormData();
+        formData.append('script', script);
+        formData.append('title', title);
+        formData.append('avatar_source', avatarGenState.avatarSource);
+        formData.append('length_preset', avatarGenState.lengthPreset);
+        
+        if (avatarGenState.avatarSource === 'prompt') {
+            formData.append('avatar_prompt', avatarPrompt);
+        } else if (avatarGenState.avatarSource === 'upload' && avatarFile) {
+            formData.append('avatar_file', avatarFile);
+        }
+        
+        const res = await fetch('/api/avatar-gen/generate', {
+            method: 'POST',
+            body: formData,
+        });
+        
+        const data = await res.json();
+        
+        if (!res.ok) {
+            if (res.status === 402 && data.code === 'insufficient_credits') {
+                openUpgradeFlow({
+                    trialMessage: `This video needs ${data.required} credits. You have ${data.balance}.`,
+                });
+                return;
+            }
+            throw new Error(data.detail || data.message || 'Generation failed');
+        }
+        
+        track('avatar_gen_started', {
+            length: avatarGenState.lengthPreset,
+            credits: avatarGenState.cost,
+            words: words,
+        });
+        
+        // Adopt the cook and start polling
+        cookingManager.adopt(data.job_id, title, 'avatar_generator');
+        
+        // Reset form
+        document.getElementById('avatar-title-input').value = '';
+        document.getElementById('avatar-script-input').value = '';
+        document.getElementById('avatar-prompt-input').value = '';
+        document.getElementById('avatar-file-input').value = '';
+        
+        // Go back to step 1
+        goToStep(1);
+        
+        showToast(`Avatar video queued! Cost: ${avatarGenState.cost} credits.`);
+        
+    } catch (e) {
+        if (e.message !== '__billing__') {
+            alert('Generation failed: ' + e.message);
+        }
+    } finally {
+        setLoading(btn, false);
+    }
+}
+
+// Initialize avatar generator when recipe is selected
+document.addEventListener('DOMContentLoaded', () => {
+    const scriptInput = document.getElementById('avatar-script-input');
+    if (scriptInput) {
+        scriptInput.addEventListener('input', debounce(updateAvatarCost, 500));
+    }
+});
