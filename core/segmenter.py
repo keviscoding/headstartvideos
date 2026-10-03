@@ -179,18 +179,52 @@ def _transcribe_groq(audio_path: str) -> list[dict]:
 
 def _check_pyav_compatible() -> bool:
     """
-    Check if PyAV is installed and compatible with faster-whisper.
+    Check if PyAV is installed and compatible with faster-whisper 1.2.1.
     
-    faster-whisper 1.2.1 uses av.open() with metadata_errors="ignore" for PyAV < 19,
-    but that parameter was removed in PyAV 19+. The library handles this automatically,
-    but we need PyAV installed at all.
+    faster-whisper 1.2.1 unconditionally passes metadata_errors="ignore" to av.open(),
+    but PyAV 19+ removed that parameter. We need PyAV <19 or we'll get:
+    TypeError: open() got an unexpected keyword argument 'metadata_errors'
+    
+    This function actually tests the call that faster-whisper makes.
     """
     try:
         import av
-        # Check that av.open exists and is callable
-        return callable(getattr(av, "open", None))
-    except ImportError:
-        return False
+        import tempfile
+        import os
+        
+        # Test that the exact call faster-whisper 1.2.1 makes will work
+        # Create a minimal silent audio file to test with
+        fd, test_path = tempfile.mkstemp(suffix=".wav")
+        try:
+            # Write minimal valid WAV file (44 bytes header + silence)
+            import struct
+            sample_rate = 16000
+            num_samples = sample_rate // 10  # 0.1 second
+            data = struct.pack('<4sI4s4sIHHIIHH4sI', 
+                b'RIFF', 36 + num_samples * 2, b'WAVE',
+                b'fmt ', 16, 1, 1, sample_rate, sample_rate * 2, 2, 16,
+                b'data', num_samples * 2)
+            data += b'\x00\x00' * num_samples
+            os.write(fd, data)
+            os.close(fd)
+            
+            # Test the exact call that faster-whisper 1.2.1 makes
+            with av.open(test_path, mode="r", metadata_errors="ignore") as container:
+                pass
+            return True
+        finally:
+            try:
+                os.unlink(test_path)
+            except:
+                pass
+    except (ImportError, TypeError) as e:
+        # TypeError means av.open doesn't accept metadata_errors (PyAV 19+)
+        if isinstance(e, TypeError) and "metadata_errors" in str(e):
+            return False
+        # ImportError means PyAV not installed
+        if isinstance(e, ImportError):
+            return False
+        raise
 
 
 def _transcribe_local(audio_path: str, model_size: str = "base") -> list[dict]:
