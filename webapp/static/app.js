@@ -3760,14 +3760,53 @@ async function generateStudioVoiceover() {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(friendlyApiError(data, 'Voiceover generation failed'));
-        document.getElementById('vo-audio').src = data.url;
-        document.getElementById('vo-download').href = data.url;
-        document.getElementById('vo-result').classList.remove('hidden');
+
+        const jobId = data.job_id;
+        await pollVoiceoverStatus(jobId);
     } catch (e) {
         showSoftPrompt(e.message || 'Voiceover generation failed.');
-    } finally {
         setLoading(btn, false);
     }
+}
+
+async function pollVoiceoverStatus(jobId) {
+    const btn = document.getElementById('btn-vo-generate');
+    const maxAttempts = 180;
+    let attempts = 0;
+
+    while (attempts < maxAttempts) {
+        try {
+            const res = await fetch(`/api/voiceover/status/${jobId}`);
+            const data = await res.json();
+
+            if (!res.ok) {
+                throw new Error(friendlyApiError(data, 'Failed to check voiceover status'));
+            }
+
+            if (data.status === 'complete') {
+                document.getElementById('vo-audio').src = data.url;
+                document.getElementById('vo-download').href = data.url;
+                document.getElementById('vo-result').classList.remove('hidden');
+                setLoading(btn, false);
+                track('voiceover_generated', { job_id: jobId });
+                return;
+            }
+
+            if (data.status === 'error') {
+                throw new Error(data.error || 'Voiceover generation failed');
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            attempts++;
+        } catch (e) {
+            showSoftPrompt(e.message || 'Voiceover generation failed.');
+            setLoading(btn, false);
+            return;
+        }
+    }
+
+    showSoftPrompt('Voiceover generation timed out. Please try again.');
+    setLoading(btn, false);
 }
 
 // ---------------------------------------------------------------------------

@@ -179,6 +179,21 @@ CREATE TABLE IF NOT EXISTS niche_hunt_runs (
     channels_upserted   INTEGER DEFAULT 0,
     error               TEXT DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS voiceover_jobs (
+    job_id          TEXT PRIMARY KEY,
+    user_id         INTEGER NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'queued',
+    script          TEXT NOT NULL,
+    voice           TEXT DEFAULT 'leo',
+    style_preset    TEXT DEFAULT 'Narrator',
+    custom_notes    TEXT DEFAULT '',
+    result_path     TEXT DEFAULT '',
+    result_url      TEXT DEFAULT '',
+    error           TEXT DEFAULT '',
+    created_at      REAL NOT NULL DEFAULT (strftime('%s','now')),
+    started_at      REAL DEFAULT 0,
+    finished_at     REAL DEFAULT 0
+);
 """
 
 _SCHEMA_PG = """
@@ -325,6 +340,21 @@ CREATE TABLE IF NOT EXISTS niche_hunt_runs (
     meta_json           TEXT DEFAULT '{}',
     channels_upserted   INTEGER DEFAULT 0,
     error               TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS voiceover_jobs (
+    job_id          TEXT PRIMARY KEY,
+    user_id         BIGINT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'queued',
+    script          TEXT NOT NULL,
+    voice           TEXT DEFAULT 'leo',
+    style_preset    TEXT DEFAULT 'Narrator',
+    custom_notes    TEXT DEFAULT '',
+    result_path     TEXT DEFAULT '',
+    result_url      TEXT DEFAULT '',
+    error           TEXT DEFAULT '',
+    created_at      DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now()),
+    started_at      DOUBLE PRECISION DEFAULT 0,
+    finished_at     DOUBLE PRECISION DEFAULT 0
 );
 """
 
@@ -2519,6 +2549,125 @@ def list_niche_hunt_runs(limit: int = 20) -> list[dict]:
 
 def backend_name() -> str:
     return "postgres" if IS_PG else "sqlite"
+
+
+# -- Voiceover jobs (async TTS queue) ---------------------------------------
+
+def create_voiceover_job(
+    job_id: str,
+    user_id: int,
+    script: str,
+    voice: str = "leo",
+    style_preset: str = "Narrator",
+    custom_notes: str = "",
+) -> None:
+    with _conn() as conn:
+        conn.cursor().execute(
+            _q("""INSERT INTO voiceover_jobs
+                  (job_id, user_id, status, script, voice, style_preset, custom_notes, created_at)
+                  VALUES (?, ?, 'queued', ?, ?, ?, ?, ?)"""),
+            (job_id, user_id, script, voice, style_preset, custom_notes, time.time()),
+        )
+
+
+def get_voiceover_job(job_id: str) -> dict | None:
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(_q("SELECT * FROM voiceover_jobs WHERE job_id = ?"), (job_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def update_voiceover_job(
+    job_id: str,
+    *,
+    status: str | None = None,
+    result_path: str | None = None,
+    result_url: str | None = None,
+    error: str | None = None,
+    started: bool = False,
+    finished: bool = False,
+) -> None:
+    fields: list[str] = []
+    vals: list = []
+    if status is not None:
+        fields.append("status = ?")
+        vals.append(status)
+    if result_path is not None:
+        fields.append("result_path = ?")
+        vals.append(result_path)
+    if result_url is not None:
+        fields.append("result_url = ?")
+        vals.append(result_url)
+    if error is not None:
+        fields.append("error = ?")
+        vals.append(error)
+    if started:
+        fields.append("started_at = ?")
+        vals.append(time.time())
+    if finished:
+        fields.append("finished_at = ?")
+        vals.append(time.time())
+    if not fields:
+        return
+    vals.append(job_id)
+    with _conn() as conn:
+        conn.cursor().execute(
+            _q(f"UPDATE voiceover_jobs SET {', '.join(fields)} WHERE job_id = ?"),
+            tuple(vals),
+        )
+
+
+def claim_next_voiceover_job() -> dict | None:
+    """Atomically claim the oldest queued voiceover job."""
+    now = time.time()
+    if IS_PG:
+        with _conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE voiceover_jobs SET
+                        status = 'running',
+                        started_at = %s
+                    WHERE job_id = (
+                        SELECT job_id FROM voiceover_jobs
+                        WHERE status = 'queued'
+                        ORDER BY created_at ASC
+                        FOR UPDATE SKIP LOCKED
+                        LIMIT 1
+                    )
+                    RETURNING *
+                    """,
+                    (now,),
+                )
+                row = cur.fetchone()
+                return dict(row) if row else None
+
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute("BEGIN IMMEDIATE")
+        cur.execute(
+            """SELECT job_id FROM voiceover_jobs
+               WHERE status = 'queued'
+               ORDER BY created_at ASC LIMIT 1"""
+        )
+        row = cur.fetchone()
+        if not row:
+            conn.commit()
+            return None
+        jid = row["job_id"]
+        cur.execute(
+            """UPDATE voiceover_jobs SET status = 'running', started_at = ?
+               WHERE job_id = ? AND status = 'queued'""",
+            (now, jid),
+        )
+        if cur.rowcount != 1:
+            conn.commit()
+            return None
+        cur.execute("SELECT * FROM voiceover_jobs WHERE job_id = ?", (jid,))
+        claimed = cur.fetchone()
+        conn.commit()
+        return dict(claimed) if claimed else None
 
 
 # Initialize on import
