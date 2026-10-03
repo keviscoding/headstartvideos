@@ -2643,6 +2643,21 @@ const cookingManager = {
         if (statusEl) statusEl.textContent = 'Building stills…';
     },
 
+    /** Track an avatar generator cook so the sticky bar survives refresh. */
+    adoptAvatarGenerator(jobId, title) {
+        if (!jobId) return;
+        this.jobId = jobId;
+        this.title = title || 'your avatar video';
+        this.kind = 'avatar_generator';
+        this.result = null;
+        this.activeCount = Math.max(1, this.activeCount);
+        this._persist();
+        this._showCookingBar();
+        const statusEl = document.getElementById('cooking-bar-status');
+        if (statusEl) statusEl.textContent = 'Starting avatar generation…';
+        this._connect();
+    },
+
     _connect() {
         // Close any prior stream before opening a new one. Without this, a
         // reconnect leaves two EventSources alive; the stale one can fire
@@ -3020,6 +3035,13 @@ const cookingManager = {
         if (this.kind === 'ranking') {
             navigateTo('pipeline');
             goToStep('rk-cook');
+            return;
+        }
+        if (this.kind === 'avatar_generator') {
+            navigateTo('pipeline');
+            goToStep(6);
+            document.getElementById('build-start').classList.add('hidden');
+            document.getElementById('build-progress').classList.remove('hidden');
             return;
         }
         navigateTo('pipeline');
@@ -8207,6 +8229,20 @@ async function pollStoryboardPack() {
 // ===========================================================================
 // Avatar Generator
 // ===========================================================================
+
+// Simple debounce utility for avatar cost updates
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
 let avatarGenState = {
     lengthPreset: 'short',
     avatarSource: 'prompt',
@@ -8328,7 +8364,7 @@ async function startAvatarGeneration() {
         });
         
         // Adopt the cook and start polling
-        cookingManager.adopt(data.job_id, title, 'avatar_generator');
+        cookingManager.adoptAvatarGenerator(data.job_id, title);
         
         // Reset form
         document.getElementById('avatar-title-input').value = '';
@@ -8339,7 +8375,7 @@ async function startAvatarGeneration() {
         // Go back to step 1
         goToStep(1);
         
-        showToast(`Avatar video queued! Cost: ${avatarGenState.cost} credits.`);
+        cookingManager._showToast();
         
     } catch (e) {
         if (e.message !== '__billing__') {
