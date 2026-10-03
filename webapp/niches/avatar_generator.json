@@ -1,0 +1,26 @@
+{
+  "id": "avatar_generator",
+  "name": "AI Avatar Generator",
+  "tagline": "Speaking avatar videos that follow real channels",
+  "description": "Paste your script, choose an AI avatar, and generate videos following proven channel patterns. The avatar speaks while b-roll illustrates your points — just like Fair and Square, Nan Margaret, or The Korean Method.",
+  "category": "Long-form",
+  "difficulty": "Beginner",
+  "rpm_range": "$1 - $8",
+  "demand": "High",
+  "recipe": "avatar_generator",
+  "format": "long",
+  "default_voice": "kore",
+  "default_minutes": 2,
+  "max_free_minutes": 2,
+  "max_paid_minutes": 8,
+  "style_preset": "educational",
+  "thumbnail_style": "Clean educational thumbnail with avatar face, topic text, and key visual",
+  "example_topics": [
+    "Top 10 historical events explained",
+    "5 investing mistakes to avoid",
+    "How ancient Rome really worked"
+  ],
+  "color": "#8B5CF6",
+  "preview_gif": "/static/previews/avatar_generator.gif",
+  "status": "new"
+}
