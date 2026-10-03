@@ -352,6 +352,21 @@ def run_cook_job(
                     lite_mode=lite_mode,
                     image_quality=image_quality,
                 )
+            elif recipe == "avatar_generator":
+                # AI Avatar Generator
+                avatar_source = (req_data.get("avatar_source") or "").strip()
+                reference_tags = req_data.get("reference_tags") or []
+                target_duration = float(req_data.get("target_duration") or 120.0)
+                
+                from core.avatar_gen_pipeline import run_avatar_gen_pipeline
+                result = run_avatar_gen_pipeline(
+                    script=script,
+                    avatar_source=avatar_source,
+                    reference_channel_tags=reference_tags,
+                    target_duration=target_duration,
+                    title=title,
+                    progress_callback=on_progress,
+                )
             else:
                 # Defensive: storyboard should have returned above; keep message clear.
                 if recipe == "storyboard_pack":

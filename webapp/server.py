@@ -2504,6 +2504,200 @@ async def ranking_assemble(req: RankingAssembleRequest, user: dict = Depends(req
     }
 
 
+# ===========================================================================
+# AI AVATAR GENERATOR
+# ===========================================================================
+
+class AvatarGenRequest(BaseModel):
+    script: str
+    title: str = ""
+    avatar_source: str = ""  # "upload", "prompt", "url"
+    avatar_prompt: str = ""
+    avatar_url: str = ""
+    reference_channel_url: str = ""
+    target_minutes: float = 2.0
+    length_preset: str = "short"  # "short" (2min), "medium" (5min), "long" (8min)
+
+
+@app.post("/api/avatar-gen/cost")
+async def avatar_gen_cost(req: AvatarGenRequest, user: dict = Depends(require_user)):
+    """Calculate credit cost for avatar generator."""
+    # Avatar generator cost: based on length
+    # Short (2min): 3 credits
+    # Medium (5min): 6 credits  
+    # Long (8min): 10 credits
+    length_preset = (req.length_preset or "short").strip().lower()
+    target_minutes = float(req.target_minutes or 2.0)
+    
+    if length_preset == "short":
+        target_minutes = 2.0
+        credits = 3
+    elif length_preset == "medium":
+        target_minutes = 5.0
+        credits = 6
+    elif length_preset == "long":
+        target_minutes = 8.0
+        credits = 10
+    else:
+        # Custom length
+        credits = max(1, int(math.ceil(target_minutes / 2.0)) * 3)
+    
+    return {
+        "credits": credits,
+        "target_minutes": target_minutes,
+        "breakdown": {
+            "length_preset": length_preset,
+            "estimated_shots": int(target_minutes * 60 / 4),  # ~4sec per shot
+        }
+    }
+
+
+@app.post("/api/avatar-gen/generate")
+async def avatar_gen_generate(
+    req: AvatarGenRequest,
+    avatar_file: UploadFile = File(None),
+    user: dict = Depends(require_active_plan)
+):
+    """Generate AI avatar video following reference channel pattern."""
+    from webapp.database import deduct_credits
+    
+    script = (req.script or "").strip()
+    if not script:
+        raise HTTPException(400, "Script is required")
+    
+    # Validate script length
+    words = len(script.split())
+    if words < 50:
+        raise HTTPException(400, "Script too short (min 50 words)")
+    if words > 2000:
+        raise HTTPException(400, "Script too long (max 2000 words)")
+    
+    # Calculate cost
+    length_preset = (req.length_preset or "short").strip().lower()
+    target_minutes = float(req.target_minutes or 2.0)
+    
+    if length_preset == "short":
+        target_minutes = 2.0
+        credits = 3
+    elif length_preset == "medium":
+        target_minutes = 5.0
+        credits = 6
+    elif length_preset == "long":
+        target_minutes = 8.0
+        credits = 10
+    else:
+        credits = max(1, int(math.ceil(target_minutes / 2.0)) * 3)
+    
+    # Check credits
+    is_admin = _is_admin_email(user.get("email", ""))
+    if not is_admin:
+        balance = user.get("credits") or 0
+        if balance < credits:
+            raise HTTPException(
+                402,
+                detail={
+                    "code": "insufficient_credits",
+                    "message": f"Need {credits} credits. You have {balance}.",
+                    "required": credits,
+                    "balance": balance,
+                }
+            )
+    
+    _enforce_user_cook_slot(user)
+    
+    # Handle avatar source
+    avatar_source_type = (req.avatar_source or "prompt").strip().lower()
+    avatar_path_or_prompt = ""
+    
+    if avatar_source_type == "upload" and avatar_file:
+        # Save uploaded avatar image
+        content = await avatar_file.read()
+        if len(content) > 10 * 1024 * 1024:
+            raise HTTPException(400, "Avatar image too large (max 10MB)")
+        
+        out_dir = OUTPUT_DIR / "avatar_uploads" / str(user["id"])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        fname = f"{int(time.time())}_{uuid.uuid4().hex[:8]}.jpg"
+        local = out_dir / fname
+        local.write_bytes(content)
+        avatar_path_or_prompt = str(local)
+    
+    elif avatar_source_type == "prompt":
+        # Generate avatar from prompt
+        prompt = (req.avatar_prompt or "").strip()
+        if not prompt:
+            raise HTTPException(400, "Avatar prompt required when using 'prompt' source")
+        avatar_path_or_prompt = f"prompt:{prompt}"
+    
+    elif avatar_source_type == "url":
+        # Download avatar from URL
+        url = (req.avatar_url or "").strip()
+        if not url:
+            raise HTTPException(400, "Avatar URL required when using 'url' source")
+        
+        out_dir = OUTPUT_DIR / "avatar_uploads" / str(user["id"])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        fname = f"{int(time.time())}_{uuid.uuid4().hex[:8]}.jpg"
+        local = out_dir / fname
+        
+        try:
+            import httpx
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, follow_redirects=True, timeout=30)
+                resp.raise_for_status()
+                local.write_bytes(resp.content)
+            avatar_path_or_prompt = str(local)
+        except Exception as e:
+            raise HTTPException(400, f"Could not download avatar image: {e}")
+    
+    else:
+        raise HTTPException(400, f"Invalid avatar_source: {avatar_source_type}")
+    
+    # Fetch reference channel tags if URL provided
+    reference_tags = []
+    reference_url = (req.reference_channel_url or "").strip()
+    if reference_url:
+        # Parse tags from reference channel video
+        # For now, we'll skip this and use default pattern
+        # In production, would analyze reference video
+        pass
+    
+    # Deduct credits
+    if not is_admin:
+        deduct_credits(int(user["id"]), credits)
+    
+    # Queue the job
+    job_id = str(uuid.uuid4())
+    title = (req.title or "AI Avatar Video").strip()
+    
+    request_data = {
+        "script": script,
+        "title": title,
+        "avatar_source": avatar_path_or_prompt,
+        "reference_tags": reference_tags,
+        "target_duration": target_minutes * 60.0,
+        "credits_charged": credits,
+        "notify_email": user.get("email") or "",
+    }
+    
+    from webapp.database import create_cook_job
+    create_cook_job(
+        job_id=job_id,
+        user_id=int(user["id"]),
+        recipe="avatar_generator",
+        request_json=json.dumps(request_data),
+        lite_mode=False,
+        credit_deducted=True,
+    )
+    
+    return {
+        "job_id": job_id,
+        "credits": credits,
+        "status": "queued",
+        "message": f"Avatar video queued. Cost: {credits} credits."
+    }
+
+
 # ---------------------------------------------------------------------------
 # Voices
 # ---------------------------------------------------------------------------
