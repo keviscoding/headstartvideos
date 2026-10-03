@@ -2159,8 +2159,12 @@ async function handleVoiceNext() {
         });
         const voData = await voRes.json();
         if (!voRes.ok) throw new Error(friendlyApiError(voData, 'Voiceover failed'));
-        state.voiceoverPath = voData.path;
-        state.voiceoverUrl = voData.url;
+
+        const jobId = voData.job_id;
+        const result = await pollVoiceoverStatusForBuild(jobId);
+        
+        state.voiceoverPath = result.path;
+        state.voiceoverUrl = result.url;
         track('voiceover_generated', { voice: state.voice, recipe: state.niche });
         resetThumbnailStep();
         goToStep(5);
@@ -2171,6 +2175,34 @@ async function handleVoiceNext() {
         document.getElementById('vo-generating')?.classList.add('hidden');
     }
 }
+
+async function pollVoiceoverStatusForBuild(jobId) {
+    const maxAttempts = 180;
+    let attempts = 0;
+
+    while (attempts < maxAttempts) {
+        const res = await fetch(`/api/voiceover/status/${jobId}`);
+        const data = await res.json();
+
+        if (!res.ok) {
+            throw new Error(friendlyApiError(data, 'Failed to check voiceover status'));
+        }
+
+        if (data.status === 'complete') {
+            return { path: data.path, url: data.url };
+        }
+
+        if (data.status === 'error') {
+            throw new Error(data.error || 'Voiceover generation failed');
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        attempts++;
+    }
+
+    throw new Error('Voiceover generation timed out. Please try again.');
+}
+
 
 function assertVoiceoverLengthOk(script) {
     const words = String(script || '').trim().split(/\s+/).filter(Boolean).length;

@@ -2843,8 +2843,9 @@ def _unique_media_dir(*parts: str) -> Path:
 
 @app.post("/api/voiceover")
 def generate_voiceover(req: VoiceoverRequest, user: dict = Depends(require_user)):
-    from core.atlas_runtime import use_atlas_key
-    from core.voiceover_gen import generate_voiceover as gen_vo
+    """Start an async voiceover job and return the job_id immediately."""
+    import uuid
+    from webapp.database import create_voiceover_job
 
     byok = _is_byok_email(user.get("email", ""))
     user_atlas = get_user_atlas_key(user["id"]) if byok else None
@@ -2854,14 +2855,20 @@ def generate_voiceover(req: VoiceoverRequest, user: dict = Depends(require_user)
             "Add your Atlas API key in Settings → Integrations before generating voiceovers.",
         )
 
-    out_dir = str(_unique_media_dir("voiceovers"))
-    try:
-        with use_atlas_key(user_atlas):
-            wav_path = gen_vo(script=req.script, voice=req.voice, style_preset="Narrator", output_dir=out_dir)
-        path, url = _stage_user_media(wav_path, user["id"], "voiceover", "audio/wav")
-        return {"path": path, "url": url}
-    except Exception as e:
-        raise HTTPException(_provider_http_status(e), f"Voiceover generation failed: {e}")
+    job_id = f"vo_{uuid.uuid4().hex[:16]}"
+    create_voiceover_job(
+        job_id=job_id,
+        user_id=user["id"],
+        script=req.script,
+        voice=req.voice,
+        style_preset="Narrator",
+        custom_notes="",
+    )
+
+    _start_voiceover_worker()
+
+    return {"job_id": job_id, "status": "queued"}
+
 
 
 @app.post("/api/voiceover/upload")
