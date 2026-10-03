@@ -84,6 +84,17 @@ RECIPES = {
         "inputs": ["clips", "title"],
         "settings": ["style_preset"],
     },
+    "avatar_generator": {
+        "pipeline": "avatar",
+        "label": "AI Avatar Generator",
+        "description": "Speaking avatar videos that follow proven channel patterns. "
+                       "AI avatar speaks script while b-roll illustrates points.",
+        "requires_keys": ["ATLASCLOUD_KEY"],
+        "optional_keys": [],
+        "inputs": ["script", "avatar_source"],
+        "settings": ["length_preset"],
+        "admin_only": True,
+    },
 }
 
 

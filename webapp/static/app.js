@@ -8309,7 +8309,12 @@ async function startAvatarGeneration() {
             body: formData,
         });
         
-        const data = await res.json();
+        let data;
+        try {
+            data = await res.json();
+        } catch (e) {
+            throw new Error('Server error: Invalid response format');
+        }
         
         if (!res.ok) {
             if (res.status === 402 && data.code === 'insufficient_credits') {
@@ -8318,7 +8323,16 @@ async function startAvatarGeneration() {
                 });
                 return;
             }
-            throw new Error(data.detail || data.message || 'Generation failed');
+            // Handle both string detail and object detail
+            let errorMsg = 'Generation failed';
+            if (typeof data.detail === 'string') {
+                errorMsg = data.detail;
+            } else if (data.detail && typeof data.detail === 'object' && data.detail.message) {
+                errorMsg = data.detail.message;
+            } else if (data.message) {
+                errorMsg = data.message;
+            }
+            throw new Error(errorMsg);
         }
         
         track('avatar_gen_started', {

@@ -2521,7 +2521,11 @@ class AvatarGenRequest(BaseModel):
 
 @app.post("/api/avatar-gen/cost")
 async def avatar_gen_cost(req: AvatarGenRequest, user: dict = Depends(require_user)):
-    """Calculate credit cost for avatar generator."""
+    """Calculate credit cost for avatar generator. ADMIN ONLY."""
+    # ADMIN-ONLY: restrict to internal testing
+    if not _is_admin_email(user.get("email", "")):
+        raise HTTPException(403, "Avatar generator is currently in internal testing and not available to the public.")
+    
     # Avatar generator cost: based on length
     # Short (2min): 3 credits
     # Medium (5min): 6 credits  
@@ -2554,27 +2558,38 @@ async def avatar_gen_cost(req: AvatarGenRequest, user: dict = Depends(require_us
 
 @app.post("/api/avatar-gen/generate")
 async def avatar_gen_generate(
-    req: AvatarGenRequest,
+    script: str = Form(...),
+    title: str = Form(""),
+    avatar_source: str = Form("prompt"),
+    avatar_prompt: str = Form(""),
+    avatar_url: str = Form(""),
+    reference_channel_url: str = Form(""),
+    target_minutes: float = Form(2.0),
+    length_preset: str = Form("short"),
     avatar_file: UploadFile = File(None),
     user: dict = Depends(require_active_plan)
 ):
-    """Generate AI avatar video following reference channel pattern."""
+    """Generate AI avatar video following reference channel pattern. ADMIN ONLY."""
     from webapp.database import deduct_credits
     
-    script = (req.script or "").strip()
+    # ADMIN-ONLY: restrict to internal testing
+    if not _is_admin_email(user.get("email", "")):
+        raise HTTPException(403, "Avatar generator is currently in internal testing and not available to the public.")
+    
+    script = (script or "").strip()
     if not script:
         raise HTTPException(400, "Script is required")
     
     # Validate script length
     words = len(script.split())
     if words < 50:
-        raise HTTPException(400, "Script too short (min 50 words)")
+        raise HTTPException(400, "Script is too short (minimum 50 words)")
     if words > 2000:
-        raise HTTPException(400, "Script too long (max 2000 words)")
+        raise HTTPException(400, "Script is too long (maximum 2000 words)")
     
     # Calculate cost
-    length_preset = (req.length_preset or "short").strip().lower()
-    target_minutes = float(req.target_minutes or 2.0)
+    length_preset = (length_preset or "short").strip().lower()
+    target_minutes = float(target_minutes or 2.0)
     
     if length_preset == "short":
         target_minutes = 2.0
@@ -2606,7 +2621,7 @@ async def avatar_gen_generate(
     _enforce_user_cook_slot(user)
     
     # Handle avatar source
-    avatar_source_type = (req.avatar_source or "prompt").strip().lower()
+    avatar_source_type = (avatar_source or "prompt").strip().lower()
     avatar_path_or_prompt = ""
     
     if avatar_source_type == "upload" and avatar_file:
@@ -2624,14 +2639,14 @@ async def avatar_gen_generate(
     
     elif avatar_source_type == "prompt":
         # Generate avatar from prompt
-        prompt = (req.avatar_prompt or "").strip()
+        prompt = (avatar_prompt or "").strip()
         if not prompt:
             raise HTTPException(400, "Avatar prompt required when using 'prompt' source")
         avatar_path_or_prompt = f"prompt:{prompt}"
     
     elif avatar_source_type == "url":
         # Download avatar from URL
-        url = (req.avatar_url or "").strip()
+        url = (avatar_url or "").strip()
         if not url:
             raise HTTPException(400, "Avatar URL required when using 'url' source")
         
@@ -2655,7 +2670,7 @@ async def avatar_gen_generate(
     
     # Fetch reference channel tags if URL provided
     reference_tags = []
-    reference_url = (req.reference_channel_url or "").strip()
+    reference_url = (reference_channel_url or "").strip()
     if reference_url:
         # Parse tags from reference channel video
         # For now, we'll skip this and use default pattern
@@ -2668,11 +2683,11 @@ async def avatar_gen_generate(
     
     # Queue the job
     job_id = str(uuid.uuid4())
-    title = (req.title or "AI Avatar Video").strip()
+    title_text = (title or "AI Avatar Video").strip()
     
     request_data = {
         "script": script,
-        "title": title,
+        "title": title_text,
         "avatar_source": avatar_path_or_prompt,
         "reference_tags": reference_tags,
         "target_duration": target_minutes * 60.0,
