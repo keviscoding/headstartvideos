@@ -223,6 +223,88 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 _jobs: dict[str, dict[str, Any]] = {}
 
+# ---------------------------------------------------------------------------
+# Voiceover async worker
+# ---------------------------------------------------------------------------
+import threading
+
+_voiceover_worker_started = False
+_voiceover_worker_lock = threading.Lock()
+
+
+def _start_voiceover_worker():
+    """Start the voiceover worker thread if not already running."""
+    global _voiceover_worker_started
+    with _voiceover_worker_lock:
+        if _voiceover_worker_started:
+            return
+        _voiceover_worker_started = True
+        t = threading.Thread(target=_voiceover_worker_loop, daemon=True, name="voiceover-worker")
+        t.start()
+        print("[voiceover] Background worker started")
+
+
+def _voiceover_worker_loop():
+    """Background worker that processes queued voiceover jobs."""
+    from webapp.database import claim_next_voiceover_job, update_voiceover_job, get_user_by_id
+    from core.atlas_runtime import use_atlas_key
+    from core.voiceover_gen import generate_voiceover as gen_vo
+
+    while True:
+        try:
+            job = claim_next_voiceover_job()
+            if not job:
+                time.sleep(2)
+                continue
+
+            job_id = job["job_id"]
+            user_id = job["user_id"]
+            print(f"[voiceover] Processing job {job_id} for user {user_id}")
+
+            try:
+                user = get_user_by_id(user_id)
+                if not user:
+                    raise RuntimeError("User not found")
+
+                byok = _is_byok_email(user.get("email", ""))
+                user_atlas = get_user_atlas_key(user_id) if byok else None
+
+                out_dir = str(_unique_media_dir("voiceovers"))
+                with use_atlas_key(user_atlas):
+                    wav_path = gen_vo(
+                        script=job["script"],
+                        voice=job["voice"],
+                        style_preset=job["style_preset"],
+                        custom_notes=job["custom_notes"],
+                        output_dir=out_dir,
+                    )
+
+                path, url = _stage_user_media(wav_path, user_id, "voiceover", "audio/wav")
+
+                update_voiceover_job(
+                    job_id,
+                    status="complete",
+                    result_path=path,
+                    result_url=url,
+                    finished=True,
+                )
+                print(f"[voiceover] Job {job_id} completed successfully")
+
+            except Exception as e:
+                error_msg = str(e)
+                print(f"[voiceover] Job {job_id} failed: {error_msg}")
+                update_voiceover_job(
+                    job_id,
+                    status="error",
+                    error=error_msg,
+                    finished=True,
+                )
+
+        except Exception as e:
+            print(f"[voiceover] Worker error: {e}")
+            time.sleep(5)
+
+
 _COOK_DIED_MSG = (
     "This cook stopped responding and was ended automatically. "
     "Your credits have been returned — please try again."
@@ -2761,8 +2843,9 @@ def _unique_media_dir(*parts: str) -> Path:
 
 @app.post("/api/voiceover")
 def generate_voiceover(req: VoiceoverRequest, user: dict = Depends(require_user)):
-    from core.atlas_runtime import use_atlas_key
-    from core.voiceover_gen import generate_voiceover as gen_vo
+    """Start an async voiceover job and return the job_id immediately."""
+    import uuid
+    from webapp.database import create_voiceover_job
 
     byok = _is_byok_email(user.get("email", ""))
     user_atlas = get_user_atlas_key(user["id"]) if byok else None
@@ -2772,14 +2855,20 @@ def generate_voiceover(req: VoiceoverRequest, user: dict = Depends(require_user)
             "Add your Atlas API key in Settings → Integrations before generating voiceovers.",
         )
 
-    out_dir = str(_unique_media_dir("voiceovers"))
-    try:
-        with use_atlas_key(user_atlas):
-            wav_path = gen_vo(script=req.script, voice=req.voice, style_preset="Narrator", output_dir=out_dir)
-        path, url = _stage_user_media(wav_path, user["id"], "voiceover", "audio/wav")
-        return {"path": path, "url": url}
-    except Exception as e:
-        raise HTTPException(_provider_http_status(e), f"Voiceover generation failed: {e}")
+    job_id = f"vo_{uuid.uuid4().hex[:16]}"
+    create_voiceover_job(
+        job_id=job_id,
+        user_id=user["id"],
+        script=req.script,
+        voice=req.voice,
+        style_preset="Narrator",
+        custom_notes="",
+    )
+
+    _start_voiceover_worker()
+
+    return {"job_id": job_id, "status": "queued"}
+
 
 
 @app.post("/api/voiceover/upload")
@@ -2988,8 +3077,9 @@ async def create_fish_voice_clone(
 
 @app.post("/api/voiceover/studio")
 def voiceover_studio(req: VoiceoverStudioRequest, user: dict = Depends(require_user)):
-    from core.atlas_runtime import use_atlas_key
-    from core.voiceover_gen import generate_voiceover as gen_vo
+    """Start an async voiceover job and return the job_id immediately."""
+    import uuid
+    from webapp.database import create_voiceover_job
 
     if not (req.script or "").strip():
         raise HTTPException(400, "Paste a script first, then generate the voiceover.")
@@ -3002,22 +3092,40 @@ def voiceover_studio(req: VoiceoverStudioRequest, user: dict = Depends(require_u
             "Add your Atlas API key in Settings → Integrations before generating voiceovers.",
         )
 
-    out_dir = str(_unique_media_dir("voiceovers"))
-    try:
-        with use_atlas_key(user_atlas):
-            wav_path = gen_vo(
-                script=req.script,
-                voice=req.voice,
-                style_preset=req.style_preset,
-                custom_notes=req.custom_notes,
-                output_dir=out_dir,
-            )
-        path, url = _stage_user_media(wav_path, user["id"], "voiceover", "audio/wav")
-        return {"path": path, "url": url}
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    except Exception as e:
-        raise HTTPException(_provider_http_status(e), f"Voiceover generation failed: {e}")
+    job_id = f"vo_{uuid.uuid4().hex[:16]}"
+    create_voiceover_job(
+        job_id=job_id,
+        user_id=user["id"],
+        script=req.script,
+        voice=req.voice,
+        style_preset=req.style_preset,
+        custom_notes=req.custom_notes,
+    )
+
+    _start_voiceover_worker()
+
+    return {"job_id": job_id, "status": "queued"}
+
+
+@app.get("/api/voiceover/status/{job_id}")
+def voiceover_status(job_id: str, user: dict = Depends(require_user)):
+    """Poll the status of a voiceover job."""
+    from webapp.database import get_voiceover_job
+
+    job = get_voiceover_job(job_id)
+    if not job:
+        raise HTTPException(404, "Voiceover job not found")
+    if job["user_id"] != user["id"]:
+        raise HTTPException(403, "Not authorized to view this job")
+
+    return {
+        "job_id": job_id,
+        "status": job["status"],
+        "path": job.get("result_path") or "",
+        "url": job.get("result_url") or "",
+        "error": job.get("error") or "",
+    }
+
 
 
 # ---------------------------------------------------------------------------
