@@ -2686,6 +2686,7 @@ async def avatar_gen_generate(
     title_text = (title or "AI Avatar Video").strip()
     
     request_data = {
+        "recipe": "avatar_generator",
         "script": script,
         "title": title_text,
         "avatar_source": avatar_path_or_prompt,
