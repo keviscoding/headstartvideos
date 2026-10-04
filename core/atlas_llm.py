@@ -11,6 +11,7 @@ import os
 import threading
 import time
 from pathlib import Path
+from typing import Callable
 
 import httpx
 
@@ -581,6 +582,7 @@ def generate_image_file(
     aspect_ratio: str = "16:9",
     resolution: str = "1k",
     timeout_sec: float = 90,
+    progress: Callable[[str], None] | None = None,
 ) -> bool:
     """
     Text-to-image via Atlas generateImage (Nano Banana / etc.).
@@ -588,6 +590,10 @@ def generate_image_file(
     """
     key = _atlas_key()
     if not key:
+        msg = "[atlas] generateImage: no ATLASCLOUD_KEY"
+        print(msg)
+        if progress:
+            progress(msg)
         return False
 
     model = model or ATLAS_PREMIUM_IMAGE_MODEL
@@ -609,13 +615,22 @@ def generate_image_file(
                     "enable_sync_mode": False,
                 },
             )
+            if resp.status_code >= 400:
+                msg = f"[atlas] generateImage HTTP {resp.status_code}: {resp.text[:300]}"
+                print(msg)
+                if progress:
+                    progress(f"Atlas image generation failed: HTTP {resp.status_code}")
+                return False
             data = resp.json()
             pred_id = None
             if isinstance(data.get("data"), dict):
                 pred_id = data["data"].get("id")
             pred_id = pred_id or data.get("id") or data.get("prediction_id")
             if not pred_id:
-                print(f"[atlas] generateImage no id: {str(data)[:200]}")
+                msg = f"[atlas] generateImage no id: {str(data)[:200]}"
+                print(msg)
+                if progress:
+                    progress(f"Atlas image generation failed: no prediction ID returned")
                 return False
 
             while time.time() - t0 < timeout_sec:
@@ -645,12 +660,22 @@ def generate_image_file(
                     )
                     return True
                 if status in ("failed", "error", "cancelled"):
-                    print(f"[atlas] generateImage failed: {inner}")
+                    err_msg = inner.get("error") or inner.get("message") or str(inner)
+                    msg = f"[atlas] generateImage failed: {err_msg}"
+                    print(msg)
+                    if progress:
+                        progress(f"Atlas image generation failed: {err_msg}")
                     return False
     except Exception as e:
-        print(f"[atlas] generateImage error: {e}")
+        msg = f"[atlas] generateImage error: {e}"
+        print(msg)
+        if progress:
+            progress(f"Atlas image generation error: {e}")
         return False
-    print(f"[atlas] generateImage timeout after {timeout_sec}s")
+    msg = f"[atlas] generateImage timeout after {timeout_sec}s"
+    print(msg)
+    if progress:
+        progress(f"Atlas image generation timed out after {timeout_sec}s")
     return False
 
 
