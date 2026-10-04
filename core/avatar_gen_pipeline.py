@@ -104,9 +104,9 @@ def detect_channel_avatar_pattern(reference_tags: list[dict]) -> dict[str, Any]:
     - use_title_cards: whether to show list numbers as title cards
     """
     if not reference_tags:
-        # Default: avatar open (15s), then mix with b-roll every 8-12s
+        # Default: short avatar intro (3-5s), then mix with b-roll throughout
         return {
-            "opening_avatar_sec": 15.0,
+            "opening_avatar_sec": 4.0,
             "face_return_frequency": 10.0,
             "face_shot_duration": 3.0,
             "use_title_cards": False,
@@ -747,22 +747,11 @@ def run_avatar_gen_pipeline(
     )
     
     if not ok:
-        # Fallback: create static avatar with audio overlay
-        progress("Atlas avatar unavailable, creating static fallback...")
-        subprocess.run([
-            "ffmpeg", "-y",
-            "-loop", "1",
-            "-i", str(avatar_img_path),
-            "-i", audio_path,
-            "-t", str(audio_duration),
-            "-c:v", "libx264", "-preset", "medium", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "128k",
-            "-shortest",
-            str(avatar_video_path),
-        ], capture_output=True, timeout=int(audio_duration) + 60)
-        
-        if not avatar_video_path.is_file():
-            raise RuntimeError("Failed to create avatar video")
+        # Atlas avatar generation failed - this is fatal, do not fall back to static
+        raise RuntimeError(
+            "Atlas talking avatar generation failed. The avatar recipe requires a "
+            "speaking avatar with lip sync. A static image is not acceptable."
+        )
     
     timing["avatar_generation"] = time.time() - t0
     
@@ -801,20 +790,21 @@ def run_avatar_gen_pipeline(
     
     timing["broll_generation"] = time.time() - t0
     
+    # Avatar recipe requires b-roll throughout - fail if we couldn't generate any
     if broll_count == 0:
-        progress("No b-roll generated, using avatar throughout...")
-        # Just use the avatar video as-is
-        output_path = work_dir / "final_video.mp4"
-        import shutil
-        shutil.copy(avatar_video_path, output_path)
-    else:
-        progress(f"Compositing {broll_count} b-roll segments...")
-        t0 = time.time()
-        output_path = work_dir / "final_video.mp4"
-        result = assemble_mixed_avatar_broll_video(
-            avatar_video_path, shots, work_dir, output_path, progress
+        raise RuntimeError(
+            "No b-roll assets were generated. The avatar recipe requires b-roll images "
+            "intermixed with the talking avatar throughout the video. A continuous locked "
+            "shot of only the avatar is not acceptable."
         )
-        timing["assembly"] = time.time() - t0
+    
+    progress(f"Compositing {broll_count} b-roll segments...")
+    t0 = time.time()
+    output_path = work_dir / "final_video.mp4"
+    result = assemble_mixed_avatar_broll_video(
+        avatar_video_path, shots, work_dir, output_path, progress
+    )
+    timing["assembly"] = time.time() - t0
     
     # Verify final duration
     probe = subprocess.run(
