@@ -137,9 +137,9 @@ def detect_channel_avatar_pattern(reference_tags: list[dict]) -> dict[str, Any]:
             })
     
     if not face_shots:
-        # No face detected in reference - unusual, use default
+        # No face detected in reference - use default short intro
         return {
-            "opening_avatar_sec": 15.0,
+            "opening_avatar_sec": 4.0,
             "face_return_frequency": 10.0,
             "face_shot_duration": 3.0,
             "use_title_cards": False,
@@ -156,6 +156,10 @@ def detect_channel_avatar_pattern(reference_tags: list[dict]) -> dict[str, Any]:
         if ts > opening_end:
             opening_duration = ts - first_face["timestamp"]
             break
+    
+    # Cap opening at 4 seconds to ensure b-roll appears throughout
+    # Even if reference shows longer, we don't want face to dominate a Short
+    opening_duration = min(opening_duration, 4.0)
     
     # Check for face returns
     face_return_frequency = None
@@ -184,7 +188,7 @@ def detect_channel_avatar_pattern(reference_tags: list[dict]) -> dict[str, Any]:
     )
     
     return {
-        "opening_avatar_sec": min(opening_duration, 30.0),
+        "opening_avatar_sec": opening_duration,
         "face_return_frequency": face_return_frequency or 10.0,
         "face_shot_duration": avg_face_duration,
         "use_title_cards": has_title_cards,
@@ -206,7 +210,7 @@ def plan_avatar_video_shots(
     current_time = 0.0
     shot_index = 0
     
-    opening_sec = avatar_pattern.get("opening_avatar_sec", 15.0)
+    opening_sec = avatar_pattern.get("opening_avatar_sec", 4.0)
     face_return_freq = avatar_pattern.get("face_return_frequency", 10.0)
     face_duration = avatar_pattern.get("face_shot_duration", 3.0)
     last_face_time = 0.0
@@ -455,99 +459,24 @@ def generate_broll_image_atlas(
     output_path: str | Path,
     progress: ProgressFn | None = None,
 ) -> bool:
-    """Generate b-roll still image using Atlas (black-forest-labs/flux-schnell)."""
-    from core.atlas_llm import _atlas_key
-    import httpx
+    """
+    Generate b-roll still image using Atlas.
+    Uses the same proven model as avatar image generation (google/nano-banana-2-lite).
+    """
+    from core.atlas_llm import generate_image_file
     
-    key = _atlas_key()
-    if not key:
-        return False
-    
-    model = "black-forest-labs/flux-schnell"
-    body = {
-        "model": model,
-        "prompt": prompt,
-        "aspect_ratio": "16:9",
-        "resolution": "1k",
-        "enable_sync_mode": False,
-    }
-    
-    headers = {
-        "Authorization": f"Bearer {key}",
-        "Content-Type": "application/json",
-    }
-    
+    # Use the same model that already succeeded for avatar image
+    # (google/nano-banana-2-lite/text-to-image-developer, not flux-schnell)
     try:
-        with httpx.Client(timeout=30) as client:
-            resp = client.post(
-                "https://api.atlascloud.ai/api/v1/model/generateImage",
-                headers=headers,
-                json=body,
-            )
-            
-            if resp.status_code >= 400:
-                data = resp.json() if resp.content else {}
-                # Check for fatal errors
-                from core.atlas_llm import _is_atlas_fatal_error
-                is_fatal, fatal_reason = _is_atlas_fatal_error(data)
-                if is_fatal:
-                    print(f"[avatar_gen] B-roll fatal error: {fatal_reason}")
-                    return False
-                return False
-            
-            data = resp.json()
-            pred_id = None
-            if isinstance(data.get("data"), dict):
-                pred_id = data["data"].get("id")
-            pred_id = pred_id or data.get("id")
-            
-            if not pred_id:
-                return False
-            
-            # Poll for completion
-            max_wait = 90
-            start_time = time.time()
-            
-            while time.time() - start_time < max_wait:
-                time.sleep(1.5)
-                
-                poll_resp = client.get(
-                    f"https://api.atlascloud.ai/api/v1/model/prediction/{pred_id}",
-                    headers={"Authorization": f"Bearer {key}"},
-                )
-                
-                inner = poll_resp.json().get("data", poll_resp.json())
-                status = str(inner.get("status", "")).lower()
-                
-                if status in ("succeeded", "completed", "done"):
-                    outputs = inner.get("outputs") or inner.get("output") or []
-                    if isinstance(outputs, str):
-                        img_url = outputs
-                    elif isinstance(outputs, list) and outputs:
-                        img_url = outputs[0]
-                    else:
-                        return False
-                    
-                    img_resp = client.get(img_url, follow_redirects=True, timeout=60)
-                    img_resp.raise_for_status()
-                    
-                    output_path_obj = Path(output_path)
-                    output_path_obj.parent.mkdir(parents=True, exist_ok=True)
-                    output_path_obj.write_bytes(img_resp.content)
-                    
-                    return output_path_obj.stat().st_size > 1000
-                
-                elif status in ("failed", "error", "cancelled"):
-                    # Check for fatal errors
-                    from core.atlas_llm import _is_atlas_fatal_error
-                    is_fatal, fatal_reason = _is_atlas_fatal_error(inner)
-                    if is_fatal:
-                        print(f"[avatar_gen] B-roll fatal: {fatal_reason}")
-                    return False
-            
-            return False
-    
-    except Exception:
+        ok = generate_image_file(
+            prompt,
+            str(output_path),
+            progress=progress,
+        )
+        return ok
+    except Exception as e:
+        if progress:
+            progress(f"B-roll generation failed: {e}")
         return False
 
 
@@ -763,11 +692,11 @@ def run_avatar_gen_pipeline(
     progress(f"Generating b-roll assets...")
     t0 = time.time()
     broll_count = 0
-    failed_broll = 0
     
     for i, shot in enumerate(shots):
         if shot.shot_type == "broll_still":
-            progress(f"Generating b-roll {broll_count + 1}...")
+            broll_count_needed = sum(1 for s in shots if s.shot_type == "broll_still")
+            progress(f"Generating b-roll {broll_count + 1}/{broll_count_needed}...")
             broll_img_path = work_dir / f"broll_{shot.index:03d}.jpg"
             
             # Create prompt from shot context
@@ -784,9 +713,11 @@ def run_avatar_gen_pipeline(
                     shot.is_generated = True
                     broll_count += 1
                 else:
-                    failed_broll += 1
-                    # Don't fail the whole cook if some b-roll fails
-                    print(f"[avatar_gen] B-roll {shot.index} failed, will show avatar instead")
+                    # B-roll generation failed - this is fatal
+                    raise RuntimeError(
+                        f"B-roll image generation failed for segment {shot.index}. "
+                        "The avatar recipe requires b-roll images throughout the video."
+                    )
     
     timing["broll_generation"] = time.time() - t0
     
