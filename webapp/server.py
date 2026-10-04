@@ -2696,14 +2696,71 @@ async def avatar_gen_generate(
     }
     
     from webapp.database import create_cook_job
-    create_cook_job(
-        job_id=job_id,
-        user_id=int(user["id"]),
-        recipe="avatar_generator",
-        request_json=json.dumps(request_data),
-        lite_mode=False,
-        credit_deducted=True,
-    )
+    
+    # Add to in-memory job tracker
+    _jobs[job_id] = {
+        "status": "queued",
+        "progress": [],
+        "result": None,
+        "request": request_data,
+        "user_id": int(user["id"]),
+        "credit_deducted": credits if not is_admin else 0,
+        "lite_mode": False,
+        "queue_position": 0,
+        "est_wait_minutes": 0,
+        "created_at": time.time(),
+    }
+    
+    try:
+        create_cook_job(
+            job_id=job_id,
+            user_id=int(user["id"]),
+            recipe="avatar_generator",
+            request_json=json.dumps(request_data),
+            lite_mode=False,
+            credit_deducted=True,
+            status="queued" if not COOK_ON_WEB else "web_queued",
+        )
+    except Exception as e:
+        print(f"[avatar-gen] create_cook_job failed: {e}")
+        if not is_admin and credits:
+            from webapp.database import add_credits
+            add_credits(int(user["id"]), credits)
+        raise HTTPException(500, "Could not queue your cook. Please try again.")
+    
+    # Start the cook
+    if COOK_ON_WEB:
+        job_queue.enqueue(job_id)
+    else:
+        try:
+            from webapp.database import announce_queued_jobs
+            announce_queued_jobs()
+        except Exception:
+            pass
+        if COOK_ON_FLY:
+            try:
+                from webapp.fly_bridge import spawn_cook as fly_spawn
+                if fly_spawn(job_id):
+                    _jobs[job_id]["progress"].append({
+                        "time": time.time(),
+                        "message": "Starting cook (Fly elastic worker)...",
+                        "phase": "queued",
+                    })
+                else:
+                    print(f"[avatar-gen] Fly spawn failed for {job_id} — left in queue for DO worker")
+            except Exception as e:
+                print(f"[avatar-gen] Fly bridge error: {e}")
+        elif COOK_ON_MODAL:
+            try:
+                from webapp.modal_bridge import spawn_cook
+                if spawn_cook(job_id):
+                    _jobs[job_id]["progress"].append({
+                        "time": time.time(),
+                        "message": "Starting cook (Modal scale-to-zero)...",
+                        "phase": "queued",
+                    })
+            except Exception as e:
+                print(f"[avatar-gen] Modal bridge error: {e}")
     
     return {
         "job_id": job_id,
