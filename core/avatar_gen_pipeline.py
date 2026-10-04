@@ -541,7 +541,11 @@ def assemble_avatar_video(
     
     for shot in shots:
         if shot.asset_path and Path(shot.asset_path).is_file():
-            concat_lines.append(f"file '{shot.asset_path}'")
+            # Use absolute resolved path to avoid path doubling when ffmpeg runs
+            abs_path = Path(shot.asset_path).resolve()
+            # Escape single quotes for concat demuxer
+            escaped = str(abs_path).replace("'", "'\\''")
+            concat_lines.append(f"file '{escaped}'")
             concat_lines.append(f"duration {shot.duration}")
     
     if not concat_lines:

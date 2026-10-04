@@ -2630,12 +2630,19 @@ async def avatar_gen_generate(
         if len(content) > 10 * 1024 * 1024:
             raise HTTPException(400, "Avatar image too large (max 10MB)")
         
+        # Save locally first
         out_dir = OUTPUT_DIR / "avatar_uploads" / str(user["id"])
         out_dir.mkdir(parents=True, exist_ok=True)
         fname = f"{int(time.time())}_{uuid.uuid4().hex[:8]}.jpg"
         local = out_dir / fname
         local.write_bytes(content)
-        avatar_path_or_prompt = str(local)
+        
+        # Upload to remote storage if configured (for Fly cook workers)
+        if storage.is_remote():
+            key = f"avatar_uploads/{user['id']}/{fname}"
+            avatar_path_or_prompt = storage.store_file(str(local), key, "image/jpeg")
+        else:
+            avatar_path_or_prompt = str(local)
     
     elif avatar_source_type == "prompt":
         # Generate avatar from prompt
@@ -2650,6 +2657,7 @@ async def avatar_gen_generate(
         if not url:
             raise HTTPException(400, "Avatar URL required when using 'url' source")
         
+        # Save locally first
         out_dir = OUTPUT_DIR / "avatar_uploads" / str(user["id"])
         out_dir.mkdir(parents=True, exist_ok=True)
         fname = f"{int(time.time())}_{uuid.uuid4().hex[:8]}.jpg"
@@ -2661,7 +2669,13 @@ async def avatar_gen_generate(
                 resp = await client.get(url, follow_redirects=True, timeout=30)
                 resp.raise_for_status()
                 local.write_bytes(resp.content)
-            avatar_path_or_prompt = str(local)
+            
+            # Upload to remote storage if configured (for Fly cook workers)
+            if storage.is_remote():
+                key = f"avatar_uploads/{user['id']}/{fname}"
+                avatar_path_or_prompt = storage.store_file(str(local), key, "image/jpeg")
+            else:
+                avatar_path_or_prompt = str(local)
         except Exception as e:
             raise HTTPException(400, f"Could not download avatar image: {e}")
     
