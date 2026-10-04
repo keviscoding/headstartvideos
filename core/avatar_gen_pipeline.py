@@ -75,19 +75,86 @@ def parse_script_to_segments(
     return segments
 
 
-def extract_visual_concepts(text: str) -> list[str]:
-    """Extract concrete nouns and concepts from text for b-roll."""
-    # Simple extraction: look for capitalized words and common nouns
-    words = text.split()
-    concepts = []
+def generate_broll_prompts_with_llm(
+    script: str,
+    segments: list[dict[str, Any]],
+    progress: ProgressFn | None = None,
+) -> list[str]:
+    """
+    Use Gemini Flash to generate contextual, on-topic b-roll image prompts for each segment.
+    Ensures all b-roll relates directly to the script content.
+    """
+    import google.generativeai as genai
+    import config
     
-    # Extract capitalized words (likely proper nouns/places)
-    for word in words:
-        clean = re.sub(r'[^\w\s]', '', word)
-        if clean and clean[0].isupper() and len(clean) > 2:
-            concepts.append(clean.lower())
+    if not config.GEMINI_KEY:
+        # Fallback to simple prompts if no Gemini key
+        return [f"High quality professional photo: {seg['text']}. Relevant visual, 16:9" 
+                for seg in segments]
     
-    return concepts[:2]  # Max 2 concepts per segment
+    genai.configure(api_key=config.GEMINI_KEY)
+    
+    # Build prompt for LLM
+    segments_text = "\n".join([
+        f"Segment {i+1}: \"{seg['text']}\"" 
+        for i, seg in enumerate(segments)
+    ])
+    
+    llm_prompt = f"""You are generating b-roll image prompts for a Short video about: "{script[:200]}"
+
+For each segment below, write a SPECIFIC, CONTEXTUAL image prompt that:
+1. Directly relates to the segment's content
+2. Shows relevant objects, places, or actions mentioned in the segment
+3. Is photorealistic and professional
+4. Uses 16:9 aspect ratio
+5. Contains NO text overlays or captions
+
+SCRIPT CONTEXT: {script}
+
+SEGMENTS:
+{segments_text}
+
+Return a JSON array with one prompt per segment. Each prompt should be specific to what that segment discusses.
+
+Example format:
+[
+  "Professional photo of a library checkout desk with barcode scanner, warm lighting, 16:9",
+  "Close-up of hands returning library books at a return slot, modern library interior, 16:9",
+  "Library patron showing library card to librarian at desk, friendly interaction, 16:9"
+]
+
+Your response (JSON array only):"""
+    
+    try:
+        # Use Gemini Flash (generativelanguage.googleapis.com, not Atlas)
+        # gemini-2.5-flash is available and suitable for prompt generation
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        response = model.generate_content(llm_prompt)
+        
+        # Parse JSON response
+        text = response.text.strip()
+        # Remove markdown code blocks if present
+        if text.startswith("```"):
+            text = text.split("```")[1]
+            if text.startswith("json"):
+                text = text[4:]
+        text = text.strip()
+        
+        prompts = json.loads(text)
+        
+        if isinstance(prompts, list) and len(prompts) == len(segments):
+            if progress:
+                progress(f"Generated {len(prompts)} contextual b-roll prompts")
+            return prompts
+        else:
+            raise ValueError(f"Expected {len(segments)} prompts, got {len(prompts) if isinstance(prompts, list) else 'invalid'}")
+    
+    except Exception as e:
+        if progress:
+            progress(f"LLM prompt generation failed ({e}), using fallback")
+        # Fallback to simple contextual prompts
+        return [f"High quality professional photo: {seg['text']}. Relevant visual illustration, photorealistic, 16:9" 
+                for seg in segments]
 
 
 def detect_channel_avatar_pattern(reference_tags: list[dict]) -> dict[str, Any]:
@@ -254,8 +321,8 @@ def plan_avatar_video_shots(
                 # Remainder goes to b-roll if significant time left
                 remaining = seg["duration"] - face_dur
                 if remaining > 1.0:
-                    concepts = extract_visual_concepts(seg["text"])
-                    visual_prompt = ", ".join(concepts) if concepts else seg["text"][:100]
+                    # Prompt will be generated later by LLM for all b-roll segments
+                    visual_prompt = seg["text"][:200]
                     
                     shots.append(AvatarShot(
                         index=shot_index,
@@ -263,13 +330,12 @@ def plan_avatar_video_shots(
                         end_sec=seg_end,
                         duration=remaining,
                         shot_type="broll_still",
-                        text="",
+                        text=seg["text"],
                         visual_prompt=visual_prompt,
                     ))
             else:
-                # B-roll shot
-                concepts = extract_visual_concepts(seg["text"])
-                visual_prompt = ", ".join(concepts) if concepts else seg["text"][:100]
+                # B-roll shot - prompt will be generated later by LLM
+                visual_prompt = seg["text"][:200]
                 
                 shots.append(AvatarShot(
                     index=shot_index,
@@ -277,7 +343,7 @@ def plan_avatar_video_shots(
                     end_sec=seg_end,
                     duration=seg["duration"],
                     shot_type="broll_still",
-                    text="",
+                    text=seg["text"],
                     visual_prompt=visual_prompt,
                 ))
         
@@ -686,6 +752,27 @@ def run_avatar_gen_pipeline(
     progress("Planning b-roll segments...")
     shots = plan_avatar_video_shots(script, audio_duration, avatar_pattern)
     
+    # Generate contextual b-roll prompts using Gemini Flash
+    progress("Generating contextual b-roll prompts with Gemini Flash...")
+    broll_segments = []
+    for shot in shots:
+        if shot.shot_type == "broll_still":
+            broll_segments.append({
+                "text": shot.text,
+                "start_sec": shot.start_sec,
+                "end_sec": shot.end_sec,
+            })
+    
+    if broll_segments:
+        broll_prompts = generate_broll_prompts_with_llm(script, broll_segments, progress)
+        # Apply prompts to shots
+        broll_idx = 0
+        for shot in shots:
+            if shot.shot_type == "broll_still":
+                if broll_idx < len(broll_prompts):
+                    shot.visual_prompt = broll_prompts[broll_idx]
+                broll_idx += 1
+    
     # Generate b-roll images for designated segments
     progress(f"Generating b-roll assets...")
     t0 = time.time()
@@ -697,13 +784,8 @@ def run_avatar_gen_pipeline(
             progress(f"Generating b-roll {broll_count + 1}/{broll_count_needed}...")
             broll_img_path = work_dir / f"broll_{shot.index:03d}.jpg"
             
-            # Create contextual b-roll prompt from the script segment
-            # Use the actual text context, not just extracted keywords
-            segment_text = shot.text or shot.visual_prompt or script[:200]
-            
-            # Build a clear, specific prompt for the image based on the topic
-            # For library card script, this will generate relevant library/book images
-            prompt_text = f"High quality professional photo: {segment_text}. Relevant visual illustration, photorealistic, 16:9"
+            # Use the LLM-generated contextual prompt
+            prompt_text = shot.visual_prompt
             
             if len(prompt_text) > 10:
                 ok = generate_broll_image_atlas(
