@@ -36,11 +36,11 @@ class AvatarShot:
 
 def parse_script_to_segments(
     script: str,
-    target_duration: float,
+    actual_audio_duration: float,
     avg_cut_sec: float = 4.0,
 ) -> list[dict[str, Any]]:
     """
-    Break script into timed segments (~4 sec each for long-form list style).
+    Break script into timed segments (~4 sec each) based on ACTUAL audio duration.
     
     Returns list of {"text": str, "start_sec": float, "end_sec": float, "duration": float}
     """
@@ -48,24 +48,21 @@ def parse_script_to_segments(
     if not words:
         return []
     
-    # Estimate speaking rate (150 wpm)
-    wpm = 150
-    total_words = len(words)
-    speech_duration = (total_words / wpm) * 60.0
-    
+    # Use ACTUAL audio duration, not estimated from word count
     # Number of segments based on cut rate
-    num_segments = max(1, int(math.ceil(speech_duration / avg_cut_sec)))
-    words_per_segment = max(1, int(math.ceil(total_words / num_segments)))
+    num_segments = max(1, int(math.ceil(actual_audio_duration / avg_cut_sec)))
+    words_per_segment = max(1, int(math.ceil(len(words) / num_segments)))
     
     segments = []
     current_time = 0.0
+    time_per_segment = actual_audio_duration / num_segments
     
     for i in range(0, len(words), words_per_segment):
         chunk_words = words[i:i + words_per_segment]
         text = " ".join(chunk_words)
         
-        # Calculate duration for this segment
-        seg_duration = (len(chunk_words) / wpm) * 60.0
+        # Use proportional duration based on actual audio
+        seg_duration = time_per_segment
         
         segments.append({
             "text": text,
@@ -197,15 +194,16 @@ def detect_channel_avatar_pattern(reference_tags: list[dict]) -> dict[str, Any]:
 
 def plan_avatar_video_shots(
     script: str,
-    target_duration: float,
+    actual_audio_duration: float,
     avatar_pattern: dict,
     avg_cut_sec: float = 4.0,
 ) -> list[AvatarShot]:
     """
     Plan all shots for the video based on script and channel pattern.
     Mix avatar (talking head) with b-roll throughout.
+    Uses ACTUAL audio duration to ensure all shots fit within the real voiceover.
     """
-    segments = parse_script_to_segments(script, target_duration, avg_cut_sec)
+    segments = parse_script_to_segments(script, actual_audio_duration, avg_cut_sec)
     shots = []
     current_time = 0.0
     shot_index = 0
@@ -699,8 +697,14 @@ def run_avatar_gen_pipeline(
             progress(f"Generating b-roll {broll_count + 1}/{broll_count_needed}...")
             broll_img_path = work_dir / f"broll_{shot.index:03d}.jpg"
             
-            # Create prompt from shot context
-            prompt_text = shot.visual_prompt or shot.text[:100]
+            # Create contextual b-roll prompt from the script segment
+            # Use the actual text context, not just extracted keywords
+            segment_text = shot.text or shot.visual_prompt or script[:200]
+            
+            # Build a clear, specific prompt for the image based on the topic
+            # For library card script, this will generate relevant library/book images
+            prompt_text = f"High quality professional photo: {segment_text}. Relevant visual illustration, photorealistic, 16:9"
+            
             if len(prompt_text) > 10:
                 ok = generate_broll_image_atlas(
                     prompt_text,
@@ -737,7 +741,7 @@ def run_avatar_gen_pipeline(
     )
     timing["assembly"] = time.time() - t0
     
-    # Verify final duration
+    # Verify final duration matches or exceeds audio duration
     probe = subprocess.run(
         [
             "ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -746,6 +750,30 @@ def run_avatar_gen_pipeline(
         capture_output=True, text=True, timeout=30,
     )
     final_duration = float((probe.stdout or "0").strip() or 0)
+    
+    # Final video must be at least as long as the audio (allowing 0.5s tolerance)
+    if final_duration < audio_duration - 0.5:
+        raise RuntimeError(
+            f"Final video duration ({final_duration:.1f}s) is shorter than audio duration "
+            f"({audio_duration:.1f}s). The voiceover would be cut off. This is not acceptable."
+        )
+    
+    # Verify audio track exists and plays through the end
+    audio_probe = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-select_streams", "a:0",
+            "-show_entries", "stream=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", str(output_path),
+        ],
+        capture_output=True, text=True, timeout=30,
+    )
+    audio_track_duration = float((audio_probe.stdout or "0").strip() or 0)
+    
+    if audio_track_duration < audio_duration - 0.5:
+        raise RuntimeError(
+            f"Audio track in final video ({audio_track_duration:.1f}s) is shorter than "
+            f"expected ({audio_duration:.1f}s). The script would be cut off."
+        )
     
     timing["total"] = time.time() - t0_total
     
