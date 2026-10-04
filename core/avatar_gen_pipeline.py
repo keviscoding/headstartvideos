@@ -520,16 +520,17 @@ def assemble_mixed_avatar_broll_video(
     
     if not filter_parts:
         # No b-roll to overlay - still need to use original audio
-        # Avatar video audio might be cut short by Kling
+        # Pad avatar video to match voiceover duration (hold last frame)
         cmd = [
             "ffmpeg", "-y",
             "-i", str(avatar_video_path),
             "-i", str(original_audio_path),
-            "-map", "0:v",  # video from avatar
-            "-map", "1:a",  # audio from original voiceover (not avatar video)
-            "-c:v", "copy",
+            "-filter_complex", "[0:v]tpad=stop_mode=clone:stop_duration=5[v]",  # pad video if needed
+            "-map", "[v]",  # padded video
+            "-map", "1:a",  # audio from original voiceover
+            "-c:v", "libx264", "-preset", "medium", "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "128k",
-            "-shortest",
+            "-movflags", "+faststart",
             str(output_path),
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -551,11 +552,14 @@ def assemble_mixed_avatar_broll_video(
     cmd.extend(["-i", str(original_audio_path)])
     audio_input_index = len(overlay_inputs) + 1  # 0=avatar, 1..N=broll, N+1=audio
     
-    # Add filter complex
+    # Add filter complex with video padding
+    # Pad the final composited video to ensure it lasts at least as long as audio
     filter_str = ";".join(filter_parts)
+    filter_str += f";[{last_output_label}]tpad=stop_mode=clone:stop_duration=5[vfinal]"
+    
     cmd.extend([
         "-filter_complex", filter_str,
-        "-map", f"[{last_output_label}]",  # composited video
+        "-map", "[vfinal]",  # padded composited video
         "-map", f"{audio_input_index}:a",  # ORIGINAL voiceover audio (not avatar video audio)
         "-c:v", "libx264",
         "-preset", "medium",
