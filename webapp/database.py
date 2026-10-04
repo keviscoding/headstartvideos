@@ -332,7 +332,11 @@ CREATE TABLE IF NOT EXISTS niche_hunt_runs (
 @contextmanager
 def _conn():
     if IS_PG:
-        conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+        conn = psycopg.connect(
+            DATABASE_URL,
+            row_factory=dict_row,
+            connect_timeout=10,
+        )
     else:
         conn = sqlite3.connect(str(DB_PATH), timeout=10)
         conn.row_factory = sqlite3.Row
