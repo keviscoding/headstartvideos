@@ -480,6 +480,7 @@ def generate_broll_image_atlas(
 
 def assemble_mixed_avatar_broll_video(
     avatar_video_path: Path,
+    original_audio_path: Path,
     shots: list[AvatarShot],
     work_dir: Path,
     output_path: Path,
@@ -488,6 +489,7 @@ def assemble_mixed_avatar_broll_video(
     """
     Create final video by overlaying b-roll on specific segments of the avatar video.
     The avatar speaks continuously; b-roll appears on top at designated times.
+    Uses ORIGINAL voiceover audio to ensure no words are cut off.
     """
     if progress:
         progress("Compositing avatar with b-roll...")
@@ -517,31 +519,48 @@ def assemble_mixed_avatar_broll_video(
             broll_index += 1
     
     if not filter_parts:
-        # No b-roll to overlay, just copy avatar video
-        import shutil
-        shutil.copy(avatar_video_path, output_path)
+        # No b-roll to overlay - still need to use original audio
+        # Avatar video audio might be cut short by Kling
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(avatar_video_path),
+            "-i", str(original_audio_path),
+            "-map", "0:v",  # video from avatar
+            "-map", "1:a",  # audio from original voiceover (not avatar video)
+            "-c:v", "copy",
+            "-c:a", "aac", "-b:a", "128k",
+            "-shortest",
+            str(output_path),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if result.returncode != 0:
+            raise RuntimeError(f"Audio replacement failed: {result.stderr}")
         return {
             "output_path": str(output_path),
             "shot_count": len(shots),
         }
     
-    # Build ffmpeg command
+    # Build ffmpeg command with original audio as additional input
     cmd = ["ffmpeg", "-y", "-i", str(avatar_video_path)]
     
     # Add all b-roll inputs
     for inp_flag, inp_path in overlay_inputs:
         cmd.extend([inp_flag, inp_path])
     
+    # Add original audio as final input
+    cmd.extend(["-i", str(original_audio_path)])
+    audio_input_index = len(overlay_inputs) + 1  # 0=avatar, 1..N=broll, N+1=audio
+    
     # Add filter complex
     filter_str = ";".join(filter_parts)
     cmd.extend([
         "-filter_complex", filter_str,
-        "-map", f"[{last_output_label}]",
-        "-map", "0:a",  # Keep original audio from avatar video
+        "-map", f"[{last_output_label}]",  # composited video
+        "-map", f"{audio_input_index}:a",  # ORIGINAL voiceover audio (not avatar video audio)
         "-c:v", "libx264",
         "-preset", "medium",
         "-crf", "23",
-        "-c:a", "copy",
+        "-c:a", "aac", "-b:a", "128k",
         "-movflags", "+faststart",
         str(output_path),
     ])
@@ -741,7 +760,7 @@ def run_avatar_gen_pipeline(
     t0 = time.time()
     output_path = work_dir / "final_video.mp4"
     result = assemble_mixed_avatar_broll_video(
-        avatar_video_path, shots, work_dir, output_path, progress
+        avatar_video_path, audio_path, shots, work_dir, output_path, progress
     )
     timing["assembly"] = time.time() - t0
     
