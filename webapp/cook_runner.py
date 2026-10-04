@@ -358,6 +358,13 @@ def run_cook_job(
                 reference_tags = req_data.get("reference_tags") or []
                 target_duration = float(req_data.get("target_duration") or 120.0)
                 
+                # Fetch avatar if it's a URL or remote path (not a prompt)
+                if avatar_source and not avatar_source.startswith("prompt:"):
+                    try:
+                        avatar_source = fetch_to_local(avatar_source, cache_dir)
+                    except Exception as e:
+                        raise RuntimeError(f"Could not fetch avatar image: {e}")
+                
                 from core.avatar_gen_pipeline import run_avatar_gen_pipeline
                 result = run_avatar_gen_pipeline(
                     script=script,
