@@ -1,0 +1,214 @@
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    AVATAR GENERATOR RECIPE FIX                          │
+│                                                                         │
+│  Problem: Avatar jobs run explainer pipeline instead of avatar pipeline │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          BEFORE FIX (BROKEN)                            │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────┐
+│ POST /api/avatar-gen/generate│
+│ (webapp/server.py:2560)     │
+└─────────────┬───────────────┘
+              │
+              │ Creates request_data WITHOUT recipe
+              ▼
+┌─────────────────────────────┐
+│ request_data = {            │
+│   "script": "...",          │
+│   "title": "...",           │
+│   "avatar_source": "...",   │
+│   ❌ NO "recipe" KEY        │
+│ }                           │
+└─────────────┬───────────────┘
+              │
+              │ Serialize to JSON
+              ▼
+┌─────────────────────────────┐
+│ create_cook_job(            │
+│   recipe="avatar_generator",│ ← Column only
+│   request_json="{...}"      │ ← JSON without recipe
+│ )                           │
+└─────────────┬───────────────┘
+              │
+              ▼
+┌─────────────────────────────────────────────┐
+│ DATABASE cook_jobs table                    │
+├─────────────────────────────────────────────┤
+│ recipe column:    "avatar_generator"        │
+│ request_json:     '{"script":"..."}' ❌     │
+│                   (no recipe in JSON)       │
+└─────────────┬───────────────────────────────┘
+              │
+              │ Worker picks up job
+              ▼
+┌─────────────────────────────┐
+│ hydrate_job_from_row()      │
+│ (cook_runner.py:35)         │
+└─────────────┬───────────────┘
+              │
+              │ Only copies request_json → job["request"]
+              │ Never copies recipe column
+              ▼
+┌─────────────────────────────┐
+│ job = {                     │
+│   "request": {              │
+│     "script": "...",        │
+│     ❌ NO "recipe"          │
+│   }                         │
+│ }                           │
+└─────────────┬───────────────┘
+              │
+              ▼
+┌─────────────────────────────┐
+│ run_cook_job()              │
+│ (cook_runner.py:126)        │
+└─────────────┬───────────────┘
+              │
+              │ recipe = req_data.get("recipe") or "animated_explainer"
+              │                       ↑ None/empty
+              ▼
+┌─────────────────────────────┐
+│ recipe = "animated_explainer"│ ← WRONG!
+└─────────────┬───────────────┘
+              │
+              ▼
+┌─────────────────────────────┐
+│ run_explainer_pipeline()    │ ❌ WRONG PIPELINE
+└─────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          AFTER FIX (WORKING)                            │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────┐
+│ POST /api/avatar-gen/generate│
+│ (webapp/server.py:2560)     │
+└─────────────┬───────────────┘
+              │
+              │ Creates request_data WITH recipe
+              ▼
+┌─────────────────────────────┐
+│ request_data = {            │
+│   ✅ "recipe": "avatar_generator",
+│   "script": "...",          │
+│   "title": "...",           │
+│   "avatar_source": "...",   │
+│ }                           │
+└─────────────┬───────────────┘
+              │
+              │ Serialize to JSON
+              ▼
+┌─────────────────────────────┐
+│ create_cook_job(            │
+│   recipe="avatar_generator",│ ← Column
+│   request_json='{"recipe"...│ ← JSON includes recipe ✅
+│ )                           │
+└─────────────┬───────────────┘
+              │
+              ▼
+┌─────────────────────────────────────────────┐
+│ DATABASE cook_jobs table                    │
+├─────────────────────────────────────────────┤
+│ recipe column:    "avatar_generator"        │
+│ request_json:     '{"recipe":"avatar_generator",...}' ✅
+└─────────────┬───────────────────────────────┘
+              │
+              │ Worker picks up job
+              ▼
+┌─────────────────────────────┐
+│ hydrate_job_from_row()      │
+│ (cook_runner.py:35)         │
+└─────────────┬───────────────┘
+              │
+              │ Copies request_json → job["request"]
+              ▼
+┌─────────────────────────────┐
+│ job = {                     │
+│   "request": {              │
+│     ✅ "recipe": "avatar_generator",
+│     "script": "...",        │
+│   }                         │
+│ }                           │
+└─────────────┬───────────────┘
+              │
+              ▼
+┌─────────────────────────────┐
+│ run_cook_job()              │
+│ (cook_runner.py:126)        │
+└─────────────┬───────────────┘
+              │
+              │ recipe = req_data.get("recipe")
+              │                       ↑ "avatar_generator" ✅
+              ▼
+┌─────────────────────────────┐
+│ recipe = "avatar_generator" │ ✅ CORRECT!
+└─────────────┬───────────────┘
+              │
+              │ if recipe == "avatar_generator":
+              ▼
+┌─────────────────────────────┐
+│ run_avatar_gen_pipeline()   │ ✅ CORRECT PIPELINE
+│ (cook_runner.py:362)        │
+└─────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                            THE FIX                                      │
+└─────────────────────────────────────────────────────────────────────────┘
+
+File: webapp/server.py
+Line: 2689
+
+BEFORE:
+    request_data = {
+        "script": script,
+        ...
+    }
+
+AFTER:
+    request_data = {
+        "recipe": "avatar_generator",  ← Added this ONE line
+        "script": script,
+        ...
+    }
+
+That's it! Just one line ensures recipe propagates through the entire chain.
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         KEY INSIGHTS                                    │
+└─────────────────────────────────────────────────────────────────────────┘
+
+1. The recipe DB column is NOT read by cook_runner
+   - It's only for DB queries/filtering
+   
+2. hydrate_job_from_row only copies request_json
+   - It never looks at the recipe column
+   
+3. run_cook_job reads recipe from job["request"]
+   - This comes from request_json, not the column
+   
+4. Missing recipe defaults to "animated_explainer"
+   - Line 126: recipe = ... or "animated_explainer"
+   
+5. The /api/build endpoint already does this correctly
+   - It includes recipe in the request payload
+   - Avatar endpoint was the outlier
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      VERIFICATION TEST                                  │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Run: python3 tests/test_avatar_gen_recipe.py
+
+✓ Recipe is in request_data
+✓ Recipe survives JSON serialization
+✓ hydrate_job_from_row preserves recipe
+✓ cook_runner uses correct recipe (not default)
+
+All tests pass!
