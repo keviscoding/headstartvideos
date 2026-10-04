@@ -2,9 +2,8 @@
 AI Avatar Generator Pipeline for Channel Recipe.
 
 Generates videos with speaking AI avatars following reference channel patterns.
-- Avatar speaks the script
-- B-roll shown as nouns/concepts
-- Face returns based on channel's own tag patterns
+- Avatar speaks the full script (talking head with lip sync)
+- B-roll images shown intermixed throughout the video
 - Atlas Cloud for all generation (images, video, speaking avatar)
 """
 from __future__ import annotations
@@ -82,7 +81,6 @@ def parse_script_to_segments(
 def extract_visual_concepts(text: str) -> list[str]:
     """Extract concrete nouns and concepts from text for b-roll."""
     # Simple extraction: look for capitalized words and common nouns
-    # In production, would use LLM for better concept extraction
     words = text.split()
     concepts = []
     
@@ -106,10 +104,10 @@ def detect_channel_avatar_pattern(reference_tags: list[dict]) -> dict[str, Any]:
     - use_title_cards: whether to show list numbers as title cards
     """
     if not reference_tags:
-        # Default: avatar open, then leave (Frugal Japan style)
+        # Default: avatar open (15s), then mix with b-roll every 8-12s
         return {
             "opening_avatar_sec": 15.0,
-            "face_return_frequency": None,
+            "face_return_frequency": 10.0,
             "face_shot_duration": 3.0,
             "use_title_cards": False,
         }
@@ -142,7 +140,7 @@ def detect_channel_avatar_pattern(reference_tags: list[dict]) -> dict[str, Any]:
         # No face detected in reference - unusual, use default
         return {
             "opening_avatar_sec": 15.0,
-            "face_return_frequency": None,
+            "face_return_frequency": 10.0,
             "face_shot_duration": 3.0,
             "use_title_cards": False,
         }
@@ -187,7 +185,7 @@ def detect_channel_avatar_pattern(reference_tags: list[dict]) -> dict[str, Any]:
     
     return {
         "opening_avatar_sec": min(opening_duration, 30.0),
-        "face_return_frequency": face_return_frequency,
+        "face_return_frequency": face_return_frequency or 10.0,
         "face_shot_duration": avg_face_duration,
         "use_title_cards": has_title_cards,
     }
@@ -201,6 +199,7 @@ def plan_avatar_video_shots(
 ) -> list[AvatarShot]:
     """
     Plan all shots for the video based on script and channel pattern.
+    Mix avatar (talking head) with b-roll throughout.
     """
     segments = parse_script_to_segments(script, target_duration, avg_cut_sec)
     shots = []
@@ -208,7 +207,7 @@ def plan_avatar_video_shots(
     shot_index = 0
     
     opening_sec = avatar_pattern.get("opening_avatar_sec", 15.0)
-    face_return_freq = avatar_pattern.get("face_return_frequency")
+    face_return_freq = avatar_pattern.get("face_return_frequency", 10.0)
     face_duration = avatar_pattern.get("face_shot_duration", 3.0)
     last_face_time = 0.0
     
@@ -232,33 +231,35 @@ def plan_avatar_video_shots(
             # Check if it's time for face to return
             should_return_face = (
                 face_return_freq is not None and
-                (current_time - last_face_time) >= face_return_freq - 5.0
+                (current_time - last_face_time) >= face_return_freq - 2.0
             )
             
-            if should_return_face:
+            if should_return_face and seg["duration"] > 2.0:
                 # Insert face shot
+                face_dur = min(face_duration, seg["duration"] * 0.6)
                 shots.append(AvatarShot(
                     index=shot_index,
                     start_sec=seg_start,
-                    end_sec=min(seg_start + face_duration, seg_end),
-                    duration=min(face_duration, seg["duration"]),
+                    end_sec=seg_start + face_dur,
+                    duration=face_dur,
                     shot_type="avatar",
-                    text=seg["text"][:50],  # Brief text
+                    text=seg["text"][:50],
                     visual_prompt="",
                 ))
                 last_face_time = current_time
                 shot_index += 1
                 
-                # Remainder goes to b-roll
-                if seg["duration"] > face_duration + 0.5:
+                # Remainder goes to b-roll if significant time left
+                remaining = seg["duration"] - face_dur
+                if remaining > 1.0:
                     concepts = extract_visual_concepts(seg["text"])
-                    visual_prompt = ", ".join(concepts) if concepts else "abstract background"
+                    visual_prompt = ", ".join(concepts) if concepts else seg["text"][:100]
                     
                     shots.append(AvatarShot(
                         index=shot_index,
-                        start_sec=seg_start + face_duration,
+                        start_sec=seg_start + face_dur,
                         end_sec=seg_end,
-                        duration=seg["duration"] - face_duration,
+                        duration=remaining,
                         shot_type="broll_still",
                         text="",
                         visual_prompt=visual_prompt,
@@ -266,7 +267,7 @@ def plan_avatar_video_shots(
             else:
                 # B-roll shot
                 concepts = extract_visual_concepts(seg["text"])
-                visual_prompt = ", ".join(concepts) if concepts else "abstract background"
+                visual_prompt = ", ".join(concepts) if concepts else seg["text"][:100]
                 
                 shots.append(AvatarShot(
                     index=shot_index,
@@ -350,6 +351,14 @@ def generate_avatar_video_atlas(
             )
             
             if resp.status_code >= 400:
+                data = resp.json() if resp.content else {}
+                # Check for fatal errors that should not retry
+                from core.atlas_llm import _is_atlas_fatal_error
+                is_fatal, fatal_reason = _is_atlas_fatal_error(data)
+                if is_fatal:
+                    if progress:
+                        progress(fatal_reason)
+                    return False
                 if progress:
                     progress(f"Atlas avatar generation failed: HTTP {resp.status_code}")
                 return False
@@ -420,6 +429,13 @@ def generate_avatar_video_atlas(
                 
                 elif status in ("failed", "error", "cancelled"):
                     error = inner.get("error") or inner.get("message") or "Generation failed"
+                    # Check for fatal errors
+                    from core.atlas_llm import _is_atlas_fatal_error
+                    is_fatal, fatal_reason = _is_atlas_fatal_error(inner)
+                    if is_fatal:
+                        if progress:
+                            progress(fatal_reason)
+                        return False
                     if progress:
                         progress(f"Avatar generation failed: {error}")
                     return False
@@ -470,6 +486,13 @@ def generate_broll_image_atlas(
             )
             
             if resp.status_code >= 400:
+                data = resp.json() if resp.content else {}
+                # Check for fatal errors
+                from core.atlas_llm import _is_atlas_fatal_error
+                is_fatal, fatal_reason = _is_atlas_fatal_error(data)
+                if is_fatal:
+                    print(f"[avatar_gen] B-roll fatal error: {fatal_reason}")
+                    return False
                 return False
             
             data = resp.json()
@@ -515,6 +538,11 @@ def generate_broll_image_atlas(
                     return output_path_obj.stat().st_size > 1000
                 
                 elif status in ("failed", "error", "cancelled"):
+                    # Check for fatal errors
+                    from core.atlas_llm import _is_atlas_fatal_error
+                    is_fatal, fatal_reason = _is_atlas_fatal_error(inner)
+                    if is_fatal:
+                        print(f"[avatar_gen] B-roll fatal: {fatal_reason}")
                     return False
             
             return False
@@ -523,52 +551,73 @@ def generate_broll_image_atlas(
         return False
 
 
-def assemble_avatar_video(
+def assemble_mixed_avatar_broll_video(
+    avatar_video_path: Path,
     shots: list[AvatarShot],
     work_dir: Path,
     output_path: Path,
     progress: ProgressFn | None = None,
 ) -> dict[str, Any]:
     """
-    Stitch all shots together into final video using ffmpeg.
+    Create final video by overlaying b-roll on specific segments of the avatar video.
+    The avatar speaks continuously; b-roll appears on top at designated times.
     """
     if progress:
-        progress("Assembling final video...")
+        progress("Compositing avatar with b-roll...")
     
-    # Create concat file for ffmpeg
-    concat_file = work_dir / "concat.txt"
-    concat_lines = []
+    # Build ffmpeg filter_complex to overlay b-roll at specific times
+    # Base layer is the full avatar video
+    filter_parts = []
+    overlay_inputs = []
+    last_output_label = "0:v"  # Start with avatar video
     
+    broll_index = 1  # Input index (0 is avatar video)
     for shot in shots:
-        if shot.asset_path and Path(shot.asset_path).is_file():
-            # Use absolute resolved path to avoid path doubling when ffmpeg runs
-            abs_path = Path(shot.asset_path).resolve()
-            # Escape single quotes for concat demuxer
-            escaped = str(abs_path).replace("'", "'\\''")
-            concat_lines.append(f"file '{escaped}'")
-            concat_lines.append(f"duration {shot.duration}")
+        if shot.shot_type == "broll_still" and shot.asset_path and Path(shot.asset_path).is_file():
+            # Add this b-roll image as an input
+            overlay_inputs.append(("-i", shot.asset_path))
+            
+            # Scale b-roll to match video size
+            scale_label = f"broll{shot.index}scaled"
+            filter_parts.append(f"[{broll_index}:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2[{scale_label}]")
+            
+            # Overlay on avatar video at the right time
+            next_label = f"out{shot.index}"
+            filter_parts.append(
+                f"[{last_output_label}][{scale_label}]overlay=enable='between(t,{shot.start_sec:.2f},{shot.end_sec:.2f})'[{next_label}]"
+            )
+            last_output_label = next_label
+            broll_index += 1
     
-    if not concat_lines:
-        raise RuntimeError("No shots to assemble")
+    if not filter_parts:
+        # No b-roll to overlay, just copy avatar video
+        import shutil
+        shutil.copy(avatar_video_path, output_path)
+        return {
+            "output_path": str(output_path),
+            "shot_count": len(shots),
+        }
     
-    concat_file.write_text("\n".join(concat_lines))
+    # Build ffmpeg command
+    cmd = ["ffmpeg", "-y", "-i", str(avatar_video_path)]
     
-    # Use ffmpeg to concatenate
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    # Add all b-roll inputs
+    for inp_flag, inp_path in overlay_inputs:
+        cmd.extend([inp_flag, inp_path])
     
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "concat",
-        "-safe", "0",
-        "-i", str(concat_file),
+    # Add filter complex
+    filter_str = ";".join(filter_parts)
+    cmd.extend([
+        "-filter_complex", filter_str,
+        "-map", f"[{last_output_label}]",
+        "-map", "0:a",  # Keep original audio from avatar video
         "-c:v", "libx264",
         "-preset", "medium",
         "-crf", "23",
-        "-c:a", "aac",
-        "-b:a", "128k",
+        "-c:a", "copy",
         "-movflags", "+faststart",
         str(output_path),
-    ]
+    ])
     
     result = subprocess.run(
         cmd,
@@ -578,15 +627,14 @@ def assemble_avatar_video(
     )
     
     if result.returncode != 0 or not output_path.is_file():
-        raise RuntimeError(f"FFmpeg assembly failed: {result.stderr}")
+        raise RuntimeError(f"FFmpeg composition failed: {result.stderr}")
     
     if progress:
-        progress("Video assembly complete!")
+        progress("Video composition complete!")
     
     return {
         "output_path": str(output_path),
         "shot_count": len(shots),
-        "duration": sum(s.duration for s in shots),
     }
 
 
@@ -600,7 +648,17 @@ def run_avatar_gen_pipeline(
     progress_callback: ProgressFn | None = None,
 ) -> dict[str, Any]:
     """
-    Main pipeline: generate AI avatar video following reference channel pattern.
+    Main pipeline: generate AI avatar video with b-roll following reference channel pattern.
+    
+    Flow:
+    1. Generate avatar image (if needed)
+    2. Generate full voiceover audio
+    3. Generate ONE talking avatar video for the complete script
+    4. Plan shots (when to show avatar vs b-roll)
+    5. Generate b-roll images for designated segments
+    6. Composite: overlay b-roll on avatar video at designated times
+    
+    The avatar speaks continuously; b-roll appears intermixed.
     
     Args:
         script: Full narration script
@@ -630,14 +688,8 @@ def run_avatar_gen_pipeline(
     # Detect pattern from reference tags
     avatar_pattern = detect_channel_avatar_pattern(reference_channel_tags or [])
     
-    progress(f"Pattern detected: opening {avatar_pattern['opening_avatar_sec']:.0f}s, "
-             f"returns: {avatar_pattern['face_return_frequency'] or 'no'}")
-    
-    # Plan all shots
-    progress("Planning video shots...")
-    shots = plan_avatar_video_shots(script, target_duration, avatar_pattern)
-    
-    progress(f"Planned {len(shots)} shots")
+    progress(f"Pattern: opening {avatar_pattern['opening_avatar_sec']:.0f}s, "
+             f"b-roll returns every ~{avatar_pattern['face_return_frequency']:.0f}s")
     
     # Generate or load avatar image
     avatar_img_path = work_dir / "avatar.jpg"
@@ -654,8 +706,8 @@ def run_avatar_gen_pipeline(
         import shutil
         shutil.copy(avatar_source, avatar_img_path)
     
-    # Generate TTS audio (using existing voiceover system)
-    progress("Generating voiceover...")
+    # Generate TTS audio for full script
+    progress("Generating voiceover for full script...")
     t0 = time.time()
     from core.voiceover_gen import generate_voiceover
     audio_path = generate_voiceover(
@@ -667,101 +719,122 @@ def run_avatar_gen_pipeline(
     )
     timing["voiceover"] = time.time() - t0
     
-    progress("Generating avatar and b-roll assets...")
-    t0 = time.time()
+    # Get actual audio duration
+    probe = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", audio_path,
+        ],
+        capture_output=True, text=True, timeout=30,
+    )
+    audio_duration = float((probe.stdout or "0").strip() or 0)
+    if audio_duration < 1.0:
+        raise RuntimeError("Failed to get voiceover duration")
     
-    # Generate assets for each shot
-    avatar_shots_generated = 0
-    broll_shots_generated = 0
+    progress(f"Voiceover ready: {audio_duration:.1f} seconds")
+    
+    # Generate ONE full-length talking avatar video with the complete audio
+    progress(f"Generating talking avatar video ({audio_duration:.1f}s)...")
+    t0 = time.time()
+    avatar_video_path = work_dir / "avatar_full.mp4"
+    
+    ok = generate_avatar_video_atlas(
+        avatar_img_path,
+        audio_path,
+        avatar_video_path,
+        audio_duration,
+        progress,
+    )
+    
+    if not ok:
+        # Fallback: create static avatar with audio overlay
+        progress("Atlas avatar unavailable, creating static fallback...")
+        subprocess.run([
+            "ffmpeg", "-y",
+            "-loop", "1",
+            "-i", str(avatar_img_path),
+            "-i", audio_path,
+            "-t", str(audio_duration),
+            "-c:v", "libx264", "-preset", "medium", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "128k",
+            "-shortest",
+            str(avatar_video_path),
+        ], capture_output=True, timeout=int(audio_duration) + 60)
+        
+        if not avatar_video_path.is_file():
+            raise RuntimeError("Failed to create avatar video")
+    
+    timing["avatar_generation"] = time.time() - t0
+    
+    # Plan all shots (when to show avatar face vs b-roll)
+    progress("Planning b-roll segments...")
+    shots = plan_avatar_video_shots(script, audio_duration, avatar_pattern)
+    
+    # Generate b-roll images for designated segments
+    progress(f"Generating b-roll assets...")
+    t0 = time.time()
+    broll_count = 0
+    failed_broll = 0
     
     for i, shot in enumerate(shots):
-        if shot.shot_type == "avatar":
-            # Generate speaking avatar video
-            progress(f"Generating avatar shot {i+1}/{len(shots)}...")
-            avatar_vid_path = work_dir / f"shot_{i:03d}_avatar.mp4"
+        if shot.shot_type == "broll_still":
+            progress(f"Generating b-roll {broll_count + 1}...")
+            broll_img_path = work_dir / f"broll_{shot.index:03d}.jpg"
             
-            # Extract audio segment for this shot
-            audio_segment = work_dir / f"audio_seg_{i:03d}.wav"
-            subprocess.run([
-                "ffmpeg", "-y",
-                "-i", audio_path,
-                "-ss", str(shot.start_sec),
-                "-t", str(shot.duration),
-                "-c", "copy",
-                str(audio_segment),
-            ], capture_output=True, timeout=30)
-            
-            ok = generate_avatar_video_atlas(
-                avatar_img_path,
-                audio_segment,
-                avatar_vid_path,
-                shot.duration,
-                progress,
-            )
-            
-            if ok:
-                shot.asset_path = str(avatar_vid_path)
-                shot.is_generated = True
-                avatar_shots_generated += 1
-            else:
-                # Fallback: use static avatar image with audio
-                progress(f"Avatar generation failed for shot {i+1}, using static fallback")
-                fallback_path = work_dir / f"shot_{i:03d}_static.mp4"
-                subprocess.run([
-                    "ffmpeg", "-y",
-                    "-loop", "1",
-                    "-i", str(avatar_img_path),
-                    "-i", str(audio_segment),
-                    "-t", str(shot.duration),
-                    "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                    "-c:a", "aac",
-                    str(fallback_path),
-                ], capture_output=True, timeout=60)
-                shot.asset_path = str(fallback_path)
-        
-        elif shot.shot_type == "broll_still":
-            # Generate b-roll still image
-            progress(f"Generating b-roll {i+1}/{len(shots)}...")
-            broll_img_path = work_dir / f"shot_{i:03d}_broll.jpg"
-            
-            ok = generate_broll_image_atlas(
-                shot.visual_prompt,
-                broll_img_path,
-                progress,
-            )
-            
-            if ok:
-                # Convert still to video clip
-                broll_vid_path = work_dir / f"shot_{i:03d}_broll.mp4"
-                subprocess.run([
-                    "ffmpeg", "-y",
-                    "-loop", "1",
-                    "-i", str(broll_img_path),
-                    "-t", str(shot.duration),
-                    "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                    str(broll_vid_path),
-                ], capture_output=True, timeout=60)
-                shot.asset_path = str(broll_vid_path)
-                shot.is_generated = True
-                broll_shots_generated += 1
+            # Create prompt from shot context
+            prompt_text = shot.visual_prompt or shot.text[:100]
+            if len(prompt_text) > 10:
+                ok = generate_broll_image_atlas(
+                    prompt_text,
+                    broll_img_path,
+                    progress,
+                )
+                
+                if ok:
+                    shot.asset_path = str(broll_img_path)
+                    shot.is_generated = True
+                    broll_count += 1
+                else:
+                    failed_broll += 1
+                    # Don't fail the whole cook if some b-roll fails
+                    print(f"[avatar_gen] B-roll {shot.index} failed, will show avatar instead")
     
-    timing["generation"] = time.time() - t0
+    timing["broll_generation"] = time.time() - t0
     
-    # Assemble final video
-    progress("Assembling final video...")
-    t0 = time.time()
-    output_path = work_dir / "final_video.mp4"
-    result = assemble_avatar_video(shots, work_dir, output_path, progress)
-    timing["assembly"] = time.time() - t0
+    if broll_count == 0:
+        progress("No b-roll generated, using avatar throughout...")
+        # Just use the avatar video as-is
+        output_path = work_dir / "final_video.mp4"
+        import shutil
+        shutil.copy(avatar_video_path, output_path)
+    else:
+        progress(f"Compositing {broll_count} b-roll segments...")
+        t0 = time.time()
+        output_path = work_dir / "final_video.mp4"
+        result = assemble_mixed_avatar_broll_video(
+            avatar_video_path, shots, work_dir, output_path, progress
+        )
+        timing["assembly"] = time.time() - t0
+    
+    # Verify final duration
+    probe = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", str(output_path),
+        ],
+        capture_output=True, text=True, timeout=30,
+    )
+    final_duration = float((probe.stdout or "0").strip() or 0)
     
     timing["total"] = time.time() - t0_total
     
     return {
         "output_path": str(output_path),
         "shot_count": len(shots),
-        "avatar_shots": avatar_shots_generated,
-        "broll_shots": broll_shots_generated,
-        "duration": sum(s.duration for s in shots),
+        "avatar_shots": sum(1 for s in shots if s.shot_type == "avatar"),
+        "broll_shots": broll_count,
+        "duration": final_duration,
         "timing": timing,
         "pattern": avatar_pattern,
+        "slots": [],  # For compatibility with cook_runner
     }

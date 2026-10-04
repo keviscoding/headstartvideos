@@ -353,6 +353,50 @@ def _is_transient_http_err(exc: BaseException) -> bool:
     )
 
 
+def _is_atlas_fatal_error(err_data: dict | str) -> tuple[bool, str]:
+    """
+    Check if Atlas error should fail immediately without retry.
+    Returns (is_fatal, reason).
+    
+    Atlas error codes that should stop immediately:
+    - 1013004: upstream too many requests (provider rate limit)
+    - 1013008: provider route unavailable
+    - Content policy violations
+    - Invalid API key / auth failures
+    """
+    if isinstance(err_data, dict):
+        code = err_data.get("code") or err_data.get("error_code") or err_data.get("errorCode")
+        msg = str(err_data.get("error") or err_data.get("message") or err_data).lower()
+    else:
+        code = None
+        msg = str(err_data).lower()
+    
+    # Check for specific error codes
+    if code in (1013004, 1013008, "1013004", "1013008"):
+        if code == 1013004 or "1013004" in msg:
+            return True, "Atlas upstream too many requests (provider rate limit)"
+        if code == 1013008 or "1013008" in msg:
+            return True, "Atlas provider route unavailable"
+    
+    # Check for error messages that indicate non-retryable failures
+    if any(phrase in msg for phrase in [
+        "too many requests",
+        "rate limit exceeded",
+        "provider route unavailable",
+        "provider unavailable",
+        "content policy",
+        "content filtered",
+        "invalid api key",
+        "authentication failed",
+        "unauthorized",
+        "quota exceeded",
+        "insufficient credits",
+    ]):
+        return True, f"Atlas provider error: {msg[:150]}"
+    
+    return False, ""
+
+
 def generate_video_file(
     prompt: str,
     image: str | Path,
@@ -460,6 +504,12 @@ def generate_video_file(
                     if resp.status_code >= 400:
                         last_err = f"create HTTP {resp.status_code}: {str(data)[:300]}"
                         print(f"[atlas] generateVideo {last_err}")
+                        # Check if this is a fatal error that should not retry
+                        is_fatal, fatal_reason = _is_atlas_fatal_error(data)
+                        if is_fatal:
+                            last_err = fatal_reason
+                            print(f"[atlas] generateVideo fatal error: {fatal_reason}")
+                            return False
                         break
                     if isinstance(data.get("data"), dict):
                         pred_id = data["data"].get("id")
@@ -548,6 +598,12 @@ def generate_video_file(
                         err = inner.get("error") or inner.get("message") or inner
                         last_err = f"provider {status}: {err}"
                         print(f"[atlas] generateVideo failed: {err}")
+                        # Check if this is a fatal error
+                        is_fatal, fatal_reason = _is_atlas_fatal_error(inner)
+                        if is_fatal:
+                            last_err = fatal_reason
+                            print(f"[atlas] generateVideo fatal: {fatal_reason}")
+                            return False
                         break
                 else:
                     last_err = f"timeout after {wall:.0f}s (pred={pred_id})"
@@ -616,8 +672,15 @@ def generate_image_file(
                 },
             )
             if resp.status_code >= 400:
+                data = resp.json() if resp.content else {}
                 msg = f"[atlas] generateImage HTTP {resp.status_code}: {resp.text[:300]}"
                 print(msg)
+                # Check for fatal errors
+                is_fatal, fatal_reason = _is_atlas_fatal_error(data)
+                if is_fatal:
+                    if progress:
+                        progress(fatal_reason)
+                    return False
                 if progress:
                     progress(f"Atlas image generation failed: HTTP {resp.status_code}")
                 return False
@@ -663,6 +726,12 @@ def generate_image_file(
                     err_msg = inner.get("error") or inner.get("message") or str(inner)
                     msg = f"[atlas] generateImage failed: {err_msg}"
                     print(msg)
+                    # Check for fatal errors
+                    is_fatal, fatal_reason = _is_atlas_fatal_error(inner)
+                    if is_fatal:
+                        if progress:
+                            progress(fatal_reason)
+                        return False
                     if progress:
                         progress(f"Atlas image generation failed: {err_msg}")
                     return False
