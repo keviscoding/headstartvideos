@@ -641,9 +641,10 @@ def run_avatar_gen_pipeline(
         # Generate avatar image from prompt
         progress("Generating avatar image...")
         prompt = str(avatar_source)[7:].strip()
-        ok = generate_broll_image_atlas(prompt, avatar_img_path, progress)
+        from core.atlas_llm import generate_image_file
+        ok = generate_image_file(prompt, str(avatar_img_path), progress=progress)
         if not ok:
-            raise RuntimeError("Failed to generate avatar image")
+            raise RuntimeError(f"Failed to generate avatar image from prompt: {prompt[:100]}")
     else:
         # Copy provided image
         import shutil
