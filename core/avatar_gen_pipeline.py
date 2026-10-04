@@ -36,11 +36,11 @@ class AvatarShot:
 
 def parse_script_to_segments(
     script: str,
-    target_duration: float,
+    actual_audio_duration: float,
     avg_cut_sec: float = 4.0,
 ) -> list[dict[str, Any]]:
     """
-    Break script into timed segments (~4 sec each for long-form list style).
+    Break script into timed segments based on ACTUAL audio duration.
     
     Returns list of {"text": str, "start_sec": float, "end_sec": float, "duration": float}
     """
@@ -48,24 +48,22 @@ def parse_script_to_segments(
     if not words:
         return []
     
-    # Estimate speaking rate (150 wpm)
-    wpm = 150
-    total_words = len(words)
-    speech_duration = (total_words / wpm) * 60.0
-    
-    # Number of segments based on cut rate
-    num_segments = max(1, int(math.ceil(speech_duration / avg_cut_sec)))
-    words_per_segment = max(1, int(math.ceil(total_words / num_segments)))
+    # Use ACTUAL audio duration to ensure all segments fit within the voiceover
+    # Calculate number of segments based on desired cut rate
+    num_segments = max(1, int(math.ceil(actual_audio_duration / avg_cut_sec)))
+    words_per_segment = max(1, int(math.ceil(len(words) / num_segments)))
     
     segments = []
     current_time = 0.0
+    # Distribute time evenly across segments
+    time_per_segment = actual_audio_duration / num_segments
     
     for i in range(0, len(words), words_per_segment):
         chunk_words = words[i:i + words_per_segment]
         text = " ".join(chunk_words)
         
-        # Calculate duration for this segment
-        seg_duration = (len(chunk_words) / wpm) * 60.0
+        # Use proportional duration based on actual audio
+        seg_duration = time_per_segment
         
         segments.append({
             "text": text,
@@ -197,15 +195,16 @@ def detect_channel_avatar_pattern(reference_tags: list[dict]) -> dict[str, Any]:
 
 def plan_avatar_video_shots(
     script: str,
-    target_duration: float,
+    actual_audio_duration: float,
     avatar_pattern: dict,
     avg_cut_sec: float = 4.0,
 ) -> list[AvatarShot]:
     """
     Plan all shots for the video based on script and channel pattern.
     Mix avatar (talking head) with b-roll throughout.
+    Uses ACTUAL audio duration to ensure shots cover the full voiceover.
     """
-    segments = parse_script_to_segments(script, target_duration, avg_cut_sec)
+    segments = parse_script_to_segments(script, actual_audio_duration, avg_cut_sec)
     shots = []
     current_time = 0.0
     shot_index = 0
@@ -256,8 +255,8 @@ def plan_avatar_video_shots(
                 # Remainder goes to b-roll if significant time left
                 remaining = seg["duration"] - face_dur
                 if remaining > 1.0:
-                    concepts = extract_visual_concepts(seg["text"])
-                    visual_prompt = ", ".join(concepts) if concepts else seg["text"][:100]
+                    # Use script context for b-roll, not just keywords
+                    visual_prompt = seg["text"]
                     
                     shots.append(AvatarShot(
                         index=shot_index,
@@ -265,13 +264,12 @@ def plan_avatar_video_shots(
                         end_sec=seg_end,
                         duration=remaining,
                         shot_type="broll_still",
-                        text="",
+                        text=seg["text"],
                         visual_prompt=visual_prompt,
                     ))
             else:
-                # B-roll shot
-                concepts = extract_visual_concepts(seg["text"])
-                visual_prompt = ", ".join(concepts) if concepts else seg["text"][:100]
+                # B-roll shot - use script context
+                visual_prompt = seg["text"]
                 
                 shots.append(AvatarShot(
                     index=shot_index,
@@ -279,7 +277,7 @@ def plan_avatar_video_shots(
                     end_sec=seg_end,
                     duration=seg["duration"],
                     shot_type="broll_still",
-                    text="",
+                    text=seg["text"],
                     visual_prompt=visual_prompt,
                 ))
         
@@ -482,6 +480,7 @@ def generate_broll_image_atlas(
 
 def assemble_mixed_avatar_broll_video(
     avatar_video_path: Path,
+    original_audio_path: Path,
     shots: list[AvatarShot],
     work_dir: Path,
     output_path: Path,
@@ -490,9 +489,34 @@ def assemble_mixed_avatar_broll_video(
     """
     Create final video by overlaying b-roll on specific segments of the avatar video.
     The avatar speaks continuously; b-roll appears on top at designated times.
+    Uses ORIGINAL voiceover audio to ensure no words are cut off.
+    Pads video if shorter than audio to prevent audio cutoff.
     """
     if progress:
         progress("Compositing avatar with b-roll...")
+    
+    # Get avatar video duration
+    probe = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", str(avatar_video_path),
+        ],
+        capture_output=True, text=True, timeout=30,
+    )
+    avatar_video_duration = float((probe.stdout or "0").strip() or 0)
+    
+    # Get original audio duration
+    audio_probe = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", str(original_audio_path),
+        ],
+        capture_output=True, text=True, timeout=30,
+    )
+    audio_duration = float((audio_probe.stdout or "0").strip() or 0)
+    
+    # Calculate padding needed (add small buffer so last word not clipped)
+    padding_needed = max(0.0, audio_duration - avatar_video_duration + 0.2)
     
     # Build ffmpeg filter_complex to overlay b-roll at specific times
     # Base layer is the full avatar video
@@ -519,31 +543,71 @@ def assemble_mixed_avatar_broll_video(
             broll_index += 1
     
     if not filter_parts:
-        # No b-roll to overlay, just copy avatar video
-        import shutil
-        shutil.copy(avatar_video_path, output_path)
+        # No b-roll to overlay - still need to use original audio and pad if needed
+        if padding_needed > 0.1:
+            # Pad video to match voiceover duration (hold last frame)
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", str(avatar_video_path),
+                "-i", str(original_audio_path),
+                "-filter_complex", f"[0:v]tpad=stop_mode=clone:stop_duration={padding_needed:.3f}[v]",
+                "-map", "[v]",  # padded video
+                "-map", "1:a",  # audio from original voiceover
+                "-c:v", "libx264", "-preset", "medium", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "128k",
+                "-movflags", "+faststart",
+                str(output_path),
+            ]
+        else:
+            # Video already long enough, just replace audio
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", str(avatar_video_path),
+                "-i", str(original_audio_path),
+                "-map", "0:v",  # video from avatar
+                "-map", "1:a",  # audio from original voiceover
+                "-c:v", "copy",
+                "-c:a", "aac", "-b:a", "128k",
+                "-movflags", "+faststart",
+                str(output_path),
+            ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if result.returncode != 0:
+            raise RuntimeError(f"Audio replacement failed: {result.stderr}")
         return {
             "output_path": str(output_path),
             "shot_count": len(shots),
         }
     
-    # Build ffmpeg command
+    # Build ffmpeg command with original audio as additional input
     cmd = ["ffmpeg", "-y", "-i", str(avatar_video_path)]
     
     # Add all b-roll inputs
     for inp_flag, inp_path in overlay_inputs:
         cmd.extend([inp_flag, inp_path])
     
-    # Add filter complex
+    # Add original audio as final input
+    cmd.extend(["-i", str(original_audio_path)])
+    audio_input_index = len(overlay_inputs) + 1  # 0=avatar, 1..N=broll, N+1=audio
+    
+    # Add filter complex with precise video padding if needed
     filter_str = ";".join(filter_parts)
+    if padding_needed > 0.1:
+        # Pad the composited video to match audio duration
+        filter_str += f";[{last_output_label}]tpad=stop_mode=clone:stop_duration={padding_needed:.3f}[vfinal]"
+        video_output_label = "[vfinal]"
+    else:
+        # Video already long enough
+        video_output_label = f"[{last_output_label}]"
+    
     cmd.extend([
         "-filter_complex", filter_str,
-        "-map", f"[{last_output_label}]",
-        "-map", "0:a",  # Keep original audio from avatar video
+        "-map", video_output_label,  # composited video (padded if needed)
+        "-map", f"{audio_input_index}:a",  # ORIGINAL voiceover audio
         "-c:v", "libx264",
         "-preset", "medium",
         "-crf", "23",
-        "-c:a", "copy",
+        "-c:a", "aac", "-b:a", "128k",
         "-movflags", "+faststart",
         str(output_path),
     ])
@@ -699,8 +763,18 @@ def run_avatar_gen_pipeline(
             progress(f"Generating b-roll {broll_count + 1}/{broll_count_needed}...")
             broll_img_path = work_dir / f"broll_{shot.index:03d}.jpg"
             
-            # Create prompt from shot context
-            prompt_text = shot.visual_prompt or shot.text[:100]
+            # Create detailed, contextual prompt from segment text
+            # Include script context to ensure on-topic generation
+            segment_text = shot.text or shot.visual_prompt
+            # Build explicit prompt emphasizing the script topic and segment content
+            prompt_text = (
+                f"Professional photograph, photorealistic, high quality: "
+                f"{segment_text}. "
+                f"Context: {title}. "
+                f"Relevant visual showing specific objects or scenes mentioned. "
+                f"16:9 aspect ratio, no text, no captions."
+            )
+            
             if len(prompt_text) > 10:
                 ok = generate_broll_image_atlas(
                     prompt_text,
@@ -733,11 +807,11 @@ def run_avatar_gen_pipeline(
     t0 = time.time()
     output_path = work_dir / "final_video.mp4"
     result = assemble_mixed_avatar_broll_video(
-        avatar_video_path, shots, work_dir, output_path, progress
+        avatar_video_path, audio_path, shots, work_dir, output_path, progress
     )
     timing["assembly"] = time.time() - t0
     
-    # Verify final duration
+    # Verify final video duration matches or exceeds audio duration
     probe = subprocess.run(
         [
             "ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -746,6 +820,30 @@ def run_avatar_gen_pipeline(
         capture_output=True, text=True, timeout=30,
     )
     final_duration = float((probe.stdout or "0").strip() or 0)
+    
+    # Video must be at least as long as audio (tolerance: 0.5s)
+    if final_duration < audio_duration - 0.5:
+        raise RuntimeError(
+            f"Final video ({final_duration:.1f}s) is shorter than audio ({audio_duration:.1f}s). "
+            f"The voiceover would be cut off mid-script. This is not acceptable."
+        )
+    
+    # Verify audio track plays through completely
+    audio_probe = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-select_streams", "a:0",
+            "-show_entries", "stream=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", str(output_path),
+        ],
+        capture_output=True, text=True, timeout=30,
+    )
+    audio_track_duration = float((audio_probe.stdout or "0").strip() or 0)
+    
+    if audio_track_duration < audio_duration - 0.5:
+        raise RuntimeError(
+            f"Audio track ({audio_track_duration:.1f}s) is shorter than expected ({audio_duration:.1f}s). "
+            f"The script would be cut off before the final word."
+        )
     
     timing["total"] = time.time() - t0_total
     
