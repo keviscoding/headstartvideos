@@ -490,9 +490,33 @@ def assemble_mixed_avatar_broll_video(
     Create final video by overlaying b-roll on specific segments of the avatar video.
     The avatar speaks continuously; b-roll appears on top at designated times.
     Uses ORIGINAL voiceover audio to ensure no words are cut off.
+    Pads video if shorter than audio to prevent audio cutoff.
     """
     if progress:
         progress("Compositing avatar with b-roll...")
+    
+    # Get avatar video duration
+    probe = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", str(avatar_video_path),
+        ],
+        capture_output=True, text=True, timeout=30,
+    )
+    avatar_video_duration = float((probe.stdout or "0").strip() or 0)
+    
+    # Get original audio duration
+    audio_probe = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", str(original_audio_path),
+        ],
+        capture_output=True, text=True, timeout=30,
+    )
+    audio_duration = float((audio_probe.stdout or "0").strip() or 0)
+    
+    # Calculate padding needed (add small buffer so last word not clipped)
+    padding_needed = max(0.0, audio_duration - avatar_video_duration + 0.2)
     
     # Build ffmpeg filter_complex to overlay b-roll at specific times
     # Base layer is the full avatar video
@@ -519,20 +543,34 @@ def assemble_mixed_avatar_broll_video(
             broll_index += 1
     
     if not filter_parts:
-        # No b-roll to overlay - still need to use original audio
-        # Pad avatar video to match voiceover duration (hold last frame)
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", str(avatar_video_path),
-            "-i", str(original_audio_path),
-            "-filter_complex", "[0:v]tpad=stop_mode=clone:stop_duration=5[v]",  # pad video if needed
-            "-map", "[v]",  # padded video
-            "-map", "1:a",  # audio from original voiceover
-            "-c:v", "libx264", "-preset", "medium", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "128k",
-            "-movflags", "+faststart",
-            str(output_path),
-        ]
+        # No b-roll to overlay - still need to use original audio and pad if needed
+        if padding_needed > 0.1:
+            # Pad video to match voiceover duration (hold last frame)
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", str(avatar_video_path),
+                "-i", str(original_audio_path),
+                "-filter_complex", f"[0:v]tpad=stop_mode=clone:stop_duration={padding_needed:.3f}[v]",
+                "-map", "[v]",  # padded video
+                "-map", "1:a",  # audio from original voiceover
+                "-c:v", "libx264", "-preset", "medium", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "128k",
+                "-movflags", "+faststart",
+                str(output_path),
+            ]
+        else:
+            # Video already long enough, just replace audio
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", str(avatar_video_path),
+                "-i", str(original_audio_path),
+                "-map", "0:v",  # video from avatar
+                "-map", "1:a",  # audio from original voiceover
+                "-c:v", "copy",
+                "-c:a", "aac", "-b:a", "128k",
+                "-movflags", "+faststart",
+                str(output_path),
+            ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         if result.returncode != 0:
             raise RuntimeError(f"Audio replacement failed: {result.stderr}")
@@ -552,15 +590,20 @@ def assemble_mixed_avatar_broll_video(
     cmd.extend(["-i", str(original_audio_path)])
     audio_input_index = len(overlay_inputs) + 1  # 0=avatar, 1..N=broll, N+1=audio
     
-    # Add filter complex with video padding
-    # Pad the final composited video to ensure it lasts at least as long as audio
+    # Add filter complex with precise video padding if needed
     filter_str = ";".join(filter_parts)
-    filter_str += f";[{last_output_label}]tpad=stop_mode=clone:stop_duration=5[vfinal]"
+    if padding_needed > 0.1:
+        # Pad the composited video to match audio duration
+        filter_str += f";[{last_output_label}]tpad=stop_mode=clone:stop_duration={padding_needed:.3f}[vfinal]"
+        video_output_label = "[vfinal]"
+    else:
+        # Video already long enough
+        video_output_label = f"[{last_output_label}]"
     
     cmd.extend([
         "-filter_complex", filter_str,
-        "-map", "[vfinal]",  # padded composited video
-        "-map", f"{audio_input_index}:a",  # ORIGINAL voiceover audio (not avatar video audio)
+        "-map", video_output_label,  # composited video (padded if needed)
+        "-map", f"{audio_input_index}:a",  # ORIGINAL voiceover audio
         "-c:v", "libx264",
         "-preset", "medium",
         "-crf", "23",
