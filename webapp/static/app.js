@@ -2505,6 +2505,7 @@ const cookingManager = {
     kind: 'pipeline', // 'pipeline' | 'storyboard'
     activeCount: 0,
     slotLimit: 1,
+    lastFinishedJobId: null,
 
     get isCooking() { return this.jobId && !this.result; },
 
@@ -2523,6 +2524,7 @@ const cookingManager = {
         this.kind = 'pipeline';
         this.title = state.title;
 
+        this._clearReadyScreen();
         document.getElementById('build-start').classList.add('hidden');
         document.getElementById('build-progress').classList.remove('hidden');
         document.getElementById('progress-log').innerHTML = '';
@@ -2611,6 +2613,7 @@ const cookingManager = {
         this.kind = 'ranking';
         this.result = null;
         this.activeCount = Math.max(1, this.activeCount);
+        this._clearReadyScreen();
         this._persist();
         this._showCookingBar();
         const statusEl = document.getElementById('cooking-bar-status');
@@ -2626,6 +2629,7 @@ const cookingManager = {
         this.kind = 'storyboard';
         this.result = null;
         this.activeCount = Math.max(1, this.activeCount);
+        this._clearReadyScreen();
         this._persist();
         this._showCookingBar();
     },
@@ -2637,6 +2641,7 @@ const cookingManager = {
         this.title = title || 'storyboard pack';
         this.kind = 'storyboard_pack';
         this.result = null;
+        this._clearReadyScreen();
         this._persist();
         this._showCookingBar();
         const statusEl = document.getElementById('cooking-bar-status');
@@ -2651,6 +2656,7 @@ const cookingManager = {
         this.kind = 'avatar_generator';
         this.result = null;
         this.activeCount = Math.max(1, this.activeCount);
+        this._clearReadyScreen();
         this._persist();
         this._showCookingBar();
         const statusEl = document.getElementById('cooking-bar-status');
@@ -2732,6 +2738,8 @@ const cookingManager = {
             const finishedKind = this.kind;
             const finishedTitle = this.title;
             const finishedResult = this.result;
+            const finishedJobId = finishedResult.job_id || finishedResult.video_id || null;
+            this.lastFinishedJobId = finishedJobId;
             this._clear();
             state.videoUrl = outUrl;
             state.videoPath = finishedResult.output_path;
@@ -2755,9 +2763,7 @@ const cookingManager = {
             }
             
             // Show toast notification when video is ready
-            this.title = finishedTitle;
-            this.result = finishedResult;
-            this._showToast();
+            this._showToast(finishedTitle);
             
             try { loadHistory(); } catch (_) {}
             refreshUserData();
@@ -2947,6 +2953,8 @@ const cookingManager = {
             const finishedKind = this.kind;
             const finishedTitle = this.title;
             const finishedResult = this.result;
+            const finishedJobId = finishedResult.job_id || finishedResult.video_id || null;
+            this.lastFinishedJobId = finishedJobId;
             this._clear();
             this._hideCookingBar();
             if (state.page !== 'pipeline') navigateTo('pipeline');
@@ -2964,9 +2972,7 @@ const cookingManager = {
             }
             
             // Show toast notification when restored job is complete
-            this.title = finishedTitle;
-            this.result = finishedResult;
-            this._showToast();
+            this._showToast(finishedTitle);
             
             try { loadHistory(); } catch (_) {}
             return;
@@ -3027,10 +3033,25 @@ const cookingManager = {
         document.getElementById('cooking-bar')?.classList.add('hidden');
     },
 
-    _showToast() {
-        document.getElementById('toast-title').textContent = this.title;
+    _showToast(title) {
+        document.getElementById('toast-title').textContent = title || this.title;
         document.getElementById('toast').classList.remove('hidden');
         setTimeout(() => dismissToast(), 15000);
+    },
+
+    _clearReadyScreen() {
+        document.getElementById('upload-kit')?.classList.add('hidden');
+        const dl = document.getElementById('download-link');
+        if (dl) { dl.href = '#'; dl.removeAttribute('download'); }
+        const video = document.getElementById('result-video');
+        if (video) video.src = '';
+        const thumb = document.getElementById('kit-thumb');
+        if (thumb) thumb.src = '';
+        const thumbDl = document.getElementById('kit-thumb-dl');
+        if (thumbDl) { thumbDl.href = '#'; thumbDl.removeAttribute('download'); }
+        document.getElementById('kit-title').textContent = '';
+        document.getElementById('kit-desc').textContent = '';
+        document.getElementById('kit-tags').textContent = '';
     },
 
     viewProgress() {
@@ -3187,47 +3208,89 @@ async function playableMediaUrl(url) {
 }
 
 async function showUploadKit(buildResult) {
+    const jobId = buildResult.job_id || buildResult.video_id || null;
+    
+    // Ignore calls for jobs that aren't the most recent finished one
+    if (jobId && cookingManager.lastFinishedJobId && jobId !== cookingManager.lastFinishedJobId) {
+        return;
+    }
+    
     document.getElementById('build-progress').classList.add('hidden');
     document.getElementById('upload-kit').classList.remove('hidden');
+    
+    const dl = document.getElementById('download-link');
+    const video = document.getElementById('result-video');
+    const thumbDl = document.getElementById('kit-thumb-dl');
+    const thumb = document.getElementById('kit-thumb');
+    
+    // Disable download link until URL is resolved
+    if (dl) {
+        dl.href = '#';
+        dl.style.pointerEvents = 'none';
+        dl.style.opacity = '0.5';
+    }
+    
+    // Resolve playable URLs
     const videoUrl = await playableMediaUrl(buildResult.output_url);
     const thumbUrl = await playableMediaUrl(buildResult.thumbnail_url || state.thumbnailUrl || '');
-    state.videoUrl = videoUrl;
-    document.getElementById('result-video').src = videoUrl;
-    const dl = document.getElementById('download-link');
-    dl.href = videoUrl;
-    dl.setAttribute('download', 'video.mp4');
-    dl.onclick = () => {
-        _track('video_downloaded', {
-            recipe: state.niche || '',
-            plan: currentUser?.plan || '',
-            source: 'upload_kit',
-        });
-    };    if (thumbUrl) {
-        state.thumbnailUrl = thumbUrl;
-        document.getElementById('kit-thumb').src = thumbUrl;
-        document.getElementById('kit-thumb-dl').href = thumbUrl;
-        document.getElementById('kit-thumb-dl').setAttribute('download', 'thumbnail.png');
-        document.getElementById('kit-thumb-wrap').classList.remove('hidden');
-    } else {
-        document.getElementById('kit-thumb-wrap').classList.add('hidden');
+    
+    // Check again after async calls - ignore if a newer job finished
+    if (jobId && cookingManager.lastFinishedJobId && jobId !== cookingManager.lastFinishedJobId) {
+        return;
     }
+    
+    state.videoUrl = videoUrl;
+    if (video) video.src = videoUrl;
+    if (dl) {
+        dl.href = videoUrl;
+        dl.setAttribute('download', 'video.mp4');
+        dl.style.pointerEvents = '';
+        dl.style.opacity = '';
+        dl.onclick = () => {
+            _track('video_downloaded', {
+                recipe: state.niche || '',
+                plan: currentUser?.plan || '',
+                source: 'upload_kit',
+            });
+        };
+    }
+    
+    if (thumbUrl) {
+        state.thumbnailUrl = thumbUrl;
+        if (thumb) thumb.src = thumbUrl;
+        if (thumbDl) {
+            thumbDl.href = thumbUrl;
+            thumbDl.setAttribute('download', 'thumbnail.png');
+        }
+        document.getElementById('kit-thumb-wrap')?.classList.remove('hidden');
+    } else {
+        document.getElementById('kit-thumb-wrap')?.classList.add('hidden');
+    }
+    
     document.getElementById('kit-title').textContent = state.title;
-    // Watermark upsell was misleading (watermark not applied in cook path) — keep hidden.
     document.getElementById('trial-watermark-note')?.classList.add('hidden');
+    
     _track('video_ready_viewed', {
         recipe: state.niche || '',
         plan: currentUser?.plan || '',
         video_id: buildResult.video_id || null,
     });
+    
     const videoId = buildResult.video_id || null;
     try {
         const res = await fetch('/api/upload-kit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: state.title, script: state.script, niche: state.niche }) });
         const kit = await res.json();
+        
+        // Check again after async call
+        if (jobId && cookingManager.lastFinishedJobId && jobId !== cookingManager.lastFinishedJobId) {
+            return;
+        }
+        
         const tagsArr = Array.isArray(kit.tags) ? kit.tags : (kit.tags ? String(kit.tags).split(',').map(t => t.trim()) : []);
         const hashArr = Array.isArray(kit.hashtags) ? kit.hashtags : (kit.hashtags ? String(kit.hashtags).split(',').map(t => t.trim()) : []);
         document.getElementById('kit-desc').textContent = kit.description || '';
         document.getElementById('kit-tags').textContent = tagsArr.join(', ');
-        // Attach the kit to the saved video so it shows in History.
+        
         if (videoId) {
             fetch(`/api/videos/${videoId}/kit`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
