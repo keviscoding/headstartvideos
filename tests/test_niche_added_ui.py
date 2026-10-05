@@ -33,14 +33,22 @@ def test_added_toggle_requests_newest_resets_page_and_renders_dates():
         assert 'AI presenter candidate' in page.locator('#nf-results').inner_text()
         assert page.locator('#nf-results time').get_attribute('datetime')
         assert page.locator('#nf-results time').get_attribute('title')
+        page.evaluate("toggleNicheFilter('avatar')")
+        page.wait_for_function("requests.at(-1).includes('ai_presenter=true')")
+        assert 'added_within_days=7' in page.evaluate('requests.at(-1)')
+        assert page.locator('#nf-toggle-avatar').get_attribute('aria-pressed')=='true'
         page.evaluate('nicheFinderNextPage()')
         page.wait_for_function("requests.at(-1).includes('offset=40')")
         page.evaluate("removeNicheFilterChip('new')")
         page.wait_for_function("!requests.at(-1).includes('added_within_days')")
         assert page.locator('#nf-toggle-new').get_attribute('aria-pressed')=='false'
+        page.evaluate("removeNicheFilterChip('avatar')")
+        page.wait_for_function("!requests.at(-1).includes('ai_presenter')")
+        assert page.locator('#nf-toggle-avatar').get_attribute('aria-pressed')=='false'
         page.evaluate("toggleNicheFilter('new');clearNicheFilters()")
         assert not page.locator('#nf-f-new').is_checked()
         assert page.locator('#nf-toggle-new').get_attribute('aria-pressed')=='false'
+        assert not page.locator('#nf-f-avatar').is_checked()
         assert page.evaluate("_nfAddedTime(null)") is None
         assert page.evaluate("_nfAddedTime(1791200000,1791200030000).relative")=='just now'
         browser.close()

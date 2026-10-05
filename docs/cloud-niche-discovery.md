@@ -8,15 +8,21 @@ A balanced daily hunt rotates broad randomly drawn search probes, related videos
 
 The one-off avatar profile adds the user's three reference presenters as starting points while retaining broad and learned exploration. References are discovery bridges, not automatically accepted additions. Related results and title searches recursively expand the frontier, with maximum depth three. Existing catalog IDs are skipped before history reads and may bridge to unseen neighbours.
 
+One-off runs can opt into `enrich_existing` (`--enrich-existing` in the CLI). This queues up to 80 active catalog entries that have never passed the quality screen, including matching references. It updates fresh metrics and quality evidence only after the same admission checks; hidden entries stay hidden. Reports count `enriched_existing` separately from additions, and the original `first_seen_at` never changes. Daily discovery leaves this mode off so catalog refreshes do not consume the entire novelty budget.
+
 ## Admission
 
 Use the latest twelve long-form uploads. Ignore uploads younger than seven days when judging failures. Require at least four uploads aged 7–60 days, at least 75% with 10,000 views, a median of at least 20,000 views, and an upload in the last 21 days. These are research admission thresholds, not guarantees of monetization or profitable replication.
 
-Performance-qualified avatar candidates first receive a cheap visual triage when public disclosure is missing. Uncertain appearances are held before caption requests; likely matches receive the expensive content screen: two captions with at least 1,000 characters each and representative numbered stills from both videos. Three independent review clients may run concurrently. Model decisions must use a valid structured response, substantive content feasible with scripts and AI/stock visuals, and no serious unresolved concerns. Repeatable real-world filming alone does not pass. Missing evidence goes to review, never automatic admission.
+Performance-qualified avatar candidates first receive a visual triage when public disclosure is missing. With native Gemini configured, this inspects two public 0–45 second openings at one frame per second, using timestamped observations for each URL. This catches introductory hosts absent from YouTube's representative stills and allows different hosts across videos. A response exceeding 30,000 input tokens disables further opening requests; unsupported video requests fall back to static stills. The direct URL/clipping mechanism is documented by [Google](https://ai.google.dev/gemini-api/docs/generate-content/video-understanding).
+
+Uncertain appearances are held before caption requests; likely matches receive the separate content screen: two captions with at least 1,000 characters each and representative numbered stills from both videos. Three independent review clients may run concurrently. Model decisions must use a valid structured response, substantive content feasible with scripts and AI/stock visuals, and no serious unresolved concerns. Repeatable real-world filming alone does not pass. Missing evidence goes to review, never automatic admission.
 
 Atlas billing failures (HTTP 402) switch reviews to the already configured native Gemini provider. The native model stays configurable with `GEMINI_TEXT_MODEL`; transient server failures receive one bounded retry. Provider failures do not enter the channel rejection cache. If review providers remain unavailable, the run stops with an error and retains its frontier and completed additions. The job never automatically purchases credits or changes account billing.
 
-AI host disclosure means an explicit public host/avatar claim plus an observed presenter. The weaker `likely` candidate label requires two public YouTube AI labels and plausible presenter-style observations, or strong synthetic styling in both visual triage and the full content screen. Triage results are withheld from the second model prompt to reduce anchoring. A realistic face, generated thumbnail, or AI scenery alone does not qualify. Limited stills cannot prove synthetic identity; the product labels `likely` as a candidate.
+AI host disclosure means an explicit public host/avatar claim plus an observed presenter. The weaker `likely` candidate label requires two public YouTube AI labels and plausible presenter-style observations, strong synthetic styling in both static triage and the full screen, or strong virtual styling supported by at least two timestamped observations in each opening excerpt. Opening evidence can establish a presenter format even when later stills contain supporting footage. Triage results are withheld from the content model prompt to reduce anchoring. A realistic face, generated thumbnail, or AI scenery alone does not qualify. Automated sampled evidence cannot prove synthetic identity; the product labels `likely` as a candidate.
+
+The user's three named examples can receive a distinct `reference` label after the same performance and content checks plus an observed introductory host. This records the human-supplied reference; it does not claim independent identity verification. It does not propagate to neighbouring channels. Classifier changes invalidate review caches and reconsider uncertain completed reviews within the original remaining budget, while preserving addition checkpoints.
 
 ## Persistence and budgets
 
@@ -39,7 +45,7 @@ Set `FLY_NICHE_IMAGE` on the web app to the resulting registry digest. The web b
 With production environment available securely:
 
 ```
-python -m scripts.cloud_niche_hunt start --profile avatar --seconds 3600 --target 40 --candidates 800 --reviews 240 --pages 200 --api 2400
+python -m scripts.cloud_niche_hunt start --profile avatar --enrich-existing --seconds 3600 --target 40 --candidates 1000 --reviews 240 --pages 250 --api 3000
 python -m scripts.cloud_niche_hunt status --job-id <id>
 python -m scripts.cloud_niche_hunt resume --job-id <id>
 ```
@@ -49,3 +55,5 @@ Resume uses the same run ID, existing frontier, addition checkpoints, and origin
 ## Newly added
 
 The toggle shows original additions from the past seven days, ordered by insertion date and channel ID for stable ties. Refreshing metrics preserves `first_seen_at`. Cards display relative time, a calendar date for older entries, and an exact timestamp tooltip. Count and pagination use the same cutoff and other filters. Older catalog entries have not been retroactively quality-screened by this change.
+
+The separate AI presenter candidates toggle includes only quality-screened entries with `likely`, `disclosed`, or explicitly labelled `reference` evidence. It can be combined with Newly added for true new additions, or used alone to include quality-enriched existing entries. Defaults continue to browse all formats.

@@ -28,13 +28,14 @@ def test_count_and_list_use_identical_added_cutoff_and_preserve_other_filters():
     def catalog(**kwargs): calls.append(kwargs);return []
     def count(**kwargs): calls.append(kwargs);return 12
     ns=routes(list_niche_channels=catalog,count_niche_channels=count)
-    result=ns['niche_finder_channels'](user={},added_within_days=7,sort='score',q='test',min_subscribers=5000,offset=40)
+    result=ns['niche_finder_channels'](user={},added_within_days=7,ai_presenter=True,sort='score',q='test',min_subscribers=5000,offset=40)
     assert result['sort']=='newest'
     assert result['total']==12
     assert calls[0]['added_since']==calls[1]['added_since']==1_000_000-7*86400
     assert calls[0]['min_subscribers']==calls[1]['min_subscribers']==5000
     assert calls[0]['q']==calls[1]['q']=='test'
     assert calls[0]['offset']==40
+    assert calls[0]['ai_presenter']==calls[1]['ai_presenter'] is True
 
 
 def test_long_healthy_cloud_run_is_not_timed_out():

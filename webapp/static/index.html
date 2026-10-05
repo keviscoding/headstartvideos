@@ -1395,6 +1395,7 @@
                     <input type="checkbox" id="nf-f-has-recent" class="nf-sr-only" checked>
                     <input type="checkbox" id="nf-f-active" class="nf-sr-only">
                     <input type="checkbox" id="nf-f-new" class="nf-sr-only">
+                    <input type="checkbox" id="nf-f-avatar" class="nf-sr-only">
 
                     <div class="nf-filters-head">
                         <div>
@@ -1501,6 +1502,13 @@
                     </div>
 
                     <div class="nf-toggles">
+                        <button type="button" class="nf-toggle" id="nf-toggle-avatar" aria-pressed="false" onclick="toggleNicheFilter('avatar')">
+                            <span class="nf-toggle-knob"></span>
+                            <span class="nf-toggle-copy">
+                                <strong>AI presenter candidates</strong>
+                                <span>Quality-screened channels with avatar evidence</span>
+                            </span>
+                        </button>
                         <button type="button" class="nf-toggle" id="nf-toggle-new" aria-pressed="false" onclick="toggleNicheFilter('new')">
                             <span class="nf-toggle-knob"></span>
                             <span class="nf-toggle-copy">
@@ -2271,6 +2279,6 @@
 
     <script src="/static/cr-telemetry.js?v=20260804b"></script>
     <script src="/static/ranking.js?v=20260807f"></script>
-    <script src="/static/app.js?v=20261005-niche"></script>
+    <script src="/static/app.js?v=20261005-avatar"></script>
 </body>
 </html>

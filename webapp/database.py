@@ -408,6 +408,9 @@ def _init_db():
                 _ensure_column(cur, "niche_channels", "est_recent_monthly_revenue_low_usd", "DOUBLE PRECISION DEFAULT 0")
                 _ensure_column(cur, "niche_channels", "est_recent_monthly_revenue_high_usd", "DOUBLE PRECISION DEFAULT 0")
                 _ensure_column(cur, "niche_channels", "videos_last_14d", "INTEGER DEFAULT 0")
+                for name,definition in [("production_format","TEXT DEFAULT ''"),("avatar_confidence","TEXT DEFAULT 'unknown'"),
+                    ("quality_status","TEXT DEFAULT ''"),("quality_evidence_json","TEXT DEFAULT '{}'"),("discovery_job_id","TEXT DEFAULT ''")]:
+                    _ensure_column(cur,"niche_channels",name,definition)
                 _ensure_column(cur, "niche_hunt_runs", "job_id", "TEXT")
                 _ensure_column(cur, "niche_hunt_runs", "request_json", "TEXT DEFAULT '{}'")
                 _ensure_column(cur, "niche_hunt_runs", "progress_json", "TEXT DEFAULT '[]'")
@@ -444,6 +447,9 @@ def _init_db():
             _ensure_column(cur, "niche_channels", "est_recent_monthly_revenue_low_usd", "REAL DEFAULT 0")
             _ensure_column(cur, "niche_channels", "est_recent_monthly_revenue_high_usd", "REAL DEFAULT 0")
             _ensure_column(cur, "niche_channels", "videos_last_14d", "INTEGER DEFAULT 0")
+            for name,definition in [("production_format","TEXT DEFAULT ''"),("avatar_confidence","TEXT DEFAULT 'unknown'"),
+                ("quality_status","TEXT DEFAULT ''"),("quality_evidence_json","TEXT DEFAULT '{}'"),("discovery_job_id","TEXT DEFAULT ''")]:
+                _ensure_column(cur,"niche_channels",name,definition)
             _ensure_column(cur, "niche_hunt_runs", "job_id", "TEXT")
             _ensure_column(cur, "niche_hunt_runs", "request_json", "TEXT DEFAULT '{}'")
             _ensure_column(cur, "niche_hunt_runs", "progress_json", "TEXT DEFAULT '[]'")
@@ -2072,6 +2078,7 @@ def list_niche_channels(
     active_recently: bool = False,
     has_recent_avg: bool = False,
     added_since: float | None = None,
+    ai_presenter: bool = False,
     q: str = "",
 ) -> list[dict]:
     limit = max(1, min(int(limit or 40), 100))
@@ -2084,6 +2091,8 @@ def list_niche_channels(
     params: list = []
     if active_only:
         clauses.append("active = 1")
+    if ai_presenter:
+        clauses.append("quality_status='screened' AND avatar_confidence IN ('likely','disclosed','reference')")
     if added_since is not None:
         clauses.append("first_seen_at >= ?")
         params.append(float(added_since))
@@ -2146,12 +2155,15 @@ def count_niche_channels(
     active_recently: bool = False,
     has_recent_avg: bool = False,
     added_since: float | None = None,
+    ai_presenter: bool = False,
     q: str = "",
 ) -> int:
     clauses = []
     params: list = []
     if active_only:
         clauses.append("active = 1")
+    if ai_presenter:
+        clauses.append("quality_status='screened' AND avatar_confidence IN ('likely','disclosed','reference')")
     if added_since is not None:
         clauses.append("first_seen_at >= ?")
         params.append(float(added_since))
