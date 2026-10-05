@@ -2730,9 +2730,11 @@ const cookingManager = {
             }
             this.result.output_url = outUrl;
             const finishedKind = this.kind;
+            const finishedTitle = this.title;
+            const finishedResult = this.result;
             this._clear();
             state.videoUrl = outUrl;
-            state.videoPath = this.result.output_path;
+            state.videoPath = finishedResult.output_path;
             this._hideCookingBar();
             const pctEl = document.getElementById('progress-pct');
             if (progressBar) progressBar.style.width = '100%';
@@ -2749,8 +2751,14 @@ const cookingManager = {
                 if (dl) { dl.href = outUrl; dl.download = 'ranking-short.mp4'; }
             } else {
                 if (state.step !== 6) goToStep(6);
-                setTimeout(() => showUploadKit(this.result), 400);
+                setTimeout(() => showUploadKit(finishedResult), 400);
             }
+            
+            // Show toast notification when video is ready
+            this.title = finishedTitle;
+            this.result = finishedResult;
+            this._showToast();
+            
             try { loadHistory(); } catch (_) {}
             refreshUserData();
         });
@@ -2937,6 +2945,8 @@ const cookingManager = {
             state.videoUrl = outUrl;
             state.videoPath = data.output_path;
             const finishedKind = this.kind;
+            const finishedTitle = this.title;
+            const finishedResult = this.result;
             this._clear();
             this._hideCookingBar();
             if (state.page !== 'pipeline') navigateTo('pipeline');
@@ -2950,8 +2960,14 @@ const cookingManager = {
                 if (dl) { dl.href = outUrl; dl.download = 'ranking-short.mp4'; }
             } else {
                 if (state.step !== 6) goToStep(6);
-                showUploadKit(data);
+                showUploadKit(finishedResult);
             }
+            
+            // Show toast notification when restored job is complete
+            this.title = finishedTitle;
+            this.result = finishedResult;
+            this._showToast();
+            
             try { loadHistory(); } catch (_) {}
             return;
         }
@@ -8388,8 +8404,6 @@ async function startAvatarGeneration() {
         
         // Go back to step 1
         goToStep(1);
-        
-        cookingManager._showToast();
         
     } catch (e) {
         if (e.message !== '__billing__') {
