@@ -103,7 +103,8 @@ def test_face_alone_and_ai_broll_cannot_become_avatar_channel():
     assert cloud.avatar_status({'presenter_visible':True}, {'explicit_avatar_claim':True})=='disclosed'
     assert cloud.avatar_status({'presenter_visible':True,'avatar_style_confidence':'high','avatar_observations':['virtual host','same virtual setup']}, {'ai_video_samples':2})=='likely'
 
-def test_hunt_uses_a_live_frontier_and_publishes_only_review_passes(store,monkeypatch):
+@pytest.mark.parametrize('provider_unavailable',[False,True])
+def test_hunt_uses_a_live_frontier_and_publishes_only_review_passes(store,monkeypatch,provider_unavailable):
     import config
     request={'time_budget_seconds':300,'target_channels':1,'profile':'balanced'}
     with db._conn() as c: c.execute('UPDATE niche_hunt_runs SET request_json=?',(json.dumps(request),))
@@ -125,18 +126,25 @@ def test_hunt_uses_a_live_frontier_and_publishes_only_review_passes(store,monkey
         'duration_sec':600,'view_count':50000,'published_at':(datetime.now(timezone.utc)-timedelta(days=10+i)).isoformat()} for i in range(6)]
     monkeypatch.setattr(cloud,'run_niche_finder',lambda **kw:{'hits':[h]})
     class Evidence:
-        def __init__(self,**kw): self.counters={'model_requests':1}
-        def review(self,hit): return {**REVIEW,'reproducible':True}
+        def __init__(self,**kw):
+            self.counters={'model_requests':1}
+            self.state=kw['provider_state']
+        def review(self,hit):
+            if provider_unavailable:
+                self.state.update(atlas_payment_blocked=True,native_unavailable=429)
+                return {'decision':'review','screen_error':'HTTPError'}
+            return {**REVIEW,'reproducible':True}
         def close(self): pass
     monkeypatch.setattr(cloud,'EvidenceClient',Evidence)
     result=cloud.run_cloud_hunt('test')
-    assert result['added']==1
-    assert result['stop_reason']=='target_reached'
-    assert db.count_niche_channels()==1
-    assert db.get_niche_hunt_run_by_job_id('test')['status']=='completed'
+    assert result['added']==(0 if provider_unavailable else 1)
+    assert result['stop_reason']==('review_providers_unavailable' if provider_unavailable else 'target_reached')
+    assert db.count_niche_channels()==(0 if provider_unavailable else 1)
+    assert db.get_niche_hunt_run_by_job_id('test')['status']==('error' if provider_unavailable else 'completed')
     with db._conn() as c:
         assert c.execute("SELECT count(*) FROM niche_discovery_tasks WHERE source='learned'").fetchone()[0]>0
         assert c.execute('SELECT count(*) FROM niche_discovery_lease').fetchone()[0]==0
+        if provider_unavailable: assert c.execute('SELECT count(*) FROM niche_discovery_cache').fetchone()[0]==0
 
 def test_stale_heartbeat_cannot_erase_an_admission_counter(store):
     assert store.claim_run()

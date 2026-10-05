@@ -14,6 +14,8 @@ Use the latest twelve long-form uploads. Ignore uploads younger than seven days 
 
 Performance-qualified avatar candidates first receive a cheap visual triage when public disclosure is missing. Uncertain appearances are held before caption requests; likely matches receive the expensive content screen: two captions with at least 1,000 characters each and representative numbered stills from both videos. Three independent review clients may run concurrently. Model decisions must use a valid structured response, substantive content feasible with scripts and AI/stock visuals, and no serious unresolved concerns. Repeatable real-world filming alone does not pass. Missing evidence goes to review, never automatic admission.
 
+Atlas billing failures (HTTP 402) switch reviews to the already configured native Gemini provider. The native model stays configurable with `GEMINI_TEXT_MODEL`; transient server failures receive one bounded retry. Provider failures do not enter the channel rejection cache. If review providers remain unavailable, the run stops with an error and retains its frontier and completed additions. The job never automatically purchases credits or changes account billing.
+
 AI host disclosure means an explicit public host/avatar claim plus an observed presenter. The weaker `likely` candidate label requires two public YouTube AI labels and plausible presenter-style observations, or strong synthetic styling in both visual triage and the full content screen. Triage results are withheld from the second model prompt to reduce anchoring. A realistic face, generated thumbnail, or AI scenery alone does not qualify. Limited stills cannot prove synthetic identity; the product labels `likely` as a candidate.
 
 ## Persistence and budgets
@@ -32,7 +34,7 @@ Build without changing the cook app's release:
 flyctl deploy -c fly.niche.toml --build-only --push --remote-only --image-label niche-<version>
 ```
 
-Set `FLY_NICHE_IMAGE` on the web app to the resulting registry digest. The web bridge injects fresh database, YouTube, Atlas, and caption provider configuration into each discovery Machine. Do not put credentials in commands or source control.
+Set `FLY_NICHE_IMAGE` on the web app to the resulting registry digest. The web bridge injects fresh database, YouTube, Atlas, native Gemini, and caption provider configuration into each discovery Machine. Do not put credentials in commands or source control.
 
 With production environment available securely:
 
