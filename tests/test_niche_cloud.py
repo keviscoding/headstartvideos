@@ -24,7 +24,7 @@ def hit(cid='new'):
     return {'channel_id':cid,'channel_name':cid,'channel_url':'https://youtube.com/channel/'+cid,
             'recent_avg_views':50000,'videos_last_14d':5}
 
-REVIEW={'decision':'pass','production_format':'presenter','avatar_confidence':'likely'}
+REVIEW={'decision':'pass','production_format':'presenter','avatar_confidence':'likely','ai_reproducible':True}
 PERF={'passes':True,'median_views':50000}
 
 def test_frontier_deduplicates_and_recovers_expired_work(store):
@@ -137,3 +137,16 @@ def test_hunt_uses_a_live_frontier_and_publishes_only_review_passes(store,monkey
     with db._conn() as c:
         assert c.execute("SELECT count(*) FROM niche_discovery_tasks WHERE source='learned'").fetchone()[0]>0
         assert c.execute('SELECT count(*) FROM niche_discovery_lease').fetchone()[0]==0
+
+def test_stale_heartbeat_cannot_erase_an_admission_counter(store):
+    assert store.claim_run()
+    t=task(store)
+    assert store.publish(hit(),REVIEW,PERF,t,{})=='added'
+    assert store.heartbeat({'added':0})
+    assert db.get_niche_hunt_run_by_job_id('test')['channels_upserted']==1
+
+def test_generic_repeatable_filming_is_not_ai_production(store):
+    assert store.claim_run()
+    with pytest.raises(ValueError):
+        store.publish(hit(),{**REVIEW,'ai_reproducible':False},PERF,task(store),{})
+    assert db.count_niche_channels()==0

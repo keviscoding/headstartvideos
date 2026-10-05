@@ -16,7 +16,7 @@ from core.niche_daily_keywords import SIMPLE_PROBES
 from core.niche_finder import _fetch_videos, _longform_from_uploads, _yt, run_niche_finder
 from core.niche_scraper import _parse_search_cards, scrape_keyword_search
 
-CLOUD_RUBRIC = "cloud-avatars-v2"
+CLOUD_RUBRIC = "cloud-avatars-v3"
 SEED_HANDLES = ["GlenPritchardBuilds", "OpalRowe1945", "TheJapaneseMethod0"]
 AVATAR_CLAIM = re.compile(
     r"\b(?:ai[- ](?:generated|powered|created|animated)\s+(?:host|presenter|avatar|character)|"
@@ -73,7 +73,9 @@ def learned_queries(titles, limit=2):
     out=[]
     for title in titles:
         words=re.findall(r"[A-Za-z][A-Za-z'-]+",re.sub(r"\|.*$","",title or ""))
-        words=[w for w in words if w.lower() not in {"the","a","an","this","these","those","my","your","you","i","full","movie","video"}]
+        words=[w for w in words if w.lower() not in {"the","a","an","this","these","those","my","your","you","i","full","movie","video",
+            "is","are","with","why","how","what","to","and","or","but","of","for","in","on","at","from","about",
+            "should","could","would","will","never","anymore","only","before","after","still","here","no"}]
         query=" ".join(words[:7])
         if 3 <= len(words) and query.casefold() not in {q.casefold() for q in out}:
             out.append(query)
@@ -387,16 +389,28 @@ def run_cloud_hunt(job_id):
                     continue
                 if stats["reviewed"]>=settings.review_cap or stop.is_set() or time.monotonic()>=deadline:
                     continue  # lease can be reclaimed for resume
+                hit["avatar_evidence"]=explorer.avatar_evidence(hit)
+                if (settings.profile=="avatar" and hit["avatar_evidence"]["ai_video_samples"]<2
+                    and not hit["avatar_evidence"]["explicit_avatar_claim"]):
+                    outcome={"channel_id":cid,"channel_name":hit["channel_name"],"status":"avatar_hold",
+                        "performance":perf,"avatar_evidence":hit["avatar_evidence"],
+                        "reason":"No sufficient public evidence of AI production; content review deferred"}
+                    store.finish_task(task,outcome)
+                    store.remember(cid,signature,outcome,21600)
+                    continue
                 if not store.reserve_budget("content_review",1,300):
                     stop.set()
                     stats["budget_exhausted"]="daily_content_reviews"
                     continue
                 stats["reviewed"]+=1
-                hit["avatar_evidence"]=explorer.avatar_evidence(hit)
                 pending.append((task,hit,perf,pool.submit(content_review,hit)))
             for task,hit,perf,future in pending:
                 review,counters=future.result()
                 review["avatar_sources"]=hit["avatar_evidence"]
+                queries=review.get("discovery_queries")
+                for query in (queries if isinstance(queries,list) else [])[:3]:
+                    if isinstance(query,str) and 3<=len(query.strip())<=100 and task["depth"]<3:
+                        store.enqueue("search",{"query":query.strip()},source="learned",depth=task["depth"]+1)
                 for key,value in counters.items(): stats[key]=stats.get(key,0)+value
                 avatar=avatar_status(review,hit["avatar_evidence"])
                 review["avatar_confidence"]=avatar if avatar in {"disclosed","likely"} else "unknown"

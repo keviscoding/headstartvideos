@@ -232,6 +232,15 @@ class EvidenceClient:
                 "A realistic human face alone is insufficient. AI narration over scenery, cartoons without a "
                 "presenter, film actors, and generated thumbnails alone are not avatar-presenter formats. "
                 "Use unknown whenever the samples cannot distinguish a real host from a synthetic host."
+                " Report ai_reproducible as a boolean. This means the core viewer value can be recreated "
+                "with original generated scripts, stock/AI visuals and a synthetic presenter, without "
+                "filming original physical tests, real-world demonstrations, personal vlogs or reactions "
+                "dependent on a real person's authentic experience. A generally repeatable filming workflow "
+                "is not ai_reproducible. Pass requires ai_reproducible=true. "
+                "You have static stills and captions only: never claim to observe motion, lip synchronization, "
+                "natural movement or an animation defect. Only describe what is actually visible in the stills. "
+                "Also return discovery_queries: up to three concise topic phrases learned from these videos "
+                "to discover other channels, without copying presenter names or exact video titles."
             )
         try:
             self.counters["model_requests"] += 1
@@ -265,6 +274,9 @@ class EvidenceClient:
             } or not isinstance(result.get("niche"), str) or not result["niche"].strip():
                 raise ValueError("Invalid review format or niche")
             result["avatar_confidence"] = "unknown"
+            if self.avatar_screen and result.get("ai_reproducible") is not True and result["decision"]=="pass":
+                result["decision"]="review"
+                result["concerns"].append("AI production feasibility has not been established")
             if result["decision"] == "pass" and (
                 not sufficient or result.get("reproducible") is not True
                 or result.get("concerns") or not result.get("reasons")

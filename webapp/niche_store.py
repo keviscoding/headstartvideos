@@ -72,8 +72,11 @@ class NicheStore:
             return False
         if meta is not None:
             with db._conn() as conn:
-                conn.cursor().execute(db._q("UPDATE niche_hunt_runs SET meta_json=?,channels_upserted=? WHERE job_id=? AND status='running'"),
-                                      (json.dumps({**meta, "heartbeat_at": time.time()}),int(meta.get("added",0)),self.job_id))
+                added=int(meta.get("added",0))
+                conn.cursor().execute(db._q("""UPDATE niche_hunt_runs SET meta_json=?,
+                    channels_upserted=CASE WHEN channels_upserted>? THEN channels_upserted ELSE ? END
+                    WHERE job_id=? AND status='running'"""),
+                    (json.dumps({**meta, "heartbeat_at": time.time()}),added,added,self.job_id))
         return True
 
     def reserve_budget(self, provider, amount, daily_cap):
@@ -169,7 +172,7 @@ class NicheStore:
         return rows[:limit]
 
     def publish(self, hit, review, performance, task, outcome):
-        if review.get("decision") != "pass" or not performance.get("passes"):
+        if review.get("decision") != "pass" or review.get("ai_reproducible") is not True or not performance.get("passes"):
             raise ValueError("Only screened performance-qualified channels can be published")
         # Admission and its checkpoint commit together. Cancellation locks the same
         # run row, so a cancelled worker cannot continue inserting channels.
