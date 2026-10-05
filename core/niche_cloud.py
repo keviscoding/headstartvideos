@@ -223,10 +223,11 @@ def run_cloud_hunt(job_id):
     started=time.monotonic()
     wall_started=float(run["started_at"])
     deadline=started+max(0,settings.seconds-(time.time()-wall_started))
-    signature=settings.signature(config.ATLAS_TEXT_MODEL)
+    signature=settings.signature(config.ATLAS_TEXT_MODEL+"|"+config.GEMINI_TEXT_MODEL)
     existing=store.existing_ids()
     cached=store.cached_ids(signature)
     stop=threading.Event()
+    provider_state={}
     stats={"runner":"fly","rubric":CLOUD_RUBRIC,"profile":settings.profile,"settings":asdict(settings),
         "added":0,"reviewed":0,"enriched":0,"searches":0,"related_pages":0,"cached_skipped":0,
         "existing_skipped":0,"results":[],"model_requests":0,"prompt_tokens":0,"completion_tokens":0,
@@ -244,6 +245,7 @@ def run_cloud_hunt(job_id):
     def snapshot():
         with lock: meta={**stats,"results":list(stats["results"])}
         meta.update(elapsed_seconds=round(time.time()-wall_started,2),heartbeat_at=time.time(),tasks=store.task_counts())
+        meta["review_provider"]=dict(provider_state)
         return meta
 
     def heartbeat():
@@ -320,7 +322,8 @@ def run_cloud_hunt(job_id):
 
     def content_review(hit):
         client=EvidenceClient(deadline=deadline,downsub_key=config.DOWNSUB_KEY,
-            atlas_key=config.ATLASCLOUD_KEY,model=config.ATLAS_TEXT_MODEL,avatar_screen=True)
+            atlas_key=config.ATLASCLOUD_KEY,model=config.ATLAS_TEXT_MODEL,avatar_screen=True,
+            gemini_key=config.GEMINI_KEY,gemini_model=config.GEMINI_TEXT_MODEL,provider_state=provider_state)
         try:
             if (settings.profile=="avatar" and hit["avatar_evidence"]["ai_video_samples"]<2
                 and not hit["avatar_evidence"]["explicit_avatar_claim"]):
@@ -461,9 +464,13 @@ def run_cloud_hunt(job_id):
                 elif status=="pass":
                     outcome["status"]="ready"
                 store.finish_task(task,outcome)
-                if outcome["status"] not in {"ready","cancelled"}:
+                screen_error=review.get("screen_error") or (review.get("avatar_triage") or {}).get("error")
+                if outcome["status"] not in {"ready","cancelled"} and not screen_error:
                     store.remember(hit["channel_id"],signature,outcome,604800 if status=="reject" else 21600 if status=="avatar_hold" else 86400)
             stats["youtube_api"]=api_stats()
+            if provider_state.get("atlas_payment_blocked") and (not config.GEMINI_KEY or provider_state.get("native_unavailable") or provider_state.get("native_failures",0)>=3):
+                stats["budget_exhausted"]="review_providers_unavailable"
+                stop.set()
             store.heartbeat(snapshot())
         reason=(stats.get("budget_exhausted") or ("daily_api_budget" if reservation["exhausted"]
             else "cancelled" if stop.is_set() else "target_reached" if stats["added"]>=settings.target
@@ -473,7 +480,8 @@ def run_cloud_hunt(job_id):
         meta["youtube_api"]=api_stats()
         current=db.get_niche_hunt_run_by_job_id(job_id)
         if current and current["status"]=="running":
-            db.finish_niche_hunt_run(run["id"],status="completed",meta=meta,channels_upserted=stats["added"])
+            unavailable=reason=="review_providers_unavailable"
+            db.finish_niche_hunt_run(run["id"],status="error" if unavailable else "completed",meta=meta,channels_upserted=stats["added"],error="Review providers unavailable; frontier retained" if unavailable else "")
         progress(f"Finished: {stats['added']} additions in {meta['elapsed_seconds']:.0f}s ({reason})")
         return meta
     except Exception as exc:

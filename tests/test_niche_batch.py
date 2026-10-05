@@ -174,6 +174,7 @@ def test_model_screen_fails_closed_and_never_confirms_avatar_identity(monkeypatc
     ))
     response_text = response if isinstance(response, str) else json.dumps(response)
     monkeypatch.setattr(client.session, "post", lambda *a, **kw: SimpleNamespace(
+        status_code=200,
         raise_for_status=lambda: None,
         json=lambda: {"choices": [{"message": {"content": response_text}}]},
     ))
@@ -225,3 +226,56 @@ def test_saved_report_replay_avoids_new_discovery_work(monkeypatch, tmp_path):
     assert result["discovery"]["discovery"] == "saved_report_replay"
     assert result["content_reviews"] == 0
     assert result["rubric_version"] == batch.RUBRIC_VERSION
+
+
+def test_native_fallback_preserves_images_and_skips_payment_blocked_atlas(monkeypatch):
+    import requests
+    calls=[]
+    def post(url,**kwargs):
+        calls.append((url,kwargs))
+        response=requests.Response()
+        response.status_code=402 if 'atlascloud' in url else 200
+        response._content=json.dumps({'candidates':[{'content':{'parts':[{'text':'{"ready":true}'}]}}],
+            'usageMetadata':{'promptTokenCount':17,'candidatesTokenCount':4}}).encode()
+        return response
+    state={}
+    client=batch.EvidenceClient(deadline=10**12,atlas_key='atlas-test',gemini_key='native-test',provider_state=state)
+    monkeypatch.setattr(client.session,'post',post)
+    messages=[{'role':'system','content':'Check evidence'}, {'role':'user','content':[
+        {'type':'text','text':'sample'}, {'type':'image_url','image_url':{'url':'data:image/jpeg;base64,YWJj'}}]}]
+    data=client.model_json(messages)
+    client.model_json(messages)
+    assert len(calls)==3 and sum('atlascloud' in x[0] for x in calls)==1
+    assert state['atlas_payment_blocked'] and state['active']=='gemini'
+    native=calls[1]
+    assert native[1]['headers']=={'x-goog-api-key':'native-test'}
+    assert 'native-test' not in native[0]
+    assert native[1]['json']['contents'][0]['parts'][1]['inlineData']=={'mimeType':'image/jpeg','data':'YWJj'}
+    assert data['usage']['prompt_tokens']==17 and client.counters['model_requests']==3
+
+
+def test_native_transient_retry_is_bounded(monkeypatch):
+    import requests
+    client=batch.EvidenceClient(deadline=10**12,gemini_key='test')
+    calls=[]
+    def post(*a,**k):
+        calls.append(1)
+        response=requests.Response();response.status_code=503;response._content=b'{}'
+        return response
+    monkeypatch.setattr(client.session,'post',post)
+    monkeypatch.setattr(batch.time,'sleep',lambda *_:None)
+    with pytest.raises(requests.HTTPError): client.model_json([{'role':'user','content':'test'}])
+    assert len(calls)==2 and client.provider_state['native_failures']==1
+
+
+def test_atlas_other_errors_do_not_switch_providers(monkeypatch):
+    import requests
+    client=batch.EvidenceClient(deadline=10**12,atlas_key='test',gemini_key='test')
+    calls=[]
+    def post(url,**k):
+        calls.append(url)
+        response=requests.Response();response.status_code=400;response._content=b'{}'
+        return response
+    monkeypatch.setattr(client.session,'post',post)
+    with pytest.raises(requests.HTTPError): client.model_json([{'role':'user','content':'test'}])
+    assert len(calls)==1 and 'atlascloud' in calls[0]
