@@ -113,6 +113,20 @@ def test_review_cache_invalidates_when_rubric_or_profile_changes(store):
     store.remember('hold',sig,{},60)
     assert store.cached_ids(sig)=={'hold'}
     assert not store.cached_ids(cloud.HuntSettings(profile='avatar').signature('model'))
+    assert not store.cached_ids(cloud.HuntSettings(max_subscribers=2000).signature('model'))
+    assert not store.cached_ids(cloud.HuntSettings(min_recent_avg_views=100000).signature('model'))
+
+
+def test_admin_average_cutoff_is_separate_from_mature_median_and_small_subscriber_cap():
+    settings=cloud.HuntSettings.from_request({'min_recent_avg_views':100000,'max_subscribers':2000})
+    assert settings.max_subscribers==2000
+    candidate={**hit(),'recent_avg_views':80000,'sampled_videos':[
+        {'published_at':(datetime.now(timezone.utc)-timedelta(days=10+i)).isoformat(),
+         'view_count':150000,'duration_sec':600} for i in range(6)]}
+    evidence=cloud.eligible_performance(candidate,settings)
+    assert evidence['median_views']==150000 and evidence['recent_average_views']==80000
+    assert not evidence['passes']
+    assert cloud.eligible_performance(candidate,cloud.HuntSettings())['passes']
 
 @pytest.mark.parametrize('text,expected',[
     ('Our host is fictional and the videos use AI.',True),
