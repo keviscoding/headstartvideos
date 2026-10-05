@@ -2780,8 +2780,7 @@ const cookingManager = {
                 try { err = JSON.parse(e.data).error || err; } catch (_) {}
                 closeThis();
                 this._clear();
-                this._hideCookingBar();
-                alert('Build failed: ' + err);
+                this._showFailedState(err);
                 return;
             }
             // Transient disconnect (idle timeout / LB / network). The render keeps
@@ -2978,8 +2977,8 @@ const cookingManager = {
             return;
         }
         if (data && (data.status === 'error' || data.status === 'cancelled')) {
-            this._clear();
-            this._hideCookingBar();
+            const errorMsg = data.error || (data.status === 'cancelled' ? 'Cook was cancelled' : 'Cook failed');
+            this._showFailedState(errorMsg);
             return;
         }
         // Still running / queued — show the bar and reconnect the live stream.
@@ -3001,8 +3000,34 @@ const cookingManager = {
 
     _showCookingBar() {
         const bar = document.getElementById('cooking-bar');
+        const spinner = document.getElementById('cooking-bar-spinner');
+        const errorIcon = document.getElementById('cooking-bar-error-icon');
         const titleEl = document.getElementById('cooking-bar-title');
         const labelEl = document.getElementById('cooking-bar-label');
+        const ellipsis = document.getElementById('cooking-bar-ellipsis');
+        const statusEl = document.getElementById('cooking-bar-status');
+        const viewBtn = document.getElementById('cooking-bar-view-btn');
+        const cancelBtn = document.getElementById('cooking-bar-cancel-btn');
+        const dismissBtn = document.getElementById('cooking-bar-dismiss-btn');
+
+        if (!bar) return;
+
+        // Reset bar to cooking state
+        bar.setAttribute('data-state', 'cooking');
+        bar.style.background = 'var(--accent-soft-dark)';
+        bar.style.borderBottom = '1px solid var(--accent)';
+
+        // Show spinner, hide error icon
+        if (spinner) spinner.classList.remove('hidden');
+        if (errorIcon) errorIcon.classList.add('hidden');
+
+        // Reset label styling
+        if (labelEl) {
+            labelEl.textContent = this.kind === 'storyboard_pack' ? 'Building' : 'Cooking';
+            labelEl.style.color = '';
+        }
+
+        // Set title
         if (titleEl) {
             const n = this.activeCount || 1;
             if (this.kind === 'storyboard_pack') {
@@ -3012,25 +3037,96 @@ const cookingManager = {
                     ? `${n} videos`
                     : (this.title || 'your video');
             }
+            titleEl.style.color = 'var(--accent)';
         }
-        if (labelEl) {
-            labelEl.textContent = this.kind === 'storyboard_pack' ? 'Building' : 'Cooking';
+
+        // Show ellipsis
+        if (ellipsis) ellipsis.textContent = '...';
+
+        // Set status
+        if (statusEl) {
+            if (!statusEl.textContent || statusEl.textContent === 'Starting...') {
+                statusEl.textContent = this.kind === 'storyboard_pack'
+                    ? 'Stills generating…'
+                    : this.kind === 'storyboard'
+                    ? 'Starting your cook…'
+                    : this.kind === 'ranking'
+                    ? 'Starting your ranking short…'
+                    : 'Joining cook queue...';
+            }
+            statusEl.style.color = 'var(--app-ink-3)';
         }
-        const statusEl = document.getElementById('cooking-bar-status');
-        if (statusEl && (!statusEl.textContent || statusEl.textContent === 'Starting...')) {
-            statusEl.textContent = this.kind === 'storyboard_pack'
-                ? 'Stills generating…'
-                : this.kind === 'storyboard'
-                ? 'Starting your cook…'
-                : this.kind === 'ranking'
-                ? 'Starting your ranking short…'
-                : 'Joining cook queue...';
-        }
-        if (bar) bar.classList.remove('hidden');
+
+        // Show View/Cancel buttons, hide Dismiss
+        if (viewBtn) viewBtn.classList.remove('hidden');
+        if (cancelBtn) cancelBtn.classList.remove('hidden');
+        if (dismissBtn) dismissBtn.classList.add('hidden');
+
+        bar.classList.remove('hidden');
     },
 
     _hideCookingBar() {
-        document.getElementById('cooking-bar')?.classList.add('hidden');
+        const bar = document.getElementById('cooking-bar');
+        if (bar) {
+            bar.classList.add('hidden');
+            bar.setAttribute('data-state', 'cooking');
+        }
+    },
+
+    _showFailedState(errorMessage) {
+        const bar = document.getElementById('cooking-bar');
+        const spinner = document.getElementById('cooking-bar-spinner');
+        const errorIcon = document.getElementById('cooking-bar-error-icon');
+        const label = document.getElementById('cooking-bar-label');
+        const title = document.getElementById('cooking-bar-title');
+        const ellipsis = document.getElementById('cooking-bar-ellipsis');
+        const status = document.getElementById('cooking-bar-status');
+        const viewBtn = document.getElementById('cooking-bar-view-btn');
+        const cancelBtn = document.getElementById('cooking-bar-cancel-btn');
+        const dismissBtn = document.getElementById('cooking-bar-dismiss-btn');
+        const upgradeBtn = document.getElementById('cooking-upgrade-btn');
+
+        if (!bar) return;
+
+        // Update bar state and styling
+        bar.setAttribute('data-state', 'failed');
+        bar.style.background = 'var(--error-soft)';
+        bar.style.borderBottom = '1px solid var(--error)';
+
+        // Switch spinner to error icon
+        if (spinner) spinner.classList.add('hidden');
+        if (errorIcon) errorIcon.classList.remove('hidden');
+
+        // Update text
+        if (label) {
+            label.textContent = 'Failed';
+            label.style.color = 'var(--error)';
+        }
+        if (title) title.style.color = 'var(--error)';
+        if (ellipsis) ellipsis.textContent = '';
+
+        // Show error message
+        if (status) {
+            status.textContent = errorMessage || 'Cook failed';
+            status.style.color = 'var(--error)';
+        }
+
+        // Update buttons - hide View/Cancel, show Dismiss
+        if (viewBtn) viewBtn.classList.add('hidden');
+        if (cancelBtn) cancelBtn.classList.add('hidden');
+        if (upgradeBtn) upgradeBtn.classList.add('hidden');
+        if (dismissBtn) dismissBtn.classList.remove('hidden');
+
+        // Keep bar visible
+        bar.classList.remove('hidden');
+    },
+
+    dismissFailure() {
+        this._clear();
+        this._hideCookingBar();
+        // Re-enable Generate button if it was disabled
+        const generateBtn = document.getElementById('build-generate');
+        if (generateBtn) generateBtn.disabled = false;
     },
 
     _showToast(title) {
@@ -7561,13 +7657,13 @@ async function pollStoryboardAssemble() {
             if (_sbAssemblePollTimer) { clearInterval(_sbAssemblePollTimer); _sbAssemblePollTimer = null; }
             setLoading(btnAssemble, false);
             setLoading(btnAnimate, false);
+            const errorMsg = data.error || (data.status === 'cancelled' ? 'Cook was cancelled' : 'Cook failed');
             if (cookingManager.jobId === _sbAssembleJobId) {
-                cookingManager._clear();
-                cookingManager._hideCookingBar();
+                cookingManager._showFailedState(errorMsg);
             } else {
                 _sbHideCookingBar();
+                alert(errorMsg);
             }
-            alert(data.error || 'Cook failed');
         }
     } catch (e) {
         console.warn('assemble poll', e);
@@ -8311,13 +8407,14 @@ async function pollStoryboardPack() {
         } else if (data.status === 'error' || data.status === 'cancelled') {
             if (_sbPollTimer) { clearInterval(_sbPollTimer); _sbPollTimer = null; }
             _sbSetPackLoading(false);
+            const errorMsg = data.error || (data.status === 'cancelled' ? 'Pack generation was cancelled' : 'Storyboard pack failed');
             if (cookingManager.kind === 'storyboard_pack' && cookingManager.jobId === _sbJobId) {
-                cookingManager._clear();
-                cookingManager._hideCookingBar();
+                cookingManager._showFailedState(errorMsg);
+            } else {
+                alert(errorMsg);
             }
             if (continueBtn) continueBtn.classList.add('hidden');
             document.getElementById('btn-sb-goto-assemble')?.classList.add('hidden');
-            alert(data.error || 'Storyboard pack failed');
         }
     } catch (e) {
         console.warn('storyboard poll', e);
