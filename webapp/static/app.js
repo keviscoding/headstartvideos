@@ -1493,10 +1493,13 @@ function hideTrialExhaustedModal() {
  *
  * `charge` is what the card is actually billed on the day they convert, which
  * the CTA must state outright — annual takes the whole year at once.
+ *
+ * NEW PRICING (for new signups): Starter $19/$190, Daily $79/$790
+ * Existing subscribers grandfathered at $27/$270 and $49/$490
  */
 const PLAN_CATALOG = [
-    { tier: 'starter', monthly: { charge: '$27' }, annual: { charge: '$270' } },
-    { tier: 'daily', monthly: { charge: '$49' }, annual: { charge: '$490' } },
+    { tier: 'starter', monthly: { charge: '$19' }, annual: { charge: '$190' } },
+    { tier: 'daily', monthly: { charge: '$79' }, annual: { charge: '$790' } },
 ];
 
 function planByTier(tier) {
@@ -1617,22 +1620,22 @@ function setPricingPlan(cycle) {
     if (cycle === 'annual') {
         mBtn.style.background = 'transparent'; mBtn.style.color = 'var(--app-ink-3)';
         aBtn.style.background = 'var(--accent)'; aBtn.style.color = 'white';
-        document.getElementById('starter-price').textContent = '$22.50';
+        document.getElementById('starter-price').textContent = '$15.83';
         document.getElementById('starter-period').textContent = '/mo';
-        document.getElementById('starter-note').textContent = 'Billed $270/year · 2 months free';
+        document.getElementById('starter-note').textContent = 'Billed $190/year · 2 months free';
         document.getElementById('starter-videos').innerHTML = '<strong>180 credits</strong>/year';
-        document.getElementById('daily-price').textContent = '$40.83';
+        document.getElementById('daily-price').textContent = '$65.83';
         document.getElementById('daily-period').textContent = '/mo';
-        document.getElementById('daily-note').textContent = 'Billed $490/year · 2 months free';
+        document.getElementById('daily-note').textContent = 'Billed $790/year · 2 months free';
         document.getElementById('daily-videos').innerHTML = '<strong>420 credits</strong>/year';
     } else {
         aBtn.style.background = 'transparent'; aBtn.style.color = 'var(--app-ink-3)';
         mBtn.style.background = 'var(--accent)'; mBtn.style.color = 'white';
-        document.getElementById('starter-price').textContent = '$27';
+        document.getElementById('starter-price').textContent = '$19';
         document.getElementById('starter-period').textContent = '/mo';
         document.getElementById('starter-note').textContent = '15 credits / month · cancel anytime';
         document.getElementById('starter-videos').innerHTML = '<strong>15 credits</strong>/month';
-        document.getElementById('daily-price').textContent = '$49';
+        document.getElementById('daily-price').textContent = '$79';
         document.getElementById('daily-period').textContent = '/mo';
         document.getElementById('daily-note').textContent = '35 credits / month · cancel anytime';
         document.getElementById('daily-videos').innerHTML = '<strong>35 credits</strong>/month';

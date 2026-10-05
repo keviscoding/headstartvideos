@@ -764,12 +764,20 @@ def _channelrecipe_price_ids() -> set[str]:
     return {
         p.strip()
         for p in (
+            # Current pricing (new signups: $19/$79)
             config.STRIPE_PRICE_STARTER_MONTHLY,
             config.STRIPE_PRICE_STARTER_ANNUAL,
             config.STRIPE_PRICE_DAILY_MONTHLY,
             config.STRIPE_PRICE_DAILY_ANNUAL,
+            # Grandfathered pricing (V1: $27/$49)
+            config.STRIPE_PRICE_STARTER_MONTHLY_V1,
+            config.STRIPE_PRICE_STARTER_ANNUAL_V1,
+            config.STRIPE_PRICE_DAILY_MONTHLY_V1,
+            config.STRIPE_PRICE_DAILY_ANNUAL_V1,
+            # Legacy
             config.STRIPE_PRICE_ID,
             config.STRIPE_PRICE_ID_ANNUAL,
+            # Top-ups
             config.STRIPE_PRICE_TOPUP_5,
             config.STRIPE_PRICE_TOPUP_15,
         )
@@ -816,6 +824,8 @@ def _annual_price_ids() -> tuple[str, ...]:
     return tuple(p for p in (
         config.STRIPE_PRICE_STARTER_ANNUAL,
         config.STRIPE_PRICE_DAILY_ANNUAL,
+        config.STRIPE_PRICE_STARTER_ANNUAL_V1,
+        config.STRIPE_PRICE_DAILY_ANNUAL_V1,
         config.STRIPE_PRICE_ID_ANNUAL,
     ) if (p or "").strip())
 
@@ -934,10 +944,14 @@ def _tier_from_price_id(price_id: str) -> str:
     daily = {
         (config.STRIPE_PRICE_DAILY_MONTHLY or "").strip(),
         (config.STRIPE_PRICE_DAILY_ANNUAL or "").strip(),
+        (config.STRIPE_PRICE_DAILY_MONTHLY_V1 or "").strip(),
+        (config.STRIPE_PRICE_DAILY_ANNUAL_V1 or "").strip(),
     } - {""}
     starter = {
         (config.STRIPE_PRICE_STARTER_MONTHLY or "").strip(),
         (config.STRIPE_PRICE_STARTER_ANNUAL or "").strip(),
+        (config.STRIPE_PRICE_STARTER_MONTHLY_V1 or "").strip(),
+        (config.STRIPE_PRICE_STARTER_ANNUAL_V1 or "").strip(),
         (config.STRIPE_PRICE_ID or "").strip(),
         (config.STRIPE_PRICE_ID_ANNUAL or "").strip(),
     } - {""}
