@@ -937,7 +937,7 @@ def assemble_mixed_avatar_broll_video(
         framing_filter_parts.append(
             f"[avatar_base][opening_zoomed]overlay=enable='between(t,{opening_avatar.start_sec:.2f},{opening_avatar.end_sec:.2f})':shortest=0[avatar_varied]"
         )
-        last_output_label = "[avatar_varied]"
+        last_output_label = "avatar_varied"
     else:
         # No variation needed (single avatar shot or no avatar shots)
         last_output_label = "0:v"
