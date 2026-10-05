@@ -477,6 +477,52 @@ def generate_avatar_video_atlas(
         return False
 
 
+def select_shot_framing(segment_text: str, segment_index: int, prev_framing: str | None) -> dict[str, str]:
+    """
+    Deterministically select shot framing type for b-roll variety.
+    
+    Returns dict with:
+    - framing: "close_up", "wide", "over_shoulder", "detail", "medium"
+    - directive: prompt text specifying the framing
+    
+    Ensures consecutive shots use different framing.
+    """
+    framings = [
+        {
+            "framing": "close_up",
+            "directive": "Close-up shot focusing on hands, faces, or key objects in sharp detail",
+        },
+        {
+            "framing": "detail",
+            "directive": "Extreme close-up macro detail of a key object from the line (barcodes, card edges, book spines, page texture), no legible words",
+        },
+        {
+            "framing": "over_shoulder",
+            "directive": "Over-the-shoulder perspective shot showing interaction or point of view",
+        },
+        {
+            "framing": "wide",
+            "directive": "Wide establishing shot showing the full scene and environment",
+        },
+        {
+            "framing": "medium",
+            "directive": "Medium shot at waist or desk level showing person and immediate surroundings",
+        },
+    ]
+    
+    # Hash segment text for deterministic but varied selection
+    text_hash = sum(ord(c) for c in segment_text.lower())
+    base_index = (text_hash + segment_index) % len(framings)
+    
+    # Select framing, avoiding previous if possible
+    selected = framings[base_index]
+    if prev_framing and selected["framing"] == prev_framing and len(framings) > 1:
+        # Pick next framing to ensure variety
+        selected = framings[(base_index + 1) % len(framings)]
+    
+    return selected
+
+
 def generate_broll_image_atlas(
     prompt: str,
     output_path: str | Path,
@@ -804,6 +850,7 @@ def run_avatar_gen_pipeline(
     progress(f"Generating b-roll assets...")
     t0 = time.time()
     broll_count = 0
+    prev_framing = None
     
     for i, shot in enumerate(shots):
         if shot.shot_type == "broll_still":
@@ -814,10 +861,16 @@ def run_avatar_gen_pipeline(
             # Create detailed, contextual prompt from segment text
             # Include script context to ensure on-topic generation
             segment_text = shot.text or shot.visual_prompt
+            
+            # Select shot framing for variety (deterministic, avoids consecutive repeats)
+            framing = select_shot_framing(segment_text, shot.index, prev_framing)
+            prev_framing = framing["framing"]
+            
             # Build explicit prompt emphasizing the script topic and segment content
             prompt_text = (
-                f"Professional photograph, photorealistic, high quality: "
-                f"{segment_text}. "
+                f"Professional photograph, photorealistic, high quality. "
+                f"{framing['directive']}. "
+                f"Scene: {segment_text}. "
                 f"Context: {title}. "
                 f"Relevant visual showing specific objects or scenes mentioned. "
                 f"16:9 aspect ratio. "
