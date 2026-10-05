@@ -3230,8 +3230,23 @@ async function showUploadKit(buildResult) {
         dl.style.opacity = '0.5';
     }
     
+    // Get video URL from result or fall back to API if we have video_id
+    let rawVideoUrl = buildResult.output_url || buildResult.video_url || '';
+    const videoId = buildResult.video_id || null;
+    
+    // If no URL in result but we have video_id, fetch from API (same as History)
+    if (!rawVideoUrl && videoId) {
+        try {
+            const vRes = await fetch(`/api/videos/${videoId}`);
+            if (vRes.ok) {
+                const vData = await vRes.json();
+                rawVideoUrl = vData.url || '';
+            }
+        } catch (_) {}
+    }
+    
     // Resolve playable URLs
-    const videoUrl = await playableMediaUrl(buildResult.output_url);
+    const videoUrl = rawVideoUrl ? await playableMediaUrl(rawVideoUrl) : '';
     const thumbUrl = await playableMediaUrl(buildResult.thumbnail_url || state.thumbnailUrl || '');
     
     // Check again after async calls - ignore if a newer job finished
@@ -3239,20 +3254,26 @@ async function showUploadKit(buildResult) {
         return;
     }
     
-    state.videoUrl = videoUrl;
-    if (video) video.src = videoUrl;
-    if (dl) {
-        dl.href = videoUrl;
-        dl.setAttribute('download', 'video.mp4');
-        dl.style.pointerEvents = '';
-        dl.style.opacity = '';
-        dl.onclick = () => {
-            _track('video_downloaded', {
-                recipe: state.niche || '',
-                plan: currentUser?.plan || '',
-                source: 'upload_kit',
-            });
-        };
+    // Only set video/download if we have a valid URL
+    if (videoUrl) {
+        state.videoUrl = videoUrl;
+        if (video) video.src = videoUrl;
+        if (dl) {
+            dl.href = videoUrl;
+            dl.setAttribute('download', 'video.mp4');
+            dl.style.pointerEvents = '';
+            dl.style.opacity = '';
+            dl.onclick = () => {
+                _track('video_downloaded', {
+                    recipe: state.niche || '',
+                    plan: currentUser?.plan || '',
+                    source: 'upload_kit',
+                });
+            };
+        }
+    } else {
+        // No URL available - keep link disabled
+        if (video) video.src = '';
     }
     
     if (thumbUrl) {
@@ -3273,10 +3294,9 @@ async function showUploadKit(buildResult) {
     _track('video_ready_viewed', {
         recipe: state.niche || '',
         plan: currentUser?.plan || '',
-        video_id: buildResult.video_id || null,
+        video_id: videoId,
     });
     
-    const videoId = buildResult.video_id || null;
     try {
         const res = await fetch('/api/upload-kit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: state.title, script: state.script, niche: state.niche }) });
         const kit = await res.json();
