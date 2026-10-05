@@ -43,13 +43,13 @@ def _build_zoompan_filter(effect: str, duration_sec: float) -> str:
     elif effect == "pan_left_to_right":
         return (
             f"zoompan=z=1.15:"
-            f"x='(iw/zoom-iw)*on/{d}':y='ih/2-(ih/zoom/2)':"
+            f"x='(iw-iw/zoom)*on/{d}':y='ih/2-(ih/zoom/2)':"
             f"d={d}:s={w}x{h}:fps={VIDEO_FPS}"
         )
     elif effect == "pan_right_to_left":
         return (
             f"zoompan=z=1.15:"
-            f"x='(iw/zoom-iw)*(1-on/{d})':y='ih/2-(ih/zoom/2)':"
+            f"x='(iw-iw/zoom)*(1-on/{d})':y='ih/2-(ih/zoom/2)':"
             f"d={d}:s={w}x{h}:fps={VIDEO_FPS}"
         )
     elif effect == "zoom_in_drift_right":
