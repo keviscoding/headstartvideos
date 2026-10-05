@@ -385,8 +385,11 @@ def generate_avatar_video_atlas(
 ) -> bool:
     """
     Generate speaking avatar video using Atlas Cloud (kwaivgi/kling-v2.6-std/avatar).
+    
+    Retries up to 3 times with backoff on timeout or transient errors.
+    Polls for up to 15 minutes per attempt with regular progress updates.
     """
-    from core.atlas_llm import _atlas_key, _image_payload_for_atlas
+    from core.atlas_llm import _atlas_key, _image_payload_for_atlas, _is_atlas_fatal_error
     import httpx
     
     key = _atlas_key()
@@ -395,9 +398,7 @@ def generate_avatar_video_atlas(
             progress("Atlas Cloud key not configured")
         return False
     
-    if progress:
-        progress("Generating speaking avatar video...")
-    
+    # Prepare image and audio once (reuse across retries)
     try:
         image_val = _image_payload_for_atlas(image_path)
     except Exception as e:
@@ -405,7 +406,6 @@ def generate_avatar_video_atlas(
             progress(f"Could not load avatar image: {e}")
         return False
     
-    # Load audio as base64
     audio_path_obj = Path(audio_path)
     if not audio_path_obj.is_file():
         if progress:
@@ -432,113 +432,167 @@ def generate_avatar_video_atlas(
     
     timeout = httpx.Timeout(connect=30.0, read=120.0, write=120.0, pool=30.0)
     
-    try:
-        with httpx.Client(timeout=timeout) as client:
-            # Create prediction
-            resp = client.post(
-                "https://api.atlascloud.ai/api/v1/model/generateVideo",
-                headers=headers,
-                json=body,
-            )
-            
-            if resp.status_code >= 400:
-                data = resp.json() if resp.content else {}
-                # Check for fatal errors that should not retry
-                from core.atlas_llm import _is_atlas_fatal_error
-                is_fatal, fatal_reason = _is_atlas_fatal_error(data)
-                if is_fatal:
-                    if progress:
-                        progress(fatal_reason)
-                    return False
-                if progress:
-                    progress(f"Atlas avatar generation failed: HTTP {resp.status_code}")
-                return False
-            
-            data = resp.json()
-            pred_id = None
-            if isinstance(data.get("data"), dict):
-                pred_id = data["data"].get("id")
-            pred_id = pred_id or data.get("id")
-            
-            if not pred_id:
-                if progress:
-                    progress("No prediction ID returned")
-                return False
-            
-            # Poll for completion (avatar gen can take 2-5 minutes)
-            max_wait = 600  # 10 minutes
-            start_time = time.time()
-            sleep_interval = 3.0
-            
-            while time.time() - start_time < max_wait:
-                time.sleep(sleep_interval)
-                sleep_interval = min(8.0, sleep_interval + 0.5)
-                
-                poll_resp = client.get(
-                    f"https://api.atlascloud.ai/api/v1/model/prediction/{pred_id}",
-                    headers={"Authorization": f"Bearer {key}"},
-                    timeout=httpx.Timeout(connect=20.0, read=90.0, write=30.0, pool=20.0),
-                )
-                
-                inner = poll_resp.json().get("data", poll_resp.json())
-                if not isinstance(inner, dict):
-                    continue
-                
-                status = str(inner.get("status", "")).lower()
-                
-                if status in ("succeeded", "completed", "done"):
-                    outputs = inner.get("outputs") or inner.get("output") or []
-                    if isinstance(outputs, str):
-                        video_url = outputs
-                    elif isinstance(outputs, list) and outputs:
-                        video_url = outputs[0]
-                    else:
-                        if progress:
-                            progress("No video output in completed response")
-                        return False
-                    
-                    # Download video
-                    vid_resp = client.get(
-                        video_url,
-                        follow_redirects=True,
-                        timeout=httpx.Timeout(connect=30.0, read=180.0, write=30.0, pool=30.0),
+    # Retry up to 3 times with backoff
+    max_attempts = 3
+    last_error = ""
+    
+    for attempt in range(1, max_attempts + 1):
+        if attempt > 1:
+            # Backoff: 30s after first failure, 60s after second
+            backoff_sec = 30 * attempt
+            if progress:
+                progress(f"Retrying avatar generation in {backoff_sec}s (attempt {attempt}/{max_attempts})...")
+            time.sleep(backoff_sec)
+        
+        if progress:
+            progress(f"Generating speaking avatar video (attempt {attempt}/{max_attempts})...")
+        
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                # Create prediction
+                try:
+                    resp = client.post(
+                        "https://api.atlascloud.ai/api/v1/model/generateVideo",
+                        headers=headers,
+                        json=body,
                     )
-                    vid_resp.raise_for_status()
-                    
-                    output_path_obj = Path(output_path)
-                    output_path_obj.parent.mkdir(parents=True, exist_ok=True)
-                    output_path_obj.write_bytes(vid_resp.content)
-                    
-                    if output_path_obj.stat().st_size < 1000:
-                        if progress:
-                            progress("Downloaded video file is too small")
-                        return False
-                    
+                except Exception as e:
+                    last_error = f"Network error creating prediction: {e}"
                     if progress:
-                        progress(f"Avatar video generated: {output_path_obj.name}")
-                    return True
+                        progress(last_error)
+                    continue  # Retry
                 
-                elif status in ("failed", "error", "cancelled"):
-                    error = inner.get("error") or inner.get("message") or "Generation failed"
-                    # Check for fatal errors
-                    from core.atlas_llm import _is_atlas_fatal_error
-                    is_fatal, fatal_reason = _is_atlas_fatal_error(inner)
+                if resp.status_code >= 400:
+                    data = resp.json() if resp.content else {}
+                    # Check for fatal errors that should not retry
+                    is_fatal, fatal_reason = _is_atlas_fatal_error(data)
                     if is_fatal:
                         if progress:
                             progress(fatal_reason)
                         return False
+                    
+                    last_error = f"HTTP {resp.status_code}: {str(data)[:200]}"
                     if progress:
-                        progress(f"Avatar generation failed: {error}")
-                    return False
-            
+                        progress(f"Atlas avatar creation failed: {last_error}")
+                    continue  # Retry
+                
+                data = resp.json()
+                pred_id = None
+                if isinstance(data.get("data"), dict):
+                    pred_id = data["data"].get("id")
+                pred_id = pred_id or data.get("id")
+                
+                if not pred_id:
+                    last_error = "No prediction ID returned"
+                    if progress:
+                        progress(last_error)
+                    continue  # Retry
+                
+                # Poll for completion - 15 minutes for ~20s Short
+                max_wait = 900  # 15 minutes
+                start_time = time.time()
+                sleep_interval = 3.0
+                last_progress_time = start_time
+                
+                while time.time() - start_time < max_wait:
+                    time.sleep(sleep_interval)
+                    sleep_interval = min(8.0, sleep_interval + 0.5)
+                    
+                    elapsed = time.time() - start_time
+                    
+                    # Progress update every ~20s
+                    if progress and elapsed - (last_progress_time - start_time) >= 20:
+                        if progress:
+                            progress(f"Avatar generation in progress... {int(elapsed)}s elapsed")
+                        last_progress_time = time.time()
+                    
+                    try:
+                        poll_resp = client.get(
+                            f"https://api.atlascloud.ai/api/v1/model/prediction/{pred_id}",
+                            headers={"Authorization": f"Bearer {key}"},
+                            timeout=httpx.Timeout(connect=20.0, read=90.0, write=30.0, pool=20.0),
+                        )
+                    except Exception as e:
+                        # Transient poll error, continue polling
+                        continue
+                    
+                    inner = poll_resp.json().get("data", poll_resp.json())
+                    if not isinstance(inner, dict):
+                        continue
+                    
+                    status = str(inner.get("status", "")).lower()
+                    
+                    if status in ("succeeded", "completed", "done"):
+                        outputs = inner.get("outputs") or inner.get("output") or []
+                        if isinstance(outputs, str):
+                            video_url = outputs
+                        elif isinstance(outputs, list) and outputs:
+                            video_url = outputs[0]
+                        else:
+                            last_error = "No video output in completed response"
+                            if progress:
+                                progress(last_error)
+                            break  # Try next attempt
+                        
+                        # Download video
+                        try:
+                            vid_resp = client.get(
+                                video_url,
+                                follow_redirects=True,
+                                timeout=httpx.Timeout(connect=30.0, read=180.0, write=30.0, pool=30.0),
+                            )
+                            vid_resp.raise_for_status()
+                        except Exception as e:
+                            last_error = f"Failed to download video: {e}"
+                            if progress:
+                                progress(last_error)
+                            break  # Try next attempt
+                        
+                        output_path_obj = Path(output_path)
+                        output_path_obj.parent.mkdir(parents=True, exist_ok=True)
+                        output_path_obj.write_bytes(vid_resp.content)
+                        
+                        if output_path_obj.stat().st_size < 1000:
+                            last_error = "Downloaded video file is too small"
+                            if progress:
+                                progress(last_error)
+                            break  # Try next attempt
+                        
+                        if progress:
+                            progress(f"Avatar video generated: {output_path_obj.name}")
+                        return True
+                    
+                    elif status in ("failed", "error", "cancelled"):
+                        error = inner.get("error") or inner.get("message") or "Generation failed"
+                        # Check for fatal errors
+                        is_fatal, fatal_reason = _is_atlas_fatal_error(inner)
+                        if is_fatal:
+                            if progress:
+                                progress(fatal_reason)
+                            return False
+                        
+                        last_error = f"Atlas error: {error}"
+                        if progress:
+                            progress(last_error)
+                        break  # Try next attempt
+                
+                # If we get here, either timed out or broke from loop
+                if time.time() - start_time >= max_wait:
+                    last_error = f"Timed out after {int(elapsed)}s (attempt {attempt}/{max_attempts})"
+                    if progress:
+                        progress(last_error)
+                    # Continue to next attempt
+        
+        except Exception as e:
+            last_error = f"Unexpected error: {e}"
             if progress:
-                progress(f"Avatar generation timed out after {max_wait}s")
-            return False
+                progress(last_error)
+            # Continue to next attempt
     
-    except Exception as e:
-        if progress:
-            progress(f"Atlas error: {e}")
-        return False
+    # All attempts failed
+    if progress:
+        progress(f"Avatar generation failed after {max_attempts} attempts. Last error: {last_error}")
+    return False
 
 
 def select_shot_framing(broll_index: int, segment_text: str, prev_framing: str | None, total_broll_shots: int) -> dict[str, str]:
@@ -1091,10 +1145,11 @@ def run_avatar_gen_pipeline(
     )
     
     if not ok:
-        # Atlas avatar generation failed - this is fatal, do not fall back to static
+        # Atlas avatar generation failed after retries - this is fatal, do not fall back to static
         raise RuntimeError(
-            "Atlas talking avatar generation failed. The avatar recipe requires a "
-            "speaking avatar with lip sync. A static image is not acceptable."
+            "Atlas talking avatar generation failed after 3 attempts. "
+            "The avatar recipe requires a speaking avatar with lip sync - no fallback to static. "
+            "Check progress log for specific error (timeout, network, or Atlas error)."
         )
     
     timing["avatar_generation"] = time.time() - t0
