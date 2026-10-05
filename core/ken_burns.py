@@ -19,6 +19,10 @@ EFFECTS = [
     "pan_right_to_left",
     "zoom_in_drift_right",
     "zoom_in_drift_left",
+    "zoom_in_pan_up",
+    "zoom_in_pan_down",
+    "diagonal_drift_tl_br",
+    "diagonal_drift_tr_bl",
 ]
 
 
@@ -29,39 +33,73 @@ def _build_zoompan_filter(effect: str, duration_sec: float) -> str:
     w, h = VIDEO_WIDTH, VIDEO_HEIGHT
 
     if effect == "zoom_in_center":
+        # Stronger zoom for more dynamic feel
         return (
-            f"zoompan=z='min(zoom+0.0008,1.2)':"
+            f"zoompan=z='min(zoom+0.0012,1.3)':"
             f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
             f"d={d}:s={w}x{h}:fps={VIDEO_FPS}"
         )
     elif effect == "zoom_out_center":
+        # Stronger zoom out
         return (
-            f"zoompan=z='if(eq(on,1),1.2,max(zoom-0.0008,1.0))':"
+            f"zoompan=z='if(eq(on,1),1.3,max(zoom-0.0012,1.0))':"
             f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
             f"d={d}:s={w}x{h}:fps={VIDEO_FPS}"
         )
     elif effect == "pan_left_to_right":
+        # More zoom plus pan for dynamic movement
         return (
-            f"zoompan=z=1.15:"
+            f"zoompan=z=1.25:"
             f"x='(iw-iw/zoom)*on/{d}':y='ih/2-(ih/zoom/2)':"
             f"d={d}:s={w}x{h}:fps={VIDEO_FPS}"
         )
     elif effect == "pan_right_to_left":
+        # More zoom plus pan
         return (
-            f"zoompan=z=1.15:"
+            f"zoompan=z=1.25:"
             f"x='(iw-iw/zoom)*(1-on/{d})':y='ih/2-(ih/zoom/2)':"
             f"d={d}:s={w}x{h}:fps={VIDEO_FPS}"
         )
     elif effect == "zoom_in_drift_right":
+        # Stronger combined zoom and drift
         return (
-            f"zoompan=z='min(zoom+0.0006,1.15)':"
-            f"x='(iw/zoom-iw)*on/{d}*0.3':y='ih/2-(ih/zoom/2)':"
+            f"zoompan=z='min(zoom+0.0010,1.25)':"
+            f"x='(iw-iw/zoom)*on/{d}*0.4':y='ih/2-(ih/zoom/2)':"
             f"d={d}:s={w}x{h}:fps={VIDEO_FPS}"
         )
     elif effect == "zoom_in_drift_left":
+        # Stronger combined zoom and drift
         return (
-            f"zoompan=z='min(zoom+0.0006,1.15)':"
-            f"x='(iw/zoom-iw)*(1-on/{d}*0.3)':y='ih/2-(ih/zoom/2)':"
+            f"zoompan=z='min(zoom+0.0010,1.25)':"
+            f"x='(iw-iw/zoom)*(1-on/{d}*0.4)':y='ih/2-(ih/zoom/2)':"
+            f"d={d}:s={w}x{h}:fps={VIDEO_FPS}"
+        )
+    elif effect == "zoom_in_pan_up":
+        # Zoom in while panning upward
+        return (
+            f"zoompan=z='min(zoom+0.0010,1.25)':"
+            f"x='iw/2-(iw/zoom/2)':y='(ih-ih/zoom)*(1-on/{d}*0.5)':"
+            f"d={d}:s={w}x{h}:fps={VIDEO_FPS}"
+        )
+    elif effect == "zoom_in_pan_down":
+        # Zoom in while panning downward
+        return (
+            f"zoompan=z='min(zoom+0.0010,1.25)':"
+            f"x='iw/2-(iw/zoom/2)':y='(ih-ih/zoom)*on/{d}*0.5':"
+            f"d={d}:s={w}x{h}:fps={VIDEO_FPS}"
+        )
+    elif effect == "diagonal_drift_tl_br":
+        # Diagonal drift from top-left to bottom-right with zoom
+        return (
+            f"zoompan=z='min(zoom+0.0008,1.2)':"
+            f"x='(iw-iw/zoom)*on/{d}*0.3':y='(ih-ih/zoom)*on/{d}*0.3':"
+            f"d={d}:s={w}x{h}:fps={VIDEO_FPS}"
+        )
+    elif effect == "diagonal_drift_tr_bl":
+        # Diagonal drift from top-right to bottom-left with zoom
+        return (
+            f"zoompan=z='min(zoom+0.0008,1.2)':"
+            f"x='(iw-iw/zoom)*(1-on/{d}*0.3)':y='(ih-ih/zoom)*on/{d}*0.3':"
             f"d={d}:s={w}x{h}:fps={VIDEO_FPS}"
         )
     else:
