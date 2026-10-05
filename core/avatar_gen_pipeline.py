@@ -281,9 +281,20 @@ def plan_avatar_video_shots(
     # Scale b-roll count with middle duration at ~2.5-4s per shot
     middle_duration = broll_end_time - opening_sec
     
+    # Minimum b-roll duration to avoid zero-length shots
+    MIN_BROLL_DURATION = 2.5
+    
+    # Calculate how many b-roll shots actually fit given the minimum duration
+    max_possible_broll = int(middle_duration / MIN_BROLL_DURATION)
+    
     # Target 2.5-4s per b-roll shot (aim for ~3.2s average)
     target_broll_count = max(3, int(middle_duration / 3.2))
-    ideal_broll_duration = middle_duration / target_broll_count
+    
+    # Can't exceed what actually fits
+    target_broll_count = min(target_broll_count, max_possible_broll)
+    
+    # Recalculate ideal duration based on constrained count
+    ideal_broll_duration = middle_duration / max(1, target_broll_count)
     
     current_time = opening_sec
     broll_added = 0
@@ -292,12 +303,16 @@ def plan_avatar_video_shots(
         # Calculate how much time is left in middle section
         remaining_time = broll_end_time - current_time
         
+        # Stop if remaining time is too short for a meaningful b-roll
+        if remaining_time < MIN_BROLL_DURATION:
+            break
+        
         # Check if it's time for face to return (based on frequency pattern)
         time_since_face = current_time - last_face_time
         should_return_face = (
             face_return_freq is not None and
             time_since_face >= face_return_freq - 1.0 and
-            remaining_time > face_duration + ideal_broll_duration  # Need room for face + at least one more b-roll
+            remaining_time > face_duration + MIN_BROLL_DURATION  # Need room for face + at least one more b-roll
         )
         
         if should_return_face:
@@ -319,8 +334,12 @@ def plan_avatar_video_shots(
             shot_index += 1
         else:
             # B-roll shot
-            # Use calculated duration, but cap at remaining time for last shot
+            # Use calculated duration, but cap at remaining time
             this_duration = min(ideal_broll_duration, remaining_time)
+            
+            # Enforce minimum duration
+            if this_duration < MIN_BROLL_DURATION:
+                break
             
             # Get text from segment covering this shot's midpoint
             broll_midpoint = current_time + this_duration / 2
@@ -648,8 +667,18 @@ def _generate_broll_motion_parallel(
         """Generate one motion clip with retries."""
         still_path = still_info["still_path"]
         motion_prompt = still_info["motion_prompt"]
-        duration = int(max(4, min(12, still_info["duration"])))  # Atlas i2v duration 4-12s
         shot = still_info["shot"]
+        shot_duration = still_info["duration"]
+        
+        # Skip shots that are too short (< 1s)
+        if shot_duration < 1.0:
+            raise RuntimeError(
+                f"Shot {shot.index} duration {shot_duration:.2f}s is too short (< 1s). "
+                "Should have been filtered in shot planning."
+            )
+        
+        # Use ceil() so i2v clip covers the whole window (a 4.14s shot needs 5s i2v)
+        duration = int(math.ceil(max(4, min(12, shot_duration))))
         
         # Output path for the raw i2v clip (before trimming)
         raw_video_path = work_dir / f"broll_{shot.index:03d}_i2v.mp4"
@@ -674,12 +703,30 @@ def _generate_broll_motion_parallel(
                 "No fallback to static - avatar recipe requires real motion."
             )
         
-        # Trim to exact shot duration
+        # Verify raw clip has video stream using ffprobe
+        probe_cmd = [
+            "ffprobe", "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=codec_type,duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(raw_video_path),
+        ]
+        probe_result = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=30)
+        probe_output = (probe_result.stdout or "").strip()
+        
+        if "video" not in probe_output.lower():
+            raise RuntimeError(
+                f"Atlas i2v clip for shot {shot.index} has no video stream. "
+                f"ffprobe output: '{probe_output[:200]}'"
+            )
+        
+        # Trim to exact shot duration and normalize to 30fps, 1280x720
         trimmed_path = work_dir / f"broll_{shot.index:03d}_motion.mp4"
         trim_cmd = [
             "ffmpeg", "-y",
             "-i", str(raw_video_path),
-            "-t", f"{still_info['duration']:.2f}",
+            "-t", f"{shot_duration:.2f}",
+            "-vf", "fps=30,scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2",
             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
             "-an",  # Remove audio (i2v audio not needed)
             str(trimmed_path),
@@ -689,6 +736,24 @@ def _generate_broll_motion_parallel(
         if result.returncode != 0 or not trimmed_path.is_file():
             raise RuntimeError(
                 f"Failed to trim i2v clip for shot {shot.index}: {result.stderr[:200]}"
+            )
+        
+        # Verify trimmed clip has valid duration
+        final_probe = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                str(trimmed_path),
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        final_duration = float((final_probe.stdout or "0").strip() or 0)
+        
+        if final_duration < 1.0:
+            raise RuntimeError(
+                f"Trimmed clip for shot {shot.index} is only {final_duration:.2f}s (< 1s). "
+                "Cannot use in composite."
             )
         
         # Verify motion with freeze check
