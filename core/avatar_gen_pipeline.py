@@ -775,12 +775,13 @@ def _generate_broll_motion_parallel(
             )
         
         # Trim to exact shot duration and normalize to 30fps, 1280x720
+        # Use cover+crop to avoid black bars (Seedance returns 1268x728)
         trimmed_path = work_dir / f"broll_{shot.index:03d}_motion.mp4"
         trim_cmd = [
             "ffmpeg", "-y",
             "-i", str(raw_video_path),
             "-t", f"{shot_duration:.2f}",
-            "-vf", "fps=30,scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2",
+            "-vf", "fps=30,scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720",
             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
             "-an",  # Remove audio (i2v audio not needed)
             str(trimmed_path),
@@ -936,8 +937,8 @@ def assemble_mixed_avatar_broll_video(
 
             scale_label = f"broll{shot.index}scaled"
             filter_parts.append(
-                f"[{broll_index}:v]scale=1280:720:force_original_aspect_ratio=decrease,"
-                f"pad=1280:720:(ow-iw)/2:(oh-ih)/2,format=yuv420p[{scale_label}]"
+                f"[{broll_index}:v]scale=1280:720:force_original_aspect_ratio=increase,"
+                f"crop=1280:720,format=yuv420p[{scale_label}]"
             )
 
             next_label = f"out{shot.index}"
