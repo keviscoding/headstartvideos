@@ -177,6 +177,28 @@ class NicheStore:
         rows.sort(key=lambda r: hashlib.sha256((self.job_id+r["channel_id"]).encode()).hexdigest())
         return rows[:limit]
 
+    def enrichment_candidates(self, limit=80):
+        """Choose promising factories across source groups without a topic allowlist."""
+        with db._conn() as conn:
+            cur=conn.cursor()
+            cur.execute("""SELECT channel_id,source_keyword FROM niche_channels
+                WHERE active=1 AND COALESCE(quality_status,'')!='screened'
+                AND recent_avg_views>=20000 AND videos_last_14d>0
+                AND video_count BETWEEN 4 AND 80 AND subscriber_count BETWEEN 1000 AND 500000""")
+            rows=[dict(r) for r in cur.fetchall()]
+        groups={}
+        for row in rows: groups.setdefault(row.get('source_keyword') or 'unlabelled',[]).append(row)
+        for group in groups.values():
+            group.sort(key=lambda r:hashlib.sha256((self.job_id+r['channel_id']).encode()).hexdigest())
+        sources=sorted(groups,key=lambda s:hashlib.sha256((self.job_id+s).encode()).hexdigest())
+        chosen=[]
+        while sources and len(chosen)<limit:
+            for source in list(sources):
+                if len(chosen)>=limit: break
+                chosen.append(groups[source].pop())
+                if not groups[source]: sources.remove(source)
+        return chosen
+
     def publish(self, hit, review, performance, task, outcome):
         if review.get("decision") != "pass" or review.get("ai_reproducible") is not True or not performance.get("passes"):
             raise ValueError("Only screened performance-qualified channels can be published")

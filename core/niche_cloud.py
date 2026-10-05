@@ -16,7 +16,7 @@ from core.niche_daily_keywords import SIMPLE_PROBES
 from core.niche_finder import _fetch_videos, _longform_from_uploads, _yt, run_niche_finder
 from core.niche_scraper import _parse_search_cards, scrape_keyword_search
 
-CLOUD_RUBRIC = "cloud-avatars-v4-openings"
+CLOUD_RUBRIC = "cloud-avatars-v5-mixed"
 SEED_HANDLES = ["GlenPritchardBuilds", "OpalRowe1945", "TheJapaneseMethod0"]
 AVATAR_CLAIM = re.compile(
     r"\b(?:ai[- ](?:generated|powered|created|animated)\s+(?:host|presenter|avatar|character)|"
@@ -111,6 +111,9 @@ def avatar_status(review, evidence):
         and triage.get("avatar_style_confidence")=="high" and valid_clips
         and len(triage.get("avatar_observations") or [])>=4):
         return "disclosed" if evidence.get("explicit_avatar_claim") else "likely"
+    if (valid_clips and triage.get("presenter_visible") is True and evidence.get("ai_video_samples",0)>=2
+        and review.get("ai_reproducible") is True):
+        return "possible"
     if review.get("presenter_visible") is not True:
         return "not_presenter"
     if evidence.get("explicit_avatar_claim"):
@@ -268,6 +271,7 @@ def run_cloud_hunt(job_id):
         with lock: meta={**stats,"results":list(stats["results"])}
         meta.update(elapsed_seconds=round(time.time()-wall_started,2),heartbeat_at=time.time(),tasks=store.task_counts())
         meta["review_provider"]=dict(provider_state)
+        meta["youtube_api"]=api_stats()
         return meta
 
     def heartbeat():
@@ -363,7 +367,7 @@ def run_cloud_hunt(job_id):
                 hit["avatar_evidence"]["visual_triage"]=triage
                 disclosed=(hit["avatar_evidence"]["ai_video_samples"]>=2
                     or hit["avatar_evidence"]["explicit_avatar_claim"] or hit["avatar_evidence"].get("user_reference"))
-                if triage.get("presenter_visible") is not True or (triage.get("avatar_style_confidence")!="high" and not disclosed):
+                if (triage.get("presenter_visible") is not True or triage.get("avatar_style_confidence")!="high") and not disclosed:
                     return {"decision":"review","screen_stage":"visual_triage","reasons":["Avatar presentation is unconfirmed"],"avatar_triage":triage},client.counters.copy()
                 if not store.reserve_budget("content_review",1,300):
                     return {"decision":"review","reasons":["Daily model budget reached"]},client.counters.copy()
@@ -397,6 +401,9 @@ def run_cloud_hunt(job_id):
                     queue_channel(item["id"],seed_videos,"avatar_seed")
                     for v in seed_videos:
                         store.enqueue("related",{"video_id":v["video_id"]},source="avatar_seed")
+        if settings.enrich_existing:
+            for candidate in store.enrichment_candidates(limit=settings.existing_review_cap):
+                queue_channel(candidate['channel_id'],[],"catalog")
         explorer=Explorer(deadline)
         rotation=[("search","broad"),("related",None),("search","learned"),("related",None),("search","broad")]
         if settings.profile=="avatar":
@@ -484,9 +491,10 @@ def run_cloud_hunt(job_id):
                         store.enqueue("search",{"query":query.strip()},source="learned",depth=task["depth"]+1)
                 for key,value in counters.items(): stats[key]=stats.get(key,0)+value
                 avatar=avatar_status(review,hit["avatar_evidence"])
-                review["avatar_confidence"]=avatar if avatar in {"disclosed","likely","reference"} else "unknown"
+                review["avatar_confidence"]=avatar if avatar in {"disclosed","likely","reference","possible"} else "unknown"
                 status=review["decision"]
-                if status=="pass" and settings.profile=="avatar" and avatar not in {"disclosed","likely","reference"}:
+                if (status=="pass" and settings.profile=="avatar" and avatar not in {"disclosed","likely","reference"}
+                    and hit["avatar_evidence"]["ai_video_samples"]<2):
                     status="avatar_hold"
                 outcome={"channel_id":hit["channel_id"],"channel_name":hit["channel_name"],
                     "channel_url":hit["channel_url"],"status":status,"performance":perf,"content_review":review}

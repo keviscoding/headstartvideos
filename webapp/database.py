@@ -2092,7 +2092,7 @@ def list_niche_channels(
     if active_only:
         clauses.append("active = 1")
     if ai_presenter:
-        clauses.append("quality_status='screened' AND avatar_confidence IN ('likely','disclosed','reference')")
+        clauses.append("quality_status='screened' AND avatar_confidence IN ('likely','disclosed','reference','possible')")
     if added_since is not None:
         clauses.append("first_seen_at >= ?")
         params.append(float(added_since))
@@ -2163,7 +2163,7 @@ def count_niche_channels(
     if active_only:
         clauses.append("active = 1")
     if ai_presenter:
-        clauses.append("quality_status='screened' AND avatar_confidence IN ('likely','disclosed','reference')")
+        clauses.append("quality_status='screened' AND avatar_confidence IN ('likely','disclosed','reference','possible')")
     if added_since is not None:
         clauses.append("first_seen_at >= ?")
         params.append(float(added_since))

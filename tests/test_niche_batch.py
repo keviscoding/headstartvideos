@@ -247,7 +247,7 @@ def test_native_fallback_preserves_images_and_skips_payment_blocked_atlas(monkey
     monkeypatch.setattr(client.session,'post',post)
     messages=[{'role':'system','content':'Check evidence'}, {'role':'user','content':[
         {'type':'text','text':'sample'}, {'type':'image_url','image_url':{'url':'data:image/jpeg;base64,YWJj'}}]}]
-    data=client.model_json(messages)
+    data=client.model_json(messages,response_schema=batch._style_schema())
     client.model_json(messages)
     assert len(calls)==3 and sum('atlascloud' in x[0] for x in calls)==1
     assert state['atlas_payment_blocked'] and state['active']=='gemini'
@@ -255,6 +255,7 @@ def test_native_fallback_preserves_images_and_skips_payment_blocked_atlas(monkey
     assert native[1]['headers']=={'x-goog-api-key':'native-test'}
     assert 'native-test' not in native[0]
     assert native[1]['json']['contents'][0]['parts'][1]['inlineData']=={'mimeType':'image/jpeg','data':'YWJj'}
+    assert native[1]['json']['generationConfig']['responseJsonSchema']['type']=='object'
     assert data['usage']['prompt_tokens']==17 and client.counters['model_requests']==3
 
 
@@ -309,3 +310,10 @@ def test_opening_evidence_requires_two_bounded_video_samples(monkeypatch,invalid
     assert calls[0][1]['native_only'] is True
     assert client.counters['prompt_tokens']==(35000 if too_many_tokens else 8000)
     if too_many_tokens: assert client.provider_state['clips_disabled']
+
+
+def test_single_review_wrapper_keeps_evidence_validation_strict():
+    assert batch._model_object('[{"decision":"pass"}]')=={'decision':'pass'}
+    with pytest.raises(ValueError): batch._model_object('[{},{}]')
+    with pytest.raises(ValueError): batch._model_object('[]')
+    with pytest.raises(ValueError): batch._model_object('"pass"')
