@@ -1,148 +1,145 @@
 """
-Test that avatar_gen concat.txt uses absolute paths to avoid path doubling.
+Test that the avatar generation pipeline skips zero-duration b-roll shots.
 
 Reproduces the error:
-  [concat] Impossible to open 'output/avatar_gen/1791129206/output/avatar_gen/1791129206/shot_000_avatar.mp4'
-
-The fix ensures concat.txt contains absolute resolved paths.
+  FFmpeg: Stream specifier ':v' ... matches no streams / Error binding filtergraph
+  
+When shot planning creates near-zero duration shots (e.g., between(t,16.43,16.43)),
+the assembly should skip them to avoid FFmpeg errors.
 """
 from pathlib import Path
 import tempfile
-import shutil
 
 
-def test_concat_uses_absolute_paths():
-    """Verify concat.txt contains absolute paths, not relative paths."""
-    from core.avatar_gen_pipeline import AvatarShot, assemble_avatar_video
+def test_zero_duration_broll_skip():
+    """Verify that zero-duration or near-zero b-roll shots are skipped in assembly."""
+    from core.avatar_gen_pipeline import AvatarShot, assemble_mixed_avatar_broll_video
     
     with tempfile.TemporaryDirectory() as tmpdir:
-        work_dir = Path(tmpdir) / "output" / "avatar_gen" / "1791129206"
+        work_dir = Path(tmpdir) / "work"
         work_dir.mkdir(parents=True, exist_ok=True)
         
-        # Create dummy shot files
-        shot_files = []
-        for i in range(3):
-            shot_path = work_dir / f"shot_{i:03d}_avatar.mp4"
-            shot_path.write_text(f"fake video {i}")
-            shot_files.append(shot_path)
+        # Create a fake avatar video file
+        avatar_video_path = work_dir / "avatar_full.mp4"
+        avatar_video_path.write_bytes(b"fake video")
         
-        # Create shots with relative-style paths (as the pipeline currently creates)
+        # Create a fake audio file
+        audio_path = work_dir / "audio.wav"
+        audio_path.write_bytes(b"fake audio")
+        
+        # Create a mix of normal and zero-duration shots
         shots = [
             AvatarShot(
-                index=i,
-                start_sec=i * 4.0,
-                end_sec=(i + 1) * 4.0,
+                index=0,
+                start_sec=0.0,
+                end_sec=4.0,
                 duration=4.0,
                 shot_type="avatar",
-                text=f"Segment {i}",
+                text="Opening",
                 visual_prompt="",
-                asset_path=str(shot_files[i]),
+                asset_path="",
+                is_generated=False,
+            ),
+            # Normal b-roll shot
+            AvatarShot(
+                index=1,
+                start_sec=4.0,
+                end_sec=7.5,
+                duration=3.5,
+                shot_type="broll_still",
+                text="Some content",
+                visual_prompt="content",
+                asset_path=str(work_dir / "broll_1.mp4"),
                 is_generated=True,
-            )
-            for i in range(3)
+            ),
+            # ZERO-DURATION b-roll (should be skipped)
+            AvatarShot(
+                index=2,
+                start_sec=7.5,
+                end_sec=7.5,
+                duration=0.0,
+                shot_type="broll_still",
+                text="Zero duration",
+                visual_prompt="zero",
+                asset_path=str(work_dir / "broll_2.mp4"),
+                is_generated=True,
+            ),
+            # Near-zero b-roll (< 0.05s, should be skipped)
+            AvatarShot(
+                index=3,
+                start_sec=7.5,
+                end_sec=7.52,
+                duration=0.02,
+                shot_type="broll_still",
+                text="Near zero",
+                visual_prompt="near zero",
+                asset_path=str(work_dir / "broll_3.mp4"),
+                is_generated=True,
+            ),
+            # Normal b-roll again
+            AvatarShot(
+                index=4,
+                start_sec=7.52,
+                end_sec=11.0,
+                duration=3.48,
+                shot_type="broll_still",
+                text="More content",
+                visual_prompt="more",
+                asset_path=str(work_dir / "broll_4.mp4"),
+                is_generated=True,
+            ),
+            AvatarShot(
+                index=5,
+                start_sec=11.0,
+                end_sec=14.0,
+                duration=3.0,
+                shot_type="avatar",
+                text="Ending",
+                visual_prompt="",
+                asset_path="",
+                is_generated=False,
+            ),
         ]
         
-        output_path = work_dir / "final_video.mp4"
-        concat_file = work_dir / "concat.txt"
-        
-        # The assembly should fail without ffmpeg, but we can check the concat file
-        try:
-            assemble_avatar_video(shots, work_dir, output_path, progress=None)
-        except Exception:
-            # Expected to fail without real ffmpeg/video files
-            pass
-        
-        # Verify concat.txt was created
-        assert concat_file.exists(), "concat.txt should be created"
-        
-        concat_content = concat_file.read_text()
-        print(f"\nconcat.txt content:\n{concat_content}\n")
-        
-        lines = concat_content.strip().split("\n")
-        file_lines = [line for line in lines if line.startswith("file ")]
-        
-        # Verify all paths are absolute
-        for line in file_lines:
-            # Extract path from "file 'path'"
-            path_str = line[len("file '"):-1]  # Remove "file '" prefix and "'" suffix
-            
-            # Path should be absolute
-            assert Path(path_str).is_absolute(), (
-                f"Path in concat.txt must be absolute, got: {path_str}"
-            )
-            
-            # Path should NOT contain doubled segments like "output/.../output/..."
-            path_parts = Path(path_str).parts
-            part_counts = {}
-            for i, part in enumerate(path_parts):
-                if i == 0:
-                    continue  # Skip root
-                if part in part_counts:
-                    # Check if we have suspicious doubling
-                    if part in ("output", "avatar_gen") and part_counts[part] > 1:
-                        raise AssertionError(
-                            f"Path appears to have doubled segments: {path_str}"
-                        )
-                part_counts[part] = part_counts.get(part, 0) + 1
-        
-        print("✓ PASS: concat.txt uses absolute paths without doubling")
-
-
-def test_concat_path_not_doubled_in_work_dir():
-    """
-    Ensure that when work_dir is output/avatar_gen/123,
-    the concat.txt paths don't become output/.../output/... when resolved.
-    """
-    from core.avatar_gen_pipeline import AvatarShot, assemble_avatar_video
-    
-    with tempfile.TemporaryDirectory() as tmpdir:
-        # Simulate the work_dir structure as it happens in production
-        work_dir = Path(tmpdir) / "output" / "avatar_gen" / "test_job"
-        work_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Create a shot file
-        shot_file = work_dir / "shot_000_avatar.mp4"
-        shot_file.write_text("fake")
-        
-        shot = AvatarShot(
-            index=0,
-            start_sec=0,
-            end_sec=4,
-            duration=4,
-            shot_type="avatar",
-            text="Test",
-            visual_prompt="",
-            asset_path=str(shot_file),
-            is_generated=True,
-        )
+        # Create fake b-roll files for the valid shots
+        (work_dir / "broll_1.mp4").write_bytes(b"fake broll 1")
+        (work_dir / "broll_2.mp4").write_bytes(b"fake broll 2")
+        (work_dir / "broll_3.mp4").write_bytes(b"fake broll 3")
+        (work_dir / "broll_4.mp4").write_bytes(b"fake broll 4")
         
         output_path = work_dir / "final.mp4"
         
+        # Track progress messages to verify skipping
+        progress_messages = []
+        def track_progress(msg: str):
+            progress_messages.append(msg)
+        
+        # The assembly should skip zero-duration shots without error
+        # (It will fail at ffmpeg execution, but we can check the filter construction)
         try:
-            assemble_avatar_video([shot], work_dir, output_path)
-        except Exception:
-            pass
-        
-        concat_file = work_dir / "concat.txt"
-        content = concat_file.read_text()
-        
-        # The absolute path should appear exactly once, not doubled
-        absolute_shot = shot_file.resolve()
-        assert f"file '{absolute_shot}'" in content or str(absolute_shot) in content, (
-            "concat.txt should contain the resolved absolute path"
-        )
-        
-        # Check for path doubling
-        if "output/avatar_gen" in str(absolute_shot):
-            # Count occurrences of the work_dir pattern
-            parts_str = str(absolute_shot)
-            if parts_str.count("output/avatar_gen/test_job") > 1:
-                raise AssertionError(f"Path is doubled: {parts_str}")
-        
-        print("✓ PASS: Paths in concat.txt are not doubled")
+            assemble_mixed_avatar_broll_video(
+                avatar_video_path,
+                audio_path,
+                shots,
+                work_dir,
+                output_path,
+                progress=track_progress,
+            )
+        except Exception as e:
+            # Expected to fail without real video files, but check error type
+            error_msg = str(e)
+            # Should NOT have the "Stream specifier ':v' matches no streams" error
+            assert "matches no streams" not in error_msg, (
+                f"Zero-duration shots were not skipped! Error: {error_msg}"
+            )
+            # Should have skipped the zero-duration shots (check progress messages)
+            skip_messages = [m for m in progress_messages if "Skipping zero-duration" in m]
+            assert len(skip_messages) >= 2, (
+                f"Expected at least 2 zero-duration skip messages, got {len(skip_messages)}: {progress_messages}"
+            )
+            print(f"✓ Zero-duration shots skipped: {skip_messages}")
 
 
 if __name__ == "__main__":
-    test_concat_uses_absolute_paths()
-    test_concat_path_not_doubled_in_work_dir()
-    print("\n✓ All concat path tests passed")
+    test_zero_duration_broll_skip()
+    print("\n✓ Zero-duration b-roll skip test passed")

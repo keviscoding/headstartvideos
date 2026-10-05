@@ -360,10 +360,36 @@ def run_cook_job(
                 
                 # Fetch avatar if it's a URL or remote path (not a prompt)
                 if avatar_source and not avatar_source.startswith("prompt:"):
+                    # If avatar_source is a local path that doesn't exist on this machine,
+                    # try to derive the Spaces key and fetch it
+                    if not avatar_source.startswith("http://") and not avatar_source.startswith("https://"):
+                        local_path = Path(avatar_source)
+                        if not local_path.is_file():
+                            # Try to derive Spaces key from path pattern: avatar_uploads/<user>/<file>
+                            # This handles cases where the job carries a bare local path from web
+                            parts = Path(avatar_source).parts
+                            if "avatar_uploads" in parts:
+                                idx = parts.index("avatar_uploads")
+                                spaces_key = "/".join(parts[idx:])
+                                on_progress(f"Avatar not local, fetching from Spaces: {spaces_key}")
+                                try:
+                                    spaces_url = storage._public_url(spaces_key)
+                                    avatar_source = fetch_to_local(spaces_url, cache_dir)
+                                except Exception as e:
+                                    raise RuntimeError(
+                                        f"Avatar file not found locally ({avatar_source}) and could not "
+                                        f"fetch from Spaces key {spaces_key}: {e}"
+                                    ) from e
+                            else:
+                                raise RuntimeError(
+                                    f"Avatar file not found: {avatar_source}. "
+                                    f"Ensure uploads go to remote storage when SPACES is configured."
+                                )
+                    
                     try:
                         avatar_source = fetch_to_local(avatar_source, cache_dir)
                     except Exception as e:
-                        raise RuntimeError(f"Could not fetch avatar image: {e}")
+                        raise RuntimeError(f"Could not fetch avatar image: {e}") from e
                 
                 from core.avatar_gen_pipeline import run_avatar_gen_pipeline
                 result = run_avatar_gen_pipeline(

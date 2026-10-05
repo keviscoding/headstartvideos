@@ -2639,8 +2639,12 @@ async def avatar_gen_generate(
         
         # Upload to remote storage if configured (for Fly cook workers)
         if storage.is_remote():
-            key = f"avatar_uploads/{user['id']}/{fname}"
-            avatar_path_or_prompt = storage.store_file(str(local), key, "image/jpeg")
+            try:
+                key = f"avatar_uploads/{user['id']}/{fname}"
+                avatar_path_or_prompt = storage.store_file(str(local), key, "image/jpeg")
+            except Exception as e:
+                # If upload fails, the cook worker won't have access to the file
+                raise HTTPException(500, f"Failed to upload avatar to remote storage: {e}") from e
         else:
             avatar_path_or_prompt = str(local)
     
