@@ -102,6 +102,11 @@ def parse_relative_age_days(text: str) -> float | None:
         return None
     t = text.lower().strip()
     t = re.sub(r"^(streamed|premiered)\s+", "", t)
+    compact = re.search(r"(\d+)\s*(mo|[hdwmy])\s*ago", t)
+    if compact:
+        return float(compact[1]) * {
+            "h": 1 / 24, "d": 1, "w": 7, "m": 1 / 1440, "mo": 30, "y": 365,
+        }[compact[2]]
     if "just now" in t or "second" in t or "minute" in t or "hour" in t:
         return 0.0
     m = re.search(r"(\d+)\s*(day|week|month|year)s?\s*ago", t)
@@ -134,139 +139,22 @@ def _channel_id_from_url(url: str) -> str:
     return url.rstrip("/").split("/")[-1]
 
 
-def _search_url(keyword: str) -> str:
+def _search_url(keyword: str, *, use_duration_filter: bool = True) -> str:
     # Prefer long videos via YouTube filter chip encoded in sp=
     # EgIYAg == "Long" duration filter (commonly used; DOM still filtered).
     q = quote_plus(keyword)
-    return f"https://www.youtube.com/results?search_query={q}&sp=EgIYAg%253D%253D"
+    url = f"https://www.youtube.com/results?search_query={q}"
+    return url + "&sp=EgIYAg%253D%253D" if use_duration_filter else url
 
 
-def scrape_keyword_search(
-    keyword: str,
-    *,
-    scroll_count: int = DEFAULT_SCROLL_COUNT,
-    max_age_days: int = MAX_VIDEO_AGE_DAYS,
-    min_duration_sec: int = MIN_DURATION_SEC,
-    progress: ProgressCb | None = None,
-) -> list[dict[str, Any]]:
-    """
-    Scroll one YouTube search page and return fresh long-form video hits.
-    Each hit: video_id, title, channel_name, channel_url, channel_id,
-              view_count, duration_sec, age_days, thumbnail, published_label
-    """
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError as e:
-        raise RuntimeError(
-            "Playwright is required for niche scroll discovery. "
-            "Install: pip install playwright && playwright install chromium"
-        ) from e
-
-    def _log(msg: str) -> None:
-        print(f"[niche_scraper] {msg}")
-        if progress:
-            progress(msg)
-
-    url = _search_url(keyword)
-    hits: list[dict[str, Any]] = []
-    _log(f"Opening search: {keyword}")
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
-        )
-        context = browser.new_context(
-            viewport={"width": 1400, "height": 900},
-            user_agent=(
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/122.0.0.0 Safari/537.36"
-            ),
-            locale="en-US",
-        )
-        page = context.new_page()
-        try:
-            page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-            page.wait_for_timeout(2500)
-
-            # Consent / cookie banners (best-effort)
-            for sel in (
-                "button:has-text('Accept all')",
-                "button:has-text('Accept')",
-                "button:has-text('I agree')",
-                "tp-yt-paper-button:has-text('Accept')",
-            ):
-                try:
-                    btn = page.locator(sel).first
-                    if btn.is_visible(timeout=800):
-                        btn.click(timeout=1500)
-                        page.wait_for_timeout(800)
-                        break
-                except Exception:
-                    pass
-
-            last_count = 0
-            stagnant = 0
-            # Scroll until YouTube stops loading new cards (or hit the ceiling).
-            max_scrolls = max(10, int(scroll_count))
-            for i in range(1, max_scrolls + 1):
-                page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
-                page.wait_for_timeout(int(SCROLL_DELAY_SEC * 1000))
-                count = page.locator("ytd-video-renderer").count()
-                if i == 1 or i % 5 == 0 or i == max_scrolls:
-                    _log(f"  scroll {i}/{max_scrolls} — {count} video cards")
-                if count <= last_count:
-                    stagnant += 1
-                    if stagnant >= 4:
-                        _log(f"  reached end of results (~{count} cards)")
-                        break
-                else:
-                    stagnant = 0
-                last_count = count
-
-            raw = page.evaluate(
-                """() => {
-                  const out = [];
-                  const items = document.querySelectorAll('ytd-video-renderer');
-                  for (const video of items) {
-                    try {
-                      const titleEl = video.querySelector('a#video-title')
-                        || video.querySelector('h3 a')
-                        || video.querySelector('a[title]');
-                      const channelEl = video.querySelector('ytd-channel-name a')
-                        || video.querySelector('a[href*="/@"]')
-                        || video.querySelector('a[href*="/channel/"]');
-                      const metaSpans = video.querySelectorAll('#metadata-line span, .inline-metadata-item');
-                      const meta = Array.from(metaSpans).map(s => (s.textContent || '').trim()).filter(Boolean);
-                      const durEl = video.querySelector('ytd-thumbnail-overlay-time-status-renderer span, #time-status span, span.ytd-thumbnail-overlay-time-status-renderer');
-                      const thumbEl = video.querySelector('img');
-                      const href = titleEl?.href || '';
-                      if (!href || href.includes('/shorts/')) continue;
-                      out.push({
-                        title: (titleEl?.title || titleEl?.textContent || '').trim(),
-                        videoUrl: href,
-                        channelName: (channelEl?.textContent || '').trim(),
-                        channelUrl: channelEl?.href || '',
-                        meta,
-                        durationText: (durEl?.textContent || '').trim(),
-                        thumbnail: thumbEl?.src || '',
-                      });
-                    } catch (e) {}
-                  }
-                  return out;
-                }"""
-            )
-        finally:
-            context.close()
-            browser.close()
-
+def _parse_search_cards(raw, keyword, max_age_days, min_duration_sec):
+    hits = []
     for item in raw or []:
         title = item.get("title") or ""
         video_url = item.get("videoUrl") or ""
         channel_name = item.get("channelName") or ""
         channel_url = item.get("channelUrl") or ""
-        if not title or not video_url or not channel_name:
+        if not title or not video_url:
             continue
 
         m = re.search(r"[?&]v=([\w-]{11})", video_url)
@@ -281,8 +169,10 @@ def scrape_keyword_search(
         if duration_sec and duration_sec < min_duration_sec:
             continue
 
-        meta = item.get("meta") or []
+        meta = [part.strip() for x in (item.get("meta") or []) for part in re.split(r"[•·]", x) if part.strip()]
         views_text = next((x for x in meta if "view" in x.lower()), "")
+        if not views_text:
+            views_text = next((x for x in meta if re.fullmatch(r"[\d,.]+\s*[KMBkmb]?", x)), "")
         age_text = next(
             (x for x in meta if "ago" in x.lower() or "yesterday" in x.lower()),
             "",
@@ -311,7 +201,117 @@ def scrape_keyword_search(
             }
         )
 
-    _log(f"  kept {len(hits)} fresh long-form hits (≤{max_age_days}d) for '{keyword}'")
+    return hits
+
+
+def scrape_keyword_search(
+    keyword: str,
+    *,
+    scroll_count: int = DEFAULT_SCROLL_COUNT,
+    max_age_days: int = MAX_VIDEO_AGE_DAYS,
+    min_duration_sec: int = MIN_DURATION_SEC,
+    progress: ProgressCb | None = None,
+    page=None,
+    max_results: int = 0,
+    deadline: float | None = None,
+    use_duration_filter: bool = True,
+) -> list[dict[str, Any]]:
+    """Read public search cards; optionally reuse a browser and bound the work."""
+    def _log(msg):
+        if progress:
+            progress(msg)
+
+    if deadline is not None and time.monotonic() >= deadline:
+        return []
+    if page is None:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+            try:
+                context = browser.new_context(locale="en-US", viewport={"width": 1400, "height": 900})
+                return scrape_keyword_search(
+                    keyword, scroll_count=scroll_count, max_age_days=max_age_days,
+                    min_duration_sec=min_duration_sec, progress=progress,
+                    page=context.new_page(), max_results=max_results, deadline=deadline,
+                    use_duration_filter=use_duration_filter,
+                )
+            finally:
+                browser.close()
+
+    _log(f"Opening search: {keyword}")
+    timeout = min(30000, max(1, int((deadline - time.monotonic()) * 1000))) if deadline else 60000
+    page.goto(_search_url(keyword, use_duration_filter=use_duration_filter), wait_until="domcontentloaded", timeout=timeout)
+    page.wait_for_timeout(min(1500, max(0, int((deadline - time.monotonic()) * 1000))) if deadline else 2500)
+    for label in ("Reject all", "Accept all"):
+        btn = page.get_by_role("button", name=label, exact=True)
+        if btn.count() and btn.first.is_visible():
+            btn.first.click(timeout=2000)
+            break
+
+    raw = []
+    last_count = 0
+    stagnant = 0
+    # Scroll until YouTube stops loading new cards (or hit the ceiling).
+    max_scrolls = max(1 if max_results else 10, int(scroll_count))
+    for i in range(1, max_scrolls + 1):
+        if deadline is not None and time.monotonic() >= deadline:
+            break
+        page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
+        remaining_ms = int(max(0, deadline - time.monotonic()) * 1000) if deadline else 1600
+        page.wait_for_timeout(min(int(SCROLL_DELAY_SEC * 1000), remaining_ms))
+        raw = page.evaluate(
+            r"""() => {
+              const out = [];
+              const items = document.querySelectorAll('ytd-video-renderer, yt-lockup-view-model');
+              for (const video of items) {
+                try {
+                  const titleEl = video.querySelector('a#video-title')
+                    || video.querySelector('h3 a')
+                    || video.querySelector('a[href*="/watch?v="]');
+                  const channelEl = video.querySelector('ytd-channel-name a')
+                    || video.querySelector('a[href*="/@"]')
+                    || video.querySelector('a[href*="/channel/"]');
+                  const metaSpans = video.querySelectorAll('#metadata-line span, .inline-metadata-item');
+                  const meta = Array.from(metaSpans).map(s => (s.textContent || '').trim()).filter(Boolean);
+                  if (!meta.length) meta.push(...(video.innerText || '').split('\n'));
+                  const timeMatch = (video.innerText || '').match(/\b(?:\d{1,2}:)?\d{1,2}:\d{2}\b/);
+                  const durEl = video.querySelector('ytd-thumbnail-overlay-time-status-renderer span, #time-status span, span.ytd-thumbnail-overlay-time-status-renderer');
+                  const thumbEl = video.querySelector('img');
+                  const href = titleEl?.href || '';
+                  if (!href || href.includes('/shorts/')) continue;
+                  out.push({
+                    title: (titleEl?.title || titleEl?.textContent || '').trim(),
+                    videoUrl: href,
+                    channelName: (channelEl?.textContent || '').trim(),
+                    channelUrl: channelEl?.href || '',
+                    meta,
+                    durationText: (durEl?.textContent || '').trim() || (timeMatch ? timeMatch[0] : ''),
+                    thumbnail: thumbEl?.src || '',
+                  });
+                } catch (e) {}
+              }
+              return out;
+            }"""
+        )
+        count = len(raw)
+        if max_results and len(_parse_search_cards(raw, keyword, max_age_days, min_duration_sec)) >= max_results:
+            break
+        if i == 1 or i % 5 == 0 or i == max_scrolls:
+            _log(f"  scroll {i}/{max_scrolls} — {count} video cards")
+        if count <= last_count:
+            stagnant += 1
+            if stagnant >= 4:
+                _log(f"  reached end of results (~{count} cards)")
+                break
+        else:
+            stagnant = 0
+        last_count = count
+
+
+    hits = _parse_search_cards(raw, keyword, max_age_days, min_duration_sec)
+    if max_results:
+        hits = hits[:max_results]
+    _log(f"Kept {len(hits)} fresh long-form videos for {keyword!r}")
     return hits
 
 
@@ -321,33 +321,50 @@ def scrape_keywords(
     scroll_count: int = DEFAULT_SCROLL_COUNT,
     max_age_days: int = MAX_VIDEO_AGE_DAYS,
     progress: ProgressCb | None = None,
+    max_per_keyword: int = 0,
+    max_videos: int = 0,
+    deadline: float | None = None,
+    use_duration_filter: bool = True,
+    reuse_browser: bool = True,
 ) -> list[dict[str, Any]]:
-    """Scroll-scrape many keywords; return deduped video hits."""
-    kws = [k.strip() for k in keywords if k and str(k).strip()]
-    if not kws:
-        kws = list(SCROLL_KEYWORDS)
-    all_hits: list[dict[str, Any]] = []
-    seen_vids: set[str] = set()
-    for i, kw in enumerate(kws):
-        if progress:
-            progress(f"Scrolling search ({i + 1}/{len(kws)}): {kw}")
-        try:
-            batch = scrape_keyword_search(
-                kw,
-                scroll_count=scroll_count,
-                max_age_days=max_age_days,
-                progress=progress,
-            )
-        except Exception as e:
-            print(f"[niche_scraper] keyword '{kw}' failed: {e}")
+    """Reuse one browser per hunt, deduplicate, and stop at work/time budgets."""
+    from contextlib import ExitStack
+
+    kws = list(dict.fromkeys(str(k).strip() for k in keywords if str(k).strip())) or list(SCROLL_KEYWORDS)
+    all_hits = []
+    seen_vids = set()
+    with ExitStack() as resources:
+        page = None
+        if reuse_browser and (deadline is None or time.monotonic() < deadline):
+            from playwright.sync_api import sync_playwright
+            p = resources.enter_context(sync_playwright())
+            browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+            resources.callback(browser.close)
+            context = browser.new_context(locale="en-US", viewport={"width": 1400, "height": 900})
+            page = context.new_page()
+        for i, kw in enumerate(kws):
+            if deadline is not None and time.monotonic() >= deadline:
+                break
+            if max_videos and len(all_hits) >= max_videos:
+                break
             if progress:
-                progress(f"Search failed for '{kw}': {e}")
-            continue
-        for h in batch:
-            vid = h.get("video_id")
-            if not vid or vid in seen_vids:
+                progress(f"Searching ({i + 1}/{len(kws)}): {kw}")
+            try:
+                batch = scrape_keyword_search(
+                    kw, scroll_count=scroll_count, max_age_days=max_age_days,
+                    progress=progress, page=page, max_results=max_per_keyword,
+                    deadline=deadline, use_duration_filter=use_duration_filter,
+                )
+            except Exception as e:
+                if progress:
+                    progress(f"Search failed for {kw!r}: {type(e).__name__}")
                 continue
-            seen_vids.add(vid)
-            all_hits.append(h)
-        time.sleep(0.8)
+            for hit in batch:
+                vid = hit.get("video_id")
+                if not vid or vid in seen_vids:
+                    continue
+                seen_vids.add(vid)
+                all_hits.append(hit)
+                if max_videos and len(all_hits) >= max_videos:
+                    break
     return all_hits

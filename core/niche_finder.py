@@ -84,7 +84,22 @@ def parse_duration_iso8601(duration: str) -> int:
 
 
 def _yt(api_key: str):
-    return build("youtube", "v3", developerKey=api_key, cache_discovery=False)
+    import httplib2
+    http = httplib2.Http(timeout=20)
+    stats = {"requests": 0, "seconds": 0.0}
+    request = http.request
+    def measured_request(uri, *args, **kwargs):
+        started = time.monotonic()
+        try:
+            return request(uri, *args, **kwargs)
+        finally:
+            if "/youtube/v3/" in uri:
+                stats["requests"] += 1
+                stats["seconds"] += time.monotonic() - started
+    http.request = measured_request
+    http.niche_stats = stats
+    return build("youtube", "v3", developerKey=api_key, cache_discovery=False,
+                 http=http)
 
 
 def _search_video_ids(
@@ -252,7 +267,7 @@ def _longform_from_uploads(
             last_err = e
             time.sleep(0.35 * (attempt + 1))
     if resp is None:
-        print(f"[niche_finder] playlistItems failed: {last_err}")
+        print(f"[niche_finder] playlistItems failed: {type(last_err).__name__}")
         return []
 
     ids = []
@@ -449,6 +464,11 @@ def run_niche_finder(
     scroll_count: int = 20,
     max_video_age_days: int = 180,
     progress: ProgressCb | None = None,
+    max_enrich_channels: int = 0,
+    max_discovery_videos: int = 0,
+    excluded_channel_ids: set[str] | None = None,
+    excluded_channel_names: set[str] | None = None,
+    deadline: float | None = None,
 ) -> dict[str, Any]:
     """
     Scroll-scrape YouTube search (ViewHunt-style), then lightly enrich with
@@ -476,15 +496,19 @@ def run_niche_finder(
     scraped = scrape_keywords(
         kws,
         # High ceiling so each keyword can scroll to the real end of results.
-        scroll_count=max(10, min(int(scroll_count or 80), 150)),
+        scroll_count=max(1 if max_per_keyword else 10, min(int(scroll_count or 80), 150)),
         max_age_days=age_limit,
         progress=_log,
+        max_per_keyword=max_per_keyword,
+        max_videos=max_discovery_videos,
+        deadline=deadline,
+        use_duration_filter=not bool(max_enrich_channels),
     )
     video_ids = [h["video_id"] for h in scraped if h.get("video_id")]
     scrape_by_vid = {h["video_id"]: h for h in scraped if h.get("video_id")}
     _log(f"Scroll discovery kept {len(video_ids)} fresh videos (≤{age_limit}d)")
 
-    if not video_ids:
+    if not video_ids or (deadline is not None and time.monotonic() >= deadline):
         return {
             "hits": [],
             "meta": {
@@ -493,7 +517,7 @@ def run_niche_finder(
                 "channels_considered": 0,
                 "discovery": "scroll",
                 "max_video_age_days": age_limit,
-                "note": "No fresh long-form results from scroll scrape.",
+                "note": "No fresh results, or discovery exhausted its time budget before enrichment.",
             },
         }
 
@@ -527,12 +551,24 @@ def run_niche_finder(
     channels = _fetch_channels(youtube, channel_ids)
 
     hits: list[dict] = []
+    excluded_ids = excluded_channel_ids or set()
+    excluded_names = {name.strip().casefold() for name in (excluded_channel_names or set())}
+    cached_encountered = sum(cid in excluded_ids for cid in channels)
     to_enrich = [
         (cid, ch)
         for cid, ch in channels.items()
         if ch.get("subscriber_count", 0) <= max_subscribers
         and ch.get("subscriber_count", 0) >= 100
+        and cid not in excluded_ids
+        and ch.get("channel_name", "").strip().casefold() not in excluded_names
     ]
+    # Bound upload-history reads before enrichment. The output cap alone does
+    # not limit work. Cheap API-enriched discovery statistics choose the pool.
+    if max_enrich_channels:
+        to_enrich.sort(key=lambda row: max(
+            (v.get("view_count", 0) for v in by_channel[row[0]]), default=0,
+        ), reverse=True)
+        to_enrich = to_enrich[:max(0, max_enrich_channels)]
 
     def _enrich_one(cid: str, ch: dict) -> dict | None:
         seed_videos = sorted(
@@ -674,16 +710,21 @@ def run_niche_finder(
             "est_recent_monthly_revenue_high_usd": rev_recent["est_monthly_revenue_high_usd"],
             # Primary gallery = most recent long-form
             "recent_videos": [_vid_row(v) for v in recent[:4]],
+            "sampled_videos": [_vid_row(v) for v in by_date] if max_enrich_channels else [],
             "popular_videos": [_vid_row(v) for v in popular],
         }
 
     _log(f"Scoring {len(to_enrich)} channels…")
     # Sequential enrich — parallel googleapiclient calls flake hard (SSL/timeouts).
+    enrichment_attempts = 0
     for cid, ch in to_enrich:
+        if deadline is not None and time.monotonic() >= deadline:
+            break
         try:
+            enrichment_attempts += 1
             hit = _enrich_one(cid, ch)
         except Exception as e:
-            print(f"[niche_finder] enrich error: {e}")
+            print(f"[niche_finder] enrich error: {type(e).__name__}")
             continue
         if hit:
             hits.append(hit)
@@ -707,6 +748,11 @@ def run_niche_finder(
             "keywords": kws,
             "videos_scanned": len(videos),
             "channels_considered": len(channel_ids),
+            "channels_selected_for_enrichment": len(to_enrich),
+            "channels_enrichment_attempted": enrichment_attempts,
+            "channels_enriched": len(hits),
+            "cached_channels_encountered": cached_encountered,
+            "youtube_api": getattr(getattr(youtube, "_http", None), "niche_stats", {}),
             "min_duration_sec": MIN_DURATION_SEC,
             "recent_video_count": RECENT_VIDEO_COUNT,
             "rpm_assumed": rpm_usd,
@@ -714,7 +760,7 @@ def run_niche_finder(
             "max_video_age_days": age_limit,
             "note": (
                 "Discovery scrolls real YouTube search (not API ranking). "
-                "Videos older than 6 months are ignored. "
+                f"Discovery videos older than {age_limit} days are ignored. "
                 "Revenue estimate: views × uploads/month × RPM/1000 ($4 mid, $2–$8 band)."
             ),
         },
