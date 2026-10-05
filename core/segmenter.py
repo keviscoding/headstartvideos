@@ -182,7 +182,20 @@ def _transcribe_local(audio_path: str, model_size: str = "base") -> list[dict]:
     from faster_whisper import WhisperModel
 
     model = WhisperModel(model_size, compute_type="int8")
-    segments_iter, info = model.transcribe(audio_path, word_timestamps=True, language="en")
+    
+    # faster-whisper 1.2.1 calls av.open with metadata_errors="ignore" internally.
+    # Some av versions don't accept that parameter and raise TypeError.
+    # Catch and provide a clear error message instead of cryptic TypeError.
+    try:
+        segments_iter, info = model.transcribe(audio_path, word_timestamps=True, language="en")
+    except TypeError as e:
+        if "metadata_errors" in str(e):
+            raise RuntimeError(
+                f"PyAV version incompatibility: av.open does not accept metadata_errors parameter. "
+                f"This is required by faster-whisper 1.2.1. Please ensure av>=12.0.0,<19.0.0 is installed. "
+                f"Original error: {e}"
+            ) from e
+        raise
 
     words = []
     for seg in segments_iter:

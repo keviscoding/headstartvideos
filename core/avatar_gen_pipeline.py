@@ -949,6 +949,14 @@ def assemble_mixed_avatar_broll_video(
     broll_index = 1  # Input index (0 is avatar video)
     for shot in shots:
         if shot.shot_type == "broll_still" and shot.asset_path and Path(shot.asset_path).is_file():
+            # Skip zero-duration or near-zero-duration shots (< 0.05s)
+            # These cause FFmpeg to fail with "Stream specifier ':v' matches no streams"
+            shot_duration = shot.end_sec - shot.start_sec
+            if shot_duration < 0.05:
+                if progress:
+                    progress(f"Skipping zero-duration b-roll shot {shot.index} ({shot_duration:.3f}s)")
+                continue
+            
             # The asset_path now points to the trimmed i2v motion clip
             motion_path = Path(shot.asset_path)
             

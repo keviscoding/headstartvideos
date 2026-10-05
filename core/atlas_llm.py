@@ -209,6 +209,11 @@ def _atlas_chat(
         attempts.append(min(16384, max(max_tokens * 2, 12288)))
 
     last_err = "Atlas LLM returned empty content"
+    
+    # Retry HTTP 429 and high demand errors with exponential backoff
+    max_http_retries = 5
+    http_retry_count = 0
+    
     with httpx.Client(timeout=180) as client:
         for attempt_tokens in attempts:
             body: dict = {
@@ -219,64 +224,114 @@ def _atlas_chat(
             if temperature is not None:
                 body["temperature"] = temperature
 
-            resp = client.post(
-                f"{ATLAS_LLM_BASE}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {key}",
-                    "Content-Type": "application/json",
-                },
-                json=body,
-            )
-            ctype = (resp.headers.get("content-type") or "").lower()
-            text_body = resp.text or ""
-            if resp.status_code >= 400:
-                raise RuntimeError(
-                    f"Atlas LLM {resp.status_code}: {text_body[:400]}"
-                )
-            if "application/json" not in ctype or text_body.lstrip().startswith("<!"):
-                raise RuntimeError(
-                    f"Atlas LLM returned non-JSON ({ctype or 'unknown'}): {text_body[:200]}"
-                )
-            try:
-                data = resp.json()
-            except Exception as e:
-                raise RuntimeError(
-                    f"Atlas LLM JSON parse failed: {e}; body={text_body[:200]}"
-                ) from e
-
-            choices = data.get("choices") or []
-            if not choices:
-                last_err = f"Atlas LLM empty response: {str(data)[:300]}"
-                continue
-            choice0 = choices[0] if isinstance(choices[0], dict) else {}
-            msg = choice0.get("message") or {}
-            text = _extract_atlas_message_text(msg)
-            if not text:
-                # Some gateways put the answer on the choice itself
-                text = _extract_atlas_message_text(choice0)
-            if text:
-                if attempt_tokens != attempts[0]:
-                    print(
-                        f"[atlas] LLM ok after empty/length retry "
-                        f"(max_tokens {attempts[0]}→{attempt_tokens})"
+            for http_attempt in range(max_http_retries):
+                try:
+                    resp = client.post(
+                        f"{ATLAS_LLM_BASE}/chat/completions",
+                        headers={
+                            "Authorization": f"Bearer {key}",
+                            "Content-Type": "application/json",
+                        },
+                        json=body,
                     )
-                return text
+                except Exception as e:
+                    # Network errors - retry with backoff
+                    if http_attempt < max_http_retries - 1:
+                        backoff_sec = min(30, 2 ** http_attempt)
+                        print(f"[atlas] LLM network error (attempt {http_attempt + 1}/{max_http_retries}): {e}")
+                        time.sleep(backoff_sec)
+                        continue
+                    raise RuntimeError(f"Atlas LLM network error after {max_http_retries} attempts: {e}") from e
+                
+                ctype = (resp.headers.get("content-type") or "").lower()
+                text_body = resp.text or ""
+                
+                # Handle HTTP 429 (rate limit) and transient errors with retry
+                if resp.status_code == 429:
+                    if http_attempt < max_http_retries - 1:
+                        backoff_sec = min(60, 3 * (2 ** http_attempt))
+                        print(f"[atlas] LLM HTTP 429 rate limit (attempt {http_attempt + 1}/{max_http_retries}), backing off {backoff_sec}s")
+                        time.sleep(backoff_sec)
+                        continue
+                    raise RuntimeError(f"Atlas LLM rate limit (429) after {max_http_retries} attempts")
+                
+                # Check for "high demand" or temporary spike messages in the response
+                if resp.status_code >= 500 or (resp.status_code >= 400 and (
+                    "high demand" in text_body.lower() or
+                    "temporarily unavailable" in text_body.lower() or
+                    "temporary spike" in text_body.lower() or
+                    "try again" in text_body.lower()
+                )):
+                    if http_attempt < max_http_retries - 1:
+                        backoff_sec = min(45, 2 * (2 ** http_attempt))
+                        print(f"[atlas] LLM transient error {resp.status_code} (attempt {http_attempt + 1}/{max_http_retries}): {text_body[:150]}")
+                        time.sleep(backoff_sec)
+                        continue
+                    # Last attempt - check if it's quota/billing (fail fast with 1 short retry only)
+                    if "quota" in text_body.lower() or "billing" in text_body.lower() or "insufficient" in text_body.lower():
+                        raise RuntimeError(
+                            f"Atlas LLM quota or billing error (not retryable): {text_body[:400]}"
+                        )
+                    raise RuntimeError(
+                        f"Atlas LLM transient error {resp.status_code} after {max_http_retries} attempts: {text_body[:400]}"
+                    )
+                
+                # Other 4xx/5xx errors - fail after one retry
+                if resp.status_code >= 400:
+                    if http_attempt == 0:
+                        # Try once more for other errors
+                        print(f"[atlas] LLM HTTP {resp.status_code}, retrying once: {text_body[:150]}")
+                        time.sleep(2)
+                        continue
+                    raise RuntimeError(
+                        f"Atlas LLM {resp.status_code}: {text_body[:400]}"
+                    )
+                
+                if "application/json" not in ctype or text_body.lstrip().startswith("<!"):
+                    raise RuntimeError(
+                        f"Atlas LLM returned non-JSON ({ctype or 'unknown'}): {text_body[:200]}"
+                    )
+                try:
+                    data = resp.json()
+                except Exception as e:
+                    raise RuntimeError(
+                        f"Atlas LLM JSON parse failed: {e}; body={text_body[:200]}"
+                    ) from e
 
-            finish = choice0.get("finish_reason") or choice0.get("native_finish_reason") or ""
-            usage = data.get("usage") or {}
-            last_err = (
-                f"Atlas LLM returned empty content "
-                f"(finish_reason={finish!r} model={body.get('model')} "
-                f"max_tokens={attempt_tokens} usage={usage})"
-            )
-            finish_l = str(finish).lower()
-            # Safety filter — don't burn retries; caller may soften the prompt.
-            if "content_filter" in finish_l or finish_l in ("safety", "blocked", "content_filtered"):
-                raise AtlasContentFiltered(last_err, finish_reason=str(finish))
-            # Only worth retrying when the model hit the length wall / omitted message.
-            if finish_l not in ("length", "max_tokens", ""):
-                break
-            print(f"[atlas] {last_err} — retrying with more tokens")
+                choices = data.get("choices") or []
+                if not choices:
+                    last_err = f"Atlas LLM empty response: {str(data)[:300]}"
+                    break  # Move to next token attempt
+                choice0 = choices[0] if isinstance(choices[0], dict) else {}
+                msg = choice0.get("message") or {}
+                text = _extract_atlas_message_text(msg)
+                if not text:
+                    # Some gateways put the answer on the choice itself
+                    text = _extract_atlas_message_text(choice0)
+                if text:
+                    if attempt_tokens != attempts[0]:
+                        print(
+                            f"[atlas] LLM ok after empty/length retry "
+                            f"(max_tokens {attempts[0]}→{attempt_tokens})"
+                        )
+                    return text
+
+                finish = choice0.get("finish_reason") or choice0.get("native_finish_reason") or ""
+                usage = data.get("usage") or {}
+                last_err = (
+                    f"Atlas LLM returned empty content "
+                    f"(finish_reason={finish!r} model={body.get('model')} "
+                    f"max_tokens={attempt_tokens} usage={usage})"
+                )
+                finish_l = str(finish).lower()
+                # Safety filter — don't burn retries; caller may soften the prompt.
+                if "content_filter" in finish_l or finish_l in ("safety", "blocked", "content_filtered"):
+                    raise AtlasContentFiltered(last_err, finish_reason=str(finish))
+                # Only worth retrying when the model hit the length wall / omitted message.
+                if finish_l not in ("length", "max_tokens", ""):
+                    break
+                print(f"[atlas] {last_err} — retrying with more tokens")
+                break  # Move to next token attempt
 
     raise RuntimeError(last_err)
 
