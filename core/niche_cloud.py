@@ -374,8 +374,7 @@ def run_cloud_hunt(job_id):
             # Establish useful, AI-reproducible content before spending on video
             # openings. Uncertain presenter identity cannot veto other formats.
             if (review.get("decision")=="pass" and review.get("ai_reproducible") is True
-                and (review.get("presenter_visible") is True
-                    or (settings.profile=="avatar" and review.get("production_format") in {"presenter","mixed"}))):
+                and (settings.profile=="avatar" or review.get("presenter_visible") is True)):
                 if store.reserve_budget("content_review",1,300):
                     hit["avatar_evidence"]["visual_triage"]=client.presenter_style(hit)
                 else:

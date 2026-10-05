@@ -223,6 +223,7 @@ def test_hunt_uses_a_live_frontier_and_publishes_only_review_passes(store,monkey
             return {**REVIEW,'reproducible':True,'production_format':'animation' if public_ai_format else 'presenter'}
         def presenter_style(self,hit):
             assert self.state.get('content_checked'), 'Content must be reviewed before opening clips'
+            self.state['opening_checked']=True
             return {'presenter_visible':False,'avatar_style_confidence':'unknown','avatar_observations':['Animated scene','No host visible']}
         def close(self): pass
     monkeypatch.setattr(cloud,'EvidenceClient',Evidence)
@@ -232,6 +233,7 @@ def test_hunt_uses_a_live_frontier_and_publishes_only_review_passes(store,monkey
     assert result['stop_reason']==('review_providers_unavailable' if provider_unavailable else 'work_budget_or_frontier_exhausted' if existing_enrichment else 'target_reached')
     assert db.count_niche_channels()==(0 if provider_unavailable else 1)
     assert db.get_niche_hunt_run_by_job_id('test')['status']==('error' if provider_unavailable else 'completed')
+    assert result['review_provider'].get('opening_checked',False)==(not provider_unavailable)
     with db._conn() as c:
         assert c.execute("SELECT count(*) FROM niche_discovery_tasks WHERE source='learned'").fetchone()[0]>0
         assert c.execute('SELECT count(*) FROM niche_discovery_lease').fetchone()[0]==0
