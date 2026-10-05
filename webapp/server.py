@@ -3458,6 +3458,8 @@ async def list_active_cooks(request: Request):
             kind = "storyboard"
         elif recipe == "ranking_countdown":
             kind = "ranking"
+        elif recipe == "avatar_generator":
+            kind = "avatar_generator"
         else:
             kind = "pipeline"
         progress = j.get("progress") or []

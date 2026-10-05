@@ -1384,6 +1384,7 @@ _VIDEO_COOK_RECIPES = (
     "broll",
     "broll_narration",
     "avatar_plus_broll",
+    "avatar_generator",
     "storyboard_animate",
     "storyboard_assemble",
     "ranking_countdown",
