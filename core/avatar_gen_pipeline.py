@@ -536,6 +536,7 @@ def select_shot_framing(broll_index: int, segment_text: str, prev_framing: str |
     Returns dict with:
     - framing: "close_up", "wide", "over_shoulder", "detail", "medium"
     - directive: prompt text specifying the framing
+    - camera_move: camera movement for i2v motion prompt
     
     First 3 b-rolls always include at least one close-up/detail and one wide.
     """
@@ -544,22 +545,27 @@ def select_shot_framing(broll_index: int, segment_text: str, prev_framing: str |
         {
             "framing": "close_up",
             "directive": "Close-up shot focusing on hands, facial expressions, or key physical objects in sharp detail",
+            "camera_move": "gentle camera drift closer",
         },
         {
             "framing": "detail",
             "directive": "Extreme macro detail shot of textures, surfaces, or edges - card corner, paper texture, fabric weave, hand gesture",
+            "camera_move": "subtle camera push forward",
         },
         {
             "framing": "wide",
             "directive": "Wide establishing shot showing the full environment, people, and spatial context",
+            "camera_move": "slow camera pan revealing scene",
         },
         {
             "framing": "over_shoulder",
             "directive": "Over-the-shoulder perspective showing hands interacting with objects, natural background",
+            "camera_move": "handheld camera following action",
         },
         {
             "framing": "medium",
             "directive": "Medium shot from waist or chest level showing person and their immediate interaction space",
+            "camera_move": "camera slowly pushes forward",
         },
     ]
     
@@ -573,6 +579,153 @@ def select_shot_framing(broll_index: int, segment_text: str, prev_framing: str |
         selected = framings[(base_index + 1) % len(framings)]
     
     return selected
+
+
+def build_motion_prompt(segment_text: str, camera_move: str) -> str:
+    """
+    Build deterministic motion prompt for Atlas i2v from segment text and camera move.
+    
+    Extracts key action/subject from text and combines with camera movement.
+    No LLM call - uses simple text processing.
+    
+    Args:
+        segment_text: Script text for this shot (e.g. "scan your card at the desk")
+        camera_move: Camera movement from framing (e.g. "gentle camera drift closer")
+    
+    Returns:
+        Motion prompt like "Person scanning card at desk, gentle camera drift closer, realistic"
+    """
+    # Clean and extract key phrases
+    text = segment_text.lower().strip()
+    
+    # Remove common filler words but keep action words
+    filler = ["the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with"]
+    words = [w for w in text.split() if w not in filler]
+    
+    # Take first 5-8 words as the action/subject
+    action_words = words[:min(8, len(words))]
+    action_phrase = " ".join(action_words)
+    
+    # Build motion prompt: action + camera move + realistic
+    motion_prompt = f"{action_phrase}, {camera_move}, realistic"
+    
+    # Cap at reasonable length
+    if len(motion_prompt) > 200:
+        motion_prompt = motion_prompt[:197] + "..."
+    
+    return motion_prompt
+
+
+def _generate_broll_motion_parallel(
+    broll_stills: list[dict],
+    work_dir: Path,
+    progress: ProgressFn | None = None,
+) -> list[dict]:
+    """
+    Generate motion clips from b-roll stills in parallel using Atlas i2v.
+    
+    Args:
+        broll_stills: List of dicts with still_path, motion_prompt, duration, shot
+        work_dir: Working directory for output
+        progress: Progress callback
+    
+    Returns:
+        List of dicts with video_path, shot
+        
+    Raises:
+        RuntimeError: If any i2v generation fails after retries
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from core.atlas_llm import generate_video_file
+    import config
+    
+    if not broll_stills:
+        return []
+    
+    max_workers = min(len(broll_stills), getattr(config, "ATLAS_I2V_CONCURRENCY", 5))
+    
+    def generate_one_clip(still_info: dict) -> dict:
+        """Generate one motion clip with retries."""
+        still_path = still_info["still_path"]
+        motion_prompt = still_info["motion_prompt"]
+        duration = int(max(4, min(12, still_info["duration"])))  # Atlas i2v duration 4-12s
+        shot = still_info["shot"]
+        
+        # Output path for the raw i2v clip (before trimming)
+        raw_video_path = work_dir / f"broll_{shot.index:03d}_i2v.mp4"
+        
+        # Generate motion clip with Atlas i2v (max 3 attempts with backoff)
+        ok = generate_video_file(
+            prompt=motion_prompt,
+            image=still_path,
+            output_path=raw_video_path,
+            duration=duration,
+            resolution="720p",
+            generate_audio=False,
+            camera_fixed=False,
+            max_attempts=3,
+            timeout_sec=600,  # 10 min per clip
+        )
+        
+        if not ok or not raw_video_path.is_file():
+            raise RuntimeError(
+                f"Atlas i2v failed for shot {shot.index} after retries. "
+                f"Prompt: '{motion_prompt[:100]}...'. "
+                "No fallback to static - avatar recipe requires real motion."
+            )
+        
+        # Trim to exact shot duration
+        trimmed_path = work_dir / f"broll_{shot.index:03d}_motion.mp4"
+        trim_cmd = [
+            "ffmpeg", "-y",
+            "-i", str(raw_video_path),
+            "-t", f"{still_info['duration']:.2f}",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-an",  # Remove audio (i2v audio not needed)
+            str(trimmed_path),
+        ]
+        
+        result = subprocess.run(trim_cmd, capture_output=True, text=True, timeout=60)
+        if result.returncode != 0 or not trimmed_path.is_file():
+            raise RuntimeError(
+                f"Failed to trim i2v clip for shot {shot.index}: {result.stderr[:200]}"
+            )
+        
+        # Verify motion with freeze check
+        has_motion, reason = _verify_motion(trimmed_path)
+        if not has_motion:
+            raise RuntimeError(
+                f"Generated i2v clip {shot.index} failed freeze check: {reason}"
+            )
+        
+        return {
+            "shot": shot,
+            "video_path": trimmed_path,
+            "motion_prompt": motion_prompt,
+        }
+    
+    # Generate all clips in parallel
+    results = []
+    completed = 0
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(generate_one_clip, still): still for still in broll_stills}
+        
+        for future in as_completed(futures):
+            still = futures[future]
+            try:
+                result = future.result()
+                results.append(result)
+                completed += 1
+                if progress:
+                    progress(f"B-roll motion {completed}/{len(broll_stills)} complete")
+            except Exception as e:
+                # Fast fail on first error
+                raise RuntimeError(
+                    f"B-roll motion generation failed for shot {still['shot'].index}: {e}"
+                ) from e
+    
+    return results
 
 
 def generate_broll_image_atlas(
@@ -647,29 +800,16 @@ def assemble_mixed_avatar_broll_video(
     overlay_inputs = []
     last_output_label = "0:v"  # Start with avatar video
     
-    # Turn each b-roll still into a short Ken Burns clip so overlays move like
-    # the approved samples. Fail hard if motion render fails — a frozen still
-    # must not be marked success.
-    from core.ken_burns import pick_effects, render_clip
-
+    # Use the already-generated Atlas i2v motion clips (no Ken Burns needed)
     broll_index = 1  # Input index (0 is avatar video)
     for shot in shots:
         if shot.shot_type == "broll_still" and shot.asset_path and Path(shot.asset_path).is_file():
-            seg_dur = max(0.5, float(shot.end_sec) - float(shot.start_sec))
-            motion_path = work_dir / f"broll_{shot.index:03d}_motion.mp4"
-            effect = pick_effects(1)[0]
-            ok = render_clip(str(shot.asset_path), str(motion_path), seg_dur, effect)
-            if not ok or not motion_path.is_file():
-                raise RuntimeError(
-                    f"B-roll motion render failed for segment {shot.index}. "
-                    "Frozen still overlays are not acceptable for avatar_generator."
-                )
+            # The asset_path now points to the trimmed i2v motion clip
+            motion_path = Path(shot.asset_path)
             
-            # Verify the rendered clip actually has motion
-            has_motion, reason = _verify_motion(motion_path)
-            if not has_motion:
+            if not motion_path.is_file():
                 raise RuntimeError(
-                    f"B-roll motion clip {shot.index} is frozen (effect: {effect}): {reason}"
+                    f"B-roll motion clip missing for shot {shot.index}: {motion_path}"
                 )
 
             # Align the motion clip to the shot window on the main timeline
@@ -898,59 +1038,81 @@ def run_avatar_gen_pipeline(
     progress("Planning b-roll segments...")
     shots = plan_avatar_video_shots(script, audio_duration, avatar_pattern)
     
-    # Generate b-roll images for designated segments
-    progress(f"Generating b-roll assets...")
+    # Generate b-roll stills and animate them with Atlas i2v in parallel
+    progress(f"Generating b-roll motion clips...")
     t0 = time.time()
-    broll_count = 0
+    
+    # Step 1: Generate all b-roll stills first (fast, sequential is fine)
+    broll_shots = [s for s in shots if s.shot_type == "broll_still"]
+    broll_count = len(broll_shots)
     prev_framing = None
+    broll_stills = []
     
-    for i, shot in enumerate(shots):
-        if shot.shot_type == "broll_still":
-            broll_count_needed = sum(1 for s in shots if s.shot_type == "broll_still")
-            progress(f"Generating b-roll {broll_count + 1}/{broll_count_needed}...")
-            broll_img_path = work_dir / f"broll_{shot.index:03d}.jpg"
-            
-            # Create detailed, contextual prompt from segment text
-            # Include script context to ensure on-topic generation
-            segment_text = shot.text or shot.visual_prompt
-            
-            # Select shot framing for variety using b-roll index (not overall shot index)
-            framing = select_shot_framing(broll_count, segment_text, prev_framing, broll_count_needed)
-            prev_framing = framing["framing"]
-            
-            # Build explicit prompt emphasizing the script topic and segment content
-            prompt_text = (
-                f"Professional photograph, photorealistic, high quality. "
-                f"{framing['directive']}. "
-                f"Scene: {segment_text}. "
-                f"Context: {title}. "
-                f"Relevant visual showing specific objects or scenes mentioned. "
-                f"16:9 aspect ratio. "
-                f"No text, no captions, no logos, no brand marks, no watermarks, "
-                f"no credit cards, no payment cards, no trademarks, no readable labels. "
-                f"If people appear, keep them consistent with the script and the speaking "
-                f"avatar (same gender and role as the on-camera host when that role is shown)."
+    for idx, shot in enumerate(broll_shots):
+        progress(f"Generating b-roll still {idx + 1}/{broll_count}...")
+        broll_img_path = work_dir / f"broll_{shot.index:03d}.jpg"
+        
+        # Create detailed, contextual prompt from segment text
+        segment_text = shot.text or shot.visual_prompt
+        
+        # Select shot framing for variety using b-roll index
+        framing = select_shot_framing(idx, segment_text, prev_framing, broll_count)
+        prev_framing = framing["framing"]
+        
+        # Build explicit prompt emphasizing the script topic and segment content
+        prompt_text = (
+            f"Professional photograph, photorealistic, high quality. "
+            f"{framing['directive']}. "
+            f"Scene: {segment_text}. "
+            f"Context: {title}. "
+            f"Relevant visual showing specific objects or scenes mentioned. "
+            f"16:9 aspect ratio. "
+            f"No text, no captions, no logos, no brand marks, no watermarks, "
+            f"no credit cards, no payment cards, no trademarks, no readable labels. "
+            f"If people appear, keep them consistent with the script and the speaking "
+            f"avatar (same gender and role as the on-camera host when that role is shown)."
+        )
+        
+        ok = generate_broll_image_atlas(
+            prompt_text,
+            broll_img_path,
+            progress,
+        )
+        
+        if not ok:
+            raise RuntimeError(
+                f"B-roll still generation failed for shot {shot.index}. "
+                "The avatar recipe requires b-roll images throughout the video."
             )
-            
-            if len(prompt_text) > 10:
-                ok = generate_broll_image_atlas(
-                    prompt_text,
-                    broll_img_path,
-                    progress,
-                )
-                
-                if ok:
-                    shot.asset_path = str(broll_img_path)
-                    shot.is_generated = True
-                    broll_count += 1
-                else:
-                    # B-roll generation failed - this is fatal
-                    raise RuntimeError(
-                        f"B-roll image generation failed for segment {shot.index}. "
-                        "The avatar recipe requires b-roll images throughout the video."
-                    )
+        
+        # Build motion prompt from segment text and camera move
+        motion_prompt = build_motion_prompt(segment_text, framing["camera_move"])
+        
+        broll_stills.append({
+            "shot": shot,
+            "still_path": broll_img_path,
+            "motion_prompt": motion_prompt,
+            "duration": shot.duration,
+        })
     
-    timing["broll_generation"] = time.time() - t0
+    timing["broll_stills"] = time.time() - t0
+    
+    # Step 2: Animate all stills to motion clips in parallel using Atlas i2v
+    progress(f"Animating {broll_count} b-roll clips with Atlas i2v...")
+    t0 = time.time()
+    
+    broll_clips = _generate_broll_motion_parallel(
+        broll_stills,
+        work_dir,
+        progress,
+    )
+    
+    # Assign generated clips back to shots
+    for clip_info in broll_clips:
+        clip_info["shot"].asset_path = str(clip_info["video_path"])
+        clip_info["shot"].is_generated = True
+    
+    timing["broll_motion"] = time.time() - t0
     
     # Avatar recipe requires b-roll throughout - fail if we couldn't generate any
     if broll_count == 0:
