@@ -171,7 +171,8 @@ class EvidenceClient:
             })
             for frame in (1, 2):
                 self.counters["image_requests"] += 1
-                url = f"https://i.ytimg.com/vi/{video_id}/{frame}.jpg"
+                still = f"hq{frame}" if self.avatar_screen else str(frame)
+                url = f"https://i.ytimg.com/vi/{video_id}/{still}.jpg"
                 try:
                     r = self.session.get(url, timeout=self.timeout(6))
                     digest = hashlib.sha256(r.content).hexdigest()

@@ -1,9 +1,9 @@
 """
-Run a single Niche Finder scroll scrape on a Fly Machine, then exit.
+Run one adaptive, quality-screened discovery hunt on a Fly Machine, then exit.
 
   python -m webapp.fly_niche_oneshot <job_id>
 
-Isolated from cook jobs — same cook app image, different command.
+Isolated from cook jobs with a dedicated digest-pinned image.
 Progress + status live in niche_hunt_runs so the web UI can resume after refresh.
 """
 from __future__ import annotations

@@ -16,7 +16,7 @@ from core.niche_daily_keywords import SIMPLE_PROBES
 from core.niche_finder import _fetch_videos, _longform_from_uploads, _yt, run_niche_finder
 from core.niche_scraper import _parse_search_cards, scrape_keyword_search
 
-CLOUD_RUBRIC = "cloud-avatars-v1"
+CLOUD_RUBRIC = "cloud-avatars-v2"
 SEED_HANDLES = ["GlenPritchardBuilds", "OpalRowe1945", "TheJapaneseMethod0"]
 AVATAR_CLAIM = re.compile(
     r"\b(?:ai[- ](?:generated|powered|created|animated)\s+(?:host|presenter|avatar|character)|"
@@ -258,12 +258,12 @@ def run_cloud_hunt(job_id):
     thread=threading.Thread(target=heartbeat,daemon=True)
     thread.start()
 
-    def add_expansion(hit, depth):
+    def add_expansion(hit, depth, source="related"):
         if depth>=3: return
         vids=hit.get("sampled_videos") or hit.get("recent_videos") or []
         for v in vids[:2]:
             vid=video_id(v.get("url"))
-            if vid: store.enqueue("related",{"video_id":vid},source="related",depth=depth+1)
+            if vid: store.enqueue("related",{"video_id":vid},source="avatar_seed" if source=="avatar_seed" else "related",depth=depth+1)
         for query in learned_queries([v.get("title","") for v in vids]):
             store.enqueue("search",{"query":query},source="learned",depth=depth+1)
 
@@ -379,7 +379,7 @@ def run_cloud_hunt(job_id):
                     store.remember(cid,signature,outcome,86400)
                     continue
                 perf=eligible_performance(hit,settings)
-                if perf["median_views"]>=5000: add_expansion(hit,task["depth"])
+                if perf["median_views"]>=5000: add_expansion(hit,task["depth"],task["source"])
                 if not perf["passes"]:
                     outcome={"channel_id":cid,"channel_name":hit["channel_name"],"status":"performance_hold","performance":perf}
                     store.finish_task(task,outcome)
