@@ -177,6 +177,56 @@ def _transcribe_groq(audio_path: str) -> list[dict]:
                 pass
 
 
+def _check_pyav_compatible() -> bool:
+    """
+    Check if PyAV is installed and compatible with faster-whisper 1.2.1.
+    
+    faster-whisper 1.2.1 unconditionally passes metadata_errors="ignore" to av.open(),
+    but PyAV 19+ removed that parameter. We need PyAV <19 or we'll get:
+    TypeError: open() got an unexpected keyword argument 'metadata_errors'
+    
+    This function actually tests the call that faster-whisper makes.
+    """
+    try:
+        import av
+        import tempfile
+        import os
+        
+        # Test that the exact call faster-whisper 1.2.1 makes will work
+        # Create a minimal silent audio file to test with
+        fd, test_path = tempfile.mkstemp(suffix=".wav")
+        try:
+            # Write minimal valid WAV file (44 bytes header + silence)
+            import struct
+            sample_rate = 16000
+            num_samples = sample_rate // 10  # 0.1 second
+            data = struct.pack('<4sI4s4sIHHIIHH4sI', 
+                b'RIFF', 36 + num_samples * 2, b'WAVE',
+                b'fmt ', 16, 1, 1, sample_rate, sample_rate * 2, 2, 16,
+                b'data', num_samples * 2)
+            data += b'\x00\x00' * num_samples
+            os.write(fd, data)
+            os.close(fd)
+            
+            # Test the exact call that faster-whisper 1.2.1 makes
+            with av.open(test_path, mode="r", metadata_errors="ignore") as container:
+                pass
+            return True
+        finally:
+            try:
+                os.unlink(test_path)
+            except:
+                pass
+    except (ImportError, TypeError) as e:
+        # TypeError means av.open doesn't accept metadata_errors (PyAV 19+)
+        if isinstance(e, TypeError) and "metadata_errors" in str(e):
+            return False
+        # ImportError means PyAV not installed
+        if isinstance(e, ImportError):
+            return False
+        raise
+
+
 def _transcribe_local(audio_path: str, model_size: str = "base") -> list[dict]:
     """Transcribe locally with faster-whisper. Fallback when Groq is unavailable."""
     from faster_whisper import WhisperModel
@@ -209,6 +259,13 @@ def align_script_to_audio(
     allow_local = os.getenv("ALLOW_LOCAL_WHISPER", "").strip() in ("1", "true", "yes")
     app_env = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "").lower()
     is_prod = app_env in ("production", "prod") or bool(os.getenv("DATABASE_URL", "").strip())
+    
+    # Detect if we're on a dedicated cook worker (Fly Machine / separate worker process)
+    # vs the web dyno. Cook workers have dedicated resources and can safely run local Whisper.
+    on_cook_worker = (
+        not getattr(config, "COOK_ON_WEB", True)
+        or bool(os.getenv("FLY_MACHINE_ID") or os.getenv("FLY_APP_NAME"))
+    )
 
     if config.GROQ_API_KEY:
         try:
@@ -216,17 +273,33 @@ def align_script_to_audio(
             words = _transcribe_groq(audio_path)
             print(f"[segmenter] Groq returned {len(words)} words")
         except Exception as e:
-            if is_prod and not allow_local:
+            # Allow fallback on dedicated cook workers even in production
+            if is_prod and not allow_local and not on_cook_worker:
                 raise RuntimeError(
-                    f"Groq Whisper failed and local whisper is disabled in production: {e}"
+                    f"Groq Whisper failed and local whisper is disabled on web dyno: {e}"
                 ) from e
-            print(f"[segmenter] Groq failed ({e}), falling back to local whisper...")
+            
+            # Check PyAV compatibility before attempting local Whisper
+            if not _check_pyav_compatible():
+                raise RuntimeError(
+                    f"Groq Whisper failed ({e}) and local fallback requires PyAV. "
+                    "Install: pip install 'av>=12.0.0'"
+                ) from e
+            
+            env_hint = "cook worker" if on_cook_worker else "dev/local"
+            print(f"[segmenter] Groq failed ({e}), falling back to local whisper ({env_hint})...")
             words = _transcribe_local(audio_path, model_size)
     else:
-        if is_prod and not allow_local:
+        if is_prod and not allow_local and not on_cook_worker:
             raise RuntimeError(
-                "GROQ_API_KEY is required in production. Local Whisper would freeze the server under load."
+                "GROQ_API_KEY is required in production. Local Whisper would freeze the web server under load."
             )
+        
+        if not _check_pyav_compatible():
+            raise RuntimeError(
+                "Local Whisper requires PyAV. Install: pip install 'av>=12.0.0'"
+            )
+        
         words = _transcribe_local(audio_path, model_size)
 
     if not words:
