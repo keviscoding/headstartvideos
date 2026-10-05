@@ -39,6 +39,7 @@ class HuntSettings:
     max_subscribers: int = 300000
     min_views: int = 10000
     min_median_views: int = 20000
+    min_recent_avg_views: int = 0
     min_hit_rate: float = 0.75
     review_workers: int = 3
     enrich_existing: bool = False
@@ -56,13 +57,14 @@ class HuntSettings:
             review_cap=max(5,min(400,int(request.get("review_cap",100)))),
             search_cap=max(20,min(300,int(request.get("search_cap",100)))),
             api_cap=max(100,min(4000,int(request.get("api_cap",2000)))),
-            max_subscribers=max(10000,min(1000000,int(request.get("max_subscribers",300000)))),
+            max_subscribers=max(100,min(1000000,int(request.get("max_subscribers",300000)))),
+            min_recent_avg_views=max(0,int(request.get("min_recent_avg_views",0))),
             enrich_existing=request.get("enrich_existing") is True,
             existing_review_cap=max(0,min(200,int(request.get("existing_review_cap",80)))),
         )
 
     def signature(self, model):
-        criteria={k:asdict(self)[k] for k in ("profile","min_views","min_median_views","min_hit_rate")}
+        criteria={k:asdict(self)[k] for k in ("profile","min_views","min_median_views","min_hit_rate","min_recent_avg_views","max_subscribers")}
         return hashlib.sha256(json.dumps({**criteria,"rubric":CLOUD_RUBRIC,"model":model},sort_keys=True).encode()).hexdigest()
 
 
@@ -91,7 +93,10 @@ def eligible_performance(hit, settings):
     trial=BatchSettings(min_views=settings.min_views,min_hit_rate=settings.min_hit_rate)
     evidence=performance_evidence(hit,trial)
     evidence["min_median_views"]=settings.min_median_views
-    evidence["passes"]=bool(evidence["passes"] and evidence["median_views"]>=settings.min_median_views)
+    evidence["recent_average_views"]=int(hit.get("recent_avg_views") or 0)
+    evidence["min_recent_avg_views"]=settings.min_recent_avg_views
+    evidence["passes"]=bool(evidence["passes"] and evidence["median_views"]>=settings.min_median_views
+        and evidence["recent_average_views"]>=settings.min_recent_avg_views)
     return evidence
 
 

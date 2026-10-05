@@ -38,7 +38,7 @@ PostgreSQL stores the frontier, evidence decisions, immutable catalog insertion 
 
 Per-run limits cover wall-clock time, explored pages, enriched channels, content reviews, and actual YouTube read requests. Shared UTC-day reservations cap discovery at 6,000 YouTube read requests and 300 review attempts; abandoned reservation blocks remain counted conservatively. These are application budgets, not a claim about the account's remaining provider quota. Cache keys include model and acceptance criteria; rejected content is cached for seven days, insufficient evidence for a shorter retry window.
 
-Default daily limits: 30 minutes, 300 enriched channels, 100 content reviews, 100 explored pages, 2,000 API reads, and a target of 20 additions. A target is a ceiling; the worker never weakens admission to fill it.
+Default daily limits: 30 minutes, 300 enriched channels, 100 content reviews, 100 explored pages, 2,000 API reads, and a target of 20 additions. A target is a ceiling; the worker never weakens admission to fill it. The admin's optional recent-average cutoff remains separate from the mature-video median gate, and subscriber caps below 10,000 are honored. Both values are part of the evidence cache signature so changing them cannot reuse a rejection from different criteria.
 
 ## Deploy and operate
 
