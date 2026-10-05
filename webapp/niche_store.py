@@ -100,6 +100,8 @@ class NicheStore:
 
     def enqueue(self, kind, payload, *, source, depth=0):
         identity = payload.get("channel_id") if kind == "channel" else payload.get("video_id") if kind == "related" else str(payload.get("query", "")).strip().casefold()
+        if kind=="search" and payload.get("upload_month") and identity:
+            identity += ":upload_month"
         if not identity:
             return False
         key = kind + ":" + hashlib.sha256(identity.encode()).hexdigest()

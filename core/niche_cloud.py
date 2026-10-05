@@ -16,7 +16,7 @@ from core.niche_daily_keywords import SIMPLE_PROBES
 from core.niche_finder import _fetch_videos, _longform_from_uploads, _yt, run_niche_finder
 from core.niche_scraper import _parse_search_cards, scrape_keyword_search
 
-CLOUD_RUBRIC = "cloud-avatars-v5-mixed"
+CLOUD_RUBRIC = "cloud-content-v6-presenter-priority"
 SEED_HANDLES = ["GlenPritchardBuilds", "OpalRowe1945", "TheJapaneseMethod0"]
 AVATAR_CLAIM = re.compile(
     r"\b(?:ai[- ](?:generated|powered|created|animated)\s+(?:host|presenter|avatar|character)|"
@@ -169,9 +169,10 @@ class Explorer:
                 button.first.click(timeout=1500)
                 break
 
-    def search(self, query, settings):
+    def search(self, query, settings, upload_month=False):
         return scrape_keyword_search(query,page=self.page,scroll_count=settings.scrolls,
-            max_results=settings.per_query,max_age_days=120,deadline=self.deadline,use_duration_filter=False)
+            max_results=settings.per_query,max_age_days=31 if upload_month else 120,
+            deadline=self.deadline,use_duration_filter=False,upload_month=upload_month)
 
     def related(self, vid):
         self.navigate(f"https://www.youtube.com/watch?v={vid}")
@@ -326,6 +327,7 @@ def run_cloud_hunt(job_id):
             if vid: store.enqueue("related",{"video_id":vid},source="avatar_seed" if source=="avatar_seed" else "related",depth=depth+1)
         for query in learned_queries([v.get("title","") for v in vids]):
             store.enqueue("search",{"query":query},source="learned",depth=depth+1)
+            store.enqueue("search",{"query":query,"upload_month":True},source="fresh",depth=depth+1)
 
     def queue_cards(cards, task):
         ids=list(dict.fromkeys(c["video_id"] for c in cards))
@@ -362,17 +364,17 @@ def run_cloud_hunt(job_id):
             atlas_key=config.ATLASCLOUD_KEY,model=config.ATLAS_TEXT_MODEL,avatar_screen=True,
             gemini_key=config.GEMINI_KEY,gemini_model=config.GEMINI_TEXT_MODEL,provider_state=provider_state)
         try:
-            if settings.profile=="avatar":
-                triage=client.presenter_style(hit)
-                hit["avatar_evidence"]["visual_triage"]=triage
-                disclosed=(hit["avatar_evidence"]["ai_video_samples"]>=2
-                    or hit["avatar_evidence"]["explicit_avatar_claim"] or hit["avatar_evidence"].get("user_reference"))
-                if (triage.get("presenter_visible") is not True or triage.get("avatar_style_confidence")!="high") and not disclosed:
-                    return {"decision":"review","screen_stage":"visual_triage","reasons":["Avatar presentation is unconfirmed"],"avatar_triage":triage},client.counters.copy()
-                if not store.reserve_budget("content_review",1,300):
-                    return {"decision":"review","reasons":["Daily model budget reached"]},client.counters.copy()
             review=client.review(hit)
             review["screen_stage"]="content"
+            # Establish useful, AI-reproducible content before spending on video
+            # openings. Uncertain presenter identity cannot veto other formats.
+            if (review.get("decision")=="pass" and review.get("ai_reproducible") is True
+                and (review.get("presenter_visible") is True
+                    or (settings.profile=="avatar" and review.get("production_format") in {"presenter","mixed"}))):
+                if store.reserve_budget("content_review",1,300):
+                    hit["avatar_evidence"]["visual_triage"]=client.presenter_style(hit)
+                else:
+                    review["avatar_check_skipped"]="daily_model_budget"
             return review,client.counters.copy()
         finally: client.close()
 
@@ -383,12 +385,16 @@ def run_cloud_hunt(job_id):
         random.Random(job_id).shuffle(probes)
         for query in (run.get("keywords") or [])+probes[:100]:
             store.enqueue("search",{"query":query},source="broad")
+        for query in probes[:8]:
+            store.enqueue("search",{"query":query,"upload_month":True},source="fresh")
         for seed in store.seed_channels(limit=24):
             try: vids=json.loads(seed["recent_videos_json"] or seed["popular_videos_json"] or "[]")
             except ValueError: continue
             for v in vids[:1]:
                 vid=video_id(v.get("url"))
                 if vid: store.enqueue("related",{"video_id":vid},source="related")
+                for query in learned_queries([v.get("title","")],limit=1):
+                    store.enqueue("search",{"query":query,"upload_month":True},source="fresh")
         if settings.profile=="avatar":
             for handle in SEED_HANDLES:
                 response=youtube.channels().list(part="id,contentDetails",forHandle=handle).execute()
@@ -398,6 +404,7 @@ def run_cloud_hunt(job_id):
                     seed_videos=_longform_from_uploads(youtube,playlist,want=2)
                     for query in learned_queries([v["title"] for v in seed_videos]):
                         store.enqueue("search",{"query":query},source="learned")
+                        store.enqueue("search",{"query":query,"upload_month":True},source="fresh")
                     queue_channel(item["id"],seed_videos,"avatar_seed")
                     for v in seed_videos:
                         store.enqueue("related",{"video_id":v["video_id"]},source="avatar_seed")
@@ -405,9 +412,9 @@ def run_cloud_hunt(job_id):
             for candidate in store.enrichment_candidates(limit=settings.existing_review_cap):
                 queue_channel(candidate['channel_id'],[],"catalog")
         explorer=Explorer(deadline)
-        rotation=[("search","broad"),("related",None),("search","learned"),("related",None),("search","broad")]
+        rotation=[("search","broad"),("related",None),("search","learned"),("search","fresh"),("related",None),("search","broad")]
         if settings.profile=="avatar":
-            rotation=[("related","avatar_seed"),("search","broad"),("related","related"),("search","learned"),("related","avatar_seed"),("search","broad")]
+            rotation=[("related","avatar_seed"),("search","fresh"),("related","related"),("search","learned"),("related","avatar_seed"),("search","broad")]
         iteration=0
         while not stop.is_set() and time.monotonic()<deadline and stats["added"]<settings.target:
             if api_stats()["requests"]>=settings.api_cap or reservation["exhausted"]: break
@@ -423,7 +430,7 @@ def run_cloud_hunt(job_id):
                     if task["kind"]=="search":
                         query=task["payload"]["query"]
                         progress(f"Explore {stats['searches']+stats['related_pages']+1}: {query}")
-                        cards=explorer.search(query,settings)
+                        cards=explorer.search(query,settings,upload_month=task["payload"].get("upload_month") is True)
                         stats["searches"]+=1
                     else:
                         cards=explorer.related(task["payload"]["video_id"])
@@ -436,8 +443,8 @@ def run_cloud_hunt(job_id):
             # Rotate channel pools as well as queries so one crowded query
             # cannot consume the entire enrichment budget.
             for slot in range(min(5,settings.candidate_cap-stats["enriched"])):
-                pools=("broad","related","learned","avatar_seed","existing" if settings.enrich_existing else "broad")
-                wanted=pools[(iteration+slot)%5]
+                pools=("broad","related","learned","avatar_seed","fresh","existing" if settings.enrich_existing else "broad")
+                wanted=pools[(iteration+slot)%len(pools)]
                 channel_tasks.extend(store.claim_tasks("channel",source=wanted) or store.claim_tasks("channel"))
             if not tasks and not channel_tasks: break
             if not channel_tasks: continue
@@ -489,13 +496,11 @@ def run_cloud_hunt(job_id):
                 for query in (queries if isinstance(queries,list) else [])[:3]:
                     if isinstance(query,str) and 3<=len(query.strip())<=100 and task["depth"]<3:
                         store.enqueue("search",{"query":query.strip()},source="learned",depth=task["depth"]+1)
+                        store.enqueue("search",{"query":query.strip(),"upload_month":True},source="fresh",depth=task["depth"]+1)
                 for key,value in counters.items(): stats[key]=stats.get(key,0)+value
                 avatar=avatar_status(review,hit["avatar_evidence"])
                 review["avatar_confidence"]=avatar if avatar in {"disclosed","likely","reference","possible"} else "unknown"
                 status=review["decision"]
-                if (status=="pass" and settings.profile=="avatar" and avatar not in {"disclosed","likely","reference"}
-                    and hit["avatar_evidence"]["ai_video_samples"]<2):
-                    status="avatar_hold"
                 outcome={"channel_id":hit["channel_id"],"channel_name":hit["channel_name"],
                     "channel_url":hit["channel_url"],"status":status,"performance":perf,"content_review":review}
                 if (status=="pass" and not stop.is_set() and stats["added"]<settings.target

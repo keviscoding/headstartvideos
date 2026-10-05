@@ -30,11 +30,12 @@ PERF={'passes':True,'median_views':50000}
 def test_frontier_deduplicates_and_recovers_expired_work(store):
     assert store.enqueue('search',{'query':'Home Advice'},source='broad')
     assert not store.enqueue('search',{'query':'home advice'},source='learned')
+    assert store.enqueue('search',{'query':'Home Advice','upload_month':True},source='fresh')
     first=store.claim_tasks('search')[0]
     other=NicheStore('test','worker-b')
-    assert not other.claim_tasks('search')
+    assert not other.claim_tasks('search',source='broad')
     with db._conn() as c: c.execute('UPDATE niche_discovery_tasks SET lease_until=0')
-    assert other.claim_tasks('search')[0]['id']==first['id']
+    assert other.claim_tasks('search',source='broad')[0]['id']==first['id']
     store.finish_task(first,{'stale':True})
     assert not store.completed_results()
 
@@ -173,7 +174,7 @@ def test_catalog_enrichment_seed_pool_rotates_sources_and_excludes_hidden_entrie
 @pytest.mark.parametrize('provider_unavailable,existing_enrichment,public_ai_format',[(False,False,False),(True,False,False),(False,True,False),(False,False,True)])
 def test_hunt_uses_a_live_frontier_and_publishes_only_review_passes(store,monkeypatch,provider_unavailable,existing_enrichment,public_ai_format):
     import config
-    request={'time_budget_seconds':300,'target_channels':1,'profile':'avatar' if public_ai_format else 'balanced','enrich_existing':existing_enrichment}
+    request={'time_budget_seconds':300,'target_channels':1,'profile':'avatar','enrich_existing':existing_enrichment}
     if existing_enrichment:
         db.upsert_niche_channel(hit())
         with db._conn() as c: c.execute('UPDATE niche_channels SET first_seen_at=100')
@@ -187,7 +188,7 @@ def test_hunt_uses_a_live_frontier_and_publishes_only_review_passes(store,monkey
     class Explorer:
         def __init__(self,*a): pass
         def close(self): pass
-        def search(self,query,settings): return [{'video_id':'abcdefghijk'}]
+        def search(self,query,settings,**kw): return [{'video_id':'abcdefghijk'}]
         def related(self,vid): return []
         def avatar_evidence(self,hit): return {'ai_video_samples':2,'explicit_avatar_claim':False} if public_ai_format else {}
     monkeypatch.setattr(cloud,'Explorer',Explorer)
@@ -201,11 +202,13 @@ def test_hunt_uses_a_live_frontier_and_publishes_only_review_passes(store,monkey
             self.counters={'model_requests':1}
             self.state=kw['provider_state']
         def review(self,hit):
+            self.state['content_checked']=True
             if provider_unavailable:
                 self.state.update(atlas_payment_blocked=True,native_unavailable=429)
                 return {'decision':'review','screen_error':'HTTPError'}
             return {**REVIEW,'reproducible':True,'production_format':'animation' if public_ai_format else 'presenter'}
         def presenter_style(self,hit):
+            assert self.state.get('content_checked'), 'Content must be reviewed before opening clips'
             return {'presenter_visible':False,'avatar_style_confidence':'unknown','avatar_observations':['Animated scene','No host visible']}
         def close(self): pass
     monkeypatch.setattr(cloud,'EvidenceClient',Evidence)

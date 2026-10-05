@@ -178,6 +178,10 @@ class EvidenceClient:
             if r.status_code not in {500,502,503,504} or attempt: break
             time.sleep(min(0.5,self.timeout()))
         if r.status_code in {401,402,403,429}: self.provider_state["native_unavailable"]=r.status_code
+        if r.status_code>=400:
+            self.provider_state["native_last_http_status"]=r.status_code
+            errors=self.provider_state.setdefault("native_http_errors",{})
+            errors[str(r.status_code)]=errors.get(str(r.status_code),0)+1
         if r.status_code>=500:
             self.provider_state["native_failures"]=self.provider_state.get("native_failures",0)+1
         r.raise_for_status();data=r.json();self.provider_state["active"]="gemini"
