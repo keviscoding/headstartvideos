@@ -623,7 +623,7 @@ def select_shot_framing(broll_index: int, segment_text: str, prev_framing: str |
         {
             "framing": "detail",
             "directive": "Extreme macro detail shot of textures, surfaces, or edges - card corner, paper texture, fabric weave, hand gesture",
-            "camera_move": "subtle camera push forward",
+            "camera_move": "dynamic camera push forward with slight tilt, subject enters frame with visible motion",
         },
         {
             "framing": "wide",
@@ -914,11 +914,36 @@ def assemble_mixed_avatar_broll_video(
     # Calculate padding needed (add small buffer so last word not clipped)
     padding_needed = max(0.0, audio_duration - avatar_video_duration + 0.2)
     
+    # Identify opening and ending avatar shots to apply framing variety
+    avatar_shots = [s for s in shots if s.shot_type == "avatar"]
+    opening_avatar = avatar_shots[0] if avatar_shots else None
+    ending_avatar = avatar_shots[-1] if len(avatar_shots) > 1 else None
+    
     # Build ffmpeg filter_complex to overlay b-roll at specific times
-    # Base layer is the full avatar video
-    filter_parts = []
+    # Apply subtle framing variations to opening avatar for variety
+    framing_filter_parts = []
     overlay_inputs = []
-    last_output_label = "0:v"  # Start with avatar video
+    
+    # Create framing variety between opening and ending avatar shots
+    # Opening: slight zoom in for tighter framing (simulates closer camera/longer lens)
+    # Ending: keeps original framing (simulates wider camera/shorter lens)
+    # This prevents the two shots from feeling repetitive with identical framing
+    if opening_avatar and ending_avatar and opening_avatar != ending_avatar:
+        # Apply zoom only during the opening window using overlay enable timing
+        framing_filter_parts.append("[0:v]split=2[avatar_base][avatar_for_zoom]")
+        framing_filter_parts.append(
+            "[avatar_for_zoom]scale=w=1280*1.08:h=720*1.08,crop=1280:720[opening_zoomed]"
+        )
+        framing_filter_parts.append(
+            f"[avatar_base][opening_zoomed]overlay=enable='between(t,{opening_avatar.start_sec:.2f},{opening_avatar.end_sec:.2f})':shortest=0[avatar_varied]"
+        )
+        last_output_label = "avatar_varied"
+    else:
+        # No variation needed (single avatar shot or no avatar shots)
+        last_output_label = "0:v"
+    
+    # Now build b-roll overlay filters
+    filter_parts = list(framing_filter_parts)  # Start with framing filters
     
     # Use the already-generated Atlas i2v motion clips (no Ken Burns needed)
     broll_index = 1  # Input index (0 is avatar video)
