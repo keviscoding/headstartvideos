@@ -62,10 +62,11 @@ class AvatarShot:
 def parse_script_to_segments(
     script: str,
     actual_audio_duration: float,
-    avg_cut_sec: float = 4.0,
+    avg_cut_sec: float = 3.0,
 ) -> list[dict[str, Any]]:
     """
     Break script into timed segments based on ACTUAL audio duration.
+    For ~20s Shorts, targets 6-7 segments (~3s each) to enable 3-4 b-roll shots.
     
     Returns list of {"text": str, "start_sec": float, "end_sec": float, "duration": float}
     """
@@ -222,110 +223,115 @@ def plan_avatar_video_shots(
     script: str,
     actual_audio_duration: float,
     avatar_pattern: dict,
-    avg_cut_sec: float = 4.0,
+    avg_cut_sec: float = 3.0,
 ) -> list[AvatarShot]:
     """
     Plan all shots for the video based on script and channel pattern.
     Mix avatar (talking head) with b-roll throughout.
     Uses ACTUAL audio duration to ensure shots cover the full voiceover.
     Always ends on the avatar for a strong finish.
+    For ~20s Shorts, produces 3-4 b-roll shots between opening and ending.
     """
     segments = parse_script_to_segments(script, actual_audio_duration, avg_cut_sec)
     shots = []
-    current_time = 0.0
     shot_index = 0
     
     opening_sec = avatar_pattern.get("opening_avatar_sec", 4.0)
     face_return_freq = avatar_pattern.get("face_return_frequency", 10.0)
     face_duration = avatar_pattern.get("face_shot_duration", 3.0)
-    last_face_time = 0.0
     
     # Reserve last ~3 seconds for avatar ending
     ending_avatar_sec = 3.0
-    content_end_time = actual_audio_duration - ending_avatar_sec
+    broll_end_time = actual_audio_duration - ending_avatar_sec
     
-    for seg_idx, seg in enumerate(segments):
-        seg_start = current_time
-        seg_end = seg_start + seg["duration"]
-        is_last_segment = seg_idx == len(segments) - 1
+    # Create opening avatar shot (single shot, exact duration)
+    shots.append(AvatarShot(
+        index=shot_index,
+        start_sec=0.0,
+        end_sec=opening_sec,
+        duration=opening_sec,
+        shot_type="avatar",
+        text=script[:100],  # First part of script
+        visual_prompt="",
+    ))
+    shot_index += 1
+    last_face_time = opening_sec
+    
+    # Middle section: b-roll with optional face returns
+    # Target 3-4 b-roll shots for ~20s Short (opening 4s, ending 3s, middle ~13s)
+    middle_duration = broll_end_time - opening_sec
+    
+    # Calculate b-roll shot duration to hit target count (3-4 shots)
+    # For ~13s middle section: 3 shots = ~4.3s each, 4 shots = ~3.25s each
+    target_broll_count = 3 if middle_duration < 10 else 4
+    broll_shot_duration = middle_duration / target_broll_count
+    
+    current_time = opening_sec
+    seg_index_for_middle = 0
+    broll_added = 0
+    
+    while current_time < broll_end_time and broll_added < target_broll_count:
+        # Calculate how much time is left in middle section
+        remaining_time = broll_end_time - current_time
         
-        # First segment(s) are avatar opening
-        if current_time < opening_sec:
+        # Check if it's time for face to return (based on frequency pattern)
+        time_since_face = current_time - last_face_time
+        should_return_face = (
+            face_return_freq is not None and
+            time_since_face >= face_return_freq - 1.0 and
+            remaining_time > face_duration + broll_shot_duration  # Need room for face + at least one more b-roll
+        )
+        
+        if should_return_face:
+            # Insert face return
             shots.append(AvatarShot(
                 index=shot_index,
-                start_sec=seg_start,
-                end_sec=seg_end,
-                duration=seg["duration"],
+                start_sec=current_time,
+                end_sec=current_time + face_duration,
+                duration=face_duration,
                 shot_type="avatar",
-                text=seg["text"],
+                text=script[int(current_time * 10):int(current_time * 10) + 50],
                 visual_prompt="",
             ))
-            last_face_time = seg_end
-        # Last segment should be avatar for strong ending
-        elif is_last_segment or seg_start >= content_end_time:
-            shots.append(AvatarShot(
-                index=shot_index,
-                start_sec=seg_start,
-                end_sec=seg_end,
-                duration=seg["duration"],
-                shot_type="avatar",
-                text=seg["text"],
-                visual_prompt="",
-            ))
-            last_face_time = seg_end
+            current_time += face_duration
+            last_face_time = current_time
+            shot_index += 1
         else:
-            # Check if it's time for face to return
-            should_return_face = (
-                face_return_freq is not None and
-                (current_time - last_face_time) >= face_return_freq - 2.0
-            )
+            # B-roll shot
+            # Use calculated duration, but cap at remaining time for last shot
+            this_duration = min(broll_shot_duration, remaining_time)
             
-            if should_return_face and seg["duration"] > 2.0:
-                # Insert face shot
-                face_dur = min(face_duration, seg["duration"] * 0.6)
-                shots.append(AvatarShot(
-                    index=shot_index,
-                    start_sec=seg_start,
-                    end_sec=seg_start + face_dur,
-                    duration=face_dur,
-                    shot_type="avatar",
-                    text=seg["text"][:50],
-                    visual_prompt="",
-                ))
-                last_face_time = current_time
-                shot_index += 1
-                
-                # Remainder goes to b-roll if significant time left
-                remaining = seg["duration"] - face_dur
-                if remaining > 1.0:
-                    # Use script context for b-roll, not just keywords
-                    visual_prompt = seg["text"]
-                    
-                    shots.append(AvatarShot(
-                        index=shot_index,
-                        start_sec=seg_start + face_dur,
-                        end_sec=seg_end,
-                        duration=remaining,
-                        shot_type="broll_still",
-                        text=seg["text"],
-                        visual_prompt=visual_prompt,
-                    ))
+            # Get text from corresponding segment if available
+            if seg_index_for_middle < len(segments):
+                seg_text = segments[seg_index_for_middle]["text"]
+                seg_index_for_middle += 1
             else:
-                # B-roll shot - use script context
-                visual_prompt = seg["text"]
-                
-                shots.append(AvatarShot(
-                    index=shot_index,
-                    start_sec=seg_start,
-                    end_sec=seg_end,
-                    duration=seg["duration"],
-                    shot_type="broll_still",
-                    text=seg["text"],
-                    visual_prompt=visual_prompt,
-                ))
-        
-        current_time = seg_end
-        shot_index += 1
+                # Fallback if we've exhausted segments
+                seg_text = script[int(current_time * 10):int((current_time + this_duration) * 10)]
+            
+            shots.append(AvatarShot(
+                index=shot_index,
+                start_sec=current_time,
+                end_sec=current_time + this_duration,
+                duration=this_duration,
+                shot_type="broll_still",
+                text=seg_text,
+                visual_prompt=seg_text,
+            ))
+            current_time += this_duration
+            shot_index += 1
+            broll_added += 1
+    
+    # Create ending avatar shot
+    shots.append(AvatarShot(
+        index=shot_index,
+        start_sec=broll_end_time,
+        end_sec=actual_audio_duration,
+        duration=actual_audio_duration - broll_end_time,
+        shot_type="avatar",
+        text=script[-100:],  # Last part of script
+        visual_prompt="",
+    ))
     
     return shots
 
@@ -495,17 +501,24 @@ def generate_avatar_video_atlas(
         return False
 
 
-def select_shot_framing(segment_text: str, segment_index: int, prev_framing: str | None, total_segments: int) -> dict[str, str]:
+def select_shot_framing(broll_index: int, segment_text: str, prev_framing: str | None, total_broll_shots: int) -> dict[str, str]:
     """
     Deterministically select shot framing type for b-roll variety.
+    Uses the b-roll shot index (not overall shot index) for proper round-robin.
+    
+    Args:
+        broll_index: Index among b-roll shots only (0, 1, 2, ...)
+        segment_text: Script text for this segment
+        prev_framing: Previous framing to avoid consecutive repeats
+        total_broll_shots: Total number of b-roll shots expected
     
     Returns dict with:
     - framing: "close_up", "wide", "over_shoulder", "detail", "medium"
     - directive: prompt text specifying the framing
     
-    Ensures all 5 framings appear across the video when possible,
-    and consecutive shots never use the same framing.
+    First 3 b-rolls always include at least one close-up/detail and one wide.
     """
+    # Order ensures first 3 shots hit close-up, detail, and wide
     framings = [
         {
             "framing": "close_up",
@@ -516,12 +529,12 @@ def select_shot_framing(segment_text: str, segment_index: int, prev_framing: str
             "directive": "Extreme macro detail shot of textures, surfaces, or edges - card corner, paper texture, fabric weave, hand gesture",
         },
         {
-            "framing": "over_shoulder",
-            "directive": "Over-the-shoulder perspective showing hands interacting with objects, natural background",
-        },
-        {
             "framing": "wide",
             "directive": "Wide establishing shot showing the full environment, people, and spatial context",
+        },
+        {
+            "framing": "over_shoulder",
+            "directive": "Over-the-shoulder perspective showing hands interacting with objects, natural background",
         },
         {
             "framing": "medium",
@@ -529,15 +542,8 @@ def select_shot_framing(segment_text: str, segment_index: int, prev_framing: str
         },
     ]
     
-    # For short videos (3-4 segments), ensure we hit different framings
-    # Use round-robin with offset to cover the range
-    if total_segments <= len(framings):
-        # Distribute framings evenly across segments
-        base_index = segment_index % len(framings)
-    else:
-        # For longer videos, use hash-based selection for variety
-        text_hash = sum(ord(c) for c in segment_text.lower())
-        base_index = (text_hash + segment_index * 3) % len(framings)
+    # Use round-robin based on b-roll index
+    base_index = broll_index % len(framings)
     
     # Select framing, avoiding previous if possible
     selected = framings[base_index]
@@ -887,8 +893,8 @@ def run_avatar_gen_pipeline(
             # Include script context to ensure on-topic generation
             segment_text = shot.text or shot.visual_prompt
             
-            # Select shot framing for variety (deterministic, covers all 5 framings)
-            framing = select_shot_framing(segment_text, shot.index, prev_framing, broll_count_needed)
+            # Select shot framing for variety using b-roll index (not overall shot index)
+            framing = select_shot_framing(broll_count, segment_text, prev_framing, broll_count_needed)
             prev_framing = framing["framing"]
             
             # Build explicit prompt emphasizing the script topic and segment content

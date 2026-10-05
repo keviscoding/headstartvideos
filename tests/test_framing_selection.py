@@ -1,11 +1,11 @@
 """
 Test that b-roll framing selection actually covers all 5 framings.
 
-Symptom from job a6d78406: Only OTS and medium appeared across 3 b-roll shots.
+Symptoms from jobs a6d78406 and 5cf1270c: Only OTS and medium appeared.
 No close-up, detail, or wide even though select_shot_framing has all 5.
 
-The fix: round-robin for short videos, deterministic hash for longer ones,
-and always avoid consecutive repeats.
+The fix: round-robin using b-roll index (not overall shot index),
+first 3 always include close-up/detail and wide, no consecutive repeats.
 """
 import sys
 from pathlib import Path
@@ -20,7 +20,7 @@ from core.avatar_gen_pipeline import select_shot_framing
 def test_framing_covers_all_five_for_typical_short():
     """
     A typical Short with 3-4 b-roll shots should use 3-4 different framings.
-    Over multiple Shorts, all 5 should appear.
+    First 3 must include close-up or detail, and wide.
     """
     print("TEST: framing_covers_all_five_for_typical_short")
     
@@ -31,139 +31,148 @@ def test_framing_covers_all_five_for_typical_short():
         "Return books on time to avoid late fees",
     ]
     
-    framings_used = set()
+    framings_used = []
     prev = None
     
-    for idx, text in enumerate(segments):
-        result = select_shot_framing(text, idx, prev, len(segments))
+    for broll_idx, text in enumerate(segments):
+        result = select_shot_framing(broll_idx, text, prev, len(segments))
         framing = result["framing"]
-        framings_used.add(framing)
+        framings_used.append(framing)
         
         # Should never repeat consecutive
-        assert framing != prev, f"Segment {idx} repeated framing {framing}"
+        assert framing != prev, f"B-roll {broll_idx} repeated framing {framing}"
         
         prev = framing
-        print(f"  Segment {idx}: {framing} - {result['directive'][:60]}...")
+        print(f"  B-roll {broll_idx}: {framing} - {result['directive'][:60]}...")
     
     # With 3 segments, we should get 3 different framings
-    assert len(framings_used) == 3, f"Expected 3 unique framings, got {len(framings_used)}: {framings_used}"
+    assert len(set(framings_used)) == 3, f"Expected 3 unique framings, got {len(set(framings_used))}: {framings_used}"
     
-    print(f"  ✓ PASS: 3 segments produced 3 unique framings: {framings_used}")
+    # First 3 must include close-up or detail
+    has_closeup_or_detail = any(f in framings_used for f in ["close_up", "detail"])
+    assert has_closeup_or_detail, f"First 3 framings missing close-up/detail: {framings_used}"
+    
+    # First 3 must include wide
+    has_wide = "wide" in framings_used
+    assert has_wide, f"First 3 framings missing wide: {framings_used}"
+    
+    print(f"  ✓ PASS: 3 b-roll shots produced 3 unique framings with close-up/detail and wide: {framings_used}")
 
 
-def test_framing_covers_all_five_across_multiple_shorts():
+def test_framing_covers_all_five_with_four_broll():
     """
-    Across 2-3 typical Shorts (9 total segments), all 5 framings should appear.
+    A Short with 4 b-roll shots gets 4 different framings.
+    With 5 b-roll shots, all 5 framings appear.
     """
-    print("\nTEST: framing_covers_all_five_across_multiple_shorts")
+    print("\nTEST: framing_covers_all_five_with_four_broll")
     
-    # Simulate 3 Shorts with different content
-    all_segments = [
-        # Short 1 (library)
-        ("Library cards let you borrow books", 3),
-        ("Scan your card at the desk", 3),
-        ("Return books to avoid late fees", 3),
-        # Short 2 (cooking)
-        ("First, chop the vegetables finely", 3),
-        ("Heat oil in a large pan", 3),
-        ("Sauté until golden brown", 3),
-        # Short 3 (exercise)
-        ("Start with a light warm-up", 3),
-        ("Focus on proper form and breathing", 3),
-        ("Cool down with gentle stretches", 3),
-    ]
-    
-    all_framings = set()
+    # Test 4 b-roll shots
+    all_framings_4 = []
     prev = None
-    
-    for idx, (text, total) in enumerate(all_segments):
-        result = select_shot_framing(text, idx, prev, total)
+    for broll_idx in range(4):
+        text = f"Segment {broll_idx}"
+        result = select_shot_framing(broll_idx, text, prev, 4)
         framing = result["framing"]
-        all_framings.add(framing)
+        all_framings_4.append(framing)
         prev = framing
     
+    unique_4 = set(all_framings_4)
+    print(f"  4 b-roll shots: {all_framings_4}")
+    print(f"  Unique: {len(unique_4)}/4")
+    assert len(unique_4) == 4, f"Expected 4 unique framings, got {len(unique_4)}: {unique_4}"
+    
+    # Test 5 b-roll shots gets all 5
+    all_framings_5 = []
+    prev = None
+    for broll_idx in range(5):
+        text = f"Segment {broll_idx}"
+        result = select_shot_framing(broll_idx, text, prev, 5)
+        framing = result["framing"]
+        all_framings_5.append(framing)
+        prev = framing
+    
+    unique_5 = set(all_framings_5)
     available_framings = {"close_up", "detail", "over_shoulder", "wide", "medium"}
     
-    print(f"  Framings found: {all_framings}")
-    print(f"  Total unique: {len(all_framings)}/5")
+    print(f"  5 b-roll shots: {all_framings_5}")
+    print(f"  Unique: {len(unique_5)}/5")
     
-    # All 5 should appear across 9 segments
-    assert len(all_framings) >= 4, f"Expected at least 4/5 framings, got {len(all_framings)}"
+    assert len(unique_5) == 5, f"Expected all 5 framings, got {len(unique_5)}: {unique_5}"
     
     # Check each is in the available set
-    for f in all_framings:
+    for f in unique_5:
         assert f in available_framings, f"Unknown framing: {f}"
     
-    print(f"  ✓ PASS: Found {len(all_framings)} unique framings across 9 segments")
+    print(f"  ✓ PASS: 4 b-roll gets 4 framings, 5 b-roll gets all 5")
 
 
 def test_framing_never_repeats_consecutive():
-    """No two consecutive segments should use the same framing."""
+    """No two consecutive b-roll shots should use the same framing."""
     print("\nTEST: framing_never_repeats_consecutive")
     
     # Test with same text repeated (should still vary)
     segments = ["Same text repeated"] * 10
     prev = None
     
-    for idx, text in enumerate(segments):
-        result = select_shot_framing(text, idx, prev, len(segments))
+    for broll_idx, text in enumerate(segments):
+        result = select_shot_framing(broll_idx, text, prev, len(segments))
         framing = result["framing"]
         
         if prev is not None:
-            assert framing != prev, f"Segment {idx} repeated framing {framing} after {prev}"
+            assert framing != prev, f"B-roll {broll_idx} repeated framing {framing} after {prev}"
         
         prev = framing
     
-    print("  ✓ PASS: 10 consecutive segments never repeated framing")
+    print("  ✓ PASS: 10 consecutive b-roll shots never repeated framing")
 
 
 def test_framing_directive_present():
     """Each framing should have a directive for prompt generation."""
     print("\nTEST: framing_directive_present")
     
-    framings_to_test = ["close_up", "detail", "over_shoulder", "wide", "medium"]
-    found_framings = set()
+    # With round-robin, first 5 b-roll shots give us all 5 framings
+    framings_found = []
     
-    for idx, target_framing in enumerate(framings_to_test):
-        # Use distinct text to help hit the target
-        text = f"Test text for framing {target_framing} variant {idx}"
-        # Try a few indices to find one that gives us this framing
-        for attempt in range(10):
-            result = select_shot_framing(text, idx + attempt, None, 5)
-            if result["framing"] == target_framing:
-                # Found it, check directive
-                assert "directive" in result, f"Missing directive for {target_framing}"
-                assert isinstance(result["directive"], str), f"directive not a string for {target_framing}"
-                assert len(result["directive"]) > 0, f"Empty directive for {target_framing}"
-                found_framings.add(target_framing)
-                print(f"  {target_framing}: '{result['directive'][:60]}...'")
-                break
+    for broll_idx in range(5):
+        text = f"Test segment {broll_idx}"
+        prev = framings_found[-1] if framings_found else None
+        result = select_shot_framing(broll_idx, text, prev, 5)
+        framing = result["framing"]
+        
+        # Check directive
+        assert "directive" in result, f"Missing directive for {framing}"
+        assert isinstance(result["directive"], str), f"directive not a string for {framing}"
+        assert len(result["directive"]) > 0, f"Empty directive for {framing}"
+        
+        framings_found.append(framing)
+        print(f"  B-roll {broll_idx} ({framing}): '{result['directive'][:60]}...'")
     
-    assert len(found_framings) == 5, f"Only found {len(found_framings)}/5 framings"
-    print("  ✓ PASS: All framings have directives")
+    unique_framings = set(framings_found)
+    assert len(unique_framings) == 5, f"Expected 5 unique framings, got {len(unique_framings)}: {unique_framings}"
+    print("  ✓ PASS: All 5 framings have directives")
 
 
 def test_framing_round_robin_for_short_videos():
     """
-    For videos with ≤5 segments, framings should distribute evenly (round-robin).
+    Round-robin ensures different framings across b-roll shots.
     """
     print("\nTEST: framing_round_robin_for_short_videos")
     
-    # 4 segments should give us 4 different framings
+    # 4 b-roll shots should give us 4 different framings
     segments = [f"Segment {i}" for i in range(4)]
     framings = []
     prev = None
     
-    for idx, text in enumerate(segments):
-        result = select_shot_framing(text, idx, prev, len(segments))
+    for broll_idx, text in enumerate(segments):
+        result = select_shot_framing(broll_idx, text, prev, len(segments))
         framing = result["framing"]
         framings.append(framing)
         prev = framing
     
     unique_count = len(set(framings))
-    assert unique_count == 4, f"Expected 4 unique framings for 4 segments, got {unique_count}: {framings}"
+    assert unique_count == 4, f"Expected 4 unique framings for 4 b-roll shots, got {unique_count}: {framings}"
     
-    print(f"  ✓ PASS: 4 segments yielded 4 unique framings: {framings}")
+    print(f"  ✓ PASS: 4 b-roll shots yielded 4 unique framings: {framings}")
 
 
 if __name__ == "__main__":
@@ -173,7 +182,7 @@ if __name__ == "__main__":
     
     try:
         test_framing_covers_all_five_for_typical_short()
-        test_framing_covers_all_five_across_multiple_shorts()
+        test_framing_covers_all_five_with_four_broll()
         test_framing_never_repeats_consecutive()
         test_framing_directive_present()
         test_framing_round_robin_for_short_videos()
