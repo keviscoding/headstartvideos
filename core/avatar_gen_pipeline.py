@@ -775,13 +775,19 @@ def _generate_broll_motion_parallel(
         trimmed_path = work_dir / f"broll_{shot.index:03d}_motion.mp4"
         
         if zoom_strength and zoom_strength > 1.0:
-            # Apply zoom animation from 1.0 to zoom_strength over the clip duration
-            # This gives the ECU shot a visible push-in effect
+            # Apply zoom animation from 1.0 to zoom_strength over the full clip duration
+            # Compute per-frame increment so zoom ramps across the entire shot
+            total_frames = max(1, round(shot_duration * 30))
+            zoom_increment = (zoom_strength - 1.0) / total_frames
+            
+            # Upscale to 2560x1440 before zoompan to avoid integer jitter
+            # zoompan with fps=30 ensures output stays at 30fps (default is 25fps)
+            # trim+setpts ensures exact shot_duration output
             vf_filter = (
                 f"fps=30,"
-                f"scale=1280*{zoom_strength}:720*{zoom_strength}:force_original_aspect_ratio=increase,"
-                f"zoompan=z='min(zoom+0.0015,{zoom_strength})':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1280x720,"
-                f"crop=1280:720"
+                f"scale=2560:1440:force_original_aspect_ratio=increase,crop=2560:1440,"
+                f"zoompan=z='if(eq(on,1),1,zoom+{zoom_increment:.6f})':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1280x720:fps=30,"
+                f"trim=duration={shot_duration:.2f},setpts=PTS-STARTPTS"
             )
         else:
             # Standard trim without extra zoom
@@ -790,7 +796,6 @@ def _generate_broll_motion_parallel(
         trim_cmd = [
             "ffmpeg", "-y",
             "-i", str(raw_video_path),
-            "-t", f"{shot_duration:.2f}",
             "-vf", vf_filter,
             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
             "-an",  # Remove audio (i2v audio not needed)
