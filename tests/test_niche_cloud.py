@@ -30,11 +30,12 @@ PERF={'passes':True,'median_views':50000}
 def test_frontier_deduplicates_and_recovers_expired_work(store):
     assert store.enqueue('search',{'query':'Home Advice'},source='broad')
     assert not store.enqueue('search',{'query':'home advice'},source='learned')
+    assert store.enqueue('search',{'query':'Home Advice','upload_month':True},source='fresh')
     first=store.claim_tasks('search')[0]
     other=NicheStore('test','worker-b')
-    assert not other.claim_tasks('search')
+    assert not other.claim_tasks('search',source='broad')
     with db._conn() as c: c.execute('UPDATE niche_discovery_tasks SET lease_until=0')
-    assert other.claim_tasks('search')[0]['id']==first['id']
+    assert other.claim_tasks('search',source='broad')[0]['id']==first['id']
     store.finish_task(first,{'stale':True})
     assert not store.completed_results()
 
@@ -136,6 +137,8 @@ def test_face_alone_and_ai_broll_cannot_become_avatar_channel():
     assert cloud.avatar_status({'presenter_visible':False},{'visual_triage':clip})=='likely'
     clip['avatar_style_confidence']='unknown'
     assert cloud.avatar_status({'presenter_visible':False},{'visual_triage':clip})=='not_presenter'
+    assert cloud.avatar_status({'ai_reproducible':True},{'visual_triage':clip,'ai_video_samples':2})=='possible'
+    assert cloud.avatar_status({'ai_reproducible':True},{'visual_triage':clip,'ai_video_samples':1})=='not_presenter'
     assert cloud.avatar_status({'presenter_visible':False},{'visual_triage':clip,'user_reference':True})=='reference'
 
 
@@ -160,10 +163,18 @@ def test_database_bootstrap_supports_avatar_filter_before_any_worker(tmp_path,mo
     assert db.count_niche_channels(ai_presenter=True)==0
     assert db.list_niche_channels(ai_presenter=True)==[]
 
-@pytest.mark.parametrize('provider_unavailable,existing_enrichment',[(False,False),(True,False),(False,True)])
-def test_hunt_uses_a_live_frontier_and_publishes_only_review_passes(store,monkeypatch,provider_unavailable,existing_enrichment):
+
+def test_catalog_enrichment_seed_pool_rotates_sources_and_excludes_hidden_entries(store):
+    for cid,source in [('a1','A'),('a2','A'),('b','B'),('hidden','C')]:
+        db.upsert_niche_channel({**hit(cid),'source_keyword':source,'video_count':10,'subscriber_count':2000})
+    with db._conn() as c: c.execute("UPDATE niche_channels SET active=0 WHERE channel_id='hidden'")
+    pool=store.enrichment_candidates(limit=2)
+    assert len(pool)==2 and {c['source_keyword'] for c in pool}=={'A','B'}
+
+@pytest.mark.parametrize('provider_unavailable,existing_enrichment,public_ai_format',[(False,False,False),(True,False,False),(False,True,False),(False,False,True)])
+def test_hunt_uses_a_live_frontier_and_publishes_only_review_passes(store,monkeypatch,provider_unavailable,existing_enrichment,public_ai_format):
     import config
-    request={'time_budget_seconds':300,'target_channels':1,'profile':'balanced','enrich_existing':existing_enrichment}
+    request={'time_budget_seconds':300,'target_channels':1,'profile':'avatar','enrich_existing':existing_enrichment}
     if existing_enrichment:
         db.upsert_niche_channel(hit())
         with db._conn() as c: c.execute('UPDATE niche_channels SET first_seen_at=100')
@@ -172,13 +183,14 @@ def test_hunt_uses_a_live_frontier_and_publishes_only_review_passes(store,monkey
     monkeypatch.setattr(cloud,'_yt',lambda *a,**k:api)
     monkeypatch.setattr(config,'YOUTUBE_API_KEY','test')
     monkeypatch.setattr(cloud,'SIMPLE_PROBES',['unexpected topic'])
+    monkeypatch.setattr(cloud,'SEED_HANDLES',[])
     monkeypatch.setattr(NicheStore,'seed_channels',lambda *a,**k:[])
     class Explorer:
         def __init__(self,*a): pass
         def close(self): pass
-        def search(self,query,settings): return [{'video_id':'abcdefghijk'}]
+        def search(self,query,settings,**kw): return [{'video_id':'abcdefghijk'}]
         def related(self,vid): return []
-        def avatar_evidence(self,hit): return {}
+        def avatar_evidence(self,hit): return {'ai_video_samples':2,'explicit_avatar_claim':False} if public_ai_format else {}
     monkeypatch.setattr(cloud,'Explorer',Explorer)
     monkeypatch.setattr(cloud,'_fetch_videos',lambda *a:[{'video_id':'abcdefghijk','channel_id':'new','view_count':50000}])
     h=hit()
@@ -190,10 +202,14 @@ def test_hunt_uses_a_live_frontier_and_publishes_only_review_passes(store,monkey
             self.counters={'model_requests':1}
             self.state=kw['provider_state']
         def review(self,hit):
+            self.state['content_checked']=True
             if provider_unavailable:
                 self.state.update(atlas_payment_blocked=True,native_unavailable=429)
                 return {'decision':'review','screen_error':'HTTPError'}
-            return {**REVIEW,'reproducible':True}
+            return {**REVIEW,'reproducible':True,'production_format':'animation' if public_ai_format else 'presenter'}
+        def presenter_style(self,hit):
+            assert self.state.get('content_checked'), 'Content must be reviewed before opening clips'
+            return {'presenter_visible':False,'avatar_style_confidence':'unknown','avatar_observations':['Animated scene','No host visible']}
         def close(self): pass
     monkeypatch.setattr(cloud,'EvidenceClient',Evidence)
     result=cloud.run_cloud_hunt('test')
@@ -209,6 +225,10 @@ def test_hunt_uses_a_live_frontier_and_publishes_only_review_passes(store,monkey
     if existing_enrichment:
         assert result['existing_queued']==1
         assert db.list_niche_channels()[0]['first_seen_at']==100
+    if public_ai_format:
+        assert db.list_niche_channels()[0]['production_format']=='animation'
+        assert db.list_niche_channels()[0]['avatar_confidence']=='unknown'
+        assert db.count_niche_channels(ai_presenter=True)==0
 
 def test_stale_heartbeat_cannot_erase_an_admission_counter(store):
     assert store.claim_run()

@@ -139,11 +139,14 @@ def _channel_id_from_url(url: str) -> str:
     return url.rstrip("/").split("/")[-1]
 
 
-def _search_url(keyword: str, *, use_duration_filter: bool = True) -> str:
+def _search_url(keyword: str, *, use_duration_filter: bool = True, upload_month: bool = False) -> str:
     # Prefer long videos via YouTube filter chip encoded in sp=
     # EgIYAg == "Long" duration filter (commonly used; DOM still filtered).
     q = quote_plus(keyword)
     url = f"https://www.youtube.com/results?search_query={q}"
+    # Observed from YouTube's “This month” filter on 2026-10-05. Duration
+    # remains enforced on result cards, rather than guessing combined codes.
+    if upload_month: return url + "&sp=EgIIBA%253D%253D"
     return url + "&sp=EgIYAg%253D%253D" if use_duration_filter else url
 
 
@@ -215,6 +218,7 @@ def scrape_keyword_search(
     max_results: int = 0,
     deadline: float | None = None,
     use_duration_filter: bool = True,
+    upload_month: bool = False,
 ) -> list[dict[str, Any]]:
     """Read public search cards; optionally reuse a browser and bound the work."""
     def _log(msg):
@@ -234,16 +238,17 @@ def scrape_keyword_search(
                     min_duration_sec=min_duration_sec, progress=progress,
                     page=context.new_page(), max_results=max_results, deadline=deadline,
                     use_duration_filter=use_duration_filter,
+                    upload_month=upload_month,
                 )
             finally:
                 browser.close()
 
     _log(f"Opening search: {keyword}")
     timeout = min(30000, max(1, int((deadline - time.monotonic()) * 1000))) if deadline else 60000
-    page.goto(_search_url(keyword, use_duration_filter=use_duration_filter), wait_until="domcontentloaded", timeout=timeout)
+    page.goto(_search_url(keyword, use_duration_filter=use_duration_filter, upload_month=upload_month), wait_until="domcontentloaded", timeout=timeout)
     page.wait_for_timeout(min(1500, max(0, int((deadline - time.monotonic()) * 1000))) if deadline else 2500)
     for label in ("Reject all", "Accept all"):
-        btn = page.get_by_role("button", name=label, exact=True)
+        btn = page.get_by_role("button", name=re.compile(r"^"+label.split()[0]+r" (?:all|the use of cookies)",re.I))
         if btn.count() and btn.first.is_visible():
             btn.first.click(timeout=2000)
             break
