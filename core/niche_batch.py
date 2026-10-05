@@ -90,11 +90,12 @@ def _write_json(path, value):
 
 
 class EvidenceClient:
-    def __init__(self, *, deadline, downsub_key="", atlas_key="", model="google/gemini-3.1-flash-lite"):
+    def __init__(self, *, deadline, downsub_key="", atlas_key="", model="google/gemini-3.1-flash-lite", avatar_screen=False):
         self.deadline = deadline
         self.downsub_key = downsub_key
         self.atlas_key = atlas_key
         self.model = model
+        self.avatar_screen = avatar_screen
         self.session = requests.Session()
         self.counters = {"transcript_requests": 0, "image_requests": 0,
                          "model_requests": 0, "prompt_tokens": 0, "completion_tokens": 0}
@@ -192,6 +193,8 @@ class EvidenceClient:
         if not self.atlas_key:
             return {"decision": "review", "reasons": ["Model key unavailable"], "evidence": public_evidence}
         payload = {"channel": hit["channel_name"],
+                   "channel_description": (hit.get("channel_description") or "")[:4000],
+                   "avatar_evidence": hit.get("avatar_evidence") or {},
                    "recent_titles": [v["title"] for v in videos[:12]], "evidence": evidence}
         instruction = (
             "Review a YouTube channel as a research candidate for a quality, repeatable "
@@ -218,6 +221,17 @@ class EvidenceClient:
             '"caveats":["minor or hypothetical limitations"]}. '
             "Use pass only for substantive reproducible content with no serious unresolved concerns."
         )
+        if self.avatar_screen:
+            instruction += (
+                " Also report presenter_visible as a boolean, avatar_style_confidence as "
+                "high|medium|low|unknown, and avatar_observations as a list of specific visible observations. "
+                "These fields classify the presentation style, not the identity of a real person. "
+                "High requires consistent on-screen talking-presenter framing across both video samples "
+                "and visible synthetic/virtual styling, or explicit host/avatar disclosure in the supplied metadata. "
+                "A realistic human face alone is insufficient. AI narration over scenery, cartoons without a "
+                "presenter, film actors, and generated thumbnails alone are not avatar-presenter formats. "
+                "Use unknown whenever the samples cannot distinguish a real host from a synthetic host."
+            )
         try:
             self.counters["model_requests"] += 1
             response = self.session.post(

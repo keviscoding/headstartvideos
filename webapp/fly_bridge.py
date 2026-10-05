@@ -337,9 +337,9 @@ def spawn_niche_scrape_machine(job_id: str) -> str:
     if not app:
         print("[fly-niche] FLY_COOK_APP missing")
         return ""
-    image = _latest_app_image(app) or (getattr(config, "FLY_COOK_IMAGE", "") or "").strip()
+    image = (getattr(config, "FLY_NICHE_IMAGE", "") or "").strip()
     if not image:
-        print("[fly-niche] no cook image for niche scrape")
+        print("[fly-niche] FLY_NICHE_IMAGE missing — deploy the dedicated discovery worker")
         return ""
     try:
         region = (getattr(config, "FLY_COOK_REGION", "") or "sjc").strip() or "sjc"
@@ -349,6 +349,7 @@ def spawn_niche_scrape_machine(job_id: str) -> str:
         env = _machine_env()
         env["APP_ENV"] = "fly-niche"
         env["COOK_ON_WEB"] = "0"
+        env["DOWNSUB_KEY"] = config.DOWNSUB_KEY
         # Enrichment needs YouTube Data API; scrape itself is browser-based.
         yt = (os.getenv("YOUTUBE_API_KEY") or "").strip()
         if not yt and hasattr(config, "YOUTUBE_API_KEY"):
@@ -393,4 +394,3 @@ def spawn_niche_scrape_machine(job_id: str) -> str:
     except Exception as e:
         print(f"[fly-niche] spawn failed for {job_id}: {e}")
         return ""
-

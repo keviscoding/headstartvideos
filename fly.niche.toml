@@ -1,0 +1,6 @@
+# Build and push only. FLY_NICHE_IMAGE pins this image for discovery one-shots.
+# Keep the cook app's current release unchanged.
+app = 'channelrecipe-cook'
+primary_region = 'sjc'
+[build]
+  dockerfile = 'Dockerfile.niche'

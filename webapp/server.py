@@ -15,12 +15,12 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import Cookie, Depends, FastAPI, File, Form, HTTPException, Header, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 from contextlib import asynccontextmanager
 
@@ -4144,6 +4144,13 @@ class NicheFinderJobRequest(BaseModel):
     max_subscribers: int = 150_000
     scroll_count: int = 80
     max_video_age_days: int = 180
+    profile: Literal["balanced", "avatar"] = "balanced"
+    time_budget_seconds: int = Field(default=1800, ge=300, le=7200)
+    target_channels: int = Field(default=20, ge=1, le=200)
+    candidate_cap: int = Field(default=300, ge=20, le=1200)
+    review_cap: int = Field(default=100, ge=5, le=400)
+    search_cap: int = Field(default=100, ge=20, le=300)
+    api_cap: int = Field(default=2000, ge=100, le=4000)
 
 
 def _niche_job_response(run: dict) -> dict:
@@ -4160,76 +4167,13 @@ def _niche_job_response(run: dict) -> dict:
     }
 
 
-def _run_niche_hunt_locally(
-    *,
-    job_id: str,
-    run_id: int,
-    kws: list[str],
-    max_per_keyword: int,
-    max_channels: int,
-    min_recent_avg_views: int,
-    max_subscribers: int,
-    scroll_count: int,
-    max_video_age_days: int,
-) -> None:
-    from core.niche_finder import run_niche_finder
-
-    def _progress(msg: str):
-        try:
-            append_niche_hunt_progress(job_id, msg)
-        except Exception:
-            pass
-
+def _run_niche_hunt_locally(*, job_id: str) -> None:
+    """Development only; production discovery always uses isolated Fly Machines."""
+    from core.niche_cloud import run_cloud_hunt
     try:
-        _progress("Running niche scrape on web (Fly unavailable)…")
-        result = run_niche_finder(
-            api_key=config.YOUTUBE_API_KEY,
-            keywords=kws,
-            max_per_keyword=0,
-            # 0 = uncapped — keep every channel the scroll scrape finds
-            max_channels=max(0, int(max_channels or 0)),
-            min_recent_avg_views=max(0, int(min_recent_avg_views or 0)),
-            max_subscribers=max(10_000, int(max_subscribers or 150_000)),
-            scroll_count=max(10, min(int(scroll_count or 80), 150)),
-            max_video_age_days=max(30, min(int(max_video_age_days or 180), 365)),
-            progress=_progress,
-        )
-        hits = result.get("hits") or []
-        n = upsert_niche_channels(hits)
-        meta = dict(result.get("meta") or {})
-        meta["runner"] = "web"
-        finish_niche_hunt_run(
-            run_id,
-            status="completed",
-            meta=meta,
-            channels_upserted=n,
-        )
-        _progress(f"Saved {n} channels to the niche library")
-        try:
-            from webapp.email_service import send_niche_hunt_complete
-            run_row = get_niche_hunt_run_by_job_id(job_id) or {}
-            send_niche_hunt_complete(
-                keywords=kws,
-                channels_upserted=n,
-                job_id=job_id,
-                trigger=str(run_row.get("trigger") or "manual"),
-                runner="web",
-            )
-        except Exception as mail_err:
-            print(f"[niche_finder] admin email failed: {mail_err}")
-    except Exception as e:
-        finish_niche_hunt_run(
-            run_id,
-            status="error",
-            channels_upserted=0,
-            error=str(e),
-        )
-        print(f"[niche_finder] job {job_id} failed: {e}")
+        run_cloud_hunt(job_id)
     finally:
-        try:
-            _niche_scrape_lock.release()
-        except Exception:
-            pass
+        _niche_scrape_lock.release()
 
 
 def _start_niche_hunt(
@@ -4243,44 +4187,33 @@ def _start_niche_hunt(
     user_id: int | None = None,
     scroll_count: int = 20,
     max_video_age_days: int = 180,
+    discovery_settings: dict | None = None,
 ) -> str:
     """
-    Kick off scroll discovery + upsert. Prefer Fly Machine; fall back to web thread.
+    Kick off adaptive, quality-screened discovery on an isolated Fly Machine.
     Job state is in Postgres so page refresh can keep polling.
     """
     import threading
 
     existing = get_latest_running_niche_hunt()
     if existing and existing.get("job_id"):
-        age = time.time() - float(existing.get("started_at") or 0)
-        # Fly Machines that crash before writing progress leave a zombie "running" row.
-        if age > 5 * 60 and existing.get("id"):
-            finish_niche_hunt_run(
-                int(existing["id"]),
-                status="error",
-                error="Timed out (no finish within 5m) — safe to start a new scrape.",
-            )
+        meta = existing.get("meta") or {}
+        last_activity = float(meta.get("heartbeat_at") or existing.get("started_at") or 0)
+        progress = existing.get("progress") or []
+        if progress:
+            last_activity = max(last_activity, float(progress[-1].get("t") or 0))
+        if time.time() - last_activity > 15 * 60:
+            finish_niche_hunt_run(int(existing["id"]),status="error",meta=meta,
+                channels_upserted=int(existing.get("channels_upserted") or 0),
+                error="Worker has had no heartbeat or progress for 15 minutes; checkpoints are retained.")
         else:
-            raise HTTPException(
-                409,
-                detail={
-                    "message": "A niche discovery scrape is already running. Re-attach to that job.",
-                    "job_id": existing["job_id"],
-                },
-            )
+            raise HTTPException(409,detail={"message":"Discovery is already running.","job_id":existing["job_id"]})
 
     kws = [k.strip() for k in (keywords or []) if k and str(k).strip()]
-    if not kws:
-        if trigger == "cron":
-            from core.niche_daily_keywords import daily_cron_keywords
-            kws = daily_cron_keywords()
-        else:
-            from core.niche_finder import DEFAULT_KEYWORDS
-            kws = list(DEFAULT_KEYWORDS)
-
 
     job_id = str(uuid.uuid4())
     request = {
+        **(discovery_settings or {}),
         "keywords": kws,
         "max_per_keyword": max_per_keyword,
         "max_channels": max_channels,
@@ -4314,31 +4247,15 @@ def _start_niche_hunt(
         append_niche_hunt_progress(job_id, f"Spawned Fly Machine for scroll scrape…{mid_note}")
         return job_id
 
-    # Local fallback — only one web-thread scrape at a time
+    if COOK_ON_FLY:
+        finish_niche_hunt_run(run_id,status="error",error="Cloud discovery worker could not start.")
+        raise HTTPException(503,"Cloud discovery worker could not start. Check the Fly worker image and credentials.")
     if not _niche_scrape_lock.acquire(blocking=False):
-        finish_niche_hunt_run(
-            run_id,
-            status="error",
-            error="Could not start local scrape (busy) and Fly spawn failed.",
-        )
-        raise HTTPException(409, "A niche discovery scrape is already running on the web dyno.")
+        finish_niche_hunt_run(run_id,status="error",error="Development worker is busy.")
+        raise HTTPException(409,"A development discovery worker is already running.")
+    threading.Thread(target=_run_niche_hunt_locally,kwargs={"job_id":job_id},
+                     daemon=True,name="niche-discovery").start()
 
-    threading.Thread(
-        target=_run_niche_hunt_locally,
-        kwargs=dict(
-            job_id=job_id,
-            run_id=run_id,
-            kws=kws,
-            max_per_keyword=max_per_keyword,
-            max_channels=max_channels,
-            min_recent_avg_views=min_recent_avg_views,
-            max_subscribers=max_subscribers,
-            scroll_count=scroll_count,
-            max_video_age_days=max_video_age_days,
-        ),
-        daemon=True,
-        name="niche-scroll-scrape",
-    ).start()
     return job_id
 
 
@@ -4396,12 +4313,14 @@ def niche_finder_channels(
     max_recent_revenue: float = 0,
     active_recently: bool = False,
     has_recent_avg: bool = False,
+    added_within_days: int = 0,
     q: str = "",
     user: dict = Depends(require_user),
 ):
     if not _niche_finder_can_browse(user):
         raise HTTPException(402, "Niche Finder is available on Starter and Daily plans.")
     filters = dict(
+        added_since=time.time() - min(365, max(1, added_within_days)) * 86400 if added_within_days > 0 else None,
         min_recent_avg=min_recent_avg or None,
         max_recent_avg=max_recent_avg or None,
         min_subscribers=min_subscribers or None,
@@ -4414,14 +4333,15 @@ def niche_finder_channels(
         has_recent_avg=bool(has_recent_avg),
         q=(q or "").strip(),
     )
-    channels = list_niche_channels(sort=sort or "recent_revenue", limit=limit, offset=offset, **filters)
+    effective_sort = "newest" if added_within_days > 0 else sort or "recent_revenue"
+    channels = list_niche_channels(sort=effective_sort, limit=limit, offset=offset, **filters)
     total = count_niche_channels(**filters)
     return {
         "channels": channels,
         "total": total,
         "limit": max(1, min(int(limit or 40), 100)),
         "offset": max(0, int(offset or 0)),
-        "sort": sort or "recent_revenue",
+        "sort": effective_sort,
         "filters": filters,
     }
 
@@ -4441,6 +4361,7 @@ def start_niche_finder_job(
         max_subscribers=req.max_subscribers,
         scroll_count=req.scroll_count,
         max_video_age_days=req.max_video_age_days,
+        discovery_settings=req.model_dump(),
         trigger="admin",
         user_id=admin["id"],
     )
@@ -6174,11 +6095,11 @@ def niche_finder_cron(
         max_subscribers=body.max_subscribers or 150_000,
         scroll_count=body.scroll_count or 80,
         max_video_age_days=body.max_video_age_days or 180,
+        discovery_settings=body.model_dump(),
         trigger="cron",
         user_id=None,
     )
-    from core.niche_daily_keywords import daily_cron_keywords
-    used = kws if kws else daily_cron_keywords()
+    used = kws
     return {
         "job_id": job_id,
         "status": "running",

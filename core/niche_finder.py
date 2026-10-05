@@ -83,17 +83,23 @@ def parse_duration_iso8601(duration: str) -> int:
     return h * 3600 + mi * 60 + s
 
 
-def _yt(api_key: str):
+def _yt(api_key: str, *, deadline=None, max_requests=0, reserve_request=None):
     import httplib2
     http = httplib2.Http(timeout=20)
     stats = {"requests": 0, "seconds": 0.0}
     request = http.request
     def measured_request(uri, *args, **kwargs):
+        is_api = "/youtube/v3/" in uri
+        if is_api and ((deadline is not None and time.monotonic() >= deadline)
+                       or (max_requests and stats["requests"] >= max_requests)):
+            raise TimeoutError("Discovery API work budget reached")
+        if is_api and reserve_request and not reserve_request():
+            raise TimeoutError("Shared daily discovery API budget reached")
         started = time.monotonic()
         try:
             return request(uri, *args, **kwargs)
         finally:
-            if "/youtube/v3/" in uri:
+            if is_api:
                 stats["requests"] += 1
                 stats["seconds"] += time.monotonic() - started
     http.request = measured_request
@@ -184,6 +190,7 @@ def _fetch_videos(youtube, video_ids: list[str]) -> list[dict]:
                 {
                     "video_id": item["id"],
                     "title": sn.get("title") or "",
+                    "description": sn.get("description") or "",
                     "channel_id": sn.get("channelId") or "",
                     "channel_title": sn.get("channelTitle") or "",
                     "published_at": sn.get("publishedAt") or "",
@@ -224,6 +231,7 @@ def _fetch_channels(youtube, channel_ids: list[str]) -> dict[str, dict]:
             out[item["id"]] = {
                 "channel_id": item["id"],
                 "channel_name": sn.get("title") or "",
+                "channel_description": sn.get("description") or "",
                 "channel_url": f"https://www.youtube.com/channel/{item['id']}",
                 "avatar_url": avatar,
                 "subscriber_count": int(st.get("subscriberCount") or 0),
@@ -469,6 +477,9 @@ def run_niche_finder(
     excluded_channel_ids: set[str] | None = None,
     excluded_channel_names: set[str] | None = None,
     deadline: float | None = None,
+    discovered_videos: list[dict] | None = None,
+    direct_channel_ids: list[str] | None = None,
+    youtube_client=None,
 ) -> dict[str, Any]:
     """
     Scroll-scrape YouTube search (ViewHunt-style), then lightly enrich with
@@ -493,7 +504,7 @@ def run_niche_finder(
     age_limit = max_video_age_days or MAX_VIDEO_AGE_DAYS
 
     _log("Starting scroll discovery (real YouTube search pages)…")
-    scraped = scrape_keywords(
+    scraped = [] if discovered_videos is not None or direct_channel_ids else scrape_keywords(
         kws,
         # High ceiling so each keyword can scroll to the real end of results.
         scroll_count=max(1 if max_per_keyword else 10, min(int(scroll_count or 80), 150)),
@@ -508,7 +519,7 @@ def run_niche_finder(
     scrape_by_vid = {h["video_id"]: h for h in scraped if h.get("video_id")}
     _log(f"Scroll discovery kept {len(video_ids)} fresh videos (≤{age_limit}d)")
 
-    if not video_ids or (deadline is not None and time.monotonic() >= deadline):
+    if (not video_ids and discovered_videos is None and not direct_channel_ids) or (deadline is not None and time.monotonic() >= deadline):
         return {
             "hits": [],
             "meta": {
@@ -521,9 +532,9 @@ def run_niche_finder(
             },
         }
 
-    youtube = _yt(api_key)
+    youtube = youtube_client or _yt(api_key)
     _log(f"Enriching {len(video_ids)} videos (API stats only)…")
-    videos = _fetch_videos(youtube, video_ids)
+    videos = list(discovered_videos) if discovered_videos is not None else _fetch_videos(youtube, video_ids)
     # Extra freshness guard from API publish dates
     fresh_videos = []
     for v in videos:
@@ -546,6 +557,8 @@ def run_niche_finder(
             continue
         by_channel.setdefault(cid, []).append(v)
 
+    for cid in direct_channel_ids or []:
+        by_channel.setdefault(cid, [])
     channel_ids = list(by_channel.keys())
     _log(f"Fetching {len(channel_ids)} channels…")
     channels = _fetch_channels(youtube, channel_ids)
@@ -685,11 +698,13 @@ def run_niche_finder(
                 "view_count": v.get("view_count"),
                 "duration_sec": v.get("duration_sec"),
                 "published_at": v.get("published_at"),
+                "description": v.get("description") or "",
             }
 
         return {
             "channel_id": cid,
             "channel_name": ch.get("channel_name"),
+            "channel_description": ch.get("channel_description") or "",
             "channel_url": ch.get("channel_url"),
             "avatar_url": ch.get("avatar_url"),
             "source_keyword": source_kw,
