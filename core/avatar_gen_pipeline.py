@@ -20,6 +20,31 @@ from typing import Any, Callable
 ProgressFn = Callable[[str], None]
 
 
+def _verify_motion(video_path: Path) -> tuple[bool, str]:
+    """
+    Verify that a video clip has visible motion.
+    Uses ffmpeg freezedetect to check for frozen segments.
+    Returns (has_motion, reason).
+    """
+    cmd = [
+        "ffmpeg",
+        "-i", str(video_path),
+        "-vf", "freezedetect=n=0.001:d=2",
+        "-f", "null",
+        "-",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    stderr = result.stderr or ""
+    
+    # freezedetect logs when it finds frozen segments
+    freeze_lines = [line for line in stderr.split('\n') if 'freezedetect' in line.lower()]
+    
+    if any('freeze_start' in line for line in freeze_lines):
+        return False, "freezedetect found frozen segments"
+    
+    return True, "Motion verified"
+
+
 @dataclass
 class AvatarShot:
     """One shot in the final video."""
@@ -540,6 +565,13 @@ def assemble_mixed_avatar_broll_video(
                 raise RuntimeError(
                     f"B-roll motion render failed for segment {shot.index}. "
                     "Frozen still overlays are not acceptable for avatar_generator."
+                )
+            
+            # Verify the rendered clip actually has motion
+            has_motion, reason = _verify_motion(motion_path)
+            if not has_motion:
+                raise RuntimeError(
+                    f"B-roll motion clip {shot.index} is frozen (effect: {effect}): {reason}"
                 )
 
             # Align the motion clip to the shot window on the main timeline
