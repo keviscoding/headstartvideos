@@ -228,6 +228,7 @@ def plan_avatar_video_shots(
     Plan all shots for the video based on script and channel pattern.
     Mix avatar (talking head) with b-roll throughout.
     Uses ACTUAL audio duration to ensure shots cover the full voiceover.
+    Always ends on the avatar for a strong finish.
     """
     segments = parse_script_to_segments(script, actual_audio_duration, avg_cut_sec)
     shots = []
@@ -239,12 +240,29 @@ def plan_avatar_video_shots(
     face_duration = avatar_pattern.get("face_shot_duration", 3.0)
     last_face_time = 0.0
     
+    # Reserve last ~3 seconds for avatar ending
+    ending_avatar_sec = 3.0
+    content_end_time = actual_audio_duration - ending_avatar_sec
+    
     for seg_idx, seg in enumerate(segments):
         seg_start = current_time
         seg_end = seg_start + seg["duration"]
+        is_last_segment = seg_idx == len(segments) - 1
         
         # First segment(s) are avatar opening
         if current_time < opening_sec:
+            shots.append(AvatarShot(
+                index=shot_index,
+                start_sec=seg_start,
+                end_sec=seg_end,
+                duration=seg["duration"],
+                shot_type="avatar",
+                text=seg["text"],
+                visual_prompt="",
+            ))
+            last_face_time = seg_end
+        # Last segment should be avatar for strong ending
+        elif is_last_segment or seg_start >= content_end_time:
             shots.append(AvatarShot(
                 index=shot_index,
                 start_sec=seg_start,
@@ -477,46 +495,59 @@ def generate_avatar_video_atlas(
         return False
 
 
-def select_shot_framing(segment_text: str, segment_index: int, prev_framing: str | None) -> dict[str, str]:
+def select_shot_framing(segment_text: str, segment_index: int, prev_framing: str | None, total_segments: int) -> dict[str, str]:
     """
     Deterministically select shot framing type for b-roll variety.
     
     Returns dict with:
     - framing: "close_up", "wide", "over_shoulder", "detail", "medium"
     - directive: prompt text specifying the framing
+    - avoid_elements: list of scene elements to avoid for this framing
     
-    Ensures consecutive shots use different framing.
+    Ensures all 5 framings appear across the video when possible,
+    and consecutive shots never use the same framing.
     """
     framings = [
         {
             "framing": "close_up",
-            "directive": "Close-up shot focusing on hands, faces, or key objects in sharp detail",
+            "directive": "Close-up shot focusing on hands, facial expressions, or key physical objects in sharp detail",
+            "avoid_elements": ["computer screens", "monitors", "signs", "badges", "name tags"],
         },
         {
             "framing": "detail",
-            "directive": "Extreme close-up macro detail of a key object from the line (barcodes, card edges, book spines, page texture), no legible words",
+            "directive": "Extreme macro detail shot of textures, surfaces, or edges - card corner, paper texture, fabric weave, hand gesture",
+            "avoid_elements": ["text", "words", "labels", "book spines", "screens", "printed material", "signage"],
         },
         {
             "framing": "over_shoulder",
-            "directive": "Over-the-shoulder perspective shot showing interaction or point of view",
+            "directive": "Over-the-shoulder perspective showing hands interacting with objects, blurred background",
+            "avoid_elements": ["computer screens", "monitors", "signs in focus", "readable text"],
         },
         {
             "framing": "wide",
-            "directive": "Wide establishing shot showing the full scene and environment",
+            "directive": "Wide establishing shot showing the full environment, people, and spatial context",
+            "avoid_elements": ["close-up text", "readable signs"],
         },
         {
             "framing": "medium",
-            "directive": "Medium shot at waist or desk level showing person and immediate surroundings",
+            "directive": "Medium shot from waist or chest level showing person and their immediate interaction space",
+            "avoid_elements": ["computer screens in focus", "name badges", "close-up monitors"],
         },
     ]
     
-    # Hash segment text for deterministic but varied selection
-    text_hash = sum(ord(c) for c in segment_text.lower())
-    base_index = (text_hash + segment_index) % len(framings)
+    # For short videos (3-4 segments), ensure we hit different framings
+    # Use round-robin with offset to cover the range
+    if total_segments <= len(framings):
+        # Distribute framings evenly across segments
+        base_index = segment_index % len(framings)
+    else:
+        # For longer videos, use hash-based selection for variety
+        text_hash = sum(ord(c) for c in segment_text.lower())
+        base_index = (text_hash + segment_index * 3) % len(framings)
     
     # Select framing, avoiding previous if possible
     selected = framings[base_index]
-    if prev_framing and selected["framing"] == prev_framing and len(framings) > 1:
+    if prev_framing and selected["framing"] == prev_framing:
         # Pick next framing to ensure variety
         selected = framings[(base_index + 1) % len(framings)]
     
@@ -862,22 +893,32 @@ def run_avatar_gen_pipeline(
             # Include script context to ensure on-topic generation
             segment_text = shot.text or shot.visual_prompt
             
-            # Select shot framing for variety (deterministic, avoids consecutive repeats)
-            framing = select_shot_framing(segment_text, shot.index, prev_framing)
+            # Select shot framing for variety (deterministic, covers all 5 framings)
+            framing = select_shot_framing(segment_text, shot.index, prev_framing, broll_count_needed)
             prev_framing = framing["framing"]
             
-            # Build explicit prompt emphasizing the script topic and segment content
+            # Extract concrete visual elements while steering clear of text-heavy scenes
+            # For library example: focus on hands, cards, books (edge-on), people, gestures
+            # Avoid: computer monitors, name badges, book spines showing text, signs
+            avoid_list = ", ".join(framing["avoid_elements"])
+            
+            # Build explicit prompt that steers the composition toward text-free visuals
             prompt_text = (
                 f"Professional photograph, photorealistic, high quality. "
                 f"{framing['directive']}. "
-                f"Scene: {segment_text}. "
+                f"Scene showing: {segment_text}. "
                 f"Context: {title}. "
-                f"Relevant visual showing specific objects or scenes mentioned. "
+                f"Show relevant physical objects, people, hands, and actions mentioned. "
+                f"AVOID showing: {avoid_list}. "
+                f"If books appear, show them edge-on or with plain covers. "
+                f"If technology appears, show only hardware edges or blurred screens. "
+                f"Focus on human interactions, gestures, and tangible objects. "
                 f"16:9 aspect ratio. "
-                f"No text, no captions, no logos, no brand marks, no watermarks, "
-                f"no credit cards, no payment cards, no trademarks, no readable labels. "
-                f"If people appear, keep them consistent with the script and the speaking "
-                f"avatar (same gender and role as the on-camera host when that role is shown)."
+                f"No text, no captions, no logos, no brand names (Dell, HP, Apple, etc), "
+                f"no watermarks, no credit cards, no payment cards, no trademarks, "
+                f"no readable labels, no computer monitors with visible content, "
+                f"no name badges, no signs with letters. "
+                f"If people appear, match the gender and role from the script."
             )
             
             if len(prompt_text) > 10:
