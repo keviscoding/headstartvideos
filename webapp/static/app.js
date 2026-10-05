@@ -4059,6 +4059,7 @@ let _nfTotal = 0;
 const _NF_PAGE = 40;
 let _nfFilterTimer = null;
 let _nfFiltersBound = false;
+let _nfSortBeforeAdded = 'recent_revenue';
 const _NF_RECENT_MAX = 500000;
 const _NF_SUBS_MAX = 500000;
 const _NF_VIDEOS_MAX = 2000;
@@ -4247,7 +4248,7 @@ function _nfRenderFilterChips() {
         chips.push({ key: 'new', label: 'Added in the past 7 days' });
     }
     const sort = document.getElementById('nf-sort');
-    if (sort && sort.value !== 'recent_revenue') {
+    if (sort && sort.value !== 'recent_revenue' && !document.getElementById('nf-f-new')?.checked) {
         const opt = sort.options[sort.selectedIndex];
         chips.push({ key: 'sort', label: opt ? opt.text : sort.value });
     }
@@ -4272,6 +4273,18 @@ function applyNicheFilters() {
     loadNicheFinderFeed({ reset: true });
 }
 
+function _nfSetNewlyAdded(enabled) {
+    const box = document.getElementById('nf-f-new');
+    const btn = document.getElementById('nf-toggle-new');
+    const sort = document.getElementById('nf-sort');
+    if (!box || !btn) return;
+    if (enabled && !box.checked) _nfSortBeforeAdded = sort?.value || 'recent_revenue';
+    box.checked = enabled;
+    btn.classList.toggle('is-on', enabled);
+    btn.setAttribute('aria-pressed', String(enabled));
+    if (sort) { sort.value = enabled ? 'newest' : _nfSortBeforeAdded; sort.disabled = enabled; }
+}
+
 function toggleNicheFilter(kind) {
     if (kind === 'has-recent') {
         const box = document.getElementById('nf-f-has-recent');
@@ -4281,12 +4294,7 @@ function toggleNicheFilter(kind) {
         btn.classList.toggle('is-on', box.checked);
         btn.setAttribute('aria-pressed', box.checked ? 'true' : 'false');
     } else if (kind === 'new') {
-        const box = document.getElementById('nf-f-new');
-        const btn = document.getElementById('nf-toggle-new');
-        if (!box || !btn) return;
-        box.checked = !box.checked;
-        btn.classList.toggle('is-on', box.checked);
-        btn.setAttribute('aria-pressed', String(box.checked));
+        _nfSetNewlyAdded(!document.getElementById('nf-f-new')?.checked);
     } else if (kind === 'active') {
         const box = document.getElementById('nf-f-active');
         const btn = document.getElementById('nf-toggle-active');
@@ -4335,10 +4343,7 @@ function removeNicheFilterChip(key) {
             btn.setAttribute('aria-pressed', 'false');
         }
     } else if (key === 'new') {
-        const box = document.getElementById('nf-f-new');
-        const btn = document.getElementById('nf-toggle-new');
-        if (box) box.checked = false;
-        if (btn) { btn.classList.remove('is-on'); btn.setAttribute('aria-pressed', 'false'); }
+        _nfSetNewlyAdded(false);
     } else if (key === 'sort') {
         const sort = document.getElementById('nf-sort');
         if (sort) sort.value = 'recent_revenue';
@@ -4350,6 +4355,8 @@ function clearNicheFilters() {
     const q = document.getElementById('nf-f-q');
     if (q) q.value = '';
     const sort = document.getElementById('nf-sort');
+    _nfSetNewlyAdded(false);
+    _nfSortBeforeAdded = 'recent_revenue';
     if (sort) sort.value = 'recent_revenue';
     const recentMin = document.getElementById('nf-recent-min');
     const recentMax = document.getElementById('nf-recent-max');
@@ -4890,9 +4897,6 @@ function _renderNicheFinderHits(hits, opts = {}) {
                 <p style="font-family: var(--font-display); font-weight: 700; font-size: 18px; color: var(--app-ink); margin-top: 4px;">${value}</p>
             </div>`;
 
-        const mon = h.likely_monetized
-            ? `<span title="Likely monetized (≥1K subs)" style="color:#14B87A;font-weight:700;margin-left:4px;">$</span>`
-            : '';
         const tag = h.source_keyword
             ? `<span class="cr-mono" style="font-size: 11px; color: var(--app-ink-3); background: var(--app-surface-2); border: 1px solid var(--app-border); border-radius: 99px; padding: 2px 8px;">${_nfEsc(h.source_keyword)}</span>`
             : '';
@@ -4911,7 +4915,7 @@ function _renderNicheFinderHits(hits, opts = {}) {
                     <div class="flex items-center gap-2" style="flex-wrap:wrap;">
                         <a href="${_nfEsc(h.channel_url)}" target="_blank" rel="noopener"
                            style="font-family: var(--font-display); font-weight: 700; font-size: 18px; color: var(--app-ink); text-decoration:none;">
-                            ${_nfEsc(h.channel_name || 'Channel')}${mon}
+                            ${_nfEsc(h.channel_name || 'Channel')}
                         </a>
                         ${tag}
                         ${avatarLabel ? `<span class="cr-mono" title="${h.avatar_confidence === 'disclosed' ? 'The channel publicly describes its synthetic presenter.' : 'Public AI labels and limited visual samples suggest a synthetic presenter; identity is unconfirmed.'}" style="font-size:11px;color:var(--accent);">${avatarLabel}</span>` : ''}
@@ -4933,7 +4937,7 @@ function _renderNicheFinderHits(hits, opts = {}) {
             </div>
             <div class="flex gap-2 mt-4" style="flex-wrap: wrap;">
                 ${metric('Recent Avg Views', _nfFmt(h.recent_avg_views))}
-                ${metric('Days Since Start', h.days_since_start != null ? _nfEsc(h.days_since_start) : '—')}
+                ${metric('Channel Age (days)', h.days_since_start != null ? _nfEsc(h.days_since_start) : '—')}
                 ${metric('Uploads', _nfFmt(h.video_count))}
                 ${metric('Active 14d', h.videos_last_14d != null ? _nfEsc(h.videos_last_14d) : '—')}
             </div>

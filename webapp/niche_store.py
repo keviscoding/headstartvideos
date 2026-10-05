@@ -78,6 +78,8 @@ class NicheStore:
 
     def reserve_budget(self, provider, amount, daily_cap):
         """Reserve conservative daily blocks, including abandoned work after a crash."""
+        if not 0 < amount <= daily_cap:
+            return False
         from datetime import datetime, timezone
         day=datetime.now(timezone.utc).strftime("%Y-%m-%d")
         with db._conn() as conn:

@@ -396,6 +396,7 @@ def run_cloud_hunt(job_id):
                 pending.append((task,hit,perf,pool.submit(content_review,hit)))
             for task,hit,perf,future in pending:
                 review,counters=future.result()
+                review["avatar_sources"]=hit["avatar_evidence"]
                 for key,value in counters.items(): stats[key]=stats.get(key,0)+value
                 avatar=avatar_status(review,hit["avatar_evidence"])
                 review["avatar_confidence"]=avatar if avatar in {"disclosed","likely"} else "unknown"
