@@ -98,8 +98,11 @@ def avatar_status(review, evidence):
     if evidence.get("explicit_avatar_claim"):
         return "disclosed"
     observations=review.get("avatar_observations")
-    if (evidence.get("ai_video_samples",0)>=2
-        and review.get("avatar_style_confidence")=="high"
+    triage=evidence.get("visual_triage") or {}
+    supported=(evidence.get("ai_video_samples",0)>=2 and review.get("avatar_style_confidence") in {"high","medium"})
+    visual=(triage.get("presenter_visible") is True and triage.get("avatar_style_confidence")=="high"
+            and review.get("avatar_style_confidence")=="high")
+    if ((supported or visual)
         and isinstance(observations,list) and len(observations)>=2
         and all(isinstance(x,str) and x.strip() for x in observations)):
         return "likely"
@@ -120,6 +123,7 @@ class Explorer:
     def __init__(self, deadline):
         from playwright.sync_api import sync_playwright
         self.deadline=deadline
+        self.consent_attempts=0
         self.playwright=sync_playwright().start()
         self.browser=self.playwright.chromium.launch(headless=True,args=["--no-sandbox"])
         self.page=self.browser.new_context(locale="en-US",viewport={"width":1400,"height":900}).new_page()
@@ -133,8 +137,14 @@ class Explorer:
         if left<=0: raise TimeoutError("Hunt deadline reached")
         self.page.goto(url,wait_until="domcontentloaded",timeout=min(25000,int(left*1000)))
         self.page.wait_for_timeout(1200)
+        if self.consent_attempts<2:
+            self.consent_attempts+=1
+            try:
+                self.page.get_by_role("button",name=re.compile(r"^Reject (?:all|the use of cookies)",re.I)).first.wait_for(state="visible",timeout=3500)
+            except Exception:
+                pass
         for text in ("Reject all","Accept all"):
-            button=self.page.get_by_role("button",name=text,exact=True)
+            button=self.page.get_by_role("button",name=re.compile(r"^"+text.split()[0]+r" (?:all|the use of cookies)",re.I))
             if button.count() and button.first.is_visible():
                 button.first.click(timeout=1500)
                 break
@@ -167,11 +177,21 @@ class Explorer:
             label=False
             try:
                 self.navigate(f"https://www.youtube.com/watch?v={vid}")
+                expand=self.page.locator("ytd-watch-metadata #expand")
+                try:
+                    expand.first.wait_for(state="visible",timeout=2500)
+                    expand.first.click(timeout=2500)
+                    self.page.wait_for_timeout(350)
+                except Exception:
+                    pass
                 label=self.page.evaluate("""() => {
-                    const labels=Array.from(document.querySelectorAll('[aria-label],img[alt]'))
+                    const metadata=document.querySelector('#primary-inner') || document.querySelector('ytd-watch-metadata');
+                    if (!metadata) return false;
+                    const labels=Array.from(metadata.querySelectorAll('[aria-label],img[alt]'))
                         .map(n => n.getAttribute('aria-label') || n.getAttribute('alt') || '');
-                    return labels.some(t => /content was made with AI|altered or synthetic/i.test(t))
-                        || /altered or synthetic content/i.test(document.body.innerText || '');
+                    const panels=Array.from(metadata.querySelectorAll('ytd-info-panel-content-renderer,ytd-video-description-infocards-section-renderer'));
+                    return labels.some(t => /content (?:was )?(?:made|created|generated) (?:using|with) AI|altered or synthetic/i.test(t))
+                        || panels.some(n => /altered or synthetic content/i.test(n.innerText || ''));
                 }""")
             except Exception:
                 pass
@@ -210,7 +230,7 @@ def run_cloud_hunt(job_id):
     stats={"runner":"fly","rubric":CLOUD_RUBRIC,"profile":settings.profile,"settings":asdict(settings),
         "added":0,"reviewed":0,"enriched":0,"searches":0,"related_pages":0,"cached_skipped":0,
         "existing_skipped":0,"results":[],"model_requests":0,"prompt_tokens":0,"completion_tokens":0,
-        "transcript_requests":0,"image_requests":0,"errors":0}
+        "transcript_requests":0,"image_requests":0,"errors":0,"triaged":0,"full_reviews":0}
     previous=run.get("meta") or {}
     for key in list(stats):
         if isinstance(stats[key],int) and isinstance(previous.get(key),int): stats[key]=previous[key]
@@ -301,7 +321,18 @@ def run_cloud_hunt(job_id):
     def content_review(hit):
         client=EvidenceClient(deadline=deadline,downsub_key=config.DOWNSUB_KEY,
             atlas_key=config.ATLASCLOUD_KEY,model=config.ATLAS_TEXT_MODEL,avatar_screen=True)
-        try: return client.review(hit),client.counters.copy()
+        try:
+            if (settings.profile=="avatar" and hit["avatar_evidence"]["ai_video_samples"]<2
+                and not hit["avatar_evidence"]["explicit_avatar_claim"]):
+                triage=client.presenter_style(hit)
+                hit["avatar_evidence"]["visual_triage"]=triage
+                if triage.get("presenter_visible") is not True or triage.get("avatar_style_confidence")!="high":
+                    return {"decision":"review","screen_stage":"visual_triage","reasons":["Avatar presentation is unconfirmed"],"avatar_triage":triage},client.counters.copy()
+                if not store.reserve_budget("content_review",1,300):
+                    return {"decision":"review","reasons":["Daily model budget reached"]},client.counters.copy()
+            review=client.review(hit)
+            review["screen_stage"]="content"
+            return review,client.counters.copy()
         finally: client.close()
 
     try:
@@ -323,6 +354,8 @@ def run_cloud_hunt(job_id):
                 for item in response.get("items",[]):
                     playlist=item.get("contentDetails",{}).get("relatedPlaylists",{}).get("uploads","")
                     seed_videos=_longform_from_uploads(youtube,playlist,want=2)
+                    for query in learned_queries([v["title"] for v in seed_videos]):
+                        store.enqueue("search",{"query":query},source="learned")
                     if item["id"] not in existing and item["id"] not in cached:
                         store.enqueue("channel",{"channel_id":item["id"],"videos":seed_videos},source="avatar_seed")
                     for v in seed_videos:
@@ -390,14 +423,6 @@ def run_cloud_hunt(job_id):
                 if stats["reviewed"]>=settings.review_cap or stop.is_set() or time.monotonic()>=deadline:
                     continue  # lease can be reclaimed for resume
                 hit["avatar_evidence"]=explorer.avatar_evidence(hit)
-                if (settings.profile=="avatar" and hit["avatar_evidence"]["ai_video_samples"]<2
-                    and not hit["avatar_evidence"]["explicit_avatar_claim"]):
-                    outcome={"channel_id":cid,"channel_name":hit["channel_name"],"status":"avatar_hold",
-                        "performance":perf,"avatar_evidence":hit["avatar_evidence"],
-                        "reason":"No sufficient public evidence of AI production; content review deferred"}
-                    store.finish_task(task,outcome)
-                    store.remember(cid,signature,outcome,21600)
-                    continue
                 if not store.reserve_budget("content_review",1,300):
                     stop.set()
                     stats["budget_exhausted"]="daily_content_reviews"
@@ -407,6 +432,10 @@ def run_cloud_hunt(job_id):
             for task,hit,perf,future in pending:
                 review,counters=future.result()
                 review["avatar_sources"]=hit["avatar_evidence"]
+                if hit["avatar_evidence"].get("visual_triage"):
+                    stats["triaged"]=stats.get("triaged",0)+1
+                if review.get("screen_stage")=="content":
+                    stats["full_reviews"]=stats.get("full_reviews",0)+1
                 queries=review.get("discovery_queries")
                 for query in (queries if isinstance(queries,list) else [])[:3]:
                     if isinstance(query,str) and 3<=len(query.strip())<=100 and task["depth"]<3:

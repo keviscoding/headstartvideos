@@ -4918,7 +4918,7 @@ function _renderNicheFinderHits(hits, opts = {}) {
                             ${_nfEsc(h.channel_name || 'Channel')}
                         </a>
                         ${tag}
-                        ${avatarLabel ? `<span class="cr-mono" title="${h.avatar_confidence === 'disclosed' ? 'The channel publicly describes its synthetic presenter.' : 'Public AI labels and limited visual samples suggest a synthetic presenter; identity is unconfirmed.'}" style="font-size:11px;color:var(--accent);">${avatarLabel}</span>` : ''}
+                        ${avatarLabel ? `<span class="cr-mono" title="${h.avatar_confidence === 'disclosed' ? 'The channel publicly describes its virtual presenter.' : 'Limited visual samples suggest a virtual presenter; identity is unconfirmed. Some candidates also have public AI disclosures.'}" style="font-size:11px;color:var(--accent);">${avatarLabel}</span>` : ''}
                         ${added ? `<time datetime="${_nfEsc(added.iso)}" title="${_nfEsc(added.exact)}" class="cr-mono" style="font-size:11px;color:var(--app-ink-3);">Added ${_nfEsc(added.relative)}</time>` : ''}
                         <span class="cr-mono" style="font-size: 11px; color: var(--accent); background: var(--accent-soft-dark); border: 1px solid var(--accent); border-radius: 99px; padding: 2px 8px;">
                             score ${_nfEsc(h.score)}

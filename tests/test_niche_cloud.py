@@ -150,3 +150,11 @@ def test_generic_repeatable_filming_is_not_ai_production(store):
     with pytest.raises(ValueError):
         store.publish(hit(),{**REVIEW,'ai_reproducible':False},PERF,task(store),{})
     assert db.count_niche_channels()==0
+
+def test_undisclosed_presenter_requires_strong_evidence_in_both_stages():
+    review={'presenter_visible':True,'avatar_style_confidence':'high','avatar_observations':['virtual skin styling','repeated rendered setup']}
+    assert cloud.avatar_status(review,{})=='unknown'
+    evidence={'visual_triage':{'presenter_visible':True,'avatar_style_confidence':'high'}}
+    assert cloud.avatar_status(review,evidence)=='likely'
+    assert cloud.avatar_status({**review,'avatar_style_confidence':'medium'},evidence)=='unknown'
+    assert cloud.avatar_status({**review,'avatar_style_confidence':'medium'},{'ai_video_samples':2})=='likely'
