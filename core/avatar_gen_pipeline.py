@@ -524,17 +524,33 @@ def assemble_mixed_avatar_broll_video(
     overlay_inputs = []
     last_output_label = "0:v"  # Start with avatar video
     
+    # Turn each b-roll still into a short Ken Burns clip so overlays move like
+    # the approved samples. Fail hard if motion render fails — a frozen still
+    # must not be marked success.
+    from core.ken_burns import pick_effects, render_clip
+
     broll_index = 1  # Input index (0 is avatar video)
     for shot in shots:
         if shot.shot_type == "broll_still" and shot.asset_path and Path(shot.asset_path).is_file():
-            # Add this b-roll image as an input
-            overlay_inputs.append(("-i", shot.asset_path))
-            
-            # Scale b-roll to match video size
+            seg_dur = max(0.5, float(shot.end_sec) - float(shot.start_sec))
+            motion_path = work_dir / f"broll_{shot.index:03d}_motion.mp4"
+            effect = pick_effects(1)[0]
+            ok = render_clip(str(shot.asset_path), str(motion_path), seg_dur, effect)
+            if not ok or not motion_path.is_file():
+                raise RuntimeError(
+                    f"B-roll motion render failed for segment {shot.index}. "
+                    "Frozen still overlays are not acceptable for avatar_generator."
+                )
+
+            # Align the motion clip to the shot window on the main timeline
+            overlay_inputs.append(("-itsoffset", f"{shot.start_sec:.3f}", "-i", str(motion_path)))
+
             scale_label = f"broll{shot.index}scaled"
-            filter_parts.append(f"[{broll_index}:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2[{scale_label}]")
-            
-            # Overlay on avatar video at the right time
+            filter_parts.append(
+                f"[{broll_index}:v]scale=1280:720:force_original_aspect_ratio=decrease,"
+                f"pad=1280:720:(ow-iw)/2:(oh-ih)/2,format=yuv420p[{scale_label}]"
+            )
+
             next_label = f"out{shot.index}"
             filter_parts.append(
                 f"[{last_output_label}][{scale_label}]overlay=enable='between(t,{shot.start_sec:.2f},{shot.end_sec:.2f})'[{next_label}]"
@@ -582,9 +598,9 @@ def assemble_mixed_avatar_broll_video(
     # Build ffmpeg command with original audio as additional input
     cmd = ["ffmpeg", "-y", "-i", str(avatar_video_path)]
     
-    # Add all b-roll inputs
-    for inp_flag, inp_path in overlay_inputs:
-        cmd.extend([inp_flag, inp_path])
+    # Add all b-roll inputs (may include -itsoffset before each -i)
+    for inp in overlay_inputs:
+        cmd.extend(list(inp))
     
     # Add original audio as final input
     cmd.extend(["-i", str(original_audio_path)])
@@ -772,7 +788,11 @@ def run_avatar_gen_pipeline(
                 f"{segment_text}. "
                 f"Context: {title}. "
                 f"Relevant visual showing specific objects or scenes mentioned. "
-                f"16:9 aspect ratio, no text, no captions."
+                f"16:9 aspect ratio. "
+                f"No text, no captions, no logos, no brand marks, no watermarks, "
+                f"no credit cards, no payment cards, no trademarks, no readable labels. "
+                f"If people appear, keep them consistent with the script and the speaking "
+                f"avatar (same gender and role as the on-camera host when that role is shown)."
             )
             
             if len(prompt_text) > 10:
