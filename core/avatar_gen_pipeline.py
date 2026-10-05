@@ -219,6 +219,17 @@ def detect_channel_avatar_pattern(reference_tags: list[dict]) -> dict[str, Any]:
     }
 
 
+def _find_segment_for_time(segments: list[dict], time_sec: float) -> str:
+    """Find the script text being spoken at the given time."""
+    for seg in segments:
+        if seg["start_sec"] <= time_sec < seg["end_sec"]:
+            return seg["text"]
+    # Fallback: return closest segment
+    if segments:
+        return segments[-1]["text"] if time_sec >= segments[-1]["end_sec"] else segments[0]["text"]
+    return ""
+
+
 def plan_avatar_video_shots(
     script: str,
     actual_audio_duration: float,
@@ -230,7 +241,12 @@ def plan_avatar_video_shots(
     Mix avatar (talking head) with b-roll throughout.
     Uses ACTUAL audio duration to ensure shots cover the full voiceover.
     Always ends on the avatar for a strong finish.
-    For ~20s Shorts, produces 3-4 b-roll shots between opening and ending.
+    
+    B-roll count scales with middle section length at ~2.5-4s per shot:
+    - ~20s Short: 3-4 b-roll shots
+    - ~60s video: 13-15 b-roll shots
+    
+    Each b-roll's text matches what's being spoken during that shot's time window.
     """
     segments = parse_script_to_segments(script, actual_audio_duration, avg_cut_sec)
     shots = []
@@ -244,6 +260,10 @@ def plan_avatar_video_shots(
     ending_avatar_sec = 3.0
     broll_end_time = actual_audio_duration - ending_avatar_sec
     
+    # Get text for opening from segments covering that time
+    opening_midpoint = opening_sec / 2
+    opening_text = _find_segment_for_time(segments, opening_midpoint)
+    
     # Create opening avatar shot (single shot, exact duration)
     shots.append(AvatarShot(
         index=shot_index,
@@ -251,26 +271,24 @@ def plan_avatar_video_shots(
         end_sec=opening_sec,
         duration=opening_sec,
         shot_type="avatar",
-        text=script[:100],  # First part of script
+        text=opening_text,
         visual_prompt="",
     ))
     shot_index += 1
     last_face_time = opening_sec
     
     # Middle section: b-roll with optional face returns
-    # Target 3-4 b-roll shots for ~20s Short (opening 4s, ending 3s, middle ~13s)
+    # Scale b-roll count with middle duration at ~2.5-4s per shot
     middle_duration = broll_end_time - opening_sec
     
-    # Calculate b-roll shot duration to hit target count (3-4 shots)
-    # For ~13s middle section: 3 shots = ~4.3s each, 4 shots = ~3.25s each
-    target_broll_count = 3 if middle_duration < 10 else 4
-    broll_shot_duration = middle_duration / target_broll_count
+    # Target 2.5-4s per b-roll shot (aim for ~3.2s average)
+    target_broll_count = max(3, int(middle_duration / 3.2))
+    ideal_broll_duration = middle_duration / target_broll_count
     
     current_time = opening_sec
-    seg_index_for_middle = 0
     broll_added = 0
     
-    while current_time < broll_end_time and broll_added < target_broll_count:
+    while current_time < broll_end_time:
         # Calculate how much time is left in middle section
         remaining_time = broll_end_time - current_time
         
@@ -279,18 +297,21 @@ def plan_avatar_video_shots(
         should_return_face = (
             face_return_freq is not None and
             time_since_face >= face_return_freq - 1.0 and
-            remaining_time > face_duration + broll_shot_duration  # Need room for face + at least one more b-roll
+            remaining_time > face_duration + ideal_broll_duration  # Need room for face + at least one more b-roll
         )
         
         if should_return_face:
             # Insert face return
+            face_midpoint = current_time + face_duration / 2
+            face_text = _find_segment_for_time(segments, face_midpoint)
+            
             shots.append(AvatarShot(
                 index=shot_index,
                 start_sec=current_time,
                 end_sec=current_time + face_duration,
                 duration=face_duration,
                 shot_type="avatar",
-                text=script[int(current_time * 10):int(current_time * 10) + 50],
+                text=face_text,
                 visual_prompt="",
             ))
             current_time += face_duration
@@ -299,15 +320,11 @@ def plan_avatar_video_shots(
         else:
             # B-roll shot
             # Use calculated duration, but cap at remaining time for last shot
-            this_duration = min(broll_shot_duration, remaining_time)
+            this_duration = min(ideal_broll_duration, remaining_time)
             
-            # Get text from corresponding segment if available
-            if seg_index_for_middle < len(segments):
-                seg_text = segments[seg_index_for_middle]["text"]
-                seg_index_for_middle += 1
-            else:
-                # Fallback if we've exhausted segments
-                seg_text = script[int(current_time * 10):int((current_time + this_duration) * 10)]
+            # Get text from segment covering this shot's midpoint
+            broll_midpoint = current_time + this_duration / 2
+            broll_text = _find_segment_for_time(segments, broll_midpoint)
             
             shots.append(AvatarShot(
                 index=shot_index,
@@ -315,12 +332,16 @@ def plan_avatar_video_shots(
                 end_sec=current_time + this_duration,
                 duration=this_duration,
                 shot_type="broll_still",
-                text=seg_text,
-                visual_prompt=seg_text,
+                text=broll_text,
+                visual_prompt=broll_text,
             ))
             current_time += this_duration
             shot_index += 1
             broll_added += 1
+    
+    # Get text for ending from segments covering that time
+    ending_midpoint = broll_end_time + (actual_audio_duration - broll_end_time) / 2
+    ending_text = _find_segment_for_time(segments, ending_midpoint)
     
     # Create ending avatar shot
     shots.append(AvatarShot(
@@ -329,7 +350,7 @@ def plan_avatar_video_shots(
         end_sec=actual_audio_duration,
         duration=actual_audio_duration - broll_end_time,
         shot_type="avatar",
-        text=script[-100:],  # Last part of script
+        text=ending_text,
         visual_prompt="",
     ))
     

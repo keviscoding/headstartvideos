@@ -243,6 +243,100 @@ def test_opening_respects_pattern_duration():
     print(f"  ✓ PASS: Opening avatar respects pattern duration ({expected:.1f}s)")
 
 
+def test_broll_text_matches_time_window():
+    """Each b-roll's text should match what's spoken during that shot's time."""
+    print("\nTEST: broll_text_matches_time_window")
+    
+    from core.avatar_gen_pipeline import parse_script_to_segments, _find_segment_for_time
+    
+    # Clear script with distinct sentences
+    script = (
+        "First sentence spoken at the start during opening. "
+        "Second sentence comes after the opening ends. "
+        "Third sentence appears in the middle section. "
+        "Fourth sentence follows shortly after third. "
+        "Fifth sentence wraps up before the ending."
+    )
+    
+    audio_duration = 20.0
+    avatar_pattern = {
+        "opening_avatar_sec": 4.0,
+        "face_return_frequency": 20.0,  # No face returns in middle for this test
+        "face_shot_duration": 3.0,
+        "use_title_cards": False,
+    }
+    
+    shots = plan_avatar_video_shots(script, audio_duration, avatar_pattern)
+    segments = parse_script_to_segments(script, audio_duration, 3.0)
+    
+    print(f"  Segments:")
+    for i, seg in enumerate(segments):
+        print(f"    {i}: {seg['start_sec']:.1f}s-{seg['end_sec']:.1f}s: '{seg['text'][:40]}...'")
+    
+    print(f"\n  Shots:")
+    for shot in shots:
+        midpoint = shot.start_sec + shot.duration / 2
+        expected_text = _find_segment_for_time(segments, midpoint)
+        
+        print(f"    {shot.shot_type:12s} {shot.start_sec:5.1f}s-{shot.end_sec:5.1f}s (mid: {midpoint:.1f}s)")
+        print(f"      Text: '{shot.text[:50]}...'")
+        
+        if shot.shot_type == "broll_still":
+            # B-roll text should match segment at its midpoint
+            assert shot.text == expected_text, (
+                f"B-roll at {shot.start_sec:.1f}s-{shot.end_sec:.1f}s (mid {midpoint:.1f}s) "
+                f"has text '{shot.text[:30]}...' but should have '{expected_text[:30]}...'"
+            )
+    
+    print("  ✓ PASS: All b-roll text matches spoken time window")
+
+
+def test_sixty_second_video_scales_broll_count():
+    """60s video should have proportionally more b-roll shots than 20s."""
+    print("\nTEST: sixty_second_video_scales_broll_count")
+    
+    script = "Test sentence. " * 40  # Enough for 60s
+    audio_duration = 60.0
+    
+    avatar_pattern = {
+        "opening_avatar_sec": 4.0,
+        "face_return_frequency": 15.0,  # Face returns every ~15s
+        "face_shot_duration": 3.0,
+        "use_title_cards": False,
+    }
+    
+    shots = plan_avatar_video_shots(script, audio_duration, avatar_pattern)
+    
+    broll_shots = [s for s in shots if s.shot_type == "broll_still"]
+    broll_count = len(broll_shots)
+    
+    # Middle section: 60s - 4s opening - 3s ending = 53s
+    # At ~3.2s per b-roll, expect ~16-17 b-roll shots
+    # With face returns every 15s, some b-roll time will be avatar
+    # Expect at least 10 b-roll shots (much more than 4 for 20s)
+    
+    print(f"  Total shots: {len(shots)}")
+    print(f"  B-roll shots: {broll_count}")
+    print(f"  Avatar shots: {len(shots) - broll_count}")
+    
+    # Calculate average b-roll duration
+    if broll_shots:
+        avg_duration = sum(s.duration for s in broll_shots) / len(broll_shots)
+        print(f"  Average b-roll duration: {avg_duration:.1f}s")
+        
+        # Should be in 2.5-4s range
+        assert 2.5 <= avg_duration <= 4.0, (
+            f"Average b-roll duration {avg_duration:.1f}s outside 2.5-4s range"
+        )
+    
+    # Should have significantly more than 4 b-roll shots (the 20s count)
+    assert broll_count >= 10, (
+        f"60s video has only {broll_count} b-roll shots, expected at least 10"
+    )
+    
+    print(f"  ✓ PASS: 60s video has {broll_count} b-roll shots (>>4 from 20s videos)")
+
+
 if __name__ == "__main__":
     print("=" * 70)
     print("Running Avatar Ending Tests")
@@ -255,6 +349,8 @@ if __name__ == "__main__":
         test_no_broll_in_last_3_seconds()
         test_twenty_second_short_has_three_to_four_broll()
         test_opening_respects_pattern_duration()
+        test_broll_text_matches_time_window()
+        test_sixty_second_video_scales_broll_count()
         
         print("\n" + "=" * 70)
         print("✓ ALL TESTS PASSED")
