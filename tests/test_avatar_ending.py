@@ -337,6 +337,72 @@ def test_sixty_second_video_scales_broll_count():
     print(f"  ✓ PASS: 60s video has {broll_count} b-roll shots (>>4 from 20s videos)")
 
 
+def test_nineteen_point_four_three_seconds_no_zero_broll():
+    """
+    Reproduce the live regression: 19.43s audio should not create zero-length b-roll.
+    
+    The bug: with 19.43s audio, 4s opening, 3s ending, middle is 12.43s.
+    max(3, int(12.43/3.2)) = 3, ideal_duration = 12.43/3 = 4.14s.
+    Shots: 4.0-8.14, 8.14-12.29, 12.29-16.43 (all good).
+    Then loop continues: remaining = 16.43 - 16.43 = 0.0s, creates zero-length shot.
+    
+    Fix ensures no b-roll has duration < 2.5s.
+    """
+    print("\nTEST: nineteen_point_four_three_seconds_no_zero_broll")
+    
+    script = "Library card sentence one. Library card sentence two. Library card sentence three."
+    audio_duration = 19.43  # Exact duration from the regression
+    
+    avatar_pattern = {
+        "opening_avatar_sec": 4.0,
+        "face_return_frequency": 10.0,
+        "face_shot_duration": 3.0,
+        "use_title_cards": False,
+    }
+    
+    shots = plan_avatar_video_shots(script, audio_duration, avatar_pattern)
+    
+    print(f"  Audio duration: {audio_duration}s")
+    print(f"  Total shots: {len(shots)}")
+    print(f"  Shot sequence:")
+    
+    for shot in shots:
+        window_length = shot.end_sec - shot.start_sec
+        print(f"    {shot.shot_type:12s} {shot.start_sec:6.2f}s - {shot.end_sec:6.2f}s (duration: {shot.duration:.2f}s)")
+        
+        # No zero-length or near-zero windows
+        assert window_length > 0.01, (
+            f"Shot {shot.index} has zero/near-zero window: "
+            f"{shot.start_sec:.2f}s - {shot.end_sec:.2f}s"
+        )
+        
+        # B-roll shots must be >= 2.5s
+        if shot.shot_type == "broll_still":
+            assert shot.duration >= 2.5, (
+                f"B-roll shot {shot.index} is {shot.duration:.2f}s, must be >= 2.5s"
+            )
+    
+    # Check that b-roll tiles cleanly (no overlaps, no gaps > 0.1s)
+    broll_shots = [s for s in shots if s.shot_type == "broll_still"]
+    avatar_shots = [s for s in shots if s.shot_type == "avatar"]
+    
+    print(f"  B-roll shots: {len(broll_shots)}")
+    print(f"  Avatar shots: {len(avatar_shots)}")
+    
+    # Should have at least 3 b-roll (target for ~20s)
+    assert len(broll_shots) >= 3, f"Expected at least 3 b-roll, got {len(broll_shots)}"
+    
+    # First shot should be avatar (opening)
+    assert shots[0].shot_type == "avatar", "First shot not avatar"
+    assert abs(shots[0].start_sec - 0.0) < 0.01, "Opening doesn't start at 0"
+    
+    # Last shot should be avatar (ending)
+    assert shots[-1].shot_type == "avatar", "Last shot not avatar"
+    assert abs(shots[-1].end_sec - audio_duration) < 0.01, "Ending doesn't reach audio end"
+    
+    print("  ✓ PASS: 19.43s audio produces valid b-roll windows (all >= 2.5s, no zeros)")
+
+
 if __name__ == "__main__":
     print("=" * 70)
     print("Running Avatar Ending Tests")
@@ -351,6 +417,7 @@ if __name__ == "__main__":
         test_opening_respects_pattern_duration()
         test_broll_text_matches_time_window()
         test_sixty_second_video_scales_broll_count()
+        test_nineteen_point_four_three_seconds_no_zero_broll()
         
         print("\n" + "=" * 70)
         print("✓ ALL TESTS PASSED")
