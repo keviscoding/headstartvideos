@@ -83,8 +83,29 @@ def parse_duration_iso8601(duration: str) -> int:
     return h * 3600 + mi * 60 + s
 
 
-def _yt(api_key: str):
-    return build("youtube", "v3", developerKey=api_key, cache_discovery=False)
+def _yt(api_key: str, *, deadline=None, max_requests=0, reserve_request=None):
+    import httplib2
+    http = httplib2.Http(timeout=20)
+    stats = {"requests": 0, "seconds": 0.0}
+    request = http.request
+    def measured_request(uri, *args, **kwargs):
+        is_api = "/youtube/v3/" in uri
+        if is_api and ((deadline is not None and time.monotonic() >= deadline)
+                       or (max_requests and stats["requests"] >= max_requests)):
+            raise TimeoutError("Discovery API work budget reached")
+        if is_api and reserve_request and not reserve_request():
+            raise TimeoutError("Shared daily discovery API budget reached")
+        started = time.monotonic()
+        try:
+            return request(uri, *args, **kwargs)
+        finally:
+            if is_api:
+                stats["requests"] += 1
+                stats["seconds"] += time.monotonic() - started
+    http.request = measured_request
+    http.niche_stats = stats
+    return build("youtube", "v3", developerKey=api_key, cache_discovery=False,
+                 http=http)
 
 
 def _search_video_ids(
@@ -169,6 +190,7 @@ def _fetch_videos(youtube, video_ids: list[str]) -> list[dict]:
                 {
                     "video_id": item["id"],
                     "title": sn.get("title") or "",
+                    "description": sn.get("description") or "",
                     "channel_id": sn.get("channelId") or "",
                     "channel_title": sn.get("channelTitle") or "",
                     "published_at": sn.get("publishedAt") or "",
@@ -209,6 +231,7 @@ def _fetch_channels(youtube, channel_ids: list[str]) -> dict[str, dict]:
             out[item["id"]] = {
                 "channel_id": item["id"],
                 "channel_name": sn.get("title") or "",
+                "channel_description": sn.get("description") or "",
                 "channel_url": f"https://www.youtube.com/channel/{item['id']}",
                 "avatar_url": avatar,
                 "subscriber_count": int(st.get("subscriberCount") or 0),
@@ -252,7 +275,7 @@ def _longform_from_uploads(
             last_err = e
             time.sleep(0.35 * (attempt + 1))
     if resp is None:
-        print(f"[niche_finder] playlistItems failed: {last_err}")
+        print(f"[niche_finder] playlistItems failed: {type(last_err).__name__}")
         return []
 
     ids = []
@@ -449,6 +472,14 @@ def run_niche_finder(
     scroll_count: int = 20,
     max_video_age_days: int = 180,
     progress: ProgressCb | None = None,
+    max_enrich_channels: int = 0,
+    max_discovery_videos: int = 0,
+    excluded_channel_ids: set[str] | None = None,
+    excluded_channel_names: set[str] | None = None,
+    deadline: float | None = None,
+    discovered_videos: list[dict] | None = None,
+    direct_channel_ids: list[str] | None = None,
+    youtube_client=None,
 ) -> dict[str, Any]:
     """
     Scroll-scrape YouTube search (ViewHunt-style), then lightly enrich with
@@ -473,18 +504,22 @@ def run_niche_finder(
     age_limit = max_video_age_days or MAX_VIDEO_AGE_DAYS
 
     _log("Starting scroll discovery (real YouTube search pages)…")
-    scraped = scrape_keywords(
+    scraped = [] if discovered_videos is not None or direct_channel_ids else scrape_keywords(
         kws,
         # High ceiling so each keyword can scroll to the real end of results.
-        scroll_count=max(10, min(int(scroll_count or 80), 150)),
+        scroll_count=max(1 if max_per_keyword else 10, min(int(scroll_count or 80), 150)),
         max_age_days=age_limit,
         progress=_log,
+        max_per_keyword=max_per_keyword,
+        max_videos=max_discovery_videos,
+        deadline=deadline,
+        use_duration_filter=not bool(max_enrich_channels),
     )
     video_ids = [h["video_id"] for h in scraped if h.get("video_id")]
     scrape_by_vid = {h["video_id"]: h for h in scraped if h.get("video_id")}
     _log(f"Scroll discovery kept {len(video_ids)} fresh videos (≤{age_limit}d)")
 
-    if not video_ids:
+    if (not video_ids and discovered_videos is None and not direct_channel_ids) or (deadline is not None and time.monotonic() >= deadline):
         return {
             "hits": [],
             "meta": {
@@ -493,13 +528,13 @@ def run_niche_finder(
                 "channels_considered": 0,
                 "discovery": "scroll",
                 "max_video_age_days": age_limit,
-                "note": "No fresh long-form results from scroll scrape.",
+                "note": "No fresh results, or discovery exhausted its time budget before enrichment.",
             },
         }
 
-    youtube = _yt(api_key)
+    youtube = youtube_client or _yt(api_key)
     _log(f"Enriching {len(video_ids)} videos (API stats only)…")
-    videos = _fetch_videos(youtube, video_ids)
+    videos = list(discovered_videos) if discovered_videos is not None else _fetch_videos(youtube, video_ids)
     # Extra freshness guard from API publish dates
     fresh_videos = []
     for v in videos:
@@ -522,17 +557,31 @@ def run_niche_finder(
             continue
         by_channel.setdefault(cid, []).append(v)
 
+    for cid in direct_channel_ids or []:
+        by_channel.setdefault(cid, [])
     channel_ids = list(by_channel.keys())
     _log(f"Fetching {len(channel_ids)} channels…")
     channels = _fetch_channels(youtube, channel_ids)
 
     hits: list[dict] = []
+    excluded_ids = excluded_channel_ids or set()
+    excluded_names = {name.strip().casefold() for name in (excluded_channel_names or set())}
+    cached_encountered = sum(cid in excluded_ids for cid in channels)
     to_enrich = [
         (cid, ch)
         for cid, ch in channels.items()
         if ch.get("subscriber_count", 0) <= max_subscribers
         and ch.get("subscriber_count", 0) >= 100
+        and cid not in excluded_ids
+        and ch.get("channel_name", "").strip().casefold() not in excluded_names
     ]
+    # Bound upload-history reads before enrichment. The output cap alone does
+    # not limit work. Cheap API-enriched discovery statistics choose the pool.
+    if max_enrich_channels:
+        to_enrich.sort(key=lambda row: max(
+            (v.get("view_count", 0) for v in by_channel[row[0]]), default=0,
+        ), reverse=True)
+        to_enrich = to_enrich[:max(0, max_enrich_channels)]
 
     def _enrich_one(cid: str, ch: dict) -> dict | None:
         seed_videos = sorted(
@@ -649,11 +698,13 @@ def run_niche_finder(
                 "view_count": v.get("view_count"),
                 "duration_sec": v.get("duration_sec"),
                 "published_at": v.get("published_at"),
+                "description": v.get("description") or "",
             }
 
         return {
             "channel_id": cid,
             "channel_name": ch.get("channel_name"),
+            "channel_description": ch.get("channel_description") or "",
             "channel_url": ch.get("channel_url"),
             "avatar_url": ch.get("avatar_url"),
             "source_keyword": source_kw,
@@ -674,16 +725,21 @@ def run_niche_finder(
             "est_recent_monthly_revenue_high_usd": rev_recent["est_monthly_revenue_high_usd"],
             # Primary gallery = most recent long-form
             "recent_videos": [_vid_row(v) for v in recent[:4]],
+            "sampled_videos": [_vid_row(v) for v in by_date] if max_enrich_channels else [],
             "popular_videos": [_vid_row(v) for v in popular],
         }
 
     _log(f"Scoring {len(to_enrich)} channels…")
     # Sequential enrich — parallel googleapiclient calls flake hard (SSL/timeouts).
+    enrichment_attempts = 0
     for cid, ch in to_enrich:
+        if deadline is not None and time.monotonic() >= deadline:
+            break
         try:
+            enrichment_attempts += 1
             hit = _enrich_one(cid, ch)
         except Exception as e:
-            print(f"[niche_finder] enrich error: {e}")
+            print(f"[niche_finder] enrich error: {type(e).__name__}")
             continue
         if hit:
             hits.append(hit)
@@ -707,6 +763,11 @@ def run_niche_finder(
             "keywords": kws,
             "videos_scanned": len(videos),
             "channels_considered": len(channel_ids),
+            "channels_selected_for_enrichment": len(to_enrich),
+            "channels_enrichment_attempted": enrichment_attempts,
+            "channels_enriched": len(hits),
+            "cached_channels_encountered": cached_encountered,
+            "youtube_api": getattr(getattr(youtube, "_http", None), "niche_stats", {}),
             "min_duration_sec": MIN_DURATION_SEC,
             "recent_video_count": RECENT_VIDEO_COUNT,
             "rpm_assumed": rpm_usd,
@@ -714,7 +775,7 @@ def run_niche_finder(
             "max_video_age_days": age_limit,
             "note": (
                 "Discovery scrolls real YouTube search (not API ranking). "
-                "Videos older than 6 months are ignored. "
+                f"Discovery videos older than {age_limit} days are ignored. "
                 "Revenue estimate: views × uploads/month × RPM/1000 ($4 mid, $2–$8 band)."
             ),
         },

@@ -50,13 +50,15 @@ def maybe_start_daily_niche_hunt(*, start_hunt) -> dict | None:
         job_id = start_hunt(
             keywords=keywords,
             max_per_keyword=0,
-            max_channels=0,  # uncapped — keep everything discovered
+            max_channels=0,
             min_recent_avg_views=0,
-            max_subscribers=150_000,
-            scroll_count=80,  # high ceiling; stops early when results end
+            max_subscribers=300_000,
+            scroll_count=5,
             max_video_age_days=180,
             trigger="cron",
             user_id=None,
+            discovery_settings={"profile":"balanced","time_budget_seconds":1800,
+                "target_channels":20,"candidate_cap":300,"review_cap":100,"search_cap":100,"api_cap":2000},
         )
     except Exception as e:
         # Release is intentional non-event — leave the claim so we don't hammer

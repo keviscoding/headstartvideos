@@ -1,0 +1,14 @@
+.env
+.git/
+.venv/
+venv/
+output/
+data/
+presets/
+assets/
+frontier-gfx-kit/
+node_modules/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store

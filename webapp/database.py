@@ -361,6 +361,7 @@ CREATE INDEX IF NOT EXISTS idx_niche_channels_revenue ON niche_channels (active,
 CREATE INDEX IF NOT EXISTS idx_niche_channels_score ON niche_channels (active, score DESC);
 CREATE INDEX IF NOT EXISTS idx_niche_channels_recent_avg ON niche_channels (active, recent_avg_views DESC);
 CREATE INDEX IF NOT EXISTS idx_niche_channels_recent_rev ON niche_channels (active, est_recent_monthly_revenue_usd DESC);
+CREATE INDEX IF NOT EXISTS idx_niche_channels_added ON niche_channels (active, first_seen_at DESC, channel_id);
 CREATE INDEX IF NOT EXISTS idx_niche_hunt_runs_started ON niche_hunt_runs (started_at DESC);
 """
 
@@ -1859,7 +1860,7 @@ def append_cook_progress(job_id: str, message: str, phase: str = "running") -> N
 
 # --- Niche Finder catalog --------------------------------------------------
 
-def upsert_niche_channel(hit: dict, *, source_keyword: str = "") -> None:
+def upsert_niche_channel(hit: dict, *, source_keyword: str = "", connection=None, insert_only=False) -> bool:
     """Insert or refresh a niche channel from a hunt hit (never deletes prior rows)."""
     now = time.time()
     cid = (hit.get("channel_id") or "").strip()
@@ -1951,27 +1952,31 @@ def upsert_niche_channel(hit: dict, *, source_keyword: str = "") -> None:
     """
     placeholders_pg = ",".join(["%s"] * 29)
     placeholders_sq = ",".join(["?"] * 29)
-    with _conn() as conn:
+    from contextlib import nullcontext
+    with (nullcontext(connection) if connection is not None else _conn()) as conn:
         cur = conn.cursor()
+        conflict = "DO NOTHING" if insert_only else f"DO UPDATE SET {update}"
         if IS_PG:
             cur.execute(
                 f"""
                 INSERT INTO niche_channels ({cols})
                 VALUES ({placeholders_pg})
-                ON CONFLICT (channel_id) DO UPDATE SET {update}
+                ON CONFLICT (channel_id) {conflict}
                 """,
                 vals,
             )
         else:
             update_sq = update.replace("EXCLUDED.", "excluded.")
+            conflict_sq = "DO NOTHING" if insert_only else f"DO UPDATE SET {update_sq}"
             cur.execute(
                 f"""
                 INSERT INTO niche_channels ({cols})
                 VALUES ({placeholders_sq})
-                ON CONFLICT(channel_id) DO UPDATE SET {update_sq}
+                ON CONFLICT(channel_id) {conflict_sq}
                 """,
                 vals,
             )
+        return cur.rowcount > 0
 
 
 def upsert_niche_channels(hits: list[dict], *, source_keyword: str = "") -> int:
@@ -2027,6 +2032,9 @@ def _niche_row_to_hit(row: dict) -> dict:
         "recent_videos": recent,
         "popular_videos": popular,
         "first_seen_at": d.get("first_seen_at"),
+        "production_format": d.get("production_format") or "",
+        "avatar_confidence": d.get("avatar_confidence") or "unknown",
+        "quality_status": d.get("quality_status") or "",
         "last_seen_at": d.get("last_seen_at"),
         "last_scored_at": d.get("last_scored_at"),
     }
@@ -2042,7 +2050,7 @@ _NICHE_SORT_MAP = {
     "subscribers": "subscriber_count DESC",
     "subscribers_asc": "subscriber_count ASC",
     "videos": "video_count DESC",
-    "newest": "first_seen_at DESC",
+    "newest": "first_seen_at DESC, channel_id ASC",
     "oldest": "first_seen_at ASC",
 }
 
@@ -2063,18 +2071,22 @@ def list_niche_channels(
     max_recent_revenue: float | None = None,
     active_recently: bool = False,
     has_recent_avg: bool = False,
+    added_since: float | None = None,
     q: str = "",
 ) -> list[dict]:
     limit = max(1, min(int(limit or 40), 100))
     offset = max(0, int(offset or 0))
     order = _NICHE_SORT_MAP.get(sort) or _NICHE_SORT_MAP["recent_revenue"]
     # Soft boost: prefer channels posting more in the last 2 weeks (not a hard gate).
-    if active_recently:
+    if active_recently and sort != "newest":
         order = f"COALESCE(videos_last_14d, 0) DESC, {order}"
     clauses = []
     params: list = []
     if active_only:
         clauses.append("active = 1")
+    if added_since is not None:
+        clauses.append("first_seen_at >= ?")
+        params.append(float(added_since))
     if has_recent_avg:
         clauses.append("COALESCE(recent_avg_views, 0) > 0")
     if min_recent_avg is not None and min_recent_avg > 0:
@@ -2133,12 +2145,16 @@ def count_niche_channels(
     max_recent_revenue: float | None = None,
     active_recently: bool = False,
     has_recent_avg: bool = False,
+    added_since: float | None = None,
     q: str = "",
 ) -> int:
     clauses = []
     params: list = []
     if active_only:
         clauses.append("active = 1")
+    if added_since is not None:
+        clauses.append("first_seen_at >= ?")
+        params.append(float(added_since))
     if has_recent_avg:
         clauses.append("COALESCE(recent_avg_views, 0) > 0")
     if min_recent_avg is not None and min_recent_avg > 0:
@@ -2412,7 +2428,7 @@ def get_latest_running_niche_hunt(*, trigger: str | None = None) -> dict | None:
         if trigger:
             cur.execute(
                 _q(
-                    "SELECT * FROM niche_hunt_runs WHERE status = 'running' AND trigger = ? "
+                    "SELECT * FROM niche_hunt_runs WHERE status = 'running' AND job_id IS NOT NULL AND job_id != '' AND trigger = ? "
                     "ORDER BY started_at DESC LIMIT 1"
                 ),
                 (trigger,),
@@ -2420,7 +2436,7 @@ def get_latest_running_niche_hunt(*, trigger: str | None = None) -> dict | None:
         else:
             cur.execute(
                 _q(
-                    "SELECT * FROM niche_hunt_runs WHERE status = 'running' "
+                    "SELECT * FROM niche_hunt_runs WHERE status = 'running' AND job_id IS NOT NULL AND job_id != '' "
                     "ORDER BY started_at DESC LIMIT 1"
                 )
             )
@@ -2446,7 +2462,7 @@ def finish_niche_hunt_run(
                 UPDATE niche_hunt_runs
                 SET status = ?, finished_at = ?, meta_json = ?,
                     channels_upserted = ?, error = ?
-                WHERE id = ?
+                WHERE id = ? AND status = 'running'
                 """
             ),
             (

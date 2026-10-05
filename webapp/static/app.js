@@ -4059,6 +4059,7 @@ let _nfTotal = 0;
 const _NF_PAGE = 40;
 let _nfFilterTimer = null;
 let _nfFiltersBound = false;
+let _nfSortBeforeAdded = 'recent_revenue';
 const _NF_RECENT_MAX = 500000;
 const _NF_SUBS_MAX = 500000;
 const _NF_VIDEOS_MAX = 2000;
@@ -4208,6 +4209,7 @@ function _nfActiveFilterCount() {
     if (document.getElementById('nf-f-min-rev')?.value) n += 1;
     if (!document.getElementById('nf-f-has-recent')?.checked) n += 1;
     if (document.getElementById('nf-f-active')?.checked) n += 1;
+    if (document.getElementById('nf-f-new')?.checked) n += 1;
     const sort = document.getElementById('nf-sort')?.value || 'recent_revenue';
     if (sort !== 'recent_revenue') n += 1;
     return n;
@@ -4242,8 +4244,11 @@ function _nfRenderFilterChips() {
     if (document.getElementById('nf-f-active')?.checked) {
         chips.push({ key: 'active', label: 'Active recently' });
     }
+    if (document.getElementById('nf-f-new')?.checked) {
+        chips.push({ key: 'new', label: 'Added in the past 7 days' });
+    }
     const sort = document.getElementById('nf-sort');
-    if (sort && sort.value !== 'recent_revenue') {
+    if (sort && sort.value !== 'recent_revenue' && !document.getElementById('nf-f-new')?.checked) {
         const opt = sort.options[sort.selectedIndex];
         chips.push({ key: 'sort', label: opt ? opt.text : sort.value });
     }
@@ -4268,6 +4273,18 @@ function applyNicheFilters() {
     loadNicheFinderFeed({ reset: true });
 }
 
+function _nfSetNewlyAdded(enabled) {
+    const box = document.getElementById('nf-f-new');
+    const btn = document.getElementById('nf-toggle-new');
+    const sort = document.getElementById('nf-sort');
+    if (!box || !btn) return;
+    if (enabled && !box.checked) _nfSortBeforeAdded = sort?.value || 'recent_revenue';
+    box.checked = enabled;
+    btn.classList.toggle('is-on', enabled);
+    btn.setAttribute('aria-pressed', String(enabled));
+    if (sort) { sort.value = enabled ? 'newest' : _nfSortBeforeAdded; sort.disabled = enabled; }
+}
+
 function toggleNicheFilter(kind) {
     if (kind === 'has-recent') {
         const box = document.getElementById('nf-f-has-recent');
@@ -4276,6 +4293,8 @@ function toggleNicheFilter(kind) {
         box.checked = !box.checked;
         btn.classList.toggle('is-on', box.checked);
         btn.setAttribute('aria-pressed', box.checked ? 'true' : 'false');
+    } else if (kind === 'new') {
+        _nfSetNewlyAdded(!document.getElementById('nf-f-new')?.checked);
     } else if (kind === 'active') {
         const box = document.getElementById('nf-f-active');
         const btn = document.getElementById('nf-toggle-active');
@@ -4323,6 +4342,8 @@ function removeNicheFilterChip(key) {
             btn.classList.remove('is-on');
             btn.setAttribute('aria-pressed', 'false');
         }
+    } else if (key === 'new') {
+        _nfSetNewlyAdded(false);
     } else if (key === 'sort') {
         const sort = document.getElementById('nf-sort');
         if (sort) sort.value = 'recent_revenue';
@@ -4334,6 +4355,8 @@ function clearNicheFilters() {
     const q = document.getElementById('nf-f-q');
     if (q) q.value = '';
     const sort = document.getElementById('nf-sort');
+    _nfSetNewlyAdded(false);
+    _nfSortBeforeAdded = 'recent_revenue';
     if (sort) sort.value = 'recent_revenue';
     const recentMin = document.getElementById('nf-recent-min');
     const recentMax = document.getElementById('nf-recent-max');
@@ -4349,6 +4372,10 @@ function clearNicheFilters() {
     if (rev) rev.value = '0';
     const hasRecent = document.getElementById('nf-f-has-recent');
     const active = document.getElementById('nf-f-active');
+    const newlyAdded = document.getElementById('nf-f-new');
+    const tNew = document.getElementById('nf-toggle-new');
+    if (newlyAdded) newlyAdded.checked = false;
+    if (tNew) { tNew.classList.remove('is-on'); tNew.setAttribute('aria-pressed', 'false'); }
     if (hasRecent) hasRecent.checked = true;
     if (active) active.checked = false;
     const tHas = document.getElementById('nf-toggle-has-recent');
@@ -4522,6 +4549,10 @@ async function loadNicheFinderFeed(opts = {}) {
         if (q) params.set('q', q);
         if (document.getElementById('nf-f-has-recent')?.checked) params.set('has_recent_avg', 'true');
         if (document.getElementById('nf-f-active')?.checked) params.set('active_recently', 'true');
+        if (document.getElementById('nf-f-new')?.checked) {
+            params.set('added_within_days', '7');
+            params.set('sort', 'newest');
+        }
 
         const res = await fetch(`/api/niche-finder/channels?${params.toString()}`);
         const data = await readJson(res, null);
@@ -4541,7 +4572,8 @@ async function loadNicheFinderFeed(opts = {}) {
         if (meta) {
             meta.textContent = _nfTotal
                 ? `Showing ${from}–${to} of ${_nfTotal} niches`
-                : 'Library is empty — run Add niches (admin) or wait for the daily cron.';
+                : params.has('added_within_days') ? 'No channels added in the past 7 days match these filters.'
+                : 'No niches match these filters.';
         }
         if (pager) pager.classList.toggle('hidden', _nfTotal <= _NF_PAGE);
         if (pageLabel) pageLabel.textContent = `Page ${_nfPage} of ${totalPages}`;
@@ -4865,12 +4897,12 @@ function _renderNicheFinderHits(hits, opts = {}) {
                 <p style="font-family: var(--font-display); font-weight: 700; font-size: 18px; color: var(--app-ink); margin-top: 4px;">${value}</p>
             </div>`;
 
-        const mon = h.likely_monetized
-            ? `<span title="Likely monetized (≥1K subs)" style="color:#14B87A;font-weight:700;margin-left:4px;">$</span>`
-            : '';
         const tag = h.source_keyword
             ? `<span class="cr-mono" style="font-size: 11px; color: var(--app-ink-3); background: var(--app-surface-2); border: 1px solid var(--app-border); border-radius: 99px; padding: 2px 8px;">${_nfEsc(h.source_keyword)}</span>`
             : '';
+        const added = _nfAddedTime(h.first_seen_at);
+        const avatarLabel = h.avatar_confidence === 'disclosed' ? 'AI presenter · disclosed'
+            : h.avatar_confidence === 'likely' ? 'AI presenter candidate' : '';
 
         return `
         <div class="cr-surface" style="padding: 18px 20px;">
@@ -4883,9 +4915,11 @@ function _renderNicheFinderHits(hits, opts = {}) {
                     <div class="flex items-center gap-2" style="flex-wrap:wrap;">
                         <a href="${_nfEsc(h.channel_url)}" target="_blank" rel="noopener"
                            style="font-family: var(--font-display); font-weight: 700; font-size: 18px; color: var(--app-ink); text-decoration:none;">
-                            ${_nfEsc(h.channel_name || 'Channel')}${mon}
+                            ${_nfEsc(h.channel_name || 'Channel')}
                         </a>
                         ${tag}
+                        ${avatarLabel ? `<span class="cr-mono" title="${h.avatar_confidence === 'disclosed' ? 'The channel publicly describes its virtual presenter.' : 'Limited visual samples suggest a virtual presenter; identity is unconfirmed. Some candidates also have public AI disclosures.'}" style="font-size:11px;color:var(--accent);">${avatarLabel}</span>` : ''}
+                        ${added ? `<time datetime="${_nfEsc(added.iso)}" title="${_nfEsc(added.exact)}" class="cr-mono" style="font-size:11px;color:var(--app-ink-3);">Added ${_nfEsc(added.relative)}</time>` : ''}
                         <span class="cr-mono" style="font-size: 11px; color: var(--accent); background: var(--accent-soft-dark); border: 1px solid var(--accent); border-radius: 99px; padding: 2px 8px;">
                             score ${_nfEsc(h.score)}
                         </span>
@@ -4903,7 +4937,7 @@ function _renderNicheFinderHits(hits, opts = {}) {
             </div>
             <div class="flex gap-2 mt-4" style="flex-wrap: wrap;">
                 ${metric('Recent Avg Views', _nfFmt(h.recent_avg_views))}
-                ${metric('Days Since Start', h.days_since_start != null ? _nfEsc(h.days_since_start) : '—')}
+                ${metric('Channel Age (days)', h.days_since_start != null ? _nfEsc(h.days_since_start) : '—')}
                 ${metric('Uploads', _nfFmt(h.video_count))}
                 ${metric('Active 14d', h.videos_last_14d != null ? _nfEsc(h.videos_last_14d) : '—')}
             </div>
@@ -4915,6 +4949,20 @@ function _renderNicheFinderHits(hits, opts = {}) {
     }).join('');
     if (append) root.insertAdjacentHTML('beforeend', html);
     else root.innerHTML = html;
+}
+
+function _nfAddedTime(timestamp, now = Date.now()) {
+    if (!timestamp || !Number.isFinite(Number(timestamp))) return null;
+    const date = new Date(Number(timestamp) * 1000);
+    if (!Number.isFinite(date.getTime())) return null;
+    const minutes = Math.max(0, Math.floor((now - date.getTime()) / 60000));
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+    const relative = minutes < 1 ? 'just now' : minutes < 60 ? `${minutes} minute${minutes === 1 ? '' : 's'} ago`
+        : hours < 24 ? `${hours} hour${hours === 1 ? '' : 's'} ago`
+        : days < 7 ? `${days} day${days === 1 ? '' : 's'} ago`
+        : date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    return { relative, iso: date.toISOString(), exact: date.toLocaleString() };
 }
 
 function _nfRelTime(iso) {
