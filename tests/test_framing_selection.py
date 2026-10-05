@@ -117,11 +117,12 @@ def test_framing_never_repeats_consecutive():
     print("  ✓ PASS: 10 consecutive segments never repeated framing")
 
 
-def test_framing_avoid_elements_populated():
-    """Each framing should have avoid_elements list for prompt steering."""
-    print("\nTEST: framing_avoid_elements_populated")
+def test_framing_directive_present():
+    """Each framing should have a directive for prompt generation."""
+    print("\nTEST: framing_directive_present")
     
     framings_to_test = ["close_up", "detail", "over_shoulder", "wide", "medium"]
+    found_framings = set()
     
     for idx, target_framing in enumerate(framings_to_test):
         # Use distinct text to help hit the target
@@ -130,14 +131,16 @@ def test_framing_avoid_elements_populated():
         for attempt in range(10):
             result = select_shot_framing(text, idx + attempt, None, 5)
             if result["framing"] == target_framing:
-                # Found it, check avoid_elements
-                assert "avoid_elements" in result, f"Missing avoid_elements for {target_framing}"
-                assert isinstance(result["avoid_elements"], list), f"avoid_elements not a list for {target_framing}"
-                assert len(result["avoid_elements"]) > 0, f"Empty avoid_elements for {target_framing}"
-                print(f"  {target_framing}: avoids {len(result['avoid_elements'])} elements")
+                # Found it, check directive
+                assert "directive" in result, f"Missing directive for {target_framing}"
+                assert isinstance(result["directive"], str), f"directive not a string for {target_framing}"
+                assert len(result["directive"]) > 0, f"Empty directive for {target_framing}"
+                found_framings.add(target_framing)
+                print(f"  {target_framing}: '{result['directive'][:60]}...'")
                 break
     
-    print("  ✓ PASS: All framings have populated avoid_elements")
+    assert len(found_framings) == 5, f"Only found {len(found_framings)}/5 framings"
+    print("  ✓ PASS: All framings have directives")
 
 
 def test_framing_round_robin_for_short_videos():
@@ -172,7 +175,7 @@ if __name__ == "__main__":
         test_framing_covers_all_five_for_typical_short()
         test_framing_covers_all_five_across_multiple_shorts()
         test_framing_never_repeats_consecutive()
-        test_framing_avoid_elements_populated()
+        test_framing_directive_present()
         test_framing_round_robin_for_short_videos()
         
         print("\n" + "=" * 70)

@@ -502,7 +502,6 @@ def select_shot_framing(segment_text: str, segment_index: int, prev_framing: str
     Returns dict with:
     - framing: "close_up", "wide", "over_shoulder", "detail", "medium"
     - directive: prompt text specifying the framing
-    - avoid_elements: list of scene elements to avoid for this framing
     
     Ensures all 5 framings appear across the video when possible,
     and consecutive shots never use the same framing.
@@ -511,27 +510,22 @@ def select_shot_framing(segment_text: str, segment_index: int, prev_framing: str
         {
             "framing": "close_up",
             "directive": "Close-up shot focusing on hands, facial expressions, or key physical objects in sharp detail",
-            "avoid_elements": ["computer screens", "monitors", "signs", "badges", "name tags"],
         },
         {
             "framing": "detail",
             "directive": "Extreme macro detail shot of textures, surfaces, or edges - card corner, paper texture, fabric weave, hand gesture",
-            "avoid_elements": ["text", "words", "labels", "book spines", "screens", "printed material", "signage"],
         },
         {
             "framing": "over_shoulder",
-            "directive": "Over-the-shoulder perspective showing hands interacting with objects, blurred background",
-            "avoid_elements": ["computer screens", "monitors", "signs in focus", "readable text"],
+            "directive": "Over-the-shoulder perspective showing hands interacting with objects, natural background",
         },
         {
             "framing": "wide",
             "directive": "Wide establishing shot showing the full environment, people, and spatial context",
-            "avoid_elements": ["close-up text", "readable signs"],
         },
         {
             "framing": "medium",
             "directive": "Medium shot from waist or chest level showing person and their immediate interaction space",
-            "avoid_elements": ["computer screens in focus", "name badges", "close-up monitors"],
         },
     ]
     
@@ -897,28 +891,18 @@ def run_avatar_gen_pipeline(
             framing = select_shot_framing(segment_text, shot.index, prev_framing, broll_count_needed)
             prev_framing = framing["framing"]
             
-            # Extract concrete visual elements while steering clear of text-heavy scenes
-            # For library example: focus on hands, cards, books (edge-on), people, gestures
-            # Avoid: computer monitors, name badges, book spines showing text, signs
-            avoid_list = ", ".join(framing["avoid_elements"])
-            
-            # Build explicit prompt that steers the composition toward text-free visuals
+            # Build explicit prompt emphasizing the script topic and segment content
             prompt_text = (
                 f"Professional photograph, photorealistic, high quality. "
                 f"{framing['directive']}. "
-                f"Scene showing: {segment_text}. "
+                f"Scene: {segment_text}. "
                 f"Context: {title}. "
-                f"Show relevant physical objects, people, hands, and actions mentioned. "
-                f"AVOID showing: {avoid_list}. "
-                f"If books appear, show them edge-on or with plain covers. "
-                f"If technology appears, show only hardware edges or blurred screens. "
-                f"Focus on human interactions, gestures, and tangible objects. "
+                f"Relevant visual showing specific objects or scenes mentioned. "
                 f"16:9 aspect ratio. "
-                f"No text, no captions, no logos, no brand names (Dell, HP, Apple, etc), "
-                f"no watermarks, no credit cards, no payment cards, no trademarks, "
-                f"no readable labels, no computer monitors with visible content, "
-                f"no name badges, no signs with letters. "
-                f"If people appear, match the gender and role from the script."
+                f"No text, no captions, no logos, no brand marks, no watermarks, "
+                f"no credit cards, no payment cards, no trademarks, no readable labels. "
+                f"If people appear, keep them consistent with the script and the speaking "
+                f"avatar (same gender and role as the on-camera host when that role is shown)."
             )
             
             if len(prompt_text) > 10:
