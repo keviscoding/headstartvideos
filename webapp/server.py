@@ -4149,6 +4149,8 @@ class NicheFinderJobRequest(BaseModel):
     scroll_count: int = 80
     max_video_age_days: int = 180
     profile: Literal["balanced", "avatar"] = "balanced"
+    enrich_existing: bool = False
+    existing_review_cap: int = Field(default=80,ge=0,le=200)
     time_budget_seconds: int = Field(default=1800, ge=300, le=7200)
     target_channels: int = Field(default=20, ge=1, le=200)
     candidate_cap: int = Field(default=300, ge=20, le=1200)
@@ -4318,12 +4320,14 @@ def niche_finder_channels(
     active_recently: bool = False,
     has_recent_avg: bool = False,
     added_within_days: int = 0,
+    ai_presenter: bool = False,
     q: str = "",
     user: dict = Depends(require_user),
 ):
     if not _niche_finder_can_browse(user):
         raise HTTPException(402, "Niche Finder is available on Starter and Daily plans.")
     filters = dict(
+        ai_presenter=ai_presenter,
         added_since=time.time() - min(365, max(1, added_within_days)) * 86400 if added_within_days > 0 else None,
         min_recent_avg=min_recent_avg or None,
         max_recent_avg=max_recent_avg or None,

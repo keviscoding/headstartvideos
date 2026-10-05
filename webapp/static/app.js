@@ -4210,6 +4210,7 @@ function _nfActiveFilterCount() {
     if (!document.getElementById('nf-f-has-recent')?.checked) n += 1;
     if (document.getElementById('nf-f-active')?.checked) n += 1;
     if (document.getElementById('nf-f-new')?.checked) n += 1;
+    if (document.getElementById('nf-f-avatar')?.checked) n += 1;
     const sort = document.getElementById('nf-sort')?.value || 'recent_revenue';
     if (sort !== 'recent_revenue') n += 1;
     return n;
@@ -4246,6 +4247,9 @@ function _nfRenderFilterChips() {
     }
     if (document.getElementById('nf-f-new')?.checked) {
         chips.push({ key: 'new', label: 'Added in the past 7 days' });
+    }
+    if (document.getElementById('nf-f-avatar')?.checked) {
+        chips.push({ key: 'avatar', label: 'AI presenter candidates' });
     }
     const sort = document.getElementById('nf-sort');
     if (sort && sort.value !== 'recent_revenue' && !document.getElementById('nf-f-new')?.checked) {
@@ -4295,9 +4299,9 @@ function toggleNicheFilter(kind) {
         btn.setAttribute('aria-pressed', box.checked ? 'true' : 'false');
     } else if (kind === 'new') {
         _nfSetNewlyAdded(!document.getElementById('nf-f-new')?.checked);
-    } else if (kind === 'active') {
-        const box = document.getElementById('nf-f-active');
-        const btn = document.getElementById('nf-toggle-active');
+    } else if (kind === 'active' || kind === 'avatar') {
+        const box = document.getElementById(`nf-f-${kind}`);
+        const btn = document.getElementById(`nf-toggle-${kind}`);
         if (!box || !btn) return;
         box.checked = !box.checked;
         btn.classList.toggle('is-on', box.checked);
@@ -4334,9 +4338,9 @@ function removeNicheFilterChip(key) {
             btn.classList.add('is-on');
             btn.setAttribute('aria-pressed', 'true');
         }
-    } else if (key === 'active') {
-        const box = document.getElementById('nf-f-active');
-        const btn = document.getElementById('nf-toggle-active');
+    } else if (key === 'active' || key === 'avatar') {
+        const box = document.getElementById(`nf-f-${key}`);
+        const btn = document.getElementById(`nf-toggle-${key}`);
         if (box) box.checked = false;
         if (btn) {
             btn.classList.remove('is-on');
@@ -4376,6 +4380,10 @@ function clearNicheFilters() {
     const tNew = document.getElementById('nf-toggle-new');
     if (newlyAdded) newlyAdded.checked = false;
     if (tNew) { tNew.classList.remove('is-on'); tNew.setAttribute('aria-pressed', 'false'); }
+    const avatar = document.getElementById('nf-f-avatar');
+    const tAvatar = document.getElementById('nf-toggle-avatar');
+    if (avatar) avatar.checked = false;
+    if (tAvatar) { tAvatar.classList.remove('is-on'); tAvatar.setAttribute('aria-pressed', 'false'); }
     if (hasRecent) hasRecent.checked = true;
     if (active) active.checked = false;
     const tHas = document.getElementById('nf-toggle-has-recent');
@@ -4549,6 +4557,7 @@ async function loadNicheFinderFeed(opts = {}) {
         if (q) params.set('q', q);
         if (document.getElementById('nf-f-has-recent')?.checked) params.set('has_recent_avg', 'true');
         if (document.getElementById('nf-f-active')?.checked) params.set('active_recently', 'true');
+        if (document.getElementById('nf-f-avatar')?.checked) params.set('ai_presenter', 'true');
         if (document.getElementById('nf-f-new')?.checked) {
             params.set('added_within_days', '7');
             params.set('sort', 'newest');
@@ -4902,6 +4911,7 @@ function _renderNicheFinderHits(hits, opts = {}) {
             : '';
         const added = _nfAddedTime(h.first_seen_at);
         const avatarLabel = h.avatar_confidence === 'disclosed' ? 'AI presenter · disclosed'
+            : h.avatar_confidence === 'reference' ? 'AI presenter reference'
             : h.avatar_confidence === 'likely' ? 'AI presenter candidate' : '';
 
         return `
@@ -4918,7 +4928,7 @@ function _renderNicheFinderHits(hits, opts = {}) {
                             ${_nfEsc(h.channel_name || 'Channel')}
                         </a>
                         ${tag}
-                        ${avatarLabel ? `<span class="cr-mono" title="${h.avatar_confidence === 'disclosed' ? 'The channel publicly describes its virtual presenter.' : 'Limited visual samples suggest a virtual presenter; identity is unconfirmed. Some candidates also have public AI disclosures.'}" style="font-size:11px;color:var(--accent);">${avatarLabel}</span>` : ''}
+                        ${avatarLabel ? `<span class="cr-mono" title="${h.avatar_confidence === 'disclosed' ? 'The channel publicly describes its virtual presenter.' : h.avatar_confidence === 'reference' ? 'Supplied as an AI-avatar example and quality-screened; synthetic identity is not independently verified.' : 'Limited visual samples suggest a virtual presenter; identity is unconfirmed. Some candidates also have public AI disclosures.'}" style="font-size:11px;color:var(--accent);">${avatarLabel}</span>` : ''}
                         ${added ? `<time datetime="${_nfEsc(added.iso)}" title="${_nfEsc(added.exact)}" class="cr-mono" style="font-size:11px;color:var(--app-ink-3);">Added ${_nfEsc(added.relative)}</time>` : ''}
                         <span class="cr-mono" style="font-size: 11px; color: var(--accent); background: var(--accent-soft-dark); border: 1px solid var(--accent); border-radius: 99px; padding: 2px 8px;">
                             score ${_nfEsc(h.score)}

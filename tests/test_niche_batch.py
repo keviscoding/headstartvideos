@@ -91,6 +91,10 @@ def test_processing_cap_applies_before_upload_history_reads(monkeypatch):
     assert reads == ["2"]
     assert result["meta"]["channels_selected_for_enrichment"] == 1
     assert result["meta"]["cached_channels_encountered"] == 1
+    def outage(*a,**kw): raise TimeoutError('temporary provider timeout')
+    monkeypatch.setattr(finder,'_longform_from_uploads',outage)
+    failed=finder.run_niche_finder(api_key='fake',keywords=['home'],max_enrich_channels=1,excluded_channel_ids={'UC3'})
+    assert failed['hits']==[] and failed['meta']['enrichment_errors']=={'UC2':'TimeoutError'}
 
 
 def test_expired_discovery_budget_stops_api_work(monkeypatch):
@@ -279,3 +283,29 @@ def test_atlas_other_errors_do_not_switch_providers(monkeypatch):
     monkeypatch.setattr(client.session,'post',post)
     with pytest.raises(requests.HTTPError): client.model_json([{'role':'user','content':'test'}])
     assert len(calls)==1 and 'atlascloud' in calls[0]
+
+
+@pytest.mark.parametrize('invalid_timestamp,too_many_tokens',[(False,False),(True,False),(False,True)])
+def test_opening_evidence_requires_two_bounded_video_samples(monkeypatch,invalid_timestamp,too_many_tokens):
+    client=batch.EvidenceClient(deadline=10**12,gemini_key='test')
+    urls=['https://www.youtube.com/watch?v=abcdefghijk','https://www.youtube.com/watch?v=12345678901']
+    result={'presenter_visible':True,'avatar_style_confidence':'high','video_observations':[
+        {'video_url':u,'presenter_visible':True,'observations':[
+            {'second':60 if invalid_timestamp else 5,'detail':'Specific synthetic facial geometry'},
+            {'second':25,'detail':'Visible artificial rendering seam'}]} for u in urls]}
+    calls=[]
+    def model(messages,**kwargs):
+        calls.append((messages,kwargs))
+        return {'choices':[{'message':{'content':json.dumps(result)}}],
+            'usage':{'prompt_tokens':35000 if too_many_tokens else 8000}}
+    monkeypatch.setattr(client,'model_json',model)
+    hit={'channel_name':'Test','sampled_videos':[{'url':u} for u in urls]}
+    if invalid_timestamp or too_many_tokens:
+        with pytest.raises(ValueError): client.presenter_openings(hit)
+    else:
+        evidence=client.presenter_openings(hit)
+        assert evidence['evidence_kind']=='video_openings' and len(evidence['avatar_observations'])==4
+        assert evidence['evidence'][0]['end_seconds']==45 and evidence['presenter_visible']
+    assert calls[0][1]['native_only'] is True
+    assert client.counters['prompt_tokens']==(35000 if too_many_tokens else 8000)
+    if too_many_tokens: assert client.provider_state['clips_disabled']

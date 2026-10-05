@@ -16,7 +16,7 @@ from core.niche_daily_keywords import SIMPLE_PROBES
 from core.niche_finder import _fetch_videos, _longform_from_uploads, _yt, run_niche_finder
 from core.niche_scraper import _parse_search_cards, scrape_keyword_search
 
-CLOUD_RUBRIC = "cloud-avatars-v3"
+CLOUD_RUBRIC = "cloud-avatars-v4-openings"
 SEED_HANDLES = ["GlenPritchardBuilds", "OpalRowe1945", "TheJapaneseMethod0"]
 AVATAR_CLAIM = re.compile(
     r"\b(?:ai[- ](?:generated|powered|created|animated)\s+(?:host|presenter|avatar|character)|"
@@ -41,6 +41,8 @@ class HuntSettings:
     min_median_views: int = 20000
     min_hit_rate: float = 0.75
     review_workers: int = 3
+    enrich_existing: bool = False
+    existing_review_cap: int = 80
 
     @classmethod
     def from_request(cls, request):
@@ -55,6 +57,8 @@ class HuntSettings:
             search_cap=max(20,min(300,int(request.get("search_cap",100)))),
             api_cap=max(100,min(4000,int(request.get("api_cap",2000)))),
             max_subscribers=max(10000,min(1000000,int(request.get("max_subscribers",300000)))),
+            enrich_existing=request.get("enrich_existing") is True,
+            existing_review_cap=max(0,min(200,int(request.get("existing_review_cap",80)))),
         )
 
     def signature(self, model):
@@ -93,12 +97,25 @@ def eligible_performance(hit, settings):
 
 def avatar_status(review, evidence):
     """Identity claims require disclosure; limited visual evidence remains a candidate."""
+    triage=evidence.get("visual_triage") or {}
+    if evidence.get("user_reference") is True and triage.get("presenter_visible") is True:
+        return "reference"
+    clips=triage.get("video_observations") or []
+    valid_clips=(len(clips)==2 and all(isinstance(c,dict) and c.get("presenter_visible") is True
+        and isinstance(c.get("observations"),list) and len(c["observations"])>=2
+        and all(isinstance(o,dict) and isinstance(o.get("detail"),str) and o["detail"].strip()
+            and not isinstance(o.get("second"),bool) and isinstance(o.get("second"),(int,float))
+            and 0<=o["second"]<=45 for o in c["observations"]) for c in clips)
+        and len({c.get("video_url") for c in clips})==2)
+    if (triage.get("evidence_kind")=="video_openings" and triage.get("presenter_visible") is True
+        and triage.get("avatar_style_confidence")=="high" and valid_clips
+        and len(triage.get("avatar_observations") or [])>=4):
+        return "disclosed" if evidence.get("explicit_avatar_claim") else "likely"
     if review.get("presenter_visible") is not True:
         return "not_presenter"
     if evidence.get("explicit_avatar_claim"):
         return "disclosed"
     observations=review.get("avatar_observations")
-    triage=evidence.get("visual_triage") or {}
     supported=(evidence.get("ai_video_samples",0)>=2 and review.get("avatar_style_confidence") in {"high","medium"})
     visual=(triage.get("presenter_visible") is True and triage.get("avatar_style_confidence")=="high"
             and review.get("avatar_style_confidence")=="high")
@@ -199,7 +216,7 @@ class Explorer:
         explicit=any(explicit_avatar_claim(d) for d in descriptions)
         return {"sources":sources,"ai_video_samples":sum(s["ai_label"] for s in sources),
                 "explicit_avatar_claim":explicit,
-                "scope":"Public disclosure and limited stills; a realistic face alone does not prove a synthetic host."}
+                "scope":"Public disclosure and sampled visual evidence; a realistic face alone does not prove a synthetic host."}
 
 
 def run_cloud_hunt(job_id):
@@ -225,19 +242,24 @@ def run_cloud_hunt(job_id):
     deadline=started+max(0,settings.seconds-(time.time()-wall_started))
     signature=settings.signature(config.ATLAS_TEXT_MODEL+"|"+config.GEMINI_TEXT_MODEL)
     existing=store.existing_ids()
+    unreviewed_existing=store.unreviewed_ids() if settings.enrich_existing else set()
     cached=store.cached_ids(signature)
     stop=threading.Event()
     provider_state={}
     stats={"runner":"fly","rubric":CLOUD_RUBRIC,"profile":settings.profile,"settings":asdict(settings),
         "added":0,"reviewed":0,"enriched":0,"searches":0,"related_pages":0,"cached_skipped":0,
         "existing_skipped":0,"results":[],"model_requests":0,"prompt_tokens":0,"completion_tokens":0,
-        "transcript_requests":0,"image_requests":0,"errors":0,"triaged":0,"full_reviews":0}
+        "transcript_requests":0,"image_requests":0,"errors":0,"triaged":0,"full_reviews":0,
+        "existing_queued":0,"existing_enriched":0}
     previous=run.get("meta") or {}
+    if previous and previous.get("rubric")!=CLOUD_RUBRIC:
+        store.reconsider_review_holds()
     for key in list(stats):
         if isinstance(stats[key],int) and isinstance(previous.get(key),int): stats[key]=previous[key]
     prior=store.completed_results()
-    stats["results"]=[r for r in prior if r.get("status")=="added"]
-    stats["added"]=len(stats["results"])
+    stats["results"]=[r for r in prior if r.get("status") in {"added","enriched_existing"}]
+    stats["added"]=sum(r["status"]=="added" for r in stats["results"])
+    stats["existing_enriched"]=sum(r["status"]=="enriched_existing" for r in stats["results"])
     stats["enriched"]=max(stats["enriched"],len(prior))
     stats["reviewed"]=max(stats["reviewed"],sum(bool(r.get("content_review")) for r in prior))
     lock=threading.Lock()
@@ -278,9 +300,19 @@ def run_cloud_hunt(job_id):
         current["seconds"]+=(previous.get("youtube_api") or {}).get("seconds",0)
         return current
     explorer=None
+    reference_ids=set()
     pool=ThreadPoolExecutor(max_workers=settings.review_workers)
     thread=threading.Thread(target=heartbeat,daemon=True)
     thread.start()
+
+    def queue_channel(cid, videos, source, depth=0):
+        known=cid in existing
+        if cid in cached: return False
+        if known and (cid not in unreviewed_existing or stats["existing_queued"]>=settings.existing_review_cap):
+            return False
+        queued=store.enqueue("channel",{"channel_id":cid,"videos":videos,"review_existing":known,"origin_source":source},source="existing" if known else source,depth=depth)
+        if queued and known: stats["existing_queued"]+=1
+        return queued
 
     def add_expansion(hit, depth, source="related"):
         if depth>=3: return
@@ -308,16 +340,17 @@ def run_cloud_hunt(job_id):
         ordered=[cid for pair in zip(top,tail) for cid in pair]+top[len(tail):]+tail[len(top):]
         for cid in ordered:
             if cid in existing:
-                stats["existing_skipped"]+=1
+                if not queue_channel(cid,grouped[cid],task["source"],task["depth"]):
+                    stats["existing_skipped"]+=1
                 # Existing channels can bridge to unseen neighbours without rescoring.
                 if task["depth"]<2:
                     v=max(grouped[cid],key=lambda v:v["view_count"])
-                    store.enqueue("related",{"video_id":v["video_id"]},source="related",depth=task["depth"]+1)
+                    store.enqueue("related",{"video_id":v["video_id"]},source="avatar_seed" if task["source"]=="avatar_seed" else "related",depth=task["depth"]+1)
                 continue
             if cid in cached:
                 stats["cached_skipped"]+=1
                 continue
-            store.enqueue("channel",{"channel_id":cid,"videos":grouped[cid]},source=task["source"],depth=task["depth"])
+            queue_channel(cid,grouped[cid],task["source"],task["depth"])
         return {"videos":len(videos),"channels":len(grouped)}
 
     def content_review(hit):
@@ -325,11 +358,12 @@ def run_cloud_hunt(job_id):
             atlas_key=config.ATLASCLOUD_KEY,model=config.ATLAS_TEXT_MODEL,avatar_screen=True,
             gemini_key=config.GEMINI_KEY,gemini_model=config.GEMINI_TEXT_MODEL,provider_state=provider_state)
         try:
-            if (settings.profile=="avatar" and hit["avatar_evidence"]["ai_video_samples"]<2
-                and not hit["avatar_evidence"]["explicit_avatar_claim"]):
+            if settings.profile=="avatar":
                 triage=client.presenter_style(hit)
                 hit["avatar_evidence"]["visual_triage"]=triage
-                if triage.get("presenter_visible") is not True or triage.get("avatar_style_confidence")!="high":
+                disclosed=(hit["avatar_evidence"]["ai_video_samples"]>=2
+                    or hit["avatar_evidence"]["explicit_avatar_claim"] or hit["avatar_evidence"].get("user_reference"))
+                if triage.get("presenter_visible") is not True or (triage.get("avatar_style_confidence")!="high" and not disclosed):
                     return {"decision":"review","screen_stage":"visual_triage","reasons":["Avatar presentation is unconfirmed"],"avatar_triage":triage},client.counters.copy()
                 if not store.reserve_budget("content_review",1,300):
                     return {"decision":"review","reasons":["Daily model budget reached"]},client.counters.copy()
@@ -355,12 +389,12 @@ def run_cloud_hunt(job_id):
             for handle in SEED_HANDLES:
                 response=youtube.channels().list(part="id,contentDetails",forHandle=handle).execute()
                 for item in response.get("items",[]):
+                    reference_ids.add(item["id"])
                     playlist=item.get("contentDetails",{}).get("relatedPlaylists",{}).get("uploads","")
                     seed_videos=_longform_from_uploads(youtube,playlist,want=2)
                     for query in learned_queries([v["title"] for v in seed_videos]):
                         store.enqueue("search",{"query":query},source="learned")
-                    if item["id"] not in existing and item["id"] not in cached:
-                        store.enqueue("channel",{"channel_id":item["id"],"videos":seed_videos},source="avatar_seed")
+                    queue_channel(item["id"],seed_videos,"avatar_seed")
                     for v in seed_videos:
                         store.enqueue("related",{"video_id":v["video_id"]},source="avatar_seed")
         explorer=Explorer(deadline)
@@ -395,7 +429,8 @@ def run_cloud_hunt(job_id):
             # Rotate channel pools as well as queries so one crowded query
             # cannot consume the entire enrichment budget.
             for slot in range(min(5,settings.candidate_cap-stats["enriched"])):
-                wanted=("broad","related","learned","avatar_seed","broad")[(iteration+slot)%5]
+                pools=("broad","related","learned","avatar_seed","existing" if settings.enrich_existing else "broad")
+                wanted=pools[(iteration+slot)%5]
                 channel_tasks.extend(store.claim_tasks("channel",source=wanted) or store.claim_tasks("channel"))
             if not tasks and not channel_tasks: break
             if not channel_tasks: continue
@@ -412,12 +447,15 @@ def run_cloud_hunt(job_id):
                 stats["enriched"]+=1
                 hit=hits.get(cid)
                 if not hit:
-                    outcome={"channel_id":cid,"status":"ineligible"}
+                    failed=(result.get("meta") or {}).get("enrichment_errors",{}).get(cid)
+                    incomplete=bool(failed or time.monotonic()>=deadline or api_stats()["requests"]>=settings.api_cap)
+                    outcome={"channel_id":cid,"status":"enrichment_error" if incomplete else "ineligible"}
+                    if failed: outcome["error"]=failed
                     store.finish_task(task,outcome)
-                    store.remember(cid,signature,outcome,86400)
+                    if not incomplete: store.remember(cid,signature,outcome,86400)
                     continue
                 perf=eligible_performance(hit,settings)
-                if perf["median_views"]>=5000: add_expansion(hit,task["depth"],task["source"])
+                if perf["median_views"]>=5000: add_expansion(hit,task["depth"],task["payload"].get("origin_source",task["source"]))
                 if not perf["passes"]:
                     outcome={"channel_id":cid,"channel_name":hit["channel_name"],"status":"performance_hold","performance":perf}
                     store.finish_task(task,outcome)
@@ -426,6 +464,7 @@ def run_cloud_hunt(job_id):
                 if stats["reviewed"]>=settings.review_cap or stop.is_set() or time.monotonic()>=deadline:
                     continue  # lease can be reclaimed for resume
                 hit["avatar_evidence"]=explorer.avatar_evidence(hit)
+                hit["avatar_evidence"]["user_reference"]=cid in reference_ids
                 if not store.reserve_budget("content_review",1,300):
                     stop.set()
                     stats["budget_exhausted"]="daily_content_reviews"
@@ -445,9 +484,9 @@ def run_cloud_hunt(job_id):
                         store.enqueue("search",{"query":query.strip()},source="learned",depth=task["depth"]+1)
                 for key,value in counters.items(): stats[key]=stats.get(key,0)+value
                 avatar=avatar_status(review,hit["avatar_evidence"])
-                review["avatar_confidence"]=avatar if avatar in {"disclosed","likely"} else "unknown"
+                review["avatar_confidence"]=avatar if avatar in {"disclosed","likely","reference"} else "unknown"
                 status=review["decision"]
-                if status=="pass" and settings.profile=="avatar" and avatar not in {"disclosed","likely"}:
+                if status=="pass" and settings.profile=="avatar" and avatar not in {"disclosed","likely","reference"}:
                     status="avatar_hold"
                 outcome={"channel_id":hit["channel_id"],"channel_name":hit["channel_name"],
                     "channel_url":hit["channel_url"],"status":status,"performance":perf,"content_review":review}
@@ -460,6 +499,10 @@ def run_cloud_hunt(job_id):
                         stats["added"]+=1
                         stats["results"].append(outcome)
                         progress(f"Added {stats['added']}/{settings.target}: {hit['channel_name']} ({perf['median_views']:,} mature median; avatar {review['avatar_confidence']})")
+                    elif admitted=="enriched_existing":
+                        stats["existing_enriched"]+=1
+                        stats["results"].append(outcome)
+                        progress(f"Quality-enriched existing channel: {hit['channel_name']} ({perf['median_views']:,} mature median; avatar {review['avatar_confidence']})")
                     elif admitted=="cancelled": stop.set()
                 elif status=="pass":
                     outcome["status"]="ready"
@@ -482,7 +525,7 @@ def run_cloud_hunt(job_id):
         if current and current["status"]=="running":
             unavailable=reason=="review_providers_unavailable"
             db.finish_niche_hunt_run(run["id"],status="error" if unavailable else "completed",meta=meta,channels_upserted=stats["added"],error="Review providers unavailable; frontier retained" if unavailable else "")
-        progress(f"Finished: {stats['added']} additions in {meta['elapsed_seconds']:.0f}s ({reason})")
+        progress(f"Finished: {stats['added']} additions, {stats['existing_enriched']} existing quality updates in {meta['elapsed_seconds']:.0f}s ({reason})")
         return meta
     except Exception as exc:
         meta=snapshot()

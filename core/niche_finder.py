@@ -732,6 +732,7 @@ def run_niche_finder(
     _log(f"Scoring {len(to_enrich)} channels…")
     # Sequential enrich — parallel googleapiclient calls flake hard (SSL/timeouts).
     enrichment_attempts = 0
+    enrichment_errors = {}
     for cid, ch in to_enrich:
         if deadline is not None and time.monotonic() >= deadline:
             break
@@ -740,6 +741,7 @@ def run_niche_finder(
             hit = _enrich_one(cid, ch)
         except Exception as e:
             print(f"[niche_finder] enrich error: {type(e).__name__}")
+            enrichment_errors[cid]=type(e).__name__
             continue
         if hit:
             hits.append(hit)
@@ -760,6 +762,7 @@ def run_niche_finder(
     return {
         "hits": hits,
         "meta": {
+            "enrichment_errors":enrichment_errors,
             "keywords": kws,
             "videos_scanned": len(videos),
             "channels_considered": len(channel_ids),

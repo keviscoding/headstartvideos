@@ -160,6 +160,12 @@ class NicheStore:
             cur.execute("SELECT channel_id FROM niche_channels")
             return {dict(r)["channel_id"] for r in cur.fetchall()}
 
+    def unreviewed_ids(self):
+        with db._conn() as conn:
+            cur=conn.cursor()
+            cur.execute("SELECT channel_id FROM niche_channels WHERE active=1 AND COALESCE(quality_status,'')!='screened'")
+            return {dict(r)["channel_id"] for r in cur.fetchall()}
+
     def seed_channels(self, limit=40):
         # Draw across the existing library rather than a hand-picked topic list.
         with db._conn() as conn:
@@ -191,23 +197,41 @@ class NicheStore:
                         (task["id"],self.owner))
             if not cur.fetchone(): return "cancelled"
             added=db.upsert_niche_channel(hit,connection=conn,insert_only=True)
-            if not added: return "already_present"
+            if not added and not task.get("payload",{}).get("review_existing"):
+                return "already_present"
+            if not added:
+                cur.execute(db._q("SELECT active FROM niche_channels WHERE channel_id=?"+lock),(hit["channel_id"],))
+                row=cur.fetchone()
+                if not row or dict(row)["active"]!=1: return "already_present"
+                db.upsert_niche_channel(hit,connection=conn)
             cur.execute(db._q("""UPDATE niche_channels SET production_format=?,avatar_confidence=?,
                 quality_status='screened',quality_evidence_json=?,discovery_job_id=? WHERE channel_id=?"""),
                 (review.get("production_format", "unknown"),review.get("avatar_confidence", "unknown"),
-                 json.dumps({"performance":performance,"content":review}),self.job_id,hit["channel_id"]))
-            saved={**outcome,"status":"added"}
+                 json.dumps({"performance":performance,"content":review,"screened_at":time.time()}),self.job_id,hit["channel_id"]))
+            status="added" if added else "enriched_existing"
+            saved={**outcome,"status":status}
             cur.execute(db._q("""UPDATE niche_discovery_tasks SET state='done',result_json=?,finished_at=?,lease_until=0
                 WHERE id=? AND owner=? AND state='working'"""),
                 (json.dumps(saved),time.time(),task["id"],self.owner))
-            cur.execute(db._q("UPDATE niche_hunt_runs SET channels_upserted=channels_upserted+1 WHERE job_id=?"),(self.job_id,))
-            return "added"
+            if added:
+                cur.execute(db._q("UPDATE niche_hunt_runs SET channels_upserted=channels_upserted+1 WHERE job_id=?"),(self.job_id,))
+            return status
 
     def completed_results(self):
         with db._conn() as conn:
             cur = conn.cursor()
             cur.execute(db._q("SELECT result_json FROM niche_discovery_tasks WHERE job_id=? AND kind='channel' AND state='done'"), (self.job_id,))
             return [json.loads(dict(r)["result_json"]) for r in cur.fetchall()]
+
+    def reconsider_review_holds(self):
+        """Retry only uncertain reviews after a classifier change; never replay additions."""
+        with db._conn() as conn:
+            cur=conn.cursor()
+            cur.execute(db._q("SELECT id,result_json FROM niche_discovery_tasks WHERE job_id=? AND kind='channel' AND state='done' AND attempts<3"),(self.job_id,))
+            for row in cur.fetchall():
+                row=dict(row);result=json.loads(row['result_json'])
+                if result.get('status') in {'review','avatar_hold'} and result.get('performance',{}).get('passes'):
+                    cur.execute(db._q("UPDATE niche_discovery_tasks SET state='queued',owner='',lease_until=0 WHERE id=? AND state='done'"),(row['id'],))
 
     def task_counts(self):
         with db._conn() as conn:
