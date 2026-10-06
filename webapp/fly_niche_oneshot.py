@@ -1,5 +1,5 @@
 """
-Run one adaptive, quality-screened discovery hunt on a Fly Machine, then exit.
+Run one lightweight performance-lead hunt on a Fly Machine, then exit.
 
   python -m webapp.fly_niche_oneshot <job_id>
 

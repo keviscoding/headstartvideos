@@ -28,9 +28,9 @@ AVATAR_CLAIM = re.compile(
 @dataclass(frozen=True)
 class HuntSettings:
     profile: str = "balanced"
-    seconds: int = 1800
-    target: int = 20
-    candidate_cap: int = 300
+    seconds: int = 600
+    target: int = 50
+    candidate_cap: int = 600
     review_cap: int = 100
     search_cap: int = 100
     api_cap: int = 2000
@@ -51,9 +51,9 @@ class HuntSettings:
             raise ValueError("Unknown discovery profile")
         return cls(
             profile=request.get("profile", "balanced"),
-            seconds=max(300, min(7200, int(request.get("time_budget_seconds",1800)))),
-            target=max(1,min(200,int(request.get("target_channels",20)))),
-            candidate_cap=max(20,min(1200,int(request.get("candidate_cap",300)))),
+            seconds=max(300, min(7200, int(request.get("time_budget_seconds",600)))),
+            target=max(1,min(200,int(request.get("target_channels",50)))),
+            candidate_cap=max(20,min(1200,int(request.get("candidate_cap",600)))),
             review_cap=max(5,min(400,int(request.get("review_cap",100)))),
             search_cap=max(20,min(300,int(request.get("search_cap",100)))),
             api_cap=max(100,min(4000,int(request.get("api_cap",2000)))),
@@ -229,6 +229,12 @@ class Explorer:
 
 
 def run_cloud_hunt(job_id):
+    """Production discovery collects performance leads without content classification."""
+    from core.niche_light import run_light_hunt
+    return run_light_hunt(job_id)
+
+
+def run_evidence_hunt(job_id):
     import config
     from webapp import database as db
     from webapp.niche_store import NicheStore

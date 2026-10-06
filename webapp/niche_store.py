@@ -99,19 +99,25 @@ class NicheStore:
                                   (self.job_id, self.owner))
 
     def enqueue(self, kind, payload, *, source, depth=0):
-        identity = payload.get("channel_id") if kind == "channel" else payload.get("video_id") if kind == "related" else str(payload.get("query", "")).strip().casefold()
-        if kind=="search" and payload.get("upload_month") and identity:
-            identity += ":upload_month"
-        if not identity:
-            return False
-        key = kind + ":" + hashlib.sha256(identity.encode()).hexdigest()
+        return bool(self.enqueue_many([(kind,payload,source,depth)]))
+
+    def enqueue_many(self, entries):
+        """Deduplicate a frontier batch with one connection/transaction."""
+        rows=[]
+        for kind,payload,source,depth in entries:
+            identity = payload.get("channel_id") if kind == "channel" else payload.get("video_id") if kind == "related" else str(payload.get("query", "")).strip().casefold()
+            if kind=="search" and payload.get("upload_month") and identity:
+                identity += ":upload_month"
+            if not identity: continue
+            key=kind+":"+hashlib.sha256(identity.encode()).hexdigest()
+            rows.append((self.job_id,key,kind,source,depth,json.dumps(payload),time.time()))
+        if not rows: return 0
         with db._conn() as conn:
-            cur = conn.cursor()
-            cur.execute(db._q("""INSERT INTO niche_discovery_tasks
+            cur=conn.cursor()
+            cur.executemany(db._q("""INSERT INTO niche_discovery_tasks
                 (job_id,task_key,kind,source,depth,payload_json,created_at)
-                VALUES (?,?,?,?,?,?,?) ON CONFLICT(job_id,task_key) DO NOTHING"""),
-                (self.job_id,key,kind,source,depth,json.dumps(payload),time.time()))
-            return bool(cur.rowcount)
+                VALUES (?,?,?,?,?,?,?) ON CONFLICT(job_id,task_key) DO NOTHING"""),rows)
+            return cur.rowcount
 
     def claim_tasks(self, kind, *, source=None, limit=1, lease_seconds=300):
         now = time.time()
@@ -204,6 +210,14 @@ class NicheStore:
     def publish(self, hit, review, performance, task, outcome):
         if review.get("decision") != "pass" or review.get("ai_reproducible") is not True or not performance.get("passes"):
             raise ValueError("Only screened performance-qualified channels can be published")
+        return self._publish(hit,review,performance,task,outcome)
+
+    def publish_lead(self, hit, performance, task, outcome):
+        if not performance.get("passes"):
+            raise ValueError("Only performance-qualified leads can be published")
+        return self._publish(hit,None,performance,task,outcome)
+
+    def _publish(self, hit, review, performance, task, outcome):
         # Admission and its checkpoint commit together. Cancellation locks the same
         # run row, so a cancelled worker cannot continue inserting channels.
         with db._conn() as conn:
@@ -221,7 +235,7 @@ class NicheStore:
                         (task["id"],self.owner))
             if not cur.fetchone(): return "cancelled"
             added=db.upsert_niche_channel(hit,connection=conn,insert_only=True)
-            if not added and not task.get("payload",{}).get("review_existing"):
+            if not added and (review is None or not task.get("payload",{}).get("review_existing")):
                 return "already_present"
             if not added:
                 cur.execute(db._q("SELECT active FROM niche_channels WHERE channel_id=?"+lock),(hit["channel_id"],))
@@ -229,9 +243,10 @@ class NicheStore:
                 if not row or dict(row)["active"]!=1: return "already_present"
                 db.upsert_niche_channel(hit,connection=conn)
             cur.execute(db._q("""UPDATE niche_channels SET production_format=?,avatar_confidence=?,
-                quality_status='screened',quality_evidence_json=?,discovery_job_id=? WHERE channel_id=?"""),
-                (review.get("production_format", "unknown"),review.get("avatar_confidence", "unknown"),
-                 json.dumps({"performance":performance,"content":review,"screened_at":time.time()}),self.job_id,hit["channel_id"]))
+                quality_status=?,quality_evidence_json=?,discovery_job_id=? WHERE channel_id=?"""),
+                ((review or {}).get("production_format", "unknown"),(review or {}).get("avatar_confidence", "unknown"),
+                 "screened" if review else "metrics",
+                 json.dumps({"performance":performance,"content":review,"checked_at":time.time()}),self.job_id,hit["channel_id"]))
             status="added" if added else "enriched_existing"
             saved={**outcome,"status":status}
             cur.execute(db._q("""UPDATE niche_discovery_tasks SET state='done',result_json=?,finished_at=?,lease_until=0

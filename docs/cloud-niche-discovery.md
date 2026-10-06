@@ -1,67 +1,54 @@
-# Cloud discovery and catalog admissions
+# Lightweight cloud niche discovery
 
-The production discovery worker is an ephemeral Fly Machine with a dedicated image. Web requests only create a PostgreSQL run and launch it; Fly failures do not run Chromium on the web server. Cook Machines and their release image are independent.
+The production finder collects promising new channel leads using observed performance numbers. It does not clean up the existing catalog, fetch captions or images, classify AI identity, or call language models. Channels are marked `quality_status=metrics` and shown as **Performance lead**, rather than represented as content-reviewed or monetization-verified.
 
-## Exploration
+## Discovery and diversity
 
-A balanced daily hunt rotates broad randomly drawn search probes, related videos from a shuffled sample of the existing catalog, and searches learned from titles encountered during this run. A separate “This month” search lane uses the observed public YouTube filter, with the same long-form card checks. Fresh and ordinary searches have separate task identities; neither dominates the rotation. It expands even promising channels that fail the content screen, avoiding a feedback loop that only follows accepted formats. Queue sources rotate during enrichment as well as discovery; each encountered pool interleaves high-view and randomized channels. It has no fixed niche taxonomy and cannot guarantee exhaustive YouTube coverage.
+Two concurrent HTTP scouts read YouTube's public initial result data, with at most one search continuation per page. There is no Chromium, video playback, media download, or ASR process. Public result layouts are subject to change; repeated failures stop the run and retain its frontier rather than spawning a heavier browser fallback.
 
-The one-off avatar profile adds the user's three reference presenters as starting points while retaining broad and learned exploration. References are discovery bridges, not automatically accepted additions. Related results and title searches recursively expand the frontier, with maximum depth three. Existing catalog IDs are skipped before history reads and may bridge to unseen neighbours.
+The scout rotates four equal discovery lanes: broad everyday-word searches, recent-upload searches, related videos, and phrases learned from encountered titles. Each run shuffles its probes and draws 24 different existing-library channel seeds. Those seeds supply neighbours; they are never re-reviewed or updated. Related/title expansion stops at depth two. Top-view cards are mixed with a shuffled tail, and candidate processing draws from all four lanes. There is no niche whitelist or fixed avatar funnel. Historical `profile`/`enrich_existing` request fields remain accepted for compatibility but cannot enable classification or catalog cleanup in the production path.
 
-Avatar is a discovery priority, not an exclusive catalog format. All formats enter after the same performance and AI-production quality checks, without requiring public AI disclosure. They retain their own production format and unknown avatar confidence where evidence is insufficient; the AI presenter filter excludes unknown candidates. A failed avatar check cannot veto a useful, AI-reproducible animation or voiceover channel.
+Known and recently checked channel IDs are skipped before expensive upload-history reads. Frontier insertion batches share one database transaction. Channel metadata is read in batches, and the existing API client remains confined to the coordinator to avoid unsafe concurrent googleapiclient use. Scouting continues while the coordinator checks channel histories.
 
-One-off runs can opt into `enrich_existing` (`--enrich-existing` in the CLI). This queues up to 80 active catalog entries that have never passed the quality screen, including matching references. It updates fresh metrics and quality evidence only after the same admission checks; hidden entries stay hidden. Reports count `enriched_existing` separately from additions, and the original `first_seen_at` never changes. Daily discovery leaves this mode off so catalog refreshes do not consume the entire novelty budget.
+## Admission numbers
 
-The enrichment seed pool uses existing metadata as a cheap lead: active entries with recorded recent averages of at least 20,000 views, 4–80 uploads, and recent posting activity. It rotates source-keyword groups and shuffles IDs per run, then fetches fresh histories before screening. Stored metrics are not treated as current admission evidence. All earlier review and daily limits still apply.
+Defaults retain the previous measurable checks:
 
-## Admission
+- Long-form videos are at least four minutes.
+- At least four sampled uploads aged 7–60 days.
+- At least 75% of the latest up to 12 mature samples have at least 10,000 views.
+- Mature median at least 20,000 views, and an upload within 21 days.
+- The admin subscriber cap and optional recent-average cutoff are honored separately.
+- A majority of exactly repeated normalized titles puts a candidate on hold; there are no topic or language rejection rules.
 
-Use the latest twelve long-form uploads. Ignore uploads younger than seven days when judging failures. Require at least four uploads aged 7–60 days, at least 75% with 10,000 views, a median of at least 20,000 views, and an upload in the last 21 days. These are research admission thresholds, not guarantees of monetization or profitable replication.
+Unseen channels passing these checks are inserted with their real addition time, source, sample videos, and numeric audit evidence. Content quality, AI identity, copyright/licensing, competitor comparisons, factual accuracy, and profitability are not asserted by these checks. Missing/weak numerical samples remain held. The AI presenter filter continues to cover previously screened entries; new metadata leads do not receive speculative AI labels.
 
-Performance-qualified candidates receive the content screen first. The avatar-priority profile checks the openings of every passing AI-reproducible format, including apparent voiceovers and animation: hosts can appear only in introductions absent from representative stills. Balanced discovery adds openings when a presenter is observed in the content samples. With native Gemini configured, this inspects two public 0–45 second openings at one frame per second, using timestamped observations for each URL. This catches introductory hosts absent from YouTube's representative stills and allows different hosts across videos. A response exceeding 30,000 input tokens disables further opening requests; unsupported video requests fall back to static stills. The direct URL/clipping mechanism is documented by [Google](https://ai.google.dev/gemini-api/docs/generate-content/video-understanding).
+## Fly and budgets
 
-The content screen requires two captions with at least 1,000 characters each and representative numbered stills from both videos. Three independent review clients may run concurrently. Model decisions must use a valid structured response, substantive content feasible with scripts and AI/stock visuals, and no serious unresolved concerns. Repeatable real-world filming alone does not pass. Missing evidence goes to review, never automatic admission. Uncertain identity preserves an unknown avatar label rather than discarding other useful formats.
+Discovery requests one shared CPU and 512 MB RAM by default, using `FLY_NICHE_MEMORY_MB` (bounded to 256–1024 MB), independently of cook worker sizing. Its dedicated image has no Chromium, caption client, or Pillow dependency. Its injected credentials are limited to database access, YouTube metadata access, and optional error reporting. Cook image, worker command, and resource settings are unchanged.
 
-Atlas billing failures (HTTP 402) switch reviews to the already configured native Gemini provider. The native model stays configurable with `GEMINI_TEXT_MODEL`; transient server failures receive one bounded retry. Provider failures do not enter the channel rejection cache. If review providers remain unavailable, the run stops with an error and retains its frontier and completed additions. The job never automatically purchases credits or changes account billing.
+Default runs have a ten-minute ceiling, a target of 50 new leads, 600 candidate checks, 100 result pages, and 2,000 metered YouTube reads. The target is a ceiling, never an instruction to weaken admission. The shared UTC-day read reservation remains capped at 6,000. Only one hunt owns the catalog lease; two HTTP scouts run inside that one small machine. The machine auto-destroys on exit.
 
-Native requests use constrained JSON output schemas; local validation still checks all evidence and timestamps. A single-object array wrapper can be normalized, but ambiguous multiple-review arrays are rejected. API counters are included in every heartbeat so a resume during a slow review retains its request usage.
+PostgreSQL retains the deduplicated frontier, expiring task ownership, checkpoints, cached numeric decisions, and immutable catalog insertion dates. Atomic insertion and task checkpoint lock the run and verify its current lease; cancellation prevents further admission. Interrupted jobs can resume only within their original remaining time/work limits. Existing channels are never reactivated, refreshed, or counted as additions.
 
-AI host disclosure means an explicit public host/avatar claim plus an observed presenter. The weaker `likely` candidate label requires two public YouTube AI labels and plausible presenter-style observations, strong synthetic styling in both static triage and the full screen, or strong virtual styling supported by at least two timestamped observations in each opening excerpt. Opening evidence can establish a presenter format even when later stills contain supporting footage. Triage results are withheld from the content model prompt to reduce anchoring. A realistic face, generated thumbnail, or AI scenery alone does not qualify. Automated sampled evidence cannot prove synthetic identity; the product labels `likely` as a candidate.
+Metrics record model/caption/image calls (all zero in this path), HTTP and YouTube request counts, total elapsed time, peak process RSS, and process CPU seconds. Rates from one short run are measurements of that run, not guaranteed sustained yield. These leads have a different acceptance scope from the earlier full content-review experiments.
 
-The user's three named examples can receive a distinct `reference` label after the same performance and content checks plus an observed introductory host. This records the human-supplied reference; it does not claim independent identity verification. It does not propagate to neighbouring channels. Classifier changes invalidate review caches and reconsider uncertain completed reviews within the original remaining budget, while preserving addition checkpoints.
+## Operations
 
-`possible` is a weaker discovery lead: a presenter in both validated opening excerpts, two public AI-content labels, and a substantive AI-reproducible format. It is displayed as **AI-assisted presenter**, with an explicit tooltip that AI may only be used in supporting visuals and the host could be real. It does not claim strong synthetic styling or independent identity verification, and does not relax the performance/content admission checks.
+Build only; do not deploy a cook release:
 
-## Persistence and budgets
-
-PostgreSQL stores the frontier, evidence decisions, immutable catalog insertion date, and every addition's audit checkpoint. One renewable catalog lease prevents overlapping adaptive hunts. Tasks have expiring ownership and up to three claims; an interrupted running job may resume within its original wall-clock budget. Insertion and its task checkpoint are one transaction and lock the run row, so cancellation prevents further admission. A completed or cancelled run cannot be overwritten by a late worker.
-
-Per-run limits cover wall-clock time, explored pages, enriched channels, content reviews, and actual YouTube read requests. Shared UTC-day reservations cap discovery at 6,000 YouTube read requests and 300 review attempts; abandoned reservation blocks remain counted conservatively. These are application budgets, not a claim about the account's remaining provider quota. Cache keys include model and acceptance criteria; rejected content is cached for seven days, insufficient evidence for a shorter retry window.
-
-Default daily limits: 30 minutes, 300 enriched channels, 100 content reviews, 100 explored pages, 2,000 API reads, and a target of 20 additions. A target is a ceiling; the worker never weakens admission to fill it. The admin's optional recent-average cutoff remains separate from the mature-video median gate, and subscriber caps below 10,000 are honored. Both values are part of the evidence cache signature so changing them cannot reuse a rejection from different criteria.
-
-## Deploy and operate
-
-Build without changing the cook app's release:
-
-```
-flyctl deploy -c fly.niche.toml --build-only --push --remote-only --image-label niche-<version>
+```sh
+flyctl deploy -c fly.niche.toml --build-only --push --remote-only --image-label niche-light-v1
 ```
 
-Set `FLY_NICHE_IMAGE` on the web app to the resulting registry digest. The web bridge injects fresh database, YouTube, Atlas, native Gemini, and caption provider configuration into each discovery Machine. Do not put credentials in commands or source control.
+Set the web app's `FLY_NICHE_IMAGE` to the resulting dedicated digest, then launch with the web admin control or:
 
-With production environment available securely:
-
-```
-python -m scripts.cloud_niche_hunt start --profile avatar --enrich-existing --seconds 3600 --target 40 --candidates 1000 --reviews 240 --pages 250 --api 3000
-python -m scripts.cloud_niche_hunt status --job-id <id>
-python -m scripts.cloud_niche_hunt resume --job-id <id>
+```sh
+python -m scripts.cloud_niche_hunt start --seconds 600 --target 50 --candidates 600 --pages 100 --api 2000
+python -m scripts.cloud_niche_hunt status --job-id JOB_ID
+python -m scripts.cloud_niche_hunt resume --job-id JOB_ID
 ```
 
-Resume uses the same run ID, existing frontier, addition checkpoints, and original work/time limits. A stopped or completed job needs a new run; do not reset its timestamp to bypass budgets.
+The former evidence experiment is retained as `run_evidence_hunt` for reference/research tests. The production entry point always dispatches `run_light_hunt`; neither legacy request fields nor a missing model key change that.
 
-## Newly added
-
-The toggle shows original additions from the past seven days, ordered by insertion date and channel ID for stable ties. Refreshing metrics preserves `first_seen_at`. Cards display relative time, a calendar date for older entries, and an exact timestamp tooltip. Count and pagination use the same cutoff and other filters. Older catalog entries have not been retroactively quality-screened by this change.
-
-The separate AI presenter candidates toggle includes only quality-screened entries with `likely`, `disclosed`, explicitly labelled `reference`, or clearly labelled AI-assisted `possible` evidence. It can be combined with Newly added for true new additions, or used alone to include quality-enriched existing entries. Defaults continue to browse all formats.
+API references: [YouTube videos.list](https://developers.google.com/youtube/v3/docs/videos/list), [Fly Machine configuration](https://docs.fly.io/machines/api/machines-resource).

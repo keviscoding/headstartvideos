@@ -10,13 +10,11 @@ def main():
     parser.add_argument('action',choices=['start','status','resume'])
     parser.add_argument('--job-id')
     parser.add_argument('--profile',choices=['balanced','avatar'],default='balanced')
-    parser.add_argument('--seconds',type=int,default=1800)
-    parser.add_argument('--target',type=int,default=20)
-    parser.add_argument('--candidates',type=int,default=300)
-    parser.add_argument('--reviews',type=int,default=100)
+    parser.add_argument('--seconds',type=int,default=600)
+    parser.add_argument('--target',type=int,default=50)
+    parser.add_argument('--candidates',type=int,default=600)
     parser.add_argument('--pages',type=int,default=100)
     parser.add_argument('--api',type=int,default=2000)
-    parser.add_argument('--enrich-existing',action='store_true',help='Also screen up to 80 existing active, unreviewed entries; keep insertion dates intact')
     args=parser.parse_args()
     NicheStore.ensure_schema()
     if args.action=='status':
@@ -27,8 +25,7 @@ def main():
         current=db.get_latest_running_niche_hunt()
         if current: raise SystemExit('A hunt is already running: '+current['job_id'])
         request=dict(profile=args.profile,time_budget_seconds=args.seconds,target_channels=args.target,
-            candidate_cap=args.candidates,review_cap=args.reviews,search_cap=args.pages,api_cap=args.api,
-            max_subscribers=500000,enrich_existing=args.enrich_existing)
+            candidate_cap=args.candidates,search_cap=args.pages,api_cap=args.api,max_subscribers=500000)
         HuntSettings.from_request(request)
         job_id=str(uuid.uuid4())
         run_id=db.create_niche_hunt_run(job_id=job_id,trigger='one_off',keywords=[],request=request)

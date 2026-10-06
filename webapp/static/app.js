@@ -4929,6 +4929,7 @@ function _renderNicheFinderHits(hits, opts = {}) {
                             ${_nfEsc(h.channel_name || 'Channel')}
                         </a>
                         ${tag}
+                        ${h.quality_status === 'metrics' ? '<span class="cr-mono" title="Recent performance and activity checked. Content and AI identity have not been reviewed." style="font-size:11px;color:var(--app-ink-3);">Performance lead</span>' : ''}
                         ${avatarLabel ? `<span class="cr-mono" title="${h.avatar_confidence === 'disclosed' ? 'The channel publicly describes its virtual presenter.' : h.avatar_confidence === 'reference' ? 'Supplied as an AI-avatar example and quality-screened; synthetic identity is not independently verified.' : h.avatar_confidence === 'possible' ? 'A presenter appears in both sampled openings and both videos disclose AI use. AI may be used in supporting visuals; the host could be real.' : 'Limited visual samples suggest a virtual presenter; identity is unconfirmed. Some candidates also have public AI disclosures.'}" style="font-size:11px;color:var(--accent);">${avatarLabel}</span>` : ''}
                         ${added ? `<time datetime="${_nfEsc(added.iso)}" title="${_nfEsc(added.exact)}" class="cr-mono" style="font-size:11px;color:var(--app-ink-3);">Added ${_nfEsc(added.relative)}</time>` : ''}
                         <span class="cr-mono" style="font-size: 11px; color: var(--accent); background: var(--accent-soft-dark); border: 1px solid var(--accent); border-radius: 99px; padding: 2px 8px;">

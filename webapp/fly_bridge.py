@@ -343,14 +343,14 @@ def spawn_niche_scrape_machine(job_id: str) -> str:
         return ""
     try:
         region = (getattr(config, "FLY_COOK_REGION", "") or "sjc").strip() or "sjc"
-        # Playwright + Chromium needs RAM; keep lighter than a full cook when possible.
-        cpus = max(1, min(2, int(getattr(config, "FLY_COOK_CPUS", 2) or 2)))
-        memory_mb = max(2048, min(4096, int(getattr(config, "FLY_COOK_MEMORY_MB", 4096) or 4096)))
-        env = _machine_env()
+        # Discovery is HTTP + metadata, independent of cook CPU/RAM settings.
+        cpus = 1
+        memory_mb = max(256, min(1024, int(getattr(config, "FLY_NICHE_MEMORY_MB", 512) or 512)))
+        env = {key: value for key in ("DATABASE_URL", "SENTRY_DSN")
+               if (value := (os.getenv(key) or getattr(config,key,"") or ""))}
         env["APP_ENV"] = "fly-niche"
         env["COOK_ON_WEB"] = "0"
-        env["DOWNSUB_KEY"] = config.DOWNSUB_KEY
-        # Enrichment needs YouTube Data API; scrape itself is browser-based.
+        # No model, caption, image-generation, or cook credentials are needed.
         yt = (os.getenv("YOUTUBE_API_KEY") or "").strip()
         if not yt and hasattr(config, "YOUTUBE_API_KEY"):
             yt = str(getattr(config, "YOUTUBE_API_KEY") or "").strip()

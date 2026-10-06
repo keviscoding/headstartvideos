@@ -227,7 +227,7 @@ def test_hunt_uses_a_live_frontier_and_publishes_only_review_passes(store,monkey
             return {'presenter_visible':False,'avatar_style_confidence':'unknown','avatar_observations':['Animated scene','No host visible']}
         def close(self): pass
     monkeypatch.setattr(cloud,'EvidenceClient',Evidence)
-    result=cloud.run_cloud_hunt('test')
+    result=cloud.run_evidence_hunt('test')
     assert result['added']==(0 if provider_unavailable or existing_enrichment else 1)
     assert result['existing_enriched']==(1 if existing_enrichment else 0)
     assert result['stop_reason']==('review_providers_unavailable' if provider_unavailable else 'work_budget_or_frontier_exhausted' if existing_enrichment else 'target_reached')
