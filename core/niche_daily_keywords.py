@@ -1,9 +1,9 @@
 """
-Daily keyword packs for Niche Finder cron.
+Rotating keyword packs for Niche Finder cron.
 
 Only common everyday English words (the kind you type into YouTube that surface
-many niches). No niche-name phrases like "true crime story". Each UTC day gets
-a different deterministic subset so cron feels spontaneous but stays idempotent.
+many niches). No niche-name phrases like "true crime story". Each scheduled slot
+gets a different deterministic subset so cron stays broad and idempotent.
 """
 
 from __future__ import annotations
@@ -101,16 +101,21 @@ def daily_cron_keywords(
     *,
     when: datetime | None = None,
     count: int = 50,
+    slot: int | None = None,
 ) -> list[str]:
     """
-    Different everyday-English pack each UTC day.
+    Different everyday-English pack per UTC day or twice-daily slot (0/1).
 
-    Packs slide through a fixed shuffle so consecutive days don't share
-    keywords (until the pool wraps). Cron scrolls each probe to the end of
-    YouTube results and keeps every channel discovered (no hard channel cap).
+    Packs slide through a fixed shuffle so consecutive slots don't share
+    keywords until the pool wraps. With no slot, retain the daily-pack behavior.
+    Discovery keeps its bounded page, candidate, time, and admission budgets.
     """
     dt = when or datetime.now(timezone.utc)
-    day = dt.strftime("%Y-%m-%d")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    dt = dt.astimezone(timezone.utc)
+    if slot is not None and slot not in (0, 1):
+        raise ValueError("slot must be 0 (midnight), 1 (noon), or None (daily)")
     # Deduplicate while preserving order of first occurrence
     seen: set[str] = set()
     pool: list[str] = []
@@ -122,7 +127,7 @@ def daily_cron_keywords(
         pool.append(w.strip())
     want = max(8, min(int(count or 50), len(pool)))
     fixed = _stable_shuffle(pool, salt="simple:v2")
-    # Day ordinal → non-overlapping window (wraps after pool/want days)
-    day_ord = dt.toordinal()
-    offset = (day_ord * want) % len(fixed)
+    # Consecutive slots advance to non-overlapping windows, including midnight.
+    period = dt.toordinal() if slot is None else dt.toordinal() * 2 + slot
+    offset = (period * want) % len(fixed)
     return [fixed[(offset + i) % len(fixed)] for i in range(want)]

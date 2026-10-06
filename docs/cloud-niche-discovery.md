@@ -35,6 +35,10 @@ Metrics record model/caption/image calls (all zero in this path), HTTP and YouTu
 
 ## Operations
 
+With `CRON_SECRET` and `YOUTUBE_API_KEY` configured on the web app, its background scheduler starts one bounded hunt at **00:00 and 12:00 UTC** (within the five-minute poll interval). Midnight/noon packs advance through different everyday-word probes; all four exploration lanes remain enabled. Each run targets up to 50 new leads within the same ten-minute, 600-candidate, 100-page, and 2,000-read limits. Both runs share the existing 6,000-read UTC-day allowance with manual hunts.
+
+PostgreSQL slot claims prevent duplicates across web replicas and restarts. Noon retains the legacy daily key, so deploying this schedule after a daily run does not add an extra run. After downtime, only the current slot is eligible. If another discovery hunt is active, the scheduler releases its unstarted claim and retries at the next check; failed spawns retain their claim until the next slot to avoid repeated launches. Blocking database/Fly launch calls run outside the web event loop. Only one discovery worker owns the catalog, and each ephemeral machine auto-destroys at completion.
+
 Build only; do not deploy a cook release:
 
 ```sh
