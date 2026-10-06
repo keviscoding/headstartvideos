@@ -598,58 +598,52 @@ def generate_avatar_video_atlas(
 def select_shot_framing(broll_index: int, segment_text: str, prev_framing: str | None, total_broll_shots: int) -> dict[str, str]:
     """
     Deterministically select shot framing type for b-roll variety.
-    Uses the b-roll shot index (not overall shot index) for proper round-robin.
+    Enforces shot-size variety: no two b-roll beats may share the same shot size.
+    
+    With three b-rolls, forces the order: medium, extreme close-up detail, then wide.
+    With more or fewer b-rolls, cycles through medium, ECU, wide.
     
     Args:
         broll_index: Index among b-roll shots only (0, 1, 2, ...)
         segment_text: Script text for this segment
-        prev_framing: Previous framing to avoid consecutive repeats
+        prev_framing: Previous framing to avoid consecutive repeats (legacy, now unused)
         total_broll_shots: Total number of b-roll shots expected
     
     Returns dict with:
-    - framing: "close_up", "wide", "over_shoulder", "detail", "medium"
+    - framing: "medium", "detail" (ECU), "wide" (cycles in that order)
+    - shot_size: explicit shot size prefix for prompts ("Medium shot:", "Extreme close-up:", "Wide shot:")
     - directive: prompt text specifying the framing
     - camera_move: camera movement for i2v motion prompt
-    
-    First 3 b-rolls always include at least one close-up/detail and one wide.
+    - zoom_strength: optional post-processing zoom scale (1.0 to 1.12 for ECU detail)
     """
-    # Order ensures first 3 shots hit close-up, detail, and wide
-    framings = [
+    # Three-shot cycle: medium -> ECU detail -> wide
+    # Guarantees shot-size variety with no repeats
+    cycle = [
         {
-            "framing": "close_up",
-            "directive": "Close-up shot focusing on hands, facial expressions, or key physical objects in sharp detail",
-            "camera_move": "gentle camera drift closer",
+            "framing": "medium",
+            "shot_size": "Medium shot:",
+            "directive": "Medium shot from waist or chest level showing person and their immediate interaction space",
+            "camera_move": "camera slowly pushes forward",
+            "zoom_strength": None,
         },
         {
             "framing": "detail",
-            "directive": "Extreme macro detail shot of textures, surfaces, or edges - card corner, paper texture, fabric weave, hand gesture",
+            "shot_size": "Extreme close-up:",
+            "directive": "Extreme close-up macro detail shot of textures, surfaces, or edges - hands mid-motion with slight motion blur, shallow depth-of-field rack focus on moving object, card corner entering frame, paper texture, fabric weave",
             "camera_move": "dynamic camera push forward with slight tilt, subject enters frame with visible motion",
+            "zoom_strength": 1.12,
         },
         {
             "framing": "wide",
-            "directive": "Wide establishing shot showing the full environment, people, and spatial context",
+            "shot_size": "Wide shot:",
+            "directive": "Wide establishing shot showing the full environment, whole room or setting visible, subject small in frame with spatial context",
             "camera_move": "slow camera pan revealing scene",
-        },
-        {
-            "framing": "over_shoulder",
-            "directive": "Over-the-shoulder perspective showing hands interacting with objects, natural background",
-            "camera_move": "handheld camera following action",
-        },
-        {
-            "framing": "medium",
-            "directive": "Medium shot from waist or chest level showing person and their immediate interaction space",
-            "camera_move": "camera slowly pushes forward",
+            "zoom_strength": None,
         },
     ]
     
-    # Use round-robin based on b-roll index
-    base_index = broll_index % len(framings)
-    
-    # Select framing, avoiding previous if possible
-    selected = framings[base_index]
-    if prev_framing and selected["framing"] == prev_framing:
-        # Pick next framing to ensure variety
-        selected = framings[(base_index + 1) % len(framings)]
+    # Deterministic round-robin: index 0 -> medium, 1 -> ECU, 2 -> wide, 3 -> medium, ...
+    selected = cycle[broll_index % len(cycle)]
     
     return selected
 
@@ -698,7 +692,7 @@ def _generate_broll_motion_parallel(
     Generate motion clips from b-roll stills in parallel using Atlas i2v.
     
     Args:
-        broll_stills: List of dicts with still_path, motion_prompt, duration, shot
+        broll_stills: List of dicts with still_path, motion_prompt, duration, shot, zoom_strength
         work_dir: Working directory for output
         progress: Progress callback
     
@@ -723,6 +717,7 @@ def _generate_broll_motion_parallel(
         motion_prompt = still_info["motion_prompt"]
         shot = still_info["shot"]
         shot_duration = still_info["duration"]
+        zoom_strength = still_info.get("zoom_strength")
         
         # Skip shots that are too short (< 1s)
         if shot_duration < 1.0:
@@ -776,12 +771,32 @@ def _generate_broll_motion_parallel(
         
         # Trim to exact shot duration and normalize to 30fps, 1280x720
         # Use cover+crop to avoid black bars (Seedance returns 1268x728)
+        # For ECU detail shots with zoom_strength, apply a stronger post-zoom push (1.0 to 1.12)
         trimmed_path = work_dir / f"broll_{shot.index:03d}_motion.mp4"
+        
+        if zoom_strength and zoom_strength > 1.0:
+            # Apply zoom animation from 1.0 to zoom_strength over the full clip duration
+            # Compute per-frame increment so zoom ramps across the entire shot
+            total_frames = max(1, round(shot_duration * 30))
+            zoom_increment = (zoom_strength - 1.0) / total_frames
+            
+            # Upscale to 2560x1440 before zoompan to avoid integer jitter
+            # zoompan with fps=30 ensures output stays at 30fps (default is 25fps)
+            # trim+setpts ensures exact shot_duration output
+            vf_filter = (
+                f"fps=30,"
+                f"scale=2560:1440:force_original_aspect_ratio=increase,crop=2560:1440,"
+                f"zoompan=z='if(eq(on,1),1,zoom+{zoom_increment:.6f})':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1280x720:fps=30,"
+                f"trim=duration={shot_duration:.2f},setpts=PTS-STARTPTS"
+            )
+        else:
+            # Standard trim without extra zoom
+            vf_filter = "fps=30,scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720"
+        
         trim_cmd = [
             "ffmpeg", "-y",
             "-i", str(raw_video_path),
-            "-t", f"{shot_duration:.2f}",
-            "-vf", "fps=30,scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720",
+            "-vf", vf_filter,
             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
             "-an",  # Remove audio (i2v audio not needed)
             str(trimmed_path),
@@ -925,14 +940,15 @@ def assemble_mixed_avatar_broll_video(
     overlay_inputs = []
     
     # Create framing variety between opening and ending avatar shots
-    # Opening: slight zoom in for tighter framing (simulates closer camera/longer lens)
-    # Ending: keeps original framing (simulates wider camera/shorter lens)
-    # This prevents the two shots from feeling repetitive with identical framing
+    # Opening: 20-25% punch-in for clear close-up (head and shoulders filling frame, centred on face)
+    # Ending: keeps original framing (looser, medium shot)
+    # This ensures the two shots are obviously different in a single still
     if opening_avatar and ending_avatar and opening_avatar != ending_avatar:
-        # Apply zoom only during the opening window using overlay enable timing
+        # Apply 22% punch-in during the opening window using overlay enable timing
+        # Scale by 1.22, crop to 1280x720 centred on face, no black bars, no upscale blur beyond scale+crop
         framing_filter_parts.append("[0:v]split=2[avatar_base][avatar_for_zoom]")
         framing_filter_parts.append(
-            "[avatar_for_zoom]scale=w=1280*1.08:h=720*1.08,crop=1280:720[opening_zoomed]"
+            "[avatar_for_zoom]scale=w=1280*1.22:h=720*1.22,crop=1280:720[opening_zoomed]"
         )
         framing_filter_parts.append(
             f"[avatar_base][opening_zoomed]overlay=enable='between(t,{opening_avatar.start_sec:.2f},{opening_avatar.end_sec:.2f})':shortest=0[avatar_varied]"
@@ -1199,7 +1215,6 @@ def run_avatar_gen_pipeline(
     # Step 1: Generate all b-roll stills first (fast, sequential is fine)
     broll_shots = [s for s in shots if s.shot_type == "broll_still"]
     broll_count = len(broll_shots)
-    prev_framing = None
     broll_stills = []
     
     for idx, shot in enumerate(broll_shots):
@@ -1210,12 +1225,12 @@ def run_avatar_gen_pipeline(
         segment_text = shot.text or shot.visual_prompt
         
         # Select shot framing for variety using b-roll index
-        framing = select_shot_framing(idx, segment_text, prev_framing, broll_count)
-        prev_framing = framing["framing"]
+        # This enforces deterministic shot-size cycling: medium, ECU, wide
+        framing = select_shot_framing(idx, segment_text, None, broll_count)
         
-        # Build explicit prompt emphasizing the script topic and segment content
+        # Build explicit prompt with shot_size prefix at the front
         prompt_text = (
-            f"Professional photograph, photorealistic, high quality. "
+            f"{framing['shot_size']} Professional photograph, photorealistic, high quality. "
             f"{framing['directive']}. "
             f"Scene: {segment_text}. "
             f"Context: {title}. "
@@ -1247,6 +1262,7 @@ def run_avatar_gen_pipeline(
             "still_path": broll_img_path,
             "motion_prompt": motion_prompt,
             "duration": shot.duration,
+            "zoom_strength": framing.get("zoom_strength"),
         })
     
     timing["broll_stills"] = time.time() - t0
