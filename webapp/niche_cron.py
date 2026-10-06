@@ -57,8 +57,8 @@ def maybe_start_daily_niche_hunt(*, start_hunt) -> dict | None:
             max_video_age_days=180,
             trigger="cron",
             user_id=None,
-            discovery_settings={"profile":"balanced","time_budget_seconds":1800,
-                "target_channels":20,"candidate_cap":300,"review_cap":100,"search_cap":100,"api_cap":2000},
+            discovery_settings={"profile":"balanced","time_budget_seconds":600,
+                "target_channels":50,"candidate_cap":600,"search_cap":100,"api_cap":2000},
         )
     except Exception as e:
         # Release is intentional non-event — leave the claim so we don't hammer

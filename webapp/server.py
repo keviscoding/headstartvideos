@@ -4151,9 +4151,9 @@ class NicheFinderJobRequest(BaseModel):
     profile: Literal["balanced", "avatar"] = "balanced"
     enrich_existing: bool = False
     existing_review_cap: int = Field(default=80,ge=0,le=200)
-    time_budget_seconds: int = Field(default=1800, ge=300, le=7200)
-    target_channels: int = Field(default=20, ge=1, le=200)
-    candidate_cap: int = Field(default=300, ge=20, le=1200)
+    time_budget_seconds: int = Field(default=600, ge=300, le=7200)
+    target_channels: int = Field(default=50, ge=1, le=200)
+    candidate_cap: int = Field(default=600, ge=20, le=1200)
     review_cap: int = Field(default=100, ge=5, le=400)
     search_cap: int = Field(default=100, ge=20, le=300)
     api_cap: int = Field(default=2000, ge=100, le=4000)
@@ -4196,7 +4196,7 @@ def _start_niche_hunt(
     discovery_settings: dict | None = None,
 ) -> str:
     """
-    Kick off adaptive, quality-screened discovery on an isolated Fly Machine.
+    Kick off lightweight performance-lead discovery on an isolated Fly Machine.
     Job state is in Postgres so page refresh can keep polling.
     """
     import threading
@@ -4250,7 +4250,7 @@ def _start_niche_hunt(
 
     if spawned:
         mid_note = f" ({machine_id})" if machine_id else ""
-        append_niche_hunt_progress(job_id, f"Spawned Fly Machine for scroll scrape…{mid_note}")
+        append_niche_hunt_progress(job_id, f"Started lightweight Fly discovery…{mid_note}")
         return job_id
 
     if COOK_ON_FLY:
