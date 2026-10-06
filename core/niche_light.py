@@ -70,7 +70,7 @@ def public_cards(data, source, max_age_days=120):
                          if "thumbnailBadgeViewModel" in n and re.fullmatch(r"(?:\d+:)?\d+:\d{2}", n["thumbnailBadgeViewModel"].get("text", ""))), "")
         raw.append(dict(title=_text(metadata.get("title")), videoUrl="https://www.youtube.com/watch?v=" + lockup.get("contentId", ""),
             channelName=_text(parts[0].get("text")) if parts else "", channelUrl="https://www.youtube.com/channel/" + cid,
-            meta=[p.get("accessibilityLabel") or _text(p.get("text")) for p in parts[1:]], durationText=duration))
+            meta=[_text(p.get("text")) or p.get("accessibilityLabel", "") for p in parts[1:]], durationText=duration))
     return list({c["video_id"]: c for c in _parse_search_cards(raw, source, max_age_days, 240)}.values())
 
 

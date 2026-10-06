@@ -45,6 +45,7 @@ def test_lockup_related_renderer_uses_channel_and_accessible_date():
         'contentImage': {'thumbnailBadgeViewModel': {'text': '25:16'}}}}
     cards = light.public_cards(data, 'related')
     assert len(cards) == 1 and cards[0]['channel_id'] == 'UCother' and cards[0]['duration_sec'] == 1516
+    assert cards[0]['view_count'] == 42000
 
 
 def test_metadata_holds_exact_repetition_without_topic_or_language_rules():
