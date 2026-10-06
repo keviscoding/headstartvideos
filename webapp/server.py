@@ -3045,7 +3045,14 @@ def _unique_media_dir(*parts: str) -> Path:
 
 
 @app.post("/api/voiceover")
-def generate_voiceover(req: VoiceoverRequest, user: dict = Depends(require_user)):
+async def generate_voiceover(req: VoiceoverRequest, user: dict = Depends(require_user)):
+    """
+    Generate voiceover via Atlas xAI TTS.
+    
+    Runs in threadpool (asyncio.to_thread) to avoid blocking the event loop
+    while ensuring JSON responses (FastAPI will serialize dict to JSON).
+    """
+    import asyncio
     from core.atlas_runtime import use_atlas_key
     from core.voiceover_gen import generate_voiceover as gen_vo
 
@@ -3058,9 +3065,13 @@ def generate_voiceover(req: VoiceoverRequest, user: dict = Depends(require_user)
         )
 
     out_dir = str(_unique_media_dir("voiceovers"))
-    try:
+    
+    def _generate():
         with use_atlas_key(user_atlas):
-            wav_path = gen_vo(script=req.script, voice=req.voice, style_preset="Narrator", output_dir=out_dir)
+            return gen_vo(script=req.script, voice=req.voice, style_preset="Narrator", output_dir=out_dir)
+    
+    try:
+        wav_path = await asyncio.to_thread(_generate)
         path, url = _stage_user_media(wav_path, user["id"], "voiceover", "audio/wav")
         return {"path": path, "url": url}
     except Exception as e:
@@ -3105,12 +3116,13 @@ async def upload_voiceover(file: UploadFile = File(...), user: dict = Depends(re
 
 
 @app.post("/api/voiceover/preview")
-def voice_preview(req: VoicePreviewRequest, user: dict = Depends(require_user)):
+async def voice_preview(req: VoicePreviewRequest, user: dict = Depends(require_user)):
     """Return a quick preview — prefer Atlas official sample URLs when available."""
     for v in CURATED_VOICES:
         if v["id"] == req.voice and v.get("preview_url"):
             return {"url": v["preview_url"], "cached": True}
 
+    import asyncio
     from core.voiceover_gen import generate_voiceover as gen_vo
 
     out_dir = str(OUTPUT_DIR / "voice_previews")
@@ -3121,8 +3133,11 @@ def voice_preview(req: VoicePreviewRequest, user: dict = Depends(require_user)):
         rel = os.path.relpath(str(cache_path), str(ROOT))
         return {"url": f"/api/files/{rel}"}
 
+    def _generate():
+        return gen_vo(script=req.text, voice=req.voice, style_preset="Narrator", output_dir=out_dir)
+
     try:
-        wav_path = gen_vo(script=req.text, voice=req.voice, style_preset="Narrator", output_dir=out_dir)
+        wav_path = await asyncio.to_thread(_generate)
         if Path(wav_path).exists() and not cache_path.exists():
             Path(wav_path).rename(cache_path)
             wav_path = str(cache_path)
@@ -3272,7 +3287,9 @@ async def create_fish_voice_clone(
 
 
 @app.post("/api/voiceover/studio")
-def voiceover_studio(req: VoiceoverStudioRequest, user: dict = Depends(require_user)):
+async def voiceover_studio(req: VoiceoverStudioRequest, user: dict = Depends(require_user)):
+    """Generate voiceover via Atlas xAI TTS (Voiceover Studio tab)."""
+    import asyncio
     from core.atlas_runtime import use_atlas_key
     from core.voiceover_gen import generate_voiceover as gen_vo
 
@@ -3288,15 +3305,19 @@ def voiceover_studio(req: VoiceoverStudioRequest, user: dict = Depends(require_u
         )
 
     out_dir = str(_unique_media_dir("voiceovers"))
-    try:
+    
+    def _generate():
         with use_atlas_key(user_atlas):
-            wav_path = gen_vo(
+            return gen_vo(
                 script=req.script,
                 voice=req.voice,
                 style_preset=req.style_preset,
                 custom_notes=req.custom_notes,
                 output_dir=out_dir,
             )
+    
+    try:
+        wav_path = await asyncio.to_thread(_generate)
         path, url = _stage_user_media(wav_path, user["id"], "voiceover", "audio/wav")
         return {"path": path, "url": url}
     except ValueError as e:
