@@ -26,6 +26,11 @@ STARTER_M = "price_starter_monthly"
 STARTER_A = "price_starter_annual"
 DAILY_M = "price_daily_monthly"
 DAILY_A = "price_daily_annual"
+# Grandfathered V1 prices ($27/$49)
+STARTER_M_V1 = "price_starter_monthly_v1"
+STARTER_A_V1 = "price_starter_annual_v1"
+DAILY_M_V1 = "price_daily_monthly_v1"
+DAILY_A_V1 = "price_daily_annual_v1"
 
 
 @pytest.fixture(autouse=True)
@@ -34,6 +39,10 @@ def prices(monkeypatch):
     monkeypatch.setattr(config, "STRIPE_PRICE_STARTER_ANNUAL", STARTER_A)
     monkeypatch.setattr(config, "STRIPE_PRICE_DAILY_MONTHLY", DAILY_M)
     monkeypatch.setattr(config, "STRIPE_PRICE_DAILY_ANNUAL", DAILY_A)
+    monkeypatch.setattr(config, "STRIPE_PRICE_STARTER_MONTHLY_V1", STARTER_M_V1)
+    monkeypatch.setattr(config, "STRIPE_PRICE_STARTER_ANNUAL_V1", STARTER_A_V1)
+    monkeypatch.setattr(config, "STRIPE_PRICE_DAILY_MONTHLY_V1", DAILY_M_V1)
+    monkeypatch.setattr(config, "STRIPE_PRICE_DAILY_ANNUAL_V1", DAILY_A_V1)
     monkeypatch.setattr(config, "STRIPE_PRICE_ID", "")
     monkeypatch.setattr(config, "STRIPE_PRICE_ID_ANNUAL", "")
 
@@ -54,6 +63,8 @@ class TestTierFromPriceId:
     @pytest.mark.parametrize("pid,tier", [
         (STARTER_M, "starter"), (STARTER_A, "starter"),
         (DAILY_M, "daily"), (DAILY_A, "daily"),
+        (STARTER_M_V1, "starter"), (STARTER_A_V1, "starter"),
+        (DAILY_M_V1, "daily"), (DAILY_A_V1, "daily"),
     ])
     def test_known_prices(self, pid, tier):
         assert server._tier_from_price_id(pid) == tier
@@ -76,10 +87,22 @@ class TestTierFromPriceId:
         monkeypatch.setattr(config, "STRIPE_PRICE_ID", "price_legacy")
         assert server._tier_from_price_id("price_legacy") == "starter"
 
+    def test_grandfathered_v1_prices_recognized(self):
+        """V1 prices ($27/$49) must continue working for existing subscribers."""
+        assert server._tier_from_price_id(STARTER_M_V1) == "starter"
+        assert server._tier_from_price_id(STARTER_A_V1) == "starter"
+        assert server._tier_from_price_id(DAILY_M_V1) == "daily"
+        assert server._tier_from_price_id(DAILY_A_V1) == "daily"
+
 
 class TestTierFromInvoice:
     def test_simple_renewal(self):
         assert server._tier_from_invoice(_invoice(_line(DAILY_M, 4900))) == "daily"
+
+    def test_simple_renewal_grandfathered_v1(self):
+        """Grandfathered $27/$49 invoices must still grant correct credits."""
+        assert server._tier_from_invoice(_invoice(_line(DAILY_M_V1, 4900))) == "daily"
+        assert server._tier_from_invoice(_invoice(_line(STARTER_M_V1, 2700))) == "starter"
 
     def test_upgrade_proration_picks_the_new_plan(self):
         """Stripe credits the unused Starter time as a negative line."""
@@ -94,6 +117,18 @@ class TestTierFromInvoice:
 
     def test_downgrade_proration_picks_starter(self):
         invoice = _invoice(_line(DAILY_M, -2000), _line(STARTER_M, 2700))
+
+        assert server._tier_from_invoice(invoice) == "starter"
+
+    def test_upgrade_from_v1_to_new_pricing(self):
+        """Grandfathered $27 → new $79 upgrade proration."""
+        invoice = _invoice(_line(STARTER_M_V1, -1200), _line(DAILY_M, 7900))
+
+        assert server._tier_from_invoice(invoice) == "daily"
+
+    def test_downgrade_from_new_to_v1_pricing(self):
+        """Edge case: new $79 → grandfathered $27 (portal shouldn't allow, but handle it)."""
+        invoice = _invoice(_line(DAILY_M, -3000), _line(STARTER_M_V1, 2700))
 
         assert server._tier_from_invoice(invoice) == "starter"
 
@@ -213,11 +248,11 @@ class TestUpgradeGrant:
 
 
 class TestIntervalFromPriceId:
-    @pytest.mark.parametrize("pid", [STARTER_A, DAILY_A])
+    @pytest.mark.parametrize("pid", [STARTER_A, DAILY_A, STARTER_A_V1, DAILY_A_V1])
     def test_annual_prices_are_annual(self, pid):
         assert server._interval_from_price_id(pid) == "annual"
 
-    @pytest.mark.parametrize("pid", [STARTER_M, DAILY_M, "", "price_unknown", None])
+    @pytest.mark.parametrize("pid", [STARTER_M, DAILY_M, STARTER_M_V1, DAILY_M_V1, "", "price_unknown", None])
     def test_everything_else_is_monthly(self, pid):
         assert server._interval_from_price_id(pid) == "monthly"
 
