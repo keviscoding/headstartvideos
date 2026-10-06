@@ -2299,9 +2299,10 @@ def _ensure_niche_cron_table() -> None:
 
 def claim_daily_niche_cron(day_key: str) -> bool:
     """
-    Atomically claim today's cron slot. Returns True if this process won
+    Atomically claim a midnight/noon cron slot. Returns True if this process won
     (so it should start the hunt). False if already claimed (another worker
-    or earlier run today).
+    or earlier run in this slot). Noon retains YYYY-MM-DD keys for compatibility;
+    midnight uses YYYY-MM-DD:00.
     """
     _ensure_niche_cron_table()
     day_key = (day_key or "").strip()
@@ -2323,6 +2324,15 @@ def claim_daily_niche_cron(day_key: str) -> bool:
             (day_key, now),
         )
         return int(cur.rowcount or 0) == 1
+
+
+def release_daily_niche_cron(day_key: str) -> None:
+    """Release an unstarted claim when another discovery worker is busy."""
+    with _conn() as conn:
+        conn.cursor().execute(
+            _q("DELETE FROM niche_cron_days WHERE day_key = ? AND job_id = ''"),
+            (day_key,),
+        )
 
 
 def finish_daily_niche_cron(day_key: str, *, job_id: str, keywords: list[str]) -> None:

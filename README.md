@@ -111,21 +111,19 @@ python -m webapp.worker
 
 Or: `docker compose up --build` (web with `COOK_ON_WEB=0` + one worker).
 
-## Niche Finder library (scroll discovery + cron)
+## Niche Finder library (lightweight discovery + cron)
 
 Niche Finder is a **shared database** users browse — not an on-demand hunt for everyone.
-Discovery **scrolls real YouTube search pages** (Playwright), like ViewHunt — not API search ranking.
-Videos older than **6 months** are ignored. Results upsert into `niche_channels`.
+Discovery reads public YouTube search/related results with two HTTP scouts and batches metadata checks. It uses broad, rotating probes and numeric admission checks. New entries are marked **Performance lead**; see [the process and limits](docs/cloud-niche-discovery.md).
 
-Isolation: niche scrape prefers an ephemeral **Fly Machine** on the cook app image (`python -m webapp.fly_niche_oneshot`) — same image as cooks, different command, **not** the cook queue. Progress lives in `niche_hunt_runs` so refreshing the page can resume polling. If Fly is off, it falls back to a web-dyno background thread.
+Isolation: discovery uses an ephemeral **Fly Machine** with its dedicated `FLY_NICHE_IMAGE` (`python -m webapp.fly_niche_oneshot`), one shared CPU and 512 MB RAM. Progress lives in `niche_hunt_runs` so refreshing the page can resume polling. If Fly is off, it falls back to a development background thread.
 
 1. Create a `CRON_SECRET` (any long random string, e.g. `openssl rand -hex 32`).
    Set it on the **web** DigitalOcean app env vars. Same value can be used for manual curls.
    This secret only authorizes niche scrape triggers — it is not Claude MCP auth.
 2. Set `YOUTUBE_API_KEY`, and (for Fly) `COOK_ON_FLY=1` + cook Fly secrets on the web app.
-3. Redeploy the cook image after niche code changes so Machines pick up `fly_niche_oneshot`.
-4. **Automatic daily populate:** with `CRON_SECRET` set, the web app itself starts one spontaneous
-   keyword hunt per UTC day after 12:00 UTC (no DigitalOcean scheduled job required).
+3. Build the dedicated niche image after discovery-worker changes and set `FLY_NICHE_IMAGE` to its digest. Scheduler-only changes need only a web deployment.
+4. **Automatic twice-daily populate:** with `CRON_SECRET` set, the web app starts a hunt at **00:00 and 12:00 UTC**, checking every five minutes (no DigitalOcean scheduled job required). Each slot gets a different broad keyword pack. Database claims prevent duplicate runs across restarts/replicas, including the previous daily noon claim. After downtime, only the current slot runs; missed hunts do not accumulate. A busy discovery worker defers the slot to the next check. Each run retains its ten-minute ceiling, target of up to 50 leads, and existing work/API limits; the shared 6,000-read daily cap is unchanged.
    You can still trigger manually:
 
 ```bash
@@ -135,8 +133,7 @@ curl -X POST https://channelrecipe.com/api/internal/niche-finder/cron \
   -d '{}'
 ```
 
-Empty body → today's spontaneous keyword pack (simple probes + niche anchors).
-Optional JSON: `keywords` (overrides daily pack), `scroll_count` (default 80; scrolls until results end), `max_video_age_days`, `max_channels` (0 = keep all).
+The endpoint above is an additional manual trigger. Empty body uses the lightweight defaults and rotating exploration lanes. Optional JSON includes `keywords`, `time_budget_seconds`, `target_channels`, `candidate_cap`, `search_cap`, and `api_cap`.
 Admin can also hit **Add niches** in the Niche Finder UI.
 
 ## Architecture
