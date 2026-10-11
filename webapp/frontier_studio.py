@@ -24,13 +24,15 @@ from pydantic import BaseModel, Field
 import config
 from webapp import database as db
 from cryptography.fernet import Fernet, InvalidToken
+from webapp import frontier_providers as providers
 
-VERSION = "5.3-admin.1"
+VERSION = "5.3-admin.2"
 CATALOG = Path(__file__).resolve().parent / "frontier" / "catalog.json"
-RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.1.zip"
+RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.2.zip"
 GEMINI_MODEL = "gemini-3.8-flash"
 _slots = threading.BoundedSemaphore(2)
 _schema_lock = threading.Lock()
+_schema_ready = set()
 
 
 def _vault():
@@ -66,10 +68,17 @@ def require_admin_user(user: dict | None) -> dict:
 
 def initialize():
     # Dedicated additive tables; no changes to existing Stripe or render schemas.
+    schema_key = (db.IS_PG, str(db.DB_PATH))
     with _schema_lock, db._conn() as conn:
+        if schema_key in _schema_ready:
+            return
         conn.execute("""CREATE TABLE IF NOT EXISTS frontier_credentials (
             user_id INTEGER PRIMARY KEY, key_enc TEXT NOT NULL, model TEXT NOT NULL,
             updated_at DOUBLE PRECISION NOT NULL)""")
+        if db.IS_PG:
+            conn.execute("ALTER TABLE frontier_credentials ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'gemini'")
+        elif "provider" not in {r["name"] for r in conn.execute("PRAGMA table_info(frontier_credentials)").fetchall()}:
+            conn.execute("ALTER TABLE frontier_credentials ADD COLUMN provider TEXT NOT NULL DEFAULT 'gemini'")
         conn.execute("""CREATE TABLE IF NOT EXISTS frontier_projects (
             id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, title TEXT NOT NULL,
             style TEXT NOT NULL, version TEXT NOT NULL, max_calls INTEGER NOT NULL,
@@ -80,6 +89,7 @@ def initialize():
             id TEXT PRIMARY KEY, project_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
             status TEXT NOT NULL, result_json TEXT NOT NULL DEFAULT '',
             created_at DOUBLE PRECISION NOT NULL)""")
+    _schema_ready.add(schema_key)
 
 
 def catalog() -> list[dict]:
@@ -98,7 +108,8 @@ def status(user: dict) -> dict:
     c = credential(user["id"])
     return {"access": "admin_preview", "version": VERSION,
             "brain": {"connected": bool(c and decrypt_secret(c["key_enc"])),
-                      "provider": "gemini", "model": c["model"] if c else GEMINI_MODEL},
+                      "provider": c["provider"] if c else "gemini", "model": c["model"] if c else GEMINI_MODEL},
+            "providers": providers.PROVIDERS,
             "download_ready": release_ready(), "styles": catalog(),
             "local_url": "http://127.0.0.1:7860/cr-setup",
             "generation_billing": "Your provider accounts", "rendering": "Your computer",
@@ -128,7 +139,8 @@ def release_ready() -> bool:
 
 class BrainKey(BaseModel):
     api_key: str = Field(min_length=16, max_length=512)
-    model: str = Field(default=GEMINI_MODEL, pattern=r"^gemini-[a-zA-Z0-9.\-]+$", max_length=100)
+    provider: Literal["gemini", "kie", "atlas"] = "gemini"
+    model: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9./_\-]+$", max_length=100)
 
 
 def save_key(user: dict, req: BrainKey) -> dict:
@@ -137,26 +149,25 @@ def save_key(user: dict, req: BrainKey) -> dict:
     key = req.api_key.strip()
     if any(c.isspace() for c in key):
         raise HTTPException(400, "Paste the complete key without spaces.")
-    try:
-        # Auth/model lookup: does not generate content or spend generation tokens.
-        res = requests.get("https://generativelanguage.googleapis.com/v1beta/models/" + req.model,
-                           headers={"x-goog-api-key": key}, timeout=(10, 20))
-    except requests.RequestException:
-        raise HTTPException(503, "Google could not be reached. Your existing key was kept; try again.")
-    if res.status_code != 200:
-        message = {401: "Google did not accept this key.", 403: "Enable Gemini API access for this key.",
-                   404: "This model is not available on your Google project.",
-                   429: "Google is rate limiting this project. Try again after its limit resets."}
-        raise HTTPException(400, message.get(res.status_code, "Google could not verify this key. Try again."))
-    if "generateContent" not in res.json().get("supportedGenerationMethods", []):
-        raise HTTPException(400, "Choose a Gemini model that can generate text and understand images.")
+    info = providers.PROVIDERS[req.provider]
+    model = req.model or info["default_brain"]
+    if req.provider == "gemini":
+        import re
+        valid = re.fullmatch(r"gemini-[a-zA-Z0-9.\-]+", model)
+    else:
+        valid = model in {m["id"] for m in info["brain_models"]}
+    if not valid:
+        raise HTTPException(400, "Choose one of this account's supported brain models.")
+    # Read-only account/model lookup. Never generates content or spends tokens.
+    providers.check_key(req.provider, key, model)
     initialize()
     with db._conn() as conn:
-        conn.execute(db._q("""INSERT INTO frontier_credentials (user_id,key_enc,model,updated_at)
-            VALUES (?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET
-            key_enc=excluded.key_enc,model=excluded.model,updated_at=excluded.updated_at"""),
-            (user["id"], encrypt_secret(key), req.model, time.time()))
-    return {"connected": True, "model": req.model, "message": "Connected. Model calls use your Google project."}
+        conn.execute(db._q("""INSERT INTO frontier_credentials (user_id,key_enc,model,updated_at,provider)
+            VALUES (?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET
+            key_enc=excluded.key_enc,model=excluded.model,updated_at=excluded.updated_at,provider=excluded.provider"""),
+            (user["id"], encrypt_secret(key), model, time.time(), req.provider))
+    return {"connected": True, "provider": req.provider, "model": model,
+            "message": f"Connected. Brain calls use your {info['label']} account."}
 
 
 class ProjectRequest(BaseModel):
@@ -168,7 +179,7 @@ class ProjectRequest(BaseModel):
 def create_project(user: dict, req: ProjectRequest) -> dict:
     require_admin_user(user)
     if not credential(user["id"]):
-        raise HTTPException(409, "Connect your Gemini account in Local studio first.")
+        raise HTTPException(409, "Connect a model account in Local studio first.")
     project_id = "crv_" + secrets.token_hex(12)
     now = time.time()
     with db._conn() as conn:
@@ -207,7 +218,7 @@ def generate(user: dict, req: BrainRequest) -> dict:
     c = credential(user["id"])
     key = decrypt_secret(c["key_enc"]) if c else ""
     if not key:
-        raise HTTPException(409, "Reconnect your Gemini key in Local studio.")
+        raise HTTPException(409, "Reconnect your model account in Local studio.")
     parts = [{"text": req.prompt}]
     size = 0
     for data in req.images:
@@ -248,33 +259,9 @@ def generate(user: dict, req: BrainRequest) -> dict:
             conn.execute(db._q("INSERT INTO frontier_requests (id,project_id,fingerprint,status,created_at) VALUES (?,?,?,?,?)"),
                          (req.request_id, req.project_id, fingerprint, "running", time.time()))
             reserved = True
-        payload = {"contents": [{"role": "user", "parts": parts}],
-                   "generationConfig": {"maxOutputTokens": req.max_tokens}}
-        if req.kind == "research":
-            payload["tools"] = [{"google_search": {}}]
-        try:
-            res = requests.post("https://generativelanguage.googleapis.com/v1beta/models/" + c["model"] + ":generateContent",
-                                headers={"x-goog-api-key": key}, json=payload, timeout=(15, 180))
-            if res.status_code != 200:
-                # Never return upstream bodies, which can contain credentials or private prompts.
-                raise HTTPException(502, "Google could not complete this request (HTTP %s). No CR key was used." % res.status_code)
-            data = res.json()
-            candidate = (data.get("candidates") or [{}])[0]
-            if candidate.get("finishReason") not in (None, "STOP"):
-                raise HTTPException(502, "Google stopped before completing this answer. Review this project's usage before restarting it.")
-            text = "".join(p.get("text", "") for cand in data.get("candidates", [])[:1]
-                           for p in cand.get("content", {}).get("parts", []) if not p.get("thought"))
-            if not text.strip():
-                raise HTTPException(502, "The model returned no usable answer. Check your project before retrying.")
-            usage = data.get("usageMetadata", {})
-            incoming = int(usage.get("promptTokenCount", 0))
-            outgoing = int(usage.get("candidatesTokenCount", 0)) + int(usage.get("thoughtsTokenCount", 0))
-            result = {"text": text, "model": c["model"], "input_tokens": incoming,
-                      "output_tokens": outgoing, "request_id": req.request_id, "version": VERSION}
-        except requests.RequestException:
-            raise HTTPException(502, "The provider connection was interrupted. Check the recorded request before retrying.")
-        except (ValueError, TypeError):
-            raise HTTPException(502, "Google returned an unreadable response.")
+        text, incoming, outgoing = providers.generate(c["provider"], key, c["model"], parts, req.kind, req.max_tokens)
+        result = {"text": text, "provider": c["provider"], "model": c["model"], "input_tokens": incoming,
+                  "output_tokens": outgoing, "request_id": req.request_id, "version": VERSION}
         with db._conn() as conn:
             conn.execute(db._q("UPDATE frontier_requests SET status='complete',result_json=? WHERE id=?"),
                          (json.dumps(result), req.request_id))

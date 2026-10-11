@@ -17,7 +17,7 @@ import requests
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
-VERSION = "5.3-admin.1"
+VERSION = "5.3-admin.2"
 
 
 def verify_private(client, bucket, key, endpoint, cdn=""):
@@ -65,6 +65,7 @@ def build(source: Path, target: Path):
             info.external_attr = (0o100755 if path.suffix == ".command" else 0o100644) << 16
             info.compress_type = zipfile.ZIP_DEFLATED
             result.writestr(info, path.read_bytes())
+        result.writestr("ChannelRecipe studio/cr-providers.json", (ROOT / "webapp/frontier/providers.json").read_bytes())
         result.writestr("ChannelRecipe studio/cr-release.json", json.dumps({
             "version": VERSION, "access": "admin_only", "source_sha256": SOURCE_SHA256,
             "public_release_allowed": False, "engine_files": count,
@@ -77,7 +78,7 @@ def build(source: Path, target: Path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
-    parser.add_argument("--output", type=Path, default=ROOT / "data/frontier/channelrecipe-5.3-admin.1.zip")
+    parser.add_argument("--output", type=Path, default=ROOT / "data/frontier/channelrecipe-5.3-admin.2.zip")
     parser.add_argument("--upload", action="store_true")
     args = parser.parse_args()
     manifest = build(args.source, args.output)

@@ -1,6 +1,6 @@
 # ChannelRecipe local studio: admin migration preview
 
-Version: `5.3-admin.1`. Entry point: `https://channelrecipe.com/app#local-studio`.
+Version: `5.3-admin.2`. Entry point: `https://channelrecipe.com/app#local-studio`.
 
 This is the first runnable integration checkpoint, **not completion of the full
 Frontier migration**. Ordinary users, including paying subscribers, cannot use
@@ -16,7 +16,11 @@ its website APIs, download or MCP tools. Access is checked against the current
   timeline editor, style files, graphics, 3D libraries and required assets.
 - Local setup checks, secure account entry and a spending acknowledgement.
 - Text, grounded research and sampled-image review calls routed to CR using the
-  admin's own Gemini key. No CR generation key is used as a fallback.
+  admin's own Google Gemini, Kie.ai or Atlas Cloud key. No CR generation key is used as a fallback.
+- An optional one-key model account in the local setup: checked narration,
+  images/reference edits, Seedance motion and Kling Standard/Pro presenter tasks
+  go directly to Kie.ai or Atlas Cloud. The same key can connect the CR brain
+  with explicit form consent. Unchecked tasks retain their original providers.
 - Encrypted brain keys, owned project records, provider-reported token receipts,
   request idempotency, bounded concurrency and a per-project request ceiling.
 
@@ -51,9 +55,9 @@ asset notices are retained. It writes a version/manifest into the bundle.
 python scripts/build_frontier_admin.py --source /private/path/Frontier-5.3-FULL.zip
 ```
 
-The output defaults to git-ignored `data/frontier/channelrecipe-5.3-admin.1.zip`.
+The output defaults to git-ignored `data/frontier/channelrecipe-5.3-admin.2.zip`.
 `--upload` publishes to the private Spaces object
-`private/frontier/channelrecipe-5.3-admin.1.zip`. It checks both the object ACL
+`private/frontier/channelrecipe-5.3-admin.2.zip`. It checks both the object ACL
 and unauthenticated origin/CDN access, testing a small canary before uploading
 the engine. Failure removes the uploaded release. Never print storage credentials.
 
@@ -70,13 +74,17 @@ rotate unrelated HeyGen credentials. Without it, key saving fails before any
 provider call. Rotation requires decrypting/re-encrypting the frontier credentials
 or asking admins to reconnect; replacing the key silently is not a rotation.
 
-Admins enter their own Gemini API key through the CR account form. Model lookup
-verifies API access without generating content. The configured default model is
-`gemini-3.8-flash`; changing its availability or output quality requires review.
+Admins connect Google Gemini, Kie.ai or Atlas Cloud through the CR brain form,
+or paste a hub key once in the local setup and select its brain checkbox.
+Read-only model/account lookup verifies API access without generating content.
+The supported hub brain is Gemini 3.8 Flash (provider-specific model identifiers).
+Kie uses its model-specific Chat Completions endpoint, including googleSearch
+for research; Atlas uses native Gemini contents/tools and multimodal parts.
+Changing model availability or output quality requires review.
 Connection is not a promise of credit availability or production quality.
 
-Media keys are stored locally with private file permissions. They never travel
-through the CR account endpoints. The local connect key is the existing personal
+Media keys are stored locally with private file permissions. They travel to CR
+only when the user explicitly selects the same account for the brain. The local connect key is the existing personal
 CR MCP key; users can revoke it using the existing rotation control. Never ask
 for keys in chat or pass them as shell command arguments.
 
@@ -84,6 +92,24 @@ Receipts show reported brain tokens, including thinking tokens where reported.
 They are not an exact total dollar bill. Media, search, interrupted requests and
 provider subscriptions can have additional charges. Provider usage reports are
 the source of truth. The preview does not enforce a cross-provider dollar budget.
+
+The hub profile replaces tasks, not every model in the engine. Its catalog is
+shared between the server and packaged runner. Defaults use Nano Banana for
+images/edits, ElevenLabs for narration, Seedance for image motion, and Kling for
+presenters. The hub's setup voice replaces preset voices. Private clones, licensed
+music, stock/search services, other avatar models, effects and upscalers do not
+automatically transfer. Unsupported specialised substitutions stop with guidance;
+they do not silently change wallets. Original per-provider fallback behavior can
+still apply to tasks the user explicitly leaves on individual providers.
+
+Hub media jobs have at most two active calls on the local computer. Creation is
+recorded before sending; successful IDs are persisted before polling. Polling
+and file downloads can resume without another submission. An uncertain creation
+without an ID, or a failed task, stops until an operator reviews the provider log
+and deliberately clears that specific receipt. No automatic paid retry occurs.
+Receipts contain task IDs and reported usage, not API keys or private prompts.
+Uploads go to the chosen provider; downloads never carry its Authorization.
+Cached uploads expire after 12 hours. Account changes are blocked during jobs.
 
 ## Recovery and limitations
 
@@ -110,13 +136,15 @@ installers and automatic prerequisite repair remain onboarding work.
 
 ```sh
 python -m pytest -q tests/test_frontier_studio.py tests/test_frontier_bridge.py \
-  tests/test_mcp_billing.py tests/test_niche_cron.py
-python scripts/smoke_frontier_admin.py --bundle data/frontier/channelrecipe-5.3-admin.1.zip
+  tests/test_frontier_media.py tests/test_mcp_billing.py tests/test_niche_cron.py
+python scripts/smoke_frontier_admin.py --bundle data/frontier/channelrecipe-5.3-admin.2.zip
 ```
 
 The bundle smoke requires its runtime dependencies. It imports the actual pinned
 engine and tests local screens, local access boundaries and the CR bridge using
-stubbed model responses; it does not spend provider credits or certify a video.
+stubbed model responses, plus actual 5.3 image/motion/presenter hook routing;
+it does not spend provider credits or certify a video. New provider contracts
+are verified against official API docs; live paid video quality remains a gate.
 Browser checks exercise all five onboarding steps, account saving, style search
 and family filters, and narrow/mobile layouts.
 

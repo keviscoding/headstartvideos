@@ -1,7 +1,7 @@
 /* Guided owner preview. Backend enforces access independently of this page. */
 window.CRLocalStudio = (() => {
     let data = null, step = 0, platform = /Win/i.test(navigator.userAgent) ? 'windows' : 'mac';
-    let busy = false;
+    let busy = false, brainChoice = 'kie';
     const esc = text => String(text ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const root = () => document.getElementById('page-local-studio');
     const steps = ['How it works', 'Download', 'Connect Claude', 'Connect accounts', 'Make a video'];
@@ -14,6 +14,15 @@ window.CRLocalStudio = (() => {
         download:'<path d="M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4"/>'
     };
     const icon = key => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">'+icons[key]+'</svg>';
+    const providerInfo = () => data.providers[brainChoice];
+    function brainForm() {
+        const account=providerInfo();
+        return '<div class="ls-key-card"><div class="ls-key-top"><div><h3>Brain account</h3><p>Writing, research and image review use your chosen account.</p></div><span class="ls-status '+(data.brain.connected?'connected':'')+'">'+(data.brain.connected?esc(data.providers[data.brain.provider].label)+' connected':'Needs a key')+'</span></div>'+
+            '<form id="ls-key-form"><label for="ls-brain-provider">Model account</label><select id="ls-brain-provider" class="cr-input">'+Object.entries(data.providers).map(([id,p])=>'<option value="'+id+'" '+(id===brainChoice?'selected':'')+'>'+esc(p.label)+'</option>').join('')+'</select>'+
+            '<label for="ls-brain-key" id="ls-brain-label">Your '+esc(account.label)+' API key</label><div class="ls-key-input"><input id="ls-brain-key" class="cr-input" type="password" autocomplete="off" placeholder="Paste the complete key" required minlength="16"><button class="btn-primary" type="submit">Save & check</button></div></form>'+
+            '<p class="ls-inline-note">The key is encrypted in CR. Checking API access does not generate content or spend generation credits. Media tasks use a local copy when you connect the same account in the downloaded studio.</p><a id="ls-key-link" href="'+esc(account.key_url)+'" target="_blank" rel="noopener">Create an account key ↗</a>'+
+            (data.brain.connected?'<button class="btn-ghost ls-remove" data-ls-remove-key>Disconnect brain account</button>':'')+'</div>';
+    }
     function notice(text, error = false) {
         const el = document.getElementById('ls-notice');
         if (el) { el.textContent = text; el.classList.toggle('ls-error', error); el.hidden = !text; }
@@ -52,13 +61,10 @@ window.CRLocalStudio = (() => {
             '<p class="ls-inline-note">No API key is included in this command.</p></div><aside class="ls-callout"><h3>New to Claude Code?</h3><p>It is Claude’s app for working with files on your computer. Start with its official installation guide, then return here.</p><a href="https://code.claude.com/docs/en/quickstart" target="_blank" rel="noopener">Open Claude Code setup ↗</a><p class="ls-inline-note">Claude’s subscription has its own usage limits.</p></aside></div>' +
             '<div class="ls-callout"><strong>A first message to try</strong><p class="ls-prompt">“Use ChannelRecipe to help me set up my local video studio. Walk me through it one step at a time.”</p><button class="btn-secondary" data-ls-copy-prompt>Copy first message</button></div>' +
             '<button class="btn-primary ls-next" data-ls-next>Next: connect your accounts '+icon('arrow')+'</button>';
-        if (step === 3) return '<div class="ls-section-head"><span class="ls-step-number">04</span><div><h2>Connect the accounts that do the work</h2><p>The brain key lives securely in CR. Voice, image and video keys are added on your computer.</p></div></div>' +
-            '<div class="ls-key-card"><div class="ls-key-top"><div><h3>Google Gemini</h3><p>Powers writing, directing and review through your Google project.</p></div><span class="ls-status '+(data.brain.connected?'connected':'')+'">'+(data.brain.connected?'Connected':'Needs a key')+'</span></div>' +
-            '<form id="ls-key-form"><label for="ls-brain-key">Your Gemini API key</label><div class="ls-key-input"><input id="ls-brain-key" class="cr-input" type="password" autocomplete="off" placeholder="'+(data.brain.connected?'Paste a new key to replace the saved one':'Paste your Gemini key')+'" required minlength="16"><button class="btn-primary" type="submit">Save & check</button></div></form>' +
-            '<p class="ls-inline-note">This check does not generate a video. Your key is encrypted and never included in the download.</p><a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Create a Gemini key ↗</a>' +
-            (data.brain.connected?'<button class="btn-ghost ls-remove" data-ls-remove-key>Disconnect Gemini</button>':'')+'</div>' +
+        if (step === 3) return '<div class="ls-section-head"><span class="ls-step-number">04</span><div><h2>One model account can do most of the work</h2><p>Choose Kie.ai or Atlas Cloud for the main AI tasks. You can also keep individual providers.</p></div></div>' +
             '<div class="ls-key-card"><h3>Connect your downloaded studio</h3><p>Copy your CR connect key, then paste it into the local setup page. This connects the studio to your CR account.</p><div class="ls-key-actions"><button class="btn-secondary" data-ls-copy-key>Copy CR connect key</button><a href="http://127.0.0.1:7860/cr-setup" target="_blank" rel="noopener" class="btn-secondary">Open local setup ↗</a></div><p class="ls-inline-note">Keep this key private. It is different from your Google or media keys.</p></div>' +
-            '<div class="ls-callout"><strong>Add media accounts in the local setup page.</strong><p>Start with a voice and image provider. Avatar and motion styles may need additional services. You will see which keys are missing before production.</p></div>' +
+            '<div class="ls-callout"><strong>The easiest setup: paste one model key locally.</strong><p>In local setup, choose Kie.ai or Atlas Cloud. One key connects narration, images, motion and Kling presenters. Select “Also use this account for the CR brain” to connect writing and review with the same key. Stock footage, licensed music and specialised models may need their original accounts. Hub narration uses the voice you choose in setup; private voice clones are account-specific.</p></div>' +
+            '<details class="ls-help"><summary>Connect or change the brain account here</summary>'+brainForm()+'</details>' +
             '<button class="btn-primary ls-next" data-ls-next>Choose your first video '+icon('arrow')+'</button>';
         return '<div class="ls-section-head"><span class="ls-step-number">05</span><div><h2>Choose a look for your first video</h2><p>The current library covers illustrated stories, documentaries, presenters, maps and 3D. Each has different account and hardware needs.</p></div></div>' +
             '<div class="ls-library-controls"><input class="cr-input" id="ls-style-search" type="search" placeholder="Search styles" aria-label="Search styles"><select class="cr-input" id="ls-family-filter" aria-label="Filter styles"><option value="">All styles</option><option value="illustrated">Illustrated</option><option value="documentary">Documentary & graphics</option><option value="avatar">AI presenters</option><option value="3d">3D</option></select></div>' +
@@ -84,12 +90,17 @@ window.CRLocalStudio = (() => {
         });
         root().querySelector('#ls-key-form')?.addEventListener('submit', async event => {
             event.preventDefault(); const button=event.target.querySelector('button');button.disabled=true;button.textContent='Checking…';
-            try { await api('brain-key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:document.getElementById('ls-brain-key').value.trim()})}); data=await api('status');render();notice('Gemini connected. Requests use your Google project.');}
+            try { const result=await api('brain-key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:document.getElementById('ls-brain-key').value.trim(),provider:brainChoice,model:providerInfo().default_brain})}); data=await api('status');render();notice(result.message);}
             catch(e){notice(e.message,true);}
             finally{button.disabled=false;button.textContent='Save & check';}
         });
+        root().querySelector('#ls-brain-provider')?.addEventListener('change', event => {
+            brainChoice=event.target.value;document.getElementById('ls-brain-key').value='';
+            document.getElementById('ls-brain-label').textContent='Your '+providerInfo().label+' API key';
+            document.getElementById('ls-key-link').href=providerInfo().key_url;
+        });
         root().querySelector('[data-ls-remove-key]')?.addEventListener('click', async () => {
-            try{await api('brain-key',{method:'DELETE'});data=await api('status');render();notice('Gemini disconnected. Add a key before starting more work.');}
+            try{await api('brain-key',{method:'DELETE'});data=await api('status');render();notice('Brain account disconnected. Add a key before starting more work.');}
             catch(e){notice(e.message,true);}
         });
         if(step===4){styles();document.getElementById('ls-style-search').addEventListener('input',styles);document.getElementById('ls-family-filter').addEventListener('change',styles);history();}
@@ -120,7 +131,7 @@ window.CRLocalStudio = (() => {
         if (!(typeof currentUser !== 'undefined' && currentUser?.is_admin)) return;
         if(busy)return;busy=true;
         if(!data)root().innerHTML='<div class="ls-wrap"><p role="status">Preparing your studio setup…</p></div>';
-        try{data=await api('status');render();}
+        try{data=await api('status');brainChoice=data.brain.connected?data.brain.provider:'kie';render();}
         catch(e){root().innerHTML='<div class="ls-wrap ls-panel"><h2>Your setup could not load</h2><p>'+esc(e.message)+'</p><button class="btn-primary" id="ls-retry">Try again</button></div>';document.getElementById('ls-retry').addEventListener('click',open);}
         finally{busy=false;}
     }
