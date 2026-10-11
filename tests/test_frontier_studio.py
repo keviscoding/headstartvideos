@@ -82,8 +82,10 @@ def request_for(project_id, **changes):
 
 
 def reply(**changes):
-    return SimpleNamespace(status_code=200, json=lambda: {"candidates": [{"content": {"parts": [{"text": "An outline."}]}}],
-                           "usageMetadata": {"promptTokenCount": 120, "candidatesTokenCount": 60, "thoughtsTokenCount": 10}, **changes})
+    data = {"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": "An outline."}]}}],
+            "usageMetadata": {"promptTokenCount": 120, "candidatesTokenCount": 60, "thoughtsTokenCount": 10}, **changes}
+    return SimpleNamespace(status_code=200, json=lambda: data,
+                           iter_lines=lambda **k: iter([('data: '+json.dumps(data)).encode(), b'']), close=lambda: None)
 
 
 def test_completed_request_is_reused_without_second_provider_call(env, monkeypatch):
@@ -222,7 +224,7 @@ def test_each_hub_routes_text_grounding_and_images_to_customer_account(env, monk
     calls = []
     def answer(url, **kw):
         calls.append((url, kw))
-        return SimpleNamespace(status_code=200, json=lambda: {"choices": [{"message": {"content": "Answer"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 10, "completion_tokens": 15}}) if provider == "kie" else reply()
+        return SimpleNamespace(status_code=200, close=lambda: None, json=lambda: {"choices": [{"message": {"content": "Answer"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 10, "completion_tokens": 15}}) if provider == "kie" else reply()
     monkeypatch.setattr(studio.requests, "post", answer)
     req = request_for(p["id"], kind=kind, images=[b64encode(b"\x89PNG\r\n\x1a\nreview").decode()] if kind == "vision" else [])
     result = studio.generate(env.owner, req)
@@ -261,6 +263,12 @@ def test_postgres_schema_initialization_does_not_require_sqlite_path(env, monkey
     assert any("ADD COLUMN IF NOT EXISTS provider" in s for s in statements)
 
 
+def test_initialized_schema_does_not_open_redundant_database_connections(env, monkeypatch):
+    studio.initialize()
+    monkeypatch.setattr(studio.db, "_conn", lambda: pytest.fail("Ready schema should not open a connection"))
+    studio.initialize()
+
+
 def stopped_request(env, monkeypatch, max_calls=120):
     env.connect(env.owner)
     p = studio.create_project(env.owner, studio.ProjectRequest(title="Stopped video", max_calls=max_calls))
@@ -280,8 +288,9 @@ def test_failure_history_is_owned_and_contains_no_private_payload(env, monkeypat
     history = studio.request_history(env.owner, p["id"])
     item = history["requests"][0]
     assert item["status"] == "needs_review" and item["can_retry"]
-    assert item["errors"][0]["code"] == "network_interrupted"
-    assert item["context"] == {"provider": "gemini", "model": "gemini-3.8-flash", "kind": "text", "max_tokens": 8000}
+    assert item["errors"][0]["code"] == "read_timeout"
+    assert item["context"] == {"provider": "gemini", "model": "gemini-3.8-flash", "kind": "text", "max_tokens": 8000,
+                               "prompt_chars": len(req.prompt), "image_count": 0, "image_bytes": 0, "thinking_level": "low"}
     assert not any(s in json.dumps(history) for s in ("secret provider URL", req.prompt, "private-google-key-for-test", "fingerprint", "result_json"))
     with pytest.raises(HTTPException) as denied:
         studio.request_history(env.other, p["id"])

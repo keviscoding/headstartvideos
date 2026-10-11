@@ -93,6 +93,25 @@ They are not an exact total dollar bill. Media, search, interrupted requests and
 provider subscriptions can have additional charges. Provider usage reports are
 the source of truth. The preview does not enforce a cross-provider dollar budget.
 
+Gemini 3 brain calls explicitly use `low` thinking, matching the original
+engine's preference for limited reasoning on script and review helpers. Gemini
+3.8 cannot fully disable thinking; its default `medium` setting can consume the
+same output budget as the answer. Older/custom Google models keep their existing
+settings. Kie uses its documented `reasoning_effort: low`; hiding thoughts alone
+does not limit their generation. Output budgets and project request ceilings
+are unchanged. Google and Atlas native responses are consumed as SSE streams,
+with reported cumulative usage counted once and a terminal finish reason required.
+Only a complete answer is stored; partial text and thinking are discarded.
+
+The provider's idle read timeout remains 180 seconds. Active native streams are
+also checked against a 180-second generation window; an outstanding blocking
+read can outlast that window until its idle timeout. This does not detach the
+compatibility relay from App Platform or local HTTP timeouts. If the local
+connection stops while CR is finishing, review its recorded status before
+resuming. A persistent job submission/polling contract remains migration work.
+These controls improve latency but do not guarantee provider availability or
+prove original-vs-integrated output quality across every style.
+
 The hub profile replaces tasks, not every model in the engine. Its catalog is
 shared between the server and packaged runner. Defaults use Nano Banana for
 images/edits, ElevenLabs for narration, Seedance for image motion, and Kling for
@@ -121,6 +140,9 @@ request stops to prevent an accidental second charge. The CR page surfaces stopp
 requests, safe failure details and any provider-reported usage. Earlier preview
 failures can have no retained reason; their charge remains unknown. Private prompts,
 partial scripts, keys and upstream bodies are not included in this diagnostic history.
+New failures distinguish an idle read timeout, an active stream exceeding its
+window and an incomplete stream. Safe diagnostics retain elapsed time, reported
+answer/thinking token counts and input lengths, never the input text or images.
 
 An admin can acknowledge a possible additional provider charge and allow one
 recovery retry for a specific stopped request. Approval itself makes no provider call.
@@ -146,7 +168,7 @@ installers and automatic prerequisite repair remain onboarding work.
 ## Verification and next migration work
 
 ```sh
-python -m pytest -q tests/test_frontier_studio.py tests/test_frontier_bridge.py \
+python -m pytest -q tests/test_frontier_providers.py tests/test_frontier_studio.py tests/test_frontier_bridge.py \
   tests/test_frontier_media.py tests/test_mcp_billing.py tests/test_niche_cron.py
 python scripts/smoke_frontier_admin.py --bundle data/frontier/channelrecipe-5.3-admin.2.zip
 ```
