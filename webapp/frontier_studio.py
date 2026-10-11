@@ -68,7 +68,7 @@ def require_admin_user(user: dict | None) -> dict:
 
 def initialize():
     # Dedicated additive tables; no changes to existing Stripe or render schemas.
-    schema_key = (db.IS_PG, str(db.DB_PATH))
+    schema_key = (db.IS_PG, db.DATABASE_URL if db.IS_PG else str(db.DB_PATH))
     with _schema_lock, db._conn() as conn:
         if schema_key in _schema_ready:
             return
