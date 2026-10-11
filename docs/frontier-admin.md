@@ -1,6 +1,6 @@
 # ChannelRecipe local studio: admin migration preview
 
-Version: `5.3-admin.6`. Entry point: `https://channelrecipe.com/app#local-studio`.
+Version: `5.3-admin.7`. Entry point: `https://channelrecipe.com/app#local-studio`.
 
 This is the first runnable integration checkpoint, **not completion of the full
 Frontier migration**. Ordinary users, including paying subscribers, cannot use
@@ -10,13 +10,15 @@ its website APIs, download or MCP tools. Access is checked against the current
 ## What this checkpoint supplies
 
 - An admin navigation entry and five-step onboarding: explanation, download,
-  Claude Code connection, account connection and first video.
+  brain selection, account connection and first video.
 - A searchable catalog of the 26 main presets in the selected 5.3 package.
 - A protected Mac/Windows download retaining the original production engine,
   timeline editor, style files, graphics, 3D libraries and required assets.
 - Local setup checks, secure account entry and a spending acknowledgement.
-- Text, grounded research and sampled-image review calls routed to CR using the
-  admin's own Google Gemini, Kie.ai or Atlas Cloud key. No CR generation key is used as a fallback.
+- Text, supported web research and sampled-image review calls routed to CR using
+  the admin's own Anthropic, Google Gemini, Kie.ai or Atlas Cloud API key. Separate
+  general and specialist visual models are selected explicitly. No CR generation
+  key is used as a fallback.
 - An optional one-key model account in the local setup: checked narration,
   images/reference edits, Seedance motion and Kling Standard/Pro presenter tasks
   go directly to Kie.ai or Atlas Cloud. The same key can connect the CR brain
@@ -55,9 +57,9 @@ asset notices are retained. It writes a version/manifest into the bundle.
 python scripts/build_frontier_admin.py --source /private/path/Frontier-5.3-FULL.zip
 ```
 
-The output defaults to git-ignored `data/frontier/channelrecipe-5.3-admin.6.zip`.
+The output defaults to git-ignored `data/frontier/channelrecipe-5.3-admin.7.zip`.
 `--upload` publishes to the private Spaces object
-`private/frontier/channelrecipe-5.3-admin.6.zip`. It checks both the object ACL
+`private/frontier/channelrecipe-5.3-admin.7.zip`. It checks both the object ACL
 and unauthenticated origin/CDN access, testing a small canary before uploading
 the engine. Failure removes the uploaded release. Never print storage credentials.
 
@@ -74,14 +76,56 @@ rotate unrelated HeyGen credentials. Without it, key saving fails before any
 provider call. Rotation requires decrypting/re-encrypting the frontier credentials
 or asking admins to reconnect; replacing the key silently is not a rotation.
 
-Admins connect Google Gemini, Kie.ai or Atlas Cloud through the CR brain form,
-or paste a hub key once in the local setup and select its brain checkbox.
+Admins connect Anthropic, Google Gemini, Kie.ai or Atlas Cloud through the CR
+brain form, or paste a hub key once in the local setup and select its brain checkbox.
 Read-only model/account lookup verifies API access without generating content.
-The supported hub brain is Gemini 3.8 Flash (provider-specific model identifiers).
-Kie uses its model-specific Chat Completions endpoint, including googleSearch
-for research; Atlas uses native Gemini contents/tools and multimodal parts.
-Changing model availability or output quality requires review.
+The shared `webapp/frontier/providers.json` catalog supplies the allowed model IDs,
+protocols, model labels and research support for the website and packaged runner.
+Claude uses native Messages requests and streaming through the selected account.
+Kie Gemini uses its model-specific Chat Completions endpoint, including googleSearch
+for research; Atlas Gemini uses native contents/tools and multimodal parts.
 Connection is not a promise of credit availability or production quality.
+
+| API account | General / specialist Claude choices | Hosted research on its Claude route |
+| --- | --- | --- |
+| Anthropic | `claude-sonnet-5-5` / `claude-opus-5-5` | Native web search |
+| Kie.ai | `claude-sonnet-5-5` / `claude-opus-5-5` | Unverified; stopped before submission |
+| Atlas Cloud | `anthropic/claude-sonnet-5.5-ccmax` / `anthropic/claude-opus-5.5` | Unverified; stopped before submission |
+
+New setup forms offer Sonnet 5.5 for writing, planning and research, and Opus 5.5
+for demanding visual work. Saving the form makes that profile explicit. Existing
+Gemini connections keep their saved model; an API request that omits the specialist
+model uses its general model for both roles. Media account changes leave the brain
+in place unless the user explicitly selects the brain checkbox and model choices.
+The bridge carries the original stage's requested model as routing metadata:
+Opus requests use the chosen specialist model; other requests use the general model.
+This preserves the original role distinction for Folio and 3D without introducing
+new creative choices. Image review by itself does not force every call onto Opus.
+
+The account owns the API charges. An Anthropic API key uses that account's API
+billing; it does not use a Claude Code or Claude subscription login. Kie and Atlas
+charges use their respective API balances. Claude Code can remain an optional
+assistant for local setup, but there is no production option to bypass CR's brain
+with a local Claude Code login. No Claude OAuth credentials are collected. Direct
+Anthropic brain keys entered locally are sent to CR's encrypted per-user vault
+and are not saved to the local media environment.
+
+Keeping source and stage orchestration on CR does not guarantee that prompts are
+secret from the owner of a customer-supplied provider account. Kie documents
+account logs containing request inputs (https://docs.kie.ai/). The recommended
+public-product design for strict prompt privacy is a CR-controlled brain provider
+account with plan/allowance funding, and customer keys for media. Optional
+customer-key brain use needs a clear prompt-visibility policy. That funding and
+private-stage design is not activated by this owner-only compatibility relay;
+it still never reads CR platform generation credentials.
+
+Anthropic research exposes hosted web search with a bounded five-use setting.
+The relay does not provide the original CLI's local tool execution, WebFetch tool,
+or automatic `pause_turn` continuation. A tool error, pause or incomplete answer
+stops for review. Kie/Atlas Claude research is rejected before a paid provider
+request because the supported contracts do not establish hosted search. Users can
+choose direct Anthropic, or a catalog model with verified research support; CR
+never silently changes the account or model to obtain it.
 
 Media keys are stored locally with private file permissions. They travel to CR
 only when the user explicitly selects the same account for the brain. The local connect key is the existing personal
@@ -89,6 +133,9 @@ CR MCP key; users can revoke it using the existing rotation control. Never ask
 for keys in chat or pass them as shell command arguments.
 
 Receipts show reported brain tokens, including thinking tokens where reported.
+Claude's output count already includes reasoning; a separate reasoning count is
+not invented. Cache-read and cache-write input tokens are included in the input
+total, with separate safe diagnostic fields when reported.
 They are not an exact total dollar bill. Media, search, interrupted requests and
 provider subscriptions can have additional charges. Provider usage reports are
 the source of truth. The preview does not enforce a cross-provider dollar budget.
@@ -103,10 +150,16 @@ are unchanged. Google and Atlas native responses are consumed as SSE streams,
 with reported cumulative usage counted once and a terminal finish reason required.
 Only a complete answer is stored; partial text and thinking are discarded.
 
+Claude keeps its model reasoning defaults; Gemini's `low` reasoning settings do
+not apply to Claude. Only a terminal complete Messages stream supplies an answer;
+reasoning, partial text and upstream error bodies are not stored as results.
+
 The provider's idle read timeout remains 180 seconds. Active native streams are
-also checked against a 180-second generation window; an outstanding blocking
-read can outlast that window until its idle timeout. This does not detach the
-compatibility relay from App Platform or local HTTP timeouts. If the local
+checked against a 180-second Gemini or 600-second Claude generation window.
+The packaged bridge allows 650 seconds for a brain response and 220 seconds for
+other CR responses. An outstanding blocking provider read can outlast its stream
+window until the idle timeout. This does not detach the compatibility relay from
+App Platform or local HTTP timeouts. If the local
 connection stops while CR is finishing, review its recorded status before
 resuming. A persistent job submission/polling contract remains migration work.
 These controls improve latency but do not guarantee provider availability or
@@ -159,6 +212,11 @@ and optional branch has not completed real production validation. Existing
 farm, learning, product, avatar and 3D files are retained; their presence is not
 proof of cloud compatibility or parity. The local bridge changes the reasoning
 model, so output parity must be measured before claiming preservation of quality.
+Using the same Claude model name does not reproduce the original Claude Code
+execution contract. The current generic relay still flattens some separate system
+and user prompts, omits specialist effort/cache controls, bounds review images to
+eight 1280-pixel samples and does not reproduce all original research tool loops.
+These are remaining named-stage migration tasks, not a completed private brain.
 
 The Mac launcher and imported engine were exercised on the development Mac.
 The Windows launcher requires testing on a fresh Windows machine. Python,
@@ -170,7 +228,7 @@ installers and automatic prerequisite repair remain onboarding work.
 ```sh
 python -m pytest -q tests/test_frontier_providers.py tests/test_frontier_studio.py tests/test_frontier_bridge.py \
   tests/test_frontier_media.py tests/test_frontier_render.py tests/test_mcp_billing.py tests/test_niche_cron.py
-python scripts/smoke_frontier_admin.py --bundle data/frontier/channelrecipe-5.3-admin.6.zip
+python scripts/smoke_frontier_admin.py --bundle data/frontier/channelrecipe-5.3-admin.7.zip
 ```
 
 The bundle smoke requires its runtime dependencies. It imports the actual pinned

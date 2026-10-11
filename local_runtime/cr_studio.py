@@ -83,7 +83,7 @@ def create_app():
         if request.method in ("POST", "DELETE", "PUT", "PATCH"):
             if request.headers.get("X-CR-Local-Token") != token:
                 return jsonify(error="Refresh your studio page and try again."), 403
-        if request.path in ("/cr-connect", "/cr-provider", "/cr-hub", "/cr-voice", "/cr-images") and request.method == "POST":
+        if request.path in ("/cr-connect", "/cr-provider", "/cr-brain", "/cr-hub", "/cr-voice", "/cr-images") and request.method == "POST":
             if studio.RUNNING.get("slug") or studio.QUEUE:
                 return jsonify(error="Finish your current video before changing its accounts."), 409
         if request.path == "/api/run" and request.method == "POST":
@@ -122,6 +122,9 @@ def create_app():
             checks["account"] = cr_bridge.call("status") if cfg.get("key") else None
         except Exception as e:
             checks["connection_error"] = str(e)
+        brain = (checks.get("account") or {}).get("brain") or {}
+        checks["brain_models"] = {"general": brain.get("model", ""),
+                                  "visual": brain.get("visual_model") or brain.get("model", "")}
         # Key readiness only; never send saved provider keys to the browser.
         checks["providers"] = {name: bool(os.getenv(name)) for name in
                               ["ELEVENLABS_API_KEY", "ALGROW_API_KEY", "WAVESPEED_API_KEY", "KIE_API_KEY", "ATLASCLOUD_API_KEY", "PEXELS_API_KEY", "GEMINI_API_KEY", "EPIDEMIC_API_KEY", "AI33_API_KEY", "SIRAY_API_KEY", "BRAVE_API_KEY"]}
@@ -184,6 +187,30 @@ def create_app():
         os.environ[name] = value
         if hasattr(studio.mv, name):
             setattr(studio.mv, name, value)
+
+    @studio.app.post("/cr-brain")
+    def save_brain():
+        data = request.get_json(silent=True) or {}
+        cfg = cr_bridge.load_settings()
+        if not cfg.get("key") or not cfg.get("costs_accepted"):
+            return jsonify(error="Connect CR and review provider spending first."), 409
+        provider = data.get("provider")
+        info = cr_media.PROVIDERS.get(provider) if isinstance(provider, str) else None
+        if not info or not info.get("brain_models"):
+            return jsonify(error="Choose a supported brain account."), 400
+        supplied = str(data.get("key", "")).strip()
+        # Reusing a saved media key is explicit in the brain form. A direct
+        # Anthropic key is stored only in CR's encrypted per-user vault.
+        key = supplied or (os.getenv(info.get("key_env", ""), "").strip()
+                           if provider in ("kie", "atlas") else "")
+        if not 16 <= len(key) <= 512 or any(ch.isspace() for ch in key):
+            return jsonify(error="Paste your complete API key, or reuse your saved Kie or Atlas key."), 400
+        try:
+            result = cr_bridge.call("brain-key", {"provider": provider, "api_key": key,
+                                    "model": data.get("model"), "visual_model": data.get("visual_model")})
+        except Exception as error:
+            return jsonify(error=str(error)), 400
+        return jsonify(saved=True, message=result.get("message", "Brain account connected."))
 
     def check_media_account(provider, key):
         # Read-only validation: no generated audio and no change to the CR brain.
@@ -296,7 +323,10 @@ def create_app():
             info = cr_media.PROVIDERS[provider]
             if data.get("use_for_brain") is True:
                 # Explicit form consent: the same key is encrypted in CR for brain calls.
-                cr_bridge.call("brain-key", {"provider": provider, "api_key": key, "model": info["default_brain"]})
+                if not data.get("model"):
+                    return jsonify(error="Choose your brain models before replacing the current brain account."), 400
+                cr_bridge.call("brain-key", {"provider": provider, "api_key": key,
+                                            "model": data["model"], "visual_model": data.get("visual_model")})
             else:
                 # Check the media account without generating content. Never send it to CR.
                 check_media_account(provider, key)
