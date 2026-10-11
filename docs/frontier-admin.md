@@ -117,9 +117,20 @@ Completed identical requests reuse the stored answer. Capacity rejections are
 retried at most four times locally; network/provider failures are not
 automatically repeated or sent to a different paid account. An uncertain or
 truncated answer leaves the project marked `needs_review`. Resuming that same
-request stops to prevent an accidental second charge. Check provider usage and
-the local job log before deliberately restarting with a new project. A guided
-per-stage retry approval flow is still required for public release.
+request stops to prevent an accidental second charge. The CR page surfaces stopped
+requests, safe failure details and any provider-reported usage. Earlier preview
+failures can have no retained reason; their charge remains unknown. Private prompts,
+partial scripts, keys and upstream bodies are not included in this diagnostic history.
+
+An admin can acknowledge a possible additional provider charge and allow one
+recovery retry for a specific stopped request. Approval itself makes no provider call.
+Resume the same video locally to submit the identical recorded input once. Approval
+is tied to the chosen model account, consumed under the project row lock and bounded
+by the existing project request limit. Completed answers continue to reuse their
+saved results. A failed recovery does not automatically receive another retry.
+No new download is required for this server-side recovery flow. The original error
+and retry approval remain recorded; no usage counters are reset. This is admin
+recovery, not the complete per-stage repair/quote flow needed for public release.
 
 Original provider options and render behavior are preserved, but every preset
 and optional branch has not completed real production validation. Existing

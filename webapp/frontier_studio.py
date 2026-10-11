@@ -72,6 +72,9 @@ def initialize():
     with _schema_lock, db._conn() as conn:
         if schema_key in _schema_ready:
             return
+        if db.IS_PG:
+            # Serialize additive preview migrations across web processes/replicas.
+            conn.execute("SELECT pg_advisory_xact_lock(726346119)")
         conn.execute("""CREATE TABLE IF NOT EXISTS frontier_credentials (
             user_id INTEGER PRIMARY KEY, key_enc TEXT NOT NULL, model TEXT NOT NULL,
             updated_at DOUBLE PRECISION NOT NULL)""")
@@ -89,6 +92,19 @@ def initialize():
             id TEXT PRIMARY KEY, project_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
             status TEXT NOT NULL, result_json TEXT NOT NULL DEFAULT '',
             created_at DOUBLE PRECISION NOT NULL)""")
+        additions = {"attempts": "INTEGER NOT NULL DEFAULT 1", "error_json": "TEXT NOT NULL DEFAULT ''",
+                     "context_json": "TEXT NOT NULL DEFAULT ''"}
+        columns = set() if db.IS_PG else {r["name"] for r in conn.execute("PRAGMA table_info(frontier_requests)").fetchall()}
+        for name, definition in additions.items():
+            if db.IS_PG:
+                conn.execute(f"ALTER TABLE frontier_requests ADD COLUMN IF NOT EXISTS {name} {definition}")
+            elif name not in columns:
+                conn.execute(f"ALTER TABLE frontier_requests ADD COLUMN {name} {definition}")
+        conn.execute("""CREATE TABLE IF NOT EXISTS frontier_retries (
+            request_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, user_id INTEGER NOT NULL,
+            attempt INTEGER NOT NULL, account_hash TEXT NOT NULL,
+            approved_at DOUBLE PRECISION NOT NULL, used_at DOUBLE PRECISION NOT NULL DEFAULT 0)""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_frontier_requests_project ON frontier_requests(project_id,status,created_at)")
     _schema_ready.add(schema_key)
 
 
@@ -106,10 +122,15 @@ def credential(user_id: int) -> dict | None:
 def status(user: dict) -> dict:
     require_admin_user(user)
     c = credential(user["id"])
+    with db._conn() as conn:
+        recovery = conn.execute(db._q("""SELECT COUNT(*) AS total FROM frontier_requests r
+            JOIN frontier_projects p ON p.id=r.project_id WHERE p.user_id=? AND r.status='needs_review'"""),
+            (user["id"],)).fetchone()["total"]
     return {"access": "admin_preview", "version": VERSION,
             "brain": {"connected": bool(c and decrypt_secret(c["key_enc"])),
                       "provider": c["provider"] if c else "gemini", "model": c["model"] if c else GEMINI_MODEL},
             "providers": providers.PROVIDERS,
+            "recovery_requests": recovery,
             "download_ready": release_ready(), "styles": catalog(),
             "local_url": "http://127.0.0.1:7860/cr-setup",
             "generation_billing": "Your provider accounts", "rendering": "Your computer",
@@ -211,6 +232,91 @@ class BrainRequest(BaseModel):
     images: list[str] = Field(default_factory=list, max_length=8)
 
 
+def _account_hash(c, key):
+    return hashlib.sha256((c["provider"] + "\0" + c["model"] + "\0" + key).encode()).hexdigest()
+
+
+def _errors(raw):
+    try:
+        items = json.loads(raw)
+        return items if isinstance(items, list) else []
+    except (ValueError, TypeError):
+        return []
+
+
+def request_history(user, project_id):
+    p = project(user, project_id)
+    with db._conn() as conn:
+        rows = conn.execute(db._q("""SELECT id,status,attempts,error_json,context_json,created_at
+            FROM frontier_requests WHERE project_id=?
+            ORDER BY CASE WHEN status IN ('needs_review','retry_allowed') THEN 0 ELSE 1 END,created_at DESC LIMIT 100"""), (project_id,)).fetchall()
+    result = []
+    for row in rows:
+        errors = _errors(row["error_json"])
+        context = json.loads(row["context_json"] or "{}")
+        result.append({"id": row["id"], "status": row["status"], "attempts": row["attempts"],
+                       "created_at": row["created_at"], "context": context, "errors": errors,
+                       "can_retry": row["status"] == "needs_review" and row["attempts"] == 1 and p["calls"] < p["max_calls"]})
+    return {"requests": result, "project_id": project_id}
+
+
+class RetryApproval(BaseModel):
+    expected_attempt: int = Field(ge=1, le=2)
+    acknowledge_costs: bool = Field(default=False, strict=True)
+
+
+def approve_retry(user, project_id, request_id, req):
+    require_admin_user(user)
+    project(user, project_id)
+    if req.acknowledge_costs is not True:
+        raise HTTPException(400, "Confirm that your provider may charge for this retry.")
+    c = credential(user["id"])
+    key = decrypt_secret(c["key_enc"]) if c else ""
+    if not key:
+        raise HTTPException(409, "Connect your model account before allowing a retry.")
+    with db._conn() as conn:
+        if not db.IS_PG:
+            conn.execute("BEGIN IMMEDIATE")
+        lock = " FOR UPDATE" if db.IS_PG else ""
+        p = conn.execute(db._q("SELECT * FROM frontier_projects WHERE id=? AND user_id=?") + lock,
+                         (project_id, user["id"])).fetchone()
+        row = conn.execute(db._q("SELECT * FROM frontier_requests WHERE id=? AND project_id=?"), (request_id, project_id)).fetchone()
+        if not p or not row:
+            raise HTTPException(404, "This request was not found in your account.")
+        if row["attempts"] != req.expected_attempt:
+            raise HTTPException(409, "This request changed. Refresh its status before continuing.")
+        if row["status"] == "retry_allowed":
+            return {"allowed": True, "message": "One retry is already allowed. Resume the same video in your local studio."}
+        if row["status"] != "needs_review" or row["attempts"] != 1:
+            raise HTTPException(409, "Only a stopped request can receive one recovery retry.")
+        if p["calls"] >= p["max_calls"]:
+            raise HTTPException(409, "This project reached its request limit. Its budget has not been increased.")
+        conn.execute(db._q("""INSERT INTO frontier_retries
+            (request_id,project_id,user_id,attempt,account_hash,approved_at) VALUES (?,?,?,?,?,?)"""),
+            (request_id, project_id, user["id"], row["attempts"], _account_hash(c, key), time.time()))
+        conn.execute(db._q("UPDATE frontier_requests SET status='retry_allowed' WHERE id=?"), (request_id,))
+    return {"allowed": True, "message": "One retry is allowed. Resume the same video in your local studio; your saved work will be reused."}
+
+
+def _record_failure(req, attempt, error):
+    if isinstance(error, providers.ProviderFailure):
+        failure = dict(error.diagnostics)
+    else:
+        failure = {"code": "internal_error", "message": "CR could not save a complete result for this request.",
+                   "error_type": type(error).__name__}
+    failure.update(attempt=attempt, recorded_at=time.time())
+    with db._conn() as conn:
+        row = conn.execute(db._q("SELECT error_json FROM frontier_requests WHERE id=?"), (req.request_id,)).fetchone()
+        errors = _errors(row["error_json"]) if row else []
+        changed = conn.execute(db._q("""UPDATE frontier_requests SET status='needs_review',error_json=?
+            WHERE id=? AND project_id=? AND status='running' AND attempts=?"""),
+            (json.dumps(errors + [failure]), req.request_id, req.project_id, attempt)).rowcount
+        if changed:
+            conn.execute(db._q("""UPDATE frontier_projects SET status='needs_review',updated_at=?,
+                input_tokens=input_tokens+?,output_tokens=output_tokens+? WHERE id=?"""),
+                (time.time(), failure.get("input_tokens", 0), failure.get("output_tokens", 0), req.project_id))
+
+
 def generate(user: dict, req: BrainRequest) -> dict:
     """Compatibility relay for owners only. Never expose this tool to paid users."""
     require_admin_user(user)
@@ -236,6 +342,8 @@ def generate(user: dict, req: BrainRequest) -> dict:
     if not _slots.acquire(blocking=False):
         raise HTTPException(429, "The brain is busy. Your local runner will retry shortly.", headers={"Retry-After": "10"})
     reserved = False
+    attempt = 1
+    context = json.dumps({"provider": c["provider"], "model": c["model"], "kind": req.kind, "max_tokens": req.max_tokens})
     try:
         with db._conn() as conn:
             # A row lock makes the per-project limit safe across web replicas.
@@ -252,12 +360,27 @@ def generate(user: dict, req: BrainRequest) -> dict:
                     raise HTTPException(409, "This request ID belongs to different work.")
                 if existing["status"] == "complete":
                     return json.loads(existing["result_json"])
-                raise HTTPException(409, "This request is already recorded. Check project history before retrying it.")
+                if existing["status"] != "retry_allowed":
+                    raise HTTPException(409, "This request stopped or is still running. Open Local studio in CR to review its status and recovery options.")
+                approval = conn.execute(db._q("SELECT * FROM frontier_retries WHERE request_id=?"), (req.request_id,)).fetchone()
+                if not approval or approval["used_at"] or approval["attempt"] != existing["attempts"]:
+                    raise HTTPException(409, "This request has no unused recovery retry.")
+                if approval["account_hash"] != _account_hash(c, key):
+                    raise HTTPException(409, "Reconnect the model account used to allow this retry before resuming.")
+                attempt = existing["attempts"] + 1
             if row["calls"] >= row["max_calls"]:
                 raise HTTPException(409, "This project reached its brain request limit. Review its usage before starting more work.")
             conn.execute(db._q("UPDATE frontier_projects SET calls=calls+1,status='running',updated_at=? WHERE id=?"), (time.time(), req.project_id))
-            conn.execute(db._q("INSERT INTO frontier_requests (id,project_id,fingerprint,status,created_at) VALUES (?,?,?,?,?)"),
-                         (req.request_id, req.project_id, fingerprint, "running", time.time()))
+            if existing:
+                errors = _errors(existing["error_json"])
+                if not errors:
+                    errors = [{"attempt": 1, "code": "unrecorded", "message": "The original error was not retained by the earlier preview."}]
+                conn.execute(db._q("UPDATE frontier_requests SET status='running',attempts=?,context_json=?,error_json=? WHERE id=?"),
+                             (attempt, context, json.dumps(errors), req.request_id))
+                conn.execute(db._q("UPDATE frontier_retries SET used_at=? WHERE request_id=?"), (time.time(), req.request_id))
+            else:
+                conn.execute(db._q("INSERT INTO frontier_requests (id,project_id,fingerprint,status,created_at,context_json) VALUES (?,?,?,?,?,?)"),
+                             (req.request_id, req.project_id, fingerprint, "running", time.time(), context))
             reserved = True
         text, incoming, outgoing = providers.generate(c["provider"], key, c["model"], parts, req.kind, req.max_tokens)
         result = {"text": text, "provider": c["provider"], "model": c["model"], "input_tokens": incoming,
@@ -270,13 +393,14 @@ def generate(user: dict, req: BrainRequest) -> dict:
                 THEN 'needs_review' ELSE 'ready' END,updated_at=? WHERE id=?"""),
                          (incoming, outgoing, req.project_id, time.time(), req.project_id))
         return result
-    except HTTPException:
+    except HTTPException as error:
         if reserved:
-            with db._conn() as conn:
-                conn.execute(db._q("UPDATE frontier_requests SET status='needs_review' WHERE id=? AND project_id=? AND status='running'"),
-                             (req.request_id, req.project_id))
-                conn.execute(db._q("UPDATE frontier_projects SET status='needs_review',updated_at=? WHERE id=?"), (time.time(), req.project_id))
+            _record_failure(req, attempt, error)
         raise
+    except Exception as error:
+        if reserved:
+            _record_failure(req, attempt, error)
+        raise HTTPException(502, "CR could not complete this request. Open Local studio in CR to review its recorded status.") from None
     finally:
         _slots.release()
 
@@ -323,6 +447,14 @@ def make_router(session_user):
     @router.get("/projects/{project_id}")
     def get_project(project_id: str, user=Depends(access)):
         return project(user, project_id)
+
+    @router.get("/projects/{project_id}/requests")
+    def get_requests(project_id: str, user=Depends(access)):
+        return request_history(user, project_id)
+
+    @router.post("/projects/{project_id}/requests/{request_id}/retry")
+    def retry(project_id: str, request_id: str, req: RetryApproval, user=Depends(access)):
+        return approve_retry(user, project_id, request_id, req)
 
     @router.post("/brain")
     def brain(req: BrainRequest, user=Depends(access)):
