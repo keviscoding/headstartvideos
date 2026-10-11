@@ -72,6 +72,7 @@ function renderReadiness(){
  $('final-ready').classList.toggle('ready',complete);$('readiness-title').textContent=complete?'Your selected preset is ready':'Finish your setup checks';
  $('readiness-message').textContent=complete?'Your account, tools and selected preset passed the required checks. Open the studio to make your video.':dirty?'Your displayed Claude model choices have not been saved. Save them in step 3, verify the saved models, then check this preset.':setupBusy?'Wait for the Claude setup step to finish, then check this preset.':preflightResult?.ready===false?'This preset needs the items listed above. Connect the missing service or explicitly change its options, then check again.':basic.ready===false?'Complete the account and tool checks above, then validate your preset.':basic.ready!==true?'The studio has not confirmed setup readiness. Refresh your checks or download the current version.':'Choose a preset and check its requirements. This does not generate media or start a video.';
  $('launch').setAttribute('aria-disabled',String(!complete));$('launch').tabIndex=complete?0:-1;
+ $('launch').href=complete?'/?cr-preset='+encodeURIComponent($('preflight-style').value):'/';
  $('preflight-check').disabled=dirty||setupBusy||preflightBusy||!stylesCatalog.some(style=>style.name===$('preflight-style').value);
 }
 function invalidatePreflight(){preflightResult=null;renderReadiness();}
