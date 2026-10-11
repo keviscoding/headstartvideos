@@ -61,6 +61,22 @@ def account(task=None):
     return provider, key
 
 
+def narration_model(provider, model=None):
+    info = PROVIDERS[provider]
+    model = model or info["models"]["narration"]
+    for choice in info.get("narration_models", []):
+        if choice["id"] == model:
+            return choice
+    raise AccountStop("Choose a supported voice model in Setup & accounts.")
+
+
+def narration_input(text, voice, model):
+    if model == "google/gemini-3-8-flash-tts":
+        return {"temperature": 1, "speakers": [{"speaker_id": "Speaker 1", "voice_name": voice}],
+                "dialogue_turns": [{"speaker_id": "Speaker 1", "text": text}]}
+    return {"text": text, "voice": voice}
+
+
 def _data(res, provider):
     if res.status_code != 200:
         raise AccountStop(f"{PROVIDERS[provider]['label']} could not complete this step (HTTP {res.status_code}). Check its task log before retrying.")
@@ -221,8 +237,12 @@ def run(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
                     return output
                 if state in ("fail", "failed", "cancelled", "canceled"):
                     previous["status"] = "failed"
+                    reason = re.sub(r"\s+", " ", str(detail.get("failMsg") or "")).replace(key, "[redacted]")[:200]
+                    previous.update(failure_message=reason, failure_code=str(detail.get("failCode") or "")[:40],
+                                    credits=detail.get("creditsConsumed"))
                     _write(marker, previous)
-                    raise AccountStop(f"{PROVIDERS[provider]['label']} failed this task. Check its log; no other wallet was used.")
+                    raise AccountStop(f"{PROVIDERS[provider]['label']} failed this task." + (" " + reason if reason else "") +
+                                      " Check its log; no other wallet was used.")
             except requests.RequestException:
                 pass  # Read-only task poll; keep the original ID.
             except (ValueError, TypeError, AttributeError, KeyError):
@@ -278,18 +298,24 @@ def _chunks(text, limit=2400):
 def narrate(engine, text, mp3, srt, voice_id="", style=""):
     cfg = profile("narration")
     provider = cfg["provider"]
-    voice = cfg.get("voice") or PROVIDERS[provider]["default_voice"]
+    model = narration_model(provider, cfg.get("model"))
+    voice = cfg.get("voice") or model["default_voice"]
+    if model.get("voice_names") and voice not in model["voice_names"]:
+        raise AccountStop("Choose a voice name supported by your narration model in Setup & accounts.")
     folder = Path(mp3).parent / (Path(mp3).stem + "-hub-voice")
     folder.mkdir(parents=True, exist_ok=True)
     parts = []
     for i, piece in enumerate(_chunks(text)):
-        part = folder / f"part-{i:03d}.mp3"
-        run("narration", {"text": piece, "voice": voice}, part, log=engine.log)
+        part = folder / f"part-{i:03d}.{model['format']}"
+        run("narration", narration_input(piece, voice, model["id"]), part, model=model["id"], log=engine.log)
         parts.append(part)
     if not parts:
         raise AccountStop("There is no narration text to record.")
-    if len(parts) == 1:
+    if len(parts) == 1 and model["format"] == "mp3":
         shutil.copyfile(parts[0], mp3)
+    elif len(parts) == 1:
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(parts[0]),
+                        "-c:a", "libmp3lame", "-b:a", "192k", str(mp3)], check=True)
     else:
         # Relative names avoid escaping user-controlled folder names in ffconcat.
         listing = folder / "parts.txt"

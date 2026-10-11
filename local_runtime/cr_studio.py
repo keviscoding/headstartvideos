@@ -112,6 +112,7 @@ def create_app():
         override = cfg.get("narration") or {}
         checks["narration"] = {"selection": override.get("provider", "inherit"),
                                "provider": voice.get("provider", "original"), "voice": voice.get("voice", ""),
+                               "model": voice.get("model") or (cr_media.PROVIDERS[voice["provider"]]["models"]["narration"] if voice else ""),
                                "connected": bool(cr_media.active("narration") and voice and
                                                  os.getenv(cr_media.PROVIDERS[voice["provider"]]["key_env"]))}
         try:
@@ -167,9 +168,16 @@ def create_app():
             return jsonify(saved=True, message="Narration uses " +
                            ("the model account choices above." if provider == "inherit" else "your individual Frontier voice settings."))
         info = cr_media.PROVIDERS[provider]
+        model_id = str(data.get("model", "")).strip() or info["models"]["narration"]
+        try:
+            model = cr_media.narration_model(provider, model_id)
+        except cr_media.AccountStop as error:
+            return jsonify(error=str(error)), 400
         supplied = str(data.get("key", "")).strip()
         key = supplied or os.getenv(info["key_env"], "").strip()
         voice = str(data.get("voice", "")).strip()
+        if model.get("voice_names") and voice and voice not in model["voice_names"]:
+            return jsonify(error="Choose a voice name from this model’s list, or leave it blank for " + model["default_voice"] + "."), 400
         if (not 16 <= len(key) <= 512 or any(c.isspace() for c in key)
                 or (voice and (len(voice) > 100 or not all(c.isalnum() or c in "_-" for c in voice)))):
             return jsonify(error="Paste a complete API key and a valid voice ID, or leave the voice blank for the default."), 400
@@ -177,7 +185,7 @@ def create_app():
             check_media_account(provider, key)
             if supplied:
                 write_provider(info["key_env"], key)
-            cfg["narration"] = {"provider": provider, "voice": voice or info["default_voice"]}
+            cfg["narration"] = {"provider": provider, "model": model_id, "voice": voice or model["default_voice"]}
             cr_bridge.save_settings(cfg)
         except cr_media.AccountStop as error:
             return jsonify(error=str(error)), 400

@@ -94,9 +94,11 @@ def main():
         media_calls = []
         tone = root / "test-tone.mp3"
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=200:duration=1", str(tone)], check=True)
+        wav = root / "test-tone.wav"
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(tone), "-ar", "24000", str(wav)], check=True)
         def mock_task(task, inputs, dest, **kwargs):
             media_calls.append((task, inputs, kwargs))
-            Path(dest).write_bytes(tone.read_bytes() if task == "narration" else b"stub-media")
+            Path(dest).write_bytes((wav if Path(dest).suffix == ".wav" else tone).read_bytes() if task == "narration" else b"stub-media")
             return "https://files.example/output"
         cr_media.run = mock_task
         studio.mv.image_gen("Smoke image", root / "smoke.png", ref_urls=["https://files.example/ref"])
@@ -119,6 +121,21 @@ def main():
         studio.mv.generate_voiceover("Hello world. Hello world.", job, True, avatar_min=1)
         assert len(media_calls) == before + 2, "The split narration must be joined, not recorded again"
         assert (job / "audio_p1.mp3").is_file() and (job / "audio_p2.mp3").is_file()
+        # Single-speaker Gemini through Kie must become a real MP3, with timings.
+        assert client.post("/cr-voice", headers=protected,
+                           json={"provider": "kie", "model": "not-a-model"}).status_code == 400
+        assert client.post("/cr-voice", headers=protected,
+                           json={"provider": "kie", "model": "google/gemini-3-8-flash-tts", "voice": "not-a-voice"}).status_code == 400
+        assert client.post("/cr-voice", headers=protected,
+                           json={"provider": "kie", "model": "google/gemini-3-8-flash-tts"}).status_code == 200
+        studio.mv._split_script_by_minutes = lambda script, *a: [script]
+        gemini_job = root / "smoke-gemini-voice"
+        gemini_job.mkdir()
+        studio.mv.generate_voiceover("Hello world.", gemini_job, False)
+        assert media_calls[-1][1]["speakers"] == [{"speaker_id": "Speaker 1", "voice_name": "Kore"}]
+        assert media_calls[-1][1]["dialogue_turns"] == [{"speaker_id": "Speaker 1", "text": "Hello world."}]
+        probe = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "stream=codec_name", "-of", "json", str(gemini_job / "audio.mp3")]))
+        assert probe["streams"][0]["codec_name"] == "mp3"
         # Account changes are blocked while a video is active.
         studio.RUNNING["slug"] = "busy"
         assert client.post("/cr-hub", headers=protected, json={"provider": "original"}).status_code == 409

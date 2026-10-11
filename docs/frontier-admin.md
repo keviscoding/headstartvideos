@@ -196,3 +196,5 @@ maintain them while downloaded preview jobs are still in use.
 ## Separate narration choice (admin.3)
 
 The local setup has a visible narration selector: inherit the shared model account, Kie.ai, Atlas Cloud, or individual Frontier voice settings. An explicit narration choice overrides only narration. It can reuse a locally saved key after a read-only account check; it does not call the brain-key API. A new key replaces that provider’s saved local key. Account changes are blocked while a video is running or queued. The setup displays its local version so a newer cloud release can be identified. Old installations require the updated runtime.
+
+Kie narration offers an explicit choice between Gemini 3.8 Flash TTS and ElevenLabs Turbo 2.5. Existing shared-hub choices retain their ElevenLabs default; selecting a separate voice model is explicit. Gemini uses one `Speaker 1` and preserves the script in `dialogue_turns`. Its WAV output is converted locally to MP3 before existing subtitle timing and audio processing. Provider failures stop the job and retain their error and reported credits; there is no automatic paid fallback.

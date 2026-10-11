@@ -3,13 +3,23 @@
     "label": "Google Gemini",
     "key_url": "https://aistudio.google.com/apikey",
     "default_brain": "gemini-3.8-flash",
-    "brain_models": [{"id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash"}]
+    "brain_models": [
+      {
+        "id": "gemini-3.8-flash",
+        "label": "Gemini 3.8 Flash"
+      }
+    ]
   },
   "kie": {
     "label": "Kie.ai",
     "key_url": "https://kie.ai/api-key",
     "default_brain": "gemini-3.8-flash",
-    "brain_models": [{"id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash"}],
+    "brain_models": [
+      {
+        "id": "gemini-3.8-flash",
+        "label": "Gemini 3.8 Flash"
+      }
+    ],
     "key_env": "KIE_API_KEY",
     "models": {
       "images": "google/nano-banana",
@@ -19,13 +29,104 @@
       "avatars": "kling/ai-avatar-standard",
       "avatar_pro": "kling/ai-avatar-pro"
     },
-    "default_voice": "EkK5I93UQWFDigLMpZcX"
+    "default_voice": "EkK5I93UQWFDigLMpZcX",
+    "narration_models": [
+      {
+        "id": "google/gemini-3-8-flash-tts",
+        "label": "Gemini 3.8 Flash",
+        "default_voice": "Kore",
+        "format": "wav",
+        "voice_names": [
+          "Bodi",
+          "Lumi",
+          "Sadaltager",
+          "Sola",
+          "Sulafat",
+          "Varo",
+          "Zephyr",
+          "Koda",
+          "Kore",
+          "Nika",
+          "Tavi",
+          "Zeno",
+          "Algenib",
+          "Despina",
+          "Erinome",
+          "Kira",
+          "Ludo",
+          "Mako",
+          "Rasalgethi",
+          "Rina",
+          "Alnilam",
+          "Brio",
+          "Jori",
+          "Laomedeia",
+          "Rami",
+          "Veda",
+          "Achird",
+          "Enzo",
+          "Riko",
+          "Sami",
+          "Zali",
+          "Zubenelgenubi",
+          "Algieba",
+          "Aoede",
+          "Autonoe",
+          "Callirrhoe",
+          "Enceladus",
+          "Gero",
+          "Iapetus",
+          "Neno",
+          "Olin",
+          "Tari",
+          "Umbriel",
+          "Achernar",
+          "Charon",
+          "Daro",
+          "Fola",
+          "Hali",
+          "Milo",
+          "Puck",
+          "Arlo",
+          "Cleo",
+          "Fenrir",
+          "Finn",
+          "Leda",
+          "Lora",
+          "Orus",
+          "Enya",
+          "Jett",
+          "Knox",
+          "Nyla",
+          "Sadachbia",
+          "Vindemiatrix",
+          "Cruz",
+          "Elio",
+          "Gacrux",
+          "Pulcherrima",
+          "Schedar",
+          "Tova",
+          "Zuri"
+        ]
+      },
+      {
+        "id": "elevenlabs/text-to-speech-turbo-2-5",
+        "label": "ElevenLabs Turbo 2.5",
+        "default_voice": "EkK5I93UQWFDigLMpZcX",
+        "format": "mp3"
+      }
+    ]
   },
   "atlas": {
     "label": "Atlas Cloud",
     "key_url": "https://www.atlascloud.ai/console/api-keys",
     "default_brain": "google/gemini-3.8-flash",
-    "brain_models": [{"id": "google/gemini-3.8-flash", "label": "Gemini 3.8 Flash"}],
+    "brain_models": [
+      {
+        "id": "google/gemini-3.8-flash",
+        "label": "Gemini 3.8 Flash"
+      }
+    ],
     "key_env": "ATLASCLOUD_API_KEY",
     "models": {
       "images": "google/nano-banana/text-to-image",
@@ -35,6 +136,14 @@
       "avatars": "kwaivgi/kling-v2.6-std/avatar",
       "avatar_pro": "kwaivgi/kling-v2.6-pro/avatar"
     },
-    "default_voice": "JBFqnCBsd6RMkjVDRZzb"
+    "default_voice": "JBFqnCBsd6RMkjVDRZzb",
+    "narration_models": [
+      {
+        "id": "elevenlabs/v3/text-to-speech",
+        "label": "ElevenLabs V3",
+        "default_voice": "JBFqnCBsd6RMkjVDRZzb",
+        "format": "mp3"
+      }
+    ]
   }
 }

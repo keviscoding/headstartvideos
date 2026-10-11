@@ -20,4 +20,4 @@ The single-account path covers narration, standard images/reference edits, Seeda
 
 This package is only for CR admins. It retains original Frontier source for migration testing. Do not distribute it to customers; their private-brain runtime is a separate release.
 
-Choose narration separately in **Setup & accounts → Choose how your voice is made**. Kie.ai runs ElevenLabs Turbo 2.5 using your Kie key and balance; a separate ElevenLabs key is not needed. Atlas Cloud is also available. Leave the key blank to use a saved account. This choice does not switch your CR brain or image models. Voice generation is paid; checking an account only validates access.
+Choose narration separately in **Setup & accounts → Choose how your voice is made**. Kie.ai offers Gemini 3.8 Flash voices and ElevenLabs Turbo 2.5 using your Kie key and balance; a separate ElevenLabs key is not needed. Atlas Cloud is also available. Leave the key blank to use a saved account. This choice does not switch your CR brain or image models. Voice generation is paid; checking an account only validates access.
