@@ -172,3 +172,71 @@ def test_key_storage_requires_a_dedicated_secret_before_contacting_google(env, m
     with pytest.raises(HTTPException) as err:
         studio.save_key(env.owner, studio.BrainKey(api_key="test-key-not-for-production"))
     assert err.value.status_code == 503
+
+
+@pytest.mark.parametrize("provider,model,body", [
+    ("kie", "gemini-3.8-flash", {"code": 200, "data": 10}),
+    ("atlas", "google/gemini-3.8-flash", {"data": [{"id": "google/gemini-3.8-flash"}]}),
+])
+def test_hub_account_is_checked_without_paid_call_and_kept_private(env, monkeypatch, provider, model, body):
+    calls = []
+    monkeypatch.setattr(studio.requests, "get", lambda *a, **kw: calls.append((a, kw)) or SimpleNamespace(status_code=200, json=lambda: body))
+    monkeypatch.setattr(studio.requests, "post", lambda *a, **k: pytest.fail("Account checks must not generate content"))
+    result = studio.save_key(env.owner, studio.BrainKey(api_key="customer-hub-key-for-test", provider=provider))
+    assert result["model"] == model and result["provider"] == provider
+    assert len(calls) == 1 and calls[0][1]["headers"] == {"Authorization": "Bearer customer-hub-key-for-test"}
+    assert studio.credential(1)["provider"] == provider
+    assert studio.decrypt_secret(studio.credential(1)["key_enc"]) == "customer-hub-key-for-test"
+    assert "customer-hub-key-for-test" not in json.dumps(studio.status(env.owner))
+
+
+def test_kie_http_200_error_does_not_replace_working_google_connection(env, monkeypatch):
+    env.connect(env.owner)
+    monkeypatch.setattr(studio.requests, "get", lambda *a, **kw: SimpleNamespace(status_code=200, json=lambda: {"code": 401, "msg": "secret upstream body"}))
+    with pytest.raises(HTTPException) as error:
+        studio.save_key(env.owner, studio.BrainKey(api_key="customer-hub-key-for-test", provider="kie"))
+    assert "secret upstream" not in error.value.detail
+    assert studio.credential(1)["provider"] == "gemini"
+
+
+def test_existing_credentials_migrate_without_key_or_model_rotation(env):
+    with studio.db._conn() as conn:
+        conn.execute("CREATE TABLE frontier_credentials (user_id INTEGER PRIMARY KEY,key_enc TEXT NOT NULL,model TEXT NOT NULL,updated_at DOUBLE PRECISION NOT NULL)")
+        conn.execute("INSERT INTO frontier_credentials VALUES (?,?,?,?)", (1, studio.encrypt_secret("old-google-key-for-test"), "gemini-3.8-flash", 100))
+    studio.initialize()
+    c = studio.credential(1)
+    assert c["provider"] == "gemini" and c["model"] == "gemini-3.8-flash"
+    assert studio.decrypt_secret(c["key_enc"]) == "old-google-key-for-test"
+
+
+@pytest.mark.parametrize("provider", ["kie", "atlas"])
+@pytest.mark.parametrize("kind", ["text", "research", "vision"])
+def test_each_hub_routes_text_grounding_and_images_to_customer_account(env, monkeypatch, provider, kind):
+    from base64 import b64encode
+    body = {"code": 200, "data": 10} if provider == "kie" else {"data": [{"id": "google/gemini-3.8-flash"}]}
+    monkeypatch.setattr(studio.requests, "get", lambda *a, **kw: SimpleNamespace(status_code=200, json=lambda: body))
+    studio.save_key(env.owner, studio.BrainKey(api_key="customer-hub-key-for-test", provider=provider))
+    p = studio.create_project(env.owner, studio.ProjectRequest(title="Hub video"))
+    calls = []
+    def answer(url, **kw):
+        calls.append((url, kw))
+        return SimpleNamespace(status_code=200, json=lambda: {"choices": [{"message": {"content": "Answer"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 10, "completion_tokens": 15}}) if provider == "kie" else reply()
+    monkeypatch.setattr(studio.requests, "post", answer)
+    req = request_for(p["id"], kind=kind, images=[b64encode(b"\x89PNG\r\n\x1a\nreview").decode()] if kind == "vision" else [])
+    result = studio.generate(env.owner, req)
+    assert studio.generate(env.owner, req) == result and len(calls) == 1
+    url, options = calls[0]
+    assert ("api.kie.ai" if provider == "kie" else "api.atlascloud.ai") in url
+    assert options["headers"] == {"Authorization": "Bearer customer-hub-key-for-test"}
+    payload = options["json"]
+    if kind == "research":
+        assert payload["tools"] == ([{"type": "function", "function": {"name": "googleSearch"}}] if provider == "kie" else [{"google_search": {}}])
+    if kind == "vision":
+        assert "data:image/png;base64" in json.dumps(payload) if provider == "kie" else "inlineData" in json.dumps(payload)
+    assert result["provider"] == provider
+
+
+def test_unknown_hub_models_are_rejected_before_network(env, monkeypatch):
+    monkeypatch.setattr(studio.requests, "get", lambda *a, **k: pytest.fail("Unsupported model should not reach provider"))
+    with pytest.raises(HTTPException):
+        studio.save_key(env.owner, studio.BrainKey(api_key="customer-hub-key-for-test", provider="atlas", model="unknown/model"))

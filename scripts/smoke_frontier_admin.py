@@ -6,10 +6,12 @@ into a temporary directory, never into Git or the web container.
 import argparse
 import json
 import re
+import subprocess
 import sys
 import tempfile
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 
 def main():
@@ -46,6 +48,7 @@ def main():
             calls.append((path, payload))
             if path == "projects": return {"id": "crv_" + "1" * 24}
             if path == "status": return {"brain": {"connected": True}}
+            if path == "brain-key": return {"connected": True, "provider": payload["provider"]}
             return {"text": "Smoke decision", "request_id": payload["request_id"], "input_tokens": 5, "output_tokens": 5}
         cr_bridge.call = mock_api
         connected = client.post("/cr-connect", headers=protected,
@@ -65,7 +68,51 @@ def main():
         assert status.json["providers"]["PEXELS_API_KEY"]
         assert "test-local-provider-key" not in status.text
         assert (root / ".env").stat().st_mode & 0o077 == 0
-        print("Pinned engine import, onboarding, local access checks, provider saving and CR text/research/vision bridge passed.")
+        # One form entry connects local media and, with explicit consent, the CR brain.
+        saved = client.post("/cr-hub", headers=protected, json={"provider": "atlas", "key": "test-hub-provider-key",
+                            "tasks": ["images", "narration", "motion", "avatars"], "use_for_brain": True})
+        assert saved.status_code == 200 and "test-hub-provider-key" not in saved.text
+        assert ("brain-key", {"provider": "atlas", "api_key": "test-hub-provider-key", "model": "google/gemini-3.8-flash"}) in calls
+        status = client.get("/cr-status", headers=local)
+        assert status.json["media_hub"]["connected"] and "test-hub-provider-key" not in status.text
+        assert studio.mv._image_provider() == "channelrecipe-hub"
+        # Exercise the actual 5.3 entry points with stub task execution (no provider credits).
+        import cr_media
+        media_calls = []
+        tone = root / "test-tone.mp3"
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=200:duration=1", str(tone)], check=True)
+        def mock_task(task, inputs, dest, **kwargs):
+            media_calls.append((task, inputs, kwargs))
+            Path(dest).write_bytes(tone.read_bytes() if task == "narration" else b"stub-media")
+            return "https://files.example/output"
+        cr_media.run = mock_task
+        studio.mv.image_gen("Smoke image", root / "smoke.png", ref_urls=["https://files.example/ref"])
+        assert studio.mv._kie_still_with_url("Smoke still", root / "still.png", "still") == "https://files.example/output"
+        studio.mv._kie_video_gen("https://files.example/frame", "Smoke motion", root / "smoke.mp4", "motion")
+        studio.avatar._kie("kling-standard", "https://files.example/face", "https://files.example/audio", root / "presenter.mp4")
+        import wavespeed
+        wavespeed.run("google/nano-banana-2/edit", {"prompt": "Smoke reference", "images": ["https://files.example/ref"]}, root / "ref.png")
+        assert [t for t, _, _ in media_calls] == ["images", "images", "motion", "avatars", "images"]
+        # Real engine subtitle correction, audio probing and split/concat helpers.
+        words = [SimpleNamespace(word="Hello", start=0.1, end=0.4), SimpleNamespace(word="world.", start=0.5, end=0.8)]
+        studio.mv._get_whisper = lambda: SimpleNamespace(transcribe=lambda *a, **k: ([SimpleNamespace(words=words)], None))
+        job = root / "smoke-voice"
+        job.mkdir()
+        studio.mv.generate_voiceover("Hello world.", job, False)
+        assert (job / "audio.mp3").is_file() and (job / "subs.srt").is_file()
+        assert media_calls[-1][0] == "narration" and media_calls[-1][1]["voice"] == cr_media.PROVIDERS["atlas"]["default_voice"]
+        studio.mv._split_script_by_minutes = lambda *a: ["Hello world.", "Hello world."]
+        before = len(media_calls)
+        studio.mv.generate_voiceover("Hello world. Hello world.", job, True, avatar_min=1)
+        assert len(media_calls) == before + 2, "The split narration must be joined, not recorded again"
+        assert (job / "audio_p1.mp3").is_file() and (job / "audio_p2.mp3").is_file()
+        # Account changes are blocked while a video is active.
+        studio.RUNNING["slug"] = "busy"
+        assert client.post("/cr-hub", headers=protected, json={"provider": "original"}).status_code == 409
+        studio.RUNNING["slug"] = None
+        assert client.post("/cr-hub", headers=protected, json={"provider": "original"}).status_code == 200
+        assert studio.mv._image_provider() != "channelrecipe-hub"
+        print("Pinned engine, onboarding, local security, CR brain and actual media/presenter hooks passed.")
         print("No provider credits used. Full-video quality and fresh-platform validation remain required.")
 
 
