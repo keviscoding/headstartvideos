@@ -20,9 +20,38 @@ import cr_mcp
 import cr_readiness
 import cr_workers
 import hashlib
+import re
 
 HOME = Path(__file__).resolve().parent
 _graphics_check = {}
+
+
+def output_artifacts(engine, job):
+    """Record published deliverables before working files, without uploading them."""
+    media_types={".mp4":"video/mp4",".mp3":"audio/mpeg",".wav":"audio/wav",".png":"image/png",".jpg":"image/jpeg",".zip":"application/zip",".txt":"text/plain",".json":"application/json",".srt":"text/plain"}
+    final=engine.final_video(job)
+    candidates=[final, *sorted(engine.main_dir(job).iterdir())] if engine.main_dir(job).is_dir() else [final]
+    candidates.extend(sorted(job.iterdir()))
+    artifacts=[]
+    seen=set()
+    names=set()
+    for path in candidates:
+        if not path.is_file() or path in seen or path.suffix not in media_types or path.name.startswith(("_",".cr","cr-project")):
+            continue
+        seen.add(path)
+        # Receipts describe local files; canonical names also support titles in
+        # languages outside the server's ASCII metadata contract.
+        stem=re.sub(r"[^a-zA-Z0-9._ -]","_",path.stem).strip("._ -") or "output"
+        name="video.mp4" if path==final else stem[:160-len(path.suffix)]+path.suffix
+        if name in names:
+            name=f"{len(artifacts)+1}-{name}"[:160]
+        names.add(name)
+        with path.open("rb") as handle:
+            digest=hashlib.file_digest(handle,"sha256").hexdigest()
+        artifacts.append({"name":name,"sha256":digest,"media_type":media_types[path.suffix]})
+        if len(artifacts)==20:
+            break
+    return artifacts
 
 
 def graphics_ready():
@@ -578,12 +607,13 @@ def create_app():
                 if spec.get("timeline"):
                     with studio.app.app_context():
                         setup=cr_readiness.proof(setup_status().get_json(),purpose=purpose)
-                project=cr_bridge.begin_project(title,style,spec.get("cr_project_id") or (None if spec.get("force") or spec.get("timeline") else previous.get("id")),
+                resume=previous.get("id") if previous.get("brain_mode")=="claudecode" else None
+                project=cr_bridge.begin_project(title,style,spec.get("cr_project_id") or (None if spec.get("force") or spec.get("timeline") else resume),
                     proof=setup,job_spec={**spec,"minutes":max(1,int(spec.get("minutes") or 1))},purpose=purpose)
             else:
                 project = cr_bridge.begin_project(title, style, None if spec.get("force") else previous.get("id"))
             job.mkdir(parents=True, exist_ok=True)
-            marker.write_text(json.dumps(project, indent=2))
+            marker.write_text(json.dumps({**project,"brain_mode":cfg.get("brain_mode","channelrecipe")}, indent=2))
         except Exception as error:
             with studio.LOCK:
                 studio.JOBS.setdefault(spec["slug"], {}).update(state="error", error=str(error), done=False)
@@ -593,16 +623,14 @@ def create_app():
         if cfg.get("brain_mode") == "claudecode":
             state=studio.JOBS.get(spec["slug"],{})
             artifacts=[]
-            media_types={".mp4":"video/mp4",".mp3":"audio/mpeg",".wav":"audio/wav",".png":"image/png",".jpg":"image/jpeg",".zip":"application/zip",".txt":"text/plain",".json":"application/json",".srt":"text/plain"}
             if state.get("state") == "done":
-                for path in sorted(job.iterdir()):
-                    if path.is_file() and path.suffix in media_types and not path.name.startswith("_"):
-                        with path.open("rb") as handle:
-                            digest=hashlib.file_digest(handle,"sha256").hexdigest()
-                        artifacts.append({"name":path.name,"sha256":digest,"media_type":media_types[path.suffix]})
+                artifacts=output_artifacts(studio.mv,job)
+            complete=bool(artifacts) and state.get("state")=="done"
+            if "video" in spec.get("steps",[]):
+                complete=complete and studio.mv.final_video(job).is_file()
             try:
-                report={"project_id":project["id"],"status":"done" if artifacts and state.get("state")=="done" else "failed",
-                    "artifacts":artifacts[:20],"error_code":"" if artifacts and state.get("state")=="done" else "runtime_failed"}
+                report={"project_id":project["id"],"status":"done" if complete else "failed",
+                    "artifacts":artifacts,"error_code":"" if complete else "runtime_failed"}
                 pending=job/".cr-finish-pending.json"
                 cr_claude._private_write(pending,report)
                 cr_bridge.finish_project(report)

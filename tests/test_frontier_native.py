@@ -145,6 +145,10 @@ def test_production_tools_work_over_actual_mcp_http_transport(native,monkeypatch
             "params":{"name":"local_studio_progress","arguments":{"payload":{"project_id":native.project["id"]}}}}))
         data=json.loads(progress["result"]["content"][0]["text"])
         assert data["project_id"] == native.project["id"] and data["brain_mode"] == "claudecode"
+        from local_runtime import cr_mcp
+        monkeypatch.setattr(cr_mcp,"rpc",lambda *a:progress["result"])
+        decoded=cr_mcp.call_tool("local_studio_progress",{"payload":{"project_id":native.project["id"]}},{})
+        assert decoded["project_id"] == native.project["id"]
         assert client.post("/mcp",headers={"Host":"localhost","Accept":"application/json, text/event-stream"},json={"jsonrpc":"2.0","id":4,"method":"tools/list"}).status_code==401
 
 
