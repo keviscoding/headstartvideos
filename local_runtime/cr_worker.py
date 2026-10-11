@@ -36,12 +36,17 @@ def main():
     if mode=="claudecode":
         progress=cr_bridge.project_progress(args.project)
         version=json.loads((HOME/"cr-release.json").read_text())["version"]
-        if version != progress["workflow"]["required_release"]:
+        current=cr_bridge.call("status")["production_workflow"]
+        workflow=progress["workflow"]
+        compatible=version==workflow["required_release"] or (version==current["required_release"] and
+            workflow.get("workflow_version")==current.get("workflow_version") and
+            workflow.get("engine_source_sha256")==current.get("engine_source_sha256"))
+        if not compatible:
             raise RuntimeError("Download this project's current studio release before resuming.")
         cr_bridge._project=progress["project"]
     else:
         cr_bridge._project=cr_bridge.call("projects/"+args.project)
-    checks={**cr_studio.graphics_ready(),"python":True,"ffmpeg":cr_studio.video_tools_ready(),
+    checks={**cr_studio.graphics_ready(),"python":sys.version_info >= (3,10),"ffmpeg":cr_studio.video_tools_ready(),
         "node":cr_studio.tool_ready("node","--version") or cr_studio.tool_ready("deno","--version"),
         "local_version":json.loads((HOME/"cr-release.json").read_text())["version"],"account":cr_bridge.call("status")}
     ready=cr_readiness.basic(checks)

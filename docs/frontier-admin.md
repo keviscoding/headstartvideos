@@ -1,6 +1,6 @@
 # ChannelRecipe local studio
 
-Version: `5.3-admin.9`. Entry point: https://channelrecipe.com/app#local-studio.
+Version: `5.3-admin.10`. Entry point: https://channelrecipe.com/app#local-studio.
 
 The preferred route runs the original Frontier 5.3 workflow through the creator's
 signed-in Claude Code account. CR supplies the protected runtime, current workflow
@@ -59,12 +59,13 @@ benchmark. No render workload is installed into the CR web container.
 
 - Account access is checked live, including for every Bearer/MCP call.
 - Workflow/release/model profiles are pinned per project. A stale runtime cannot
-  start or resume until the required release is installed.
+  start new work. Approved adapter upgrades can resume projects with the same
+  pinned engine/workflow and models, preserving completed-stage caches.
 - Local readiness reports are checks performed by the runner, not cryptographic
   attestation of a customer-controlled computer.
 - Stage inputs/results are hashed. Prompts, creative output and account secrets
   are not included in native stage authorization/receipt payloads.
-- Completed creative responses remain in private local caches. Lost completion
+- Completed creative responses remain in private local caches. Lost completion or failure
   receipts can be submitted again without invoking Claude or counting twice.
 - Interrupted/failed Claude stages stop outside the original automatic retry and
   fallback handlers. One additional attempt requires explicit usage review and
@@ -106,8 +107,8 @@ CR account/launch instructions take precedence over its older setup guidance.
 python scripts/build_frontier_admin.py --source /private/path/Frontier-5.3-FULL.zip
 ```
 
-The ignored output is `data/frontier/channelrecipe-5.3-admin.9.zip`. The private
-object is `private/frontier/channelrecipe-5.3-admin.9.zip`. Publishing checks its
+The ignored output is `data/frontier/channelrecipe-5.3-admin.10.zip`. The private
+object is `private/frontier/channelrecipe-5.3-admin.10.zip`. Publishing checks its
 ACL and unauthenticated origin/CDN access. Downloads stream through CR's
 authenticated endpoint with `private, no-store`; no public object URL is returned.
 

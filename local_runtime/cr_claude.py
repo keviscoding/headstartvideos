@@ -31,6 +31,53 @@ class ClaudeStageStopped(BaseException):
     """Stop outside the source's retry/fallback handlers after uncertain work."""
 
 
+def failure_info(stdout="",stderr=""):
+    """Classify failures without displaying upstream bodies or credentials."""
+    diagnostic=(str(stdout)+" "+str(stderr)).lower()
+    if any(x in diagnostic for x in ("usage limit","rate limit","limit reached","out of extra usage","hit your limit","usage exceeded","rate_limit","too many requests")):
+        return "usage_limit","Your Claude account reached its usage limit. Check its reset or usage allowance, then review this saved stage in setup."
+    if any(x in diagnostic for x in ("authentication","oauth","not logged in","invalid token","please log in")):
+        return "auth_missing","Claude Code needs you to sign in again. Reconnect your Claude account, then review this saved stage in setup."
+    if any(x in diagnostic for x in ("model not found","invalid model","not have access to","not available for your","model does not exist")):
+        return "model_unavailable","Your Claude account could not use the selected model. Check model access and your saved choices in setup."
+    if any(x in diagnostic for x in ("connection error","econnreset","etimedout","econnrefused","overloaded","internal server error","service unavailable")) or re.search(r"api error:\s*5\d\d",diagnostic):
+        return "network_interrupted","Claude's connection or service failed. Check its service status and your saved stage in setup before resuming."
+    return "cli_failed","Claude could not finish this stage. Its diagnostic is saved privately on this computer. Review recovery in ChannelRecipe."
+
+
+def private_diagnostic(completed,cfg):
+    """Keep a bounded local diagnostic; never send its contents to CR."""
+    result={"returncode":completed.returncode}
+    for name in ("stdout","stderr"):
+        value=str(getattr(completed,name,"") or "")[-12000:]
+        # Upstream bodies are untrusted. Remove credential-shaped values and
+        # this computer's explicitly configured secrets before saving them.
+        for secret in (cfg.get("key"),*(v for k,v in os.environ.items() if k.upper().endswith(("_API_KEY","_AUTH_TOKEN","_ACCESS_TOKEN")))):
+            if isinstance(secret,str) and len(secret)>6:value=value.replace(secret,"[redacted]")
+        value=re.sub(r"(?i)(bearer\s+)[a-z0-9._\-]+",r"\1[redacted]",value)
+        value=re.sub(r"\b(?:sk-ant-|sk-|cr_mcp_)[a-zA-Z0-9_\-]+","[redacted]",value)
+        result[name]=value
+    return result
+
+
+def sync_receipts(bridge):
+    """Reconcile already finished local stages; this never starts Claude."""
+    saved=0
+    for path in list((Path(bridge.HOME)/"output/cr-claude-cache").glob("*/*.json")):
+        try:
+            data=json.loads(path.read_text())
+            if data.get("state") not in {"complete_local","failed_local"} or not data.get("receipt"):
+                continue
+            bridge.finish_stage(data["receipt"])
+            data["state"]="complete" if data["state"]=="complete_local" else "failed"
+            data.pop("receipt",None)
+            _private_write(path,data)
+            saved+=1
+        except (Exception,ValueError):
+            continue
+    return saved
+
+
 def clean_environment(source=None):
     """Use the customer's local login, never inherited API/cloud credentials."""
     env = dict(os.environ if source is None else source)
@@ -255,12 +302,12 @@ class Runtime:
             saved = {}
         stage = {"project_id": project_id, "stage_id": stage_id, "input_fingerprint": fingerprint,
                  "kind": kind, "model_role": role, "requested_model": requested,
-                 "local_version": cfg.get("local_version", "5.3-admin.9"),
+                 "local_version": cfg.get("local_version", "5.3-admin.10"),
                  "brain_mode": "claudecode"}
         try:
             # A completion receipt lost in transit can be submitted again. This
             # only records the already cached result; it never invokes Claude.
-            if saved.get("state") == "complete_local":
+            if saved.get("state") in {"complete_local","failed_local"}:
                 self.bridge.finish_stage(saved["receipt"])
             approval = self.bridge.authorize_stage(stage)
         except Exception:
@@ -279,8 +326,8 @@ class Runtime:
         # tools. The runner calls the authenticated CR MCP before/after them.
         command = _replace_option(command, "--settings", '{"apiKeyHelper":""}')
         env = clean_environment(kwargs.get("env"))
-        if maximum is not None:
-            env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(maximum)
+        # Original native helpers do not apply their API max_tokens argument
+        # to Claude Code. Keep its native reasoning/output behavior intact.
         options = {**kwargs, "env": env}
         _private_write(cache, {"state": "running", "input_fingerprint": fingerprint})
         started = time.monotonic()
@@ -288,19 +335,11 @@ class Runtime:
                    "status": "failed", "error_code": "cli_failed", "usage": {}}
         failure_code="cli_failed"
         failure_message="Claude could not finish this stage. Review recovery in ChannelRecipe."
+        completed=None
         try:
             completed = self.real_run(command, **options)
+            failure_code,failure_message=failure_info(getattr(completed,"stdout",""),getattr(completed,"stderr",""))
             if completed.returncode:
-                diagnostic=((completed.stderr or "")+" "+(completed.stdout or "")).lower()
-                if any(x in diagnostic for x in ("usage limit","rate limit","limit reached","out of extra usage")):
-                    failure_code="usage_limit"
-                    failure_message="Your Claude account reached its usage limit. Check its reset or usage allowance, then review this saved stage in setup."
-                elif any(x in diagnostic for x in ("authentication","oauth","not logged in","invalid token","please log in")):
-                    failure_code="auth_missing"
-                    failure_message="Claude Code needs you to sign in again. Reconnect your Claude account, then review this saved stage in setup."
-                elif any(x in diagnostic for x in ("model not found","invalid model","not have access to","not available for your")):
-                    failure_code="model_unavailable"
-                    failure_message="Your Claude account could not use the selected model. Check model access and your saved choices in setup."
                 raise ValueError("cli_failed")
             usage, output = _result(completed.stdout or "", _option(args, "--output-format", "text"))
             safe_usage = {name: int(usage[name]) for name in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
@@ -319,9 +358,14 @@ class Runtime:
                 raise ClaudeStageStopped("Claude finished this stage, but ChannelRecipe could not save its receipt. Reconnect and resume to recover the cached result.") from None
             receipt["error_code"] = "timeout" if isinstance(error, subprocess.TimeoutExpired) else "cancelled" if isinstance(error, (KeyboardInterrupt, SystemExit)) else failure_code
             receipt["usage"] = {"duration_seconds": time.monotonic() - started, "reported": False}
-            _private_write(cache, {"state": "failed", "input_fingerprint": fingerprint, "error_code": receipt["error_code"]})
+            failed={"state":"failed_local","input_fingerprint":fingerprint,"error_code":receipt["error_code"],"receipt":receipt,
+                "diagnostic":private_diagnostic(completed,cfg) if completed is not None else {"exception_type":type(error).__name__}}
+            _private_write(cache,failed)
             try:
                 self.bridge.finish_stage(receipt)
+                failed.update(state="failed")
+                failed.pop("receipt",None)
+                _private_write(cache,failed)
             except Exception:
                 pass
             if receipt["error_code"]=="timeout":
