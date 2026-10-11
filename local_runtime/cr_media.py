@@ -77,6 +77,21 @@ def narration_input(text, voice, model):
     return {"text": text, "voice": voice}
 
 
+def narration_audio(path):
+    # FFmpeg is checked at setup. Pass PCM directly to Whisper so differing
+    # PyAV decoder versions cannot break a successfully generated voice.
+    import numpy as np
+    try:
+        decoded = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-f", "f32le",
+                                  "-ac", "1", "-ar", "16000", "pipe:1"], check=True, capture_output=True)
+        samples = np.frombuffer(decoded.stdout, dtype=np.float32)
+        if not samples.size:
+            raise AccountStop("Narration was saved, but no audio could be read for subtitle timing.")
+        return samples
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        raise AccountStop("Narration was saved, but subtitle timing could not read it. Check your video tools before resuming.")
+
+
 def _data(res, provider):
     if res.status_code != 200:
         raise AccountStop(f"{PROVIDERS[provider]['label']} could not complete this step (HTTP {res.status_code}). Check its task log before retrying.")
@@ -325,7 +340,7 @@ def narrate(engine, text, mp3, srt, voice_id="", style=""):
     # Both hubs return audio. Preserve timing with the engine's local Whisper,
     # then restore script spelling instead of inventing caption timestamps.
     engine.log("Timing narration on this computer…")
-    segments, _ = engine._get_whisper().transcribe(str(mp3), beam_size=1, word_timestamps=True, vad_filter=True)
+    segments, _ = engine._get_whisper().transcribe(narration_audio(mp3), beam_size=1, word_timestamps=True, vad_filter=True)
     cues, current = [], []
     for seg in segments:
         for word in seg.words or []:

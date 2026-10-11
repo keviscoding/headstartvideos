@@ -89,6 +89,7 @@ def test_narration_is_bounded_and_timings_come_from_audio(hub, monkeypatch):
     assert all(len(s) <= 2400 for s in media._chunks("A" * 10001))
     calls = []
     monkeypatch.setattr(media, "run", lambda task, inputs, dest, **k: calls.append(inputs) or Path(dest).write_bytes(b"audio"))
+    monkeypatch.setattr(media, "narration_audio", lambda path: [0.0])
     words = [SimpleNamespace(word="Hello", start=0.1, end=0.4), SimpleNamespace(word="world.", start=0.5, end=0.8)]
     engine = SimpleNamespace(log=lambda *_: None, _get_whisper=lambda: SimpleNamespace(transcribe=lambda *a, **k: ([SimpleNamespace(words=words)], None)),
                              _srt_ts=lambda n: "00:00:00," + str(int(n * 1000)).zfill(3), _script_words_into_srt=lambda *a: None)
@@ -143,6 +144,7 @@ def test_gemini_voice_protocol_and_wav_conversion_preserve_script(hub, monkeypat
         Path(args[-1]).write_bytes(b"converted-mp3")
     monkeypatch.setattr(media, "run", task)
     monkeypatch.setattr(media.subprocess, "run", convert)
+    monkeypatch.setattr(media, "narration_audio", lambda path: [0.0])
     words = [SimpleNamespace(word="Exact", start=0.1, end=0.4), SimpleNamespace(word="script.", start=0.5, end=0.8)]
     engine = SimpleNamespace(log=lambda *_: None, _get_whisper=lambda: SimpleNamespace(
         transcribe=lambda *a, **k: ([SimpleNamespace(words=words)], None)),
