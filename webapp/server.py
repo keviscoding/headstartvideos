@@ -514,6 +514,12 @@ def require_admin(request: Request) -> dict:
     return user
 
 
+# Local studio is explicitly admin-only throughout the migration preview.
+# The router checks both web sessions and runner Bearer keys on every request.
+from webapp.frontier_studio import make_router as _frontier_router
+app.include_router(_frontier_router(_current_user))
+
+
 def require_analytics(request: Request) -> dict:
     """Admins or analytics-only viewers may read the analytics dashboard."""
     user = require_user(request)

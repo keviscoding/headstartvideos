@@ -2,6 +2,8 @@
 .env
 .env.local
 .env.production
+**/.cr-connection.json
+**/.cr-connection.tmp
 !.env.example
 
 # Generated output (videos, audio, images)
