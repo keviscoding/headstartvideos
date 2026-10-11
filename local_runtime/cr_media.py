@@ -6,6 +6,7 @@ submissions are never repeated or routed to another wallet.
 """
 from __future__ import annotations
 import hashlib
+from contextlib import contextmanager
 import json
 import mimetypes
 import os
@@ -30,6 +31,7 @@ _slots = threading.BoundedSemaphore(2)
 _lock = threading.RLock()
 _references = {}
 _native_images = None
+_routing = threading.local()
 
 
 class AccountStop(BaseException):
@@ -72,6 +74,8 @@ def failure_category(code, reason):
 
 
 def profile(task=None):
+    if task == "motion" and getattr(_routing, "native_motion", False):
+        return {"provider": "kie", "tasks": ["motion"]}
     settings = cr_bridge.load_settings()
     images = settings.get("images") or {}
     if task == "images" and images.get("provider") == "kie":
@@ -374,13 +378,78 @@ def image(prompt, dest, label="image", ref_urls=None, **kwargs):
 
 
 def motion(image_url, prompt, dest, label="motion", retries=1, **kwargs):
-    provider = profile()["provider"]
-    inputs = {"prompt": prompt[:2000], "aspect_ratio": "16:9", "resolution": "720p", "duration": 8}
+    provider = profile("motion")["provider"]
     if provider == "kie":
-        inputs.update(input_urls=[image_url], generate_audio=False)
+        # V1 Pro Fast has a different schema from Seedance 1.5. Keep the
+        # five-second cost choice fixed even for a longer timeline slot.
+        inputs = {"prompt": prompt[:2000], "image_url": image_url,
+                  "resolution": "720p", "duration": "5"}
     else:
-        inputs["image"] = image_url
-    return run("motion", inputs, dest)
+        inputs = {"prompt": prompt[:2000], "image": image_url, "aspect_ratio": "16:9",
+                  "resolution": "720p", "duration": 8}
+    return run("motion", inputs, dest, log=kwargs.get("log", print))
+
+
+@contextmanager
+def native_motion_account():
+    """A native Kie call selects Kie unless motion was explicitly replaced.
+
+    Scope this to the calling thread: having a Kie voice key must not switch
+    unrelated WaveSpeed jobs or uploads to Kie.
+    """
+    previous = getattr(_routing, "native_motion", False)
+    if not active("motion"):
+        _routing.native_motion = True
+    try:
+        yield
+    finally:
+        _routing.native_motion = previous
+
+
+def native_motion(*args, **kwargs):
+    with native_motion_account():
+        return motion(*args, **kwargs)
+
+
+def animate_paintings(engine, job, shots, cfg, log=print):
+    """Route the history kit's direct Kie animation through saved task IDs."""
+    if not cfg or cfg.get("off") or not int(cfg.get("max") or 0):
+        return 0
+    held = {}
+    for shot in shots:
+        path = str(shot["pic_path"])
+        held[path] = held.get(path, 0.0) + float(shot["g1"]) - float(shot["g0"])
+    picks = sorted(held, key=held.get, reverse=True)
+    picks = [Path(p) for p in picks if held[p] >= float(cfg.get("min_s") or 5.5)][:int(cfg.get("max") or 8)]
+    todo = [p for p in picks if not (p.with_suffix(".anim.mp4").is_file() and p.with_suffix(".anim.mp4").stat().st_size > 50_000)]
+    if not todo:
+        return 0
+    import history_kit
+    from concurrent.futures import ThreadPoolExecutor
+    try:
+        scenes = json.loads((Path(job) / "astro_scenes.json").read_text())
+    except (OSError, ValueError):
+        scenes = []
+    with native_motion_account():
+        provider, _ = account("motion")
+    model = PROVIDERS[provider]["models"]["motion"]
+    log(f"Image animation: {len(todo)} scenes · {model} · 720p" + (" · 5 seconds each" if provider == "kie" else ""))
+    def one(path):
+        scene = ""
+        numbers = re.findall(r"\d+", path.stem)
+        if numbers and isinstance(scenes, list):
+            index = int(numbers[-1])
+            if index < len(scenes) and isinstance(scenes[index], dict):
+                scene = str(scenes[index].get("prompt") or "")
+        prompt = history_kit.MOTION_PROMPT + (" Scene: " + scene if scene else "")
+        with native_motion_account():
+            url = upload(path, task="motion")
+            motion(url, prompt, path.with_suffix(".anim.mp4"), log=log)
+        return 1
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        made = sum(pool.map(one, todo))
+    log(f"Image animation: {made} scenes saved; existing clips kept.")
+    return made
 
 
 def avatar_clip(provider, image_url, audio_url, dest, log=print):
@@ -464,7 +533,13 @@ def install(engine):
     hook("image_gen", "images", image)
     hook("_image_provider", "images", lambda: "channelrecipe-hub")
     hook("_kie_still_with_url", "images", lambda prompt, dest, label, retries=4: image(prompt, dest, label))
-    hook("_kie_video_gen", "motion", motion)
+    # Native Kie motion and the history kit previously bypassed the hub.
+    # Both must use the same cheap model and the same durable receipts.
+    engine._kie_video_gen = native_motion
+    engine.KIE_VIDEO_MODEL = PROVIDERS["kie"]["models"]["motion"]
+    engine.KIE_VIDEO_RES, engine.KIE_VIDEO_DUR = "720p", "5"
+    import history_kit
+    history_kit.animate_paintings = animate_paintings
     hook("_tts_one", "narration", lambda *a, **k: narrate(engine, *a, **k))
     original_voice = engine.generate_voiceover
     def voiceover(script, job, force=False, avatar_min=0, style=""):

@@ -17,7 +17,7 @@ import requests
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
-VERSION = "5.3-admin.4"
+VERSION = "5.3-admin.5"
 
 
 def verify_private(client, bucket, key, endpoint, cdn=""):
@@ -78,7 +78,7 @@ def build(source: Path, target: Path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
-    parser.add_argument("--output", type=Path, default=ROOT / "data/frontier/channelrecipe-5.3-admin.4.zip")
+    parser.add_argument("--output", type=Path, default=ROOT / "data/frontier/channelrecipe-5.3-admin.5.zip")
     parser.add_argument("--upload", action="store_true")
     args = parser.parse_args()
     manifest = build(args.source, args.output)

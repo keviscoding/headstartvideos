@@ -1,6 +1,6 @@
 # ChannelRecipe local studio: admin migration preview
 
-Version: `5.3-admin.3`. Entry point: `https://channelrecipe.com/app#local-studio`.
+Version: `5.3-admin.5`. Entry point: `https://channelrecipe.com/app#local-studio`.
 
 This is the first runnable integration checkpoint, **not completion of the full
 Frontier migration**. Ordinary users, including paying subscribers, cannot use
@@ -55,9 +55,9 @@ asset notices are retained. It writes a version/manifest into the bundle.
 python scripts/build_frontier_admin.py --source /private/path/Frontier-5.3-FULL.zip
 ```
 
-The output defaults to git-ignored `data/frontier/channelrecipe-5.3-admin.4.zip`.
+The output defaults to git-ignored `data/frontier/channelrecipe-5.3-admin.5.zip`.
 `--upload` publishes to the private Spaces object
-`private/frontier/channelrecipe-5.3-admin.4.zip`. It checks both the object ACL
+`private/frontier/channelrecipe-5.3-admin.5.zip`. It checks both the object ACL
 and unauthenticated origin/CDN access, testing a small canary before uploading
 the engine. Failure removes the uploaded release. Never print storage credentials.
 
@@ -114,7 +114,7 @@ prove original-vs-integrated output quality across every style.
 
 The hub profile replaces tasks, not every model in the engine. Its catalog is
 shared between the server and packaged runner. Defaults use Nano Banana for
-images/edits, ElevenLabs for narration, Seedance for image motion, and Kling for
+images/edits, ElevenLabs for narration, Seedance V1 Pro Fast (720p, five seconds) for Kie image motion, and Kling for
 presenters. The hub's setup voice replaces preset voices. Private clones, licensed
 music, stock/search services, other avatar models, effects and upscalers do not
 automatically transfer. Unsupported specialised substitutions stop with guidance;
@@ -169,14 +169,14 @@ installers and automatic prerequisite repair remain onboarding work.
 
 ```sh
 python -m pytest -q tests/test_frontier_providers.py tests/test_frontier_studio.py tests/test_frontier_bridge.py \
-  tests/test_frontier_media.py tests/test_mcp_billing.py tests/test_niche_cron.py
-python scripts/smoke_frontier_admin.py --bundle data/frontier/channelrecipe-5.3-admin.4.zip
+  tests/test_frontier_media.py tests/test_frontier_render.py tests/test_mcp_billing.py tests/test_niche_cron.py
+python scripts/smoke_frontier_admin.py --bundle data/frontier/channelrecipe-5.3-admin.5.zip
 ```
 
 The bundle smoke requires its runtime dependencies. It imports the actual pinned
 engine and tests local screens, local access boundaries and the CR bridge using
 stubbed model responses, plus actual 5.3 image/motion/presenter hook routing;
-it does not spend provider credits or certify a video. New provider contracts
+it also performs a real subtitle/audio final mux with local FFmpeg. It spends no provider credits and does not certify every style. New provider contracts
 are verified against official API docs; live paid video quality remains a gate.
 Browser checks exercise all five onboarding steps, account saving, style search
 and family filters, and narrow/mobile layouts.
@@ -211,3 +211,12 @@ Supported families are Nano Banana, Nano Banana 2, Nano Banana 2.1, GPT Image 2,
 The default Kie chain keeps the selected primary image model, then tries Nano Banana 2.1, GPT Image 2, Nano Banana 2 and GPT Image 2.5 Flare, omitting duplicates. Users can select a primary and disable any/all backups. At most five distinct model attempts run per image, once per model, on the same Kie wallet. Attempts may consume credits; this is an attempt limit, not a fixed-price guarantee. Only a confirmed moderation refusal or terminal model failure advances the chain, with the same prompt. Provider moderation still applies and may refuse every selected model. Balance/access/rate-limit/validation errors, cancellation, uncertain creation, pending jobs and failed downloads stop instead of launching another paid job.
 
 A per-model receipt retains each task ID, outcome, provider reason and reported credits. An explicit client rejection without an ID is saved as a known failure; a 5xx/timeout without an ID remains uncertain. Resume skips known failed attempts and reuses the successful fallback or polls the pending task. It never resubmits a failed model. Narration remains separate: a Gemini TTS failure cannot be fixed by changing image models, and there is no automatic paid voice fallback.
+
+
+## Fixed Kie motion cost and subtitle-capable rendering (admin.5)
+
+All Kie image animation uses `bytedance/v1-pro-fast-image-to-video` with `image_url`, `resolution: "720p"` and the string `duration: "5"`. This includes the shared hub, native Kie clips and the history kit's formerly direct provider call. Longer scene holds keep the five-second generated clip and the engine's existing playback behavior; they do not select ten seconds or a more expensive model. Explicit Atlas motion selections keep their existing Atlas adapter. Reference: https://docs.kie.ai/market/bytedance/v1-pro-fast-image-to-video.
+
+History animation now uses the same per-file task receipts and two active local media calls. Cached animated clips are retained. Failed, pending or uncertain motion tasks stop without a new paid submission or another model. The native Kie context is limited to its worker thread, so a Kie voice key does not replace unrelated WaveSpeed tasks.
+
+Video setup checks require the `subtitles` filter and H.264/AAC/MP3 encoders. A minimal FFmpeg build can pass `-version` and still fail the final render with exit 234. On Mac the studio selects an already installed compatible `ffmpeg-full` pair for its own process. If none is available, setup reports that video tools need attention. Final mux failures retain a private, sanitized local diagnostic and explain that generated assets remain saved.

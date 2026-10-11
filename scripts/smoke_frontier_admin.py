@@ -108,6 +108,22 @@ def main():
         import wavespeed
         wavespeed.run("google/nano-banana-2/edit", {"prompt": "Smoke reference", "images": ["https://files.example/ref"]}, root / "ref.png")
         assert [t for t, _, _ in media_calls] == ["images", "images", "motion", "avatars", "images"]
+        # Use actual FFmpeg + libass for a final mux, not just a -version check.
+        assert cr_studio.video_tools_ready()
+        mux = root / "smoke-final-mux"
+        mux.mkdir()
+        (mux / "style.txt").write_text("cr-smoke")
+        studio.mv.STYLE_NO_DUST.add("cr-smoke")
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+                        "testsrc2=size=320x180:rate=30:duration=1", "-c:v", "libx264",
+                        "-pix_fmt", "yuv420p", str(mux / "_visual.mp4")], check=True)
+        subtitle = mux / "subs.srt"
+        subtitle.write_text("1\n00:00:00,100 --> 00:00:00,800\nSubtitle smoke test.\n")
+        mux_audio = mux / "audio.mp3"
+        mux_audio.write_bytes(tone.read_bytes())
+        studio.mv._final_mux(mux, mux_audio, subtitle, True)
+        rendered = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-show_streams", "-of", "json", str(mux / "video.mp4")]))
+        assert {s["codec_name"] for s in rendered["streams"]} == {"h264", "aac"}
         # Real engine subtitle correction, audio probing and split/concat helpers.
         words = [SimpleNamespace(word="Hello", start=0.1, end=0.4), SimpleNamespace(word="world.", start=0.5, end=0.8)]
         studio.mv._get_whisper = lambda: SimpleNamespace(transcribe=lambda *a, **k: ([SimpleNamespace(words=words)], None))
@@ -172,6 +188,19 @@ def main():
         assert media_calls[-1][2]["model"] == "google/nano-banana"
         studio.mv.image_gen("Native Kie with a reference", root / "native-ref.png", ref_urls=["https://files.example/ref"])
         assert media_calls[-1][2]["model"] == "google/nano-banana-edit"
+        studio.mv._kie_video_gen("https://files.example/frame", "Native motion", root / "native-motion.mp4", "motion")
+        assert media_calls[-1][1] == {"prompt": "Native motion", "image_url": "https://files.example/frame", "resolution": "720p", "duration": "5"}
+        assert studio.mv.KIE_VIDEO_MODEL == "bytedance/v1-pro-fast-image-to-video"
+        assert not cr_media.active("motion")
+        import history_kit
+        painting = root / "scene_00.png"
+        Image.new("RGB", (64, 64), "black").save(painting)
+        original_upload = cr_media.upload
+        cr_media.upload = lambda *a, **k: "https://files.example/frame"
+        assert history_kit.animate_paintings(studio.mv, root, [{"pic_path": str(painting), "g0": 0, "g1": 15}],
+                                            {"max": 1, "model": "bytedance/v1-pro-image-to-video", "resolution": "1080p"}) == 1
+        cr_media.upload = original_upload
+        assert media_calls[-1][1]["duration"] == "5" and media_calls[-1][1]["resolution"] == "720p"
         studio.mv.IMAGE_PROVIDER = "wavespeed"
         studio.mv.KIE_API_KEY = ""
         assert not cr_media.active("images"), "A voice-only Kie choice must not replace another image provider"
