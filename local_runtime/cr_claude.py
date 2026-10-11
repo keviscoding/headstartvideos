@@ -1,0 +1,420 @@
+"""Customer-owned Claude Code execution around the protected Frontier workflow.
+
+The workflow keeps its own helpers, prompts, tools, and response formats. This
+module gates only its Claude subprocesses; it never makes a generation API call.
+"""
+from __future__ import annotations
+
+import hashlib
+import inspect
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import threading
+import time
+
+GENERAL_MODEL = "claude-sonnet-5-5"
+VISUAL_MODEL = "claude-opus-5-5"
+MODELS = (GENERAL_MODEL, VISUAL_MODEL)
+MINIMUM_VERSION = (2, 1, 268)
+_real_run = subprocess.run
+_runtime = None
+_lock = threading.RLock()
+_slots = threading.BoundedSemaphore(2)
+HOME = Path(__file__).resolve().parent
+
+
+class ClaudeStageStopped(BaseException):
+    """Stop outside the source's retry/fallback handlers after uncertain work."""
+
+
+def clean_environment(source=None):
+    """Use the customer's local login, never inherited API/cloud credentials."""
+    env = dict(os.environ if source is None else source)
+    for name in list(env):
+        upper = name.upper()
+        if (upper.startswith(("ANTHROPIC_", "CLAUDE_CODE_OAUTH_", "CLAUDE_CODE_USE_",
+                              "AWS_ACCESS_", "AWS_SECRET_", "AWS_SESSION_", "AZURE_"))
+                or upper.endswith(("_API_KEY", "_AUTH_TOKEN", "_ACCESS_TOKEN"))
+                or upper in {"CLAUDECODE", "GOOGLE_APPLICATION_CREDENTIALS",
+                             "CLAUDE_CODE_API_KEY_HELPER_TTL_MS", "CLAUDE_CODE_PLUGIN_DIRS",
+                             "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "MAX_THINKING_TOKENS",
+                             "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING"}):
+            env.pop(name, None)
+    # Do not repeat a timed-out request inside the CLI either. Rejected-request
+    # handling remains Claude Code's own behavior, within this one authorization.
+    env["CLAUDE_CODE_NONSTREAMING_TIMEOUT_RETRIES"] = "0"
+    return env
+
+
+def find_executable():
+    found = shutil.which("claude")
+    if found:
+        return str(Path(found).resolve())
+    candidates = [Path.home() / ".local/bin/claude", Path("/opt/homebrew/bin/claude"),
+                  Path("/usr/local/bin/claude")]
+    if os.name == "nt":
+        candidates += [Path(os.getenv("USERPROFILE", str(Path.home()))) / ".local/bin/claude.exe",
+                       Path(os.getenv("APPDATA", "")) / "npm/claude.cmd"]
+    return next((str(p.resolve()) for p in candidates if p.is_file() and os.access(p, os.X_OK)), None)
+
+
+def status(executable=None, *, run=None, environment=None):
+    """Read-only installation/login check. Return no identity or credentials."""
+    exe = executable or find_executable()
+    result = {"installed": bool(exe), "authenticated": False, "ready": False,
+              "version": "", "auth_method": "none", "api_provider": "", "subscription_type": ""}
+    if not exe:
+        result["message"] = "Install Claude Code, then sign in with your Claude account."
+        return result
+    invoke = run or _real_run
+    env = clean_environment(environment)
+    try:
+        version = invoke([exe, "--version"], capture_output=True, text=True, env=env, timeout=20)
+        match = re.search(r"\b(\d+)\.(\d+)\.(\d+)\b", version.stdout or "")
+        if version.returncode or not match:
+            raise ValueError("version")
+        result["version"] = match.group(0)
+        if tuple(map(int, match.groups())) < MINIMUM_VERSION:
+            result["message"] = "Update Claude Code to version 2.1.268 or newer."
+            return result
+        auth = invoke([exe, "--setting-sources", "", "auth", "status"],
+                      capture_output=True, text=True, env=env, timeout=20)
+        data = json.loads(auth.stdout or "{}")
+        result["account_fingerprint"] = hashlib.sha256(str(data.get("email") or data.get("accountUuid") or "unknown-local-account").encode()).hexdigest()
+        method = data.get("authMethod", "none")
+        result["auth_method"] = method if method in {"none", "claude.ai", "oauth_token", "api_key", "api_key_helper", "third_party"} else "unknown"
+        result["api_provider"] = "firstParty" if data.get("apiProvider") == "firstParty" else "other"
+        subscription = data.get("subscriptionType", "")
+        result["subscription_type"] = subscription if subscription in {"free", "pro", "max", "team", "enterprise"} else ""
+        result["authenticated"] = bool(auth.returncode == 0 and data.get("loggedIn") is True
+                                       and method == "claude.ai" and data.get("apiProvider") == "firstParty")
+        result["ready"] = result["authenticated"]
+        result["message"] = ("Your local Claude account is connected. Its usage limits apply."
+                             if result["ready"] else "Sign in to Claude Code with your Claude subscription. API and cloud billing are not used in this mode.")
+    except (OSError, subprocess.TimeoutExpired, ValueError, TypeError, AttributeError):
+        result["message"] = "Claude Code could not confirm its local login. Open it and sign in again."
+    return result
+
+
+def select_profile(general_model=GENERAL_MODEL, visual_model=VISUAL_MODEL):
+    if general_model not in MODELS or visual_model not in MODELS:
+        raise ValueError("Choose a supported Claude Sonnet 5.5 or Opus 5.5 model.")
+    return {"brain_mode": "claudecode", "general_model": general_model, "visual_model": visual_model}
+
+
+def preflight(settings=None):
+    cfg = settings or {}
+    profile = select_profile(cfg.get("general_model", cfg.get("claude_general_model", GENERAL_MODEL)),
+                             cfg.get("visual_model", cfg.get("claude_visual_model", VISUAL_MODEL)))
+    local = status()
+    return {**local, **profile, "claude_installed": local["installed"],
+            "claude_authenticated": local["authenticated"], "api_provider": local["api_provider"]}
+
+
+def _digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False,
+                                     separators=(",", ":")).encode()).hexdigest()
+
+
+def _option(args, name, default=""):
+    for i, value in enumerate(args):
+        if value == name and i + 1 < len(args):
+            return args[i + 1]
+        if isinstance(value, str) and value.startswith(name + "="):
+            return value[len(name) + 1:]
+    return default
+
+
+def _replace_option(args, name, value):
+    result = list(args)
+    for i, entry in enumerate(result):
+        if entry == name and i + 1 < len(result):
+            result[i + 1] = value
+            return result
+        if entry.startswith(name + "="):
+            result[i] = name + "=" + value
+            return result
+    return result + [name, value]
+
+
+def _source_context():
+    """Read original call metadata without replacing or copying its helpers."""
+    frame = inspect.currentframe()
+    maximum, origin = None, "claude"
+    try:
+        frame = frame.f_back
+        for _ in range(18):
+            if frame is None:
+                break
+            filename = Path(frame.f_code.co_filename).name
+            if filename in {"make_video.py", "folio.py", "threed.py", "reflearn.py"}:
+                origin = filename.removesuffix(".py") + ":" + frame.f_code.co_name
+                candidate = frame.f_locals.get("max_tokens")
+                if maximum is None and isinstance(candidate, int) and not isinstance(candidate, bool):
+                    maximum = min(32768, max(128, candidate))
+            frame = frame.f_back
+    finally:
+        del frame
+    return maximum, origin
+
+
+def _read_inputs(prompt, args):
+    # The original Read-based helpers put absolute image paths on their own
+    # lines. Include file contents so a new render at the same path is new work.
+    hashes = []
+    if "Read" in _option(args, "--tools").split(","):
+        for line in str(prompt).splitlines():
+            if line.startswith("- "):
+                path = Path(line[2:])
+                if path.is_file():
+                    hashes.append([str(path.resolve()), hashlib.sha256(path.read_bytes()).hexdigest()])
+    return hashes
+
+
+def _private_write(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.parent.chmod(0o700)
+    except OSError:
+        pass
+    temporary = path.with_suffix(".tmp")
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, ensure_ascii=False)
+    temporary.replace(path)
+
+
+def _result(stdout, output_format):
+    """Validate complete JSON/stream results without retaining reasoning logs."""
+    if output_format == "text":
+        if not str(stdout).strip():
+            raise ValueError("empty_result")
+        return {}, stdout
+    if output_format == "stream-json":
+        rows = [json.loads(line) for line in str(stdout).splitlines() if line.strip().startswith("{")]
+        data = next((row for row in reversed(rows) if row.get("type") == "result"), None)
+    else:
+        data = json.loads(stdout)
+        if isinstance(data, list):
+            data = next((row for row in reversed(data) if isinstance(row, dict) and row.get("type") == "result"), None)
+    if (not isinstance(data, dict) or data.get("is_error") or not str(data.get("result", "")).strip()
+            or data.get("subtype", "success") != "success"):
+        raise ValueError("incomplete_result")
+    # The original Folio parser consumes the final result line, and 3D consumes
+    # the result object. Both retain usage, but transient assistant/thinking
+    # events never need to be stored or sent back to the caller.
+    filtered = {key: data[key] for key in ("type", "subtype", "is_error", "result", "usage", "total_cost_usd", "duration_ms", "num_turns") if key in data}
+    rendered = json.dumps(filtered, ensure_ascii=False) + ("\n" if output_format == "stream-json" else "")
+    return data.get("usage") or {}, rendered
+
+
+class Runtime:
+    def __init__(self, engine, bridge, executable, real_run):
+        self.engine, self.bridge, self.executable, self.real_run = engine, bridge, executable, real_run
+
+    def handles(self, args):
+        return (isinstance(args, (list, tuple)) and bool(args)
+                and os.path.normcase(os.path.realpath(str(args[0]))) == os.path.normcase(os.path.realpath(self.executable)))
+
+    def run(self, args, *positional, **kwargs):
+        if not self.handles(args):
+            return self.real_run(args, *positional, **kwargs)
+        with _slots:
+            return self.execute(args,*positional,**kwargs)
+
+    def execute(self,args,*positional,**kwargs):
+        if positional or kwargs.get("shell") or kwargs.get("input") is None:
+            raise ClaudeStageStopped("This Claude stage has an unsupported execution contract. No request was started.")
+        cfg = self.bridge.load_settings()
+        if cfg.get("brain_mode") != "claudecode" or not cfg.get("costs_accepted"):
+            raise ClaudeStageStopped("Connect Claude Code and review its usage in ChannelRecipe setup before starting this stage.")
+        project = self.bridge.current_project() if hasattr(self.bridge, "current_project") else self.bridge._project
+        project_id = project.get("id") if isinstance(project, dict) else None
+        if not project_id:
+            raise ClaudeStageStopped("Start this job through ChannelRecipe before running its workflow.")
+        local = status(self.executable, run=self.real_run, environment=kwargs.get("env"))
+        if not local["ready"]:
+            raise ClaudeStageStopped(local["message"])
+        requested = _option(args, "--model", GENERAL_MODEL)
+        role = "visual" if "opus" in requested.lower() else "general"
+        tools = _option(args, "--tools")
+        kind = "research" if any(tool in tools.split(",") for tool in ("WebSearch", "WebFetch")) else "vision" if ("Read" in tools.split(",") or _option(args, "--input-format") == "stream-json") else "text"
+        maximum, origin = _source_context()
+        source_contract = {"args": list(args[1:]), "input": kwargs["input"],
+                           "max_tokens": maximum, "read_files": _read_inputs(kwargs["input"], args)}
+        fingerprint = _digest(source_contract)
+        stage_id = "cc_" + fingerprint
+        cache = Path(self.bridge.HOME) / "output" / "cr-claude-cache" / project_id / (stage_id + ".json")
+        try:
+            saved = json.loads(cache.read_text())
+        except (OSError, ValueError):
+            saved = {}
+        stage = {"project_id": project_id, "stage_id": stage_id, "input_fingerprint": fingerprint,
+                 "kind": kind, "model_role": role, "requested_model": requested,
+                 "local_version": cfg.get("local_version", "5.3-admin.8"),
+                 "brain_mode": "claudecode"}
+        try:
+            # A completion receipt lost in transit can be submitted again. This
+            # only records the already cached result; it never invokes Claude.
+            if saved.get("state") == "complete_local":
+                self.bridge.finish_stage(saved["receipt"])
+            approval = self.bridge.authorize_stage(stage)
+        except Exception:
+            raise ClaudeStageStopped("ChannelRecipe could not authorize this stage. Your work is saved; reconnect before resuming.") from None
+        if approval.get("reuse") and not approval.get("execute"):
+            if saved.get("stdout") is not None and approval.get("result_fingerprint") == saved.get("result_fingerprint"):
+                return subprocess.CompletedProcess(args, 0, saved["stdout"], "")
+            raise ClaudeStageStopped("This stage already completed, but its local result is unavailable. Review recovery in ChannelRecipe.")
+        token = approval.get("authorization_token")
+        selected = approval.get("selected_model")
+        if approval.get("execute") is not True or not token or selected not in MODELS:
+            raise ClaudeStageStopped("This stage stopped or is already running. Review its status in ChannelRecipe before resuming.")
+        command = _replace_option(args, "--model", selected)
+        command = _replace_option(command, "--setting-sources", "")
+        # Source helpers use --strict-mcp-config and deliberately expose no MCP
+        # tools. The runner calls the authenticated CR MCP before/after them.
+        command = _replace_option(command, "--settings", '{"apiKeyHelper":""}')
+        env = clean_environment(kwargs.get("env"))
+        if maximum is not None:
+            env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(maximum)
+        options = {**kwargs, "env": env}
+        _private_write(cache, {"state": "running", "input_fingerprint": fingerprint})
+        started = time.monotonic()
+        receipt = {"project_id": project_id, "stage_id": stage_id, "authorization_token": token,
+                   "status": "failed", "error_code": "cli_failed", "usage": {}}
+        failure_code="cli_failed"
+        failure_message="Claude could not finish this stage. Review recovery in ChannelRecipe."
+        try:
+            completed = self.real_run(command, **options)
+            if completed.returncode:
+                diagnostic=((completed.stderr or "")+" "+(completed.stdout or "")).lower()
+                if any(x in diagnostic for x in ("usage limit","rate limit","limit reached","out of extra usage")):
+                    failure_code="usage_limit"
+                    failure_message="Your Claude account reached its usage limit. Check its reset or usage allowance, then review this saved stage in setup."
+                elif any(x in diagnostic for x in ("authentication","oauth","not logged in","invalid token","please log in")):
+                    failure_code="auth_missing"
+                    failure_message="Claude Code needs you to sign in again. Reconnect your Claude account, then review this saved stage in setup."
+                elif any(x in diagnostic for x in ("model not found","invalid model","not have access to","not available for your")):
+                    failure_code="model_unavailable"
+                    failure_message="Your Claude account could not use the selected model. Check model access and your saved choices in setup."
+                raise ValueError("cli_failed")
+            usage, output = _result(completed.stdout or "", _option(args, "--output-format", "text"))
+            safe_usage = {name: int(usage[name]) for name in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+                          if isinstance(usage.get(name), (int, float)) and not isinstance(usage[name], bool) and usage[name] >= 0}
+            safe_usage.update({"duration_seconds": time.monotonic() - started, "reported": bool(usage)})
+            output_digest = hashlib.sha256(output.encode()).hexdigest()
+            receipt.update(status="complete", result_fingerprint=output_digest, usage=safe_usage, error_code="")
+            _private_write(cache, {"state": "complete_local", "stdout": output, "result_fingerprint": output_digest,
+                                   "input_fingerprint": fingerprint, "receipt": receipt, "origin": origin})
+            self.bridge.finish_stage(receipt)
+            _private_write(cache, {"state": "complete", "stdout": output, "result_fingerprint": output_digest,
+                                   "input_fingerprint": fingerprint, "origin": origin})
+            return subprocess.CompletedProcess(args, 0, output, "")
+        except BaseException as error:
+            if receipt["status"] == "complete":
+                raise ClaudeStageStopped("Claude finished this stage, but ChannelRecipe could not save its receipt. Reconnect and resume to recover the cached result.") from None
+            receipt["error_code"] = "timeout" if isinstance(error, subprocess.TimeoutExpired) else "cancelled" if isinstance(error, (KeyboardInterrupt, SystemExit)) else failure_code
+            receipt["usage"] = {"duration_seconds": time.monotonic() - started, "reported": False}
+            _private_write(cache, {"state": "failed", "input_fingerprint": fingerprint, "error_code": receipt["error_code"]})
+            try:
+                self.bridge.finish_stage(receipt)
+            except Exception:
+                pass
+            if receipt["error_code"]=="timeout":
+                failure_message="Claude took too long to finish this stage. Check your account usage and saved work in setup before resuming."
+            raise ClaudeStageStopped(failure_message+" It will not run again automatically.") from None
+
+
+def install(engine, bridge):
+    """Install only inside the isolated local runner; leave source helpers intact."""
+    global _runtime
+    cfg = bridge.load_settings()
+    profile = select_profile(cfg.get("general_model", cfg.get("claude_general_model", GENERAL_MODEL)),
+                             cfg.get("visual_model", cfg.get("claude_visual_model", VISUAL_MODEL)))
+    executable = find_executable()
+    engine.CLAUDE_PROVIDER = engine.SCRIPT_PROVIDER = "claudecode"
+    engine.CLAUDE_FALLBACK = ""
+    engine._HANDOFF_DIR = ""
+    # Keep the source's generic-model marker. Substituting the selected model
+    # here would turn a general Opus choice into a specialist routing request.
+    if not hasattr(engine,"_cr_original_cc_model"):
+        engine._cr_original_cc_model=getattr(engine,"CC_MODEL","sonnet")
+    engine.CC_MODEL = engine._cr_original_cc_model
+    engine._claude_exe = lambda: executable
+    # Every fallback endpoint is unavailable in this mode, including when a
+    # local .env contains API credentials for a different workflow.
+    engine._claude_endpoint = lambda provider: None
+    if not executable:
+        return {**profile, "ready":False}
+    if hasattr(engine, "_DEAD_PROVIDERS"):
+        engine._DEAD_PROVIDERS.clear()
+    with _lock:
+        _runtime = Runtime(engine, bridge, executable, _real_run)
+        subprocess.run = _runtime.run
+    return {"brain_mode": "claudecode", "general_model": profile["general_model"], "visual_model": profile["visual_model"]}
+
+
+def _verification_identity(settings, local):
+    return _digest({"general":settings.get("general_model"), "visual":settings.get("visual_model"),
+        "version":settings.get("local_version"), "claude_version":local.get("version"),
+        "auth":local.get("auth_method"), "provider":local.get("api_provider"),"account":local.get("account_fingerprint")})
+
+
+def models_verified(settings, local):
+    root = HOME
+    try:
+        marker = json.loads((root/".cr-claude-verified.json").read_text())
+    except (OSError,ValueError):
+        return False
+    return bool(local.get("ready") and marker.get("identity") == _verification_identity(settings,local)
+                and marker.get("verified_at",0)+86400 > time.time())
+
+
+def verify_models(engine, bridge, proof):
+    cfg = bridge.load_settings()
+    local = status()
+    if models_verified(cfg,local):
+        return {"verified":True,"reused":True,"message":"Both selected Claude models already passed their connection checks."}
+    if not local["ready"] or not cfg.get("costs_accepted"):
+        raise RuntimeError("Sign in to Claude Code and acknowledge its usage before checking models.")
+    profile = select_profile(cfg.get("general_model",GENERAL_MODEL),cfg.get("visual_model",VISUAL_MODEL))
+    marker = Path(bridge.HOME)/".cr-claude-probe.json"
+    identity = _verification_identity(cfg,local)
+    try:
+        previous = json.loads(marker.read_text())
+    except (OSError,ValueError):
+        previous = {}
+    project = bridge.begin_project("Claude model connection checks","custom",
+        previous.get("project_id") if previous.get("identity")==identity and not previous.get("complete") else None,
+        proof={**proof,"models_verified":False,"purpose":"setup"},purpose="setup")
+    _private_write(marker,{"identity":identity,"project_id":project["id"]})
+    install(engine,bridge)
+    for role in ("general","visual"):
+        # The request identifies its original role; CR substitutes the pinned
+        # account model. This also verifies swapped or identical model choices.
+        requested=GENERAL_MODEL if role=="general" else VISUAL_MODEL
+        command=[find_executable(),"--print","--model",requested,"--output-format","json",
+            "--tools","","--strict-mcp-config","--mcp-config",'{"mcpServers":{}}',
+            "--max-turns","1","--no-session-persistence"]
+        result=subprocess.run(command,input="Connection check: reply exactly OK.",capture_output=True,text=True,
+                              env=clean_environment(),timeout=120)
+        _,text=_result(result.stdout,"json")
+        if json.loads(text).get("result","").strip() != "OK":
+            raise ClaudeStageStopped("Claude did not complete its model check. Review the saved check before retrying.")
+    _private_write(Path(bridge.HOME)/".cr-claude-verified.json",{"identity":identity,"verified_at":time.time()})
+    _private_write(marker,{"identity":identity,"project_id":project["id"],"complete":True})
+    bridge._project=None
+    return {"verified":True,"reused":False,"message":"Both selected Claude models passed. Their checks used your Claude Code account."}
+
+
+def uninstall():
+    """Restore the process delegation; used by isolated runner shutdown/tests."""
+    global _runtime
+    with _lock:
+        if _runtime is not None and subprocess.run == _runtime.run:
+            subprocess.run = _real_run
+        _runtime = None

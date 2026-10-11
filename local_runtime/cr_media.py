@@ -493,6 +493,18 @@ def narrate(engine, text, mp3, srt, voice_id="", style=""):
 
 def install(engine):
     """Keep native providers when a task is unticked; resolve settings per call."""
+    original_whisper=getattr(engine,"_get_whisper",None)
+    if original_whisper and not getattr(original_whisper,"_cr_pcm_io",False):
+        class WhisperIO:
+            def __init__(self,model):self.model=model
+            def __getattr__(self,name):return getattr(self.model,name)
+            def transcribe(self,audio,*args,**kwargs):
+                if isinstance(audio,(str,Path)):
+                    audio=narration_audio(audio)
+                return self.model.transcribe(audio,*args,**kwargs)
+        def get_whisper():return WhisperIO(original_whisper())
+        get_whisper._cr_pcm_io=True
+        engine._get_whisper=get_whisper
     global _native_images
     _native_images = engine._image_provider
     def hook(name, task, replacement):

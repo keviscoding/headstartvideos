@@ -19,16 +19,19 @@ from typing import Literal
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 import config
 from webapp import database as db
 from cryptography.fernet import Fernet, InvalidToken
 from webapp import frontier_providers as providers
 
-VERSION = "5.3-admin.7"
+VERSION = "5.3-admin.8"
 CATALOG = Path(__file__).resolve().parent / "frontier" / "catalog.json"
-RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.7.zip"
+RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.8.zip"
+WORKFLOW_VERSION = "frontier-5.3-claudecode.1"
+SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
+NATIVE_STAGE_LIMIT = 2
 GEMINI_MODEL = "gemini-3.8-flash"
 _slots = threading.BoundedSemaphore(2)
 _schema_lock = threading.Lock()
@@ -112,6 +115,24 @@ def initialize():
                 attempt INTEGER NOT NULL, account_hash TEXT NOT NULL,
                 approved_at DOUBLE PRECISION NOT NULL, used_at DOUBLE PRECISION NOT NULL DEFAULT 0)""")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_frontier_requests_project ON frontier_requests(project_id,status,created_at)")
+            conn.execute("""CREATE TABLE IF NOT EXISTS frontier_native_sessions (
+                project_id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, begin_id TEXT NOT NULL,
+                begin_fingerprint TEXT NOT NULL, workflow_json TEXT NOT NULL, setup_json TEXT NOT NULL,
+                spec_json TEXT NOT NULL, artifacts_json TEXT NOT NULL DEFAULT '[]',
+                error_code TEXT NOT NULL DEFAULT '', created_at DOUBLE PRECISION NOT NULL,
+                updated_at DOUBLE PRECISION NOT NULL, UNIQUE(user_id,begin_id))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS frontier_native_stages (
+                project_id TEXT NOT NULL, stage_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
+                input_fingerprint TEXT NOT NULL, kind TEXT NOT NULL, model_role TEXT NOT NULL,
+                selected_model TEXT NOT NULL, status TEXT NOT NULL, authorization_hash TEXT NOT NULL,
+                result_fingerprint TEXT NOT NULL DEFAULT '', usage_json TEXT NOT NULL DEFAULT '{}',
+                error_code TEXT NOT NULL DEFAULT '', created_at DOUBLE PRECISION NOT NULL,
+                updated_at DOUBLE PRECISION NOT NULL, PRIMARY KEY(project_id,stage_id),
+                UNIQUE(project_id,input_fingerprint,kind,model_role))""")
+            if db.IS_PG:
+                conn.execute("ALTER TABLE frontier_native_stages ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 1")
+            elif "attempts" not in {r["name"] for r in conn.execute("PRAGMA table_info(frontier_native_stages)").fetchall()}:
+                conn.execute("ALTER TABLE frontier_native_stages ADD COLUMN attempts INTEGER NOT NULL DEFAULT 1")
         _schema_ready.add(schema_key)
 
 
@@ -143,6 +164,7 @@ def status(user: dict) -> dict:
             "download_ready": release_ready(), "styles": catalog(),
             "local_url": "http://127.0.0.1:7860/cr-setup",
             "generation_billing": "Your provider accounts", "rendering": "Your computer",
+            "production_workflow": workflow_contract(),
             "preview_note": "Admin preview preserves the original Frontier engine. Public release remains disabled."}
 
 
@@ -440,6 +462,380 @@ def generate(user: dict, req: BrainRequest) -> dict:
         _slots.release()
 
 
+class SafeContract(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class NativeSetup(SafeContract):
+    """Reported local checks, not a cryptographic attestation of the computer."""
+    local_version: str = Field(max_length=40)
+    brain_mode: Literal["claudecode"] = "claudecode"
+    general_model: str = Field(pattern=r"^[a-zA-Z0-9._\-]+$", max_length=100)
+    visual_model: str = Field(pattern=r"^[a-zA-Z0-9._\-]+$", max_length=100)
+    claude_installed: bool = Field(strict=True)
+    claude_authenticated: bool = Field(strict=True)
+    api_provider: Literal["firstParty"]
+    ffmpeg_ready: bool = Field(strict=True)
+    browser_ready: bool = Field(strict=True)
+    costs_accepted: bool = Field(strict=True)
+    node_ready: bool = Field(default=False, strict=True)
+    media_ready: bool = Field(default=False, strict=True)
+    models_verified: bool = Field(default=False, strict=True)
+    purpose: Literal["video", "setup", "creative"] = "video"
+
+
+class NativeBegin(SafeContract):
+    begin_id: str = Field(min_length=12, max_length=80, pattern=r"^[a-zA-Z0-9_\-]+$")
+    title: str = Field(min_length=1, max_length=300)
+    style: str = Field(default="jung", min_length=1, max_length=80, pattern=r"^[a-z0-9_\-]+$")
+    minutes: int = Field(default=1, ge=1, le=60)
+    features: dict[str, bool] = Field(default_factory=dict, max_length=60)
+    setup: NativeSetup
+    max_calls: int = Field(default=500, ge=1, le=1500)
+    resume_project_id: str | None = Field(default=None, pattern=r"^crv_[a-f0-9]{24}$")
+    platform: Literal["mac", "windows"] = "mac"
+    options: dict = Field(default_factory=dict, max_length=40)
+
+
+class NativeAuthorize(SafeContract):
+    project_id: str = Field(pattern=r"^crv_[a-f0-9]{24}$")
+    stage_id: str = Field(min_length=12, max_length=80, pattern=r"^[a-zA-Z0-9_\-]+$")
+    input_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    kind: Literal["text", "vision", "research"] = "text"
+    model_role: Literal["general", "visual"] = "general"
+    requested_model: str = Field(pattern=r"^[a-zA-Z0-9./_\-]+$", max_length=100)
+    local_version: str = Field(max_length=40)
+    brain_mode: Literal["claudecode"] = "claudecode"
+
+
+class NativeUsage(SafeContract):
+    input_tokens: int = Field(default=0, ge=0, le=1_000_000_000, strict=True)
+    output_tokens: int = Field(default=0, ge=0, le=1_000_000_000, strict=True)
+    cache_read_input_tokens: int = Field(default=0, ge=0, le=1_000_000_000, strict=True)
+    cache_creation_input_tokens: int = Field(default=0, ge=0, le=1_000_000_000, strict=True)
+    duration_seconds: float = Field(default=0, ge=0, le=86400)
+    reported: bool = Field(default=False, strict=True)
+
+
+NativeError = Literal["", "cli_failed", "timeout", "auth_missing", "cancelled", "network_interrupted",
+                      "invalid_result", "authorization_interrupted", "render_failed", "runtime_failed", "usage_limit", "model_unavailable"]
+
+
+class NativeFinishStage(SafeContract):
+    project_id: str = Field(pattern=r"^crv_[a-f0-9]{24}$")
+    stage_id: str = Field(min_length=12, max_length=80, pattern=r"^[a-zA-Z0-9_\-]+$")
+    authorization_token: str = Field(min_length=24, max_length=100, pattern=r"^[a-zA-Z0-9_\-]+$")
+    status: Literal["complete", "failed"]
+    result_fingerprint: str = Field(default="", pattern=r"^(|[a-f0-9]{64})$")
+    usage: NativeUsage = Field(default_factory=NativeUsage)
+    error_code: NativeError = ""
+
+
+class NativeArtifact(SafeContract):
+    name: str = Field(min_length=1, max_length=160, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._ \-]*$")
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    media_type: Literal["video/mp4", "audio/mpeg", "audio/wav", "image/png", "image/jpeg", "application/zip", "text/plain", "application/json"]
+    duration_seconds: float | None = Field(default=None, ge=0, le=86400)
+    width: int | None = Field(default=None, ge=1, le=16384, strict=True)
+    height: int | None = Field(default=None, ge=1, le=16384, strict=True)
+
+
+class NativeFinishProject(SafeContract):
+    project_id: str = Field(pattern=r"^crv_[a-f0-9]{24}$")
+    status: Literal["done", "failed"]
+    artifacts: list[NativeArtifact] = Field(default_factory=list, max_length=20)
+    error_code: NativeError = ""
+
+
+class NativeRetryStage(SafeContract):
+    project_id: str = Field(pattern=r"^crv_[a-f0-9]{24}$")
+    stage_id: str = Field(min_length=12,max_length=80,pattern=r"^[a-zA-Z0-9_\-]+$")
+    acknowledge_costs: bool = Field(default=False,strict=True)
+
+
+def workflow_contract():
+    choices = [row["id"] for row in providers.PROVIDERS["anthropic"]["brain_models"]]
+    return {"workflow_version": WORKFLOW_VERSION, "schema_version": 1,
+            "required_release": VERSION, "engine_source_sha256": SOURCE_SHA256,
+            "mode": "claudecode", "models": choices, "default_general_model": "claude-sonnet-5-5",
+            "default_visual_model": "claude-opus-5-5", "max_active_stages": NATIVE_STAGE_LIMIT,
+            "access": "admin_preview", "public_release_allowed": False,
+            "brain_billing": "Your local Claude Code account and its usage limits",
+            "brain_api_key_required": False, "rendering": "Your computer",
+            "prompt_visibility": "The admin runtime retains original local Frontier prompts and source.",
+            "setup_required": ["local_version", "brain_mode", "general_model", "visual_model", "claude_installed",
+                               "claude_authenticated", "api_provider", "ffmpeg_ready", "browser_ready", "node_ready",
+                               "models_verified", "media_ready", "costs_accepted"]}
+
+
+def _setup_issues(setup, workflow):
+    issues = []
+    if setup.local_version != workflow["required_release"]:
+        issues.append("Download the release required by this workflow before starting or resuming.")
+    if not setup.claude_installed or not setup.claude_authenticated:
+        issues.append("Install Claude Code and sign in locally before making a video.")
+    if not setup.ffmpeg_ready or not setup.browser_ready:
+        issues.append("Finish the local video-tools and graphics-browser checks.")
+    if not setup.costs_accepted:
+        issues.append("Review and acknowledge your Claude and media-provider spending.")
+    if not setup.node_ready:
+        issues.append("Install the JavaScript runtime required by the local workflow.")
+    if setup.purpose != "setup" and not setup.models_verified:
+        issues.append("Verify both selected Claude models in local setup before creating a video.")
+    if setup.purpose == "video" and not setup.media_ready:
+        issues.append("Complete this preset's media-account checks before creating a video.")
+    if any(model not in workflow["models"] for model in (setup.general_model, setup.visual_model)):
+        issues.append("Choose supported writing and specialist models for this workflow.")
+    return issues
+
+
+def native_prepare(user, setup: NativeSetup | None = None):
+    require_admin_user(user)
+    workflow = workflow_contract()
+    issues = _setup_issues(setup, workflow) if setup else ["Run the downloaded studio's local setup checks first."]
+    if not release_ready():
+        issues.append("The required protected runtime download is being prepared.")
+    return {"ready": not issues, "workflow": workflow, "issues": issues,
+            "local_checks_are_attestation": False, "starts_local_process": False,
+            "message": "Claude Code must execute the local launch command. MCP does not launch a computer over the network."}
+
+
+def _native_session(user, project_id):
+    p = project(user, project_id)  # Includes live authorization and tenant check.
+    with db._conn() as conn:
+        row = conn.execute(db._q("SELECT * FROM frontier_native_sessions WHERE project_id=? AND user_id=?"),
+                           (project_id, user["id"])).fetchone()
+    if not row:
+        raise HTTPException(409, "This project uses the API brain. Start a local Claude Code project explicitly.")
+    return p, dict(row)
+
+
+def _native_begin_result(user, session, platform, resumed=False):
+    p = project(user, session["project_id"])
+    command = ((r".venv\Scripts\python.exe" if platform == "windows" else ".venv/bin/python") +
+               " cr_run.py --project " + p["id"])
+    return {"project_id": p["id"], "project": p, "workflow": json.loads(session["workflow_json"]),
+            "job_spec": json.loads(session["spec_json"]), "launch_command": command,
+            "launch_required": p["status"] != "done", "resumed": resumed,
+            "message": "Run this command from the extracted studio folder. It starts the saved project locally."}
+
+
+def native_begin(user, req: NativeBegin):
+    require_admin_user(user)
+    initialize()
+    import re
+    if not req.title.strip() or any(c in req.title for c in "\n\r") or any(not re.fullmatch(r"[a-zA-Z0-9_\-]{1,80}", key) for key in req.features):
+        raise HTTPException(400, "Choose a title and valid original feature names.")
+    if req.resume_project_id:
+        p, session = _native_session(user, req.resume_project_id)
+        workflow = json.loads(session["workflow_json"])
+        previous_setup = json.loads(session["setup_json"])
+        issues = _setup_issues(req.setup, workflow)
+        if any(getattr(req.setup, key) != previous_setup[key] for key in ("general_model", "visual_model", "brain_mode")):
+            issues.append("Resume with this project's pinned Claude model profile.")
+        if issues:
+            raise HTTPException(409, " ".join(issues))
+        # A failed local render can reuse all completed Claude stages. A failed
+        # or uncertain Claude stage still needs its separate recovery approval.
+        if p["status"] == "failed":
+            with db._conn() as conn:
+                blocked = conn.execute(db._q("SELECT COUNT(*) AS n FROM frontier_native_stages WHERE project_id=? AND status IN ('failed','authorized')"),(req.resume_project_id,)).fetchone()["n"]
+                if not blocked:
+                    conn.execute(db._q("UPDATE frontier_projects SET status='ready',updated_at=? WHERE id=? AND status='failed'"),(time.time(),req.resume_project_id))
+        return _native_begin_result(user, session, req.platform, resumed=True)
+    ready = native_prepare(user, req.setup)
+    if not ready["ready"]:
+        raise HTTPException(409, " ".join(ready["issues"]))
+    allowed = {"steps", "script", "burn_subs", "thumb_count", "use_motion", "character", "character_image",
+               "maps", "headlines", "spotlight", "objects", "depth", "extra", "avatar_id", "avatar_s",
+               "avatar_count", "auto_style", "offer", "offer_plugs", "desc", "chapters", "sources", "byo_audio", "mix"}
+    if set(req.options) - allowed or len(json.dumps(req.options)) > 200000:
+        raise HTTPException(400, "Use valid original video options without account credentials.")
+    spec = {**req.options, "title": req.title.strip(), "style": req.style, "minutes": req.minutes, "features": req.features}
+    identity = {"spec": spec, "release": req.setup.local_version, "general_model": req.setup.general_model,
+                "visual_model": req.setup.visual_model, "max_calls": req.max_calls}
+    fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    now = time.time()
+    # A user row is not needed here: the unique per-user begin ID serializes
+    # repeated project submissions, including across web processes.
+    with db._conn() as conn:
+        if not db.IS_PG:
+            conn.execute("BEGIN IMMEDIATE")
+        project_id = "crv_" + secrets.token_hex(12)
+        changed = conn.execute(db._q("""INSERT INTO frontier_native_sessions
+            (project_id,user_id,begin_id,begin_fingerprint,workflow_json,setup_json,spec_json,created_at,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id,begin_id) DO NOTHING"""),
+            (project_id, user["id"], req.begin_id, fingerprint, json.dumps(ready["workflow"]),
+             req.setup.model_dump_json(), json.dumps(spec), now, now)).rowcount
+        row = conn.execute(db._q("SELECT * FROM frontier_native_sessions WHERE user_id=? AND begin_id=?"),
+                           (user["id"], req.begin_id)).fetchone()
+        if row["begin_fingerprint"] != fingerprint:
+            raise HTTPException(409, "This begin ID belongs to different saved work. Resume its project explicitly.")
+        if changed:
+            conn.execute(db._q("""INSERT INTO frontier_projects
+                (id,user_id,title,style,version,max_calls,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)"""),
+                (project_id, user["id"], req.title.strip(), req.style, VERSION, req.max_calls, now, now))
+        session = dict(row)
+    return _native_begin_result(user, session, req.platform, resumed=not bool(changed))
+
+
+def native_progress(user, project_id):
+    p, session = _native_session(user, project_id)
+    with db._conn() as conn:
+        rows = conn.execute(db._q("""SELECT stage_id,kind,model_role,selected_model,status,result_fingerprint,attempts,
+            usage_json,error_code,created_at,updated_at FROM frontier_native_stages
+            WHERE project_id=? ORDER BY created_at,stage_id"""), (project_id,)).fetchall()
+    stages = []
+    for row in rows:
+        stage = dict(row)
+        stage["usage"] = json.loads(stage.pop("usage_json"))
+        stage["can_retry"] = stage["status"] in {"failed","authorized"} and stage["attempts"] == 1
+        stages.append(stage)
+    p["receipt_note"] = "Locally reported Claude Code usage; your Claude and media accounts determine actual charges."
+    return {"project_id": project_id, "project": p, "workflow": json.loads(session["workflow_json"]),
+            "job_spec": json.loads(session["spec_json"]), "stages": stages,
+            "artifacts": json.loads(session["artifacts_json"]), "error_code": session["error_code"],
+            "brain_mode": "claudecode", "can_resume": p["status"] != "done" and not any(s["status"] == "authorized" for s in stages)}
+
+
+def native_authorize(user, req: NativeAuthorize):
+    p, session = _native_session(user, req.project_id)
+    workflow, setup = json.loads(session["workflow_json"]), json.loads(session["setup_json"])
+    if req.local_version != workflow["required_release"]:
+        raise HTTPException(409, "Use this project's pinned runtime release before executing a stage.")
+    selected = setup["visual_model"] if req.model_role == "visual" else setup["general_model"]
+    fingerprint = hashlib.sha256(req.model_dump_json().encode()).hexdigest()
+    token = secrets.token_urlsafe(32)
+    now = time.time()
+    with db._conn() as conn:
+        if not db.IS_PG:
+            conn.execute("BEGIN IMMEDIATE")
+        lock = " FOR UPDATE" if db.IS_PG else ""
+        p = conn.execute(db._q("SELECT * FROM frontier_projects WHERE id=? AND user_id=?") + lock,
+                         (req.project_id, user["id"])).fetchone()
+        existing = conn.execute(db._q("SELECT * FROM frontier_native_stages WHERE project_id=? AND stage_id=?"),
+                                (req.project_id, req.stage_id)).fetchone()
+        if existing:
+            if existing["fingerprint"] != fingerprint:
+                raise HTTPException(409, "This stage ID belongs to different work.")
+            if existing["status"] == "complete":
+                return {"execute": False, "reuse": True, "status": "complete", "stage_id": req.stage_id,
+                        "project_id": req.project_id, "result_fingerprint": existing["result_fingerprint"],
+                        "selected_model": existing["selected_model"], "workflow_version": workflow["workflow_version"]}
+            if existing["status"] == "retry_allowed" and p["calls"] < p["max_calls"]:
+                conn.execute(db._q("UPDATE frontier_native_stages SET status='authorized',attempts=attempts+1,authorization_hash=?,error_code='',updated_at=? WHERE project_id=? AND stage_id=?"),
+                    (hashlib.sha256(token.encode()).hexdigest(),now,req.project_id,req.stage_id))
+                conn.execute(db._q("UPDATE frontier_projects SET calls=calls+1,status='running',updated_at=? WHERE id=?"),(now,req.project_id))
+                return {"execute":True,"reuse":False,"status":"authorized","authorization_token":token,
+                    "selected_model":existing["selected_model"],"stage_id":req.stage_id,"project_id":req.project_id,
+                    "workflow_version":workflow["workflow_version"]}
+            raise HTTPException(409, "This stage already started or stopped. Review its local cache and Claude usage; it will not run again automatically.")
+        if p["status"] in ("done", "failed"):
+            raise HTTPException(409, "Resume this saved project before authorizing new work.")
+        duplicate = conn.execute(db._q("""SELECT stage_id FROM frontier_native_stages
+            WHERE project_id=? AND input_fingerprint=? AND kind=? AND model_role=?"""),
+            (req.project_id, req.input_fingerprint, req.kind, req.model_role)).fetchone()
+        if duplicate:
+            raise HTTPException(409, "This input already has a recorded stage. Use its original stage ID and local cache.")
+        if p["calls"] >= p["max_calls"]:
+            raise HTTPException(409, "This project reached its stage request ceiling. Its budget has not been increased.")
+        active = conn.execute(db._q("SELECT COUNT(*) AS n FROM frontier_native_stages WHERE project_id=? AND status='authorized'"),
+                              (req.project_id,)).fetchone()["n"]
+        if active >= NATIVE_STAGE_LIMIT:
+            raise HTTPException(429, "Wait for this project's active stages before requesting another authorization.", headers={"Retry-After": "5"})
+        conn.execute(db._q("""INSERT INTO frontier_native_stages
+            (project_id,stage_id,fingerprint,input_fingerprint,kind,model_role,selected_model,status,authorization_hash,created_at,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)"""), (req.project_id, req.stage_id, fingerprint, req.input_fingerprint,
+            req.kind, req.model_role, selected, "authorized", hashlib.sha256(token.encode()).hexdigest(), now, now))
+        conn.execute(db._q("UPDATE frontier_projects SET calls=calls+1,status='running',updated_at=? WHERE id=?"),
+                     (now, req.project_id))
+    return {"execute": True, "reuse": False, "status": "authorized", "authorization_token": token,
+            "selected_model": selected, "stage_id": req.stage_id, "project_id": req.project_id,
+            "workflow_version": workflow["workflow_version"]}
+
+
+def native_finish_stage(user, req: NativeFinishStage):
+    _native_session(user, req.project_id)
+    if req.status == "complete" and (not req.result_fingerprint or req.error_code):
+        raise HTTPException(400, "A completed stage needs a saved-result digest and no error code.")
+    token_hash = hashlib.sha256(req.authorization_token.encode()).hexdigest()
+    usage = req.usage.model_dump()
+    with db._conn() as conn:
+        if not db.IS_PG:
+            conn.execute("BEGIN IMMEDIATE")
+        lock = " FOR UPDATE" if db.IS_PG else ""
+        conn.execute(db._q("SELECT id FROM frontier_projects WHERE id=? AND user_id=?") + lock,
+                     (req.project_id, user["id"])).fetchone()
+        stage = conn.execute(db._q("SELECT * FROM frontier_native_stages WHERE project_id=? AND stage_id=?"),
+                             (req.project_id, req.stage_id)).fetchone()
+        if not stage or not secrets.compare_digest(stage["authorization_hash"], token_hash):
+            raise HTTPException(409, "This stage result has no matching execution authorization.")
+        if stage["status"] != "authorized":
+            if (stage["status"] == req.status and stage["result_fingerprint"] == req.result_fingerprint
+                    and json.loads(stage["usage_json"]) == usage and stage["error_code"] == req.error_code):
+                return {"saved": True, "reused": True, "status": stage["status"], "stage_id": req.stage_id}
+            raise HTTPException(409, "This stage already has a different saved result.")
+        now = time.time()
+        conn.execute(db._q("""UPDATE frontier_native_stages SET status=?,result_fingerprint=?,usage_json=?,error_code=?,updated_at=?
+            WHERE project_id=? AND stage_id=?"""), (req.status, req.result_fingerprint, json.dumps(usage), req.error_code,
+            now, req.project_id, req.stage_id))
+        pending = conn.execute(db._q("SELECT COUNT(*) AS n FROM frontier_native_stages WHERE project_id=? AND status='authorized'"),
+                               (req.project_id,)).fetchone()["n"]
+        failed = conn.execute(db._q("SELECT COUNT(*) AS n FROM frontier_native_stages WHERE project_id=? AND status='failed'"),
+                              (req.project_id,)).fetchone()["n"]
+        status = "running" if pending else "failed" if failed else "ready"
+        incoming = usage["input_tokens"] + usage["cache_read_input_tokens"] + usage["cache_creation_input_tokens"]
+        conn.execute(db._q("""UPDATE frontier_projects SET status=?,input_tokens=input_tokens+?,
+            output_tokens=output_tokens+?,updated_at=? WHERE id=?"""), (status, incoming, usage["output_tokens"], now, req.project_id))
+    return {"saved": True, "reused": False, "status": req.status, "stage_id": req.stage_id}
+
+
+def native_finish_project(user, req: NativeFinishProject):
+    _native_session(user, req.project_id)
+    if req.status == "done" and (not req.artifacts or req.error_code):
+        raise HTTPException(400, "A finished project needs saved output metadata and no error code.")
+    artifacts = [artifact.model_dump() for artifact in req.artifacts]
+    with db._conn() as conn:
+        if not db.IS_PG:
+            conn.execute("BEGIN IMMEDIATE")
+        lock = " FOR UPDATE" if db.IS_PG else ""
+        row = conn.execute(db._q("SELECT * FROM frontier_projects WHERE id=? AND user_id=?") + lock,
+                           (req.project_id, user["id"])).fetchone()
+        session = conn.execute(db._q("SELECT * FROM frontier_native_sessions WHERE project_id=?"), (req.project_id,)).fetchone()
+        if row["status"] == "done":
+            if req.status == "done" and json.loads(session["artifacts_json"]) == artifacts:
+                return {"saved": True, "reused": True, "status": "done", "project_id": req.project_id}
+            raise HTTPException(409, "This project already has its final output metadata.")
+        active = conn.execute(db._q("SELECT COUNT(*) AS n FROM frontier_native_stages WHERE project_id=? AND status='authorized'"),
+                              (req.project_id,)).fetchone()["n"]
+        failed = conn.execute(db._q("SELECT COUNT(*) AS n FROM frontier_native_stages WHERE project_id=? AND status='failed'"),
+                              (req.project_id,)).fetchone()["n"]
+        if req.status == "done" and (active or failed):
+            raise HTTPException(409, "Review incomplete or failed stages before marking this video done.")
+        now = time.time()
+        conn.execute(db._q("UPDATE frontier_native_sessions SET artifacts_json=?,error_code=?,updated_at=? WHERE project_id=?"),
+                     (json.dumps(artifacts), req.error_code, now, req.project_id))
+        conn.execute(db._q("UPDATE frontier_projects SET status=?,updated_at=? WHERE id=?"), (req.status, now, req.project_id))
+    return {"saved": True, "reused": False, "status": req.status, "project_id": req.project_id}
+
+
+def native_retry_stage(user,req:NativeRetryStage):
+    _native_session(user,req.project_id)
+    if not req.acknowledge_costs:
+        raise HTTPException(400,"Confirm you reviewed Claude usage and accept another attempt before retrying.")
+    with db._conn() as conn:
+        if not db.IS_PG:conn.execute("BEGIN IMMEDIATE")
+        lock=" FOR UPDATE" if db.IS_PG else ""
+        p=conn.execute(db._q("SELECT * FROM frontier_projects WHERE id=? AND user_id=?")+lock,(req.project_id,user["id"])).fetchone()
+        stage=conn.execute(db._q("SELECT * FROM frontier_native_stages WHERE project_id=? AND stage_id=?"),(req.project_id,req.stage_id)).fetchone()
+        if not stage or stage["status"] not in {"authorized","failed"} or stage["attempts"] != 1 or p["status"] == "done" or p["calls"] >= p["max_calls"]:
+            raise HTTPException(409,"This stage has no additional recovery attempt available.")
+        now=time.time()
+        conn.execute(db._q("UPDATE frontier_native_stages SET status='retry_allowed',updated_at=? WHERE project_id=? AND stage_id=?"),(now,req.project_id,req.stage_id))
+        conn.execute(db._q("UPDATE frontier_projects SET status='ready',updated_at=? WHERE id=?"),(now,req.project_id))
+    return {"approved":True,"project_id":req.project_id,"stage_id":req.stage_id,"message":"One recovery attempt is approved. Resume the same local video to use it."}
+
+
 def make_router(session_user):
     router = APIRouter(prefix="/api/frontier", tags=["Admin local studio"])
 
@@ -494,6 +890,34 @@ def make_router(session_user):
     @router.post("/brain")
     def brain(req: BrainRequest, user=Depends(access)):
         return generate(user, req)
+
+    @router.post("/runtime/prepare")
+    def runtime_prepare(req: NativeSetup, user=Depends(access)):
+        return native_prepare(user, req)
+
+    @router.post("/projects/begin")
+    def runtime_begin(req: NativeBegin, user=Depends(access)):
+        return native_begin(user, req)
+
+    @router.post("/stages/authorize")
+    def runtime_authorize(req: NativeAuthorize, user=Depends(access)):
+        return native_authorize(user, req)
+
+    @router.post("/stages/finish")
+    def runtime_finish_stage(req: NativeFinishStage, user=Depends(access)):
+        return native_finish_stage(user, req)
+
+    @router.get("/projects/{project_id}/progress")
+    def runtime_progress(project_id: str, user=Depends(access)):
+        return native_progress(user, project_id)
+
+    @router.post("/projects/finish")
+    def runtime_finish_project(req: NativeFinishProject, user=Depends(access)):
+        return native_finish_project(user, req)
+
+    @router.post("/stages/retry")
+    def runtime_retry(req:NativeRetryStage,user=Depends(access)):
+        return native_retry_stage(user,req)
 
     @router.get("/download")
     def download(user=Depends(access)):

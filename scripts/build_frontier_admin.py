@@ -17,7 +17,7 @@ import requests
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
-VERSION = "5.3-admin.7"
+VERSION = "5.3-admin.8"
 
 
 def verify_private(client, bucket, key, endpoint, cdn=""):
@@ -69,6 +69,7 @@ def build(source: Path, target: Path):
         result.writestr("ChannelRecipe studio/cr-release.json", json.dumps({
             "version": VERSION, "access": "admin_only", "source_sha256": SOURCE_SHA256,
             "public_release_allowed": False, "engine_files": count,
+            "workflow_version": "frontier-5.3-claudecode.1", "preferred_brain": "claudecode",
             "note": "Owner preview contains original source. Public runtime split remains required."}, indent=2))
     with target.open("rb") as f:
         digest = hashlib.file_digest(f, "sha256").hexdigest()

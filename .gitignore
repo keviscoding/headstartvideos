@@ -4,6 +4,9 @@
 .env.production
 **/.cr-connection.json
 **/.cr-connection.tmp
+**/.cr-*.json
+**/.cr-*.tmp
+**/.mcp.json
 !.env.example
 
 # Generated output (videos, audio, images)
