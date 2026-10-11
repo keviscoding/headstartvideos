@@ -74,6 +74,27 @@ def test_stage_reservation_completion_and_recovery_do_not_count_twice(native):
         studio.native_finish_stage(native.owner,finish.model_copy(update={"authorization_token":"wrong"*8}))
 
 
+def test_adapter_upgrade_reuses_pinned_project_and_completed_stage(native,monkeypatch):
+    monkeypatch.setattr(studio,"VERSION","5.3-admin.9")
+    native.proof={**native.proof,"local_version":studio.VERSION}
+    native.project=studio.native_begin(native.owner,studio.NativeBegin(begin_id="old_adapter_project",title="A complete video",
+        style="history",setup=native.proof))["project"]
+    req=stage(native)
+    approval=studio.native_authorize(native.owner,req)
+    studio.native_finish_stage(native.owner,studio.NativeFinishStage(project_id=req.project_id,stage_id=req.stage_id,
+        authorization_token=approval["authorization_token"],status="complete",result_fingerprint="f"*64))
+    monkeypatch.setattr(studio,"VERSION","5.3-admin.10")
+    setup={**native.proof,"local_version":studio.VERSION}
+    resumed=studio.native_begin(native.owner,studio.NativeBegin(begin_id="resume_adapter_upgrade",title="A complete video",
+        style="history",setup=setup,resume_project_id=req.project_id))
+    assert resumed["resumed"]
+    assert studio.native_authorize(native.owner,req.model_copy(update={"local_version":studio.VERSION}))["reuse"]
+    assert studio.native_progress(native.owner,req.project_id)["project"]["calls"]==1
+    monkeypatch.setattr(studio,"SOURCE_SHA256","0"*64)
+    with pytest.raises(HTTPException):
+        studio.native_authorize(native.owner,req.model_copy(update={"local_version":studio.VERSION}))
+
+
 def test_uncertain_or_failed_stage_never_restarts_automatically(native):
     req=stage(native)
     allowed=studio.native_authorize(native.owner,req)
@@ -172,6 +193,7 @@ def test_cli_contract_and_local_cache_survive_connection_recovery(tmp_path,monke
         calls.append((args,kw))
         return SimpleNamespace(returncode=0,stdout=json.dumps({"type":"result","subtype":"success","result":"Original creative output","usage":{"input_tokens":9,"output_tokens":11}}))
     runtime=cr_claude.Runtime(SimpleNamespace(),bridge,"/fake/claude",invoke)
+    monkeypatch.setattr(cr_claude,"_source_context",lambda:(2000,"make_video:_cc_vision"))
     args=["/fake/claude","--print","--model","claude-opus-5-5","--effort","high","--system-prompt","Original visual instructions",
         "--tools","Read","--output-format","json","--strict-mcp-config","--mcp-config",'{"mcpServers":{}}']
     kwargs={"input":"Original review with reference evidence","text":True,"capture_output":True,"env":{"ANTHROPIC_API_KEY":"must-not-bill","KIE_API_KEY":"private-media-key"},"timeout":180}
@@ -182,6 +204,7 @@ def test_cli_contract_and_local_cache_survive_connection_recovery(tmp_path,monke
     assert actual[actual.index("--system-prompt")+1]=="Original visual instructions"
     assert actual[actual.index("--effort")+1]=="high" and options["input"]==kwargs["input"]
     assert "ANTHROPIC_API_KEY" not in options["env"] and "KIE_API_KEY" not in options["env"]
+    assert "CLAUDE_CODE_MAX_OUTPUT_TOKENS" not in options["env"]
     assert finish[0]["usage"]["reported"] and finish[0]["usage"]["output_tokens"]==11
     assert next((tmp_path/"output/cr-claude-cache").rglob("*.json")).stat().st_mode&0o077==0
 
@@ -192,6 +215,33 @@ def test_read_only_claude_auth_never_returns_identity_or_api_credentials():
             "loggedIn":True,"authMethod":"claude.ai","apiProvider":"firstParty","subscriptionType":"pro","email":"private@example.com","apiKey":"secret"}))
     result=cr_claude.status("/fake/claude",run=invoke)
     assert result["ready"] and "private@example.com" not in json.dumps(result) and "secret" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("message,code",[("You've hit your limit · resets later","usage_limit"),
+    ("API Error: 529 overloaded","network_interrupted"),("Please log in again","auth_missing"),
+    ("Model does not exist","model_unavailable")])
+def test_failure_messages_classify_without_echoing_upstream_text(message,code):
+    actual,hint=cr_claude.failure_info(message+" sk-ant-private-account-secret")
+    assert actual==code and "private-account-secret" not in hint
+
+
+def test_failed_stage_receipt_sync_never_runs_claude_or_keeps_authorization_token(tmp_path):
+    receipt={"status":"failed","authorization_token":"private-test-authorization"}
+    path=tmp_path/"output/cr-claude-cache/project/stage.json"
+    cr_claude._private_write(path,{"state":"failed_local","receipt":receipt,"error_code":"cli_failed"})
+    reports=[]
+    bridge=SimpleNamespace(HOME=tmp_path,finish_stage=lambda payload:reports.append(payload))
+    assert cr_claude.sync_receipts(bridge)==1 and reports==[receipt]
+    assert cr_claude.sync_receipts(bridge)==0
+    data=json.loads(path.read_text())
+    assert data["state"]=="failed" and "private-test-authorization" not in path.read_text()
+
+
+def test_diagnostics_are_private_and_redact_keys(monkeypatch):
+    monkeypatch.setenv("KIE_API_KEY","a-private-saved-media-key")
+    d=cr_claude.private_diagnostic(SimpleNamespace(returncode=1,stdout="API Error: 529",stderr="Bearer secret-header-token a-private-saved-media-key sk-ant-example-secret cr_mcp_example-secret"),{})
+    assert d["returncode"]==1
+    assert all(s not in json.dumps(d) for s in ("secret-header-token","a-private-saved-media-key","example-secret"))
 
 
 def test_general_opus_choice_does_not_change_source_role_marker(tmp_path,monkeypatch):

@@ -1,18 +1,38 @@
 #!/bin/bash
 cd "$(dirname "$0")" || exit 1
-if ! command -v python3 >/dev/null; then
-  echo "Install Python 3.12 from https://www.python.org/downloads/ then open this file again."
+
+failed() {
+  echo "$1"
   read -r -p "Press Return to close. "
   exit 1
-fi
+}
+
 if [ ! -f .venv/bin/python ]; then
-  python3 -m venv .venv || exit 1
+  cr_python=""
+  for candidate in python3.12 python3 python3.11 python3.10; do
+    resolved=$(command -v "$candidate") || continue
+    if "$resolved" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1; then
+      cr_python="$resolved"
+      break
+    fi
+  done
+  if [ -z "$cr_python" ]; then
+    failed "Install Python 3.12 from https://www.python.org/downloads/ (Python 3.10 or newer is required), then open this file again."
+  fi
+  echo "Creating your studio environment with: $cr_python"
+  "$cr_python" --version
+  "$cr_python" -m venv .venv || failed "Python could not create the studio environment. Check the error above, then reopen this launcher."
 fi
+
+.venv/bin/python -c 'import sys; print("Studio Python:", sys.version.split()[0]); raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' || failed "This studio's .venv uses Python older than 3.10. Install Python 3.12, rename the .venv folder to .venv-old, then reopen this launcher. Your output folder and saved accounts stay in place."
+
 if [ ! -f .venv/.cr-installed ]; then
   echo "Setting up ChannelRecipe. This first download may take a few minutes."
-  .venv/bin/python -m pip install -r requirements.txt || exit 1
-  .venv/bin/python -m playwright install chromium || exit 1
+  .venv/bin/python -m pip install -r requirements.txt || failed "The studio libraries could not finish installing. Check the error above and your connection, then reopen this launcher."
+  .venv/bin/python -m playwright install chromium || failed "The graphics browser could not finish installing. Check the error above and your connection, then reopen this launcher."
   touch .venv/.cr-installed
 fi
 .venv/bin/python cr_studio.py
+cr_result=$?
 read -r -p "Press Return to close. "
+exit "$cr_result"

@@ -26,9 +26,9 @@ from webapp import database as db
 from cryptography.fernet import Fernet, InvalidToken
 from webapp import frontier_providers as providers
 
-VERSION = "5.3-admin.9"
+VERSION = "5.3-admin.10"
 CATALOG = Path(__file__).resolve().parent / "frontier" / "catalog.json"
-RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.9.zip"
+RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.10.zip"
 WORKFLOW_VERSION = "frontier-5.3-claudecode.1"
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 NATIVE_STAGE_LIMIT = 2
@@ -568,9 +568,19 @@ def workflow_contract():
                                "models_verified", "media_ready", "costs_accepted"]}
 
 
+def _runtime_compatible(version, workflow):
+    # Adapter-only upgrades keep the pinned creative engine and workflow. A
+    # changed engine or workflow must explicitly migrate projects instead.
+    current=workflow_contract()
+    return version==workflow["required_release"] or (
+        version==VERSION and workflow.get("required_release") in {"5.3-admin.8","5.3-admin.9"}
+        and workflow.get("workflow_version")==current["workflow_version"]
+        and workflow.get("engine_source_sha256")==current["engine_source_sha256"])
+
+
 def _setup_issues(setup, workflow):
     issues = []
-    if setup.local_version != workflow["required_release"]:
+    if not _runtime_compatible(setup.local_version,workflow):
         issues.append("Download the release required by this workflow before starting or resuming.")
     if not setup.claude_installed or not setup.claude_authenticated:
         issues.append("Install Claude Code and sign in locally before making a video.")
@@ -701,10 +711,12 @@ def native_progress(user, project_id):
 def native_authorize(user, req: NativeAuthorize):
     p, session = _native_session(user, req.project_id)
     workflow, setup = json.loads(session["workflow_json"]), json.loads(session["setup_json"])
-    if req.local_version != workflow["required_release"]:
+    if not _runtime_compatible(req.local_version,workflow):
         raise HTTPException(409, "Use this project's pinned runtime release before executing a stage.")
     selected = setup["visual_model"] if req.model_role == "visual" else setup["general_model"]
-    fingerprint = hashlib.sha256(req.model_dump_json().encode()).hexdigest()
+    # Preserve reservations and cached completion across approved adapter-only
+    # upgrades. Changing the model, tools or stage input still conflicts.
+    fingerprint = hashlib.sha256(req.model_copy(update={"local_version":workflow["required_release"]}).model_dump_json().encode()).hexdigest()
     token = secrets.token_urlsafe(32)
     now = time.time()
     with db._conn() as conn:

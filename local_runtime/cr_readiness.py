@@ -25,7 +25,8 @@ def basic(checks, *, verify_mcp=True):
     cfg = cr_bridge.load_settings()
     mode = cfg.get("brain_mode", "channelrecipe")
     account = checks.get("account") or {}
-    results = [item("connection", "ChannelRecipe account", bool(account), "Connect your CR account in step 2."),
+    results = [item("python","Python 3.10 or newer",checks.get("python") is True,"Install Python 3.12, then reopen the launcher."),
+        item("connection", "ChannelRecipe account", bool(account), "Connect your CR account in step 2."),
         item("spending", "Account spending acknowledged", cfg.get("costs_accepted"), "Review account costs in step 2."),
         item("release", "Current workflow installed", account.get("version") == checks.get("local_version"),
              "Download and start the current studio from ChannelRecipe."),
@@ -55,7 +56,7 @@ def basic(checks, *, verify_mcp=True):
 def proof(checks, *, media_ready=False, purpose="video"):
     cfg = cr_bridge.load_settings()
     cli = checks.get("claude_code") or cr_claude.status()
-    return {"local_version":checks.get("local_version", "5.3-admin.9"), "brain_mode":"claudecode",
+    return {"local_version":checks.get("local_version", "5.3-admin.10"), "brain_mode":"claudecode",
             "general_model":cfg.get("general_model", cr_claude.GENERAL_MODEL),
             "visual_model":cfg.get("visual_model", cr_claude.VISUAL_MODEL),
             "claude_installed":cli.get("installed") is True, "claude_authenticated":cli.get("authenticated") is True,

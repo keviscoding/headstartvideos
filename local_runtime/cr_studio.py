@@ -19,6 +19,7 @@ import cr_claude
 import cr_mcp
 import cr_readiness
 import cr_workers
+import cr_ui
 import hashlib
 import re
 
@@ -46,9 +47,11 @@ def output_artifacts(engine, job):
         if name in names:
             name=f"{len(artifacts)+1}-{name}"[:160]
         names.add(name)
+        digest=hashlib.sha256()
         with path.open("rb") as handle:
-            digest=hashlib.file_digest(handle,"sha256").hexdigest()
-        artifacts.append({"name":name,"sha256":digest,"media_type":media_types[path.suffix]})
+            for chunk in iter(lambda:handle.read(1024*1024),b""):
+                digest.update(chunk)
+        artifacts.append({"name":name,"sha256":digest.hexdigest(),"media_type":media_types[path.suffix]})
         if len(artifacts)==20:
             break
     return artifacts
@@ -195,7 +198,7 @@ def create_app():
     @studio.app.get("/cr-status")
     def setup_status():
         cfg = cr_bridge.load_settings()
-        checks = {"python": True, "ffmpeg": video_tools_ready(),
+        checks = {"python": sys.version_info >= (3,10), "ffmpeg": video_tools_ready(),
                   "node": tool_ready("node", "--version") or tool_ready("deno", "--version"),
                   "connected": bool(cfg.get("key")), "costs_accepted": bool(cfg.get("costs_accepted"))}
         checks.update(graphics_ready())
@@ -350,6 +353,7 @@ def create_app():
     @studio.app.get("/cr-projects")
     def local_projects():
         try:
+            cr_claude.sync_receipts(cr_bridge)
             # Only replay final metadata, never generation, after a lost receipt.
             for pending in list(studio.OUT.rglob(".cr-finish-pending.json"))[:20]:
                 try:
@@ -375,6 +379,7 @@ def create_app():
         if studio.RUNNING.get("slug") or studio.QUEUE or cr_workers.busy():
             return jsonify(error="Stop or finish the running video before reviewing recovery."),409
         try:
+            cr_claude.sync_receipts(cr_bridge)
             result=cr_bridge._mcp_tool("local_studio_retry_stage",request.get_json(silent=True) or {})
             return jsonify(result)
         except Exception as error:
@@ -580,8 +585,29 @@ def create_app():
     @studio.app.after_request
     def inject(response):
         if response.mimetype == "text/html" and request.path != "/cr-setup" and not response.direct_passthrough:
+            narration=None
+            if request.path=="/" and cr_media.active("narration"):
+                voice=cr_media.profile("narration")
+                provider=voice.get("provider")
+                if provider in cr_media.PROVIDERS:
+                    info=cr_media.PROVIDERS[provider]
+                    model=cr_media.narration_model(provider,voice.get("model"))
+                    narration={"provider":provider,"label":info["label"],"model":model["id"],
+                        "model_label":model.get("label",model["id"]),"voice":voice.get("voice") or model["default_voice"],
+                        "connected":bool(os.getenv(info["key_env"]))}
+            preset=None
+            if request.path=="/" and request.args.get("cr-preset"):
+                try:
+                    checked=json.loads((HOME/".cr-setup-proof.json").read_text())
+                    name=request.args["cr-preset"]
+                    if checked.get("style")==name and checked.get("setup",{}).get("local_version")==json.loads((HOME/"cr-release.json").read_text())["version"]:
+                        entry=next((s for s in studio.styles.catalogue() if s["name"]==name),None)
+                        if entry:preset={"style":name,"tab":entry.get("tab","production"),"features":checked.get("features",{})}
+                except (OSError,ValueError,KeyError):
+                    pass
+            text=cr_ui.transform_html(response.get_data(as_text=True),narration=narration,preset=preset)
             patch = "<script>const CR_LOCAL_TOKEN=" + json.dumps(token) + ";const crFetch=window.fetch.bind(window);window.fetch=(url,opts={})=>{if(new URL(url instanceof Request?url.url:url,location.href).origin===location.origin){const h=new Headers(opts.headers||(url instanceof Request?url.headers:undefined));h.set('X-CR-Local-Token',CR_LOCAL_TOKEN);opts={...opts,headers:h}}return crFetch(url,opts)};</script>"
-            text = response.get_data(as_text=True).replace("</head>", patch + "</head>", 1)
+            text = text.replace("</head>", patch + "</head>", 1)
             text = text.replace("<body>", '<body><a href="/cr-setup" style="display:block;background:#171B2E;color:#EDEEF5;padding:12px 24px;font:14px system-ui;text-decoration:none">ChannelRecipe · Setup &amp; accounts</a>', 1)
             if request.path == "/":
                 guard = """<script>document.addEventListener('DOMContentLoaded',()=>{const go=document.getElementById('go');if(!go)return;let ready=false;const note=document.createElement('p');note.style.cssText='color:#e8a13c;font:14px system-ui;line-height:1.6';note.textContent='Checking ChannelRecipe setup…';go.insertAdjacentElement('beforebegin',note);go.disabled=true;fetch('/cr-status').then(r=>r.json()).then(d=>{ready=d.readiness?.ready===true;go.disabled=!ready;note.textContent=ready?'Your setup is connected. The selected preset and options will be checked before generation.':'Finish Setup & accounts before generating a video.';if(!ready){const a=document.createElement('a');a.href='/cr-setup';a.textContent=' Open setup';note.append(a)}}).catch(()=>{note.textContent='Reconnect ChannelRecipe in Setup & accounts before generating.'});go.addEventListener('click',e=>{if(!ready){e.preventDefault();e.stopImmediatePropagation();location.href='/cr-setup'}},true)});</script>"""
