@@ -30,6 +30,14 @@ def _brain_readiness():
         return {**result, "why": "Connect to ChannelRecipe using a secure HTTPS address in Setup & accounts."}
     if not cfg.get("costs_accepted"):
         return {**result, "why": "Review provider spending in Setup & accounts before using the CR brain."}
+    if cfg.get("brain_mode") == "claudecode":
+        try:
+            import cr_claude
+            local=cr_claude.status()
+            if not local["ready"] or not cr_claude.models_verified(cfg,local):
+                return {**result,"why":"Sign in to Claude Code and verify both selected models in Setup & accounts."}
+        except (ImportError,ValueError):
+            return {**result,"why":"Complete Claude Code setup before using the studio."}
     # /api/run already checks the connected remote brain before dispatch.
     # A saved key alone must never be presented as verified remote readiness.
     return {**result, "ok": True, "why": ""}
@@ -68,7 +76,7 @@ def install(studio):
 
     def capabilities():
         result = deepcopy(original())
-        if getattr(getattr(studio, "mv", None), "CLAUDE_PROVIDER", None) == "channelrecipe":
+        if cr_bridge.load_settings().get("brain_mode") == "claudecode" or getattr(getattr(studio, "mv", None), "CLAUDE_PROVIDER", None) == "channelrecipe":
             result.setdefault("base", {})["claude"] = _brain_readiness()
         # Image animation is a provider task, not the native 'motion' switch
         # for locally rendered graphics. It must not disable those graphics or

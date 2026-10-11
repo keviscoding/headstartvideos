@@ -31,6 +31,12 @@ def main():
         original_history_animation = history_kit.animate_paintings
         import cr_studio
         import cr_bridge
+        import cr_claude
+        import cr_mcp
+        # Tests never contact the live MCP or use the operator's Claude login.
+        cr_mcp.status=lambda cfg:{"connected":True,"why":""}
+        cr_mcp.is_registered=lambda cfg:True
+        cr_claude.status=lambda *a,**k:{"installed":True,"authenticated":True,"ready":True,"version":"2.1.291","api_provider":"firstParty","auth_method":"claude.ai"}
         studio = cr_studio.create_app()
         assert history_kit.animate_paintings.__cr_history_original__ is original_history_animation
         client = studio.app.test_client()
@@ -45,19 +51,27 @@ def main():
         assert client.get("/cr-status", headers={**local, "Origin": "https://remote.example"}).status_code == 403
         assert client.post("/cr-connect", headers=local, json={}).status_code == 403
         assert client.post("/api/run", headers=protected, json={"title": "Test"}).status_code == 409
+        for route in ("/api/products/build","/api/farm/queue","/api/tl/test/chat"):
+            assert client.post(route,headers=protected,json={}).status_code==409
         assert client.get("/cr-status", headers=local).status_code == 200
         assert "X-CR-Local-Token" in client.get("/", headers=local).text
         calls = []
         def mock_api(path, payload=None, settings=None):
             calls.append((path, payload))
             if path == "projects": return {"id": "crv_" + "1" * 24}
-            if path == "status": return {"brain": {"connected": True}}
+            if path == "status": return {"version":manifest["version"],"brain": {"connected": True}}
             if path == "brain-key": return {"connected": True, "provider": payload["provider"]}
             return {"text": "Smoke decision", "request_id": payload["request_id"], "input_tokens": 5, "output_tokens": 5}
         cr_bridge.call = mock_api
         connected = client.post("/cr-connect", headers=protected,
                                 json={"key": "cr_mcp_smoke_only", "costs_accepted": True})
         assert connected.status_code == 200
+        # Exercise the explicit API alternative separately from the new default.
+        cfg=cr_bridge.load_settings()
+        cfg["brain_mode"]="channelrecipe"
+        cr_bridge.save_settings(cfg)
+        cr_claude.uninstall()
+        cr_bridge.install(studio.mv)
         assert studio.mv.claude("Smoke outline", model="source-model") == "Smoke decision"
         assert studio.mv.claude_research("Smoke research") == "Smoke decision"
         from PIL import Image
@@ -237,8 +251,63 @@ def main():
         studio.mv.IMAGE_PROVIDER = "wavespeed"
         studio.mv.KIE_API_KEY = ""
         assert not cr_media.active("images"), "A voice-only Kie choice must not replace another image provider"
-        print("Pinned engine, onboarding, local security, CR brain and actual media/presenter hooks passed.")
-        print("No provider credits used. Full-video quality and fresh-platform validation remain required.")
+        # Execute the actual pinned text, web research, vision, Folio and 3D
+        # helpers through the native wrapper, retaining their exact tool/prompt
+        # contracts. Only the Claude process result and MCP transport are mocked.
+        import folio,threed,cr_readiness
+        real_run=cr_claude._real_run
+        native_calls=[]
+        receipts={}
+        def native_cli(command,**options):
+            if command[0]!="/smoke/claude":
+                return real_run(command,**options)
+            native_calls.append((command,options))
+            fmt=command[command.index("--output-format")+1]
+            result={"type":"result","subtype":"success","result":"Native creative output",
+                "usage":{"input_tokens":5,"output_tokens":8}}
+            return SimpleNamespace(returncode=0,stdout="Native creative output" if fmt=="text" else json.dumps(result)+"\n",stderr="")
+        def authorize(stage):
+            if stage["stage_id"] in receipts:
+                return {"reuse":True,"execute":False,"result_fingerprint":receipts[stage["stage_id"]]["result_fingerprint"]}
+            return {"execute":True,"authorization_token":"s"*32,"selected_model":cr_claude.VISUAL_MODEL if stage["model_role"]=="visual" else cr_claude.GENERAL_MODEL}
+        cr_claude.find_executable=lambda:"/smoke/claude"
+        cr_claude._real_run=native_cli
+        cr_claude.models_verified=lambda *a:True
+        cr_bridge.authorize_stage=authorize
+        cr_bridge.finish_stage=lambda receipt:receipts.setdefault(receipt["stage_id"],receipt)
+        cfg=cr_bridge.load_settings()
+        cfg.update(brain_mode="claudecode",local_version=manifest["version"],general_model=cr_claude.GENERAL_MODEL,visual_model=cr_claude.VISUAL_MODEL)
+        cr_bridge.save_settings(cfg)
+        cr_bridge._project={"id":"crv_"+"2"*24}
+        cr_bridge.install(studio.mv)
+        originals=cr_bridge._engine_originals[id(studio.mv)]
+        assert studio.mv.claude is originals["claude"] and studio.mv.claude_vision is originals["claude_vision"]
+        assert studio.mv.claude("Native text",model="claude-sonnet-5")=="Native creative output"
+        assert studio.mv.claude_research("Native factual research")=="Native creative output"
+        assert studio.mv.claude_vision("Native frame review",[picture])=="Native creative output"
+        assert folio._call(studio.mv,"Original illustration instructions","Native Folio drawing","drawing",effort="high")=="Native creative output"
+        assert folio._call(studio.mv,"Original illustration instructions","Native Folio contact sheet","review",images=[picture])=="Native creative output"
+        assert folio._look(studio.mv,"Native Folio visual review",[picture])=="Native creative output"
+        assert threed._cc(studio.mv,"Native 3D code",cr_claude.VISUAL_MODEL,[picture],what="smoke")=="Native creative output"
+        assert len(native_calls)==7
+        assert native_calls[1][0][native_calls[1][0].index("--tools")+1]=="WebSearch,WebFetch"
+        assert native_calls[2][0][native_calls[2][0].index("--tools")+1]=="Read"
+        folio_command=native_calls[3][0]
+        assert folio_command[folio_command.index("--effort")+1]=="high"
+        assert folio_command[folio_command.index("--system-prompt")+1]=="Original illustration instructions"
+        assert json.loads(native_calls[4][1]["input"])["message"]["content"][0]["type"]=="image"
+        assert native_calls[-1][0][native_calls[-1][0].index("--model")+1]==cr_claude.VISUAL_MODEL
+        assert studio.mv.claude("Native text",model="claude-sonnet-5")=="Native creative output" and len(native_calls)==7
+        # Requested stock is reported missing instead of silently disappearing.
+        previous_caps=studio.features.capabilities
+        cr_readiness.basic=lambda checks:{"checks":[],"claude_code":{},"ready":True}
+        studio.features.capabilities=lambda:{"base":{"voice":{"ok":True}},"features":{"stock":{"ok":False,"why":"Connect Pexels."}}}
+        missing=cr_readiness.preset(studio,{"local_version":manifest["version"]},{"style":"documentary","features":{"stock":True}})
+        assert missing["features"]["stock"] and not missing["ready"] and "Connect Pexels." in missing["blockers"]
+        studio.features.capabilities=previous_caps
+        cr_claude.uninstall()
+        print("Pinned native text/research/vision/Folio/3D contracts, cached recovery, setup gates, FFmpeg and media hooks passed.")
+        print("No provider credits used by this package smoke check.")
 
 
 if __name__ == "__main__":

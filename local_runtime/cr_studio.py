@@ -15,8 +15,32 @@ import cr_bridge
 import cr_capabilities
 import cr_media
 import cr_render
+import cr_claude
+import cr_mcp
+import cr_readiness
+import cr_workers
+import hashlib
 
 HOME = Path(__file__).resolve().parent
+_graphics_check = {}
+
+
+def graphics_ready():
+    if _graphics_check.get("expires",0)>time.monotonic():
+        return _graphics_check["result"]
+    result={"browser":False,"webgl":False}
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            if Path(p.chromium.executable_path).is_file():
+                browser=p.chromium.launch(headless=True,args=["--enable-unsafe-swiftshader"])
+                page=browser.new_page()
+                result=page.evaluate("""() => ({browser:!!document.createElement('canvas').getContext('2d'),webgl:!!document.createElement('canvas').getContext('webgl2')})""")
+                browser.close()
+    except Exception:
+        pass
+    _graphics_check.update(result=result,expires=time.monotonic()+300)
+    return result
 
 
 def tool_ready(name, flag="-version"):
@@ -62,8 +86,13 @@ def configure_video_tools():
 
 def create_app():
     configure_video_tools()
-    os.environ["CLAUDE_PROVIDER"] = "channelrecipe"
-    os.environ["SCRIPT_PROVIDER"] = "channelrecipe"
+    initial=cr_bridge.load_settings()
+    if not initial:
+        initial={"brain_mode":"claudecode","costs_accepted":False}
+        cr_bridge.save_settings(initial)
+    mode = initial.get("brain_mode", "channelrecipe")
+    os.environ["CLAUDE_PROVIDER"] = "claudecode" if mode == "claudecode" else "channelrecipe"
+    os.environ["SCRIPT_PROVIDER"] = os.environ["CLAUDE_PROVIDER"]
     os.environ["CLAUDE_HANDOFF_DIR"] = ""
     import app as studio
     from flask import Response, jsonify, request
@@ -71,7 +100,13 @@ def create_app():
     cr_media.install(studio.mv)
     cr_capabilities.install(studio)
     cr_render.install(studio.mv)
+    cr_workers.install()
     token = secrets.token_urlsafe(24)
+    # The project launcher reads this private, local-only control token. It is
+    # never sent to CR or included in copied launch commands.
+    control = HOME / ".cr-runtime.json"
+    control.write_text(json.dumps({"pid":os.getpid(),"token":token,"port":7860}))
+    control.chmod(0o600)
     # Prevent a remote website from using the local control room (DNS rebinding/CSRF).
     @studio.app.before_request
     def local_access():
@@ -83,8 +118,8 @@ def create_app():
         if request.method in ("POST", "DELETE", "PUT", "PATCH"):
             if request.headers.get("X-CR-Local-Token") != token:
                 return jsonify(error="Refresh your studio page and try again."), 403
-        if request.path in ("/cr-connect", "/cr-provider", "/cr-brain", "/cr-hub", "/cr-voice", "/cr-images") and request.method == "POST":
-            if studio.RUNNING.get("slug") or studio.QUEUE:
+        if request.path in ("/cr-connect", "/cr-provider", "/cr-brain", "/cr-hub", "/cr-voice", "/cr-images", "/cr-claude/setup") and request.method == "POST":
+            if studio.RUNNING.get("slug") or studio.QUEUE or cr_workers.busy():
                 return jsonify(error="Finish your current video before changing its accounts."), 409
         if request.path == "/api/run" and request.method == "POST":
             try:
@@ -93,13 +128,35 @@ def create_app():
                     return jsonify(error="Review your provider spending in setup before making a video."), 409
                 data = request.get_json(silent=True) or {}
                 # Do not change the shared brain project while another video is active.
-                if studio.RUNNING.get("slug") or studio.QUEUE:
+                if studio.RUNNING.get("slug") or studio.QUEUE or cr_workers.busy():
                     return jsonify(error="Finish your current video before starting another."), 409
-                account = cr_bridge.call("status")
-                if not account.get("brain", {}).get("connected"):
-                    return jsonify(error="Connect a brain account in Setup & accounts before starting a video."), 409
+                checks = setup_status().get_json()
+                preflight = cr_readiness.preset(studio,checks,data)
+                if not preflight["ready"]:
+                    return jsonify(error="Complete this video's setup before starting.",**preflight),409
+                cfg = cr_bridge.load_settings()
+                cfg["setup_proof"] = preflight["proof"]
+                cr_bridge.save_settings(cfg)
+                if cfg.get("brain_mode") == "claudecode":
+                    cr_bridge.prepare_runtime(preflight["proof"])
             except Exception as e:
                 return jsonify(error=str(e)), 409
+        elif request.method == "POST" and (request.path.startswith(("/api/style", "/api/offer", "/api/auto", "/api/learn", "/api/products", "/api/farm"))
+                or request.path.startswith("/api/tl/") and request.path.rsplit("/",1)[-1] in {"chat","op","render"}):
+            checks=setup_status().get_json()
+            if not checks["readiness"]["ready"]:
+                return jsonify(error="Finish studio setup before creating styles or products.",**checks["readiness"]),409
+            if studio.RUNNING.get("slug") or studio.QUEUE or cr_workers.busy():
+                return jsonify(error="Finish the current video before starting more creative work."),409
+            if cr_bridge.load_settings().get("brain_mode") == "claudecode":
+                if request.path.startswith("/api/farm/"):
+                    return jsonify(error="The selected Claude Code workflow renders on this computer. A remote farm does not have this Claude login."),409
+                current=cr_bridge._project
+                if current and cr_bridge.project_progress(current["id"])["project"]["status"] in {"done","failed"}:
+                    current=None
+                if not current:
+                    p=cr_readiness.proof(checks,purpose="creative")
+                    cr_bridge.begin_project("Studio style or product work","custom",proof=p,purpose="creative")
 
     @studio.app.get("/cr-setup")
     def setup_page():
@@ -112,12 +169,7 @@ def create_app():
         checks = {"python": True, "ffmpeg": video_tools_ready(),
                   "node": tool_ready("node", "--version") or tool_ready("deno", "--version"),
                   "connected": bool(cfg.get("key")), "costs_accepted": bool(cfg.get("costs_accepted"))}
-        try:
-            from playwright.sync_api import sync_playwright
-            with sync_playwright() as p:
-                checks["browser"] = Path(p.chromium.executable_path).is_file()
-        except Exception:
-            checks["browser"] = False
+        checks.update(graphics_ready())
         try:
             checks["account"] = cr_bridge.call("status") if cfg.get("key") else None
         except Exception as e:
@@ -164,7 +216,140 @@ def create_app():
             checks["local_version"] = json.loads((HOME / "cr-release.json").read_text())["version"]
         except (OSError, ValueError, KeyError):
             checks["local_version"] = "development"
+        readiness = cr_readiness.basic(checks)
+        checks["brain_mode"] = readiness["brain_mode"]
+        checks["claude_code"] = readiness.pop("claude_code")
+        checks["readiness"] = readiness
         return jsonify(checks)
+
+    @studio.app.post("/cr-preflight")
+    def preflight():
+        try:
+            result=cr_readiness.preset(studio,setup_status().get_json(),request.get_json(silent=True) or {})
+            if result["ready"]:
+                cfg=cr_bridge.load_settings()
+                cfg.update(local_version=result["proof"]["local_version"],setup_proof=result["proof"])
+                cr_bridge.save_settings(cfg)
+                proof_file=HOME/".cr-setup-proof.json"
+                proof_file.write_text(json.dumps({"setup":result["proof"],"style":(request.get_json(silent=True) or {}).get("style"),"features":result["features"]},indent=2))
+                proof_file.chmod(0o600)
+                if cfg.get("brain_mode") == "claudecode":
+                    result["workflow"]=cr_bridge.prepare_runtime(result["proof"])["workflow"]
+            return jsonify(result)
+        except Exception as error:
+            return jsonify(error=str(error),ready=False,blockers=[str(error)]),409
+
+    @studio.app.post("/cr-submit-project")
+    def submit_project():
+        if studio.RUNNING.get("slug") or studio.QUEUE or cr_workers.busy():
+            return jsonify(error="Finish the current video before starting another."),409
+        try:
+            project_id=str((request.get_json(silent=True) or {}).get("project_id", ""))
+            import re
+            if not re.fullmatch(r"crv_[a-f0-9]{24}",project_id):
+                return jsonify(error="Use a valid saved CR project."),400
+            progress=cr_bridge.project_progress(project_id)
+            spec=progress["job_spec"]
+            if progress["project"]["status"] == "done":
+                return jsonify(error="This project already finished. Open its saved local output."),409
+            preflight=cr_readiness.preset(studio,setup_status().get_json(),spec)
+            if not preflight["ready"]:
+                return jsonify(error="Complete this project's setup before starting.",**preflight),409
+            cfg=cr_bridge.load_settings()
+            cfg["setup_proof"]=preflight["proof"]
+            cr_bridge.save_settings(cfg)
+            # Use Frontier's own validation, normalization and queue construction.
+            # Defer dispatch just long enough to attach the owned MCP project.
+            payload={**spec,"steps":spec.get("steps") or ["script","voiceover","pexels","images","video","thumbnail"]}
+            request._cached_json=(payload,payload)
+            dispatch=studio._ensure_dispatcher
+            studio._ensure_dispatcher=lambda:None
+            try:
+                response=studio.app.view_functions["api_run"]()
+            finally:
+                studio._ensure_dispatcher=dispatch
+            if isinstance(response,tuple):
+                return response
+            queued=response.get_json().get("queued",[])
+            with studio.LOCK:
+                for job in studio.QUEUE:
+                    job["cr_project_id"]=project_id
+            studio._ensure_dispatcher()
+            return jsonify(queued=queued,project_id=project_id)
+        except Exception as error:
+            return jsonify(error=str(error)),409
+
+    @studio.app.post("/cr-claude/setup")
+    def claude_setup():
+        data=request.get_json(silent=True) or {}
+        action=data.get("action")
+        cfg=cr_bridge.load_settings()
+        try:
+            if action == "check":
+                return jsonify(message="Claude Code login and connection checks updated.",**setup_status().get_json())
+            if not cfg.get("key") or not cfg.get("costs_accepted"):
+                raise RuntimeError("Connect CR and acknowledge account usage before connecting Claude Code.")
+            local=cr_claude.status()
+            if not local["ready"]:
+                raise RuntimeError(local["message"])
+            if action == "connect_mcp":
+                connection=cr_mcp.register(cfg)
+                if not connection["connected"]:
+                    raise RuntimeError(connection["why"])
+                return jsonify(message="CR production tools connected. Save your model choices next.",mcp_connected=True)
+            if action == "select":
+                if not cr_mcp.status(cfg)["connected"]:
+                    raise RuntimeError("Connect CR tools before selecting your Claude Code route.")
+                cfg.update(cr_claude.select_profile(data.get("general_model"),data.get("visual_model")))
+                cfg["local_version"]=json.loads((HOME/"cr-release.json").read_text())["version"]
+                cfg.pop("setup_proof",None)
+                cr_bridge.save_settings(cfg)
+                cr_bridge.install(studio.mv)
+                return jsonify(message="Your Claude Code route is selected. Verify both models, then check your preset.")
+            if action == "verify":
+                if cfg.get("brain_mode") != "claudecode" or not cr_mcp.status(cfg)["connected"]:
+                    raise RuntimeError("Connect CR tools and save your Claude Code model choices first.")
+                if not all(cfg.get(key) for key in ("general_model","visual_model","local_version")):
+                    raise RuntimeError("Save your Claude Code model choices before verifying them.")
+                checks=setup_status().get_json()
+                result=cr_claude.verify_models(studio.mv,cr_bridge,cr_readiness.proof(checks,purpose="setup"))
+                return jsonify(result)
+            return jsonify(error="Choose a supported setup action."),400
+        except (Exception,cr_claude.ClaudeStageStopped) as error:
+            return jsonify(error=str(error)),409
+
+    @studio.app.get("/cr-projects")
+    def local_projects():
+        try:
+            # Only replay final metadata, never generation, after a lost receipt.
+            for pending in list(studio.OUT.rglob(".cr-finish-pending.json"))[:20]:
+                try:
+                    cr_bridge.finish_project(json.loads(pending.read_text()))
+                    pending.replace(pending.with_name(".cr-finish.json"))
+                except (Exception,ValueError):
+                    pass
+            projects=cr_bridge.call("projects")["projects"]
+            result=[]
+            for p in projects[:20]:
+                try:
+                    progress=cr_bridge.project_progress(p["id"])
+                except RuntimeError:
+                    continue
+                result.append({"project_id":p["id"],"title":p["title"],"status":p["status"],
+                    "stages":[s for s in progress["stages"] if s["status"] in {"failed","authorized","retry_allowed"}]})
+            return jsonify(projects=result)
+        except Exception:
+            return jsonify(error="Reconnect CR before loading project recovery.",projects=[]),409
+
+    @studio.app.post("/cr-recover")
+    def recover_stage():
+        if studio.RUNNING.get("slug") or studio.QUEUE or cr_workers.busy():
+            return jsonify(error="Stop or finish the running video before reviewing recovery."),409
+        try:
+            result=cr_bridge._mcp_tool("local_studio_retry_stage",request.get_json(silent=True) or {})
+            return jsonify(result)
+        except Exception as error:
+            return jsonify(error=str(error)),409
 
     @studio.app.post("/cr-connect")
     def connect():
@@ -210,6 +395,11 @@ def create_app():
                                     "model": data.get("model"), "visual_model": data.get("visual_model")})
         except Exception as error:
             return jsonify(error=str(error)), 400
+        cfg["brain_mode"]="channelrecipe"
+        cfg.pop("setup_proof",None)
+        cr_bridge.save_settings(cfg)
+        cr_claude.uninstall()
+        cr_bridge.install(studio.mv)
         return jsonify(saved=True, message=result.get("message", "Brain account connected."))
 
     def check_media_account(provider, key):
@@ -332,7 +522,13 @@ def create_app():
                 check_media_account(provider, key)
             write_provider(info["key_env"], key)
             cfg["media_hub"] = {"provider": provider, "tasks": sorted(set(tasks)), "voice": voice or info["default_voice"]}
+            if data.get("use_for_brain") is True:
+                cfg["brain_mode"]="channelrecipe"
+                cfg.pop("setup_proof",None)
+                cr_claude.uninstall()
             cr_bridge.save_settings(cfg)
+            if data.get("use_for_brain") is True:
+                cr_bridge.install(studio.mv)
         except cr_media.AccountStop as e:
             return jsonify(error=str(e)), 400
         except Exception:
@@ -358,6 +554,9 @@ def create_app():
             patch = "<script>const CR_LOCAL_TOKEN=" + json.dumps(token) + ";const crFetch=window.fetch.bind(window);window.fetch=(url,opts={})=>{if(new URL(url instanceof Request?url.url:url,location.href).origin===location.origin){const h=new Headers(opts.headers||(url instanceof Request?url.headers:undefined));h.set('X-CR-Local-Token',CR_LOCAL_TOKEN);opts={...opts,headers:h}}return crFetch(url,opts)};</script>"
             text = response.get_data(as_text=True).replace("</head>", patch + "</head>", 1)
             text = text.replace("<body>", '<body><a href="/cr-setup" style="display:block;background:#171B2E;color:#EDEEF5;padding:12px 24px;font:14px system-ui;text-decoration:none">ChannelRecipe · Setup &amp; accounts</a>', 1)
+            if request.path == "/":
+                guard = """<script>document.addEventListener('DOMContentLoaded',()=>{const go=document.getElementById('go');if(!go)return;let ready=false;const note=document.createElement('p');note.style.cssText='color:#e8a13c;font:14px system-ui;line-height:1.6';note.textContent='Checking ChannelRecipe setup…';go.insertAdjacentElement('beforebegin',note);go.disabled=true;fetch('/cr-status').then(r=>r.json()).then(d=>{ready=d.readiness?.ready===true;go.disabled=!ready;note.textContent=ready?'Your setup is connected. The selected preset and options will be checked before generation.':'Finish Setup & accounts before generating a video.';if(!ready){const a=document.createElement('a');a.href='/cr-setup';a.textContent=' Open setup';note.append(a)}}).catch(()=>{note.textContent='Reconnect ChannelRecipe in Setup & accounts before generating.'});go.addEventListener('click',e=>{if(!ready){e.preventDefault();e.stopImmediatePropagation();location.href='/cr-setup'}},true)});</script>"""
+                text=text.replace("</body>",guard+"</body>",1)
             response.set_data(text)
         return response
 
@@ -371,7 +570,18 @@ def create_app():
         marker = job / "cr-project.json"
         try:
             previous = json.loads(marker.read_text()) if marker.is_file() else {}
-            project = cr_bridge.begin_project(title, style, None if spec.get("force") else previous.get("id"))
+            cfg=cr_bridge.load_settings()
+            cr_bridge.install(studio.mv)
+            if cfg.get("brain_mode") == "claudecode":
+                purpose="creative" if spec.get("timeline") else "video"
+                setup=cfg.get("setup_proof")
+                if spec.get("timeline"):
+                    with studio.app.app_context():
+                        setup=cr_readiness.proof(setup_status().get_json(),purpose=purpose)
+                project=cr_bridge.begin_project(title,style,spec.get("cr_project_id") or (None if spec.get("force") or spec.get("timeline") else previous.get("id")),
+                    proof=setup,job_spec={**spec,"minutes":max(1,int(spec.get("minutes") or 1))},purpose=purpose)
+            else:
+                project = cr_bridge.begin_project(title, style, None if spec.get("force") else previous.get("id"))
             job.mkdir(parents=True, exist_ok=True)
             marker.write_text(json.dumps(project, indent=2))
         except Exception as error:
@@ -379,7 +589,27 @@ def create_app():
                 studio.JOBS.setdefault(spec["slug"], {}).update(state="error", error=str(error), done=False)
                 studio.RUNNING["slug"] = None
             return
-        return original_run(spec)
+        result=original_run(spec)
+        if cfg.get("brain_mode") == "claudecode":
+            state=studio.JOBS.get(spec["slug"],{})
+            artifacts=[]
+            media_types={".mp4":"video/mp4",".mp3":"audio/mpeg",".wav":"audio/wav",".png":"image/png",".jpg":"image/jpeg",".zip":"application/zip",".txt":"text/plain",".json":"application/json",".srt":"text/plain"}
+            if state.get("state") == "done":
+                for path in sorted(job.iterdir()):
+                    if path.is_file() and path.suffix in media_types and not path.name.startswith("_"):
+                        with path.open("rb") as handle:
+                            digest=hashlib.file_digest(handle,"sha256").hexdigest()
+                        artifacts.append({"name":path.name,"sha256":digest,"media_type":media_types[path.suffix]})
+            try:
+                report={"project_id":project["id"],"status":"done" if artifacts and state.get("state")=="done" else "failed",
+                    "artifacts":artifacts[:20],"error_code":"" if artifacts and state.get("state")=="done" else "runtime_failed"}
+                pending=job/".cr-finish-pending.json"
+                cr_claude._private_write(pending,report)
+                cr_bridge.finish_project(report)
+                pending.replace(job/".cr-finish.json")
+            except Exception:
+                state["lines"].append("Your local output is saved. Reconnect CR to update its completion record.")
+        return result
     studio._run_spec = run_spec
     return studio
 

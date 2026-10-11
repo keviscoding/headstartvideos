@@ -1,13 +1,43 @@
-# ChannelRecipe local studio — admin preview
+# ChannelRecipe production studio
 
-Help the creator connect ChannelRecipe, choose a style and make a video using the packaged engine. Explain steps plainly. Do not rewrite the engine or promise a fixed cost/render time.
+Use CR's MCP production workflow and the installed Frontier engine. Do not build
+a substitute renderer or hardcode stock/image percentages. Preserve the original
+preset, director, scene modules and visual review loops.
 
-1. Use ChannelRecipe MCP `local_studio_setup` to check admin access and brain-key readiness. Model keys are entered securely in the CR website, never pasted into chat.
-2. Start `cr_studio.py` using the included Mac/Windows launcher. Open http://127.0.0.1:7860/cr-setup. Guide the creator through checks and account setup.
-3. The CR connect key is entered only in the local setup form. Never echo it into a terminal command or chat.
-4. Explain: CR brain calls use their chosen Anthropic, Google, Kie.ai or Atlas Cloud API account; media calls use local provider keys; rendering runs on this computer. Help them select writing and specialist visual models in the separate brain form. Existing models do not change automatically. Kie/Atlas can connect compatible media tasks with one key; connecting that key to the brain requires explicit consent and model choices. Direct Anthropic supports Claude web research, while Kie/Atlas Claude routes currently do not have verified hosted search. Do not promise identical quality to local Claude Code or a completed private-brain migration. Paid media requires the spending agreement in setup. Stock/music and specialised models can still require separate accounts. Hub narration uses the setup voice rather than private preset clones.
-5. Open the local studio after checks pass. Let the creator choose a preset, title, duration and feature options. Missing provider keys mean missing capabilities, not free substitutes.
-6. Use the existing engine through `cr_studio.py`. Directly launching `app.py`, calling private source functions or modifying provider helpers bypasses the supported integration. Do not do that.
-7. Reopen a saved job to resume rather than creating duplicates. CR brain receipts are in output/cr-receipts; model-account media task IDs are in .cr-tasks folders beside the assets. Pending tasks resume with the same ID. An uncertain submission without an ID requires checking the provider log; do not delete its receipt or try another wallet automatically. Media charges must be checked in provider accounts.
+For customization, samples, creative direction and specialist features, read
+FRONTIER_GUIDE.md and the original README for the selected style/module. The
+original creative guidance remains available in this private owner download.
+The CR instructions here take precedence over its older setup, prices, account
+collection and launch commands. Use setup forms for keys, current provider prices,
+cr_studio.py for launch and MCP/cr_run.py for production videos. Do not invoke
+standalone generative Python commands to bypass the CR project/stage checks.
 
-This owner's admin package retains original Frontier source for compatibility testing. It is not the public customer runtime. Never share the package, keys, private prompts or customer assets publicly.
+Begin with local_studio_setup and local_studio_prepare. If setup has not passed,
+guide the creator to http://127.0.0.1:7860/cr-setup. Never request keys in chat or
+read .env, .cr-connection.json, .mcp.json or login files into conversation.
+
+After the creator checks a preset, .cr-setup-proof.json contains only safe setup
+fields, style and feature choices. Read it, then call local_studio_begin with
+payload containing setup, a unique begin_id, title, style, minutes, features and
+optional original video options. Use their preset and choices; defaults belong
+to Frontier. Never impose footage or animation ratios.
+
+Run the returned launch command from this folder using the local terminal.
+It contains only a project ID. The local studio must be running; cr_run.py
+rechecks setup and options before queuing. Use local_studio_progress with
+payload containing project_id to inspect stage progress, usage and outputs.
+
+Each original Claude Code stage retains its system/user instructions, tools,
+effort, vision inputs and response formats. CR authorizes stages through MCP and
+pins the workflow and model profile. Do not use hosted generate_script or an API
+brain as a local fallback. Claude Code uses the signed-in creator's account;
+media uses their provider balances, separately from the CR subscription.
+
+Completed stage outputs and media tasks resume from caches. Do not delete
+receipts or rerun uncertain work. The local setup recovery section offers one
+further attempt after the creator checks usage, confirms no active job and
+explicitly accepts additional usage. Never approve retries automatically.
+
+Help review the final video, timeline, thumbnails and exports. Model identity
+alone does not guarantee equal quality; inspect actual output when judging it.
+This owner package remains admin-only and retains original private source.

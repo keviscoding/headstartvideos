@@ -42,7 +42,10 @@ mcp = MCPServer(
         "do not ask the user for an api_key tool argument. "
         "When a tool returns upgrade_url, tell the user to upgrade at that link. "
         "After server tool updates, start a brand-new chat so the tool catalog refreshes. "
-        "For the admin Local studio preview, start with local_studio_setup. "
+        "For Local studio, start with local_studio_setup and local_studio_prepare. "
+        "After required local checks pass, use local_studio_begin, run its cr_run.py "
+        "launch command from the extracted folder, then use local_studio_progress. "
+        "The maintained Frontier engine performs original Claude Code and local rendering stages. "
         "Guide users through the website and downloaded setup screen; never ask them "
         "to paste provider keys into chat or invoke hosted generation as a free local fallback."
     ),
@@ -922,8 +925,8 @@ def local_studio_setup(ctx: Context | None = None) -> str:
     result["steps"] = [
         "Open CR's Local studio page and download the admin package.",
         "Extract it, then open Start on Mac.command or Start on Windows.cmd.",
-        "Follow the local setup screen to connect CR and your generation accounts.",
-        "Check provider spending, choose a style and make a video in the local studio.",
+        "Connect CR in local setup, sign in to Claude Code, connect CR tools, and save/verify your writing and visual models.",
+        "Connect media accounts, check your selected preset's requirements, and create/review/export in the original studio.",
     ]
     return json.dumps(result)
 
@@ -960,6 +963,90 @@ def local_studio_receipt(project_id: str, ctx: Context | None = None) -> str:
         return json.dumps(studio.project(user, project_id))
     except Exception:
         return json.dumps({"error": "Project not found in your studio account."})
+
+
+def _studio_production(ctx, method, payload, contract=None):
+    from webapp import frontier_studio as studio
+    from pydantic import ValidationError
+    from fastapi import HTTPException
+    user = _user_from_request(ctx)
+    try:
+        studio.require_admin_user(user)
+        req = contract.model_validate(payload) if contract else payload
+        return json.dumps(method(user, req))
+    except ValidationError:
+        return json.dumps({"error": "Complete the downloaded studio's setup checks and supply valid project details."})
+    except HTTPException as error:
+        return json.dumps({"error": error.detail, "status": error.status_code})
+
+
+@mcp.tool()
+def local_studio_prepare(payload: dict | None = None, ctx: Context | None = None) -> str:
+    """Get CR's current production workflow and validate reported local setup.
+
+    Claude Code must use the downloaded local studio. Never collect provider
+    keys in chat. This does not generate content or start a local process.
+    """
+    from webapp import frontier_studio as studio
+    return _studio_production(ctx, studio.native_prepare, payload, studio.NativeSetup if payload else None)
+
+
+@mcp.tool()
+def local_studio_begin(payload: dict, ctx: Context | None = None) -> str:
+    """Create/resume a production project after local setup passes.
+
+    Use the local setup proof and original preset/options. The returned launch
+    command contains only the project ID. Run it from the extracted studio
+    folder using your local terminal tool; MCP cannot start localhost remotely.
+    Your logged-in Claude Code and media accounts pay for generation.
+    """
+    from webapp import frontier_studio as studio
+    return _studio_production(ctx, studio.native_begin, payload, studio.NativeBegin)
+
+
+@mcp.tool()
+def local_studio_authorize_stage(payload: dict, ctx: Context | None = None) -> str:
+    """Runner: authorize one original Frontier Claude stage before execution.
+
+    Supply hashes and routing metadata, never the prompt or account credentials.
+    Existing completed work is reused; uncertain work cannot be charged again
+    automatically. This tool itself makes no model request.
+    """
+    from webapp import frontier_studio as studio
+    return _studio_production(ctx, studio.native_authorize, payload, studio.NativeAuthorize)
+
+
+@mcp.tool()
+def local_studio_finish_stage(payload: dict, ctx: Context | None = None) -> str:
+    """Runner: save a Claude stage outcome, result hash and safe reported usage."""
+    from webapp import frontier_studio as studio
+    return _studio_production(ctx, studio.native_finish_stage, payload, studio.NativeFinishStage)
+
+
+@mcp.tool()
+def local_studio_progress(payload: dict, ctx: Context | None = None) -> str:
+    """Read your saved production project, stage progress and output metadata."""
+    from webapp import frontier_studio as studio
+    return _studio_production(ctx, studio.native_progress, str(payload.get("project_id", "")))
+
+
+@mcp.tool()
+def local_studio_finish_project(payload: dict, ctx: Context | None = None) -> str:
+    """Runner: record final video/output metadata or a recoverable project stop."""
+    from webapp import frontier_studio as studio
+    return _studio_production(ctx, studio.native_finish_project, payload, studio.NativeFinishProject)
+
+
+@mcp.tool()
+def local_studio_retry_stage(payload:dict,ctx:Context|None=None)->str:
+    """Allow one explicitly approved recovery attempt after checking local work.
+
+    Never approve automatically: confirm no local video is running, review the
+    user's Claude usage and cached work, and obtain their cost acknowledgement.
+    Approval itself makes no model call. Resume the original project afterwards.
+    """
+    from webapp import frontier_studio as studio
+    return _studio_production(ctx,studio.native_retry_stage,payload,studio.NativeRetryStage)
 
 
 def build_mcp_asgi():
