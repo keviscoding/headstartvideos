@@ -12,6 +12,7 @@ import cr_media as media
 
 @pytest.fixture
 def hub(tmp_path, monkeypatch):
+    monkeypatch.setattr(media, "_native_images", None)
     monkeypatch.setattr(media.cr_bridge, "SETTINGS", tmp_path / ".cr-connection.json")
     media.cr_bridge.save_settings({"costs_accepted": True, "media_hub": {"provider": "kie", "tasks": sorted(media.TASKS)}})
     monkeypatch.setenv("KIE_API_KEY", "customer-test-key")
@@ -209,3 +210,126 @@ def test_installed_but_broken_video_tool_is_not_reported_ready(monkeypatch):
     assert not cr_studio.tool_ready("ffmpeg")
     monkeypatch.setattr(cr_studio.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0))
     assert cr_studio.tool_ready("ffmpeg")
+
+
+def kie_tasks(monkeypatch, states):
+    creates = []
+    def create(url, **kw):
+        creates.append(kw["json"])
+        return response({"code": 200, "data": {"taskId": "task-" + str(len(creates))}})
+    def poll(url, **kw):
+        idx = int(kw["params"]["taskId"].split("-")[1]) - 1
+        state = states[idx]
+        return response({"code": 200, "data": state if isinstance(state, dict) else {
+            "state": "success", "resultJson": json.dumps({"resultUrls": ["https://files.example/image.png"]})}})
+    monkeypatch.setattr(media.requests, "post", create)
+    monkeypatch.setattr(media.requests, "get", poll)
+    return creates
+
+
+def test_confirmed_moderation_falls_back_with_references_and_resume_never_pays_again(hub, monkeypatch):
+    creates = kie_tasks(monkeypatch, [{"state": "fail", "failCode": "422", "failMsg": "Flagged as sensitive", "creditsConsumed": 0}, "success"])
+    dest = hub / "scene.png"
+    refs = ["https://files.example/character.png"]
+    media.image("A childhood memory", dest, ref_urls=refs)
+    media.image("A childhood memory", dest, ref_urls=refs)
+    assert [c["model"] for c in creates] == ["google/nano-banana-edit", "nano-banana-2-1"]
+    assert creates[0]["input"]["image_urls"] == creates[1]["input"]["image_input"] == refs
+    assert creates[0]["input"]["prompt"] == creates[1]["input"]["prompt"]
+    assert len(list((hub / ".cr-tasks").glob("*.json"))) == 2
+
+
+def test_terminal_model_failure_uses_each_selected_model_once_and_stops(hub, monkeypatch):
+    creates = kie_tasks(monkeypatch, [{"state": "fail", "failCode": "500", "failMsg": "Internal error", "creditsConsumed": 0}] * 5)
+    for _ in range(2):
+        with pytest.raises(media.AccountStop, match="after 5 selected models"):
+            media.image("Example", hub / "scene.png")
+    assert len(creates) == 5 and len({c["model"] for c in creates}) == 5
+
+
+@pytest.mark.parametrize("code,reason", [("402", "Insufficient credits"), ("401", "Missing permission"),
+                                          ("429", "Rate limit"), ("422", "Invalid aspect ratio"), ("cancelled", "Flagged as sensitive")])
+def test_account_and_validation_failures_never_fallback(hub, monkeypatch, code, reason):
+    creates = kie_tasks(monkeypatch, [{"state": "fail", "failCode": code, "failMsg": reason}])
+    with pytest.raises(media.AccountStop):
+        media.image("Example", hub / "scene.png")
+    assert len(creates) == 1
+
+
+def test_uncertain_image_creation_does_not_try_other_models(hub, monkeypatch):
+    calls = []
+    def create(*a, **kw):
+        calls.append(kw)
+        raise media.requests.ReadTimeout()
+    monkeypatch.setattr(media.requests, "post", create)
+    for _ in range(2):
+        with pytest.raises(media.AccountStop):
+            media.image("Example", hub / "scene.png")
+    assert len(calls) == 1
+
+
+def test_known_create_rejection_can_fallback_but_ambiguous_500_cannot(hub, monkeypatch):
+    creates = kie_tasks(monkeypatch, ["success", "success"])
+    original = media.requests.post
+    def reject_first(*a, **kw):
+        if kw["json"]["model"] == "google/nano-banana":
+            return response({"code": 422, "msg": "Flagged as sensitive"})
+        return original(*a, **kw)
+    monkeypatch.setattr(media.requests, "post", reject_first)
+    media.image("Example", hub / "known.png")
+    assert len(creates) == 1 and creates[0]["model"] == "nano-banana-2-1"
+    calls = []
+    monkeypatch.setattr(media.requests, "post", lambda *a, **kw: calls.append(kw) or response({"code": 500}, status=500))
+    with pytest.raises(media.AccountStop):
+        media.image("Example", hub / "uncertain.png")
+    assert len(calls) == 1
+
+
+def test_pending_or_failed_transfer_does_not_create_a_fallback(hub, monkeypatch):
+    creates = kie_tasks(monkeypatch, ["success"])
+    monkeypatch.setattr(media, "download", lambda *a: (_ for _ in ()).throw(media.AccountStop("Transfer stopped")))
+    with pytest.raises(media.AccountStop, match="Transfer stopped"):
+        media.image("Example", hub / "scene.png")
+    assert len(creates) == 1
+
+
+def test_pending_image_keeps_its_task_id_and_does_not_fallback(hub, monkeypatch):
+    creates = kie_tasks(monkeypatch, [{"state": "processing"}])
+    original = media.run
+    monkeypatch.setattr(media, "run", lambda *a, **kw: original(*a, timeout_s=0, **kw))
+    for _ in range(2):
+        with pytest.raises(media.AccountStop, match="still pending"):
+            media.image("Example", hub / "scene.png")
+    assert len(creates) == 1
+
+
+def test_image_fallbacks_can_be_disabled_and_independent_kie_images_keep_voice_wallet(hub, monkeypatch):
+    media.cr_bridge.save_settings({"costs_accepted": True,
+        "media_hub": {"provider": "atlas", "tasks": ["images", "narration"]},
+        "images": {"provider": "kie", "model": "gpt-image-2", "fallbacks": []}})
+    assert media.account("images")[0] == "kie" and media.account("narration")[0] == "atlas"
+    creates = kie_tasks(monkeypatch, [{"state": "fail", "failCode": "500", "failMsg": "Internal error"}])
+    with pytest.raises(media.AccountStop, match="after 1 selected models"):
+        media.image("Example", hub / "scene.png")
+    assert len(creates) == 1 and creates[0]["model"] == "gpt-image-2-text-to-image"
+    assert creates[0]["input"] == {"prompt": "Example", "aspect_ratio": "16:9", "resolution": "1K", "background": "opaque"}
+
+
+def test_native_kie_images_work_without_a_hub_and_voice_does_not_choose_images(hub, monkeypatch):
+    media.cr_bridge.save_settings({"costs_accepted": True, "narration": {"provider": "kie"}})
+    monkeypatch.setattr(media, "_native_images", lambda: "wavespeed")
+    assert not media.active("images")
+    monkeypatch.setattr(media, "_native_images", lambda: "kie")
+    creates = kie_tasks(monkeypatch, ["success"])
+    media.image("Example", hub / "native.png")
+    assert len(creates) == 1 and creates[0]["model"] == "google/nano-banana"
+
+
+@pytest.mark.parametrize("family", ["google/nano-banana", "nano-banana-2", "nano-banana-2-1", "gpt-image-2", "gpt-image-2-5-flare"])
+def test_supported_image_models_preserve_reference_edits(family):
+    choice = media.image_model(family)
+    refs = ["https://files.example/ref.png"]
+    model, inputs = media.image_input(choice, "Example", refs)
+    assert model == choice["edit"] and inputs[choice["reference_field"]] == refs
+    assert inputs["aspect_ratio"] == "16:9"
+    assert media.image_model(choice["generate"]) == media.image_model(choice["edit"]) == choice

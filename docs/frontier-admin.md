@@ -55,9 +55,9 @@ asset notices are retained. It writes a version/manifest into the bundle.
 python scripts/build_frontier_admin.py --source /private/path/Frontier-5.3-FULL.zip
 ```
 
-The output defaults to git-ignored `data/frontier/channelrecipe-5.3-admin.3.zip`.
+The output defaults to git-ignored `data/frontier/channelrecipe-5.3-admin.4.zip`.
 `--upload` publishes to the private Spaces object
-`private/frontier/channelrecipe-5.3-admin.3.zip`. It checks both the object ACL
+`private/frontier/channelrecipe-5.3-admin.4.zip`. It checks both the object ACL
 and unauthenticated origin/CDN access, testing a small canary before uploading
 the engine. Failure removes the uploaded release. Never print storage credentials.
 
@@ -170,7 +170,7 @@ installers and automatic prerequisite repair remain onboarding work.
 ```sh
 python -m pytest -q tests/test_frontier_providers.py tests/test_frontier_studio.py tests/test_frontier_bridge.py \
   tests/test_frontier_media.py tests/test_mcp_billing.py tests/test_niche_cron.py
-python scripts/smoke_frontier_admin.py --bundle data/frontier/channelrecipe-5.3-admin.3.zip
+python scripts/smoke_frontier_admin.py --bundle data/frontier/channelrecipe-5.3-admin.4.zip
 ```
 
 The bundle smoke requires its runtime dependencies. It imports the actual pinned
@@ -200,3 +200,14 @@ The local setup has a visible narration selector: inherit the shared model accou
 Kie narration offers an explicit choice between Gemini 3.8 Flash TTS and ElevenLabs Turbo 2.5. Existing shared-hub choices retain their ElevenLabs default; selecting a separate voice model is explicit. Gemini uses one `Speaker 1` and preserves the script in `dialogue_turns`. Its WAV output is converted locally to MP3 before existing subtitle timing and audio processing. Provider failures stop the job and retain their error and reported credits; there is no automatic paid fallback.
 
 Subtitle timing decodes the saved audio with FFmpeg to 16 kHz mono PCM and passes the waveform to local Whisper. This avoids incompatibilities between installed PyAV and faster-whisper versions without upgrading the original engine's dependency set.
+
+
+## Kie image routing and bounded fallbacks (admin.4)
+
+The CR image adapter now handles the native engine’s selected Kie image provider even when no shared media hub is configured. The native provider selection is captured before installing hooks; saving a Kie narration key does not itself switch another image provider. An optional, separate Kie image choice takes priority over a shared image hub. Its setup form reuses a saved local key after a read-only account check and does not change the CR brain or narration. Account/model edits are blocked while work is running or queued.
+
+Supported families are Nano Banana, Nano Banana 2, Nano Banana 2.1, GPT Image 2, and GPT Image 2.5 Flare. Each family has its documented text/reference-edit model ID and reference field (`image_urls`, `image_input`, or `input_urls`). Newer models explicitly use 1K output; original Nano Banana keeps its default output size. Each reference stays attached through fallback. Catalog/schema sources: https://docs.kie.ai/market/google/nanobanana2, https://docs.kie.ai/market/google/nanobanana-2-1, https://docs.kie.ai/market/gpt/gpt-image-2-text-to-image, and https://docs.kie.ai/market/gpt/gpt-image-2-5-flare-text-to-image, plus the corresponding edit pages.
+
+The default Kie chain keeps the selected primary image model, then tries Nano Banana 2.1, GPT Image 2, Nano Banana 2 and GPT Image 2.5 Flare, omitting duplicates. Users can select a primary and disable any/all backups. At most five distinct model attempts run per image, once per model, on the same Kie wallet. Attempts may consume credits; this is an attempt limit, not a fixed-price guarantee. Only a confirmed moderation refusal or terminal model failure advances the chain, with the same prompt. Provider moderation still applies and may refuse every selected model. Balance/access/rate-limit/validation errors, cancellation, uncertain creation, pending jobs and failed downloads stop instead of launching another paid job.
+
+A per-model receipt retains each task ID, outcome, provider reason and reported credits. An explicit client rejection without an ID is saved as a known failure; a 5xx/timeout without an ID remains uncertain. Resume skips known failed attempts and reuses the successful fallback or polls the pending task. It never resubmits a failed model. Narration remains separate: a Gemini TTS failure cannot be fixed by changing image models, and there is no automatic paid voice fallback.

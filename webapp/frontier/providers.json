@@ -115,6 +115,68 @@
         "default_voice": "EkK5I93UQWFDigLMpZcX",
         "format": "mp3"
       }
+    ],
+    "image_models": [
+      {
+        "id": "google/nano-banana",
+        "label": "Nano Banana",
+        "generate": "google/nano-banana",
+        "edit": "google/nano-banana-edit",
+        "reference_field": "image_urls",
+        "options": {
+          "output_format": "png"
+        }
+      },
+      {
+        "id": "nano-banana-2-1",
+        "label": "Nano Banana 2.1",
+        "generate": "nano-banana-2-1",
+        "edit": "nano-banana-2-1",
+        "reference_field": "image_input",
+        "options": {
+          "resolution": "1K",
+          "output_format": "png"
+        }
+      },
+      {
+        "id": "gpt-image-2",
+        "label": "GPT Image 2",
+        "generate": "gpt-image-2-text-to-image",
+        "edit": "gpt-image-2-image-to-image",
+        "reference_field": "input_urls",
+        "options": {
+          "resolution": "1K",
+          "background": "opaque"
+        }
+      },
+      {
+        "id": "nano-banana-2",
+        "label": "Nano Banana 2",
+        "generate": "nano-banana-2",
+        "edit": "nano-banana-2",
+        "reference_field": "image_input",
+        "options": {
+          "resolution": "1K",
+          "output_format": "png"
+        }
+      },
+      {
+        "id": "gpt-image-2-5-flare",
+        "label": "GPT Image 2.5 Flare",
+        "generate": "gpt-image-2-5-flare-text-to-image",
+        "edit": "gpt-image-2-5-flare-image-to-image",
+        "reference_field": "input_urls",
+        "options": {
+          "resolution": "1K",
+          "background": "opaque"
+        }
+      }
+    ],
+    "image_fallbacks": [
+      "nano-banana-2-1",
+      "gpt-image-2",
+      "nano-banana-2",
+      "gpt-image-2-5-flare"
     ]
   },
   "atlas": {

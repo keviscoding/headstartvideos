@@ -29,6 +29,7 @@ TASKS = {"images", "narration", "motion", "avatars"}
 _slots = threading.BoundedSemaphore(2)
 _lock = threading.RLock()
 _references = {}
+_native_images = None
 
 
 class AccountStop(BaseException):
@@ -37,12 +38,53 @@ class AccountStop(BaseException):
     pass
 
 
+class TaskFailed(AccountStop):
+    """A confirmed rejection or terminal task failure, safe to consider for fallback."""
+    def __init__(self, provider, receipt, task):
+        self.code = str(receipt.get("failure_code") or "")
+        self.reason = receipt.get("failure_message") or ""
+        self.category = receipt.get("failure_category") or failure_category(self.code, self.reason)
+        self.fallback_allowed = provider == "kie" and task == "images" and self.category in ("moderation", "model_failure")
+        action = (" Review this image prompt or choose another image model in Setup & accounts." if self.category == "moderation" and task == "images"
+                  else " Review this narration text in your provider log." if self.category == "moderation" and task == "narration"
+                  else " Top up this account, then resume." if self.category == "balance"
+                  else " Check its log; no other wallet was used.")
+        prefix = f"{PROVIDERS[provider]['label']} " + (f"refused this {task} request." if receipt.get("rejected") else f"failed this {task} task.")
+        super().__init__(prefix +
+                         (" " + self.reason if self.reason else "") + action)
+
+
+def failure_category(code, reason):
+    text = str(reason).lower()
+    if str(code) == "cancelled":
+        return "cancelled"
+    if str(code) in ("401", "403") or any(w in text for w in ("api key", "unauthorized", "permission")):
+        return "access"
+    if str(code) == "402" or any(w in text for w in ("insufficient", "balance", "credits", "credit", "quota")):
+        return "balance"
+    if str(code) == "429" or "rate limit" in text:
+        return "rate_limit"
+    if any(w in text for w in ("sensitive", "moderation", "content policy", "safety", "nsfw")):
+        return "moderation"
+    if str(code) in ("500", "502", "503", "504"):
+        return "model_failure"
+    return "request"
+
+
 def profile(task=None):
     settings = cr_bridge.load_settings()
+    images = settings.get("images") or {}
+    if task == "images" and images.get("provider") == "kie":
+        return {**images, "tasks": ["images"]}
     voice = settings.get("narration") or {}
     if task == "narration" and voice.get("provider") in ("kie", "atlas", "original"):
         return {**voice, "tasks": ["narration"]} if voice["provider"] != "original" else {}
     cfg = settings.get("media_hub") or {}
+    if task == "images" and "images" not in cfg.get("tasks", []):
+        # Repair only a Kie image provider already selected by the native engine.
+        # A Kie voice key alone must never replace another image provider.
+        if _native_images and _native_images() == "kie":
+            return {"provider": "kie", "tasks": ["images"], "model": os.getenv("KIE_IMAGE_MODEL", "google/nano-banana")}
     return cfg if cfg.get("provider") in ("kie", "atlas") else {}
 
 
@@ -147,8 +189,8 @@ def download(url, dest):
         tmp.unlink(missing_ok=True)
 
 
-def upload(path, cache_file=None):
-    provider, key = account()
+def upload(path, cache_file=None, *, task=None):
+    provider, key = account(task)
     path = Path(path)
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     marker = path.parent / ".cr-tasks" / f"upload-{provider}-{digest}.json"
@@ -204,16 +246,32 @@ def run(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
                 log(f"cached model task: {dest.name}")
                 _references[previous["url"]] = {"task_fingerprint": fingerprint}
                 return previous["url"]
+            if previous.get("status") == "failed":
+                raise TaskFailed(provider, previous, task)
             if previous and not previous.get("id"):
                 raise AccountStop("This media submission has an uncertain result. Check your provider task log and the .cr-tasks receipt before deliberately retrying.")
-            if previous.get("status") == "failed":
-                raise AccountStop("This media task failed. Check the provider log and saved receipt before deliberately retrying.")
             if not previous:
                 previous = {"provider": provider, "model": model, "status": "submitting", "created_at": time.time()}
                 _write(marker, previous)  # Crash before ID is recorded is uncertain, never auto-resubmit.
                 suffix = "/createTask" if provider == "kie" else {"images": "/generateImage", "narration": "/generateAudio", "motion": "/generateVideo", "avatars": "/generateVideo"}[task]
                 try:
                     res = requests.post(base + suffix, headers=headers, json=payload, timeout=(15, 90), allow_redirects=False)
+                    # Only an explicit client rejection is known not to have
+                    # created a job. A 5xx/timeout without an ID stays uncertain.
+                    if provider == "kie":
+                        try:
+                            rejected = res.json()
+                            code = str(rejected.get("code") or res.status_code)
+                            if code in ("400", "401", "402", "403", "422", "429") and not (rejected.get("data") or {}).get("taskId"):
+                                reason = re.sub(r"\s+", " ", str(rejected.get("msg") or rejected.get("message") or "")).replace(key, "[redacted]")[:200]
+                                category = failure_category(code, reason)
+                                previous.update(status="failed", rejected=True, failure_code=code,
+                                                failure_category=category,
+                                                failure_message=reason if category == "moderation" else "", credits=0)
+                                _write(marker, previous)
+                                raise TaskFailed(provider, previous, task)
+                        except (ValueError, TypeError, AttributeError):
+                            pass
                     data = _data(res, provider)
                     detail = data.get("data") or data
                     task_id = detail.get("taskId" if provider == "kie" else "id")
@@ -253,11 +311,10 @@ def run(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
                 if state in ("fail", "failed", "cancelled", "canceled"):
                     previous["status"] = "failed"
                     reason = re.sub(r"\s+", " ", str(detail.get("failMsg") or "")).replace(key, "[redacted]")[:200]
-                    previous.update(failure_message=reason, failure_code=str(detail.get("failCode") or "")[:40],
+                    previous.update(failure_message=reason, failure_code=("cancelled" if state in ("cancelled", "canceled") else str(detail.get("failCode") or "")[:40]),
                                     credits=detail.get("creditsConsumed"))
                     _write(marker, previous)
-                    raise AccountStop(f"{PROVIDERS[provider]['label']} failed this task." + (" " + reason if reason else "") +
-                                      " Check its log; no other wallet was used.")
+                    raise TaskFailed(provider, previous, task)
             except requests.RequestException:
                 pass  # Read-only task poll; keep the original ID.
             except (ValueError, TypeError, AttributeError, KeyError):
@@ -266,15 +323,54 @@ def run(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
         raise AccountStop("The media task is still pending. Its ID is saved; resume this job to check it without submitting again.")
 
 
-def image(prompt, dest, label="image", ref_urls=None, **kwargs):
-    cfg = profile()
-    provider = cfg["provider"]
-    inputs = {"prompt": prompt[:5000], "aspect_ratio": "16:9", "output_format": "png"}
-    refs = list(ref_urls or [])
-    model = PROVIDERS[provider]["models"]["image_edit" if refs else "images"]
+def image_model(model):
+    for choice in PROVIDERS["kie"]["image_models"]:
+        if model in (choice["id"], choice["generate"], choice["edit"]):
+            return choice
+    raise AccountStop("Choose a supported Kie image model in Setup & accounts.")
+
+
+def image_plan(cfg):
+    primary = image_model(cfg.get("model") or PROVIDERS["kie"]["models"]["images"])["id"]
+    fallbacks = cfg.get("fallbacks", PROVIDERS["kie"]["image_fallbacks"])
+    if not isinstance(fallbacks, list) or len(fallbacks) > 4:
+        raise AccountStop("Choose at most four image fallbacks in Setup & accounts.")
+    return list(dict.fromkeys([primary] + [image_model(m)["id"] for m in fallbacks]))
+
+
+def image_input(choice, prompt, refs):
+    inputs = {"prompt": prompt[:5000], "aspect_ratio": "16:9", **choice["options"]}
     if refs:
-        inputs["image_urls" if provider == "kie" else "images"] = refs[:8]
-    return run("images", inputs, dest, model=model)
+        inputs[choice["reference_field"]] = [_url(url) for url in refs[:8]]
+    return choice["edit" if refs else "generate"], inputs
+
+
+def image(prompt, dest, label="image", ref_urls=None, **kwargs):
+    cfg = profile("images")
+    provider = cfg["provider"]
+    refs = list(ref_urls or [])
+    if provider != "kie":
+        inputs = {"prompt": prompt[:5000], "aspect_ratio": "16:9", "output_format": "png"}
+        model = PROVIDERS[provider]["models"]["image_edit" if refs else "images"]
+        if refs:
+            inputs["images"] = refs[:8]
+        return run("images", inputs, dest, model=model)
+    last = None
+    plan = image_plan(cfg)
+    for index, model_id in enumerate(plan):
+        choice = image_model(model_id)
+        model, inputs = image_input(choice, prompt, refs)
+        try:
+            # Each model/prompt/wallet has its own durable receipt. Resuming
+            # skips confirmed failures and reuses the successful fallback.
+            return run("images", inputs, dest, model=model)
+        except TaskFailed as error:
+            if not error.fallback_allowed:
+                raise
+            last = error
+            if index + 1 < len(plan):
+                print(f"  {label}: {choice['label']} failed ({error.category}); trying {image_model(plan[index+1])['label']} on the same Kie account.")
+    raise AccountStop(f"Image generation stopped after {len(plan)} selected models. {last} Saved attempts will not be submitted again on resume.")
 
 
 def motion(image_url, prompt, dest, label="motion", retries=1, **kwargs):
@@ -360,6 +456,8 @@ def narrate(engine, text, mp3, srt, voice_id="", style=""):
 
 def install(engine):
     """Keep native providers when a task is unticked; resolve settings per call."""
+    global _native_images
+    _native_images = engine._image_provider
     def hook(name, task, replacement):
         original = getattr(engine, name)
         setattr(engine, name, lambda *a, **k: replacement(*a, **k) if active(task) else original(*a, **k))
@@ -409,7 +507,9 @@ def install(engine):
             return _original(eng, script, job, *args, **kwargs)
         module.voiceover = routed_voice
     original_upload = wavespeed.upload
-    wavespeed.upload = lambda *a, **k: upload(*a, **k) if any(active(t) for t in ("images", "motion", "avatars")) else original_upload(*a, **k)
+    def upload_task():
+        return next((t for t in ("images", "motion", "avatars") if active(t)), None)
+    wavespeed.upload = lambda *a, **k: upload(*a, task=upload_task(), **k) if upload_task() else original_upload(*a, **k)
     original_run = wavespeed.run
     def routed_run(model, payload, dest, *args, **kwargs):
         image_model = any(x in model for x in ("nano-banana", "gpt-image", "seedream", "flux", "qwen-image"))
@@ -428,11 +528,11 @@ def install(engine):
         return original_run(model, payload, dest, *args, **kwargs)
     wavespeed.run = routed_run
     original_host = engine.host_image
-    engine.host_image = lambda path: upload(path) if active("images") else original_host(path)
+    engine.host_image = lambda path: upload(path, task="images") if active("images") else original_host(path)
     original_kie_upload = engine._kie_upload_image
-    engine._kie_upload_image = lambda path: upload(path) if any(active(t) for t in ("images", "motion", "avatars")) else original_kie_upload(path)
+    engine._kie_upload_image = lambda path: upload(path, task=upload_task()) if upload_task() else original_kie_upload(path)
     original_avatar_host = avatar._host
-    avatar._host = lambda path, cache, log=print: upload(path, cache) if active("avatars") else original_avatar_host(path, cache, log)
+    avatar._host = lambda path, cache, log=print: upload(path, cache, task="avatars") if active("avatars") else original_avatar_host(path, cache, log)
     for name in ("_kie", "_wavespeed", "_wavespeed_avatar"):
         original = getattr(avatar, name)
         def routed_avatar(provider, image_url, audio_url, dest, log=print, _original=original, **kwargs):

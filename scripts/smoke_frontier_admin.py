@@ -136,20 +136,45 @@ def main():
         assert media_calls[-1][1]["dialogue_turns"] == [{"speaker_id": "Speaker 1", "text": "Hello world."}]
         probe = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "stream=codec_name", "-of", "json", str(gemini_job / "audio.mp3")]))
         assert probe["streams"][0]["codec_name"] == "mp3"
+        # Image selection is independent, reuses a saved local Kie key, and
+        # validates every paid model before saving or submitting anything.
+        before = len(calls)
+        assert client.post("/cr-images", headers=protected, json={"provider": "kie", "model": "missing", "fallbacks": []}).status_code == 400
+        assert client.post("/cr-images", headers=protected, json={"provider": "kie", "model": "gpt-image-2", "fallbacks": ["missing"]}).status_code == 400
+        assert client.post("/cr-images", headers=protected, json={"provider": "kie", "model": "gpt-image-2",
+                           "fallbacks": ["nano-banana-2-1", "nano-banana-2", "gpt-image-2-5-flare"]}).status_code == 200
+        assert len(calls) == before, "Image setup must not change the cloud brain"
+        assert cr_media.account("images")[0] == "kie" and cr_media.account("narration")[0] == "kie"
+        studio.mv.image_gen("Smoke GPT reference", root / "gpt-ref.png", ref_urls=["https://files.example/ref"])
+        assert media_calls[-1][2]["model"] == "gpt-image-2-image-to-image"
+        assert media_calls[-1][1]["input_urls"] == ["https://files.example/ref"]
+        status = client.get("/cr-status", headers=local)
+        assert status.json["images"]["model"] == "gpt-image-2" and "test-kie-voice-key" not in status.text
         # Account changes are blocked while a video is active.
         studio.RUNNING["slug"] = "busy"
         assert client.post("/cr-hub", headers=protected, json={"provider": "original"}).status_code == 409
         assert client.post("/cr-voice", headers=protected, json={"provider": "original"}).status_code == 409
+        assert client.post("/cr-images", headers=protected, json={"provider": "inherit"}).status_code == 409
         studio.RUNNING["slug"] = None
         studio.QUEUE.append({"slug": "queued"})
         assert client.post("/cr-voice", headers=protected, json={"provider": "original"}).status_code == 409
+        assert client.post("/cr-images", headers=protected, json={"provider": "inherit"}).status_code == 409
         studio.QUEUE.clear()
         assert client.post("/cr-voice", headers=protected, json={"provider": "original"}).status_code == 200
         assert not cr_media.active("narration") and cr_media.active("images")
         assert client.post("/cr-voice", headers=protected, json={"provider": "inherit"}).status_code == 200
         assert cr_media.active("narration") and cr_media.profile("narration")["provider"] == "atlas"
+        assert client.post("/cr-images", headers=protected, json={"provider": "inherit"}).status_code == 200
         assert client.post("/cr-hub", headers=protected, json={"provider": "original"}).status_code == 200
-        assert studio.mv._image_provider() != "channelrecipe-hub"
+        studio.mv.IMAGE_PROVIDER = "kie"
+        assert studio.mv._image_provider() == "channelrecipe-hub"
+        studio.mv.image_gen("Native Kie without a create callback", root / "native.png")
+        assert media_calls[-1][2]["model"] == "google/nano-banana"
+        studio.mv.image_gen("Native Kie with a reference", root / "native-ref.png", ref_urls=["https://files.example/ref"])
+        assert media_calls[-1][2]["model"] == "google/nano-banana-edit"
+        studio.mv.IMAGE_PROVIDER = "wavespeed"
+        studio.mv.KIE_API_KEY = ""
+        assert not cr_media.active("images"), "A voice-only Kie choice must not replace another image provider"
         print("Pinned engine, onboarding, local security, CR brain and actual media/presenter hooks passed.")
         print("No provider credits used. Full-video quality and fresh-platform validation remain required.")
 
