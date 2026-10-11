@@ -363,6 +363,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 // Page Navigation (SPA routing)
 // ---------------------------------------------------------------------------
 function navigateTo(page) {
+    if (page === 'local-studio' && !(currentUser && currentUser.is_admin)) {
+        if (!currentUser) showAuthModal();
+        return;
+    }
     if (page === 'settings' && !currentUser) {
         showAuthModal();
         return;
@@ -415,6 +419,7 @@ function navigateTo(page) {
     if (page === 'analytics') {
         try { loadAnalyticsDashboard(); } catch (_) {}
     }
+    if (page === 'local-studio') window.CRLocalStudio?.open();
 
     // Close menus
     document.getElementById('tools-menu')?.classList.add('hidden');
@@ -6289,6 +6294,9 @@ function updateAuthUI() {
     navSettings?.classList.toggle('hidden', !signedIn);
     navSettingsMobile?.classList.toggle('hidden', !signedIn);
     const isAdmin = !!(currentUser && currentUser.is_admin);
+    document.getElementById('nav-local-studio')?.classList.toggle('hidden', !isAdmin);
+    document.getElementById('nav-local-studio-mobile')?.classList.toggle('hidden', !isAdmin);
+    if (!isAdmin && state.page === 'local-studio') navigateTo('pipeline');
     document.getElementById('nav-niche-intel')?.classList.toggle('hidden', !isAdmin);
     document.getElementById('nav-niche-intel-mobile')?.classList.toggle('hidden', !isAdmin);
     const showAnalytics = canViewAnalytics();

@@ -41,7 +41,10 @@ mcp = MCPServer(
         "Auth is the Claude connector session (or Desktop Bearer key) — "
         "do not ask the user for an api_key tool argument. "
         "When a tool returns upgrade_url, tell the user to upgrade at that link. "
-        "After server tool updates, start a brand-new chat so the tool catalog refreshes."
+        "After server tool updates, start a brand-new chat so the tool catalog refreshes. "
+        "For the admin Local studio preview, start with local_studio_setup. "
+        "Guide users through the website and downloaded setup screen; never ask them "
+        "to paste provider keys into chat or invoke hosted generation as a free local fallback."
     ),
     website_url="https://channelrecipe.com",
     auth_server_provider=oauth_provider,
@@ -583,7 +586,8 @@ def _admin_gate(user: dict | None, *, feature: str) -> str | None:
         return json.dumps({
             "error": (
                 f"{feature} is limited to the ChannelRecipe admin account "
-                "while we control YouTube quota and caption credits."
+                + ("during the local studio migration preview." if feature == "Local studio"
+                   else "while we control YouTube quota and caption credits.")
             ),
             "code": "admin_only",
             "email": (user.get("email") or ""),
@@ -899,6 +903,63 @@ def research_niche_channels(
     except Exception:
         mv = _MAX_RESEARCH_VIDEOS
     return _run_niche_research(urls, user=user, max_videos=mv)
+
+
+@mcp.tool()
+def local_studio_setup(ctx: Context | None = None) -> str:
+    """Admin preview: check CR's local video studio connection and guide setup.
+
+    Generation/rendering use the creator's accounts and computer. Never ask them
+    to paste provider keys into chat; key entry is in the website/local setup.
+    """
+    from webapp import frontier_studio as studio
+    user = _user_from_request(ctx)
+    error = _admin_gate(user, feature="Local studio")
+    if error:
+        return error
+    result = studio.status(user)
+    result["setup_url"] = public_base_url() + "/app#local-studio"
+    result["steps"] = [
+        "Open CR's Local studio page and download the admin package.",
+        "Extract it, then open Start on Mac.command or Start on Windows.cmd.",
+        "Follow the local setup screen to connect CR and your generation accounts.",
+        "Check provider spending, choose a style and make a video in the local studio.",
+    ]
+    return json.dumps(result)
+
+
+@mcp.tool()
+def local_studio_styles(ctx: Context | None = None) -> str:
+    """Admin preview: list the 26 imported Frontier preset descriptions.
+
+    Presets are migration candidates, not claims that each has passed real
+    production validation. The protected download includes the original engine.
+    """
+    from webapp import frontier_studio as studio
+    user = _user_from_request(ctx)
+    error = _admin_gate(user, feature="Local studio")
+    if error:
+        return error
+    studio.require_admin_user(user)
+    return json.dumps({"version": studio.VERSION, "styles": studio.catalog(), "access": "admin_preview"})
+
+
+@mcp.tool()
+def local_studio_receipt(project_id: str, ctx: Context | None = None) -> str:
+    """Admin preview: provider-reported brain token usage for your local video.
+
+    Media charges remain in the creator's own provider accounts; don't invent
+    an exact total price from this partial receipt.
+    """
+    from webapp import frontier_studio as studio
+    user = _user_from_request(ctx)
+    error = _admin_gate(user, feature="Local studio")
+    if error:
+        return error
+    try:
+        return json.dumps(studio.project(user, project_id))
+    except Exception:
+        return json.dumps({"error": "Project not found in your studio account."})
 
 
 def build_mcp_asgi():

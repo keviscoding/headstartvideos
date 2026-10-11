@@ -43,6 +43,7 @@
                     <button class="nav-btn active" data-page="pipeline" onclick="navigateTo('pipeline')">New video</button>
                     <button class="nav-btn" data-page="niche-finder" onclick="navigateTo('niche-finder')">Niche Finder</button>
                     <button id="nav-niche-intel" class="nav-btn hidden" data-page="niche-intel" onclick="navigateTo('niche-intel')">Niche Intel</button>
+                    <button id="nav-local-studio" class="nav-btn hidden" data-page="local-studio" onclick="navigateTo('local-studio')">Local studio</button>
                     <button id="nav-analytics" class="nav-btn hidden" data-page="analytics" onclick="navigateTo('analytics')">Analytics</button>
                     <div class="relative" id="tools-dropdown">
                         <button class="nav-btn" data-page="tools" onclick="toggleToolsMenu(event)" style="position:relative;">
@@ -105,6 +106,7 @@
             <button class="mobile-nav-btn" onclick="navigateTo('pipeline')">New video</button>
             <button class="mobile-nav-btn" onclick="navigateTo('niche-finder')">Niche Finder</button>
             <button id="nav-niche-intel-mobile" class="mobile-nav-btn hidden" onclick="navigateTo('niche-intel')">Niche Intel</button>
+            <button id="nav-local-studio-mobile" class="mobile-nav-btn hidden" onclick="navigateTo('local-studio')">Local studio</button>
             <button id="nav-analytics-mobile" class="mobile-nav-btn hidden" onclick="navigateTo('analytics')">Analytics</button>
             <button class="mobile-nav-btn" onclick="navigateTo('script-studio')">Script Studio</button>
             <button class="mobile-nav-btn" onclick="navigateTo('voiceover-studio')">Voiceover Studio</button>
@@ -1833,6 +1835,8 @@
     <!-- ============================================================ -->
     <!-- PAGE: Settings -->
     <!-- ============================================================ -->
+    <div id="page-local-studio" class="page-container hidden"></div>
+
     <div id="page-settings" class="page-container hidden">
         <main class="max-w-3xl mx-auto px-6 py-8">
             <h2 class="cr-display" style="font-size: 32px; margin-bottom: 8px;">Settings</h2>
@@ -2279,6 +2283,8 @@
 
     <script src="/static/cr-telemetry.js?v=20260804b"></script>
     <script src="/static/ranking.js?v=20260807f"></script>
-    <script src="/static/app.js?v=20261006-leads1"></script>
+    <link rel="stylesheet" href="/static/local-studio.css?v=20261011a">
+    <script src="/static/app.js?v=20261011-studio1"></script>
+    <script src="/static/local-studio.js?v=20261011a"></script>
 </body>
 </html>
