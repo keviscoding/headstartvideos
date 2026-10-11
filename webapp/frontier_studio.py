@@ -26,9 +26,9 @@ from webapp import database as db
 from cryptography.fernet import Fernet, InvalidToken
 from webapp import frontier_providers as providers
 
-VERSION = "5.3-admin.5"
+VERSION = "5.3-admin.6"
 CATALOG = Path(__file__).resolve().parent / "frontier" / "catalog.json"
-RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.5.zip"
+RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.6.zip"
 GEMINI_MODEL = "gemini-3.8-flash"
 _slots = threading.BoundedSemaphore(2)
 _schema_lock = threading.Lock()

@@ -382,7 +382,7 @@ def motion(image_url, prompt, dest, label="motion", retries=1, **kwargs):
     if provider == "kie":
         # V1 Pro Fast has a different schema from Seedance 1.5. Keep the
         # five-second cost choice fixed even for a longer timeline slot.
-        inputs = {"prompt": prompt[:2000], "image_url": image_url,
+        inputs = {"prompt": prompt[:10000], "image_url": image_url,
                   "resolution": "720p", "duration": "5"}
     else:
         inputs = {"prompt": prompt[:2000], "image": image_url, "aspect_ratio": "16:9",
@@ -411,47 +411,6 @@ def native_motion(*args, **kwargs):
         return motion(*args, **kwargs)
 
 
-def animate_paintings(engine, job, shots, cfg, log=print):
-    """Route the history kit's direct Kie animation through saved task IDs."""
-    if not cfg or cfg.get("off") or not int(cfg.get("max") or 0):
-        return 0
-    held = {}
-    for shot in shots:
-        path = str(shot["pic_path"])
-        held[path] = held.get(path, 0.0) + float(shot["g1"]) - float(shot["g0"])
-    picks = sorted(held, key=held.get, reverse=True)
-    picks = [Path(p) for p in picks if held[p] >= float(cfg.get("min_s") or 5.5)][:int(cfg.get("max") or 8)]
-    todo = [p for p in picks if not (p.with_suffix(".anim.mp4").is_file() and p.with_suffix(".anim.mp4").stat().st_size > 50_000)]
-    if not todo:
-        return 0
-    import history_kit
-    from concurrent.futures import ThreadPoolExecutor
-    try:
-        scenes = json.loads((Path(job) / "astro_scenes.json").read_text())
-    except (OSError, ValueError):
-        scenes = []
-    with native_motion_account():
-        provider, _ = account("motion")
-    model = PROVIDERS[provider]["models"]["motion"]
-    log(f"Image animation: {len(todo)} scenes · {model} · 720p" + (" · 5 seconds each" if provider == "kie" else ""))
-    def one(path):
-        scene = ""
-        numbers = re.findall(r"\d+", path.stem)
-        if numbers and isinstance(scenes, list):
-            index = int(numbers[-1])
-            if index < len(scenes) and isinstance(scenes[index], dict):
-                scene = str(scenes[index].get("prompt") or "")
-        prompt = history_kit.MOTION_PROMPT + (" Scene: " + scene if scene else "")
-        with native_motion_account():
-            url = upload(path, task="motion")
-            motion(url, prompt, path.with_suffix(".anim.mp4"), log=log)
-        return 1
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        made = sum(pool.map(one, todo))
-    log(f"Image animation: {made} scenes saved; existing clips kept.")
-    return made
-
-
 def avatar_clip(provider, image_url, audio_url, dest, log=print):
     if provider not in ("kling-standard", "kling-pro"):
         raise AccountStop("This presenter model needs its original service. Choose Kling Standard/Pro for the model account, or turn off its presenter replacement in setup.")
@@ -460,6 +419,15 @@ def avatar_clip(provider, image_url, audio_url, dest, log=print):
     model = PROVIDERS[hub]["models"]["avatar_pro" if provider == "kling-pro" else "avatars"]
     run("avatars", inputs, dest, model=model, log=log)
     return Path(dest)
+
+
+def route_avatar(original):
+    """Forward native positional options when presenter replacement is off."""
+    def routed(provider, image_url, audio_url, dest, log=print, *args, **kwargs):
+        if active("avatars"):
+            return avatar_clip(provider, image_url, audio_url, dest, log)
+        return original(provider, image_url, audio_url, dest, log, *args, **kwargs)
+    return routed
 
 
 def _chunks(text, limit=2400):
@@ -539,7 +507,8 @@ def install(engine):
     engine.KIE_VIDEO_MODEL = PROVIDERS["kie"]["models"]["motion"]
     engine.KIE_VIDEO_RES, engine.KIE_VIDEO_DUR = "720p", "5"
     import history_kit
-    history_kit.animate_paintings = animate_paintings
+    import cr_history_io
+    cr_history_io.install(history_kit)
     hook("_tts_one", "narration", lambda *a, **k: narrate(engine, *a, **k))
     original_voice = engine.generate_voiceover
     def voiceover(script, job, force=False, avatar_min=0, style=""):
@@ -610,6 +579,4 @@ def install(engine):
     avatar._host = lambda path, cache, log=print: upload(path, cache, task="avatars") if active("avatars") else original_avatar_host(path, cache, log)
     for name in ("_kie", "_wavespeed", "_wavespeed_avatar"):
         original = getattr(avatar, name)
-        def routed_avatar(provider, image_url, audio_url, dest, log=print, _original=original, **kwargs):
-            return avatar_clip(provider, image_url, audio_url, dest, log) if active("avatars") else _original(provider, image_url, audio_url, dest, log, **kwargs)
-        setattr(avatar, name, routed_avatar)
+        setattr(avatar, name, route_avatar(original))
