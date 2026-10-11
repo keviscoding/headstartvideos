@@ -1,11 +1,28 @@
 """Owner-supplied model accounts. Never read platform generation credentials."""
 import json
+import re
 from pathlib import Path
 
 import requests
 from fastapi import HTTPException
 
 PROVIDERS = json.loads((Path(__file__).parent / "frontier/providers.json").read_text())
+
+
+class ProviderFailure(HTTPException):
+    """Safe diagnostics only: never retain provider bodies, prompts or keys."""
+    def __init__(self, message, code, **metadata):
+        super().__init__(502, message)
+        self.diagnostics = {"code": code, "message": message, **metadata}
+
+
+def _usage(data, provider):
+    usage = data.get("usage" if provider == "kie" else "usageMetadata", {}) or {}
+    incoming = int(usage.get("prompt_tokens" if provider == "kie" else "promptTokenCount", 0) or 0)
+    outgoing = int(usage.get("completion_tokens" if provider == "kie" else "candidatesTokenCount", 0) or 0)
+    if provider != "kie":
+        outgoing += int(usage.get("thoughtsTokenCount", 0) or 0)
+    return {"input_tokens": max(0, incoming), "output_tokens": max(0, outgoing), "usage_reported": bool(usage)}
 
 
 def check_key(provider, key, model):
@@ -60,27 +77,30 @@ def generate(provider, key, model, parts, kind, max_tokens):
     try:
         res = requests.post(url, headers=headers, json=payload, timeout=(15, 180), allow_redirects=False)
         if res.status_code != 200:
-            raise HTTPException(502, f"{label} could not complete this request (HTTP {res.status_code}). No other account was used.")
+            raise ProviderFailure(f"{label} could not complete this request (HTTP {res.status_code}). No other account was used.",
+                                  "upstream_http", upstream_http=res.status_code)
         data = res.json()
+        usage = _usage(data, provider)
+        headers = getattr(res, "headers", {})
+        provider_id = headers.get("x-request-id", headers.get("request-id", ""))
+        if isinstance(provider_id, str) and re.fullmatch(r"[a-zA-Z0-9_\-]{1,100}", provider_id):
+            usage["provider_request_id"] = provider_id
         if provider == "kie":
             candidate = (data.get("choices") or [{}])[0]
-            if candidate.get("finish_reason") not in (None, "stop"):
-                raise HTTPException(502, f"{label} stopped before completing this answer. Review this project's usage before restarting it.")
+            reason = candidate.get("finish_reason")
             text = candidate.get("message", {}).get("content", "")
-            usage = data.get("usage", {})
-            incoming, outgoing = int(usage.get("prompt_tokens", 0)), int(usage.get("completion_tokens", 0))
         else:
             candidate = (data.get("candidates") or [{}])[0]
-            if candidate.get("finishReason") not in (None, "STOP"):
-                raise HTTPException(502, f"{label} stopped before completing this answer. Review this project's usage before restarting it.")
+            reason = candidate.get("finishReason")
             text = "".join(p.get("text", "") for p in candidate.get("content", {}).get("parts", []) if not p.get("thought"))
-            usage = data.get("usageMetadata", {})
-            incoming = int(usage.get("promptTokenCount", 0))
-            outgoing = int(usage.get("candidatesTokenCount", 0)) + int(usage.get("thoughtsTokenCount", 0))
+        if reason not in (None, "stop" if provider == "kie" else "STOP"):
+            safe_reason = reason if reason in {"MAX_TOKENS", "length", "SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "content_filter"} else "OTHER"
+            raise ProviderFailure(f"{label} stopped before completing this answer. Open Local studio in CR to review this request.",
+                                  "truncated" if reason in ("MAX_TOKENS", "length") else "stopped", finish_reason=safe_reason, **usage)
         if not isinstance(text, str) or not text.strip():
-            raise HTTPException(502, "The model returned no usable answer. Check your project before retrying.")
-        return text, incoming, outgoing
+            raise ProviderFailure("The model returned no usable answer. Open Local studio in CR to review this request.", "empty_answer", **usage)
+        return text, usage["input_tokens"], usage["output_tokens"]
     except requests.RequestException:
-        raise HTTPException(502, "The provider connection was interrupted. Check the recorded request before retrying.")
+        raise ProviderFailure("The provider connection was interrupted. Open Local studio in CR to review this request.", "network_interrupted")
     except (ValueError, TypeError, AttributeError):
-        raise HTTPException(502, f"{label} returned an unreadable response.")
+        raise ProviderFailure(f"{label} returned an unreadable response. Open Local studio in CR to review this request.", "unreadable")

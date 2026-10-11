@@ -67,21 +67,22 @@ window.CRLocalStudio = (() => {
             '<details class="ls-help"><summary>Connect or change the brain account here</summary>'+brainForm()+'</details>' +
             '<button class="btn-primary ls-next" data-ls-next>Choose your first video '+icon('arrow')+'</button>';
         return '<div class="ls-section-head"><span class="ls-step-number">05</span><div><h2>Choose a look for your first video</h2><p>The current library covers illustrated stories, documentaries, presenters, maps and 3D. Each has different account and hardware needs.</p></div></div>' +
+            '<div id="ls-history"></div>' +
             '<div class="ls-library-controls"><input class="cr-input" id="ls-style-search" type="search" placeholder="Search styles" aria-label="Search styles"><select class="cr-input" id="ls-family-filter" aria-label="Filter styles"><option value="">All styles</option><option value="illustrated">Illustrated</option><option value="documentary">Documentary & graphics</option><option value="avatar">AI presenters</option><option value="3d">3D</option></select></div>' +
             '<div id="ls-style-grid" class="ls-style-grid"></div><p class="ls-inline-note">These are imported presets for admin testing. Full production validation is still in progress.</p>' +
             '<div class="ls-launch"><div><h3>Ready when your setup checks pass</h3><p>Open your local studio, choose a style, add a title and review the options. Start with a short video to check your accounts and output.</p></div><a class="btn-primary" href="http://127.0.0.1:7860/cr-setup" target="_blank" rel="noopener">Open your studio ↗</a></div>' +
-            '<details class="ls-help"><summary>If something stops, what happens to my work?</summary><p>The engine saves work in your local output folder. Reopen the same job to resume. If a provider request has an uncertain result, check its recorded status before retrying, so you do not accidentally pay twice.</p></details>' +
-            '<div id="ls-history"></div>';
+            '<details class="ls-help"><summary>If something stops, what happens to my work?</summary><p>The engine saves work in your local output folder. Reopen the same video to resume. Use “View request status” above to see a stopped model request and its recovery option. You do not need to find a technical log.</p></details>';
     }
     function render() {
         if (!root() || !data) return;
         root().innerHTML = '<div class="ls-wrap">'+hero()+'<nav class="ls-steps" aria-label="Setup steps">'+steps.map((title,i)=>
             '<button data-ls-step="'+i+'" class="'+(i===step?'active':'')+'" '+(i===step?'aria-current="step"':'')+'><span>'+String(i+1).padStart(2,'0')+'</span>'+title+'</button>').join('')+
-            '</nav><main class="ls-panel"><div id="ls-notice" role="status" hidden></div>'+body()+'</main><footer class="ls-footer"><span>Admin access only · '+esc(data.version)+'</span><button class="btn-ghost" data-ls-refresh>Refresh connection status</button></footer></div>';
+            '</nav>'+(data.recovery_requests&&step!==4?'<aside class="ls-callout ls-recovery-notice"><div><strong>A model request needs attention</strong><p>You can review its status and recovery option here.</p></div><button class="btn-secondary" data-ls-review>Review stopped request</button></aside>':'')+'<main class="ls-panel"><div id="ls-notice" role="status" hidden></div>'+body()+'</main><footer class="ls-footer"><span>Admin access only · '+esc(data.version)+'</span><button class="btn-ghost" data-ls-refresh>Refresh connection status</button></footer></div>';
         root().querySelectorAll('[data-ls-step]').forEach(el => el.addEventListener('click', () => {step = Number(el.dataset.lsStep);render();}));
         root().querySelectorAll('[data-ls-next]').forEach(el => el.addEventListener('click', () => {step = Math.min(4, step+1);render();root().scrollIntoView({behavior:'smooth',block:'start'});}));
         root().querySelectorAll('[data-ls-platform]').forEach(el => el.addEventListener('click', () => {platform=el.dataset.lsPlatform;render();}));
         root().querySelector('[data-ls-refresh]')?.addEventListener('click', open);
+        root().querySelector('[data-ls-review]')?.addEventListener('click',()=>{step=4;render();document.getElementById('ls-history').scrollIntoView({behavior:'smooth',block:'start'});});
         root().querySelector('[data-ls-copy-command]')?.addEventListener('click', () => copy(document.getElementById('ls-connect-command').textContent,'Connection command copied.'));
         root().querySelector('[data-ls-copy-prompt]')?.addEventListener('click', () => copy('Use ChannelRecipe to help me set up my local video studio. Walk me through it one step at a time.','First message copied.'));
         root().querySelector('[data-ls-copy-key]')?.addEventListener('click', async () => {
@@ -118,9 +119,41 @@ window.CRLocalStudio = (() => {
             const result=await api('projects');
             const el=document.getElementById('ls-history');if(!el)return;
             el.innerHTML='<h3>Your recent studio projects</h3>'+(result.projects.length?'<div class="ls-projects">'+result.projects.map(p=>
-                '<article><div><strong>'+esc(p.title)+'</strong><small>'+esc(p.style)+' · '+new Date(p.created_at*1000).toLocaleDateString()+'</small>'+(p.status==='needs_review'?'<small>A request stopped. Check your local log and provider usage before restarting.</small>':'')+'</div><span>'+Number(p.calls)+' brain requests<br>'+Number(p.input_tokens+p.output_tokens).toLocaleString()+' reported tokens</span></article>').join('')+'</div>':'<p>Your first project will appear here when you start a video in the local studio.</p>')+
+                '<div class="ls-project"><article><div><strong>'+esc(p.title)+'</strong><small>'+esc(p.style)+' · '+new Date(p.created_at*1000).toLocaleDateString()+'</small>'+(p.status==='needs_review'?'<small>A model request stopped. Open its status for the next step.</small>':'')+'<button class="btn-secondary ls-view-requests" data-ls-requests="'+esc(p.id)+'" aria-expanded="false">View request status</button></div><span>'+Number(p.calls)+' brain requests<br>'+Number(p.input_tokens+p.output_tokens).toLocaleString()+' reported tokens</span></article><div id="ls-requests-'+esc(p.id)+'" class="ls-request-list" hidden></div></div>').join('')+'</div>':'<p>Your first project will appear here when you start a video in the local studio.</p>')+
                 '<p class="ls-inline-note">Brain usage is recorded here. Voice, image and video charges are in your provider accounts.</p>';
+            el.querySelectorAll('[data-ls-requests]').forEach(button=>button.addEventListener('click',()=>requests(button.dataset.lsRequests,button)));
         }catch(e){notice(e.message,true);}
+    }
+    async function requests(projectId, button) {
+        const el=document.getElementById('ls-requests-'+projectId);if(!el)return;
+        if(!el.hidden){el.hidden=true;button.setAttribute('aria-expanded','false');return;}
+        el.hidden=false;button.setAttribute('aria-expanded','true');el.innerHTML='<p role="status">Loading request status…</p>';
+        try {
+            const result=await api('projects/'+projectId+'/requests');
+            const labels={complete:'Answer saved',needs_review:'Request stopped',retry_allowed:'Ready to resume',running:'Still running'};
+            el.innerHTML=result.requests.length?result.requests.map(r=>{
+                const error=r.errors[r.errors.length-1];
+                const account=r.context.provider?data.providers[r.context.provider]?.label:null;
+                const message=r.status==='complete'?'Resume the same video to reuse this saved answer.':r.status==='retry_allowed'?'One retry is allowed. Resume the same video in your local studio.':r.status==='running'?'The request is still running or awaiting a saved result. Refresh its status before continuing.':error?.message||'This request stopped before a complete result was saved. The earlier preview did not retain its detailed error.';
+                return '<section class="ls-request"><div class="ls-request-heading"><strong>'+esc(labels[r.status]||r.status)+'</strong><span>'+Number(r.attempts)+' '+(r.attempts===1?'attempt':'attempts')+'</span></div>'+
+                    '<p>'+esc(message)+'</p><small>'+new Date(r.created_at*1000).toLocaleString()+(account?' · '+esc(account):'')+'</small>'+
+                    (error?.usage_reported?'<small>'+Number(error.input_tokens+error.output_tokens).toLocaleString()+' tokens reported for the stopped attempt. Provider billing may include other charges.</small>':r.status==='needs_review'?'<small>The stopped attempt’s charge is unknown. Check your provider’s usage if needed.</small>':'')+
+                    (r.can_retry?'<form data-ls-retry-form data-project="'+esc(projectId)+'" data-request="'+esc(r.id)+'" data-attempt="'+Number(r.attempts)+'"><p>A retry repeats this one model request using your connected '+esc(data.providers[data.brain.provider].label)+' account. Your provider may charge again. Your saved work stays available.</p><label class="ls-retry-consent"><input type="checkbox" required> I understand my provider may charge for this retry.</label><button class="btn-primary" type="submit" disabled>Allow one retry</button></form>':r.status==='needs_review'?'<p class="ls-inline-note">Another retry is unavailable. The recovery attempt or project request limit has been used. This status is available here for support.</p>':'')+
+                    '<details class="ls-request-debug"><summary>Details for support</summary><small class="ls-request-id">Request '+esc(r.id)+'</small></details></section>';
+            }).join(''):'<p>No model requests have been submitted for this project.</p>';
+            el.querySelectorAll('[data-ls-retry-form]').forEach(form=>{
+                const consent=form.querySelector('input'), submit=form.querySelector('button');
+                consent.addEventListener('change',()=>submit.disabled=!consent.checked);
+                form.addEventListener('submit',async event=>{
+                    event.preventDefault();if(!consent.checked)return;submit.disabled=true;submit.textContent='Allowing retry…';
+                    try {
+                        const approved=await api('projects/'+form.dataset.project+'/requests/'+form.dataset.request+'/retry',{
+                            method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({expected_attempt:Number(form.dataset.attempt),acknowledge_costs:true})});
+                        notice(approved.message);el.hidden=true;await requests(projectId,button);
+                    }catch(e){notice(e.message,true);submit.disabled=!consent.checked;submit.textContent='Allow one retry';}
+                });
+            });
+        }catch(e){el.textContent=e.message;}
     }
     async function copy(text, message) {
         if(!text)throw new Error('The value is not available yet. Refresh your connection.');

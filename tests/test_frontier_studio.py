@@ -33,6 +33,8 @@ def env(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("path,method", [("status", "get"), ("download", "get"),
     ("projects", "get"), ("projects/crv_" + "1" * 24, "get"),
+    ("projects/crv_" + "1" * 24 + "/requests", "get"),
+    ("projects/crv_" + "1" * 24 + "/requests/request_123456/retry", "post"),
     ("brain-key", "delete"), ("brain-key", "post"), ("projects", "post"), ("brain", "post")])
 def test_every_endpoint_denies_anonymous_and_paid_non_admins(env, path, method):
     options = {"json": {}} if method == "post" else {}
@@ -257,3 +259,168 @@ def test_postgres_schema_initialization_does_not_require_sqlite_path(env, monkey
     studio.initialize()
     assert len(statements) == count
     assert any("ADD COLUMN IF NOT EXISTS provider" in s for s in statements)
+
+
+def stopped_request(env, monkeypatch, max_calls=120):
+    env.connect(env.owner)
+    p = studio.create_project(env.owner, studio.ProjectRequest(title="Stopped video", max_calls=max_calls))
+    monkeypatch.setattr(studio.requests, "post", lambda *a, **k: (_ for _ in ()).throw(studio.requests.ReadTimeout("secret provider URL")))
+    req = request_for(p["id"])
+    with pytest.raises(HTTPException):
+        studio.generate(env.owner, req)
+    return p, req
+
+
+def approval(**changes):
+    return studio.RetryApproval(expected_attempt=1, acknowledge_costs=True, **changes)
+
+
+def test_failure_history_is_owned_and_contains_no_private_payload(env, monkeypatch):
+    p, req = stopped_request(env, monkeypatch)
+    history = studio.request_history(env.owner, p["id"])
+    item = history["requests"][0]
+    assert item["status"] == "needs_review" and item["can_retry"]
+    assert item["errors"][0]["code"] == "network_interrupted"
+    assert item["context"] == {"provider": "gemini", "model": "gemini-3.8-flash", "kind": "text", "max_tokens": 8000}
+    assert not any(s in json.dumps(history) for s in ("secret provider URL", req.prompt, "private-google-key-for-test", "fingerprint", "result_json"))
+    with pytest.raises(HTTPException) as denied:
+        studio.request_history(env.other, p["id"])
+    assert denied.value.status_code == 404
+
+
+def test_opted_in_retry_is_single_use_and_reuses_completed_result(env, monkeypatch):
+    p, req = stopped_request(env, monkeypatch)
+    calls = []
+    monkeypatch.setattr(studio.requests, "post", lambda *a, **k: calls.append(k) or reply())
+    with pytest.raises(HTTPException):
+        studio.generate(env.owner, req)
+    assert not calls
+    assert studio.approve_retry(env.owner, p["id"], req.request_id, approval())["allowed"]
+    assert studio.approve_retry(env.owner, p["id"], req.request_id, approval())["allowed"]
+    assert not calls and studio.project(env.owner, p["id"])["calls"] == 1
+    answer = studio.generate(env.owner, req)
+    assert studio.generate(env.owner, req) == answer and len(calls) == 1
+    row = studio.request_history(env.owner, p["id"])["requests"][0]
+    assert row["attempts"] == 2 and row["status"] == "complete"
+    assert studio.project(env.owner, p["id"])["calls"] == 2
+    with pytest.raises(HTTPException):
+        studio.approve_retry(env.owner, p["id"], req.request_id, approval())
+
+
+def test_recovery_requires_cost_acknowledgement_and_owner(env, monkeypatch):
+    p, req = stopped_request(env, monkeypatch)
+    for who, options, expected in [(env.owner, studio.RetryApproval(expected_attempt=1), 400), (env.other, approval(), 404)]:
+        with pytest.raises(HTTPException) as error:
+            studio.approve_retry(who, p["id"], req.request_id, options)
+        assert error.value.status_code == expected
+    assert studio.request_history(env.owner, p["id"])["requests"][0]["status"] == "needs_review"
+
+
+def test_retry_never_raises_budget_or_repeats_running_work(env, monkeypatch):
+    p, req = stopped_request(env, monkeypatch, max_calls=1)
+    with pytest.raises(HTTPException):
+        studio.approve_retry(env.owner, p["id"], req.request_id, approval())
+    assert not studio.request_history(env.owner, p["id"])["requests"][0]["can_retry"]
+    with studio.db._conn() as conn:
+        conn.execute("UPDATE frontier_projects SET max_calls=120 WHERE id=?", (p["id"],))
+        conn.execute("UPDATE frontier_requests SET status='running' WHERE id=?", (req.request_id,))
+    with pytest.raises(HTTPException):
+        studio.approve_retry(env.owner, p["id"], req.request_id, approval())
+
+
+def test_recovery_cannot_switch_account_or_payload(env, monkeypatch):
+    p, req = stopped_request(env, monkeypatch)
+    studio.approve_retry(env.owner, p["id"], req.request_id, approval())
+    monkeypatch.setattr(studio.requests, "post", lambda *a, **k: pytest.fail("Changed work/account must not be submitted"))
+    with pytest.raises(HTTPException):
+        studio.generate(env.owner, req.model_copy(update={"prompt": "Different work"}))
+    with studio.db._conn() as conn:
+        conn.execute("UPDATE frontier_credentials SET key_enc=? WHERE user_id=1", (studio.encrypt_secret("another-account-key-for-test"),))
+    with pytest.raises(HTTPException):
+        studio.generate(env.owner, req)
+    assert studio.project(env.owner, p["id"])["calls"] == 1
+
+
+def test_failed_recovery_does_not_allow_another_paid_retry(env, monkeypatch):
+    p, req = stopped_request(env, monkeypatch)
+    studio.approve_retry(env.owner, p["id"], req.request_id, approval())
+    with pytest.raises(HTTPException):
+        studio.generate(env.owner, req)
+    item = studio.request_history(env.owner, p["id"])["requests"][0]
+    assert item["attempts"] == 2 and not item["can_retry"] and len(item["errors"]) == 2
+    with pytest.raises(HTTPException):
+        studio.approve_retry(env.owner, p["id"], req.request_id, studio.RetryApproval(expected_attempt=2, acknowledge_costs=True))
+
+
+def test_old_stopped_request_can_recover_without_original_error_log(env, monkeypatch):
+    p, req = stopped_request(env, monkeypatch)
+    with studio.db._conn() as conn:
+        conn.execute("UPDATE frontier_requests SET error_json='',context_json='' WHERE id=?", (req.request_id,))
+    studio.approve_retry(env.owner, p["id"], req.request_id, approval())
+    monkeypatch.setattr(studio.requests, "post", lambda *a, **k: reply())
+    studio.generate(env.owner, req)
+    assert studio.request_history(env.owner, p["id"])["requests"][0]["errors"][0]["code"] == "unrecorded"
+
+
+def test_truncated_attempt_retains_reported_usage_and_reason(env, monkeypatch):
+    env.connect(env.owner)
+    p = studio.create_project(env.owner, studio.ProjectRequest(title="Example"))
+    monkeypatch.setattr(studio.requests, "post", lambda *a, **k: reply(candidates=[{"finishReason": "MAX_TOKENS", "content": {"parts": [{"text": "Private partial script"}]}}]))
+    with pytest.raises(HTTPException):
+        studio.generate(env.owner, request_for(p["id"]))
+    item = studio.request_history(env.owner, p["id"])["requests"][0]
+    error = item["errors"][0]
+    assert error["code"] == "truncated" and error["finish_reason"] == "MAX_TOKENS"
+    assert error["usage_reported"] and error["output_tokens"] == 70
+    assert "Private partial script" not in json.dumps(item)
+    assert studio.project(env.owner, p["id"])["input_tokens"] == 120
+
+
+def test_unexpected_failure_is_structured_and_preserved_for_recovery(env, monkeypatch):
+    env.connect(env.owner)
+    p = studio.create_project(env.owner, studio.ProjectRequest(title="Example"))
+    monkeypatch.setattr(studio.providers, "generate", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("secret implementation details")))
+    with pytest.raises(HTTPException) as error:
+        studio.generate(env.owner, request_for(p["id"]))
+    assert error.value.status_code == 502 and "secret" not in error.value.detail
+    item = studio.request_history(env.owner, p["id"])["requests"][0]
+    assert item["status"] == "needs_review" and item["errors"][0]["code"] == "internal_error"
+    assert "secret" not in json.dumps(item)
+
+
+def test_concurrent_resumption_consumes_one_retry_only(env, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    p, req = stopped_request(env, monkeypatch)
+    studio.approve_retry(env.owner, p["id"], req.request_id, approval())
+    started, release = Event(), Event()
+    calls = []
+    def pending(*a, **k):
+        calls.append(k)
+        started.set()
+        assert release.wait(5)
+        return reply()
+    monkeypatch.setattr(studio.requests, "post", pending)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(studio.generate, env.owner, req)
+        try:
+            assert started.wait(5)
+            duplicate = pool.submit(studio.generate, env.owner, req)
+            with pytest.raises(HTTPException) as error:
+                duplicate.result(timeout=5)
+            assert error.value.status_code == 409
+        finally:
+            release.set()
+        assert first.result(timeout=5)["text"] == "An outline."
+    assert len(calls) == 1 and studio.project(env.owner, p["id"])["calls"] == 2
+
+
+def test_concurrent_approval_is_idempotent(env, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    p, req = stopped_request(env, monkeypatch)
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        results = list(pool.map(lambda _: studio.approve_retry(env.owner, p["id"], req.request_id, approval()), range(3)))
+    assert all(r["allowed"] for r in results)
+    with studio.db._conn() as conn:
+        assert conn.execute("SELECT COUNT(*) AS n FROM frontier_retries").fetchone()["n"] == 1
+    assert studio.project(env.owner, p["id"])["calls"] == 1
