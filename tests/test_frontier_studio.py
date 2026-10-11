@@ -240,3 +240,20 @@ def test_unknown_hub_models_are_rejected_before_network(env, monkeypatch):
     monkeypatch.setattr(studio.requests, "get", lambda *a, **k: pytest.fail("Unsupported model should not reach provider"))
     with pytest.raises(HTTPException):
         studio.save_key(env.owner, studio.BrainKey(api_key="customer-hub-key-for-test", provider="atlas", model="unknown/model"))
+
+
+def test_postgres_schema_initialization_does_not_require_sqlite_path(env, monkeypatch):
+    from contextlib import contextmanager
+    statements = []
+    @contextmanager
+    def connection():
+        yield SimpleNamespace(execute=lambda sql: statements.append(sql))
+    monkeypatch.setattr(studio.db, "IS_PG", True)
+    monkeypatch.setattr(studio.db, "DATABASE_URL", "postgresql://test-schema-initialization")
+    monkeypatch.delattr(studio.db, "DB_PATH")
+    monkeypatch.setattr(studio.db, "_conn", connection)
+    studio.initialize()
+    count = len(statements)
+    studio.initialize()
+    assert len(statements) == count
+    assert any("ADD COLUMN IF NOT EXISTS provider" in s for s in statements)
