@@ -35,7 +35,10 @@ def current_project():
 
 
 def prepare_runtime(proof):
-    return _mcp_tool("local_studio_prepare", proof)
+    result=_mcp_tool("local_studio_prepare", proof)
+    if result.get("ready") is not True:
+        raise RuntimeError(" ".join(result.get("issues") or ["Finish this workflow's setup before starting."]))
+    return result
 
 
 def authorize_stage(payload):

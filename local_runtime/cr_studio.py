@@ -18,6 +18,7 @@ import cr_render
 import cr_claude
 import cr_mcp
 import cr_readiness
+import cr_workers
 import hashlib
 
 HOME = Path(__file__).resolve().parent
@@ -99,6 +100,7 @@ def create_app():
     cr_media.install(studio.mv)
     cr_capabilities.install(studio)
     cr_render.install(studio.mv)
+    cr_workers.install()
     token = secrets.token_urlsafe(24)
     # The project launcher reads this private, local-only control token. It is
     # never sent to CR or included in copied launch commands.
@@ -117,7 +119,7 @@ def create_app():
             if request.headers.get("X-CR-Local-Token") != token:
                 return jsonify(error="Refresh your studio page and try again."), 403
         if request.path in ("/cr-connect", "/cr-provider", "/cr-brain", "/cr-hub", "/cr-voice", "/cr-images", "/cr-claude/setup") and request.method == "POST":
-            if studio.RUNNING.get("slug") or studio.QUEUE:
+            if studio.RUNNING.get("slug") or studio.QUEUE or cr_workers.busy():
                 return jsonify(error="Finish your current video before changing its accounts."), 409
         if request.path == "/api/run" and request.method == "POST":
             try:
@@ -126,7 +128,7 @@ def create_app():
                     return jsonify(error="Review your provider spending in setup before making a video."), 409
                 data = request.get_json(silent=True) or {}
                 # Do not change the shared brain project while another video is active.
-                if studio.RUNNING.get("slug") or studio.QUEUE:
+                if studio.RUNNING.get("slug") or studio.QUEUE or cr_workers.busy():
                     return jsonify(error="Finish your current video before starting another."), 409
                 checks = setup_status().get_json()
                 preflight = cr_readiness.preset(studio,checks,data)
@@ -144,7 +146,7 @@ def create_app():
             checks=setup_status().get_json()
             if not checks["readiness"]["ready"]:
                 return jsonify(error="Finish studio setup before creating styles or products.",**checks["readiness"]),409
-            if studio.RUNNING.get("slug") or studio.QUEUE:
+            if studio.RUNNING.get("slug") or studio.QUEUE or cr_workers.busy():
                 return jsonify(error="Finish the current video before starting more creative work."),409
             if cr_bridge.load_settings().get("brain_mode") == "claudecode":
                 if request.path.startswith("/api/farm/"):
@@ -239,7 +241,7 @@ def create_app():
 
     @studio.app.post("/cr-submit-project")
     def submit_project():
-        if studio.RUNNING.get("slug") or studio.QUEUE:
+        if studio.RUNNING.get("slug") or studio.QUEUE or cr_workers.busy():
             return jsonify(error="Finish the current video before starting another."),409
         try:
             project_id=str((request.get_json(silent=True) or {}).get("project_id", ""))
@@ -341,7 +343,7 @@ def create_app():
 
     @studio.app.post("/cr-recover")
     def recover_stage():
-        if studio.RUNNING.get("slug") or studio.QUEUE:
+        if studio.RUNNING.get("slug") or studio.QUEUE or cr_workers.busy():
             return jsonify(error="Stop or finish the running video before reviewing recovery."),409
         try:
             result=cr_bridge._mcp_tool("local_studio_retry_stage",request.get_json(silent=True) or {})

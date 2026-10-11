@@ -4,6 +4,14 @@ Use CR's MCP production workflow and the installed Frontier engine. Do not build
 a substitute renderer or hardcode stock/image percentages. Preserve the original
 preset, director, scene modules and visual review loops.
 
+For customization, samples, creative direction and specialist features, read
+FRONTIER_GUIDE.md and the original README for the selected style/module. The
+original creative guidance remains available in this private owner download.
+The CR instructions here take precedence over its older setup, prices, account
+collection and launch commands. Use setup forms for keys, current provider prices,
+cr_studio.py for launch and MCP/cr_run.py for production videos. Do not invoke
+standalone generative Python commands to bypass the CR project/stage checks.
+
 Begin with local_studio_setup and local_studio_prepare. If setup has not passed,
 guide the creator to http://127.0.0.1:7860/cr-setup. Never request keys in chat or
 read .env, .cr-connection.json, .mcp.json or login files into conversation.

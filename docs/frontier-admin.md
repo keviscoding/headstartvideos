@@ -45,6 +45,10 @@ provider protocols and research restrictions still apply. Connecting media alone
 does not switch the selected brain. Kie motion uses Seedance V1 Pro Fast, 720p,
 five seconds; current provider pricing remains the source of truth.
 
+Original isolated timeline, reference and product Python workers inherit the owned
+CR project and the same native Claude/media/render adapters. Non-worker FFmpeg,
+Node and browser commands keep their original arguments.
+
 The full engine/resources remain local, including FFmpeg, browser rendering,
 Whisper, asset generation and output caches. Cloud work is small authenticated
 project/stage metadata. Local Claude concurrency is two and each project has a
@@ -95,6 +99,8 @@ Pinned source SHA-256:
 `e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf`.
 The builder rejects a changed archive, preserves the original engine/resources,
 excludes samples/output/user configuration and adds generic CR adapters/onboarding.
+The original Claude customization guide is retained privately as FRONTIER_GUIDE.md;
+CR account/launch instructions take precedence over its older setup guidance.
 
 ```sh
 python scripts/build_frontier_admin.py --source /private/path/Frontier-5.3-FULL.zip

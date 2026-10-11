@@ -52,10 +52,10 @@ def build(source: Path, target: Path):
                 continue
             if rel.parts[0] in {"samples", ".frontier", "output", "presets", "__MACOSX"}:
                 continue
-            if rel.name in {".env", ".env.example", "CLAUDE.md", ".DS_Store"} or rel.suffix == ".pyc":
+            if rel.name in {".env", ".env.example", ".DS_Store"} or rel.suffix == ".pyc":
                 continue
             # The source and templates remain admin-only for parity testing.
-            name = "ChannelRecipe studio/" + str(rel)
+            name = "ChannelRecipe studio/" + ("FRONTIER_GUIDE.md" if str(rel)=="CLAUDE.md" else str(rel))
             result.writestr(name, original.read(info))
             count += 1
         for path in sorted((ROOT / "local_runtime").iterdir()):
