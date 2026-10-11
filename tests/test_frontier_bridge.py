@@ -62,6 +62,8 @@ def test_engine_text_research_vision_and_resumption_use_same_bridge(local, monke
     assert engine.claude("Outline", "old-source-model") == "A decision"
     assert engine.claude("Outline", "old-source-model") == "A decision"
     assert calls[1][1]["request_id"] == calls[2][1]["request_id"]
+    assert calls[1][1]["requested_model"] == "old-source-model"
+    assert calls[1][1]["model_role"] == "general"
     engine.claude_research("Verify")
     engine.claude_vision("Review", [pic])
     assert calls[-2][1]["kind"] == "research"
@@ -74,6 +76,28 @@ def test_engine_text_research_vision_and_resumption_use_same_bridge(local, monke
     with pytest.raises(RuntimeError, match="CR brain"):
         engine._claude_exe()
     assert engine._claude_endpoint("anthropic") is None
+
+
+def test_specialist_source_models_keep_their_visual_role_and_legacy_request_id(local, monkeypatch):
+    import hashlib
+    calls = []
+    def api(path, payload=None, settings=None):
+        if path == "projects":
+            return {"id": "crv_" + "1" * 24}
+        calls.append(payload)
+        return {"text": "Code", "provider": "kie", "model": "claude-opus-5-5"}
+    monkeypatch.setattr(bridge, "call", api)
+    engine = SimpleNamespace()
+    bridge.install(engine)
+    engine.claude("Write a scene", "claude-opus-5-5", max_tokens=24000)
+    payload = calls[-1]
+    assert payload["model_role"] == "visual" and payload["requested_model"] == "claude-opus-5-5"
+    prior_payload = {k: v for k, v in payload.items() if k not in {"model_role", "requested_model", "request_id"}}
+    assert payload["request_id"] == "r_" + hashlib.sha256(json.dumps(prior_payload, sort_keys=True).encode()).hexdigest()
+    engine.claude_research("Verify a claim", model="claude-sonnet-5")
+    assert calls[-1]["model_role"] == "general" and calls[-1]["kind"] == "research"
+    receipt = json.loads(next((local / "output/cr-receipts").glob("*.json")).read_text())
+    assert any(row["model"] == "claude-opus-5-5" for row in receipt.values())
 
 
 def test_no_brain_or_product_work_without_spending_agreement(local, monkeypatch):

@@ -1,10 +1,10 @@
 /* Guided owner preview. Backend enforces access independently of this page. */
 window.CRLocalStudio = (() => {
     let data = null, step = 0, platform = /Win/i.test(navigator.userAgent) ? 'windows' : 'mac';
-    let busy = false, brainChoice = 'kie';
+    let busy = false, brainChoice = 'anthropic';
     const esc = text => String(text ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const root = () => document.getElementById('page-local-studio');
-    const steps = ['How it works', 'Download', 'Connect Claude', 'Connect accounts', 'Make a video'];
+    const steps = ['How it works', 'Download', 'Choose your brain', 'Connect accounts', 'Make a video'];
     const icons = {
         computer:'<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/>',
         plan:'<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6m-6 4h6m-6 4h4"/>',
@@ -14,14 +14,37 @@ window.CRLocalStudio = (() => {
         download:'<path d="M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4"/>'
     };
     const icon = key => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">'+icons[key]+'</svg>';
-    const providerInfo = () => data.providers[brainChoice];
-    function brainForm() {
+    const providerInfo = () => data?.providers?.[brainChoice] || {label:'Claude API', brain_models:[]};
+    const modelName = (provider, id) => data?.providers?.[provider]?.brain_models?.find(m=>m.id===id)?.label || id || 'Not selected';
+    function modelOptions(account, selected, same=false) {
+        const choices=account?.brain_models||[];
+        const saved=selected&&!choices.some(m=>m.id===selected)?'<option value="'+esc(selected)+'" selected>'+esc(selected)+' · saved selection</option>':'';
+        return (same?'<option value="">Use the same model as writing</option>':'')+saved+choices.map(m=>'<option value="'+esc(m.id)+'" '+(m.id===selected?'selected':'')+'>'+esc(m.label||m.id)+'</option>').join('');
+    }
+    function updateBrainModels(general, visual) {
         const account=providerInfo();
-        return '<div class="ls-key-card"><div class="ls-key-top"><div><h3>Brain account</h3><p>Writing, research and image review use your chosen account.</p></div><span class="ls-status '+(data.brain.connected?'connected':'')+'">'+(data.brain.connected?esc(data.providers[data.brain.provider].label)+' connected':'Needs a key')+'</span></div>'+
-            '<form id="ls-key-form"><label for="ls-brain-provider">Model account</label><select id="ls-brain-provider" class="cr-input">'+Object.entries(data.providers).map(([id,p])=>'<option value="'+id+'" '+(id===brainChoice?'selected':'')+'>'+esc(p.label)+'</option>').join('')+'</select>'+
+        document.getElementById('ls-brain-model').innerHTML=modelOptions(account,general||account.default_brain);
+        document.getElementById('ls-brain-visual-model').innerHTML=modelOptions(account,visual===undefined?account.default_visual_brain:visual,true);
+        document.querySelector('#ls-key-form button').disabled=!account.brain_models?.length;
+        updateBrainResearch();
+    }
+    function updateBrainResearch() {
+        const model=providerInfo().brain_models?.find(m=>m.id===document.getElementById('ls-brain-model').value);
+        document.getElementById('ls-brain-research').textContent=model?.research===false?'This model does not include built-in web research through this provider. Choose a model with research support when the video needs it.':'Research tools vary by provider. Changing media accounts leaves this brain choice in place.';
+    }
+    function brainForm() {
+        const account=providerInfo(), saved=data.brain||{};
+        const general=saved.provider===brainChoice?saved.model:account.default_brain;
+        const visual=saved.provider===brainChoice?(saved.visual_model||saved.model):account.default_visual_brain;
+        return '<div class="ls-key-card"><div class="ls-key-top"><div><h3>Choose your API brain</h3><p>The brain writes and plans. Your media accounts generate the voice, images and video separately.</p></div><span class="ls-status '+(saved.connected?'connected':'')+'">'+(saved.connected?esc(data.providers?.[saved.provider]?.label||saved.provider)+' connected':'Needs a key')+'</span></div>'+
+            (saved.connected?'<p class="ls-inline-note">Saved API account: '+esc(data.providers?.[saved.provider]?.label||saved.provider)+' · writing: '+esc(modelName(saved.provider,saved.model))+' · complex visuals: '+esc(modelName(saved.provider,saved.visual_model||saved.model))+'.</p>':'')+
+            '<p class="ls-inline-note">Choose the models used by your CR brain. Its usage is billed to your selected API account; the video workflow comes from ChannelRecipe.</p>'+
+            '<form id="ls-key-form"><label for="ls-brain-provider">Brain API account</label><select id="ls-brain-provider" class="cr-input">'+(!data.providers?.anthropic?'<option value="anthropic" selected disabled>Claude API — waiting for model choices</option>':'')+Object.entries(data.providers||{}).map(([id,p])=>'<option value="'+esc(id)+'" '+(id===brainChoice?'selected':'')+'>'+esc(p.label)+'</option>').join('')+'</select>'+
+            '<label for="ls-brain-model">Writing, planning and research model</label><select id="ls-brain-model" class="cr-input" required>'+modelOptions(account,general)+'</select>'+
+            '<label for="ls-brain-visual-model">Complex visuals and render review model</label><select id="ls-brain-visual-model" class="cr-input">'+modelOptions(account,visual,true)+'</select><p class="ls-inline-note">This model handles demanding visual work, including 3D scenes. Choosing the same model keeps one model for both roles.</p>'+
             '<label for="ls-brain-key" id="ls-brain-label">Your '+esc(account.label)+' API key</label><div class="ls-key-input"><input id="ls-brain-key" class="cr-input" type="password" autocomplete="off" placeholder="Paste the complete key" required minlength="16"><button class="btn-primary" type="submit">Save & check</button></div></form>'+
-            '<p class="ls-inline-note">The key is encrypted in CR. Checking API access does not generate content or spend generation credits. Media tasks use a local copy when you connect the same account in the downloaded studio.</p><a id="ls-key-link" href="'+esc(account.key_url)+'" target="_blank" rel="noopener">Create an account key ↗</a>'+
-            (data.brain.connected?'<button class="btn-ghost ls-remove" data-ls-remove-key>Disconnect brain account</button>':'')+'</div>';
+            '<p id="ls-brain-research" class="ls-inline-note">Research tools vary by provider. Changing media accounts leaves this brain choice in place.</p><p class="ls-inline-note">Your key is encrypted in CR. These calls use your own API balance and do not spend CR generation credits. Accounts change only when you save your choice.</p>'+(account.key_url?'<a id="ls-key-link" href="'+esc(account.key_url)+'" target="_blank" rel="noopener">Create an account key ↗</a>':'<a id="ls-key-link" hidden>Create an account key ↗</a>')+
+            (saved.connected?'<button class="btn-ghost ls-remove" data-ls-remove-key>Disconnect API brain account</button>':'')+'</div>';
     }
     function notice(text, error = false) {
         const el = document.getElementById('ls-notice');
@@ -36,14 +59,14 @@ window.CRLocalStudio = (() => {
     function hero() {
         return '<header class="ls-header"><div><div class="ls-eyebrow">LOCAL STUDIO <span>ADMIN PREVIEW</span></div>' +
             '<h1>Your computer.<br>Your next <em>video.</em></h1>' +
-            '<p>Choose a style. Connect your accounts. Make a video with ChannelRecipe and Claude Code, using your own computer.</p></div>' +
-            '<div class="ls-flow" aria-label="How production works"><div>'+icon('plan')+'<strong>CR plans it</strong><small>Research, writing & directing</small></div>' +
+            '<p>Choose a style, your brain and your media accounts. Your computer follows the Frontier workflow and renders your video.</p></div>' +
+            '<div class="ls-flow" aria-label="How production works"><div>'+icon('plan')+'<strong>Your brain plans it</strong><small>Research, writing & directing</small></div>' +
             '<span>'+icon('arrow')+'</span><div>'+icon('computer')+'<strong>You make it</strong><small>Your accounts & computer</small></div></div></header>';
     }
     function body() {
         if (step === 0) return '<div class="ls-section-head"><span class="ls-step-number">01</span><div><h2>A quick tour before you begin</h2><p>Three parts work together. You only need to connect them once.</p></div></div>' +
-            '<div class="ls-explain"><article>'+icon('plan')+'<h3>ChannelRecipe is your director</h3><p>It helps choose a topic, write the script and decide what appears on screen. Your CR account connects the workflow.</p><span>YOUR CR SUBSCRIPTION</span></article>' +
-            '<article>'+icon('computer')+'<h3>Claude Code is your assistant</h3><p>You describe the video you want. Claude helps you set up and use the studio. You do not need to write the code yourself.</p><span>YOUR CLAUDE ACCOUNT</span></article>' +
+            '<div class="ls-explain"><article>'+icon('plan')+'<h3>CR connects your studio</h3><p>Your CR account gives you access to the studio and its style library. Frontier’s workflow decides what belongs on screen.</p><span>YOUR CR ACCOUNT</span></article>' +
+            '<article>'+icon('computer')+'<h3>You choose the brain</h3><p>Connect your own API account for writing, planning and visual review. ChannelRecipe connects those models to the video workflow.</p><span>YOUR BRAIN API ACCOUNT</span></article>' +
             '<article>'+icon('video')+'<h3>Your accounts make the media</h3><p>Your voice, image and video providers create the assets. Your computer combines them into a finished video.</p><span>YOUR PROVIDER BALANCES</span></article></div>' +
             '<div class="ls-callout"><strong>Know what you’re paying for.</strong><p>CR, Claude and your media providers are separate accounts. Some styles need more paid media than others. Preview costs vary; check your provider prices and balances before making a video.</p></div>' +
             '<button class="btn-primary ls-next" data-ls-next>Show me the setup '+icon('arrow')+'</button>';
@@ -54,17 +77,18 @@ window.CRLocalStudio = (() => {
             (!data.download_ready?'<p class="ls-inline-note">The private download is being prepared. You can continue through the setup guide now.</p>':'') +
             '<ol class="ls-instructions"><li><strong>Extract the whole ZIP.</strong><p>Keep the folder somewhere you can find again.</p></li><li><strong>Open '+(platform==='mac'?'Start on Mac.command':'Start on Windows.cmd')+'.</strong><p>The first launch installs its libraries and browser. Keep the window open while making videos.</p></li><li><strong>Follow the setup page that opens.</strong><p>It checks the video tools and tells you what needs attention.</p></li></ol>' +
             '<details class="ls-help"><summary>What if it does not open?</summary><p>Install <a href="https://www.python.org/downloads/" target="_blank" rel="noopener">Python 3.12</a> first. On Windows, select “Add Python to PATH”. On Mac, try right-click → Open. If a video tool is missing, open the folder in Claude Code and ask it to help with the setup checks.</p></details>' +
-            '<button class="btn-primary ls-next" data-ls-next>Next: connect Claude '+icon('arrow')+'</button>';
-        if (step === 2) return '<div class="ls-section-head"><span class="ls-step-number">03</span><div><h2>Give Claude access to CR</h2><p>The connection is called an MCP. It lets Claude ask ChannelRecipe for help.</p></div></div>' +
-            '<div class="ls-two-col"><div><h3>Already have Claude Code?</h3><p>Copy this connection command into your terminal. Then open Claude Code, type <code>/mcp</code> and sign in to ChannelRecipe when asked.</p>' +
+            '<button class="btn-primary ls-next" data-ls-next>Next: choose your brain '+icon('arrow')+'</button>';
+        if (step === 2) return '<div class="ls-section-head"><span class="ls-step-number">03</span><div><h2>Your brain follows the CR workflow</h2><p>Choose your own API account and models for writing, planning and visual review. Your media accounts stay separate.</p></div></div>' +
+            '<div class="ls-callout"><strong>Pick the brain models for your account.</strong><p>Choose a writing model and a separate model for complex visual work, or use one model for both. You control the account and its spending. These calls do not use CR generation credits.</p><a href="http://127.0.0.1:7860/cr-setup" target="_blank" rel="noopener">Open local brain setup ↗</a></div>'+
+            '<div class="ls-two-col"><div><h3>Want help with local setup?</h3><p>Claude Code can help install tools and work with files on your computer. It is a separate, optional setup assistant. Copy this connection command into your terminal, then open Claude Code, type <code>/mcp</code> and sign in to ChannelRecipe.</p>' +
             '<div class="ls-copybox"><code id="ls-connect-command">claude mcp add --transport http channelrecipe https://channelrecipe.com/mcp --scope user</code><button class="btn-secondary" data-ls-copy-command>Copy command</button></div>' +
             '<p class="ls-inline-note">No API key is included in this command.</p></div><aside class="ls-callout"><h3>New to Claude Code?</h3><p>It is Claude’s app for working with files on your computer. Start with its official installation guide, then return here.</p><a href="https://code.claude.com/docs/en/quickstart" target="_blank" rel="noopener">Open Claude Code setup ↗</a><p class="ls-inline-note">Claude’s subscription has its own usage limits.</p></aside></div>' +
             '<div class="ls-callout"><strong>A first message to try</strong><p class="ls-prompt">“Use ChannelRecipe to help me set up my local video studio. Walk me through it one step at a time.”</p><button class="btn-secondary" data-ls-copy-prompt>Copy first message</button></div>' +
             '<button class="btn-primary ls-next" data-ls-next>Next: connect your accounts '+icon('arrow')+'</button>';
-        if (step === 3) return '<div class="ls-section-head"><span class="ls-step-number">04</span><div><h2>One model account can do most of the work</h2><p>Choose Kie.ai or Atlas Cloud for the main AI tasks. You can also keep individual providers.</p></div></div>' +
+        if (step === 3) return '<div class="ls-section-head"><span class="ls-step-number">04</span><div><h2>Connect your brain and media accounts</h2><p>Choose the brain separately from the accounts that generate your media.</p></div></div>' +
             '<div class="ls-key-card"><h3>Connect your downloaded studio</h3><p>Copy your CR connect key, then paste it into the local setup page. This connects the studio to your CR account.</p><div class="ls-key-actions"><button class="btn-secondary" data-ls-copy-key>Copy CR connect key</button><a href="http://127.0.0.1:7860/cr-setup" target="_blank" rel="noopener" class="btn-secondary">Open local setup ↗</a></div><p class="ls-inline-note">Keep this key private. It is different from your Google or media keys.</p></div>' +
-            '<div class="ls-callout"><strong>The easiest setup: paste one model key locally.</strong><p>In local setup, choose Kie.ai or Atlas Cloud. One key connects narration, images, motion and Kling presenters. Select “Also use this account for the CR brain” to connect writing and review with the same key. Stock footage, licensed music and specialised models may need their original accounts. Hub narration uses the voice you choose in setup; private voice clones are account-specific.</p></div>' +
-            '<details class="ls-help"><summary>Connect or change the brain account here</summary>'+brainForm()+'</details>' +
+            '<div class="ls-callout"><strong>Your media account makes the assets.</strong><p>In local setup, Kie.ai or Atlas Cloud can connect narration, images, image animation and Kling presenters with one key. This leaves your brain choice in place. To use the media account for API writing too, explicitly select that option and its two brain models. Stock footage, licensed music and specialised models may need their original accounts.</p></div>' +
+            brainForm() +
             '<button class="btn-primary ls-next" data-ls-next>Choose your first video '+icon('arrow')+'</button>';
         return '<div class="ls-section-head"><span class="ls-step-number">05</span><div><h2>Choose a look for your first video</h2><p>The current library covers illustrated stories, documentaries, presenters, maps and 3D. Each has different account and hardware needs.</p></div></div>' +
             '<div id="ls-history"></div>' +
@@ -91,7 +115,7 @@ window.CRLocalStudio = (() => {
         });
         root().querySelector('#ls-key-form')?.addEventListener('submit', async event => {
             event.preventDefault(); const button=event.target.querySelector('button');button.disabled=true;button.textContent='Checking…';
-            try { const result=await api('brain-key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:document.getElementById('ls-brain-key').value.trim(),provider:brainChoice,model:providerInfo().default_brain})}); data=await api('status');render();notice(result.message);}
+            try { const result=await api('brain-key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:document.getElementById('ls-brain-key').value.trim(),provider:brainChoice,model:document.getElementById('ls-brain-model').value,visual_model:document.getElementById('ls-brain-visual-model').value||null})}); data=await api('status');brainChoice=data.brain?.provider||brainChoice;render();notice(result.message||'Brain account and models saved.');}
             catch(e){notice(e.message,true);}
             finally{button.disabled=false;button.textContent='Save & check';}
         });
@@ -99,7 +123,11 @@ window.CRLocalStudio = (() => {
             brainChoice=event.target.value;document.getElementById('ls-brain-key').value='';
             document.getElementById('ls-brain-label').textContent='Your '+providerInfo().label+' API key';
             document.getElementById('ls-key-link').href=providerInfo().key_url;
+            document.getElementById('ls-key-link').hidden=!providerInfo().key_url;
+            updateBrainModels();
         });
+        root().querySelector('#ls-brain-model')?.addEventListener('change',updateBrainResearch);
+        if(root().querySelector('#ls-key-form')){root().querySelector('#ls-key-form button').disabled=!providerInfo().brain_models?.length;updateBrainResearch();}
         root().querySelector('[data-ls-remove-key]')?.addEventListener('click', async () => {
             try{await api('brain-key',{method:'DELETE'});data=await api('status');render();notice('Brain account disconnected. Add a key before starting more work.');}
             catch(e){notice(e.message,true);}
@@ -164,7 +192,7 @@ window.CRLocalStudio = (() => {
         if (!(typeof currentUser !== 'undefined' && currentUser?.is_admin)) return;
         if(busy)return;busy=true;
         if(!data)root().innerHTML='<div class="ls-wrap"><p role="status">Preparing your studio setup…</p></div>';
-        try{data=await api('status');brainChoice=data.brain.connected?data.brain.provider:'kie';render();}
+        try{data=await api('status');brainChoice=data.brain?.connected?data.brain.provider:'anthropic';render();}
         catch(e){root().innerHTML='<div class="ls-wrap ls-panel"><h2>Your setup could not load</h2><p>'+esc(e.message)+'</p><button class="btn-primary" id="ls-retry">Try again</button></div>';document.getElementById('ls-retry').addEventListener('click',open);}
         finally{busy=false;}
     }

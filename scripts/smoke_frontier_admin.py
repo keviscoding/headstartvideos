@@ -5,6 +5,7 @@ into a temporary directory, never into Git or the web container.
 """
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -64,6 +65,9 @@ def main():
         Image.new("RGB", (64, 64), "black").save(picture)
         assert studio.mv.claude_vision("Smoke review", [picture]) == "Smoke decision"
         assert [payload["kind"] for path, payload in calls if path == "brain"] == ["text", "research", "vision"]
+        assert studio.mv.claude("Smoke 3D code", model="claude-opus-5-5", max_tokens=24000) == "Smoke decision"
+        assert calls[-1][1]["model_role"] == "visual"
+        assert calls[-1][1]["requested_model"] == "claude-opus-5-5"
         saved = client.post("/cr-provider", headers=protected,
                             json={"name": "PEXELS_API_KEY", "key": "test-local-provider-key"})
         assert saved.status_code == 200
@@ -73,9 +77,18 @@ def main():
         assert (root / ".env").stat().st_mode & 0o077 == 0
         # One form entry connects local media and, with explicit consent, the CR brain.
         saved = client.post("/cr-hub", headers=protected, json={"provider": "atlas", "key": "test-hub-provider-key",
-                            "tasks": ["images", "narration", "motion", "avatars"], "use_for_brain": True})
+                            "tasks": ["images", "narration", "motion", "avatars"], "use_for_brain": True,
+                            "model": "google/gemini-3.8-flash", "visual_model": "google/gemini-3.8-flash"})
         assert saved.status_code == 200 and "test-hub-provider-key" not in saved.text
-        assert ("brain-key", {"provider": "atlas", "api_key": "test-hub-provider-key", "model": "google/gemini-3.8-flash"}) in calls
+        assert ("brain-key", {"provider": "atlas", "api_key": "test-hub-provider-key", "model": "google/gemini-3.8-flash",
+                              "visual_model": "google/gemini-3.8-flash"}) in calls
+        before_brain = len(calls)
+        brain = client.post("/cr-brain", headers=protected, json={"provider": "kie", "key": "test-owned-brain-key",
+                            "model": "claude-sonnet-5-5", "visual_model": "claude-opus-5-5"})
+        assert brain.status_code == 200 and "test-owned-brain-key" not in brain.text
+        assert len(calls) == before_brain + 1 and calls[-1] == ("brain-key", {"provider": "kie",
+                            "api_key": "test-owned-brain-key", "model": "claude-sonnet-5-5", "visual_model": "claude-opus-5-5"})
+        assert os.getenv("KIE_API_KEY", "") != "test-owned-brain-key", "A brain key alone must not replace media keys"
         status = client.get("/cr-status", headers=local)
         assert status.json["media_hub"]["connected"] and "test-hub-provider-key" not in status.text
         assert studio.mv._image_provider() == "channelrecipe-hub"
@@ -184,6 +197,7 @@ def main():
         # Account changes are blocked while a video is active.
         studio.RUNNING["slug"] = "busy"
         assert client.post("/cr-hub", headers=protected, json={"provider": "original"}).status_code == 409
+        assert client.post("/cr-brain", headers=protected, json={"provider": "kie"}).status_code == 409
         assert client.post("/cr-voice", headers=protected, json={"provider": "original"}).status_code == 409
         assert client.post("/cr-images", headers=protected, json={"provider": "inherit"}).status_code == 409
         studio.RUNNING["slug"] = None

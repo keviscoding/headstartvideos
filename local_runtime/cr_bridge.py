@@ -47,7 +47,7 @@ def call(path, payload=None, settings=None):
     for attempt in range(4):
         try:
             res = requests.request("POST" if payload is not None else "GET", base + "/api/frontier/" + path,
-                                   headers=headers, json=payload, timeout=(15, 220))
+                                   headers=headers, json=payload, timeout=(15, 650 if path == "brain" else 220))
         except requests.RequestException:
             raise RuntimeError("Could not reach ChannelRecipe. Your work is saved; check your connection.")
         if res.status_code == 429 and attempt < 3:
@@ -73,7 +73,7 @@ def begin_project(title, style, resume_id=None):
     return _project
 
 
-def think(prompt, max_tokens=8000, kind="text", images=None):
+def think(prompt, max_tokens=8000, kind="text", images=None, model=None):
     with _lock:
         if not _project:
             cfg = load_settings()
@@ -93,7 +93,12 @@ def think(prompt, max_tokens=8000, kind="text", images=None):
                "max_tokens": min(32768, max(128, max_tokens or 8000)), "images": encoded}
     # The same stage input gets the same ID after an interrupted connection.
     request_id = "r_" + hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
-    result = call("brain", {**payload, "request_id": request_id})
+    # Frontier already selects a model for each stage. Preserve that distinction
+    # through the account's explicit general/visual profile, without selecting a
+    # provider or falling back to somebody else's balance.
+    role = "visual" if isinstance(model, str) and "claude-opus" in model.lower() else "general"
+    result = call("brain", {**payload, "request_id": request_id, "model_role": role,
+                             "requested_model": model})
     receipt = HOME / "output" / "cr-receipts" / (project_id + ".json")
     receipt.parent.mkdir(parents=True, exist_ok=True)
     with _lock:
@@ -111,11 +116,11 @@ def install(engine):
     engine.SCRIPT_PROVIDER = "channelrecipe"
     engine.CLAUDE_FALLBACK = ""
     engine._HANDOFF_DIR = ""
-    engine.claude = lambda prompt, model=None, max_tokens=16000, provider=None: think(prompt, max_tokens)
-    engine._claude_try = lambda provider, model, prompt, max_tokens, budget_s: think(prompt, max_tokens)
-    engine._claude_code_try = lambda model, prompt: think(prompt)
-    engine.claude_research = lambda prompt, model=None: think(prompt, kind="research")
-    engine.claude_vision = lambda prompt, image_paths, model=None, max_tokens=2000: think(prompt, max_tokens, "vision", image_paths)
+    engine.claude = lambda prompt, model=None, max_tokens=16000, provider=None: think(prompt, max_tokens, model=model)
+    engine._claude_try = lambda provider, model, prompt, max_tokens, budget_s: think(prompt, max_tokens, model=model)
+    engine._claude_code_try = lambda model, prompt: think(prompt, model=model)
+    engine.claude_research = lambda prompt, model=None: think(prompt, kind="research", model=model)
+    engine.claude_vision = lambda prompt, image_paths, model=None, max_tokens=2000: think(prompt, max_tokens, "vision", image_paths, model=model)
     engine._claude_code_vision = lambda prompt, image_paths: think(prompt, 8000, "vision", image_paths)
     # Some source modules call the CLI directly, outside the common helper.
     engine._claude_exe = lambda: (_ for _ in ()).throw(RuntimeError("Use the CR brain for this preview."))

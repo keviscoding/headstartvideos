@@ -26,9 +26,9 @@ from webapp import database as db
 from cryptography.fernet import Fernet, InvalidToken
 from webapp import frontier_providers as providers
 
-VERSION = "5.3-admin.6"
+VERSION = "5.3-admin.7"
 CATALOG = Path(__file__).resolve().parent / "frontier" / "catalog.json"
-RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.6.zip"
+RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.7.zip"
 GEMINI_MODEL = "gemini-3.8-flash"
 _slots = threading.BoundedSemaphore(2)
 _schema_lock = threading.Lock()
@@ -85,6 +85,10 @@ def initialize():
                 conn.execute("ALTER TABLE frontier_credentials ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'gemini'")
             elif "provider" not in {r["name"] for r in conn.execute("PRAGMA table_info(frontier_credentials)").fetchall()}:
                 conn.execute("ALTER TABLE frontier_credentials ADD COLUMN provider TEXT NOT NULL DEFAULT 'gemini'")
+            if db.IS_PG:
+                conn.execute("ALTER TABLE frontier_credentials ADD COLUMN IF NOT EXISTS visual_model TEXT NOT NULL DEFAULT ''")
+            elif "visual_model" not in {r["name"] for r in conn.execute("PRAGMA table_info(frontier_credentials)").fetchall()}:
+                conn.execute("ALTER TABLE frontier_credentials ADD COLUMN visual_model TEXT NOT NULL DEFAULT ''")
             conn.execute("""CREATE TABLE IF NOT EXISTS frontier_projects (
                 id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, title TEXT NOT NULL,
                 style TEXT NOT NULL, version TEXT NOT NULL, max_calls INTEGER NOT NULL,
@@ -131,7 +135,9 @@ def status(user: dict) -> dict:
             (user["id"],)).fetchone()["total"]
     return {"access": "admin_preview", "version": VERSION,
             "brain": {"connected": bool(c and decrypt_secret(c["key_enc"])),
-                      "provider": c["provider"] if c else "gemini", "model": c["model"] if c else GEMINI_MODEL},
+                      "provider": c["provider"] if c else "anthropic",
+                      "model": c["model"] if c else providers.PROVIDERS["anthropic"]["default_brain"],
+                      "visual_model": (c.get("visual_model") or c["model"]) if c else providers.PROVIDERS["anthropic"]["default_visual_brain"]},
             "providers": providers.PROVIDERS,
             "recovery_requests": recovery,
             "download_ready": release_ready(), "styles": catalog(),
@@ -163,8 +169,16 @@ def release_ready() -> bool:
 
 class BrainKey(BaseModel):
     api_key: str = Field(min_length=16, max_length=512)
-    provider: Literal["gemini", "kie", "atlas"] = "gemini"
+    provider: Literal["gemini", "kie", "atlas", "anthropic"] = "gemini"
     model: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9./_\-]+$", max_length=100)
+    visual_model: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9./_\-]+$", max_length=100)
+
+
+def _supported_model(provider, model):
+    if provider == "gemini":
+        import re
+        return bool(re.fullmatch(r"gemini-[a-zA-Z0-9.\-]+", model))
+    return model in {m["id"] for m in providers.PROVIDERS[provider]["brain_models"]}
 
 
 def save_key(user: dict, req: BrainKey) -> dict:
@@ -175,22 +189,23 @@ def save_key(user: dict, req: BrainKey) -> dict:
         raise HTTPException(400, "Paste the complete key without spaces.")
     info = providers.PROVIDERS[req.provider]
     model = req.model or info["default_brain"]
-    if req.provider == "gemini":
-        import re
-        valid = re.fullmatch(r"gemini-[a-zA-Z0-9.\-]+", model)
-    else:
-        valid = model in {m["id"] for m in info["brain_models"]}
-    if not valid:
+    # An omitted specialist choice inherits the explicitly selected general
+    # model. Only the setup form can opt into a more expensive specialist.
+    visual_model = req.visual_model or model
+    if not all(_supported_model(req.provider, selected) for selected in (model, visual_model)):
         raise HTTPException(400, "Choose one of this account's supported brain models.")
     # Read-only account/model lookup. Never generates content or spends tokens.
     providers.check_key(req.provider, key, model)
+    if visual_model != model:
+        providers.check_key(req.provider, key, visual_model)
     initialize()
     with db._conn() as conn:
-        conn.execute(db._q("""INSERT INTO frontier_credentials (user_id,key_enc,model,updated_at,provider)
-            VALUES (?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET
-            key_enc=excluded.key_enc,model=excluded.model,updated_at=excluded.updated_at,provider=excluded.provider"""),
-            (user["id"], encrypt_secret(key), model, time.time(), req.provider))
-    return {"connected": True, "provider": req.provider, "model": model,
+        conn.execute(db._q("""INSERT INTO frontier_credentials (user_id,key_enc,model,updated_at,provider,visual_model)
+            VALUES (?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET
+            key_enc=excluded.key_enc,model=excluded.model,updated_at=excluded.updated_at,
+            provider=excluded.provider,visual_model=excluded.visual_model"""),
+            (user["id"], encrypt_secret(key), model, time.time(), req.provider, visual_model))
+    return {"connected": True, "provider": req.provider, "model": model, "visual_model": visual_model,
             "message": f"Connected. Brain calls use your {info['label']} account."}
 
 
@@ -233,10 +248,15 @@ class BrainRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=150000)
     max_tokens: int = Field(default=8000, ge=128, le=32768)
     images: list[str] = Field(default_factory=list, max_length=8)
+    model_role: Literal["general", "visual"] = "general"
+    requested_model: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9./_\-]+$", max_length=100)
 
 
 def _account_hash(c, key):
-    return hashlib.sha256((c["provider"] + "\0" + c["model"] + "\0" + key).encode()).hexdigest()
+    material = c["provider"] + "\0" + c["model"] + "\0" + key
+    if c.get("visual_model") and c["visual_model"] != c["model"]:
+        material += "\0" + c["visual_model"]
+    return hashlib.sha256(material.encode()).hexdigest()
 
 
 def _errors(raw):
@@ -328,6 +348,7 @@ def generate(user: dict, req: BrainRequest) -> dict:
     key = decrypt_secret(c["key_enc"]) if c else ""
     if not key:
         raise HTTPException(409, "Reconnect your model account in Local studio.")
+    model = (c.get("visual_model") or c["model"]) if req.model_role == "visual" else c["model"]
     parts = [{"text": req.prompt}]
     size = 0
     for data in req.images:
@@ -342,13 +363,16 @@ def generate(user: dict, req: BrainRequest) -> dict:
             raise HTTPException(413, "Use PNG review samples, up to 6 MB total.")
         parts.append({"inlineData": {"mimeType": "image/png", "data": data}})
     fingerprint = hashlib.sha256(req.model_dump_json().encode()).hexdigest()
+    legacy_fingerprint = hashlib.sha256(req.model_dump_json(exclude={"model_role", "requested_model"}).encode()).hexdigest()
     if not _slots.acquire(blocking=False):
         raise HTTPException(429, "The brain is busy. Your local runner will retry shortly.", headers={"Retry-After": "10"})
     reserved = False
     attempt = 1
-    context = json.dumps({"provider": c["provider"], "model": c["model"], "kind": req.kind, "max_tokens": req.max_tokens,
+    context = json.dumps({"provider": c["provider"], "model": model, "model_role": req.model_role,
+                          "requested_model": req.requested_model, "kind": req.kind, "max_tokens": req.max_tokens,
                           "prompt_chars": len(req.prompt), "image_count": len(req.images), "image_bytes": size,
-                          "thinking_level": "low" if c["provider"] == "kie" or providers.thinking_config(c["model"]) else "model_default"})
+                          "thinking_level": "low" if not providers.is_claude(model) and
+                          (c["provider"] == "kie" or providers.thinking_config(model)) else "model_default"})
     try:
         with db._conn() as conn:
             # A row lock makes the per-project limit safe across web replicas.
@@ -361,7 +385,13 @@ def generate(user: dict, req: BrainRequest) -> dict:
                 raise HTTPException(404, "Project not found.")
             existing = conn.execute(db._q("SELECT * FROM frontier_requests WHERE id=?"), (req.request_id,)).fetchone()
             if existing:
-                if existing["project_id"] != req.project_id or existing["fingerprint"] != fingerprint:
+                # Keep existing interrupted admin.6 requests recoverable. A
+                # model-profile upgrade must never create a fresh paid attempt
+                # for an old request merely because routing metadata was added.
+                old_context = json.loads(existing["context_json"] or "{}")
+                matches = existing["fingerprint"] == fingerprint or (
+                    "model_role" not in old_context and existing["fingerprint"] == legacy_fingerprint)
+                if existing["project_id"] != req.project_id or not matches:
                     raise HTTPException(409, "This request ID belongs to different work.")
                 if existing["status"] == "complete":
                     return json.loads(existing["result_json"])
@@ -380,15 +410,15 @@ def generate(user: dict, req: BrainRequest) -> dict:
                 errors = _errors(existing["error_json"])
                 if not errors:
                     errors = [{"attempt": 1, "code": "unrecorded", "message": "The original error was not retained by the earlier preview."}]
-                conn.execute(db._q("UPDATE frontier_requests SET status='running',attempts=?,context_json=?,error_json=? WHERE id=?"),
-                             (attempt, context, json.dumps(errors), req.request_id))
+                conn.execute(db._q("UPDATE frontier_requests SET status='running',attempts=?,context_json=?,error_json=?,fingerprint=? WHERE id=?"),
+                             (attempt, context, json.dumps(errors), fingerprint, req.request_id))
                 conn.execute(db._q("UPDATE frontier_retries SET used_at=? WHERE request_id=?"), (time.time(), req.request_id))
             else:
                 conn.execute(db._q("INSERT INTO frontier_requests (id,project_id,fingerprint,status,created_at,context_json) VALUES (?,?,?,?,?,?)"),
                              (req.request_id, req.project_id, fingerprint, "running", time.time(), context))
             reserved = True
-        text, incoming, outgoing = providers.generate(c["provider"], key, c["model"], parts, req.kind, req.max_tokens)
-        result = {"text": text, "provider": c["provider"], "model": c["model"], "input_tokens": incoming,
+        text, incoming, outgoing = providers.generate(c["provider"], key, model, parts, req.kind, req.max_tokens)
+        result = {"text": text, "provider": c["provider"], "model": model, "model_role": req.model_role, "input_tokens": incoming,
                   "output_tokens": outgoing, "request_id": req.request_id, "version": VERSION}
         with db._conn() as conn:
             conn.execute(db._q("UPDATE frontier_requests SET status='complete',result_json=? WHERE id=?"),

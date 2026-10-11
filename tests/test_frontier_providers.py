@@ -135,3 +135,174 @@ def test_unreadable_stream_and_upstream_http_close_connection(monkeypatch):
             send(monkeypatch, response)
         assert response.closed and error.value.diagnostics["code"] == code
         assert "private provider error" not in json.dumps(error.value.diagnostics)
+
+
+def claude_events(text="Finished answer", reason="end_turn", complete=True, cached=True):
+    usage = {"input_tokens": 12, "output_tokens": 1}
+    if cached:
+        usage.update(cache_read_input_tokens=3, cache_creation_input_tokens=4)
+    events = [
+        {"type": "message_start", "message": {"type": "message", "role": "assistant", "usage": usage}},
+        {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "Private reasoning"}},
+        {"type": "content_block_stop", "index": 0},
+        {"type": "content_block_start", "index": 1, "content_block": {"type": "text", "text": ""}},
+        {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": text}},
+        {"type": "content_block_stop", "index": 1},
+        {"type": "message_delta", "delta": {"stop_reason": reason}, "usage": {"output_tokens": 20}},
+        {"type": "message_delta", "delta": {}, "usage": {"output_tokens": 20}},
+    ]
+    if complete:
+        events.append({"type": "message_stop"})
+    return events
+
+
+CLAUDE_ROUTES = [
+    ("anthropic", "claude-sonnet-5-5", "https://api.anthropic.com/v1/messages"),
+    ("anthropic", "claude-opus-5-5", "https://api.anthropic.com/v1/messages"),
+    ("kie", "claude-sonnet-5-5", "https://api.kie.ai/claude/v1/messages"),
+    ("kie", "claude-opus-5-5", "https://api.kie.ai/claude/v1/messages"),
+    ("atlas", "anthropic/claude-sonnet-5.5-ccmax", "https://api.atlascloud.ai/v1/messages"),
+    ("atlas", "anthropic/claude-opus-5.5", "https://api.atlascloud.ai/v1/messages"),
+]
+
+
+@pytest.mark.parametrize("provider,model,url", CLAUDE_ROUTES)
+def test_verified_claude_models_use_native_messages_vision_and_complete_stream(monkeypatch, provider, model, url):
+    response = Response(*claude_events())
+    calls = []
+    monkeypatch.setattr(providers.requests, "post", lambda *a, **k: calls.append((a, k)) or response)
+    parts = [{"text": "Original private stage prompt"}, {"inlineData": {"mimeType": "image/png", "data": "original-png"}}]
+    result = providers.generate(provider, "owner-private-key", model, parts, "vision", 50000)
+    assert result == ("Finished answer", 19, 20) and response.closed
+    assert len(calls) == 1
+    args, options = calls[0]
+    assert args[0] == url and options["stream"] is True and options["allow_redirects"] is False
+    assert options["timeout"] == (15, 180)
+    payload = options["json"]
+    assert payload == {"model": model, "max_tokens": 32768, "stream": True, "messages": [{"role": "user", "content": [
+        {"type": "text", "text": parts[0]["text"]},
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "original-png"}},
+    ]}]}
+    assert options["headers"]["anthropic-version"] == "2023-06-01"
+    assert options["headers"].get("x-api-key") == ("owner-private-key" if provider == "anthropic" else None)
+    assert options["headers"].get("Authorization") == (None if provider == "anthropic" else "Bearer owner-private-key")
+    assert "Private reasoning" not in result[0]
+
+
+@pytest.mark.parametrize("provider,model,url", CLAUDE_ROUTES)
+def test_claude_catalog_preserves_gateway_specific_ids_and_research_support(provider, model, url):
+    entry = providers.brain_model(provider, model)
+    assert entry["protocol"] == "anthropic" and entry["vision"] is True
+    assert providers.supports_research(provider, model) is (provider == "anthropic")
+    assert providers.stream_window(model) == 600
+    assert providers.PROVIDERS[provider]["default_brain"] in {m["id"] for m in providers.PROVIDERS[provider]["brain_models"]}
+    assert providers.PROVIDERS[provider]["default_visual_brain"] in {m["id"] for m in providers.PROVIDERS[provider]["brain_models"]}
+
+
+def test_anthropic_research_uses_native_server_search_and_keeps_stage_prompt(monkeypatch):
+    response = Response(*claude_events())
+    result, calls = send(monkeypatch, response, "anthropic", "claude-sonnet-5-5", "research")
+    assert result == ("Finished answer", 19, 20)
+    payload = calls[0][1]["json"]
+    assert payload["tools"] == [{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}]
+    assert payload["messages"][0]["content"][0]["text"] == "Private input"
+    assert "tool_choice" not in payload and "thinking" not in payload and "output_config" not in payload
+
+
+@pytest.mark.parametrize("provider,model", [("kie", "claude-opus-5-5"), ("atlas", "anthropic/claude-opus-5.5")])
+def test_gateway_research_is_rejected_before_any_paid_request(monkeypatch, provider, model):
+    monkeypatch.setattr(providers.requests, "post", lambda *a, **k: pytest.fail("No paid submission is allowed"))
+    with pytest.raises(providers.ProviderFailure) as error:
+        providers.generate(provider, "private-key", model, [{"text": "private prompt"}], "research", 8000)
+    assert error.value.diagnostics["code"] == "research_unsupported"
+    assert error.value.diagnostics["usage_reported"] is False
+    assert "private" not in json.dumps(error.value.diagnostics)
+
+
+@pytest.mark.parametrize("reason,complete,code", [
+    ("end_turn", False, "incomplete_stream"),
+    (None, True, "incomplete_stream"),
+    ("max_tokens", True, "truncated"),
+    ("refusal", True, "stopped"),
+    ("tool_use", True, "stopped"),
+    ("pause_turn", True, "stopped"),
+])
+def test_claude_incomplete_tool_or_refused_answers_never_return_partial_text(monkeypatch, reason, complete, code):
+    response = Response(*claude_events("Private partial answer", reason, complete))
+    with pytest.raises(providers.ProviderFailure) as error:
+        send(monkeypatch, response, "anthropic", "claude-opus-5-5")
+    details = error.value.diagnostics
+    assert response.closed and details["code"] == code
+    assert details["input_tokens"] == 19 and details["output_tokens"] == 20
+    assert details["cache_read_input_tokens"] == 3 and details["cache_creation_input_tokens"] == 4
+    assert "Private partial" not in json.dumps(details) and "Private reasoning" not in json.dumps(details)
+
+
+def test_claude_stream_error_keeps_reported_usage_without_provider_private_body(monkeypatch):
+    events = claude_events()
+    response = Response(*events[:7], {"type": "error", "error": {"type": "overloaded_error", "message": "Private provider failure"}})
+    with pytest.raises(providers.ProviderFailure) as error:
+        send(monkeypatch, response, "kie", "claude-sonnet-5-5")
+    details = error.value.diagnostics
+    assert response.closed and details["code"] == "upstream_stream_error" and details["upstream_error_type"] == "overloaded_error"
+    assert details["input_tokens"] == 19 and details["output_tokens"] == 1
+    assert "Private provider failure" not in json.dumps(details) and "Private reasoning" not in json.dumps(details)
+
+
+def test_claude_search_failure_is_not_a_successful_fact_check(monkeypatch):
+    events = claude_events()
+    events[7:7] = [
+        {"type": "content_block_start", "index": 2, "content_block": {"type": "web_search_tool_result", "content": {
+            "type": "web_search_tool_result_error", "error_code": "too_many_requests"}}},
+        {"type": "content_block_stop", "index": 2},
+    ]
+    response = Response(*events)
+    with pytest.raises(providers.ProviderFailure) as error:
+        send(monkeypatch, response, "anthropic", "claude-sonnet-5-5", "research")
+    assert response.closed and error.value.diagnostics["code"] == "research_failed"
+    assert error.value.diagnostics["output_tokens"] == 20
+
+
+def test_claude_broken_block_sequence_is_not_accepted_as_a_finished_answer(monkeypatch):
+    events = claude_events()
+    del events[6]  # a text block remained open when message_stop arrived
+    response = Response(*events)
+    with pytest.raises(providers.ProviderFailure) as error:
+        send(monkeypatch, response, "anthropic", "claude-sonnet-5-5")
+    assert response.closed and error.value.diagnostics["code"] == "unreadable"
+
+
+def test_claude_total_stream_limit_is_distinct_from_gemini_limit(monkeypatch):
+    times = iter([0, 599, 601, 601])
+    monkeypatch.setattr(providers.time, "monotonic", lambda: next(times))
+    response = Response(*claude_events())
+    with pytest.raises(providers.ProviderFailure) as error:
+        send(monkeypatch, response, "anthropic", "claude-opus-5-5")
+    assert response.closed and error.value.diagnostics["code"] == "generation_timeout"
+    assert error.value.diagnostics["timeout_seconds"] == 600
+    assert providers.stream_window("gemini-3.8-flash") == 180
+
+
+@pytest.mark.parametrize("provider,model,url,body", [
+    ("anthropic", "claude-sonnet-5-5", "https://api.anthropic.com/v1/models/claude-sonnet-5-5", {"id": "claude-sonnet-5-5"}),
+    ("kie", "claude-opus-5-5", "https://api.kie.ai/anthropic/v1/models", {"data": [{"id": "claude-opus-5-5"}]}),
+    ("atlas", "anthropic/claude-opus-5.5", "https://api.atlascloud.ai/v1/models", {"data": [{"id": "anthropic/claude-opus-5.5"}]}),
+])
+def test_claude_account_checks_only_read_available_model_metadata(monkeypatch, provider, model, url, body):
+    calls, closed = [], []
+    response = SimpleNamespace(status_code=200, json=lambda: body, close=lambda: closed.append(True))
+    monkeypatch.setattr(providers.requests, "get", lambda *a, **k: calls.append((a, k)) or response)
+    monkeypatch.setattr(providers.requests, "post", lambda *a, **k: pytest.fail("Key check cannot generate anything"))
+    providers.check_key(provider, "private-owner-key", model)
+    assert len(calls) == 1 and calls[0][0][0] == url and closed == [True]
+    assert calls[0][1]["timeout"] == (10, 20) and calls[0][1]["allow_redirects"] is False
+    assert calls[0][1]["headers"].get("x-api-key") == ("private-owner-key" if provider == "anthropic" else None)
+
+
+def test_claude_key_check_rejects_unavailable_model_without_using_a_different_one(monkeypatch):
+    response = SimpleNamespace(status_code=200, json=lambda: {"data": [{"id": "claude-sonnet-5-5"}]}, close=lambda: None)
+    monkeypatch.setattr(providers.requests, "get", lambda *a, **k: response)
+    with pytest.raises(providers.HTTPException) as error:
+        providers.check_key("kie", "private-owner-key", "claude-opus-5-5")
+    assert error.value.status_code == 400 and "not available" in error.value.detail

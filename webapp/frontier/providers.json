@@ -6,18 +6,38 @@
     "brain_models": [
       {
         "id": "gemini-3.8-flash",
-        "label": "Gemini 3.8 Flash"
+        "label": "Gemini 3.8 Flash",
+        "protocol": "gemini",
+        "vision": true,
+        "research": true
       }
     ]
   },
   "kie": {
     "label": "Kie.ai",
     "key_url": "https://kie.ai/api-key",
-    "default_brain": "gemini-3.8-flash",
+    "default_brain": "claude-sonnet-5-5",
     "brain_models": [
       {
+        "id": "claude-sonnet-5-5",
+        "label": "Claude Sonnet 5.5",
+        "protocol": "anthropic",
+        "vision": true,
+        "research": false
+      },
+      {
+        "id": "claude-opus-5-5",
+        "label": "Claude Opus 5.5",
+        "protocol": "anthropic",
+        "vision": true,
+        "research": false
+      },
+      {
         "id": "gemini-3.8-flash",
-        "label": "Gemini 3.8 Flash"
+        "label": "Gemini 3.8 Flash",
+        "protocol": "openai",
+        "vision": true,
+        "research": true
       }
     ],
     "key_env": "KIE_API_KEY",
@@ -177,16 +197,35 @@
       "gpt-image-2",
       "nano-banana-2",
       "gpt-image-2-5-flare"
-    ]
+    ],
+    "brain_docs": "https://docs.kie.ai/market/claude/claude-sonnet-5-5",
+    "default_visual_brain": "claude-opus-5-5"
   },
   "atlas": {
     "label": "Atlas Cloud",
     "key_url": "https://www.atlascloud.ai/console/api-keys",
-    "default_brain": "google/gemini-3.8-flash",
+    "default_brain": "anthropic/claude-sonnet-5.5-ccmax",
     "brain_models": [
       {
+        "id": "anthropic/claude-sonnet-5.5-ccmax",
+        "label": "Claude Sonnet 5.5 CC Max",
+        "protocol": "anthropic",
+        "vision": true,
+        "research": false
+      },
+      {
+        "id": "anthropic/claude-opus-5.5",
+        "label": "Claude Opus 5.5",
+        "protocol": "anthropic",
+        "vision": true,
+        "research": false
+      },
+      {
         "id": "google/gemini-3.8-flash",
-        "label": "Gemini 3.8 Flash"
+        "label": "Gemini 3.8 Flash",
+        "protocol": "gemini",
+        "vision": true,
+        "research": true
       }
     ],
     "key_env": "ATLASCLOUD_API_KEY",
@@ -206,6 +245,33 @@
         "default_voice": "JBFqnCBsd6RMkjVDRZzb",
         "format": "mp3"
       }
-    ]
+    ],
+    "brain_docs": "https://www.atlascloud.ai/docs/llm-protocols",
+    "brain_catalog": "https://api.atlascloud.ai/v1/models",
+    "default_visual_brain": "anthropic/claude-opus-5.5"
+  },
+  "anthropic": {
+    "label": "Anthropic",
+    "key_url": "https://console.anthropic.com/settings/keys",
+    "key_env": "ANTHROPIC_API_KEY",
+    "default_brain": "claude-sonnet-5-5",
+    "brain_models": [
+      {
+        "id": "claude-sonnet-5-5",
+        "label": "Claude Sonnet 5.5",
+        "protocol": "anthropic",
+        "vision": true,
+        "research": true
+      },
+      {
+        "id": "claude-opus-5-5",
+        "label": "Claude Opus 5.5",
+        "protocol": "anthropic",
+        "vision": true,
+        "research": true
+      }
+    ],
+    "brain_docs": "https://platform.claude.com/docs/en/api/messages/create",
+    "default_visual_brain": "claude-opus-5-5"
   }
 }

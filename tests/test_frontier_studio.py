@@ -186,7 +186,7 @@ def test_hub_account_is_checked_without_paid_call_and_kept_private(env, monkeypa
     calls = []
     monkeypatch.setattr(studio.requests, "get", lambda *a, **kw: calls.append((a, kw)) or SimpleNamespace(status_code=200, json=lambda: body))
     monkeypatch.setattr(studio.requests, "post", lambda *a, **k: pytest.fail("Account checks must not generate content"))
-    result = studio.save_key(env.owner, studio.BrainKey(api_key="customer-hub-key-for-test", provider=provider))
+    result = studio.save_key(env.owner, studio.BrainKey(api_key="customer-hub-key-for-test", provider=provider, model=model))
     assert result["model"] == model and result["provider"] == provider
     assert len(calls) == 1 and calls[0][1]["headers"] == {"Authorization": "Bearer customer-hub-key-for-test"}
     assert studio.credential(1)["provider"] == provider
@@ -211,6 +211,87 @@ def test_existing_credentials_migrate_without_key_or_model_rotation(env):
     c = studio.credential(1)
     assert c["provider"] == "gemini" and c["model"] == "gemini-3.8-flash"
     assert studio.decrypt_secret(c["key_enc"]) == "old-google-key-for-test"
+    assert c["visual_model"] == ""
+    assert studio.status(env.owner)["brain"]["visual_model"] == "gemini-3.8-flash"
+
+
+def connect_claude_profile(env, monkeypatch, visual="claude-opus-5-5"):
+    checked = []
+    monkeypatch.setattr(studio.providers, "check_key", lambda provider, key, model: checked.append((provider, model)))
+    studio.save_key(env.owner, studio.BrainKey(provider="kie", api_key="owned-claude-key-for-test",
+                    model="claude-sonnet-5-5", visual_model=visual))
+    return checked
+
+
+def test_specialist_profile_routes_to_owned_opus_without_changing_general_calls(env, monkeypatch):
+    checked = connect_claude_profile(env, monkeypatch)
+    assert checked == [("kie", "claude-sonnet-5-5"), ("kie", "claude-opus-5-5")]
+    p = studio.create_project(env.owner, studio.ProjectRequest(title="Visual story"))
+    calls = []
+    monkeypatch.setattr(studio.providers, "generate", lambda *args: calls.append(args) or ("Code", 50, 100))
+    general = studio.generate(env.owner, request_for(p["id"]))
+    visual_req = studio.BrainRequest(project_id=p["id"], request_id="visual_request_1234", prompt="Write the scene.",
+                                    requested_model="claude-opus-5-5", model_role="visual")
+    visual = studio.generate(env.owner, visual_req)
+    assert [row[2] for row in calls] == ["claude-sonnet-5-5", "claude-opus-5-5"]
+    assert all(row[0:2] == ("kie", "owned-claude-key-for-test") for row in calls)
+    assert general["model_role"] == "general" and visual["model_role"] == "visual"
+    assert studio.generate(env.owner, visual_req) == visual and len(calls) == 2
+    assert studio.request_history(env.owner, p["id"])["requests"][0]["context"]["thinking_level"] == "model_default"
+
+
+def test_omitted_visual_choice_never_silently_upgrades_to_opus(env, monkeypatch):
+    monkeypatch.setattr(studio.providers, "check_key", lambda *args: None)
+    studio.save_key(env.owner, studio.BrainKey(provider="kie", api_key="owned-claude-key-for-test", model="claude-sonnet-5-5"))
+    assert studio.status(env.owner)["brain"]["visual_model"] == "claude-sonnet-5-5"
+    monkeypatch.setattr(studio.providers, "check_key", lambda *args: pytest.fail("Invalid model should not reach a provider"))
+    with pytest.raises(HTTPException):
+        studio.save_key(env.owner, studio.BrainKey(provider="kie", api_key="owned-claude-key-for-test",
+                        model="claude-sonnet-5-5", visual_model="unknown-model"))
+    assert studio.credential(1)["visual_model"] == "claude-sonnet-5-5"
+
+
+def test_changing_specialist_model_invalidates_old_retry_approval(env, monkeypatch):
+    p, req = stopped_request(env, monkeypatch)
+    connect_claude_profile(env, monkeypatch)
+    studio.approve_retry(env.owner, p["id"], req.request_id, approval())
+    connect_claude_profile(env, monkeypatch, visual="claude-sonnet-5-5")
+    monkeypatch.setattr(studio.providers, "generate", lambda *a: pytest.fail("Changed model profile must not spend an approved retry"))
+    with pytest.raises(HTTPException):
+        studio.generate(env.owner, req)
+    assert studio.project(env.owner, p["id"])["calls"] == 1
+
+
+def test_legacy_completed_and_stopped_stage_ids_do_not_create_fresh_paid_attempts(env, monkeypatch):
+    import hashlib
+    p, req = stopped_request(env, monkeypatch)
+    legacy_hash = hashlib.sha256(req.model_dump_json(exclude={"model_role", "requested_model"}).encode()).hexdigest()
+    with studio.db._conn() as conn:
+        conn.execute("UPDATE frontier_requests SET fingerprint=?,context_json='{}' WHERE id=?", (legacy_hash, req.request_id))
+    updated_req = req.model_copy(update={"model_role": "visual", "requested_model": "claude-opus-5-5"})
+    monkeypatch.setattr(studio.providers, "generate", lambda *a: pytest.fail("An old interrupted request still needs explicit recovery"))
+    with pytest.raises(HTTPException):
+        studio.generate(env.owner, updated_req)
+    assert studio.project(env.owner, p["id"])["calls"] == 1
+    saved = {"text": "Already saved", "model": "gemini-3.8-flash"}
+    with studio.db._conn() as conn:
+        conn.execute("UPDATE frontier_requests SET status='complete',result_json=? WHERE id=?", (json.dumps(saved), req.request_id))
+    assert studio.generate(env.owner, updated_req) == saved
+
+
+def test_legacy_recovery_is_still_cached_after_new_routing_metadata_is_saved(env, monkeypatch):
+    import hashlib
+    p, req = stopped_request(env, monkeypatch)
+    old_hash = hashlib.sha256(req.model_dump_json(exclude={"model_role", "requested_model"}).encode()).hexdigest()
+    with studio.db._conn() as conn:
+        conn.execute("UPDATE frontier_requests SET fingerprint=?,context_json='{}' WHERE id=?", (old_hash, req.request_id))
+    updated = req.model_copy(update={"model_role": "visual", "requested_model": "claude-opus-5-5"})
+    studio.approve_retry(env.owner, p["id"], req.request_id, approval())
+    calls = []
+    monkeypatch.setattr(studio.providers, "generate", lambda *args: calls.append(args) or ("Saved scene", 40, 60))
+    result = studio.generate(env.owner, updated)
+    assert studio.generate(env.owner, updated) == result and len(calls) == 1
+    assert studio.project(env.owner, p["id"])["calls"] == 2
 
 
 @pytest.mark.parametrize("provider", ["kie", "atlas"])
@@ -219,7 +300,8 @@ def test_each_hub_routes_text_grounding_and_images_to_customer_account(env, monk
     from base64 import b64encode
     body = {"code": 200, "data": 10} if provider == "kie" else {"data": [{"id": "google/gemini-3.8-flash"}]}
     monkeypatch.setattr(studio.requests, "get", lambda *a, **kw: SimpleNamespace(status_code=200, json=lambda: body))
-    studio.save_key(env.owner, studio.BrainKey(api_key="customer-hub-key-for-test", provider=provider))
+    legacy_model = "gemini-3.8-flash" if provider == "kie" else "google/gemini-3.8-flash"
+    studio.save_key(env.owner, studio.BrainKey(api_key="customer-hub-key-for-test", provider=provider, model=legacy_model))
     p = studio.create_project(env.owner, studio.ProjectRequest(title="Hub video"))
     calls = []
     def answer(url, **kw):
@@ -290,7 +372,8 @@ def test_failure_history_is_owned_and_contains_no_private_payload(env, monkeypat
     assert item["status"] == "needs_review" and item["can_retry"]
     assert item["errors"][0]["code"] == "read_timeout"
     assert item["context"] == {"provider": "gemini", "model": "gemini-3.8-flash", "kind": "text", "max_tokens": 8000,
-                               "prompt_chars": len(req.prompt), "image_count": 0, "image_bytes": 0, "thinking_level": "low"}
+                               "prompt_chars": len(req.prompt), "image_count": 0, "image_bytes": 0, "thinking_level": "low",
+                               "model_role": "general", "requested_model": None}
     assert not any(s in json.dumps(history) for s in ("secret provider URL", req.prompt, "private-google-key-for-test", "fingerprint", "result_json"))
     with pytest.raises(HTTPException) as denied:
         studio.request_history(env.other, p["id"])
