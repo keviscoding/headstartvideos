@@ -60,7 +60,7 @@ def create_app():
         if request.method in ("POST", "DELETE", "PUT", "PATCH"):
             if request.headers.get("X-CR-Local-Token") != token:
                 return jsonify(error="Refresh your studio page and try again."), 403
-        if request.path in ("/cr-connect", "/cr-provider", "/cr-hub", "/cr-voice") and request.method == "POST":
+        if request.path in ("/cr-connect", "/cr-provider", "/cr-hub", "/cr-voice", "/cr-images") and request.method == "POST":
             if studio.RUNNING.get("slug") or studio.QUEUE:
                 return jsonify(error="Finish your current video before changing its accounts."), 409
         if request.path == "/api/run" and request.method == "POST":
@@ -115,6 +115,17 @@ def create_app():
                                "model": voice.get("model") or (cr_media.PROVIDERS[voice["provider"]]["models"]["narration"] if voice else ""),
                                "connected": bool(cr_media.active("narration") and voice and
                                                  os.getenv(cr_media.PROVIDERS[voice["provider"]]["key_env"]))}
+        image_cfg = cr_media.profile("images") if cr_media.active("images") else {}
+        plan = []
+        if image_cfg.get("provider") == "kie":
+            try:
+                plan = cr_media.image_plan(image_cfg)
+            except cr_media.AccountStop as error:
+                checks["image_error"] = str(error)
+        checks["images"] = {"selection": (cfg.get("images") or {}).get("provider", "inherit"),
+                            "provider": image_cfg.get("provider", "original"),
+                            "model": plan[0] if plan else "", "fallbacks": plan[1:],
+                            "connected": bool(image_cfg and os.getenv(cr_media.PROVIDERS[image_cfg["provider"]]["key_env"]))}
         try:
             checks["local_version"] = json.loads((HOME / "cr-release.json").read_text())["version"]
         except (OSError, ValueError, KeyError):
@@ -149,6 +160,44 @@ def create_app():
         import requests
         cr_media._data(requests.get(url, headers={"Authorization": "Bearer " + key},
                                    timeout=(10, 20), allow_redirects=False), provider)
+
+    @studio.app.post("/cr-images")
+    def save_images():
+        data = request.get_json(silent=True) or {}
+        cfg = cr_bridge.load_settings()
+        if not cfg.get("key") or not cfg.get("costs_accepted"):
+            return jsonify(error="Connect CR and review the spending agreement first."), 409
+        provider = data.get("provider")
+        if provider == "inherit":
+            cfg.pop("images", None)
+            cr_bridge.save_settings(cfg)
+            return jsonify(saved=True, message="Images use your model account or individual image settings.")
+        if provider != "kie":
+            return jsonify(error="Choose Kie.ai or your existing image account."), 400
+        fallbacks = data.get("fallbacks", [])
+        if (not isinstance(data.get("model"), str) or not isinstance(fallbacks, list)
+                or len(fallbacks) > 4 or any(not isinstance(m, str) for m in fallbacks)):
+            return jsonify(error="Choose a primary image model and up to four fallbacks."), 400
+        try:
+            plan = cr_media.image_plan({"model": data["model"], "fallbacks": fallbacks})
+        except cr_media.AccountStop as error:
+            return jsonify(error=str(error)), 400
+        supplied = str(data.get("key", "")).strip()
+        key = supplied or os.getenv("KIE_API_KEY", "").strip()
+        if not 16 <= len(key) <= 512 or any(c.isspace() for c in key):
+            return jsonify(error="Connect your Kie API key, or leave it blank to reuse your saved key."), 400
+        try:
+            check_media_account("kie", key)
+            if supplied:
+                write_provider("KIE_API_KEY", key)
+            cfg["images"] = {"provider": "kie", "model": plan[0], "fallbacks": plan[1:]}
+            cr_bridge.save_settings(cfg)
+        except cr_media.AccountStop as error:
+            return jsonify(error=str(error)), 400
+        except Exception:
+            return jsonify(error="Kie could not be connected. Check its key and API access."), 400
+        return jsonify(saved=True, message="Image choices saved. Each image can try up to " + str(len(plan)) +
+                       " selected models, once each, on your Kie balance. Narration and writing keep their existing choices.")
 
     @studio.app.post("/cr-voice")
     def save_voice():
