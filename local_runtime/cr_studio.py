@@ -60,7 +60,7 @@ def create_app():
         if request.method in ("POST", "DELETE", "PUT", "PATCH"):
             if request.headers.get("X-CR-Local-Token") != token:
                 return jsonify(error="Refresh your studio page and try again."), 403
-        if request.path in ("/cr-connect", "/cr-provider", "/cr-hub") and request.method == "POST":
+        if request.path in ("/cr-connect", "/cr-provider", "/cr-hub", "/cr-voice") and request.method == "POST":
             if studio.RUNNING.get("slug") or studio.QUEUE:
                 return jsonify(error="Finish your current video before changing its accounts."), 409
         if request.path == "/api/run" and request.method == "POST":
@@ -106,6 +106,18 @@ def create_app():
         checks["model_accounts"] = cr_media.PROVIDERS
         checks["media_hub"] = {k: hub[k] for k in ("provider", "tasks", "voice") if k in hub}
         checks["media_hub"]["connected"] = bool(hub and os.getenv(cr_media.PROVIDERS[hub["provider"]]["key_env"]))
+        voice = cr_media.profile("narration")
+        if not cr_media.active("narration"):
+            voice = {}
+        override = cfg.get("narration") or {}
+        checks["narration"] = {"selection": override.get("provider", "inherit"),
+                               "provider": voice.get("provider", "original"), "voice": voice.get("voice", ""),
+                               "connected": bool(cr_media.active("narration") and voice and
+                                                 os.getenv(cr_media.PROVIDERS[voice["provider"]]["key_env"]))}
+        try:
+            checks["local_version"] = json.loads((HOME / "cr-release.json").read_text())["version"]
+        except (OSError, ValueError, KeyError):
+            checks["local_version"] = "development"
         return jsonify(checks)
 
     @studio.app.post("/cr-connect")
@@ -129,6 +141,50 @@ def create_app():
         os.environ[name] = value
         if hasattr(studio.mv, name):
             setattr(studio.mv, name, value)
+
+    def check_media_account(provider, key):
+        # Read-only validation: no generated audio and no change to the CR brain.
+        url = "https://api.kie.ai/api/v1/chat/credit" if provider == "kie" else "https://api.atlascloud.ai/v1/models"
+        import requests
+        cr_media._data(requests.get(url, headers={"Authorization": "Bearer " + key},
+                                   timeout=(10, 20), allow_redirects=False), provider)
+
+    @studio.app.post("/cr-voice")
+    def save_voice():
+        data = request.get_json(silent=True) or {}
+        cfg = cr_bridge.load_settings()
+        provider = data.get("provider")
+        if provider not in ("inherit", "original", "kie", "atlas"):
+            return jsonify(error="Choose a narration account."), 400
+        if not cfg.get("key") or not cfg.get("costs_accepted"):
+            return jsonify(error="Connect CR and review the spending agreement first."), 409
+        if provider in ("inherit", "original"):
+            if provider == "inherit":
+                cfg.pop("narration", None)
+            else:
+                cfg["narration"] = {"provider": "original"}
+            cr_bridge.save_settings(cfg)
+            return jsonify(saved=True, message="Narration uses " +
+                           ("the model account choices above." if provider == "inherit" else "your individual Frontier voice settings."))
+        info = cr_media.PROVIDERS[provider]
+        supplied = str(data.get("key", "")).strip()
+        key = supplied or os.getenv(info["key_env"], "").strip()
+        voice = str(data.get("voice", "")).strip()
+        if (not 16 <= len(key) <= 512 or any(c.isspace() for c in key)
+                or (voice and (len(voice) > 100 or not all(c.isalnum() or c in "_-" for c in voice)))):
+            return jsonify(error="Paste a complete API key and a valid voice ID, or leave the voice blank for the default."), 400
+        try:
+            check_media_account(provider, key)
+            if supplied:
+                write_provider(info["key_env"], key)
+            cfg["narration"] = {"provider": provider, "voice": voice or info["default_voice"]}
+            cr_bridge.save_settings(cfg)
+        except cr_media.AccountStop as error:
+            return jsonify(error=str(error)), 400
+        except Exception:
+            return jsonify(error="This voice account could not be connected. Check its API key and access, then try again."), 400
+        return jsonify(saved=True, message="Narration now uses " + info["label"] +
+                       ". Voice generation is charged to that account. Your writing and other media choices are unchanged.")
 
     @studio.app.post("/cr-hub")
     def save_hub():
@@ -155,9 +211,7 @@ def create_app():
                 cr_bridge.call("brain-key", {"provider": provider, "api_key": key, "model": info["default_brain"]})
             else:
                 # Check the media account without generating content. Never send it to CR.
-                url = "https://api.kie.ai/api/v1/chat/credit" if provider == "kie" else "https://api.atlascloud.ai/v1/models"
-                import requests
-                cr_media._data(requests.get(url, headers={"Authorization": "Bearer " + key}, timeout=(10, 20), allow_redirects=False), provider)
+                check_media_account(provider, key)
             write_provider(info["key_env"], key)
             cfg["media_hub"] = {"provider": provider, "tasks": sorted(set(tasks)), "voice": voice or info["default_voice"]}
             cr_bridge.save_settings(cfg)

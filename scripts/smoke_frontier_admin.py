@@ -76,8 +76,21 @@ def main():
         status = client.get("/cr-status", headers=local)
         assert status.json["media_hub"]["connected"] and "test-hub-provider-key" not in status.text
         assert studio.mv._image_provider() == "channelrecipe-hub"
-        # Exercise the actual 5.3 entry points with stub task execution (no provider credits).
         import cr_media
+        cr_media.requests.get = lambda *a, **k: SimpleNamespace(status_code=200,
+                                                               json=lambda: {"code": 200, "data": {"credit": 1}})
+        voice_call_count = len(calls)
+        assert client.post("/cr-voice", headers=protected,
+                           json={"provider": "kie", "key": "test-kie-voice-key", "voice": "selected-voice"}).status_code == 200
+        assert len(calls) == voice_call_count, "Voice setup must not change the cloud brain"
+        assert cr_media.profile("images")["provider"] == "atlas"
+        assert cr_media.profile("narration")["provider"] == "kie"
+        assert client.post("/cr-voice", headers=protected, json={"provider": "kie"}).status_code == 200
+        status = client.get("/cr-status", headers=local)
+        assert status.json["narration"]["connected"] and status.json["narration"]["selection"] == "kie"
+        assert status.json["local_version"] == manifest["version"]
+        assert "test-kie-voice-key" not in status.text
+        # Exercise the actual 5.3 entry points with stub task execution (no provider credits).
         media_calls = []
         tone = root / "test-tone.mp3"
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=200:duration=1", str(tone)], check=True)
@@ -100,7 +113,7 @@ def main():
         job.mkdir()
         studio.mv.generate_voiceover("Hello world.", job, False)
         assert (job / "audio.mp3").is_file() and (job / "subs.srt").is_file()
-        assert media_calls[-1][0] == "narration" and media_calls[-1][1]["voice"] == cr_media.PROVIDERS["atlas"]["default_voice"]
+        assert media_calls[-1][0] == "narration" and media_calls[-1][1]["voice"] == cr_media.PROVIDERS["kie"]["default_voice"]
         studio.mv._split_script_by_minutes = lambda *a: ["Hello world.", "Hello world."]
         before = len(media_calls)
         studio.mv.generate_voiceover("Hello world. Hello world.", job, True, avatar_min=1)
@@ -109,7 +122,15 @@ def main():
         # Account changes are blocked while a video is active.
         studio.RUNNING["slug"] = "busy"
         assert client.post("/cr-hub", headers=protected, json={"provider": "original"}).status_code == 409
+        assert client.post("/cr-voice", headers=protected, json={"provider": "original"}).status_code == 409
         studio.RUNNING["slug"] = None
+        studio.QUEUE.append({"slug": "queued"})
+        assert client.post("/cr-voice", headers=protected, json={"provider": "original"}).status_code == 409
+        studio.QUEUE.clear()
+        assert client.post("/cr-voice", headers=protected, json={"provider": "original"}).status_code == 200
+        assert not cr_media.active("narration") and cr_media.active("images")
+        assert client.post("/cr-voice", headers=protected, json={"provider": "inherit"}).status_code == 200
+        assert cr_media.active("narration") and cr_media.profile("narration")["provider"] == "atlas"
         assert client.post("/cr-hub", headers=protected, json={"provider": "original"}).status_code == 200
         assert studio.mv._image_provider() != "channelrecipe-hub"
         print("Pinned engine, onboarding, local security, CR brain and actual media/presenter hooks passed.")

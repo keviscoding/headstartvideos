@@ -37,17 +37,21 @@ class AccountStop(BaseException):
     pass
 
 
-def profile():
-    cfg = cr_bridge.load_settings().get("media_hub") or {}
+def profile(task=None):
+    settings = cr_bridge.load_settings()
+    voice = settings.get("narration") or {}
+    if task == "narration" and voice.get("provider") in ("kie", "atlas", "original"):
+        return {**voice, "tasks": ["narration"]} if voice["provider"] != "original" else {}
+    cfg = settings.get("media_hub") or {}
     return cfg if cfg.get("provider") in ("kie", "atlas") else {}
 
 
 def active(task):
-    return task in profile().get("tasks", [])
+    return task in profile(task).get("tasks", [])
 
 
-def account():
-    cfg = profile()
+def account(task=None):
+    cfg = profile(task)
     if not cfg or not cr_bridge.load_settings().get("costs_accepted"):
         raise AccountStop("Review your model account and spending agreement in Setup & accounts.")
     provider = cfg["provider"]
@@ -144,7 +148,7 @@ def upload(path, cache_file=None):
 
 
 def run(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
-    provider, key = account()
+    provider, key = account(task)
     dest = Path(dest)
     model = model or PROVIDERS[provider]["models"][task]
     payload = {"model": model, "input": inputs} if provider == "kie" else {"model": model, **inputs}
@@ -272,8 +276,9 @@ def _chunks(text, limit=2400):
 
 
 def narrate(engine, text, mp3, srt, voice_id="", style=""):
-    provider = profile()["provider"]
-    voice = profile().get("voice") or PROVIDERS[provider]["default_voice"]
+    cfg = profile("narration")
+    provider = cfg["provider"]
+    voice = cfg.get("voice") or PROVIDERS[provider]["default_voice"]
     folder = Path(mp3).parent / (Path(mp3).stem + "-hub-voice")
     folder.mkdir(parents=True, exist_ok=True)
     parts = []

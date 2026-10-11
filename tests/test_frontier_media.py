@@ -104,6 +104,33 @@ def test_no_media_generation_before_spending_agreement(hub, monkeypatch):
         media.run("images", {}, hub / "image.png")
 
 
+def test_separate_narration_uses_its_wallet_without_changing_images(hub, monkeypatch):
+    media.cr_bridge.save_settings({"costs_accepted": True,
+        "media_hub": {"provider": "atlas", "tasks": sorted(media.TASKS)},
+        "narration": {"provider": "kie", "voice": "chosen-voice"}})
+    calls = []
+    monkeypatch.setattr(media.requests, "post", lambda url, **kw: calls.append((url, kw)) or
+                        response({"code": 200, "data": {"taskId": "voice-task"}}))
+    monkeypatch.setattr(media.requests, "get", lambda *a, **kw: response({"code": 200,
+        "data": {"state": "success", "resultJson": json.dumps({"resultUrls": ["https://files.example/voice.mp3"]})}}))
+    media.run("narration", {"text": "Hello", "voice": "chosen-voice"}, hub / "voice.mp3")
+    assert calls[0][0] == "https://api.kie.ai/api/v1/jobs/createTask"
+    assert calls[0][1]["headers"]["Authorization"] == "Bearer customer-test-key"
+    assert calls[0][1]["json"]["model"] == "elevenlabs/text-to-speech-turbo-2-5"
+    assert media.profile("images")["provider"] == "atlas"
+    assert media.profile("narration")["voice"] == "chosen-voice"
+
+
+def test_individual_voice_override_and_inherited_hub_narration(hub):
+    settings = media.cr_bridge.load_settings()
+    settings["narration"] = {"provider": "original"}
+    media.cr_bridge.save_settings(settings)
+    assert not media.active("narration") and media.active("images")
+    settings.pop("narration")
+    media.cr_bridge.save_settings(settings)
+    assert media.active("narration") and media.profile("narration")["provider"] == "kie"
+
+
 def test_refreshing_upload_url_does_not_duplicate_pending_paid_task(hub, monkeypatch):
     calls = []
     monkeypatch.setattr(media.requests, "post", lambda *a, **k: calls.append(k) or response({"code": 200, "data": {"taskId": "existing-task"}}))

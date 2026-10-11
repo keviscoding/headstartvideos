@@ -1,6 +1,6 @@
 # ChannelRecipe local studio: admin migration preview
 
-Version: `5.3-admin.2`. Entry point: `https://channelrecipe.com/app#local-studio`.
+Version: `5.3-admin.3`. Entry point: `https://channelrecipe.com/app#local-studio`.
 
 This is the first runnable integration checkpoint, **not completion of the full
 Frontier migration**. Ordinary users, including paying subscribers, cannot use
@@ -55,9 +55,9 @@ asset notices are retained. It writes a version/manifest into the bundle.
 python scripts/build_frontier_admin.py --source /private/path/Frontier-5.3-FULL.zip
 ```
 
-The output defaults to git-ignored `data/frontier/channelrecipe-5.3-admin.2.zip`.
+The output defaults to git-ignored `data/frontier/channelrecipe-5.3-admin.3.zip`.
 `--upload` publishes to the private Spaces object
-`private/frontier/channelrecipe-5.3-admin.2.zip`. It checks both the object ACL
+`private/frontier/channelrecipe-5.3-admin.3.zip`. It checks both the object ACL
 and unauthenticated origin/CDN access, testing a small canary before uploading
 the engine. Failure removes the uploaded release. Never print storage credentials.
 
@@ -170,7 +170,7 @@ installers and automatic prerequisite repair remain onboarding work.
 ```sh
 python -m pytest -q tests/test_frontier_providers.py tests/test_frontier_studio.py tests/test_frontier_bridge.py \
   tests/test_frontier_media.py tests/test_mcp_billing.py tests/test_niche_cron.py
-python scripts/smoke_frontier_admin.py --bundle data/frontier/channelrecipe-5.3-admin.2.zip
+python scripts/smoke_frontier_admin.py --bundle data/frontier/channelrecipe-5.3-admin.3.zip
 ```
 
 The bundle smoke requires its runtime dependencies. It imports the actual pinned
@@ -192,3 +192,7 @@ Rollback the web release to hide the entry and deny new use. Keep the private
 bundle and encryption secret for recovery. Do not delete project tables or rotate
 keys as part of rollback. The current runner requires compatible admin APIs;
 maintain them while downloaded preview jobs are still in use.
+
+## Separate narration choice (admin.3)
+
+The local setup has a visible narration selector: inherit the shared model account, Kie.ai, Atlas Cloud, or individual Frontier voice settings. An explicit narration choice overrides only narration. It can reuse a locally saved key after a read-only account check; it does not call the brain-key API. A new key replaces that provider’s saved local key. Account changes are blocked while a video is running or queued. The setup displays its local version so a newer cloud release can be identified. Old installations require the updated runtime.
