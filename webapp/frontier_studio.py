@@ -26,9 +26,9 @@ from webapp import database as db
 from cryptography.fernet import Fernet, InvalidToken
 from webapp import frontier_providers as providers
 
-VERSION = "5.3-admin.10"
+VERSION = "5.3-admin.11"
 CATALOG = Path(__file__).resolve().parent / "frontier" / "catalog.json"
-RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.10.zip"
+RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.11.zip"
 WORKFLOW_VERSION = "frontier-5.3-claudecode.1"
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 NATIVE_STAGE_LIMIT = 2
@@ -573,7 +573,7 @@ def _runtime_compatible(version, workflow):
     # changed engine or workflow must explicitly migrate projects instead.
     current=workflow_contract()
     return version==workflow["required_release"] or (
-        version==VERSION and workflow.get("required_release") in {"5.3-admin.8","5.3-admin.9"}
+        version==VERSION and workflow.get("required_release") in {"5.3-admin.8","5.3-admin.9","5.3-admin.10"}
         and workflow.get("workflow_version")==current["workflow_version"]
         and workflow.get("engine_source_sha256")==current["engine_source_sha256"])
 
@@ -782,7 +782,12 @@ def native_finish_stage(user, req: NativeFinishStage):
                              (req.project_id, req.stage_id)).fetchone()
         if not stage or not secrets.compare_digest(stage["authorization_hash"], token_hash):
             raise HTTPException(409, "This stage result has no matching execution authorization.")
-        if stage["status"] != "authorized":
+        late_receipt = stage["status"] == "retry_allowed" and stage["attempts"] == 1
+        if late_receipt and req.status == "failed":
+            # A delayed first-attempt failure must not revoke an approved retry
+            # or account for the same execution again.
+            return {"saved": True, "reused": True, "status": "retry_allowed", "stage_id": req.stage_id}
+        if stage["status"] != "authorized" and not late_receipt:
             if (stage["status"] == req.status and stage["result_fingerprint"] == req.result_fingerprint
                     and json.loads(stage["usage_json"]) == usage and stage["error_code"] == req.error_code):
                 return {"saved": True, "reused": True, "status": stage["status"], "stage_id": req.stage_id}
@@ -797,8 +802,18 @@ def native_finish_stage(user, req: NativeFinishStage):
                               (req.project_id,)).fetchone()["n"]
         status = "running" if pending else "failed" if failed else "ready"
         incoming = usage["input_tokens"] + usage["cache_read_input_tokens"] + usage["cache_creation_input_tokens"]
+        outgoing = usage["output_tokens"]
+        if late_receipt:
+            # The first attempt may already have reported partial usage with
+            # its failure. Reconcile its saved success before another execution
+            # starts, adding only usage not yet counted for that same attempt.
+            previous = json.loads(stage["usage_json"])
+            recorded_incoming = sum(previous.get(key, 0) for key in
+                ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+            incoming = max(0, incoming - recorded_incoming)
+            outgoing = max(0, outgoing - previous.get("output_tokens", 0))
         conn.execute(db._q("""UPDATE frontier_projects SET status=?,input_tokens=input_tokens+?,
-            output_tokens=output_tokens+?,updated_at=? WHERE id=?"""), (status, incoming, usage["output_tokens"], now, req.project_id))
+            output_tokens=output_tokens+?,updated_at=? WHERE id=?"""), (status, incoming, outgoing, now, req.project_id))
     return {"saved": True, "reused": False, "status": req.status, "stage_id": req.stage_id}
 
 

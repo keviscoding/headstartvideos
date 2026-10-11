@@ -78,7 +78,7 @@ def _session(settings):
                "Accept": "application/json, text/event-stream"}
     message, session = _message(url, headers, {"jsonrpc": "2.0", "id": 1, "method": "initialize",
         "params": {"protocolVersion": PROTOCOL, "capabilities": {},
-                   "clientInfo": {"name": "ChannelRecipe local studio", "version": "5.3-admin.10"}}})
+                   "clientInfo": {"name": "ChannelRecipe local studio", "version": "5.3-admin.11"}}})
     result = (message or {}).get("result") or {}
     if not isinstance(message, dict) or message.get("error") or not result.get("protocolVersion"):
         raise RuntimeError("ChannelRecipe's workflow connection could not initialize.")

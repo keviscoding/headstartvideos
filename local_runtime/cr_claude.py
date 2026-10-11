@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import threading
+import tempfile
 import time
 
 GENERAL_MODEL = "claude-sonnet-5-5"
@@ -228,11 +229,14 @@ def _private_write(path, data):
         path.parent.chmod(0o700)
     except OSError:
         pass
-    temporary = path.with_suffix(".tmp")
-    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        json.dump(data, handle, ensure_ascii=False)
-    temporary.replace(path)
+    fd,name=tempfile.mkstemp(dir=path.parent,prefix="."+path.name+".",suffix=".tmp")
+    temporary=Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, ensure_ascii=False)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _result(stdout, output_format):
@@ -302,7 +306,7 @@ class Runtime:
             saved = {}
         stage = {"project_id": project_id, "stage_id": stage_id, "input_fingerprint": fingerprint,
                  "kind": kind, "model_role": role, "requested_model": requested,
-                 "local_version": cfg.get("local_version", "5.3-admin.10"),
+                 "local_version": cfg.get("local_version", "5.3-admin.11"),
                  "brain_mode": "claudecode"}
         try:
             # A completion receipt lost in transit can be submitted again. This

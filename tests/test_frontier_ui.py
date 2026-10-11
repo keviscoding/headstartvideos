@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 
@@ -157,3 +158,163 @@ def test_native_voice_stays_native_and_dynamic_estimates_are_removed_in_browser(
     tab.evaluate("""()=>{const tile=document.createElement('div');tile.className='sl-pick';tile.title='Original look\\nabout $0.08 with a free Gemini tier';tile.textContent='Style';document.body.append(tile)}""")
     tab.wait_for_function("document.querySelector('.sl-pick').title==='Original look'")
     assert tab.locator(".sl-pick").get_attribute("title") == "Original look"
+
+
+@pytest.fixture
+def setup_page(page):
+    """Only the public setup HTML runs; all account checks are fake responses."""
+    tab, _ = page
+    tab.unroute("**/*")
+    html = (Path(__file__).parents[1] / "local_runtime" / "cr_setup.html").read_text()
+    html = html.replace("__LOCAL_TOKEN__", "ui-fixture-local-token")
+    models = [{"id": "sonnet-fixture", "label": "Sonnet fixture"},
+              {"id": "opus-fixture", "label": "Opus fixture"}]
+    state = {
+        "python": True, "ffmpeg": True, "browser": True, "node": True,
+        "connected": True, "costs_accepted": True, "brain_mode": "claudecode",
+        "local_version": "ui-fixture", "model_accounts": {}, "providers": {},
+        "account": {"version": "ui-fixture", "brain": {"connected": False}},
+        "claude_code": {"installed": True, "authenticated": True, "mcp_connected": True,
+                        "models": models, "general_model": "sonnet-fixture",
+                        "visual_model": "opus-fixture", "models_saved": True,
+                        "models_verified": True},
+        "readiness": {"ready": True, "checks": [{"label": "Fixture account checks", "ready": True}], "blockers": []},
+    }
+    catalog = {"channels": [{"name": "original fixture", "label": "Original fixture",
+                             "description": "The original preset's requirements",
+                             "features": {"offered": ["stock"], "on": ["stock"]}}],
+               "features": [{"key": "stock", "label": "Original stock footage"}]}
+    calls, pending = [], []
+    control = {"defer_save": False, "fail_save": False}
+
+    def finish_save(route, payload):
+        if control["fail_save"]:
+            route.fulfill(status=409, json={"error": "Fixture model choices could not save"})
+            return
+        state["claude_code"].update(general_model=payload["general_model"],
+                                     visual_model=payload["visual_model"],
+                                     models_saved=True, models_verified=False)
+        state["readiness"].update(ready=False, blockers=["Verify the saved models first."])
+        route.fulfill(json={"message": "Saved fixture models; verify them next."})
+
+    def fixture(route):
+        request = route.request
+        path = urlparse(request.url).path
+        if request.method == "GET" and path == "/cr-setup":
+            return route.fulfill(body=html, content_type="text/html")
+        assert request.headers.get("x-cr-local-token") == "ui-fixture-local-token"
+        if request.method == "GET" and path == "/cr-status":
+            return route.fulfill(json=state)
+        if request.method == "GET" and path == "/api/channels":
+            return route.fulfill(json=catalog)
+        payload = request.post_data_json
+        calls.append((path, payload))
+        if path == "/cr-claude/setup":
+            action = payload["action"]
+            if action == "select":
+                if control["defer_save"]:
+                    pending.append((route, payload))
+                    return
+                return finish_save(route, payload)
+            if action == "verify":
+                state["claude_code"]["models_verified"] = True
+                state["readiness"].update(ready=True, blockers=[])
+                return route.fulfill(json={"message": "Fixture model access verified."})
+            assert action == "check"
+            return route.fulfill(json={"message": "Read-only fixture checks complete."})
+        if path == "/cr-preflight":
+            ready = state["readiness"]["ready"]
+            return route.fulfill(json={"ready": ready,
+                "checks": [{"label": "Original fixture preset", "ready": ready}],
+                "blockers": [] if ready else ["Verify the saved models first."],
+                "features": payload["features"]})
+        pytest.fail("Unexpected UI fixture request: " + request.method + " " + path)
+
+    tab.route("**/*", fixture)
+    tab.goto("http://setup-ui-fixture.invalid/cr-setup")
+    tab.wait_for_function("document.getElementById('claude-verify').disabled===false")
+    tab.select_option("#preflight-style", "original fixture")
+    yield {"page": tab, "state": state, "calls": calls, "control": control,
+           "pending": pending, "finish_save": finish_save}
+    for route, _ in pending:
+        route.abort()
+
+
+@pytest.mark.parametrize("field,choice", [("claude-general", "opus-fixture"),
+                                         ("claude-visual", "sonnet-fixture")])
+def test_unsaved_either_claude_model_blocks_verify_preflight_and_launch(setup_page, field, choice):
+    tab = setup_page["page"]
+    tab.locator("#preflight-check").click()
+    tab.wait_for_function("document.getElementById('launch').getAttribute('aria-disabled')==='false'")
+    assert tab.locator("#launch").get_attribute("href") == "/?cr-preset=original%20fixture"
+    previous_calls = len(setup_page["calls"])
+    tab.select_option("#" + field, choice)
+    assert tab.locator("#claude-verify").is_disabled()
+    assert tab.locator("#preflight-check").is_disabled()
+    assert tab.locator("#launch").get_attribute("aria-disabled") == "true"
+    assert tab.locator("#launch").get_attribute("href") == "/"
+    assert not tab.locator("#final-ready").evaluate("el=>el.classList.contains('ready')")
+    assert "Unsaved choices" in tab.locator("#claude-status").inner_text()
+    assert "Saved Claude profile" in tab.locator("#claude-status").inner_text()
+    # The handler guards also prevent scripted/Enter submits from issuing checks.
+    tab.evaluate("claudeAction('verify')")
+    tab.evaluate("document.getElementById('preflight').requestSubmit()")
+    assert len(setup_page["calls"]) == previous_calls
+    assert "Save the displayed Claude model choices" in tab.locator("#notice").inner_text()
+
+
+def test_saving_retains_displayed_choices_then_requires_verify_and_preset_check(setup_page):
+    tab = setup_page["page"]
+    setup_page["control"]["defer_save"] = True
+    tab.select_option("#claude-general", "opus-fixture")
+    tab.select_option("#claude-visual", "sonnet-fixture")
+    tab.locator("#claude-select").click()
+    tab.wait_for_function("document.getElementById('claude-general').disabled===true")
+    assert tab.locator("#claude-general").input_value() == "opus-fixture"
+    assert tab.locator("#claude-visual").input_value() == "sonnet-fixture"
+    assert "Saving your displayed choices" in tab.locator("#claude-status").inner_text()
+    assert tab.locator("#claude-verify").is_disabled()
+    assert tab.locator("#preflight-check").is_disabled()
+    assert tab.locator("#launch").get_attribute("aria-disabled") == "true"
+    route, payload = setup_page["pending"].pop()
+    assert payload == {"action": "select", "general_model": "opus-fixture", "visual_model": "sonnet-fixture"}
+    setup_page["finish_save"](route, payload)
+    tab.wait_for_function("document.getElementById('claude-verify').disabled===false")
+    assert tab.locator("#claude-general").input_value() == "opus-fixture"
+    assert tab.locator("#claude-visual").input_value() == "sonnet-fixture"
+    assert "dropdowns match your saved profile" in tab.locator("#claude-status").inner_text()
+    assert "Unsaved choices" not in tab.locator("#claude-status").inner_text()
+    assert tab.locator("#launch").get_attribute("aria-disabled") == "true"
+    tab.locator("#preflight-check").click()
+    tab.wait_for_function("document.getElementById('readiness-message').textContent.includes('needs the items')")
+    assert tab.locator("#launch").get_attribute("aria-disabled") == "true"
+    tab.locator("#claude-verify").click()
+    tab.wait_for_function("document.getElementById('notice').textContent.includes('model access verified')")
+    tab.wait_for_function("document.getElementById('claude-verify').disabled===false")
+    assert tab.locator("#launch").get_attribute("aria-disabled") == "true"
+    tab.locator("#preflight-check").click()
+    tab.wait_for_function("document.getElementById('launch').getAttribute('aria-disabled')==='false'")
+    assert tab.locator("#launch").get_attribute("href") == "/?cr-preset=original%20fixture"
+    assert setup_page["calls"][-1] == ("/cr-preflight", {"style": "original fixture", "features": {"stock": True}})
+    assert [payload["action"] for path, payload in setup_page["calls"] if path == "/cr-claude/setup"] == ["select", "verify"]
+
+
+def test_failed_save_and_read_only_refresh_keep_unsaved_choice_blocked(setup_page):
+    tab = setup_page["page"]
+    setup_page["control"]["fail_save"] = True
+    tab.select_option("#claude-visual", "sonnet-fixture")
+    tab.locator("#claude-select").click()
+    tab.wait_for_function("document.getElementById('notice').textContent.includes('could not save')")
+    assert tab.locator("#claude-visual").input_value() == "sonnet-fixture"
+    assert tab.locator("#claude-verify").is_disabled()
+    assert tab.locator("#preflight-check").is_disabled()
+    assert "Unsaved choices" in tab.locator("#claude-status").inner_text()
+    tab.locator("#claude-check").click()
+    tab.wait_for_function("document.getElementById('notice').textContent.includes('Read-only fixture checks complete')")
+    tab.wait_for_function("document.getElementById('claude-check').disabled===false")
+    assert tab.locator("#claude-visual").input_value() == "sonnet-fixture"
+    assert tab.locator("#claude-verify").is_disabled()
+    assert tab.locator("#preflight-check").is_disabled()
+    assert tab.locator("#launch").get_attribute("aria-disabled") == "true"
+    assert setup_page["state"]["claude_code"]["visual_model"] == "opus-fixture"
+    assert [payload["action"] for path, payload in setup_page["calls"] if path == "/cr-claude/setup"] == ["select", "check"]

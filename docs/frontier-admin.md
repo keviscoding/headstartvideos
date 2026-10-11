@@ -1,6 +1,6 @@
 # ChannelRecipe local studio
 
-Version: `5.3-admin.10`. Entry point: https://channelrecipe.com/app#local-studio.
+Version: `5.3-admin.11`. Entry point: https://channelrecipe.com/app#local-studio.
 
 The preferred route runs the original Frontier 5.3 workflow through the creator's
 signed-in Claude Code account. CR supplies the protected runtime, current workflow
@@ -107,8 +107,8 @@ CR account/launch instructions take precedence over its older setup guidance.
 python scripts/build_frontier_admin.py --source /private/path/Frontier-5.3-FULL.zip
 ```
 
-The ignored output is `data/frontier/channelrecipe-5.3-admin.10.zip`. The private
-object is `private/frontier/channelrecipe-5.3-admin.10.zip`. Publishing checks its
+The ignored output is `data/frontier/channelrecipe-5.3-admin.11.zip`. The private
+object is `private/frontier/channelrecipe-5.3-admin.11.zip`. Publishing checks its
 ACL and unauthenticated origin/CDN access. Downloads stream through CR's
 authenticated endpoint with `private, no-store`; no public object URL is returned.
 
