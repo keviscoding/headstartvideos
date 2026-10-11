@@ -69,43 +69,46 @@ def require_admin_user(user: dict | None) -> dict:
 def initialize():
     # Dedicated additive tables; no changes to existing Stripe or render schemas.
     schema_key = (db.IS_PG, db.DATABASE_URL if db.IS_PG else str(db.DB_PATH))
-    with _schema_lock, db._conn() as conn:
+    if schema_key in _schema_ready:
+        return
+    with _schema_lock:
         if schema_key in _schema_ready:
             return
-        if db.IS_PG:
-            # Serialize additive preview migrations across web processes/replicas.
-            conn.execute("SELECT pg_advisory_xact_lock(726346119)")
-        conn.execute("""CREATE TABLE IF NOT EXISTS frontier_credentials (
-            user_id INTEGER PRIMARY KEY, key_enc TEXT NOT NULL, model TEXT NOT NULL,
-            updated_at DOUBLE PRECISION NOT NULL)""")
-        if db.IS_PG:
-            conn.execute("ALTER TABLE frontier_credentials ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'gemini'")
-        elif "provider" not in {r["name"] for r in conn.execute("PRAGMA table_info(frontier_credentials)").fetchall()}:
-            conn.execute("ALTER TABLE frontier_credentials ADD COLUMN provider TEXT NOT NULL DEFAULT 'gemini'")
-        conn.execute("""CREATE TABLE IF NOT EXISTS frontier_projects (
-            id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, title TEXT NOT NULL,
-            style TEXT NOT NULL, version TEXT NOT NULL, max_calls INTEGER NOT NULL,
-            calls INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0,
-            output_tokens INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'ready',
-            created_at DOUBLE PRECISION NOT NULL, updated_at DOUBLE PRECISION NOT NULL)""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS frontier_requests (
-            id TEXT PRIMARY KEY, project_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
-            status TEXT NOT NULL, result_json TEXT NOT NULL DEFAULT '',
-            created_at DOUBLE PRECISION NOT NULL)""")
-        additions = {"attempts": "INTEGER NOT NULL DEFAULT 1", "error_json": "TEXT NOT NULL DEFAULT ''",
-                     "context_json": "TEXT NOT NULL DEFAULT ''"}
-        columns = set() if db.IS_PG else {r["name"] for r in conn.execute("PRAGMA table_info(frontier_requests)").fetchall()}
-        for name, definition in additions.items():
+        with db._conn() as conn:
             if db.IS_PG:
-                conn.execute(f"ALTER TABLE frontier_requests ADD COLUMN IF NOT EXISTS {name} {definition}")
-            elif name not in columns:
-                conn.execute(f"ALTER TABLE frontier_requests ADD COLUMN {name} {definition}")
-        conn.execute("""CREATE TABLE IF NOT EXISTS frontier_retries (
-            request_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, user_id INTEGER NOT NULL,
-            attempt INTEGER NOT NULL, account_hash TEXT NOT NULL,
-            approved_at DOUBLE PRECISION NOT NULL, used_at DOUBLE PRECISION NOT NULL DEFAULT 0)""")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_frontier_requests_project ON frontier_requests(project_id,status,created_at)")
-    _schema_ready.add(schema_key)
+                # Serialize additive preview migrations across web processes/replicas.
+                conn.execute("SELECT pg_advisory_xact_lock(726346119)")
+            conn.execute("""CREATE TABLE IF NOT EXISTS frontier_credentials (
+                user_id INTEGER PRIMARY KEY, key_enc TEXT NOT NULL, model TEXT NOT NULL,
+                updated_at DOUBLE PRECISION NOT NULL)""")
+            if db.IS_PG:
+                conn.execute("ALTER TABLE frontier_credentials ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'gemini'")
+            elif "provider" not in {r["name"] for r in conn.execute("PRAGMA table_info(frontier_credentials)").fetchall()}:
+                conn.execute("ALTER TABLE frontier_credentials ADD COLUMN provider TEXT NOT NULL DEFAULT 'gemini'")
+            conn.execute("""CREATE TABLE IF NOT EXISTS frontier_projects (
+                id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, title TEXT NOT NULL,
+                style TEXT NOT NULL, version TEXT NOT NULL, max_calls INTEGER NOT NULL,
+                calls INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'ready',
+                created_at DOUBLE PRECISION NOT NULL, updated_at DOUBLE PRECISION NOT NULL)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS frontier_requests (
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
+                status TEXT NOT NULL, result_json TEXT NOT NULL DEFAULT '',
+                created_at DOUBLE PRECISION NOT NULL)""")
+            additions = {"attempts": "INTEGER NOT NULL DEFAULT 1", "error_json": "TEXT NOT NULL DEFAULT ''",
+                         "context_json": "TEXT NOT NULL DEFAULT ''"}
+            columns = set() if db.IS_PG else {r["name"] for r in conn.execute("PRAGMA table_info(frontier_requests)").fetchall()}
+            for name, definition in additions.items():
+                if db.IS_PG:
+                    conn.execute(f"ALTER TABLE frontier_requests ADD COLUMN IF NOT EXISTS {name} {definition}")
+                elif name not in columns:
+                    conn.execute(f"ALTER TABLE frontier_requests ADD COLUMN {name} {definition}")
+            conn.execute("""CREATE TABLE IF NOT EXISTS frontier_retries (
+                request_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, user_id INTEGER NOT NULL,
+                attempt INTEGER NOT NULL, account_hash TEXT NOT NULL,
+                approved_at DOUBLE PRECISION NOT NULL, used_at DOUBLE PRECISION NOT NULL DEFAULT 0)""")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_frontier_requests_project ON frontier_requests(project_id,status,created_at)")
+        _schema_ready.add(schema_key)
 
 
 def catalog() -> list[dict]:
@@ -343,7 +346,9 @@ def generate(user: dict, req: BrainRequest) -> dict:
         raise HTTPException(429, "The brain is busy. Your local runner will retry shortly.", headers={"Retry-After": "10"})
     reserved = False
     attempt = 1
-    context = json.dumps({"provider": c["provider"], "model": c["model"], "kind": req.kind, "max_tokens": req.max_tokens})
+    context = json.dumps({"provider": c["provider"], "model": c["model"], "kind": req.kind, "max_tokens": req.max_tokens,
+                          "prompt_chars": len(req.prompt), "image_count": len(req.images), "image_bytes": size,
+                          "thinking_level": "low" if c["provider"] == "kie" or providers.thinking_config(c["model"]) else "model_default"})
     try:
         with db._conn() as conn:
             # A row lock makes the per-project limit safe across web replicas.
