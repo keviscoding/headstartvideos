@@ -110,6 +110,15 @@ with a local Claude Code login. No Claude OAuth credentials are collected. Direc
 Anthropic brain keys entered locally are sent to CR's encrypted per-user vault
 and are not saved to the local media environment.
 
+Keeping source and stage orchestration on CR does not guarantee that prompts are
+secret from the owner of a customer-supplied provider account. Kie documents
+account logs containing request inputs (https://docs.kie.ai/). The recommended
+public-product design for strict prompt privacy is a CR-controlled brain provider
+account with plan/allowance funding, and customer keys for media. Optional
+customer-key brain use needs a clear prompt-visibility policy. That funding and
+private-stage design is not activated by this owner-only compatibility relay;
+it still never reads CR platform generation credentials.
+
 Anthropic research exposes hosted web search with a bounded five-use setting.
 The relay does not provide the original CLI's local tool execution, WebFetch tool,
 or automatic `pause_turn` continuation. A tool error, pause or incomplete answer
