@@ -31,11 +31,14 @@ def env(tmp_path, monkeypatch):
     return SimpleNamespace(client=client, owner=owner, other=other, connect=connect, tmp=tmp_path)
 
 
-@pytest.mark.parametrize("path,method", [("status", "get"), ("download", "get"), ("projects", "get"), ("brain-key", "delete")])
+@pytest.mark.parametrize("path,method", [("status", "get"), ("download", "get"),
+    ("projects", "get"), ("projects/crv_" + "1" * 24, "get"),
+    ("brain-key", "delete"), ("brain-key", "post"), ("projects", "post"), ("brain", "post")])
 def test_every_endpoint_denies_anonymous_and_paid_non_admins(env, path, method):
-    assert getattr(env.client, method)("/api/frontier/" + path).status_code == 401
+    options = {"json": {}} if method == "post" else {}
+    assert getattr(env.client, method)("/api/frontier/" + path, **options).status_code == 401
     # is_admin supplied by a user/client is not authoritative.
-    assert getattr(env.client, method)("/api/frontier/" + path, headers={"x-test-user": "paid"}).status_code == 403
+    assert getattr(env.client, method)("/api/frontier/" + path, headers={"x-test-user": "paid"}, **options).status_code == 403
 
 
 def test_runner_bearer_requires_live_admin_identity(env):
