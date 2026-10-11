@@ -244,6 +244,16 @@ def test_diagnostics_are_private_and_redact_keys(monkeypatch):
     assert all(s not in json.dumps(d) for s in ("secret-header-token","a-private-saved-media-key","example-secret"))
 
 
+def test_concurrent_receipt_writes_remain_atomic_and_private(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    path=tmp_path/"stage.json"
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(lambda n:cr_claude._private_write(path,{"state":"complete","result":"x"*5000,"writer":n}),range(50)))
+    data=json.loads(path.read_text())
+    assert data["state"]=="complete" and len(data["result"])==5000
+    assert path.stat().st_mode&0o077==0 and list(tmp_path.glob("*.tmp"))==[]
+
+
 def test_general_opus_choice_does_not_change_source_role_marker(tmp_path,monkeypatch):
     engine=SimpleNamespace(CC_MODEL="sonnet")
     bridge=SimpleNamespace(load_settings=lambda:{"general_model":cr_claude.VISUAL_MODEL,"visual_model":cr_claude.GENERAL_MODEL})
