@@ -78,7 +78,7 @@ def _session(settings):
                "Accept": "application/json, text/event-stream"}
     message, session = _message(url, headers, {"jsonrpc": "2.0", "id": 1, "method": "initialize",
         "params": {"protocolVersion": PROTOCOL, "capabilities": {},
-                   "clientInfo": {"name": "ChannelRecipe local studio", "version": "5.3-admin.8"}}})
+                   "clientInfo": {"name": "ChannelRecipe local studio", "version": "5.3-admin.9"}}})
     result = (message or {}).get("result") or {}
     if not isinstance(message, dict) or message.get("error") or not result.get("protocolVersion"):
         raise RuntimeError("ChannelRecipe's workflow connection could not initialize.")
@@ -105,6 +105,13 @@ def call_tool(name, arguments, settings):
         message = " ".join(c.get("text", "") for c in result.get("content", []) if c.get("type") == "text")
         raise RuntimeError(message[:800] or "ChannelRecipe stopped this workflow step. Review the project before resuming.")
     data = result.get("structuredContent")
+    # MCP SDK string-returning tools expose {result: <JSON string>} as their
+    # structured result, alongside a JSON text block. Unwrap that contract.
+    if isinstance(data,dict) and set(data)=={"result"} and isinstance(data["result"],str):
+        try:
+            data=json.loads(data["result"])
+        except ValueError:
+            data=None
     if not isinstance(data, dict):
         texts = [c.get("text", "") for c in result.get("content", []) if c.get("type") == "text"]
         try:

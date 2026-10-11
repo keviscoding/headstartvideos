@@ -26,9 +26,9 @@ from webapp import database as db
 from cryptography.fernet import Fernet, InvalidToken
 from webapp import frontier_providers as providers
 
-VERSION = "5.3-admin.8"
+VERSION = "5.3-admin.9"
 CATALOG = Path(__file__).resolve().parent / "frontier" / "catalog.json"
-RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.8.zip"
+RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.9.zip"
 WORKFLOW_VERSION = "frontier-5.3-claudecode.1"
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 NATIVE_STAGE_LIMIT = 2

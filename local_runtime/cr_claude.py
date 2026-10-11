@@ -255,7 +255,7 @@ class Runtime:
             saved = {}
         stage = {"project_id": project_id, "stage_id": stage_id, "input_fingerprint": fingerprint,
                  "kind": kind, "model_role": role, "requested_model": requested,
-                 "local_version": cfg.get("local_version", "5.3-admin.8"),
+                 "local_version": cfg.get("local_version", "5.3-admin.9"),
                  "brain_mode": "claudecode"}
         try:
             # A completion receipt lost in transit can be submitted again. This

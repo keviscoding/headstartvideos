@@ -578,12 +578,13 @@ def create_app():
                 if spec.get("timeline"):
                     with studio.app.app_context():
                         setup=cr_readiness.proof(setup_status().get_json(),purpose=purpose)
-                project=cr_bridge.begin_project(title,style,spec.get("cr_project_id") or (None if spec.get("force") or spec.get("timeline") else previous.get("id")),
+                resume=previous.get("id") if previous.get("brain_mode")=="claudecode" else None
+                project=cr_bridge.begin_project(title,style,spec.get("cr_project_id") or (None if spec.get("force") or spec.get("timeline") else resume),
                     proof=setup,job_spec={**spec,"minutes":max(1,int(spec.get("minutes") or 1))},purpose=purpose)
             else:
                 project = cr_bridge.begin_project(title, style, None if spec.get("force") else previous.get("id"))
             job.mkdir(parents=True, exist_ok=True)
-            marker.write_text(json.dumps(project, indent=2))
+            marker.write_text(json.dumps({**project,"brain_mode":cfg.get("brain_mode","channelrecipe")}, indent=2))
         except Exception as error:
             with studio.LOCK:
                 studio.JOBS.setdefault(spec["slug"], {}).update(state="error", error=str(error), done=False)
