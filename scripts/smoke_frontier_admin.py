@@ -76,14 +76,29 @@ def main():
         status = client.get("/cr-status", headers=local)
         assert status.json["media_hub"]["connected"] and "test-hub-provider-key" not in status.text
         assert studio.mv._image_provider() == "channelrecipe-hub"
-        # Exercise the actual 5.3 entry points with stub task execution (no provider credits).
         import cr_media
+        cr_media.requests.get = lambda *a, **k: SimpleNamespace(status_code=200,
+                                                               json=lambda: {"code": 200, "data": {"credit": 1}})
+        voice_call_count = len(calls)
+        assert client.post("/cr-voice", headers=protected,
+                           json={"provider": "kie", "key": "test-kie-voice-key", "voice": "selected-voice"}).status_code == 200
+        assert len(calls) == voice_call_count, "Voice setup must not change the cloud brain"
+        assert cr_media.profile("images")["provider"] == "atlas"
+        assert cr_media.profile("narration")["provider"] == "kie"
+        assert client.post("/cr-voice", headers=protected, json={"provider": "kie"}).status_code == 200
+        status = client.get("/cr-status", headers=local)
+        assert status.json["narration"]["connected"] and status.json["narration"]["selection"] == "kie"
+        assert status.json["local_version"] == manifest["version"]
+        assert "test-kie-voice-key" not in status.text
+        # Exercise the actual 5.3 entry points with stub task execution (no provider credits).
         media_calls = []
         tone = root / "test-tone.mp3"
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=200:duration=1", str(tone)], check=True)
+        wav = root / "test-tone.wav"
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(tone), "-ar", "24000", str(wav)], check=True)
         def mock_task(task, inputs, dest, **kwargs):
             media_calls.append((task, inputs, kwargs))
-            Path(dest).write_bytes(tone.read_bytes() if task == "narration" else b"stub-media")
+            Path(dest).write_bytes((wav if Path(dest).suffix == ".wav" else tone).read_bytes() if task == "narration" else b"stub-media")
             return "https://files.example/output"
         cr_media.run = mock_task
         studio.mv.image_gen("Smoke image", root / "smoke.png", ref_urls=["https://files.example/ref"])
@@ -100,16 +115,39 @@ def main():
         job.mkdir()
         studio.mv.generate_voiceover("Hello world.", job, False)
         assert (job / "audio.mp3").is_file() and (job / "subs.srt").is_file()
-        assert media_calls[-1][0] == "narration" and media_calls[-1][1]["voice"] == cr_media.PROVIDERS["atlas"]["default_voice"]
+        assert media_calls[-1][0] == "narration" and media_calls[-1][1]["voice"] == cr_media.PROVIDERS["kie"]["default_voice"]
         studio.mv._split_script_by_minutes = lambda *a: ["Hello world.", "Hello world."]
         before = len(media_calls)
         studio.mv.generate_voiceover("Hello world. Hello world.", job, True, avatar_min=1)
         assert len(media_calls) == before + 2, "The split narration must be joined, not recorded again"
         assert (job / "audio_p1.mp3").is_file() and (job / "audio_p2.mp3").is_file()
+        # Single-speaker Gemini through Kie must become a real MP3, with timings.
+        assert client.post("/cr-voice", headers=protected,
+                           json={"provider": "kie", "model": "not-a-model"}).status_code == 400
+        assert client.post("/cr-voice", headers=protected,
+                           json={"provider": "kie", "model": "google/gemini-3-8-flash-tts", "voice": "not-a-voice"}).status_code == 400
+        assert client.post("/cr-voice", headers=protected,
+                           json={"provider": "kie", "model": "google/gemini-3-8-flash-tts"}).status_code == 200
+        studio.mv._split_script_by_minutes = lambda script, *a: [script]
+        gemini_job = root / "smoke-gemini-voice"
+        gemini_job.mkdir()
+        studio.mv.generate_voiceover("Hello world.", gemini_job, False)
+        assert media_calls[-1][1]["speakers"] == [{"speaker_id": "Speaker 1", "voice_name": "Kore"}]
+        assert media_calls[-1][1]["dialogue_turns"] == [{"speaker_id": "Speaker 1", "text": "Hello world."}]
+        probe = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "stream=codec_name", "-of", "json", str(gemini_job / "audio.mp3")]))
+        assert probe["streams"][0]["codec_name"] == "mp3"
         # Account changes are blocked while a video is active.
         studio.RUNNING["slug"] = "busy"
         assert client.post("/cr-hub", headers=protected, json={"provider": "original"}).status_code == 409
+        assert client.post("/cr-voice", headers=protected, json={"provider": "original"}).status_code == 409
         studio.RUNNING["slug"] = None
+        studio.QUEUE.append({"slug": "queued"})
+        assert client.post("/cr-voice", headers=protected, json={"provider": "original"}).status_code == 409
+        studio.QUEUE.clear()
+        assert client.post("/cr-voice", headers=protected, json={"provider": "original"}).status_code == 200
+        assert not cr_media.active("narration") and cr_media.active("images")
+        assert client.post("/cr-voice", headers=protected, json={"provider": "inherit"}).status_code == 200
+        assert cr_media.active("narration") and cr_media.profile("narration")["provider"] == "atlas"
         assert client.post("/cr-hub", headers=protected, json={"provider": "original"}).status_code == 200
         assert studio.mv._image_provider() != "channelrecipe-hub"
         print("Pinned engine, onboarding, local security, CR brain and actual media/presenter hooks passed.")

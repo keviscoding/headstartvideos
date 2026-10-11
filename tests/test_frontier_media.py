@@ -89,6 +89,7 @@ def test_narration_is_bounded_and_timings_come_from_audio(hub, monkeypatch):
     assert all(len(s) <= 2400 for s in media._chunks("A" * 10001))
     calls = []
     monkeypatch.setattr(media, "run", lambda task, inputs, dest, **k: calls.append(inputs) or Path(dest).write_bytes(b"audio"))
+    monkeypatch.setattr(media, "narration_audio", lambda path: [0.0])
     words = [SimpleNamespace(word="Hello", start=0.1, end=0.4), SimpleNamespace(word="world.", start=0.5, end=0.8)]
     engine = SimpleNamespace(log=lambda *_: None, _get_whisper=lambda: SimpleNamespace(transcribe=lambda *a, **k: ([SimpleNamespace(words=words)], None)),
                              _srt_ts=lambda n: "00:00:00," + str(int(n * 1000)).zfill(3), _script_words_into_srt=lambda *a: None)
@@ -102,6 +103,69 @@ def test_no_media_generation_before_spending_agreement(hub, monkeypatch):
     monkeypatch.setattr(media.requests, "post", lambda *a, **k: pytest.fail("No paid calls before agreement"))
     with pytest.raises(media.AccountStop, match="spending agreement"):
         media.run("images", {}, hub / "image.png")
+
+
+def test_separate_narration_uses_its_wallet_without_changing_images(hub, monkeypatch):
+    media.cr_bridge.save_settings({"costs_accepted": True,
+        "media_hub": {"provider": "atlas", "tasks": sorted(media.TASKS)},
+        "narration": {"provider": "kie", "voice": "chosen-voice"}})
+    calls = []
+    monkeypatch.setattr(media.requests, "post", lambda url, **kw: calls.append((url, kw)) or
+                        response({"code": 200, "data": {"taskId": "voice-task"}}))
+    monkeypatch.setattr(media.requests, "get", lambda *a, **kw: response({"code": 200,
+        "data": {"state": "success", "resultJson": json.dumps({"resultUrls": ["https://files.example/voice.mp3"]})}}))
+    media.run("narration", {"text": "Hello", "voice": "chosen-voice"}, hub / "voice.mp3")
+    assert calls[0][0] == "https://api.kie.ai/api/v1/jobs/createTask"
+    assert calls[0][1]["headers"]["Authorization"] == "Bearer customer-test-key"
+    assert calls[0][1]["json"]["model"] == "elevenlabs/text-to-speech-turbo-2-5"
+    assert media.profile("images")["provider"] == "atlas"
+    assert media.profile("narration")["voice"] == "chosen-voice"
+
+
+def test_individual_voice_override_and_inherited_hub_narration(hub):
+    settings = media.cr_bridge.load_settings()
+    settings["narration"] = {"provider": "original"}
+    media.cr_bridge.save_settings(settings)
+    assert not media.active("narration") and media.active("images")
+    settings.pop("narration")
+    media.cr_bridge.save_settings(settings)
+    assert media.active("narration") and media.profile("narration")["provider"] == "kie"
+
+
+def test_gemini_voice_protocol_and_wav_conversion_preserve_script(hub, monkeypatch):
+    media.cr_bridge.save_settings({"costs_accepted": True,
+        "narration": {"provider": "kie", "model": "google/gemini-3-8-flash-tts", "voice": "Kore"}})
+    calls, conversions = [], []
+    def task(task, inputs, dest, **kwargs):
+        calls.append((inputs, Path(dest), kwargs))
+        Path(dest).write_bytes(b"provider-wav")
+    def convert(args, **kwargs):
+        conversions.append(args)
+        Path(args[-1]).write_bytes(b"converted-mp3")
+    monkeypatch.setattr(media, "run", task)
+    monkeypatch.setattr(media.subprocess, "run", convert)
+    monkeypatch.setattr(media, "narration_audio", lambda path: [0.0])
+    words = [SimpleNamespace(word="Exact", start=0.1, end=0.4), SimpleNamespace(word="script.", start=0.5, end=0.8)]
+    engine = SimpleNamespace(log=lambda *_: None, _get_whisper=lambda: SimpleNamespace(
+        transcribe=lambda *a, **k: ([SimpleNamespace(words=words)], None)),
+        _srt_ts=lambda n: "00:00:00," + str(int(n * 1000)).zfill(3), _script_words_into_srt=lambda *a: None)
+    media.narrate(engine, "Exact script.", hub / "audio.mp3", hub / "subs.srt")
+    inputs, dest, kwargs = calls[0]
+    assert inputs["speakers"] == [{"speaker_id": "Speaker 1", "voice_name": "Kore"}]
+    assert inputs["dialogue_turns"] == [{"speaker_id": "Speaker 1", "text": "Exact script."}]
+    assert kwargs["model"] == "google/gemini-3-8-flash-tts" and dest.suffix == ".wav"
+    assert len(conversions) == 1 and (hub / "audio.mp3").read_bytes() == b"converted-mp3"
+    assert "00:00:00,100 --> 00:00:00,800" in (hub / "subs.srt").read_text()
+
+
+def test_failed_voice_retains_provider_reason_and_credits_without_key(hub, monkeypatch):
+    monkeypatch.setattr(media.requests, "post", lambda *a, **k: response({"code": 200, "data": {"taskId": "failed-voice"}}))
+    monkeypatch.setattr(media.requests, "get", lambda *a, **k: response({"code": 200, "data": {
+        "state": "fail", "failCode": "500", "failMsg": "Internal error customer-test-key", "creditsConsumed": 0}}))
+    with pytest.raises(media.AccountStop, match=r"Internal error \[redacted\]"):
+        media.run("narration", {"text": "Hello", "voice": "example"}, hub / "voice.mp3")
+    receipt = next((hub / ".cr-tasks").glob("*.json")).read_text()
+    assert "customer-test-key" not in receipt and json.loads(receipt)["credits"] == 0
 
 
 def test_refreshing_upload_url_does_not_duplicate_pending_paid_task(hub, monkeypatch):
