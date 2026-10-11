@@ -114,25 +114,18 @@ def test_native_kie_motion_does_not_switch_unselected_tasks_or_an_explicit_hub(h
     assert observed[-1][0] == "atlas" and observed[-1][1]["image"] == "https://files.example/frame"
 
 
-def test_history_long_scenes_use_five_second_clips_and_keep_existing_assets(hub, monkeypatch):
+def test_native_presenter_receives_positional_motion_when_replacement_is_off(hub, monkeypatch):
     media.cr_bridge.save_settings({"costs_accepted": True, "narration": {"provider": "kie"}})
-    monkeypatch.setitem(sys.modules, "history_kit", SimpleNamespace(MOTION_PROMPT="Animate this painting."))
-    picture = hub / "scene_00.png"
-    picture.write_bytes(b"source picture")
-    existing = hub / "scene_01.png"
-    existing.write_bytes(b"other picture")
-    existing.with_suffix(".anim.mp4").write_bytes(b"x" * 60_000)
-    (hub / "astro_scenes.json").write_text(json.dumps([{"prompt": "Original scene"}]))
     calls = []
-    monkeypatch.setattr(media, "upload", lambda *a, **k: "https://files.example/frame")
-    monkeypatch.setattr(media, "run", lambda task, inputs, dest, **k: calls.append((media.account(task)[0], inputs)) or Path(dest).write_bytes(b"x" * 60_000))
-    shots = [{"pic_path": str(picture), "g0": 0, "g1": 15}, {"pic_path": str(existing), "g0": 15, "g1": 25}]
-    cfg = {"max": 8, "min_s": 5, "model": "bytedance/v1-pro-image-to-video", "resolution": "1080p"}
-    assert media.animate_paintings(None, hub, shots, cfg) == 1
-    assert media.animate_paintings(None, hub, shots, cfg) == 0
-    assert len(calls) == 1 and calls[0][0] == "kie"
-    assert calls[0][1]["duration"] == "5" and calls[0][1]["resolution"] == "720p"
-    assert "Original scene" in calls[0][1]["prompt"] and not media.active("motion")
+    def native(provider, image, audio, dest, log=print, motion=""):
+        calls.append((provider, image, audio, dest, log, motion))
+        return dest
+    wrapped = media.route_avatar(native)
+    logger = lambda *_: None
+    assert wrapped("pruna", "portrait", "voice", hub / "clip.mp4", logger, "Turn toward camera") == hub / "clip.mp4"
+    assert calls[-1] == ("pruna", "portrait", "voice", hub / "clip.mp4", logger, "Turn toward camera")
+    wrapped("pruna", "portrait", "voice", hub / "clip.mp4", motion="Look up")
+    assert calls[-1][-1] == "Look up"
 
 
 def test_narration_is_bounded_and_timings_come_from_audio(hub, monkeypatch):

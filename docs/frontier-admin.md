@@ -1,6 +1,6 @@
 # ChannelRecipe local studio: admin migration preview
 
-Version: `5.3-admin.5`. Entry point: `https://channelrecipe.com/app#local-studio`.
+Version: `5.3-admin.6`. Entry point: `https://channelrecipe.com/app#local-studio`.
 
 This is the first runnable integration checkpoint, **not completion of the full
 Frontier migration**. Ordinary users, including paying subscribers, cannot use
@@ -55,9 +55,9 @@ asset notices are retained. It writes a version/manifest into the bundle.
 python scripts/build_frontier_admin.py --source /private/path/Frontier-5.3-FULL.zip
 ```
 
-The output defaults to git-ignored `data/frontier/channelrecipe-5.3-admin.5.zip`.
+The output defaults to git-ignored `data/frontier/channelrecipe-5.3-admin.6.zip`.
 `--upload` publishes to the private Spaces object
-`private/frontier/channelrecipe-5.3-admin.5.zip`. It checks both the object ACL
+`private/frontier/channelrecipe-5.3-admin.6.zip`. It checks both the object ACL
 and unauthenticated origin/CDN access, testing a small canary before uploading
 the engine. Failure removes the uploaded release. Never print storage credentials.
 
@@ -170,7 +170,7 @@ installers and automatic prerequisite repair remain onboarding work.
 ```sh
 python -m pytest -q tests/test_frontier_providers.py tests/test_frontier_studio.py tests/test_frontier_bridge.py \
   tests/test_frontier_media.py tests/test_frontier_render.py tests/test_mcp_billing.py tests/test_niche_cron.py
-python scripts/smoke_frontier_admin.py --bundle data/frontier/channelrecipe-5.3-admin.5.zip
+python scripts/smoke_frontier_admin.py --bundle data/frontier/channelrecipe-5.3-admin.6.zip
 ```
 
 The bundle smoke requires its runtime dependencies. It imports the actual pinned
@@ -220,3 +220,39 @@ All Kie image animation uses `bytedance/v1-pro-fast-image-to-video` with `image_
 History animation now uses the same per-file task receipts and two active local media calls. Cached animated clips are retained. Failed, pending or uncertain motion tasks stop without a new paid submission or another model. The native Kie context is limited to its worker thread, so a Kie voice key does not replace unrelated WaveSpeed tasks.
 
 Video setup checks require the `subtitles` filter and H.264/AAC/MP3 encoders. A minimal FFmpeg build can pass `-version` and still fail the final render with exit 234. On Mac the studio selects an already installed compatible `ffmpeg-full` pair for its own process. If none is available, setup reports that video tools need attention. Final mux failures retain a private, sanitized local diagnostic and explain that generated assets remain saved.
+
+
+## Original process and adapter corrections (admin.6)
+
+The original director, feature resolver, style defaults, B-roll sourcing, local
+graphics, 3D modules and compositor remain the production entry points. A
+provider account changes which supported service executes a task; it does not
+choose a preset, enable every feature or impose a percentage of footage.
+
+The original History preset deliberately offers AI images, local motion
+graphics and sound, excludes footage and disables captions. Its timeline pass
+uses moving paintings with embedded title/counter/cutout graphics. Documentary
+(per-title style creation and the broader toolset) and ALMANAC (archive footage,
+historical objects and graphics) are existing original alternatives. Their
+output remains subject to the selected features and required accounts.
+
+History animation executes the original function code, including shot ranking,
+cache validation and scene prompt construction. A scoped transport adapts only
+its upload, provider execution and download operations to durable CR receipts.
+The user-selected cheaper Kie model still uses 720p/five-second clips. Its
+documented schema lacks the original model's camera_fixed parameter, so the
+original camera direction remains in the prompt; identical model output is not
+guaranteed. The previous CR copy of creative selection logic was removed.
+
+Readiness now recognizes configured CR brain access and supported replacement
+voice, image and Kling accounts. Remote brain access is still checked before
+starting each job. The original feature offered/default/resolve rules and all
+specialized stock, video-watcher, cutout and 3D dependencies remain intact. A
+connected brain account is not itself a video-watcher account: the native
+YouTube footage analyzer still needs its supported local provider configuration.
+Original presenter calls preserve positional motion options when the hub is off.
+
+The private bundle smoke checks actual original animation code and feature
+resolution with stubbed provider execution. This establishes integration
+boundaries, not successful full-video output for every preset. No new paid
+requests or regenerated job assets are required by this correction.

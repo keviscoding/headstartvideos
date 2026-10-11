@@ -12,6 +12,7 @@ import webbrowser
 from pathlib import Path
 
 import cr_bridge
+import cr_capabilities
 import cr_media
 import cr_render
 
@@ -68,6 +69,7 @@ def create_app():
     from flask import Response, jsonify, request
     cr_bridge.install(studio.mv)
     cr_media.install(studio.mv)
+    cr_capabilities.install(studio)
     cr_render.install(studio.mv)
     token = secrets.token_urlsafe(24)
     # Prevent a remote website from using the local control room (DNS rebinding/CSRF).

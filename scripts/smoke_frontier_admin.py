@@ -26,9 +26,12 @@ def main():
         manifest = json.loads((root / "cr-release.json").read_text())
         assert manifest["access"] == "admin_only" and not manifest["public_release_allowed"]
         sys.path.insert(0, str(root))
+        import history_kit
+        original_history_animation = history_kit.animate_paintings
         import cr_studio
         import cr_bridge
         studio = cr_studio.create_app()
+        assert history_kit.animate_paintings.__cr_history_original__ is original_history_animation
         client = studio.app.test_client()
         local = {"Host": "127.0.0.1:7860"}
         page = client.get("/cr-setup", headers=local)
@@ -76,6 +79,18 @@ def main():
         status = client.get("/cr-status", headers=local)
         assert status.json["media_hub"]["connected"] and "test-hub-provider-key" not in status.text
         assert studio.mv._image_provider() == "channelrecipe-hub"
+        assert studio.features.capabilities()["base"]["claude"]["ok"]
+        assert studio.features.capabilities()["base"]["voice"]["ok"]
+        assert studio.features.capabilities()["features"]["ai_images"]["ok"]
+        history_style = json.loads((root / "styles/history.json").read_text())
+        all_on = {key: True for key in studio.features.KEYS}
+        history_features = studio.features.resolve(history_style, all_on)
+        assert {key for key, enabled in history_features.items() if enabled} == {"ai_images", "motion", "sound"}
+        assert not any(studio.features.resolve(history_style, {key: False for key in all_on}).values())
+        documentary_style = json.loads((root / "styles/documentary.json").read_text())
+        documentary_features = studio.features.resolve(documentary_style, all_on)
+        assert all(documentary_features[key] for key in ("stock", "motion", "ai_images", "maps", "headlines", "sound"))
+        assert not any(studio.features.resolve(documentary_style, {key: False for key in all_on}).values())
         import cr_media
         cr_media.requests.get = lambda *a, **k: SimpleNamespace(status_code=200,
                                                                json=lambda: {"code": 200, "data": {"credit": 1}})
@@ -98,7 +113,7 @@ def main():
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(tone), "-ar", "24000", str(wav)], check=True)
         def mock_task(task, inputs, dest, **kwargs):
             media_calls.append((task, inputs, kwargs))
-            Path(dest).write_bytes((wav if Path(dest).suffix == ".wav" else tone).read_bytes() if task == "narration" else b"stub-media")
+            Path(dest).write_bytes((wav if Path(dest).suffix == ".wav" else tone).read_bytes() if task == "narration" else b"stub-media" * 6000)
             return "https://files.example/output"
         cr_media.run = mock_task
         studio.mv.image_gen("Smoke image", root / "smoke.png", ref_urls=["https://files.example/ref"])
@@ -192,15 +207,19 @@ def main():
         assert media_calls[-1][1] == {"prompt": "Native motion", "image_url": "https://files.example/frame", "resolution": "720p", "duration": "5"}
         assert studio.mv.KIE_VIDEO_MODEL == "bytedance/v1-pro-fast-image-to-video"
         assert not cr_media.active("motion")
-        import history_kit
         painting = root / "scene_00.png"
         Image.new("RGB", (64, 64), "black").save(painting)
+        (root / "astro_scenes.json").write_text(json.dumps([{"prompt": "Original scene. Painted as a style suffix that belongs only to the still."}]))
         original_upload = cr_media.upload
         cr_media.upload = lambda *a, **k: "https://files.example/frame"
         assert history_kit.animate_paintings(studio.mv, root, [{"pic_path": str(painting), "g0": 0, "g1": 15}],
                                             {"max": 1, "model": "bytedance/v1-pro-image-to-video", "resolution": "1080p"}) == 1
         cr_media.upload = original_upload
         assert media_calls[-1][1]["duration"] == "5" and media_calls[-1][1]["resolution"] == "720p"
+        assert media_calls[-1][1]["prompt"] == (history_kit.MOTION_PROMPT + " The scene: Original scene.")[:2400]
+        call_count = len(media_calls)
+        assert history_kit.animate_paintings(studio.mv, root, [{"pic_path": str(painting), "g0": 0, "g1": 15}], {"max": 1}) == 0
+        assert len(media_calls) == call_count, "The original valid animation cache must skip paid work"
         studio.mv.IMAGE_PROVIDER = "wavespeed"
         studio.mv.KIE_API_KEY = ""
         assert not cr_media.active("images"), "A voice-only Kie choice must not replace another image provider"
