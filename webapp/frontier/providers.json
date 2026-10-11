@@ -25,7 +25,7 @@
       "images": "google/nano-banana",
       "image_edit": "google/nano-banana-edit",
       "narration": "elevenlabs/text-to-speech-turbo-2-5",
-      "motion": "bytedance/seedance-1.5-pro",
+      "motion": "bytedance/v1-pro-fast-image-to-video",
       "avatars": "kling/ai-avatar-standard",
       "avatar_pro": "kling/ai-avatar-pro"
     },

@@ -80,10 +80,59 @@ def test_image_refs_motion_and_presenter_use_correct_protocol(hub, monkeypatch, 
     media.avatar_clip("kling-pro", "https://files.example/face", "https://files.example/voice", hub / "presenter.mp4")
     assert calls[0][1]["model"] == media.PROVIDERS[provider]["models"]["image_edit"]
     assert calls[0][0][1]["image_urls" if provider == "kie" else "images"]
-    assert ("input_urls" if provider == "kie" else "image") in calls[1][0][1]
+    assert ("image_url" if provider == "kie" else "image") in calls[1][0][1]
     assert calls[2][1]["model"] == media.PROVIDERS[provider]["models"]["avatar_pro"]
     with pytest.raises(media.AccountStop, match="original service"):
         media.avatar_clip("pruna", "image", "audio", hub / "presenter.mp4")
+
+
+def test_kie_motion_cost_choice_and_pending_task_are_preserved_on_resume(hub, monkeypatch):
+    creates = []
+    monkeypatch.setattr(media.requests, "post", lambda *a, **k: creates.append(k["json"]) or
+                        response({"code": 200, "data": {"taskId": "motion-task"}}))
+    monkeypatch.setattr(media.requests, "get", lambda *a, **k: (_ for _ in ()).throw(media.requests.ReadTimeout()))
+    clock = iter(range(0, 12000, 2000))
+    monkeypatch.setattr(media.time, "monotonic", lambda: next(clock))
+    for _ in range(2):
+        with pytest.raises(media.AccountStop, match="pending"):
+            media.motion("https://files.example/frame", "A gentle move", hub / "motion.mp4")
+    assert creates == [{"model": "bytedance/v1-pro-fast-image-to-video", "input": {
+        "prompt": "A gentle move", "image_url": "https://files.example/frame", "resolution": "720p", "duration": "5"}}]
+
+
+def test_native_kie_motion_does_not_switch_unselected_tasks_or_an_explicit_hub(hub, monkeypatch):
+    settings = {"costs_accepted": True, "media_hub": {"provider": "atlas", "tasks": ["images"]}}
+    media.cr_bridge.save_settings(settings)
+    observed = []
+    monkeypatch.setattr(media, "run", lambda task, inputs, dest, **k: observed.append((media.account(task)[0], inputs)))
+    media.native_motion("https://files.example/frame", "Move", hub / "clip.mp4")
+    assert observed[-1][0] == "kie" and observed[-1][1]["duration"] == "5"
+    assert not media.active("motion") and media.profile("images")["provider"] == "atlas"
+    settings["media_hub"]["tasks"].append("motion")
+    media.cr_bridge.save_settings(settings)
+    media.native_motion("https://files.example/frame", "Move", hub / "other.mp4")
+    assert observed[-1][0] == "atlas" and observed[-1][1]["image"] == "https://files.example/frame"
+
+
+def test_history_long_scenes_use_five_second_clips_and_keep_existing_assets(hub, monkeypatch):
+    media.cr_bridge.save_settings({"costs_accepted": True, "narration": {"provider": "kie"}})
+    monkeypatch.setitem(sys.modules, "history_kit", SimpleNamespace(MOTION_PROMPT="Animate this painting."))
+    picture = hub / "scene_00.png"
+    picture.write_bytes(b"source picture")
+    existing = hub / "scene_01.png"
+    existing.write_bytes(b"other picture")
+    existing.with_suffix(".anim.mp4").write_bytes(b"x" * 60_000)
+    (hub / "astro_scenes.json").write_text(json.dumps([{"prompt": "Original scene"}]))
+    calls = []
+    monkeypatch.setattr(media, "upload", lambda *a, **k: "https://files.example/frame")
+    monkeypatch.setattr(media, "run", lambda task, inputs, dest, **k: calls.append((media.account(task)[0], inputs)) or Path(dest).write_bytes(b"x" * 60_000))
+    shots = [{"pic_path": str(picture), "g0": 0, "g1": 15}, {"pic_path": str(existing), "g0": 15, "g1": 25}]
+    cfg = {"max": 8, "min_s": 5, "model": "bytedance/v1-pro-image-to-video", "resolution": "1080p"}
+    assert media.animate_paintings(None, hub, shots, cfg) == 1
+    assert media.animate_paintings(None, hub, shots, cfg) == 0
+    assert len(calls) == 1 and calls[0][0] == "kie"
+    assert calls[0][1]["duration"] == "5" and calls[0][1]["resolution"] == "720p"
+    assert "Original scene" in calls[0][1]["prompt"] and not media.active("motion")
 
 
 def test_narration_is_bounded_and_timings_come_from_audio(hub, monkeypatch):

@@ -13,6 +13,7 @@ from pathlib import Path
 
 import cr_bridge
 import cr_media
+import cr_render
 
 HOME = Path(__file__).resolve().parent
 
@@ -28,13 +29,32 @@ def tool_ready(name, flag="-version"):
         return False
 
 
+def video_tools_ready(ffmpeg="ffmpeg", ffprobe="ffprobe"):
+    if not tool_ready(ffprobe):
+        return False
+    executable = shutil.which(ffmpeg)
+    if not executable:
+        return False
+    try:
+        # A minimal Homebrew build can pass -version but cannot burn captions.
+        for flag, required in (("-filters", {"subtitles"}),
+                               ("-encoders", {"libx264", "aac", "libmp3lame"})):
+            result = subprocess.run([executable, flag], capture_output=True, text=True, timeout=5)
+            names = {line.split()[1] for line in result.stdout.splitlines() if len(line.split()) > 1}
+            if result.returncode or not required <= names:
+                return False
+        return True
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def configure_video_tools():
-    if sys.platform != "darwin" or (tool_ready("ffmpeg") and tool_ready("ffprobe")):
+    if sys.platform != "darwin" or video_tools_ready():
         return
     # Homebrew's full build can coexist with a stale binary earlier on PATH.
     # Select an already installed, runnable pair for this studio process only.
     for directory in ("/opt/homebrew/opt/ffmpeg-full/bin", "/usr/local/opt/ffmpeg-full/bin"):
-        if tool_ready(str(Path(directory) / "ffmpeg")) and tool_ready(str(Path(directory) / "ffprobe")):
+        if video_tools_ready(str(Path(directory) / "ffmpeg"), str(Path(directory) / "ffprobe")):
             os.environ["PATH"] = directory + os.pathsep + os.environ.get("PATH", "")
             return
 
@@ -48,6 +68,7 @@ def create_app():
     from flask import Response, jsonify, request
     cr_bridge.install(studio.mv)
     cr_media.install(studio.mv)
+    cr_render.install(studio.mv)
     token = secrets.token_urlsafe(24)
     # Prevent a remote website from using the local control room (DNS rebinding/CSRF).
     @studio.app.before_request
@@ -86,7 +107,7 @@ def create_app():
     @studio.app.get("/cr-status")
     def setup_status():
         cfg = cr_bridge.load_settings()
-        checks = {"python": True, "ffmpeg": tool_ready("ffmpeg") and tool_ready("ffprobe"),
+        checks = {"python": True, "ffmpeg": video_tools_ready(),
                   "node": tool_ready("node", "--version") or tool_ready("deno", "--version"),
                   "connected": bool(cfg.get("key")), "costs_accepted": bool(cfg.get("costs_accepted"))}
         try:
@@ -106,6 +127,14 @@ def create_app():
         checks["model_accounts"] = cr_media.PROVIDERS
         checks["media_hub"] = {k: hub[k] for k in ("provider", "tasks", "voice") if k in hub}
         checks["media_hub"]["connected"] = bool(hub and os.getenv(cr_media.PROVIDERS[hub["provider"]]["key_env"]))
+        motion_cfg = cr_media.profile("motion") if cr_media.active("motion") else {}
+        # The history kit chooses Kie directly when motion isn't replaced.
+        motion_provider = motion_cfg.get("provider") or ("kie" if os.getenv("KIE_API_KEY") else "original")
+        checks["motion"] = {"provider": motion_provider, "resolution": "720p",
+                            "seconds": 5 if motion_provider == "kie" else 8,
+                            "model": cr_media.PROVIDERS.get(motion_provider, {}).get("models", {}).get("motion", ""),
+                            "connected": bool(motion_provider in cr_media.PROVIDERS and
+                                              os.getenv(cr_media.PROVIDERS[motion_provider].get("key_env", "")))}
         voice = cr_media.profile("narration")
         if not cr_media.active("narration"):
             voice = {}
