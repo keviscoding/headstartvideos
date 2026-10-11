@@ -107,7 +107,7 @@ window.CRLocalStudio = (() => {
             const result=await api('projects');
             const el=document.getElementById('ls-history');if(!el)return;
             el.innerHTML='<h3>Your recent studio projects</h3>'+(result.projects.length?'<div class="ls-projects">'+result.projects.map(p=>
-                '<article><div><strong>'+esc(p.title)+'</strong><small>'+esc(p.style)+' · '+new Date(p.created_at*1000).toLocaleDateString()+'</small></div><span>'+Number(p.calls)+' brain requests<br>'+Number(p.input_tokens+p.output_tokens).toLocaleString()+' reported tokens</span></article>').join('')+'</div>':'<p>Your first project will appear here when you start a video in the local studio.</p>')+
+                '<article><div><strong>'+esc(p.title)+'</strong><small>'+esc(p.style)+' · '+new Date(p.created_at*1000).toLocaleDateString()+'</small>'+(p.status==='needs_review'?'<small>A request stopped. Check your local log and provider usage before restarting.</small>':'')+'</div><span>'+Number(p.calls)+' brain requests<br>'+Number(p.input_tokens+p.output_tokens).toLocaleString()+' reported tokens</span></article>').join('')+'</div>':'<p>Your first project will appear here when you start a video in the local studio.</p>')+
                 '<p class="ls-inline-note">Brain usage is recorded here. Voice, image and video charges are in your provider accounts.</p>';
         }catch(e){notice(e.message,true);}
     }

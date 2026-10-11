@@ -69,17 +69,17 @@ def initialize():
     with _schema_lock, db._conn() as conn:
         conn.execute("""CREATE TABLE IF NOT EXISTS frontier_credentials (
             user_id INTEGER PRIMARY KEY, key_enc TEXT NOT NULL, model TEXT NOT NULL,
-            updated_at REAL NOT NULL)""")
+            updated_at DOUBLE PRECISION NOT NULL)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS frontier_projects (
             id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, title TEXT NOT NULL,
             style TEXT NOT NULL, version TEXT NOT NULL, max_calls INTEGER NOT NULL,
             calls INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0,
             output_tokens INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'ready',
-            created_at REAL NOT NULL, updated_at REAL NOT NULL)""")
+            created_at DOUBLE PRECISION NOT NULL, updated_at DOUBLE PRECISION NOT NULL)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS frontier_requests (
             id TEXT PRIMARY KEY, project_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
             status TEXT NOT NULL, result_json TEXT NOT NULL DEFAULT '',
-            created_at REAL NOT NULL)""")
+            created_at DOUBLE PRECISION NOT NULL)""")
 
 
 def catalog() -> list[dict]:
@@ -278,8 +278,10 @@ def generate(user: dict, req: BrainRequest) -> dict:
         with db._conn() as conn:
             conn.execute(db._q("UPDATE frontier_requests SET status='complete',result_json=? WHERE id=?"),
                          (json.dumps(result), req.request_id))
-            conn.execute(db._q("UPDATE frontier_projects SET input_tokens=input_tokens+?,output_tokens=output_tokens+?,status='ready',updated_at=? WHERE id=?"),
-                         (incoming, outgoing, time.time(), req.project_id))
+            conn.execute(db._q("""UPDATE frontier_projects SET input_tokens=input_tokens+?,output_tokens=output_tokens+?,
+                status=CASE WHEN EXISTS (SELECT 1 FROM frontier_requests WHERE project_id=? AND status='needs_review')
+                THEN 'needs_review' ELSE 'ready' END,updated_at=? WHERE id=?"""),
+                         (incoming, outgoing, req.project_id, time.time(), req.project_id))
         return result
     except HTTPException:
         if reserved:
