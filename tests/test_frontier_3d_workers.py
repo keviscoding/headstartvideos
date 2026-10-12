@@ -182,7 +182,7 @@ def test_worker_dispatch_preserves_original_command_and_requires_native_setup(sa
     import cr_bridge,cr_media,cr_render,cr_studio,cr_readiness
     (home/"cr-release.json").write_text('{"version":"test-release"}')
     workflow={"required_release":"test-release","workflow_version":"same","engine_source_sha256":"same"}
-    source={"project":{"id":SOURCE},"workflow":workflow}
+    source={"project":{"id":SOURCE},"workflow":workflow,"job_spec":{}}
     engine=SimpleNamespace()
     monkeypatch.setitem(sys.modules,"make_video",engine)
     monkeypatch.setattr(cr_worker,"HOME",home)

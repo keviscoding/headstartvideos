@@ -182,6 +182,7 @@ def run_operation(home,source_project_id,arguments,bridge,proof,execute,operatio
     with _operation_lock(job):
         source=bridge.project_progress(source_project_id)
         parent=source.get("project") or {}
+        parent_spec=source.get("job_spec") or {}
         if parent.get("id") != source_project_id or source.get("brain_mode") != "claudecode":
             raise RuntimeError("Reconnect the owner of this saved Claude Code video.")
         if parent.get("status") != "done":
@@ -221,11 +222,12 @@ def run_operation(home,source_project_id,arguments,bridge,proof,execute,operatio
         style=(job/"style.txt").read_text(encoding="utf-8").strip()
         if title != parent.get("title") or style != parent.get("style"):
             raise RuntimeError("The saved video's title or preset does not match its owned CR project.")
+        renderer_options={key: parent_spec[key] for key in ("render_backend", "manimgx_identity") if key in parent_spec}
         result=bridge._mcp_tool("local_studio_begin",{"begin_id":saved["begin_id"],"title":title,"style":style,
-            "minutes":1,"features":{"threed":True},"options":{},"setup":proof,"max_calls":500,
+            "minutes":1,"features":{"threed":True},"options":renderer_options,"setup":proof,"max_calls":500,
             "platform":"windows" if os.name=="nt" else "mac"})
         operation=result["project"]
-        bridge._project=operation
+        bridge._project={**operation, "job_spec":renderer_options}
         saved.update(state="running",operation_project_id=operation["id"])
         cr_claude._private_write(path,saved)
         report_path=job/("threed/qa/qa.json" if arguments[0]=="qa" else "threed/redo_last.json")

@@ -1,6 +1,6 @@
 # ChannelRecipe local studio
 
-Version: `5.3-admin.17`. Entry point: https://channelrecipe.com/app#local-studio.
+Version: `5.3-admin.18`. Entry point: https://channelrecipe.com/app#local-studio.
 
 The preferred route runs the original Frontier 5.3 workflow through the creator's
 signed-in Claude Code account. CR supplies the protected runtime, current workflow
@@ -113,8 +113,8 @@ CR account/launch instructions take precedence over its older setup guidance.
 python scripts/build_frontier_admin.py --source /private/path/Frontier-5.3-FULL.zip
 ```
 
-The ignored output is `data/frontier/channelrecipe-5.3-admin.17.zip`. The private
-object is `private/frontier/channelrecipe-5.3-admin.17.zip`. Publishing checks its
+The ignored output is `data/frontier/channelrecipe-5.3-admin.18.zip`. The private
+object is `private/frontier/channelrecipe-5.3-admin.18.zip`. Publishing checks its
 ACL and unauthenticated origin/CDN access. Downloads stream through CR's
 authenticated endpoint with `private, no-store`; no public object URL is returned.
 
@@ -133,3 +133,14 @@ vision/Folio/3D helper contracts with mocked paid results, media entry points an
 real FFmpeg/Whisper subtitle processing. These checks establish routing and
 runtime behavior; actual rendered-video quality and fresh-computer onboarding
 must also be assessed before making quality claims.
+
+
+## Optional graphics and reference learning (admin18)
+
+The local production and timeline screens use ChannelRecipe branding. Learn a style opens a guided reference preview, approval and native Claude study. It follows the original private learner on real downloaded reference frames and the original kit validation; unavailable evidence or a failed model stage stops the study. Saved styles appear in the local preset catalogue and retain a durable kit registration. The user-selected Ifverse reference is pending actual creative validation.
+
+ManimGX is an optional, separately installed renderer for enabled 3D scenes. Install and check creates an isolated Python3.13+ environment with ManimGX0.1.1 and ty0.0.86, verifies pinned official documentation and renders a local check without model calls. A new project's toggle pins the checked environment; Claude compiles the original scene contract with coverage and type checks. Original scene reviews and repairs still apply. Unsupported features stop explicitly. Live frame counts and elapsed render time are measured locally; no90x ChannelRecipe performance promise is made. Upstream ManimGX native binaries use GPL3; these dependencies are installed from upstream, not bundled in this owner download.
+
+Known Claude session-limit messages with an explicit reset/timezone create a local account-bound cooldown. Queued fresh stages stop before additional authorization; completed cached stages and receipt synchronization remain usable. The reset does not automatically retry a stopped operation.
+
+The completed bees film still needs creative corrections. Do not mark output acceptance passed merely because the file rendered or these software checks passed.

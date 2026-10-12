@@ -113,7 +113,7 @@ def begin_project(title, style, resume_id=None, *, proof=None, job_spec=None, pu
             cfg = load_settings()
             options = {k:spec[k] for k in ("steps", "script", "burn_subs", "thumb_count", "use_motion", "character",
                 "character_image", "maps", "headlines", "spotlight", "objects", "depth", "extra", "avatar_id", "avatar_s",
-                "avatar_count", "auto_style", "offer", "offer_plugs", "desc", "chapters", "sources", "byo_audio", "mix") if k in spec}
+                "avatar_count", "auto_style", "offer", "offer_plugs", "desc", "chapters", "sources", "byo_audio", "mix", "render_backend", "manimgx_identity") if k in spec}
             if "script_text" in spec:
                 options["script"] = spec["script_text"]
             if spec.get("meta"):
@@ -141,7 +141,7 @@ def begin_project(title, style, resume_id=None, *, proof=None, job_spec=None, pu
             with os.fdopen(fd,"w") as handle:
                 json.dump({"identity":identity,"begin_id":begin_key},handle)
             result = _mcp_tool("local_studio_begin", {**payload,"begin_id":begin_key})
-            _project = result["project"]
+            _project = {**result["project"], "job_spec": result.get("job_spec", spec)}
             pending_path.unlink(missing_ok=True)
         elif resume_id:
             _project = call("projects/" + resume_id)

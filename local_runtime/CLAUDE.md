@@ -49,3 +49,8 @@ JOB with the original scene IDs/options; never invoke raw threed.py generation.
 Stopped or uncertain operations require review; do not rerun them automatically.
 Sync saved completion only reconciles receipts and does not generate again.
 This owner package remains admin-only and retains original private source.
+
+
+ChannelRecipe additions: Learn a style at /cr-style-clone previews a public YouTube reference and runs the original reference learner under a separate owned creative project. Its validated style becomes a local preset. Study actual frames, use captions when available, and report evidence gaps; never substitute metadata for a viewed reference. Keep the learned visual language separate from copying the reference script or footage.
+
+The production page offers an optional ManimGX toggle for new projects with 3D scenes enabled. Install and check it first. The runner pins the separately installed version and official documentation, then sends the complete scene contract and documentation to your chosen native Claude model for compilation. Original directing and visual reviews remain active. Unsupported features stop; do not silently drop scene requirements or switch renderers. The saved render_backend and manimgx_identity belong to the project and persist in reviews and cached exports. Do not promise a 90x speedup over CR: the upstream claim is a comparison with ManimCE. Live frame progress measures actual local rendering.

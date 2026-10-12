@@ -101,6 +101,19 @@ def preset(studio, checks, spec):
         "capabilities":lambda:{"features":{key:{"ok":True} for key in studio.features.KEYS}}},
         original.__name__, original.__defaults__, original.__closure__)
     wanted = resolve_requested(info,asked)
+    backend = spec.get("render_backend", "original")
+    renderer_identity = None
+    if backend not in {"original", "manimgx"}:
+        results.append(item("renderer", "3D renderer", False, "Choose the standard renderer or ManimGX."))
+    if backend == "manimgx":
+        import cr_optional_renderer
+        renderer = cr_optional_renderer.ready(cr_bridge.HOME)
+        renderer_identity = renderer.get("identity")
+        results += [item("renderer", "ManimGX installed and checked", renderer["ready"], renderer.get("message", "Complete the optional ManimGX check.")),
+            item("renderer_brain", "Claude Code connected for ManimGX", ready["brain_mode"] == "claudecode", "Use your Claude Code brain with ManimGX."),
+            item("renderer_use", "3D scenes enabled", wanted.get("threed"), "Enable 3D scenes for this preset, or turn off ManimGX for this video.")]
+        if spec.get("manimgx_identity") and spec["manimgx_identity"] != renderer_identity:
+            results.append(item("renderer_pin", "Project renderer unchanged", False, "This project's ManimGX installation changed. Review setup before continuing."))
     if wanted.get("threed"):
         results.append(item("webgl","3D graphics support",checks.get("webgl"),"The graphics browser could not create a 3D canvas. Reopen the launcher and check your graphics drivers before using this preset."))
     steps = spec.get("steps") or ["script","voiceover","pexels","images","video","thumbnail"]
@@ -129,6 +142,8 @@ def preset(studio, checks, spec):
             results.append(item("account_"+task,task.title()+" account",False,"Reconnect or top up the selected "+task+" account in step 4."))
     result = {"ready":all(r["ready"] for r in results),"checks":results,
               "blockers":[r["message"] for r in results if not r["ready"]],"features":wanted}
+    if renderer_identity:
+        result["manimgx_identity"] = renderer_identity
     checks["claude_code"] = ready["claude_code"]
     result["proof"] = proof(checks,media_ready=result["ready"])
     return result

@@ -30,6 +30,8 @@ def test_mux_error_preserves_actionable_diagnostic_without_credentials(tmp_path,
     monkeypatch.setenv("KIE_API_KEY", "private-test-key")
     def fail(*args, **kwargs):
         raise subprocess.CalledProcessError(234, ["ffmpeg"], stderr=b"No such filter: subtitles private-test-key https://media.example/signed?token=secret\nInvalid argument")
+    import cr_manimgx
+    monkeypatch.setattr(cr_manimgx, "install", lambda *a, **k: None)
     engine = SimpleNamespace(_final_mux=fail)
     cr_render.install(engine)
     try:

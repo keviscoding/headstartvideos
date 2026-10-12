@@ -141,6 +141,8 @@ def status(executable=None, *, run=None, environment=None):
         result["authenticated"] = bool(auth.returncode == 0 and data.get("loggedIn") is True
                                        and method == "claude.ai" and data.get("apiProvider") == "firstParty")
         result["ready"] = result["authenticated"]
+        import cr_allowance
+        result["allowance"] = cr_allowance.status(HOME, result["account_fingerprint"])
         result["message"] = ("Your local Claude account is connected. Its usage limits apply."
                              if result["ready"] else "Sign in to Claude Code with your Claude subscription. API and cloud billing are not used in this mode.")
     except (OSError, subprocess.TimeoutExpired, ValueError, TypeError, AttributeError):
@@ -302,7 +304,7 @@ class Runtime:
         try:
             installed_version=json.loads((Path(self.bridge.HOME)/"cr-release.json").read_text())["version"]
         except (OSError,ValueError,KeyError):
-            installed_version=cfg.get("local_version","5.3-admin.17")
+            installed_version=cfg.get("local_version","5.3-admin.18")
         cache = Path(self.bridge.HOME) / "output" / "cr-claude-cache" / project_id / (stage_id + ".json")
         try:
             saved = json.loads(cache.read_text())
@@ -312,6 +314,10 @@ class Runtime:
                  "kind": kind, "model_role": role, "requested_model": requested,
                  "local_version": installed_version,
                  "brain_mode": "claudecode"}
+        import cr_allowance
+        allowance = cr_allowance.status(self.bridge.HOME, local.get("account_fingerprint"))
+        if allowance["blocked"] and saved.get("state") not in {"complete", "complete_local"}:
+            raise ClaudeStageStopped(allowance["message"])
         try:
             # A completion receipt lost in transit can be submitted again. This
             # only records the already cached result; it never invokes Claude.
@@ -365,6 +371,11 @@ class Runtime:
             if receipt["status"] == "complete":
                 raise ClaudeStageStopped("Claude finished this stage, but ChannelRecipe could not save its receipt. Reconnect and resume to recover the cached result.") from None
             receipt["error_code"] = "timeout" if isinstance(error, subprocess.TimeoutExpired) else "cancelled" if isinstance(error, (KeyboardInterrupt, SystemExit)) else failure_code
+            if receipt["error_code"] == "usage_limit" and completed is not None:
+                allowance = cr_allowance.record(self.bridge.HOME, local.get("account_fingerprint"),
+                    str(getattr(completed, "stdout", "")) + " " + str(getattr(completed, "stderr", "")))
+                if allowance:
+                    failure_message = allowance["message"]
             receipt["usage"] = {"duration_seconds": time.monotonic() - started, "reported": False}
             failed={"state":"failed_local","input_fingerprint":fingerprint,"error_code":receipt["error_code"],"receipt":receipt,
                 "diagnostic":private_diagnostic(completed,cfg) if completed is not None else {"exception_type":type(error).__name__}}
