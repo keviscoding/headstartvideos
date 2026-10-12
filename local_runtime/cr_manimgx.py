@@ -53,6 +53,8 @@ _PREFIX = "CR_MANIMGX "
 _DEFAULT_TIMEOUT = 600
 _PROBE_CACHE = {}
 _PROGRESS_LOCK = threading.Lock()
+_OUTPUT_INJECTIONS = {}
+_OUTPUT_INJECTIONS_LOCK = threading.Lock()
 
 
 class ManimGXStageStopped(ClaudeStageStopped):
@@ -132,7 +134,7 @@ def _probe(python, *, timeout=15, refresh=False):
     completed = subprocess.run([str(python), str(Path(__file__).resolve()), "--probe"],
                                capture_output=True, text=True, timeout=timeout, env=_environment())
     if completed.returncode:
-        raise RuntimeError("The separate ManimGX environment is unavailable. Run its setup check again.")
+        raise RuntimeError("The separate Fast mode environment is unavailable. Run its setup check again.")
     result = json.loads(completed.stdout)
     if (result.get("version") != MANIMGX_VERSION or result.get("ty") != TYPECHECKER_VERSION
             or tuple(result.get("python", [])) < (3, 13)):
@@ -146,17 +148,17 @@ def readiness(root, *, refresh=False):
     try:
         saved = _read(Path(root) / ".cr-manimgx" / "ready.json")
         if saved.get("compiler") != COMPILER_VERSION:
-            raise RuntimeError("Run the optional ManimGX setup check before selecting it.")
+            raise RuntimeError("Run the optional Fast mode setup check before selecting it.")
         docs, package = _docs(saved["docs"]), _probe(saved["python"], refresh=refresh)
         if saved.get("identity") != _digest({"package": package, "docs": docs, "compiler": COMPILER_VERSION}):
-            raise RuntimeError("The ManimGX environment changed. Run its setup check again.")
+            raise RuntimeError("The Fast mode environment changed. Run its setup check again.")
         if _file_hash(saved["smoke"]) != saved.get("smoke_sha256"):
-            raise RuntimeError("The ManimGX setup render is missing or changed. Run its setup check again.")
+            raise RuntimeError("The Fast mode setup render is missing or changed. Run its setup check again.")
         return {"ready": True, "version": MANIMGX_VERSION, "mode": "graphics", "python": saved["python"],
                 "docs": docs["directory"], "identity": saved["identity"]}
     except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired, RuntimeError) as error:
         return {"ready": False, "version": MANIMGX_VERSION, "mode": "graphics",
-                "message": str(error) if isinstance(error, RuntimeError) else "Run the optional ManimGX setup check again."}
+                "message": str(error) if isinstance(error, RuntimeError) else "Run the optional Fast mode setup check again."}
 
 
 def prepare(root, python_executable, docs_dir, *, timeout=60, event=None):
@@ -229,6 +231,32 @@ def _pointers(value, prefix=""):
     if isinstance(value, list) and value:
         return [p for i, child in enumerate(value) for p in _pointers(child, prefix + "/" + str(i))]
     return [prefix]
+
+
+def _coverage_description(context, pointer, description):
+    if not isinstance(description, str) or not description.strip():
+        return False
+    text = description.strip()
+    if len(text) >= 8:
+        return True
+    # Short scalar annotations can be complete: "0." or "y=1250.".
+    # Require their actual value, rather than accepting an arbitrary short
+    # assertion such as "done" in place of an implementation explanation.
+    value = context
+    for component in pointer.split("/")[1:]:
+        component = component.replace("~1", "/").replace("~0", "~")
+        value = value[int(component)] if isinstance(value, list) else value[component]
+    token = text.rstrip(".").strip()
+    if value is None:
+        return token.lower() == "null"
+    if isinstance(value, bool):
+        return token.lower() == str(value).lower()
+    if isinstance(value, (int, float)):
+        match = re.fullmatch(r"(?:[A-Za-z][A-Za-z ]*\s*=\s*)?([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)", token)
+        return bool(match and math.isfinite(float(match[1])) and float(match[1]) == value)
+    if isinstance(value, str):
+        return text.strip('"\'') == value or token.strip('"\'') == value
+    return False
 
 
 def _assets(context, outdir):
@@ -328,7 +356,8 @@ def _compiler_result(raw, context, assets=None):
     coverage = result.get("coverage")
     required = set(_pointers(context))
     if (not isinstance(coverage, dict) or set(coverage) != required or
-            any(not isinstance(x, str) or len(x.strip()) < 8 for x in coverage.values())):
+            any(not _coverage_description(context, pointer, description)
+                for pointer, description in coverage.items())):
         raise RuntimeError("Claude's ManimGX manifest omitted or changed render requirements. The scene was not rendered.")
     _validate_source(result.get("source"), result.get("scene_class"), assets)
     return result
@@ -385,7 +414,7 @@ def _redacted_diagnostic(value):
 
 
 def _stopped(error):
-    raise ManimGXStageStopped("ManimGX stopped: " + _redacted_diagnostic(error)[:1000]
+    raise ManimGXStageStopped("Fast mode stopped: " + _redacted_diagnostic(error)[:1000]
         + " Your completed scenes and creative work are saved. Review this graphics request before continuing.") from None
 
 
@@ -480,7 +509,175 @@ def correct_recovered_source(engine, context, assets, ready, directory, key, *, 
         raise
 
 
-def _compiled_source(engine, compiler, context, assets, ready, directory, key, *, reference_bundle=None):
+def _cache_key(context, assets, ready, reference_bundle):
+    return _digest({"input": context, "assets": assets, "compiler": COMPILER_VERSION,
+                    "setup": ready["identity"],
+                    "original_references": reference_bundle["identity"] if reference_bundle else None})
+
+
+def _regular(path):
+    return Path(path).is_file() and not Path(path).is_symlink()
+
+
+def _legacy_contexts(cache):
+    """Only actual retained renderer reports can establish an old compile input."""
+    contexts = {}
+    for number, path in enumerate(cache.parent.rglob("report.json")):
+        if number >= 2000:
+            raise RuntimeError("The saved render-report search exceeded its bounded cache limit.")
+        if cache in path.parents or not _regular(path) or not _regular(path.parent / "video.json"):
+            continue
+        report, video = _read(path), _read(path.parent / "video.json")
+        if (report.get("renderer") != "manimgx" or not isinstance(video.get("scenes"), list)
+                or not isinstance(report.get("scenes"), list)):
+            continue
+        for row in report["scenes"]:
+            if not isinstance(row, dict) or not re.fullmatch(r"[a-f0-9]{64}", str(row.get("compiler_key", ""))):
+                continue
+            scenes = [s for s in video["scenes"] if isinstance(s, dict) and s.get("id") == row.get("id")]
+            if len(scenes) != 1:
+                continue
+            context = {"scene": scenes[0], "cast": video.get("cast", []),
+                "video": {k: v for k, v in video.items() if k not in {"scenes", "cast"}},
+                "output": {"width": report.get("w"), "height": report.get("h"),
+                           "fps": report.get("fps"), "quality": report.get("quality")}}
+            contexts.setdefault(row["compiler_key"], {})[_digest(context)] = context
+    return contexts
+
+
+def _accepted_response(directory, saved, context, assets):
+    """Bind accepted source to its saved successful compile or recovery evidence."""
+    key = saved["key"]
+    journal = _read(directory / "compile-attempts.json")
+    if journal.get("key") == key and journal.get("state") == "validated" and journal.get("calls") in (1, 2):
+        raw_path = directory / f"compiler-response-{journal['calls']}.txt"
+        if not _regular(raw_path) or _compiler_result(raw_path.read_text(), context, assets) != saved["result"]:
+            raise RuntimeError("The accepted graphics response changed before format reuse.")
+        return {"kind": "native_compile", "journal_sha256": _file_hash(directory / "compile-attempts.json"),
+                "response_sha256": _file_hash(raw_path)}
+    correction = _read(directory / "correction-attempts.json")
+    recovery = _read(directory / "recovery.json")
+    proof = saved.get("recovery_proof")
+    if (isinstance(proof, dict) and proof and correction.get("key") == key
+            and correction.get("state") == "validated" and correction.get("calls") == 1
+            and correction.get("recovery_proof") == proof and recovery.get("proof") == proof
+            and recovery.get("state") == "corrected"
+            and recovery.get("corrected_source_sha256") == saved.get("source_sha256")):
+        raw_path = directory / "compiler-correction-response-1.txt"
+        if not _regular(raw_path) or _compiler_result(raw_path.read_text(), context, assets) != saved["result"]:
+            raise RuntimeError("The accepted graphics correction changed before format reuse.")
+        return {"kind": "native_corrected_recovery", "proof": proof,
+                "receipt_sha256": _file_hash(directory / "recovery.json"), "response_sha256": _file_hash(raw_path)}
+    relative = saved.get("recovery_receipt")
+    if isinstance(relative, str):
+        receipt = directory / relative
+        if receipt.resolve().is_relative_to(directory.resolve()) and _regular(receipt):
+            record = _read(receipt); proof = record.get("proof", {})
+            if (record.get("state") == "validated" and isinstance(proof, dict)
+                    and proof.get("key") == key and proof.get("context_sha256") == _digest(context)
+                    and proof.get("assets_sha256") == _digest(assets)
+                    and proof.get("source_sha256") == saved.get("source_sha256")
+                    and isinstance(proof.get("native_stage_id"), str)
+                    and isinstance(proof.get("native_result_fingerprint"), str)):
+                return {"kind": "completed_native_recovery", "proof": proof,
+                        "receipt_sha256": _file_hash(receipt)}
+    raise RuntimeError("The saved graphics source has no accepted completed native receipt for format reuse.")
+
+
+def _reuse_source(context, assets, ready, directory, key, *, reference_bundle=None, injection=None):
+    """Borrow one unchanged accepted class; never rewrite its creative coverage."""
+    import cr_manimgx_profile as profile
+    directory = Path(directory)
+    existing = directory / "reuse.json"
+    # Every historical/stopped target is exclusive. Format reuse cannot act as
+    # a recovery or mask a previous compiler failure.
+    if any((directory / name).exists() or (directory / name).is_symlink() for name in
+           ("compiler.json", "compile-attempts.json", "correction-attempts.json", "compiler-response-1.txt", "scene.py")):
+        return None
+    if existing.exists() and not _regular(existing):
+        raise RuntimeError("The saved format-reuse receipt changed.")
+    recorded = _read(existing)
+    if existing.exists() and not recorded:
+        raise RuntimeError("The saved format-reuse receipt is unreadable.")
+    cache, candidates = directory.parent, []
+    legacy = None
+    entries = sorted(cache.glob("*/compiler.json"))
+    if len(entries) > 2000:
+        raise RuntimeError("The accepted graphics-source search exceeded its bounded cache limit.")
+    for manifest in entries:
+        source_dir = manifest.parent
+        if (source_dir == directory or source_dir.is_symlink() or not _regular(manifest)
+                or not re.fullmatch(r"[a-f0-9]{64}", source_dir.name)):
+            continue
+        if recorded and recorded.get("source_key") != source_dir.name:
+            continue
+        saved = _read(manifest)
+        if saved.get("typed") is not True or saved.get("key") != source_dir.name:
+            continue
+        if isinstance(saved.get("context"), dict):
+            contexts = [saved["context"]]
+        else:
+            if legacy is None:
+                legacy = _legacy_contexts(cache)
+            contexts = list(legacy.get(source_dir.name, {}).values())
+        for source_context in contexts:
+            try:
+                if _cache_key(source_context, assets, ready, reference_bundle) != source_dir.name:
+                    continue
+                result = _compiler_result(json.dumps(saved.get("result")), source_context, assets)
+                assessment = profile.assess_reuse(source_context, context, result["source"],
+                    source_injection=saved.get("output_injection"), target_injection=injection)
+                if not assessment["eligible"]:
+                    continue
+            except (KeyError, ValueError, TypeError, RuntimeError):
+                continue
+            source = source_dir / "scene.py"
+            if (not _regular(source) or saved.get("source_sha256") != assessment["source_sha256"]
+                    or _file_hash(source) != assessment["source_sha256"]):
+                raise RuntimeError("The accepted graphics source changed before format reuse; it will not compile again automatically.")
+            acceptance = _accepted_response(source_dir, saved, source_context, assets)
+            receipt = {"version": profile.VERSION, "target_key": key, "source_key": source_dir.name,
+                "manifest_sha256": _file_hash(manifest), "assets_sha256": _digest(assets),
+                "setup_identity": ready["identity"],
+                "reference_identity": reference_bundle["identity"] if reference_bundle else None,
+                "compiler": COMPILER_VERSION, "acceptance": acceptance, "assessment": assessment,
+                "model_calls": 0, "changes_original_coverage": False}
+            candidates.append((receipt, result, source, source_context))
+    if len(candidates) > 1:
+        raise RuntimeError("More than one accepted graphics source matches this format request. Review the saved source before continuing.")
+    if not candidates:
+        if recorded:
+            raise RuntimeError("The accepted graphics format-reuse evidence no longer matches this request.")
+        return None
+    receipt, result, source, source_context = candidates[0]
+    if recorded and recorded != receipt:
+        raise RuntimeError("The accepted graphics format-reuse evidence changed.")
+    _typecheck(ready["python"], source)
+    if _file_hash(source) != receipt["assessment"]["source_sha256"]:
+        raise RuntimeError("The accepted graphics source changed during format validation.")
+    source_manifest = source.parent / "compiler.json"
+    if (_file_hash(source_manifest) != receipt["manifest_sha256"]
+            or _accepted_response(source.parent, _read(source_manifest),
+                source_context, assets) != receipt["acceptance"]):
+        raise RuntimeError("The accepted graphics receipt changed during format validation.")
+    if any((directory / name).exists() or (directory / name).is_symlink() for name in
+           ("compiler.json", "compile-attempts.json", "correction-attempts.json", "compiler-response-1.txt", "scene.py")):
+        raise RuntimeError("A graphics compiler request appeared during format validation. It will not be overwritten.")
+    if not recorded:
+        directory.mkdir(parents=True, exist_ok=True)
+        directory.chmod(0o700)
+        try:
+            descriptor = os.open(existing, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            if not _regular(existing) or _read(existing) != receipt:
+                raise RuntimeError("A different format-reuse receipt appeared during validation.") from None
+        else:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(receipt, handle, ensure_ascii=False, allow_nan=False)
+    return result, source
+
+
+def _compiled_source(engine, compiler, context, assets, ready, directory, key, *, reference_bundle=None, injection=None):
     """Cache accepted typed source; one correction only after a known local API failure."""
     directory = Path(directory)
     manifest = directory / "compiler.json"
@@ -490,13 +687,20 @@ def _compiled_source(engine, compiler, context, assets, ready, directory, key, *
         result = _compiler_result(json.dumps(saved.get("result")), context, assets)
         if saved.get("source_sha256") != hashlib.sha256(result["source"].encode()).hexdigest():
             raise RuntimeError("The cached ManimGX source changed. Review its saved graphics request before continuing.")
-        _write(source, result["source"], text=True)
+        if not _regular(source) or _file_hash(source) != saved["source_sha256"]:
+            raise RuntimeError("The cached ManimGX source file changed. Review its saved graphics request before continuing.")
         _typecheck(ready["python"], source)
         return result, source
     journal_path = directory / "compile-attempts.json"
     journal = _read(journal_path)
-    if journal:
+    if journal or journal_path.exists() or journal_path.is_symlink():
         raise RuntimeError("This ManimGX compiler request already started or stopped. Its saved responses and diagnostics will not execute again automatically.")
+    if manifest.exists() or manifest.is_symlink():
+        raise RuntimeError("This saved compiler manifest has no accepted API validation. Review its graphics request before continuing.")
+    if not saved and not manifest.exists() and not manifest.is_symlink():
+        reused = _reuse_source(context, assets, ready, directory, key, reference_bundle=reference_bundle, injection=injection)
+        if reused is not None:
+            return reused
     references = None
     if reference_bundle is not None:
         import cr_manimgx_refs
@@ -546,11 +750,11 @@ def _compiled_source(engine, compiler, context, assets, ready, directory, key, *
                     raise
                 prompt = _repair_prompt(context, assets, ready["docs"], result, error.diagnostic, references)
                 if hasattr(engine, "log"):
-                    engine.log("ManimGX: correcting one completed source response against its local API diagnostic; the original scene requirements stay unchanged.")
+                    engine.log("Fast mode: correcting one completed source response against its local API diagnostic; the original scene requirements stay unchanged.")
                 continue
             _write(source, result["source"], text=True)
             _write(manifest, {"key": key, "typed": True, "source_sha256": hashlib.sha256(result["source"].encode()).hexdigest(),
-                              "result": result})
+                              "result": result, "context": context, "output_injection": injection})
             journal.update(state="validated")
             _write(journal_path, journal)
             return result, source
@@ -725,13 +929,17 @@ def render(engine, video, outdir, args, what, total_scenes=0, progress=None, *, 
     if not isinstance(video, dict) or not isinstance(video.get("scenes"), list) or not video["scenes"]:
         raise RuntimeError("ManimGX requires the complete original scene render input.")
     options = _options(list(args), video)
+    import cr_manimgx_profile as profile
+    native_profile = profile.native_profile({k: options[k] for k in ("width", "height", "fps", "quality")})
+    with _OUTPUT_INJECTIONS_LOCK:
+        injections = _OUTPUT_INJECTIONS.get(_digest(video), {}).copy()
     outdir = Path(outdir).resolve()
     outdir.mkdir(parents=True, exist_ok=True)
     cache = next((p for p in [outdir, *outdir.parents] if p.name == "threed"), outdir) / ".cr-manimgx"
     started = time.monotonic()
     report = {"video": str(outdir / "video.json"), "outdir": str(outdir), "quality": options["quality"],
               "w": options["width"], "h": options["height"], "fps": options["fps"], "renderer": "manimgx",
-              "renderer_version": MANIMGX_VERSION, "scenes": []}
+              "renderer_version": MANIMGX_VERSION, "native_profile": native_profile, "scenes": []}
     _write(outdir / "video.json", video)
     _write(outdir / "report.json", report)
     seen_ids = set()
@@ -759,13 +967,12 @@ def render(engine, video, outdir, args, what, total_scenes=0, progress=None, *, 
                 # asset records. Keep their paths and provenance together for
                 # source validation and the compiler cache identity.
                 assets.update(reference_bundle["assets"])
-            key = _digest({"input": context, "assets": assets, "compiler": COMPILER_VERSION, "setup": ready["identity"],
-                           "original_references": reference_bundle["identity"] if reference_bundle else None})
+            key = _cache_key(context, assets, ready, reference_bundle)
             directory = cache / key
             if event:
                 event({"event": "compile", "scene_id": sid, "scene": number, "total_scenes": len(video["scenes"])})
             result, source = _compiled_source(engine, compiler, context, assets, ready, directory, key,
-                                              reference_bundle=reference_bundle)
+                                              reference_bundle=reference_bundle, injection=injections.get(sid))
             # The original renderer gives fractional sampling precedence when
             # both forms are present.
             times = [duration * f for f in options["fractions"]] if options["fractions"] else options["times"]
@@ -780,12 +987,12 @@ def render(engine, video, outdir, args, what, total_scenes=0, progress=None, *, 
                 if event:
                     event({**value, "scene_id": sid, "scene": number, "total_scenes": len(video["scenes"]), "phase": what})
                 if hasattr(engine, "log") and value.get("event") in {"frame", "exporting"}:
-                    engine.log(f"{what} — ManimGX {sid}: {value.get('frame', 0)} frames, {value.get('time', 0):.2f}/{duration:.2f}s ({value['event']})")
+                    engine.log(f"{what} — Fast mode {sid}: {value.get('frame', 0)} frames, {value.get('time', 0):.2f}/{duration:.2f}s ({value['event']})")
             response = _invoke(ready["python"], {"source": str(source), "class": result["scene_class"],
                               "output": None if options["preview"] else str(destination), "still_dir": str(outdir), "id": sid,
                               "width": options["width"], "height": options["height"], "fps": options["fps"],
-                              "duration": duration, "times": times, "crf": 16,
-                              "preset": "slow" if options["quality"] == "final" else "veryfast"}, directory,
+                              "duration": duration, "times": times, "native_profile": native_profile,
+                              **profile.render_kwargs(native_profile)}, directory,
                               timeout=min(_DEFAULT_TIMEOUT, max(30, duration * 15)), event=notify)
             _validate_frames(response, duration, options["fps"], options["width"], options["height"])
             if not options["preview"]:
@@ -843,7 +1050,7 @@ def _selected_environment(bridge, root):
     if not ready["ready"]:
         _stopped(ready["message"])
     if options.get("manimgx_identity") != ready["identity"]:
-        _stopped("This project's pinned ManimGX environment changed. Review setup before resuming.")
+        _stopped("This project's pinned Fast mode environment changed. Review setup before resuming.")
     return ready
 
 
@@ -935,6 +1142,7 @@ def install(engine, bridge, *, root=None, event=None):
     root = Path(root or Path(__file__).resolve().parent)
     threed = importlib.import_module("threed")
     _install_planning(threed, bridge, root)
+    _install_output_provenance(threed, bridge, root)
     if not getattr(threed._render, "_cr_manimgx", False):
         original = threed._render
         @functools.wraps(original)
@@ -947,6 +1155,39 @@ def install(engine, bridge, *, root=None, event=None):
         wrapped._cr_original = original
         threed._render = wrapped
     return {"installed": True}
+
+
+def _install_output_provenance(threed, bridge, root):
+    """Keep original _video output/hash identical; provenance lives only in memory."""
+    if not hasattr(threed, "_video") or getattr(threed._video, "_cr_manimgx_provenance", False):
+        return
+    original = threed._video
+    @functools.wraps(original)
+    def wrapped(board, sub=None, preset=None):
+        if _selected_environment(bridge, root) is None:
+            return original(board, sub, preset)
+        before_board = json.loads(json.dumps(board, ensure_ascii=False, allow_nan=False)) if sub else None
+        video = original(board, sub, preset)
+        proofs = {}
+        if sub:
+            import cr_manimgx_profile as profile
+            before = original(before_board, None, preset)
+            if len(before.get("scenes", [])) != len(video.get("scenes", [])):
+                raise RuntimeError("The original output runner changed its scene set during Fast mode validation.")
+            for old, new in zip(before["scenes"], video["scenes"]):
+                if old.get("id") != new.get("id"):
+                    raise RuntimeError("The original output runner changed its scene identity during Fast mode validation.")
+                proof = profile.injected_sub_proof(old, new, int(sub))
+                if proof is not None:
+                    proofs[new["id"]] = proof
+        with _OUTPUT_INJECTIONS_LOCK:
+            _OUTPUT_INJECTIONS[_digest(video)] = proofs
+            while len(_OUTPUT_INJECTIONS) > 512:
+                _OUTPUT_INJECTIONS.pop(next(iter(_OUTPUT_INJECTIONS)))
+        return video
+    wrapped._cr_manimgx_provenance = True
+    wrapped._cr_original = original
+    threed._video = wrapped
 
 
 def _child_probe():
@@ -969,8 +1210,13 @@ def _child_scene(payload):
     spec = importlib.util.spec_from_file_location("cr_generated_scene", payload["source"])
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    m.config.pixel_width, m.config.pixel_height = payload["width"], payload["height"]
-    m.config.frame_rate = payload["fps"]
+    if payload.get("native_profile") is not None:
+        import cr_manimgx_profile as profile
+        profile.apply_native_config(m.config, payload["native_profile"])
+    else:
+        # Existing setup fixtures retain their explicit small output format.
+        m.config.pixel_width, m.config.pixel_height = payload["width"], payload["height"]
+        m.config.frame_rate = payload["fps"]
     made = getattr(module, payload["class"])()
     started = time.monotonic()
     fps = payload["fps"]

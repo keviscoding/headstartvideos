@@ -24,7 +24,7 @@ def submit(studio, payload, project_id, *, before_publish=None):
 def _publish(studio, payload, original, *, project_id=None, before_publish=None):
     backend = payload.get("render_backend", "original")
     if backend not in {"original", "manimgx"}:
-        raise ValueError("Choose the standard renderer or ManimGX.")
+        raise ValueError("Choose the standard renderer or Fast mode.")
     staged = []
     globals_ = {**original.__globals__, "QUEUE": staged, "_ensure_dispatcher": lambda: None}
     capture = FunctionType(original.__code__, globals_, original.__name__,

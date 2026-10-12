@@ -104,16 +104,16 @@ def preset(studio, checks, spec):
     backend = spec.get("render_backend", "original")
     renderer_identity = None
     if backend not in {"original", "manimgx"}:
-        results.append(item("renderer", "3D renderer", False, "Choose the standard renderer or ManimGX."))
+        results.append(item("renderer", "3D renderer", False, "Choose the standard renderer or Fast mode."))
     if backend == "manimgx":
         import cr_optional_renderer
         renderer = cr_optional_renderer.ready(cr_bridge.HOME)
         renderer_identity = renderer.get("identity")
-        results += [item("renderer", "ManimGX installed and checked", renderer["ready"], renderer.get("message", "Complete the optional ManimGX check.")),
-            item("renderer_brain", "Claude Code connected for ManimGX", ready["brain_mode"] == "claudecode", "Use your Claude Code brain with ManimGX."),
-            item("renderer_use", "3D scenes enabled", wanted.get("threed"), "Enable 3D scenes for this preset, or turn off ManimGX for this video.")]
+        results += [item("renderer", "Fast mode installed and checked", renderer["ready"], renderer.get("message", "Complete the optional Fast mode check.")),
+            item("renderer_brain", "Claude Code connected for Fast mode", ready["brain_mode"] == "claudecode", "Use your Claude Code brain with Fast mode."),
+            item("renderer_use", "3D scenes enabled", wanted.get("threed"), "Enable 3D scenes for this preset, or turn off Fast mode for this video.")]
         if spec.get("manimgx_identity") and spec["manimgx_identity"] != renderer_identity:
-            results.append(item("renderer_pin", "Project renderer unchanged", False, "This project's ManimGX installation changed. Review setup before continuing."))
+            results.append(item("renderer_pin", "Project renderer unchanged", False, "This project's Fast mode installation changed. Review setup before continuing."))
     if wanted.get("threed"):
         results.append(item("webgl","3D graphics support",checks.get("webgl"),"The graphics browser could not create a 3D canvas. Reopen the launcher and check your graphics drivers before using this preset."))
     steps = spec.get("steps") or ["script","voiceover","pexels","images","video","thumbnail"]

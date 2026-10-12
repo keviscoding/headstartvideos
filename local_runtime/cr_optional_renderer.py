@@ -55,7 +55,7 @@ def supported_python():
                 seen.add(candidate)
                 if supported(candidate):
                     return candidate
-    raise RuntimeError("ManimGX needs Python 3.13 or newer. Install it, reopen this studio, then run this check again. Your standard renderer is still available.")
+    raise RuntimeError("Fast mode needs Python 3.13 or newer. Install it, reopen this studio, then run this check again. Your standard renderer is still available.")
 
 
 def ready(home, *, refresh=False):
@@ -81,10 +81,10 @@ def install_dependencies(home, report):
     with logpath.open("w", encoding="utf-8") as log:
         logpath.chmod(0o600)
         if not python.is_file():
-            report("installing", "Preparing a separate Python environment for ManimGX.")
+            report("installing", "Preparing a separate Python environment for Fast mode.")
             subprocess.run([supported_python(), "-m", "venv", str(directory / "venv")], check=True,
                 stdout=log, stderr=subprocess.STDOUT, timeout=180, env=env)
-        report("installing", "Installing ManimGX and its code checker. This does not use your model accounts.")
+        report("installing", "Installing Fast mode and its code checker. This does not use your model accounts.")
         subprocess.run([str(python), "-m", "pip", "--disable-pip-version-check", "install", "--index-url", "https://pypi.org/simple", *cr_manimgx.DEPENDENCIES],
             check=True, stdout=log, stderr=subprocess.STDOUT, timeout=600, env=env)
     report("checking", "Checking the exact API documentation Claude will use.")
@@ -97,14 +97,14 @@ def install_dependencies(home, report):
         response = requests.get(url, timeout=(10,30), allow_redirects=False)
         response.raise_for_status()
         if len(response.content) > 2_000_000 or hashlib.sha256(response.content).hexdigest() != expected:
-            raise RuntimeError("ManimGX's documentation changed upstream. This version cannot be enabled until its integration is updated.")
+            raise RuntimeError("Fast mode's documentation changed upstream. This version cannot be enabled until its integration is updated.")
         path.write_bytes(response.content)
     report("rendering", "Rendering a short local 3D check and verifying the exported video.")
     cr_manimgx.prepare(home, python, docs, timeout=90)
     result = ready(home, refresh=True)
     if not result["ready"]:
         raise RuntimeError(result["message"])
-    report("ready", "ManimGX is ready. You can enable it on a new 3D project.")
+    report("ready", "Fast mode is ready. You can enable it on a new 3D project.")
 
 
 def _saved_jobs(home):
@@ -156,7 +156,7 @@ def install(studio, activity, *, home, readiness=None):
         if (not isinstance(cloud, dict) or (cloud.get("project") or {}).get("id") != project_id
                 or (cloud.get("project") or {}).get("status") != "failed"
                 or cloud.get("brain_mode") != "claudecode"):
-            raise RuntimeError("Choose a stopped ManimGX project owned by your connected ChannelRecipe account.")
+            raise RuntimeError("Choose a stopped Fast mode project owned by your connected ChannelRecipe account.")
         return cloud
 
     def native_proof(*, correction=False, spec=None):
@@ -164,7 +164,7 @@ def install(studio, activity, *, home, readiness=None):
         if (cr_bridge.load_settings().get("brain_mode") != "claudecode"
                 or not checks.get("readiness", {}).get("ready")
                 or not ready(home, refresh=True).get("ready")):
-            raise RuntimeError("Finish Claude Code setup, model verification and the ManimGX check before reviewing saved 3D work.")
+            raise RuntimeError("Finish Claude Code setup, model verification and the Fast mode check before reviewing saved 3D work.")
         allowance = checks.get("claude_code", {}).get("allowance", {})
         if correction and allowance.get("blocked"):
             raise RuntimeError(allowance.get("message") or "Wait for your Claude allowance to reset before correcting saved code.")
@@ -279,7 +279,7 @@ def install(studio, activity, *, home, readiness=None):
                                 acknowledge_recovery=True)
                         if result.get("accepted") is not True:
                             raise RuntimeError("The saved source was not accepted. Find saved 3D work again to review its status.")
-                        final = {**state, "state": "validated", "message": "Saved 3D code passed local validation. The video is still stopped. Use its same title, preset and ManimGX option, then explicitly press Create video to resume the original cached workflow and reviews."}
+                        final = {**state, "state": "validated", "message": "Saved 3D code passed local validation. The video is still stopped. Use its same title, preset and Fast mode option, then explicitly press Create video to resume the original cached workflow and reviews."}
                         cr_claude._private_write(recovery_path, final)
                     except BaseException as error:
                         message = (str(error)[:500] if isinstance(error, (RuntimeError, cr_claude.ClaudeStageStopped))
@@ -318,10 +318,10 @@ def install(studio, activity, *, home, readiness=None):
     def renderer_setup():
         data = request.get_json(silent=True) or {}
         if data.get("action") != "install":
-            return jsonify(error="Choose Install and check ManimGX."), 400
+            return jsonify(error="Choose Install and check Fast mode."), 400
         with activity.lock:
             if activity.busy():
-                return jsonify(error="Finish the current studio work before setting up ManimGX."), 409
+                return jsonify(error="Finish the current studio work before setting up Fast mode."), 409
             reservation = activity.reserve()
             def run():
                 try:

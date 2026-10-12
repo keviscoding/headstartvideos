@@ -120,6 +120,26 @@ def test_malformed_texture_records_stop_with_local_diagnostic():
         gx._validate_source(SOURCE, "BoardFixture", {"original:earth.png": "wrong-shape"})
 
 
+def test_scalar_coverage_can_be_concise_but_must_be_present_and_nonempty():
+    context = {"scene": {"rotation": [0, 0, 0], "camera_y": 1250}}
+    result = manifest(context)
+    result["coverage"] = {"/scene/rotation/0": "0.", "/scene/rotation/1": "0.",
+                          "/scene/rotation/2": "0.", "/scene/camera_y": "y=1250."}
+    assert gx._compiler_result(json.dumps(result), context)["source"] == SOURCE
+    result["coverage"]["/scene/rotation/0"] = "done"
+    with pytest.raises(RuntimeError, match="omitted or changed"):
+        gx._compiler_result(json.dumps(result), context)
+    result["coverage"]["/scene/rotation/0"] = "x=2."
+    with pytest.raises(RuntimeError, match="omitted or changed"):
+        gx._compiler_result(json.dumps(result), context)
+    result["coverage"]["/scene/rotation/0"] = "  "
+    with pytest.raises(RuntimeError, match="omitted or changed"):
+        gx._compiler_result(json.dumps(result), context)
+    del result["coverage"]["/scene/rotation/0"]
+    with pytest.raises(RuntimeError, match="omitted or changed"):
+        gx._compiler_result(json.dumps(result), context)
+
+
 @pytest.fixture
 def saved_source_correction(stub_runtime, monkeypatch):
     import cr_manimgx_refs
@@ -273,7 +293,7 @@ def test_compiler_sees_every_input_leaf_assets_and_output_format(stub_runtime):
     assert "/video/a~1b~0/0" in pointers and "/video/empty" in pointers and "/scene/render/sub" in pointers
 
 
-def test_cache_reuses_verified_source_but_invalidates_changed_format_board_and_setup(stub_runtime):
+def test_cache_reuses_verified_source_across_format_but_invalidates_changed_board_and_setup(stub_runtime):
     calls = []
     def compiler(prompt, maximum):
         calls.append(prompt)
@@ -288,7 +308,9 @@ def test_cache_reuses_verified_source_but_invalidates_changed_format_board_and_s
     run_stub(stub_runtime, compiler=compiler, video=video)
     stub_runtime.ready["identity"] = "setup-two"
     run_stub(stub_runtime, compiler=compiler)
-    assert len(calls) == 4
+    # Same-aspect output size reuses accepted typed creative code. Changed
+    # direction and pinned environment still need their own compiler input.
+    assert len(calls) == 3
 
 
 @pytest.mark.parametrize("change", ["missing", "extra", "empty", "unsupported", "syntax", "non_json", "non_text"])
