@@ -123,7 +123,10 @@ def begin_project(title, style, resume_id=None, *, proof=None, job_spec=None, pu
                 "title": title, "style": style, "minutes": spec.get("minutes", 10),
                 "features": spec.get("features") or {},
                 "options": options,
-                "max_calls": 2 if purpose == "setup" else 500,
+                # Two models, with at most one explicitly approved recovery
+                # for each. A recovered first check must leave room for the
+                # second model's normal check.
+                "max_calls": 4 if purpose == "setup" else 500,
                 "platform": "windows" if os.name == "nt" else "mac"}
             # Preserve the begin ID if its response is interrupted. Reconnecting
             # records the same project rather than creating an orphaned duplicate.
