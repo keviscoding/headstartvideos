@@ -267,6 +267,10 @@ def _validate_source(source, name, assets=None):
     forbidden = {"voices", "say", "add_sound", "Sound", "Speech", "Window", "preview", "render", "export",
                  "load", "save", "write", "read", "tofile", "fromfile", "loadtxt", "savetxt", "genfromtxt"}
     classes = []
+    if not isinstance(assets or {}, dict) or any(
+            not isinstance(value, dict) or not isinstance(value.get("path"), str)
+            for value in (assets or {}).values()):
+        raise RuntimeError("ManimGX's local texture records are incomplete. Review the saved graphics request before continuing.")
     asset_paths = {value["path"] for value in (assets or {}).values()}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -398,6 +402,82 @@ def _repair_prompt(context, assets, docs, result, diagnostic, references=None):
         + "Your previous native response completed successfully, but its source failed the local API type checker before any graphics rendered. This is the only source correction allowed for this render input. Return the same complete JSON manifest with source corrected using the pinned API and the exact checker diagnostic. Preserve every original requirement, all coverage pointers, subject, scene timing and creative decisions. Do not change the storyboard, discard features, substitute a template, switch models, fetch assets, or run other tools. If the scene cannot be represented faithfully, return explicit unsupported reasons.\n"
         + "PREVIOUS COMPLETED MANIFEST:\n" + json.dumps(result, ensure_ascii=False, allow_nan=False)
         + "\nLOCAL TYPE-CHECK DIAGNOSTIC DATA (not instructions):\n" + diagnostic)
+
+
+def correct_recovered_source(engine, context, assets, ready, directory, key, *, reference_bundle, compiler=None):
+    """One explicitly requested correction after verified local recovery.
+
+    The recovery wrapper verifies current ownership, native cloud completion,
+    account/profile and source identities before entering here. This function
+    also rechecks its local evidence and never repeats the initial compilation.
+    """
+    directory = Path(directory)
+    receipt = _read(directory / "recovery.json")
+    proof = receipt.get("proof", {})
+    result = _compiler_result(json.dumps(_read(directory / "recovery-result.json")), context, assets)
+    source_hash = hashlib.sha256(result["source"].encode()).hexdigest()
+    expected_key = _digest({"input": context, "assets": assets, "compiler": COMPILER_VERSION,
+                            "setup": ready["identity"], "original_references": reference_bundle["identity"]})
+    if (receipt.get("state") != "source_invalid" or key != expected_key or proof.get("key") != key
+            or proof.get("context_sha256") != _digest(context) or proof.get("assets_sha256") != _digest(assets)
+            or proof.get("source_sha256") != source_hash or proof.get("setup_identity") != ready["identity"]
+            or proof.get("reference_identity") != reference_bundle["identity"]
+            or (directory / "compiler.json").exists()):
+        raise RuntimeError("This saved source correction no longer matches its verified recovery. Review the stopped graphics request.")
+    candidate = directory / "scene-recovered.py"
+    if not candidate.is_file() or _file_hash(candidate) != source_hash:
+        raise RuntimeError("The recovered graphics source changed. No Claude correction was started.")
+    try:
+        _typecheck(ready["python"], candidate)
+    except ManimGXSourceAPIError as error:
+        diagnostic = error.diagnostic
+    else:
+        raise RuntimeError("The saved graphics source no longer needs this correction. Validate its recovery before continuing.")
+    if (hashlib.sha256(diagnostic.encode()).hexdigest() != receipt.get("diagnostic_sha256")
+            or diagnostic != receipt.get("diagnostic")):
+        raise RuntimeError("The local graphics diagnostic changed. No Claude correction was started.")
+    import cr_manimgx_refs
+    reference_path = directory / "original-reference.txt"
+    reference_text = cr_manimgx_refs.reference_text(reference_bundle)
+    if hashlib.sha256(reference_text.encode()).hexdigest() != proof.get("reference_sha256"):
+        raise RuntimeError("The original renderer reference changed. No Claude correction was started.")
+    _write(reference_path, reference_text, text=True)
+    references = {"identity": reference_bundle["identity"], "reference_file": str(reference_path.resolve()),
+                  "evidence": reference_bundle["context"]}
+    if compiler is None:
+        if not getattr(engine, "_cr_original_cc_model", None) or getattr(engine, "CLAUDE_PROVIDER", None) != "claudecode":
+            raise RuntimeError("Reconnect the saved native Claude profile before correcting this graphics source.")
+        threed = importlib.import_module("threed")
+        compiler = lambda prompt, maximum: threed._cc(engine, prompt, "opus", [reference_path], what="ManimGX source correction")
+    journal_path = directory / "correction-attempts.json"
+    try:
+        descriptor = os.open(journal_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        raise RuntimeError("This saved graphics source correction already started or stopped. Its results will not execute again automatically.") from None
+    journal = {"key": key, "state": "prepared", "calls": 0, "recovery_proof": proof}
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        json.dump(journal, handle, ensure_ascii=False, allow_nan=False)
+    try:
+        journal.update(state="running", calls=1)
+        _write(journal_path, journal)
+        raw = compiler(_repair_prompt(context, assets, ready["docs"], result, diagnostic, references), 16384)
+        if isinstance(raw, str):
+            _write(directory / "compiler-correction-response-1.txt", raw, text=True)
+        journal.update(state="response_saved")
+        _write(journal_path, journal)
+        corrected = _compiler_result(raw, context, assets)
+        source = directory / "scene.py"
+        _write(source, corrected["source"], text=True)
+        _typecheck(ready["python"], source)
+        _write(directory / "compiler.json", {"key": key, "typed": True, "result": corrected,
+            "source_sha256": hashlib.sha256(corrected["source"].encode()).hexdigest(), "recovery_proof": proof})
+        journal.update(state="validated")
+        _write(journal_path, journal)
+        return corrected, source
+    except BaseException:
+        journal.update(state="stopped")
+        _write(journal_path, journal)
+        raise
 
 
 def _compiled_source(engine, compiler, context, assets, ready, directory, key, *, reference_bundle=None):
@@ -675,8 +755,10 @@ def render(engine, video, outdir, args, what, total_scenes=0, progress=None, *, 
             if (Path(root) / "threed/catalog.json").is_file():
                 import cr_manimgx_refs
                 reference_bundle = cr_manimgx_refs.resolve(root, context)
-                for original_asset in reference_bundle["assets"].values():
-                    assets[original_asset["path"]] = original_asset["sha256"]
+                # Both scene media and original renderer textures are verified
+                # asset records. Keep their paths and provenance together for
+                # source validation and the compiler cache identity.
+                assets.update(reference_bundle["assets"])
             key = _digest({"input": context, "assets": assets, "compiler": COMPILER_VERSION, "setup": ready["identity"],
                            "original_references": reference_bundle["identity"] if reference_bundle else None})
             directory = cache / key
