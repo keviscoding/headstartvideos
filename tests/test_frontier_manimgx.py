@@ -622,6 +622,38 @@ def test_native_typecheck_rejects_unknown_api_before_gpu_render(native_runtime, 
     assert "invented_size" in diagnostic.read_text() and diagnostic.stat().st_mode & 0o077 == 0
 
 
+def test_native_mixed_dictionary_point_has_identical_executable_source(native_runtime, tmp_path):
+    text = SOURCE.replace("import manimgx as m", "import manimgx as m\nimport numpy as np")
+    text = text.replace("class BoardFixture", "def projected() -> tuple:\n    return np.array([0.0, 0.0, 0.0]), 1.0\nclass BoardFixture")
+    text = text.replace("self.add(cube)", "anchor, amount = projected()\n        state = {'anchor': anchor, 'amount': amount, 'angle': 0.0}\n        def update(mob: m.Mobject, dt: float) -> None:\n            mob.scale(1.0, about_point=state['anchor'])\n        update(cube, 0.0)\n        self.add(cube)")
+    source = tmp_path / "mixed_state.py"
+    source.write_text(text)
+    gx._typecheck(native_runtime.python, source)
+    assert source.read_text() == text
+    proof = gx._read(source.with_suffix(".typecheck.json"))
+    assert proof["bindings"] == ["state"] and proof["executable_ast_unchanged"]
+    assert proof["source_sha256"] == gx._file_hash(source)
+    response = gx._invoke(native_runtime.python, {"source": str(source), "class": "BoardFixture", "output": None,
+        "still_dir": str(tmp_path), "id": "mixed", "width": 320, "height": 180, "fps": 30,
+        "duration": .4, "times": [.2]}, tmp_path, timeout=10)
+    assert response["frames"] == 13
+
+
+def test_dictionary_typing_never_masks_definite_types_or_unknown_api(native_runtime, tmp_path):
+    for argument in ("about_point=3.0", "invented_point=m.ORIGIN"):
+        source = tmp_path / "invalid_state.py"
+        source.write_text(SOURCE.replace("self.add(cube)", f"cube.scale(1.0, {argument})\n        self.add(cube)"))
+        with pytest.raises(gx.ManimGXSourceAPIError):
+            gx._typecheck(native_runtime.python, source)
+        assert not source.with_suffix(".typecheck.json").exists()
+
+
+def test_dictionary_typing_does_not_change_global_or_rebound_variables():
+    text = "state = {'a': point, 'b': 1.0}\nf(about_point=state['a'])\n"
+    diagnostic = "scene.py:2:3: error[invalid-argument-type] Expected point, found Unknown | float"
+    assert gx._local_dict_typing(text, diagnostic) is None
+
+
 def test_native_close_preview_times_do_not_overwrite_requested_frames(native_runtime):
     report = gx.render(SimpleNamespace(), VIDEO, native_runtime.root / "threed/close-times",
                        SMALL + ["--preview", "0.20001,0.20002"], "precise preview", root=native_runtime.root,
