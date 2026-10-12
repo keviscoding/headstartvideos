@@ -54,6 +54,7 @@ _PREFIX = "CR_MANIMGX "
 _DEFAULT_TIMEOUT = 600
 _PROBE_CACHE = {}
 _PROGRESS_LOCK = threading.Lock()
+_REVISION_VERSION = "cr-manimgx-revision-start.1"
 _OUTPUT_INJECTIONS = {}
 _OUTPUT_INJECTIONS_LOCK = threading.Lock()
 
@@ -873,6 +874,206 @@ def _reuse_source(context, assets, ready, directory, key, *, reference_bundle=No
     return result, source
 
 
+def _revision_owner(engine, cache):
+    """Read the same owned native workflow; missing evidence disables this optimization."""
+    if getattr(engine, "CLAUDE_PROVIDER", None) != "claudecode":
+        return None
+    import cr_bridge
+    import cr_claude
+    try:
+        home = Path(cr_bridge.HOME).resolve()
+        job = Path(cache).resolve().parent.parent
+        if not job.is_relative_to(home / "output") or job.name in {"output", "threed"}:
+            return None
+        project, marker = cr_bridge.current_project(), _read(job / "cr-project.json")
+        cfg, release = cr_bridge.load_settings(), _read(home / "cr-release.json")
+        local = cr_claude.status()
+        if (not isinstance(project, dict) or not re.fullmatch(r"crv_[a-f0-9]{24}", str(project.get("id", "")))
+                or marker.get("id") != project["id"] or marker.get("user_id") != project.get("user_id")
+                or marker.get("brain_mode") != "claudecode" or cfg.get("brain_mode") != "claudecode"
+                or cfg.get("costs_accepted") is not True or not local.get("ready")
+                or not cr_claude.models_verified(cfg, local, root=home)
+                or not re.fullmatch(r"[a-f0-9]{64}", str(local.get("account_fingerprint", "")))):
+            return None
+        cloud = cr_bridge.project_progress(project["id"])
+        workflow = cloud.get("workflow") or {}
+        if (cloud.get("project_id") != project["id"] or cloud.get("brain_mode") != "claudecode"
+                or cloud.get("purpose") != "video" or (cloud.get("project") or {}).get("user_id") != project.get("user_id")
+                or workflow.get("workflow_version") != release.get("workflow_version")
+                or workflow.get("engine_source_sha256") != release.get("source_sha256")
+                or not workflow.get("workflow_version") or not re.fullmatch(r"[a-f0-9]{64}", str(release.get("source_sha256", "")))):
+            return None
+        return {"home": str(home), "stages": cloud.get("stages", []), "identity": {
+            "project_id": project["id"], "user_id": project["user_id"],
+            "workflow_version": release["workflow_version"], "engine_source_sha256": release["source_sha256"],
+            "native_account_fingerprint": local["account_fingerprint"],
+            "profile_identity": cr_claude._verification_identity(cfg, local, root=home),
+            "model_role": "visual", "selected_model": cfg.get("visual_model")}}
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        return None
+
+
+def _revision_native_result(raw, owner):
+    """A final result must match one completed local AND owned cloud visual receipt."""
+    matches = []
+    for stage in owner.get("stages", []):
+        if (not isinstance(stage, dict) or stage.get("status") != "complete" or stage.get("attempts") != 1
+                or stage.get("error_code") or stage.get("model_role") != "visual"
+                or stage.get("selected_model") != owner["identity"]["selected_model"]
+                or not re.fullmatch(r"cc_[a-f0-9]{64}", str(stage.get("stage_id", "")))):
+            continue
+        path = Path(owner["home"]) / "output/cr-claude-cache" / owner["identity"]["project_id"] / (stage["stage_id"] + ".json")
+        if not _revision_regular(path, Path(owner["home"]) / "output/cr-claude-cache" / owner["identity"]["project_id"]):
+            continue
+        native = _read(path); stdout = native.get("stdout")
+        execution_binding = {k: owner["identity"][k] for k in ("native_account_fingerprint", "profile_identity",
+            "model_role", "selected_model", "workflow_version", "engine_source_sha256")}
+        if (native.get("state") != "complete" or not isinstance(stdout, str)
+                or native.get("execution_binding") != execution_binding
+                or native.get("input_fingerprint") != stage["stage_id"][3:]
+                or native.get("result_fingerprint") != stage.get("result_fingerprint")
+                or hashlib.sha256(stdout.encode()).hexdigest() != stage.get("result_fingerprint")):
+            continue
+        try:
+            envelope = json.loads(stdout)
+            if isinstance(envelope, list):
+                envelope = next((row for row in reversed(envelope) if isinstance(row, dict) and row.get("type") == "result"), {})
+        except ValueError:
+            continue
+        if (isinstance(envelope, dict) and envelope.get("type") == "result" and envelope.get("subtype") == "success"
+                and envelope.get("is_error") is False and str(envelope.get("result", "")).strip() == raw.strip()):
+            matches.append({"stage_id": stage["stage_id"], "result_fingerprint": stage["result_fingerprint"],
+                            "local_receipt_sha256": _file_hash(path)})
+    return matches[0] if len(matches) == 1 else None
+
+
+def _revision_regular(path, base):
+    path, base = Path(path), Path(base)
+    return (_regular(path) and path.resolve().is_relative_to(base.resolve())
+            and not base.is_symlink()
+            and not any(parent.is_symlink() for parent in path.parents
+                        if parent == base or base in parent.parents))
+
+
+def _revision_start(context, ready, directory, key, owner):
+    """A previous implementation helps write new code; it never approves new pixels."""
+    if owner is None or context["scene"].get("id") is None:
+        return None
+    import cr_manimgx_refs
+    directory, cache = Path(directory), Path(directory).parent
+    contexts, candidates = _legacy_contexts(cache), []
+    manifests = sorted(cache.glob("*/compiler.json"))
+    if len(manifests) > 2000:
+        raise RuntimeError("The saved scene search exceeded its bounded cache limit.")
+    for manifest in manifests:
+        old = manifest.parent
+        if old == directory or not _revision_regular(manifest, cache):
+            continue
+        saved, identity = _read(manifest), owner["identity"]
+        provenance = saved.get("native_provenance")
+        # Historical caches and explicit recovery sidecars have no execution-time
+        # account binding. Keep exact reuse, but never invent revision provenance.
+        if (saved.get("typed") is not True or saved.get("key") != old.name
+                or not re.fullmatch(r"[a-f0-9]{64}", old.name)
+                or not isinstance(provenance, dict) or provenance.get("identity") != identity
+                or (old / "runtime-failure.json").exists()
+                or (old / ".recovery-runtime-api").exists()):
+            continue
+        previous = saved.get("context")
+        if (not isinstance(previous, dict) or previous.get("scene", {}).get("id") != context["scene"]["id"]
+                or previous == context or _digest(previous) not in contexts.get(old.name, {})):
+            continue
+        bundle = cr_manimgx_refs.resolve(owner["home"], previous)
+        old_assets = _assets(previous, cache.parent)
+        old_assets.update(bundle["assets"])
+        if (_cache_key(previous, old_assets, ready, bundle) != old.name
+                or provenance.get("key") != old.name
+                or provenance.get("context_sha256") != _digest(previous)
+                or provenance.get("assets_sha256") != _digest(old_assets)
+                or provenance.get("reference_identity") != bundle["identity"]
+                or provenance.get("setup_identity") != ready["identity"]
+                or provenance.get("compiler") != COMPILER_VERSION):
+            continue
+        journal_path, source = old / "compile-attempts.json", old / "scene.py"
+        journal = _read(journal_path)
+        if journal.get("key") != old.name or journal.get("state") != "validated" or journal.get("calls") not in (1, 2):
+            continue
+        raw_path = old / f"compiler-response-{journal['calls']}.txt"
+        paths = (manifest, source, journal_path, raw_path)
+        if any(not _revision_regular(path, cache) for path in paths):
+            raise RuntimeError("The previous scene evidence contains a redirected path. No revision request was started.")
+        result = _compiler_result(json.dumps(saved.get("result")), previous, old_assets)
+        source_hash = hashlib.sha256(result["source"].encode()).hexdigest()
+        acceptance = _accepted_response(old, saved, previous, old_assets)
+        native = _revision_native_result(raw_path.read_text(), owner)
+        if native is None or provenance.get("native") != native:
+            continue
+        if saved.get("source_sha256") != source_hash or _file_hash(source) != source_hash:
+            raise RuntimeError("The verified previous scene code changed. No revision request was started.")
+        hashes = {str(path): _file_hash(path) for path in paths}
+        _typecheck(ready["python"], source)
+        if (any(not _revision_regular(Path(path), cache) or _file_hash(Path(path)) != digest
+                for path, digest in hashes.items())
+                or _accepted_response(old, _read(manifest), previous, old_assets) != acceptance
+                or _revision_native_result(raw_path.read_text(), owner) != native):
+            raise RuntimeError("The previous scene evidence changed during API validation. No revision request was started.")
+        lineage = {"version": _REVISION_VERSION, "source_key": old.name,
+            "source_sha256": source_hash, "source_manifest_sha256": hashes[str(manifest)],
+            "previous_context_sha256": _digest(previous), "target_context_sha256": _digest(context),
+            "acceptance": acceptance, "identity": identity, "native": native,
+            "source_file": str(source.resolve()), "uses_previous_pixels": False, "visual_approval": False}
+        candidates.append((old.name, lineage, previous))
+    if not candidates:
+        return None
+    rankings = {}
+    for number, path in enumerate(cache.parent.rglob("report.json")):
+        if number >= 2000:
+            raise RuntimeError("The saved render-report search exceeded its bounded cache limit.")
+        if cache in path.parents or not _revision_regular(path, cache.parent):
+            continue
+        report = _read(path)
+        if report.get("renderer") != "manimgx":
+            continue
+        for row in report.get("scenes", []):
+            if isinstance(row, dict) and row.get("id") == context["scene"]["id"] and row.get("status") == "preview":
+                rankings[row.get("compiler_key")] = max(rankings.get(row.get("compiler_key"), 0), path.stat().st_mtime_ns)
+    candidates = [candidate for candidate in candidates if candidate[0] in rankings]
+    if not candidates:
+        return None
+    newest = max(rankings[candidate[0]] for candidate in candidates)
+    selected = [candidate for candidate in candidates if rankings[candidate[0]] == newest]
+    if len(selected) != 1:
+        raise RuntimeError("The previous scene implementation is ambiguous. No revision request was started.")
+    _, lineage, previous = selected[0]
+    before = {p: _pointer_value(previous, p) for p in _pointers(previous)}
+    after = {p: _pointer_value(context, p) for p in _pointers(context)}
+    changes = {p: {"before": before.get(p), "after": after.get(p), "change":
+        "added" if p not in before else "removed" if p not in after else "changed"}
+        for p in sorted(set(before) | set(after)) if p not in before or p not in after or before[p] != after[p]}
+    return {"lineage": lineage, "changes": changes}
+
+
+def _pointer_value(value, pointer):
+    for part in pointer.split("/")[1:]:
+        part = part.replace("~1", "/").replace("~0", "~")
+        value = value[int(part)] if isinstance(value, list) else value[part]
+    return value
+
+
+def _revision_prompt(start):
+    if start is None:
+        return ""
+    return ("\nVERIFIED PREVIOUS IMPLEMENTATION — REVISION STARTING POINT ONLY\n"
+        "Read the supplied Python file as a starting point for implementation. It belongs to this same scene and native workflow, "
+        "passed source/API checks and rendered, but its visuals are NOT approved. The new complete original input above is authoritative. "
+        "Implement all its changes; reuse helpers only when they still satisfy those requirements. Do not copy old pixels, preserve a reviewed defect, "
+        "discard a new camera/object/label/timing requirement, or substitute the previous board. Return the same COMPLETE new scene_class/source/coverage/unsupported "
+        "manifest, covering every new pointer; previous coverage is evidence, never acceptance of the revised scene. All original visual reviews still run. "
+        "The one pinned API body above remains the API authority; do not reread the whole private source inventory when this verified implementation already resolves it.\n"
+        + "STARTING POINT IDENTITY:\n" + json.dumps(start["lineage"], ensure_ascii=False)
+        + "EXACT OLD→NEW INPUT CHANGES:\n" + json.dumps(start["changes"], ensure_ascii=False, allow_nan=False))
+
+
 def _compiled_source(engine, compiler, context, assets, ready, directory, key, *, reference_bundle=None, injection=None):
     """Cache accepted typed source; one correction only after a known local API failure."""
     directory = Path(directory)
@@ -905,6 +1106,8 @@ def _compiled_source(engine, compiler, context, assets, ready, directory, key, *
         reused = _reuse_source(context, assets, ready, directory, key, reference_bundle=reference_bundle, injection=injection)
         if reused is not None:
             return reused
+    revision_owner = _revision_owner(engine, directory.parent)
+    revision = _revision_start(context, ready, directory, key, revision_owner) if reference_bundle is not None else None
     references = None
     if reference_bundle is not None:
         import cr_manimgx_refs
@@ -921,7 +1124,16 @@ def _compiled_source(engine, compiler, context, assets, ready, directory, key, *
             # native Read-only files. 'opus' selects the user's visual role;
             # CR authorizes the actual model from their verified profile.
             threed = importlib.import_module("threed")
-            compiler = lambda prompt, maximum: threed._cc(engine, prompt, "opus", [reference_path], what="ManimGX compile")
+            read_files = [reference_path]
+            if revision:
+                previous_source = Path(revision["lineage"]["source_file"])
+                snapshot = directory / "revision-start.py"
+                contents = previous_source.read_bytes()
+                if hashlib.sha256(contents).hexdigest() != revision["lineage"]["source_sha256"]:
+                    raise RuntimeError("The previous scene changed before its revision request. No model request was started.")
+                _write(snapshot, contents.decode("utf-8"), text=True)
+                read_files.append(snapshot)
+            compiler = lambda prompt, maximum: threed._cc(engine, prompt, "opus", read_files, what="ManimGX compile")
         else:
             compiler = lambda prompt, maximum: engine.claude(prompt, model, max_tokens=maximum)
     if saved:
@@ -929,7 +1141,7 @@ def _compiled_source(engine, compiler, context, assets, ready, directory, key, *
         raise RuntimeError("This saved ManimGX compiler response has no accepted API validation. Review its graphics request before continuing.")
     journal = {"key": key, "state": "prepared", "calls": 0}
     _write(journal_path, journal)
-    prompt = _prompt(context, assets, ready["docs"], references)
+    prompt = _prompt(context, assets, ready["docs"], references) + _revision_prompt(revision)
     try:
         for attempt in (1, 2):
             journal.update(state="running", calls=attempt)
@@ -957,8 +1169,18 @@ def _compiled_source(engine, compiler, context, assets, ready, directory, key, *
                     engine.log("Fast mode: correcting one completed source response against its local API diagnostic; the original scene requirements stay unchanged.")
                 continue
             _write(source, result["source"], text=True)
+            provenance = None
+            after_owner = _revision_owner(engine, directory.parent) if revision_owner is not None else None
+            if after_owner is not None and after_owner["identity"] == revision_owner["identity"]:
+                native = _revision_native_result(raw, after_owner)
+                if native is not None and native["stage_id"] not in {stage.get("stage_id") for stage in revision_owner["stages"]}:
+                    provenance = {"identity": after_owner["identity"], "native": native, "key": key,
+                        "context_sha256": _digest(context), "assets_sha256": _digest(assets),
+                        "reference_identity": reference_bundle["identity"] if reference_bundle else None,
+                        "setup_identity": ready["identity"], "compiler": COMPILER_VERSION}
             _write(manifest, {"key": key, "typed": True, "source_sha256": hashlib.sha256(result["source"].encode()).hexdigest(),
-                              "result": result, "context": context, "output_injection": injection})
+                              "result": result, "context": context, "output_injection": injection,
+                              "native_provenance": provenance, "revision_start": revision["lineage"] if revision else None})
             journal.update(state="validated")
             _write(journal_path, journal)
             return result, source
