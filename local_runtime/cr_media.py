@@ -493,6 +493,8 @@ def narrate(engine, text, mp3, srt, voice_id="", style=""):
 
 def install(engine):
     """Keep native providers when a task is unticked; resolve settings per call."""
+    import cr_watch
+    cr_watch.install()
     original_whisper=getattr(engine,"_get_whisper",None)
     if original_whisper and not getattr(original_whisper,"_cr_pcm_io",False):
         class WhisperIO:

@@ -280,3 +280,24 @@ def test_status_failure_preserves_the_users_renderer_choice(panel):
     assert toggle.is_checked() and toggle.is_enabled()
     toggle.uncheck()
     assert toggle.is_disabled()
+
+
+def test_old_success_does_not_hide_required_renderer_recheck(panel):
+    page, state = panel
+    message = "Run the optional ManimGX setup check before selecting it."
+    state.data.update(ready=False, message=message)
+    page.wait_for_function("document.getElementById('cr-renderer-status').textContent=== " + json.dumps(message))
+    assert page.locator('#cr-renderer-toggle').is_disabled()
+    assert page.get_by_role('button', name='Install and check ManimGX').is_enabled()
+
+
+def test_claude_compilation_is_distinct_from_gpu_frame_progress(panel):
+    page, state = panel
+    state.data['progress'] = {'scenes': {'example': {'scene_id': 'example', 'stage': 'compile',
+        'state': 'running', 'frames_done': 0, 'total_frames': 91, 'elapsed_seconds': 0}}}
+    page.wait_for_function("document.getElementById('cr-renderer-progress').textContent.includes('Claude is writing 3D code')")
+    text = page.locator('#cr-renderer-progress').inner_text()
+    assert 'frames/sec' not in text and '0 frames' not in text
+    state.data['progress']['scenes']['example'].update(stage='render', frames_done=45, elapsed_seconds=.5)
+    page.wait_for_function("document.getElementById('cr-renderer-progress').textContent.includes('90.0 frames/sec')")
+    assert '45 frames / 91' in page.locator('#cr-renderer-progress').inner_text()

@@ -354,6 +354,9 @@ def create_app():
     if activity is None:
         activity = studio._cr_activity = CreativeActivity(studio)
         activity.install()
+    import cr_video_cancel
+    video_workers = studio._cr_video_workers = cr_video_cancel.VideoWorkers(studio, HOME)
+    video_workers.install_routes()
     token = secrets.token_urlsafe(24)
     # The project launcher reads this private, local-only control token. It is
     # never sent to CR or included in copied launch commands.
@@ -856,6 +859,9 @@ def create_app():
             text = text.replace("<body>", '<body><a href="/cr-setup" style="display:block;background:#171B2E;color:#EDEEF5;padding:12px 24px;font:14px system-ui;text-decoration:none">ChannelRecipe · Setup &amp; accounts</a>', 1)
             if request.path == "/":
                 text=text.replace("</body>",(HOME/"cr_renderer_panel.html").read_text()+"</body>",1)
+                cancel_panel = HOME / "cr_video_cancel.html"
+                if cancel_panel.is_file():
+                    text=text.replace("</body>",cancel_panel.read_text()+"</body>",1)
                 guard = """<style>#farm.cr-native-farm #farmSetup,#farm.cr-native-farm #farmBody{display:none!important}</style>
 <script>document.addEventListener('DOMContentLoaded',()=>{
  const go=document.getElementById('go');if(!go)return;
@@ -948,8 +954,15 @@ def create_app():
             if deferred:
                 dispatch = FunctionType(original_run.__code__, {**original_run.__globals__, "timeline":deferred},
                                         original_run.__name__, original_run.__defaults__, original_run.__closure__)
-            result=dispatch(spec)
+            if video_workers.supports(spec):
+                result=video_workers.run(spec,project["id"])
+            else:
+                result=dispatch(spec)
             if cfg.get("brain_mode") == "claudecode":
+                # Only reconcile receipts already saved by the stopped worker.
+                # A killed/uncertain stage remains authorized for explicit
+                # recovery, never completed or silently retried here.
+                cr_claude.sync_receipts(cr_bridge)
                 state=studio.JOBS.get(spec["slug"],{})
                 artifacts=[]
                 if state.get("state") == "done":
@@ -959,7 +972,7 @@ def create_app():
                     complete=complete and studio.mv.final_video(job).is_file()
                 try:
                     report={"project_id":project["id"],"status":"done" if complete else "failed",
-                        "artifacts":artifacts,"error_code":"" if complete else "runtime_failed"}
+                        "artifacts":artifacts,"error_code":"" if complete else "cancelled" if state.get("state")=="cancelled" else "runtime_failed"}
                     pending=job/".cr-finish-pending.json"
                     cr_claude._private_write(pending,report)
                     cr_bridge.finish_project(report)
