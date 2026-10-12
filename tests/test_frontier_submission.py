@@ -16,6 +16,17 @@ import cr_submission
 PROJECT = "crv_" + "a" * 24
 
 
+def test_optional_renderer_is_attached_before_dispatch_for_every_title():
+    studio, observed, dispatched = studio_with_original()
+    cr_submission.install(studio)
+    response = studio.app.test_client().post("/api/run", json={"title":"One\nTwo", "steps":["video"],
+        "render_backend":"manimgx", "manimgx_identity":"a"*64})
+    assert response.status_code == 200
+    assert observed == [[], []] and dispatched == [True]
+    assert all(row["render_backend"] == "manimgx" and row["manimgx_identity"] == "a"*64 for row in studio.QUEUE)
+    assert all("cr_project_id" not in row for row in studio.QUEUE)
+
+
 def studio_with_original(queue=None):
     app = Flask("isolated-original-submission")
     studio = SimpleNamespace(app=app, QUEUE=queue if queue is not None else [],

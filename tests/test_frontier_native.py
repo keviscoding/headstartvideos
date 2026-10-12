@@ -30,6 +30,16 @@ def stage(n,suffix="a",role="general"):
         input_fingerprint=suffix*64,model_role=role,requested_model="claude-sonnet-5",local_version=studio.VERSION)
 
 
+def test_optional_renderer_and_checked_identity_are_pinned_in_project(native):
+    req=native.begin.model_copy(update={"begin_id":"optional_renderer", "options":{"render_backend":"manimgx","manimgx_identity":"a"*64}})
+    result=studio.native_begin(native.owner,req)
+    assert result["job_spec"]["render_backend"]=="manimgx"
+    assert studio.native_progress(native.owner,result["project_id"])["job_spec"]["manimgx_identity"]=="a"*64
+    for invalid in ({"render_backend":"other"},{"render_backend":"manimgx"}):
+        with pytest.raises(HTTPException):
+            studio.native_begin(native.owner,req.model_copy(update={"begin_id":"invalid_renderer","options":invalid}))
+
+
 def test_native_uses_no_api_credentials_and_duplicate_begin_is_idempotent(native):
     assert studio.credential(1) is None
     repeated=studio.native_begin(native.owner,native.begin)

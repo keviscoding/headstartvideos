@@ -10,6 +10,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import secrets
 import threading
 import time
@@ -26,9 +27,9 @@ from webapp import database as db
 from cryptography.fernet import Fernet, InvalidToken
 from webapp import frontier_providers as providers
 
-VERSION = "5.3-admin.17"
+VERSION = "5.3-admin.18"
 CATALOG = Path(__file__).resolve().parent / "frontier" / "catalog.json"
-RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.17.zip"
+RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.18.zip"
 WORKFLOW_VERSION = "frontier-5.3-claudecode.1"
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 NATIVE_STAGE_LIMIT = 2
@@ -576,7 +577,7 @@ def _runtime_compatible(version, workflow):
     # changed engine or workflow must explicitly migrate projects instead.
     current=workflow_contract()
     return version==workflow["required_release"] or (
-        version==VERSION and workflow.get("required_release") in {"5.3-admin.8","5.3-admin.9","5.3-admin.10","5.3-admin.11","5.3-admin.12","5.3-admin.13","5.3-admin.14","5.3-admin.15","5.3-admin.16"}
+        version==VERSION and workflow.get("required_release") in {"5.3-admin.8","5.3-admin.9","5.3-admin.10","5.3-admin.11","5.3-admin.12","5.3-admin.13","5.3-admin.14","5.3-admin.15","5.3-admin.16","5.3-admin.17"}
         and workflow.get("workflow_version")==current["workflow_version"]
         and workflow.get("engine_source_sha256")==current["engine_source_sha256"])
 
@@ -664,9 +665,13 @@ def native_begin(user, req: NativeBegin):
         raise HTTPException(409, " ".join(ready["issues"]))
     allowed = {"steps", "script", "burn_subs", "thumb_count", "use_motion", "character", "character_image",
                "maps", "headlines", "spotlight", "objects", "depth", "extra", "avatar_id", "avatar_s",
-               "avatar_count", "auto_style", "offer", "offer_plugs", "desc", "chapters", "sources", "byo_audio", "mix"}
+               "avatar_count", "auto_style", "offer", "offer_plugs", "desc", "chapters", "sources", "byo_audio", "mix", "render_backend", "manimgx_identity"}
     if set(req.options) - allowed or len(json.dumps(req.options)) > 200000:
         raise HTTPException(400, "Use valid original video options without account credentials.")
+    if req.options.get("render_backend", "original") not in {"original", "manimgx"}:
+        raise HTTPException(400, "Choose the standard renderer or ManimGX.")
+    if req.options.get("render_backend") == "manimgx" and not re.fullmatch(r"[a-f0-9]{64}",str(req.options.get("manimgx_identity", ""))):
+        raise HTTPException(400, "Complete the ManimGX check before starting this project.")
     spec = {**req.options, "title": req.title.strip(), "style": req.style, "minutes": req.minutes, "features": req.features}
     identity = {"spec": spec, "release": req.setup.local_version, "general_model": req.setup.general_model,
                 "visual_model": req.setup.visual_model, "max_calls": req.max_calls}

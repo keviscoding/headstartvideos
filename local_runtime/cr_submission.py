@@ -17,7 +17,14 @@ def submit(studio, payload, project_id, *, before_publish=None):
     """
     if not re.fullmatch(r"crv_[a-f0-9]{24}", str(project_id)):
         raise ValueError("Use a valid saved CR project.")
-    original = studio.app.view_functions["api_run"]
+    original = getattr(studio, "_cr_original_api_run", studio.app.view_functions["api_run"])
+    return _publish(studio, payload, original, project_id=project_id, before_publish=before_publish)
+
+
+def _publish(studio, payload, original, *, project_id=None, before_publish=None):
+    backend = payload.get("render_backend", "original")
+    if backend not in {"original", "manimgx"}:
+        raise ValueError("Choose the standard renderer or ManimGX.")
     staged = []
     globals_ = {**original.__globals__, "QUEUE": staged, "_ensure_dispatcher": lambda: None}
     capture = FunctionType(original.__code__, globals_, original.__name__,
@@ -34,10 +41,23 @@ def submit(studio, payload, project_id, *, before_publish=None):
     if not staged:
         raise RuntimeError("Frontier did not construct a queued job.")
     for spec in staged:
-        spec["cr_project_id"] = project_id
+        if project_id:
+            spec["cr_project_id"] = project_id
+        spec["render_backend"] = backend
+        if backend == "manimgx":
+            spec["manimgx_identity"] = payload.get("manimgx_identity")
     if before_publish is not None:
         before_publish()
     with studio.LOCK:
         studio.QUEUE.extend(staged)
     studio._ensure_dispatcher()
     return response
+
+
+def install(studio):
+    if hasattr(studio, "_cr_original_api_run"):
+        return
+    studio._cr_original_api_run = studio.app.view_functions["api_run"]
+    def publish():
+        return _publish(studio, request.get_json(silent=True) or {}, studio._cr_original_api_run)
+    studio.app.view_functions["api_run"] = publish

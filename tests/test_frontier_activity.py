@@ -103,6 +103,7 @@ def runtime(tmp_path, monkeypatch, timeline):
 
     studio = SimpleNamespace(app=app, mv=SimpleNamespace(), RUNNING={}, QUEUE=[],
         JOBS={}, PRODUCT_BUILD={}, FARM={}, timeline=timeline, _run_spec=lambda spec: None)
+    monkeypatch.setattr(cr_studio.cr_submission, "install", lambda *a: None)
     cfg = {"brain_mode": "channelrecipe", "costs_accepted": True, "key": "cr_mcp_fixture"}
     monkeypatch.setitem(sys.modules, "app", studio)
     monkeypatch.setattr(cr_studio, "HOME", tmp_path)

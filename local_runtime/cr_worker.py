@@ -63,7 +63,7 @@ def main():
             workflow.get("engine_source_sha256")==current.get("engine_source_sha256"))
         if not compatible:
             raise RuntimeError("Download this project's current studio release before resuming.")
-        cr_bridge._project=progress["project"]
+        cr_bridge._project={**progress["project"], "job_spec":progress["job_spec"]}
     else:
         cr_bridge._project=cr_bridge.call("projects/"+args.project)
     checks={**cr_studio.graphics_ready(),"python":sys.version_info >= (3,10),"ffmpeg":cr_studio.video_tools_ready(),

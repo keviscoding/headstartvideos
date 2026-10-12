@@ -196,6 +196,8 @@ def install(studio, activity, setup_status):
             if cfg.get("brain_mode") != "claudecode":
                 raise ValueError("Use the original Claude Code route for 3D inspection and repair.")
             checks = setup_status().get_json()
+            if action in {"qa", "redo"} and checks.get("claude_code", {}).get("allowance", {}).get("blocked"):
+                raise ValueError(checks["claude_code"]["allowance"]["message"])
             if not checks["readiness"]["ready"]:
                 raise ValueError("Finish Setup & accounts before inspecting or repairing scenes.")
             marker = read_json(job / "cr-project.json")

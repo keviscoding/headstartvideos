@@ -378,6 +378,7 @@ def setup_client(verified,monkeypatch):
     monkeypatch.setattr(cr_studio.cr_workers,"busy",lambda:False)
     monkeypatch.setattr(cr_studio.cr_mcp,"status",lambda *a:{"connected":True})
     monkeypatch.setattr(cr_studio.cr_mcp,"is_registered",lambda *a:True)
+    monkeypatch.setattr(cr_studio.cr_submission,"install",lambda *a:None)
     client = cr_studio.create_app().app.test_client()
     token = json.loads((v.root/".cr-runtime.json").read_text())["token"]
     return client,{"Host":"127.0.0.1:7860","X-CR-Local-Token":token}

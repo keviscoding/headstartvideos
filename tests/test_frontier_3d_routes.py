@@ -174,7 +174,7 @@ def test_reassembly_uses_original_validation_and_same_job_queue(local, monkeypat
     monkeypatch.setitem(api_run.__globals__, "LOCK", local.studio.LOCK)
     response = local.client.post("/cr-3d/example", json={"action": "assemble"})
     assert response.status_code == 200
-    assert local.studio.QUEUE == [{"slug": "example", "cr_project_id": new_id}]
+    assert local.studio.QUEUE == [{"slug": "example", "cr_project_id": new_id, "render_backend": "original"}]
     assert dispatched == [True]
     # The completed original marker remains until the normal dispatcher starts.
     assert json.loads((local.job / "cr-project.json").read_text())["id"] == local.parent

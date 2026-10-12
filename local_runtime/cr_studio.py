@@ -349,6 +349,7 @@ def create_app():
     cr_capabilities.install(studio)
     cr_render.install(studio.mv)
     cr_workers.install()
+    cr_submission.install(studio)
     activity = getattr(studio, "_cr_activity", None)
     if activity is None:
         activity = studio._cr_activity = CreativeActivity(studio)
@@ -394,9 +395,14 @@ def create_app():
                 if activity.busy():
                     return jsonify(error="Finish your current video before starting another."), 409
                 checks = setup_status().get_json()
+                if cfg.get("brain_mode") == "claudecode" and checks.get("claude_code", {}).get("allowance", {}).get("blocked"):
+                    return jsonify(error=checks["claude_code"]["allowance"]["message"]),409
                 preflight = cr_readiness.preset(studio,checks,data)
                 if not preflight["ready"]:
                     return jsonify(error="Complete this video's setup before starting.",**preflight),409
+                if preflight.get("manimgx_identity"):
+                    data["manimgx_identity"] = preflight["manimgx_identity"]
+                    request._cached_json = (data, data)
                 cfg = cr_bridge.load_settings()
                 cfg["setup_proof"] = preflight["proof"]
                 cr_bridge.save_settings(cfg)
@@ -730,7 +736,7 @@ def create_app():
                 cfg["narration"] = {"provider": "original"}
             cr_bridge.save_settings(cfg)
             return jsonify(saved=True, message="Narration uses " +
-                           ("the model account choices above." if provider == "inherit" else "your individual Frontier voice settings."))
+                           ("the model account choices above." if provider == "inherit" else "your individual voice settings."))
         info = cr_media.PROVIDERS[provider]
         model_id = str(data.get("model", "")).strip() or info["models"]["narration"]
         try:
@@ -765,7 +771,7 @@ def create_app():
         if data.get("provider") == "original":
             cfg.pop("media_hub", None)
             cr_bridge.save_settings(cfg)
-            return jsonify(saved=True, message="Using the individual accounts chosen in Frontier.")
+            return jsonify(saved=True, message="Using your individual studio accounts.")
         provider = data.get("provider")
         key = str(data.get("key", "")).strip()
         tasks = data.get("tasks")
@@ -831,11 +837,17 @@ def create_app():
             preset=None
             if request.path=="/" and request.args.get("cr-preset"):
                 try:
-                    checked=json.loads((HOME/".cr-setup-proof.json").read_text())
                     name=request.args["cr-preset"]
-                    if checked.get("style")==name and checked.get("setup",{}).get("local_version")==json.loads((HOME/"cr-release.json").read_text())["version"]:
-                        entry=next((s for s in studio.styles.catalogue() if s["name"]==name),None)
-                        if entry:preset={"style":name,"tab":entry.get("tab","production"),"features":checked.get("features",{})}
+                    studio.styles.load_all()
+                    entry=next((s for s in studio.styles.catalogue() if s["name"]==name),None)
+                    if entry:
+                        preset={"style":name,"tab":entry.get("tab","production")}
+                        try:
+                            checked=json.loads((HOME/".cr-setup-proof.json").read_text())
+                            if checked.get("style")==name and checked.get("setup",{}).get("local_version")==json.loads((HOME/"cr-release.json").read_text())["version"]:
+                                preset["features"]=checked.get("features",{})
+                        except (OSError,ValueError,KeyError):
+                            pass
                 except (OSError,ValueError,KeyError):
                     pass
             text=cr_ui.transform_html(response.get_data(as_text=True),narration=narration,preset=preset)
@@ -843,7 +855,8 @@ def create_app():
             text = text.replace("</head>", patch + "</head>", 1)
             text = text.replace("<body>", '<body><a href="/cr-setup" style="display:block;background:#171B2E;color:#EDEEF5;padding:12px 24px;font:14px system-ui;text-decoration:none">ChannelRecipe · Setup &amp; accounts</a>', 1)
             if request.path == "/":
-                guard = """<script>document.addEventListener('DOMContentLoaded',()=>{const go=document.getElementById('go');if(!go)return;let ready=false;const note=document.createElement('p');note.style.cssText='color:#e8a13c;font:14px system-ui;line-height:1.6';note.textContent='Checking ChannelRecipe setup…';go.insertAdjacentElement('beforebegin',note);go.disabled=true;fetch('/cr-status').then(r=>r.json()).then(d=>{ready=d.readiness?.ready===true;go.disabled=!ready;note.textContent=ready?'Your setup is connected. The selected preset and options will be checked before generation.':'Finish Setup & accounts before generating a video.';if(!ready){const a=document.createElement('a');a.href='/cr-setup';a.textContent=' Open setup';note.append(a)}}).catch(()=>{note.textContent='Reconnect ChannelRecipe in Setup & accounts before generating.'});go.addEventListener('click',e=>{if(!ready){e.preventDefault();e.stopImmediatePropagation();location.href='/cr-setup'}},true)});</script>"""
+                text=text.replace("</body>",(HOME/"cr_renderer_panel.html").read_text()+"</body>",1)
+                guard = """<script>document.addEventListener('DOMContentLoaded',()=>{const go=document.getElementById('go');if(!go)return;let ready=false;const note=document.createElement('p');note.style.cssText='color:#e8a13c;font:14px system-ui;line-height:1.6';note.textContent='Checking ChannelRecipe setup…';go.insertAdjacentElement('beforebegin',note);go.disabled=true;fetch('/cr-status').then(r=>r.json()).then(d=>{ready=d.readiness?.ready===true&&!(d.brain_mode==='claudecode'&&d.claude_code?.allowance?.blocked);go.disabled=!ready;note.textContent=d.brain_mode==='claudecode'&&d.claude_code?.allowance?.blocked?d.claude_code.allowance.message:ready?'Your setup is connected. The selected preset and options will be checked before generation.':'Finish Setup & accounts before generating a video.';if(!ready){const a=document.createElement('a');a.href='/cr-setup';a.textContent=' Open setup';note.append(a)}}).catch(()=>{note.textContent='Reconnect ChannelRecipe in Setup & accounts before generating.'});go.addEventListener('click',e=>{if(!ready){e.preventDefault();e.stopImmediatePropagation();location.href='/cr-setup'}},true)});</script>"""
                 text=text.replace("</body>",guard+"</body>",1)
             response.set_data(text)
         return response
@@ -859,7 +872,16 @@ def create_app():
         marker = job / "cr-project.json"
         try:
             previous = json.loads(marker.read_text()) if marker.is_file() else {}
+            if spec.get("timeline"):
+                for key in ("render_backend", "manimgx_identity"):
+                    if key in (previous.get("job_spec") or {}):
+                        spec[key] = previous["job_spec"][key]
+            old_backend = (previous.get("job_spec") or {}).get("render_backend", "original")
+            if previous and old_backend != spec.get("render_backend", "original"):
+                raise RuntimeError("This saved video uses a different renderer. Keep its pinned renderer, or use a new title for a new project.")
             cfg=cr_bridge.load_settings()
+            if old_backend == "manimgx" and cfg.get("brain_mode") != "claudecode":
+                raise RuntimeError("This saved ManimGX project uses your Claude Code brain. Reconnect its pinned Claude profile before editing or exporting it.")
             setup=cfg.get("setup_proof")
             cr_bridge.install(studio.mv)
             if cfg.get("brain_mode") == "claudecode":
@@ -917,6 +939,10 @@ def create_app():
     studio._run_spec = run_spec
     import cr_3d_routes
     cr_3d_routes.install(studio, activity, setup_status)
+    import cr_style_routes
+    cr_style_routes.install(studio, activity, setup_status, token=token, home=HOME)
+    import cr_optional_renderer
+    cr_optional_renderer.install(studio, activity, home=HOME)
     return studio
 
 
