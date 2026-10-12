@@ -1,4 +1,4 @@
-"""Bootstrap original timeline/product/reference workers with the CR adapters."""
+"""Bootstrap original editor, product, reference and 3D workers with CR."""
 from __future__ import annotations
 import argparse
 import json
@@ -14,18 +14,29 @@ HOME=Path(__file__).resolve().parent
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument("--project",required=True)
+    parser.add_argument("--operation")
     parser.add_argument("command",nargs=argparse.REMAINDER)
     args=parser.parse_args()
     if not re.fullmatch(r"crv_[a-f0-9]{24}",args.project):
         parser.error("Use an owned CR project ID.")
+    if args.operation is not None and not re.fullmatch(r"op_[a-f0-9]{24}",args.operation):
+        parser.error("Use a valid explicitly created 3D operation ID.")
     command=args.command[1:] if args.command[:1]==["--"] else args.command
     import cr_workers,cr_bridge,cr_claude,cr_media,cr_render,cr_studio,cr_readiness
     if not command:parser.error("Use an original studio worker command.")
     target=Path(command[0]).resolve()
     if target.parent != HOME or target.name not in cr_workers.TARGETS:
         parser.error("Use a supported original worker from this studio folder.")
+    threed = target.name == "threed.py"
+    if args.operation is not None and not threed:
+        parser.error("Operation IDs apply only to original 3D inspection or repair.")
+    if threed:
+        import cr_3d
+        cr_3d.validate_operation(HOME,args.project,command[1:])
     cfg=cr_bridge.load_settings()
     mode=cfg.get("brain_mode","channelrecipe")
+    if threed and mode != "claudecode":
+        raise RuntimeError("Connect and verify your Claude Code models before reviewing or repairing 3D scenes.")
     cr_studio.configure_video_tools()
     os.environ["CLAUDE_PROVIDER"]=os.environ["SCRIPT_PROVIDER"]="claudecode" if mode=="claudecode" else "channelrecipe"
     os.environ["CLAUDE_HANDOFF_DIR"]=""
@@ -52,9 +63,16 @@ def main():
     ready=cr_readiness.basic(checks)
     if not ready["ready"]:
         raise RuntimeError("Finish setup before starting this worker: "+" ".join(ready["blockers"]))
+    if threed and checks.get("webgl") is not True:
+        raise RuntimeError("Finish the local 3D graphics check before reviewing or repairing scenes.")
     cr_workers.install()
     sys.argv=command
-    runpy.run_path(str(target),run_name="__main__")
+    if threed:
+        checks["claude_code"]=ready["claude_code"]
+        proof=cr_readiness.proof(checks,purpose="creative")
+        return cr_3d.run_operation(HOME,args.project,command[1:],cr_bridge,proof,
+            lambda:runpy.run_path(str(target),run_name="__main__"),operation_id=args.operation)
+    return runpy.run_path(str(target),run_name="__main__")
 
 
 if __name__=="__main__":

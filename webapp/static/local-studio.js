@@ -146,15 +146,33 @@ window.CRLocalStudio = (() => {
     }
     function nativeRequests(result) {
         const stages=result.stages||[];
-        const labels={complete:'Stage saved',failed:'Stage stopped',retry_allowed:'Ready to resume',authorized:'Awaiting a saved result'};
+        const purpose=result.purpose;
+        const guidance=purpose==='video'?{
+            complete:'The result is saved. Resume the same video to reuse its completed work.',
+            approved:'One additional stage attempt has been approved. Resume the same video in your local studio; nothing starts from this history page.',
+            footer:'Saved videos and exports remain on your computer. Use Your videos to open the timeline or the output folder.',
+            link:'Open local setup to review this video ↗'}:purpose==='setup'?{
+            complete:'This model-check result is saved. Return to local setup to finish or review model verification.',
+            approved:'One additional model-check attempt has been approved. Repeat model verification in local setup; approval does not start verification.',
+            footer:'These are model-verification checks, not video renders. Return to local setup to verify the saved model profile.',
+            link:'Open local setup for model verification ↗'}:purpose==='creative'?{
+            complete:'This creative-stage result is saved with its operation. Review the result using its original studio controls.',
+            approved:'An additional stage attempt is allowed, but the stopped creative action will not replay. Use the original studio controls to explicitly start a new action from current cached assets; new work may repeat Claude calls and use more allowance.',
+            footer:'Stopped creative actions do not replay from this history page. Review their saved records, then use the original studio controls for an explicitly requested new action.',
+            link:'Open local setup to review creative work ↗'}:{
+            complete:'This result is saved. Review it using the original controls that started this work.',
+            approved:'One additional stage attempt is allowed. Review its purpose and original controls before starting more work.',
+            footer:'Review the saved status and original studio controls before continuing this work.',
+            link:'Open local setup to review saved work ↗'};
+        const labels={complete:'Stage saved',failed:'Stage stopped',retry_allowed:'Stage attempt approved',authorized:'Awaiting a saved result'};
         const errors={usage_limit:'Your Claude account reached its usage limit. Wait for its reset, then review this stage in local setup.',
             model_unavailable:'Your Claude account could not use the selected model. Review model access in local setup.',
             auth_missing:'Claude Code could not use your login. Sign in again, then review this stage in local setup.',
             timeout:'Claude Code did not return a complete result before the timeout. Review its saved status and Claude usage in local setup.'};
-        return '<p class="ls-inline-note">These creative stages use your local Claude Code account. CR records their authorization and saved results; it does not bill an API brain for these stages.</p>'+
+        return '<p class="ls-inline-note">These stages use your local Claude Code account. CR records their authorization and saved results; it does not bill an API brain for these stages.</p>'+
             (stages.length?stages.map(stage=>{
                 const usage=stage.usage||{}, tokens=Number(usage.input_tokens||0)+Number(usage.output_tokens||0)+Number(usage.cache_read_input_tokens||0)+Number(usage.cache_creation_input_tokens||0);
-                const message=stage.status==='complete'?'The result is saved. Resume the same video to reuse its completed work.':stage.status==='retry_allowed'?'One additional attempt has been approved. Resume the same video in your local studio.':stage.status==='authorized'?'This stage may still be running or waiting for its result to sync. Refresh its status in local setup before resuming or approving another attempt.':errors[stage.error_code]||'This stage stopped before a complete result was saved. Review its status and your Claude usage in local setup.';
+                const message=stage.status==='complete'?guidance.complete:stage.status==='retry_allowed'?guidance.approved:stage.status==='authorized'?'This stage may still be running or waiting for its result to sync. Refresh its status in local setup before continuing or approving another attempt.':errors[stage.error_code]||'This stage stopped before a complete result was saved. Review its status and your Claude usage in local setup.';
                 const role=stage.model_role==='visual'?'Complex visuals':'General work';
                 const kind={text:'Text',vision:'Vision',research:'Research'}[stage.kind]||stage.kind;
                 return '<section class="ls-request"><div class="ls-request-heading"><strong>'+esc(labels[stage.status]||stage.status)+'</strong><span>'+Number(stage.attempts)+' '+(stage.attempts===1?'attempt':'attempts')+'</span></div>'+
@@ -162,8 +180,8 @@ window.CRLocalStudio = (() => {
                     (usage.reported?'<small>'+tokens.toLocaleString()+' locally reported tokens, including cached input. Your Claude account determines actual usage and limits.</small>':'<small>Token usage has not been reported for this attempt. Check your Claude account; this does not mean no usage occurred.</small>')+
                     '<details class="ls-request-debug"><summary>Details for support</summary><small class="ls-request-id">Stage '+esc(stage.stage_id)+'</small>'+(stage.error_code?'<small>'+esc(stage.error_code)+'</small>':'')+'</details></section>';
             }).join(''):'<p>No Claude Code stages have been authorized for this project yet.</p>')+
-            '<p class="ls-inline-note">Saved videos and exports remain on your computer. Use Your videos to open the timeline or the output folder.</p>'+
-            '<a class="btn-secondary" href="http://127.0.0.1:7860/cr-setup" target="_blank" rel="noopener">Open local setup to review or resume ↗</a>';
+            '<p class="ls-inline-note">'+esc(guidance.footer)+'</p>'+
+            '<a class="btn-secondary" href="http://127.0.0.1:7860/cr-setup" target="_blank" rel="noopener">'+esc(guidance.link)+'</a>';
     }
     async function requests(projectId, button) {
         const el=document.getElementById('ls-requests-'+projectId);if(!el)return;

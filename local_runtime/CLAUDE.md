@@ -40,4 +40,12 @@ explicitly accepts additional usage. Never approve retries automatically.
 
 Help review the final video, timeline, thumbnails and exports. Model identity
 alone does not guarantee equal quality; inspect actual output when judging it.
+Finished 3D videos have Review 3D scenes in the local video library. Use it to
+inspect the final clips, repair selected or flagged scenes with original Claude
+direction and verification, then update the final video from the repaired cache.
+Each inspection or repair has a separate owned creative project. For terminal
+work, use cr_worker.py --project SOURCE_PROJECT_ID -- threed.py qa JOB or redo
+JOB with the original scene IDs/options; never invoke raw threed.py generation.
+Stopped or uncertain operations require review; do not rerun them automatically.
+Sync saved completion only reconciles receipts and does not generate again.
 This owner package remains admin-only and retains original private source.

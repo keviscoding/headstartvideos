@@ -8,7 +8,7 @@ import threading
 import weakref
 
 HOME=Path(__file__).resolve().parent
-TARGETS={"timeline.py","offer.py","offer_pack.py","reflearn.py"}
+TARGETS={"timeline.py","offer.py","offer_pack.py","reflearn.py","threed.py"}
 _original_popen=subprocess.Popen
 _installed=False
 _processes=weakref.WeakSet()
@@ -30,6 +30,8 @@ def rewrite(command,project_id,*,home=None,python=None):
         target=Path(str(command[j]))
         if not target.is_absolute():target=root/target
         if target.resolve().parent != root or target.name not in TARGETS:
+            return command
+        if target.name == "threed.py" and (j+1 >= len(command) or command[j+1] not in {"qa","redo"}):
             return command
         import re
         if not re.fullmatch(r"crv_[a-f0-9]{24}",project_id or ""):

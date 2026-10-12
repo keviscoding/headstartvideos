@@ -49,7 +49,7 @@ button,.button{display:inline-block;background:var(--accent);color:white;border:
 <form id="preflight"><label for="preflight-style">Video preset</label><select id="preflight-style" required><option value="">Loading your style library…</option></select><p id="preflight-description" class="note"></p><details id="preflight-options" hidden><summary>Review this preset’s original options</summary><p class="note">These start with the preset’s original defaults. You can explicitly turn off an optional feature for this check. Review the same options when you open the studio.</p><div id="preflight-features" class="feature-options"></div></details><button id="preflight-check" type="submit" disabled>Check this preset’s requirements</button></form>
 <div id="readiness-checks" class="checks" aria-live="polite"></div><div id="readiness-blockers" class="blockers" hidden></div><div id="final-ready" class="readiness" role="status"><h3 id="readiness-title">Finish your setup checks</h3><p id="readiness-message">Choose a preset and check its requirements. This step does not generate media or start a video.</p></div>
 <div class="launch"><p>When the checks pass, open the studio and choose your preset, title and duration. Generation will check the actual selected options again.</p><a class="button" id="launch" href="/" aria-disabled="true" tabindex="-1">Open studio →</a></div></section>
-<section><h2>Review stopped Claude work</h2><p>Successful stages and media assets stay saved. If a stage stops, first check your Claude usage and make sure no video is running. You can then allow one further attempt and resume the same video.</p><button id="load-recovery" type="button" class="secondary">Show stopped projects</button><div id="recovery-projects" aria-live="polite"></div></section>
+<section><h2>Review stopped Claude work</h2><p>Successful stages and media assets stay saved. First check your Claude usage and make sure no work is running. Video generation can resume with its caches; model checks return to verification. Stopped creative actions use their original controls to start explicitly requested new work.</p><button id="load-recovery" type="button" class="secondary">Show stopped projects</button><div id="recovery-projects" aria-live="polite"></div></section>
 <p class="note">Keep the launcher's window open. Videos and saved work are in your local output folder. Return to this page using “Setup & accounts” in the studio.</p>
 </main><script>
 const token='__LOCAL_TOKEN__';const $=id=>document.getElementById(id);let accounts={},savedProviders={},currentBrain={},statusData={},stylesCatalog=[],featureCatalog=[],preflightResult=null,setupBusy=false,setupAction=null,claudeDraft=null,preflightBusy=false;
@@ -168,7 +168,36 @@ $('brain-provider').onchange=()=>{$('brain-key').value='';updateBrain();};
 $('brain-model').onchange=()=>{$('brain-research').textContent=brainResearch($('brain-provider').value,$('brain-model').value);};
 $('brain').onsubmit=async e=>{e.preventDefault();const b=e.target.querySelector('button');b.disabled=true;invalidatePreflight();try{const result=await request('/cr-brain',{provider:$('brain-provider').value,key:$('brain-key').value.trim(),model:$('brain-model').value,visual_model:$('brain-visual-model').value||null});$('brain-key').value='';notice(result.message||'API brain account and models selected.');await refresh()}catch(error){notice(error.message,true)}finally{b.disabled=false}};
 $('claude-check').onclick=()=>claudeAction('check');$('claude-connect').onclick=()=>claudeAction('connect_mcp');$('claude-verify').onclick=()=>claudeAction('verify');$('claude-models').onsubmit=e=>{e.preventDefault();claudeAction('select');};
-$('load-recovery').onclick=async()=>{const root=$('recovery-projects');root.replaceChildren();try{const result=await request('/cr-projects');for(const project of result.projects||[]){for(const stage of project.stages||[]){const card=document.createElement('div');card.className='readiness';const title=document.createElement('strong');title.textContent=project.title+' · '+stage.kind+' · '+stage.status;card.append(title);if(stage.can_retry){const label=document.createElement('label');label.className='costs';const check=document.createElement('input');check.type='checkbox';const text=document.createElement('span');text.textContent='I checked Claude usage and cached work, no video is running, and I accept that another attempt uses my account.';label.append(check,text);const button=document.createElement('button');button.className='secondary';button.textContent='Allow one recovery attempt';button.disabled=true;check.onchange=()=>button.disabled=!check.checked;button.onclick=async()=>{button.disabled=true;try{const r=await request('/cr-recover',{project_id:project.project_id,stage_id:stage.stage_id,acknowledge_costs:true});notice(r.message);button.textContent='Approved — resume this video';}catch(e){notice(e.message,true);button.disabled=false}};card.append(label,button);}root.append(card);}}if(!root.children.length)root.textContent='No stopped Claude projects need review.';}catch(e){notice(e.message,true)}};
+function recoveryGuidance(purpose){
+ if(purpose==='video')return {guide:'Resume this video in the studio after any permitted stage attempt is approved. Successful stages and media are reused from cache.',button:'Allow one video-stage attempt',approved:'Approved — resume this video in the studio'};
+ if(purpose==='setup')return {guide:'Return to step 3 and repeat model verification to finish the saved profile checks. Approval does not start verification.',button:'Allow one model-check attempt',approved:'Approved — repeat model verification'};
+ if(purpose==='creative')return {guide:'The stopped creative action will not replay from this page. Use its original studio controls to explicitly start a new action from current cached assets. New work may repeat Claude calls and use more allowance.',creative:true};
+ return {guide:'Review the saved status and the original controls that started this work before allowing more Claude usage.',button:'Allow one stage attempt',approved:'Approved — return to the original controls'};
+}
+$('load-recovery').onclick=async()=>{
+ const root=$('recovery-projects');root.replaceChildren();
+ try{
+  const result=await request('/cr-projects');
+  for(const project of result.projects||[]){
+   const guidance=recoveryGuidance(project.purpose);
+   for(const stage of project.stages||[]){
+    const card=document.createElement('div');card.className='readiness';
+    const title=document.createElement('strong');title.textContent=project.title+' · '+stage.kind+' · '+stage.status;card.append(title);
+    const note=document.createElement('p');note.textContent=stage.status==='authorized'?'This stage may still be running or waiting for its saved result to sync. Refresh its status before starting more work.':guidance.guide;card.append(note);
+    if(guidance.creative){const link=document.createElement('a');link.className='button secondary';link.href='/';link.textContent='Open studio for a new action';card.append(link);}
+    else if(stage.can_retry){
+     let approved=false;const label=document.createElement('label');label.className='costs';const check=document.createElement('input');check.type='checkbox';
+     const text=document.createElement('span');text.textContent='I checked Claude usage and cached work, no work is running, and I accept that another attempt uses my account.';label.append(check,text);
+     const button=document.createElement('button');button.className='secondary';button.textContent=guidance.button;button.disabled=true;check.onchange=()=>button.disabled=approved||!check.checked;
+     button.onclick=async()=>{if(approved||!check.checked)return;button.disabled=true;try{const r=await request('/cr-recover',{project_id:project.project_id,stage_id:stage.stage_id,acknowledge_costs:true});approved=true;check.disabled=true;notice((r.message||'The stage attempt was approved.')+' '+guidance.guide);button.textContent=guidance.approved;}catch(e){notice(e.message,true);button.disabled=!check.checked}};
+     card.append(label,button);
+    }
+    root.append(card);
+   }
+  }
+  if(!root.children.length)root.textContent='No stopped Claude projects need review.';
+ }catch(e){notice(e.message,true)}
+};
 function changeClaudeModels(){claudeDraft={general:$('claude-general').value,visual:$('claude-visual').value};invalidatePreflight();renderClaude();}
 $('claude-general').onchange=changeClaudeModels;$('claude-visual').onchange=changeClaudeModels;
 $('preflight-style').onchange=updateStyle;

@@ -41,6 +41,15 @@ def test_native_uses_no_api_credentials_and_duplicate_begin_is_idempotent(native
         studio.native_begin(native.owner,changed)
 
 
+@pytest.mark.parametrize("purpose", ["setup", "creative"])
+def test_non_video_actions_cannot_launch_a_saved_video(native, purpose):
+    result = studio.native_begin(native.owner, studio.NativeBegin(begin_id="action_" + purpose,
+        title="Original studio action", style="custom", setup={**native.proof, "purpose": purpose}))
+    assert result["purpose"] == purpose and result["launch_command"] == "" and not result["launch_required"]
+    progress = studio.native_progress(native.owner, result["project_id"])
+    assert progress["purpose"] == purpose and not progress["can_resume"]
+
+
 def test_recovery_notice_includes_owned_failed_native_stages(native):
     assert studio.status(native.owner)["recovery_requests"] == 0
     req = stage(native)

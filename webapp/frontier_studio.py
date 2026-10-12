@@ -26,9 +26,9 @@ from webapp import database as db
 from cryptography.fernet import Fernet, InvalidToken
 from webapp import frontier_providers as providers
 
-VERSION = "5.3-admin.14"
+VERSION = "5.3-admin.15"
 CATALOG = Path(__file__).resolve().parent / "frontier" / "catalog.json"
-RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.14.zip"
+RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.15.zip"
 WORKFLOW_VERSION = "frontier-5.3-claudecode.1"
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 NATIVE_STAGE_LIMIT = 2
@@ -576,7 +576,7 @@ def _runtime_compatible(version, workflow):
     # changed engine or workflow must explicitly migrate projects instead.
     current=workflow_contract()
     return version==workflow["required_release"] or (
-        version==VERSION and workflow.get("required_release") in {"5.3-admin.8","5.3-admin.9","5.3-admin.10","5.3-admin.11","5.3-admin.12","5.3-admin.13"}
+        version==VERSION and workflow.get("required_release") in {"5.3-admin.8","5.3-admin.9","5.3-admin.10","5.3-admin.11","5.3-admin.12","5.3-admin.13","5.3-admin.14"}
         and workflow.get("workflow_version")==current["workflow_version"]
         and workflow.get("engine_source_sha256")==current["engine_source_sha256"])
 
@@ -625,12 +625,15 @@ def _native_session(user, project_id):
 
 def _native_begin_result(user, session, platform, resumed=False):
     p = project(user, session["project_id"])
+    purpose = json.loads(session["setup_json"]).get("purpose", "video")
     command = ((r".venv\Scripts\python.exe" if platform == "windows" else ".venv/bin/python") +
                " cr_run.py --project " + p["id"])
     return {"project_id": p["id"], "project": p, "workflow": json.loads(session["workflow_json"]),
-            "job_spec": json.loads(session["spec_json"]), "launch_command": command,
-            "launch_required": p["status"] != "done", "resumed": resumed,
-            "message": "Run this command from the extracted studio folder. It starts the saved project locally."}
+            "job_spec": json.loads(session["spec_json"]), "purpose": purpose,
+            "launch_command": command if purpose == "video" else "",
+            "launch_required": purpose == "video" and p["status"] != "done", "resumed": resumed,
+            "message": ("Run this command from the extracted studio folder. It starts the saved project locally."
+                        if purpose == "video" else "Continue this action in its original local studio controls.")}
 
 
 def native_begin(user, req: NativeBegin):
@@ -705,10 +708,11 @@ def native_progress(user, project_id):
         stage["can_retry"] = stage["status"] in {"failed","authorized"} and stage["attempts"] == 1
         stages.append(stage)
     p["receipt_note"] = "Locally reported Claude Code usage; your Claude and media accounts determine actual charges."
+    purpose = json.loads(session["setup_json"]).get("purpose", "video")
     return {"project_id": project_id, "project": p, "workflow": json.loads(session["workflow_json"]),
-            "job_spec": json.loads(session["spec_json"]), "stages": stages,
+            "job_spec": json.loads(session["spec_json"]), "purpose": purpose, "stages": stages,
             "artifacts": json.loads(session["artifacts_json"]), "error_code": session["error_code"],
-            "brain_mode": "claudecode", "can_resume": p["status"] != "done" and not any(s["status"] == "authorized" for s in stages)}
+            "brain_mode": "claudecode", "can_resume": purpose == "video" and p["status"] != "done" and not any(s["status"] == "authorized" for s in stages)}
 
 
 def native_authorize(user, req: NativeAuthorize):
