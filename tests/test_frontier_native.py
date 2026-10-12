@@ -127,6 +127,35 @@ def test_adapter_upgrade_reuses_pinned_project_and_completed_stage(native,monkey
         studio.native_authorize(native.owner,req.model_copy(update={"local_version":studio.VERSION}))
 
 
+def test_running_approved_runtime_survives_cloud_update_but_new_projects_require_latest(native,monkeypatch):
+    monkeypatch.setattr(studio,"VERSION","5.3-admin.19")
+    native.proof={**native.proof,"local_version":studio.VERSION}
+    native.project=studio.native_begin(native.owner,studio.NativeBegin(begin_id="pinned_19_running",
+        title="Saved video",style="history",setup=native.proof))["project"]
+    monkeypatch.setattr(studio,"VERSION","5.3-admin.26")
+    req=stage(native)
+    approval=studio.native_authorize(native.owner,req)
+    studio.native_finish_stage(native.owner,studio.NativeFinishStage(project_id=req.project_id,stage_id=req.stage_id,
+        authorization_token=approval["authorization_token"],status="complete",result_fingerprint="f"*64))
+    monkeypatch.setattr(studio,"VERSION","5.3-admin.27")
+    assert studio.native_authorize(native.owner,req)["reuse"]
+    next_stage=stage(native,"b").model_copy(update={"local_version":"5.3-admin.26"})
+    assert studio.native_authorize(native.owner,next_stage)["execute"]
+    for invalid in ("5.3-admin.18","5.3-admin.28","5.3-admin.999","unrecognized"):
+        with pytest.raises(HTTPException):
+            studio.native_authorize(native.owner,stage(native,"c").model_copy(update={"local_version":invalid}))
+    old_setup={**native.proof,"local_version":"5.3-admin.26"}
+    assert not studio.native_prepare(native.owner,studio.NativeSetup(**old_setup))["ready"]
+    with pytest.raises(HTTPException):
+        studio.native_begin(native.owner,studio.NativeBegin(begin_id="fresh_old_runtime",title="New video",
+            style="history",setup=old_setup))
+    latest_setup={**old_setup,"local_version":"5.3-admin.27"}
+    assert studio.native_begin(native.owner,studio.NativeBegin(begin_id="fresh_latest_runtime",title="New video",
+        style="history",setup=latest_setup))["project"]
+    monkeypatch.setattr(studio,"WORKFLOW_VERSION","different_workflow")
+    with pytest.raises(HTTPException):studio.native_authorize(native.owner,req)
+
+
 def test_uncertain_or_failed_stage_never_restarts_automatically(native):
     req=stage(native)
     allowed=studio.native_authorize(native.owner,req)
