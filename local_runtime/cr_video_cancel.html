@@ -1,0 +1,43 @@
+<style>
+.cr-cancel-video{margin-left:auto;border:1px solid #694349;border-radius:8px;background:#2d2028;color:#ffc3cb;padding:7px 12px;font:inherit;cursor:pointer}.cr-cancel-video:disabled{opacity:.6;cursor:wait}
+#cr-cancel-note{font-size:12px;color:var(--muted,#aab1c3);line-height:1.5;margin:10px 0}
+</style>
+<script>
+document.addEventListener('DOMContentLoaded',()=>{
+ const run=document.getElementById('run'),queue=document.getElementById('queue');if(!run||!queue)return;
+ const top=run.querySelector('.run-top');if(!top)return;
+ const stop=document.createElement('button');stop.type='button';stop.className='cr-cancel-video';stop.hidden=true;stop.textContent='Cancel render';top.append(stop);
+ const note=document.createElement('p');note.id='cr-cancel-note';note.hidden=true;note.textContent='Cancel keeps saved media and caches. Requests already accepted by a provider may still finish and be charged. Nothing restarts automatically.';top.insertAdjacentElement('afterend',note);
+ let selected=null,busy=false;
+ async function cancel(job,button){
+  if(busy||!job?.cr_cancel?.can_cancel)return;busy=true;button.disabled=true;
+  try{
+   const response=await fetch('/cr-video/'+encodeURIComponent(job.slug)+'/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id:job.cr_cancel.run_id})});
+   const data=await response.json();if(!response.ok)throw Error(data.error||'This worker could not be stopped.');
+   note.hidden=false;note.dataset.result='1';note.textContent=data.message;stop.hidden=true;
+  }catch(error){note.hidden=false;note.dataset.result='1';note.textContent=error.message;button.disabled=false;}
+  finally{busy=false;}
+ }
+ stop.onclick=()=>cancel(selected,stop);
+ // Observe the original poll's queue response. No second polling loop, new
+ // generation, page reload or different selected title is introduced.
+ const prior=window.fetch.bind(window);
+ window.fetch=async(...args)=>{
+  const response=await prior(...args);let path;
+  try{path=new URL(args[0] instanceof Request?args[0].url:args[0],location.href).pathname;}catch(error){return response;}
+  if(path==='/api/queue'&&response.ok){
+   response.clone().json().then(data=>{
+    const jobs=data.jobs||[];selected=jobs.find(job=>job.state==='running'&&job.cr_cancel?.can_cancel)||null;
+    stop.hidden=!selected;stop.disabled=busy;note.hidden=!selected&&!note.dataset.result;
+    if(selected){note.textContent='Cancel keeps saved media and caches. Requests already accepted by a provider may still finish and be charged. Nothing restarts automatically.';}
+    // The original tick rebuilds the queue immediately after this response.
+    setTimeout(()=>{const rows=queue.querySelectorAll('.qrow');const rest=jobs.filter(job=>job.state!=='running').slice(0,6);rows.forEach((row,index)=>{
+      const job=rest[index];if(job?.state!=='queued'||!job.cr_cancel?.can_cancel)return;
+      const button=document.createElement('button');button.type='button';button.className='cr-cancel-video';button.textContent='Cancel queued video';button.onclick=()=>cancel(job,button);row.append(button);
+    });},0);
+   }).catch(()=>{});
+  }
+  return response;
+ };
+});
+</script>

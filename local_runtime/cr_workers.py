@@ -8,11 +8,18 @@ import threading
 import weakref
 
 HOME=Path(__file__).resolve().parent
-TARGETS={"timeline.py","offer.py","offer_pack.py","reflearn.py","threed.py"}
+TARGETS={"timeline.py","offer.py","offer_pack.py","reflearn.py","threed.py","app.py"}
 _original_popen=subprocess.Popen
 _installed=False
 _processes=weakref.WeakSet()
 _lock=threading.Lock()
+_contained=False
+
+
+def contain_children():
+    """An isolated video's descendants must stay in its cancellable group."""
+    global _contained
+    _contained=True
 
 
 def rewrite(command,project_id,*,home=None,python=None):
@@ -33,6 +40,9 @@ def rewrite(command,project_id,*,home=None,python=None):
             return command
         if target.name == "threed.py" and (j+1 >= len(command) or command[j+1] not in {"qa","redo"}):
             return command
+        if target.name == "app.py":
+            # Ordinary standalone app invocations are not creative workers.
+            return command
         import re
         if not re.fullmatch(r"crv_[a-f0-9]{24}",project_id or ""):
             raise RuntimeError("Connect CR and start this creative work through the studio first.")
@@ -52,6 +62,11 @@ def install():
         import cr_bridge
         project=cr_bridge._project or {}
         updated=rewrite(command,project.get("id"))
+        if _contained and os.name != "nt":
+            kwargs["start_new_session"] = False
+            # This process already owns a fresh session/group. A nested CLI or
+            # browser cannot escape cancellation into another one.
+            kwargs.pop("process_group", None)
         process=_original_popen(updated,*args,**kwargs)
         if updated != command:
             with _lock:_processes.add(process)

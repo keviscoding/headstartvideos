@@ -343,6 +343,28 @@ def test_real_child_timeout_kills_process_even_when_stdout_is_closed(tmp_path, m
     assert "CR_MANIMGX" in (tmp_path / "render_stdout.log").read_text()
 
 
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX process-group containment')
+def test_contained_render_timeout_stops_only_its_owned_process(tmp_path, monkeypatch):
+    popen, children = subprocess.Popen, []
+    parent_group = os.getpgrp()
+
+    def launch(args, **kwargs):
+        kwargs['start_new_session'] = False
+        child = popen([sys.executable, '-c', 'import json,sys,time; json.load(sys.stdin); time.sleep(30)'], **kwargs)
+        children.append(child)
+        assert os.getpgid(child.pid) == parent_group
+        return child
+
+    monkeypatch.setattr(gx.subprocess, 'Popen', launch)
+    monkeypatch.setattr(gx.os, 'killpg', lambda *args: pytest.fail('A scene must not kill its containing video group.'))
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match='time ceiling'):
+        gx._invoke(sys.executable, {}, tmp_path, timeout=.35)
+    assert time.monotonic() - started < 3
+    assert len(children) == 1 and children[0].poll() is not None
+    assert os.getpgrp() == parent_group
+
+
 @pytest.mark.parametrize("program,message", [
     ("print('shader compilation failed');raise SystemExit(1)", "could not build"),
     ("print('CR_MANIMGX not json')", "invalid progress"),

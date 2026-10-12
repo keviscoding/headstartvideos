@@ -37,6 +37,13 @@ def main():
     if target.parent != HOME or target.name not in cr_workers.TARGETS:
         parser.error("Use a supported original worker from this studio folder.")
     threed = target.name == "threed.py"
+    video = target.name == "app.py"
+    if video and (len(command) != 3 or command[1] != "--cr-video" or
+                  not re.fullmatch(r"video_[a-f0-9]{24}", command[2])):
+        parser.error("Use an explicitly created owned video worker.")
+    if video:
+        import cr_video_cancel
+        cr_video_cancel.guard_parent(HOME,args.project,command[2])
     if args.operation is not None and not threed:
         parser.error("Operation IDs apply only to original 3D inspection or repair.")
     if threed:
@@ -74,8 +81,16 @@ def main():
         raise RuntimeError("Finish setup before starting this worker: "+" ".join(ready["blockers"]))
     if threed and checks.get("webgl") is not True:
         raise RuntimeError("Finish the local 3D graphics check before reviewing or repairing scenes.")
+    if video:
+        cr_workers.contain_children()
     cr_workers.install()
     sys.argv=command
+    if video:
+        import app as studio
+        import cr_capabilities
+        import cr_video_cancel
+        cr_capabilities.install(studio)
+        return cr_video_cancel.run_original_worker(HOME,args.project,command[2],studio)
     if threed:
         checks["claude_code"]=ready["claude_code"]
         proof=cr_readiness.proof(checks,purpose="creative")

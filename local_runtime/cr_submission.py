@@ -43,6 +43,9 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None)
     for spec in staged:
         if project_id:
             spec["cr_project_id"] = project_id
+        if hasattr(studio, "_cr_video_workers") and not spec.get("timeline"):
+            import cr_video_cancel
+            spec["cr_video_run_id"] = cr_video_cancel.new_run_id()
         spec["render_backend"] = backend
         if backend == "manimgx":
             spec["manimgx_identity"] = payload.get("manimgx_identity")
