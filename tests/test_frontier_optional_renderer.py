@@ -376,3 +376,46 @@ def test_saved_source_errors_remain_visible_during_renderer_polling(panel):
     assert page.locator('#cr-recovery-error').inner_text() == state.recovery_error
     assert page.locator('#cr-recovery-error').is_visible()
     assert len(state.recovery_posts) == 1
+
+
+def test_completed_correction_can_validate_despite_stopped_state_and_previous_failed_correction(panel):
+    page, state = panel
+    choice = {"project_id": "crv_" + "1" * 24, "selection_id": "a" * 64, "scene_id": "tilt",
+              "title": "Saved eclipse", "state": "stopped", "can_validate": True, "can_correct": False}
+    state.recovery_choices = [choice]
+    state.data.update(busy=False, recovery={"project_id": choice["project_id"], "selection_id": choice["selection_id"],
+        "action": "correct", "state": "failed", "message": "Claude completed; its local checker stopped."})
+    page.get_by_text('Recover a stopped 3D scene', exact=True).click()
+    page.get_by_role('button', name='Find saved 3D work').click()
+    validate = page.get_by_role('button', name='Validate saved 3D code · no credits')
+    assert validate.is_enabled() and not state.recovery_posts
+    assert page.get_by_role('button', name='Correct saved 3D code', exact=True).count() == 0
+    page.wait_for_timeout(2150)
+    assert validate.is_enabled()  # The old failed correction must not override fresh eligibility.
+    validate.click()
+    assert state.recovery_posts == [{"body": {"action": "validate", "project_id": choice['project_id'],
+        "selection_id": choice['selection_id'], "acknowledge_recovery": True}, "token": "fixture-token"}]
+    assert validate.is_disabled()
+    state.data.update(busy=False, recovery={**state.data['recovery'], 'state': 'validated',
+        'message': 'Completed correction validated locally.'})
+    page.wait_for_function("document.getElementById('cr-recovery-message').textContent.includes('validated locally')")
+    assert validate.is_disabled() and len(state.recovery_posts) == 1
+
+
+@pytest.mark.parametrize("action,status,busy", [
+    ("validate", "running", False), ("validate", "validated", False),
+    ("validate", "failed", False), ("correct", "running", False), ("correct", "failed", True),
+])
+def test_recovery_validation_does_not_repeat_a_started_action_or_run_while_busy(panel, action, status, busy):
+    page, state = panel
+    choice = {"project_id": "crv_" + "1" * 24, "selection_id": "a" * 64, "scene_id": "tilt",
+              "title": "Saved eclipse", "state": "stopped", "can_validate": True, "can_correct": False}
+    state.recovery_choices = [choice]
+    page.get_by_text('Recover a stopped 3D scene', exact=True).click()
+    page.get_by_role('button', name='Find saved 3D work').click()
+    validate = page.get_by_role('button', name='Validate saved 3D code · no credits')
+    assert validate.is_enabled()
+    state.data.update(busy=busy, recovery={"project_id": choice["project_id"], "selection_id": choice["selection_id"],
+        "action": action, "state": status, "message": "Updated saved action status."})
+    page.wait_for_function("document.getElementById('cr-recovery-message').textContent.includes('Updated saved action status')")
+    assert validate.is_disabled() and not state.recovery_posts

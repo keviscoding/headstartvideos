@@ -27,9 +27,9 @@ from webapp import database as db
 from cryptography.fernet import Fernet, InvalidToken
 from webapp import frontier_providers as providers
 
-VERSION = "5.3-admin.26"
+VERSION = "5.3-admin.27"
 CATALOG = Path(__file__).resolve().parent / "frontier" / "catalog.json"
-RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.26.zip"
+RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.27.zip"
 WORKFLOW_VERSION = "frontier-5.3-claudecode.1"
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 NATIVE_STAGE_LIMIT = 2
@@ -575,11 +575,19 @@ def workflow_contract():
 def _runtime_compatible(version, workflow):
     # Adapter-only upgrades keep the pinned creative engine and workflow. A
     # changed engine or workflow must explicitly migrate projects instead.
-    current=workflow_contract()
-    return version==workflow["required_release"] or (
-        version==VERSION and workflow.get("required_release") in {"5.3-admin.8","5.3-admin.9","5.3-admin.10","5.3-admin.11","5.3-admin.12","5.3-admin.13","5.3-admin.14","5.3-admin.15","5.3-admin.16","5.3-admin.17","5.3-admin.18","5.3-admin.19","5.3-admin.20","5.3-admin.21","5.3-admin.22","5.3-admin.23","5.3-admin.24","5.3-admin.25"}
-        and workflow.get("workflow_version")==current["workflow_version"]
-        and workflow.get("engine_source_sha256")==current["engine_source_sha256"])
+    approved = ("5.3-admin.8", "5.3-admin.9", "5.3-admin.10", "5.3-admin.11", "5.3-admin.12",
+                "5.3-admin.13", "5.3-admin.14", "5.3-admin.15", "5.3-admin.16", "5.3-admin.17",
+                "5.3-admin.18", "5.3-admin.19", "5.3-admin.20", "5.3-admin.21", "5.3-admin.22",
+                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27")
+    current = workflow_contract()
+    if (version not in approved or workflow.get("required_release") not in approved or VERSION not in approved
+            or workflow.get("workflow_version") != current["workflow_version"]
+            or workflow.get("engine_source_sha256") != current["engine_source_sha256"]):
+        return False
+    # A running approved adapter can finish a project pinned to an older
+    # identical engine. A fresh contract pins today's release, so it still
+    # requires the current download. Never admit an unknown/future release.
+    return approved.index(workflow["required_release"]) <= approved.index(version) <= approved.index(VERSION)
 
 
 def _setup_issues(setup, workflow):
