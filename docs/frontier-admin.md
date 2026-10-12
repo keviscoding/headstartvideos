@@ -1,6 +1,6 @@
 # ChannelRecipe local studio
 
-Version: `5.3-admin.13`. Entry point: https://channelrecipe.com/app#local-studio.
+Version: `5.3-admin.17`. Entry point: https://channelrecipe.com/app#local-studio.
 
 The preferred route runs the original Frontier 5.3 workflow through the creator's
 signed-in Claude Code account. CR supplies the protected runtime, current workflow
@@ -19,6 +19,9 @@ through authenticated MCP. Generation and rendering execute on the local compute
 5. Choose an original preset and check its actual requested features. Required
    accounts, the browser, FFmpeg and Node must pass before generation is queued.
 6. Create, inspect the result and timeline, and export from the original studio.
+   For 3D projects, Review 3D scenes runs the original final-clip QA, selected or
+   flagged repairs, then cached final assembly. A saved render does not itself
+   mean the creative review passed.
 
 MCP conversation control follows the same path: `local_studio_prepare`,
 `local_studio_begin`, the returned local `cr_run.py --project` command, and
@@ -28,9 +31,12 @@ MCP does not remotely launch a computer or sign the creator into Claude.
 
 ## Workflow and billing
 
-The native route preserves the engine's original helpers, system/user instructions,
+The native route preserves the engine's original helpers, base instructions,
 CLI tools, effort, response formats, research, local image review, Folio and 3D
-review/repair loops. It wraps Claude subprocess execution rather than replacing
+review/repair loops. Generic renderer compatibility findings join the original
+3D checks; the director can read the actual renderer contract before revising a
+recipe. These diagnostics do not rewrite geometry, choose subjects or override
+styles. It wraps Claude subprocess execution rather than replacing
 those helpers with a generic API call. Original preset/director rules determine
 media choices; missing default features block instead of silently disappearing.
 
@@ -107,8 +113,8 @@ CR account/launch instructions take precedence over its older setup guidance.
 python scripts/build_frontier_admin.py --source /private/path/Frontier-5.3-FULL.zip
 ```
 
-The ignored output is `data/frontier/channelrecipe-5.3-admin.13.zip`. The private
-object is `private/frontier/channelrecipe-5.3-admin.13.zip`. Publishing checks its
+The ignored output is `data/frontier/channelrecipe-5.3-admin.17.zip`. The private
+object is `private/frontier/channelrecipe-5.3-admin.17.zip`. Publishing checks its
 ACL and unauthenticated origin/CDN access. Downloads stream through CR's
 authenticated endpoint with `private, no-store`; no public object URL is returned.
 
