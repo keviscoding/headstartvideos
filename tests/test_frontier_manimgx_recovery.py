@@ -207,14 +207,14 @@ def test_coverage_length_recovery_accepts_same_key_without_changing_old_history(
     assert row["state"] == "validated" and not row["can_validate"] and not row["can_correct"]
 
 
-@pytest.mark.parametrize("mutation", ["missing", "empty", "wrong_scalar", "arbitrary_short", "long_only", "unsafe", "unsupported"])
+@pytest.mark.parametrize("mutation", ["missing", "empty", "non_string", "oversized", "long_only", "unsafe", "unsupported"])
 def test_coverage_recovery_rejects_real_manifest_failures_without_typecheck(coverage_saved, mutation):
     saved = coverage_saved
     result = json.loads((saved.old / "compiler-response-1.txt").read_text())
     if mutation == "missing": del result["coverage"]["/scene/dur"]
     elif mutation == "empty": result["coverage"]["/scene/dur"] = " "
-    elif mutation == "wrong_scalar": result["coverage"]["/scene/dur"] = "2."
-    elif mutation == "arbitrary_short": result["coverage"]["/scene/dur"] = "done"
+    elif mutation == "non_string": result["coverage"]["/scene/dur"] = 1
+    elif mutation == "oversized": result["coverage"]["/scene/dur"] = "a" * 2001
     elif mutation == "long_only": result["coverage"]["/scene/dur"] = "Original input requirement preserved"
     elif mutation == "unsafe": result["source"] = "import os\n" + SOURCE
     elif mutation == "unsupported": result["unsupported"] = ["Original camera cannot be preserved"]
@@ -226,25 +226,39 @@ def test_coverage_recovery_rejects_real_manifest_failures_without_typecheck(cove
     assert not recovery.discover(saved.home, saved.job, saved.cloud)
 
 
-def test_coverage_typecheck_failure_preserves_history_and_never_offers_correction(coverage_saved, monkeypatch):
+@pytest.mark.parametrize("description", ["2.", "done", "x 0.", "31*S.", "0.6*S."])
+def test_coverage_descriptions_are_bounded_metadata_not_scalar_proofs(coverage_saved, description):
+    saved = coverage_saved
+    result = json.loads((saved.old / "compiler-response-1.txt").read_text())
+    result["coverage"]["/scene/dur"] = description
+    update_completed_response(saved, result)
+    accepted = invoke(saved, acknowledge_recovery=True)
+    assert accepted["accepted"] and len(saved.checked) == 1
+
+
+@pytest.mark.parametrize("api_failure", [True, False])
+def test_coverage_typecheck_failure_preserves_history_and_offers_only_explicit_api_correction(coverage_saved, monkeypatch, api_failure):
     saved = coverage_saved
     history = {p.name: p.read_bytes() for p in saved.old.iterdir()}
     def checker(python, source):
         saved.checked.append(source)
         source.with_suffix(".validation.log").write_text("Known API type error")
-        raise renderer.ManimGXSourceAPIError("Known API type error")
+        if api_failure:
+            raise renderer.ManimGXSourceAPIError("Known API type error")
+        raise RuntimeError("Checker failed to start")
     monkeypatch.setattr(renderer, "_typecheck", checker)
     with pytest.raises(RuntimeError, match="no model"):
         invoke(saved, acknowledge_recovery=True)
     for name, data in history.items(): assert (saved.old / name).read_bytes() == data
     assert not (saved.old / "compiler.json").exists()
     receipt = json.loads((saved.old / ".recovery-coverage-text/recovery.json").read_text())
-    assert receipt["state"] == "stopped" and receipt["model_calls"] == 0
+    state = "source_invalid" if api_failure else "stopped"
+    assert receipt["state"] == state and receipt["model_calls"] == 0
     row = recovery.discover(saved.home, saved.job, saved.cloud)[0]
-    assert row["state"] == "stopped" and not row["can_correct"] and not row["can_validate"]
+    assert row["state"] == state and row["can_correct"] is api_failure and not row["can_validate"]
     with pytest.raises(RuntimeError, match="not execute again"):
         invoke(saved, acknowledge_recovery=True)
-    with pytest.raises(RuntimeError, match="does not authorize"):
+    with pytest.raises(RuntimeError, match="verified native|no longer matches"):
         recovery.correct(saved.home, PROJECT, saved.out, "original", saved.cloud, acknowledge_correction=True)
     assert len(saved.checked) == 1
 
@@ -395,3 +409,136 @@ def test_correction_requires_explicit_fresh_native_setup_and_restores_context(sa
     receipt = json.loads((saved.destination / "recovery.json").read_text())
     assert receipt["state"] == "corrected" and receipt["corrected_source_sha256"] == hashlib.sha256(SOURCE.encode()).hexdigest()
     assert not recovery.discover(saved.home, saved.job, saved.cloud)[0]["can_correct"]
+
+
+@pytest.fixture
+def coverage_correction(coverage_saved, monkeypatch):
+    import cr_bridge
+    saved = coverage_saved
+    work = saved.old / ".recovery-coverage-text"
+    corrected_source = SOURCE.replace("self.wait(1)", "self.wait(1.0)")
+    calls = []
+    def checker(python, source):
+        saved.checked.append(source)
+        if source.name == "scene-recovered.py":
+            source.with_suffix(".validation.log").write_text("Known API type error")
+            raise renderer.ManimGXSourceAPIError("Known API type error")
+    monkeypatch.setattr(renderer, "_typecheck", checker)
+    with pytest.raises(RuntimeError, match="no model"):
+        invoke(saved, acknowledge_recovery=True)
+    monkeypatch.setattr(cr_bridge, "HOME", saved.home)
+    previous = {"id": "prior-native-project"}
+    monkeypatch.setattr(cr_bridge, "_project", previous)
+    monkeypatch.setattr(cr_bridge, "begin_project", lambda *a, **kw: calls.append("begin"))
+    monkeypatch.setattr(cr_bridge, "finish_project", lambda *a, **kw: calls.append("finish"))
+    def compiler(engine, context, assets, ready, directory, key, *, reference_bundle, recovery_directory):
+        assert directory == saved.old and recovery_directory == work
+        calls.append("correct")
+        receipt = json.loads((work / "recovery.json").read_text())
+        result = json.loads((work / "recovery-result.json").read_text())
+        result["source"] = corrected_source
+        (work / "compiler-correction-response-1.txt").write_text(json.dumps(result))
+        (work / "scene-corrected.py").write_text(corrected_source)
+        write(work / "correction-attempts.json", {"key": key, "state": "validated", "calls": 1,
+              "recovery_proof": receipt["proof"]})
+        write(work / "compiler-corrected.json", {"key": key, "typed": True, "result": result,
+              "source_sha256": hashlib.sha256(corrected_source.encode()).hexdigest(), "recovery_proof": receipt["proof"]})
+        return result, work / "scene-corrected.py"
+    monkeypatch.setattr(renderer, "correct_recovered_source", compiler)
+    saved.work, saved.calls, saved.corrected_source, saved.previous = work, calls, corrected_source, previous
+    saved.engine = SimpleNamespace(CLAUDE_PROVIDER="claudecode")
+    saved.setup = {"brain_mode": "claudecode", "models_verified": True, "costs_accepted": True}
+    return saved
+
+
+def correct_coverage(saved, **kwargs):
+    return recovery.correct(saved.home, PROJECT, saved.out, "original", saved.cloud,
+                            engine=saved.engine, setup_proof=saved.setup, **kwargs)
+
+
+def test_coverage_api_correction_is_explicit_single_native_call_and_preserves_origin(coverage_correction):
+    import cr_bridge
+    saved = coverage_correction
+    history = {p.name: p.read_bytes() for p in saved.old.iterdir() if p.is_file()}
+    with pytest.raises(RuntimeError, match="Confirm"):
+        correct_coverage(saved)
+    assert not saved.calls
+    result = correct_coverage(saved, acknowledge_correction=True)
+    assert result["accepted"] and result["corrected"]
+    assert saved.calls == ["begin", "correct", "finish"] and cr_bridge._project is saved.previous
+    for name, content in history.items(): assert (saved.old / name).read_bytes() == content
+    assert (saved.old / "scene.py").read_text() == saved.corrected_source
+    manifest = json.loads((saved.old / "compiler.json").read_text())
+    receipt = json.loads((saved.work / "recovery.json").read_text())
+    assert manifest["recovery_receipt"] == ".recovery-coverage-text/recovery.json"
+    assert manifest["recovery_proof"] == receipt["proof"] and receipt["state"] == "corrected"
+    assert receipt["model_calls"] == 1 and receipt["diagnostic"] == "Known API type error"
+    assert manifest["source_sha256"] != receipt["proof"]["source_sha256"]
+    plan = recovery._prepare(saved.home, PROJECT, saved.out, "original", saved.cloud)
+    assert renderer._accepted_response(saved.old, manifest, plan["context"], plan["assets"])["kind"] == "completed_native_recovery_correction"
+    assert recovery.discover(saved.home, saved.job, saved.cloud)[0]["state"] == "corrected"
+    assert not recovery.discover(saved.home, saved.job, saved.cloud)[0]["can_correct"]
+    assert invoke(saved, acknowledge_recovery=True)["reused"]
+    with pytest.raises(RuntimeError, match="no longer matches"):
+        correct_coverage(saved, acknowledge_correction=True)
+    assert saved.calls == ["begin", "correct", "finish"]
+
+
+@pytest.mark.parametrize("existing", ["compiler.json", "scene.py"])
+def test_coverage_correction_refuses_existing_root_work_before_native_call(coverage_correction, existing):
+    saved = coverage_correction
+    content = "{}" if existing == "compiler.json" else SOURCE
+    (saved.old / existing).write_text(content)
+    with pytest.raises(RuntimeError): correct_coverage(saved, acknowledge_correction=True)
+    assert not saved.calls and (saved.old / existing).read_text() == content
+    assert not (saved.work / "correction-attempts.json").exists()
+
+
+@pytest.mark.parametrize("mutation", ["source", "raw", "proof", "child_manifest", "asset", "manifest_race", "source_race", "type_error"])
+def test_coverage_correction_rechecks_provenance_and_never_overwrites_new_work(coverage_correction, monkeypatch, mutation):
+    import cr_bridge
+    saved = coverage_correction
+    history = {p.name: p.read_bytes() for p in saved.old.iterdir() if p.is_file()}
+    compiler = renderer.correct_recovered_source
+    def changed(*a, **kw):
+        result, source = compiler(*a, **kw)
+        if mutation == "source": source.write_text(saved.corrected_source + "# changed\n")
+        elif mutation == "raw": (saved.work / "compiler-correction-response-1.txt").write_text("{}")
+        elif mutation == "proof":
+            journal = json.loads((saved.work / "correction-attempts.json").read_text())
+            journal["recovery_proof"]["source_sha256"] = "e" * 64
+            write(saved.work / "correction-attempts.json", journal)
+        elif mutation == "asset": saved.asset.write_bytes(b"changed image")
+        elif mutation == "child_manifest": (saved.work / "compiler-corrected.json").write_text("{}")
+        elif mutation == "manifest_race": (saved.old / "compiler.json").write_text("{}")
+        elif mutation == "source_race": (saved.old / "scene.py").write_text("# User work\n")
+        elif mutation == "type_error":
+            monkeypatch.setattr(renderer, "_typecheck", lambda *a: (_ for _ in ()).throw(renderer.ManimGXSourceAPIError("Correction still invalid")))
+        return result, source
+    monkeypatch.setattr(renderer, "correct_recovered_source", changed)
+    with pytest.raises(RuntimeError): correct_coverage(saved, acknowledge_correction=True)
+    for name, content in history.items(): assert (saved.old / name).read_bytes() == content
+    assert cr_bridge._project is saved.previous
+    assert json.loads((saved.work / "recovery.json").read_text())["state"] == "stopped"
+    if mutation == "manifest_race": assert (saved.old / "compiler.json").read_text() == "{}"
+    else: assert not (saved.old / "compiler.json").exists()
+    if mutation == "source_race": assert (saved.old / "scene.py").read_text() == "# User work\n"
+    else: assert not (saved.old / "scene.py").exists()
+    with pytest.raises(RuntimeError): correct_coverage(saved, acknowledge_correction=True)
+    assert saved.calls.count("correct") == 1
+
+
+@pytest.mark.parametrize("target", ["compiler.json", "scene.py"])
+def test_coverage_correction_exclusive_publication_rejects_racing_work(coverage_correction, monkeypatch, target):
+    saved = coverage_correction
+    original_link = recovery.os.link
+    content = "{}" if target == "compiler.json" else "# Racing user work\n"
+    def racing_link(source, destination):
+        if destination.name == target: destination.write_text(content)
+        return original_link(source, destination)
+    monkeypatch.setattr(recovery.os, "link", racing_link)
+    with pytest.raises(RuntimeError, match="will not be overwritten"):
+        correct_coverage(saved, acknowledge_correction=True)
+    assert (saved.old / target).read_text() == content
+    assert json.loads((saved.work / "recovery.json").read_text())["state"] == "stopped"
+    assert saved.calls.count("correct") == 1

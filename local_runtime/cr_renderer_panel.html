@@ -23,7 +23,7 @@ document.addEventListener('DOMContentLoaded',()=>{
    if(correct)correct.disabled=recoveryPosting||studioBusy||state!=='source_invalid'||!ack.checked;
   }
  }
- function drawRecovery(result={}){lastRecovery=result;if(result.message){recoveryPanel.open=true;recoveryMessage.textContent=(result.title?result.title+' · ':'')+result.message;}updateRecoveryButtons();}
+ function drawRecovery(result={}){lastRecovery=result;if(result.message){recoveryPanel.open=true;const message=studioBusy&&result.state==='validated'?'Saved 3D code passed validation. A studio job is running; follow its progress below.':result.message;recoveryMessage.textContent=(result.title?result.title+' · ':'')+message.replaceAll('ManimGX','Fast mode');}updateRecoveryButtons();}
  async function recoveryAction(choice,action){
   recoveryPosting=true;recoveryError.hidden=true;recoveryError.textContent='';updateRecoveryButtons();
   try{const response=await fetch('/cr-renderer/recovery',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,project_id:choice.project_id,selection_id:choice.selection_id,[action==='correct'?'acknowledge_correction':'acknowledge_recovery']:true})});const data=await response.json();if(!response.ok)throw Error(data.error||'The saved-scene action could not start.');drawRecovery(data.recovery);}

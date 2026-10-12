@@ -120,21 +120,16 @@ def test_malformed_texture_records_stop_with_local_diagnostic():
         gx._validate_source(SOURCE, "BoardFixture", {"original:earth.png": "wrong-shape"})
 
 
-def test_scalar_coverage_can_be_concise_but_must_be_present_and_nonempty():
-    context = {"scene": {"rotation": [0, 0, 0], "camera_y": 1250}}
+def test_coverage_accepts_short_scaled_code_without_treating_prose_as_geometry_proof():
+    context = {"scene": {"rotation": [0, 0, 0], "r": 31, "tube": .6}}
     result = manifest(context)
-    result["coverage"] = {"/scene/rotation/0": "0.", "/scene/rotation/1": "0.",
-                          "/scene/rotation/2": "0.", "/scene/camera_y": "y=1250."}
+    result["coverage"] = {"/scene/rotation/0": "x 0.", "/scene/rotation/1": "To y 0.",
+                          "/scene/rotation/2": "z 0.", "/scene/r": "31*S.", "/scene/tube": ".6*S."}
     assert gx._compiler_result(json.dumps(result), context)["source"] == SOURCE
-    result["coverage"]["/scene/rotation/0"] = "done"
-    with pytest.raises(RuntimeError, match="omitted or changed"):
-        gx._compiler_result(json.dumps(result), context)
-    result["coverage"]["/scene/rotation/0"] = "x=2."
-    with pytest.raises(RuntimeError, match="omitted or changed"):
-        gx._compiler_result(json.dumps(result), context)
-    result["coverage"]["/scene/rotation/0"] = "  "
-    with pytest.raises(RuntimeError, match="omitted or changed"):
-        gx._compiler_result(json.dumps(result), context)
+    for invalid in ["  ", None, 0, "a" * 2001]:
+        result["coverage"]["/scene/rotation/0"] = invalid
+        with pytest.raises(RuntimeError, match="omitted or changed"):
+            gx._compiler_result(json.dumps(result), context)
     del result["coverage"]["/scene/rotation/0"]
     with pytest.raises(RuntimeError, match="omitted or changed"):
         gx._compiler_result(json.dumps(result), context)
@@ -323,7 +318,7 @@ def test_bad_compiler_results_stop_before_render_and_record_failure(stub_runtime
         elif change == "extra":
             value["coverage"]["/invented"] = "This requirement was invented."
         elif change == "empty":
-            value["coverage"][next(iter(value["coverage"]))] = "yes"
+            value["coverage"][next(iter(value["coverage"]))] = ""
         elif change == "unsupported":
             value["unsupported"] = ["Film sequences cannot be represented faithfully"]
         elif change == "syntax":
@@ -411,6 +406,15 @@ def test_corrupt_saved_status_and_readiness_fail_safely(tmp_path):
     assert gx.readiness(tmp_path)["ready"] is False
     gx._write(tmp_path / ".cr-manimgx/progress.json", {"scenes": ["corrupt"], "source": "secret"})
     assert gx.progress_status(tmp_path) == {"scenes": {}}
+
+
+def test_failure_progress_keeps_actual_compile_or_render_stage(tmp_path):
+    gx._progress(tmp_path, {"scene_id": "compile_error", "event": "compile"})
+    gx._progress(tmp_path, {"scene_id": "compile_error", "event": "failed"})
+    assert gx.progress_status(tmp_path)["stage"] == "compile"
+    gx._progress(tmp_path, {"scene_id": "render_error", "event": "frame", "frame": 1})
+    gx._progress(tmp_path, {"scene_id": "render_error", "event": "failed"})
+    assert gx.progress_status(tmp_path)["stage"] == "render"
 
 
 def test_layout_warnings_remain_reviewable_without_claiming_camera_failure(stub_runtime):

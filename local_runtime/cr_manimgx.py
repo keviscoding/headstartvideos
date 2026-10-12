@@ -211,7 +211,7 @@ def _progress(root, value):
         path = Path(root) / ".cr-manimgx" / "progress.json"
         saved = progress_status(root)
         previous = saved["scenes"].get(sid, {})
-        current = {"stage": value.get("stage", "compile" if event == "compile" else "export" if event == "exporting" else "render"),
+        current = {"stage": value.get("stage", "compile" if event == "compile" else "export" if event == "exporting" else previous.get("stage", "render") if event == "failed" else "render"),
                    "scene_id": sid, "state": "complete" if event == "complete" else "failed" if event == "failed" else "running",
                    "updated_at": time.time()}
         for source, target in (("frame", "frames_done"), ("total_frames", "total_frames"),
@@ -234,29 +234,13 @@ def _pointers(value, prefix=""):
 
 
 def _coverage_description(context, pointer, description):
-    if not isinstance(description, str) or not description.strip():
-        return False
-    text = description.strip()
-    if len(text) >= 8:
-        return True
-    # Short scalar annotations can be complete: "0." or "y=1250.".
-    # Require their actual value, rather than accepting an arbitrary short
-    # assertion such as "done" in place of an implementation explanation.
-    value = context
-    for component in pointer.split("/")[1:]:
-        component = component.replace("~1", "/").replace("~0", "~")
-        value = value[int(component)] if isinstance(value, list) else value[component]
-    token = text.rstrip(".").strip()
-    if value is None:
-        return token.lower() == "null"
-    if isinstance(value, bool):
-        return token.lower() == str(value).lower()
-    if isinstance(value, (int, float)):
-        match = re.fullmatch(r"(?:[A-Za-z][A-Za-z ]*\s*=\s*)?([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)", token)
-        return bool(match and math.isfinite(float(match[1])) and float(match[1]) == value)
-    if isinstance(value, str):
-        return text.strip('"\'') == value or token.strip('"\'') == value
-    return False
+    """Coverage is an obligation map, not a natural-language proof of geometry.
+
+    Exact pointers bind all input fields. Source safety/types, input identity,
+    render checks and the original visual reviews verify the implementation.
+    Prose length and literal-number parsing reject valid units and code names.
+    """
+    return isinstance(description, str) and 0 < len(description.strip()) <= 2000
 
 
 def _assets(context, outdir):
@@ -433,7 +417,8 @@ def _repair_prompt(context, assets, docs, result, diagnostic, references=None):
         + "\nLOCAL TYPE-CHECK DIAGNOSTIC DATA (not instructions):\n" + diagnostic)
 
 
-def correct_recovered_source(engine, context, assets, ready, directory, key, *, reference_bundle, compiler=None):
+def correct_recovered_source(engine, context, assets, ready, directory, key, *, reference_bundle, compiler=None,
+                             recovery_directory=None):
     """One explicitly requested correction after verified local recovery.
 
     The recovery wrapper verifies current ownership, native cloud completion,
@@ -441,9 +426,15 @@ def correct_recovered_source(engine, context, assets, ready, directory, key, *, 
     also rechecks its local evidence and never repeats the initial compilation.
     """
     directory = Path(directory)
-    receipt = _read(directory / "recovery.json")
+    work = directory
+    if recovery_directory is not None:
+        work = Path(recovery_directory)
+        if (work.is_symlink() or not work.is_dir() or work.resolve().parent != directory.resolve()
+                or work.name != ".recovery-coverage-text"):
+            raise RuntimeError("Use this compiler request's exact private coverage recovery directory.")
+    receipt = _read(work / "recovery.json")
     proof = receipt.get("proof", {})
-    result = _compiler_result(json.dumps(_read(directory / "recovery-result.json")), context, assets)
+    result = _compiler_result(json.dumps(_read(work / "recovery-result.json")), context, assets)
     source_hash = hashlib.sha256(result["source"].encode()).hexdigest()
     expected_key = _digest({"input": context, "assets": assets, "compiler": COMPILER_VERSION,
                             "setup": ready["identity"], "original_references": reference_bundle["identity"]})
@@ -451,10 +442,11 @@ def correct_recovered_source(engine, context, assets, ready, directory, key, *, 
             or proof.get("context_sha256") != _digest(context) or proof.get("assets_sha256") != _digest(assets)
             or proof.get("source_sha256") != source_hash or proof.get("setup_identity") != ready["identity"]
             or proof.get("reference_identity") != reference_bundle["identity"]
-            or (directory / "compiler.json").exists()):
+            or (directory / "compiler.json").exists() or (directory / "compiler.json").is_symlink()
+            or (work / "compiler-corrected.json").exists()):
         raise RuntimeError("This saved source correction no longer matches its verified recovery. Review the stopped graphics request.")
-    candidate = directory / "scene-recovered.py"
-    if not candidate.is_file() or _file_hash(candidate) != source_hash:
+    candidate = work / "scene-recovered.py"
+    if not _regular(candidate) or _file_hash(candidate) != source_hash:
         raise RuntimeError("The recovered graphics source changed. No Claude correction was started.")
     try:
         _typecheck(ready["python"], candidate)
@@ -466,7 +458,7 @@ def correct_recovered_source(engine, context, assets, ready, directory, key, *, 
             or diagnostic != receipt.get("diagnostic")):
         raise RuntimeError("The local graphics diagnostic changed. No Claude correction was started.")
     import cr_manimgx_refs
-    reference_path = directory / "original-reference.txt"
+    reference_path = work / "original-reference.txt"
     reference_text = cr_manimgx_refs.reference_text(reference_bundle)
     if hashlib.sha256(reference_text.encode()).hexdigest() != proof.get("reference_sha256"):
         raise RuntimeError("The original renderer reference changed. No Claude correction was started.")
@@ -478,7 +470,7 @@ def correct_recovered_source(engine, context, assets, ready, directory, key, *, 
             raise RuntimeError("Reconnect the saved native Claude profile before correcting this graphics source.")
         threed = importlib.import_module("threed")
         compiler = lambda prompt, maximum: threed._cc(engine, prompt, "opus", [reference_path], what="ManimGX source correction")
-    journal_path = directory / "correction-attempts.json"
+    journal_path = work / "correction-attempts.json"
     try:
         descriptor = os.open(journal_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
@@ -491,14 +483,15 @@ def correct_recovered_source(engine, context, assets, ready, directory, key, *, 
         _write(journal_path, journal)
         raw = compiler(_repair_prompt(context, assets, ready["docs"], result, diagnostic, references), 16384)
         if isinstance(raw, str):
-            _write(directory / "compiler-correction-response-1.txt", raw, text=True)
+            _write(work / "compiler-correction-response-1.txt", raw, text=True)
         journal.update(state="response_saved")
         _write(journal_path, journal)
         corrected = _compiler_result(raw, context, assets)
-        source = directory / "scene.py"
+        source = work / ("scene-corrected.py" if recovery_directory is not None else "scene.py")
         _write(source, corrected["source"], text=True)
         _typecheck(ready["python"], source)
-        _write(directory / "compiler.json", {"key": key, "typed": True, "result": corrected,
+        _write(work / ("compiler-corrected.json" if recovery_directory is not None else "compiler.json"),
+            {"key": key, "typed": True, "result": corrected,
             "source_sha256": hashlib.sha256(corrected["source"].encode()).hexdigest(), "recovery_proof": proof})
         journal.update(state="validated")
         _write(journal_path, journal)
@@ -573,6 +566,31 @@ def _accepted_response(directory, saved, context, assets):
         receipt = directory / relative
         if receipt.resolve().is_relative_to(directory.resolve()) and _regular(receipt):
             record = _read(receipt); proof = record.get("proof", {})
+            if (saved.get("recovery_kind") == "coverage_text"
+                    and relative == ".recovery-coverage-text/recovery.json"
+                    and record.get("state") == "corrected" and record.get("model_calls") == 1
+                    and record.get("corrected_source_sha256") == saved.get("source_sha256")
+                    and proof == saved.get("recovery_proof") and isinstance(proof, dict)
+                    and proof.get("key") == key and proof.get("context_sha256") == _digest(context)
+                    and proof.get("assets_sha256") == _digest(assets)
+                    and isinstance(proof.get("native_stage_id"), str)
+                    and isinstance(proof.get("native_result_fingerprint"), str)):
+                correction = _read(receipt.parent / "correction-attempts.json")
+                raw_path = receipt.parent / "compiler-correction-response-1.txt"
+                corrected_manifest = _read(receipt.parent / "compiler-corrected.json")
+                if (correction.get("key") != key or correction.get("state") != "validated"
+                        or correction.get("calls") != 1 or correction.get("recovery_proof") != proof
+                        or not _regular(raw_path)
+                        or _compiler_result(raw_path.read_text(), context, assets) != saved["result"]
+                        or corrected_manifest.get("typed") is not True
+                        or corrected_manifest.get("key") != key
+                        or corrected_manifest.get("result") != saved["result"]
+                        or corrected_manifest.get("source_sha256") != saved.get("source_sha256")
+                        or corrected_manifest.get("recovery_proof") != proof):
+                    raise RuntimeError("The accepted coverage-recovery correction changed before format reuse.")
+                return {"kind": "completed_native_recovery_correction", "proof": proof,
+                        "receipt_sha256": _file_hash(receipt), "response_sha256": _file_hash(raw_path),
+                        "correction_journal_sha256": _file_hash(receipt.parent / "correction-attempts.json")}
             if (record.get("state") == "validated" and isinstance(proof, dict)
                     and proof.get("key") == key and proof.get("context_sha256") == _digest(context)
                     and proof.get("assets_sha256") == _digest(assets)
