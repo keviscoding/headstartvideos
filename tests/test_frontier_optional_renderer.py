@@ -206,7 +206,7 @@ def _injected_page(home):
 
     @app.get("/")
     def page():
-        return '<!doctype html><html><head></head><body><button id="go">Make video</button></body></html>'
+        return '<!doctype html><html><head><meta charset="utf-8"></head><body><button id="go">Make video</button></body></html>'
 
     return app.test_client().get("/").get_data(as_text=True)
 
@@ -216,7 +216,9 @@ def panel(tmp_path):
     api = pytest.importorskip("playwright.sync_api")
     html = _injected_page(tmp_path)
     state = SimpleNamespace(posts=[], polls=0, post_status=409, get_status=200,
-                            error="Finish the current studio work before setting up ManimGX.")
+                            error="Finish the current studio work before setting up ManimGX.",
+                            recovery_posts=[], recovery_gets=0, recovery_choices=[], recovery_status=200,
+                            recovery_error="The saved recovery changed; refresh its status.")
     state.data = {"ready": True, "busy": False, "setup": {"state": "ready", "message": "ManimGX is ready."}, "progress": {}}
     with api.sync_playwright() as playwright:
         try:
@@ -233,6 +235,19 @@ def panel(tmp_path):
                 return route.fulfill(status=200, content_type="text/html", body=html)
             if req.url == "http://fixture.test/cr-status":
                 return route.fulfill(status=200, content_type="application/json", body='{"readiness":{"ready":true}}')
+            if req.url == "http://fixture.test/cr-renderer/recovery":
+                if req.method == "POST":
+                    body = req.post_data_json
+                    state.recovery_posts.append({"body": body, "token": req.headers.get("x-cr-local-token")})
+                    if state.recovery_status != 200:
+                        return route.fulfill(status=state.recovery_status, content_type="application/json",
+                                             body=json.dumps({"error": state.recovery_error}))
+                    state.data.update(busy=True, recovery={**body, "state": "running", "message": "Saved-scene action running."})
+                    return route.fulfill(status=200, content_type="application/json",
+                                         body=json.dumps({"started": True, "recovery": state.data["recovery"]}))
+                state.recovery_gets += 1
+                return route.fulfill(status=200, content_type="application/json", body=json.dumps({
+                    "choices": state.recovery_choices, "recovery": state.data.get("recovery", {})}))
             if req.url == "http://fixture.test/cr-renderer":
                 if req.method == "POST":
                     state.posts.append({"body": req.post_data_json, "token": req.headers.get("x-cr-local-token")})
@@ -301,3 +316,63 @@ def test_claude_compilation_is_distinct_from_gpu_frame_progress(panel):
     state.data['progress']['scenes']['example'].update(stage='render', frames_done=45, elapsed_seconds=.5)
     page.wait_for_function("document.getElementById('cr-renderer-progress').textContent.includes('90.0 frames/sec')")
     assert '45 frames / 91' in page.locator('#cr-renderer-progress').inner_text()
+
+
+def test_saved_source_validation_is_explicit_and_never_runs_create(panel):
+    page, state = panel
+    choice = {"project_id": "crv_" + "1" * 24, "selection_id": "a" * 64, "scene_id": "bee",
+              "title": "Saved <video>", "state": "available", "can_validate": True, "can_correct": False}
+    state.recovery_choices = [choice]
+    assert state.recovery_gets == 0 and not state.recovery_posts
+    page.get_by_text('Recover a stopped 3D scene', exact=True).click()
+    page.get_by_role('button', name='Find saved 3D work').click()
+    assert page.locator('.cr-recovery-choice strong').inner_text() == 'Saved <video> · bee'
+    assert 'no model or media credits' in page.locator('#cr-recovery-panel').inner_text()
+    page.get_by_role('button', name='Validate saved 3D code · no credits').click()
+    assert state.recovery_posts == [{"body": {"action": "validate", "project_id": choice['project_id'],
+        "selection_id": choice['selection_id'], "acknowledge_recovery": True}, "token": "fixture-token"}]
+    assert page.get_by_role('button', name='Validate saved 3D code · no credits').is_disabled()
+    state.data.update(busy=False, recovery={**state.data['recovery'], 'state': 'validated',
+        'message': 'Saved code passed validation. The video is still stopped. Press Create video manually to resume.'})
+    page.wait_for_function("document.getElementById('cr-recovery-message').textContent.includes('still stopped')")
+    assert len(state.recovery_posts) == 1 and state.recovery_gets == 1
+    assert page.get_by_role('button', name='Validate saved 3D code · no credits').is_disabled()
+    assert not state.posts  # No setup, paid fallback or automatic video submission occurred.
+
+
+def test_saved_source_correction_needs_its_own_visible_cost_acknowledgement(panel):
+    page, state = panel
+    choice = {"project_id": "crv_" + "1" * 24, "selection_id": "a" * 64, "scene_id": "bee",
+              "title": "Saved video", "state": "source_invalid", "can_validate": False, "can_correct": True}
+    state.recovery_choices = [choice]
+    page.get_by_text('Recover a stopped 3D scene', exact=True).click()
+    page.get_by_role('button', name='Find saved 3D work').click()
+    correct = page.get_by_role('button', name='Correct saved 3D code', exact=True)
+    assert correct.is_disabled() and not state.recovery_posts
+    page.get_by_label('Use my Claude account for one correction to this saved scene.').check()
+    assert correct.is_enabled()
+    page.wait_for_timeout(2150)
+    assert correct.is_enabled()  # Status polling preserves an explicit checkbox choice.
+    correct.click()
+    assert state.recovery_posts == [{"body": {"action": "correct", "project_id": choice['project_id'],
+        "selection_id": choice['selection_id'], "acknowledge_correction": True}, "token": "fixture-token"}]
+    assert correct.is_disabled() and state.recovery_gets == 1
+    state.data.update(busy=False, recovery={**state.data['recovery'], 'state': 'failed',
+        'message': 'The one correction stopped. Review its saved diagnostic; it will not retry.'})
+    page.wait_for_function("document.getElementById('cr-recovery-message').textContent.includes('one correction stopped')")
+    assert correct.is_disabled()  # Its old checked checkbox cannot re-enable a spent action.
+    assert len(state.recovery_posts) == 1
+
+
+def test_saved_source_errors_remain_visible_during_renderer_polling(panel):
+    page, state = panel
+    state.recovery_choices = [{"project_id": "crv_" + "1" * 24, "selection_id": "a" * 64, "scene_id": "bee",
+        "title": "Saved video", "state": "available", "can_validate": True, "can_correct": False}]
+    state.recovery_status = 409
+    page.get_by_text('Recover a stopped 3D scene', exact=True).click()
+    page.get_by_role('button', name='Find saved 3D work').click()
+    page.get_by_role('button', name='Validate saved 3D code · no credits').click()
+    page.wait_for_timeout(2150)
+    assert page.locator('#cr-recovery-error').inner_text() == state.recovery_error
+    assert page.locator('#cr-recovery-error').is_visible()
+    assert len(state.recovery_posts) == 1

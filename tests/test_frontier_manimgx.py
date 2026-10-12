@@ -88,6 +88,110 @@ def run_stub(state, *, engine=None, video=None, args=None, compiler=fixture_comp
                      "test review", root=state.root, compiler=compiler, event=event)
 
 
+def test_original_texture_records_reach_source_validation_and_cache(stub_runtime, monkeypatch):
+    import cr_manimgx_refs
+    state = stub_runtime
+    catalog = state.root / "threed/catalog.json"
+    catalog.parent.mkdir()
+    catalog.write_text("{}")
+    texture = state.root / "threed/earth.png"
+    Image.new("RGB", (4, 4), "blue").save(texture)
+    record = {"path": str(texture), "sha256": gx._file_hash(texture),
+              "bytes": texture.stat().st_size, "source": "private_original_renderer"}
+    bundle = {"identity": "verified-source", "context": {"kind": "space.earth"},
+              "assets": {"original:earth.png": record}}
+    monkeypatch.setattr(cr_manimgx_refs, "resolve", lambda *a: bundle)
+    monkeypatch.setattr(cr_manimgx_refs, "reference_text", lambda *a: "Verified original source")
+    def compiler(prompt, maximum):
+        assets = json.loads(prompt.split("LOCAL ASSETS:\n", 1)[1].split("\nVERIFIED PRIVATE ORIGINAL REFERENCE:", 1)[0])
+        assert assets == bundle["assets"]
+        context = json.loads(prompt.split("ORIGINAL INPUT:\n", 1)[1].split("\nLOCAL ASSETS:", 1)[0])
+        source = SOURCE.replace("self.add(cube)", f"self.add(cube, m.ImageMobject({str(texture)!r}))")
+        return json.dumps(manifest(context, source))
+    first = run_stub(state, compiler=compiler)
+    second = run_stub(state, compiler=lambda *a: pytest.fail("Completed textured source must be reused"), output="second")
+    assert first["scenes"][0]["compiler_key"] == second["scenes"][0]["compiler_key"]
+    saved = gx._read(state.root / "job/threed/.cr-manimgx" / first["scenes"][0]["compiler_key"] / "compiler.json")
+    assert saved["typed"] is True and "ImageMobject" in saved["result"]["source"]
+
+
+def test_malformed_texture_records_stop_with_local_diagnostic():
+    with pytest.raises(RuntimeError, match="local texture records"):
+        gx._validate_source(SOURCE, "BoardFixture", {"original:earth.png": "wrong-shape"})
+
+
+@pytest.fixture
+def saved_source_correction(stub_runtime, monkeypatch):
+    import cr_manimgx_refs
+    state = stub_runtime
+    context = {"scene": VIDEO["scenes"][0], "cast": [], "video": {},
+               "output": {"width": 320, "height": 180, "fps": 30, "quality": "draft"}}
+    assets, reference_text = {}, "Verified private renderer reference"
+    bundle = {"identity": "source-proof", "context": {"sources": ["original.js"]}, "assets": {}}
+    key = gx._digest({"input": context, "assets": assets, "compiler": gx.COMPILER_VERSION,
+                      "setup": state.ready["identity"], "original_references": bundle["identity"]})
+    directory = state.root / key
+    diagnostic = "Known source API diagnostic"
+    result = manifest(context)
+    source_sha = gx.hashlib.sha256(SOURCE.encode()).hexdigest()
+    proof = {"key": key, "context_sha256": gx._digest(context), "assets_sha256": gx._digest(assets),
+             "source_sha256": source_sha, "setup_identity": state.ready["identity"],
+             "reference_identity": bundle["identity"], "reference_sha256": gx.hashlib.sha256(reference_text.encode()).hexdigest()}
+    gx._write(directory / "recovery.json", {"state": "source_invalid", "proof": proof, "diagnostic": diagnostic,
+              "diagnostic_sha256": gx.hashlib.sha256(diagnostic.encode()).hexdigest()})
+    gx._write(directory / "recovery-result.json", result)
+    gx._write(directory / "scene-recovered.py", SOURCE, text=True)
+    monkeypatch.setattr(cr_manimgx_refs, "reference_text", lambda *a: reference_text)
+    def typecheck(python, path):
+        if Path(path).name == "scene-recovered.py":
+            raise gx.ManimGXSourceAPIError(diagnostic)
+    monkeypatch.setattr(gx, "_typecheck", typecheck)
+    return SimpleNamespace(**vars(state), context=context, assets=assets, bundle=bundle, key=key, directory=directory)
+
+
+def test_explicit_saved_source_correction_calls_only_once_and_accepts_typed_result(saved_source_correction):
+    state, calls = saved_source_correction, []
+    def compiler(prompt, maximum):
+        calls.append(prompt)
+        assert "ONE LOCAL PINNED-API CORRECTION" in prompt
+        return json.dumps(manifest(state.context))
+    gx.correct_recovered_source(SimpleNamespace(), state.context, state.assets, state.ready, state.directory,
+                                state.key, reference_bundle=state.bundle, compiler=compiler)
+    assert len(calls) == 1
+    assert gx._read(state.directory / "compiler.json")["typed"] is True
+    assert gx._read(state.directory / "correction-attempts.json")["state"] == "validated"
+    with pytest.raises(RuntimeError, match="no longer matches"):
+        gx.correct_recovered_source(SimpleNamespace(), state.context, state.assets, state.ready, state.directory,
+                                    state.key, reference_bundle=state.bundle, compiler=compiler)
+    assert len(calls) == 1
+
+
+def test_failed_saved_source_correction_keeps_result_and_never_repeats(saved_source_correction):
+    state, calls = saved_source_correction, []
+    def compiler(prompt, maximum):
+        calls.append(prompt)
+        return json.dumps(manifest(state.context, unsupported=["Required geometry cannot be preserved"]))
+    with pytest.raises(RuntimeError, match="cannot preserve"):
+        gx.correct_recovered_source(SimpleNamespace(), state.context, state.assets, state.ready, state.directory,
+                                    state.key, reference_bundle=state.bundle, compiler=compiler)
+    assert (state.directory / "compiler-correction-response-1.txt").is_file()
+    assert not (state.directory / "compiler.json").exists()
+    assert gx._read(state.directory / "correction-attempts.json")["state"] == "stopped"
+    with pytest.raises(RuntimeError, match="already started or stopped"):
+        gx.correct_recovered_source(SimpleNamespace(), state.context, state.assets, state.ready, state.directory,
+                                    state.key, reference_bundle=state.bundle, compiler=compiler)
+    assert len(calls) == 1
+
+
+def test_changed_recovery_evidence_stops_before_saved_source_correction(saved_source_correction):
+    state = saved_source_correction
+    gx._write(state.directory / "scene-recovered.py", SOURCE + "\n# changed", text=True)
+    with pytest.raises(RuntimeError, match="source changed"):
+        gx.correct_recovered_source(SimpleNamespace(), state.context, state.assets, state.ready, state.directory,
+            state.key, reference_bundle=state.bundle, compiler=lambda *a: pytest.fail("No model call"))
+    assert not (state.directory / "correction-attempts.json").exists()
+
+
 def test_install_keeps_original_default_and_selects_each_projects_pinned_renderer(tmp_path, monkeypatch):
     calls = []
     def original(*args):
