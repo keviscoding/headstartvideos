@@ -185,7 +185,7 @@ def setup_page(page):
                              "features": {"offered": ["stock"], "on": ["stock"]}}],
                "features": [{"key": "stock", "label": "Original stock footage"}]}
     calls, pending = [], []
-    control = {"defer_save": False, "fail_save": False}
+    control = {"defer_save": False, "fail_save": False, "recovery_projects": []}
 
     def finish_save(route, payload):
         if control["fail_save"]:
@@ -207,8 +207,12 @@ def setup_page(page):
             return route.fulfill(json=state)
         if request.method == "GET" and path == "/api/channels":
             return route.fulfill(json=catalog)
+        if request.method == "GET" and path == "/cr-projects":
+            return route.fulfill(json={"projects": control["recovery_projects"]})
         payload = request.post_data_json
         calls.append((path, payload))
+        if path == "/cr-recover":
+            return route.fulfill(json={"message": "One further stage attempt is allowed."})
         if path == "/cr-claude/setup":
             action = payload["action"]
             if action == "select":
@@ -318,3 +322,47 @@ def test_failed_save_and_read_only_refresh_keep_unsaved_choice_blocked(setup_pag
     assert tab.locator("#launch").get_attribute("aria-disabled") == "true"
     assert setup_page["state"]["claude_code"]["visual_model"] == "opus-fixture"
     assert [payload["action"] for path, payload in setup_page["calls"] if path == "/cr-claude/setup"] == ["select", "check"]
+
+
+@pytest.mark.parametrize("purpose,button,approved,guidance", [
+    ("video", "Allow one video-stage attempt", "Approved — resume this video in the studio", "reused from cache"),
+    ("setup", "Allow one model-check attempt", "Approved — repeat model verification", "Approval does not start verification"),
+    (None, "Allow one stage attempt", "Approved — return to the original controls", "original controls that started this work"),
+])
+def test_recovery_approval_guidance_matches_work_purpose_without_generation(setup_page, purpose, button, approved, guidance):
+    data = setup_page
+    tab = data["page"]
+    data["control"]["recovery_projects"] = [{"project_id": "saved-project", "title": "Saved work", "purpose": purpose,
+        "stages": [{"stage_id": "saved-stage", "kind": "text", "status": "failed", "can_retry": True}]}]
+    tab.locator("#load-recovery").click()
+    tab.wait_for_function("document.querySelector('#recovery-projects button')!==null")
+    assert guidance in tab.locator("#recovery-projects").inner_text()
+    approve = tab.locator("#recovery-projects button")
+    assert approve.inner_text() == button
+    assert approve.is_disabled()
+    assert not any(path == "/cr-recover" for path, _ in data["calls"])
+    tab.locator("#recovery-projects input").check()
+    assert not any(path == "/cr-recover" for path, _ in data["calls"])
+    approve.click()
+    tab.wait_for_function("document.querySelector('#recovery-projects button').textContent.startsWith('Approved')")
+    assert approve.inner_text() == approved and approve.is_disabled()
+    assert tab.locator("#recovery-projects input").is_disabled()
+    assert [(path, body) for path, body in data["calls"] if path == "/cr-recover"] == [
+        ("/cr-recover", {"project_id": "saved-project", "stage_id": "saved-stage", "acknowledge_costs": True})]
+    assert not any(path in {"/api/run", "/cr-claude/setup"} for path, _ in data["calls"])
+
+
+def test_creative_recovery_routes_to_original_controls_without_old_stage_replay(setup_page):
+    data = setup_page
+    data["control"]["recovery_projects"] = [{"project_id": "saved-creative", "title": "Stopped 3D repair", "purpose": "creative",
+        "stages": [{"stage_id": "stopped-stage", "kind": "vision", "status": "failed", "can_retry": True}]}]
+    tab = data["page"]
+    tab.locator("#load-recovery").click()
+    tab.wait_for_function("document.querySelector('#recovery-projects a')!==null")
+    assert "will not replay" in tab.locator("#recovery-projects").inner_text()
+    assert "explicitly start a new action" in tab.locator("#recovery-projects").inner_text()
+    assert "may repeat Claude calls" in tab.locator("#recovery-projects").inner_text()
+    assert "resume this video" not in tab.locator("#recovery-projects").inner_text()
+    assert tab.locator("#recovery-projects button").count() == 0
+    assert tab.locator("#recovery-projects a").get_attribute("href") == "/"
+    assert not any(path == "/cr-recover" for path, _ in data["calls"])

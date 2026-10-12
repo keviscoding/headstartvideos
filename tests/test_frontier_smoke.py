@@ -12,6 +12,7 @@ For full testing with real Atlas/Pexels, set ATLASCLOUD_KEY and PEXELS_KEY.
 """
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -62,9 +63,12 @@ def create_test_fixtures(output_dir: Path):
         img.save(photo_path)
         pexels_photos.append(photo_path)
     
-    # Create test voiceover (silence)
+    # A quiet deterministic tone exercises both mixing and loudnorm. Silence
+    # measures as -inf LUFS/true peak and cannot seed a two-pass normalizer.
     vo_path = output_dir / "test_voiceover.mp3"
-    os.system(f"ffmpeg -f lavfi -i anullsrc=r=44100:cl=stereo -t 20 -c:a libmp3lame -y {vo_path} 2>/dev/null")
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+                    "-i", "sine=frequency=440:sample_rate=44100:duration=20",
+                    "-af", "volume=0.2", "-ac", "2", "-c:a", "libmp3lame", "-y", str(vo_path)], check=True)
     
     # Create test SRT
     srt_path = output_dir / "test_subs.srt"

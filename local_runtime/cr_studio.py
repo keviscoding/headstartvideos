@@ -22,6 +22,7 @@ import cr_mcp
 import cr_readiness
 import cr_workers
 import cr_ui
+import cr_submission
 import hashlib
 import re
 
@@ -374,7 +375,7 @@ def create_app():
             account_change = False
         deferred = deferred_editor_request(studio, request.path)
         creative = creative_request(request.path) and not deferred
-        if request.method == "POST" and (account_change or creative or request.path in {"/api/run", "/cr-submit-project", "/cr-recover"}):
+        if request.method == "POST" and (account_change or creative or request.path.startswith("/cr-3d/") or request.path in {"/api/run", "/cr-submit-project", "/cr-recover"}):
             # Serialize the initial check and context selection. Native chat/task
             # reservations keep this protection after their response returns.
             if not activity.lock.acquire(blocking=False):
@@ -519,6 +520,8 @@ def create_app():
             if not re.fullmatch(r"crv_[a-f0-9]{24}",project_id):
                 return jsonify(error="Use a valid saved CR project."),400
             progress=cr_bridge.project_progress(project_id)
+            if progress.get("purpose", "video") != "video":
+                return jsonify(error="This is a setup or creative action. Continue it in its original studio controls, not the saved-video launcher."),409
             spec=progress["job_spec"]
             if progress["project"]["status"] == "done":
                 return jsonify(error="This project already finished. Open its saved local output."),409
@@ -528,23 +531,13 @@ def create_app():
             cfg=cr_bridge.load_settings()
             cfg["setup_proof"]=preflight["proof"]
             cr_bridge.save_settings(cfg)
-            # Use Frontier's own validation, normalization and queue construction.
-            # Defer dispatch just long enough to attach the owned MCP project.
+            # Capture original normalized specs before the live dispatcher can
+            # consume them, and publish only this project's fully owned items.
             payload={**spec,"steps":spec.get("steps") or ["script","voiceover","pexels","images","video","thumbnail"]}
-            request._cached_json=(payload,payload)
-            dispatch=studio._ensure_dispatcher
-            studio._ensure_dispatcher=lambda:None
-            try:
-                response=studio.app.view_functions["api_run"]()
-            finally:
-                studio._ensure_dispatcher=dispatch
-            if isinstance(response,tuple):
+            response=cr_submission.submit(studio,payload,project_id)
+            if not 200 <= response.status_code < 300:
                 return response
             queued=response.get_json().get("queued",[])
-            with studio.LOCK:
-                for job in studio.QUEUE:
-                    job["cr_project_id"]=project_id
-            studio._ensure_dispatcher()
             return jsonify(queued=queued,project_id=project_id)
         except Exception as error:
             return jsonify(error=str(error)),409
@@ -608,7 +601,7 @@ def create_app():
                     progress=cr_bridge.project_progress(p["id"])
                 except RuntimeError:
                     continue
-                result.append({"project_id":p["id"],"title":p["title"],"status":p["status"],
+                result.append({"project_id":p["id"],"title":p["title"],"status":p["status"],"purpose":progress.get("purpose", ""),
                     "stages":[s for s in progress["stages"] if s["status"] in {"failed","authorized","retry_allowed"}]})
             return jsonify(projects=result)
         except Exception:
@@ -922,6 +915,8 @@ def create_app():
             else:
                 activity.release(render_token)
     studio._run_spec = run_spec
+    import cr_3d_routes
+    cr_3d_routes.install(studio, activity, setup_status)
     return studio
 
 

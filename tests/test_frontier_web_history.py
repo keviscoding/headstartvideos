@@ -122,6 +122,30 @@ def test_native_project_without_stages_does_not_query_legacy_history(native_hist
     assert not any(path.endswith("/requests") for _, path in calls)
 
 
+@pytest.mark.parametrize("purpose,saved,approved", [
+    ("video", "Resume the same video to reuse its completed work", "Resume the same video in your local studio"),
+    ("setup", "model-check result is saved", "Repeat model verification in local setup"),
+    ("creative", "creative-stage result is saved with its operation", "stopped creative action will not replay"),
+    (None, "Review it using the original controls", "Review its purpose and original controls"),
+])
+def test_native_history_recovery_describes_actual_saved_work_purpose(native_history, browser_page, purpose, saved, approved):
+    payload = json.loads(json.dumps(native_history.progress))
+    payload["purpose"] = purpose
+    payload["stages"][1].update(status="retry_allowed")
+    calls, history = mount(browser_page, native_history.status, payload["project"], payload)
+    browser_page.wait_for_function("document.querySelectorAll('.ls-request').length===3")
+    text = history.inner_text()
+    assert saved in text and approved in text
+    assert "Stage attempt approved" in text
+    if purpose != "video":
+        assert "Resume the same video" not in text
+    if purpose == "creative":
+        assert "explicitly start a new action from current cached assets" in text
+        assert "may repeat Claude calls" in text
+    assert history.locator("[data-ls-retry-form]").count() == 0
+    assert all(method == "GET" for method, _ in calls)
+
+
 def test_legacy_404_fallback_keeps_api_recovery_without_saved_brain_assumptions(native_history, browser_page):
     status = {**native_history.status, "brain": {}, "providers": {"kie": {"label": "Kie.ai"}}}
     project = {**native_history.progress["project"], "status": "needs_review"}
