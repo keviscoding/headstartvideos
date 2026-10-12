@@ -856,7 +856,46 @@ def create_app():
             text = text.replace("<body>", '<body><a href="/cr-setup" style="display:block;background:#171B2E;color:#EDEEF5;padding:12px 24px;font:14px system-ui;text-decoration:none">ChannelRecipe · Setup &amp; accounts</a>', 1)
             if request.path == "/":
                 text=text.replace("</body>",(HOME/"cr_renderer_panel.html").read_text()+"</body>",1)
-                guard = """<script>document.addEventListener('DOMContentLoaded',()=>{const go=document.getElementById('go');if(!go)return;let ready=false;const note=document.createElement('p');note.style.cssText='color:#e8a13c;font:14px system-ui;line-height:1.6';note.textContent='Checking ChannelRecipe setup…';go.insertAdjacentElement('beforebegin',note);go.disabled=true;fetch('/cr-status').then(r=>r.json()).then(d=>{ready=d.readiness?.ready===true&&!(d.brain_mode==='claudecode'&&d.claude_code?.allowance?.blocked);go.disabled=!ready;note.textContent=d.brain_mode==='claudecode'&&d.claude_code?.allowance?.blocked?d.claude_code.allowance.message:ready?'Your setup is connected. The selected preset and options will be checked before generation.':'Finish Setup & accounts before generating a video.';if(!ready){const a=document.createElement('a');a.href='/cr-setup';a.textContent=' Open setup';note.append(a)}}).catch(()=>{note.textContent='Reconnect ChannelRecipe in Setup & accounts before generating.'});go.addEventListener('click',e=>{if(!ready){e.preventDefault();e.stopImmediatePropagation();location.href='/cr-setup'}},true)});</script>"""
+                guard = """<style>#farm.cr-native-farm #farmSetup,#farm.cr-native-farm #farmBody{display:none!important}</style>
+<script>document.addEventListener('DOMContentLoaded',()=>{
+ const go=document.getElementById('go');if(!go)return;
+ let ready=false,settled=false,nativeFarm=false,farmRequested=false,wasBlocked=true;
+ let message='Checking ChannelRecipe setup…';
+ const note=document.createElement('p');note.id='cr-generation-readiness';note.style.cssText='color:#e8a13c;font:14px system-ui;line-height:1.6';
+ go.insertAdjacentElement('beforebegin',note);go.disabled=true;
+ const farm=document.getElementById('farm'),farmToggle=document.getElementById('f_on');
+ function drawGate(){
+  const blocked=!ready||(nativeFarm&&farmRequested);
+  if(blocked)go.disabled=true;else if(wasBlocked)go.disabled=false;
+  wasBlocked=blocked;
+  note.textContent=ready&&nativeFarm&&farmRequested?'Uncheck Cloud render below to make this video on your computer with Claude Code.':message;
+  if(settled&&!ready){const link=document.createElement('a');link.href='/cr-setup';link.textContent=' Open setup';note.append(link);}
+ }
+ function drawNativeFarm(){
+  if(!nativeFarm||!farm||!farmToggle)return;
+  farm.classList.add('cr-native-farm');farm.classList.remove('hidden');
+  farmToggle.checked=farmRequested;farmToggle.disabled=!farmRequested;
+  const why=document.getElementById('farmWhy');if(why)why.textContent=farmRequested?'Cloud render is selected, but your Claude Code login runs on this computer. Uncheck this option to continue locally.':'Cloud render is unavailable with your local Claude Code account. Your computer renders the video; no farm accounts are required.';
+  go.textContent='Create video';drawGate();
+ }
+ function connectNativeFarm(){
+  if(!farm||!farmToggle)return;
+  nativeFarm=true;farmRequested=farmToggle.checked;
+  try{farmRequested=farmRequested||!!localStorage.getItem('fr.farm');}catch(error){}
+  // Original polling calls this layout function after updating its farm state.
+  // Preserve the user's selection until their existing change handler saves it.
+  if(typeof window.farmBody==='function')window.farmBody=drawNativeFarm;
+  farmToggle.addEventListener('change',()=>{farmRequested=farmToggle.checked;drawNativeFarm();},true);
+  drawNativeFarm();
+ }
+ fetch('/cr-status').then(response=>response.json()).then(data=>{
+  ready=data.readiness?.ready===true&&!(data.brain_mode==='claudecode'&&data.claude_code?.allowance?.blocked);settled=true;
+  message=data.brain_mode==='claudecode'&&data.claude_code?.allowance?.blocked?data.claude_code.allowance.message:ready?'Your setup is connected. The selected preset and options will be checked before generation.':'Finish Setup & accounts before generating a video.';
+  if(data.brain_mode==='claudecode')connectNativeFarm();drawGate();
+ }).catch(()=>{settled=true;message='Reconnect ChannelRecipe in Setup & accounts before generating.';drawGate();});
+ go.addEventListener('click',event=>{if(!ready||(nativeFarm&&farmRequested)){event.preventDefault();event.stopImmediatePropagation();drawGate();if(!ready)location.href='/cr-setup';}},true);
+ drawGate();
+});</script>"""
                 text=text.replace("</body>",guard+"</body>",1)
             response.set_data(text)
         return response

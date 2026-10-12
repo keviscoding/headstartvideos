@@ -16,15 +16,42 @@ _check_cache = {}
 
 
 def supported_python():
-    candidates = [sys.executable] + [shutil.which(name) for name in ("python3.14", "python3.13", "python3", "python")]
-    for candidate in dict.fromkeys(p for p in candidates if p):
+    env = cr_manimgx._environment()
+    env["PYTHON_MANAGER_AUTOMATIC_INSTALL"] = "false"
+    for setting in ("PYLAUNCHER_ALLOW_INSTALL", "PYLAUNCHER_ALWAYS_INSTALL", "PYLAUNCHER_DRYRUN"):
+        env.pop(setting, None)
+
+    def supported(candidate):
         try:
             check = subprocess.run([candidate, "-c", "import sys;print(int(sys.version_info >= (3,13)))"],
-                capture_output=True, text=True, timeout=10, env=cr_manimgx._environment())
-            if check.returncode == 0 and check.stdout.strip() == "1":
-                return candidate
+                capture_output=True, text=True, timeout=10, env=env)
+            return check.returncode == 0 and check.stdout.strip() == "1"
         except (OSError, subprocess.TimeoutExpired):
-            pass
+            return False
+
+    candidates = [sys.executable] + [shutil.which(name) for name in ("python3.14", "python3.13", "python3", "python")]
+    seen = set()
+    for candidate in (p for p in candidates if p):
+        if candidate not in seen:
+            seen.add(candidate)
+            if supported(candidate):
+                return candidate
+    # A normal side-by-side Windows install may be registered with py while
+    # PATH and the studio's existing environment still point to Python 3.12.
+    launcher = shutil.which("py") if os.name == "nt" else None
+    if launcher:
+        for version in ("-3.14", "-3.13", "-3"):
+            try:
+                found = subprocess.run([launcher, version, "-c", "import sys;print(sys.executable)"],
+                    capture_output=True, text=True, timeout=10, env=env)
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+            candidate = found.stdout.strip()
+            if (found.returncode == 0 and candidate and "\n" not in candidate and "\r" not in candidate
+                    and candidate not in seen):
+                seen.add(candidate)
+                if supported(candidate):
+                    return candidate
     raise RuntimeError("ManimGX needs Python 3.13 or newer. Install it, reopen this studio, then run this check again. Your standard renderer is still available.")
 
 
@@ -81,19 +108,22 @@ def install(studio, activity, *, home):
     from flask import jsonify, request
     home = Path(home)
     state_path = home / ".cr-manimgx/setup-status.json"
+    worker = {"thread": None}
 
     def report(state, message):
         cr_claude._private_write(state_path, {"state": state, "message": message, "updated_at": time.time()})
 
     @studio.app.get("/cr-renderer")
     def renderer_status():
-        try:
-            state = json.loads(state_path.read_text())
-        except (OSError, ValueError):
-            state = {"state": "not_installed", "message": "Optional. The standard renderer is ready to use with your normal setup."}
+        with activity.lock:
+            try:
+                state = json.loads(state_path.read_text())
+            except (OSError, ValueError):
+                state = {"state": "not_installed", "message": "Optional. The standard renderer is ready to use with your normal setup."}
+            running = worker["thread"] is not None and worker["thread"].is_alive()
+            if state.get("state") in {"installing", "checking", "rendering"} and not running:
+                state = {"state": "stopped", "message": "The renderer check stopped. Run it again to finish setup."}
         result = ready(home)
-        if state.get("state") in {"installing", "checking", "rendering"} and not activity.busy():
-            state = {"state": "stopped", "message": "The renderer check stopped. Run it again to finish setup."}
         progress = cr_manimgx.progress_status(home) if hasattr(cr_manimgx, "progress_status") else {}
         return jsonify(ready=result["ready"], version=result["version"], setup=state,
                        message=result.get("message", ""), progress=progress, busy=activity.busy())
@@ -107,7 +137,6 @@ def install(studio, activity, *, home):
             if activity.busy():
                 return jsonify(error="Finish the current studio work before setting up ManimGX."), 409
             reservation = activity.reserve()
-            report("installing", "Preparing the optional renderer. Keep the studio running.")
             def run():
                 try:
                     install_dependencies(home, report)
@@ -118,8 +147,14 @@ def install(studio, activity, *, home):
                 finally:
                     activity.release(reservation)
             try:
-                threading.Thread(target=run, daemon=True).start()
-            except BaseException:
+                report("installing", "Preparing the optional renderer. Keep the studio running.")
+                worker["thread"] = threading.Thread(target=run, daemon=True)
+                worker["thread"].start()
+            except BaseException as error:
+                worker["thread"] = None
                 activity.release(reservation)
+                if isinstance(error, Exception):
+                    studio.app.logger.exception("The optional renderer check could not start")
+                    return jsonify(error="The renderer check could not start. Check the local studio log, then try again."), 503
                 raise
         return jsonify(started=True)

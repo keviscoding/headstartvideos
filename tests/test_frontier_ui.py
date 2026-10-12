@@ -305,7 +305,7 @@ def setup_page(page):
                              "features": {"offered": ["stock"], "on": ["stock"]}}],
                "features": [{"key": "stock", "label": "Original stock footage"}]}
     calls, pending = [], []
-    control = {"defer_save": False, "fail_save": False, "recovery_projects": []}
+    control = {"defer_save": False, "fail_save": False, "recovery_projects": [], "preset_blockers": []}
 
     def finish_save(route, payload):
         if control["fail_save"]:
@@ -347,10 +347,10 @@ def setup_page(page):
             assert action == "check"
             return route.fulfill(json={"message": "Read-only fixture checks complete."})
         if path == "/cr-preflight":
-            ready = state["readiness"]["ready"]
+            ready = state["readiness"]["ready"] and not control["preset_blockers"]
             return route.fulfill(json={"ready": ready,
                 "checks": [{"label": "Original fixture preset", "ready": ready}],
-                "blockers": [] if ready else ["Verify the saved models first."],
+                "blockers": [] if ready else control["preset_blockers"] or ["Verify the saved models first."],
                 "features": payload["features"]})
         pytest.fail("Unexpected UI fixture request: " + request.method + " " + path)
 
@@ -369,7 +369,7 @@ def setup_page(page):
 def test_unsaved_either_claude_model_blocks_verify_preflight_and_launch(setup_page, field, choice):
     tab = setup_page["page"]
     tab.locator("#preflight-check").click()
-    tab.wait_for_function("document.getElementById('launch').getAttribute('aria-disabled')==='false'")
+    tab.wait_for_function("document.getElementById('launch').getAttribute('href').startsWith('/?cr-preset=')")
     assert tab.locator("#launch").get_attribute("href") == "/?cr-preset=original%20fixture"
     previous_calls = len(setup_page["calls"])
     tab.select_option("#" + field, choice)
@@ -387,7 +387,7 @@ def test_unsaved_either_claude_model_blocks_verify_preflight_and_launch(setup_pa
     assert "Save the displayed Claude model choices" in tab.locator("#notice").inner_text()
 
 
-def test_saving_retains_displayed_choices_then_requires_verify_and_preset_check(setup_page):
+def test_saving_retains_displayed_choices_then_requires_verification_before_studio_entry(setup_page):
     tab = setup_page["page"]
     setup_page["control"]["defer_save"] = True
     tab.select_option("#claude-general", "opus-fixture")
@@ -415,12 +415,47 @@ def test_saving_retains_displayed_choices_then_requires_verify_and_preset_check(
     tab.locator("#claude-verify").click()
     tab.wait_for_function("document.getElementById('notice').textContent.includes('model access verified')")
     tab.wait_for_function("document.getElementById('claude-verify').disabled===false")
-    assert tab.locator("#launch").get_attribute("aria-disabled") == "true"
+    assert tab.locator("#launch").get_attribute("aria-disabled") == "false"
+    assert tab.locator("#launch").get_attribute("href") == "/"
     tab.locator("#preflight-check").click()
-    tab.wait_for_function("document.getElementById('launch').getAttribute('aria-disabled')==='false'")
+    tab.wait_for_function("document.getElementById('launch').getAttribute('href').startsWith('/?cr-preset=')")
     assert tab.locator("#launch").get_attribute("href") == "/?cr-preset=original%20fixture"
     assert setup_page["calls"][-1] == ("/cr-preflight", {"style": "original fixture", "features": {"stock": True}})
     assert [payload["action"] for path, payload in setup_page["calls"] if path == "/cr-claude/setup"] == ["select", "verify"]
+
+
+def test_completed_basic_setup_opens_studio_without_preset_or_media_requests(setup_page):
+    tab = setup_page["page"]
+    tab.select_option("#preflight-style", "")
+    assert tab.locator("#launch").get_attribute("aria-disabled") == "false"
+    assert tab.locator("#launch").get_attribute("href") == "/"
+    assert tab.locator("#launch").get_attribute("tabindex") == "0"
+    assert tab.locator("#readiness-title").inner_text() == "Your studio is ready"
+    assert "before starting" in tab.locator("#readiness-message").inner_text()
+    assert setup_page["calls"] == []
+
+
+def test_missing_preset_service_does_not_block_studio_entry_or_start_generation(setup_page):
+    tab = setup_page["page"]
+    setup_page["control"]["preset_blockers"] = ["Connect stock footage for this preset."]
+    tab.locator("#preflight-check").click()
+    tab.wait_for_function("document.getElementById('readiness-message').textContent.includes('still needs')")
+    assert tab.locator("#launch").get_attribute("aria-disabled") == "false"
+    assert tab.locator("#launch").get_attribute("href") == "/"
+    assert "before generation" in tab.locator("#readiness-blockers").inner_text()
+    assert "Connect stock footage" in tab.locator("#readiness-blockers").inner_text()
+    assert setup_page["calls"] == [("/cr-preflight", {"style": "original fixture", "features": {"stock": True}})]
+
+
+@pytest.mark.parametrize("blocker", ["Connect CR tools.", "Verify your selected models.", "Install FFmpeg with captions."])
+def test_incomplete_basic_setup_still_blocks_studio_entry(setup_page, blocker):
+    setup_page["state"]["readiness"].update(ready=False, blockers=[blocker])
+    tab = setup_page["page"]
+    tab.evaluate("refresh()")
+    assert tab.locator("#launch").get_attribute("aria-disabled") == "true"
+    assert tab.locator("#launch").get_attribute("tabindex") == "-1"
+    assert blocker in tab.locator("#readiness-blockers").inner_text()
+    assert not setup_page["calls"]
 
 
 def test_failed_save_and_read_only_refresh_keep_unsaved_choice_blocked(setup_page):
