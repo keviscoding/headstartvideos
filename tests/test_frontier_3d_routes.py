@@ -1,9 +1,12 @@
 """Finished-scene controls preserve ownership, native argv and stopped work."""
 import json
+import ast
+import os
 from pathlib import Path
 import re
 import sys
 import threading
+import time
 from types import SimpleNamespace
 
 from flask import Flask, jsonify, request
@@ -23,6 +26,7 @@ def local(tmp_path, monkeypatch):
         "threed/lock.json": {}, "threed/qa/qa.json": {"flags": {"scene_a": {"severity": 3, "note": "Black frame", "codes": ["dark"]}}}}.items():
         (job / name).write_text(json.dumps(data))
     (job / "video.mp4").write_bytes(b"saved video")
+    routes.ui_path(job).parent.mkdir(parents=True)
     app = Flask("3d-controls")
     studio = SimpleNamespace(app=app, OUT=tmp_path / "output", SAFE=re.compile(r"^[a-zA-Z0-9_-]+$"),
         _job=lambda slug: job if slug == "example" else tmp_path / slug,
@@ -31,6 +35,7 @@ def local(tmp_path, monkeypatch):
     activity = SimpleNamespace(busy=lambda: state["busy"], reserve=lambda: state.update(busy=True) or "reservation",
         release=lambda token: (state["released"].append(token), state.update(busy=False)))
     monkeypatch.setattr(routes.cr_bridge, "load_settings", lambda: {"brain_mode": state["mode"]})
+    monkeypatch.setattr(routes,"original_job_active",lambda _: "")
     monkeypatch.setattr(routes.cr_bridge, "project_progress", lambda pid: {"project": {"id": pid, "status": state["parent_status"]},
         "job_spec": {"title": "Example", "style": "3d", "minutes": 1, "burn_subs": True}})
     monkeypatch.setitem(sys.modules, "cr_3d", SimpleNamespace(operation_status=lambda *a, **kw: {}))
@@ -79,6 +84,10 @@ def test_review_launch_reserves_context_and_uses_owned_worker_without_shell(loca
     assert calls[0][0][-2:] == ["qa", str(local.job)]
     assert not local.state["busy"] and local.state["released"] == ["reservation"]
     assert json.loads((local.job / "cr-project.json").read_text())["id"] == local.parent
+    operation_id=calls[0][0][5]
+    assert Path(calls[0][1]["stdout"].name)==routes.log_path(local.job,operation_id)
+    assert routes.ui_path(local.job).is_file()
+    assert not (local.job/".cr-3d-ui.json").exists() and not (local.job/"threed/.cr-operation.log").exists()
 
 
 def test_failed_operation_cannot_be_replayed_by_repeated_button(local, monkeypatch):
@@ -100,14 +109,14 @@ def test_repair_keeps_original_verification_and_literal_feedback(local):
 
 
 def test_stopped_work_requires_explicit_new_work_acknowledgement(local):
-    (local.job / ".cr-3d-ui.json").write_text(json.dumps({"state": "failed", "needs_manual_recovery": True}))
+    routes.ui_path(local.job).write_text(json.dumps({"state": "failed", "needs_manual_recovery": True}))
     assert local.client.post("/cr-3d/example", json={"action": "qa"}).status_code == 409
     assert local.client.post("/cr-3d/example", json={"action": "qa", "acknowledge_new_work": True}).status_code == 200
     assert len(local.state["threads"]) == 1
 
 
 def test_new_acknowledged_action_cannot_bypass_an_uncertain_cloud_stage(local, monkeypatch):
-    (local.job / ".cr-3d-ui.json").write_text(json.dumps({"state": "failed", "needs_manual_recovery": True,
+    routes.ui_path(local.job).write_text(json.dumps({"state": "failed", "needs_manual_recovery": True,
         "operation_project_id": "crv_" + "2" * 24}))
     monkeypatch.setattr(routes.cr_bridge, "project_progress", lambda *a: {"stages": [{"status": "authorized"}]})
     assert local.client.post("/cr-3d/example", json={"action": "qa", "acknowledge_new_work": True}).status_code == 409
@@ -116,7 +125,7 @@ def test_new_acknowledged_action_cannot_bypass_an_uncertain_cloud_stage(local, m
 
 def test_assembly_completion_can_sync_without_generation(local, monkeypatch):
     project = "crv_" + "3" * 24
-    (local.job / ".cr-3d-ui.json").write_text(json.dumps({"action": "assemble", "state": "running",
+    routes.ui_path(local.job).write_text(json.dumps({"action": "assemble", "state": "running",
         "operation_project_id": project, "needs_reassembly": True}))
     receipt = {"project_id": project, "status": "done", "artifacts": []}
     (local.job / ".cr-finish-pending.json").write_text(json.dumps(receipt))
@@ -130,7 +139,7 @@ def test_assembly_completion_can_sync_without_generation(local, monkeypatch):
 
 
 def test_assembly_startup_failure_is_stopped_not_permanently_running(local):
-    (local.job / ".cr-3d-ui.json").write_text(json.dumps({"action": "assemble", "state": "running",
+    routes.ui_path(local.job).write_text(json.dumps({"action": "assemble", "state": "running",
         "operation_project_id": "crv_" + "3" * 24, "needs_reassembly": True}))
     result = local.client.get("/cr-3d/example").get_json()
     assert result["state"] == "failed" and result["needs_manual_recovery"] and result["needs_reassembly"]
@@ -138,7 +147,7 @@ def test_assembly_startup_failure_is_stopped_not_permanently_running(local):
 
 def test_live_worker_journal_is_normal_progress_not_stopped_work(local, monkeypatch):
     local.state["busy"] = True
-    (local.job / ".cr-3d-ui.json").write_text(json.dumps({"action": "qa", "state": "running", "command": ["qa", str(local.job)]}))
+    routes.ui_path(local.job).write_text(json.dumps({"action": "qa", "state": "running", "command": ["qa", str(local.job)]}))
     monkeypatch.setitem(sys.modules, "cr_3d", SimpleNamespace(operation_status=lambda *a, **kw: {
         "state": "running", "needs_manual_recovery": True, "message": "Stopped"}))
     result = local.client.get("/cr-3d/example").get_json()
@@ -147,7 +156,7 @@ def test_live_worker_journal_is_normal_progress_not_stopped_work(local, monkeypa
 
 
 def test_reassembly_uses_original_validation_and_same_job_queue(local, monkeypatch):
-    (local.job / ".cr-3d-ui.json").write_text(json.dumps({"state": "done", "needs_reassembly": True}))
+    routes.ui_path(local.job).write_text(json.dumps({"state": "done", "needs_reassembly": True}))
     new_id = "crv_" + "3" * 24
     monkeypatch.setattr(routes.cr_readiness, "preset", lambda *a: {"ready": True, "proof": {"purpose": "video"}})
     monkeypatch.setattr(routes.cr_bridge, "save_settings", lambda *a: None)
@@ -169,3 +178,63 @@ def test_reassembly_uses_original_validation_and_same_job_queue(local, monkeypat
     assert dispatched == [True]
     # The completed original marker remains until the normal dispatcher starts.
     assert json.loads((local.job / "cr-project.json").read_text())["id"] == local.parent
+
+
+def test_legacy_stopped_status_is_read_without_modifying_old_failure_evidence(local):
+    legacy=local.job/".cr-3d-ui.json"
+    evidence=json.dumps({"state":"failed","needs_manual_recovery":True,"operation_project_id":"crv_"+"2"*24})
+    legacy.write_text(evidence)
+    assert not routes.ui_path(local.job).exists()
+    result=local.client.get("/cr-3d/example").get_json()
+    assert result["state"]=="failed" and result["needs_manual_recovery"]
+    assert legacy.read_text()==evidence and not routes.ui_path(local.job).exists()
+    routes.ui_path(local.job).write_text('{"state":"done"}')
+    assert local.client.get("/cr-3d/example").get_json()["state"]=="done"
+    assert legacy.read_text()==evidence
+
+
+def test_recent_original_files_stop_redo_before_new_status_or_worker(local,monkeypatch):
+    monkeypatch.setattr(routes,"original_job_active",lambda _: "segments/recent.mp4")
+    response=local.client.post("/cr-3d/example",json={"action":"redo","scene_ids":["scene_a"]})
+    assert response.status_code==409 and "updated recently" in response.get_json()["error"]
+    assert not local.state["threads"] and not local.state["busy"]
+    assert not routes.ui_path(local.job).exists()
+    assert not routes.ui_path(local.job).parent.joinpath("logs").exists()
+    # Frontier does not impose this cooldown on its read-only film inspection.
+    assert local.client.post("/cr-3d/example",json={"action":"qa"}).status_code==200
+
+
+def test_original_activity_detector_ignores_fresh_adapter_state_but_protects_recent_segments(local,monkeypatch):
+    source=Path(os.environ.get("FRONTIER_TEST_ENGINE_DIR",str(Path.home()/"Downloads/ChannelRecipe studio")))/"threed.py"
+    if not source.is_file():
+        pytest.skip("Original private Frontier runtime is required for this parity regression.")
+    tree=ast.parse(source.read_text(encoding="utf-8"),filename=str(source))
+    function=next(node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=="_job_active")
+    # Compile only the actual original detector. This neither imports its
+    # private creative prompts nor starts a provider, renderer or native CLI.
+    namespace={"Path":Path,"time":time,"RUNNER_LOCK":".runner.lock"}
+    exec(compile(ast.Module(body=[function],type_ignores=[]),str(source),"exec"),namespace)
+    detector=namespace["_job_active"]
+    older=time.time()-180
+    for path in local.job.rglob("*"):
+        if path.is_file():os.utime(path,(older,older))
+    monkeypatch.setattr(routes,"original_job_active",detector)
+    monkeypatch.setitem(sys.modules,"cr_3d",SimpleNamespace(operation_status=lambda *a,**kw:{"state":"done"}))
+    calls=[]
+    def original_worker(command,**options):
+        calls.append(command)
+        assert detector(local.job)==""
+        assert Path(options["stdout"].name)==routes.log_path(local.job,command[5])
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(routes.subprocess,"run",original_worker)
+    assert local.client.post("/cr-3d/example",json={"action":"redo","scene_ids":["scene_a"]}).status_code==200
+    local.state["threads"].pop().target()
+    assert detector(local.job)=="" and len(calls)==1
+    state_evidence=routes.ui_path(local.job).read_bytes()
+    recent=local.job/"segments/recent.mp4"
+    recent.parent.mkdir();recent.write_bytes(b"genuine original render work")
+    assert detector(local.job)=="segments/recent.mp4"
+    response=local.client.post("/cr-3d/example",json={"action":"redo","scene_ids":["scene_a"]})
+    assert response.status_code==409 and "updated recently" in response.get_json()["error"]
+    assert not local.state["threads"] and len(calls)==1
+    assert routes.ui_path(local.job).read_bytes()==state_evidence

@@ -26,9 +26,9 @@ from webapp import database as db
 from cryptography.fernet import Fernet, InvalidToken
 from webapp import frontier_providers as providers
 
-VERSION = "5.3-admin.15"
+VERSION = "5.3-admin.16"
 CATALOG = Path(__file__).resolve().parent / "frontier" / "catalog.json"
-RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.15.zip"
+RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.16.zip"
 WORKFLOW_VERSION = "frontier-5.3-claudecode.1"
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 NATIVE_STAGE_LIMIT = 2
@@ -576,7 +576,7 @@ def _runtime_compatible(version, workflow):
     # changed engine or workflow must explicitly migrate projects instead.
     current=workflow_contract()
     return version==workflow["required_release"] or (
-        version==VERSION and workflow.get("required_release") in {"5.3-admin.8","5.3-admin.9","5.3-admin.10","5.3-admin.11","5.3-admin.12","5.3-admin.13","5.3-admin.14"}
+        version==VERSION and workflow.get("required_release") in {"5.3-admin.8","5.3-admin.9","5.3-admin.10","5.3-admin.11","5.3-admin.12","5.3-admin.13","5.3-admin.14","5.3-admin.15"}
         and workflow.get("workflow_version")==current["workflow_version"]
         and workflow.get("engine_source_sha256")==current["engine_source_sha256"])
 

@@ -25,6 +25,33 @@ def read_json(path):
         return {}
 
 
+def ui_path(job):
+    # Frontier's original activity detector scans direct working files. Keep
+    # adapter bookkeeping in a deeper directory so it cannot impersonate a
+    # still-running original render.
+    return Path(job) / "threed" / ".cr-operations" / ".ui.json"
+
+
+def read_ui(job):
+    path=ui_path(job)
+    # Read an earlier stopped operation without modifying its saved evidence.
+    # Every new write uses ui_path; a legacy file still follows Frontier's
+    # original quiet-period safety check until it naturally becomes old.
+    return read_json(path if path.is_file() else Path(job) / ".cr-3d-ui.json")
+
+
+def log_path(job, operation_id):
+    if not isinstance(operation_id,str) or not re.fullmatch(r"op_[a-f0-9]{24}",operation_id):
+        raise ValueError("Use a valid explicitly created 3D operation ID.")
+    return ui_path(job).parent / "logs" / (operation_id + ".log")
+
+
+def original_job_active(job):
+    """Use Frontier's own read-only cooldown check before a redo starts."""
+    import threed
+    return threed._job_active(job)
+
+
 def scene_ids(job):
     return [s["id"] for s in scene_rows(job)]
 
@@ -75,7 +102,7 @@ def safe_status(studio, activity, job):
     available = bool(marker.get("brain_mode") == "claudecode" and
                      (job / "threed" / "board_final.json").is_file() and
                      (job / "threed" / "lock.json").is_file() and studio.mv.final_video(job).is_file())
-    state = read_json(job / ".cr-3d-ui.json")
+    state = read_ui(job)
     if state.get("command"):
         import cr_3d
         recorded = cr_3d.operation_status(job, state["command"], operation_id=state.get("operation_id"))
@@ -91,7 +118,7 @@ def safe_status(studio, activity, job):
         if receipt.get("project_id") == state.get("operation_project_id"):
             state.update(state="done" if receipt.get("status") == "done" else "failed",
                          needs_reassembly=receipt.get("status") != "done")
-            cr_claude._private_write(job / ".cr-3d-ui.json", state)
+            cr_claude._private_write(ui_path(job), state)
         elif read_json(job / ".cr-finish-pending.json").get("project_id") == state.get("operation_project_id"):
             state.update(state="pending", message="Your final video is saved locally. Sync its completion record to finish.")
         elif not activity.busy():
@@ -136,7 +163,7 @@ def install(studio, activity, setup_status):
             data = request.get_json(silent=True) or {}
             action = data.get("action")
             if action == "sync":
-                saved = read_json(job / ".cr-3d-ui.json")
+                saved = read_ui(job)
                 if saved.get("action") == "assemble":
                     pending = job / ".cr-finish-pending.json"
                     receipt = read_json(pending)
@@ -147,7 +174,7 @@ def install(studio, activity, setup_status):
                     saved.update(state="done" if receipt.get("status") == "done" else "failed",
                                  needs_reassembly=receipt.get("status") != "done",
                                  message="Your local final video and completion record are saved.")
-                    cr_claude._private_write(job / ".cr-3d-ui.json", saved)
+                    cr_claude._private_write(ui_path(job), saved)
                     return jsonify(safe_status(studio, activity, job))
                 if not saved.get("command"):
                     raise ValueError("No saved scene operation needs reconciliation.")
@@ -195,7 +222,7 @@ def install(studio, activity, setup_status):
                 project = cr_bridge.begin_project(spec["title"], spec["style"],
                     state["operation_project_id"] if resume_assembly else None, proof=proof["proof"], job_spec=spec)
                 def before_publish():
-                    cr_claude._private_write(job / ".cr-3d-ui.json", {"action": action, "state": "running",
+                    cr_claude._private_write(ui_path(job), {"action": action, "state": "running",
                         "operation_project_id": project["id"], "needs_reassembly": True,
                         "message": "Updating your final video from the repaired scene cache."})
                 response = cr_submission.submit(studio, spec, project["id"], before_publish=before_publish)
@@ -203,19 +230,21 @@ def install(studio, activity, setup_status):
                     return response
                 return jsonify(queued=True, operation_project_id=project["id"])
             args = command(action, job, data)
+            if action == "redo" and original_job_active(job):
+                raise ValueError("This video was updated recently. Wait a little longer before starting its repair, then try again.")
             operation_id = "op_" + secrets.token_hex(12)
             entry = {"action": action, "command": args, "operation_id": operation_id, "state": "running",
                      "needs_reassembly": state["needs_reassembly"],
                      "message": "Claude is inspecting the finished scenes." if action == "qa" else "Claude is repairing and reviewing the selected scenes."}
-            cr_claude._private_write(job / ".cr-3d-ui.json", entry)
+            cr_claude._private_write(ui_path(job), entry)
             reservation = activity.reserve()
 
             def run():
                 try:
-                    log_path = job / "threed" / ".cr-operation.log"
-                    log_path.parent.mkdir(parents=True, exist_ok=True)
-                    with log_path.open("w", encoding="utf-8") as log:
-                        log_path.chmod(0o600)
+                    operation_log = log_path(job, operation_id)
+                    operation_log.parent.mkdir(parents=True, exist_ok=True)
+                    with operation_log.open("w", encoding="utf-8") as log:
+                        operation_log.chmod(0o600)
                         result = subprocess.run([sys.executable, str(HOME / "cr_worker.py"), "--project", marker["id"], "--operation", operation_id,
                             "--", str(HOME / "threed.py"), *args], cwd=HOME, stdout=log, stderr=subprocess.STDOUT)
                     import cr_3d
@@ -224,11 +253,11 @@ def install(studio, activity, setup_status):
                     if result.returncode and entry.get("state") not in {"failed", "pending"}:
                         entry.update(state="failed", needs_manual_recovery=True,
                                      message="The operation stopped. Review its project in Setup & accounts; your saved scenes are kept.")
-                    cr_claude._private_write(job / ".cr-3d-ui.json", entry)
+                    cr_claude._private_write(ui_path(job), entry)
                 except BaseException:
                     entry.update(state="failed", needs_manual_recovery=True,
                                  message="The operation stopped. Review it in Setup & accounts; your saved scenes are kept.")
-                    cr_claude._private_write(job / ".cr-3d-ui.json", entry)
+                    cr_claude._private_write(ui_path(job), entry)
                 finally:
                     activity.release(reservation)
 
