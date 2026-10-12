@@ -65,16 +65,21 @@ def test_actual_manifest_corrector_publishes_once_and_reuses_saved_code(manifest
     acceptance = gx._accepted_response(s.old, gx._read(s.old / 'compiler.json'), plan['context'], plan['assets'])
     assert acceptance['kind'] == 'completed_native_recovery_correction'
 
-from test_frontier_manimgx_recovery import runtime_correction
+from test_frontier_manimgx_recovery import runtime_correction, completed_runtime_correction
 
 
-def test_runtime_corrected_source_reuses_final_format_without_touching_parent_log(runtime_correction, monkeypatch):
+@pytest.mark.parametrize('saved_fixture', ['runtime_correction', 'completed_runtime_correction'])
+def test_runtime_corrected_source_reuses_final_format_without_touching_parent_log(request, saved_fixture, monkeypatch):
     import math
     from PIL import Image
-    s = runtime_correction
+    s = request.getfixturevalue(saved_fixture)
     plan = recovery._prepare(s.home, s.cloud['project_id'], s.out, 'original', s.cloud)
-    recovery.correct(s.home, s.cloud['project_id'], s.out, 'original', s.cloud,
-        acknowledge_correction=True, engine=s.engine, setup_proof=s.setup)
+    if saved_fixture == 'completed_runtime_correction':
+        invoke(s, acknowledge_recovery=True)
+    else:
+        recovery.correct(s.home, s.cloud['project_id'], s.out, 'original', s.cloud,
+            acknowledge_correction=True, engine=s.engine, setup_proof=s.setup)
+    expected_source = recovery.runtime_override(s.old, plan['context'], plan['assets'], plan['ready'], s.key, s.bundle)[1]
     originals = {p.name: p.read_bytes() for p in s.old.iterdir() if p.is_file()}
     invoked = []
     def invoke_render(python, payload, directory, **kwargs):
@@ -98,6 +103,6 @@ def test_runtime_corrected_source_reuses_final_format_without_touching_parent_lo
         compiler=lambda *a: pytest.fail('No repeat compiler'))
     target = s.old.parent / report['scenes'][0]['compiler_key']
     assert invoked[0][1] == target
-    assert Path(invoked[0][0]['source']) == s.work / 'scene-corrected.py'
+    assert Path(invoked[0][0]['source']) == expected_source
     assert gx._read(target / 'reuse.json')['acceptance']['kind'] == 'completed_native_runtime_correction'
     assert all((s.old / name).read_bytes() == data for name,data in originals.items())

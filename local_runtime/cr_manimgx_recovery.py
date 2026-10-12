@@ -138,6 +138,131 @@ def runtime_diagnostic(directory, context, assets, ready, key, reference_bundle)
     return evidence
 
 
+def _completed_correction_inputs(work, context, assets, proof):
+    """Read one paid correction which completed but failed only local typing."""
+    names = ("recovery.json", "correction-attempts.json", "compiler-correction-response-1.txt",
+             "scene-corrected.py", "scene-corrected.validation.log")
+    if any(not _present(work / name) or not _regular(work / name) for name in names):
+        raise RuntimeError("The completed correction lost its original saved result or validation diagnostic.")
+    receipt, journal = _read(work / "recovery.json"), _read(work / "correction-attempts.json")
+    if (receipt.get("state") != "stopped" or receipt.get("model_calls") != 1
+            or receipt.get("correction_error_type") != "ManimGXSourceAPIError"
+            or receipt.get("proof") != proof or journal.get("state") != "stopped"
+            or journal.get("key") != proof["key"] or journal.get("calls") != 1
+            or journal.get("recovery_proof") != proof or _present(work / "compiler-corrected.json")
+            or _present(work / "runtime-failure.json")):
+        raise RuntimeError("This correction is not one completed native result stopped only by local API validation.")
+    raw = (work / "compiler-correction-response-1.txt").read_text(encoding="utf-8")
+    result = renderer._compiler_result(raw, context, assets)
+    if hashlib.sha256(result["source"].encode()).hexdigest() != _hash(work / "scene-corrected.py"):
+        raise RuntimeError("The completed correction source changed before local revalidation.")
+    return result, {name: _hash(work / name) for name in names}
+
+
+def _completed_correction_candidate(home, plan, cloud_progress):
+    if plan["kind"] != "runtime_api":
+        raise RuntimeError("Use the original runtime correction's local validation controls.")
+    work = plan["recovery_directory"]
+    result, history = _completed_correction_inputs(work, plan["context"], plan["assets"], plan["proof"])
+    raw = (work / "compiler-correction-response-1.txt").read_text(encoding="utf-8")
+    cfg, local = _read(Path(home) / ".cr-connection.json"), cr_claude.status()
+    matches = []
+    for stage in cloud_progress.get("stages", []):
+        stage_id = stage.get("stage_id")
+        if not isinstance(stage_id, str) or not re.fullmatch(r"cc_[a-f0-9]{64}", stage_id):
+            continue
+        path = Path(home) / "output/cr-claude-cache" / plan["proof"]["project_id"] / (stage_id + ".json")
+        if not _present(path) or not _regular(path):
+            continue
+        native = _read(path)
+        stdout = native.get("stdout")
+        if not isinstance(stdout, str):
+            continue
+        try:
+            envelope = json.loads(stdout)
+        except ValueError:
+            continue
+        if not (isinstance(envelope, dict) and envelope.get("result") == raw):
+            continue
+        fingerprint = hashlib.sha256(stdout.encode()).hexdigest()
+        if (stage_id == plan["proof"]["native_stage_id"] or stage.get("status") != "complete"
+                or native.get("state") != "complete" or native.get("input_fingerprint") != stage_id[3:]
+                or fingerprint != native.get("result_fingerprint") or fingerprint != stage.get("result_fingerprint")
+                or envelope.get("type") != "result" or envelope.get("subtype") != "success" or envelope.get("is_error") is not False
+                or stage.get("model_role") != "visual" or stage.get("selected_model") != cfg.get("visual_model")
+                or stage.get("attempts") != 1 or stage.get("error_code")
+                or (native.get("account_fingerprint") is not None and native["account_fingerprint"] != local.get("account_fingerprint"))):
+            raise RuntimeError("The completed correction no longer matches its exact successful native account/model receipt.")
+        matches.append({"stage_id": stage_id, "result_fingerprint": fingerprint, "local_receipt_sha256": _hash(path),
+                        "account_fingerprint": local.get("account_fingerprint")})
+    if len(matches) != 1:
+        raise RuntimeError("The completed correction has no unique successful native receipt; no revalidation is available.")
+    return result, {"origin": plan["proof"], "history": history, "native": matches[0]}
+
+
+def _completed_validation_result(work, context, assets, proof):
+    validation = work / ".completed-correction-validation"
+    if validation.is_symlink() or not validation.is_dir():
+        raise RuntimeError("The completed-correction validation directory changed.")
+    result, history = _completed_correction_inputs(work, context, assets, proof)
+    record_path, manifest_path, source = validation / "recovery.json", validation / "compiler-corrected.json", validation / "scene.py"
+    if any(not _present(path) or not _regular(path) for path in (record_path, manifest_path, source)):
+        raise RuntimeError("This completed correction's local validation did not finish.")
+    record, manifest = _read(record_path), _read(manifest_path)
+    acceptance = record.get("proof", {})
+    native = acceptance.get("native", {})
+    home = next((parent for parent in work.parents if parent.name == "output"), None)
+    stage_id = native.get("stage_id", "")
+    if home is None or not re.fullmatch(r"cc_[a-f0-9]{64}", str(stage_id)):
+        raise RuntimeError("The revalidated correction lost its native receipt identity.")
+    native_path = home / "cr-claude-cache" / proof["project_id"] / (stage_id + ".json")
+    source_hash = hashlib.sha256(result["source"].encode()).hexdigest()
+    if (record.get("state") != "validated" or record.get("model_calls") != 0
+            or acceptance.get("origin") != proof or acceptance.get("history") != history
+            or not _present(native_path) or not _regular(native_path) or _hash(native_path) != native.get("local_receipt_sha256")
+            or not _HASH.fullmatch(str(native.get("result_fingerprint", "")))
+            or manifest.get("key") != proof["key"] or manifest.get("typed") is not True
+            or manifest.get("result") != result or manifest.get("source_sha256") != source_hash
+            or manifest.get("recovery_proof") != acceptance or _hash(source) != source_hash):
+        raise RuntimeError("The revalidated correction no longer matches its unchanged paid result and zero-model receipt.")
+    return result, source
+
+
+def _recover_completed_correction(home, outdir, plan, cloud_progress):
+    work = plan["recovery_directory"]
+    validation = work / ".completed-correction-validation"
+    if _present(validation):
+        result, source = _completed_validation_result(work, plan["context"], plan["assets"], plan["proof"])
+        return {"accepted": True, "reused": True, "corrected": True, "model_calls": 0,
+                **plan["proof"], "source_sha256": _hash(source)}
+    result, proof = _completed_correction_candidate(home, plan, cloud_progress)
+    try:
+        validation.mkdir(mode=0o700)
+    except FileExistsError:
+        raise RuntimeError("This completed correction is already being validated.") from None
+    record = {"state": "validating", "proof": proof, "model_calls": 0, "created_at": time.time()}
+    renderer._write(validation / "recovery.json", record)
+    candidate = validation / "scene.py"
+    renderer._write(candidate, result["source"], text=True)
+    try:
+        renderer._typecheck(plan["ready"]["python"], candidate)
+        fresh = _prepare(home, plan["proof"]["project_id"], outdir, plan["proof"]["scene_id"], cloud_progress)
+        current, current_proof = _completed_correction_candidate(home, fresh, cloud_progress)
+        if (fresh["proof"] != plan["proof"] or current != result or current_proof != proof
+                or not _regular(candidate) or _hash(candidate) != hashlib.sha256(result["source"].encode()).hexdigest()):
+            raise RuntimeError("The completed correction changed during local validation.")
+        renderer._write(validation / "compiler-corrected.json", {"key": plan["key"], "typed": True,
+            "result": result, "source_sha256": _hash(candidate), "recovery_proof": proof})
+        record.update(state="validated", checked_at=time.time())
+        renderer._write(validation / "recovery.json", record)
+    except BaseException as error:
+        record.update(state="stopped", diagnostic=renderer._redacted_diagnostic(str(error)), error_type=type(error).__name__)
+        renderer._write(validation / "recovery.json", record)
+        raise
+    return {"accepted": True, "reused": False, "corrected": True, "model_calls": 0,
+            **plan["proof"], "source_sha256": _hash(candidate)}
+
+
 def runtime_override(directory, context, assets, ready, key, reference_bundle):
     """Return only a completed explicit runtime correction, retaining its parent."""
     directory = Path(directory)
@@ -154,7 +279,8 @@ def runtime_override(directory, context, assets, ready, key, reference_bundle):
     journal = _read(directory / "compile-attempts.json")
     original_response = directory / f"compiler-response-{journal.get('calls')}.txt"
     reference = directory / "original-reference.txt"
-    if (record.get("state") != "corrected" or record.get("model_calls") != 1
+    validated_completion = _present(work / ".completed-correction-validation")
+    if ((record.get("state") != "corrected" and not (record.get("state") == "stopped" and validated_completion)) or record.get("model_calls") != 1
             or proof.get("runtime_failure") != evidence or proof.get("key") != key
             or proof.get("source_sha256") != evidence["source_sha256"]
             or proof.get("legacy_journal_sha256") != _hash(directory / "compile-attempts.json")
@@ -169,6 +295,11 @@ def runtime_override(directory, context, assets, ready, key, reference_bundle):
             or proof.get("setup_identity") != ready["identity"]
             or proof.get("reference_identity") != reference_bundle["identity"]):
         raise RuntimeError("This saved runtime source needs its explicit recovery completed before rendering.")
+    if validated_completion:
+        result, source = _completed_validation_result(work, context, assets, proof)
+        if _present(source.parent / "runtime-failure.json"):
+            raise RuntimeError("The revalidated correction stopped at runtime; it will not render again automatically.")
+        return result, source
     manifest = _read(work / "compiler-corrected.json")
     result = _runtime_corrected_result(directory, work, context, assets, proof, record, manifest)
     return result, work / "scene-corrected.py"
@@ -181,9 +312,10 @@ def runtime_acceptance(directory, context, assets, ready, key, reference_bundle)
         return None
     directory = Path(directory)
     work = directory / ".recovery-runtime-api"
-    return {"kind": "completed_native_runtime_correction", "key": key,
+    manifest_directory = accepted[1].parent
+    acceptance = {"kind": "completed_native_runtime_correction", "key": key,
             "source_sha256": _hash(accepted[1]),
-            "manifest_sha256": _hash(work / "compiler-corrected.json"),
+            "manifest_sha256": _hash(manifest_directory / "compiler-corrected.json"),
             "receipt_sha256": _hash(work / "recovery.json"),
             "journal_sha256": _hash(work / "correction-attempts.json"),
             "response_sha256": _hash(work / "compiler-correction-response-1.txt"),
@@ -191,6 +323,9 @@ def runtime_acceptance(directory, context, assets, ready, key, reference_bundle)
             "parent_manifest_sha256": _hash(directory / "compiler.json"),
             "parent_source_sha256": _hash(directory / "scene.py"),
             "parent_journal_sha256": _hash(directory / "compile-attempts.json")}
+    if manifest_directory != work:
+        acceptance["completed_validation_sha256"] = _hash(manifest_directory / "recovery.json")
+    return acceptance
 
 
 def _runtime_corrected_result(directory, work, context, assets, proof, receipt, manifest):
@@ -504,19 +639,34 @@ def discover(home, job, cloud_progress):
             saved = renderer._read(receipt_path)
             if saved and saved.get("proof") != plan["proof"]:
                 continue
+            completed_available = False
+            completed_validated = False
+            if plan["kind"] == "runtime_api" and saved.get("state") == "stopped":
+                validation = plan["recovery_directory"] / ".completed-correction-validation"
+                try:
+                    if _present(validation):
+                        _completed_validation_result(plan["recovery_directory"], plan["context"], plan["assets"], plan["proof"])
+                        completed_validated = True
+                    else:
+                        _completed_correction_candidate(home, plan, cloud_progress)
+                        completed_available = True
+                except (RuntimeError, OSError, ValueError, KeyError, TypeError):
+                    pass
             selector = renderer._digest({"project_id": project_id, "preview": str(report_path.parent.relative_to(job)),
                                          "scene_id": scene["id"], "legacy_key": plan["legacy_key"]})
             found.append({"selection_id": selector, "project_id": project_id, "scene_id": scene["id"],
                           "title": str((cloud_progress.get("project") or {}).get("title") or project_id),
-                          "state": saved.get("state", "available"), "outdir": str(report_path.parent),
+                          "state": "validated" if completed_validated else saved.get("state", "available"), "outdir": str(report_path.parent),
                           "receipt_path": str(receipt_path), "key": plan["key"], "kind": plan["kind"],
                           "diagnostic": saved.get("diagnostic", ""),
-                          "message": "The saved Claude response needs one explicit JSON formatting or completion correction." if saved.get("state") == "source_invalid" and plan["kind"] == "manifest_json" and "saved_response" in plan["result"]
+                          "message": "The completed correction passed local validation. Resume through the original video controls." if completed_validated
+                              else "Claude already completed this correction. Validate its saved source locally; no model call or media generation is needed." if completed_available
+                              else "The saved Claude response needs one explicit JSON formatting or completion correction." if saved.get("state") == "source_invalid" and plan["kind"] == "manifest_json" and "saved_response" in plan["result"]
                               else "The saved source needs one explicit Claude API correction." if saved.get("state") == "source_invalid"
                               else "Local validation stopped. Review its saved diagnostic; no Claude correction is available." if saved.get("state") == "stopped"
                               else "The completed response passed local validation. Resume through the original video controls." if saved.get("state") in {"validated", "corrected"}
                               else "Validate the completed response locally. This generates no media and uses no model calls.",
-                          "can_validate": not saved, "can_correct": saved.get("state") == "source_invalid"
+                          "can_validate": not saved or completed_available, "can_correct": saved.get("state") == "source_invalid"
                               and not _present(plan["recovery_directory"] / "correction-attempts.json")
                               and (plan["kind"] not in {"coverage_text", "manifest_json"} or not _present(plan["directory"] / "scene.py"))})
     return found
@@ -540,6 +690,8 @@ def recover(home, project_id, outdir, scene_id, cloud_progress, *, acknowledge_r
     if work.exists():
         saved = renderer._read(work / "recovery.json")
         manifest = renderer._read(directory / "compiler.json")
+        if plan["kind"] == "runtime_api" and saved.get("state") == "stopped" and saved.get("proof") == proof:
+            return _recover_completed_correction(home, outdir, plan, cloud_progress)
         if plan["kind"] == "runtime_api" and saved.get("state") == "corrected" and saved.get("proof") == proof:
             result = runtime_override(directory, plan["context"], plan["assets"], plan["ready"], plan["key"], plan["reference_bundle"])
             return {"accepted": True, "reused": True, **proof,

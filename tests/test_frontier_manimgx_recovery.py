@@ -796,3 +796,110 @@ def test_manifest_correction_refuses_changed_saved_data_without_native_call(mani
     (saved.work / target).write_text("{}")
     with pytest.raises(RuntimeError): correct_coverage(saved, acknowledge_correction=True)
     assert not saved.calls and not (saved.old / "compiler.json").exists()
+
+
+@pytest.fixture
+def completed_runtime_correction(runtime_saved):
+    saved = runtime_saved
+    invoke(saved, acknowledge_recovery=True)
+    receipt_path = saved.work / "recovery.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt.update(state="stopped", correction_error_type="ManimGXSourceAPIError", model_calls=1)
+    write(receipt_path, receipt)
+    result = json.loads((saved.work / "recovery-result.json").read_text())
+    result["source"] = SOURCE
+    raw = json.dumps(result)
+    (saved.work / "compiler-correction-response-1.txt").write_text(raw)
+    (saved.work / "scene-corrected.py").write_text(SOURCE)
+    (saved.work / "scene-corrected.validation.log").write_text("Old checker false positive")
+    write(saved.work / "correction-attempts.json", {"key": saved.key, "state": "stopped", "calls": 1,
+          "recovery_proof": receipt["proof"]})
+    saved.correction_stage = "cc_" + "d" * 64
+    stdout = json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": raw})
+    fingerprint = hashlib.sha256(stdout.encode()).hexdigest()
+    saved.correction_native = saved.home / "output/cr-claude-cache" / PROJECT / (saved.correction_stage + ".json")
+    write(saved.correction_native, {"state": "complete", "input_fingerprint": saved.correction_stage[3:],
+          "result_fingerprint": fingerprint, "stdout": stdout})
+    saved.cloud["stages"].append({"stage_id": saved.correction_stage, "status": "complete", "result_fingerprint": fingerprint,
+                                 "model_role": "visual", "selected_model": "claude-opus-5-5", "attempts": 1, "error_code": ""})
+    return saved
+
+
+def test_completed_native_correction_recovers_locally_without_rewriting_stopped_history(completed_runtime_correction):
+    saved = completed_runtime_correction
+    originals = {p: p.read_bytes() for p in saved.old.rglob("*") if p.is_file()}
+    row = recovery.discover(saved.home, saved.job, saved.cloud)[0]
+    assert row["can_validate"] and not row["can_correct"] and not saved.checked
+    assert "no model call" in row["message"]
+    accepted = invoke(saved, acknowledge_recovery=True)
+    assert accepted["accepted"] and accepted["model_calls"] == 0 and not accepted["reused"]
+    assert len(saved.checked) == 1
+    for path, content in originals.items(): assert path.read_bytes() == content
+    plan = recovery._prepare(saved.home, PROJECT, saved.out, "original", saved.cloud)
+    args = (saved.old, plan["context"], plan["assets"], plan["ready"], saved.key, saved.bundle)
+    result, source = recovery.runtime_override(*args)
+    assert result["source"] == SOURCE and source.parent.name == ".completed-correction-validation"
+    assert "completed_validation_sha256" in recovery.runtime_acceptance(*args)
+    row = recovery.discover(saved.home, saved.job, saved.cloud)[0]
+    assert row["state"] == "validated" and not row["can_validate"] and not row["can_correct"]
+    assert invoke(saved, acknowledge_recovery=True)["reused"] and len(saved.checked) == 1
+    assert json.loads((saved.work / "correction-attempts.json").read_text())["state"] == "stopped"
+
+
+@pytest.mark.parametrize("mutation", ["raw", "source", "journal", "native", "model", "duplicate", "account", "accepted_manifest"])
+def test_completed_correction_requires_exact_successful_native_receipt_before_local_validation(completed_runtime_correction, mutation):
+    saved = completed_runtime_correction
+    if mutation == "raw": (saved.work / "compiler-correction-response-1.txt").write_text("{}")
+    elif mutation == "source": (saved.work / "scene-corrected.py").write_text(SOURCE + "# Changed\n")
+    elif mutation == "journal": write(saved.work / "correction-attempts.json", {"state": "running", "calls": 1})
+    elif mutation == "native": saved.cloud["stages"][-1]["result_fingerprint"] = "a" * 64
+    elif mutation == "model": saved.cloud["stages"][-1]["selected_model"] = "different-model"
+    elif mutation == "duplicate": saved.cloud["stages"].append(dict(saved.cloud["stages"][-1]))
+    elif mutation == "account":
+        native = json.loads(saved.correction_native.read_text()); native["account_fingerprint"] = "other-account"; write(saved.correction_native, native)
+    elif mutation == "accepted_manifest": write(saved.work / "compiler-corrected.json", {"typed": True})
+    with pytest.raises(RuntimeError): invoke(saved, acknowledge_recovery=True)
+    assert not (saved.work / ".completed-correction-validation").exists() and not saved.checked
+
+
+def test_completed_correction_local_failure_is_one_shot_and_keeps_original_source(completed_runtime_correction, monkeypatch):
+    saved = completed_runtime_correction
+    original = (saved.work / "scene-corrected.py").read_bytes()
+    def fail(python, source):
+        saved.checked.append(source)
+        raise renderer.ManimGXSourceAPIError("Still invalid")
+    monkeypatch.setattr(renderer, "_typecheck", fail)
+    with pytest.raises(renderer.ManimGXSourceAPIError): invoke(saved, acknowledge_recovery=True)
+    with pytest.raises(RuntimeError): invoke(saved, acknowledge_recovery=True)
+    assert len(saved.checked) == 1 and (saved.work / "scene-corrected.py").read_bytes() == original
+    row = recovery.discover(saved.home, saved.job, saved.cloud)[0]
+    assert not row["can_validate"] and not row["can_correct"]
+
+
+@pytest.mark.parametrize("target", ["history", "sidecar_source", "sidecar_manifest", "native", "sidecar_runtime_failure"])
+def test_revalidated_correction_rechecks_original_and_sidecar_hashes_before_render(completed_runtime_correction, target):
+    saved = completed_runtime_correction
+    invoke(saved, acknowledge_recovery=True)
+    plan = recovery._prepare(saved.home, PROJECT, saved.out, "original", saved.cloud)
+    validation = saved.work / ".completed-correction-validation"
+    if target == "history": (saved.work / "scene-corrected.validation.log").write_text("Changed old diagnostic")
+    elif target == "sidecar_source": (validation / "scene.py").write_text("# Changed")
+    elif target == "sidecar_manifest": write(validation / "compiler-corrected.json", {"typed": True})
+    elif target == "native": write(saved.correction_native, {"state": "complete"})
+    elif target == "sidecar_runtime_failure": write(validation / "runtime-failure.json", {"error_type": "AttributeError"})
+    with pytest.raises(RuntimeError):
+        recovery.runtime_override(saved.old, plan["context"], plan["assets"], plan["ready"], saved.key, saved.bundle)
+
+
+@pytest.mark.parametrize("mutation", ["asset", "source", "account"])
+def test_completed_correction_rechecks_inputs_after_local_validation(completed_runtime_correction, monkeypatch, mutation):
+    saved = completed_runtime_correction
+    def racing_checker(python, source):
+        if mutation == "asset": saved.asset.write_bytes(b"Changed original image")
+        elif mutation == "source": source.write_text(SOURCE + "# Changed during check")
+        elif mutation == "account": monkeypatch.setattr(recovery.cr_claude, "status", lambda: {"ready": True, "account_fingerprint": "changed"})
+    monkeypatch.setattr(renderer, "_typecheck", racing_checker)
+    with pytest.raises(RuntimeError): invoke(saved, acknowledge_recovery=True)
+    receipt = json.loads((saved.work / ".completed-correction-validation/recovery.json").read_text())
+    assert receipt["state"] == "stopped" and receipt["model_calls"] == 0
+    assert not (saved.work / ".completed-correction-validation/compiler-corrected.json").exists()
