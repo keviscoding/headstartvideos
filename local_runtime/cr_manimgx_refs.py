@@ -57,7 +57,96 @@ def _read(path, root, maximum):
     return path, text, hashlib.sha256(raw).hexdigest(), len(raw)
 
 
-def _module(engine, entry, kind):
+def _js_tokens(source):
+    """Read declarations without evaluating JS; comments/templates are opaque."""
+    pattern = re.compile(r"\s+|//[^\n]*|/\*[\s\S]*?\*/|`(?:\\[\s\S]|[^`\\])*`|'(?:\\[\s\S]|[^'\\])*'|\"(?:\\[\s\S]|[^\"\\])*\"|[A-Za-z_$][\w$]*|.")
+    result = []
+    for match in pattern.finditer(source):
+        value = match[0]
+        if value.isspace() or value.startswith(("//", "/*", "`")):
+            continue
+        if value[0] in "'\"":
+            # A computed/escaped factory label stays unresolved rather than
+            # inventing its interpretation. Original NAME labels are literal.
+            result.append(("string", value[1:-1] if "\\" not in value else None))
+        else:
+            result.append(("code", value))
+    return result
+
+
+def _factory_catalogs(index, called):
+    """Prove a zero-argument MODULES factory returns a catalog object."""
+    tokens = _js_tokens(index)
+    factories = {}
+    for offset in range(len(tokens) - 6):
+        if tokens[offset:offset + 5] != [("code", "function"), ("code", called),
+                                        ("code", "("), ("code", ")"), ("code", "{")]:
+            continue
+        depth, end = 1, offset + 5
+        while end < len(tokens) and depth:
+            if tokens[end] == ("code", "{"):
+                depth += 1
+            elif tokens[end] == ("code", "}"):
+                depth -= 1
+            end += 1
+        if depth:
+            continue
+        body = tokens[offset + 5:end - 1]
+        for start in range(len(body) - 1):
+            if body[start:start + 2] != [("code", "return"), ("code", "{")]:
+                continue
+            depth, keys, names, cursor = 1, set(), set(), start + 2
+            while cursor < len(body) and depth:
+                token = body[cursor]
+                if token == ("code", "{"):
+                    depth += 1
+                elif token == ("code", "}"):
+                    depth -= 1
+                elif depth == 1 and token[0] == "code":
+                    # Top-level returned property keys/shorthand only.
+                    previous = body[cursor - 1]
+                    if previous in {("code", "{"), ("code", ",")}:
+                        keys.add(token[1])
+                        if token[1] == "NAME" and body[cursor + 1:cursor + 2] == [("code", ":")]:
+                            value = body[cursor + 2] if cursor + 2 < len(body) else None
+                            if value and value[0] == "string" and value[1] is not None:
+                                names.add(value[1])
+                cursor += 1
+            if not depth and "CATALOG" in keys and {"build", "buildWorld", "buildCast"} & keys:
+                factories.setdefault(called, set()).update(names)
+    return factories
+
+
+def _bare_catalog_key(source, kind):
+    """Recognize only direct identifier keys of an exported CATALOG object."""
+    tokens = _js_tokens(source)
+    marker = [("code", value) for value in ("export", "const", "CATALOG", "=", "{")]
+    for offset in range(len(tokens) - len(marker) + 1):
+        if tokens[offset:offset + len(marker)] != marker:
+            continue
+        depth, cursor = 1, offset + len(marker)
+        while cursor < len(tokens) and depth:
+            token = tokens[cursor]
+            if token == ("code", "{"):
+                depth += 1
+            elif token == ("code", "}"):
+                depth -= 1
+            elif depth == 1 and token == ("code", kind):
+                if tokens[cursor - 1] in {("code", "{"), ("code", ",")} and tokens[cursor + 1:cursor + 2] == [("code", ":")]:
+                    return True
+            cursor += 1
+    return False
+
+
+def _namespace_reference(folder, module, ownership):
+    if ownership is not None:
+        ownership.update({"method": "verified_namespace_index", "declared_module": module,
+            "precise_owner": False,
+            "note": "The catalog selects this original namespace. Its generated or merged kind ownership is not evaluated; the exact routing index and complete local dependencies are supplied instead."})
+    return folder / "index.js"
+
+
+def _module(engine, entry, kind, *, ownership=None):
     module = entry.get("module")
     if not isinstance(module, str):
         raise RuntimeError("The installed catalog does not identify this kind's original module.")
@@ -74,10 +163,18 @@ def _module(engine, entry, kind):
         declaration = re.search(r"\bexport\s+const\s+MODULES\s*=\s*\[([^\]]+)\]", index)
         if declaration is None:
             raise RuntimeError("The original object-module index is not statically readable.")
-        for alias in re.findall(r"\b[A-Za-z_$][\w$]*\b", declaration[1]):
-            if alias not in imports:
+        namespace_needed = False
+        for binding in declaration[1].split(","):
+            binding = binding.strip()
+            factory = re.fullmatch(r"([A-Za-z_$][\w$]*)\(\s*\)", binding)
+            if factory:
+                if not _factory_catalogs(index, factory[1]):
+                    raise RuntimeError("The original module factory has no statically verified catalog return.")
+                namespace_needed = True
+                continue
+            if not re.fullmatch(r"[A-Za-z_$][\w$]*", binding) or binding not in imports:
                 raise RuntimeError("The original module list contains an unresolved object binding.")
-            path, source, _, _ = _read(folder / imports[alias], engine, MAX_FILE_BYTES)
+            path, source, _, _ = _read(folder / imports[binding], engine, MAX_FILE_BYTES)
             # Literal catalog keys and explicit key assignments are supported;
             # dynamically constructed definitions stay honestly unresolved.
             defined = False
@@ -86,10 +183,26 @@ def _module(engine, entry, kind):
                 following = re.search(r"^(?:export\s+)?(?:const|let|function|async\s+function|class)\b", source[declaration.end():], re.M)
                 end = declaration.end() + following.start() if following else len(source)
                 defined = re.search(r"(['\"])" + re.escape(kind) + r"\1\s*:", source[declaration.start():end])
+                if not defined and re.fullmatch(r"[A-Za-z_$][\w$]*", kind):
+                    defined = _bare_catalog_key(source, kind)
             assigned = re.search(r"^\s*CATALOG\s*\[\s*(['\"])" + re.escape(kind) + r"\1\s*\]\s*=", source, re.M)
-            if defined or assigned:
+            if (defined or assigned) and not namespace_needed:
                 return path
-        raise RuntimeError("The catalog's original object module cannot be resolved without executing source.")
+        return _namespace_reference(folder, module, ownership)
+    named = re.fullmatch(r"(nature|human|fx|game|v3)/([A-Za-z_$][\w$-]*)", module)
+    if named:
+        folder = engine / "lib" / named[1]
+        _, index, _, _ = _read(folder / "index.js", engine, MAX_FILE_BYTES)
+        declaration = re.search(r"\bexport\s+const\s+MODULES\s*=\s*\[([^\]]+)\]", index)
+        if declaration is not None:
+            tokens = _js_tokens(declaration[1])
+            called_factories = [tokens[offset][1] for offset in range(len(tokens) - 2)
+                if tokens[offset][0] == "code" and re.fullmatch(r"[A-Za-z_$][\w$]*", tokens[offset][1])
+                and tokens[offset + 1:offset + 3] == [("code", "("), ("code", ")")]]
+            for called in called_factories:
+                if module in _factory_catalogs(index, called).get(called, set()):
+                    return _namespace_reference(folder, module, ownership)
+        raise RuntimeError("The original catalog factory label has no verified namespace routing definition.")
     if not _LIBRARY.fullmatch(module) or ".." in Path(module).parts:
         raise RuntimeError("The original catalog module is outside the renderer's supported library paths.")
     return engine / "lib" / module
@@ -183,20 +296,24 @@ def resolve(home, context, *, max_files=MAX_FILES, max_source_bytes=MAX_SOURCE_B
         entry = kinds.get(kind)
         if not isinstance(entry, dict):
             raise RuntimeError("An original scene kind is absent from the installed catalog. Review its actual renderer requirements.")
-        module = _inside(_module(engine, entry, kind), engine)
-        if str(entry.get("module", "")).endswith("/(object)"):
+        ownership = {}
+        module = _inside(_module(engine, entry, kind, ownership=ownership), engine)
+        if str(entry.get("module", "")).endswith("/(object)") or ownership:
             index_path, _, digest, size = _read(engine / "lib" / entry["module"].split("/")[0] / "index.js", engine, MAX_FILE_BYTES)
             resolution_inputs[str(index_path)] = {"path": str(index_path), "sha256": digest, "bytes": size,
                 "role": "original_object_module_index"}
-        roots[module] = "selected_catalog_module"
+        roots[module] = "original_namespace_routing_contract" if ownership else "selected_catalog_module"
         for row in rows:
             item = row["item"]
             # The original registry and library builders merge these exact
             # defaults with nested params, then top-level item overrides.
             params = {**(entry.get("params") or {}), **(item.get("params") or {}), **item}
-            entries.append({"kind": kind, "pointer": row["pointer"], "catalog": entry,
-                            "resolved_parameters": params,
-                            "resolved_module": module.relative_to(engine).as_posix()})
+            resolved = {"kind": kind, "pointer": row["pointer"], "catalog": entry,
+                        "resolved_parameters": params,
+                        "resolved_module": module.relative_to(engine).as_posix()}
+            if ownership:
+                resolved["ownership_resolution"] = ownership
+            entries.append(resolved)
     scene = context["scene"]
     roots[engine / "core/registry.js"] = "original_placement_and_kind_contract"
     if scene.get("camera"):
