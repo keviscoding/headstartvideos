@@ -17,7 +17,23 @@ import requests
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
-VERSION = "5.3-admin.13"
+VERSION = "5.3-admin.14"
+
+
+def compose_claude_instructions(original: bytes, overrides: bytes) -> bytes:
+    """Restore private interactive creative context without publishing its text."""
+    introduction = (
+        "# ChannelRecipe private studio instructions\n\n"
+        "The original Frontier creative guide follows unchanged. Use it for creative direction, "
+        "style customization, specialist modules, visual verification and editing.\n\n"
+        "The ChannelRecipe operational overrides at the end govern setup, account/key handling, "
+        "billing, launch commands, MCP authorization and recovery whenever the older guide differs. "
+        "Use local setup forms for keys; never collect or reveal them in chat. Launch production "
+        "through CR's maintained tools and project/stage checks. Do not follow older standalone "
+        "generation commands or API fallback instructions that bypass those checks.\n\n"
+        "## Original Frontier creative guide\n\n"
+    ).encode("utf-8")
+    return introduction + original + b"\n\n---\n\n# ChannelRecipe operational overrides\n\n" + overrides
 
 
 def verify_private(client, bucket, key, endpoint, cdn=""):
@@ -40,6 +56,12 @@ def build(source: Path, target: Path):
         actual = hashlib.file_digest(f, "sha256").hexdigest()
     if actual != SOURCE_SHA256:
         raise ValueError("Source changed. Review and pin its new manifest before building a release.")
+    with zipfile.ZipFile(source) as original:
+        try:
+            private_guide = original.read("Frontier/CLAUDE.md")
+        except KeyError:
+            raise ValueError("The pinned source must include its original Claude creative guide.") from None
+    operational_overrides = (ROOT / "local_runtime/CLAUDE.md").read_bytes()
     target.parent.mkdir(parents=True, exist_ok=True)
     count = 0
     with zipfile.ZipFile(source) as original, zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as result:
@@ -64,7 +86,8 @@ def build(source: Path, target: Path):
             info = zipfile.ZipInfo("ChannelRecipe studio/" + path.name)
             info.external_attr = (0o100755 if path.suffix == ".command" else 0o100644) << 16
             info.compress_type = zipfile.ZIP_DEFLATED
-            result.writestr(info, path.read_bytes())
+            contents = compose_claude_instructions(private_guide, operational_overrides) if path.name == "CLAUDE.md" else path.read_bytes()
+            result.writestr(info, contents)
         result.writestr("ChannelRecipe studio/cr-providers.json", (ROOT / "webapp/frontier/providers.json").read_bytes())
         result.writestr("ChannelRecipe studio/cr-release.json", json.dumps({
             "version": VERSION, "access": "admin_only", "source_sha256": SOURCE_SHA256,

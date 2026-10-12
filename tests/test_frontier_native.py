@@ -41,6 +41,19 @@ def test_native_uses_no_api_credentials_and_duplicate_begin_is_idempotent(native
         studio.native_begin(native.owner,changed)
 
 
+def test_recovery_notice_includes_owned_failed_native_stages(native):
+    assert studio.status(native.owner)["recovery_requests"] == 0
+    req = stage(native)
+    allowed = studio.native_authorize(native.owner, req)
+    # An active stage is normal progress, not a stopped-work notice.
+    assert studio.status(native.owner)["recovery_requests"] == 0
+    studio.native_finish_stage(native.owner, studio.NativeFinishStage(
+        project_id=req.project_id, stage_id=req.stage_id,
+        authorization_token=allowed["authorization_token"], status="failed", error_code="usage_limit"))
+    assert studio.status(native.owner)["recovery_requests"] == 1
+    assert studio.status(native.other)["recovery_requests"] == 0
+
+
 @pytest.mark.parametrize("field,value",[("claude_authenticated",False),("models_verified",False),("media_ready",False),
     ("node_ready",False),("ffmpeg_ready",False),("browser_ready",False),("costs_accepted",False),("local_version","old")])
 def test_every_required_setup_failure_blocks_video_before_authorization(native,field,value):

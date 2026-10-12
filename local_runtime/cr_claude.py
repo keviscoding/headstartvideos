@@ -302,7 +302,7 @@ class Runtime:
         try:
             installed_version=json.loads((Path(self.bridge.HOME)/"cr-release.json").read_text())["version"]
         except (OSError,ValueError,KeyError):
-            installed_version=cfg.get("local_version","5.3-admin.13")
+            installed_version=cfg.get("local_version","5.3-admin.14")
         cache = Path(self.bridge.HOME) / "output" / "cr-claude-cache" / project_id / (stage_id + ".json")
         try:
             saved = json.loads(cache.read_text())
@@ -410,57 +410,170 @@ def install(engine, bridge):
     return {"brain_mode": "claudecode", "general_model": profile["general_model"], "visual_model": profile["visual_model"]}
 
 
-def _verification_identity(settings, local):
+def _verification_workflow(root=None):
+    try:
+        release = json.loads((Path(root or HOME)/"cr-release.json").read_text())
+        workflow, source = release["workflow_version"], release["source_sha256"]
+        if not isinstance(workflow, str) or not workflow or not re.fullmatch(r"[a-f0-9]{64}", source):
+            return {}
+        return {"workflow":workflow, "source":source}
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}
+
+
+def _verification_identity(settings, local, *, root=None):
+    workflow = _verification_workflow(root)
     return _digest({"general":settings.get("general_model"), "visual":settings.get("visual_model"),
-        "version":settings.get("local_version"), "claude_version":local.get("version"),
+        "brain_mode":settings.get("brain_mode"), "workflow":workflow,
+        "release":None if workflow else settings.get("local_version"), "claude_version":local.get("version"),
         "auth":local.get("auth_method"), "provider":local.get("api_provider"),"account":local.get("account_fingerprint")})
 
 
-def models_verified(settings, local):
-    root = HOME
+def _verification_marker(settings, local, *, root=None):
     try:
-        marker = json.loads((root/".cr-claude-verified.json").read_text())
-    except (OSError,ValueError):
+        marker = json.loads((Path(root or HOME)/".cr-claude-verified.json").read_text())
+        verified_at = marker.get("verified_at", 0)
+        if (not local.get("ready") or not isinstance(verified_at, (int, float))
+                or not 0 <= time.time()-verified_at < 86400):
+            return None
+        if marker.get("identity") == _verification_identity(settings, local, root=root):
+            return marker
+        # Older adapters bound the check to cfg.local_version. Only migrate an
+        # exact saved-profile match from this reviewed, unchanged engine family.
+        # Other workflows, sources and future releases need their own checks.
+        known_workflow = {"workflow":"frontier-5.3-claudecode.1",
+            "source":"e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"}
+        legacy_releases = {"5.3-admin.8", "5.3-admin.9", "5.3-admin.10",
+                           "5.3-admin.11", "5.3-admin.12", "5.3-admin.13"}
+        if (marker.get("schema_version") is None and settings.get("local_version") in legacy_releases
+                and _verification_workflow(root) == known_workflow):
+            legacy_identity = _digest({"general":settings.get("general_model"), "visual":settings.get("visual_model"),
+                "version":settings.get("local_version"), "claude_version":local.get("version"),
+                "auth":local.get("auth_method"), "provider":local.get("api_provider"),
+                "account":local.get("account_fingerprint")})
+            if marker.get("identity") == legacy_identity:
+                return marker
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    return None
+
+
+def models_verified(settings, local, *, root=None):
+    return _verification_marker(settings, local, root=root) is not None
+
+
+def preserve_model_verification(settings, local, *, root=None):
+    """Persist a valid check before a setup action changes its adapter version."""
+    marker = _verification_marker(settings, local, root=root)
+    if marker is None:
         return False
-    return bool(local.get("ready") and marker.get("identity") == _verification_identity(settings,local)
-                and marker.get("verified_at",0)+86400 > time.time())
+    _private_write(Path(root or HOME)/".cr-claude-verified.json", {
+        "schema_version":2, "identity":_verification_identity(settings, local, root=root),
+        "workflow":_verification_workflow(root), "verified_at":marker["verified_at"]})
+    return True
+
+
+def _finish_model_verification(bridge, probe, verification, profile, previous_identity=None):
+    """Close saved setup work; replay metadata only after a lost connection."""
+    if (not isinstance(probe, dict) or not isinstance(probe.get("identity"), str)
+            or not probe.get("complete") or probe.get("identity") not in
+            {verification["identity"], previous_identity}):
+        return True
+    project_id = probe.get("project_id", "")
+    if not isinstance(project_id, str) or not re.fullmatch(r"crv_[a-f0-9]{24}", project_id):
+        return True
+    if probe.get("completion_saved"):
+        return True
+    marker = Path(bridge.HOME)/".cr-claude-probe.json"
+    report_dir = Path(bridge.HOME)/"output/cr-claude-checks"/project_id
+    pending_file = report_dir/".cr-finish-pending.json"
+    try:
+        pending = dict(probe)
+        pending["identity"] = verification["identity"]
+        if not pending.get("finish_receipt"):
+            report = {"schema_version":1, "general_model":profile["general_model"],
+                "visual_model":profile["visual_model"], "workflow":verification["workflow"],
+                "verified_at":verification["verified_at"]}
+            report_path = report_dir/"model-verification.json"
+            _private_write(report_path, report)
+            pending["finish_receipt"] = {"project_id":project_id, "status":"done", "error_code":"",
+                "artifacts":[{"name":report_path.name, "sha256":hashlib.sha256(report_path.read_bytes()).hexdigest(),
+                              "media_type":"application/json"}]}
+        _private_write(marker, pending)
+        _private_write(pending_file, pending["finish_receipt"])
+        bridge.finish_project(pending["finish_receipt"])
+        _private_write(report_dir/".cr-finish.json",pending["finish_receipt"])
+        pending_file.unlink(missing_ok=True)
+        pending.pop("finish_receipt", None)
+        pending["completion_saved"] = True
+        _private_write(marker, pending)
+        return True
+    except Exception:
+        # Model access already passed. A missing completion receipt must not
+        # turn that success into another paid model check.
+        return False
 
 
 def verify_models(engine, bridge, proof):
     cfg = bridge.load_settings()
-    local = status()
-    if models_verified(cfg,local):
-        return {"verified":True,"reused":True,"message":"Both selected Claude models already passed their connection checks."}
-    if not local["ready"] or not cfg.get("costs_accepted"):
-        raise RuntimeError("Sign in to Claude Code and acknowledge its usage before checking models.")
     profile = select_profile(cfg.get("general_model",GENERAL_MODEL),cfg.get("visual_model",VISUAL_MODEL))
+    cfg = {**cfg, **profile}
+    local = status()
     marker = Path(bridge.HOME)/".cr-claude-probe.json"
-    identity = _verification_identity(cfg,local)
+    identity = _verification_identity(cfg,local,root=bridge.HOME)
     try:
         previous = json.loads(marker.read_text())
     except (OSError,ValueError):
         previous = {}
+    verified = _verification_marker(cfg,local,root=bridge.HOME)
+    if verified is not None and preserve_model_verification(cfg,local,root=bridge.HOME):
+        migrated = {"identity":identity, "workflow":_verification_workflow(bridge.HOME),
+                    "verified_at":verified["verified_at"]}
+        saved = _finish_model_verification(bridge,previous,migrated,profile,verified["identity"])
+        return {"verified":True,"reused":True,"completion_pending":not saved,
+                "message":"Both selected Claude models already passed their connection checks." +
+                    (" Reconnect CR to sync their saved completion record." if not saved else "")}
+    if not local["ready"] or not cfg.get("costs_accepted"):
+        raise RuntimeError("Sign in to Claude Code and acknowledge its usage before checking models.")
     project = bridge.begin_project("Claude model connection checks","custom",
         previous.get("project_id") if previous.get("identity")==identity and not previous.get("complete") else None,
-        proof={**proof,"models_verified":False,"purpose":"setup"},purpose="setup")
+        proof={**proof,**profile,"models_verified":False,"purpose":"setup"},purpose="setup")
     _private_write(marker,{"identity":identity,"project_id":project["id"]})
     install(engine,bridge)
-    for role in ("general","visual"):
-        # The request identifies its original role; CR substitutes the pinned
-        # account model. This also verifies swapped or identical model choices.
-        requested=GENERAL_MODEL if role=="general" else VISUAL_MODEL
-        command=[find_executable(),"--print","--model",requested,"--output-format","json",
-            "--tools","","--strict-mcp-config","--mcp-config",'{"mcpServers":{}}',
-            "--max-turns","1","--no-session-persistence"]
-        result=subprocess.run(command,input="Connection check: reply exactly OK.",capture_output=True,text=True,
-                              env=clean_environment(),timeout=120)
-        _,text=_result(result.stdout,"json")
-        if json.loads(text).get("result","").strip() != "OK":
-            raise ClaudeStageStopped("Claude did not complete its model check. Review the saved check before retrying.")
-    _private_write(Path(bridge.HOME)/".cr-claude-verified.json",{"identity":identity,"verified_at":time.time()})
-    _private_write(marker,{"identity":identity,"project_id":project["id"],"complete":True})
+    # Tiny access checks must not load the studio's interactive creative guide.
+    # cwd is deliberately outside the request fingerprint, preserving recovery
+    # of checks already reserved by an older adapter.
+    with tempfile.TemporaryDirectory(prefix="cr-model-check-") as check_cwd:
+        for role in ("general","visual"):
+            # The request identifies its original role; CR substitutes the pinned
+            # account model. This also verifies swapped or identical model choices.
+            requested=GENERAL_MODEL if role=="general" else VISUAL_MODEL
+            command=[find_executable(),"--print","--model",requested,"--output-format","json",
+                "--tools","","--strict-mcp-config","--mcp-config",'{"mcpServers":{}}',
+                "--max-turns","1","--no-session-persistence"]
+            result=subprocess.run(command,input="Connection check: reply exactly OK.",capture_output=True,text=True,
+                                  env=clean_environment(),timeout=120,cwd=check_cwd)
+            _,text=_result(result.stdout,"json")
+            if json.loads(text).get("result","").strip() != "OK":
+                raise ClaudeStageStopped("Claude did not complete its model check. Review the saved check before retrying.")
+    completed_probe = {"identity":identity,"project_id":project["id"],"complete":True}
+    _private_write(marker,completed_probe)
     bridge._project=None
-    return {"verified":True,"reused":False,"message":"Both selected Claude models passed. Their checks used your Claude Code account."}
+    current = bridge.load_settings()
+    current_mode = current.get("brain_mode")
+    current = {**current, **select_profile(current.get("general_model",GENERAL_MODEL),
+                                          current.get("visual_model",VISUAL_MODEL))}
+    refreshed_local = status()
+    if (current_mode != cfg.get("brain_mode") or not refreshed_local.get("ready")
+            or _verification_identity(current,refreshed_local,root=bridge.HOME) != identity):
+        raise RuntimeError("Your Claude account, models or workflow changed during these checks. Save the current choices and verify them again.")
+    verification = {"schema_version":2,"identity":identity,
+                    "workflow":_verification_workflow(bridge.HOME),"verified_at":time.time()}
+    _private_write(Path(bridge.HOME)/".cr-claude-verified.json",verification)
+    saved = _finish_model_verification(bridge,completed_probe,verification,profile)
+    return {"verified":True,"reused":False,"completion_pending":not saved,
+            "message":"Both selected Claude models passed. Their checks used your Claude Code account." +
+                (" Reconnect CR to sync their saved completion record." if not saved else "")}
 
 
 def uninstall():

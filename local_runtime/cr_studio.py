@@ -10,6 +10,8 @@ import threading
 import time
 import webbrowser
 from pathlib import Path
+from functools import wraps
+from types import FunctionType, SimpleNamespace
 
 import cr_bridge
 import cr_capabilities
@@ -25,6 +27,219 @@ import re
 
 HOME = Path(__file__).resolve().parent
 _graphics_check = {}
+
+
+class CreativeActivity:
+    """Keep the original editor's asynchronous work on its selected accounts."""
+    def __init__(self, studio):
+        self.studio = studio
+        self.lock = threading.RLock()
+        self.changed = threading.Condition(self.lock)
+        self.active = set()
+        self.waiting_editor = False
+
+    def reserve(self):
+        token = object()
+        with self.lock:
+            self.active.add(token)
+        return token
+
+    def release(self, token):
+        with self.lock:
+            self.active.discard(token)
+            self.changed.notify_all()
+
+    def wait_for_editor(self):
+        """A queued title must not replace a still-running editor's project."""
+        with self.changed:
+            self.waiting_editor = True
+            try:
+                while self.active or self.editor_queue_busy():
+                    self.changed.wait(timeout=0.25)
+            finally:
+                self.waiting_editor = False
+
+    def rendering(self, job):
+        # The original dispatcher reserves RUNNING before entering run_spec.
+        # Editor tasks for that job must still drain before its next render.
+        return not self.waiting_editor and self.studio._tl_busy(Path(job).name) == "running"
+
+    def editor_queue_busy(self):
+        timeline = getattr(self.studio, "timeline", None)
+        condition = getattr(timeline, "_QCOND", None)
+        if condition is None:
+            return False
+        with condition:
+            return bool(timeline._QUEUE or timeline._WORKER.get("current"))
+
+    def busy(self):
+        with self.lock:
+            if self.active or self.studio.RUNNING.get("slug") or self.studio.QUEUE or cr_workers.busy():
+                return True
+            if self.editor_queue_busy():
+                return True
+            product = getattr(self.studio, "PRODUCT_BUILD", {}).get("proc")
+            if product is not None and product.poll() is None:
+                return True
+            farm = getattr(self.studio, "FARM", {}).get("thread")
+            return bool(farm is not None and farm.is_alive())
+
+    def install(self):
+        timeline = getattr(self.studio, "timeline", None)
+        if timeline is None or not all(hasattr(timeline, name) for name in ("chat", "_chat_reply", "_run_task")):
+            return
+        original_chat, original_reply, original_task = timeline.chat, timeline._chat_reply, timeline._run_task
+
+        def stopped(job):
+            # A stopped authorization must not trigger an automatic final render.
+            with timeline._lock(job):
+                state = timeline._state(job)
+                state["auto_render"] = False
+                timeline._save_state(job, state)
+
+        def reply(job, slug, message, selection, mid, token=None):
+            token = token if token is not None else self.reserve()
+            try:
+                return original_reply(job, slug, message, selection, mid)
+            except (cr_claude.ClaudeStageStopped, cr_media.AccountStop) as error:
+                stopped(job)
+                timeline._replace_msg(job, mid, str(error)[:440] +
+                    " Sending another editor message starts new work; it does not retry this saved stage.", [], error=True)
+            finally:
+                self.release(token)
+
+        @wraps(original_chat)
+        def chat(job, slug, message, sel, after_render=False):
+            # Reserve before the source spawns its thread, including the interval
+            # between returning the HTTP response and the thread's first stage.
+            token = self.reserve()
+            bound_reply = lambda *args: reply(*args, token=token)
+            dispatch = FunctionType(original_chat.__code__, {**original_chat.__globals__, "_chat_reply": bound_reply},
+                                    original_chat.__name__, original_chat.__defaults__, original_chat.__closure__)
+            try:
+                result = dispatch(job, slug, message, sel, after_render=after_render)
+                if not result.get("ok") or result.get("queued"):
+                    self.release(token)
+                return result
+            except BaseException:
+                self.release(token)
+                raise
+
+        @wraps(original_task)
+        def task(job, tid):
+            token = self.reserve()
+            try:
+                return original_task(job, tid)
+            except (cr_claude.ClaudeStageStopped, cr_media.AccountStop) as error:
+                stopped(job)
+                timeline._finish(job, tid, "failed", str(error)[:600])
+            finally:
+                self.release(token)
+
+        timeline.chat, timeline._chat_reply, timeline._run_task = chat, reply, task
+
+
+class DeferredRender:
+    """Run native deferred edits after the render's own receipt has finished."""
+    def __init__(self, activity, spec, setup, mode):
+        self.activity, self.spec, self.setup, self.mode = activity, spec, setup, mode
+        self.timeline = activity.studio.timeline
+        self.finished = threading.Event()
+        self.receipt_saved = False
+        self.render_token = activity.reserve()
+        self.deferred_tokens = []
+
+    def close(self, receipt_saved):
+        self.receipt_saved = receipt_saved
+        self.finished.set()
+        self.activity.release(self.render_token)
+        if not receipt_saved:
+            for token in self.deferred_tokens:
+                self.activity.release(token)
+
+    def __getattr__(self, name):
+        if name != "release_deferred":
+            return getattr(self.timeline, name)
+        # The original app retrieves this callback before constructing its
+        # daemon thread. Reserve now, rather than after that thread starts.
+        token = self.activity.reserve()
+        self.deferred_tokens.append(token)
+
+        def release(job, slug):
+            try:
+                self.finished.wait()
+                with self.timeline._lock(job):
+                    deferred = bool(self.timeline._state(job).get("deferred"))
+                if not deferred:
+                    return 0
+                if not self.receipt_saved:
+                    self.timeline._note(job, "sys", "Your edits are still queued. Reconnect CR and render again to save the render record before those edits start.")
+                    return 0
+                title = str(self.spec.get("title") or slug)
+                style = str(self.spec.get("style") or "custom")
+                try:
+                    project = cr_bridge.begin_project(title, style, proof=self.setup,
+                        job_spec={**self.spec, "minutes":max(1, int(self.spec.get("minutes") or 1))}, purpose="creative")
+                    cr_claude._private_write(Path(job) / ".cr-editor-project.json", {**project, "brain_mode": self.mode})
+                except Exception:
+                    self.timeline._note(job, "sys", "Your edits are still queued. Reconnect CR in setup before rendering again; no editor generation has started.")
+                    return 0
+                original = self.timeline.release_deferred
+                source_thread = original.__globals__["threading"].Thread
+
+                def spawn(*args, **kwargs):
+                    target = kwargs.get("target")
+                    if target is not self.timeline._chat_reply:
+                        return source_thread(*args, **kwargs)
+                    child_token = self.activity.reserve()
+
+                    def reply(*args, **kwargs):
+                        try:
+                            return target(*args, **kwargs)
+                        finally:
+                            self.activity.release(child_token)
+
+                    try:
+                        thread = source_thread(*args, **{**kwargs, "target":reply})
+                    except BaseException:
+                        self.activity.release(child_token)
+                        raise
+
+                    class Dispatch:
+                        def start(dispatch):
+                            try:
+                                return thread.start()
+                            except BaseException:
+                                self.activity.release(child_token)
+                                raise
+
+                    return Dispatch()
+
+                dispatch = FunctionType(original.__code__, {**original.__globals__, "threading":SimpleNamespace(Thread=spawn)},
+                                        original.__name__, original.__defaults__, original.__closure__)
+                return dispatch(job, slug)
+            finally:
+                self.activity.release(token)
+
+        return release
+
+
+def deferred_editor_request(studio, path):
+    """Only the same job's timeline render can accept native deferred edits."""
+    match = re.fullmatch(r"/api/tl/([^/]+)/(?:chat|op)", path)
+    if not match:
+        return False
+    slug = match[1]
+    if studio.RUNNING.get("slug") == slug:
+        return bool(getattr(studio, "JOBS", {}).get(slug, {}).get("timeline"))
+    return any(spec.get("slug") == slug and spec.get("timeline") for spec in studio.QUEUE)
+
+
+def creative_request(path):
+    """Routes that may start creative work; saved output remains accessible."""
+    return (path.startswith(("/api/style", "/api/offer", "/api/auto", "/api/learn", "/api/farm"))
+            or path in {"/api/products/ideas", "/api/products/build"}
+            or path.startswith("/api/tl/") and path.rsplit("/", 1)[-1] in {"chat", "op", "render"})
 
 
 def output_artifacts(engine, job):
@@ -127,12 +342,16 @@ def create_app():
     os.environ["SCRIPT_PROVIDER"] = os.environ["CLAUDE_PROVIDER"]
     os.environ["CLAUDE_HANDOFF_DIR"] = ""
     import app as studio
-    from flask import Response, jsonify, request
+    from flask import Response, g, jsonify, request
     cr_bridge.install(studio.mv)
     cr_media.install(studio.mv)
     cr_capabilities.install(studio)
     cr_render.install(studio.mv)
     cr_workers.install()
+    activity = getattr(studio, "_cr_activity", None)
+    if activity is None:
+        activity = studio._cr_activity = CreativeActivity(studio)
+        activity.install()
     token = secrets.token_urlsafe(24)
     # The project launcher reads this private, local-only control token. It is
     # never sent to CR or included in copied launch commands.
@@ -150,8 +369,19 @@ def create_app():
         if request.method in ("POST", "DELETE", "PUT", "PATCH"):
             if request.headers.get("X-CR-Local-Token") != token:
                 return jsonify(error="Refresh your studio page and try again."), 403
-        if request.path in ("/cr-connect", "/cr-provider", "/cr-brain", "/cr-hub", "/cr-voice", "/cr-images", "/cr-claude/setup") and request.method == "POST":
-            if studio.RUNNING.get("slug") or studio.QUEUE or cr_workers.busy():
+        account_change = request.path in {"/cr-connect", "/cr-provider", "/cr-brain", "/cr-hub", "/cr-voice", "/cr-images", "/cr-claude/setup"}
+        if request.path == "/cr-claude/setup" and (request.get_json(silent=True) or {}).get("action") == "check":
+            account_change = False
+        deferred = deferred_editor_request(studio, request.path)
+        creative = creative_request(request.path) and not deferred
+        if request.method == "POST" and (account_change or creative or request.path in {"/api/run", "/cr-submit-project", "/cr-recover"}):
+            # Serialize the initial check and context selection. Native chat/task
+            # reservations keep this protection after their response returns.
+            if not activity.lock.acquire(blocking=False):
+                return jsonify(error="Finish the current studio request before starting more work or changing accounts."), 409
+            g.cr_activity_locked = True
+        if account_change and request.method == "POST":
+            if activity.busy():
                 return jsonify(error="Finish your current video before changing its accounts."), 409
         if request.path == "/api/run" and request.method == "POST":
             try:
@@ -160,7 +390,7 @@ def create_app():
                     return jsonify(error="Review your provider spending in setup before making a video."), 409
                 data = request.get_json(silent=True) or {}
                 # Do not change the shared brain project while another video is active.
-                if studio.RUNNING.get("slug") or studio.QUEUE or cr_workers.busy():
+                if activity.busy():
                     return jsonify(error="Finish your current video before starting another."), 409
                 checks = setup_status().get_json()
                 preflight = cr_readiness.preset(studio,checks,data)
@@ -173,12 +403,11 @@ def create_app():
                     cr_bridge.prepare_runtime(preflight["proof"])
             except Exception as e:
                 return jsonify(error=str(e)), 409
-        elif request.method == "POST" and (request.path.startswith(("/api/style", "/api/offer", "/api/auto", "/api/learn", "/api/products", "/api/farm"))
-                or request.path.startswith("/api/tl/") and request.path.rsplit("/",1)[-1] in {"chat","op","render"}):
+        elif request.method == "POST" and creative:
             checks=setup_status().get_json()
             if not checks["readiness"]["ready"]:
                 return jsonify(error="Finish studio setup before creating styles or products.",**checks["readiness"]),409
-            if studio.RUNNING.get("slug") or studio.QUEUE or cr_workers.busy():
+            if activity.busy():
                 return jsonify(error="Finish the current video before starting more creative work."),409
             if cr_bridge.load_settings().get("brain_mode") == "claudecode":
                 if request.path.startswith("/api/farm/"):
@@ -189,6 +418,12 @@ def create_app():
                 if not current:
                     p=cr_readiness.proof(checks,purpose="creative")
                     cr_bridge.begin_project("Studio style or product work","custom",proof=p,purpose="creative")
+
+    @studio.app.teardown_request
+    def release_activity_lock(error=None):
+        if getattr(g, "cr_activity_locked", False):
+            g.cr_activity_locked = False
+            activity.lock.release()
 
     @studio.app.get("/cr-setup")
     def setup_page():
@@ -257,9 +492,12 @@ def create_app():
     @studio.app.post("/cr-preflight")
     def preflight():
         try:
-            result=cr_readiness.preset(studio,setup_status().get_json(),request.get_json(silent=True) or {})
+            checks=setup_status().get_json()
+            result=cr_readiness.preset(studio,checks,request.get_json(silent=True) or {})
             if result["ready"]:
                 cfg=cr_bridge.load_settings()
+                if cfg.get("brain_mode") == "claudecode":
+                    cr_claude.preserve_model_verification(cfg,checks["claude_code"])
                 cfg.update(local_version=result["proof"]["local_version"],setup_proof=result["proof"])
                 cr_bridge.save_settings(cfg)
                 proof_file=HOME/".cr-setup-proof.json"
@@ -273,7 +511,7 @@ def create_app():
 
     @studio.app.post("/cr-submit-project")
     def submit_project():
-        if studio.RUNNING.get("slug") or studio.QUEUE or cr_workers.busy():
+        if activity.busy():
             return jsonify(error="Finish the current video before starting another."),409
         try:
             project_id=str((request.get_json(silent=True) or {}).get("project_id", ""))
@@ -332,6 +570,8 @@ def create_app():
             if action == "select":
                 if not cr_mcp.status(cfg)["connected"]:
                     raise RuntimeError("Connect CR tools before selecting your Claude Code route.")
+                if cfg.get("brain_mode") == "claudecode":
+                    cr_claude.preserve_model_verification(cfg,local)
                 cfg.update(cr_claude.select_profile(data.get("general_model"),data.get("visual_model")))
                 cfg["local_version"]=json.loads((HOME/"cr-release.json").read_text())["version"]
                 cfg.pop("setup_proof",None)
@@ -376,7 +616,7 @@ def create_app():
 
     @studio.app.post("/cr-recover")
     def recover_stage():
-        if studio.RUNNING.get("slug") or studio.QUEUE or cr_workers.busy():
+        if activity.busy():
             return jsonify(error="Stop or finish the running video before reviewing recovery."),409
         try:
             cr_claude.sync_receipts(cr_bridge)
@@ -619,6 +859,7 @@ def create_app():
     # retain their own receipts rather than billing every title to the first one.
     original_run = studio._run_spec
     def run_spec(spec):
+        activity.wait_for_editor()
         title = str(spec.get("title") or "Your video")
         style = str(spec.get("style") or "jung")
         job = studio.mv.job_dir(title, style)
@@ -626,10 +867,10 @@ def create_app():
         try:
             previous = json.loads(marker.read_text()) if marker.is_file() else {}
             cfg=cr_bridge.load_settings()
+            setup=cfg.get("setup_proof")
             cr_bridge.install(studio.mv)
             if cfg.get("brain_mode") == "claudecode":
                 purpose="creative" if spec.get("timeline") else "video"
-                setup=cfg.get("setup_proof")
                 if spec.get("timeline"):
                     with studio.app.app_context():
                         setup=cr_readiness.proof(setup_status().get_json(),purpose=purpose)
@@ -645,25 +886,41 @@ def create_app():
                 studio.JOBS.setdefault(spec["slug"], {}).update(state="error", error=str(error), done=False)
                 studio.RUNNING["slug"] = None
             return
-        result=original_run(spec)
-        if cfg.get("brain_mode") == "claudecode":
-            state=studio.JOBS.get(spec["slug"],{})
-            artifacts=[]
-            if state.get("state") == "done":
-                artifacts=output_artifacts(studio.mv,job)
-            complete=bool(artifacts) and state.get("state")=="done"
-            if "video" in spec.get("steps",[]):
-                complete=complete and studio.mv.final_video(job).is_file()
-            try:
-                report={"project_id":project["id"],"status":"done" if complete else "failed",
-                    "artifacts":artifacts,"error_code":"" if complete else "runtime_failed"}
-                pending=job/".cr-finish-pending.json"
-                cr_claude._private_write(pending,report)
-                cr_bridge.finish_project(report)
-                pending.replace(job/".cr-finish.json")
-            except Exception:
-                state["lines"].append("Your local output is saved. Reconnect CR to update its completion record.")
-        return result
+        deferred = DeferredRender(activity, spec, setup, cfg.get("brain_mode", "channelrecipe")) if spec.get("timeline") else None
+        render_token = None if deferred else activity.reserve()
+        receipt_saved = False
+        try:
+            dispatch = original_run
+            if deferred:
+                dispatch = FunctionType(original_run.__code__, {**original_run.__globals__, "timeline":deferred},
+                                        original_run.__name__, original_run.__defaults__, original_run.__closure__)
+            result=dispatch(spec)
+            if cfg.get("brain_mode") == "claudecode":
+                state=studio.JOBS.get(spec["slug"],{})
+                artifacts=[]
+                if state.get("state") == "done":
+                    artifacts=output_artifacts(studio.mv,job)
+                complete=bool(artifacts) and state.get("state")=="done"
+                if "video" in spec.get("steps",[]):
+                    complete=complete and studio.mv.final_video(job).is_file()
+                try:
+                    report={"project_id":project["id"],"status":"done" if complete else "failed",
+                        "artifacts":artifacts,"error_code":"" if complete else "runtime_failed"}
+                    pending=job/".cr-finish-pending.json"
+                    cr_claude._private_write(pending,report)
+                    cr_bridge.finish_project(report)
+                    pending.replace(job/".cr-finish.json")
+                    receipt_saved=True
+                except Exception:
+                    state["lines"].append("Your local output is saved. Reconnect CR to update its completion record.")
+            else:
+                receipt_saved=True
+            return result
+        finally:
+            if deferred:
+                deferred.close(receipt_saved)
+            else:
+                activity.release(render_token)
     studio._run_spec = run_spec
     return studio
 
@@ -672,7 +929,7 @@ def main():
     studio = create_app()
     studio.OUT.mkdir(exist_ok=True)
     studio._ensure_dispatcher()
-    studio.timeline.start_worker(busy=lambda job: bool(studio._tl_busy(Path(job).name) == "running"),
+    studio.timeline.start_worker(busy=studio._cr_activity.rendering,
                                 on_idle=lambda job: studio._enqueue_tl_render(Path(job), Path(job).name))
     def open_page():
         time.sleep(1)

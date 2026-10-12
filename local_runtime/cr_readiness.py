@@ -56,7 +56,7 @@ def basic(checks, *, verify_mcp=True):
 def proof(checks, *, media_ready=False, purpose="video"):
     cfg = cr_bridge.load_settings()
     cli = checks.get("claude_code") or cr_claude.status()
-    return {"local_version":checks.get("local_version", "5.3-admin.13"), "brain_mode":"claudecode",
+    return {"local_version":checks.get("local_version", "5.3-admin.14"), "brain_mode":"claudecode",
             "general_model":cfg.get("general_model", cr_claude.GENERAL_MODEL),
             "visual_model":cfg.get("visual_model", cr_claude.VISUAL_MODEL),
             "claude_installed":cli.get("installed") is True, "claude_authenticated":cli.get("authenticated") is True,
