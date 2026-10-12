@@ -205,7 +205,7 @@ def _prepare(home, project_id, outdir, scene_id, cloud_progress):
             or (old / "compiler-response-2.txt").exists()):
         raise RuntimeError("This compiler request has other acceptance or correction work; use its original recovery controls.")
     reference = old / "original-reference.txt"
-    if reference.read_text(encoding="utf-8") != refs.reference_text(bundle):
+    if reference.read_text(encoding="utf-8") != refs.reference_text(bundle, reference_path=reference):
         raise RuntimeError("The original source references changed; no response was accepted.")
     raw_path = old / "compiler-response-1.txt"
     raw = raw_path.read_text(encoding="utf-8")

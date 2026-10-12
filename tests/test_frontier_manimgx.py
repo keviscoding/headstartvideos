@@ -101,7 +101,8 @@ def test_original_texture_records_reach_source_validation_and_cache(stub_runtime
     bundle = {"identity": "verified-source", "context": {"kind": "space.earth"},
               "assets": {"original:earth.png": record}}
     monkeypatch.setattr(cr_manimgx_refs, "resolve", lambda *a: bundle)
-    monkeypatch.setattr(cr_manimgx_refs, "reference_text", lambda *a: "Verified original source")
+    monkeypatch.setattr(cr_manimgx_refs, "reference_text", lambda *a, **kw: "Verified original source")
+    monkeypatch.setattr(cr_manimgx_refs, "save_reference", lambda path, bundle: gx._write(path, "Verified original source", text=True))
     def compiler(prompt, maximum):
         assets = json.loads(prompt.split("LOCAL ASSETS:\n", 1)[1].split("\nVERIFIED PRIVATE ORIGINAL REFERENCE:", 1)[0])
         assert assets == bundle["assets"]
@@ -156,7 +157,8 @@ def saved_source_correction(stub_runtime, monkeypatch):
               "diagnostic_sha256": gx.hashlib.sha256(diagnostic.encode()).hexdigest()})
     gx._write(directory / "recovery-result.json", result)
     gx._write(directory / "scene-recovered.py", SOURCE, text=True)
-    monkeypatch.setattr(cr_manimgx_refs, "reference_text", lambda *a: reference_text)
+    monkeypatch.setattr(cr_manimgx_refs, "reference_text", lambda *a, **kw: reference_text)
+    monkeypatch.setattr(cr_manimgx_refs, "save_reference", lambda path, bundle: gx._write(path, reference_text, text=True))
     def typecheck(python, path):
         if Path(path).name == "scene-recovered.py":
             raise gx.ManimGXSourceAPIError(diagnostic)
