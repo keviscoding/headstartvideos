@@ -110,7 +110,7 @@ def env(tmp_path, monkeypatch):
         state.attempts.append(home)
         report("checking", "Checking the local renderer.")
         state.ready = True
-        report("ready", "ManimGX is ready.")
+        report("ready", "Fast mode is ready.")
 
     monkeypatch.setattr(renderer, "install_dependencies", install)
     renderer.install(studio, activity, home=tmp_path)
@@ -216,10 +216,10 @@ def panel(tmp_path):
     api = pytest.importorskip("playwright.sync_api")
     html = _injected_page(tmp_path)
     state = SimpleNamespace(posts=[], polls=0, post_status=409, get_status=200,
-                            error="Finish the current studio work before setting up ManimGX.",
+                            error="Finish the current studio work before setting up Fast mode.",
                             recovery_posts=[], recovery_gets=0, recovery_choices=[], recovery_status=200,
                             recovery_error="The saved recovery changed; refresh its status.")
-    state.data = {"ready": True, "busy": False, "setup": {"state": "ready", "message": "ManimGX is ready."}, "progress": {}}
+    state.data = {"ready": True, "busy": False, "setup": {"state": "ready", "message": "Fast mode is ready."}, "progress": {}}
     with api.sync_playwright() as playwright:
         try:
             browser = playwright.chromium.launch(headless=True)
@@ -266,23 +266,23 @@ def panel(tmp_path):
 
 
 @pytest.mark.parametrize("status,message", [
-    (409, "Finish the current studio work before setting up ManimGX."),
+    (409, "Finish the current studio work before setting up Fast mode."),
     (403, "Refresh your studio page and try again."),
     (503, "The renderer check could not start. Check the local studio log, then try again."),
 ])
 def test_setup_post_errors_survive_status_polling(panel, status, message):
     page, state = panel
     state.post_status, state.error = status, message
-    page.get_by_role("button", name="Check ManimGX again").click()
+    page.get_by_role("button", name="Check Fast mode again").click()
     page.wait_for_function("document.getElementById('cr-renderer-error').hidden===false")
     polls = state.polls
     page.wait_for_timeout(2150)
     assert state.polls > polls
     assert page.get_by_role("alert").inner_text() == message
     assert state.posts == [{"body": {"action": "install"}, "token": "fixture-token"}]
-    assert page.get_by_role("button", name="Check ManimGX again").is_enabled()
+    assert page.get_by_role("button", name="Check Fast mode again").is_enabled()
     state.post_status = 200
-    page.get_by_role("button", name="Check ManimGX again").click()
+    page.get_by_role("button", name="Check Fast mode again").click()
     assert page.get_by_role("alert").is_hidden()
 
 
@@ -299,11 +299,11 @@ def test_status_failure_preserves_the_users_renderer_choice(panel):
 
 def test_old_success_does_not_hide_required_renderer_recheck(panel):
     page, state = panel
-    message = "Run the optional ManimGX setup check before selecting it."
+    message = "Run the optional Fast mode setup check before selecting it."
     state.data.update(ready=False, message=message)
     page.wait_for_function("document.getElementById('cr-renderer-status').textContent=== " + json.dumps(message))
     assert page.locator('#cr-renderer-toggle').is_disabled()
-    assert page.get_by_role('button', name='Install and check ManimGX').is_enabled()
+    assert page.get_by_role('button', name='Install and check Fast mode').is_enabled()
 
 
 def test_claude_compilation_is_distinct_from_gpu_frame_progress(panel):

@@ -78,6 +78,28 @@ def invoke(saved, **kwargs):
     return recovery.recover(saved.home, PROJECT, saved.out, "original", saved.cloud, **kwargs)
 
 
+def update_completed_response(saved, result):
+    """Preserve the fixture's paired, completed native/cloud response identity."""
+    raw = json.dumps(result)
+    (saved.old / "compiler-response-1.txt").write_text(raw)
+    stdout = json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": raw})
+    fingerprint = hashlib.sha256(stdout.encode()).hexdigest()
+    write(saved.home / "output/cr-claude-cache" / PROJECT / (STAGE + ".json"),
+          {"state": "complete", "input_fingerprint": STAGE[3:], "result_fingerprint": fingerprint, "stdout": stdout})
+    saved.cloud["stages"][0]["result_fingerprint"] = fingerprint
+
+
+@pytest.fixture
+def coverage_saved(saved):
+    saved.old.rename(saved.destination)
+    saved.old = saved.destination
+    write(saved.old / "compile-attempts.json", {"key": saved.key, "state": "stopped", "calls": 1})
+    result = json.loads((saved.old / "compiler-response-1.txt").read_text())
+    result["coverage"]["/scene/dur"] = "1."
+    update_completed_response(saved, result)
+    return saved
+
+
 def test_explicit_acceptance_preserves_history_and_creates_exact_normal_cache(saved):
     original = {p.name: p.read_bytes() for p in saved.old.iterdir()}
     assert recovery.inspect(saved.home, PROJECT, saved.out, "original", saved.cloud)["ready_for_local_typecheck"]
@@ -161,6 +183,176 @@ def test_discovery_is_read_only_opaque_and_selection_bound_to_current_inputs(sav
     saved.asset.write_bytes(b"changed")
     with pytest.raises(RuntimeError, match="changed or is unavailable"):
         recovery.resolve_selection(saved.home, saved.job, saved.cloud, rows[0]["selection_id"])
+
+
+def test_coverage_length_recovery_accepts_same_key_without_changing_old_history(coverage_saved):
+    saved = coverage_saved
+    original = {p.name: p.read_bytes() for p in saved.old.iterdir()}
+    rows = recovery.discover(saved.home, saved.job, saved.cloud)
+    assert len(rows) == 1 and rows[0]["kind"] == "coverage_text"
+    assert rows[0]["can_validate"] and not rows[0]["can_correct"] and not saved.checked
+    result = invoke(saved, acknowledge_recovery=True)
+    assert result["accepted"] and not result["reused"] and len(saved.checked) == 1
+    for name, data in original.items():
+        assert (saved.old / name).read_bytes() == data
+    work = saved.old / ".recovery-coverage-text"
+    receipt = json.loads((work / "recovery.json").read_text())
+    manifest = json.loads((saved.old / "compiler.json").read_text())
+    assert receipt["state"] == "validated" and receipt["model_calls"] == 0
+    assert manifest["key"] == saved.key and manifest["typed"] is True
+    assert manifest["recovery_of"] == saved.key and manifest["recovery_kind"] == "coverage_text"
+    assert manifest["recovery_receipt"] == ".recovery-coverage-text/recovery.json"
+    assert invoke(saved, acknowledge_recovery=True)["reused"] and len(saved.checked) == 1
+    row = recovery.discover(saved.home, saved.job, saved.cloud)[0]
+    assert row["state"] == "validated" and not row["can_validate"] and not row["can_correct"]
+
+
+@pytest.mark.parametrize("mutation", ["missing", "empty", "wrong_scalar", "arbitrary_short", "long_only", "unsafe", "unsupported"])
+def test_coverage_recovery_rejects_real_manifest_failures_without_typecheck(coverage_saved, mutation):
+    saved = coverage_saved
+    result = json.loads((saved.old / "compiler-response-1.txt").read_text())
+    if mutation == "missing": del result["coverage"]["/scene/dur"]
+    elif mutation == "empty": result["coverage"]["/scene/dur"] = " "
+    elif mutation == "wrong_scalar": result["coverage"]["/scene/dur"] = "2."
+    elif mutation == "arbitrary_short": result["coverage"]["/scene/dur"] = "done"
+    elif mutation == "long_only": result["coverage"]["/scene/dur"] = "Original input requirement preserved"
+    elif mutation == "unsafe": result["source"] = "import os\n" + SOURCE
+    elif mutation == "unsupported": result["unsupported"] = ["Original camera cannot be preserved"]
+    update_completed_response(saved, result)
+    history = {p.name: p.read_bytes() for p in saved.old.iterdir()}
+    with pytest.raises(RuntimeError): invoke(saved, acknowledge_recovery=True)
+    assert not saved.checked and not (saved.old / ".recovery-coverage-text").exists()
+    assert {p.name: p.read_bytes() for p in saved.old.iterdir()} == history
+    assert not recovery.discover(saved.home, saved.job, saved.cloud)
+
+
+def test_coverage_typecheck_failure_preserves_history_and_never_offers_correction(coverage_saved, monkeypatch):
+    saved = coverage_saved
+    history = {p.name: p.read_bytes() for p in saved.old.iterdir()}
+    def checker(python, source):
+        saved.checked.append(source)
+        source.with_suffix(".validation.log").write_text("Known API type error")
+        raise renderer.ManimGXSourceAPIError("Known API type error")
+    monkeypatch.setattr(renderer, "_typecheck", checker)
+    with pytest.raises(RuntimeError, match="no model"):
+        invoke(saved, acknowledge_recovery=True)
+    for name, data in history.items(): assert (saved.old / name).read_bytes() == data
+    assert not (saved.old / "compiler.json").exists()
+    receipt = json.loads((saved.old / ".recovery-coverage-text/recovery.json").read_text())
+    assert receipt["state"] == "stopped" and receipt["model_calls"] == 0
+    row = recovery.discover(saved.home, saved.job, saved.cloud)[0]
+    assert row["state"] == "stopped" and not row["can_correct"] and not row["can_validate"]
+    with pytest.raises(RuntimeError, match="not execute again"):
+        invoke(saved, acknowledge_recovery=True)
+    with pytest.raises(RuntimeError, match="does not authorize"):
+        recovery.correct(saved.home, PROJECT, saved.out, "original", saved.cloud, acknowledge_correction=True)
+    assert len(saved.checked) == 1
+
+
+def test_coverage_unknown_accepted_cache_cannot_be_overwritten(coverage_saved):
+    saved = coverage_saved
+    write(saved.old / "compiler.json", {"key": saved.key, "typed": True, "recovery_kind": "coverage_text"})
+    with pytest.raises(RuntimeError, match="other acceptance"):
+        invoke(saved, acknowledge_recovery=True)
+    assert not saved.checked and not (saved.old / ".recovery-coverage-text").exists()
+
+
+def test_coverage_accepted_cache_changes_are_not_reported_as_validated(coverage_saved):
+    saved = coverage_saved
+    invoke(saved, acknowledge_recovery=True)
+    (saved.old / "scene.py").write_text(SOURCE + "# Changed source\n")
+    with pytest.raises(RuntimeError, match="source changed"):
+        invoke(saved, acknowledge_recovery=True)
+    assert not recovery.discover(saved.home, saved.job, saved.cloud)
+    assert len(saved.checked) == 1
+
+
+@pytest.mark.parametrize("contents", ["{}", "{malformed", "[]"])
+def test_coverage_existing_empty_or_malformed_manifest_is_never_overwritten(coverage_saved, contents):
+    saved = coverage_saved
+    manifest = saved.old / "compiler.json"
+    manifest.write_text(contents)
+    before = {p.name: p.read_bytes() for p in saved.old.iterdir()}
+    with pytest.raises(RuntimeError): invoke(saved, acknowledge_recovery=True)
+    assert {p.name: p.read_bytes() for p in saved.old.iterdir()} == before
+    assert not saved.checked and not (saved.old / ".recovery-coverage-text").exists()
+
+
+@pytest.mark.parametrize("kind", ["edited", "symlink", "directory"])
+def test_coverage_existing_unknown_scene_is_never_overwritten(coverage_saved, kind):
+    saved = coverage_saved
+    scene = saved.old / "scene.py"
+    target = saved.home / "unrelated.py"
+    target.write_text(SOURCE)
+    if kind == "edited": scene.write_text(SOURCE + "# User edit\n")
+    elif kind == "symlink": scene.symlink_to(target)
+    else: scene.mkdir()
+    before = scene.lstat()
+    with pytest.raises(RuntimeError, match="will not be overwritten"):
+        invoke(saved, acknowledge_recovery=True)
+    after = scene.lstat()
+    assert (before.st_ino, before.st_mode, before.st_mtime_ns) == (after.st_ino, after.st_mode, after.st_mtime_ns)
+    assert target.read_text() == SOURCE
+    if kind == "edited": assert scene.read_text() == SOURCE + "# User edit\n"
+    assert not saved.checked and not (saved.old / ".recovery-coverage-text").exists()
+
+
+def test_coverage_identical_regular_scene_preserves_inode_and_bytes(coverage_saved):
+    saved = coverage_saved
+    scene = saved.old / "scene.py"
+    scene.write_text(SOURCE)
+    before = scene.stat()
+    result = invoke(saved, acknowledge_recovery=True)
+    after = scene.stat()
+    assert result["accepted"] and len(saved.checked) == 1
+    assert scene.read_bytes() == SOURCE.encode()
+    assert (before.st_ino, before.st_mtime_ns) == (after.st_ino, after.st_mtime_ns)
+
+
+@pytest.mark.parametrize("path_name", ["compiler.json", "scene.py"])
+def test_coverage_publication_rechecks_work_that_appeared_during_typecheck(coverage_saved, monkeypatch, path_name):
+    saved = coverage_saved
+    contents = "{}" if path_name == "compiler.json" else SOURCE + "# Concurrent user edit\n"
+    def checker(python, candidate):
+        saved.checked.append(candidate)
+        (saved.old / path_name).write_text(contents)
+    monkeypatch.setattr(renderer, "_typecheck", checker)
+    with pytest.raises(RuntimeError, match="will not be overwritten"):
+        invoke(saved, acknowledge_recovery=True)
+    assert (saved.old / path_name).read_text() == contents
+    receipt = json.loads((saved.old / ".recovery-coverage-text/recovery.json").read_text())
+    assert receipt["state"] == "stopped" and receipt["model_calls"] == 0
+    assert json.loads((saved.old / "compile-attempts.json").read_text()) == {"key": saved.key, "state": "stopped", "calls": 1}
+    assert len(saved.checked) == 1
+
+
+@pytest.mark.parametrize("path_name", ["compiler.json", "scene.py"])
+def test_coverage_exclusive_publication_cannot_replace_a_racing_file(coverage_saved, monkeypatch, path_name):
+    saved = coverage_saved
+    original_link = recovery.os.link
+    contents = "{}" if path_name == "compiler.json" else SOURCE + "# Racing user edit\n"
+    def race_link(temporary, destination):
+        if destination.name == path_name:
+            destination.write_text(contents)
+        return original_link(temporary, destination)
+    monkeypatch.setattr(recovery.os, "link", race_link)
+    with pytest.raises(RuntimeError, match="will not be overwritten"):
+        invoke(saved, acknowledge_recovery=True)
+    assert (saved.old / path_name).read_text() == contents
+    receipt = json.loads((saved.old / ".recovery-coverage-text/recovery.json").read_text())
+    assert receipt["state"] == "stopped" and receipt["model_calls"] == 0
+    assert json.loads((saved.old / "compile-attempts.json").read_text()) == {"key": saved.key, "state": "stopped", "calls": 1}
+    assert len(saved.checked) == 1
+
+
+def test_recovery_never_writes_redirected_cache(coverage_saved, tmp_path):
+    saved = coverage_saved
+    outside = tmp_path / "redirected"
+    saved.old.rename(outside)
+    saved.old.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(RuntimeError, match="redirected paths"):
+        invoke(saved, acknowledge_recovery=True)
+    assert not saved.checked and not (outside / ".recovery-coverage-text").exists()
 
 
 @pytest.mark.parametrize("metadata_failure", [False, True])

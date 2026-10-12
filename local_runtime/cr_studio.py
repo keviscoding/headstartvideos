@@ -926,7 +926,7 @@ def create_app():
                 raise RuntimeError("This saved video uses a different renderer. Keep its pinned renderer, or use a new title for a new project.")
             cfg=cr_bridge.load_settings()
             if old_backend == "manimgx" and cfg.get("brain_mode") != "claudecode":
-                raise RuntimeError("This saved ManimGX project uses your Claude Code brain. Reconnect its pinned Claude profile before editing or exporting it.")
+                raise RuntimeError("This saved Fast mode project uses your Claude Code brain. Reconnect its pinned Claude profile before editing or exporting it.")
             setup=cfg.get("setup_proof")
             cr_bridge.install(studio.mv)
             if cfg.get("brain_mode") == "claudecode":

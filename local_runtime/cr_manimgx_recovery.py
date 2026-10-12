@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
+import stat
+import tempfile
 import time
 
 import cr_claude
@@ -33,6 +36,38 @@ def _read(path):
 
 def _hash(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _present(path):
+    return path.exists() or path.is_symlink()
+
+
+def _regular(path):
+    return stat.S_ISREG(path.lstat().st_mode)
+
+
+def _existing_source(path, expected):
+    if not _present(path):
+        return False
+    if not _regular(path) or _hash(path) != expected:
+        raise RuntimeError("An existing scene source changed or is not a regular file. It will not be overwritten.")
+    return True
+
+
+def _publish_new(path, value, *, text=False):
+    """Atomically publish an absent path without replacing concurrent work."""
+    fd, name = tempfile.mkstemp(dir=path.parent, prefix="." + path.name, suffix=".recovery-tmp")
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(value) if text else json.dump(value, handle, ensure_ascii=False, allow_nan=False)
+        temporary.chmod(0o600)
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            raise RuntimeError("Saved compiler work appeared during validation. It will not be overwritten.") from None
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _prepare(home, project_id, outdir, scene_id, cloud_progress):
@@ -83,11 +118,11 @@ def _prepare(home, project_id, outdir, scene_id, cloud_progress):
             or saved_spec.get("render_backend") != "manimgx"
             or spec.get("manimgx_identity") != ready.get("identity")
             or saved_spec.get("manimgx_identity") != ready.get("identity")):
-        raise RuntimeError("Restore this project's exact pinned ManimGX environment before recovery.")
+        raise RuntimeError("Restore this project's exact pinned Fast mode environment before recovery.")
     video, report = _read(outdir / "video.json"), _read(outdir / "report.json")
     scenes = [s for s in video.get("scenes", []) if isinstance(s, dict) and s.get("id") == scene_id]
     if len(scenes) != 1 or report.get("renderer") != "manimgx":
-        raise RuntimeError("Use exactly one scene from the saved original ManimGX preview.")
+        raise RuntimeError("Use exactly one scene from the saved original Fast mode preview.")
     context = {"scene": scenes[0], "cast": video.get("cast", []),
                "video": {k: v for k, v in video.items() if k not in {"scenes", "cast"}},
                "output": {"width": report.get("w"), "height": report.get("h"),
@@ -108,11 +143,31 @@ def _prepare(home, project_id, outdir, scene_id, cloud_progress):
                 "setup": ready["identity"], "original_references": bundle["identity"]}
     legacy_key = renderer._digest({**identity, "assets": legacy_assets})
     key = renderer._digest({**identity, "assets": assets})
+    directory = threed / ".cr-manimgx" / key
     old = threed / ".cr-manimgx" / legacy_key
+    kind = "asset_records"
+    if legacy_key == key or not (old / "compiler-response-1.txt").is_file():
+        # This second known adapter failure used the correct full asset
+        # records. Only its former description-length rule rejected it.
+        old, legacy_key, kind = directory, key, "coverage_text"
+    cache_root = threed / ".cr-manimgx"
+    if directory.resolve().parent != cache_root or old.resolve().parent != cache_root:
+        raise RuntimeError("Use this video's original compiler cache, without redirected paths.")
     journal = _read(old / "compile-attempts.json")
     if journal != {"key": legacy_key, "state": "stopped", "calls": 1}:
-        raise RuntimeError("This is not the single completed compiler response stopped by the asset-record adapter bug.")
-    if (old / "compiler.json").exists() or (old / "compiler-response-2.txt").exists():
+        raise RuntimeError("This is not a single completed compiler response stopped by a known validation-only adapter failure.")
+    work = directory / ".recovery-coverage-text" if kind == "coverage_text" else directory
+    if work.is_symlink():
+        raise RuntimeError("The saved recovery path was redirected; no source was accepted.")
+    manifest_path = old / "compiler.json"
+    recovered_manifest = None
+    if _present(manifest_path):
+        if not _regular(manifest_path):
+            raise RuntimeError("An existing compiler manifest is not a regular file. It will not be overwritten.")
+        recovered_manifest = _read(manifest_path)
+    if ((recovered_manifest is not None and (kind != "coverage_text" or recovered_manifest.get("recovery_kind") != "coverage_text"
+            or renderer._read(work / "recovery.json").get("state") != "validated"))
+            or (old / "compiler-response-2.txt").exists()):
         raise RuntimeError("This compiler request has other acceptance or correction work; use its original recovery controls.")
     reference = old / "original-reference.txt"
     if reference.read_text(encoding="utf-8") != refs.reference_text(bundle):
@@ -159,7 +214,14 @@ def _prepare(home, project_id, outdir, scene_id, cloud_progress):
     if len(matches) != 1:
         raise RuntimeError("The saved compiler response has no unique matching completed native receipt.")
     result = renderer._compiler_result(raw, context, assets)
-    return {"directory": threed / ".cr-manimgx" / key, "key": key, "legacy_key": legacy_key,
+    if kind == "coverage_text":
+        descriptions = result["coverage"].values()
+        if (not any(len(value.strip()) < 8 for value in descriptions)
+                or any(not isinstance(value, str) or not value.strip() for value in result["coverage"].values())
+                or set(result["coverage"]) != set(renderer._pointers(context)) or result["unsupported"]):
+            raise RuntimeError("This response was not rejected solely by the former coverage-description length check.")
+    plan = {"directory": directory, "recovery_directory": work,
+            "kind": kind, "key": key, "legacy_key": legacy_key,
             "ready": ready, "result": result, "context": context, "assets": assets, "reference_bundle": bundle,
             "references": {"identity": bundle["identity"], "reference_file": str(reference.resolve()),
                            "evidence": bundle["context"]},
@@ -172,12 +234,25 @@ def _prepare(home, project_id, outdir, scene_id, cloud_progress):
                       "native_result_fingerprint": matches[0]["result_fingerprint"],
                       "native_account_fingerprint": local.get("account_fingerprint"),
                       "source_sha256": hashlib.sha256(result["source"].encode()).hexdigest()}}
+    if kind == "coverage_text":
+        _existing_source(directory / "scene.py", plan["proof"]["source_sha256"])
+    if recovered_manifest is not None:
+        receipt = renderer._read(work / "recovery.json")
+        if (receipt.get("proof") != plan["proof"] or recovered_manifest.get("key") != key
+                or recovered_manifest.get("typed") is not True or recovered_manifest.get("result") != result
+                or recovered_manifest.get("source_sha256") != plan["proof"]["source_sha256"]
+                or recovered_manifest.get("recovery_of") != legacy_key
+                or recovered_manifest.get("recovery_receipt") != str((work / "recovery.json").relative_to(directory))
+                or not (directory / "scene.py").is_file()
+                or _hash(directory / "scene.py") != plan["proof"]["source_sha256"]):
+            raise RuntimeError("This accepted source no longer matches its original completed response and local recovery receipt.")
+    return plan
 
 
 def inspect(home, project_id, outdir, scene_id, cloud_progress):
     """Verify supplied receipt and immutable inputs without writing or rendering."""
     plan = _prepare(home, project_id, outdir, scene_id, cloud_progress)
-    return {**plan["proof"], "ready_for_local_typecheck": True, "starts_model": False}
+    return {**plan["proof"], "kind": plan["kind"], "ready_for_local_typecheck": True, "starts_model": False}
 
 
 def discover(home, job, cloud_progress):
@@ -205,7 +280,7 @@ def discover(home, job, cloud_progress):
                 plan = _prepare(home, project_id, report_path.parent, scene.get("id"), cloud_progress)
             except (RuntimeError, OSError, ValueError, KeyError, TypeError):
                 continue
-            receipt_path = plan["directory"] / "recovery.json"
+            receipt_path = plan["recovery_directory"] / "recovery.json"
             saved = renderer._read(receipt_path)
             if saved and saved.get("proof") != plan["proof"]:
                 continue
@@ -214,11 +289,13 @@ def discover(home, job, cloud_progress):
             found.append({"selection_id": selector, "project_id": project_id, "scene_id": scene["id"],
                           "title": str((cloud_progress.get("project") or {}).get("title") or project_id),
                           "state": saved.get("state", "available"), "outdir": str(report_path.parent),
-                          "receipt_path": str(receipt_path), "key": plan["key"],
+                          "receipt_path": str(receipt_path), "key": plan["key"], "kind": plan["kind"],
                           "diagnostic": saved.get("diagnostic", ""),
                           "message": "The saved source needs one explicit Claude API correction." if saved.get("state") == "source_invalid"
+                              else "Local validation stopped. Review its saved diagnostic; no Claude correction is available." if saved.get("state") == "stopped"
+                              else "The completed response passed local validation. Resume through the original video controls." if saved.get("state") in {"validated", "corrected"}
                               else "Validate the completed response locally. This generates no media and uses no model calls.",
-                          "can_validate": not saved, "can_correct": saved.get("state") == "source_invalid"
+                          "can_validate": not saved, "can_correct": plan["kind"] == "asset_records" and saved.get("state") == "source_invalid"
                               and not (plan["directory"] / "correction-attempts.json").exists()})
     return found
 
@@ -237,12 +314,15 @@ def recover(home, project_id, outdir, scene_id, cloud_progress, *, acknowledge_r
     if acknowledge_recovery is not True:
         raise RuntimeError("Explicitly acknowledge local recovery of this completed response first.")
     plan = _prepare(home, project_id, outdir, scene_id, cloud_progress)
-    directory, proof = plan["directory"], plan["proof"]
-    if directory.exists():
-        saved = renderer._read(directory / "recovery.json")
+    directory, work, proof = plan["directory"], plan["recovery_directory"], plan["proof"]
+    if work.exists():
+        saved = renderer._read(work / "recovery.json")
         manifest = renderer._read(directory / "compiler.json")
         if (saved.get("state") == "validated" and saved.get("proof") == proof
                 and manifest.get("key") == plan["key"] and manifest.get("typed") is True
+                and manifest.get("recovery_kind") == plan["kind"]
+                and manifest.get("recovery_of") == plan["legacy_key"]
+                and manifest.get("recovery_receipt") == str((work / "recovery.json").relative_to(directory))
                 and manifest.get("source_sha256") == proof["source_sha256"]
                 and manifest.get("result") == plan["result"]
                 and _hash(directory / "scene.py") == proof["source_sha256"]):
@@ -251,37 +331,52 @@ def recover(home, project_id, outdir, scene_id, cloud_progress, *, acknowledge_r
     # Atomic creation prevents two explicit invocations from validating or
     # overwriting the same destination at once. Historical files remain intact.
     try:
-        directory.mkdir(mode=0o700)
+        work.mkdir(mode=0o700)
     except FileExistsError:
         raise RuntimeError("This graphics recovery is already being reviewed.") from None
-    record = {"state": "validating", "proof": proof, "created_at": time.time(), "model_calls": 0}
-    renderer._write(directory / "recovery.json", record)
-    renderer._write(directory / "compile-attempts.json", {"key": plan["key"], "state": "recovery_started",
+    record = {"state": "validating", "proof": proof, "kind": plan["kind"], "created_at": time.time(), "model_calls": 0}
+    renderer._write(work / "recovery.json", record)
+    renderer._write(work / "compile-attempts.json", {"key": plan["key"], "state": "recovery_started",
                     "calls": 0, "recovery_of": plan["legacy_key"]})
-    renderer._write(directory / "recovery-input.json", {"context": plan["context"], "assets": plan["assets"],
+    renderer._write(work / "recovery-input.json", {"context": plan["context"], "assets": plan["assets"],
                     "references": plan["references"], "ready": plan["ready"], "proof": proof})
-    renderer._write(directory / "recovery-result.json", plan["result"])
-    candidate = directory / "scene-recovered.py"
+    renderer._write(work / "recovery-result.json", plan["result"])
+    candidate = work / "scene-recovered.py"
     renderer._write(candidate, plan["result"]["source"], text=True)
     try:
         renderer._typecheck(plan["ready"]["python"], candidate)
     except BaseException as error:
         diagnostic_path = candidate.with_suffix(".validation.log")
-        record.update(state="source_invalid" if isinstance(error, renderer.ManimGXSourceAPIError) else "stopped",
+        record.update(state="source_invalid" if plan["kind"] == "asset_records" and isinstance(error, renderer.ManimGXSourceAPIError) else "stopped",
                       error_type=type(error).__name__, diagnostic=renderer._redacted_diagnostic(
                           error.diagnostic if isinstance(error, renderer.ManimGXSourceAPIError) else str(error)),
                       diagnostic_sha256=_hash(diagnostic_path) if diagnostic_path.is_file() else None,
                       checker_version=renderer.TYPECHECKER_VERSION)
-        renderer._write(directory / "recovery.json", record)
-        renderer._write(directory / "compile-attempts.json", {"key": plan["key"], "state": "stopped",
+        renderer._write(work / "recovery.json", record)
+        renderer._write(work / "compile-attempts.json", {"key": plan["key"], "state": "stopped",
                         "calls": 0, "recovery_of": plan["legacy_key"]})
         raise RuntimeError("The recovered source did not pass the pinned local API check. Its diagnostic is saved; no model or rendering was started.") from None
-    renderer._write(directory / "scene.py", plan["result"]["source"], text=True)
-    renderer._write(directory / "compiler.json", {"key": plan["key"], "typed": True,
-                    "source_sha256": proof["source_sha256"], "result": plan["result"], "recovery_of": plan["legacy_key"]})
+    try:
+        # Recheck after the local checker returns. Exclusive publication also
+        # protects against a file appearing between this guard and the write.
+        if _present(directory / "compiler.json"):
+            raise RuntimeError("A compiler manifest appeared during validation. It will not be overwritten.")
+        source = directory / "scene.py"
+        if not _existing_source(source, proof["source_sha256"]):
+            _publish_new(source, plan["result"]["source"], text=True)
+        _existing_source(source, proof["source_sha256"])
+        _publish_new(directory / "compiler.json", {"key": plan["key"], "typed": True,
+                        "source_sha256": proof["source_sha256"], "result": plan["result"], "recovery_of": plan["legacy_key"],
+                        "recovery_kind": plan["kind"], "recovery_receipt": str((work / "recovery.json").relative_to(directory))})
+    except BaseException as error:
+        record.update(state="stopped", error_type=type(error).__name__, diagnostic=renderer._redacted_diagnostic(str(error)))
+        renderer._write(work / "recovery.json", record)
+        renderer._write(work / "compile-attempts.json", {"key": plan["key"], "state": "stopped",
+                        "calls": 0, "recovery_of": plan["legacy_key"]})
+        raise
     record.update(state="validated", checked_at=time.time())
-    renderer._write(directory / "recovery.json", record)
-    renderer._write(directory / "compile-attempts.json", {"key": plan["key"], "state": "validated",
+    renderer._write(work / "recovery.json", record)
+    renderer._write(work / "compile-attempts.json", {"key": plan["key"], "state": "validated",
                     "calls": 0, "recovery_of": plan["legacy_key"]})
     return {"accepted": True, "reused": False, **proof}
 
@@ -296,6 +391,8 @@ def correct(home, project_id, outdir, scene_id, cloud_progress, *, acknowledge_c
     if acknowledge_correction is not True:
         raise RuntimeError("Confirm the single Claude source correction and its account usage first.")
     plan = _prepare(home, project_id, outdir, scene_id, cloud_progress)
+    if plan["kind"] != "asset_records":
+        raise RuntimeError("This validation-only recovery does not authorize a Claude source correction.")
     directory = plan["directory"]
     receipt = _read(directory / "recovery.json")
     saved_input = _read(directory / "recovery-input.json")
