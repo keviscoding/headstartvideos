@@ -35,7 +35,7 @@ class ClaudeStageStopped(BaseException):
 def failure_info(stdout="",stderr=""):
     """Classify failures without displaying upstream bodies or credentials."""
     diagnostic=(str(stdout)+" "+str(stderr)).lower()
-    if any(x in diagnostic for x in ("usage limit","rate limit","limit reached","out of extra usage","hit your limit","usage exceeded","rate_limit","too many requests")):
+    if any(x in diagnostic for x in ("usage limit","session limit","weekly limit","rate limit","limit reached","out of extra usage","hit your limit","usage exceeded","rate_limit","too many requests")):
         return "usage_limit","Your Claude account reached its usage limit. Check its reset or usage allowance, then review this saved stage in setup."
     if any(x in diagnostic for x in ("authentication","oauth","not logged in","invalid token","please log in")):
         return "auth_missing","Claude Code needs you to sign in again. Reconnect your Claude account, then review this saved stage in setup."
@@ -306,7 +306,7 @@ class Runtime:
             saved = {}
         stage = {"project_id": project_id, "stage_id": stage_id, "input_fingerprint": fingerprint,
                  "kind": kind, "model_role": role, "requested_model": requested,
-                 "local_version": cfg.get("local_version", "5.3-admin.11"),
+                 "local_version": cfg.get("local_version", "5.3-admin.12"),
                  "brain_mode": "claudecode"}
         try:
             # A completion receipt lost in transit can be submitted again. This

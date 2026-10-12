@@ -104,6 +104,24 @@ def test_uncertain_or_failed_stage_never_restarts_automatically(native):
     assert studio.native_progress(native.owner,req.project_id)["project"]["calls"]==1
 
 
+def test_recovered_first_setup_model_leaves_budget_for_second_model(native):
+    proof={**native.proof,"purpose":"setup","models_verified":False}
+    project=studio.native_begin(native.owner,studio.NativeBegin(begin_id="two_models_with_recovery",title="Model connection checks",
+        style="custom",setup=proof,max_calls=4))["project"]
+    req=studio.NativeAuthorize(project_id=project["id"],stage_id="setup_first_model",input_fingerprint="a"*64,requested_model="claude-sonnet-5-5",local_version=studio.VERSION)
+    first=studio.native_authorize(native.owner,req)
+    studio.native_finish_stage(native.owner,studio.NativeFinishStage(project_id=req.project_id,stage_id=req.stage_id,
+        authorization_token=first["authorization_token"],status="failed",error_code="network_interrupted"))
+    studio.native_retry_stage(native.owner,studio.NativeRetryStage(project_id=req.project_id,stage_id=req.stage_id,acknowledge_costs=True))
+    retried=studio.native_authorize(native.owner,req)
+    studio.native_finish_stage(native.owner,studio.NativeFinishStage(project_id=req.project_id,stage_id=req.stage_id,
+        authorization_token=retried["authorization_token"],status="complete",result_fingerprint="b"*64))
+    visual=req.model_copy(update={"stage_id":"setup_second_model","input_fingerprint":"c"*64,"model_role":"visual","requested_model":"claude-opus-5-5"})
+    second=studio.native_authorize(native.owner,visual)
+    assert second["execute"] and second["selected_model"]=="claude-opus-5-5"
+    assert studio.native_progress(native.owner,req.project_id)["project"]["calls"]==3
+
+
 def test_final_metadata_cannot_hide_incomplete_stages(native):
     studio.native_authorize(native.owner,stage(native))
     report=studio.NativeFinishProject(project_id=native.project["id"],status="done",
@@ -218,6 +236,7 @@ def test_read_only_claude_auth_never_returns_identity_or_api_credentials():
 
 
 @pytest.mark.parametrize("message,code",[("You've hit your limit · resets later","usage_limit"),
+    ("You've hit your session limit · resets 4:40am (Europe/London)","usage_limit"),
     ("API Error: 529 overloaded","network_interrupted"),("Please log in again","auth_missing"),
     ("Model does not exist","model_unavailable")])
 def test_failure_messages_classify_without_echoing_upstream_text(message,code):

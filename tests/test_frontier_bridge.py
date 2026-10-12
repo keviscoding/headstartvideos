@@ -105,3 +105,11 @@ def test_no_brain_or_product_work_without_spending_agreement(local, monkeypatch)
     monkeypatch.setattr(bridge, "call", lambda *a, **k: pytest.fail("No billable request should occur"))
     with pytest.raises(RuntimeError, match="Review provider spending"):
         bridge.think("Write a product")
+
+
+def test_model_check_budget_reserves_only_one_explicit_recovery_per_model(local,monkeypatch):
+    bridge.save_settings({**bridge.load_settings(),"brain_mode":"claudecode"})
+    requests=[]
+    monkeypatch.setattr(bridge,"_mcp_tool",lambda name,payload:requests.append((name,payload)) or {"project":{"id":"crv_"+"1"*24}})
+    bridge.begin_project("Model connection checks","custom",proof={"purpose":"setup"},purpose="setup")
+    assert requests[0][1]["max_calls"]==4
