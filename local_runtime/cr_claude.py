@@ -299,6 +299,10 @@ class Runtime:
                            "max_tokens": maximum, "read_files": _read_inputs(kwargs["input"], args)}
         fingerprint = _digest(source_contract)
         stage_id = "cc_" + fingerprint
+        try:
+            installed_version=json.loads((Path(self.bridge.HOME)/"cr-release.json").read_text())["version"]
+        except (OSError,ValueError,KeyError):
+            installed_version=cfg.get("local_version","5.3-admin.13")
         cache = Path(self.bridge.HOME) / "output" / "cr-claude-cache" / project_id / (stage_id + ".json")
         try:
             saved = json.loads(cache.read_text())
@@ -306,7 +310,7 @@ class Runtime:
             saved = {}
         stage = {"project_id": project_id, "stage_id": stage_id, "input_fingerprint": fingerprint,
                  "kind": kind, "model_role": role, "requested_model": requested,
-                 "local_version": cfg.get("local_version", "5.3-admin.12"),
+                 "local_version": installed_version,
                  "brain_mode": "claudecode"}
         try:
             # A completion receipt lost in transit can be submitted again. This

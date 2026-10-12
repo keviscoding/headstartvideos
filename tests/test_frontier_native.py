@@ -273,6 +273,23 @@ def test_concurrent_receipt_writes_remain_atomic_and_private(tmp_path):
     assert path.stat().st_mode&0o077==0 and list(tmp_path.glob("*.tmp"))==[]
 
 
+def test_upgraded_runtime_authorizes_installed_release_with_saved_old_model_profile(native,monkeypatch):
+    root=native.tmp
+    (root/"cr-release.json").write_text(json.dumps({"version":studio.VERSION}))
+    cfg={"brain_mode":"claudecode","costs_accepted":True,"local_version":"5.3-admin.9"}
+    bridge=SimpleNamespace(HOME=root,load_settings=lambda:cfg,current_project=lambda:native.project,
+        authorize_stage=lambda data:studio.native_authorize(native.owner,studio.NativeAuthorize(**data)),
+        finish_stage=lambda data:studio.native_finish_stage(native.owner,studio.NativeFinishStage(**data)))
+    def invoke(args,**kwargs):
+        if "--version" in args:return SimpleNamespace(returncode=0,stdout="2.1.291")
+        if "auth" in args:return SimpleNamespace(returncode=0,stdout=json.dumps({"loggedIn":True,"authMethod":"claude.ai","apiProvider":"firstParty"}))
+        return SimpleNamespace(returncode=0,stdout="Creative output",stderr="")
+    runtime=cr_claude.Runtime(SimpleNamespace(),bridge,"/fake/claude",invoke)
+    result=runtime.run(["/fake/claude","--print","--model","claude-sonnet-5-5","--output-format","text"],input="A fresh stage after upgrading.",text=True,capture_output=True)
+    assert result.stdout=="Creative output"
+    assert studio.native_progress(native.owner,native.project["id"])["stages"][0]["status"]=="complete"
+
+
 def test_general_opus_choice_does_not_change_source_role_marker(tmp_path,monkeypatch):
     engine=SimpleNamespace(CC_MODEL="sonnet")
     bridge=SimpleNamespace(load_settings=lambda:{"general_model":cr_claude.VISUAL_MODEL,"visual_model":cr_claude.GENERAL_MODEL})
