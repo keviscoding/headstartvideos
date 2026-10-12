@@ -26,6 +26,11 @@ def main():
         root = Path(tmp) / "ChannelRecipe studio"
         manifest = json.loads((root / "cr-release.json").read_text())
         assert manifest["access"] == "admin_only" and not manifest["public_release_allowed"]
+        original_guide = (root / "FRONTIER_GUIDE.md").read_bytes()
+        interactive_instructions = (root / "CLAUDE.md").read_bytes()
+        operational_overrides = (Path(__file__).resolve().parents[1] / "local_runtime/CLAUDE.md").read_bytes()
+        assert original_guide in interactive_instructions, "Interactive creative context must retain the complete original guide"
+        assert interactive_instructions.endswith(operational_overrides), "CR account, setup and launch instructions must follow the older guide"
         sys.path.insert(0, str(root))
         import history_kit
         original_history_animation = history_kit.animate_paintings
@@ -38,6 +43,7 @@ def main():
         cr_mcp.is_registered=lambda cfg:True
         cr_claude.status=lambda *a,**k:{"installed":True,"authenticated":True,"ready":True,"version":"2.1.291","api_provider":"firstParty","auth_method":"claude.ai"}
         studio = cr_studio.create_app()
+        assert not Path(studio.mv.CC_CWD).resolve().is_relative_to(root.resolve()), "Native creative calls must keep their original neutral working directory"
         assert history_kit.animate_paintings.__cr_history_original__ is original_history_animation
         client = studio.app.test_client()
         local = {"Host": "127.0.0.1:7860"}
@@ -290,6 +296,7 @@ def main():
         assert folio._look(studio.mv,"Native Folio visual review",[picture])=="Native creative output"
         assert threed._cc(studio.mv,"Native 3D code",cr_claude.VISUAL_MODEL,[picture],what="smoke")=="Native creative output"
         assert len(native_calls)==7
+        assert all(Path(options["cwd"]).resolve() == Path(studio.mv.CC_CWD).resolve() for _, options in native_calls)
         assert native_calls[1][0][native_calls[1][0].index("--tools")+1]=="WebSearch,WebFetch"
         assert native_calls[2][0][native_calls[2][0].index("--tools")+1]=="Read"
         folio_command=native_calls[3][0]

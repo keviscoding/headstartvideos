@@ -53,7 +53,11 @@ window.CRLocalStudio = (() => {
     async function api(path, options) {
         const response = await fetch('/api/frontier/' + path, options);
         const body = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(typeof body.detail === 'string' ? body.detail : 'This step could not finish. Please try again.');
+        if (!response.ok) {
+            const error=new Error(typeof body.detail === 'string' ? body.detail : 'This step could not finish. Please try again.');
+            error.status=response.status;
+            throw error;
+        }
         return body;
     }
     function hero() {
@@ -135,26 +139,56 @@ window.CRLocalStudio = (() => {
             const result=await api('projects');
             const el=document.getElementById('ls-history');if(!el)return;
             el.innerHTML='<h3>Your recent studio projects</h3>'+(result.projects.length?'<div class="ls-projects">'+result.projects.map(p=>
-                '<div class="ls-project"><article><div><strong>'+esc(p.title)+'</strong><small>'+esc(p.style)+' · '+new Date(p.created_at*1000).toLocaleDateString()+'</small>'+(p.status==='needs_review'?'<small>A model request stopped. Open its status for the next step.</small>':'')+'<button class="btn-secondary ls-view-requests" data-ls-requests="'+esc(p.id)+'" aria-expanded="false">View request status</button></div><span>'+Number(p.calls)+' brain requests<br>'+Number(p.input_tokens+p.output_tokens).toLocaleString()+' reported tokens</span></article><div id="ls-requests-'+esc(p.id)+'" class="ls-request-list" hidden></div></div>').join('')+'</div>':'<p>Your first project will appear here when you start a video in the local studio.</p>')+
-                '<p class="ls-inline-note">Brain usage is recorded here. Voice, image and video charges are in your provider accounts.</p>';
+                '<div class="ls-project"><article><div><strong>'+esc(p.title)+'</strong><small>'+esc(p.style)+' · '+new Date(p.created_at*1000).toLocaleDateString()+'</small>'+(['needs_review','failed'].includes(p.status)?'<small>This project stopped. View its status for the next step.</small>':'')+'<button class="btn-secondary ls-view-requests" data-ls-requests="'+esc(p.id)+'" aria-expanded="false">View request status</button></div><span>'+Number(p.calls)+' model requests<br>'+Number(p.input_tokens+p.output_tokens).toLocaleString()+' reported tokens</span></article><div id="ls-requests-'+esc(p.id)+'" class="ls-request-list" hidden></div></div>').join('')+'</div>':'<p>Your first project will appear here when you start a video in the local studio.</p>')+
+                '<p class="ls-inline-note">Claude Code uses your Claude account and its limits. Alternative API requests use the selected API account. Voice, image and video charges stay in your media accounts.</p>';
             el.querySelectorAll('[data-ls-requests]').forEach(button=>button.addEventListener('click',()=>requests(button.dataset.lsRequests,button)));
         }catch(e){notice(e.message,true);}
+    }
+    function nativeRequests(result) {
+        const stages=result.stages||[];
+        const labels={complete:'Stage saved',failed:'Stage stopped',retry_allowed:'Ready to resume',authorized:'Awaiting a saved result'};
+        const errors={usage_limit:'Your Claude account reached its usage limit. Wait for its reset, then review this stage in local setup.',
+            model_unavailable:'Your Claude account could not use the selected model. Review model access in local setup.',
+            auth_missing:'Claude Code could not use your login. Sign in again, then review this stage in local setup.',
+            timeout:'Claude Code did not return a complete result before the timeout. Review its saved status and Claude usage in local setup.'};
+        return '<p class="ls-inline-note">These creative stages use your local Claude Code account. CR records their authorization and saved results; it does not bill an API brain for these stages.</p>'+
+            (stages.length?stages.map(stage=>{
+                const usage=stage.usage||{}, tokens=Number(usage.input_tokens||0)+Number(usage.output_tokens||0)+Number(usage.cache_read_input_tokens||0)+Number(usage.cache_creation_input_tokens||0);
+                const message=stage.status==='complete'?'The result is saved. Resume the same video to reuse its completed work.':stage.status==='retry_allowed'?'One additional attempt has been approved. Resume the same video in your local studio.':stage.status==='authorized'?'This stage may still be running or waiting for its result to sync. Refresh its status in local setup before resuming or approving another attempt.':errors[stage.error_code]||'This stage stopped before a complete result was saved. Review its status and your Claude usage in local setup.';
+                const role=stage.model_role==='visual'?'Complex visuals':'General work';
+                const kind={text:'Text',vision:'Vision',research:'Research'}[stage.kind]||stage.kind;
+                return '<section class="ls-request"><div class="ls-request-heading"><strong>'+esc(labels[stage.status]||stage.status)+'</strong><span>'+Number(stage.attempts)+' '+(stage.attempts===1?'attempt':'attempts')+'</span></div>'+
+                    '<p>'+esc(message)+'</p><small>'+esc(role)+' · '+esc(kind)+' · '+esc(modelName('anthropic',stage.selected_model))+' · Claude Code</small><small>'+new Date(stage.updated_at*1000).toLocaleString()+'</small>'+
+                    (usage.reported?'<small>'+tokens.toLocaleString()+' locally reported tokens, including cached input. Your Claude account determines actual usage and limits.</small>':'<small>Token usage has not been reported for this attempt. Check your Claude account; this does not mean no usage occurred.</small>')+
+                    '<details class="ls-request-debug"><summary>Details for support</summary><small class="ls-request-id">Stage '+esc(stage.stage_id)+'</small>'+(stage.error_code?'<small>'+esc(stage.error_code)+'</small>':'')+'</details></section>';
+            }).join(''):'<p>No Claude Code stages have been authorized for this project yet.</p>')+
+            '<p class="ls-inline-note">Saved videos and exports remain on your computer. Use Your videos to open the timeline or the output folder.</p>'+
+            '<a class="btn-secondary" href="http://127.0.0.1:7860/cr-setup" target="_blank" rel="noopener">Open local setup to review or resume ↗</a>';
     }
     async function requests(projectId, button) {
         const el=document.getElementById('ls-requests-'+projectId);if(!el)return;
         if(!el.hidden){el.hidden=true;button.setAttribute('aria-expanded','false');return;}
         el.hidden=false;button.setAttribute('aria-expanded','true');el.innerHTML='<p role="status">Loading request status…</p>';
         try {
+            let progress;
+            try {progress=await api('projects/'+projectId+'/progress');}
+            catch(error) {if(error.status!==404)throw error;}
+            if(progress) {
+                if(progress.brain_mode!=='claudecode')throw new Error('This project returned an unrecognised workflow. Refresh its status before continuing.');
+                el.innerHTML=nativeRequests(progress);
+                return;
+            }
             const result=await api('projects/'+projectId+'/requests');
             const labels={complete:'Answer saved',needs_review:'Request stopped',retry_allowed:'Ready to resume',running:'Still running'};
             el.innerHTML=result.requests.length?result.requests.map(r=>{
-                const error=r.errors[r.errors.length-1];
-                const account=r.context.provider?data.providers[r.context.provider]?.label:null;
+                const error=r.errors?.[r.errors.length-1];
+                const account=r.context?.provider?(data.providers?.[r.context.provider]?.label||r.context.provider):null;
+                const retryAccount=account||data.providers?.[data.brain?.provider]?.label||'selected API';
                 const message=r.status==='complete'?'Resume the same video to reuse this saved answer.':r.status==='retry_allowed'?'One retry is allowed. Resume the same video in your local studio.':r.status==='running'?'The request is still running or awaiting a saved result. Refresh its status before continuing.':error?.message||'This request stopped before a complete result was saved. The earlier preview did not retain its detailed error.';
                 return '<section class="ls-request"><div class="ls-request-heading"><strong>'+esc(labels[r.status]||r.status)+'</strong><span>'+Number(r.attempts)+' '+(r.attempts===1?'attempt':'attempts')+'</span></div>'+
                     '<p>'+esc(message)+'</p><small>'+new Date(r.created_at*1000).toLocaleString()+(account?' · '+esc(account):'')+'</small>'+
                     (error?.usage_reported?'<small>'+Number(error.input_tokens+error.output_tokens).toLocaleString()+' tokens reported for the stopped attempt. Provider billing may include other charges.</small>':r.status==='needs_review'?'<small>The stopped attempt’s charge is unknown. Check your provider’s usage if needed.</small>':'')+
-                    (r.can_retry?'<form data-ls-retry-form data-project="'+esc(projectId)+'" data-request="'+esc(r.id)+'" data-attempt="'+Number(r.attempts)+'"><p>A retry repeats this one model request using your connected '+esc(data.providers[data.brain.provider].label)+' account. Your provider may charge again. Your saved work stays available.</p><label class="ls-retry-consent"><input type="checkbox" required> I understand my provider may charge for this retry.</label><button class="btn-primary" type="submit" disabled>Allow one retry</button></form>':r.status==='needs_review'?'<p class="ls-inline-note">Another retry is unavailable. The recovery attempt or project request limit has been used. This status is available here for support.</p>':'')+
+                    (r.can_retry?'<form data-ls-retry-form data-project="'+esc(projectId)+'" data-request="'+esc(r.id)+'" data-attempt="'+Number(r.attempts)+'"><p>A retry repeats this one model request using your connected '+esc(retryAccount)+' account. Your provider may charge again. Your saved work stays available.</p><label class="ls-retry-consent"><input type="checkbox" required> I understand my provider may charge for this retry.</label><button class="btn-primary" type="submit" disabled>Allow one retry</button></form>':r.status==='needs_review'?'<p class="ls-inline-note">Another retry is unavailable. The recovery attempt or project request limit has been used. This status is available here for support.</p>':'')+
                     '<details class="ls-request-debug"><summary>Details for support</summary><small class="ls-request-id">Request '+esc(r.id)+'</small></details></section>';
             }).join(''):'<p>No model requests have been submitted for this project.</p>';
             el.querySelectorAll('[data-ls-retry-form]').forEach(form=>{
