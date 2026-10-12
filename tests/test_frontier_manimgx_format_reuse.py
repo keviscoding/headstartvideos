@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_frontier_manimgx import SOURCE, VIDEO, manifest, stub_runtime, run_stub
+from test_frontier_manimgx import SOURCE, VIDEO, manifest, stub_runtime, run_stub, saved_source_correction
 import cr_manimgx as gx
 import cr_manimgx_profile as profile
 
@@ -132,3 +132,79 @@ def test_output_provenance_keeps_original_values_hashes_and_explicit_sub(monkeyp
     assert module._video(explicit, 6) == original(explicit, 6)
     assert gx._OUTPUT_INJECTIONS[gx._digest(actual)] == {}
     assert VIDEO["scenes"][0].get("render") is None
+
+
+def coverage_correction_fixture(state):
+    root = state.directory
+    work = root / ".recovery-coverage-text"
+    work.mkdir()
+    for name in ("recovery.json", "recovery-result.json", "scene-recovered.py"):
+        (root / name).rename(work / name)
+    receipt = gx._read(work / "recovery.json")
+    receipt["proof"].update(native_stage_id="cc_" + "a" * 64, native_result_fingerprint="b" * 64)
+    gx._write(work / "recovery.json", receipt)
+    gx._write(root / "compile-attempts.json", {"key": state.key, "state": "stopped", "calls": 1})
+    gx._write(root / "compiler-response-1.txt", "Original completed response retained unchanged", text=True)
+    return work, receipt
+
+
+def test_coverage_correction_writes_only_child_and_has_accepted_reuse_lineage(saved_source_correction):
+    state, calls = saved_source_correction, []
+    work, receipt = coverage_correction_fixture(state)
+    old = {p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in state.directory.iterdir() if p.is_file()}
+    corrected_source = SOURCE + "\n# One pinned API correction\n"
+    def compiler(prompt, maximum):
+        calls.append(prompt)
+        return json.dumps(manifest(state.context, corrected_source))
+    result, source = gx.correct_recovered_source(SimpleNamespace(), state.context, state.assets,
+        state.ready, state.directory, state.key, reference_bundle=state.bundle, compiler=compiler,
+        recovery_directory=work)
+    assert len(calls) == 1 and source == work / "scene-corrected.py"
+    assert gx._read(work / "compiler-corrected.json")["typed"] is True
+    assert gx._read(work / "correction-attempts.json")["state"] == "validated"
+    assert not (state.directory / "compiler.json").exists() and not (state.directory / "scene.py").exists()
+    assert all((state.directory / name).read_bytes() == contents
+               and (state.directory / name).stat().st_mtime_ns == modified
+               for name, (contents, modified) in old.items())
+    source_hash = gx._file_hash(source)
+    receipt.update(state="corrected", model_calls=1, corrected_source_sha256=source_hash)
+    gx._write(work / "recovery.json", receipt)
+    root_manifest = {"key": state.key, "typed": True, "result": result, "source_sha256": source_hash,
+        "recovery_of": state.key, "recovery_kind": "coverage_text",
+        "recovery_receipt": ".recovery-coverage-text/recovery.json", "recovery_proof": receipt["proof"]}
+    acceptance = gx._accepted_response(state.directory, root_manifest, state.context, state.assets)
+    assert acceptance["kind"] == "completed_native_recovery_correction"
+    journal = gx._read(work / "correction-attempts.json"); journal["calls"] = 2
+    gx._write(work / "correction-attempts.json", journal)
+    with pytest.raises(RuntimeError, match="correction changed"):
+        gx._accepted_response(state.directory, root_manifest, state.context, state.assets)
+    with pytest.raises(RuntimeError, match="no longer matches"):
+        gx.correct_recovered_source(SimpleNamespace(), state.context, state.assets,
+            state.ready, state.directory, state.key, reference_bundle=state.bundle, compiler=compiler,
+            recovery_directory=work)
+    assert len(calls) == 1
+
+
+def test_coverage_correction_rejects_outside_or_failed_child_without_repeat(saved_source_correction):
+    state, calls = saved_source_correction, []
+    work, receipt = coverage_correction_fixture(state)
+    outside = work.parent.parent / ".recovery-coverage-text"; outside.mkdir()
+    with pytest.raises(RuntimeError, match="exact private"):
+        gx.correct_recovered_source(SimpleNamespace(), state.context, state.assets,
+            state.ready, state.directory, state.key, reference_bundle=state.bundle,
+            compiler=lambda *a: pytest.fail("No model call"), recovery_directory=outside)
+    def compiler(prompt, maximum):
+        calls.append(prompt)
+        return json.dumps(manifest(state.context, unsupported=["Required geometry cannot be represented"]))
+    with pytest.raises(RuntimeError, match="cannot preserve"):
+        gx.correct_recovered_source(SimpleNamespace(), state.context, state.assets,
+            state.ready, state.directory, state.key, reference_bundle=state.bundle,
+            compiler=compiler, recovery_directory=work)
+    assert gx._read(work / "correction-attempts.json")["state"] == "stopped"
+    assert (work / "compiler-correction-response-1.txt").is_file()
+    assert not (state.directory / "compiler.json").exists()
+    with pytest.raises(RuntimeError, match="already started or stopped"):
+        gx.correct_recovered_source(SimpleNamespace(), state.context, state.assets,
+            state.ready, state.directory, state.key, reference_bundle=state.bundle,
+            compiler=compiler, recovery_directory=work)
+    assert len(calls) == 1

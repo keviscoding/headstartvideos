@@ -206,3 +206,138 @@ def test_actual_private_catalog_resolves_object_module_assets_and_world_contract
     assert len(result["sources"]) < refs.MAX_FILES
     assert all(Path(row["path"]).is_relative_to(home / "threed/engine") for row in result["sources"])
     assert refs.reference_text(result).startswith("PRIVATE ORIGINAL RENDERER REFERENCE DATA")
+
+
+def _large_inventory(source):
+    """A full dependency inventory larger than the former prompt budget."""
+    home, engine, write, _ = source
+    write("lib/nature/geometry.js", "import './chunk0.js';\nexport const CATALOG = {'demo.shape': {}};\n")
+    for index in range(8):
+        dependency = "import './chunk%d.js';\n" % (index + 1) if index < 7 else ""
+        write("lib/nature/chunk%d.js" % index,
+              dependency + "// private exact source fixture\n" * 7000)
+    result = refs.resolve(home, scene())
+    assert result["context"]["source_bytes"] > refs.INLINE_SOURCE_BYTES
+    return result
+
+
+def test_large_inventory_uses_private_exact_indexed_files_without_a_giant_prompt(source):
+    home, engine, write, _ = source
+    result = _large_inventory(source)
+    reference = home / "private-request/original-renderer-reference.txt"
+    document = refs.save_reference(reference, result)
+    # Recovery/correction moves the index into its own private child directory.
+    # Relative paths keep its content hash stable without referring to old work.
+    moved = home / "recovery-child" / "original-reference.txt"
+    assert refs.save_reference(moved, result) == document
+    assert reference.read_text() == document
+    assert reference.stat().st_mode & 0o077 == 0
+    assert "INDEXED DELIVERY" in document
+    assert "// private exact source fixture" not in document
+    assert len(document.encode()) < refs.INLINE_SOURCE_BYTES
+    indexes = [json.loads(line) for line in document.splitlines()
+               if line.startswith('{"reference":')]
+    assert len(indexes) == len(result["sources"])
+    by_name = {row["relative_path"]: row for row in result["sources"]}
+    for row in indexes:
+        copied = reference.parent / row["read_path"]
+        original = by_name[row["reference"]]
+        assert copied.is_relative_to(reference.parent)
+        assert copied.read_bytes() == Path(original["path"]).read_bytes()
+        assert copied.stat().st_mode & 0o077 == 0
+        assert copied.parent.stat().st_mode & 0o077 == 0
+        assert hashlib.sha256(copied.read_bytes()).hexdigest() == row["sha256"]
+        assert copied.stat().st_size == row["bytes"]
+
+
+def test_large_inventory_reaches_the_existing_native_visual_compiler_as_one_index(source, monkeypatch):
+    home, engine_folder, write, _ = source
+    context = scene()
+    bundle = _large_inventory(source)
+    calls = []
+    program = 'import manimgx as m\nclass IndexedFixture(m.Scene):\n    def construct(self):\n        self.wait(1)\n'
+    manifest = {'scene_class': 'IndexedFixture', 'source': program, 'unsupported': [],
+        'coverage': {pointer: 'Preserved by the indexed source fixture.' for pointer in gx._pointers(context)}}
+
+    def native_read(engine, prompt, model, files, what):
+        calls.append((model, files, what))
+        assert len(files) == 1
+        reference = Path(files[0])
+        document = reference.read_text()
+        assert "INDEXED DELIVERY" in document
+        assert "// private exact source fixture" not in document + prompt
+        indexes = [json.loads(line) for line in document.splitlines()
+                   if line.startswith('{"reference":')]
+        assert len(indexes) == len(bundle["sources"])
+        assert all((reference.parent / row["read_path"]).is_file() for row in indexes)
+        return json.dumps(manifest)
+
+    monkeypatch.setitem(sys.modules, 'threed', SimpleNamespace(_cc=native_read))
+    monkeypatch.setattr(gx, '_api_reference', lambda docs: 'Pinned API fixture data.')
+    monkeypatch.setattr(gx, '_typecheck', lambda *args, **kwargs: None)
+    engine = SimpleNamespace(CLAUDE_PROVIDER='claudecode', _cr_original_cc_model='sonnet',
+        claude=lambda *args, **kwargs: pytest.fail('Do not switch to a text/API compiler.'))
+    folder = home / 'private-compiler'
+    result, path = gx._compiled_source(engine, None, context, {}, {'python': 'fixture', 'docs': 'fixture'},
+        folder, bundle['identity'], reference_bundle=bundle)
+    assert result == manifest and path.is_file()
+    assert calls[0][0] == 'opus' and calls[0][2] == 'ManimGX compile'
+    gx._compiled_source(engine, None, context, {}, {'python': 'fixture', 'docs': 'fixture'},
+        folder, bundle['identity'], reference_bundle=bundle)
+    assert len(calls) == 1
+
+
+def test_large_reference_rejects_changed_source_before_writing_delivery_files(source):
+    home, engine, write, _ = source
+    result = _large_inventory(source)
+    reference = home / "private-request/original-renderer-reference.txt"
+    write("lib/nature/chunk7.js", "export const changed = true;\n")
+    with pytest.raises(RuntimeError, match="changed"):
+        refs.save_reference(reference, result)
+    assert not reference.parent.exists()
+
+
+def test_large_reference_rejects_index_escape_before_writing_delivery_files(source):
+    home, engine, write, _ = source
+    result = _large_inventory(source)
+    reference = home / "private-request/original-renderer-reference.txt"
+    result["sources"][0]["relative_path"] = "../../outside.js"
+    with pytest.raises(RuntimeError, match="inside"):
+        refs.save_reference(reference, result)
+    assert not reference.parent.exists()
+
+
+def test_small_reference_saver_preserves_the_existing_document_and_identity(source):
+    home, engine, write, _ = source
+    result = refs.resolve(home, scene())
+    identity = result["identity"]
+    original_document = refs.reference_text(result)
+    reference = home / "private-request/original-renderer-reference.txt"
+    assert refs.save_reference(reference, result) == original_document
+    assert reference.read_text() == original_document
+    assert not (reference.parent / "renderer-reference-sources").exists()
+    assert refs.resolve(home, scene())["identity"] == identity
+
+
+def test_actual_private_camera_and_people_dependencies_exceed_old_limit_but_remain_complete(tmp_path):
+    home = Path(os.environ.get("FRONTIER_PRIVATE_HOME", "/Users/workcomputer/Downloads/ChannelRecipe studio"))
+    if not (home / "threed/catalog.json").is_file():
+        pytest.skip("owner's original private installation unavailable")
+    context = {"scene": {"objects": [{"kind": "landmark.firebase"}],
+        "camera": {"move": "keys"}, "look": {"grade": "cold"},
+        "labels": [{"style": "almanac_sans"}]}, "cast": [], "video": {},
+        "output": {"width": 640, "height": 360, "fps": 30, "quality": "draft"}}
+    original = copy.deepcopy(context)
+    result = refs.resolve(home, context)
+    assert context == original
+    assert result["context"]["source_bytes"] > refs.INLINE_SOURCE_BYTES
+    assert result["context"]["source_bytes"] < refs.MAX_SOURCE_BYTES
+    assert any(row["relative_path"] == "lib/human/firebase.js" for row in result["sources"])
+    reference = tmp_path / "private-request/original-renderer-reference.txt"
+    document = refs.save_reference(reference, result)
+    indexes = [json.loads(line) for line in document.splitlines()
+               if line.startswith('{"reference":')]
+    assert len(indexes) == len(result["sources"])
+    assert sum(row["bytes"] for row in indexes) == result["context"]["source_bytes"]
+    for row in indexes:
+        assert hashlib.sha256((reference.parent / row["read_path"]).read_bytes()).hexdigest() == row["sha256"]
