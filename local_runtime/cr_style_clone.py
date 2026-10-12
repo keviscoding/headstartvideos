@@ -16,9 +16,11 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import time
+import traceback
 from types import FunctionType
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
@@ -273,6 +275,8 @@ def status(home, operation_id, bridge):
     percent, message = PHASES.get(phase, PHASES["prepared"])
     if state == "failed":
         message = "This study stopped. Review its saved Claude stages in setup before approving any further work. It will not run again automatically."
+        if saved.get("failure_code") == "metadata_handoff_failed":
+            message = "Reference study and graphics validation finished, but saving the style stopped. Save the completed study without repeating Claude, downloads or rendering."
     elif state == "complete_local":
         message = "Your validated style is saved locally. Reconnect CR to record completion; no generation needs to repeat."
     elif state == "running":
@@ -285,6 +289,12 @@ def status(home, operation_id, bridge):
         "reference_ids": [r["id"] for r in saved["spec"]["references"]],
         "budget_minutes": saved["spec"]["budget_minutes"], "max_calls": saved["spec"]["max_calls"],
         "style_ready": state in {"complete", "complete_local"} and _published(home, saved)}
+    result["metadata_recovery_available"] = state == "failed" and (
+        _recovery_checkpoint_ready(folder, saved) or _legacy_recovery_possible(home, folder, saved))
+    result["metadata_only"] = saved.get("metadata_only") is True
+    result["recovery_of"] = saved.get("recovery_of")
+    result["refinement_only"] = saved.get("refinement_only") is True
+    result["refinement_of"] = saved.get("refinement_of")
     if result["style_ready"]:
         result.update(style=saved["spec"]["style_id"], label=saved["spec"]["label"],
                       board_available=(folder / "reflearn/board.jpg").is_file())
@@ -297,6 +307,71 @@ def status(home, operation_id, bridge):
 def _published(home, saved):
     path = Path(home) / "styles" / (saved["spec"]["style_id"] + ".json")
     return path.is_file() and saved.get("style_sha256") == _file_hash(path)
+
+
+def _metadata_checkpoint_ready(folder, saved):
+    design, validated = _read(folder / "design-checkpoint.json"), _read(folder / "validated-checkpoint.json")
+    expected = _hash(saved["spec"])
+    payload = design.get("design")
+    if (design.get("schema") != 1 or validated.get("schema") != 1
+            or design.get("spec_sha256") != expected or validated.get("spec_sha256") != expected
+            or not isinstance(payload, dict) or not isinstance(payload.get("genome"), dict)):
+        return False
+    try:
+        return _validated_assets(folder, validated.get("record") or {}) == validated.get("assets")
+    except (OSError, RuntimeError):
+        return False
+
+
+def _recovery_checkpoint_ready(folder, saved):
+    if saved.get("refinement_only"):
+        import cr_style_refine
+        if not cr_style_refine.validation_completed(folder, saved):
+            return False
+    return _metadata_checkpoint_ready(folder, saved)
+
+
+def _record_failure(folder, saved, error):
+    """Persist useful private frames, without provider text or secrets."""
+    saved["failure_code"] = ("metadata_handoff_failed" if _recovery_checkpoint_ready(folder, saved)
+                             else "study_failed")
+    _write(folder / "failure.json", {"schema": 1, "failure_code": saved["failure_code"],
+        "exception_type": type(error).__name__, "phase": saved.get("phase"), "at": time.time(),
+        "frames": [{"file": Path(frame.filename).name, "function": frame.name, "line": frame.lineno}
+                   for frame in traceback.extract_tb(error.__traceback__)]})
+
+
+def _legacy_recovery_possible(home, folder, saved):
+    """A display hint only. Recovery independently verifies all owned receipts."""
+    if saved.get("phase") != "validate":
+        return False
+    evidence = _read(folder / "reflearn/reference-evidence.json")
+    if evidence.get("actual_frames") is not True or evidence.get("id") not in {
+            reference["id"] for reference in saved["spec"]["references"]}:
+        return False
+    try:
+        assets = _validated_assets(folder, {"kit": _read(folder / "genkit/kit.json").get("name"), "browser": True})
+        for path in (Path(home) / "learned").glob("*/meta.json"):
+            if not path.resolve().is_relative_to(Path(home).resolve()):
+                continue
+            meta = _read(path)
+            valid = meta.get("valid") or {}
+            if (meta.get("video") == evidence["id"] and meta.get("first_title") == saved["spec"]["title"]
+                    and valid.get("browser") is True and len(valid.get("kept") or []) >= 3
+                    and all((path.parent / "kit" / Path(name).name).is_file()
+                            and _file_hash(path.parent / "kit" / Path(name).name) == digest
+                            for name, digest in assets.items() if name.startswith("genkit/"))):
+                return True
+    except (OSError, RuntimeError):
+        pass
+    return False
+
+
+def metadata_recovery_available(home, operation_id, bridge):
+    """Owned, local-only readiness hint for the studio's recovery control."""
+    folder, saved = _saved(home, operation_id, bridge)
+    return saved.get("state") == "failed" and (
+        _recovery_checkpoint_ready(folder, saved) or _legacy_recovery_possible(home, folder, saved))
 
 
 def _sync(folder, saved, bridge):
@@ -382,6 +457,10 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
     progress("design")
     language = (engine.STYLE_INFO.get(spec["base_style"]) or {}).get("language", "English")
     design = designer.design(engine, spec["title"], language, spec["minutes"], channel=spec["base_style"], log=log)
+    # A completed creative design must survive a later library/metadata error.
+    # Neither checkpoint is a licence to repeat an interrupted model request.
+    _write(folder / "design-checkpoint.json", {"schema": 1, "design": design,
+        "spec_sha256": _hash(spec)})
     genome = design["genome"]
     work = folder / learner.WORK
     work.mkdir(parents=True, exist_ok=True)
@@ -389,11 +468,48 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
                      clock, work, spec["base_style"], spec["minutes"])
     if not record or not record.get("kit") or record.get("browser") is not True:
         raise StudyStopped("The original learner did not produce a graphics kit that passed real browser validation. Your study is saved; no plain preset was substituted.")
-    genome = designer.around(design, record, channel=spec["base_style"], minutes=spec["minutes"], title=spec["title"], log=log) or genome
+    _write(folder / "validated-checkpoint.json", {"schema": 1, "record": record,
+        "spec_sha256": _hash(spec), "assets": _validated_assets(folder, record)})
+    return finish_original(engine, folder, spec, design, record, progress,
+        learner=learner, designer=designer, log=log, report=clock.report())
+
+
+def _validated_assets(folder, record):
+    """Bind a completed learner record to its actual installed browser kit."""
+    folder = Path(folder).resolve()
+    manifest = _read(folder / "genkit/kit.json")
+    if (record.get("browser") is not True or not record.get("kit")
+            or manifest.get("name") != record.get("kit")
+            or not isinstance(manifest.get("types"), dict) or len(manifest["types"]) < 3):
+        raise RuntimeError("The completed study's validated kit is missing. Review the saved study.")
+    assets = {}
+    for name in ("genkit/kit.json", "genkit/kit.js", "genkit/look_overrides.json", "reflearn/board.jpg"):
+        path = folder / name
+        if path.is_file():
+            if not path.resolve().is_relative_to(folder):
+                raise RuntimeError("Keep validated study files inside their saved operation.")
+            assets[name] = _file_hash(path)
+    if "genkit/kit.js" not in assets:
+        raise RuntimeError("The completed study's graphics code is missing. Review the saved study.")
+    return assets
+
+
+def finish_original(engine, folder, spec, design, record, progress, *, learner=None,
+                    designer=None, log=None, report=None):
+    """Pure metadata handoff after original browser validation; no creative call."""
+    if learner is None:
+        import reflearn as learner
+    if designer is None:
+        import autostyle as designer
+    folder = Path(folder)
+    _validated_assets(folder, record)
+    genome = learner.around(design, record, channel=spec["base_style"], minutes=spec["minutes"], title=spec["title"], log=log) or design["genome"]
     genome["learned"] = learner.summary(record)
     progress("publish")
     style = designer.build(genome, engine.STYLE_INFO, spec["base_style"], job=folder, title=spec["title"], log=log)
-    designer.save(folder, style)
+    saved_style = designer.save(folder, style)
+    if saved_style is not None:
+        Path(saved_style).chmod(0o600)
     if not designer.genkit(style, folder, log, invalidate=True):
         raise StudyStopped("The validated kit could not attach to this style. No default graphics were substituted.")
     # Original auto looks are hidden variants; make this an explicit selectable
@@ -406,8 +522,228 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
     _write(folder / "ready-style.json", style)
     _write(folder / "study-result.json", {"references": [r["id"] for r in spec["references"]],
         "kit": record["kit"], "reference_used": (record.get("reference") or {}).get("id", ""),
-        "validated": True, "report": clock.report()})
+        "validated": True, "report": report or record.get("report") or {}})
     return style
+
+
+def _legacy_completed_metadata(home, folder, saved, engine, learner, designer):
+    """Recover admin.18's missing checkpoint from COMPLETE local evidence only.
+
+    This invokes original deterministic validators and registry readers. It does
+    not rerun design(), _learn(), Claude, yt-dlp, browser capture or rendering.
+    Ambiguous/incomplete evidence is deliberately refused.
+    """
+    spec = saved["spec"]
+    if saved.get("phase") != "validate":
+        raise RuntimeError("Only a fully validated study can be saved without repeating creative work.")
+    project_id = saved.get("project_id", "")
+    if not re.fullmatch(r"crv_[a-f0-9]{24}", project_id):
+        raise RuntimeError("The saved study has no owned Claude project.")
+    cache = Path(home) / "output/cr-claude-cache" / project_id
+    if not cache.resolve().is_relative_to(Path(home).resolve()):
+        raise RuntimeError("Keep completed Claude evidence inside this studio.")
+    outputs, receipts = {}, []
+    files = sorted(cache.glob("cc_*.json"))
+    if not files:
+        raise RuntimeError("The completed Claude evidence is missing; this study cannot be recovered automatically.")
+    for path in files:
+        data = _read(path)
+        text = data.get("stdout")
+        if (not path.resolve().is_relative_to(cache.resolve()) or data.get("state") != "complete"
+                or not isinstance(text, str)
+                or hashlib.sha256(text.encode()).hexdigest() != data.get("result_fingerprint")):
+            raise RuntimeError("A Claude stage is incomplete or uncertain. Review it before any further work.")
+        receipts.append(data["result_fingerprint"])
+        if data.get("origin") != "make_video:claude":
+            continue
+        raw = designer._json_obj(text)
+        kind = ("analysis" if "genre" in raw and "brief_reading" in raw else
+                "concepts" if isinstance(raw.get("concepts"), list) or {"name", "world", "metaphor"}.issubset(raw) else
+                "genome" if "overrides" in raw and "director_notes" in raw else None)
+        if not kind or kind in outputs:
+            raise RuntimeError("The original design evidence is ambiguous. Preserve this study for review.")
+        outputs[kind] = raw
+    if set(outputs) != {"analysis", "concepts", "genome"}:
+        raise RuntimeError("The complete original design evidence is missing. Preserve this study for review.")
+    language = (engine.STYLE_INFO.get(spec["base_style"]) or {}).get("language", "English")
+    analysis = designer.validate_analysis(outputs["analysis"], spec["title"], language)
+    if spec["brief"]:
+        analysis["brief"] = designer.read_brief(spec["brief"], outputs["analysis"].get("brief_reading"))
+    analysis["job_3d"] = bool(designer.job_3d(engine, spec["base_style"]))
+    recent = designer.recent(spec["base_style"], exclude_slug=designer.title_slug(spec["title"]), n=designer.HISTORY_KEEP)
+    concepts = _bind(designer.concepts, _ask=lambda *a, **k: outputs["concepts"])(
+        engine, spec["title"], analysis, recent)
+    chosen, _, _ = designer.pick_concept(analysis, concepts, recent, spec["minutes"])
+    genome = designer.validate(analysis, concepts[chosen], outputs["genome"], recent, spec["minutes"], spec["title"])
+    design = {"genome": genome, "concepts": concepts, "chosen": chosen, "raw_c": outputs["genome"]}
+    evidence = _read(folder / "reflearn/reference-evidence.json")
+    refs = {row["id"]: row for row in spec["references"]}
+    if evidence.get("actual_frames") is not True or evidence.get("id") not in refs:
+        raise RuntimeError("Actual approved reference-frame evidence is missing. Preserve the saved study.")
+    assets = _validated_assets(folder, {"kit": _read(folder / "genkit/kit.json").get("name"), "browser": True})
+    candidates = []
+    library_root = (Path(home) / "learned").resolve()
+    for meta_path in library_root.glob("*/meta.json"):
+        library = meta_path.parent
+        if not library.resolve().is_relative_to(library_root):
+            continue
+        meta = _read(meta_path)
+        valid = meta.get("valid") or {}
+        if (meta.get("video") != evidence["id"] or meta.get("first_title") != spec["title"]
+                or valid.get("browser") is not True or len(valid.get("kept") or []) < 3):
+            continue
+        if any(not (library / "kit" / Path(name).name).is_file()
+               or _file_hash(library / "kit" / Path(name).name) != digest
+               for name, digest in assets.items() if name.startswith("genkit/")):
+            continue
+        board = library / "sheets/board.jpg"
+        if ("reflearn/board.jpg" not in assets or not board.is_file()
+                or _file_hash(board) != assets["reflearn/board.jpg"]):
+            continue
+        candidates.append((library, meta))
+    if len(candidates) != 1:
+        raise RuntimeError("A unique completed browser validation could not be confirmed. Preserve the saved study.")
+    library, meta = candidates[0]
+    learned_spec = _read(library / "spec.json")
+    kit = _read(folder / "genkit/kit.json")
+    if not set(meta["valid"]["kept"]).issubset(kit.get("types") or {}):
+        raise RuntimeError("The installed kit differs from its saved browser validation. Preserve the study.")
+    record = {"ref": meta["id"], "from": "research", "style_name": meta.get("style_name"),
+        "kit": kit["name"], "kit_label": kit.get("label"), "types": list(kit["types"]),
+        "reference": {k: refs[evidence["id"]].get(k) for k in ("id", "title", "views", "ratio")},
+        "wants": learned_spec.get("genome_wants") or {},
+        "cut_s": (learned_spec.get("pacing") or {}).get("median_shot_s"),
+        "with_brief": bool(spec["brief"]), "board": str(folder / "reflearn/board.jpg"),
+        "library": str(library), "browser": True, "critique": meta["valid"].get("critique"),
+        "report": {"total_min": meta.get("minutes"), "total_usd": meta.get("usd")}}
+    return design, record, receipts
+
+
+def recover_metadata(home, operation_id, bridge, *, readiness, engine=None, learner=None, designer=None):
+    """Create an owned publication operation, preserving the FAILED study.
+
+    A failed paid operation remains immutable. This new operation may only use
+    verified completed assets and original deterministic metadata functions.
+    """
+    source, original = _saved(home, operation_id, bridge)
+    with _lock(_folder(home), ".runner.lock"), _lock(source):
+        if original.get("state") != "failed":
+            raise RuntimeError("Only a stopped, completed reference study needs metadata recovery.")
+        if original.get("refinement_only") and not _recovery_checkpoint_ready(source, original):
+            raise RuntimeError("This graphics refinement stopped before its new validation completed. Review its saved Claude work; the earlier kit cannot stand in for the unfinished refinement.")
+        index = _folder(home) / ".recoveries" / (operation_id + ".json")
+        previous = _read(index)
+        if previous.get("operation_id"):
+            folder, saved = _saved(home, previous["operation_id"], bridge)
+            if saved.get("metadata_only") is not True or saved.get("recovery_of") != operation_id:
+                raise RuntimeError("The saved metadata recovery does not belong to this study.")
+            with _lock(folder):
+                return _finish_metadata_recovery(home, folder, saved, bridge, readiness,
+                    engine=engine, learner=learner, designer=designer)
+        proof = _proof(bridge, readiness())
+        if any(proof[key] != original["proof"][key] for key in ("general_model", "visual_model")):
+            raise RuntimeError("Keep the completed study's original Claude model profile.")
+        if _file_hash(Path(home) / "styles" / (original["spec"]["base_style"] + ".json")) != original["spec"]["base_sha256"]:
+            raise RuntimeError("The original base preset changed. Preserve the completed study for review.")
+        cloud = bridge.project_progress(original["project_id"])
+        if (not isinstance(cloud, dict) or (cloud.get("project") or {}).get("status") != "failed"
+                or any(stage.get("status") != "complete" for stage in cloud.get("stages", []))):
+            raise RuntimeError("Reconcile this failed study's completed Claude stages before saving it. An active or uncertain stage cannot be repeated.")
+        if designer is None:
+            import autostyle as designer
+        if learner is None:
+            import reflearn as learner
+        if engine is None:
+            engine = designer._engine()
+        if _metadata_checkpoint_ready(source, original):
+            design = _read(source / "design-checkpoint.json")["design"]
+            record = _read(source / "validated-checkpoint.json")["record"]
+        else:
+            design, record, receipts = _legacy_completed_metadata(home, source, original, engine, learner, designer)
+            registered = {stage.get("result_fingerprint") for stage in cloud.get("stages", [])}
+            if len(receipts) != len(cloud.get("stages", [])) or set(receipts) != registered:
+                raise RuntimeError("The local completed stages do not match CR's saved receipts. Reconcile the study before saving it.")
+        assets = _validated_assets(source, record)
+        new_id = "op_" + secrets.token_hex(12)
+        folder = _operation(home, new_id)
+        folder.mkdir(parents=True, mode=0o700)
+        for name in [*assets, "reflearn/reference-evidence.json"]:
+            path = source / name
+            if path.is_file():
+                target = folder / name
+                target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                shutil.copyfile(path, target)
+                target.chmod(0o600)
+        record = copy.deepcopy(record)
+        record["board"] = str(folder / "reflearn/board.jpg")
+        spec = copy.deepcopy(original["spec"])
+        saved = {"operation_id": new_id, "owner": original["owner"], "spec": spec, "proof": proof,
+            "state": "prepared", "phase": "publish", "recovery_of": operation_id,
+            "metadata_only": True, "begin_id": "b_" + secrets.token_hex(16), "created_at": time.time()}
+        _write(folder / "design-checkpoint.json", {"schema": 1, "design": design, "spec_sha256": _hash(spec)})
+        _write(folder / "validated-checkpoint.json", {"schema": 1, "record": record,
+            "spec_sha256": _hash(spec), "assets": _validated_assets(folder, record)})
+        _write(folder / "operation.json", saved)
+        # The durable begin ID survives a lost response. A repeat of this
+        # function only reconciles metadata; it never enters the creative study.
+        _write(index, {"operation_id": new_id})
+        return _finish_metadata_recovery(home, folder, saved, bridge, readiness,
+            engine=engine, learner=learner, designer=designer)
+
+
+def _finish_metadata_recovery(home, folder, saved, bridge, readiness, *, engine=None, learner=None, designer=None):
+    """Idempotent metadata-only completion, including a lost begin response."""
+    if saved["state"] in {"complete", "complete_local", "validated"}:
+        if saved["state"] == "validated":
+            _publish(home, folder, saved)
+        _sync(folder, saved, bridge)
+        return status(home, folder.name, bridge)
+    if saved["state"] == "failed":
+        # A new adapter failure is visible and stays stopped; never blindly
+        # iterate another publication attempt after a known exception.
+        return status(home, folder.name, bridge)
+    if saved.get("metadata_only") is not True or not _metadata_checkpoint_ready(folder, saved):
+        raise RuntimeError("The completed metadata recovery evidence changed. Preserve the saved study.")
+    proof = _proof(bridge, readiness())
+    if any(proof[key] != saved["proof"][key] for key in ("general_model", "visual_model")):
+        raise RuntimeError("Keep the completed study's original Claude model profile.")
+    if saved["state"] == "prepared":
+        bridge.prepare_runtime(proof)
+        response = bridge._mcp_tool("local_studio_begin", {"begin_id": saved["begin_id"],
+            "title": "Save completed style: " + saved["spec"]["title"], "style": saved["spec"]["base_style"],
+            "minutes": 1, "features": {}, "options": {}, "setup": proof,
+            "max_calls": 1, "platform": "windows" if os.name == "nt" else "mac"})
+        saved.update(project_id=response["project"]["id"], state="running", started_at=time.time(), pid=os.getpid())
+        _write(folder / "operation.json", saved)
+    if designer is None:
+        import autostyle as designer
+    if learner is None:
+        import reflearn as learner
+    if engine is None:
+        engine = designer._engine()
+    design = _read(folder / "design-checkpoint.json")["design"]
+    record = _read(folder / "validated-checkpoint.json")["record"]
+    try:
+        finish_original(engine, folder, saved["spec"], design, record, lambda phase: None,
+            learner=learner, designer=designer)
+        saved["state"] = "validated"
+        _write(folder / "operation.json", saved)
+    except BaseException as error:
+        _record_failure(folder, saved, error)
+        saved.update(state="failed", completed_at=time.time(), finish_receipt={"project_id": saved["project_id"],
+            "status": "failed", "artifacts": [], "error_code": "runtime_failed"})
+        _write(folder / "operation.json", saved)
+        try:
+            _sync(folder, saved, bridge)
+        except Exception:
+            pass
+        raise RuntimeError("Saving the completed style stopped. Its validated assets and private diagnostics are preserved; no creative work was repeated.") from None
+    _publish(home, folder, saved)
+    try:
+        _sync(folder, saved, bridge)
+    except Exception:
+        pass
+    return status(home, folder.name, bridge)
 
 
 @contextmanager
@@ -463,6 +799,8 @@ def run(home, operation_id, bridge, *, readiness, execute=None):
             _publish(home, folder, saved)
             _sync(folder, saved, bridge)
             return status(home, operation_id, bridge)
+        if saved.get("metadata_only"):
+            raise RuntimeError("Use Save completed style to finish this metadata operation. No creative study will repeat.")
         if saved["state"] != "prepared":
             raise RuntimeError("This style study already started or stopped. Review its saved Claude stages; it will not execute again automatically.")
         proof = _proof(bridge, readiness())
@@ -489,12 +827,17 @@ def run(home, operation_id, bridge, *, readiness, execute=None):
                 import cr_claude
                 cr_claude.install(engine, bridge)
                 with _creative_budget(saved["spec"]["budget_minutes"]):
-                    study_original(engine, folder, saved["spec"], progress)
+                    if saved.get("refinement_only"):
+                        import cr_style_refine
+                        cr_style_refine.run_original(engine, folder, saved, progress)
+                    else:
+                        study_original(engine, folder, saved["spec"], progress)
             else:
                 execute(folder, saved["spec"], progress)
             saved["state"] = "validated"
             _write(folder / "operation.json", saved)
-        except BaseException:
+        except BaseException as error:
+            _record_failure(folder, saved, error)
             saved.update(state="failed", completed_at=time.time(), finish_receipt={"project_id": project["id"],
                 "status": "failed", "artifacts": [], "error_code": "runtime_failed"})
             _write(folder / "operation.json", saved)

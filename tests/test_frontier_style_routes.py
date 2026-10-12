@@ -1,5 +1,6 @@
 """Local style-study controls, original studio integration and free browser flow."""
 import ast
+import copy
 import json
 from pathlib import Path
 import sys
@@ -140,7 +141,8 @@ def test_page_and_catalog_integrate_without_replacing_original_api(env):
 
 @pytest.mark.parametrize("path,method", [("", "get"), ("/catalog", "get"), ("/preview", "post"), ("/start", "post"),
     ("/op_" + "1" * 24 + "/status", "get"), ("/op_" + "1" * 24 + "/board", "get"),
-    ("/op_" + "1" * 24 + "/sync", "post"), ("/op_" + "1" * 24 + "/continue", "post")])
+    ("/op_" + "1" * 24 + "/sync", "post"), ("/op_" + "1" * 24 + "/continue", "post"),
+    ("/op_" + "1" * 24 + "/recover", "post"), ("/op_" + "1" * 24 + "/refine", "post")])
 def test_every_route_rejects_remote_hosts_and_origins(env, path, method):
     invoke = getattr(env.client, method)
     assert invoke("/cr-style-clone" + path, base_url="http://rebound.example:7860").status_code == 403
@@ -148,7 +150,7 @@ def test_every_route_rejects_remote_hosts_and_origins(env, path, method):
     assert not env.calls and not env.targets
 
 
-@pytest.mark.parametrize("path", ["/preview", "/start", "/op_" + "1" * 24 + "/sync", "/op_" + "1" * 24 + "/continue"])
+@pytest.mark.parametrize("path", ["/preview", "/start", "/op_" + "1" * 24 + "/sync", "/op_" + "1" * 24 + "/continue", "/op_" + "1" * 24 + "/recover", "/op_" + "1" * 24 + "/refine"])
 def test_mutations_require_local_control_token(env, path):
     assert env.post("/cr-style-clone" + path, headers={}).status_code == 403
     assert env.post("/cr-style-clone" + path, headers={"X-CR-Local-Token": "wrong"}).status_code == 403
@@ -283,6 +285,153 @@ def test_status_sync_and_board_remain_owned_and_sync_never_starts_worker(env):
         assert not response.json.get("style_ready")
 
 
+def test_metadata_recovery_uses_ready_identity_without_requiring_new_claude_allowance(env, monkeypatch):
+    operation = "op_" + "2" * 24
+    recovered = "op_" + "3" * 24
+    env.checks["claude_code"]["allowance"] = {"blocked": True, "message": "Wait for Claude"}
+    calls = []
+    def recover(home, source, bridge, *, readiness):
+        assert env.activity.busy()
+        proof = readiness()
+        assert proof["purpose"] == "creative"
+        calls.append((home, source, bridge))
+        return {"operation_id": recovered}
+    monkeypatch.setattr(clone, "recover_metadata", recover)
+    monkeypatch.setattr(clone, "status", lambda *a: {"operation_id": recovered, "state": "done", "metadata_only": True})
+    response = env.post(f"/cr-style-clone/{operation}/recover")
+    assert response.status_code == 200 and response.json["operation_id"] == recovered
+    assert calls == [(env.home, operation, env.bridge)]
+    assert not env.activity.busy() and not env.workers and not env.targets
+    assert "no-store" in response.headers["Cache-Control"]
+
+
+def test_metadata_recovery_cannot_overlap_work_and_always_releases_its_reservation(env, monkeypatch):
+    operation = "op_" + "2" * 24
+    calls = []
+    def fail(*args, **kwargs):
+        calls.append(True)
+        raise RuntimeError("Reconcile the saved completed stages first.")
+    monkeypatch.setattr(clone, "recover_metadata", fail)
+    reservation = env.activity.reserve()
+    try:
+        assert env.post(f"/cr-style-clone/{operation}/recover").status_code == 409
+        assert not calls
+    finally:
+        env.activity.release(reservation)
+    response = env.post(f"/cr-style-clone/{operation}/recover")
+    assert response.status_code == 409 and "Reconcile" in response.json["error"]
+    assert calls == [True] and not env.activity.busy()
+
+
+def test_prepared_metadata_operation_never_offers_a_paid_study_restart(env, monkeypatch):
+    operation = "op_" + "2" * 24
+    monkeypatch.setattr(clone, "status", lambda *a: {"operation_id": operation, "state": "prepared", "metadata_only": True})
+    status = env.get(f"/cr-style-clone/{operation}/status")
+    assert status.status_code == 200 and not status.json["can_continue_prepared"]
+
+
+@pytest.fixture
+def refined(env, monkeypatch):
+    result = env.post("/cr-style-clone/start", env.approved())
+    source = result.json["operation_id"]
+    env.targets.pop()()
+    child = "op_" + "4" * 24
+    preparations = []
+    # Backend evidence/copying has its own actual refinement tests. This fixture
+    # isolates HTTP consent, activity, ownership and repeated worker submissions.
+    def prepare(home, operation, proof, bridge, *, acknowledge_costs):
+        assert acknowledge_costs is True
+        folder, original = clone._saved(home, operation, bridge)
+        assert original["state"] == "complete"
+        preparations.append((operation, proof))
+        child_folder = clone._operation(home, child)
+        if not (child_folder / "operation.json").exists():
+            saved = copy.deepcopy(original)
+            for field in ("started_at", "completed_at", "project_id", "finish_receipt", "style_sha256"):
+                saved.pop(field, None)
+            saved.update(operation_id=child, state="prepared", phase="validate", refinement_only=True,
+                         refinement_of=source, begin_id="b_" + "5" * 32)
+            saved["spec"]["max_calls"] = min(saved["spec"]["max_calls"], 8)
+            saved["spec"]["style_id"] = "cr_clone_" + "4" * 12
+            clone._write(child_folder / "operation.json", saved)
+        return clone.status(home, child, bridge)
+    monkeypatch.setattr(routes.cr_style_refine, "prepare", prepare)
+    return SimpleNamespace(env=env, source=source, child=child, preparations=preparations)
+
+
+def test_refinement_requires_explicit_approval_and_completed_owned_style(refined):
+    env, source = refined.env, refined.source
+    path = f"/cr-style-clone/{source}/refine"
+    for payload in ({}, {"acknowledge_costs": False}, {"acknowledge_costs": "true"}):
+        assert env.post(path, payload).status_code == 400
+    assert not refined.preparations and not env.targets
+    folder, saved = clone._saved(env.home, source, env.bridge)
+    saved["state"] = "failed"
+    clone._write(folder / "operation.json", saved)
+    assert env.post(path, {"acknowledge_costs": True}).status_code == 409
+    assert not refined.preparations and not env.targets
+    env.cfg["key"] = "cr_mcp_different_synthetic_owner"
+    assert env.post(path, {"acknowledge_costs": True}).status_code == 409
+    assert not refined.preparations and not env.targets
+
+
+@pytest.mark.parametrize("blocker", ["busy", "api_mode", "readiness", "allowance"])
+def test_refinement_honours_native_setup_allowance_and_shared_activity(refined, blocker):
+    env = refined.env
+    reservation = None
+    if blocker == "busy":
+        reservation = env.activity.reserve()
+    elif blocker == "api_mode":
+        env.cfg["brain_mode"] = "channelrecipe"
+    elif blocker == "readiness":
+        env.checks["readiness"]["ready"] = False
+    else:
+        env.checks["claude_code"]["allowance"] = {"blocked": True, "message": "Reset at 09:40"}
+    try:
+        response = env.post(f"/cr-style-clone/{refined.source}/refine", {"acknowledge_costs": True})
+        assert response.status_code == 409
+        assert not refined.preparations and not env.targets and len(env.workers) == 1
+        if blocker == "allowance":
+            assert response.json["error"] == "Reset at 09:40"
+    finally:
+        if reservation:
+            env.activity.release(reservation)
+
+
+def test_refinement_repeated_post_starts_only_one_worker_and_preserves_source(refined):
+    env = refined.env
+    path = f"/cr-style-clone/{refined.source}/refine"
+    source_folder, source = clone._saved(env.home, refined.source, env.bridge)
+    original_operation = (source_folder / "operation.json").read_bytes()
+    original_style = (env.home / "styles" / (source["spec"]["style_id"] + ".json")).read_bytes()
+    response = env.post(path, {"acknowledge_costs": True})
+    assert response.status_code == 200 and response.json["operation_id"] == refined.child
+    assert response.json["refinement_only"] and response.json["refinement_of"] == refined.source
+    assert response.json["state"] == "running" and response.json["max_calls"] == 8
+    assert response.json["budget_minutes"] == 22 and "no-store" in response.headers["Cache-Control"]
+    assert len(env.targets) == 1 and env.activity.busy()
+    assert env.post(path, {"acknowledge_costs": True}).status_code == 409
+    env.targets.pop()()
+    response = env.post(path, {"acknowledge_costs": True})
+    assert response.status_code == 200 and response.json["state"] == "done"
+    assert not env.targets and not env.activity.busy() and len(env.workers) == 2
+    assert (source_folder / "operation.json").read_bytes() == original_operation
+    assert (env.home / "styles" / (source["spec"]["style_id"] + ".json")).read_bytes() == original_style
+    assert sum(name == "local_studio_begin" for name, _ in env.calls) == 2
+
+
+def test_stopped_refinement_is_returned_without_blind_worker_retry(refined):
+    env = refined.env
+    proof = cr_readiness.proof(env.checks, purpose="creative")
+    routes.cr_style_refine.prepare(env.home, refined.source, proof, env.bridge, acknowledge_costs=True)
+    folder, saved = clone._saved(env.home, refined.child, env.bridge)
+    saved.update(state="failed", phase="validate")
+    clone._write(folder / "operation.json", saved)
+    response = env.post(f"/cr-style-clone/{refined.source}/refine", {"acknowledge_costs": True})
+    assert response.status_code == 200 and response.json["state"] == "failed"
+    assert response.json["needs_manual_recovery"] and not env.targets and len(env.workers) == 1
+
+
 def test_browser_approved_reference_order_to_saved_style_and_no_script_collision(env):
     browser_api = pytest.importorskip("playwright.sync_api")
     with browser_api.sync_playwright() as playwright:
@@ -342,5 +491,59 @@ def test_browser_approved_reference_order_to_saved_style_and_no_script_collision
             page.locator("#new-study").click()
             assert page.locator("#reference-panel").is_visible()
             assert page.evaluate("localStorage.getItem('cr.styleStudy')") is None
+        finally:
+            browser.close()
+
+
+def test_browser_saved_style_refinement_requires_fresh_consent_and_never_autostarts(refined):
+    env = refined.env
+    browser_api = pytest.importorskip("playwright.sync_api")
+    with browser_api.sync_playwright() as playwright:
+        try:
+            browser = playwright.chromium.launch(headless=True)
+        except browser_api.Error as error:
+            pytest.skip("Local Chromium unavailable: " + str(error).splitlines()[0])
+        try:
+            page = browser.new_page(viewport={"width": 1000, "height": 900})
+            page.set_default_timeout(5000)
+            errors = []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            def respond(route):
+                url = urlsplit(route.request.url)
+                assert url.hostname == "127.0.0.1"
+                path = url.path + (("?" + url.query) if url.query else "")
+                response = env.client.open(path, method=route.request.method, base_url=BASE,
+                    headers=dict(route.request.headers), data=route.request.post_data)
+                route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.data)
+            page.route("**/*", respond)
+            page.goto(BASE + "/cr-style-clone?operation=" + refined.source)
+            page.locator("#refine-controls").wait_for(state="visible")
+            assert not page.locator("#refine-approved").is_checked()
+            assert not page.locator("#refine-button").is_enabled()
+            assert not env.targets and len(env.workers) == 1
+            page.locator("#refine-approved").check()
+            assert page.locator("#refine-button").is_enabled()
+            page.reload()
+            page.locator("#refine-controls").wait_for(state="visible")
+            assert not page.locator("#refine-approved").is_checked()
+            assert not env.targets
+            page.locator("#refine-approved").check()
+            page.locator("#refine-button").click()
+            page.wait_for_function("(child)=>localStorage.getItem('cr.styleStudy')===child", arg=refined.child)
+            assert len(env.targets) == 1 and env.activity.busy()
+            assert not page.locator("#refine-approved").is_checked()
+            assert page.locator("#refine-controls").is_hidden()
+            assert "reuses reference and design" in page.locator("#progress-details").inner_text()
+            assert page.locator("#style-board").get_attribute("src") is None
+            # Refreshing a saved/running refinement resumes status only.
+            page.goto(BASE + "/cr-style-clone")
+            page.wait_for_function("(child)=>localStorage.getItem('cr.styleStudy')===child", arg=refined.child)
+            assert len(env.targets) == 1 and len(env.workers) == 1
+            env.targets.pop()()
+            page.reload()
+            page.locator("#saved-result").wait_for(state="visible")
+            assert not page.locator("#refine-approved").is_checked()
+            assert not page.locator("#refine-button").is_enabled()
+            assert not env.targets and len(env.workers) == 2 and not errors
         finally:
             browser.close()

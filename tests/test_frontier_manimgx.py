@@ -125,7 +125,7 @@ def test_opt_in_never_falls_back_on_account_or_identity_failure(tmp_path, monkey
     monkeypatch.setattr(gx, "readiness", lambda *a, **kw: {"ready": True, "identity": "proof"})
     monkeypatch.setattr(gx, "render", forbidden)
     gx.install(SimpleNamespace(), bridge, root=tmp_path)
-    with pytest.raises(RuntimeError, match=message):
+    with pytest.raises(gx.ManimGXStageStopped, match=message):
         module._render(SimpleNamespace(), VIDEO, tmp_path, [], "test")
 
 

@@ -13,6 +13,7 @@ import cr_bridge
 import cr_claude
 import cr_readiness
 import cr_style_clone
+import cr_style_refine
 
 HOME = Path(__file__).resolve().parent
 
@@ -79,21 +80,25 @@ def install(studio, activity, setup_status, *, token, home=None):
             result.update(state="pending", reconciliation_pending=True,
                 message="Your validated kit is saved. Sync to publish its preset and completion record; no generation will repeat.")
         result["busy"] = busy
-        result["can_continue_prepared"] = result["state"] == "prepared" and not result["busy"]
+        result["can_continue_prepared"] = (result["state"] == "prepared" and not result["busy"]
+                                           and not result.get("metadata_only"))
+        result["can_refine_saved"] = result["state"] == "done" and result.get("style_ready") is True
         return result
 
-    def native_proof():
+    def native_proof(*, check_allowance=True):
         checks = setup_status().get_json()
         if (cr_bridge.load_settings().get("brain_mode") != "claudecode"
                 or not checks.get("readiness", {}).get("ready")):
             raise RuntimeError("Finish native Claude Code setup and model verification before studying references.")
         allowance = checks.get("claude_code", {}).get("allowance", {})
-        if allowance.get("blocked"):
+        if check_allowance and allowance.get("blocked"):
             raise RuntimeError(allowance.get("message") or "Wait for your Claude allowance to reset before starting a reference study.")
         return cr_readiness.proof(checks, purpose="creative")
 
     def start_worker(operation):
         saved = cr_style_clone.status(home, operation, cr_bridge)
+        if saved.get("metadata_only"):
+            raise RuntimeError("Use Save completed style to finish this saved metadata operation. No new study is required.")
         if saved["state"] != "prepared":
             return safe_status(operation)
         reservation = activity.reserve()
@@ -185,6 +190,24 @@ def install(studio, activity, setup_status, *, token, home=None):
         except Exception as error:
             return error_response(error)
 
+    @app.post("/cr-style-clone/<operation>/recover")
+    def cr_style_recover(operation):
+        try:
+            data()
+            with activity.lock:
+                if activity.busy():
+                    raise RuntimeError("Finish the current studio work before saving this completed style.")
+                proof = native_proof(check_allowance=False)
+                reservation = activity.reserve()
+                try:
+                    result = cr_style_clone.recover_metadata(home, operation, cr_bridge,
+                                                            readiness=lambda: proof)
+                finally:
+                    activity.release(reservation)
+                return no_store(jsonify(safe_status(result["operation_id"])))
+        except Exception as error:
+            return error_response(error)
+
     @app.post("/cr-style-clone/<operation>/continue")
     def cr_style_continue(operation):
         try:
@@ -196,11 +219,33 @@ def install(studio, activity, setup_status, *, token, home=None):
                     raise RuntimeError("Finish the current studio work before continuing this study.")
                 proof = native_proof()
                 _, saved = cr_style_clone._saved(home, operation, cr_bridge)
+                if saved.get("metadata_only"):
+                    raise RuntimeError("Use Save completed style for this metadata operation. A paid study cannot restart it.")
                 if saved["state"] != "prepared":
                     raise RuntimeError("This operation already started. Review its saved stages; it cannot be blindly restarted.")
                 if any(proof[key] != saved["proof"][key] for key in ("general_model", "visual_model")):
                     raise RuntimeError("Use this study's pinned Claude model profile.")
                 return no_store(jsonify(start_worker(operation)))
+        except Exception as error:
+            return error_response(error)
+
+    @app.post("/cr-style-clone/<operation>/refine")
+    def cr_style_refine_saved(operation):
+        try:
+            payload = data()
+            if payload.get("acknowledge_costs") is not True:
+                raise ValueError("Approve another graphics review and your own Claude account usage before improving this style.")
+            with activity.lock:
+                if activity.busy():
+                    raise RuntimeError("Finish the current studio work before improving saved graphics.")
+                proof = native_proof()
+                source = safe_status(operation)
+                if not source["can_refine_saved"]:
+                    raise RuntimeError("Save and reconcile this completed style before improving its graphics.")
+                result = cr_style_refine.prepare(home, operation, proof, cr_bridge, acknowledge_costs=True)
+                # Preparation is indexed by the owned source. Repeated POSTs
+                # return the same operation; stopped/completed work never starts.
+                return no_store(jsonify(start_worker(result["operation_id"])))
         except Exception as error:
             return error_response(error)
 

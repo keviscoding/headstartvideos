@@ -270,15 +270,15 @@ def test_actual_original_learner_uses_only_approved_videos_and_keeps_full_creati
         "board": lambda path, *a: path,
         "_slug": lambda text, n=60: "reference_library", "save_library": lambda *a: (events.append(("library_save", a[2]["id"])) or folder),
         "_read_json": lambda path: json.loads(Path(path).read_text())}
-    namespace = _original_functions(ORIGINAL / "reflearn.py", {"_learn"}, namespace)
+    namespace.update(copy=copy, VERSION="test-pinned-original")
+    namespace = _original_functions(ORIGINAL / "reflearn.py", {"_learn", "around", "summary"}, namespace)
     learner = SimpleNamespace(**{**namespace, "Clock": Clock, "WORK": "reflearn",
-        "summary": lambda record: {"ref": record["ref"]}})
+        })
     engine = SimpleNamespace(STYLE_INFO={"documentary": {"language": "English"}}, set_extra=lambda text: events.append(("brief", text)))
     def genkit(style, job, log, invalidate):
         style["look"] = {"graphics": "kit", "kit": "learned", "genkit": {"manifest": str(job / "genkit/kit.json")}}
         return "learned"
     designer = SimpleNamespace(design=lambda *a, **kw: {"genome": {"analysis": {"genre": ["history_modern"]}}},
-        around=lambda design, record, **kw: copy.deepcopy(design["genome"]),
         build=lambda *a, **kw: {"name": "auto-look", "variant_of": "documentary", "look": {}, "prompts": {"outline": "original contract"}},
         save=lambda *a: None, genkit=genkit)
     transcripts = []
@@ -292,6 +292,9 @@ def test_actual_original_learner_uses_only_approved_videos_and_keeps_full_creati
     assert "variant_of" not in style and style["name"] == "cr_clone_custom" and style["auto_style"] is False
     assert style["prompts"]["outline"] == "original contract" and style["look"]["graphics"] == "kit"
     assert clone._read(folder / "reflearn/reference-evidence.json")["actual_frames"]
+    assert clone._read(folder / "design-checkpoint.json")["design"]["genome"]
+    validated = clone._read(folder / "validated-checkpoint.json")
+    assert validated["record"]["browser"] and validated["assets"]["genkit/kit.js"]
     # The actual original catalogue must list the resulting custom file, and
     # the actual original kit reader must register its durable manifest.
     _catalogue_accepts_style(approved.home, style)
@@ -352,3 +355,166 @@ def test_symlink_cannot_move_private_study_outside_the_runtime(approved, tmp_pat
     folder.symlink_to(target, target_is_directory=True)
     with pytest.raises(RuntimeError, match="output folder"):
         clone.preview(approved.home, "https://youtube.com/watch?v=" + VIDEO, learner=approved.metadata)
+
+
+def _failed_completed_fixture(approved):
+    operation = clone.prepare(approved.home, approved.spec, approved.proof, approved.bridge)["operation_id"]
+    def completed_then_failed(folder, spec, progress):
+        ready_fixture(folder, spec, progress)
+        (folder / "ready-style.json").unlink()
+        progress("validate")
+        design = {"genome": {"analysis": {"genre": ["science"]}}}
+        record = {"kit": "learned", "browser": True, "ref": "approved_reference",
+                  "reference": {"id": VIDEO}, "types": ["a", "b", "c"]}
+        clone._write(folder / "design-checkpoint.json", {"schema": 1, "design": design,
+            "spec_sha256": clone._hash(spec)})
+        clone._write(folder / "validated-checkpoint.json", {"schema": 1, "record": record,
+            "spec_sha256": clone._hash(spec), "assets": clone._validated_assets(folder, record)})
+        raise AttributeError("private-model-prompt SECRET_CREDENTIAL")
+    with pytest.raises(AttributeError):
+        clone.run(approved.home, operation, approved.bridge, readiness=lambda: approved.proof,
+                  execute=completed_then_failed)
+    source = clone._operation(approved.home, operation)
+    original = (source / "operation.json").read_bytes()
+    cloud = {"project": {"status": "failed"}, "stages": []}
+    approved.bridge.project_progress = lambda p: cloud
+    engine = SimpleNamespace(STYLE_INFO={"documentary": {"language": "English"}})
+    def save(folder, style):
+        path = folder / "auto_style.json"
+        path.write_text(json.dumps(style))
+        return path
+    def genkit(style, folder, log, invalidate):
+        style["look"] = {"graphics": "kit", "kit": "learned",
+            "genkit": {"manifest": str(folder / "genkit/kit.json")}}
+        return "learned"
+    learner = SimpleNamespace(around=lambda design, *a, **k: copy.deepcopy(design["genome"]),
+                              summary=lambda r: {"ref": r["ref"]})
+    # Deliberately no design/_learn/Claude/download/browser methods exist.
+    designer = SimpleNamespace(build=lambda *a, **k: {"name": "auto_look", "look": {}, "variant_of": "documentary"},
+                               save=save, genkit=genkit)
+    return SimpleNamespace(operation=operation, source=source, original=original, engine=engine,
+                           learner=learner, designer=designer, cloud=cloud)
+
+
+def test_failure_diagnostics_are_private_and_do_not_repeat_provider_text(approved):
+    failure = _failed_completed_fixture(approved)
+    diagnostic = failure.source / "failure.json"
+    saved = clone._read(diagnostic)
+    assert saved["exception_type"] == "AttributeError" and saved["frames"]
+    assert saved["failure_code"] == "metadata_handoff_failed"
+    assert "SECRET_CREDENTIAL" not in diagnostic.read_text()
+    result = clone.status(approved.home, failure.operation, approved.bridge)
+    assert result["metadata_recovery_available"] and "without repeating" in result["message"]
+    if os.name != "nt":
+        assert diagnostic.stat().st_mode & 0o777 == 0o600
+
+
+def test_completed_study_recovery_owns_new_operation_preserves_source_and_never_reruns_creative_work(approved):
+    failure = _failed_completed_fixture(approved)
+    assert clone.metadata_recovery_available(approved.home, failure.operation, approved.bridge)
+    result = clone.recover_metadata(approved.home, failure.operation, approved.bridge,
+        readiness=lambda: approved.proof, engine=failure.engine, learner=failure.learner, designer=failure.designer)
+    assert result["state"] == "done" and result["style_ready"] and result["metadata_only"]
+    assert result["operation_id"] != failure.operation and result["recovery_of"] == failure.operation
+    assert (failure.source / "operation.json").read_bytes() == failure.original
+    assert sum(name == "begin" for name, _ in approved.events) == 2
+    again = clone.recover_metadata(approved.home, failure.operation, approved.bridge,
+        readiness=lambda: pytest.fail("completed metadata recovery reran readiness"))
+    assert again["operation_id"] == result["operation_id"] and sum(name == "begin" for name, _ in approved.events) == 2
+    recovered = clone._operation(approved.home, result["operation_id"])
+    style = clone._read(recovered / "ready-style.json")
+    assert style["look"]["genkit"]["manifest"].startswith(str(recovered))
+    if os.name != "nt":
+        assert (recovered / "auto_style.json").stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize("cloud_state,stage_state", [("running", "complete"), ("failed", "authorized"),
+    ("failed", "failed"), ("failed", "retry_allowed")])
+def test_metadata_recovery_refuses_active_or_uncertain_owned_stages_before_new_project(approved, cloud_state, stage_state):
+    failure = _failed_completed_fixture(approved)
+    failure.cloud.update(project={"status": cloud_state}, stages=[{"status": stage_state}])
+    with pytest.raises(RuntimeError, match="Reconcile"):
+        clone.recover_metadata(approved.home, failure.operation, approved.bridge,
+            readiness=lambda: approved.proof, engine=failure.engine, learner=failure.learner, designer=failure.designer)
+    assert sum(name == "begin" for name, _ in approved.events) == 1
+    assert (failure.source / "operation.json").read_bytes() == failure.original
+
+
+def test_metadata_recovery_lost_begin_reuses_new_owned_begin_id(approved):
+    failure = _failed_completed_fixture(approved)
+    original_begin = approved.bridge._mcp_tool
+    attempts = []
+    def lost(name, payload):
+        attempts.append(payload["begin_id"])
+        raise RuntimeError("lost metadata begin response")
+    approved.bridge._mcp_tool = lost
+    with pytest.raises(RuntimeError, match="lost metadata"):
+        clone.recover_metadata(approved.home, failure.operation, approved.bridge,
+            readiness=lambda: approved.proof, engine=failure.engine, learner=failure.learner, designer=failure.designer)
+    def online(name, payload):
+        attempts.append(payload["begin_id"])
+        return original_begin(name, payload)
+    approved.bridge._mcp_tool = online
+    result = clone.recover_metadata(approved.home, failure.operation, approved.bridge,
+        readiness=lambda: approved.proof, engine=failure.engine, learner=failure.learner, designer=failure.designer)
+    assert result["style_ready"] and result["state"] == "done" and attempts[0] == attempts[1]
+    assert (failure.source / "operation.json").read_bytes() == failure.original
+
+
+def test_metadata_recovery_lost_finish_keeps_style_and_only_reconciles_receipt(approved):
+    failure = _failed_completed_fixture(approved)
+    finish = approved.bridge.finish_project
+    approved.bridge.finish_project = lambda *a: (_ for _ in ()).throw(RuntimeError("offline receipt"))
+    pending = clone.recover_metadata(approved.home, failure.operation, approved.bridge,
+        readiness=lambda: approved.proof, engine=failure.engine, learner=failure.learner, designer=failure.designer)
+    assert pending["state"] == "pending" and pending["style_ready"]
+    approved.bridge.finish_project = finish
+    complete = clone.recover_metadata(approved.home, failure.operation, approved.bridge,
+        readiness=lambda: pytest.fail("metadata sync attempted setup or generation"))
+    assert complete["state"] == "done" and complete["operation_id"] == pending["operation_id"]
+    assert sum(name == "begin" for name, _ in approved.events) == 2
+
+
+def test_metadata_recovery_refuses_changed_kit_or_foreign_owner(approved):
+    failure = _failed_completed_fixture(approved)
+    (failure.source / "genkit/kit.js").write_text("changed after validation")
+    assert not clone.metadata_recovery_available(approved.home, failure.operation, approved.bridge)
+    with pytest.raises(RuntimeError, match="original design evidence|completed Claude evidence"):
+        clone.recover_metadata(approved.home, failure.operation, approved.bridge,
+            readiness=lambda: approved.proof, engine=failure.engine, learner=failure.learner, designer=failure.designer)
+    approved.cfg["key"] = "cr_mcp_other_account"
+    with pytest.raises(RuntimeError, match="owns this"):
+        clone.recover_metadata(approved.home, failure.operation, approved.bridge,
+            readiness=lambda: pytest.fail("foreign setup"))
+    assert sum(name == "begin" for name, _ in approved.events) == 1
+
+
+def test_another_metadata_failure_is_safe_visible_and_cannot_repeat_blindly(approved):
+    failure = _failed_completed_fixture(approved)
+    failure.designer.build = lambda *a, **k: (_ for _ in ()).throw(ValueError("SECRET_CREDENTIAL private prompt"))
+    with pytest.raises(RuntimeError, match="private diagnostics") as stopped:
+        clone.recover_metadata(approved.home, failure.operation, approved.bridge,
+            readiness=lambda: approved.proof, engine=failure.engine, learner=failure.learner, designer=failure.designer)
+    assert "SECRET_CREDENTIAL" not in str(stopped.value)
+    begins = sum(name == "begin" for name, _ in approved.events)
+    result = clone.recover_metadata(approved.home, failure.operation, approved.bridge,
+        readiness=lambda: pytest.fail("known failed metadata action retried blindly"))
+    assert result["state"] == "failed" and result["needs_manual_recovery"]
+    assert sum(name == "begin" for name, _ in approved.events) == begins
+    assert (failure.source / "operation.json").read_bytes() == failure.original
+
+
+def test_actual_original_metadata_api_ownership_and_signatures():
+    import inspect
+    namespace = {"Path": Path}
+    _original_functions(ORIGINAL / "autostyle.py", {"design", "build", "save", "genkit"}, namespace)
+    _original_functions(ORIGINAL / "reflearn.py", {"around", "summary"}, namespace)
+    inspect.signature(namespace["design"]).bind(object(), "Title", "English", 10, channel="documentary", log=lambda x: None)
+    inspect.signature(namespace["around"]).bind({}, {}, channel="documentary", minutes=10, title="Title", log=None)
+    inspect.signature(namespace["build"]).bind({}, {}, "documentary", job=Path("fixture"), title="Title", log=None)
+    inspect.signature(namespace["save"]).bind(Path("fixture"), {})
+    inspect.signature(namespace["genkit"]).bind({}, Path("fixture"), None, invalidate=True)
+    # The original owning module must be checked, not a convenient fake API.
+    ast_names = {node.name for node in ast.parse((ORIGINAL / "autostyle.py").read_text()).body
+                 if isinstance(node, ast.FunctionDef)}
+    assert "around" not in ast_names
