@@ -304,7 +304,7 @@ class Runtime:
         try:
             installed_version=json.loads((Path(self.bridge.HOME)/"cr-release.json").read_text())["version"]
         except (OSError,ValueError,KeyError):
-            installed_version=cfg.get("local_version","5.3-admin.27")
+            installed_version=cfg.get("local_version","5.3-admin.28")
         cache = Path(self.bridge.HOME) / "output" / "cr-claude-cache" / project_id / (stage_id + ".json")
         try:
             saved = json.loads(cache.read_text())
@@ -340,6 +340,13 @@ class Runtime:
         # tools. The runner calls the authenticated CR MCP before/after them.
         command = _replace_option(command, "--settings", '{"apiKeyHelper":""}')
         env = clean_environment(kwargs.get("env"))
+        # Execution evidence is captured only on the actual authorized CLI
+        # branch. Completed-cache returns above never acquire new provenance.
+        workflow = _verification_workflow(self.bridge.HOME)
+        execution_binding = {"native_account_fingerprint": local.get("account_fingerprint"),
+            "profile_identity": _verification_identity(cfg, local, root=self.bridge.HOME),
+            "model_role": role, "selected_model": selected,
+            "workflow_version": workflow.get("workflow"), "engine_source_sha256": workflow.get("source")}
         # Original native helpers do not apply their API max_tokens argument
         # to Claude Code. Keep its native reasoning/output behavior intact.
         options = {**kwargs, "env": env}
@@ -360,12 +367,29 @@ class Runtime:
                           if isinstance(usage.get(name), (int, float)) and not isinstance(usage[name], bool) and usage[name] >= 0}
             safe_usage.update({"duration_seconds": time.monotonic() - started, "reported": bool(usage)})
             output_digest = hashlib.sha256(output.encode()).hexdigest()
+            # A changed/unknown identity does not invalidate a completed native
+            # result. It merely makes that result ineligible as a revision seed.
+            try:
+                after_local = status(self.executable, run=self.real_run, environment=kwargs.get("env"))
+                after_cfg = self.bridge.load_settings()
+                after_workflow = _verification_workflow(self.bridge.HOME)
+                after_binding = {"native_account_fingerprint": after_local.get("account_fingerprint"),
+                    "profile_identity": _verification_identity(after_cfg, after_local, root=self.bridge.HOME),
+                    "model_role": role, "selected_model": selected,
+                    "workflow_version": after_workflow.get("workflow"), "engine_source_sha256": after_workflow.get("source")}
+                if (not after_local.get("ready") or execution_binding != after_binding
+                        or not execution_binding["native_account_fingerprint"]
+                        or not workflow or cfg.get("brain_mode") != "claudecode"):
+                    execution_binding = None
+            except (OSError, ValueError, TypeError, RuntimeError):
+                execution_binding = None
             receipt.update(status="complete", result_fingerprint=output_digest, usage=safe_usage, error_code="")
             _private_write(cache, {"state": "complete_local", "stdout": output, "result_fingerprint": output_digest,
-                                   "input_fingerprint": fingerprint, "receipt": receipt, "origin": origin})
+                                   "input_fingerprint": fingerprint, "receipt": receipt, "origin": origin,
+                                   "execution_binding": execution_binding})
             self.bridge.finish_stage(receipt)
             _private_write(cache, {"state": "complete", "stdout": output, "result_fingerprint": output_digest,
-                                   "input_fingerprint": fingerprint, "origin": origin})
+                                   "input_fingerprint": fingerprint, "origin": origin, "execution_binding": execution_binding})
             return subprocess.CompletedProcess(args, 0, output, "")
         except BaseException as error:
             if receipt["status"] == "complete":

@@ -358,3 +358,65 @@ def test_general_opus_choice_does_not_change_source_role_marker(tmp_path,monkeyp
     cr_claude.install(engine,bridge)
     assert engine.CC_MODEL=="sonnet" and engine.CLAUDE_PROVIDER=="claudecode"
     assert engine._claude_endpoint("anthropic") is None
+
+
+@pytest.mark.parametrize("changed_account", [False, True])
+def test_actual_native_execution_binds_account_but_cached_reuse_never_restamps(tmp_path, monkeypatch, changed_account):
+    from pathlib import Path
+    (tmp_path / "cr-release.json").write_text(json.dumps({"version": studio.VERSION,
+        "workflow_version": studio.WORKFLOW_VERSION, "source_sha256": studio.SOURCE_SHA256}))
+    cfg = {"brain_mode": "claudecode", "costs_accepted": True,
+        "general_model": cr_claude.GENERAL_MODEL, "visual_model": cr_claude.VISUAL_MODEL}
+    local = {"ready": True, "account_fingerprint": "a" * 64, "version": "2.1.291",
+        "auth_method": "claude.ai", "api_provider": "firstParty"}
+    monkeypatch.setattr(cr_claude, "status", lambda *a, **kw: dict(local))
+    monkeypatch.setattr(cr_claude, "_source_context", lambda: (16384, "threed:_cc"))
+    backend, calls = {}, []
+    def authorize(stage):
+        if backend:
+            return {"reuse": True, "execute": False, "result_fingerprint": backend["result_fingerprint"]}
+        return {"execute": True, "authorization_token": "x" * 32, "selected_model": cr_claude.VISUAL_MODEL}
+    bridge = SimpleNamespace(HOME=tmp_path, load_settings=lambda: cfg,
+        current_project=lambda: {"id": "crv_" + "1" * 24}, authorize_stage=authorize,
+        finish_stage=lambda receipt: backend.update(receipt))
+    def invoke(args, **kw):
+        calls.append(args)
+        if changed_account: local["account_fingerprint"] = "b" * 64
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"type": "result", "subtype": "success",
+            "is_error": False, "result": "Complete source", "usage": {}}), stderr="")
+    runtime = cr_claude.Runtime(SimpleNamespace(), bridge, "/fake/claude", invoke)
+    args = ["/fake/claude", "--print", "--model", "opus", "--tools", "Read", "--output-format", "json"]
+    result = runtime.run(args, input="Original full scene", text=True, capture_output=True)
+    path = next((tmp_path / "output/cr-claude-cache").rglob("*.json"))
+    saved = json.loads(path.read_text()); original = path.read_bytes()
+    if changed_account:
+        assert saved["execution_binding"] is None
+    else:
+        binding = saved["execution_binding"]
+        assert binding["native_account_fingerprint"] == "a" * 64
+        assert binding["selected_model"] == cr_claude.VISUAL_MODEL and binding["model_role"] == "visual"
+        assert binding["workflow_version"] == studio.WORKFLOW_VERSION
+        assert binding["engine_source_sha256"] == studio.SOURCE_SHA256
+        assert binding["profile_identity"] == cr_claude._verification_identity(cfg, local, root=tmp_path)
+    local["account_fingerprint"] = "c" * 64
+    assert runtime.run(args, input="Original full scene", text=True, capture_output=True).stdout == result.stdout
+    assert len(calls) == 1 and path.read_bytes() == original
+
+
+def test_legacy_native_cached_result_never_acquires_current_account_binding(tmp_path, monkeypatch):
+    cfg = {"brain_mode": "claudecode", "costs_accepted": True}
+    monkeypatch.setattr(cr_claude, "status", lambda *a, **kw: {"ready": True, "account_fingerprint": "a" * 64})
+    monkeypatch.setattr(cr_claude, "_source_context", lambda: (1000, "threed:_cc"))
+    args = ["/fake/claude", "--print", "--model", "opus", "--output-format", "json"]
+    fingerprint = cr_claude._digest({"args": args[1:], "input": "Saved stage", "max_tokens": 1000, "read_files": []})
+    path = tmp_path / "output/cr-claude-cache" / ("crv_" + "1" * 24) / ("cc_" + fingerprint + ".json")
+    cr_claude._private_write(path, {"state": "complete", "stdout": "legacy complete",
+        "result_fingerprint": "b" * 64, "input_fingerprint": fingerprint})
+    original = path.read_bytes()
+    bridge = SimpleNamespace(HOME=tmp_path, load_settings=lambda: cfg,
+        current_project=lambda: {"id": "crv_" + "1" * 24},
+        authorize_stage=lambda s: {"reuse": True, "execute": False, "result_fingerprint": "b" * 64})
+    runtime = cr_claude.Runtime(SimpleNamespace(), bridge, "/fake/claude",
+        lambda *a, **kw: pytest.fail("Cached results cannot execute or restamp"))
+    assert runtime.run(args, input="Saved stage", text=True).stdout == "legacy complete"
+    assert path.read_bytes() == original and "execution_binding" not in json.loads(path.read_text())
