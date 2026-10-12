@@ -341,3 +341,102 @@ def test_actual_private_camera_and_people_dependencies_exceed_old_limit_but_rema
     assert sum(row["bytes"] for row in indexes) == result["context"]["source_bytes"]
     for row in indexes:
         assert hashlib.sha256((reference.parent / row["read_path"]).read_bytes()).hexdigest() == row["sha256"]
+
+
+def test_bare_catalog_identifier_key_is_precisely_owned_without_using_nested_keys(source):
+    home, engine, write, catalog = source
+    catalog["kinds"]["cast"] = {"module": "human/(object)"}
+    (home / "threed/catalog.json").write_text(json.dumps(catalog))
+    write("lib/human/index.js", "import * as docs from './docs.js';\nimport * as owner from './owner.js';\nexport const MODULES = [docs, owner];\n")
+    write("lib/human/docs.js", "export const CATALOG = {other: {params: {cast: 'example'}}};\n")
+    write("lib/human/owner.js", "export const CATALOG = {cast: {}};\n")
+    result = refs.resolve(home, scene(kind="cast"))
+    row = result["context"]["kinds"][0]
+    assert row["resolved_module"] == "lib/human/owner.js"
+    assert "ownership_resolution" not in row
+    assert not any(record["relative_path"] == "lib/human/docs.js" for record in result["sources"])
+
+
+def test_generated_catalog_uses_complete_namespace_routing_without_guessing_an_owner(source):
+    home, engine, write, catalog = source
+    catalog["kinds"]["demo.shape"]["module"] = "human/(object)"
+    (home / "threed/catalog.json").write_text(json.dumps(catalog))
+    write("lib/human/index.js", "import * as generated from './unpredictable.js';\nimport * as merged from './merged.js';\nexport const MODULES = [generated, merged];\n")
+    write("lib/human/unpredictable.js", "import { defaults } from '../shared/defaults.js';\nexport const CATALOG = {};\nfor (const key of Object.keys(defaults)) CATALOG['demo.' + key] = defaults[key];\nthrow new Error('Reference source must never execute');\n")
+    write("lib/human/merged.js", "export const CATALOG = Object.assign({}, {});\n")
+    write("lib/shared/defaults.js", "export const defaults = {shape: {}};\n")
+    result = refs.resolve(home, scene())
+    row = result["context"]["kinds"][0]
+    assert row["resolved_module"] == "lib/human/index.js"
+    assert row["ownership_resolution"]["method"] == "verified_namespace_index"
+    assert row["ownership_resolution"]["precise_owner"] is False
+    names = {record["relative_path"] for record in result["sources"]}
+    assert {"lib/human/index.js", "lib/human/unpredictable.js", "lib/human/merged.js", "lib/shared/defaults.js"} <= names
+    assert next(record for record in result["sources"] if record["relative_path"] == "lib/human/index.js")["role"] == "original_namespace_routing_contract"
+    write("lib/shared/defaults.js", "export const defaults = {shape: {radius: 2}};\n")
+    assert refs.resolve(home, scene())["identity"] != result["identity"]
+
+
+@pytest.mark.parametrize("label", ["game/(object)", "game/people"])
+def test_zero_argument_module_factory_keeps_its_verified_namespace_source(source, label):
+    home, engine, write, catalog = source
+    catalog["kinds"]["demo.shape"]["module"] = label
+    (home / "threed/catalog.json").write_text(json.dumps(catalog))
+    write("lib/game/index.js", "import * as geometry from './geometry.js';\nexport const MODULES = [makePeople(), geometry];\nfunction makePeople() { const CATALOG = {'demo.shape': {}}; function build() {} return {NAME: 'game/people', CATALOG, build}; }\n")
+    write("lib/game/geometry.js", "export const CATALOG = {};\n")
+    result = refs.resolve(home, scene())
+    row = result["context"]["kinds"][0]
+    assert row["resolved_module"] == "lib/game/index.js"
+    assert row["ownership_resolution"]["declared_module"] == label
+    assert row["ownership_resolution"]["precise_owner"] is False
+    assert {record["relative_path"] for record in result["sources"]} >= {"lib/game/index.js", "lib/game/geometry.js"}
+
+
+@pytest.mark.parametrize("factory", [
+    "// function makePeople() { return {NAME: 'game/people', CATALOG, build}; }\n",
+    "const example = \"function makePeople() { return {NAME: 'game/people', CATALOG, build}; }\";\n",
+    "function makePeople() { return {NAME: 'game/other', CATALOG, build}; }\n",
+    "function makePeople() { return {NAME: 'game/people', build}; }\n",
+    "function makePeople() { return {NAME: 'game/people', CATALOG}; }\n",
+    "function makePeople() { return {nested: {NAME: 'game/people', CATALOG, build}}; }\n",
+])
+def test_catalog_factory_label_requires_a_real_matching_catalog_return(source, factory):
+    home, engine, write, catalog = source
+    catalog["kinds"]["demo.shape"]["module"] = "game/people"
+    (home / "threed/catalog.json").write_text(json.dumps(catalog))
+    write("lib/game/index.js", "export const MODULES = [makePeople()];\n" + factory)
+    with pytest.raises(RuntimeError, match="verified.*definition"):
+        refs.resolve(home, scene())
+
+
+def test_namespace_fallback_does_not_accept_unbound_module_names_or_unknown_kinds(source):
+    home, engine, write, catalog = source
+    catalog["kinds"]["demo.shape"]["module"] = "human/(object)"
+    (home / "threed/catalog.json").write_text(json.dumps(catalog))
+    write("lib/human/index.js", "export const MODULES = [unbound];\n")
+    with pytest.raises(RuntimeError, match="unresolved object binding"):
+        refs.resolve(home, scene())
+    with pytest.raises(RuntimeError, match="absent"):
+        refs.resolve(home, scene(kind="not.in.catalog"))
+
+
+def test_factory_must_be_called_in_modules_not_just_mentioned_in_a_comment(source):
+    home, engine, write, catalog = source
+    catalog["kinds"]["demo.shape"]["module"] = "game/people"
+    (home / "threed/catalog.json").write_text(json.dumps(catalog))
+    write("lib/game/index.js", "export const MODULES = [/* makePeople() */];\nfunction makePeople() { return {NAME: 'game/people', CATALOG, build}; }\n")
+    with pytest.raises(RuntimeError, match="verified.*definition"):
+        refs.resolve(home, scene())
+
+
+def test_actual_private_generated_cast_details_and_game_catalogs_resolve_without_source_execution():
+    home = Path(os.environ.get("FRONTIER_PRIVATE_HOME", "/Users/workcomputer/Downloads/ChannelRecipe studio"))
+    if not (home / "threed/catalog.json").is_file():
+        pytest.skip("owner's original private installation unavailable")
+    for kind in ("cast", "figure.astronaut", "detail.papers", "interior.storm_cellar", "game.npc", "game.formation"):
+        result = refs.resolve(home, scene(kind=kind))
+        row = result["context"]["kinds"][0]
+        assert row["kind"] == kind
+        assert all(Path(record["path"]).is_relative_to(home / "threed/engine") for record in result["sources"])
+        if kind != "cast":
+            assert row["ownership_resolution"]["precise_owner"] is False

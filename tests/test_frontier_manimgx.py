@@ -52,6 +52,20 @@ def fixture_compiler(prompt, maximum):
     return json.dumps(manifest(context))
 
 
+@pytest.mark.parametrize("wrapper", ["```json\n{}\n```", "```\n{}\n```", "Here is the complete scene:\n```JSON\n{}\n```\nThe scene preserves the board."])
+def test_complete_manifest_wrapping_does_not_discard_saved_code(wrapper):
+    context = {"scene": VIDEO["scenes"][0]}
+    result = manifest(context)
+    assert gx._compiler_result(wrapper.format(json.dumps(result)), context) == result
+
+
+@pytest.mark.parametrize("response", ["The result was not finished: {\"scene_class\": \"BoardFixture\",",
+                                     '{"scene_class":"A","source":"x","coverage":{},"unsupported":[]}\n{"scene_class":"B","source":"y","coverage":{},"unsupported":[]}'])
+def test_incomplete_or_ambiguous_manifest_never_executes(response):
+    with pytest.raises(RuntimeError, match="not a complete JSON"):
+        gx._compiler_result(response, {})
+
+
 @pytest.fixture
 def stub_runtime(tmp_path, monkeypatch):
     docs = tmp_path / "docs"
@@ -625,6 +639,44 @@ def test_native_runtime_exception_propagates_with_private_diagnostic(native_runt
                    "width": 320, "height": 180, "fps": 30, "duration": .4, "times": [.2]}, tmp_path, timeout=10)
     assert "native fixture shader failure" in (tmp_path / "render_stdout.log").read_text()
     assert not (tmp_path / "bad.mp4").exists()
+
+
+def test_native_absent_mesh_member_has_exact_runtime_api_evidence(native_runtime, tmp_path):
+    source = tmp_path / "bad_helper.py"
+    source.write_text(SOURCE.replace("self.add(cube)", "cube.set_shade_in_3d(False)"))
+    with pytest.raises(gx.ManimGXRuntimeAPIError) as caught:
+        gx._invoke(native_runtime.python, {"source": str(source), "class": "BoardFixture", "output": None,
+                   "still_dir": str(tmp_path), "width": 320, "height": 180, "fps": 30,
+                   "duration": .4, "times": [.2]}, tmp_path, timeout=10)
+    evidence = caught.value.evidence
+    assert evidence["attribute"] == "set_shade_in_3d"
+    assert evidence["object_type"] == "Cube"
+    assert source.read_text().splitlines()[evidence["source_line"] - 1].strip() == "cube.set_shade_in_3d(False)"
+    assert evidence["render_log_sha256"] == gx._file_hash(tmp_path / "render_stdout.log")
+    assert evidence["diagnostic"].rstrip().splitlines()[-1].startswith("AttributeError:")
+
+
+def test_runtime_api_failure_preserves_source_and_blocks_implicit_retry(stub_runtime, monkeypatch):
+    state = stub_runtime
+    calls = []
+    def failed(python, payload, directory, **kwargs):
+        calls.append(payload)
+        gx._write(Path(directory) / "render_stdout.log", "exact private traceback", text=True)
+        raise gx.ManimGXRuntimeAPIError({"error_type": "AttributeError", "diagnostic": "absent method",
+            "diagnostic_sha256": gx.hashlib.sha256(b"absent method").hexdigest(),
+            "source_line": 6, "object_type": "Cube", "attribute": "missing",
+            "render_log_sha256": gx._file_hash(Path(directory) / "render_stdout.log")})
+    monkeypatch.setattr(gx, "_invoke", failed)
+    with pytest.raises(RuntimeError, match="method unavailable"):
+        run_stub(state)
+    directory = next((state.root / "job/threed/.cr-manimgx").iterdir())
+    original = (directory / "scene.py").read_bytes()
+    failure = gx._read(directory / "runtime-failure.json")
+    assert failure["source_sha256"] == gx._file_hash(directory / "scene.py")
+    assert failure["compiler_manifest_sha256"] == gx._file_hash(directory / "compiler.json")
+    with pytest.raises(RuntimeError, match="explicit source recovery"):
+        run_stub(state, compiler=lambda *a: pytest.fail("No repeat compiler"))
+    assert len(calls) == 1 and (directory / "scene.py").read_bytes() == original
 
 
 def test_native_duration_mismatch_is_not_completed(native_runtime):

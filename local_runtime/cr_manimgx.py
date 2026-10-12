@@ -24,6 +24,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 
 from cr_claude import ClaudeStageStopped
 
@@ -66,6 +67,18 @@ class ManimGXSourceAPIError(RuntimeError):
     def __init__(self, diagnostic):
         super().__init__("Claude's ManimGX source does not match the pinned API. Its local validation report is saved; no scene was rendered.")
         self.diagnostic = diagnostic
+
+
+class ManimGXRuntimeAPIError(RuntimeError):
+    """A saved generated scene called an absent pinned ManimGX member."""
+    def __init__(self, evidence):
+        super().__init__("The generated scene called a method unavailable on its ManimGX object. Its exact source and local diagnostic are saved for one explicit correction.")
+        self.evidence = evidence
+        self.diagnostic = evidence["diagnostic"]
+
+
+class ManimGXManifestJSONError(RuntimeError):
+    """A native answer completed without one parseable scene manifest."""
 
 _SMOKE = """import manimgx as m
 class SetupSmoke(m.ThreeDScene):
@@ -323,16 +336,47 @@ def _validate_source(source, name, assets=None):
     return tree
 
 
+def _manifest_json(raw):
+    """Read one complete compiler object, including ordinary Markdown wrapping.
+
+    Never repair syntax, complete truncated source or choose between answers.
+    Every accepted value still passes the full scene/source contract below.
+    """
+    if not isinstance(raw, str) or len(raw.encode("utf-8")) > 2000000:
+        raise RuntimeError("Claude did not return a bounded ManimGX compiler result.")
+    text = raw.strip()
+    try:
+        return json.loads(text)
+    except ValueError:
+        pass
+    candidates = []
+    decoder = json.JSONDecoder()
+    position = 0
+    scans = 0
+    while position < len(text):
+        start = text.find("{", position)
+        if start < 0:
+            break
+        scans += 1
+        if scans > 512:
+            raise RuntimeError("Claude's ManimGX response contains too many candidate objects to review safely.")
+        try:
+            value, length = decoder.raw_decode(text[start:])
+        except ValueError:
+            position = start + 1
+            continue
+        position = start + length
+        if isinstance(value, dict) and {"scene_class", "source", "coverage", "unsupported"}.issubset(value):
+            candidates.append(value)
+    if len(candidates) != 1:
+        raise ManimGXManifestJSONError("Claude's ManimGX result is not a complete JSON compiler manifest. Its full response is saved locally; incomplete or ambiguous source was not executed.")
+    return candidates[0]
+
+
 def _compiler_result(raw, context, assets=None):
     if not isinstance(raw, str):
         raise RuntimeError("Claude did not return a ManimGX compiler result.")
-    value = raw.strip()
-    if value.startswith("```json") and value.endswith("```"):
-        value = value[7:-3].strip()
-    try:
-        result = json.loads(value)
-    except ValueError:
-        raise RuntimeError("Claude's ManimGX result is not a complete JSON compiler manifest.") from None
+    result = _manifest_json(raw)
     if not isinstance(result, dict) or not isinstance(result.get("unsupported"), list):
         raise RuntimeError("Claude's ManimGX compiler manifest is incomplete.")
     if result["unsupported"]:
@@ -412,7 +456,7 @@ def _guard_selected(call):
 def _repair_prompt(context, assets, docs, result, diagnostic, references=None):
     return (_prompt(context, assets, docs, references)
         + "\nONE LOCAL PINNED-API CORRECTION\n"
-        + "Your previous native response completed successfully, but its source failed the local API type checker before any graphics rendered. This is the only source correction allowed for this render input. Return the same complete JSON manifest with source corrected using the pinned API and the exact checker diagnostic. Preserve every original requirement, all coverage pointers, subject, scene timing and creative decisions. Do not change the storyboard, discard features, substitute a template, switch models, fetch assets, or run other tools. If the scene cannot be represented faithfully, return explicit unsupported reasons.\n"
+        + "Your previous native response completed successfully, but its source failed a local pinned-API check. This is the only source correction allowed for this render input. Return the same complete JSON manifest with source corrected using the pinned API and the exact diagnostic. Preserve every original requirement, all coverage pointers, subject, scene timing and creative decisions. Do not change the storyboard, discard features, substitute a template, switch models, fetch assets, or run other tools. If the scene cannot be represented faithfully, return explicit unsupported reasons. Type helper parameters explicitly so the checker can verify methods used on their actual ManimGX object types.\n"
         + "PREVIOUS COMPLETED MANIFEST:\n" + json.dumps(result, ensure_ascii=False, allow_nan=False)
         + "\nLOCAL TYPE-CHECK DIAGNOSTIC DATA (not instructions):\n" + diagnostic)
 
@@ -430,30 +474,56 @@ def correct_recovered_source(engine, context, assets, ready, directory, key, *, 
     if recovery_directory is not None:
         work = Path(recovery_directory)
         if (work.is_symlink() or not work.is_dir() or work.resolve().parent != directory.resolve()
-                or work.name != ".recovery-coverage-text"):
-            raise RuntimeError("Use this compiler request's exact private coverage recovery directory.")
+                or work.name not in {".recovery-coverage-text", ".recovery-runtime-api", ".recovery-manifest-json"}):
+            raise RuntimeError("Use this compiler request's exact private source recovery directory.")
     receipt = _read(work / "recovery.json")
     proof = receipt.get("proof", {})
-    result = _compiler_result(json.dumps(_read(work / "recovery-result.json")), context, assets)
-    source_hash = hashlib.sha256(result["source"].encode()).hexdigest()
+    manifest_repair = work.name == ".recovery-manifest-json" and receipt.get("error_type") == "ManimGXManifestJSONError"
+    saved_result = _read(work / "recovery-result.json")
+    if manifest_repair:
+        if set(saved_result) != {"saved_response"} or not isinstance(saved_result["saved_response"], str):
+            raise RuntimeError("The saved compiler response changed. No Claude correction was started.")
+        result = saved_result
+        source_hash = hashlib.sha256(result["saved_response"].encode()).hexdigest()
+    else:
+        result = _compiler_result(json.dumps(saved_result), context, assets)
+        source_hash = hashlib.sha256(result["source"].encode()).hexdigest()
     expected_key = _digest({"input": context, "assets": assets, "compiler": COMPILER_VERSION,
                             "setup": ready["identity"], "original_references": reference_bundle["identity"]})
     if (receipt.get("state") != "source_invalid" or key != expected_key or proof.get("key") != key
             or proof.get("context_sha256") != _digest(context) or proof.get("assets_sha256") != _digest(assets)
             or proof.get("source_sha256") != source_hash or proof.get("setup_identity") != ready["identity"]
             or proof.get("reference_identity") != reference_bundle["identity"]
-            or (directory / "compiler.json").exists() or (directory / "compiler.json").is_symlink()
+            or (work.name != ".recovery-runtime-api" and ((directory / "compiler.json").exists() or (directory / "compiler.json").is_symlink()))
             or (work / "compiler-corrected.json").exists()):
         raise RuntimeError("This saved source correction no longer matches its verified recovery. Review the stopped graphics request.")
-    candidate = work / "scene-recovered.py"
+    candidate = work / ("saved-response.txt" if manifest_repair else "scene-recovered.py")
     if not _regular(candidate) or _file_hash(candidate) != source_hash:
         raise RuntimeError("The recovered graphics source changed. No Claude correction was started.")
-    try:
-        _typecheck(ready["python"], candidate)
-    except ManimGXSourceAPIError as error:
-        diagnostic = error.diagnostic
+    if manifest_repair:
+        if proof.get("response_sha256") != source_hash or (directory / "compiler-response-1.txt").read_text(encoding="utf-8") != result["saved_response"]:
+            raise RuntimeError("The completed compiler response changed. No Claude correction was started.")
+        try:
+            _manifest_json(result["saved_response"])
+        except ManimGXManifestJSONError as error:
+            diagnostic = str(error)
+        else:
+            raise RuntimeError("This saved response can now be validated locally; no Claude correction was started.")
+        if proof.get("manifest_diagnostic") != diagnostic:
+            raise RuntimeError("The saved manifest diagnostic changed. No Claude correction was started.")
+    elif work.name == ".recovery-runtime-api":
+        import cr_manimgx_recovery
+        evidence = cr_manimgx_recovery.runtime_diagnostic(directory, context, assets, ready, key, reference_bundle)
+        if receipt.get("error_type") != "ManimGXRuntimeAPIError" or proof.get("runtime_failure") != evidence:
+            raise RuntimeError("The saved runtime API failure changed. No Claude correction was started.")
+        diagnostic = evidence["diagnostic"]
     else:
-        raise RuntimeError("The saved graphics source no longer needs this correction. Validate its recovery before continuing.")
+        try:
+            _typecheck(ready["python"], candidate)
+        except ManimGXSourceAPIError as error:
+            diagnostic = error.diagnostic
+        else:
+            raise RuntimeError("The saved graphics source no longer needs this correction. Validate its recovery before continuing.")
     if (hashlib.sha256(diagnostic.encode()).hexdigest() != receipt.get("diagnostic_sha256")
             or diagnostic != receipt.get("diagnostic")):
         raise RuntimeError("The local graphics diagnostic changed. No Claude correction was started.")
@@ -481,7 +551,10 @@ def correct_recovered_source(engine, context, assets, ready, directory, key, *, 
     try:
         journal.update(state="running", calls=1)
         _write(journal_path, journal)
-        raw = compiler(_repair_prompt(context, assets, ready["docs"], result, diagnostic, references), 16384)
+        repair_prompt = _repair_prompt(context, assets, ready["docs"], result, diagnostic, references)
+        if manifest_repair:
+            repair_prompt += "\nThe saved response above is incomplete or ambiguously formatted, and has never executed. Complete exactly one JSON manifest using the complete original input and its saved creative work. Return all four fields with syntactically valid JSON; escape every newline and quote in the Python source string. Preserve the full scene, all coverage and documented API behavior. Do not return commentary or multiple alternatives.\n"
+        raw = compiler(repair_prompt, 16384)
         if isinstance(raw, str):
             _write(work / "compiler-correction-response-1.txt", raw, text=True)
         journal.update(state="response_saved")
@@ -566,8 +639,8 @@ def _accepted_response(directory, saved, context, assets):
         receipt = directory / relative
         if receipt.resolve().is_relative_to(directory.resolve()) and _regular(receipt):
             record = _read(receipt); proof = record.get("proof", {})
-            if (saved.get("recovery_kind") == "coverage_text"
-                    and relative == ".recovery-coverage-text/recovery.json"
+            if (saved.get("recovery_kind") in {"coverage_text", "manifest_json"}
+                    and relative == ".recovery-" + ("coverage-text" if saved.get("recovery_kind") == "coverage_text" else "manifest-json") + "/recovery.json"
                     and record.get("state") == "corrected" and record.get("model_calls") == 1
                     and record.get("corrected_source_sha256") == saved.get("source_sha256")
                     and proof == saved.get("recovery_proof") and isinstance(proof, dict)
@@ -639,23 +712,39 @@ def _reuse_source(context, assets, ready, directory, key, *, reference_bundle=No
                 legacy = _legacy_contexts(cache)
             contexts = list(legacy.get(source_dir.name, {}).values())
         for source_context in contexts:
+            effective_manifest = manifest
+            override = None
+            if _cache_key(source_context, assets, ready, reference_bundle) != source_dir.name:
+                continue
+            if (source_dir / ".recovery-runtime-api").exists():
+                import cr_manimgx_recovery
+                # Matching stopped recovery must not turn into a fresh paid
+                # compile simply because its child proof failed validation.
+                override = cr_manimgx_recovery.runtime_override(source_dir, source_context, assets, ready,
+                                                               source_dir.name, reference_bundle)
+            if (source_dir / "runtime-failure.json").exists() and override is None:
+                raise RuntimeError("This matching saved scene requires explicit runtime source recovery before format reuse.")
             try:
-                if _cache_key(source_context, assets, ready, reference_bundle) != source_dir.name:
-                    continue
                 result = _compiler_result(json.dumps(saved.get("result")), source_context, assets)
+                if override is not None:
+                    result, source = override
+                    effective_manifest = source.parent / "compiler-corrected.json"
                 assessment = profile.assess_reuse(source_context, context, result["source"],
                     source_injection=saved.get("output_injection"), target_injection=injection)
                 if not assessment["eligible"]:
                     continue
             except (KeyError, ValueError, TypeError, RuntimeError):
                 continue
-            source = source_dir / "scene.py"
-            if (not _regular(source) or saved.get("source_sha256") != assessment["source_sha256"]
+            source = override[1] if override is not None else source_dir / "scene.py"
+            effective_saved = _read(effective_manifest)
+            if (not _regular(source) or effective_saved.get("source_sha256") != assessment["source_sha256"]
                     or _file_hash(source) != assessment["source_sha256"]):
                 raise RuntimeError("The accepted graphics source changed before format reuse; it will not compile again automatically.")
-            acceptance = _accepted_response(source_dir, saved, source_context, assets)
+            acceptance = (cr_manimgx_recovery.runtime_acceptance(source_dir, source_context, assets, ready,
+                          source_dir.name, reference_bundle) if override is not None
+                          else _accepted_response(source_dir, saved, source_context, assets))
             receipt = {"version": profile.VERSION, "target_key": key, "source_key": source_dir.name,
-                "manifest_sha256": _file_hash(manifest), "assets_sha256": _digest(assets),
+                "manifest_sha256": _file_hash(effective_manifest), "assets_sha256": _digest(assets),
                 "setup_identity": ready["identity"],
                 "reference_identity": reference_bundle["identity"] if reference_bundle else None,
                 "compiler": COMPILER_VERSION, "acceptance": acceptance, "assessment": assessment,
@@ -673,10 +762,13 @@ def _reuse_source(context, assets, ready, directory, key, *, reference_bundle=No
     _typecheck(ready["python"], source)
     if _file_hash(source) != receipt["assessment"]["source_sha256"]:
         raise RuntimeError("The accepted graphics source changed during format validation.")
-    source_manifest = source.parent / "compiler.json"
+    runtime_child = source.parent.name == ".recovery-runtime-api"
+    source_manifest = source.parent / ("compiler-corrected.json" if runtime_child else "compiler.json")
+    acceptance = (cr_manimgx_recovery.runtime_acceptance(source.parent.parent, source_context, assets, ready,
+                  source.parent.parent.name, reference_bundle) if runtime_child
+                  else _accepted_response(source.parent, _read(source_manifest), source_context, assets))
     if (_file_hash(source_manifest) != receipt["manifest_sha256"]
-            or _accepted_response(source.parent, _read(source_manifest),
-                source_context, assets) != receipt["acceptance"]):
+            or acceptance != receipt["acceptance"]):
         raise RuntimeError("The accepted graphics receipt changed during format validation.")
     if any((directory / name).exists() or (directory / name).is_symlink() for name in
            ("compiler.json", "compile-attempts.json", "correction-attempts.json", "compiler-response-1.txt", "scene.py")):
@@ -701,6 +793,14 @@ def _compiled_source(engine, compiler, context, assets, ready, directory, key, *
     manifest = directory / "compiler.json"
     saved = _read(manifest)
     source = directory / "scene.py"
+    if (directory / ".recovery-runtime-api").exists():
+        import cr_manimgx_recovery
+        override = cr_manimgx_recovery.runtime_override(directory, context, assets, ready, key, reference_bundle)
+        if override is not None:
+            _typecheck(ready["python"], override[1])
+            return override
+    if (directory / "runtime-failure.json").exists():
+        raise RuntimeError("This saved scene stopped on a local runtime API error. Use its explicit source recovery before continuing.")
     if saved.get("key") == key and saved.get("typed") is True:
         result = _compiler_result(json.dumps(saved.get("result")), context, assets)
         if saved.get("source_sha256") != hashlib.sha256(result["source"].encode()).hexdigest():
@@ -786,6 +886,7 @@ def _invoke(python, payload, directory, *, timeout, event=None):
     log = Path(directory) / "render_stdout.log"
     started = time.monotonic()
     response = None
+    runtime_error = None
     messages = queue.Queue()
     process = subprocess.Popen([str(python), str(Path(__file__).resolve()), "--scene"], stdin=subprocess.PIPE,
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
@@ -821,9 +922,18 @@ def _invoke(python, payload, directory, *, timeout, event=None):
                         raise RuntimeError("ManimGX returned an invalid progress message. Its private render diagnostic is saved locally.")
                     if value.get("event") == "result":
                         response = value
+                    elif value.get("event") == "runtime_api_error":
+                        runtime_error = value
                     elif event:
                         event(value)
-        if process.wait(timeout=max(0.1, timeout - (time.monotonic() - started))) != 0 or not response:
+        returncode = process.wait(timeout=max(0.1, timeout - (time.monotonic() - started)))
+        if returncode != 0 and runtime_error and not response:
+            diagnostic = _redacted_diagnostic(log.read_text(encoding="utf-8"))
+            raise ManimGXRuntimeAPIError({"error_type": "AttributeError", "diagnostic": diagnostic,
+                "diagnostic_sha256": hashlib.sha256(diagnostic.encode()).hexdigest(),
+                "source_line": runtime_error["source_line"], "object_type": runtime_error["object_type"],
+                "attribute": runtime_error["attribute"], "render_log_sha256": _file_hash(log)})
+        if returncode != 0 or not response:
             raise RuntimeError("ManimGX could not build this scene. Its source and private render diagnostic are saved locally.")
         return response
     except subprocess.TimeoutExpired:
@@ -1006,12 +1116,29 @@ def render(engine, video, outdir, args, what, total_scenes=0, progress=None, *, 
                     event({**value, "scene_id": sid, "scene": number, "total_scenes": len(video["scenes"]), "phase": what})
                 if hasattr(engine, "log") and value.get("event") in {"frame", "exporting"}:
                     engine.log(f"{what} — Fast mode {sid}: {value.get('frame', 0)} frames, {value.get('time', 0):.2f}/{duration:.2f}s ({value['event']})")
-            response = _invoke(ready["python"], {"source": str(source), "class": result["scene_class"],
+            render_directory = (source.parent if source.parent.name == ".recovery-runtime-api"
+                                and source.parent.parent == directory else directory)
+            _progress(root, {"event": "render", "scene_id": sid, "fps": options["fps"],
+                             "total_frames": math.ceil(duration * options["fps"]) + 1, "frame": 0, "elapsed": 0})
+            try:
+                response = _invoke(ready["python"], {"source": str(source), "class": result["scene_class"],
                               "output": None if options["preview"] else str(destination), "still_dir": str(outdir), "id": sid,
                               "width": options["width"], "height": options["height"], "fps": options["fps"],
                               "duration": duration, "times": times, "native_profile": native_profile,
-                              **profile.render_kwargs(native_profile)}, directory,
+                              **profile.render_kwargs(native_profile)}, render_directory,
                               timeout=min(_DEFAULT_TIMEOUT, max(30, duration * 15)), event=notify)
+            except ManimGXRuntimeAPIError as error:
+                # Keep a corrected child's log separate from its immutable
+                # parent failure. A child cannot earn another repair budget.
+                if source.parent == directory:
+                    _write(directory / "runtime-failure.json", {"version": 1, "key": key,
+                        "source_sha256": _file_hash(source),
+                        "compiler_manifest_sha256": _file_hash(directory / "compiler.json"),
+                        "setup_identity": ready["identity"], **error.evidence})
+                elif render_directory.name == ".recovery-runtime-api":
+                    _write(render_directory / "runtime-failure.json", {"version": 1, "key": key,
+                        "source_sha256": _file_hash(source), **error.evidence})
+                raise
             _validate_frames(response, duration, options["fps"], options["width"], options["height"])
             if not options["preview"]:
                 _validate_output(response, destination, duration, options["fps"], options["width"], options["height"])
@@ -1281,10 +1408,34 @@ def _child_scene(payload):
           "exported": bool(film.export) if output else False, "elapsed": round(time.monotonic() - started, 4)})
 
 
+def _child_runtime_error(error, payload):
+    """Identify only an absent public member on a pinned renderer object."""
+    if not isinstance(error, AttributeError):
+        return None
+    owner = getattr(error, "obj", None)
+    attribute = getattr(error, "name", None)
+    if (owner is None or not type(owner).__module__.startswith("manimgx.")
+            or not isinstance(attribute, str) or not re.fullmatch(r"[A-Za-z][A-Za-z_0-9]*", attribute)):
+        return None
+    frames = traceback.extract_tb(error.__traceback__)
+    if not frames or Path(frames[-1].filename).resolve() != Path(payload["source"]).resolve():
+        return None
+    return {"event": "runtime_api_error", "error_type": "AttributeError",
+            "source_line": frames[-1].lineno, "object_type": type(owner).__name__, "attribute": attribute}
+
+
 if __name__ == "__main__":
     if sys.argv[1:] == ["--probe"]:
         _child_probe()
     elif sys.argv[1:] == ["--scene"]:
-        _child_scene(json.load(sys.stdin))
+        payload = json.load(sys.stdin)
+        try:
+            _child_scene(payload)
+        except Exception as error:
+            evidence = _child_runtime_error(error, payload)
+            if evidence is not None:
+                print(_PREFIX + json.dumps(evidence, allow_nan=False), flush=True)
+            traceback.print_exc()
+            raise SystemExit(1)
     else:
         raise SystemExit("Use ChannelRecipe's optional ManimGX setup or owned video workflow.")

@@ -543,3 +543,256 @@ def test_coverage_correction_exclusive_publication_rejects_racing_work(coverage_
     assert (saved.old / target).read_text() == content
     assert json.loads((saved.work / "recovery.json").read_text())["state"] == "stopped"
     assert saved.calls.count("correct") == 1
+
+@pytest.fixture
+def runtime_saved(saved):
+    saved.old.rename(saved.destination)
+    saved.old = saved.destination
+    write(saved.old / "compile-attempts.json", {"key": saved.key, "state": "validated", "calls": 1})
+    result = json.loads((saved.old / "compiler-response-1.txt").read_text())
+    result["source"] = SOURCE.replace("self.wait(1)", "m.Sphere().set_shade_in_3d(False)")
+    update_completed_response(saved, result)
+    (saved.old / "scene.py").write_text(result["source"])
+    context = {"scene": {"id": "original", "dur": 1}, "cast": [], "video": {},
+               "output": {"width": 640, "height": 360, "fps": 30, "quality": "draft"}}
+    write(saved.old / "compiler.json", {"key": saved.key, "typed": True, "context": context,
+          "result": result, "source_sha256": hashlib.sha256(result["source"].encode()).hexdigest()})
+    (saved.old / "render_stdout.log").write_text(
+        f'Traceback (most recent call last):\n  File "{saved.old / "scene.py"}", line 4, in construct\n'
+        "    m.Sphere().set_shade_in_3d(False)\n"
+        "AttributeError: 'Sphere' object has no attribute 'set_shade_in_3d'. Did you mean: 'shade_in_3d'?\n")
+    saved.work = saved.old / ".recovery-runtime-api"
+    return saved
+
+
+def test_runtime_validation_binds_exact_failure_without_model_or_rerender(runtime_saved):
+    saved = runtime_saved
+    original = {p.name: p.read_bytes() for p in saved.old.iterdir()}
+    rows = recovery.discover(saved.home, saved.job, saved.cloud)
+    assert len(rows) == 1 and rows[0]["kind"] == "runtime_api" and rows[0]["can_validate"]
+    assert not (saved.old / "runtime-failure.json").exists() and not saved.checked
+    with pytest.raises(RuntimeError, match="acknowledge"):
+        invoke(saved)
+    result = invoke(saved, acknowledge_recovery=True)
+    assert result["source_invalid"] and result["starts_model"] is False and not saved.checked
+    for name, content in original.items(): assert (saved.old / name).read_bytes() == content
+    receipt = json.loads((saved.work / "recovery.json").read_text())
+    assert receipt["state"] == "source_invalid" and receipt["error_type"] == "ManimGXRuntimeAPIError"
+    assert receipt["model_calls"] == 0
+    assert recovery.discover(saved.home, saved.job, saved.cloud)[0]["can_correct"]
+    with pytest.raises(RuntimeError, match="not execute again"):
+        invoke(saved, acknowledge_recovery=True)
+
+
+@pytest.mark.parametrize("mutation", ["source", "source_line", "wrong_path", "not_attribute", "truncated", "manifest", "receipt", "log_symlink"])
+def test_runtime_recovery_refuses_unbound_failure(runtime_saved, mutation):
+    saved = runtime_saved
+    path = saved.old / "render_stdout.log"
+    if mutation == "source": (saved.old / "scene.py").write_text(SOURCE)
+    elif mutation == "source_line": path.write_text(path.read_text().replace("line 4", "line 3"))
+    elif mutation == "wrong_path": path.write_text(path.read_text().replace(str(saved.old / "scene.py"), "/other/scene.py"))
+    elif mutation == "not_attribute": path.write_text(path.read_text().replace("AttributeError", "RuntimeError"))
+    elif mutation == "truncated": path.write_text(path.read_text().split("AttributeError")[0])
+    elif mutation == "manifest": write(saved.old / "compiler.json", {"key": saved.key, "typed": True})
+    elif mutation == "receipt": write(saved.old / "runtime-failure.json", {"diagnostic": "other failure"})
+    elif mutation == "log_symlink":
+        content = path.read_text(); path.unlink(); other = saved.home / "other.log"; other.write_text(content); path.symlink_to(other)
+    with pytest.raises((RuntimeError, ValueError, KeyError)):
+        invoke(saved, acknowledge_recovery=True)
+    assert not saved.work.exists() and not saved.checked
+
+
+@pytest.fixture
+def runtime_correction(runtime_saved, monkeypatch):
+    import cr_bridge
+    saved = runtime_saved
+    invoke(saved, acknowledge_recovery=True)
+    saved.calls = []
+    saved.engine = SimpleNamespace(CLAUDE_PROVIDER="claudecode")
+    saved.setup = {"brain_mode": "claudecode", "models_verified": True, "costs_accepted": True}
+    monkeypatch.setattr(cr_bridge, "HOME", saved.home)
+    monkeypatch.setattr(cr_bridge, "begin_project", lambda *a, **kw: saved.calls.append("begin"))
+    monkeypatch.setattr(cr_bridge, "finish_project", lambda *a, **kw: saved.calls.append("finish"))
+    def compiler(engine, context, assets, ready, directory, key, *, reference_bundle, recovery_directory):
+        assert recovery_directory == saved.work
+        saved.calls.append("correct")
+        receipt = json.loads((saved.work / "recovery.json").read_text())
+        result = json.loads((saved.work / "recovery-result.json").read_text())
+        result["source"] = SOURCE
+        (saved.work / "compiler-correction-response-1.txt").write_text(json.dumps(result))
+        (saved.work / "scene-corrected.py").write_text(SOURCE)
+        write(saved.work / "correction-attempts.json", {"key": key, "state": "validated", "calls": 1,
+              "recovery_proof": receipt["proof"]})
+        write(saved.work / "compiler-corrected.json", {"key": key, "typed": True, "result": result,
+              "source_sha256": hashlib.sha256(SOURCE.encode()).hexdigest(), "recovery_proof": receipt["proof"]})
+        return result, saved.work / "scene-corrected.py"
+    monkeypatch.setattr(renderer, "correct_recovered_source", compiler)
+    return saved
+
+
+def test_runtime_correction_preserves_original_accepted_source_and_receipts(runtime_correction):
+    saved = runtime_correction
+    originals = {p.name: p.read_bytes() for p in saved.old.iterdir() if p.is_file()}
+    with pytest.raises(RuntimeError, match="Confirm"):
+        correct_coverage(saved)
+    assert not saved.calls
+    assert correct_coverage(saved, acknowledge_correction=True)["accepted"]
+    assert saved.calls == ["begin", "correct", "finish"]
+    for name, content in originals.items(): assert (saved.old / name).read_bytes() == content
+    plan = recovery._prepare(saved.home, PROJECT, saved.out, "original", saved.cloud)
+    args = (saved.old, plan["context"], plan["assets"], plan["ready"], saved.key, saved.bundle)
+    result, source = recovery.runtime_override(*args)
+    assert result["source"] == SOURCE and source.parent == saved.work
+    acceptance = recovery.runtime_acceptance(*args)
+    assert acceptance["kind"] == "completed_native_runtime_correction"
+    assert acceptance["source_sha256"] != acceptance["parent_source_sha256"]
+    assert invoke(saved, acknowledge_recovery=True)["reused"]
+    assert not recovery.discover(saved.home, saved.job, saved.cloud)[0]["can_correct"]
+    with pytest.raises(RuntimeError): correct_coverage(saved, acknowledge_correction=True)
+    assert saved.calls.count("correct") == 1
+
+
+@pytest.mark.parametrize("target", ["compiler-corrected.json", "compiler-correction-response-1.txt", "scene-corrected.py", "correction-attempts.json", "recovery.json"])
+def test_runtime_override_rejects_changed_child(runtime_correction, target):
+    saved = runtime_correction
+    correct_coverage(saved, acknowledge_correction=True)
+    plan = recovery._prepare(saved.home, PROJECT, saved.out, "original", saved.cloud)
+    (saved.work / target).write_text("{}")
+    with pytest.raises((RuntimeError, ValueError, KeyError)):
+        recovery.runtime_override(saved.old, plan["context"], plan["assets"], plan["ready"], saved.key, saved.bundle)
+    assert saved.calls.count("correct") == 1
+
+
+def test_runtime_correction_with_second_saved_failure_never_rerenders(runtime_correction):
+    saved = runtime_correction
+    correct_coverage(saved, acknowledge_correction=True)
+    plan = recovery._prepare(saved.home, PROJECT, saved.out, "original", saved.cloud)
+    write(saved.work / "runtime-failure.json", {"error_type": "AttributeError"})
+    with pytest.raises(RuntimeError, match="will not render again"):
+        recovery.runtime_override(saved.old, plan["context"], plan["assets"], plan["ready"], saved.key, saved.bundle)
+    assert saved.calls.count("correct") == 1
+
+
+def update_completed_raw(saved, raw):
+    (saved.old / "compiler-response-1.txt").write_text(raw)
+    stdout = json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": raw})
+    fingerprint = hashlib.sha256(stdout.encode()).hexdigest()
+    write(saved.home / "output/cr-claude-cache" / PROJECT / (STAGE + ".json"),
+          {"state": "complete", "input_fingerprint": STAGE[3:], "result_fingerprint": fingerprint, "stdout": stdout})
+    saved.cloud["stages"][0]["result_fingerprint"] = fingerprint
+
+
+@pytest.fixture
+def manifest_saved(coverage_saved):
+    saved = coverage_saved
+    result = json.loads((saved.old / "compiler-response-1.txt").read_text())
+    result["coverage"]["/scene/dur"] = "Exact original timing"
+    saved.complete_result = result
+    saved.original_raw = json.dumps(result)[:-30]
+    update_completed_raw(saved, saved.original_raw)
+    saved.work = saved.old / ".recovery-manifest-json"
+    return saved
+
+
+def test_incomplete_manifest_validation_saves_full_native_result_without_fake_source(manifest_saved):
+    saved = manifest_saved
+    history = {p.name: p.read_bytes() for p in saved.old.iterdir()}
+    rows = recovery.discover(saved.home, saved.job, saved.cloud)
+    assert len(rows) == 1 and rows[0]["kind"] == "manifest_json" and rows[0]["can_validate"]
+    assert not saved.work.exists()
+    result = invoke(saved, acknowledge_recovery=True)
+    assert not result["accepted"] and result["source_invalid"] and not result["starts_model"]
+    for name, data in history.items(): assert (saved.old / name).read_bytes() == data
+    assert (saved.work / "saved-response.txt").read_text() == saved.original_raw
+    assert not (saved.work / "scene-recovered.py").exists() and not saved.checked
+    receipt = json.loads((saved.work / "recovery.json").read_text())
+    assert receipt["error_type"] == "ManimGXManifestJSONError" and receipt["model_calls"] == 0
+    assert receipt["proof"]["source_sha256"] == hashlib.sha256(saved.original_raw.encode()).hexdigest()
+    assert recovery.discover(saved.home, saved.job, saved.cloud)[0]["can_correct"]
+    with pytest.raises(RuntimeError, match="not execute again"):
+        invoke(saved, acknowledge_recovery=True)
+
+
+def test_unique_wrapped_manifest_recovers_without_native_correction(manifest_saved):
+    saved = manifest_saved
+    raw = "Here is the completed scene:\n```json\n" + json.dumps(saved.complete_result) + "\n```\nReady for local validation."
+    update_completed_raw(saved, raw)
+    result = invoke(saved, acknowledge_recovery=True)
+    assert result["accepted"] and len(saved.checked) == 1
+    assert (saved.old / "scene.py").read_text() == saved.complete_result["source"]
+    manifest = json.loads((saved.old / "compiler.json").read_text())
+    assert manifest["recovery_kind"] == "manifest_json"
+    assert json.loads((saved.work / "recovery.json").read_text())["model_calls"] == 0
+    assert invoke(saved, acknowledge_recovery=True)["reused"]
+    assert (saved.old / "compiler-response-1.txt").read_text() == raw
+
+
+@pytest.mark.parametrize("mutation", ["coverage", "unsupported", "unsafe", "oversized", "unverified", "existing_source"])
+def test_manifest_recovery_does_not_weaken_other_acceptance_rules(manifest_saved, mutation):
+    saved = manifest_saved
+    result = saved.complete_result
+    if mutation == "coverage": result["coverage"].pop("/scene/dur")
+    elif mutation == "unsupported": result["unsupported"] = ["Cannot preserve original request"]
+    elif mutation == "unsafe": result["source"] = "import os\n" + SOURCE
+    if mutation in {"coverage", "unsupported", "unsafe"}:
+        update_completed_raw(saved, "```json\n" + json.dumps(result) + "\n```")
+    elif mutation == "oversized": update_completed_raw(saved, "x" * 2000001)
+    elif mutation == "unverified": saved.cloud["stages"][0]["result_fingerprint"] = "d" * 64
+    elif mutation == "existing_source": (saved.old / "scene.py").write_text(SOURCE)
+    with pytest.raises(RuntimeError): invoke(saved, acknowledge_recovery=True)
+    assert not saved.work.exists() and not saved.checked
+
+
+@pytest.fixture
+def manifest_correction(manifest_saved, monkeypatch):
+    import cr_bridge
+    saved = manifest_saved
+    invoke(saved, acknowledge_recovery=True)
+    saved.calls = []
+    saved.engine = SimpleNamespace(CLAUDE_PROVIDER="claudecode")
+    saved.setup = {"brain_mode": "claudecode", "models_verified": True, "costs_accepted": True}
+    monkeypatch.setattr(cr_bridge, "HOME", saved.home)
+    monkeypatch.setattr(cr_bridge, "begin_project", lambda *a, **kw: saved.calls.append("begin"))
+    monkeypatch.setattr(cr_bridge, "finish_project", lambda *a, **kw: saved.calls.append("finish"))
+    def compiler(engine, context, assets, ready, directory, key, *, reference_bundle, recovery_directory):
+        assert recovery_directory == saved.work
+        saved.calls.append("correct")
+        receipt = json.loads((saved.work / "recovery.json").read_text())
+        assert json.loads((saved.work / "recovery-result.json").read_text()) == {"saved_response": saved.original_raw}
+        result = saved.complete_result
+        (saved.work / "compiler-correction-response-1.txt").write_text(json.dumps(result))
+        (saved.work / "scene-corrected.py").write_text(result["source"])
+        write(saved.work / "correction-attempts.json", {"key": key, "state": "validated", "calls": 1,
+              "recovery_proof": receipt["proof"]})
+        write(saved.work / "compiler-corrected.json", {"key": key, "typed": True, "result": result,
+              "source_sha256": hashlib.sha256(result["source"].encode()).hexdigest(), "recovery_proof": receipt["proof"]})
+        return result, saved.work / "scene-corrected.py"
+    monkeypatch.setattr(renderer, "correct_recovered_source", compiler)
+    return saved
+
+
+def test_manifest_correction_is_explicit_one_shot_and_preserves_saved_incomplete_response(manifest_correction):
+    saved = manifest_correction
+    history = {p.name: p.read_bytes() for p in saved.old.iterdir() if p.is_file()}
+    with pytest.raises(RuntimeError, match="Confirm"):
+        correct_coverage(saved)
+    assert not saved.calls
+    result = correct_coverage(saved, acknowledge_correction=True)
+    assert result["accepted"] and saved.calls == ["begin", "correct", "finish"]
+    for name, data in history.items(): assert (saved.old / name).read_bytes() == data
+    assert (saved.old / "scene.py").read_text() == saved.complete_result["source"]
+    receipt = json.loads((saved.work / "recovery.json").read_text())
+    manifest = json.loads((saved.old / "compiler.json").read_text())
+    assert receipt["state"] == "corrected" and receipt["model_calls"] == 1
+    assert manifest["recovery_kind"] == "manifest_json" and manifest["recovery_receipt"] == ".recovery-manifest-json/recovery.json"
+    assert invoke(saved, acknowledge_recovery=True)["reused"]
+    with pytest.raises(RuntimeError): correct_coverage(saved, acknowledge_correction=True)
+    assert saved.calls.count("correct") == 1
+
+
+@pytest.mark.parametrize("target", ["saved-response.txt", "recovery-result.json", "scene-recovered.validation.log", "recovery-input.json"])
+def test_manifest_correction_refuses_changed_saved_data_without_native_call(manifest_correction, target):
+    saved = manifest_correction
+    (saved.work / target).write_text("{}")
+    with pytest.raises(RuntimeError): correct_coverage(saved, acknowledge_correction=True)
+    assert not saved.calls and not (saved.old / "compiler.json").exists()
