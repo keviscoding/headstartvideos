@@ -11,6 +11,15 @@ import re
 HOME=Path(__file__).resolve().parent
 
 
+def run_threed_original(arguments):
+    """Use the original CLI dispatch on the shared, compatibility-checked module."""
+    import threed
+    if arguments[0] not in {"qa", "redo"}:
+        raise RuntimeError("Use original 3D inspection or verified repair.")
+    original = threed._qa_cli if arguments[0] == "qa" else threed._redo_cli
+    raise SystemExit(original(Path(arguments[1]), arguments[2:]))
+
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument("--project",required=True)
@@ -71,7 +80,7 @@ def main():
         checks["claude_code"]=ready["claude_code"]
         proof=cr_readiness.proof(checks,purpose="creative")
         return cr_3d.run_operation(HOME,args.project,command[1:],cr_bridge,proof,
-            lambda:runpy.run_path(str(target),run_name="__main__"),operation_id=args.operation)
+            lambda:run_threed_original(command[1:]),operation_id=args.operation)
     return runpy.run_path(str(target),run_name="__main__")
 
 

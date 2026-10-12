@@ -201,12 +201,15 @@ def test_worker_dispatch_preserves_original_command_and_requires_native_setup(sa
     def operation(home_arg,source_id,arguments,bridge,proof,execute,operation_id=None):
         assert home_arg==home and source_id==SOURCE
         assert proof["purpose"]=="creative"
-        observed.append((list(arguments),operation_id));execute()
+        observed.append((list(arguments),operation_id))
+        with pytest.raises(SystemExit) as result:execute()
+        assert result.value.code==0
     monkeypatch.setattr(cr_3d,"run_operation",operation)
-    def original(path,**kwargs):
-        assert path==str(home/"threed.py") and kwargs=={"run_name":"__main__"}
+    def original(path,arguments):
+        assert path==job and arguments==["scene","--note","Keep original art direction"]
         assert sys.argv==[str(home/"threed.py"),"redo",str(job),"scene","--note","Keep original art direction"]
-    monkeypatch.setattr(cr_worker.runpy,"run_path",original)
+        return 0
+    monkeypatch.setitem(sys.modules,"threed",SimpleNamespace(_redo_cli=original,_qa_cli=lambda *args:pytest.fail("wrong original CLI")))
     operation_id="op_"+"a"*24
     monkeypatch.setattr(sys,"argv",["cr_worker.py","--project",SOURCE,"--operation",operation_id,"--",str(home/"threed.py"),"redo",str(job),"scene","--note","Keep original art direction"])
     cr_worker.main()
@@ -215,6 +218,20 @@ def test_worker_dispatch_preserves_original_command_and_requires_native_setup(sa
     monkeypatch.setattr(cr_readiness,"basic",lambda _: {"ready":False,"blockers":["Claude model verification missing"]})
     with pytest.raises(RuntimeError,match="Claude model verification missing"):cr_worker.main()
     assert len(observed)==1
+
+
+@pytest.mark.parametrize("operation,code",[("qa",0),("redo",2)])
+def test_shared_original_cli_preserves_hooks_and_exit_status(monkeypatch,tmp_path,operation,code):
+    observed=[]
+    def original(path,arguments):
+        observed.append((path,arguments))
+        return code
+    module=SimpleNamespace(_qa_cli=original,_redo_cli=original)
+    monkeypatch.setitem(sys.modules,"threed",module)
+    arguments=[operation,str(tmp_path),"scene","--note","specific original feedback"]
+    with pytest.raises(SystemExit) as result:cr_worker.run_threed_original(arguments)
+    assert result.value.code==code
+    assert observed==[(tmp_path,arguments[2:])]
 
 
 def test_new_explicit_operation_preserves_failed_history_and_has_its_own_session(saved):

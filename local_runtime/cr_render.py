@@ -7,6 +7,9 @@ from pathlib import Path
 
 
 def install(engine):
+    # Preserve the private renderer; add contract feedback to its own reviews.
+    import cr_renderer_contracts
+    cr_renderer_contracts.install(engine)
     original = engine._final_mux
     def final_mux(job, *args, **kwargs):
         try:
