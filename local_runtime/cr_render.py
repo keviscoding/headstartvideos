@@ -8,6 +8,8 @@ from pathlib import Path
 
 def install(engine):
     # Preserve the private renderer; add contract feedback to its own reviews.
+    import cr_subject_identity
+    cr_subject_identity.install(engine)
     import cr_renderer_contracts
     cr_renderer_contracts.install(engine)
     import cr_manimgx, cr_bridge

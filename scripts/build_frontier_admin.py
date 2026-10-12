@@ -17,7 +17,7 @@ import requests
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
-VERSION = "5.3-admin.18"
+VERSION = "5.3-admin.19"
 
 
 def compose_claude_instructions(original: bytes, overrides: bytes) -> bytes:
