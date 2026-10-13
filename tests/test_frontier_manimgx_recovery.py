@@ -145,11 +145,12 @@ def test_procedural_pixel_validation_preserves_completed_native_source(coverage_
 
 
 @pytest.mark.parametrize("known_failure", [True, False])
-def test_blank_extra_annotation_recovery_uses_exact_completed_source(coverage_saved, known_failure):
+@pytest.mark.parametrize("placeholder", ["", "n/a", "not applicable"])
+def test_blank_extra_annotation_recovery_uses_exact_completed_source(coverage_saved, known_failure, placeholder):
     saved = coverage_saved
     result = json.loads((saved.old / "compiler-response-1.txt").read_text())
     result["coverage"] = {p: "Original input requirement preserved" for p in result["coverage"]}
-    result["coverage"]["/scene/objects/4/anim/1/1"] = ""
+    result["coverage"]["/scene/objects/4/anim/1/1"] = placeholder
     update_completed_response(saved, result)
     report = json.loads((saved.out / "report.json").read_text())
     report["scenes"][0]["error"] = "Claude's ManimGX manifest omitted or changed render requirements." if known_failure else "Other failure"

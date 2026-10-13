@@ -417,14 +417,14 @@ def _manifest_json(raw):
 
 
 def _blank_coverage_annotations(context, coverage):
-    """Empty annotations for nonexistent input paths carry no render intent."""
+    """Empty/not-applicable annotations for nonexistent paths carry no render intent."""
     if not isinstance(coverage, dict):
         return None
     extra = set(coverage) - set(_pointers(context))
     if len(extra) > 16 or any(
         not isinstance(pointer, str) or not pointer.startswith("/") or len(pointer) > 1000
         or any(re.fullmatch(r"(?:[^~]|~[01])*", part) is None for part in pointer.split("/")[1:])
-        or not isinstance(coverage[pointer], str) or coverage[pointer].strip()
+        or not isinstance(coverage[pointer], str) or coverage[pointer].strip().casefold() not in {"", "n/a", "not applicable"}
         for pointer in extra
     ):
         return None
