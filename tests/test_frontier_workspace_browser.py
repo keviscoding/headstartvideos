@@ -6,14 +6,17 @@ saved account settings or private catalogue data. Tests cannot reach production
 """
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 import sys
 import threading
+import time
 from types import SimpleNamespace
 
 from flask import Flask, Response, jsonify, request, send_file
 import pytest
+from PIL import Image
 
 playwright = pytest.importorskip("playwright.sync_api")
 from werkzeug.serving import make_server
@@ -41,7 +44,12 @@ def browser():
 
 @pytest.fixture
 def workspace(browser):
-    env = SimpleNamespace(mode="ready", creates=[], posts=[], errors=[])
+    env = SimpleNamespace(mode="ready", creates=[], posts=[], errors=[], preview_gets=[], preview_cached=set(),
+                          preview_active=0, preview_max_active=0, preview_busy=0, preview_delay=0,
+                          finished_jobs=[{"slug": "finished-film", "title": "A finished film", "style": "documentary", "editable": True}])
+    preview_lock = threading.Lock()
+    image = io.BytesIO()
+    Image.new("RGB", (160, 90), "#415573").save(image, "JPEG")
     rows = [
         {"name": "documentary", "features": {"offered": ["youtube", "motion", "sound"], "on": ["youtube", "motion", "sound"]}},
         {"name": "3d", "tab": "3d", "features": {"offered": ["threed", "maps", "sound"], "on": ["threed", "sound"]}},
@@ -105,7 +113,24 @@ def workspace(browser):
 
     @app.get("/api/jobs")
     def jobs():
-        return jsonify(jobs=[{"slug": "finished-film", "title": "A finished film", "style": "documentary", "editable": True}], platform="darwin")
+        return jsonify(jobs=env.finished_jobs, platform="darwin")
+
+    @app.get("/cr-workspace/preview/project/<slug>.jpg")
+    def project_preview(slug):
+        with preview_lock:
+            env.preview_gets.append(slug)
+            if slug in env.preview_cached:
+                return Response(image.getvalue(), mimetype="image/jpeg")
+            if env.preview_busy:
+                env.preview_busy -= 1
+                return Response(status=503, headers={"Retry-After": "1"})
+            env.preview_active += 1
+            env.preview_max_active = max(env.preview_max_active, env.preview_active)
+        time.sleep(env.preview_delay)
+        with preview_lock:
+            env.preview_active -= 1
+            env.preview_cached.add(slug)
+        return Response(image.getvalue(), mimetype="image/jpeg")
 
     @app.get("/api/status/<slug>")
     def progress(slug):
@@ -230,7 +255,17 @@ def test_projects_draw_native_progress_cancel_exact_run_and_preserve_exports(wor
     assert env.posts[-1] == {"path": "/cr-video/active-film/cancel", "body": {"run_id": "exact-active-run"}}
     page.locator("[data-project-filter=done]").click()
     assert page.locator("#crw-projects-list .crw-project-card").count() == 1
-    page.get_by_role("button", name="Open video", exact=True).click()
+    player=page.locator('#crw-projects-list video.crw-video-preview')
+    assert player.count()==1 and player.get_attribute('src')=='/f/video/finished-film'
+    page.wait_for_function("document.querySelector('#crw-projects-list video')?.dataset.previewPosterState==='loaded'")
+    assert player.get_attribute('poster')=='/cr-workspace/preview/project/finished-film.jpg'
+    assert player.get_attribute('preload')=='none' and player.get_attribute('controls') is not None
+    page.evaluate("window.keptVideo=document.querySelector('#crw-projects-list video')")
+    page.locator('#crw-projects-refresh').click()
+    page.wait_for_timeout(150)
+    assert page.evaluate("window.keptVideo===document.querySelector('#crw-projects-list video')")
+    page.get_by_role("button", name="Play A finished film", exact=True).wait_for(state='visible')
+    page.get_by_role("button", name="Video & exports", exact=True).click()
     page.locator("#crw-output").wait_for(state="visible")
     assert page.locator("#crw-output-download").get_attribute("href") == "/f/video/finished-film"
     assert page.locator("#crw-output-editor").get_attribute("href") == "/editor/finished-film"
@@ -262,3 +297,25 @@ def test_gallery_works_with_keyboard_and_a_mobile_viewport(workspace):
     page.locator("#crw-gallery-search").fill("")
     page.keyboard.press("Escape")
     page.locator("#crw-gallery").wait_for(state="hidden")
+
+
+def test_project_posters_are_lazy_bounded_and_retry_busy_decoders(workspace):
+    env, page = workspace, workspace.page
+    env.finished_jobs = [{"slug": f"film-{i}", "title": f"Finished film {i}", "style": "documentary", "editable": True}
+                         for i in range(24)]
+    env.preview_busy = 1
+    env.preview_delay = 0.12
+    env.open()
+    assert not env.preview_gets, "The hidden Projects page must not decode its entire video library."
+    page.locator('.crw-nav [data-nav=projects]').click()
+    first = page.locator('[data-slug="film-0"] video')
+    page.wait_for_function("document.querySelector('[data-slug=film-0] video')?.dataset.previewPosterState==='loaded'")
+    assert first.get_attribute('poster') == '/cr-workspace/preview/project/film-0.jpg'
+    assert env.preview_gets.count('film-0') >= 2, "A temporary 503 must be retried."
+    assert 'film-23' not in env.preview_gets, "Offscreen cards must stay lazy."
+    last = page.locator('[data-slug="film-23"] video')
+    last.scroll_into_view_if_needed()
+    page.wait_for_function("document.querySelector('[data-slug=film-23] video')?.dataset.previewPosterState==='loaded'")
+    assert last.get_attribute('poster') == '/cr-workspace/preview/project/film-23.jpg'
+    assert env.preview_max_active <= 2, "Only two screenshot decoders may be warmed concurrently."
+    assert not env.posts, "Loading and retrying screenshots must not create creative work."

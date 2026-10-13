@@ -7,8 +7,55 @@
   const state = {catalog: null, setup: null, selected: null, inspected: null, input: 'idea', narration: 'ai',
     audio: '', featureDrafts: {}, page: 'create', family: 'all', projectFilter: 'all',
     queue: [], jobs: [], studies: [], busy: false, submitting: false, uploading: false,
-    openJob: null, currentOutput: null, timer: null, refresh: null, optionalLoaded: false};
+    openJob: null, currentOutput: null, timer: null, refresh: null, optionalLoaded: false, projectNodes: new Map()};
   const STORAGE = 'channelrecipe.workspace.v1';
+  const posterQueue = [];
+  let posterLoads = 0;
+  const posterObserver = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => {
+    for (const entry of entries) if (entry.isIntersecting) queuePoster(entry.target);
+  }, {rootMargin:'160px'}) : null;
+  function queuePoster(video) {
+    if (state.page !== 'projects' || !video.isConnected || !video.dataset.previewPoster ||
+        ['queued','loaded','unavailable'].includes(video.dataset.previewPosterState)) return;
+    video.dataset.previewPosterState = 'queued'; posterQueue.push(video); pumpPosters();
+  }
+  function pumpPosters() {
+    while (posterLoads < 2 && posterQueue.length) {
+      const video = posterQueue.shift();
+      if (!video.isConnected || state.page !== 'projects') {video.dataset.previewPosterState='idle';continue;}
+      posterLoads++;
+      loadPoster(video).finally(()=>{posterLoads--;pumpPosters();});
+    }
+  }
+  async function loadPoster(video) {
+    // Warm at most two local screenshot requests before assigning the native
+    // poster. A transient busy decoder never becomes a permanently blank card.
+    const url=video.dataset.previewPoster;
+    for(let attempt=0;attempt<4;attempt++) {
+      const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),15000);
+      try {
+        const response=await fetch(url,{headers:{'X-CR-Local-Token':boot.token||''},cache:'no-store',signal:controller.signal});
+        if(response.status===503 && attempt<3) {
+          const delay=Math.min(2,Math.max(1,Number(response.headers.get('Retry-After'))||1));
+          await response.body?.cancel();clearTimeout(timer);
+          await new Promise(resolve=>setTimeout(resolve,delay*1000));
+          if(!video.isConnected || state.page!=='projects'){video.dataset.previewPosterState='idle';return;}
+          continue;
+        }
+        if(!response.ok || !response.headers.get('Content-Type')?.startsWith('image/'))break;
+        await response.blob();video.poster=url;video.dataset.previewPosterState='loaded';posterObserver?.unobserve(video);return;
+      } catch (_) {break;} finally {clearTimeout(timer);}
+    }
+    video.dataset.previewPosterState='unavailable';posterObserver?.unobserve(video);
+  }
+  function visiblePosters() {
+    if(state.page!=='projects')return;
+    for(const video of all('.crw-video-preview')) {
+      const bounds=video.getBoundingClientRect();
+      if(bounds.bottom>=-160 && bounds.top<=innerHeight+160)queuePoster(video);
+    }
+  }
+  function discardProject(saved) {const video=saved?.node.querySelector('video');if(video){video.pause();posterObserver?.unobserve(video);}saved?.node.remove();}
   const featureCopy = {
     youtube: ['Research footage', 'Find clips of the people, places and events in your story.'],
     stock: ['Stock footage', 'Use supporting footage for scenes without a specific source clip.'],
@@ -34,7 +81,7 @@
   function checked(id) {return $(id)?.checked === true;}
   function familyKey(value) {return ({'data & graphics': 'data', 'learned style': 'custom', 'my styles': 'custom'})[String(value).toLowerCase()] || String(value).toLowerCase();}
   function elapsed(seconds) {const v = Math.max(0, Math.round(Number(seconds) || 0)); return v < 60 ? `${v}s` : `${Math.floor(v / 60)}m ${v % 60}s`;}
-  function date(value) {const d = new Date(Number(value) * 1000); return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, {month: 'short', day: 'numeric'});}
+  function date(value) {const d = new Date(Number(value) * 1000); return Number.isNaN(d.getTime()) ? '' : d.toLocaleString(undefined, {month: 'short', day: 'numeric', hour:'numeric', minute:'2-digit'});}
   async function api(path, options = {}) {
     const headers = new Headers(options.headers || {}); headers.set('X-CR-Local-Token', boot.token || '');
     let body = options.body;
@@ -92,7 +139,7 @@
     if (state.selected) state.featureDrafts[state.selected.name] = featureValues();
     state.selected = recipe;
     text('crw-selected-name', recipe.label); text('crw-selected-description', recipe.description || recipe.tagline);
-    $('crw-selected-art').src = recipe.art_url || '/cr-workspace/art/custom.svg'; $('crw-selected-art').alt = `${recipe.label} conceptual artwork`;
+    recipePreview($('crw-selected-art'),recipe);
     tags('crw-selected-tags', recipe.capabilities);
     text('crw-selected-policy', recipe.visual_policy_label || ''); hide('crw-selected-policy', !recipe.visual_policy_label);
     const automatic = identity(recipe) === 'automatic'; hide('crw-adaptive-section', !recipe.auto_style);
@@ -143,6 +190,7 @@
   }
   function showPage(name, persist = true) {
     state.page = ['create','projects','styles'].includes(name) ? name : 'create';
+    if(state.page!=='projects')for(const player of all('.crw-video-preview'))player.pause();
     for (const p of ['create','projects','styles']) hide(`crw-page-${p}`, p !== state.page);
     for (const button of all('.crw-nav [data-nav]')) {const active = button.dataset.nav === state.page; button.classList.toggle('is-active', active); active ? button.setAttribute('aria-current','page') : button.removeAttribute('aria-current');}
     text('crw-page-name', {create:'Create video',projects:'Your projects',styles:'Style library'}[state.page]);
@@ -152,17 +200,29 @@
   }
   function inspect(recipe, reveal = false) {
     state.inspected = recipe; text('crw-detail-name', recipe.label); text('crw-detail-description',recipe.description || recipe.tagline);
-    $('crw-detail-art').src = recipe.art_url || '/cr-workspace/art/custom.svg'; $('crw-detail-art').alt = `${recipe.label} conceptual artwork`;
+    recipePreview($('crw-detail-art'),recipe);
     text('crw-detail-family', recipe.family || 'Visual recipe'); tags('crw-detail-tags', recipe.capabilities);
     text('crw-detail-policy',recipe.visual_policy_label || ''); hide('crw-detail-policy',!recipe.visual_policy_label);
     $('crw-detail-points').replaceChildren(...(recipe.capabilities || []).map(v => el('li','',v)));
-    const sample = $('crw-detail-preview'); sample.href = `/sample/${encoded(recipe.name)}`; sample.hidden = !recipe.sample; $('crw-detail-use').disabled = false;
+    const sample = $('crw-detail-preview'); sample.href = recipe.preview_video_url || '#'; sample.hidden = !recipe.preview_video_url; $('crw-detail-use').disabled = false;
     for (const card of all('#crw-gallery-grid .crw-recipe-card')) card.classList.toggle('is-selected', card.dataset.recipe === identity(recipe));
     if (reveal && matchMedia('(max-width:700px)').matches && $('crw-gallery').open) $('crw-gallery-detail').scrollIntoView({behavior:'smooth',block:'start'});
   }
+  function recipePreview(img,recipe) {
+    const parent=img.parentElement;let label=parent.querySelector('[data-preview-state]') || parent.querySelector('span');
+    if(!label){label=el('span','crw-art-caption');parent.append(label);}
+    label.dataset.previewState='1';label.textContent=recipe.preview_available ? (recipe.preview_label||'Video screenshot') : 'No video preview yet';
+    img.hidden=!recipe.preview_available;img.alt=`${recipe.label} · ${recipe.preview_label||'Video screenshot'}`;
+    parent.classList.toggle('crw-preview-unavailable',!recipe.preview_available);
+    if(recipe.preview_available && recipe.preview_url) {
+      img.onload=()=>{img.hidden=false;parent.classList.remove('crw-preview-unavailable');};
+      img.onerror=()=>{img.hidden=true;parent.classList.add('crw-preview-unavailable');label.textContent='Video preview unavailable';};
+      img.src=recipe.preview_url;
+    } else {img.removeAttribute('src');img.onload=null;img.onerror=null;}
+  }
   function recipeCard(recipe, action) {
     const b = el('button','crw-recipe-card'); b.type = 'button'; b.dataset.recipe = identity(recipe); b.setAttribute('aria-label', `Explore ${recipe.label}`);
-    const art = el('div','crw-card-art'); const img = el('img'); img.src = recipe.art_url || '/cr-workspace/art/custom.svg'; img.alt = ''; img.loading = 'lazy'; art.append(img,el('span','crw-art-caption','Visual direction'));
+    const art = el('div','crw-card-art'); const img = el('img'); img.loading='lazy';art.append(img);recipePreview(img,recipe);
     const body = el('div','crw-card-body'); body.append(el('small','crw-card-meta',recipe.family || 'Your style'),el('h3','',recipe.label),el('p','crw-card-description',recipe.description || recipe.tagline || ''));
     b.append(art,body); b.addEventListener('click',()=>action(recipe)); return b;
   }
@@ -190,20 +250,38 @@
   };
   function statusBadge(value) {const kind = value === 'done' ? 'done' : ['running','queued'].includes(value) ? 'running' : 'stopped'; return el('span',`crw-status-badge is-${kind}`,{done:'Ready',running:'In production',queued:'Queued',cancelled:'Cancelled',error:'Needs review',failed:'Needs review'}[value] || 'Saved');}
   function combinedProjects() {
-    const map = new Map(state.jobs.map(j => [j.slug,{...j,state:'done'}]));
+    const map = new Map(state.jobs.map(j => [j.slug,{...j,state:'done',hasVideo:true}]));
     for (const q of state.queue) map.set(q.slug,{...(map.get(q.slug) || {}),...q});
     return [...map.values()];
   }
+  function projectCard(job) {
+    const card=el('article','crw-project-card');card.dataset.slug=job.slug;
+    const r=findRecipe(job.style);const media=el('div','crw-card-art');
+    if(job.hasVideo) {
+      const video=el('video','crw-video-preview');video.controls=true;video.playsInline=true;video.preload='none';
+      video.dataset.previewPoster=`/cr-workspace/preview/project/${encoded(job.slug)}.jpg`;video.src=`/f/video/${encoded(job.slug)}`;
+      video.setAttribute('aria-label',job.title||'Video project');
+      const play=el('button','crw-preview-play','▶');play.type='button';play.setAttribute('aria-label',`Play ${job.title||'video'}`);
+      play.addEventListener('click',()=>{for(const other of all('.crw-video-preview'))if(other!==video)other.pause();video.play().catch(()=>toast('The video could not start. Open its saved output or check your launcher.'));});
+      video.addEventListener('play',()=>{for(const other of all('.crw-video-preview'))if(other!==video)other.pause();play.hidden=true;});video.addEventListener('pause',()=>{play.hidden=false;});video.addEventListener('ended',()=>{play.hidden=false;});
+      media.append(video,play);
+      posterObserver?.observe(video);
+    } else {media.classList.add('crw-preview-unavailable');media.append(el('span','', ['running','queued'].includes(job.state)?'Video is in production':'No finished video yet'));}
+    const body=el('div','crw-card-body');body.append(statusBadge(job.state),el('h3','',job.title||'Untitled video'),el('p','crw-card-meta',`${r?.label||'Video project'}${job.mtime?' · '+date(job.mtime):''}`));
+    const actions=el('div','crw-card-actions');const open=el('button','crw-secondary-button',job.hasVideo?'Video & exports':['running','queued'].includes(job.state)?'View progress':'Review issue');open.type='button';open.addEventListener('click',()=>job.hasVideo?openOutput(job):openProgress(job));actions.append(open);body.append(actions);card.append(media,body);return card;
+  }
   function renderProjects() {
-    const projects = combinedProjects().filter(j => state.projectFilter === 'all' || (state.projectFilter === 'done' ? j.state === 'done' : state.projectFilter === 'active' ? ['running','queued'].includes(j.state) : !['running','queued','done'].includes(j.state)));
-    $('crw-projects-list').replaceChildren();
-    for (const job of projects) {
-      const card = el('article','crw-project-card'); const r = findRecipe(job.style); const art = el('div','crw-card-art'); const image = el('img'); image.src = r?.art_url || '/cr-workspace/art/custom.svg'; image.alt = ''; image.loading = 'lazy'; art.append(image);
-      const body = el('div','crw-card-body'); body.append(statusBadge(job.state),el('h3','',job.title || 'Untitled video'),el('p','crw-card-meta',`${r?.label || 'Video project'}${job.mtime ? ' · '+date(job.mtime) : ''}`));
-      const actions = el('div','crw-card-actions'); const open = el('button','crw-secondary-button',job.state === 'done' ? 'Open video' : ['running','queued'].includes(job.state) ? 'View progress' : 'Review issue'); open.type='button'; open.addEventListener('click',()=>job.state === 'done' ? openOutput(job) : openProgress(job)); actions.append(open);
-      body.append(actions); card.append(art,body); $('crw-projects-list').append(card);
-    }
-    hide('crw-projects-empty',!!projects.length); text('crw-project-count',combinedProjects().length); hide('crw-project-count',!combinedProjects().length);
+    const projects=combinedProjects().filter(j=>state.projectFilter==='all'||(state.projectFilter==='done'?j.state==='done':state.projectFilter==='active'?['running','queued'].includes(j.state):!['running','queued','done'].includes(j.state)));
+    const target=$('crw-projects-list');const wanted=new Set(projects.map(j=>j.slug));
+    const available=new Set(combinedProjects().map(j=>j.slug));for(const [slug,cached] of state.projectNodes)if(!available.has(slug)){discardProject(cached);state.projectNodes.delete(slug);}
+    for(const node of [...target.children])if(!wanted.has(node.dataset.slug)){node.querySelector('video')?.pause();node.remove();}
+    projects.forEach((job,index)=>{
+      const fingerprint=JSON.stringify([job.state,job.title,job.style,job.mtime,job.hasVideo,job.editable]);let saved=state.projectNodes.get(job.slug);
+      if(!saved||saved.fingerprint!==fingerprint){discardProject(saved);saved={fingerprint,node:projectCard(job)};state.projectNodes.set(job.slug,saved);}
+      if(target.children[index]!==saved.node)target.insertBefore(saved.node,target.children[index]||null);
+    });
+    hide('crw-projects-empty',!!projects.length);text('crw-project-count',combinedProjects().length);hide('crw-project-count',!combinedProjects().length);
+    requestAnimationFrame(visiblePosters);
   }
   async function openProgress(job) {
     state.openJob = job.slug; showPage('projects'); hide('crw-progress',false); text('crw-progress-title',job.title || 'Your project');
@@ -242,8 +320,8 @@
   async function openOutput(job) {
     try {
       const data = await api(`/api/result/${encoded(job.slug)}`); if (!data.video) throw new Error('This project has no finished video to open yet.');
-      state.currentOutput = job; text('crw-output-title',job.title || 'Your video'); text('crw-output-message','');
-      $('crw-output-video').src = `/f/video/${encoded(job.slug)}`; $('crw-output-download').href = `/f/video/${encoded(job.slug)}`;
+      for(const player of all('.crw-video-preview'))player.pause();state.currentOutput = job; text('crw-output-title',job.title || 'Your video'); text('crw-output-message','');
+      $('crw-output-video').poster=`/cr-workspace/preview/project/${encoded(job.slug)}.jpg`;$('crw-output-video').src = `/f/video/${encoded(job.slug)}`; $('crw-output-download').href = `/f/video/${encoded(job.slug)}`;
       $('crw-output-editor').href = `/editor/${encoded(job.slug)}`; $('crw-output-editor').hidden = job.editable === false;
       const exports = [['audio','Narration','audio'],['script','Script','script'],['srt','Subtitles','srt'],['desc','Description','desc']];
       $('crw-output-exports').replaceChildren(); for (const [key,label,kind] of exports) if (data[key]) {const a=el('a','crw-export-link',label);a.href=`/f/${kind}/${encoded(job.slug)}`;a.download='';$('crw-output-exports').append(a);}
@@ -337,6 +415,7 @@
   for(const detail of all('details'))detail.addEventListener('toggle',()=>{if(detail.open&&detail.querySelector('#crw-character'))optionalAccounts();});
   window.addEventListener('hashchange',()=>showPage(location.hash.slice(1)||'create',false));
   document.addEventListener('visibilitychange',schedule);
+  if(!posterObserver)window.addEventListener('scroll',visiblePosters,{passive:true});
   window.CR_WORKSPACE_CLIENT={payload,selectRecipe,featureValues,api,state};
   start();
 })();

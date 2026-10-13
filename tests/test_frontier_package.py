@@ -136,3 +136,21 @@ def test_symlinked_workspace_resource_is_rejected_before_replacing_zip(synthetic
     with pytest.raises(ValueError, match="owned"):
         package.build(source, target)
     assert target.read_bytes() == b"previous complete release"
+
+
+def test_private_sample_screenshots_ship_with_exact_source_and_image_pins(synthetic_package, monkeypatch):
+    tmp_path,_=synthetic_package
+    source=source_archive(tmp_path,monkeypatch,guide=b"Synthetic creative guide")
+    folder=package.ROOT/"data/frontier/recipe-previews";folder.mkdir(parents=True)
+    image=folder/"quest.jpg";image.write_bytes(b"Synthetic sample screenshot")
+    manifest={"schema":1,"source_archive_sha256":package.SOURCE_SHA256,"frames":{"quest":{"file":"quest.jpg","sha256":hashlib.sha256(image.read_bytes()).hexdigest(),"source_sha256":"a"*64,"kind":"video_frame"}}}
+    (folder/"manifest.json").write_text(json.dumps(manifest))
+    target=tmp_path/"release.zip";package.build(source,target)
+    with zipfile.ZipFile(target)as archive:
+        assert archive.read("ChannelRecipe studio/cr_recipe_frames/quest.jpg")==image.read_bytes()
+        assert json.loads(archive.read("ChannelRecipe studio/cr_recipe_frames/manifest.json"))==manifest
+    image.write_bytes(b"changed")
+    with pytest.raises(ValueError,match="preview changed"):
+        package.build(source,target)
+    with zipfile.ZipFile(target)as archive:
+        assert archive.read("ChannelRecipe studio/cr_recipe_frames/quest.jpg")==b"Synthetic sample screenshot"

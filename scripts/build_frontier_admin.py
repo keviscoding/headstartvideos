@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
 import zipfile
 from pathlib import Path, PurePosixPath
@@ -17,7 +18,7 @@ import requests
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
-VERSION = "5.3-admin.40"
+VERSION = "5.3-admin.41"
 PRIVATE_WORKFLOWS = {
     "cr-style-delivery-prompt.txt": ROOT / "data/frontier/reference2d-compiler.txt",
     "cr-style-study-brief.txt": ROOT / "data/frontier/reference2d-study.txt",
@@ -44,6 +45,28 @@ def runtime_resources(root: Path):
             if path.is_symlink():
                 raise ValueError("Workspace artwork must be ordinary owned files.")
             yield path, "workspace_art/" + path.name
+
+
+def private_preview_resources(root: Path):
+    """Package only hash-bound real sample screenshots from the private build."""
+    folder=root / "data/frontier/recipe-previews"
+    if not folder.exists():
+        return []
+    manifest=folder / "manifest.json"
+    if folder.is_symlink() or not folder.is_dir() or manifest.is_symlink() or not manifest.is_file():
+        raise ValueError("Private video previews must be ordinary owned files.")
+    data=json.loads(manifest.read_text())
+    if data.get("schema")!=1 or data.get("source_archive_sha256")!=SOURCE_SHA256 or not isinstance(data.get("frames"),dict):
+        raise ValueError("Private video previews must match the pinned source.")
+    resources=[(manifest,"cr_recipe_frames/manifest.json")]
+    for style,row in data["frames"].items():
+        if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,139}",style) or not isinstance(row,dict) or row.get("file")!=style+".jpg" or row.get("kind")!="video_frame":
+            raise ValueError("Invalid private video preview identity.")
+        path=folder / row["file"]
+        if path.is_symlink() or not path.is_file() or path.stat().st_size>1024*1024 or hashlib.sha256(path.read_bytes()).hexdigest()!=row.get("sha256") or not re.fullmatch(r"[a-f0-9]{64}",str(row.get("source_sha256",""))):
+            raise ValueError("Private video preview changed.")
+        resources.append((path,"cr_recipe_frames/"+path.name))
+    return resources
 
 
 def compose_claude_instructions(original: bytes, overrides: bytes) -> bytes:
@@ -92,6 +115,7 @@ def build(source: Path, target: Path):
     operational_overrides = (ROOT / "local_runtime/CLAUDE.md").read_bytes()
     # Validate the complete resource inventory before replacing an existing ZIP.
     resources = list(runtime_resources(ROOT))
+    preview_resources = private_preview_resources(ROOT)
     target.parent.mkdir(parents=True, exist_ok=True)
     count = 0
     with zipfile.ZipFile(source) as original, zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as result:
@@ -119,6 +143,8 @@ def build(source: Path, target: Path):
         result.writestr("ChannelRecipe studio/cr-providers.json", (ROOT / "webapp/frontier/providers.json").read_bytes())
         for name, path in PRIVATE_WORKFLOWS.items():
             result.writestr("ChannelRecipe studio/" + name, path.read_bytes())
+        for path,relative in preview_resources:
+            result.writestr("ChannelRecipe studio/"+relative,path.read_bytes())
         result.writestr("ChannelRecipe studio/cr-release.json", json.dumps({
             "version": VERSION, "access": "admin_only", "source_sha256": SOURCE_SHA256,
             "public_release_allowed": False, "engine_files": count,
