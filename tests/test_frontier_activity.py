@@ -147,6 +147,121 @@ def test_chat_reserves_context_before_the_original_thread_starts(runtime, timeli
     assert r.client.post("/api/run", headers=r.headers, json={}).status_code == 200
 
 
+@pytest.mark.parametrize("status", ["done", "failed", "running"])
+def test_new_run_uses_fresh_session_only_after_previous_video_completed(runtime, monkeypatch, status):
+    r = runtime
+    old = "crv_" + "1" * 24
+    new = "crv_" + "2" * 24
+    r.cfg.update(brain_mode="claudecode", setup_proof={})
+    r.studio.mv.job_dir = lambda *a:r.job
+    r.studio.mv.final_video = lambda *a:r.job / "video.mp4"
+    (r.job / "video.mp4").write_bytes(b"saved output")
+    (r.job / "cr-project.json").write_text(json.dumps({"id":old, "status":"running",
+        "brain_mode":"claudecode", "job_spec":{"render_backend":"original"}}))
+    r.studio.JOBS["example"] = {"state":"queued", "lines":[]}
+    r.studio.RUNNING["slug"] = "example"
+    events = []
+    monkeypatch.setattr(cr_studio.cr_bridge, "project_progress", lambda pid:
+        events.append(("progress", pid)) or {"project":{"status":status}})
+    monkeypatch.setattr(cr_studio.cr_bridge, "begin_project", lambda title, style, resume, **kw:
+        events.append(("begin", resume)) or {"id":resume or new})
+    monkeypatch.setattr(cr_studio.cr_bridge, "finish_project", lambda receipt:events.append(("finish", receipt)))
+    monkeypatch.setattr(cr_studio, "output_artifacts", lambda *a:[
+        {"name":"video.mp4", "sha256":"f"*64, "media_type":"video/mp4"}])
+    cells = dict(zip(r.studio._run_spec.__code__.co_freevars, r.studio._run_spec.__closure__))
+    def render(spec):
+        events.append(("render",))
+        r.studio.JOBS["example"].update(state="done", done=True)
+        r.studio.RUNNING["slug"] = None
+    monkeypatch.setattr(cells["original_run"], "cell_contents", render)
+    r.studio._run_spec({"slug":"example", "title":"Existing video", "style":"history",
+        "minutes":5, "steps":["video"]})
+    assert events[:2] == [("progress",old), ("begin",None if status == "done" else old)]
+    assert events[2][0] == "render" and events[3][0] == "finish"
+    assert events[3][1]["project_id"] == (new if status == "done" else old)
+    assert (r.job / "video.mp4").read_bytes() == b"saved output"
+
+
+def test_completed_receipt_supersedes_only_matching_failed_repeat(tmp_path):
+    pid = "crv_" + "1" * 24
+    artifacts = [{"name":"video.mp4", "sha256":"a"*64, "media_type":"video/mp4"}]
+    saved = {"project_id":pid, "status":"done", "artifacts":artifacts, "error_code":""}
+    failed = {"project_id":pid, "status":"failed", "artifacts":[], "error_code":"runtime_failed"}
+    completed = tmp_path / ".cr-finish.json"
+    pending = tmp_path / ".cr-finish-pending.json"
+    completed.write_text(json.dumps(saved)); original = completed.read_bytes()
+    pending.write_text(json.dumps(failed))
+    bridge = SimpleNamespace(project_progress=lambda project:{"project":{"status":"done"},
+        "artifacts":artifacts,"stages":[{"status":"complete"}]},
+        finish_project=lambda *a:pytest.fail("Never downgrade finished work"))
+    cr_studio.sync_completion_receipt(bridge, pending)
+    assert not pending.exists() and completed.read_bytes() == original
+    assert json.loads((tmp_path / ".cr-finish-superseded.json").read_text()) == failed
+
+
+@pytest.mark.parametrize("mismatch", ["project", "status", "artifacts", "active", "failed"])
+def test_receipt_reconciliation_does_not_hide_unproven_or_active_work(tmp_path, mismatch):
+    pid = "crv_" + "1" * 24
+    artifacts = [{"name":"video.mp4", "sha256":"a"*64, "media_type":"video/mp4"}]
+    saved = {"project_id":pid, "status":"done", "artifacts":artifacts}
+    failed = {"project_id":pid, "status":"failed", "artifacts":[], "error_code":"runtime_failed"}
+    progress = {"project":{"status":"done"}, "artifacts":artifacts, "stages":[]}
+    if mismatch == "project": saved["project_id"] = "crv_" + "2" * 24
+    if mismatch == "status": progress["project"]["status"] = "running"
+    if mismatch == "artifacts": progress["artifacts"] = []
+    if mismatch in {"active", "failed"}: progress["stages"] = [{"status":"authorized" if mismatch == "active" else "failed"}]
+    completed = tmp_path / ".cr-finish.json"; completed.write_text(json.dumps(saved))
+    pending = tmp_path / ".cr-finish-pending.json"; pending.write_text(json.dumps(failed))
+    def reject(receipt):
+        assert receipt == failed
+        raise RuntimeError("Review saved work")
+    bridge = SimpleNamespace(project_progress=lambda project:progress, finish_project=reject)
+    with pytest.raises(RuntimeError, match="Review saved work"):
+        cr_studio.sync_completion_receipt(bridge, pending)
+    assert pending.exists() and json.loads(completed.read_text()) == saved
+    assert not (tmp_path / ".cr-finish-superseded.json").exists()
+
+
+def test_recovery_poll_never_replays_old_completion_during_active_work(runtime, monkeypatch):
+    r = runtime
+    r.studio.OUT = r.job
+    pending = r.job / ".cr-finish-pending.json"
+    pending.write_text(json.dumps({"project_id":"crv_" + "1" * 24, "status":"failed"}))
+    r.studio.RUNNING["slug"] = "example"
+    monkeypatch.setattr(cr_studio.cr_bridge, "call", lambda *a:{"projects":[]})
+    monkeypatch.setattr(cr_studio.cr_bridge, "finish_project", lambda *a:pytest.fail("Cannot close live resumed work"))
+    response = r.client.get("/cr-projects", headers=r.headers)
+    assert response.status_code == 200 and pending.exists()
+
+
+def test_idle_recovery_receipt_cannot_race_a_new_submission(runtime, monkeypatch):
+    r = runtime
+    r.studio.OUT = r.job
+    (r.job / ".cr-finish-pending.json").write_text(json.dumps({"project_id":"crv_" + "1"*24,
+        "status":"failed", "error_code":"runtime_failed"}))
+    entered, release = threading.Event(), threading.Event()
+    results = []
+    monkeypatch.setattr(cr_studio.cr_bridge, "call", lambda *a:{"projects":[]})
+    def finish(receipt):
+        entered.set()
+        assert release.wait(3)
+    monkeypatch.setattr(cr_studio.cr_bridge, "finish_project", finish)
+    def poll():
+        with r.studio.app.test_client() as client:
+            results.append(client.get("/cr-projects", headers=r.headers).status_code)
+    thread = threading.Thread(target=poll)
+    thread.start()
+    try:
+        assert entered.wait(3)
+        response = r.client.post("/api/run", headers=r.headers, json={})
+        assert response.status_code == 409
+        assert "current studio request" in response.get_json()["error"]
+    finally:
+        release.set(); thread.join(3)
+    assert results == [200] and not thread.is_alive()
+    assert not (r.job / ".cr-finish-pending.json").exists()
+
+
 @pytest.mark.parametrize("busy_source", ["queued", "working", "product", "farm"])
 def test_native_async_work_blocks_context_and_account_changes(runtime, timeline, busy_source):
     r = runtime

@@ -312,6 +312,30 @@ def graphics_ready():
     return result
 
 
+def sync_completion_receipt(bridge, pending):
+    """Sync metadata, retaining evidence when an old repeat contradicted success."""
+    receipt = json.loads(pending.read_text())
+    saved_path = pending.with_name(".cr-finish.json")
+    try:
+        saved = json.loads(saved_path.read_text())
+    except (OSError, ValueError):
+        saved = {}
+    if (receipt.get("status") == "failed" and saved.get("status") == "done"
+            and saved.get("project_id") == receipt.get("project_id") and saved.get("artifacts")):
+        progress = bridge.project_progress(receipt["project_id"])
+        if (progress.get("project", {}).get("status") == "done"
+                and progress.get("artifacts") == saved["artifacts"]
+                and not any(s.get("status") in {"authorized", "failed", "retry_allowed"}
+                            for s in progress.get("stages", []))):
+            # The finished session is immutable. An unsuccessful repeat must
+            # never downgrade it or overwrite its successful receipt.
+            cr_claude._private_write(pending.with_name(".cr-finish-superseded.json"), receipt)
+            pending.unlink()
+            return
+    bridge.finish_project(receipt)
+    pending.replace(saved_path)
+
+
 def tool_ready(name, flag="-version"):
     executable = shutil.which(name)
     if not executable:
@@ -618,12 +642,16 @@ def create_app():
         try:
             cr_claude.sync_receipts(cr_bridge)
             # Only replay final metadata, never generation, after a lost receipt.
-            for pending in list(studio.OUT.rglob(".cr-finish-pending.json"))[:20]:
+            if activity.lock.acquire(blocking=False):
                 try:
-                    cr_bridge.finish_project(json.loads(pending.read_text()))
-                    pending.replace(pending.with_name(".cr-finish.json"))
-                except (Exception,ValueError):
-                    pass
+                    if not activity.busy():
+                        for pending in list(studio.OUT.rglob(".cr-finish-pending.json"))[:20]:
+                            try:
+                                sync_completion_receipt(cr_bridge, pending)
+                            except (Exception,ValueError):
+                                pass
+                finally:
+                    activity.lock.release()
             projects=cr_bridge.call("projects")["projects"]
             result=[]
             for p in projects[:20]:
@@ -951,11 +979,23 @@ def create_app():
             setup=cfg.get("setup_proof")
             cr_bridge.install(studio.mv)
             if cfg.get("brain_mode") == "claudecode":
+                pending = job / ".cr-finish-pending.json"
+                if pending.is_file():
+                    # Settle the previous attempt before reopening its session.
+                    # A background recovery poll must not close live new work.
+                    sync_completion_receipt(cr_bridge, pending)
                 purpose="creative" if spec.get("timeline") else "video"
                 if spec.get("timeline"):
                     with studio.app.app_context():
                         setup=cr_readiness.proof(setup_status().get_json(),purpose=purpose)
                 resume=previous.get("id") if previous.get("brain_mode")=="claudecode" else None
+                if resume and not (spec.get("cr_project_id") or spec.get("force") or spec.get("timeline")):
+                    # A new user request can reuse the engine's local media
+                    # caches, but cannot execute new stages on a final session.
+                    # Query the live record: the on-disk begin marker may still
+                    # say running after its successful completion was recorded.
+                    if cr_bridge.project_progress(resume)["project"]["status"] == "done":
+                        resume = None
                 project=cr_bridge.begin_project(title,style,spec.get("cr_project_id") or (None if spec.get("force") or spec.get("timeline") else resume),
                     proof=setup,job_spec={**spec,"minutes":max(1,int(spec.get("minutes") or 1))},purpose=purpose)
             else:
@@ -999,8 +1039,9 @@ def create_app():
                     cr_bridge.finish_project(report)
                     pending.replace(job/".cr-finish.json")
                     receipt_saved=True
-                except Exception:
-                    state["lines"].append("Your local output is saved. Reconnect CR to update its completion record.")
+                except Exception as error:
+                    detail = str(error) if isinstance(error, cr_mcp.WorkflowError) else "CR could not save its completion record. Check your connection, then sync in Setup."
+                    state.setdefault("lines", []).append("Your local output is saved. " + detail)
             else:
                 receipt_saved=True
             return result
