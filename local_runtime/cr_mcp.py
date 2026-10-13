@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 import threading
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -14,6 +16,32 @@ PROTOCOL = "2025-03-26"
 _state = threading.local()
 REQUIRED_TOOLS = {"local_studio_prepare", "local_studio_begin", "local_studio_authorize_stage",
                   "local_studio_finish_stage", "local_studio_progress", "local_studio_finish_project", "local_studio_retry_stage"}
+
+
+def _workflow_message(message, settings=None):
+    """Bound creator messages and redact credentials even in malformed errors."""
+    if not isinstance(message, str) or not message.strip():
+        return "ChannelRecipe stopped this workflow step. Review the project before resuming."
+    message = message.strip()
+    secrets = [value for name, value in (settings or {}).items()
+               if isinstance(value, str) and len(value) >= 8
+               and (name.lower().endswith(("key", "token")) or "secret" in name.lower())]
+    secrets.extend(value for name, value in os.environ.items() if len(value) >= 8
+                   and (name.endswith("_KEY") or "TOKEN" in name))
+    for secret in sorted(set(secrets), key=len, reverse=True):
+        message = message.replace(secret, "[redacted]")
+    message = re.sub(r"(?i)\bBearer\s+[^\s,;]+", "Bearer [redacted]", message)
+    message = re.sub(r"\b(?:cr_mcp_|sk-)[A-Za-z0-9_-]+", "[redacted]", message)
+    message = re.sub(r"https?://\S+", "[URL]", message)
+    return " ".join(message.split())[:800]
+
+
+class WorkflowError(RuntimeError):
+    """A structured creator rejection, separate from transport/protocol faults."""
+    def __init__(self, message, status=None, *, settings=None):
+        self.detail = _workflow_message(message, settings)
+        self.status = status if isinstance(status, int) and not isinstance(status, bool) and 400 <= status <= 599 else None
+        super().__init__(self.detail)
 
 
 def _connection(settings):
@@ -101,9 +129,9 @@ def rpc(method, params, settings):
 def call_tool(name, arguments, settings):
     result = rpc("tools/call", {"name": name, "arguments": arguments}, settings)
     if result.get("isError"):
-        # Backend tools return safe creator-facing errors, never provider bodies.
-        message = " ".join(c.get("text", "") for c in result.get("content", []) if c.get("type") == "text")
-        raise RuntimeError(message[:800] or "ChannelRecipe stopped this workflow step. Review the project before resuming.")
+        # Unhandled MCP errors may contain server diagnostics. Only the native
+        # tools' structured rejection envelope is creator-facing data.
+        raise RuntimeError("ChannelRecipe could not complete this workflow step. Review setup before resuming.")
     data = result.get("structuredContent")
     # MCP SDK string-returning tools expose {result: <JSON string>} as their
     # structured result, alongside a JSON text block. Unwrap that contract.
@@ -119,7 +147,10 @@ def call_tool(name, arguments, settings):
         except ValueError:
             raise RuntimeError("ChannelRecipe returned an invalid workflow result.") from None
     if isinstance(data, dict) and (data.get("error") or data.get("detail")):
-        raise RuntimeError(str(data.get("error") or data.get("detail"))[:800])
+        message = data.get("error") or data.get("detail")
+        if name in REQUIRED_TOOLS and isinstance(message, str):
+            raise WorkflowError(message, data.get("status"), settings=settings)
+        raise RuntimeError("ChannelRecipe stopped this workflow step. Review the project before resuming.")
     if not isinstance(data, dict):
         raise RuntimeError("ChannelRecipe returned an invalid workflow result.")
     return data

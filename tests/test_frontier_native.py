@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 from webapp import frontier_studio as studio
-from local_runtime import cr_claude
+from local_runtime import cr_claude, cr_mcp
 
 
 @pytest.fixture
@@ -286,6 +286,96 @@ def test_cli_contract_and_local_cache_survive_connection_recovery(tmp_path,monke
     assert "CLAUDE_CODE_MAX_OUTPUT_TOKENS" not in options["env"]
     assert finish[0]["usage"]["reported"] and finish[0]["usage"]["output_tokens"]==11
     assert next((tmp_path/"output/cr-claude-cache").rglob("*.json")).stat().st_mode&0o077==0
+
+
+@pytest.mark.parametrize("envelope", ["structured", "wrapped", "text"])
+def test_completed_project_authorization_preserves_creator_reason_without_executing(native, monkeypatch, envelope):
+    studio.native_finish_project(native.owner, studio.NativeFinishProject(project_id=native.project["id"],
+        status="done", artifacts=[{"name":"video.mp4", "sha256":"f"*64, "media_type":"video/mp4"}]))
+    cfg = {"brain_mode":"claudecode", "costs_accepted":True, "local_version":studio.VERSION}
+
+    def rpc(method, params, settings):
+        assert method == "tools/call" and params["name"] == "local_studio_authorize_stage"
+        with pytest.raises(HTTPException) as failure:
+            studio.native_authorize(native.owner, studio.NativeAuthorize(**params["arguments"]["payload"]))
+        error = {"error":failure.value.detail, "status":failure.value.status_code}
+        if envelope == "structured": return {"structuredContent":error}
+        if envelope == "wrapped": return {"structuredContent":{"result":json.dumps(error)}}
+        return {"content":[{"type":"text", "text":json.dumps(error)}]}
+
+    monkeypatch.setattr(cr_mcp, "rpc", rpc)
+    monkeypatch.setattr(cr_claude, "status", lambda *a, **kw: {"ready":True})
+    monkeypatch.setattr(cr_claude, "_source_context", lambda: (2000, "make_video:metadata"))
+    bridge = SimpleNamespace(HOME=native.tmp, load_settings=lambda:cfg, current_project=lambda:native.project,
+        authorize_stage=lambda stage:cr_mcp.call_tool("local_studio_authorize_stage", {"payload":stage}, cfg))
+    runtime = cr_claude.Runtime(SimpleNamespace(), bridge, "/fake/claude",
+        lambda *a, **kw:pytest.fail("Rejected work cannot execute Claude"))
+    with pytest.raises(cr_claude.ClaudeStageStopped) as failure:
+        runtime.run(["/fake/claude", "--print", "--model", "sonnet"], input="New description for the published video", text=True)
+    assert "Resume this saved project before authorizing new work." in str(failure.value)
+    assert "No new Claude request was made." in str(failure.value)
+    assert studio.native_progress(native.owner, native.project["id"])["stages"] == []
+    assert not (native.tmp / "output/cr-claude-cache").exists()
+
+
+@pytest.mark.parametrize("source", ["transport", "protocol", "unhandled_tool"])
+def test_authorization_infrastructure_diagnostics_are_not_echoed(tmp_path, monkeypatch, source):
+    cfg = {"brain_mode":"claudecode", "costs_accepted":True, "local_version":studio.VERSION}
+    secret = "cr_mcp_infrastructure-secret"
+    def rpc(*args, **kwargs):
+        if source == "unhandled_tool":
+            return {"isError":True, "content":[{"type":"text", "text":"Server traceback: " + secret}]}
+        raise RuntimeError("Connection/protocol diagnostic Bearer " + secret)
+    monkeypatch.setattr(cr_mcp, "rpc", rpc)
+    monkeypatch.setattr(cr_claude, "status", lambda *a, **kw: {"ready":True})
+    monkeypatch.setattr(cr_claude, "_source_context", lambda: (2000, "make_video:metadata"))
+    bridge = SimpleNamespace(HOME=tmp_path, load_settings=lambda:cfg,
+        current_project=lambda:{"id":"crv_" + "1"*24},
+        authorize_stage=lambda stage:cr_mcp.call_tool("local_studio_authorize_stage", {"payload":stage}, cfg))
+    runtime = cr_claude.Runtime(SimpleNamespace(), bridge, "/fake/claude",
+        lambda *a, **kw:pytest.fail("Infrastructure failures cannot execute Claude"))
+    with pytest.raises(cr_claude.ClaudeStageStopped) as failure:
+        runtime.run(["/fake/claude", "--print", "--model", "sonnet"], input="Saved metadata request", text=True)
+    assert "could not authorize this stage" in str(failure.value)
+    assert secret not in str(failure.value) and "Server traceback" not in str(failure.value)
+    assert not (tmp_path / "output/cr-claude-cache").exists()
+
+
+def test_structured_workflow_rejection_is_typed_bounded_and_credential_safe(monkeypatch):
+    cfg = {"key":"cr_mcp_creator-private-key"}
+    monkeypatch.setenv("KIE_API_KEY", "private-saved-media-key")
+    message = ("Resume this saved project. " + cfg["key"] + " Bearer private-header-token "
+               + "sk-ant-private-key private-saved-media-key https://example.invalid/?token=private-query " + "x"*900)
+    monkeypatch.setattr(cr_mcp, "rpc", lambda *a, **kw: {"structuredContent":{"error":message, "status":409}})
+    with pytest.raises(cr_mcp.WorkflowError) as failure:
+        cr_mcp.call_tool("local_studio_authorize_stage", {}, cfg)
+    error = failure.value
+    assert error.status == 409 and str(error) == error.detail and len(str(error)) <= 800
+    assert "Resume this saved project." in str(error)
+    assert all(secret not in str(error) for secret in (cfg["key"], "private-header-token", "sk-ant-private-key",
+        "private-saved-media-key", "private-query"))
+
+
+def test_pending_receipt_rejection_does_not_masquerade_as_new_authorization(tmp_path, monkeypatch):
+    cfg = {"brain_mode":"claudecode", "costs_accepted":True, "local_version":studio.VERSION}
+    args = ["/fake/claude", "--print", "--model", "sonnet"]
+    prompt = "Already completed metadata"
+    fingerprint = cr_claude._digest({"args":args[1:], "input":prompt, "max_tokens":2000, "read_files":[]})
+    project = "crv_" + "1"*24
+    path = tmp_path / "output/cr-claude-cache" / project / ("cc_" + fingerprint + ".json")
+    cr_claude._private_write(path, {"state":"complete_local", "receipt":{"status":"complete"}, "stdout":"Saved output"})
+    original = path.read_bytes()
+    def finish(payload): raise cr_mcp.WorkflowError("Private receipt has a different saved result.", 409)
+    bridge = SimpleNamespace(HOME=tmp_path, load_settings=lambda:cfg, current_project=lambda:{"id":project},
+        finish_stage=finish, authorize_stage=lambda *a:pytest.fail("A failed receipt cannot authorize new work"))
+    monkeypatch.setattr(cr_claude, "status", lambda *a, **kw: {"ready":True})
+    monkeypatch.setattr(cr_claude, "_source_context", lambda: (2000, "make_video:metadata"))
+    runtime = cr_claude.Runtime(SimpleNamespace(), bridge, "/fake/claude",
+        lambda *a, **kw:pytest.fail("A failed receipt cannot execute Claude"))
+    with pytest.raises(cr_claude.ClaudeStageStopped) as failure:
+        runtime.run(args, input=prompt, text=True)
+    assert "Private receipt" not in str(failure.value) and "could not authorize this stage" in str(failure.value)
+    assert path.read_bytes() == original
 
 
 def test_read_only_claude_auth_never_returns_identity_or_api_credentials():

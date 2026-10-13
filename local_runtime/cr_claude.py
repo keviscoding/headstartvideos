@@ -19,6 +19,11 @@ import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 
+try:
+    from .cr_mcp import WorkflowError
+except ImportError:
+    from cr_mcp import WorkflowError
+
 GENERAL_MODEL = "claude-sonnet-5-5"
 VISUAL_MODEL = "claude-opus-5-5"
 MODELS = (GENERAL_MODEL, VISUAL_MODEL)
@@ -322,7 +327,7 @@ class Runtime:
         try:
             installed_version=json.loads((Path(self.bridge.HOME)/"cr-release.json").read_text())["version"]
         except (OSError,ValueError,KeyError):
-            installed_version=cfg.get("local_version","5.3-admin.32")
+            installed_version=cfg.get("local_version","5.3-admin.33")
         cache = Path(self.bridge.HOME) / "output" / "cr-claude-cache" / project_id / (stage_id + ".json")
         try:
             saved = json.loads(cache.read_text())
@@ -341,7 +346,13 @@ class Runtime:
             # only records the already cached result; it never invokes Claude.
             if saved.get("state") in {"complete_local","failed_local"}:
                 self.bridge.finish_stage(saved["receipt"])
+        except Exception:
+            raise ClaudeStageStopped("ChannelRecipe could not authorize this stage. Your work is saved; reconnect before resuming.") from None
+        try:
             approval = self.bridge.authorize_stage(stage)
+        except WorkflowError as error:
+            raise ClaudeStageStopped("ChannelRecipe stopped this stage: " + error.detail
+                                     + " No new Claude request was made.") from None
         except Exception:
             raise ClaudeStageStopped("ChannelRecipe could not authorize this stage. Your work is saved; reconnect before resuming.") from None
         if approval.get("reuse") and not approval.get("execute"):
