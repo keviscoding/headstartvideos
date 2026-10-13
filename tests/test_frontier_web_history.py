@@ -89,7 +89,7 @@ def mount(page, status, project, progress, *, progress_status=200, legacy=None):
     page.goto("https://cr-history.test/app")
     page.add_script_tag(path=str(SCRIPT))
     page.evaluate("CRLocalStudio.open()")
-    page.locator('[data-ls-step="4"]').click()
+    # Subscribers land on the setup page; their projects load below it.
     page.locator(".ls-view-requests").click()
     return calls, page.locator(".ls-request-list")
 

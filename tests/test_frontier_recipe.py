@@ -12,16 +12,16 @@ sys.path.insert(0, str(ROOT))
 
 
 def test_frontier_recipe_registered():
-    """Frontier recipe should be registered with admin_only flag."""
+    """The hosted documentary recipe is registered and admin-only."""
     from core.recipes import RECIPES, get_recipe
     
     assert "frontier" in RECIPES, "Frontier recipe not registered"
     
     frontier = get_recipe("frontier")
     assert frontier["pipeline"] == "frontier"
-    assert frontier["label"] == "Frontier"
-    assert frontier.get("admin_only") is True, "Frontier should be admin_only"
-    assert "LLM" in frontier["requires_keys"]
+    assert frontier["label"] == "Cloud Documentary"
+    assert frontier.get("admin_only") is True, "The hosted documentary recipe should be admin_only"
+    assert "ATLASCLOUD_KEY" in frontier["requires_keys"]
 
 
 def test_admin_only_flag_validates():
@@ -156,7 +156,8 @@ def test_frontier_niche_json_exists():
     
     assert niche["id"] == "frontier"
     assert niche["recipe"] == "frontier"
-    assert niche["name"] == "Frontier"
+    assert niche["name"] == "Cloud Documentary"
+    assert "Frontier" not in json.dumps(niche), "user-visible copy must not use the old brand"
     assert niche["format"] == "long"
 
 

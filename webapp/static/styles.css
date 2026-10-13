@@ -69,6 +69,7 @@
 
 /* ---- Navigation ---- */
 .nav-btn {
+  white-space: nowrap;
   padding: 0.4rem 0.75rem;
   border-radius: var(--radius-sm);
   font-size: 14px;
@@ -82,6 +83,26 @@
 }
 .nav-btn:hover { color: var(--app-ink); background: var(--app-surface-2); }
 .nav-btn.active { color: var(--app-ink); background: var(--app-surface-2); }
+
+/* Product version chips: Studio is v2, Classic recipes are v1 */
+.nav-version {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--app-border);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--app-ink-3);
+  vertical-align: 1px;
+}
+.nav-version-new {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
 
 /* Recipe Brain — subtle curiosity magnet next to Settings */
 .nav-brain-btn {
@@ -1816,4 +1837,24 @@
   font-size: 13px;
   font-weight: 600;
   padding: 6px 8px;
+}
+
+/* Classic recipes (v1) banner pointing to Studio (v2) */
+.v1-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px 14px 18px;
+  border: 1px solid var(--app-border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-md);
+  background: var(--app-surface);
+}
+.v1-banner p { flex: 1; margin: 0; font-family: var(--font-body); font-size: 14px; line-height: 1.5; color: var(--app-ink-2); }
+.v1-banner strong { color: var(--app-ink); }
+.v1-banner .btn-primary { white-space: nowrap; font-size: 14px; padding: 9px 16px; }
+.link-btn { background: none; border: 0; padding: 0; color: #b4a7ff; font: inherit; font-weight: 600; cursor: pointer; }
+.link-btn:hover { text-decoration: underline; text-underline-offset: 3px; }
+@media (max-width: 640px) {
+  .v1-banner { flex-direction: column; align-items: flex-start; }
 }

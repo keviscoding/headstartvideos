@@ -23,6 +23,10 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_WHISPER_MODEL = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo")
 # Trial grant (Stripe checkout with trial_period_days). Was 3; cut to 2 for COGS.
 TRIAL_CREDITS = max(1, int(os.getenv("TRIAL_CREDITS", "2")))
+# Card-backed free trial length for new subscriptions. 0 = no free trial: checkout
+# charges immediately (the default since the Studio launch). Existing trials still
+# convert or cancel normally.
+FREE_TRIAL_DAYS = max(0, int(os.getenv("FREE_TRIAL_DAYS", "0")))
 # Cheap Atlas text for titles/scripts/planning (~$0.25/$1.50 per 1M vs 3.5's $1.50/$9).
 GEMINI_TEXT_MODEL = os.getenv("GEMINI_TEXT_MODEL", "gemini-3.1-flash-lite")
 ATLAS_TEXT_MODEL = os.getenv("ATLAS_TEXT_MODEL", "google/gemini-3.1-flash-lite")
@@ -142,7 +146,7 @@ COOK_CONCURRENCY_PRO = max(1, int(os.getenv("COOK_CONCURRENCY_PRO", "3")))
 def cook_concurrency_for_plan(plan: str | None) -> int:
     """How many video cooks a user may run at once."""
     p = (plan or "").strip().lower()
-    if p == "pro":
+    if p in ("pro", "studio_pro", "studio_max"):
         return COOK_CONCURRENCY_PRO
     if p == "daily":
         return COOK_CONCURRENCY_DAILY
@@ -193,11 +197,16 @@ STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 # Legacy (kept for backward compat)
 STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "")
 STRIPE_PRICE_ID_ANNUAL = os.getenv("STRIPE_PRICE_ID_ANNUAL", "")
-# Two-tier pricing
+# Plan prices (tiers are defined in webapp/plans.py). Starter is legacy-only;
+# Daily is sold as Creator; Pro and Max are the Studio tiers.
 STRIPE_PRICE_STARTER_MONTHLY = os.getenv("STRIPE_PRICE_STARTER_MONTHLY", "")
 STRIPE_PRICE_STARTER_ANNUAL = os.getenv("STRIPE_PRICE_STARTER_ANNUAL", "")
 STRIPE_PRICE_DAILY_MONTHLY = os.getenv("STRIPE_PRICE_DAILY_MONTHLY", "")
 STRIPE_PRICE_DAILY_ANNUAL = os.getenv("STRIPE_PRICE_DAILY_ANNUAL", "")
+STRIPE_PRICE_PRO_MONTHLY = os.getenv("STRIPE_PRICE_PRO_MONTHLY", "")
+STRIPE_PRICE_PRO_ANNUAL = os.getenv("STRIPE_PRICE_PRO_ANNUAL", "")
+STRIPE_PRICE_MAX_MONTHLY = os.getenv("STRIPE_PRICE_MAX_MONTHLY", "")
+STRIPE_PRICE_MAX_ANNUAL = os.getenv("STRIPE_PRICE_MAX_ANNUAL", "")
 STRIPE_PRICE_TOPUP_5 = os.getenv("STRIPE_PRICE_TOPUP_5", "")
 STRIPE_PRICE_TOPUP_15 = os.getenv("STRIPE_PRICE_TOPUP_15", "")
 

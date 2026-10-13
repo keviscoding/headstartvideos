@@ -77,7 +77,8 @@ def animate_credit_cost(
 def niche_finder_can_browse(plan: str, *, is_admin: bool = False) -> bool:
     if is_admin:
         return True
-    return (plan or "free").lower() in ("starter", "daily", "pro")
+    from webapp.plans import is_paid_plan
+    return is_paid_plan(plan)
 
 
 def trial_pack_allowed(

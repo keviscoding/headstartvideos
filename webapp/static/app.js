@@ -355,6 +355,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const hash = window.location.hash.slice(1);
     if (hash) navigateTo(hash);
     else if (restored) navigateTo('pipeline');
+    // Studio (v2) is the front door; Classic recipes stay one click away.
+    else navigateTo('local-studio');
 
     maybeShowWelcomeCelebration();
 });
@@ -363,10 +365,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 // Page Navigation (SPA routing)
 // ---------------------------------------------------------------------------
 function navigateTo(page) {
-    if (page === 'local-studio' && !(currentUser && currentUser.is_admin)) {
-        if (!currentUser) showAuthModal();
-        return;
-    }
     if (page === 'settings' && !currentUser) {
         showAuthModal();
         return;
@@ -916,8 +914,34 @@ function selectNiche(niche, card) {
     setTimeout(() => goToStep(2), 300);
 }
 
+/** Plan values stored on the account. Tiers mirror webapp/plans.py. */
+const PLAN_TIERS = ['starter', 'daily', 'studio_pro', 'studio_max'];
+const STUDIO_TIERS = ['daily', 'studio_pro', 'studio_max'];
+
+function planTier(plan) {
+    let p = String(plan || '').toLowerCase();
+    if (p.endsWith('_trial')) p = p.slice(0, -6);
+    if (p === 'pro') p = 'daily'; // legacy single-tier subscribers are served as Creator
+    return PLAN_TIERS.includes(p) ? p : '';
+}
+
 function isPaidUser() {
-    return currentUser && ['pro', 'starter', 'daily', 'starter_trial', 'daily_trial'].includes(currentUser.plan);
+    return !!currentUser && !!planTier(currentUser.plan);
+}
+
+/** Customer-facing plan name, e.g. "Creator" or "Pro (trial)". */
+function planLabel(plan) {
+    const names = { starter: 'Starter', daily: 'Creator', studio_pro: 'Pro', studio_max: 'Max' };
+    const p = String(plan || '').toLowerCase();
+    if (p === 'pro') return 'Pro'; // admins are shown as Pro
+    const tier = planTier(p);
+    if (!tier) return 'Free';
+    return p.endsWith('_trial') ? `${names[tier]} (trial)` : names[tier];
+}
+
+/** Admins, and Creator/Pro/Max subscribers or trials, can use ChannelRecipe Studio. */
+function hasStudioAccess() {
+    return !!currentUser && (!!currentUser.is_admin || STUDIO_TIERS.includes(planTier(currentUser.plan)));
 }
 
 function trialCredits() {
@@ -926,7 +950,7 @@ function trialCredits() {
 }
 
 function isTrialUser() {
-    return currentUser && ['starter_trial', 'daily_trial'].includes(currentUser.plan);
+    return !!currentUser && String(currentUser.plan || '').endsWith('_trial') && !!planTier(currentUser.plan);
 }
 
 /** Paid plans past trial can go up to max_paid_minutes; free + trial are capped. */
@@ -978,7 +1002,7 @@ function updateScriptLimitMsg() {
         if (isTrialUser()) {
             body.innerHTML = `Trial caps at <span id="limit-minutes">${cap}</span> min. Start your plan for up to 20 min videos.`;
         } else {
-            body.innerHTML = `Free plan caps at <span id="limit-minutes">${cap}</span> min. Starter &amp; Daily unlock up to 20 min.`;
+            body.innerHTML = `Free plan caps at <span id="limit-minutes">${cap}</span> min. Paid plans unlock up to 20 min.`;
         }
     }
     msg.classList.add('hidden');
@@ -996,7 +1020,7 @@ function showLengthUpgradePrompt() {
         if (isTrialUser()) {
             body.innerHTML = `Trial caps at <span id="limit-minutes">${cap}</span> min. Start your plan for up to 20 min videos.`;
         } else {
-            body.innerHTML = `Free plan caps at <span id="limit-minutes">${cap}</span> min. Starter &amp; Daily unlock up to 20 min.`;
+            body.innerHTML = `Free plan caps at <span id="limit-minutes">${cap}</span> min. Paid plans unlock up to 20 min.`;
         }
     }
     msg.classList.remove('hidden');
@@ -1018,8 +1042,14 @@ let _checkoutSkipTrial = false;
 let _pendingUpgradeOpts = null;
 
 /** Free account that can still start a Stripe trial (not currently trialing). */
+/** Free trials are off unless the server advertises a trial length. */
+function trialsEnabled() {
+    return Number(_featureFlags.free_trial_days || 0) > 0;
+}
+
 function canStartFreeTrial() {
     if (!currentUser) return false;
+    if (!trialsEnabled()) return false;
     if (isTrialUser()) return false;
     if ((currentUser.plan || 'free') !== 'free') return false;
     return !currentUser.trial_used;
@@ -1077,7 +1107,9 @@ function openUpgradeFlow(opts = {}) {
             skipTrial: true,
             reason: opts.reason || 'subscribe',
             trialMessage: opts.trialMessage
-                || 'Your free trial was already used. Subscribe to keep creating — billed today.',
+                || (trialsEnabled() && currentUser.trial_used
+                    ? 'Your free trial was already used. Subscribe to keep creating — billed today.'
+                    : 'Choose a plan to start creating — billed today. Cancel anytime.'),
         });
         return;
     }
@@ -1118,7 +1150,7 @@ function showPricingModal(opts = {}) {
     const starterBtn = document.getElementById('pricing-cta-starter');
     const dailyBtn = document.getElementById('pricing-cta-daily');
     // trial_used is set when a trial *starts* — only treat as spent if they're not on trial now
-    const usedTrial = (!!currentUser.trial_used && !isTrialUser()) || _checkoutSkipTrial;
+    const usedTrial = (!!currentUser.trial_used && !isTrialUser()) || _checkoutSkipTrial || !trialsEnabled();
     const need = Math.max(1, Number(opts.need || 1));
     const have = Math.max(0, Number(opts.have ?? currentUser.credits ?? 0));
     const paidSubscriber = isPaidUser() && !isTrialUser();
@@ -1223,10 +1255,18 @@ function showPricingModal(opts = {}) {
         if (subtitle) subtitle.textContent = `Start your free trial to cook this video — ${trialCredits()} credits included.`;
     } else if (usedTrial) {
         if (heading) heading.textContent = 'Choose your plan';
-        if (subtitle) subtitle.textContent = 'Your free trial was already used. Subscribe to keep creating.';
+        if (subtitle) {
+            subtitle.textContent = trialsEnabled() && currentUser.trial_used
+                ? 'Your free trial was already used. Subscribe to keep creating.'
+                : 'Every plan includes ChannelRecipe Studio. Cancel anytime.';
+        }
     } else {
         if (heading) heading.textContent = 'Choose your plan';
-        if (subtitle) subtitle.textContent = '7-day free trial on any plan. Cancel anytime.';
+        if (subtitle) {
+            subtitle.textContent = trialsEnabled()
+                ? `${_featureFlags.free_trial_days}-day free trial on any plan. Cancel anytime.`
+                : 'Every plan includes ChannelRecipe Studio. Cancel anytime.';
+        }
     }
 
     baseProps.heading = heading?.textContent || '';
@@ -1242,20 +1282,24 @@ function showPricingModal(opts = {}) {
  * toggle. Everyone else is starting a trial or a normal checkout.
  */
 function _refreshPricingCtas() {
-    const starterBtn = document.getElementById('pricing-cta-starter');
-    const dailyBtn = document.getElementById('pricing-cta-daily');
-    if (!starterBtn && !dailyBtn) return;
-
-    if (currentUser && isTrialUser()) {
-        const cycle = _pricingBillingCycle === 'annual' ? 'annual' : 'monthly';
-        if (starterBtn) starterBtn.textContent = `Start Starter — ${planChargeToday('starter', cycle)} today`;
-        if (dailyBtn) dailyBtn.textContent = `Start Daily — ${planChargeToday('daily', cycle)} today`;
-        return;
-    }
-    const usedTrial = (!!(currentUser && currentUser.trial_used) && !isTrialUser()) || !!_checkoutSkipTrial;
-    const ctaText = usedTrial ? 'Subscribe now' : 'Start free trial';
-    if (starterBtn) starterBtn.textContent = ctaText;
-    if (dailyBtn) dailyBtn.textContent = ctaText;
+    const cycle = _pricingBillingCycle === 'annual' ? 'annual' : 'monthly';
+    const onTrial = !!currentUser && isTrialUser();
+    const subscribed = isPaidUser() && !onTrial;
+    const current = planTier(currentUser?.plan);
+    const usedTrial = (!!(currentUser && currentUser.trial_used) && !onTrial) || !!_checkoutSkipTrial || !trialsEnabled();
+    PLAN_CATALOG.forEach(plan => {
+        const btn = document.getElementById(`pricing-cta-${plan.tier}`);
+        if (!btn) return;
+        if (onTrial) {
+            // This click bills immediately, so the button names the charge.
+            btn.textContent = `Start ${plan.label} — ${planChargeToday(plan.tier, cycle)} today`;
+        } else if (subscribed) {
+            // Plan changes for subscribers go through Stripe's billing portal.
+            btn.textContent = plan.tier === current ? 'Your current plan' : `Switch to ${plan.label}`;
+        } else {
+            btn.textContent = usedTrial ? 'Subscribe now' : 'Start free trial';
+        }
+    });
 }
 
 function showCreditsNeededModal({ need = 1, have = null, reason = 'credits' } = {}) {
@@ -1312,8 +1356,8 @@ function showCelebration(kind = 'trial') {
         if (cta) cta.textContent = 'Back to cooking →';
     } else if (kind === 'subscribe') {
         if (title) title.textContent = "You're subscribed";
-        if (sub) sub.textContent = 'Welcome aboard. Your plan is live.';
-        if (cta) cta.textContent = "Let's go →";
+        if (sub) sub.textContent = 'Your plan is live. Next: download Studio and make your first video.';
+        if (cta) cta.textContent = 'Set up Studio →';
     } else {
         if (title) title.textContent = "You're in";
         if (sub) sub.textContent = `Your free trial is live. ${trialCredits()} videos ready to cook.`;
@@ -1395,6 +1439,12 @@ function maybeShowWelcomeCelebration() {
                 overlay.style.display = 'flex';
             }
             return;
+        }
+        // Stripe's webhook can land just after the redirect: wait for the plan so
+        // a new subscriber doesn't see "choose a plan" on the Studio page.
+        for (let i = 0; i < 8 && !(isPaidUser() || isTrialUser()); i++) {
+            await new Promise((r) => setTimeout(r, 800));
+            await refreshUserData();
         }
         if (welcome === 'trial') {
             // Transparent notice for people who saw the YouTube promise of 3 free videos
@@ -1500,12 +1550,20 @@ function hideTrialExhaustedModal() {
  * the CTA must state outright — annual takes the whole year at once.
  */
 const PLAN_CATALOG = [
-    { tier: 'starter', monthly: { charge: '$27' }, annual: { charge: '$270' } },
-    { tier: 'daily', monthly: { charge: '$49' }, annual: { charge: '$490' } },
+    { tier: 'daily', label: 'Creator', credits: 35,
+      monthly: { charge: '$49' }, annual: { charge: '$490', perMonth: '$40.83' } },
+    { tier: 'studio_pro', label: 'Pro', credits: 60,
+      monthly: { charge: '$79' }, annual: { charge: '$790', perMonth: '$65.83' } },
+    { tier: 'studio_max', label: 'Max', credits: 100,
+      monthly: { charge: '$119' }, annual: { charge: '$1,190', perMonth: '$99.17' } },
+];
+// Starter is no longer sold, but trial users who started on it can keep it.
+const LEGACY_PLAN_CATALOG = [
+    { tier: 'starter', label: 'Starter', credits: 15, monthly: { charge: '$27' }, annual: { charge: '$270' } },
 ];
 
 function planByTier(tier) {
-    return PLAN_CATALOG.find(p => p.tier === tier) || PLAN_CATALOG[0];
+    return PLAN_CATALOG.concat(LEGACY_PLAN_CATALOG).find(p => p.tier === tier) || PLAN_CATALOG[0];
 }
 
 /**
@@ -1540,7 +1598,7 @@ function planValueCopy() {
 
 /** The tier the current trial would convert to if the user changes nothing. */
 function trialTier() {
-    return currentUser && currentUser.plan === 'daily_trial' ? 'daily' : 'starter';
+    return planTier(currentUser?.plan) || 'daily';
 }
 let _endTrialInFlight = false;
 
@@ -1619,29 +1677,27 @@ function setPricingPlan(cycle) {
     const mBtn = document.getElementById('pricing-monthly-btn');
     const aBtn = document.getElementById('pricing-annual-btn');
 
-    if (cycle === 'annual') {
-        mBtn.style.background = 'transparent'; mBtn.style.color = 'var(--app-ink-3)';
-        aBtn.style.background = 'var(--accent)'; aBtn.style.color = 'white';
-        document.getElementById('starter-price').textContent = '$22.50';
-        document.getElementById('starter-period').textContent = '/mo';
-        document.getElementById('starter-note').textContent = 'Billed $270/year · 2 months free';
-        document.getElementById('starter-videos').innerHTML = '<strong>180 credits</strong>/year';
-        document.getElementById('daily-price').textContent = '$40.83';
-        document.getElementById('daily-period').textContent = '/mo';
-        document.getElementById('daily-note').textContent = 'Billed $490/year · 2 months free';
-        document.getElementById('daily-videos').innerHTML = '<strong>420 credits</strong>/year';
-    } else {
-        aBtn.style.background = 'transparent'; aBtn.style.color = 'var(--app-ink-3)';
-        mBtn.style.background = 'var(--accent)'; mBtn.style.color = 'white';
-        document.getElementById('starter-price').textContent = '$27';
-        document.getElementById('starter-period').textContent = '/mo';
-        document.getElementById('starter-note').textContent = '15 credits / month · cancel anytime';
-        document.getElementById('starter-videos').innerHTML = '<strong>15 credits</strong>/month';
-        document.getElementById('daily-price').textContent = '$49';
-        document.getElementById('daily-period').textContent = '/mo';
-        document.getElementById('daily-note').textContent = '35 credits / month · cancel anytime';
-        document.getElementById('daily-videos').innerHTML = '<strong>35 credits</strong>/month';
+    const annual = cycle === 'annual';
+    if (mBtn && aBtn) {
+        (annual ? mBtn : aBtn).style.background = 'transparent';
+        (annual ? mBtn : aBtn).style.color = 'var(--app-ink-3)';
+        (annual ? aBtn : mBtn).style.background = 'var(--accent)';
+        (annual ? aBtn : mBtn).style.color = 'white';
     }
+    const setText = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+    PLAN_CATALOG.forEach(plan => {
+        setText(`${plan.tier}-price`, annual ? plan.annual.perMonth : plan.monthly.charge);
+        setText(`${plan.tier}-period`, '/mo');
+        setText(`${plan.tier}-note`, annual
+            ? `Billed ${plan.annual.charge}/year · 2 months free`
+            : 'Billed monthly · cancel anytime');
+        const credits = document.getElementById(`${plan.tier}-videos`);
+        if (credits) {
+            credits.innerHTML = annual
+                ? `<strong>${plan.credits * 12} credits</strong>/year`
+                : `<strong>${plan.credits} credits</strong>/month`;
+        }
+    });
     // A trial user's CTA names the charge, which differs per interval.
     _refreshPricingCtas();
     if (prev && prev !== cycle) {
@@ -1654,7 +1710,7 @@ function setPricingPlan(cycle) {
     }
 }
 
-async function proceedToCheckout(tier = 'starter') {
+async function proceedToCheckout(tier = 'daily') {
     const cycle = _pricingBillingCycle === 'annual' ? 'annual' : 'monthly';
     const context = _paywallContext || paywallContextFromOpts({});
     _track('pricing_cta_clicked', {
@@ -1663,12 +1719,16 @@ async function proceedToCheckout(tier = 'starter') {
         interval: cycle,
         on_trial: isTrialUser(),
         plan: currentUser?.plan || 'free',
-        cta_label: (tier === 'daily'
-            ? document.getElementById('pricing-cta-daily')?.textContent
-            : document.getElementById('pricing-cta-starter')?.textContent) || '',
+        cta_label: document.getElementById(`pricing-cta-${tier}`)?.textContent || '',
         open_ms: _paywallOpenedAt ? Math.max(0, Date.now() - _paywallOpenedAt) : 0,
     });
     hidePricingModal({ via: 'cta' });
+    if (isPaidUser() && !isTrialUser()) {
+        // Checkout refuses existing subscribers; Stripe's portal changes plans
+        // with proration and keeps the same subscription.
+        if (planTier(currentUser.plan) !== tier) await openStripePortal();
+        return;
+    }
     if (isTrialUser()) {
         // Checkout refuses anyone with a live subscription, so converting the
         // trial in place is the only route. The button they just pressed named
@@ -1702,7 +1762,7 @@ function upgradeToPro(plan = 'monthly') {
     openUpgradeFlow();
 }
 
-async function _doCheckout(plan = 'monthly') {
+async function _doCheckout(plan = 'daily_monthly') {
     if (!currentUser) { showAuthModal(); return; }
     if (isTrialUser()) {
         openUpgradeFlow({ trialMessage: 'Start your plan now to continue.' });
@@ -1715,7 +1775,11 @@ async function _doCheckout(plan = 'monthly') {
         const res = await fetch('/api/billing/checkout', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ plan, skip_trial: !!_checkoutSkipTrial }),
+            body: JSON.stringify({
+                plan,
+                skip_trial: !!_checkoutSkipTrial,
+                return_to: state.page === 'pipeline' ? 'pipeline' : 'local-studio',
+            }),
         });
         let data;
         try { data = await res.json(); } catch (_) { data = {}; }
@@ -1929,8 +1993,10 @@ async function loadVoices() {
             const voices = await res.json();
             let merged = Array.isArray(voices) && voices.length ? [...voices] : [...FALLBACK_VOICES];
             try {
-                const cRes = await fetch('/api/voice/clones');
-                if (cRes.ok) {
+                // Clones are per-account; asking while signed out would 401 and
+                // pop the sign-in modal on every anonymous page load.
+                const cRes = currentUser ? await fetch('/api/voice/clones') : null;
+                if (cRes && cRes.ok) {
                     const cData = await cRes.json();
                     if (cData.enabled) {
                         _featureFlags.voice_clone_enabled = true;
@@ -3942,8 +4008,8 @@ async function loadVoiceOptions() {
             sel.appendChild(opt);
         });
         try {
-            const cRes = await fetch('/api/voice/clones');
-            if (cRes.ok) {
+            const cRes = currentUser ? await fetch('/api/voice/clones') : null;
+            if (cRes && cRes.ok) {
                 const cData = await cRes.json();
                 (cData.clones || []).forEach((c) => {
                     const opt = document.createElement('option');
@@ -4502,12 +4568,12 @@ async function initNicheFinderPage() {
             const cta = document.getElementById('nf-gate-cta');
             if (title) {
                 title.textContent = (currentUser?.plan || '').includes('trial')
-                    ? 'Unlock with Starter or Daily'
-                    : 'Available on Starter & Daily';
+                    ? 'Unlock with any paid plan'
+                    : 'Included in every paid plan';
             }
             if (body) {
                 body.textContent = data.message
-                    || 'Niche Finder is available on Starter and Daily plans.';
+                    || 'Niche Finder is included in every paid plan.';
             }
             if (cta) {
                 cta.textContent = (currentUser?.plan || '').includes('trial')
@@ -4515,7 +4581,7 @@ async function initNicheFinderPage() {
                     : 'View plans';
                 cta.classList.remove('hidden');
                 cta.onclick = () => openUpgradeFlow({
-                    trialMessage: 'Niche Finder unlocks on Starter and Daily.',
+                    trialMessage: 'Niche Finder is included in every paid plan.',
                 });
             }
         }
@@ -5244,8 +5310,8 @@ async function initRecipeBrainPage() {
     if (note) {
         if (!currentUser) {
             note.textContent = 'Sign in to connect Claude to your ChannelRecipe account.';
-        } else if (['starter', 'daily', 'pro'].includes(plan.toLowerCase())) {
-            note.textContent = `You’re on ${plan} — full niche database access in MCP.`;
+        } else if (isPaidUser() && !isTrialUser()) {
+            note.textContent = `You’re on ${planLabel(plan)} — full niche database access in MCP.`;
         } else {
             note.textContent = 'Free plan: connect for a taste, then upgrade when Claude hits the limit.';
         }
@@ -6294,9 +6360,8 @@ function updateAuthUI() {
     navSettings?.classList.toggle('hidden', !signedIn);
     navSettingsMobile?.classList.toggle('hidden', !signedIn);
     const isAdmin = !!(currentUser && currentUser.is_admin);
-    document.getElementById('nav-local-studio')?.classList.toggle('hidden', !isAdmin);
-    document.getElementById('nav-local-studio-mobile')?.classList.toggle('hidden', !isAdmin);
-    if (!isAdmin && state.page === 'local-studio') navigateTo('pipeline');
+    // The Studio page explains itself to everyone; it re-renders on sign-in/out.
+    if (state.page === 'local-studio') window.CRLocalStudio?.open();
     document.getElementById('nav-niche-intel')?.classList.toggle('hidden', !isAdmin);
     document.getElementById('nav-niche-intel-mobile')?.classList.toggle('hidden', !isAdmin);
     const showAnalytics = canViewAnalytics();
@@ -6314,14 +6379,13 @@ function updateAuthUI() {
         userBtn.classList.remove('hidden');
         userBtn.textContent = currentUser.email[0].toUpperCase();
         document.getElementById('user-email-display').textContent = currentUser.email;
-        const planLabels = { free: 'Free', starter: 'Starter', daily: 'Daily', pro: 'Pro', starter_trial: 'Starter (trial)', daily_trial: 'Daily (trial)' };
-        document.getElementById('user-plan-display').textContent = planLabels[currentUser.plan] || currentUser.plan;
+        document.getElementById('user-plan-display').textContent = planLabel(currentUser.plan);
         if (isTrialUser()) {
             document.getElementById('credits-count').textContent = currentUser.credits + ' of ' + trialCredits() + ' trial';
             document.getElementById('credits-plan').textContent = 'videos';
         } else {
             document.getElementById('credits-count').textContent = currentUser.credits + ' credits';
-            document.getElementById('credits-plan').textContent = currentUser.plan === 'free' ? '' : (planLabels[currentUser.plan] || '').toLowerCase();
+            document.getElementById('credits-plan').textContent = currentUser.plan === 'free' ? '' : planLabel(currentUser.plan).toLowerCase();
         }
         creditsDisplay.classList.remove('hidden');
         // Show Upgrade for free users AND trial users (so they can convert early)
@@ -6489,6 +6553,11 @@ function _accessChooserStorageKey() {
 function maybeShowAccessChooser(opts = {}) {
     if (!currentUser) return;
     if ((currentUser.plan || 'free') !== 'free') return;
+    // Without free trials there is nothing to choose: new accounts see Studio and its plans.
+    if (!trialsEnabled()) {
+        if (opts.fromSignup) navigateTo('local-studio');
+        return;
+    }
     if (currentUser.trial_used) return;
     // Signup path or explicit Settings reopen only — not every session boot/login.
     if (!opts.fromSignup && !opts.force) return;
@@ -6579,8 +6648,7 @@ async function handleLogout() {
 // ---------------------------------------------------------------------------
 function loadBillingPage() {
     if (!currentUser) return;
-    const planLabels = { free: 'Free', starter: 'Starter', daily: 'Daily', pro: 'Pro', starter_trial: 'Starter (trial)', daily_trial: 'Daily (trial)' };
-    document.getElementById('billing-plan-name').textContent = planLabels[currentUser.plan] || currentUser.plan;
+    document.getElementById('billing-plan-name').textContent = planLabel(currentUser.plan);
     if (isTrialUser()) {
         document.getElementById('billing-credits').textContent = currentUser.credits + ' of ' + trialCredits() + ' trial videos';
     } else {
@@ -6616,7 +6684,11 @@ function loadBillingPage() {
         const title = document.getElementById('billing-upgrade-title');
         const desc = document.getElementById('billing-upgrade-desc');
         const btn = document.getElementById('billing-upgrade-btn');
-        if (usedTrial) {
+        if (!trialsEnabled()) {
+            if (title) title.textContent = 'Choose a plan';
+            if (desc) desc.textContent = 'Every plan includes ChannelRecipe Studio, the niche library and cloud credits. Cancel anytime.';
+            if (btn) btn.textContent = 'See plans';
+        } else if (usedTrial) {
             if (title) title.textContent = 'Subscribe to keep creating';
             if (desc) desc.textContent = 'Your free trial was already used. Choose a plan to continue — billed immediately.';
             if (btn) btn.textContent = 'Choose a plan';

@@ -1,8 +1,8 @@
 {
   "id": "frontier",
-  "name": "Frontier",
-  "tagline": "1:1 Whop Frontier — Professional faceless videos (Admin only)",
-  "description": "Full Whop Frontier pipeline: Atlas gpt-image-2 AI stills, Pexels stock b-roll, word-locked motion timing, Ken Burns zooms, ASS kinetic captions, and Frontier color grading. Produces videos visually indistinguishable from Whop Frontier output.",
+  "name": "Cloud Documentary",
+  "tagline": "Cloud-made documentary with stills, stock b-roll and kinetic captions (Admin only)",
+  "description": "AI stills, Pexels stock b-roll, word-locked motion timing, Ken Burns zooms, kinetic captions and a warm documentary colour grade.",
   "category": "Premium",
   "difficulty": "Advanced",
   "rpm_range": "$8 - $15",
@@ -13,7 +13,7 @@
   "max_free_minutes": 0,
   "max_paid_minutes": 20,
   "style_preset": "jung",
-  "thumbnail_style": "Cinematic with dramatic lighting and bold text overlay, matching Frontier aesthetic",
+  "thumbnail_style": "Cinematic with dramatic lighting and bold text overlay, matching a warm documentary aesthetic",
   "example_topics": [
     "The mysterious phenomenon scientists can't explain",
     "Ancient secrets that challenge everything we know",

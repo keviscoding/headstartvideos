@@ -7,11 +7,12 @@ Script / thumbnail / transcript tools may still hit paid providers.
 
 from __future__ import annotations
 
+from webapp import plans
+
 UPGRADE_URL = "https://channelrecipe.com/app#billing"
 UPGRADE_CTA = (
-    f"Upgrade at {UPGRADE_URL} — Starter unlocks the full live niche database "
-    "inside Claude + Niche Finder in the app. Daily unlocks higher volume for "
-    "daily publishing."
+    f"Upgrade at {UPGRADE_URL} — every paid plan unlocks the full live niche "
+    "database inside Claude, Niche Finder in the app and ChannelRecipe Studio."
 )
 TRIAL_UPGRADE_CTA = (
     "Your free trial includes a limited niche database in Claude. "
@@ -30,7 +31,8 @@ TRIAL_NICHES = 15
 TRIAL_SUBJECTS = 24
 TRIAL_CHANNELS = 24
 
-# Paid tiers (Starter / Daily). Legacy "pro" counts as Daily-level.
+# Paid tiers. Starter (legacy) keeps its own caps; Creator, Pro, Max and the
+# legacy "pro" plan get the full library.
 STARTER_NICHES = 30
 STARTER_SUBJECTS = 30
 STARTER_CHANNELS = 30
@@ -39,17 +41,13 @@ DAILY_NICHES = 50
 DAILY_SUBJECTS = 50
 DAILY_CHANNELS = 50
 
-PAID_PLANS = frozenset({"starter", "daily", "pro"})
-
-
 def is_paid_plan(plan: str | None) -> bool:
     """Full paid subscription (not trial). Unlocks full MCP library + paid tools."""
-    return (plan or "free").lower() in PAID_PLANS
+    return plans.is_paid_plan(plan)
 
 
 def is_trial_plan(plan: str | None) -> bool:
-    p = (plan or "").lower()
-    return p.endswith("_trial") or p in ("starter_trial", "daily_trial")
+    return plans.is_trial_plan(plan)
 
 
 def discovery_capped(plan: str | None) -> bool:
@@ -58,14 +56,12 @@ def discovery_capped(plan: str | None) -> bool:
 
 
 def _tier(plan: str | None) -> str:
-    p = (plan or "free").lower()
-    if p in ("daily", "pro"):
-        return "daily"
-    if p == "starter":
-        return "starter"
-    if is_trial_plan(p):
+    if is_trial_plan(plan):
         return "trial"
-    return "free"
+    tier = plans.tier_of(plan)
+    if tier == "starter":
+        return "starter"
+    return "daily" if tier else "free"
 
 
 def discovery_niche_limit(plan: str | None) -> int:
@@ -157,8 +153,8 @@ def with_upgrade_hint(payload: dict, *, free_capped: bool, plan: str | None = No
         out["upgrade"] = upgrade_cta_for(plan or out.get("plan"))
         out["upgrade_url"] = UPGRADE_URL
         out["upgrade_plans"] = {
-            "starter": "Unlock the full live niche database in Claude + Niche Finder in the app.",
-            "daily": "Higher MCP volume for researching and publishing every day.",
+            "creator": "Full live niche database in Claude, Niche Finder and ChannelRecipe Studio.",
+            "pro": "Everything in Creator, more style clones and cloud credits.",
         }
     return out
 

@@ -368,7 +368,7 @@ CREATE INDEX IF NOT EXISTS idx_niche_hunt_runs_started ON niche_hunt_runs (start
 
 _MIGRATIONS = """
 UPDATE users SET credits = 0 WHERE plan = 'free' AND credits > 0;
-UPDATE users SET trial_used = 1 WHERE plan IN ('starter_trial', 'daily_trial', 'starter', 'daily', 'pro') AND COALESCE(trial_used, 0) = 0;
+UPDATE users SET trial_used = 1 WHERE plan != 'free' AND COALESCE(trial_used, 0) = 0;
 UPDATE users SET trial_used = 1 WHERE plan = 'free' AND COALESCE(stripe_customer_id, '') != '' AND COALESCE(trial_used, 0) = 0;
 """
 
@@ -702,7 +702,7 @@ def list_billing_users(limit: int = 200) -> list[dict]:
                 "SELECT id, email, plan, credits, trial_used, stripe_customer_id, stripe_sub_id, created_at "
                 "FROM users "
                 "WHERE COALESCE(stripe_customer_id, '') != '' OR COALESCE(stripe_sub_id, '') != '' "
-                "OR plan IN ('starter', 'daily', 'pro', 'starter_trial', 'daily_trial') "
+                "OR COALESCE(plan, 'free') != 'free' "
                 "ORDER BY id DESC LIMIT ?"
             ),
             (limit,),

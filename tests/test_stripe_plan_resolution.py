@@ -366,10 +366,11 @@ class TestAnnualAllowance:
 
     def test_checkout_plan_keys_agree_with_the_allowance(self):
         """The signup grant and the renewal grant must not disagree."""
-        assert server._PLAN_CREDITS["starter_annual"] == server._tier_allowance("starter", "annual")
-        assert server._PLAN_CREDITS["daily_annual"] == server._tier_allowance("daily", "annual")
-        assert server._PLAN_CREDITS["starter_monthly"] == server._tier_allowance("starter")
-        assert server._PLAN_CREDITS["daily_monthly"] == server._tier_allowance("daily")
+        for tier in ("starter", "daily", "studio_pro", "studio_max"):
+            assert server._plan_key_credits(f"{tier}_annual") == server._tier_allowance(tier, "annual")
+            assert server._plan_key_credits(f"{tier}_monthly") == server._tier_allowance(tier)
+        # Legacy keys from old clients still mean Starter.
+        assert server._plan_key_credits("annual") == server._tier_allowance("starter", "annual")
 
 
 class TestIntervalFromInvoice:
