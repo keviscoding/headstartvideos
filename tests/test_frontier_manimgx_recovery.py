@@ -116,6 +116,34 @@ def test_explicit_acceptance_preserves_history_and_creates_exact_normal_cache(sa
     assert json.loads((saved.destination / "compile-attempts.json").read_text())["calls"] == 0
 
 
+@pytest.mark.parametrize("known_failure", [True, False])
+def test_procedural_pixel_validation_preserves_completed_native_source(coverage_saved, known_failure):
+    saved = coverage_saved
+    result = json.loads((saved.old / "compiler-response-1.txt").read_text())
+    result["coverage"] = {p: "Original input requirement preserved" for p in result["coverage"]}
+    result["source"] = SOURCE.replace("import manimgx as m", "import manimgx as m\nimport numpy as np").replace(
+        "self.wait(1)", "pixels = np.zeros((16,16,4), dtype=np.uint8)\n        pixels[...,3] = 255\n        self.add(m.ImageMobject(pixels))\n        self.wait(1)")
+    update_completed_response(saved, result)
+    report = json.loads((saved.out / "report.json").read_text())
+    report["scenes"][0]["error"] = "ManimGX source must use the original scene's verified local media paths." if known_failure else "Other failure"
+    write(saved.out / "report.json", report)
+    history = {p.name: p.read_bytes() for p in saved.old.iterdir()}
+    if not known_failure:
+        with pytest.raises(RuntimeError, match="former coverage"):
+            invoke(saved, acknowledge_recovery=True)
+        assert not saved.checked
+        return
+    assert recovery.inspect(saved.home, PROJECT, saved.out, "original", saved.cloud)["kind"] == "procedural_pixels"
+    accepted = invoke(saved, acknowledge_recovery=True)
+    assert accepted["accepted"] and not accepted["reused"] and len(saved.checked) == 1
+    assert (saved.destination / "scene.py").read_text() == result["source"]
+    assert all((saved.old / name).read_bytes() == content for name, content in history.items())
+    plan = recovery._prepare(saved.home, PROJECT, saved.out, "original", saved.cloud)
+    assert renderer._accepted_response(saved.destination, renderer._read(saved.destination / "compiler.json"),
+        plan["context"], saved.bundle["assets"])
+    assert invoke(saved, acknowledge_recovery=True)["reused"] and len(saved.checked) == 1
+
+
 @pytest.mark.parametrize("mutation", ["active", "receipt", "model", "image", "reference", "journal", "source", "workflow"])
 def test_changed_or_unowned_proof_never_accepts_source(saved, mutation):
     if mutation == "active": saved.cloud["stages"][0]["status"] = "authorized"
