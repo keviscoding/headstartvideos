@@ -875,9 +875,12 @@ def create_app():
         write_provider(name, value)
         return jsonify(saved=True, message="Saved on this computer. This checks the format; the provider verifies it when used.")
 
-    # Add navigation/security token to both original local screens without rewriting the engine UI.
+    # Legacy editor/control pages keep their existing navigation and token adapter.
+    # The independent workspace owns its shell and local-token client already.
     @studio.app.after_request
     def inject(response):
+        if response.headers.get("X-CR-Workspace") == "1":
+            return response
         if response.mimetype == "text/html" and request.path != "/cr-setup" and not response.direct_passthrough:
             narration=None
             if request.path=="/" and cr_media.active("narration"):
@@ -1078,6 +1081,8 @@ def create_app():
     cr_style_routes.install(studio, activity, setup_status, token=token, home=HOME)
     import cr_optional_renderer
     cr_optional_renderer.install(studio, activity, home=HOME, readiness=setup_status)
+    import cr_workspace
+    cr_workspace.install(studio, activity, token=token, home=HOME)
     return studio
 
 

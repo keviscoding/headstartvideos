@@ -17,11 +17,33 @@ import requests
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
-VERSION = "5.3-admin.38"
+VERSION = "5.3-admin.39"
 PRIVATE_WORKFLOWS = {
     "cr-style-delivery-prompt.txt": ROOT / "data/frontier/reference2d-compiler.txt",
     "cr-style-study-brief.txt": ROOT / "data/frontier/reference2d-study.txt",
 }
+RUNTIME_SUFFIXES = {".py", ".html", ".md", ".command", ".cmd", ".js", ".css"}
+
+
+def runtime_resources(root: Path):
+    """Include owned browser assets without collecting caches or local secrets."""
+    runtime = root / "local_runtime"
+    for path in sorted(runtime.iterdir()):
+        if path.suffix not in RUNTIME_SUFFIXES or not path.is_file():
+            continue
+        if path.is_symlink():
+            raise ValueError("Runtime resources must be ordinary owned files.")
+        yield path, path.name
+    art = runtime / "workspace_art"
+    if art.exists():
+        if art.is_symlink() or not art.is_dir():
+            raise ValueError("Workspace artwork must be an owned directory.")
+        for path in sorted(art.iterdir()):
+            if path.suffix != ".svg" or not path.is_file():
+                continue
+            if path.is_symlink():
+                raise ValueError("Workspace artwork must be ordinary owned files.")
+            yield path, "workspace_art/" + path.name
 
 
 def compose_claude_instructions(original: bytes, overrides: bytes) -> bytes:
@@ -68,6 +90,8 @@ def build(source: Path, target: Path):
         except KeyError:
             raise ValueError("The pinned source must include its original Claude creative guide.") from None
     operational_overrides = (ROOT / "local_runtime/CLAUDE.md").read_bytes()
+    # Validate the complete resource inventory before replacing an existing ZIP.
+    resources = list(runtime_resources(ROOT))
     target.parent.mkdir(parents=True, exist_ok=True)
     count = 0
     with zipfile.ZipFile(source) as original, zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as result:
@@ -86,10 +110,8 @@ def build(source: Path, target: Path):
             name = "ChannelRecipe studio/" + ("FRONTIER_GUIDE.md" if str(rel)=="CLAUDE.md" else str(rel))
             result.writestr(name, original.read(info))
             count += 1
-        for path in sorted((ROOT / "local_runtime").iterdir()):
-            if not path.is_file() or path.suffix not in {".py", ".html", ".md", ".command", ".cmd"}:
-                continue
-            info = zipfile.ZipInfo("ChannelRecipe studio/" + path.name)
+        for path, relative in resources:
+            info = zipfile.ZipInfo("ChannelRecipe studio/" + relative)
             info.external_attr = (0o100755 if path.suffix == ".command" else 0o100644) << 16
             info.compress_type = zipfile.ZIP_DEFLATED
             contents = compose_claude_instructions(private_guide, operational_overrides) if path.name == "CLAUDE.md" else path.read_bytes()

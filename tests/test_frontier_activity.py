@@ -80,6 +80,14 @@ def _run_task(*args):
 def runtime(tmp_path, monkeypatch, timeline):
     app = Flask("isolated_cr_activity")
 
+    @app.get("/")
+    def original_page():
+        return "Original engine page"
+
+    @app.get("/api/channels")
+    def original_channels():
+        return jsonify(channels=[], features=[], caps={}, prices={}, dlc={})
+
     @app.post("/api/run")
     def api_run():
         return jsonify(queued=["native-job"])
@@ -101,7 +109,7 @@ def runtime(tmp_path, monkeypatch, timeline):
     def saved_video():
         return Response(b"already saved", mimetype="video/mp4")
 
-    studio = SimpleNamespace(app=app, mv=SimpleNamespace(), RUNNING={}, QUEUE=[],
+    studio = SimpleNamespace(app=app, mv=SimpleNamespace(), styles=SimpleNamespace(STYLES={}), RUNNING={}, QUEUE=[],
         JOBS={}, PRODUCT_BUILD={}, FARM={}, timeline=timeline, _run_spec=lambda spec: None)
     monkeypatch.setattr(cr_studio.cr_submission, "install", lambda *a: None)
     cfg = {"brain_mode": "channelrecipe", "costs_accepted": True, "key": "cr_mcp_fixture"}
@@ -145,6 +153,31 @@ def test_chat_reserves_context_before_the_original_thread_starts(runtime, timeli
     assert timeline.calls == [("reply", (r.job, "example", "Keep the original edit", {"kind": "range"}, "reply"))]
     assert not r.studio._cr_activity.busy()
     assert r.client.post("/api/run", headers=r.headers, json={}).status_code == 200
+
+
+def test_workspace_shell_owns_its_token_and_skips_legacy_ui_injection(runtime, monkeypatch):
+    shell = '<html><head><script>window.CR_WORKSPACE={token:__LOCAL_TOKEN_JSON__,preset:__PRESET_JSON__};</script></head><body>ChannelRecipe workspace</body></html>'
+    (runtime.job / "cr_workspace.html").write_text(shell)
+
+    def legacy_transform(*args, **kwargs):
+        pytest.fail("The independent workspace must not receive legacy controls.")
+
+    monkeypatch.setattr(cr_studio.cr_ui, "transform_html", legacy_transform)
+    response = runtime.client.get("/", headers=runtime.headers)
+    assert response.status_code == 200 and response.headers["X-CR-Workspace"] == "1"
+    assert "ChannelRecipe workspace" in response.text
+    assert runtime.headers["X-CR-Local-Token"] in response.text
+    assert "CR_LOCAL_TOKEN" not in response.text and "cr-generation-readiness" not in response.text
+    assert runtime.client.get("/cr-workspace/catalog", headers=runtime.headers).json["channels"] == []
+
+
+def test_existing_editor_keeps_the_local_token_adapter(runtime, monkeypatch):
+    runtime.studio.app.add_url_rule("/editor/saved", "saved_editor", lambda: "<html><head></head><body>Saved editor</body></html>")
+    monkeypatch.setattr(cr_studio.cr_ui, "transform_html", lambda text, **kwargs: text)
+    response = runtime.client.get("/editor/saved", headers=runtime.headers)
+    assert response.status_code == 200 and "X-CR-Workspace" not in response.headers
+    assert "Saved editor" in response.text and "CR_LOCAL_TOKEN" in response.text
+    assert runtime.headers["X-CR-Local-Token"] in response.text
 
 
 def test_fresh_create_is_not_locked_by_a_historical_allowance_report(runtime, monkeypatch):

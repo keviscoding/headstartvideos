@@ -133,7 +133,7 @@ def test_page_and_catalog_integrate_without_replacing_original_api(env):
     assert "__LOCAL_TOKEN_JSON__" not in text and "const CR_LOCAL_TOKEN=" in text
     assert "const localToken=" in text and 'id="reference-form"' in text
     catalogue = env.get("/cr-style-clone/catalog")
-    assert catalogue.json == {"styles": [{"name": "documentary", "label": "Documentary"}]}
+    assert catalogue.json == {"styles": [{"name": "documentary", "label": "Editorial Documentary"}]}
     assert "private" not in catalogue.get_data(as_text=True)
     assert env.get("/api/styles").json == {"original": True}
     assert [name for name, _ in env.calls] == ["load_all", "apply"]
@@ -453,6 +453,10 @@ def test_browser_approved_reference_order_to_saved_style_and_no_script_collision
                 route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.data)
             page.route("**/*", respond)
             page.goto(BASE + "/cr-style-clone")
+            assert page.locator('body > a[href="/cr-setup"]').is_hidden()
+            assert page.locator('nav[aria-label="Workspace"] .navlinks a').all_text_contents() == [
+                "Create", "Projects", "Style library", "Accounts"]
+            assert page.locator('#base-style option[value="documentary"]').inner_text() == "Editorial Documentary"
             page.locator("#reference-url").fill("https://www.youtube.com/@Ifverse")
             page.locator("#preview-button").click()
             page.locator("#candidate-list input").nth(1).check()
