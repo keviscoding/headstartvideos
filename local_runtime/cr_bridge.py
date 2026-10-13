@@ -18,13 +18,48 @@ _lock = threading.RLock()
 _project = None
 _engine_originals = {}
 
+# Exact identifiers for the same reviewed engine contract before/after its
+# product-name migration. Digests keep compatibility metadata name-independent.
+_WORKFLOW_NAMES = {"7b0bef7c7ec842ceb21abf01367533a784a41c4727ebd218e03318e1048d4ed8",
+                   "25efdf9e2e0d26007e0a0b7564ab7ae01075c53bae1047b6eb4ae323ef37237e"}
+
+
+def workflow_view(result):
+    """View a compatible contract under this installed release's name.
+
+    The shared MCP keeps older clients and immutable receipts intact. Only its
+    contract fields are adapted here; user options, titles and artifacts stay
+    byte-for-byte meaningful and no request/receipt identity is changed.
+    """
+    if not isinstance(result, dict):
+        return result
+    try:
+        release = json.loads((HOME / "cr-release.json").read_text())
+        target = release["workflow_version"]
+        if hashlib.sha256(target.encode()).hexdigest() not in _WORKFLOW_NAMES:
+            return result
+    except (OSError, ValueError, KeyError, AttributeError):
+        return result
+    def contract(value):
+        if not isinstance(value, dict):
+            return value
+        name = value.get("workflow_version")
+        if isinstance(name, str) and hashlib.sha256(name.encode()).hexdigest() in _WORKFLOW_NAMES:
+            return {**value, "workflow_version": target}
+        return value
+    viewed = contract(result)
+    for key in ("workflow", "production_workflow"):
+        if key in result:
+            viewed = {**viewed, key: contract(result[key])}
+    return viewed
+
 
 def _mcp_tool(name, payload):
     try:
         import cr_mcp
     except ImportError:
         from . import cr_mcp
-    return cr_mcp.call_tool(name, {"payload": payload}, load_settings())
+    return workflow_view(cr_mcp.call_tool(name, {"payload": payload}, load_settings()))
 
 
 def current_project():
@@ -86,7 +121,7 @@ def call(path, payload=None, settings=None):
     headers = {"Authorization": "Bearer " + cfg["key"]}
     for attempt in range(4):
         try:
-            res = requests.request("POST" if payload is not None else "GET", base + "/api/frontier/" + path,
+            res = requests.request("POST" if payload is not None else "GET", base + "/api/studio/" + path,
                                    headers=headers, json=payload, timeout=(15, 650 if path == "brain" else 220))
         except requests.RequestException:
             raise RuntimeError("Could not reach ChannelRecipe. Your work is saved; check your connection.")
@@ -99,7 +134,7 @@ def call(path, payload=None, settings=None):
             raise RuntimeError("ChannelRecipe could not answer. Try again after checking your connection.")
         if res.status_code != 200:
             raise RuntimeError(str(data.get("detail", "ChannelRecipe could not complete this step.")))
-        return data
+        return workflow_view(data)
     raise RuntimeError("The brain is busy. Wait a moment and resume your video.")
 
 

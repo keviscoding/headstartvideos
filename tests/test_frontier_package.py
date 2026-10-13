@@ -50,7 +50,7 @@ def test_private_creative_guide_is_automatic_context_with_cr_operational_precede
     with zipfile.ZipFile(target) as archive:
         names = archive.namelist()
         assert names.count("ChannelRecipe studio/CLAUDE.md") == 1
-        assert archive.read("ChannelRecipe studio/FRONTIER_GUIDE.md") == original
+        assert archive.read("ChannelRecipe studio/CREATIVE_GUIDE.md") == original
         instructions = archive.read("ChannelRecipe studio/CLAUDE.md")
         assert instructions.count(original) == 1
         assert instructions.endswith(overrides)
@@ -112,7 +112,7 @@ def test_workspace_browser_resources_ship_without_local_cache_or_secret_files(sy
         for name, text in assets.items():
             assert archive.read("ChannelRecipe studio/" + name).decode() == text
         assert not any(name.endswith((".json", ".log")) for name in archive.namelist()
-                       if name not in {"ChannelRecipe studio/cr-release.json", "ChannelRecipe studio/cr-providers.json"})
+                       if name not in {"ChannelRecipe studio/cr-release.json", "ChannelRecipe studio/cr-providers.json", "ChannelRecipe studio/cr-branding.json"})
         assert not any("nested" in name for name in archive.namelist())
         assert archive.read("ChannelRecipe studio/example_engine.py") == b"# Synthetic engine fixture only\n"
     assert report["engine_files"] == 2
@@ -154,3 +154,45 @@ def test_private_sample_screenshots_ship_with_exact_source_and_image_pins(synthe
         package.build(source,target)
     with zipfile.ZipFile(target)as archive:
         assert archive.read("ChannelRecipe studio/cr_recipe_frames/quest.jpg")==b"Synthetic sample screenshot"
+
+
+def test_rebrand_covers_source_owned_runtime_and_private_resources(synthetic_package, monkeypatch):
+    tmp_path, _ = synthetic_package
+    runtime = package.ROOT / "local_runtime"
+    (runtime / "bridge.py").write_text('API = "/api/frontier/"\nWORKFLOW = "frontier-5.3-claudecode.1"\n')
+    source = source_archive(tmp_path, monkeypatch, guide=b"# Frontier creative guide\n")
+    with zipfile.ZipFile(source, "a") as archive:
+        archive.writestr("Frontier/cache.py", b'FRONTIER_OUTPUT = ".frontier-video"\n')
+        archive.writestr("Frontier/assets/frontier-module.js", b'window._FRONTIER = "Frontier";\n')
+    monkeypatch.setattr(package, "SOURCE_SHA256", hashlib.sha256(source.read_bytes()).hexdigest())
+    next(iter(package.PRIVATE_WORKFLOWS.values())).write_text("Private Frontier workflow fixture.")
+    target = tmp_path / "release.zip"
+    report = package.build(source, target)
+    with zipfile.ZipFile(target) as archive:
+        for member in archive.infolist():
+            assert "frontier" not in member.filename.lower()
+            assert b"frontier" not in archive.read(member).lower()
+        assert archive.read("ChannelRecipe studio/cache.py") == b'CHANNELRECIPE_OUTPUT = ".channelrecipe-video"\n'
+        assert archive.read("ChannelRecipe studio/bridge.py") == b'API = "/api/studio/"\nWORKFLOW = "channelrecipe-5.3-claudecode.1"\n'
+        assert archive.read("ChannelRecipe studio/assets/channelrecipe-module.js") == b'window._CHANNELRECIPE = "ChannelRecipe";\n'
+        provenance = json.loads(archive.read("ChannelRecipe studio/cr-branding.json"))
+        assert provenance["source_engine_files"] == report["engine_files"] == 4
+        for record in provenance["transformed_files"]:
+            data = archive.read("ChannelRecipe studio/" + record["path"])
+            assert hashlib.sha256(data).hexdigest() == record["packaged_sha256"]
+        assert json.loads(archive.read("ChannelRecipe studio/cr-release.json"))["workflow_version"] == "channelrecipe-5.3-claudecode.1"
+    assert report["branding"]["legacy_byte_matches"] == report["branding"]["legacy_path_matches"] == 0
+
+
+def test_unknown_binary_branding_rejection_preserves_previous_complete_release(synthetic_package, monkeypatch):
+    tmp_path, _ = synthetic_package
+    source = source_archive(tmp_path, monkeypatch, guide=b"Synthetic guide")
+    with zipfile.ZipFile(source, "a") as archive:
+        archive.writestr("Frontier/opaque.dat", b"\x00\xffopaque Frontier marker")
+    monkeypatch.setattr(package, "SOURCE_SHA256", hashlib.sha256(source.read_bytes()).hexdigest())
+    target = tmp_path / "release.zip"
+    target.write_bytes(b"previous complete release")
+    with pytest.raises(ValueError, match="unsupported binary"):
+        package.build(source, target)
+    assert target.read_bytes() == b"previous complete release"
+    assert not list(target.parent.glob(".cr-build-*"))

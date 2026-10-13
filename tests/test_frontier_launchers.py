@@ -5,6 +5,8 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
+import uuid
 
 import pytest
 
@@ -120,5 +122,135 @@ def test_mac_existing_current_environment_skips_install_and_preserves_server_exi
     result, calls = run(LAUNCH_TEST_STUDIO_EXIT="7")
     assert result.returncode == 7
     assert len(calls) == 2 and calls[-1]["args"] == ["cr_studio.py"]
+
+
+def test_windows_launcher_keeps_double_click_diagnostics_and_has_no_compound_blocks():
+    text = (ROOT / "Start on Windows.cmd").read_text()
+    lines = [line.strip() for line in text.splitlines()]
+    assert 'setlocal DisableDelayedExpansion' in lines
+    assert 'if /i "%~1"=="--cr-window" goto launch_studio' in lines
+    assert 'set "CR_WINDOWS_LAUNCHER=%~f0"' in lines
+    assert 'start "ChannelRecipe Studio" "%ComSpec%" /d /k ""%%CR_WINDOWS_LAUNCHER%%" --cr-window"' in lines
+    assert lines.index('exit /b 0') < lines.index(':launch_studio')
+    # Avoid cmd.exe's whole-block parsing and delayed expansion corrupting paths
+    # containing parentheses, ampersands or exclamation marks.
+    assert not any(line.endswith("(") or line == ")" for line in lines)
+    assert 'cd /d "%~dp0"' in lines
+    assert 'if not exist "cr_studio.py" goto incomplete_download' in lines
+    assert 'if not exist "requirements.txt" goto incomplete_download' in lines
+    assert lines.index('set "CR_PYTHON_ARGS=-3.13"') < lines.index('set "CR_PYTHON_ARGS=-3"')
+    assert ':failed' in lines and lines[lines.index(':failed') + 3] == 'pause'
+
+
+@pytest.fixture
+def windows_launch(tmp_path):
+    if sys.platform != "win32":
+        pytest.skip("Requires the real Windows cmd.exe interpreter")
+    folder = tmp_path / "Fresh studio & (creator)! 100%"
+    folder.mkdir()
+    launcher = folder / "Start on Windows.cmd"
+    launcher.write_bytes((ROOT / launcher.name).read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+    (folder / "requirements.txt").write_text("")
+    # An existing environment lets this exercise cmd's real quoting and exit
+    # behavior without installing libraries or contacting a provider.
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(folder / ".venv")],
+                   check=True, capture_output=True, timeout=60)
+    (folder / ".venv/.cr-installed").touch()
+    def run():
+        command = f'"{os.environ["ComSpec"]}" /d /s /c ""{launcher}" --cr-window"'
+        return subprocess.run(command, input="\n", capture_output=True, text=True, timeout=15)
+    return folder, run
+
+
+def test_windows_real_cmd_preserves_spaced_metacharacter_path_and_studio_exit(windows_launch):
+    folder, run = windows_launch
+    (folder / "cr_studio.py").write_text('print("STUDIO STARTED"); raise SystemExit(7)')
+    result = run()
+    assert result.returncode == 7
+    assert "STUDIO STARTED" in result.stdout
+    assert "The studio stopped with exit code 7" in result.stdout
+    assert (folder / ".venv/.cr-installed").exists()
+
+
+def test_windows_real_cmd_missing_extracted_files_displays_action(windows_launch):
+    _, run = windows_launch
+    result = run()
+    assert result.returncode == 1
+    assert "The studio files are missing" in result.stdout
+    assert "Extract All" in result.stdout
+    assert "This window stays open" in result.stdout
+
+
+def test_windows_real_cmd_studio_failure_keeps_original_diagnostic(windows_launch):
+    folder, run = windows_launch
+    (folder / "cr_studio.py").write_text('raise RuntimeError("visible studio error")')
+    result = run()
+    assert result.returncode == 1
+    assert "visible studio error" in result.stderr
+    assert "The studio stopped with exit code 1" in result.stdout
+
+
+def test_windows_real_cmd_double_click_bootstrap_starts_owned_persistent_window(windows_launch):
+    folder, _ = windows_launch
+    launcher = folder / "Start on Windows.cmd"
+    signal = folder / "test-studio-started.json"
+    stop = folder / "test-studio-stop"
+    nonce = uuid.uuid4().hex
+    # Keep this synthetic studio alive until the test has identified its parent
+    # cmd.exe. No CR modules, provider keys or installed engine are loaded.
+    (folder / "cr_studio.py").write_text(f'''import json, os, pathlib, time
+signal = pathlib.Path({str(signal)!r})
+signal.write_text(json.dumps({{"nonce": {nonce!r}, "parent_pid": os.getppid(),
+    "cwd": os.getcwd(), "launcher": os.environ.get("CR_WINDOWS_LAUNCHER"),
+    "studio_file": str(pathlib.Path(__file__).resolve())}}))
+stop = pathlib.Path({str(stop)!r})
+deadline = time.monotonic() + 30
+while not stop.exists() and time.monotonic() < deadline:
+    time.sleep(0.05)
+''')
+    command = f'"{os.environ["ComSpec"]}" /d /s /c ""{launcher}""'
+    saved = None
+    bootstrap = None
+    with (folder / "test-bootstrap.log").open("w") as log:
+        try:
+            bootstrap = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
+            assert bootstrap.wait(timeout=15) == 0
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline and saved is None:
+                try:
+                    saved = json.loads(signal.read_text())
+                except (OSError, json.JSONDecodeError):
+                    time.sleep(0.05)
+            assert saved is not None, (folder / "test-bootstrap.log").read_text()
+            assert saved["nonce"] == nonce
+            assert Path(saved["cwd"]).resolve() == folder.resolve()
+            assert Path(saved["launcher"]).resolve() == launcher.resolve()
+            assert Path(saved["studio_file"]).resolve() == (folder / "cr_studio.py").resolve()
+            assert isinstance(saved["parent_pid"], int) and saved["parent_pid"] > 0
+            process = subprocess.run([
+                "powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+                f'Get-CimInstance Win32_Process -Filter "ProcessId = {saved["parent_pid"]}" '
+                '| Select-Object Name,ParentProcessId,CommandLine | ConvertTo-Json -Compress'
+            ], check=True, capture_output=True, text=True, timeout=15)
+            parent = json.loads(process.stdout)
+            assert parent["Name"].lower() == "cmd.exe"
+            assert parent["ParentProcessId"] == bootstrap.pid
+            assert "/k" in parent["CommandLine"].lower()
+            assert "--cr-window" in parent["CommandLine"]
+        finally:
+            stop.touch()
+            # Only terminate the cmd recorded by our nonce-bound synthetic
+            # studio, whose folder/launcher match this exact test project.
+            if (saved and saved.get("nonce") == nonce
+                    and Path(saved.get("cwd", "")).resolve() == folder.resolve()
+                    and Path(saved.get("launcher", "")).resolve() == launcher.resolve()
+                    and isinstance(saved.get("parent_pid"), int)):
+                listing = subprocess.run([
+                    "tasklist.exe", "/FI", f'PID eq {saved["parent_pid"]}', "/FO", "CSV", "/NH"
+                ], capture_output=True, text=True, timeout=10)
+                if listing.returncode == 0 and listing.stdout.lower().startswith('"cmd.exe",'):
+                    subprocess.run([
+                        "taskkill.exe", "/PID", str(saved["parent_pid"]), "/T", "/F"
+                    ], capture_output=True, timeout=10)
 
 

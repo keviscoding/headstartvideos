@@ -20,6 +20,7 @@ from typing import Literal
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
 
 import config
@@ -27,10 +28,11 @@ from webapp import database as db
 from cryptography.fernet import Fernet, InvalidToken
 from webapp import frontier_providers as providers
 
-VERSION = "5.3-admin.42"
+VERSION = "5.3-admin.43"
 CATALOG = Path(__file__).resolve().parent / "frontier" / "catalog.json"
-RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.42.zip"
+RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.43.zip"
 WORKFLOW_VERSION = "frontier-5.3-claudecode.1"
+BRANDED_WORKFLOW_VERSION = "channelrecipe-5.3-claudecode.1"
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 NATIVE_STAGE_LIMIT = 2
 GEMINI_MODEL = "gemini-3.8-flash"
@@ -169,7 +171,7 @@ def status(user: dict) -> dict:
             "local_url": "http://127.0.0.1:7860/cr-setup",
             "generation_billing": "Your provider accounts", "rendering": "Your computer",
             "production_workflow": workflow_contract(),
-            "preview_note": "Admin preview preserves the original Frontier engine. Public release remains disabled."}
+            "preview_note": "Admin preview preserves the ChannelRecipe creative engine. Public release remains disabled."}
 
 
 def release_ready() -> bool:
@@ -566,7 +568,7 @@ def workflow_contract():
             "access": "admin_preview", "public_release_allowed": False,
             "brain_billing": "Your local Claude Code account and its usage limits",
             "brain_api_key_required": False, "rendering": "Your computer",
-            "prompt_visibility": "The admin runtime retains original local Frontier prompts and source.",
+            "prompt_visibility": "The admin runtime retains local ChannelRecipe prompts and source.",
             "setup_required": ["local_version", "brain_mode", "general_model", "visual_model", "claude_installed",
                                "claude_authenticated", "api_provider", "ffmpeg_ready", "browser_ready", "node_ready",
                                "models_verified", "media_ready", "costs_accepted"]}
@@ -578,7 +580,7 @@ def _runtime_compatible(version, workflow):
     approved = ("5.3-admin.8", "5.3-admin.9", "5.3-admin.10", "5.3-admin.11", "5.3-admin.12",
                 "5.3-admin.13", "5.3-admin.14", "5.3-admin.15", "5.3-admin.16", "5.3-admin.17",
                 "5.3-admin.18", "5.3-admin.19", "5.3-admin.20", "5.3-admin.21", "5.3-admin.22",
-                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42")
+                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43")
     current = workflow_contract()
     if (version not in approved or workflow.get("required_release") not in approved or VERSION not in approved
             or workflow.get("workflow_version") != current["workflow_version"]
@@ -883,8 +885,46 @@ def native_retry_stage(user,req:NativeRetryStage):
     return {"approved":True,"project_id":req.project_id,"stage_id":req.stage_id,"message":"One recovery attempt is approved. Resume the same local video to use it."}
 
 
-def make_router(session_user):
-    router = APIRouter(prefix="/api/frontier", tags=["Admin local studio"])
+def _brand_workflow_response(payload):
+    """Brand protocol metadata without changing saved work or arbitrary text.
+
+    Native session contracts and stage fingerprints retain their original
+    identifier for existing projects. Only these response-schema locations are
+    aliases; a title, artifact name or user option with the same text is data.
+    """
+    if not isinstance(payload, dict):
+        return False
+    changed = False
+    for contract in (payload, payload.get("workflow"), payload.get("production_workflow")):
+        if isinstance(contract, dict) and contract.get("workflow_version") == "frontier-5.3-claudecode.1":
+            contract["workflow_version"] = BRANDED_WORKFLOW_VERSION
+            changed = True
+    return changed
+
+
+class _BrandedWorkflowRoute(APIRoute):
+    def get_route_handler(self):
+        original = super().get_route_handler()
+
+        async def branded(request: Request):
+            response = await original(request)
+            # In particular, do not read or buffer FileResponse/StreamingResponse
+            # bodies: the authenticated private ZIP keeps its original stream.
+            content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
+            body = getattr(response, "body", None)
+            if content_type == "application/json" and isinstance(body, bytes):
+                payload = json.loads(body)
+                if _brand_workflow_response(payload):
+                    response.body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                    response.headers["content-length"] = str(len(response.body))
+            return response
+
+        return branded
+
+
+def make_router(session_user, *, prefix="/api/frontier"):
+    options = {"route_class": _BrandedWorkflowRoute} if prefix == "/api/studio" else {}
+    router = APIRouter(prefix=prefix, tags=["Admin local studio"], **options)
 
     def access(request: Request):
         authorization = request.headers.get("authorization", "")
