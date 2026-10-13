@@ -211,6 +211,24 @@ def test_failed_voice_retains_provider_reason_and_credits_without_key(hub, monke
     assert "customer-test-key" not in receipt and json.loads(receipt)["credits"] == 0
 
 
+def test_accepted_voice_upstream_blank_id_failure_is_explained_without_retry(hub, monkeypatch):
+    creates = []
+    monkeypatch.setattr(media.requests, "post", lambda *a, **k:creates.append(k) or
+        response({"code":200,"data":{"taskId":"valid-saved-task"}}))
+    monkeypatch.setattr(media.requests, "get", lambda *a, **k:response({"code":200,"data":{
+        "state":"fail","failCode":"422","failMsg":"generate playground failed, task id is blank",
+        "creditsConsumed":0.0}}))
+    for _ in range(2):
+        with pytest.raises(media.TaskFailed) as failed:
+            media.run("narration", {"text":"Original script","voice":"Kore"}, hub / "voice.wav")
+        assert "CR saved a valid task ID" in str(failed.value)
+        assert "Kie reported 0 credits consumed" in str(failed.value)
+        assert "No retry was submitted" in str(failed.value)
+    assert len(creates) == 1
+    record = json.loads(next((hub / ".cr-tasks").glob("*.json")).read_text())
+    assert record["id"] == "valid-saved-task" and record["status"] == "failed"
+
+
 def test_refreshing_upload_url_does_not_duplicate_pending_paid_task(hub, monkeypatch):
     calls = []
     monkeypatch.setattr(media.requests, "post", lambda *a, **k: calls.append(k) or response({"code": 200, "data": {"taskId": "existing-task"}}))

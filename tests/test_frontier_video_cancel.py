@@ -133,6 +133,7 @@ def test_actual_original_pipeline_runs_unchanged_in_owned_worker(tmp_path):
         calls.append((args, kw))
         kw["sink"]("Original paid stages would be here; this fixture generates nothing")
     engine = SimpleNamespace(job_dir=lambda *a: job, run_custom=original_generation)
+    studio.mv = engine
     namespace = {"JOBS": studio.JOBS, "RUNNING": studio.RUNNING, "HISTORY": studio.HISTORY,
                  "LOCK": studio.LOCK, "mv": engine, "time": time, "Path": Path, "json": json}
     definition = next(node for node in ast.parse(path.read_text()).body
@@ -328,12 +329,12 @@ def test_native_cancel_saves_failed_project_and_reconciles_only_saved_receipts(t
         studio.RUNNING["slug"] = None
     workers = SimpleNamespace(supports=lambda _: True, run=worker)
     node = next(node for node in ast.walk(ast.parse((RUNTIME / "cr_studio.py").read_text()))
-                if isinstance(node, ast.FunctionDef) and node.name == "run_spec")
+                if isinstance(node, ast.FunctionDef) and node.name == "run_owned_spec")
     ns = {"activity": activity, "studio": studio, "json": json, "cr_bridge": bridge,
           "cr_claude": cr_claude, "video_workers": workers, "original_run": lambda _: pytest.fail("in-process pipeline"),
           "output_artifacts": lambda *a: pytest.fail("Cancelled work cannot publish final artifacts")}
     exec(compile(ast.Module(body=[node], type_ignores=[]), "actual-native-video-wrapper", "exec"), ns)
-    ns["run_spec"](spec())
+    ns["run_owned_spec"](spec())
     assert report == [{"project_id": PROJECT, "status": "failed", "artifacts": [], "error_code": "cancelled"}]
     assert stages == [complete] and released == ["reservation"]
     assert json.loads((saved / "running.json").read_text())["state"] == "running"

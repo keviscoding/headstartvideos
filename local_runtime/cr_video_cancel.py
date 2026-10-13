@@ -105,7 +105,9 @@ def run_original_worker(home, project_id, run_id, studio):
     watcher = threading.Thread(target=follow, daemon=True)
     watcher.start()
     try:
-        studio._run_spec(spec)
+        import cr_attempts
+        with cr_attempts.bind(studio.mv, spec):
+            studio._run_spec(spec)
     finally:
         stopped.set()
         watcher.join(2)

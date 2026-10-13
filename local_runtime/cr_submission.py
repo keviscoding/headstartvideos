@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import re
+import json
 from types import FunctionType
 
 from flask import request
 
 
-def submit(studio, payload, project_id, *, before_publish=None):
+def submit(studio, payload, project_id, *, before_publish=None, job_slug=None):
     """Keep original validation and JOBS, but hide new specs until fully owned.
 
     Frontier's dispatcher remains alive between jobs. Merely suppressing its
@@ -18,15 +19,16 @@ def submit(studio, payload, project_id, *, before_publish=None):
     if not re.fullmatch(r"crv_[a-f0-9]{24}", str(project_id)):
         raise ValueError("Use a valid saved CR project.")
     original = getattr(studio, "_cr_original_api_run", studio.app.view_functions["api_run"])
-    return _publish(studio, payload, original, project_id=project_id, before_publish=before_publish)
+    return _publish(studio, payload, original, project_id=project_id, before_publish=before_publish, job_slug=job_slug)
 
 
-def _publish(studio, payload, original, *, project_id=None, before_publish=None):
+def _publish(studio, payload, original, *, project_id=None, before_publish=None, job_slug=None):
     backend = payload.get("render_backend", "original")
     if backend not in {"original", "manimgx"}:
         raise ValueError("Choose the standard renderer or Fast mode.")
     staged = []
-    globals_ = {**original.__globals__, "QUEUE": staged, "_ensure_dispatcher": lambda: None}
+    staged_jobs = {}
+    globals_ = {**original.__globals__, "QUEUE": staged, "JOBS": staged_jobs, "_ensure_dispatcher": lambda: None}
     capture = FunctionType(original.__code__, globals_, original.__name__,
                            original.__defaults__, original.__closure__)
     capture.__kwdefaults__ = original.__kwdefaults__
@@ -40,19 +42,34 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None)
         return response
     if not staged:
         raise RuntimeError("Frontier did not construct a queued job.")
-    for spec in staged:
+    import cr_attempts
+    import cr_video_cancel
+    saved_slug = job_slug or (cr_attempts.owned_slug(studio.mv, project_id)
+                              if project_id and hasattr(studio, "mv") else None)
+    published_jobs = {}
+    queued = response.get_json().get("queued", [])
+    for index, spec in enumerate(staged):
+        old_slug = spec["slug"]
+        run_id = cr_video_cancel.new_run_id()
         if project_id:
             spec["cr_project_id"] = project_id
         if hasattr(studio, "_cr_video_workers") and not spec.get("timeline"):
-            import cr_video_cancel
-            spec["cr_video_run_id"] = cr_video_cancel.new_run_id()
+            spec["cr_video_run_id"] = run_id
+        if not spec.get("timeline") and (not project_id or saved_slug or hasattr(getattr(studio, "mv", None), "list_jobs")):
+            slug = saved_slug or cr_attempts.new_slug(old_slug, project_id or run_id)
+            spec.update(slug=slug, cr_attempt_slug=slug)
+            if index < len(queued):
+                queued[index]["slug"] = slug
+        published_jobs[spec["slug"]] = dict(staged_jobs.get(old_slug, {"state":"queued", "title":spec.get("title", payload.get("title", old_slug))}))
         spec["render_backend"] = backend
         if backend == "manimgx":
             spec["manimgx_identity"] = payload.get("manimgx_identity")
     if before_publish is not None:
         before_publish()
     with studio.LOCK:
+        studio.JOBS.update(published_jobs)
         studio.QUEUE.extend(staged)
+    response.set_data(json.dumps({**response.get_json(), "queued":queued}))
     studio._ensure_dispatcher()
     return response
 

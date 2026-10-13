@@ -52,6 +52,12 @@ class TaskFailed(AccountStop):
                   else " Top up this account, then resume." if self.category == "balance"
                   else " Check its log; no other wallet was used.")
         prefix = f"{PROVIDERS[provider]['label']} " + (f"refused this {task} request." if receipt.get("rejected") else f"failed this {task} task.")
+        if (provider == "kie" and task == "narration" and receipt.get("id") and not receipt.get("rejected")
+                and self.code == "422" and self.reason.strip().casefold() == "generate playground failed, task id is blank"):
+            prefix = "Kie.ai's narration service failed after accepting the request. CR saved a valid task ID; Kie's upstream task ID was missing."
+            action = " No retry was submitted. Create a new attempt or select another narration model in Setup & accounts."
+            if receipt.get("credits") == 0:
+                action = " Kie reported 0 credits consumed." + action
         super().__init__(prefix +
                          (" " + self.reason if self.reason else "") + action)
 

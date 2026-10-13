@@ -169,6 +169,9 @@ def test_new_run_uses_fresh_session_only_after_previous_video_completed(runtime,
     monkeypatch.setattr(cr_studio, "output_artifacts", lambda *a:[
         {"name":"video.mp4", "sha256":"f"*64, "media_type":"video/mp4"}])
     cells = dict(zip(r.studio._run_spec.__code__.co_freevars, r.studio._run_spec.__closure__))
+    if "run_owned_spec" in cells:
+        owned = cells["run_owned_spec"].cell_contents
+        cells = dict(zip(owned.__code__.co_freevars, owned.__closure__))
     def render(spec):
         events.append(("render",))
         r.studio.JOBS["example"].update(state="done", done=True)
@@ -597,6 +600,9 @@ def test_cr_run_spec_records_the_render_before_original_deferred_dispatch(deferr
     # Keep create_app's real CR wrapper, swapping only its fake native function
     # for the owner's original function loaded directly into isolated globals.
     cells = dict(zip(r.studio._run_spec.__code__.co_freevars, r.studio._run_spec.__closure__))
+    if "run_owned_spec" in cells:
+        owned = cells["run_owned_spec"].cell_contents
+        cells = dict(zip(owned.__code__.co_freevars, owned.__closure__))
     monkeypatch.setattr(cells["original_run"], "cell_contents", original)
     monkeypatch.setattr(cr_studio.cr_readiness, "proof", lambda *a, **k:d.setup)
     monkeypatch.setattr(cr_studio, "output_artifacts", lambda *a:[
