@@ -95,6 +95,8 @@
 .ls-member-grid{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:24px;align-items:start}
 .ls-setup{display:flex;flex-direction:column;gap:14px}
 .ls-step{display:flex;gap:18px;padding:24px;background:var(--app-surface);border:1px solid var(--app-border);border-radius:var(--radius-card)}
+.ls-step-quiet{background:transparent;border-style:dashed}
+.ls-step-quiet .ls-step-n{background:var(--app-surface-2);color:var(--app-ink-2)}
 .ls-step-n{display:grid;place-items:center;flex:none;width:32px;height:32px;border-radius:99px;background:var(--accent);color:var(--accent-ink);font:700 13px var(--font-mono)}
 .ls-step-body{flex:1;min-width:0}
 .ls-step-body h3{font:800 20px/1.25 var(--font-display);margin:3px 0 12px}

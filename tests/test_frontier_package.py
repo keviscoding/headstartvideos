@@ -112,8 +112,14 @@ def test_workspace_browser_resources_ship_without_local_cache_or_secret_files(sy
         for name, text in assets.items():
             assert archive.read("ChannelRecipe studio/" + name).decode() == text
         assert not any(name.endswith((".json", ".log")) for name in archive.namelist()
-                       if name not in {"ChannelRecipe studio/cr-release.json", "ChannelRecipe studio/cr-providers.json", "ChannelRecipe studio/cr-branding.json"})
+                       if name not in {"ChannelRecipe studio/cr-release.json", "ChannelRecipe studio/cr-providers.json",
+                                       "ChannelRecipe studio/cr-branding.json", "ChannelRecipe studio/cr-files.json"})
         assert not any("nested" in name for name in archive.namelist())
+        # The updater's manifest lists every other shipped file with its exact hash.
+        shipped = json.loads(archive.read("ChannelRecipe studio/cr-files.json"))["files"]
+        others = {n.removeprefix("ChannelRecipe studio/") for n in archive.namelist()} - {"cr-files.json"}
+        assert set(shipped) == others
+        assert all(shipped[n] == hashlib.sha256(archive.read("ChannelRecipe studio/" + n)).hexdigest() for n in others)
         assert archive.read("ChannelRecipe studio/example_engine.py") == b"# Synthetic engine fixture only\n"
     assert report["engine_files"] == 2
 

@@ -45,6 +45,22 @@ already passes.
 If they get stuck, suggest the ChannelRecipe Discord (https://discord.gg/aUbazAAqw3),
 where the team answers setup questions.
 
+## If they ask you to update Studio
+
+Never download a new ZIP into a second folder: that hides their projects and
+settings. Update in place instead:
+
+1. Make sure no video is running, then ask the customer to close the Studio
+   launcher window (or confirm it's closed: nothing should answer on
+   http://127.0.0.1:7860).
+2. From this folder run the studio's own Python: Mac
+   `.venv/bin/python cr_update.py`, Windows `.venv\Scripts\python cr_update.py`.
+3. Tell them what it printed. It keeps their output, accounts, keys, learned
+   styles and any files they edited (new versions of edited files are saved
+   beside them with `.new`). If it stops, nothing was changed or it restored the
+   previous version — read the message to them.
+4. Start Studio again with the launcher.
+
 ## Making videos through ChannelRecipe tools
 
 Use ChannelRecipe's MCP production workflow and the installed studio engine. Do

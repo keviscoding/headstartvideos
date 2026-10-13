@@ -160,6 +160,8 @@ window.CRLocalStudio = (() => {
                 '<div class="ls-step-actions"><button class="btn-secondary" data-ls-copy-key>'+icon('key')+'Copy my ChannelRecipe key</button>'+
                 '<a class="btn-ghost" href="'+SETUP_URL+'" target="_blank" rel="noopener">Open setup page ↗</a></div>'+
                 '<p class="ls-step-note">Setup then signs you in to Claude Code and connects a media account. When it says you’re ready, open the studio and make your first video.</p></div></div>'+
+            '<div class="ls-step ls-step-quiet"><span class="ls-step-n">↻</span><div class="ls-step-body"><h3>Already installed? Update in place</h3>'+
+                '<p>Studio tells you when a new version is out. Close the launcher, then in your Studio folder ask Claude Code to “Update ChannelRecipe Studio”. Your projects, accounts and styles stay put. Don’t download a fresh copy into a new folder.</p></div></div>'+
             '</section>';
     }
     function planPanel() {
