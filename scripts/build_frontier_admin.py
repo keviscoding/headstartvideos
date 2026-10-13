@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 from scripts import studio_branding
-VERSION = "5.3-admin.43"
+VERSION = "5.3-admin.44"
 PRIVATE_WORKFLOWS = {
     "cr-style-delivery-prompt.txt": ROOT / "data/frontier/reference2d-compiler.txt",
     "cr-style-study-brief.txt": ROOT / "data/frontier/reference2d-study.txt",
@@ -74,7 +74,10 @@ def private_preview_resources(root: Path):
 def compose_claude_instructions(original: bytes, overrides: bytes) -> bytes:
     """Restore private interactive creative context without publishing its text."""
     introduction = (
-        "# ChannelRecipe private studio instructions\n\n"
+        "# ChannelRecipe studio instructions\n\n"
+        "If the customer asks you to install, set up or start ChannelRecipe Studio, go straight to "
+        "\"If they ask you to install or set up Studio\" in the operational overrides at the end "
+        "of this file and follow those steps.\n\n"
         "The private creative guide follows. Use it for creative direction, "
         "style customization, specialist modules, visual verification and editing.\n\n"
         "The ChannelRecipe operational overrides at the end govern setup, account/key handling, "
@@ -129,6 +132,7 @@ def build(source: Path, target: Path):
     try:
         with zipfile.ZipFile(source) as original, zipfile.ZipFile(staged, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as result:
             written = set()
+            shipped = {}
 
             def write_resource(relative, contents, *, executable=False):
                 branded, data, record = studio_branding.transform_resource(relative, contents, brand_png=brand_png)
@@ -136,6 +140,7 @@ def build(source: Path, target: Path):
                 if name in written:
                     raise ValueError("Duplicate branded studio resource: " + name)
                 written.add(name)
+                shipped[branded] = hashlib.sha256(data).hexdigest()
                 if record:
                     transformed_files.append(record)
                 info = zipfile.ZipInfo(name)
@@ -168,16 +173,21 @@ def build(source: Path, target: Path):
             for path, relative in preview_resources:
                 write_resource(relative, path.read_bytes())
             write_resource("cr-release.json", json.dumps({
-                "version": VERSION, "access": "admin_only", "source_sha256": SOURCE_SHA256,
-                "public_release_allowed": False, "engine_files": count,
+                "version": VERSION, "access": "subscriber", "source_sha256": SOURCE_SHA256,
+                "public_release_allowed": True, "engine_files": count,
                 "workflow_version": "channelrecipe-5.3-claudecode.1", "preferred_brain": "claudecode",
                 "branding_version": studio_branding.BRANDING_VERSION,
-                "note": "Owner preview contains private source. Public runtime split remains required."}, indent=2).encode())
+                "note": "ChannelRecipe Studio for Creator, Pro and Max subscribers."}, indent=2).encode())
             write_resource("cr-branding.json", json.dumps({
                 "schema": 1, "branding_version": studio_branding.BRANDING_VERSION,
                 "source_archive_sha256": SOURCE_SHA256, "source_engine_files": count,
                 "transformed_files": transformed_files,
             }, indent=2).encode())
+            # Every shipped file's hash, so the in-place updater can tell which
+            # installed files a creator edited and keep them.
+            write_resource("cr-files.json", json.dumps({
+                "schema": 1, "version": VERSION, "files": dict(sorted(shipped.items())),
+            }, indent=1).encode())
         with zipfile.ZipFile(staged) as archive:
             branding_report = studio_branding.assert_clean_archive(archive)
         staged.replace(target)
@@ -218,7 +228,7 @@ def main():
         except Exception:
             client.delete_object(Bucket=bucket, Key=RELEASE_KEY)
             raise
-        print("Private admin release uploaded; object ACL and anonymous access checked.")
+        print("Private release uploaded; object ACL and anonymous access checked.")
     print(json.dumps(manifest))
 
 

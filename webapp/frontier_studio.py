@@ -1,8 +1,9 @@
-"""Admin-only Frontier integration. Never publish the preview engine to public users.
+"""ChannelRecipe Studio: the downloadable creator studio and its cloud authorization.
 
-The original native workflow runs on the admin's Claude Code account, with CR
-MCP authorization and owned project records. An API brain is an explicit alternate.
-This owner download retains local source/prompts and must remain admin-only.
+Creators run the native workflow on their own Claude Code account, with CR MCP
+authorization and owned project records. An API brain is an explicit alternate.
+Access follows the account's plan (Creator, Pro, Max and their trials; admins
+always) and is checked live on every web, runner and MCP request.
 """
 from __future__ import annotations
 
@@ -19,22 +20,24 @@ from typing import Literal
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
 
 import config
 from webapp import database as db
+from webapp import plans
 from cryptography.fernet import Fernet, InvalidToken
 from webapp import frontier_providers as providers
 
-VERSION = "5.3-admin.43"
+VERSION = "5.3-admin.44"
 CATALOG = Path(__file__).resolve().parent / "frontier" / "catalog.json"
-RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.43.zip"
+RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.44.zip"
 WORKFLOW_VERSION = "frontier-5.3-claudecode.1"
 BRANDED_WORKFLOW_VERSION = "channelrecipe-5.3-claudecode.1"
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 NATIVE_STAGE_LIMIT = 2
+DOWNLOAD_LINK_SECONDS = 600
 GEMINI_MODEL = "gemini-3.8-flash"
 _slots = threading.BoundedSemaphore(2)
 _schema_lock = threading.Lock()
@@ -63,13 +66,55 @@ def decrypt_secret(value):
         return ""
 
 
-def require_admin_user(user: dict | None) -> dict:
+UPGRADE_URL = "https://channelrecipe.com/app#billing"
+STUDIO_UPGRADE_MESSAGE = ("ChannelRecipe Studio is included in the Creator, Pro and Max plans. "
+                          "Choose a plan at " + UPGRADE_URL + " to download and use it.")
+# Style studies begin with this title; the allowance counts them per account.
+STYLE_STUDY_PREFIX = "Style study: "
+
+
+def is_admin(user: dict | None) -> bool:
+    admins = {str(e).strip().lower() for e in getattr(config, "ADMIN_EMAILS", []) if e}
+    return str((user or {}).get("email", "")).strip().lower() in admins
+
+
+def require_studio_user(user: dict | None) -> dict:
+    """Signed in with a plan that includes Studio. The plan is the live database row."""
     if not user:
         raise HTTPException(401, "Sign in to connect your studio.")
-    admins = {str(e).strip().lower() for e in getattr(config, "ADMIN_EMAILS", []) if e}
-    if str(user.get("email", "")).strip().lower() not in admins:
-        raise HTTPException(403, "Local studio is available to admins during this preview.")
+    if not plans.has_studio(user.get("plan"), is_admin=is_admin(user)):
+        raise HTTPException(403, STUDIO_UPGRADE_MESSAGE)
     return user
+
+
+def style_clone_usage(user: dict) -> dict:
+    """Style studies this account has started or kept, against its plan limit.
+
+    Stopped studies that failed outright don't use up the allowance, so a
+    creator can try again with the same reference.
+    """
+    initialize()
+    with db._conn() as conn:
+        used = conn.execute(db._q("""SELECT COUNT(*) AS n FROM frontier_projects
+            WHERE user_id=? AND title LIKE ? AND status != 'failed'"""),
+            (user["id"], STYLE_STUDY_PREFIX + "%")).fetchone()["n"]
+    limit = plans.style_clone_limit(user.get("plan"), is_admin=is_admin(user))
+    upgrade = plans.studio_upgrade_tier(user.get("plan"), is_admin=is_admin(user))
+    return {"used": int(used), "limit": limit,
+            "remaining": None if limit is None else max(0, limit - int(used)),
+            "upgrade_tier": upgrade, "upgrade_label": plans.TIERS[upgrade].label if upgrade else "",
+            "upgrade_url": UPGRADE_URL}
+
+
+def _require_style_clone_allowance(user: dict) -> None:
+    usage = style_clone_usage(user)
+    if usage["limit"] is not None and usage["used"] >= usage["limit"]:
+        plan = plans.label(user.get("plan"))
+        more = (f" Upgrade to {usage['upgrade_label']} at {UPGRADE_URL} to clone more channels."
+                if usage["upgrade_label"] else "")
+        raise HTTPException(402, f"Your {plan} plan includes {usage['limit']} style "
+                                 f"clone{'s' if usage['limit'] != 1 else ''}, and you've used "
+                                 f"{usage['used']}.{more}")
 
 
 def initialize():
@@ -151,7 +196,7 @@ def credential(user_id: int) -> dict | None:
 
 
 def status(user: dict) -> dict:
-    require_admin_user(user)
+    require_studio_user(user)
     c = credential(user["id"])
     with db._conn() as conn:
         recovery = conn.execute(db._q("""SELECT COUNT(*) AS total FROM frontier_requests r
@@ -160,7 +205,9 @@ def status(user: dict) -> dict:
         recovery += conn.execute(db._q("""SELECT COUNT(*) AS total FROM frontier_native_stages s
             JOIN frontier_projects p ON p.id=s.project_id WHERE p.user_id=? AND s.status='failed'"""),
             (user["id"],)).fetchone()["total"]
-    return {"access": "admin_preview", "version": VERSION,
+    return {"access": "admin" if is_admin(user) else "subscriber", "version": VERSION,
+            "plan": plans.tier_of(user.get("plan")), "plan_label": plans.label(user.get("plan")),
+            "style_clones": style_clone_usage(user),
             "brain": {"connected": bool(c and decrypt_secret(c["key_enc"])),
                       "provider": c["provider"] if c else "anthropic",
                       "model": c["model"] if c else providers.PROVIDERS["anthropic"]["default_brain"],
@@ -170,8 +217,7 @@ def status(user: dict) -> dict:
             "download_ready": release_ready(), "styles": catalog(),
             "local_url": "http://127.0.0.1:7860/cr-setup",
             "generation_billing": "Your provider accounts", "rendering": "Your computer",
-            "production_workflow": workflow_contract(),
-            "preview_note": "Admin preview preserves the ChannelRecipe creative engine. Public release remains disabled."}
+            "production_workflow": workflow_contract()}
 
 
 def release_ready() -> bool:
@@ -210,7 +256,7 @@ def _supported_model(provider, model):
 
 
 def save_key(user: dict, req: BrainKey) -> dict:
-    require_admin_user(user)
+    require_studio_user(user)
     _vault()  # Fail before any provider lookup if secure storage is unavailable.
     key = req.api_key.strip()
     if any(c.isspace() for c in key):
@@ -244,7 +290,7 @@ class ProjectRequest(BaseModel):
 
 
 def create_project(user: dict, req: ProjectRequest) -> dict:
-    require_admin_user(user)
+    require_studio_user(user)
     if not credential(user["id"]):
         raise HTTPException(409, "Connect a model account in Local studio first.")
     project_id = "crv_" + secrets.token_hex(12)
@@ -257,7 +303,7 @@ def create_project(user: dict, req: ProjectRequest) -> dict:
 
 
 def project(user: dict, project_id: str) -> dict:
-    require_admin_user(user)
+    require_studio_user(user)
     initialize()
     with db._conn() as conn:
         row = conn.execute(db._q("SELECT * FROM frontier_projects WHERE id=? AND user_id=?"),
@@ -317,7 +363,7 @@ class RetryApproval(BaseModel):
 
 
 def approve_retry(user, project_id, request_id, req):
-    require_admin_user(user)
+    require_studio_user(user)
     project(user, project_id)
     if req.acknowledge_costs is not True:
         raise HTTPException(400, "Confirm that your provider may charge for this retry.")
@@ -370,7 +416,7 @@ def _record_failure(req, attempt, error):
 
 def generate(user: dict, req: BrainRequest) -> dict:
     """Compatibility relay for owners only. Never expose this tool to paid users."""
-    require_admin_user(user)
+    require_studio_user(user)
     project(user, req.project_id)
     c = credential(user["id"])
     key = decrypt_secret(c["key_enc"]) if c else ""
@@ -565,10 +611,10 @@ def workflow_contract():
             "required_release": VERSION, "engine_source_sha256": SOURCE_SHA256,
             "mode": "claudecode", "models": choices, "default_general_model": "claude-sonnet-5-5",
             "default_visual_model": "claude-opus-5-5", "max_active_stages": NATIVE_STAGE_LIMIT,
-            "access": "admin_preview", "public_release_allowed": False,
+            "access": "subscriber", "public_release_allowed": True,
             "brain_billing": "Your local Claude Code account and its usage limits",
             "brain_api_key_required": False, "rendering": "Your computer",
-            "prompt_visibility": "The admin runtime retains local ChannelRecipe prompts and source.",
+            "prompt_visibility": "The downloaded studio includes ChannelRecipe's local workflow and prompts.",
             "setup_required": ["local_version", "brain_mode", "general_model", "visual_model", "claude_installed",
                                "claude_authenticated", "api_provider", "ffmpeg_ready", "browser_ready", "node_ready",
                                "models_verified", "media_ready", "costs_accepted"]}
@@ -580,7 +626,7 @@ def _runtime_compatible(version, workflow):
     approved = ("5.3-admin.8", "5.3-admin.9", "5.3-admin.10", "5.3-admin.11", "5.3-admin.12",
                 "5.3-admin.13", "5.3-admin.14", "5.3-admin.15", "5.3-admin.16", "5.3-admin.17",
                 "5.3-admin.18", "5.3-admin.19", "5.3-admin.20", "5.3-admin.21", "5.3-admin.22",
-                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43")
+                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43", "5.3-admin.44")
     current = workflow_contract()
     if (version not in approved or workflow.get("required_release") not in approved or VERSION not in approved
             or workflow.get("workflow_version") != current["workflow_version"]
@@ -614,7 +660,7 @@ def _setup_issues(setup, workflow):
 
 
 def native_prepare(user, setup: NativeSetup | None = None):
-    require_admin_user(user)
+    require_studio_user(user)
     workflow = workflow_contract()
     issues = _setup_issues(setup, workflow) if setup else ["Run the downloaded studio's local setup checks first."]
     if not release_ready():
@@ -648,7 +694,7 @@ def _native_begin_result(user, session, platform, resumed=False):
 
 
 def native_begin(user, req: NativeBegin):
-    require_admin_user(user)
+    require_studio_user(user)
     initialize()
     import re
     if not req.title.strip() or any(c in req.title for c in "\n\r") or any(not re.fullmatch(r"[a-zA-Z0-9_\-]{1,80}", key) for key in req.features):
@@ -673,6 +719,12 @@ def native_begin(user, req: NativeBegin):
     ready = native_prepare(user, req.setup)
     if not ready["ready"]:
         raise HTTPException(409, " ".join(ready["issues"]))
+    if req.setup.purpose == "creative" and req.title.startswith(STYLE_STUDY_PREFIX):
+        with db._conn() as conn:
+            replay = conn.execute(db._q("SELECT 1 FROM frontier_native_sessions WHERE user_id=? AND begin_id=?"),
+                                  (user["id"], req.begin_id)).fetchone()
+        if not replay:
+            _require_style_clone_allowance(user)
     allowed = {"steps", "script", "burn_subs", "thumb_count", "use_motion", "character", "character_image",
                "maps", "headlines", "spotlight", "objects", "depth", "extra", "avatar_id", "avatar_s",
                "avatar_count", "auto_style", "offer", "offer_plugs", "desc", "chapters", "sources", "byo_audio", "mix", "render_backend", "manimgx_identity"}
@@ -924,7 +976,7 @@ class _BrandedWorkflowRoute(APIRoute):
 
 def make_router(session_user, *, prefix="/api/frontier"):
     options = {"route_class": _BrandedWorkflowRoute} if prefix == "/api/studio" else {}
-    router = APIRouter(prefix=prefix, tags=["Admin local studio"], **options)
+    router = APIRouter(prefix=prefix, tags=["ChannelRecipe Studio"], **options)
 
     def access(request: Request):
         authorization = request.headers.get("authorization", "")
@@ -934,7 +986,7 @@ def make_router(session_user, *, prefix="/api/frontier"):
             user = db.get_user_by_mcp_api_key(authorization[7:])
         else:
             user = session_user(request)
-        return require_admin_user(user)
+        return require_studio_user(user)
 
     @router.get("/status")
     def get_status(user=Depends(access)):
@@ -1014,20 +1066,20 @@ def make_router(session_user, *, prefix="/api/frontier"):
         if local and Path(local).is_file():
             return FileResponse(local, media_type="application/zip", filename=filename, headers=headers)
         from webapp import storage
-        if not storage.is_remote():
+        if not storage.is_remote() or not release_ready():
             raise HTTPException(503, "The studio download is being prepared. Please try again shortly.")
+        # Hand the browser a short-lived signed link to the private object rather
+        # than streaming ~250 MB through the web process: a launch-day crowd of
+        # downloads must not tie up the site. The object stays private; the
+        # link is minted per signed-in, entitled request and expires quickly
+        # (an in-progress transfer is unaffected by expiry).
         try:
-            obj = storage._get_client().get_object(Bucket=storage._spaces_creds()[2], Key=RELEASE_KEY)
+            url = storage._get_client().generate_presigned_url("get_object", Params={
+                "Bucket": storage._spaces_creds()[2], "Key": RELEASE_KEY,
+                "ResponseContentDisposition": 'attachment; filename="%s"' % filename,
+                "ResponseContentType": "application/zip"}, ExpiresIn=DOWNLOAD_LINK_SECONDS)
         except Exception:
             raise HTTPException(503, "The studio download is being prepared. Please try again shortly.")
-        body = obj["Body"]
-        def chunks():
-            try:
-                yield from body.iter_chunks(chunk_size=1024 * 1024)
-            finally:
-                body.close()
-        headers["Content-Disposition"] = 'attachment; filename="%s"' % filename
-        headers["Content-Length"] = str(obj["ContentLength"])
-        return StreamingResponse(chunks(), media_type="application/zip", headers=headers)
+        return RedirectResponse(url, status_code=302, headers=headers)
 
     return router

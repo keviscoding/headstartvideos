@@ -6,7 +6,7 @@
     <title>ChannelRecipe — Proven recipes for faceless YouTube channels</title>
     <link rel="icon" href="/static/favicon.svg">
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="/static/styles.css?v=20260805c">
+    <link rel="stylesheet" href="/static/styles.css?v=20261014-v2">
     <script>
         tailwind.config = {
             theme: {
@@ -40,10 +40,10 @@
                     <span style="font-family: var(--font-display); font-weight: 800; font-size: 18px; letter-spacing: -0.01em; color: var(--app-ink);">Channel<span style="color: var(--accent);">Recipe</span></span>
                 </div>
                 <nav class="hidden sm:flex items-center gap-1">
-                    <button class="nav-btn active" data-page="pipeline" onclick="navigateTo('pipeline')">New video</button>
+                    <button id="nav-local-studio" class="nav-btn" data-page="local-studio" onclick="navigateTo('local-studio')">Studio <span class="nav-version nav-version-new">v2</span></button>
+                    <button class="nav-btn" data-page="pipeline" onclick="navigateTo('pipeline')" title="Classic recipes (v1)">Classic <span class="nav-version">v1</span></button>
                     <button class="nav-btn" data-page="niche-finder" onclick="navigateTo('niche-finder')">Niche Finder</button>
                     <button id="nav-niche-intel" class="nav-btn hidden" data-page="niche-intel" onclick="navigateTo('niche-intel')">Niche Intel</button>
-                    <button id="nav-local-studio" class="nav-btn hidden" data-page="local-studio" onclick="navigateTo('local-studio')">Local studio</button>
                     <button id="nav-analytics" class="nav-btn hidden" data-page="analytics" onclick="navigateTo('analytics')">Analytics</button>
                     <div class="relative" id="tools-dropdown">
                         <button class="nav-btn" data-page="tools" onclick="toggleToolsMenu(event)" style="position:relative;">
@@ -103,10 +103,10 @@
         </div>
         <!-- Mobile nav -->
         <div id="mobile-menu" class="sm:hidden hidden px-4 py-3 space-y-1" style="border-top: 1px solid var(--app-border);">
-            <button class="mobile-nav-btn" onclick="navigateTo('pipeline')">New video</button>
+            <button id="nav-local-studio-mobile" class="mobile-nav-btn" onclick="navigateTo('local-studio')">Studio <span class="nav-version nav-version-new">v2</span></button>
+            <button class="mobile-nav-btn" onclick="navigateTo('pipeline')" title="Classic recipes (v1)">Classic <span class="nav-version">v1</span></button>
             <button class="mobile-nav-btn" onclick="navigateTo('niche-finder')">Niche Finder</button>
             <button id="nav-niche-intel-mobile" class="mobile-nav-btn hidden" onclick="navigateTo('niche-intel')">Niche Intel</button>
-            <button id="nav-local-studio-mobile" class="mobile-nav-btn hidden" onclick="navigateTo('local-studio')">Local studio</button>
             <button id="nav-analytics-mobile" class="mobile-nav-btn hidden" onclick="navigateTo('analytics')">Analytics</button>
             <button class="mobile-nav-btn" onclick="navigateTo('script-studio')">Script Studio</button>
             <button class="mobile-nav-btn" onclick="navigateTo('voiceover-studio')">Voiceover Studio</button>
@@ -167,8 +167,16 @@
     <!-- PAGE: Pipeline (Create Video) -->
     <!-- ============================================================ -->
     <div id="page-pipeline" class="page-container">
+        <!-- Classic recipes are v1: always point people at Studio (v2) first -->
+        <div class="max-w-5xl mx-auto px-6 pt-6">
+            <div class="v1-banner" role="note">
+                <span class="nav-version">v1</span>
+                <p><strong>You’re using Classic recipes.</strong> ChannelRecipe Studio (v2) makes far better videos — dozens of styles, channel style cloning, motion graphics, 3D and a real editor.</p>
+                <button type="button" class="btn-primary" onclick="navigateTo('local-studio')">Try Studio v2 →</button>
+            </div>
+        </div>
         <!-- Stepper -->
-        <div class="max-w-5xl mx-auto px-6 pt-6 pb-2">
+        <div class="max-w-5xl mx-auto px-6 pt-4 pb-2">
             <div class="cr-panel" style="padding: 20px 26px;">
                 <div class="flex items-center justify-between" id="stepper-default">
                     <div class="step-indicator" data-step="1"><div class="step-dot active" onclick="goToCompletedStep(1)">1</div><span class="step-label">Recipe</span></div>
@@ -213,8 +221,8 @@
             <section id="step-1" class="step-panel">
                 <div class="cr-panel">
                     <div class="mb-6">
-                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Pick your first recipe</h2>
-                        <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">Each one is proven on a real channel. A new recipe drops every week.</p>
+                        <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Classic recipes</h2>
+                        <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">Quick cloud-made videos from a single recipe. For full control, use <button type="button" class="link-btn" onclick="navigateTo('local-studio')">Studio v2</button>.</p>
                     </div>
                     <div class="rk-form-toggle" role="group" aria-label="Video format">
                         <button type="button" class="rk-form-btn is-active" data-form="long" onclick="setRecipeFormFilter('long')">Long-form</button>
@@ -864,7 +872,7 @@
                             </div>
                             <div style="flex: 1;">
                                 <p style="font-family: var(--font-display); font-weight: 700; font-size: 14px; color: var(--app-ink);">Want longer videos?</p>
-                                <p style="font-family: var(--font-body); font-size: 12px; color: var(--app-ink-2); margin-top: 1px;">Free plan caps at <span id="limit-minutes">8</span> min. Starter &amp; Daily unlock up to 20 min.</p>
+                                <p style="font-family: var(--font-body); font-size: 12px; color: var(--app-ink-2); margin-top: 1px;">Free plan caps at <span id="limit-minutes">8</span> min. Paid plans unlock up to 20 min.</p>
                             </div>
                             <button onclick="openUpgradeFlow({ reason: 'niche_finder' })" class="btn-primary" style="flex: none; font-size: 13px; padding: 8px 16px;">Upgrade</button>
                         </div>
@@ -1188,7 +1196,7 @@
                                 </div>
                                 <div style="flex: 1;">
                                     <p style="font-family: var(--font-display); font-weight: 700; font-size: 14px; color: var(--app-ink);">Want longer videos?</p>
-                                    <p style="font-family: var(--font-body); font-size: 12px; color: var(--app-ink-2); margin-top: 1px;">Starter &amp; Daily unlock up to 20 min and more credits each month.</p>
+                                    <p style="font-family: var(--font-body); font-size: 12px; color: var(--app-ink-2); margin-top: 1px;">Paid plans unlock up to 20 min and more credits each month.</p>
                                 </div>
                                 <button onclick="openUpgradeFlow()" class="btn-primary" style="flex: none; font-size: 13px; padding: 8px 16px;">View plans</button>
                             </div>
@@ -1736,7 +1744,7 @@
                 <h3 style="font-family: var(--font-display); font-size: 18px; font-weight: 700; margin-bottom: 10px;">Free vs paid</h3>
                 <p style="font-size: 14px; color: var(--app-ink-2); margin-bottom: 12px;">
                     Free lets you try it. When you hit the sample limit, Claude will show an upgrade link.
-                    Starter unlocks the full niche library; Daily is for publishing every day.
+                    Every paid plan unlocks the full niche library and ChannelRecipe Studio.
                 </p>
                 <p id="mcp-brain-plan-note" class="cr-mono" style="font-size: 12px; color: var(--app-ink-3);"></p>
             </div>
@@ -1825,9 +1833,9 @@
 
             <!-- Upgrade (free users) -->
             <div id="billing-upgrade-section" style="background: var(--app-surface); border: 1px solid var(--app-border); border-radius: var(--radius-card); padding: 24px; margin-bottom: 20px;">
-                <h3 id="billing-upgrade-title" style="font-family: var(--font-display); font-size: 16px; font-weight: 700; margin-bottom: 4px;">Start your free trial</h3>
-                <p id="billing-upgrade-desc" style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-2); margin-bottom: 16px;">7 days free, then your chosen plan begins. Cancel anytime.</p>
-                <button id="billing-upgrade-btn" onclick="openUpgradeFlow({ reason: 'billing' })" class="btn-primary" style="font-size: 14px; padding: 10px 20px;">Choose how to start</button>
+                <h3 id="billing-upgrade-title" style="font-family: var(--font-display); font-size: 16px; font-weight: 700; margin-bottom: 4px;">Choose a plan</h3>
+                <p id="billing-upgrade-desc" style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-2); margin-bottom: 16px;">Every plan includes ChannelRecipe Studio, the niche library and cloud credits. Cancel anytime.</p>
+                <button id="billing-upgrade-btn" onclick="openUpgradeFlow({ reason: 'billing' })" class="btn-primary" style="font-size: 14px; padding: 10px 20px;">See plans</button>
             </div>
         </main>
     </div>
@@ -2034,21 +2042,47 @@
             border-radius: var(--radius-card);
             padding: 0;
             width: 100%;
-            max-width: 720px;
+            max-width: 980px;
             margin: auto;
-            max-height: min(92dvh, 920px);
+            max-height: min(94dvh, 980px);
             overflow-x: hidden;
             overflow-y: auto;
             -webkit-overflow-scrolling: touch;
             overscroll-behavior: contain;
+        }
+        #pricing-modal .pricing-grid {
+            padding: 6px 28px 12px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px;
+        }
+        #pricing-modal .pricing-card {
+            background: var(--app-bg); border: 1px solid var(--app-border); border-radius: var(--radius-md);
+            padding: 22px 20px 20px; position: relative; display: flex; flex-direction: column; text-align: left;
+        }
+        #pricing-modal .pricing-card.featured { border: 2px solid var(--accent); box-shadow: 0 12px 40px -18px var(--accent); }
+        #pricing-modal .pricing-badge {
+            position: absolute; top: -10px; left: 20px; background: var(--accent); color: white;
+            font-family: var(--font-mono); font-size: 10px; font-weight: 700; padding: 3px 10px;
+            border-radius: 99px; text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        #pricing-modal .pricing-card h3 { font-size: 18px; margin-bottom: 2px; }
+        #pricing-modal .pricing-tagline { font-family: var(--font-body); font-size: 12px; color: var(--app-ink-3); margin-bottom: 14px; }
+        #pricing-modal .pricing-amount { display: flex; align-items: baseline; gap: 3px; }
+        #pricing-modal .pricing-amount .cr-display { font-size: 34px; }
+        #pricing-modal .pricing-amount span:last-child { font-family: var(--font-body); font-size: 13px; color: var(--app-ink-3); }
+        #pricing-modal .pricing-note { font-family: var(--font-mono); font-size: 11px; color: var(--app-ink-3); margin: 2px 0 16px; }
+        #pricing-modal .pricing-card ul { list-style: none; padding: 0; margin: 0 0 18px; font-family: var(--font-body); font-size: 13px; color: var(--app-ink); flex: 1; }
+        #pricing-modal .pricing-card li { padding: 5px 0; display: flex; align-items: flex-start; gap: 8px; line-height: 1.4; }
+        #pricing-modal .pricing-card li svg { flex: none; margin-top: 3px; }
+        #pricing-modal .pricing-card button { font-size: 14px; padding: 10px 0; }
+        #pricing-modal .pricing-fineprint { padding: 0 28px 22px; font-family: var(--font-body); font-size: 12px; color: var(--app-ink-3); text-align: center; line-height: 1.5; }
+        @media (max-width: 860px) {
+            #pricing-modal .pricing-grid { grid-template-columns: 1fr; max-width: 440px; margin: 0 auto; }
         }
         @media (max-width: 600px) {
             #pricing-modal {
                 align-items: flex-start;
             }
             #pricing-modal .pricing-grid {
-                grid-template-columns: 1fr !important;
-                padding-bottom: 28px !important;
+                padding: 6px 16px 20px;
             }
             #pricing-modal-panel {
                 max-height: none; /* let the overlay scroll the full sheet */
@@ -2147,7 +2181,7 @@
             </button>
             <div style="padding: 28px 28px 16px; text-align: center;">
                 <h2 class="cr-display" style="font-size: 24px; margin-bottom: 6px;">Choose your plan</h2>
-                <p id="pricing-subtitle" style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2);">7-day free trial on any plan. Cancel anytime.</p>
+                <p id="pricing-subtitle" style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2);">Every plan includes ChannelRecipe Studio. Cancel anytime.</p>
                 <div id="pricing-toggle" style="display: inline-flex; background: var(--app-bg); border-radius: 99px; padding: 3px; margin-top: 16px; border: 1px solid var(--app-border);">
                     <button id="pricing-monthly-btn" onclick="setPricingPlan('monthly')" style="padding: 6px 18px; border-radius: 99px; border: none; font-family: var(--font-body); font-size: 13px; font-weight: 600; cursor: pointer; background: var(--accent); color: white; transition: all 0.2s;">Monthly</button>
                     <button id="pricing-annual-btn" onclick="setPricingPlan('annual')" style="padding: 6px 18px; border-radius: 99px; border: none; font-family: var(--font-body); font-size: 13px; font-weight: 600; cursor: pointer; background: transparent; color: var(--app-ink-3); transition: all 0.2s;">Annual <span style="color: var(--success); font-size: 11px;">2 months free</span></button>
@@ -2167,45 +2201,50 @@
                     <p style="font-family: var(--font-body); font-size: 12px; color: var(--app-ink-3); margin-top: 14px;">Top-ups add to your balance instantly and don't expire while your plan is active.</p>
                 </div>
             </div>
-            <div class="pricing-grid" style="padding: 0 28px 24px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
-                <!-- Starter -->
-                <div id="pricing-card-starter" style="background: var(--app-bg); border: 2px solid var(--app-border); border-radius: var(--radius-md); padding: 22px; text-align: center; position: relative;">
-                    <span style="position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: var(--accent); color: white; font-family: var(--font-mono); font-size: 10px; font-weight: 700; padding: 3px 10px; border-radius: 99px; text-transform: uppercase; letter-spacing: 0.5px;">Most popular</span>
-                    <h3 class="cr-display" style="font-size: 18px; margin-bottom: 2px;">Starter</h3>
-                    <p style="font-family: var(--font-body); font-size: 12px; color: var(--app-ink-3); margin-bottom: 12px;">Post every other day</p>
-                    <div style="display: flex; align-items: baseline; justify-content: center; gap: 3px; margin-bottom: 2px;">
-                        <span id="starter-price" class="cr-display" style="font-size: 36px;">$27</span>
-                        <span id="starter-period" style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-3);">/mo</span>
-                    </div>
-                    <p id="starter-note" style="font-family: var(--font-mono); font-size: 11px; color: var(--app-ink-3); margin-bottom: 16px;">15 credits / month · cancel anytime</p>
-                    <ul style="list-style: none; padding: 0; margin: 0 0 16px; text-align: left; font-family: var(--font-body); font-size: 13px; color: var(--app-ink);">
-                        <li style="padding: 5px 0; display: flex; align-items: center; gap: 8px;"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span id="starter-videos"><strong>15 credits</strong>/month</span></li>
-                        <li style="padding: 5px 0; display: flex; align-items: center; gap: 8px;"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Up to <strong>20 min</strong> per video</li>
-                        <li style="padding: 5px 0; display: flex; align-items: center; gap: 8px;"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>All video recipes</li>
-                        <li style="padding: 5px 0; display: flex; align-items: center; gap: 8px;"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Full upload kit</li>
+            <div class="pricing-grid">
+                <div id="pricing-card-daily" class="pricing-card">
+                    <h3 class="cr-display">Creator</h3>
+                    <p class="pricing-tagline">Start making videos with Studio</p>
+                    <div class="pricing-amount"><span id="daily-price" class="cr-display">$49</span><span id="daily-period">/mo</span></div>
+                    <p id="daily-note" class="pricing-note">Billed monthly · cancel anytime</p>
+                    <ul>
+                        <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span><strong>ChannelRecipe Studio</strong> (v2) + every built-in style</span></li>
+                        <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Clone <strong>3</strong> YouTube channel styles</span></li>
+                        <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span><span id="daily-videos"><strong>35 credits</strong>/month</span> for Classic recipes</span></li>
+                        <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Niche Finder + full niche database in Claude</span></li>
+                        <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Community Discord</span></li>
                     </ul>
-                    <button id="pricing-cta-starter" onclick="proceedToCheckout('starter')" class="btn-primary w-full" style="font-size: 14px; padding: 10px 0;">Start free trial</button>
+                    <button id="pricing-cta-daily" onclick="proceedToCheckout('daily')" class="btn-secondary w-full">Subscribe now</button>
                 </div>
-                <!-- Daily -->
-                <div id="pricing-card-daily" style="background: var(--app-bg); border: 2px solid var(--accent); border-radius: var(--radius-md); padding: 22px; text-align: center; position: relative;">
-                    <span style="position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: var(--success); color: white; font-family: var(--font-mono); font-size: 10px; font-weight: 700; padding: 3px 10px; border-radius: 99px; text-transform: uppercase; letter-spacing: 0.5px;">Best value</span>
-                    <h3 class="cr-display" style="font-size: 18px; margin-bottom: 2px;">Daily</h3>
-                    <p style="font-family: var(--font-body); font-size: 12px; color: var(--app-ink-3); margin-bottom: 12px;">Post every single day</p>
-                    <div style="display: flex; align-items: baseline; justify-content: center; gap: 3px; margin-bottom: 2px;">
-                        <span id="daily-price" class="cr-display" style="font-size: 36px;">$49</span>
-                        <span id="daily-period" style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-3);">/mo</span>
-                    </div>
-                    <p id="daily-note" style="font-family: var(--font-mono); font-size: 11px; color: var(--success); margin-bottom: 16px;">35 credits / month · cancel anytime</p>
-                    <ul style="list-style: none; padding: 0; margin: 0 0 16px; text-align: left; font-family: var(--font-body); font-size: 13px; color: var(--app-ink);">
-                        <li style="padding: 5px 0; display: flex; align-items: center; gap: 8px;"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span id="daily-videos"><strong>35 credits</strong>/month</span></li>
-                        <li style="padding: 5px 0; display: flex; align-items: center; gap: 8px;"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><strong>Priority</strong> render queue</li>
-                        <li style="padding: 5px 0; display: flex; align-items: center; gap: 8px;"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Full voice library</li>
-                        <li style="padding: 5px 0; display: flex; align-items: center; gap: 8px;"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>10 credit rollover</li>
-                        <li style="padding: 5px 0; display: flex; align-items: center; gap: 8px;"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Everything in Starter</li>
+                <div id="pricing-card-studio_pro" class="pricing-card featured">
+                    <span class="pricing-badge">Most popular</span>
+                    <h3 class="cr-display">Pro</h3>
+                    <p class="pricing-tagline">Run several channels</p>
+                    <div class="pricing-amount"><span id="studio_pro-price" class="cr-display">$79</span><span id="studio_pro-period">/mo</span></div>
+                    <p id="studio_pro-note" class="pricing-note">Billed monthly · cancel anytime</p>
+                    <ul>
+                        <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Everything in Creator</span></li>
+                        <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Clone <strong>15</strong> YouTube channel styles</span></li>
+                        <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span><span id="studio_pro-videos"><strong>60 credits</strong>/month</span> for Classic recipes</span></li>
+                        <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Up to <strong>3</strong> cloud videos rendering at once</span></li>
                     </ul>
-                    <button id="pricing-cta-daily" onclick="proceedToCheckout('daily')" class="btn-primary w-full" style="font-size: 14px; padding: 10px 0;">Start free trial</button>
+                    <button id="pricing-cta-studio_pro" onclick="proceedToCheckout('studio_pro')" class="btn-primary w-full">Subscribe now</button>
+                </div>
+                <div id="pricing-card-studio_max" class="pricing-card">
+                    <h3 class="cr-display">Max</h3>
+                    <p class="pricing-tagline">For serious channel operators</p>
+                    <div class="pricing-amount"><span id="studio_max-price" class="cr-display">$119</span><span id="studio_max-period">/mo</span></div>
+                    <p id="studio_max-note" class="pricing-note">Billed monthly · cancel anytime</p>
+                    <ul>
+                        <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Everything in Pro</span></li>
+                        <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span><strong>Unlimited</strong> style clones</span></li>
+                        <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span><span id="studio_max-videos"><strong>100 credits</strong>/month</span> for Classic recipes</span></li>
+                        <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Priority help in Discord</span></li>
+                    </ul>
+                    <button id="pricing-cta-studio_max" onclick="proceedToCheckout('studio_max')" class="btn-secondary w-full">Subscribe now</button>
                 </div>
             </div>
+            <p class="pricing-fineprint">Studio runs on your computer with your own Claude account and media-provider balance, so you choose what each video costs. Credits are for Classic (v1) cloud recipes.</p>
             <div id="topup-row" class="hidden" style="padding: 0 28px 20px; text-align: center;">
                 <p style="font-family: var(--font-body); font-size: 12px; color: var(--app-ink-3);">Need more? <button onclick="proceedToTopup(5)" style="background: none; border: none; color: var(--accent); cursor: pointer; font-size: 12px; font-weight: 600; padding: 0;">5 credits · $10</button> or <button onclick="proceedToTopup(15)" style="background: none; border: none; color: var(--accent); cursor: pointer; font-size: 12px; font-weight: 600; padding: 0;">15 credits · $25</button></p>
             </div>
@@ -2250,7 +2289,7 @@
             <div style="text-align: center; margin-bottom: 24px;">
                 <img src="/static/glyph.svg" width="36" height="36" alt="" style="margin: 0 auto 12px;">
                 <h2 class="cr-display" style="font-size: 22px;">Sign in to ChannelRecipe</h2>
-                <p style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2); margin-top: 6px;">Paid full access or a limited free trial — you choose after verify.</p>
+                <p style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2); margin-top: 6px;">We’ll email you a sign-in code. No password needed.</p>
             </div>
             <!-- Step 1: Email -->
             <div id="auth-step-email">
@@ -2283,8 +2322,8 @@
 
     <script src="/static/cr-telemetry.js?v=20260804b"></script>
     <script src="/static/ranking.js?v=20260807f"></script>
-    <link rel="stylesheet" href="/static/local-studio.css?v=20261011b">
-    <script src="/static/app.js?v=20261011-studio1"></script>
-    <script src="/static/local-studio.js?v=20261012-native18"></script>
+    <link rel="stylesheet" href="/static/local-studio.css?v=20261014-v2">
+    <script src="/static/app.js?v=20261014-v2"></script>
+    <script src="/static/local-studio.js?v=20261014-v2"></script>
 </body>
 </html>

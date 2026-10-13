@@ -25,7 +25,7 @@ def main():
             archive.extractall(tmp)
         root = Path(tmp) / "ChannelRecipe studio"
         manifest = json.loads((root / "cr-release.json").read_text())
-        assert manifest["access"] == "admin_only" and not manifest["public_release_allowed"]
+        assert manifest["access"] == "subscriber" and manifest["public_release_allowed"]
         original_guide = (root / "FRONTIER_GUIDE.md").read_bytes()
         interactive_instructions = (root / "CLAUDE.md").read_bytes()
         operational_overrides = (Path(__file__).resolve().parents[1] / "local_runtime/CLAUDE.md").read_bytes()

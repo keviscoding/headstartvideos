@@ -471,6 +471,7 @@ from webapp.database import (
 )
 from webapp import storage
 from webapp import job_queue
+from webapp import plans
 from webapp.cook_runner import run_cook_job, hydrate_job_from_row, job_credits_charged
 from config import COOK_ON_WEB, COOK_ON_MODAL, COOK_ON_FLY
 
@@ -500,7 +501,7 @@ def require_active_plan(request: Request) -> dict:
     user = require_user(request)
     if _is_admin_email(user.get("email", "")):
         return user
-    if user.get("plan") not in ("starter", "daily", "pro", "starter_trial", "daily_trial"):
+    if not plans.is_active_plan(user.get("plan")):
         raise HTTPException(402, "Start your free trial to generate videos.")
     return user
 
@@ -672,11 +673,11 @@ def _is_pro(user: dict | None) -> bool:
         return False
     if _is_admin_email(user.get("email", "")):
         return True
-    return user.get("plan") in ("pro", "starter", "daily", "starter_trial", "daily_trial")
+    return plans.is_active_plan(user.get("plan"))
 
 
 def _is_trial(user: dict | None) -> bool:
-    return bool(user) and user.get("plan") in ("starter_trial", "daily_trial")
+    return bool(user) and plans.is_trial_plan(user.get("plan"))
 
 
 # Trial (and free) users cannot generate scripts / cook videos longer than this.
@@ -687,8 +688,7 @@ def _enforce_length_cap(user: dict, target_minutes: int | float, *, label: str =
     """Raise 402 if a trial/free user requests more than the allowed minutes."""
     if _is_admin_email(user.get("email", "")):
         return
-    plan = user.get("plan") or "free"
-    if plan in ("starter", "daily", "pro"):
+    if plans.is_paid_plan(user.get("plan")):
         return
     cap = TRIAL_MAX_MINUTES
     if float(target_minutes or 0) > cap:
@@ -731,10 +731,13 @@ def _safe_user(u: dict) -> dict:
 # Stripe billing
 # ---------------------------------------------------------------------------
 class CheckoutRequest(BaseModel):
-    plan: str = "starter_monthly"
+    plan: str = "daily_monthly"
     # True = charge today (no Stripe trial), even if the account never trialled.
     # Used by the post-verify "Full access (paid)" chooser.
     skip_trial: bool = False
+    # Where the app reopens after Stripe: Studio by default, or the Classic
+    # recipe flow when the paywall interrupted a v1 cook.
+    return_to: Literal["local-studio", "pipeline"] = "local-studio"
 
 class TopupRequest(BaseModel):
     credits: int = 5
@@ -744,42 +747,29 @@ class EndTrialRequest(BaseModel):
     tier: str | None = None
     interval: str | None = None
 
-_PLAN_PRICE_MAP = {
-    "starter_monthly": lambda: config.STRIPE_PRICE_STARTER_MONTHLY or config.STRIPE_PRICE_ID,
-    "starter_annual": lambda: config.STRIPE_PRICE_STARTER_ANNUAL or config.STRIPE_PRICE_ID_ANNUAL,
-    "daily_monthly": lambda: config.STRIPE_PRICE_DAILY_MONTHLY,
-    "daily_annual": lambda: config.STRIPE_PRICE_DAILY_ANNUAL,
-    "monthly": lambda: config.STRIPE_PRICE_STARTER_MONTHLY or config.STRIPE_PRICE_ID,
-    "annual": lambda: config.STRIPE_PRICE_STARTER_ANNUAL or config.STRIPE_PRICE_ID_ANNUAL,
-}
-
 # Annual bills 12 months at once and the pricing page promises the year's
-# credits up front ("180 credits/year"), so the grant must be 12x. There is no
-# scheduler to drip them monthly, and the old flat 15 meant an annual customer
-# paid $270 for one month's worth.
-_ANNUAL_MONTHS = 12
+# credits up front ("420 credits/year"), so the grant must be 12x. There is no
+# scheduler to drip them monthly. Tiers, prices and allowances live in
+# webapp/plans.py; these wrappers keep the existing call sites and tests.
+_ANNUAL_MONTHS = plans.ANNUAL_MONTHS
 
-_PLAN_CREDITS = {
-    "starter_monthly": 15, "starter_annual": 15 * _ANNUAL_MONTHS,
-    "daily_monthly": 35, "daily_annual": 35 * _ANNUAL_MONTHS,
-    "monthly": 15, "annual": 15 * _ANNUAL_MONTHS,
-}
+
+def _price_for_plan_key(key: str) -> str:
+    """Stripe price for a checkout plan key such as 'studio_pro_annual'."""
+    tier, interval = plans.parse_plan_key(key)
+    return plans.price_for(tier, interval) if tier else ""
+
+
+def _plan_key_credits(key: str) -> int:
+    tier, interval = plans.parse_plan_key(key)
+    return plans.allowance(tier or "starter", interval or "monthly")
 
 
 def _channelrecipe_price_ids() -> set[str]:
     """Price IDs that belong to ChannelRecipe (ignore other businesses on same Stripe)."""
-    return {
+    return plans.subscription_price_ids() | {
         p.strip()
-        for p in (
-            config.STRIPE_PRICE_STARTER_MONTHLY,
-            config.STRIPE_PRICE_STARTER_ANNUAL,
-            config.STRIPE_PRICE_DAILY_MONTHLY,
-            config.STRIPE_PRICE_DAILY_ANNUAL,
-            config.STRIPE_PRICE_ID,
-            config.STRIPE_PRICE_ID_ANNUAL,
-            config.STRIPE_PRICE_TOPUP_5,
-            config.STRIPE_PRICE_TOPUP_15,
-        )
+        for p in (config.STRIPE_PRICE_TOPUP_5, config.STRIPE_PRICE_TOPUP_15)
         if (p or "").strip()
     }
 
@@ -820,16 +810,12 @@ def _money_track(
 
 
 def _annual_price_ids() -> tuple[str, ...]:
-    return tuple(p for p in (
-        config.STRIPE_PRICE_STARTER_ANNUAL,
-        config.STRIPE_PRICE_DAILY_ANNUAL,
-        config.STRIPE_PRICE_ID_ANNUAL,
-    ) if (p or "").strip())
+    return plans.annual_price_ids()
 
 
 def _interval_from_price_id(price_id: str) -> str:
     """'annual' or 'monthly' for an existing price, defaulting to monthly."""
-    return "annual" if (price_id or "").strip() in _annual_price_ids() else "monthly"
+    return plans.interval_from_price_id(price_id)
 
 
 def _first_subscription_item(sub: Any) -> dict:
@@ -908,13 +894,9 @@ def _price_for_tier(tier: str, interval: str) -> str:
     annual to monthly billing, so the interval is carried over rather than
     assumed.
     """
-    key = f"{(tier or '').strip().lower()}_{'annual' if interval == 'annual' else 'monthly'}"
-    resolver = _PLAN_PRICE_MAP.get(key)
-    return (resolver() or "").strip() if resolver else ""
+    return plans.price_for((tier or "").strip().lower(), interval)
 
-# Monthly credit allowance per paid tier, independent of billing interval.
-_TIER_ALLOWANCE = {"starter": 15, "daily": 35}
-_PAID_TIERS = tuple(_TIER_ALLOWANCE)
+_PAID_TIERS = plans.PAID_TIERS
 
 
 def _tier_allowance(tier: str, interval: str = "monthly") -> int:
@@ -923,8 +905,7 @@ def _tier_allowance(tier: str, interval: str = "monthly") -> int:
     An annual invoice covers 12 months, so it must grant 12 months of credits.
     Defaults to monthly so existing callers keep their behaviour.
     """
-    monthly = _TIER_ALLOWANCE.get(tier, 15)
-    return monthly * _ANNUAL_MONTHS if interval == "annual" else monthly
+    return plans.allowance(tier, interval)
 
 
 def _tier_from_price_id(price_id: str) -> str:
@@ -935,24 +916,7 @@ def _tier_from_price_id(price_id: str) -> str:
     untouched, so trusting the DB row under-granted that customer every month
     for the life of the subscription.
     """
-    pid = (price_id or "").strip()
-    if not pid:
-        return ""
-    daily = {
-        (config.STRIPE_PRICE_DAILY_MONTHLY or "").strip(),
-        (config.STRIPE_PRICE_DAILY_ANNUAL or "").strip(),
-    } - {""}
-    starter = {
-        (config.STRIPE_PRICE_STARTER_MONTHLY or "").strip(),
-        (config.STRIPE_PRICE_STARTER_ANNUAL or "").strip(),
-        (config.STRIPE_PRICE_ID or "").strip(),
-        (config.STRIPE_PRICE_ID_ANNUAL or "").strip(),
-    } - {""}
-    if pid in daily:
-        return "daily"
-    if pid in starter:
-        return "starter"
-    return ""
+    return plans.tier_from_price_id(price_id)
 
 
 def _line_price_id(line: dict) -> str:
@@ -1130,8 +1094,9 @@ async def create_checkout(req: CheckoutRequest, request: Request):
         raise HTTPException(500, "Stripe not configured")
     stripe.api_key = config.STRIPE_SECRET_KEY
 
-    resolver = _PLAN_PRICE_MAP.get(req.plan)
-    price_id = resolver() if resolver else None
+    tier, interval = plans.parse_plan_key(req.plan)
+    # Starter is kept for existing subscribers only; new checkouts sell public tiers.
+    price_id = plans.price_for(tier, interval) if tier in plans.PUBLIC_TIERS else ""
     print(f"[stripe] Checkout: plan={req.plan} → price_id={price_id}")
     if not price_id:
         raise HTTPException(400, f"Plan '{req.plan}' not configured. Please set Stripe price IDs.")
@@ -1141,15 +1106,16 @@ async def create_checkout(req: CheckoutRequest, request: Request):
         raise HTTPException(401, "Sign in first")
 
     plan = user.get("plan", "free")
-    if plan in ("starter_trial", "daily_trial"):
+    if plans.is_trial_plan(plan):
         raise HTTPException(400, "You already have an active trial. Use Billing → Start plan now to upgrade.")
-    if plan in ("starter", "daily", "pro"):
+    if plans.is_paid_plan(plan):
         raise HTTPException(400, "You already have an active subscription. Manage it from Billing.")
 
     # One free trial per account — returning users pay immediately.
     # Access-chooser "Full access" also sets skip_trial so new users can pay today.
     already_trialed = bool(user.get("trial_used"))
-    want_skip_trial = bool(req.skip_trial) or already_trialed
+    trial_days = int(getattr(config, "FREE_TRIAL_DAYS", 0) or 0)
+    want_skip_trial = bool(req.skip_trial) or already_trialed or trial_days <= 0
 
     customer_id = user.get("stripe_customer_id")
     if not customer_id:
@@ -1164,16 +1130,16 @@ async def create_checkout(req: CheckoutRequest, request: Request):
         "line_items": [{"price": price_id, "quantity": 1}],
         "payment_method_collection": "always",
         "allow_promotion_codes": True,
-        "success_url": f"{base_url}/app?welcome=1#pipeline",
-        "cancel_url": f"{base_url}/app#pipeline",
-        "metadata": {"user_id": str(user["id"]), "plan": req.plan},
+        "success_url": f"{base_url}/app?welcome=1#{req.return_to}",
+        "cancel_url": f"{base_url}/app#{req.return_to}",
+        "metadata": {"user_id": str(user["id"]), "plan": plans.plan_key(tier, interval)},
     }
     if not want_skip_trial:
-        session_kwargs["subscription_data"] = {"trial_period_days": 7}
-        session_kwargs["success_url"] = f"{base_url}/app?welcome=trial#pipeline"
+        session_kwargs["subscription_data"] = {"trial_period_days": trial_days}
+        session_kwargs["success_url"] = f"{base_url}/app?welcome=trial#{req.return_to}"
     else:
         session_kwargs["metadata"]["skip_trial"] = "1"
-        session_kwargs["success_url"] = f"{base_url}/app?welcome=upgrade#pipeline"
+        session_kwargs["success_url"] = f"{base_url}/app?welcome=1#{req.return_to}"
 
     try:
         session = stripe.checkout.Session.create(**session_kwargs)
@@ -1203,7 +1169,7 @@ async def create_topup(req: TopupRequest, request: Request):
     user = _current_user(request)
     if not user:
         raise HTTPException(401, "Sign in first")
-    if user.get("plan") not in ("starter", "daily", "pro"):
+    if not plans.is_paid_plan(user.get("plan")):
         raise HTTPException(403, "Top-ups require an active subscription.")
 
     customer_id = user.get("stripe_customer_id")
@@ -1290,8 +1256,8 @@ async def stripe_webhook(request: Request):
                 sub_id = _stripe_id(obj.get("subscription"))
                 if skip_trial:
                     # Returning customer — charge immediately, full credits
-                    plan_label = "daily" if "daily" in plan_key else "starter"
-                    credits = _PLAN_CREDITS.get(plan_key, 15)
+                    plan_label = plans.parse_plan_key(plan_key)[0] or "starter"
+                    credits = _plan_key_credits(plan_key)
                     update_user(int(user_id), plan=plan_label, credits=credits,
                                 stripe_sub_id=sub_id,
                                 trial_used=1)
@@ -1320,7 +1286,7 @@ async def stripe_webhook(request: Request):
                         checkout_session_id=session_id,
                     )
                 else:
-                    plan_label = "daily_trial" if "daily" in plan_key else "starter_trial"
+                    plan_label = plans.trial_plan(plans.parse_plan_key(plan_key)[0] or "starter")
                     trial_credits = int(getattr(config, "TRIAL_CREDITS", 2) or 2)
                     update_user(int(user_id), plan=plan_label, credits=trial_credits,
                                 stripe_sub_id=sub_id,
@@ -1408,11 +1374,13 @@ async def stripe_webhook(request: Request):
                 plan = row.get("plan", "starter")
                 price_id = _billed_price_from_invoice(obj)
                 currency = obj.get("currency") or "usd"
-                if plan in ("starter_trial", "daily_trial"):
+                if plans.is_trial_plan(plan):
                     if amount_paid == 0:
                         print(f"[stripe] Skipping $0 trial invoice for user {row['id']} (trial credits already granted)")
                     else:
-                        new_plan = "daily" if "daily" in plan else "starter"
+                        # The invoice says what they converted onto; the trial's
+                        # own tier covers prices this deployment doesn't know.
+                        new_plan = _tier_from_invoice(obj) or plans.tier_of(plan)
                         credits = _tier_allowance(new_plan, _interval_from_invoice(obj))
                         update_user(row["id"], plan=new_plan, credits=credits,
                                     trial_used=1, period_tier=new_plan)
@@ -1444,7 +1412,7 @@ async def stripe_webhook(request: Request):
                     # a Daily customer was refilled 15 credits every month.
                     billed_price = price_id
                     billed_tier = _tier_from_price_id(billed_price)
-                    db_tier = "daily" if plan == "daily" else "starter"
+                    db_tier = plans.tier_of(plan) or "starter"
                     tier = billed_tier or db_tier
                     # An annual invoice covers the year, so it grants the year.
                     credits = _tier_allowance(tier, _interval_from_price_id(billed_price))
@@ -1515,7 +1483,7 @@ async def stripe_webhook(request: Request):
         status = obj.get("status")
         if sub_id and status in ("canceled", "unpaid"):
             row = _find_user_for_stripe(sub_id=sub_id, customer_id=customer_id)
-            if row and row.get("plan") not in ("starter_trial", "daily_trial"):
+            if row and not plans.is_trial_plan(row.get("plan")):
                 prev_plan = row.get("plan", "unknown")
                 update_user(row["id"], plan="free", credits=0, period_tier="")
                 print(f"[stripe] Subscription {status} — user {row['id']} downgraded to free")
@@ -1534,8 +1502,8 @@ async def stripe_webhook(request: Request):
         elif sub_id and status == "active":
             # Safety net: if end-trial or day-7 conversion left plan as *_trial, fix it
             row = _find_user_for_stripe(sub_id=sub_id, customer_id=customer_id)
-            if row and row.get("plan") in ("starter_trial", "daily_trial"):
-                new_plan = "daily" if "daily" in row["plan"] else "starter"
+            if row and plans.is_trial_plan(row.get("plan")):
+                new_plan = _tier_from_subscription(obj) or plans.tier_of(row["plan"])
                 credits = _tier_allowance(new_plan, _interval_from_subscription(obj))
                 update_user(row["id"], plan=new_plan, credits=credits,
                             trial_used=1, period_tier=new_plan)
@@ -1600,19 +1568,17 @@ async def admin_billing_health(sync: int = 0, admin: dict = Depends(require_admi
     """
     import stripe
 
-    plans = billing_plan_counts()
+    plan_counts = billing_plan_counts()
     users = list_billing_users(limit=300)
     summary = {
-        "plans": plans,
-        "trialing_db": plans.get("starter_trial", 0) + plans.get("daily_trial", 0),
-        "paid_db": plans.get("starter", 0) + plans.get("daily", 0) + plans.get("pro", 0),
-        "free_db": plans.get("free", 0),
+        "plans": plan_counts,
+        "trialing_db": sum(n for p, n in plan_counts.items() if plans.is_trial_plan(p)),
+        "paid_db": sum(n for p, n in plan_counts.items() if plans.is_paid_plan(p)),
+        "free_db": plan_counts.get("free", 0),
         "stripe_configured": bool(config.STRIPE_SECRET_KEY and config.STRIPE_WEBHOOK_SECRET),
         "price_ids": {
-            "starter_monthly": bool(config.STRIPE_PRICE_STARTER_MONTHLY or config.STRIPE_PRICE_ID),
-            "starter_annual": bool(config.STRIPE_PRICE_STARTER_ANNUAL or config.STRIPE_PRICE_ID_ANNUAL),
-            "daily_monthly": bool(config.STRIPE_PRICE_DAILY_MONTHLY),
-            "daily_annual": bool(config.STRIPE_PRICE_DAILY_ANNUAL),
+            **{plans.plan_key(tier, interval): bool(plans.price_for(tier, interval))
+               for tier in plans.PAID_TIERS for interval in ("monthly", "annual")},
             "topup_5": bool(config.STRIPE_PRICE_TOPUP_5),
             "topup_15": bool(config.STRIPE_PRICE_TOPUP_15),
         },
@@ -1643,7 +1609,7 @@ async def admin_billing_health(sync: int = 0, admin: dict = Depends(require_admi
     for u in users:
         sub_id = (u.get("stripe_sub_id") or "").strip()
         if not sub_id:
-            if u.get("plan") in ("starter", "daily", "pro", "starter_trial", "daily_trial"):
+            if plans.is_active_plan(u.get("plan")):
                 mismatches.append({
                     "email": u["email"], "plan": u.get("plan"),
                     "issue": "missing_stripe_sub_id",
@@ -1653,23 +1619,22 @@ async def admin_billing_health(sync: int = 0, admin: dict = Depends(require_admi
             sub = stripe.Subscription.retrieve(sub_id)
             status = sub.get("status") if isinstance(sub, dict) else getattr(sub, "status", None)
             db_plan = u.get("plan") or "free"
-            if status == "active" and db_plan in ("starter_trial", "daily_trial"):
-                new_plan = "daily" if "daily" in db_plan else "starter"
-                credits = _tier_allowance(
-                    new_plan, _interval_from_price_id(_line_price_id(_first_subscription_item(sub)))
-                )
+            if status == "active" and plans.is_trial_plan(db_plan):
+                billed_price = _line_price_id(_first_subscription_item(sub))
+                new_plan = _tier_from_price_id(billed_price) or plans.tier_of(db_plan)
+                credits = _tier_allowance(new_plan, _interval_from_price_id(billed_price))
                 update_user(u["id"], plan=new_plan, credits=credits, trial_used=1)
                 healed += 1
                 mismatches.append({
                     "email": u["email"], "plan": db_plan, "stripe_status": status,
                     "issue": "trial_but_stripe_active", "healed_to": new_plan,
                 })
-            elif status in ("canceled", "unpaid", "incomplete_expired") and db_plan in ("starter", "daily", "pro"):
+            elif status in ("canceled", "unpaid", "incomplete_expired") and plans.is_paid_plan(db_plan):
                 mismatches.append({
                     "email": u["email"], "plan": db_plan, "stripe_status": status,
                     "issue": "paid_in_db_but_stripe_dead",
                 })
-            elif status == "trialing" and db_plan in ("starter", "daily"):
+            elif status == "trialing" and plans.is_paid_plan(db_plan):
                 mismatches.append({
                     "email": u["email"], "plan": db_plan, "stripe_status": status,
                     "issue": "paid_in_db_but_stripe_still_trialing",
@@ -1735,16 +1700,17 @@ async def end_trial_early(request: Request, req: EndTrialRequest | None = None):
     user = _current_user(request)
     if not user:
         raise HTTPException(401, "Sign in first")
-    if user.get("plan") not in ("starter_trial", "daily_trial"):
+    if not plans.is_trial_plan(user.get("plan")):
         raise HTTPException(400, "No active trial to end.")
 
     sub_id = user.get("stripe_sub_id")
     if not sub_id:
         raise HTTPException(400, "No subscription found.")
 
-    trial_tier = "daily" if "daily" in user["plan"] else "starter"
+    trial_tier = plans.tier_of(user["plan"])
     want_tier = ((req.tier if req else "") or trial_tier).strip().lower()
-    if want_tier not in _PAID_TIERS:
+    # Converting may move onto any plan we sell, or keep the trial's own tier.
+    if want_tier not in plans.PUBLIC_TIERS and want_tier != trial_tier:
         raise HTTPException(400, f"Unknown plan '{want_tier}'.")
 
     want_interval = ((req.interval if req else "") or "").strip().lower() or None
@@ -2075,11 +2041,11 @@ async def get_client_config():
         "storyboard_trial_pack_limit": int(getattr(config, "STORYBOARD_TRIAL_PACK_LIMIT", 2) or 2),
         "storyboard_cook_max_minutes": float(getattr(config, "STORYBOARD_COOK_MAX_MINUTES", 8) or 8),
         "storyboard_animate_credits_flat": int(getattr(config, "STORYBOARD_ANIMATE_CREDITS_FLAT", 12) or 12),
-        # Both tiers must have an annual price, or the toggle would offer a plan
-        # that can only 400 at checkout.
-        "annual_plans_available": bool(
-            _price_for_tier("starter", "annual") and _price_for_tier("daily", "annual")
-        ),
+        # Every tier on sale must have an annual price, or the toggle would
+        # offer a plan that can only 400 at checkout.
+        "annual_plans_available": all(t["annual_available"] for t in plans.catalog() if t["available"]),
+        "plan_catalog": plans.catalog(),
+        "free_trial_days": int(getattr(config, "FREE_TRIAL_DAYS", 0) or 0),
     }
 
 
@@ -3572,7 +3538,7 @@ async def start_build(req: BuildRequest, request: Request):
             "Your cooks bill your Atlas account — not ChannelRecipe's.",
         )
 
-    if not is_admin and user.get("plan") not in ("starter", "daily", "pro", "starter_trial", "daily_trial"):
+    if not is_admin and not plans.is_active_plan(user.get("plan")):
         raise HTTPException(402, "Start your free trial to cook this video.")
 
     _enforce_user_cook_slot(user)
@@ -3631,7 +3597,7 @@ async def start_build(req: BuildRequest, request: Request):
     credit_cost = hq_cost if image_quality == "high" else 1
 
     if image_quality == "high":
-        if not is_admin and not is_byok and user.get("plan") in ("starter_trial", "daily_trial", "free"):
+        if not is_admin and not is_byok and not plans.is_paid_plan(user.get("plan")):
             raise HTTPException(
                 402,
                 "High quality is for paid plans. Upgrade to unlock GPT Image 2 renders.",
@@ -3657,7 +3623,7 @@ async def start_build(req: BuildRequest, request: Request):
         credit_deducted = credit_cost
 
     job_id = str(uuid.uuid4())
-    lite_mode = (not is_admin) and user.get("plan") in ("starter_trial", "daily_trial", "free")
+    lite_mode = (not is_admin) and not plans.is_paid_plan(user.get("plan"))
     req_payload = req.model_dump()
     req_payload["image_quality"] = image_quality
     req_payload["credits_charged"] = credit_deducted
@@ -4282,15 +4248,15 @@ def niche_finder_access(user: dict = Depends(require_user)):
     if (can_browse):
         access = "ok"
         message = None
-    elif plan in ("starter_trial", "daily_trial"):
+    elif plans.is_trial_plan(plan):
         access = "plan_required"
         message = (
-            "Niche Finder is on Starter and Daily. "
+            "Niche Finder is included in every paid plan. "
             "Start your plan to browse the niche library."
         )
     else:
         access = "plan_required"
-        message = "Niche Finder is available on Starter and Daily plans."
+        message = "Niche Finder is included in every paid plan."
 
     active_job_id = None
     if can_run:
@@ -4332,7 +4298,7 @@ def niche_finder_channels(
     user: dict = Depends(require_user),
 ):
     if not _niche_finder_can_browse(user):
-        raise HTTPException(402, "Niche Finder is available on Starter and Daily plans.")
+        raise HTTPException(402, "Niche Finder is included in every paid plan.")
     filters = dict(
         ai_presenter=ai_presenter,
         added_since=time.time() - min(365, max(1, added_within_days)) * 86400 if added_within_days > 0 else None,
@@ -4958,8 +4924,8 @@ async def start_storyboard_job(req: StoryboardJobRequest, admin: dict = Depends(
 
     is_admin = _is_admin_email(admin.get("email", ""))
     plan = (admin.get("plan") or "free").strip()
-    is_paid = plan in ("starter", "daily", "pro")
-    is_trial = plan in ("starter_trial", "daily_trial")
+    is_paid = plans.is_paid_plan(plan)
+    is_trial = plans.is_trial_plan(plan)
     paid_max = float(getattr(config, "STORYBOARD_PACK_MAX_MINUTES", 25) or 25)
     trial_max = float(getattr(config, "STORYBOARD_TRIAL_PACK_MAX_MINUTES", 8) or 8)
     trial_limit = int(getattr(config, "STORYBOARD_TRIAL_PACK_LIMIT", 2) or 2)
@@ -5781,7 +5747,7 @@ async def start_storyboard_animate(
 
     is_admin = _is_admin_email(admin.get("email", ""))
     plan = (admin.get("plan") or "free").strip()
-    is_paid = plan in ("starter", "daily", "pro")
+    is_paid = plans.is_paid_plan(plan)
     if not is_admin and not is_paid:
         raise HTTPException(
             402,
@@ -6000,8 +5966,8 @@ async def storyboard_animate_cost(
     from webapp.database import get_user_atlas_key
     is_admin = _is_admin_email(admin.get("email", ""))
     plan = (admin.get("plan") or "free").strip()
-    is_paid = plan in ("starter", "daily", "pro")
-    is_trial = plan in ("starter_trial", "daily_trial")
+    is_paid = plans.is_paid_plan(plan)
+    is_trial = plans.is_trial_plan(plan)
     byok = False
     try:
         byok = bool(get_user_atlas_key(int(admin["id"])))
@@ -6032,8 +5998,8 @@ async def storyboard_pack_cost(
     """Preview credit cost + limits for a stills pack (free users can see trial offer)."""
     is_admin = _is_admin_email(admin.get("email", ""))
     plan = (admin.get("plan") or "free").strip()
-    is_paid = plan in ("starter", "daily", "pro")
-    is_trial = plan in ("starter_trial", "daily_trial")
+    is_paid = plans.is_paid_plan(plan)
+    is_trial = plans.is_trial_plan(plan)
     paid_max = float(getattr(config, "STORYBOARD_PACK_MAX_MINUTES", 25) or 25)
     trial_max = float(getattr(config, "STORYBOARD_TRIAL_PACK_MAX_MINUTES", 8) or 8)
     trial_limit = int(getattr(config, "STORYBOARD_TRIAL_PACK_LIMIT", 2) or 2)
@@ -6339,7 +6305,7 @@ RETENTION_PAID_DAYS = 30
 def _retention_days(request: Request | None = None) -> int:
     if request:
         user = _current_user(request)
-        if user and user.get("plan") in ("pro", "starter", "daily", "starter_trial", "daily_trial"):
+        if user and plans.is_active_plan(user.get("plan")):
             return RETENTION_PAID_DAYS
     return RETENTION_FREE_DAYS
 

@@ -1,44 +1,41 @@
-# Set up ChannelRecipe on this computer
+# Set up ChannelRecipe Studio
 
-1. Sign in at https://channelrecipe.com/app#local-studio and download the studio.
-2. Extract the whole ZIP. Open **Start on Mac.command** or **Start on Windows.cmd**.
-   Keep the launcher open. First launch installs libraries and Chromium, then
-   opens http://127.0.0.1:7860/cr-setup.
-3. Follow setup: connect CR, install/sign in to Claude Code, connect CR tools,
-   save the writing/visual models, and verify both. Claude calls use the signed-in
-   Claude Code account and its limits.
-4. Connect media accounts. Kie or Atlas can supply voice, images, image animation
-   and supported presenters. Stock and specialist services need their own accounts.
-   Enter keys in setup forms, never in chat.
-5. Select a video recipe and check its requirements. Missing required tools/accounts
-   block generation. Explicitly disable a feature only if you do not want it;
-   missing features are not silently removed from your video.
-6. Open Create, choose a recipe, title and duration, review options, and create your video.
-   ChannelRecipe researches, writes, directs, generates assets,
-   reviews complex visuals and assembles the result locally.
-7. Review the result and timeline. Videos, thumbnails and exports are in
-   **Projects** and the local **output** folder.
+## Easiest: let Claude Code do it
 
-For Claude Code conversation control, open Claude Code from this extracted
-folder and approve its project ChannelRecipe MCP connection. Ask it to use CR's
-production tools. It starts saved projects with the returned cr_run.py command.
+1. Open this folder in Claude Code. In the Claude desktop app, choose **Code**
+   and select this folder (or run `claude` inside it from a terminal).
+2. Paste: *Help me install ChannelRecipe Studio on this computer. Check what is
+   missing, install it for me one step at a time, then start the studio and open
+   its setup page.*
+3. Follow along. Claude explains each step. Enter keys only on the setup page,
+   never in the chat.
 
-Reopen the launcher to use saved work. Successful stage responses and media IDs
-are cached. Stopped or uncertain Claude work requires review; setup offers one
-explicitly acknowledged recovery attempt, never an automatic paid retry.
+## Or do it yourself
 
-Required for standard mode: Python 3.10+, Node.js LTS, subtitle-capable FFmpeg
-and ffprobe on PATH, and Claude Code 2.1.268+. The launcher installs libraries
-and Chromium; install these other tools separately using their official installers.
-Setup explains missing tools. On Windows, select **Add Python to PATH**.
+1. Install these if you don't have them:
+   - **Python 3.13** — https://www.python.org/downloads/ (on Windows, tick
+     **Add Python to PATH**)
+   - **Node.js LTS** — https://nodejs.org
+   - **FFmpeg with subtitle support** — Mac: `brew install ffmpeg-full`;
+     Windows: `winget install -e --id Gyan.FFmpeg`
+   - **Claude Code** — https://claude.com/download (sign in with your Claude
+     Pro or Max account)
+2. Open **Start on Mac.command** (if macOS blocks it: right-click → Open) or
+   **Start on Windows.cmd**. Keep that window open. The first launch takes a few
+   minutes.
+3. Your browser opens the setup page at http://127.0.0.1:7860/cr-setup:
+   - paste your ChannelRecipe key (Studio page on channelrecipe.com),
+   - sign in to Claude Code and verify your models,
+   - connect Kie.ai or Atlas Cloud for voice and images.
+4. Open the studio, pick a recipe, type a title and press **Create video**.
 
-For a new Windows setup, we recommend **Python 3.13** so optional Fast mode is
-available too. Fast mode requires Python 3.13+ and its separate setup render
-check; it does not require replacing an existing standard studio environment.
-The pinned Fast-mode package supports native Windows x64; Windows ARM64 has no
-prebuilt package in this release. Keep Fast mode off unless its check passes.
+Your videos, thumbnails and exports are in **Projects** and in this folder's
+`output` folder. To use Studio again later, open the launcher again.
 
-The API-brain form is an explicit alternative using your saved API balance.
-Saving media accounts alone does not change your selected brain.
+Fast mode (quick 3D graphics) is optional and needs Python 3.13+. Keep it off
+until its setup check passes.
 
-Access remains restricted to CR admins. This owner download includes private production source and workflows; keep it private.
+## Need help?
+
+Ask in the ChannelRecipe Discord: https://discord.gg/aUbazAAqw3. We answer setup
+questions there every day — and share your videos when they're done.

@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 
+from webapp import plans
+
+
 def is_trial_plan(plan: str | None) -> bool:
-    return (plan or "").lower() in ("starter_trial", "daily_trial")
+    return plans.is_trial_plan(plan)
 
 
 def is_paid_plan(plan: str | None, *, is_admin: bool = False) -> bool:
+    # Ranking cooks count trials as paid; the trial quota applies separately.
     if is_admin:
         return True
-    return (plan or "").lower() in ("starter", "daily", "pro", "starter_trial", "daily_trial")
+    return plans.is_active_plan(plan)
 
 
 def trial_ranking_allowed(

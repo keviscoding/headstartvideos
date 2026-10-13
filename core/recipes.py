@@ -52,11 +52,10 @@ RECIPES = {
     },
     "frontier": {
         "pipeline": "frontier",
-        "label": "Frontier",
-        "description": "1:1 Whop Frontier port — AI faceless videos with Atlas gpt-image-2 stills, "
-                       "Pexels stock b-roll, word-locked motion plan, Ken Burns zooms, "
-                       "ASS kinetic captions, and Frontier color grade/dust/vignette. "
-                       "Full professional pipeline matching Whop Frontier visual output.",
+        "label": "Cloud Documentary",
+        "description": "Cloud-made faceless documentary — AI stills, Pexels stock b-roll, "
+                       "word-locked motion plan, Ken Burns zooms, kinetic captions, and a "
+                       "warm documentary colour grade with dust and vignette.",
         "requires_keys": ["ATLASCLOUD_KEY"],
         "optional_keys": ["PEXELS_KEY"],
         "inputs": ["voiceover", "script"],

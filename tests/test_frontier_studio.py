@@ -19,7 +19,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("FRONTIER_RELEASE_PATH", str(tmp_path / "release.zip"))
     owner = {"id": 1, "email": "owner@example.com"}
     other = {"id": 2, "email": "other@example.com"}
-    regular = {"id": 3, "email": "paid@example.com", "plan": "pro", "is_admin": True}
+    # Starter predates Studio and doesn't include it; is_admin from a client is ignored.
+    regular = {"id": 3, "email": "paid@example.com", "plan": "starter", "is_admin": True}
     users = {"owner": owner, "other": other, "paid": regular}
     monkeypatch.setattr(studio.db, "get_user_by_mcp_api_key", lambda key: owner if key == "cr_mcp_valid" else None)
     app = FastAPI()

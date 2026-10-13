@@ -29,7 +29,8 @@ mcp = MCPServer(
     name="ChannelRecipe",
     instructions=(
         "ChannelRecipe helps YouTube creators find live niche subjects, "
-        "write scripts, and make thumbnails. Free includes a short sample — "
+        "write scripts, make thumbnails and produce whole faceless videos with "
+        "ChannelRecipe Studio. Free includes a short sample — "
         "upgrade at channelrecipe.com for the full library. "
         "Start with list_niches, then list_niche_subjects / "
         "list_niche_channels, then generate_script / generate_thumbnail. "
@@ -42,10 +43,11 @@ mcp = MCPServer(
         "do not ask the user for an api_key tool argument. "
         "When a tool returns upgrade_url, tell the user to upgrade at that link. "
         "After server tool updates, start a brand-new chat so the tool catalog refreshes. "
-        "For Local studio, start with local_studio_setup and local_studio_prepare. "
+        "For ChannelRecipe Studio (Creator, Pro and Max plans), start with "
+        "local_studio_setup and local_studio_prepare. "
         "After required local checks pass, use local_studio_begin, run its cr_run.py "
         "launch command from the extracted folder, then use local_studio_progress. "
-        "The maintained Frontier engine performs original Claude Code and local rendering stages. "
+        "The studio runs its Claude Code and rendering stages on the creator's computer. "
         "Guide users through the website and downloaded setup screen; never ask them "
         "to paste provider keys into chat or invoke hosted generation as a free local fallback."
     ),
@@ -589,11 +591,30 @@ def _admin_gate(user: dict | None, *, feature: str) -> str | None:
         return json.dumps({
             "error": (
                 f"{feature} is limited to the ChannelRecipe admin account "
-                + ("during the local studio migration preview." if feature == "Local studio"
-                   else "while we control YouTube quota and caption credits.")
+                "while we control YouTube quota and caption credits."
             ),
             "code": "admin_only",
             "email": (user.get("email") or ""),
+        })
+    return None
+
+
+def _studio_gate(user: dict | None) -> str | None:
+    """JSON error unless the account's plan includes ChannelRecipe Studio."""
+    from webapp import frontier_studio as studio
+    if not user:
+        return json.dumps({
+            "error": "ChannelRecipe Studio requires a signed-in ChannelRecipe MCP account.",
+            "code": "auth_required",
+            "upgrade_url": billing.UPGRADE_URL,
+        })
+    try:
+        studio.require_studio_user(user)
+    except Exception:
+        return json.dumps({
+            "error": studio.STUDIO_UPGRADE_MESSAGE,
+            "code": "plan_required",
+            "upgrade_url": billing.UPGRADE_URL,
         })
     return None
 
@@ -910,53 +931,50 @@ def research_niche_channels(
 
 @mcp.tool()
 def local_studio_setup(ctx: Context | None = None) -> str:
-    """Admin preview: check CR's local video studio connection and guide setup.
+    """Check the creator's ChannelRecipe Studio connection, plan and setup steps.
 
     Generation/rendering use the creator's accounts and computer. Never ask them
     to paste provider keys into chat; key entry is in the website/local setup.
     """
     from webapp import frontier_studio as studio
     user = _user_from_request(ctx)
-    error = _admin_gate(user, feature="Local studio")
+    error = _studio_gate(user)
     if error:
         return error
     result = studio.status(user)
     result["setup_url"] = public_base_url() + "/app#local-studio"
     result["steps"] = [
-        "Open CR's Local studio page and download the admin package.",
-        "Extract it, then open Start on Mac.command or Start on Windows.cmd.",
-        "Connect CR in local setup, sign in to Claude Code, connect CR tools, and save/verify your writing and visual models.",
-        "Connect media accounts, check your selected preset's requirements, and create/review/export in the original studio.",
+        "Open the Studio page on channelrecipe.com and download ChannelRecipe Studio.",
+        "Extract the whole ZIP, then open Start on Mac.command or Start on Windows.cmd.",
+        "In the studio's setup page: connect ChannelRecipe, sign in to Claude Code, and verify your writing and visual models.",
+        "Connect a media account (Kie.ai or Atlas Cloud), pick a recipe, and create your video.",
     ]
     return json.dumps(result)
 
 
 @mcp.tool()
 def local_studio_styles(ctx: Context | None = None) -> str:
-    """Admin preview: list the 26 imported Frontier preset descriptions.
-
-    Presets are migration candidates, not claims that each has passed real
-    production validation. The protected download includes the original engine.
-    """
+    """List ChannelRecipe Studio's built-in video recipes and the style-clone allowance."""
     from webapp import frontier_studio as studio
     user = _user_from_request(ctx)
-    error = _admin_gate(user, feature="Local studio")
+    error = _studio_gate(user)
     if error:
         return error
-    studio.require_admin_user(user)
-    return json.dumps({"version": studio.VERSION, "styles": studio.catalog(), "access": "admin_preview"})
+    return json.dumps({"version": studio.VERSION, "styles": studio.catalog(),
+                       "access": "admin" if studio.is_admin(user) else "subscriber",
+                       "style_clones": studio.style_clone_usage(user)})
 
 
 @mcp.tool()
 def local_studio_receipt(project_id: str, ctx: Context | None = None) -> str:
-    """Admin preview: provider-reported brain token usage for your local video.
+    """Provider-reported brain token usage for a ChannelRecipe Studio video.
 
     Media charges remain in the creator's own provider accounts; don't invent
     an exact total price from this partial receipt.
     """
     from webapp import frontier_studio as studio
     user = _user_from_request(ctx)
-    error = _admin_gate(user, feature="Local studio")
+    error = _studio_gate(user)
     if error:
         return error
     try:
@@ -971,7 +989,7 @@ def _studio_production(ctx, method, payload, contract=None):
     from fastapi import HTTPException
     user = _user_from_request(ctx)
     try:
-        studio.require_admin_user(user)
+        studio.require_studio_user(user)
         req = contract.model_validate(payload) if contract else payload
         return json.dumps(method(user, req))
     except ValidationError:
@@ -1006,7 +1024,7 @@ def local_studio_begin(payload: dict, ctx: Context | None = None) -> str:
 
 @mcp.tool()
 def local_studio_authorize_stage(payload: dict, ctx: Context | None = None) -> str:
-    """Runner: authorize one original Frontier Claude stage before execution.
+    """Runner: authorize one ChannelRecipe Studio Claude stage before execution.
 
     Supply hashes and routing metadata, never the prompt or account credentials.
     Existing completed work is reused; uncertain work cannot be charged again

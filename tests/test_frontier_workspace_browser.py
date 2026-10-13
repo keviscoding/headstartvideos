@@ -259,7 +259,8 @@ def test_projects_draw_native_progress_cancel_exact_run_and_preserve_exports(wor
     assert player.count()==1 and player.get_attribute('src')=='/f/video/finished-film'
     page.wait_for_function("document.querySelector('#crw-projects-list video')?.dataset.previewPosterState==='loaded'")
     assert player.get_attribute('poster')=='/cr-workspace/preview/project/finished-film.jpg'
-    assert player.get_attribute('preload')=='none' and player.get_attribute('controls') is not None
+    # Cards show the poster and one Play button; native controls appear only while watching.
+    assert player.get_attribute('preload')=='none' and player.get_attribute('controls') is None
     page.evaluate("window.keptVideo=document.querySelector('#crw-projects-list video')")
     page.locator('#crw-projects-refresh').click()
     page.wait_for_timeout(150)

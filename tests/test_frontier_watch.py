@@ -157,7 +157,8 @@ def test_actual_original_upload_window_prompt_and_parser_are_preserved(actual_wa
     upload, request = original.calls
     assert upload[0] == "https://kieai.redpandaai.co/api/file-stream-upload"
     assert upload[1]["file_bytes"] == b"fixture-video-file"
-    assert upload[1]["data"] == {"uploadPath": "frontier", "fileName": "already-cut-source.mp4"}
+    # Installed studios since admin43 carry the ChannelRecipe brand in every identifier.
+    assert upload[1]["data"] == {"uploadPath": "channelrecipe", "fileName": "already-cut-source.mp4"}
     assert request[0] == watch.WATCH_ENDPOINT
     assert request[1]["timeout"] == 900
     content = request[1]["json"]["messages"][0]["content"]

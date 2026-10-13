@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ChannelRecipe — Turn a proven niche into a finished YouTube video in 15 minutes</title>
-    <meta name="description" content="No editing, no camera, no experience. Pick a recipe, click generate, post. 2 free videos on trial — cancel anytime.">
+    <title>ChannelRecipe Studio — Whole faceless YouTube videos, in any style</title>
+    <meta name="description" content="Type a title or paste a script. ChannelRecipe Studio researches, writes, narrates, animates and edits a finished faceless YouTube video in the style you choose.">
     <link rel="icon" href="/static/favicon.svg">
     <style>
         @import url("https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@500,700,800,900&display=swap");
@@ -350,13 +350,16 @@
         }
         .pricing-cards {
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 24px;
-            max-width: 720px;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            max-width: 1040px;
             margin: 0 auto;
+            align-items: stretch;
         }
-        @media (max-width: 640px) {
-            .pricing-cards { grid-template-columns: 1fr; }
+        .pricing-cards .price-card { display: flex; flex-direction: column; text-align: left; }
+        .pricing-cards .price-features { flex: 1; }
+        @media (max-width: 900px) {
+            .pricing-cards { grid-template-columns: 1fr; max-width: 440px; }
         }
         .price-card {
             background: var(--white);
@@ -418,8 +421,9 @@
             color: var(--ink-2);
             padding: 6px 0;
             display: flex;
-            align-items: center;
+            align-items: flex-start;
             gap: 8px;
+            line-height: 1.45;
         }
         .price-features li::before {
             content: '✓';
@@ -518,7 +522,7 @@
                 <img src="/static/glyph.svg" width="28" height="28" alt="ChannelRecipe">
                 <span style="font-family: var(--font-display); font-weight: 800; font-size: 18px; letter-spacing: -0.01em;">Channel<span style="color: var(--accent);">Recipe</span></span>
             </div>
-            <a href="/app" class="cta-btn" style="font-size: 14px; padding: 10px 22px; border-radius: 10px;">Get started free</a>
+            <a href="/app#local-studio" class="cta-btn" style="font-size: 14px; padding: 10px 22px; border-radius: 10px;">Get started</a>
         </div>
     </header>
 
@@ -527,15 +531,15 @@
         <div class="container">
             <div class="hero-badge">
                 <svg width="14" height="14" viewBox="0 0 14 14"><path d="M4 2.5 L4 11.5 L11 7 Z" fill="currentColor"/></svg>
-                New recipes added weekly
+                New: ChannelRecipe Studio v2
             </div>
-            <h1>Turn a proven niche into a finished YouTube video in <span class="accent">15 minutes</span></h1>
-            <p class="sub">No editing, no camera, no experience. Pick a recipe, click generate, post. AI handles the script, voice, visuals, and assembly.</p>
-            <a href="/app" class="cta-btn">
+            <h1>Whole faceless YouTube videos, in <span class="accent">any style</span> you want</h1>
+            <p class="sub">Type a title or paste a script. Studio researches, writes, narrates, animates and edits a finished video on your computer — in one of dozens of styles, or one it learns from any channel you admire.</p>
+            <a href="/app#local-studio" class="cta-btn">
                 <svg width="18" height="18" viewBox="0 0 14 14"><path d="M4 2.5 L4 11.5 L11 7 Z" fill="currentColor"/></svg>
-                Make your first video free
+                Get ChannelRecipe Studio
             </a>
-            <span class="cta-micro">7-day free trial · all recipes · cancel anytime</span>
+            <span class="cta-micro">Mac &amp; Windows · cancel anytime</span>
         </div>
     </section>
 
@@ -571,18 +575,18 @@
             <div class="steps-grid">
                 <div class="step-card">
                     <div class="step-num">1</div>
-                    <h3>Pick a recipe</h3>
-                    <p>Choose from proven niches — animated explainers, cinematic B-roll, talking heads. Each recipe is pre-configured with the best settings.</p>
+                    <h3>Install Studio</h3>
+                    <p>Download ChannelRecipe Studio for Mac or Windows. Claude Code can install it for you — just paste the prompt we give you.</p>
                 </div>
                 <div class="step-card">
                     <div class="step-num">2</div>
-                    <h3>Enter a topic</h3>
-                    <p>Type your idea or pick from suggestions. AI generates the title, script, voiceover, and thumbnails — edit anything, or keep the defaults.</p>
+                    <h3>Pick or clone a style</h3>
+                    <p>Choose a built-in style — documentary, history, true crime, sports, explainer — or point Studio at a channel and it learns that look.</p>
                 </div>
                 <div class="step-card">
                     <div class="step-num">3</div>
-                    <h3>Download &amp; post</h3>
-                    <p>Your video renders in minutes. Download the MP4, thumbnail, title, and description — everything you need to upload and go live.</p>
+                    <h3>Type a title, review, post</h3>
+                    <p>Studio researches, writes, voices, animates and edits the video. Review every scene on the timeline, then export the video, thumbnail and description.</p>
                 </div>
             </div>
         </div>
@@ -591,9 +595,9 @@
     <!-- Recipe wall -->
     <section class="recipes-section">
         <div class="container">
-            <p class="section-title">Proven recipes</p>
-            <h2 class="section-heading">Formats that actually get views</h2>
-            <p style="text-align: center; color: var(--ink-2); font-size: 15px; margin-top: -32px; margin-bottom: 40px;">Each recipe is modeled after channels pulling millions of views. Hover to preview.</p>
+            <p class="section-title">Also included</p>
+            <h2 class="section-heading">Classic recipes for quick cloud videos</h2>
+            <p style="text-align: center; color: var(--ink-2); font-size: 15px; margin-top: -32px; margin-bottom: 40px;">The original ChannelRecipe (v1): made in our cloud from a single recipe. Every plan includes monthly credits for them. Hover to preview.</p>
             <div class="recipe-grid">
 
                 <a href="/app" class="recipe-card" style="text-decoration: none; color: inherit;">
@@ -684,39 +688,47 @@
     <section class="pricing-section">
         <div class="container">
             <p class="section-title">Simple pricing</p>
-            <h2 class="section-heading">7-day free trial on every plan. Cancel anytime.</h2>
+            <h2 class="section-heading">Every plan includes Studio. Cancel anytime.</h2>
             <div class="pricing-cards">
-                <div class="price-card featured">
-                    <p class="price-name">Starter</p>
-                    <p class="price-amount">$27<span>/mo</span></p>
-                    <p class="price-desc">Post every other day — the schedule we teach</p>
-                    <ul class="price-features">
-                        <li>15 credits per month</li>
-                        <li>All recipes + weekly drops</li>
-                        <li>Videos up to 20 minutes</li>
-                        <li>Full upload kit</li>
-                        <li>30-day file retention</li>
-                    </ul>
-                    <a href="/app" class="cta-btn">Start free trial</a>
-                    <p class="price-per-video">Credits for cooks, packs &amp; guides</p>
-                </div>
-                <div class="price-card" style="border-color: var(--success); box-shadow: 0 0 0 1px var(--success); position: relative;">
-                    <span style="position: absolute; top: -12px; left: 50%; transform: translateX(-50%); background: var(--success); color: white; font-size: 11px; font-weight: 700; padding: 4px 14px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.05em;">Best value</span>
-                    <p class="price-name">Daily</p>
+                <div class="price-card">
+                    <p class="price-name">Creator</p>
                     <p class="price-amount">$49<span>/mo</span></p>
-                    <p class="price-desc">Post every single day with headroom</p>
+                    <p class="price-desc">Start making videos with Studio</p>
                     <ul class="price-features">
-                        <li>35 credits per month</li>
-                        <li>Priority render queue</li>
-                        <li>Full voice library</li>
-                        <li>10 credit rollover</li>
-                        <li>Everything in Starter</li>
+                        <li>ChannelRecipe Studio + every built-in style</li>
+                        <li>Clone 3 YouTube channel styles</li>
+                        <li>35 cloud credits / month</li>
+                        <li>Niche Finder + niche database in Claude</li>
+                        <li>Community Discord</li>
                     </ul>
-                    <a href="/app" class="cta-btn" style="background: var(--success);">Start free trial</a>
-                    <p class="price-per-video" style="color: var(--success);">More credits for daily publishing</p>
+                    <a href="/app#local-studio" class="cta-btn outline">Get started</a>
+                </div>
+                <div class="price-card featured">
+                    <p class="price-name">Pro</p>
+                    <p class="price-amount">$79<span>/mo</span></p>
+                    <p class="price-desc">Run several channels</p>
+                    <ul class="price-features">
+                        <li>Everything in Creator</li>
+                        <li>Clone 15 YouTube channel styles</li>
+                        <li>60 cloud credits / month</li>
+                        <li>3 cloud videos rendering at once</li>
+                    </ul>
+                    <a href="/app#local-studio" class="cta-btn">Get started</a>
+                </div>
+                <div class="price-card">
+                    <p class="price-name">Max</p>
+                    <p class="price-amount">$119<span>/mo</span></p>
+                    <p class="price-desc">For serious channel operators</p>
+                    <ul class="price-features">
+                        <li>Everything in Pro</li>
+                        <li>Unlimited style clones</li>
+                        <li>100 cloud credits / month</li>
+                        <li>Priority help in Discord</li>
+                    </ul>
+                    <a href="/app#local-studio" class="cta-btn outline">Get started</a>
                 </div>
             </div>
-            <p style="text-align: center; margin-top: 20px; font-size: 13px; color: var(--ink-3);">Annual plans available — save 2 months. See pricing inside the app.</p>
+            <p style="text-align: center; margin-top: 20px; font-size: 13px; color: var(--ink-3); max-width: 720px; margin-left: auto; margin-right: auto; line-height: 1.6;">Yearly plans save 2 months. Studio runs on your computer with your own Claude account (Pro or Max) and a Kie.ai or Atlas Cloud balance for voice and images, so you pay those providers directly with no markup.</p>
         </div>
     </section>
 
@@ -728,22 +740,30 @@
             <div class="faq-list">
                 <div class="faq-item open">
                     <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">Is this AI slop? Can I actually get monetized with these videos?</div>
-                    <div class="faq-a">No — and this is the question we want you to ask. Every recipe is modeled after real channels pulling millions of views and earning real ad revenue. The scripts are original and research-backed, the voiceovers sound natural, and the visuals are purpose-built for each format — not generic AI filler. These are videos you'd normally hire an editor and a scriptwriter to produce. YouTube's monetization policies require original content with real value to viewers, and that's exactly what the recipes are designed to deliver. Try the free trial and judge the output yourself.</div>
+                    <div class="faq-a">No — and this is the question we want you to ask. Every recipe is modeled after real channels pulling millions of views and earning real ad revenue. The scripts are original and research-backed, the voiceovers sound natural, and the visuals are purpose-built for each format — not generic AI filler. These are videos you'd normally hire an editor and a scriptwriter to produce. YouTube's monetization policies require original content with real value to viewers, and that's exactly what the recipes are designed to deliver. Make a video and judge the output yourself — you can cancel any time.</div>
                 </div>
                 <div class="faq-item">
                     <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">What's the best way to start YouTube automation?</div>
                     <div class="faq-a">Two things: a pre-monetized channel in a proven niche, and a tool that lets you post consistently no matter what. The channel gives you day-one ad revenue so you're earning from your first upload — no waiting months to hit 1,000 subscribers. The tool means you can produce a video every single day without burning out or hiring a team. For the channel, head to <a href="https://headstartchannels.com" target="_blank" rel="noopener" style="color: var(--accent); font-weight: 600;">headstartchannels.com</a> — they sell pre-monetized channels in viral niches, ready to go. For the daily video engine, that's what ChannelRecipe is. Together, you skip the hardest part of YouTube and go straight to publishing.</div>
                 </div>
                 <div class="faq-item">
-                    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">Do I need my own API keys?</div>
-                    <div class="faq-a">No. Everything runs on our infrastructure. You just pick a recipe, enter a topic, and the system handles all the AI generation, rendering, and assembly.</div>
+                    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">What's the difference between Studio and Classic recipes?</div>
+                    <div class="faq-a">Studio (v2) is the current ChannelRecipe: it runs on your computer, has dozens of styles, clones the style of channels you admire, and adds motion graphics, 3D and a real timeline editor. Classic recipes (v1) are the original quick cloud videos — still included, with monthly credits on every plan.</div>
+                </div>
+                <div class="faq-item">
+                    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">What do I need to use Studio?</div>
+                    <div class="faq-a">A Mac or Windows computer, a Claude account (Pro or Max) for the writing and directing, and a Kie.ai or Atlas Cloud account for voice and images. You pay those providers directly at their own prices. Setup checks everything and tells you exactly what's missing — and Claude Code can install Studio for you.</div>
+                </div>
+                <div class="faq-item">
+                    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">Where do I get help?</div>
+                    <div class="faq-a">In our <a href="https://discord.gg/aUbazAAqw3" target="_blank" rel="noopener" style="color: var(--accent); font-weight: 600;">Discord</a>. We answer setup questions there every day, and it's where we hear what to build next.</div>
                 </div>
                 <div class="faq-item">
                     <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">Is this YouTube-safe?</div>
                     <div class="faq-a">Yes. All recipes use original AI-generated content, licensed stock footage, and original scripts. Your channel stays in full compliance with YouTube's monetization policies.</div>
                 </div>
                 <div class="faq-item">
-                    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">What if a render fails?</div>
+                    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">What if a Classic recipe render fails?</div>
                     <div class="faq-a">Your credit is automatically refunded. No support ticket needed. You'll see the credit restored immediately and can try again.</div>
                 </div>
                 <div class="faq-item">
@@ -751,8 +771,8 @@
                     <div class="faq-a">Yes. You can edit the AI-generated script freely, or upload your own voiceover recording. The pipeline adapts to whatever you provide.</div>
                 </div>
                 <div class="faq-item">
-                    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">What happens after the trial?</div>
-                    <div class="faq-a">After your 7-day free trial, your chosen plan (Starter or Daily) begins billing. Cancel anytime before that and you pay nothing. No surprise charges, no hoops.</div>
+                    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">How does billing work?</div>
+                    <div class="faq-a">Your plan (Creator, Pro or Max) bills monthly or yearly from the day you subscribe. Switch plans or cancel anytime from Billing — no hoops, no surprise charges.</div>
                 </div>
             </div>
         </div>
@@ -762,11 +782,11 @@
     <section class="final-cta">
         <div class="container">
             <h2 class="section-heading">Ready to make your first video?</h2>
-            <a href="/app" class="cta-btn">
+            <a href="/app#local-studio" class="cta-btn">
                 <svg width="18" height="18" viewBox="0 0 14 14"><path d="M4 2.5 L4 11.5 L11 7 Z" fill="currentColor"/></svg>
-                Start your free trial
+                Get ChannelRecipe Studio
             </a>
-            <span class="cta-micro">7-day free trial · all recipes · cancel anytime</span>
+            <span class="cta-micro">Mac &amp; Windows · cancel anytime</span>
         </div>
     </section>
 

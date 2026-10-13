@@ -23,7 +23,9 @@ def api(tmp_path, monkeypatch):
     monkeypatch.setattr(studio.providers, "generate", lambda *a, **k: pytest.fail("An alias must not call a provider"))
     owner = {"id": 1, "email": "owner@example.com"}
     users = {"owner": owner, "other": {"id": 2, "email": "other@example.com"},
-             "paid": {"id": 3, "email": "paid@example.com", "plan": "pro", "is_admin": True}}
+             # A Starter subscriber's plan doesn't include Studio; a client-sent
+             # is_admin flag is never authoritative.
+             "paid": {"id": 3, "email": "paid@example.com", "plan": "starter", "is_admin": True}}
     monkeypatch.setattr(studio.db, "get_user_by_mcp_api_key", lambda key: owner if key == "cr_mcp_valid" else None)
     app = FastAPI()
     session = lambda req: users.get(req.headers.get("x-test-user"))
@@ -158,18 +160,20 @@ def test_download_alias_keeps_file_bytes_headers_and_private_stream(api, monkeyp
     assert "ChannelRecipe-local-studio" in response.headers["content-disposition"]
     assert int(response.headers["content-length"]) == len(content)
 
+    # Remote releases are handed out as a short-lived signed link instead of
+    # streaming through the web process; the alias must pass the redirect through.
     monkeypatch.delenv("FRONTIER_RELEASE_PATH")
     from webapp import storage
-    events = []
-    def chunks(*, chunk_size):
-        events.append(("chunk_size", chunk_size))
-        yield content[:9]
-        yield content[9:]
-    body = SimpleNamespace(iter_chunks=chunks, close=lambda: events.append("closed"))
+    signed = []
+    def presign(op, Params, ExpiresIn):
+        signed.append(Params)
+        return "https://private-bucket.example/release.zip?sig=1"
     monkeypatch.setattr(storage, "is_remote", lambda: True)
+    monkeypatch.setattr(studio, "release_ready", lambda: True)
     monkeypatch.setattr(storage, "_spaces_creds", lambda: ("unused", "unused", "private-bucket"))
-    monkeypatch.setattr(storage, "_get_client", lambda: SimpleNamespace(get_object=lambda **kw: {"Body": body, "ContentLength": len(content)}))
-    response = api.client.get("/api/studio/download", headers=api.headers)
-    assert response.content == content and response.headers["content-type"] == "application/zip"
+    monkeypatch.setattr(storage, "_get_client", lambda: SimpleNamespace(generate_presigned_url=presign))
+    response = api.client.get("/api/studio/download", headers=api.headers, follow_redirects=False)
+    assert response.status_code == 302
+    assert response.headers["location"] == "https://private-bucket.example/release.zip?sig=1"
     assert response.headers["cache-control"] == "private, no-store"
-    assert events == [("chunk_size", 1024 * 1024), "closed"]
+    assert signed[0]["Bucket"] == "private-bucket" and "ChannelRecipe-local-studio" in signed[0]["ResponseContentDisposition"]

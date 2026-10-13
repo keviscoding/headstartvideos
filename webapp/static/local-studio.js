@@ -1,51 +1,36 @@
-/* Guided owner preview. Backend enforces access independently of this page. */
+/* ChannelRecipe Studio (v2) page: explains Studio, sells it, and gets subscribers set up.
+ * The server enforces plan access independently of anything rendered here. */
 window.CRLocalStudio = (() => {
-    let data = null, step = 0, platform = /Win/i.test(navigator.userAgent) ? 'windows' : 'mac';
-    let busy = false, brainChoice = 'anthropic';
+    const DISCORD_URL = 'https://discord.gg/aUbazAAqw3';
+    const SETUP_URL = 'http://127.0.0.1:7860/cr-setup';
+    const STUDIO_URL = 'http://127.0.0.1:7860/';
+    const CLAUDE_PROMPT = 'Help me install ChannelRecipe Studio on this computer. Check what is missing, '
+        + 'install it for me one step at a time, then start the studio and open its setup page.';
+    let data = null, platform = /Win/i.test(navigator.userAgent) ? 'windows' : 'mac';
+    let busy = false, brainChoice = 'anthropic', view = 'guest';
+
     const esc = text => String(text ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const root = () => document.getElementById('page-local-studio');
-    const steps = ['How it works', 'Download', 'Choose your brain', 'Connect accounts', 'Make a video'];
     const icons = {
+        idea:'<path d="M9 18h6m-5 3h4M12 3a6 6 0 0 0-3.5 10.9c.6.4 1 1.1 1 1.8V16h5v-.3c0-.7.4-1.4 1-1.8A6 6 0 0 0 12 3z"/>',
+        film:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3z"/>',
+        style:'<circle cx="8" cy="8" r="3"/><circle cx="16" cy="16" r="3"/><path d="M10.5 10.5l3 3M16 3v5m5 0h-5M3 16h5m0 5v-5"/>',
+        cube:'<path d="M12 3 4 7.5v9L12 21l8-4.5v-9z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/>',
+        edit:'<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m14 6 4 4"/>',
         computer:'<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/>',
-        plan:'<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6m-6 4h6m-6 4h4"/>',
-        video:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3z"/>',
         arrow:'<path d="M5 12h14m-5-5 5 5-5 5"/>',
         check:'<path d="m5 12 4 4L19 6"/>',
-        download:'<path d="M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4"/>'
+        download:'<path d="M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4"/>',
+        copy:'<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
+        chat:'<path d="M4 5h16v11H8l-4 4z"/>',
+        key:'<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9m-4 4 3 3"/>'
     };
-    const icon = key => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">'+icons[key]+'</svg>';
+    const icon = key => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+icons[key]+'</svg>';
     const providerInfo = () => data?.providers?.[brainChoice] || {label:'Claude API', brain_models:[]};
     const modelName = (provider, id) => data?.providers?.[provider]?.brain_models?.find(m=>m.id===id)?.label || id || 'Not selected';
-    function modelOptions(account, selected, same=false) {
-        const choices=account?.brain_models||[];
-        const saved=selected&&!choices.some(m=>m.id===selected)?'<option value="'+esc(selected)+'" selected>'+esc(selected)+' · saved selection</option>':'';
-        return (same?'<option value="">Use the same model as writing</option>':'')+saved+choices.map(m=>'<option value="'+esc(m.id)+'" '+(m.id===selected?'selected':'')+'>'+esc(m.label||m.id)+'</option>').join('');
-    }
-    function updateBrainModels(general, visual) {
-        const account=providerInfo();
-        document.getElementById('ls-brain-model').innerHTML=modelOptions(account,general||account.default_brain);
-        document.getElementById('ls-brain-visual-model').innerHTML=modelOptions(account,visual===undefined?account.default_visual_brain:visual,true);
-        document.querySelector('#ls-key-form button').disabled=!account.brain_models?.length;
-        updateBrainResearch();
-    }
-    function updateBrainResearch() {
-        const model=providerInfo().brain_models?.find(m=>m.id===document.getElementById('ls-brain-model').value);
-        document.getElementById('ls-brain-research').textContent=model?.research===false?'This model does not include built-in web research through this provider. Choose a model with research support when the video needs it.':'Research tools vary by provider. Changing media accounts leaves this brain choice in place.';
-    }
-    function brainForm() {
-        const account=providerInfo(), saved=data.brain||{};
-        const general=saved.provider===brainChoice?saved.model:account.default_brain;
-        const visual=saved.provider===brainChoice?(saved.visual_model||saved.model):account.default_visual_brain;
-        return '<div class="ls-key-card"><div class="ls-key-top"><div><h3>Choose your API brain</h3><p>The brain writes and plans. Your media accounts generate the voice, images and video separately.</p></div><span class="ls-status '+(saved.connected?'connected':'')+'">'+(saved.connected?esc(data.providers?.[saved.provider]?.label||saved.provider)+' connected':'Needs a key')+'</span></div>'+
-            (saved.connected?'<p class="ls-inline-note">Saved API account: '+esc(data.providers?.[saved.provider]?.label||saved.provider)+' · writing: '+esc(modelName(saved.provider,saved.model))+' · complex visuals: '+esc(modelName(saved.provider,saved.visual_model||saved.model))+'.</p>':'')+
-            '<p class="ls-inline-note">Choose the models used by your CR brain. Its usage is billed to your selected API account; the video workflow comes from ChannelRecipe.</p>'+
-            '<form id="ls-key-form"><label for="ls-brain-provider">Brain API account</label><select id="ls-brain-provider" class="cr-input">'+(!data.providers?.anthropic?'<option value="anthropic" selected disabled>Claude API — waiting for model choices</option>':'')+Object.entries(data.providers||{}).map(([id,p])=>'<option value="'+esc(id)+'" '+(id===brainChoice?'selected':'')+'>'+esc(p.label)+'</option>').join('')+'</select>'+
-            '<label for="ls-brain-model">Writing, planning and research model</label><select id="ls-brain-model" class="cr-input" required>'+modelOptions(account,general)+'</select>'+
-            '<label for="ls-brain-visual-model">Complex visuals and render review model</label><select id="ls-brain-visual-model" class="cr-input">'+modelOptions(account,visual,true)+'</select><p class="ls-inline-note">This model handles demanding visual work, including 3D scenes. Choosing the same model keeps one model for both roles.</p>'+
-            '<label for="ls-brain-key" id="ls-brain-label">Your '+esc(account.label)+' API key</label><div class="ls-key-input"><input id="ls-brain-key" class="cr-input" type="password" autocomplete="off" placeholder="Paste the complete key" required minlength="16"><button class="btn-primary" type="submit">Save & check</button></div></form>'+
-            '<p id="ls-brain-research" class="ls-inline-note">Research tools vary by provider. Changing media accounts leaves this brain choice in place.</p><p class="ls-inline-note">Your key is encrypted in CR. These calls use your own API balance and do not spend CR generation credits. Accounts change only when you save your choice.</p>'+(account.key_url?'<a id="ls-key-link" href="'+esc(account.key_url)+'" target="_blank" rel="noopener">Create an account key ↗</a>':'<a id="ls-key-link" hidden>Create an account key ↗</a>')+
-            (saved.connected?'<button class="btn-ghost ls-remove" data-ls-remove-key>Disconnect API brain account</button>':'')+'</div>';
-    }
+    const user = () => (typeof currentUser !== 'undefined' ? currentUser : null);
+    const cycle = () => (typeof _pricingBillingCycle !== 'undefined' && _pricingBillingCycle === 'annual') ? 'annual' : 'monthly';
+
     function notice(text, error = false) {
         const el = document.getElementById('ls-notice');
         if (el) { el.textContent = text; el.classList.toggle('ls-error', error); el.hidden = !text; }
@@ -54,95 +39,191 @@ window.CRLocalStudio = (() => {
         const response = await fetch('/api/frontier/' + path, options);
         const body = await response.json().catch(() => ({}));
         if (!response.ok) {
-            const error=new Error(typeof body.detail === 'string' ? body.detail : 'This step could not finish. Please try again.');
-            error.status=response.status;
+            const error = new Error(typeof body.detail === 'string' ? body.detail : 'This step could not finish. Please try again.');
+            error.status = response.status;
             throw error;
         }
         return body;
     }
+    async function copy(text, message) {
+        if (!text) throw new Error('That isn’t available yet. Refresh the page and try again.');
+        try { await navigator.clipboard.writeText(text); notice(message); }
+        catch { notice('Your browser blocked copying. Select the text and copy it yourself.', true); }
+    }
+    function track(event, props = {}) { try { _track(event, props); } catch (_) {} }
+
+    // ---- Shared sections -------------------------------------------------
     function hero() {
-        return '<header class="ls-header"><div><div class="ls-eyebrow">LOCAL STUDIO <span>ADMIN PREVIEW</span></div>' +
-            '<h1>Your computer.<br>Your next <em>video.</em></h1>' +
-            '<p>Connect Claude Code and your media accounts. The complete Frontier workflow runs on your computer with CR’s maintained production tools.</p></div>' +
-            '<div class="ls-flow" aria-label="How production works"><div>'+icon('plan')+'<strong>Your brain plans it</strong><small>Research, writing & directing</small></div>' +
-            '<span>'+icon('arrow')+'</span><div>'+icon('computer')+'<strong>You make it</strong><small>Your accounts & computer</small></div></div></header>';
+        const member = view === 'member';
+        return '<header class="ls-hero"><div class="ls-hero-copy">'+
+            '<span class="ls-version-chip">'+icon('film')+'ChannelRecipe Studio <b>v2</b></span>'+
+            '<h1>'+(member?'Your studio is ready to <em>install.</em>':'Whole faceless videos, made on <em>your computer.</em>')+'</h1>'+
+            '<p>'+(member
+                ? 'Three steps and you’re making your first video. Claude can do the installing for you.'
+                : 'Type a title or paste a script. Studio researches, writes, narrates, animates and edits a finished YouTube video in the style you choose — or one it learns from any channel.')+'</p>'+
+            (member?'':'<div class="ls-hero-actions"><button class="btn-primary" data-ls-plans>See plans '+icon('arrow')+'</button><a class="ls-text-link" href="#ls-how">How it works</a></div>')+
+            '</div>'+heroVisual()+'</header>';
     }
-    function body() {
-        if(step===0)return '<div class="ls-section-head"><span class="ls-step-number">01</span><div><h2>Frontier’s complete workflow, connected to CR</h2><p>Claude Code runs the creative stages. Your computer makes the media and assembles the video. CR supplies the maintained workflow and project controls.</p></div></div>'+
-            '<div class="ls-explain"><article>'+icon('plan')+'<h3>Your Claude does the thinking</h3><p>Writing, web research, direction, visual code and render review use your signed-in Claude Code account.</p><span>YOUR CLAUDE ACCOUNT</span></article><article>'+icon('computer')+'<h3>CR keeps the workflow current</h3><p>The original presets, production process and MCP tools stay connected to your CR account. Projects pin their workflow and model choices.</p><span>YOUR CR ACCOUNT</span></article><article>'+icon('video')+'<h3>Your computer creates the result</h3><p>Media services create assets; local browsers, graphics tools and FFmpeg render and assemble them. Review the timeline and export locally.</p><span>YOUR MEDIA ACCOUNTS</span></article></div>'+
-            '<div class="ls-callout"><strong>Separate accounts, clear spending.</strong><p>Claude Code uses your Claude account and its limits. Kie, Atlas and other media services use their own balances. These are separate from your CR subscription.</p></div><button class="btn-primary ls-next" data-ls-next>Set up my studio '+icon('arrow')+'</button>';
-        if(step===1)return '<div class="ls-section-head"><span class="ls-step-number">02</span><div><h2>Install the complete studio</h2><p>Keep the extracted folder together. Your videos stay on this computer.</p></div></div>'+
-            '<div class="ls-platform" role="group" aria-label="Choose your computer"><button data-ls-platform="mac" class="'+(platform==='mac'?'selected':'')+'">macOS</button><button data-ls-platform="windows" class="'+(platform==='windows'?'selected':'')+'">Windows</button></div>'+
-            '<div class="ls-download"><div>'+icon('download')+'<div><strong>ChannelRecipe local studio</strong><p>Original engine, presets, graphics, 3D, editor and guided setup · '+esc(data.version)+'</p></div></div><a class="btn-primary '+(!data.download_ready?'ls-disabled':'')+'" '+(data.download_ready?'href="/api/frontier/download"':'aria-disabled="true"')+'>Download studio</a></div>'+
-            '<ol class="ls-instructions"><li><strong>Extract the whole ZIP.</strong><p>Keep it somewhere you can find again.</p></li><li><strong>Open '+(platform==='mac'?'Start on Mac.command':'Start on Windows.cmd')+'.</strong><p>First launch installs its libraries and graphics browser. Keep the launcher open.</p></li><li><strong>Follow the setup page that opens.</strong><p>It shows each required connection and tool. Generation stays blocked until the required checks pass.</p></li></ol>'+
-            '<details class="ls-help"><summary>If the launcher does not open</summary><p>Install <a href="https://www.python.org/downloads/" target="_blank" rel="noopener">Python 3.12</a>. On Windows select “Add Python to PATH”. On Mac right-click the launcher and choose Open. Missing FFmpeg or Node tools are explained in local setup.</p></details><button class="btn-primary ls-next" data-ls-next>Connect Claude Code '+icon('arrow')+'</button>';
-        if(step===2)return '<div class="ls-section-head"><span class="ls-step-number">03</span><div><h2>Use your Claude Code as the brain</h2><p>Follow the preferred route in local setup. It preserves Frontier’s separate writing, research, vision and specialist visual stages.</p></div></div>'+
-            '<div class="ls-key-card"><h3>Connect CR in the local setup screen first</h3><p>Copy this key into step 2 of local setup. Review account costs there, then continue with Claude Code.</p><button class="btn-secondary" data-ls-copy-key>Copy CR connect key</button></div>'+
-            '<ol class="ls-instructions"><li><strong>Install Claude Code and sign in.</strong><p>Use the <a href="https://code.claude.com/docs/en/setup" target="_blank" rel="noopener">official installation guide</a>, then run Claude Code and follow its browser login. Your Claude password is never entered into CR.</p></li><li><strong>Connect CR tools in the setup screen.</strong><p>The studio saves a private MCP connection for this folder. If you open Claude Code here, approve the project connection when prompted.</p></li><li><strong>Save and verify your models.</strong><p>Choose Sonnet 5.5 for general work and Opus 5.5 for demanding visuals, or choose either available model for each role. Verification makes two tiny text checks using your Claude account.</p></li></ol>'+
-            '<div class="ls-callout"><strong>Finish these steps on your computer.</strong><p>The local screen verifies your login, model access and production MCP tools. Starting the server alone does not sign you into Claude.</p><a class="btn-secondary" href="http://127.0.0.1:7860/cr-setup" target="_blank" rel="noopener">Open local setup ↗</a></div><button class="btn-primary ls-next" data-ls-next>Connect media accounts '+icon('arrow')+'</button>';
-        if(step===3)return '<div class="ls-section-head"><span class="ls-step-number">04</span><div><h2>Connect CR and your media accounts</h2><p>Keys belong in the local setup forms. Keep them out of chat.</p></div></div>'+
-            '<div class="ls-key-card"><h3>Connect this computer to your CR account</h3><p>Copy your CR connect key and paste it into step 2 of local setup. This is separate from Claude and media keys.</p><div class="ls-key-actions"><button class="btn-secondary" data-ls-copy-key>Copy CR connect key</button><a href="http://127.0.0.1:7860/cr-setup" target="_blank" rel="noopener" class="btn-secondary">Open local setup ↗</a></div></div>'+
-            '<div class="ls-callout"><strong>One media key can cover several tasks.</strong><p>Kie.ai or Atlas Cloud can supply narration, images, image animation and supported Kling presenters. Saving media accounts leaves your Claude Code brain in place. Pexels footage, licensed music and specialised services may need their own accounts; your selected preset checks them before generation.</p></div>'+
-            '<details class="ls-help"><summary>Alternative: use a separately billed API brain</summary><p>This saves an API account for the alternative route. To use it locally, choose the API brain in the studio setup screen. Provider tool support differs; use Claude Code for the full original research and visual workflow.</p>'+brainForm()+'</details><button class="btn-primary ls-next" data-ls-next>Choose and validate a preset '+icon('arrow')+'</button>';
-        return '<div class="ls-section-head"><span class="ls-step-number">05</span><div><h2>Create, review and export</h2><p>Select a preset in local setup and check its requirements. Then choose your title, duration and options in the studio.</p></div></div><div id="ls-history"></div>'+
-            '<div class="ls-library-controls"><input class="cr-input" id="ls-style-search" type="search" placeholder="Search styles" aria-label="Search styles"><select class="cr-input" id="ls-family-filter" aria-label="Filter styles"><option value="">All styles</option><option value="illustrated">Illustrated</option><option value="documentary">Documentary & graphics</option><option value="avatar">AI presenters</option><option value="3d">3D</option></select></div><div id="ls-style-grid" class="ls-style-grid"></div>'+
-            '<div class="ls-launch"><div><h3>Generation checks the actual selected options</h3><p>Required accounts and tools must pass. Missing footage or animation access cannot silently turn your video into an image-only substitute. The original preset still decides which media types belong in the edit.</p></div><a class="btn-primary" href="http://127.0.0.1:7860/cr-setup" target="_blank" rel="noopener">Open your studio ↗</a></div>'+
-            '<details class="ls-help"><summary>Review and recovery</summary><p>Use Your videos and the timeline editor to inspect the final result. Videos, thumbnails and export files stay in output/. Completed work resumes from cache. Review stopped Claude stages in local setup before approving any additional attempt.</p></details>';
+    function heroVisual() {
+        const stages = [['idea','Your idea','“Why the Romans never invented the steam engine”'],
+            ['film','Studio makes it','Research · script · voice · footage · motion graphics · 3D'],
+            ['edit','You publish','Finished 1080p video, thumbnail, captions and description']];
+        return '<div class="ls-hero-visual" aria-hidden="true">'+stages.map(([key,title,detail],i)=>
+            '<div class="ls-stage"><span class="ls-stage-icon">'+icon(key)+'</span><div><strong>'+title+'</strong><small>'+detail+'</small></div>'+
+            (i<2?'<span class="ls-stage-line"></span>':'')+'</div>').join('')+'</div>';
     }
-    function render() {
-        if (!root() || !data) return;
-        root().innerHTML = '<div class="ls-wrap">'+hero()+'<nav class="ls-steps" aria-label="Setup steps">'+steps.map((title,i)=>
-            '<button data-ls-step="'+i+'" class="'+(i===step?'active':'')+'" '+(i===step?'aria-current="step"':'')+'><span>'+String(i+1).padStart(2,'0')+'</span>'+title+'</button>').join('')+
-            '</nav>'+(data.recovery_requests&&step!==4?'<aside class="ls-callout ls-recovery-notice"><div><strong>A model request needs attention</strong><p>You can review its status and recovery option here.</p></div><button class="btn-secondary" data-ls-review>Review stopped request</button></aside>':'')+'<main class="ls-panel"><div id="ls-notice" role="status" hidden></div>'+body()+'</main><footer class="ls-footer"><span>Admin access only · '+esc(data.version)+'</span><button class="btn-ghost" data-ls-refresh>Refresh connection status</button></footer></div>';
-        root().querySelectorAll('[data-ls-step]').forEach(el => el.addEventListener('click', () => {step = Number(el.dataset.lsStep);render();}));
-        root().querySelectorAll('[data-ls-next]').forEach(el => el.addEventListener('click', () => {step = Math.min(4, step+1);render();root().scrollIntoView({behavior:'smooth',block:'start'});}));
-        root().querySelectorAll('[data-ls-platform]').forEach(el => el.addEventListener('click', () => {platform=el.dataset.lsPlatform;render();}));
-        root().querySelector('[data-ls-refresh]')?.addEventListener('click', open);
-        root().querySelector('[data-ls-review]')?.addEventListener('click',()=>{step=4;render();document.getElementById('ls-history').scrollIntoView({behavior:'smooth',block:'start'});});
-        root().querySelector('[data-ls-copy-command]')?.addEventListener('click', () => copy(document.getElementById('ls-connect-command').textContent,'Connection command copied.'));
-        root().querySelector('[data-ls-copy-prompt]')?.addEventListener('click', () => copy('Use ChannelRecipe to help me set up my local video studio. Walk me through it one step at a time.','First message copied.'));
-        root().querySelector('[data-ls-copy-key]')?.addEventListener('click', async () => {
-            try { const mcp = await fetch('/api/me/mcp'); if(!mcp.ok) throw new Error('Could not get your connect key.');const account=await mcp.json();await copy(account.api_key,'Connect key copied. Paste it into the local setup form.');}
-            catch(e){notice(e.message,true);}
-        });
-        root().querySelector('#ls-key-form')?.addEventListener('submit', async event => {
-            event.preventDefault(); const button=event.target.querySelector('button');button.disabled=true;button.textContent='Checking…';
-            try { const result=await api('brain-key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:document.getElementById('ls-brain-key').value.trim(),provider:brainChoice,model:document.getElementById('ls-brain-model').value,visual_model:document.getElementById('ls-brain-visual-model').value||null})}); data=await api('status');brainChoice=data.brain?.provider||brainChoice;render();notice(result.message||'Brain account and models saved.');}
-            catch(e){notice(e.message,true);}
-            finally{button.disabled=false;button.textContent='Save & check';}
-        });
-        root().querySelector('#ls-brain-provider')?.addEventListener('change', event => {
-            brainChoice=event.target.value;document.getElementById('ls-brain-key').value='';
-            document.getElementById('ls-brain-label').textContent='Your '+providerInfo().label+' API key';
-            document.getElementById('ls-key-link').href=providerInfo().key_url;
-            document.getElementById('ls-key-link').hidden=!providerInfo().key_url;
-            updateBrainModels();
-        });
-        root().querySelector('#ls-brain-model')?.addEventListener('change',updateBrainResearch);
-        if(root().querySelector('#ls-key-form')){root().querySelector('#ls-key-form button').disabled=!providerInfo().brain_models?.length;updateBrainResearch();}
-        root().querySelector('[data-ls-remove-key]')?.addEventListener('click', async () => {
-            try{await api('brain-key',{method:'DELETE'});data=await api('status');render();notice('Brain account disconnected. Add a key before starting more work.');}
-            catch(e){notice(e.message,true);}
-        });
-        if(step===4){styles();document.getElementById('ls-style-search').addEventListener('input',styles);document.getElementById('ls-family-filter').addEventListener('change',styles);history();}
+    function versionNote() {
+        return '<aside class="ls-version-note"><strong>Studio is the current version of ChannelRecipe.</strong> '+
+            'The Classic recipes (v1) still work, but Studio makes better videos with far more control. '+
+            '<button class="ls-text-link" data-ls-classic>Open Classic recipes</button></aside>';
     }
-    function styles() {
-        const query=document.getElementById('ls-style-search').value.toLowerCase();
-        const family=document.getElementById('ls-family-filter').value;
-        const items=data.styles.filter(s=>(!family||s.family===family)&&(s.label+' '+s.description+' '+s.name).toLowerCase().includes(query));
-        document.getElementById('ls-style-grid').innerHTML = items.length ? items.map(s =>
-            '<article class="ls-style-card"><div class="ls-style-art '+esc(s.family)+'" aria-hidden="true"><span></span><span></span><span></span></div><div><span class="ls-family">'+esc(s.family==='3d'?'3D':s.family==='avatar'?'AI PRESENTER':s.family.toUpperCase())+'</span><h3>'+esc(s.label||s.name)+'</h3><p>'+esc(s.description||s.tagline)+'</p></div></article>').join('') :
-            '<p class="ls-empty">No styles match. Try another search or choose all styles.</p>';
+    function features() {
+        const list = [
+            ['film','Any faceless format','Documentaries, explainers, history, true crime, sports, essays and more — dozens of built-in styles.'],
+            ['style','Clone a channel’s style','Point it at a YouTube channel you admire. Studio studies the real frames and builds a reusable style.'],
+            ['cube','Motion graphics and 3D','Maps, charts, archival footage, animated scenes and fast 3D graphics — not just slideshows.'],
+            ['edit','Edit before you publish','Review every scene on a timeline, fix what you don’t like, then export.']];
+        return '<section class="ls-section" id="ls-how"><h2>What Studio does</h2><div class="ls-features">'+list.map(([key,title,text])=>
+            '<article>'+icon(key)+'<h3>'+title+'</h3><p>'+text+'</p></article>').join('')+'</div>'+
+            '<div class="ls-how"><div><span>1</span><p><strong>Download Studio</strong>Mac or Windows. Claude Code can install it for you.</p></div>'+
+            '<div><span>2</span><p><strong>Connect your accounts</strong>Your Claude account does the thinking; Kie.ai or Atlas Cloud makes voice and images.</p></div>'+
+            '<div><span>3</span><p><strong>Make videos</strong>Pick a style, type a title, review the edit, export.</p></div></div></section>';
     }
+    function planCards() {
+        const catalog = typeof PLAN_CATALOG !== 'undefined' ? PLAN_CATALOG : [];
+        const details = {
+            daily: {tag:'Start making videos', items:['Studio + every built-in style','Clone <b>3</b> channel styles','35 cloud credits / month','Niche Finder + niche database in Claude']},
+            studio_pro: {tag:'Run several channels', items:['Everything in Creator','Clone <b>15</b> channel styles','60 cloud credits / month','3 cloud videos rendering at once']},
+            studio_max: {tag:'For serious operators', items:['Everything in Pro','<b>Unlimited</b> style clones','100 cloud credits / month','Priority help in Discord']}
+        };
+        const u = user(), annual = cycle() === 'annual';
+        const onTrial = typeof isTrialUser === 'function' && isTrialUser();
+        const subscribed = typeof isPaidUser === 'function' && isPaidUser() && !onTrial;
+        const current = typeof planTier === 'function' ? planTier(u?.plan) : '';
+        const trials = typeof trialsEnabled === 'function' && trialsEnabled();
+        const usedTrial = !trials || (!!(u && u.trial_used) && !onTrial);
+        return '<section class="ls-section" id="ls-plans"><div class="ls-plans-head"><div><h2>Plans</h2><p>Every plan includes Studio. Cancel anytime.</p></div>'+
+            '<div class="ls-cycle" role="group" aria-label="Billing period"><button data-ls-cycle="monthly" class="'+(annual?'':'selected')+'">Monthly</button><button data-ls-cycle="annual" class="'+(annual?'selected':'')+'">Yearly <small>2 months free</small></button></div></div>'+
+            '<div class="ls-plans">'+catalog.map(plan=>{
+                const d = details[plan.tier] || {tag:'', items:[]};
+                const featured = plan.tier === 'studio_pro';
+                const price = annual ? plan.annual.perMonth : plan.monthly.charge;
+                let cta = usedTrial ? 'Get '+plan.label : 'Start free trial';
+                const open = typeof planAvailable !== 'function' || planAvailable(plan.tier, annual ? 'annual' : 'monthly');
+                if (!open) cta = 'Coming soon';
+                else if (onTrial) cta = 'Start '+plan.label+' — '+(annual?plan.annual.charge:plan.monthly.charge)+' today';
+                else if (subscribed) cta = plan.tier === current ? 'Your plan' : 'Switch to '+plan.label;
+                return '<article class="ls-plan'+(featured?' featured':'')+'">'+(featured?'<span class="ls-plan-badge">Most popular</span>':'')+
+                    '<h3>'+esc(plan.label)+'</h3><p class="ls-plan-tag">'+d.tag+'</p>'+
+                    '<p class="ls-plan-price"><b>'+esc(price)+'</b>/mo</p><p class="ls-plan-bill">'+(annual?'Billed '+esc(plan.annual.charge)+' yearly':'Billed monthly · cancel anytime')+'</p>'+
+                    '<ul>'+d.items.map(item=>'<li>'+icon('check')+'<span>'+item+'</span></li>').join('')+'</ul>'+
+                    '<button class="'+(featured?'btn-primary':'btn-secondary')+'" data-ls-buy="'+esc(plan.tier)+'" '+((subscribed&&plan.tier===current)||!open?'disabled':'')+'>'+esc(cta)+'</button></article>';
+            }).join('')+'</div>'+
+            '<p class="ls-fineprint">Studio runs on your computer. Writing and planning use your own Claude account (Claude Pro or Max); voice, images and animation use your Kie.ai or Atlas Cloud balance. Cloud credits are for Classic (v1) recipes.</p></section>';
+    }
+    function faq() {
+        const items = [
+            ['What do I need?','A Mac or Windows computer, a Claude account (Pro or Max) and a media account from Kie.ai or Atlas Cloud. Studio checks everything during setup and tells you what’s missing.'],
+            ['What does a video cost to make?','It depends on length and style. You pay Claude and your media provider directly at their own prices — we don’t add a markup.'],
+            ['Is this different from the recipes on ChannelRecipe?','Yes. Classic recipes are ChannelRecipe v1 and run in our cloud. Studio is v2: far more styles, style cloning, motion graphics, 3D and a real editor.'],
+            ['Can Claude set it up for me?','Yes. Open the downloaded folder in Claude Code and paste the prompt we give you. It checks your computer, installs what’s missing and starts the studio.'],
+            ['What if I get stuck?','Ask in our Discord — we answer there every day, and it’s where we hear what to build next.']];
+        return '<section class="ls-section ls-faq"><h2>Questions</h2>'+items.map(([q,a])=>'<details><summary>'+q+'</summary><p>'+a+'</p></details>').join('')+'</section>';
+    }
+    function discordCard(compact = false) {
+        return '<aside class="ls-discord'+(compact?' compact':'')+'"><span class="ls-discord-icon">'+icon('chat')+'</span><div><strong>Join the ChannelRecipe Discord</strong>'+
+            '<p>Get help with setup, share the videos you make, and tell us what to build next. We read every message.</p></div>'+
+            '<a class="btn-secondary" href="'+DISCORD_URL+'" target="_blank" rel="noopener" data-ls-discord>Join Discord ↗</a></aside>';
+    }
+
+    // ---- Member view -----------------------------------------------------
+    function setupSteps() {
+        const launcher = platform === 'mac' ? 'Start on Mac.command' : 'Start on Windows.cmd';
+        const ready = !!data.download_ready;
+        return '<section class="ls-setup">'+
+            '<div class="ls-step"><span class="ls-step-n">1</span><div class="ls-step-body"><h3>Download Studio</h3>'+
+                '<div class="ls-platform" role="group" aria-label="Your computer"><button data-ls-platform="mac" class="'+(platform==='mac'?'selected':'')+'">Mac</button><button data-ls-platform="windows" class="'+(platform==='windows'?'selected':'')+'">Windows</button></div>'+
+                '<a class="btn-primary ls-download-btn '+(ready?'':'ls-disabled')+'" '+(ready?'href="/api/frontier/download" data-ls-download':'aria-disabled="true"')+'>'+icon('download')+(ready?'Download ChannelRecipe Studio':'Preparing the download…')+'</a>'+
+                '<p class="ls-step-note">About 250 MB. When it finishes, <b>extract the whole ZIP</b>'+(platform==='windows'?' (right-click → Extract All)':'')+' into a folder you’ll keep, like Documents.</p></div></div>'+
+            '<div class="ls-step"><span class="ls-step-n">2</span><div class="ls-step-body"><h3>Install it</h3>'+
+                '<div class="ls-install-options">'+
+                '<div class="ls-option recommended"><span class="ls-option-tag">Easiest</span><h4>Let Claude Code install it</h4>'+
+                    '<p>Open the extracted folder in Claude Code — in the Claude desktop app, choose <b>Code</b> and select the folder. Then paste:</p>'+
+                    '<div class="ls-prompt-box"><code>'+esc(CLAUDE_PROMPT)+'</code><button class="btn-ghost" data-ls-copy-prompt>'+icon('copy')+'Copy</button></div>'+
+                    '<p class="ls-step-note">No Claude Code yet? <a href="https://claude.com/download" target="_blank" rel="noopener">Download the Claude app</a> and sign in with your Claude account.</p></div>'+
+                '<div class="ls-option"><h4>Or install it yourself</h4>'+
+                    '<p>In the extracted folder, double-click <b>'+launcher+'</b>'+(platform==='mac'?' (if macOS blocks it, right-click → Open)':'')+'. The first launch takes a few minutes. Keep that window open — your setup page opens in the browser.</p>'+
+                    '<details class="ls-mini"><summary>It says something is missing</summary><p>Studio needs Python 3.10 or newer (3.13 recommended'+(platform==='windows'?'; tick “Add Python to PATH” when installing':'')+'), Node.js LTS and FFmpeg. The setup page links each one. Easiest fix: use the Claude Code option — it installs them for you.</p></details></div>'+
+                '</div></div></div>'+
+            '<div class="ls-step"><span class="ls-step-n">3</span><div class="ls-step-body"><h3>Connect your account</h3>'+
+                '<p>The setup page asks for your ChannelRecipe key. Copy it here and paste it there. Keep it private — it works like a password for your studio.</p>'+
+                '<div class="ls-step-actions"><button class="btn-secondary" data-ls-copy-key>'+icon('key')+'Copy my ChannelRecipe key</button>'+
+                '<a class="btn-ghost" href="'+SETUP_URL+'" target="_blank" rel="noopener">Open setup page ↗</a></div>'+
+                '<p class="ls-step-note">Setup then signs you in to Claude Code and connects a media account. When it says you’re ready, open the studio and make your first video.</p></div></div>'+
+            '<div class="ls-step ls-step-quiet"><span class="ls-step-n">↻</span><div class="ls-step-body"><h3>Already installed? Update in place</h3>'+
+                '<p>Studio tells you when a new version is out. Close the launcher, then in your Studio folder ask Claude Code to “Update ChannelRecipe Studio”. Your projects, accounts and styles stay put. Don’t download a fresh copy into a new folder.</p></div></div>'+
+            '</section>';
+    }
+    function planPanel() {
+        const clones = data.style_clones || {};
+        const limit = clones.limit;
+        const used = Number(clones.used || 0);
+        const pct = limit ? Math.min(100, Math.round(used / limit * 100)) : 0;
+        const label = data.access === 'admin' ? 'Admin' : (data.plan_label || 'Your plan');
+        return '<aside class="ls-plan-panel"><div class="ls-plan-panel-head"><span>Your plan</span><strong>'+esc(label)+'</strong></div>'+
+            '<div class="ls-meter"><div class="ls-meter-label"><span>Style clones</span><b>'+(limit==null?used+' used · unlimited':used+' of '+limit+' used')+'</b></div>'+
+            (limit==null?'':'<div class="ls-meter-bar"><span style="width:'+pct+'%"></span></div>')+'</div>'+
+            (clones.upgrade_label?'<button class="btn-ghost ls-upgrade" data-ls-plans>Upgrade to '+esc(clones.upgrade_label)+' for more →</button>':'')+
+            '<div class="ls-needs"><strong>You’ll also need</strong><ul><li>A Claude account (Pro or Max)</li><li>A Kie.ai or Atlas Cloud account for voice and images</li></ul></div>'+
+            '<div class="ls-open-studio"><a class="btn-secondary" href="'+STUDIO_URL+'" target="_blank" rel="noopener">Open my studio ↗</a><small>Works while Studio is running on this computer.</small></div></aside>';
+    }
+    function memberBody() {
+        return '<div class="ls-member-grid">'+setupSteps()+planPanel()+'</div>'+discordCard()+
+            '<section class="ls-section"><div class="ls-section-row"><h2>Your projects</h2><button class="btn-ghost" data-ls-refresh>Refresh</button></div><div id="ls-history"><p class="ls-muted">Loading…</p></div></section>'+
+            '<details class="ls-advanced"><summary>Advanced: use an API key instead of Claude Code</summary><p>Most people should use Claude Code. If you’d rather pay per request with an API key, save it here, then choose “API brain” in the studio’s setup page.</p>'+brainForm()+'</details>';
+    }
+
+    // ---- API brain (alternative route) ---------------------------------
+    function modelOptions(account, selected, same = false) {
+        const choices = account?.brain_models || [];
+        const saved = selected && !choices.some(m=>m.id===selected) ? '<option value="'+esc(selected)+'" selected>'+esc(selected)+' · saved</option>' : '';
+        return (same?'<option value="">Same as writing model</option>':'')+saved+choices.map(m=>'<option value="'+esc(m.id)+'" '+(m.id===selected?'selected':'')+'>'+esc(m.label||m.id)+'</option>').join('');
+    }
+    function updateBrainModels(general, visual) {
+        const account = providerInfo();
+        document.getElementById('ls-brain-model').innerHTML = modelOptions(account, general||account.default_brain);
+        document.getElementById('ls-brain-visual-model').innerHTML = modelOptions(account, visual===undefined?account.default_visual_brain:visual, true);
+        document.querySelector('#ls-key-form button').disabled = !account.brain_models?.length;
+    }
+    function brainForm() {
+        const account = providerInfo(), saved = data.brain || {};
+        const general = saved.provider===brainChoice ? saved.model : account.default_brain;
+        const visual = saved.provider===brainChoice ? (saved.visual_model||saved.model) : account.default_visual_brain;
+        return '<div class="ls-key-card">'+
+            (saved.connected?'<p class="ls-step-note">Saved: '+esc(data.providers?.[saved.provider]?.label||saved.provider)+' · writing '+esc(modelName(saved.provider,saved.model))+' · visuals '+esc(modelName(saved.provider,saved.visual_model||saved.model))+'</p>':'')+
+            '<form id="ls-key-form"><label for="ls-brain-provider">Provider</label><select id="ls-brain-provider" class="cr-input">'+Object.entries(data.providers||{}).map(([id,p])=>'<option value="'+esc(id)+'" '+(id===brainChoice?'selected':'')+'>'+esc(p.label)+'</option>').join('')+'</select>'+
+            '<label for="ls-brain-model">Writing and research model</label><select id="ls-brain-model" class="cr-input" required>'+modelOptions(account,general)+'</select>'+
+            '<label for="ls-brain-visual-model">Visuals and review model</label><select id="ls-brain-visual-model" class="cr-input">'+modelOptions(account,visual,true)+'</select>'+
+            '<label for="ls-brain-key" id="ls-brain-label">Your '+esc(account.label)+' API key</label><div class="ls-key-input"><input id="ls-brain-key" class="cr-input" type="password" autocomplete="off" placeholder="Paste the complete key" required minlength="16"><button class="btn-primary" type="submit">Save</button></div></form>'+
+            '<p class="ls-step-note">Encrypted and stored with your ChannelRecipe account. Requests bill your own API account.'+(account.key_url?' <a id="ls-key-link" href="'+esc(account.key_url)+'" target="_blank" rel="noopener">Get a key ↗</a>':' <a id="ls-key-link" hidden>Get a key ↗</a>')+'</p>'+
+            (saved.connected?'<button class="btn-ghost" data-ls-remove-key>Remove saved API key</button>':'')+'</div>';
+    }
+
+    // ---- Projects and stage review ------------------------------------
     async function history() {
+        const el = document.getElementById('ls-history'); if (!el) return;
         try {
-            const result=await api('projects');
-            const el=document.getElementById('ls-history');if(!el)return;
-            el.innerHTML='<h3>Your recent studio projects</h3>'+(result.projects.length?'<div class="ls-projects">'+result.projects.map(p=>
-                '<div class="ls-project"><article><div><strong>'+esc(p.title)+'</strong><small>'+esc(p.style)+' · '+new Date(p.created_at*1000).toLocaleDateString()+'</small>'+(['needs_review','failed'].includes(p.status)?'<small>This project stopped. View its status for the next step.</small>':'')+'<button class="btn-secondary ls-view-requests" data-ls-requests="'+esc(p.id)+'" aria-expanded="false">View request status</button></div><span>'+Number(p.calls)+' model requests<br>'+Number(p.input_tokens+p.output_tokens).toLocaleString()+' reported tokens</span></article><div id="ls-requests-'+esc(p.id)+'" class="ls-request-list" hidden></div></div>').join('')+'</div>':'<p>Your first project will appear here when you start a video in the local studio.</p>')+
-                '<p class="ls-inline-note">Claude Code uses your Claude account and its limits. Alternative API requests use the selected API account. Voice, image and video charges stay in your media accounts.</p>';
+            const result = await api('projects');
+            const projects = result.projects || [];
+            el.innerHTML = projects.length ? '<div class="ls-projects">'+projects.slice(0,20).map(p=>{
+                const stopped = ['needs_review','failed'].includes(p.status);
+                const status = p.status==='done'?'Finished':stopped?'Needs attention':'In progress';
+                return '<div class="ls-project"><article><div><strong>'+esc(p.title)+'</strong><small>'+new Date(p.created_at*1000).toLocaleDateString()+' · <span class="ls-pill '+(p.status==='done'?'ok':stopped?'warn':'')+'">'+status+'</span> · '+Number(p.calls)+' model requests</small></div>'+
+                    '<button class="btn-ghost ls-view-requests" data-ls-requests="'+esc(p.id)+'" aria-expanded="false">Details</button></article><div id="ls-requests-'+esc(p.id)+'" class="ls-request-list" hidden></div></div>';
+            }).join('')+'</div><p class="ls-step-note">Your finished videos, timelines and exports live in Studio on your computer. Claude Code uses your Claude account and its limits; voice, image and video charges stay in your media accounts.</p>'
+            : '<p class="ls-muted">No projects yet. Once Studio is set up, your videos appear here.</p>';
             el.querySelectorAll('[data-ls-requests]').forEach(button=>button.addEventListener('click',()=>requests(button.dataset.lsRequests,button)));
-        }catch(e){notice(e.message,true);}
+        } catch (e) { el.innerHTML = '<p class="ls-muted">'+esc(e.message)+'</p>'; }
     }
     function nativeRequests(result) {
         const stages=result.stages||[];
@@ -223,18 +304,85 @@ window.CRLocalStudio = (() => {
             });
         }catch(e){el.textContent=e.message;}
     }
-    async function copy(text, message) {
-        if(!text)throw new Error('The value is not available yet. Refresh your connection.');
-        try{await navigator.clipboard.writeText(text);notice(message);}
-        catch{notice('Your browser could not copy this. Select the text and copy it manually.',true);}
+
+    // ---- Render ----------------------------------------------------------
+    function render() {
+        if (!root()) return;
+        const u = user();
+        const starterNote = view==='upgrade' && u && typeof planTier==='function' && planTier(u.plan)==='starter'
+            ? '<aside class="ls-version-note"><strong>Your Starter plan includes Classic recipes (v1).</strong> Studio is included from Creator — switch any time and keep your account.</aside>' : '';
+        const body = view === 'member' ? memberBody() : versionNote()+starterNote+features()+planCards()+discordCard(true)+faq();
+        root().innerHTML = '<div class="ls-wrap">'+hero()+'<div id="ls-notice" role="status" hidden></div>'+body+
+            '<footer class="ls-footer"><span>ChannelRecipe Studio'+(data?.version?' · '+esc(data.version):'')+'</span><a href="'+DISCORD_URL+'" target="_blank" rel="noopener">Help in Discord ↗</a></footer></div>';
+        bind();
+        if (view === 'member') history();
+    }
+    function bind() {
+        const r = root();
+        r.querySelectorAll('[data-ls-plans]').forEach(el=>el.addEventListener('click',()=>{
+            if (view === 'member') { if (typeof showPricingModal === 'function') showPricingModal({reason:'studio'}); return; }
+            document.getElementById('ls-plans')?.scrollIntoView({behavior:'smooth',block:'start'});
+        }));
+        r.querySelector('[data-ls-classic]')?.addEventListener('click',()=>{ track('studio_open_classic'); navigateTo('pipeline'); });
+        r.querySelectorAll('[data-ls-cycle]').forEach(el=>el.addEventListener('click',()=>{
+            if (typeof setPricingPlan === 'function') setPricingPlan(el.dataset.lsCycle);
+            render(); document.getElementById('ls-plans')?.scrollIntoView({block:'start'});
+        }));
+        r.querySelectorAll('[data-ls-buy]').forEach(el=>el.addEventListener('click',()=>{
+            const tier = el.dataset.lsBuy;
+            track('studio_plan_clicked', {tier, interval: cycle(), signed_in: !!user()});
+            const go = () => proceedToCheckout(tier);
+            if (!user()) { if (typeof ensureAuth === 'function') ensureAuth(go); else showAuthModal(); return; }
+            go();
+        }));
+        r.querySelectorAll('[data-ls-platform]').forEach(el=>el.addEventListener('click',()=>{ platform = el.dataset.lsPlatform; render(); }));
+        r.querySelector('[data-ls-download]')?.addEventListener('click',()=>track('studio_download_clicked',{platform}));
+        r.querySelector('[data-ls-copy-prompt]')?.addEventListener('click',()=>{ track('studio_prompt_copied'); copy(CLAUDE_PROMPT,'Copied. Paste it into Claude Code in your Studio folder.'); });
+        r.querySelector('[data-ls-copy-key]')?.addEventListener('click',async()=>{
+            try {
+                const mcp = await fetch('/api/me/mcp'); if (!mcp.ok) throw new Error('Couldn’t get your key. Refresh and try again.');
+                const account = await mcp.json(); await copy(account.api_key,'Key copied. Paste it into the studio’s setup page.');
+            } catch (e) { notice(e.message,true); }
+        });
+        r.querySelectorAll('[data-ls-discord]').forEach(el=>el.addEventListener('click',()=>track('discord_clicked',{source:'studio_page'})));
+        r.querySelector('[data-ls-refresh]')?.addEventListener('click',history);
+        r.querySelector('#ls-key-form')?.addEventListener('submit',async event=>{
+            event.preventDefault(); const button = event.target.querySelector('button'); button.disabled = true; button.textContent = 'Checking…';
+            try {
+                const result = await api('brain-key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:document.getElementById('ls-brain-key').value.trim(),provider:brainChoice,model:document.getElementById('ls-brain-model').value,visual_model:document.getElementById('ls-brain-visual-model').value||null})});
+                data = await api('status'); brainChoice = data.brain?.provider||brainChoice; render(); notice(result.message||'Saved.');
+            } catch (e) { notice(e.message,true); }
+            finally { button.disabled = false; button.textContent = 'Save'; }
+        });
+        r.querySelector('#ls-brain-provider')?.addEventListener('change',event=>{
+            brainChoice = event.target.value; document.getElementById('ls-brain-key').value = '';
+            document.getElementById('ls-brain-label').textContent = 'Your '+providerInfo().label+' API key';
+            const link = document.getElementById('ls-key-link'); link.href = providerInfo().key_url||''; link.hidden = !providerInfo().key_url;
+            updateBrainModels();
+        });
+        if (r.querySelector('#ls-key-form')) r.querySelector('#ls-key-form button').disabled = !providerInfo().brain_models?.length;
+        r.querySelector('[data-ls-remove-key]')?.addEventListener('click',async()=>{
+            try { await api('brain-key',{method:'DELETE'}); data = await api('status'); render(); notice('API key removed.'); }
+            catch (e) { notice(e.message,true); }
+        });
     }
     async function open() {
-        if (!(typeof currentUser !== 'undefined' && currentUser?.is_admin)) return;
-        if(busy)return;busy=true;
-        if(!data)root().innerHTML='<div class="ls-wrap"><p role="status">Preparing your studio setup…</p></div>';
-        try{data=await api('status');brainChoice=data.brain?.connected?data.brain.provider:'anthropic';render();}
-        catch(e){root().innerHTML='<div class="ls-wrap ls-panel"><h2>Your setup could not load</h2><p>'+esc(e.message)+'</p><button class="btn-primary" id="ls-retry">Try again</button></div>';document.getElementById('ls-retry').addEventListener('click',open);}
-        finally{busy=false;}
+        if (!root() || busy) return;
+        busy = true;
+        try {
+            const u = user();
+            const entitled = typeof hasStudioAccess === 'function' ? hasStudioAccess() : !!u?.is_admin;
+            if (!u || !entitled) { view = u ? 'upgrade' : 'guest'; data = null; render(); track('studio_page_viewed',{view}); return; }
+            if (!data) root().innerHTML = '<div class="ls-wrap"><p class="ls-muted">Loading your studio…</p></div>';
+            try {
+                data = await api('status'); view = 'member';
+                brainChoice = data.brain?.connected ? data.brain.provider : 'anthropic';
+            } catch (e) {
+                if (e.status === 403 || e.status === 401) { view = 'upgrade'; data = null; }
+                else { root().innerHTML = '<div class="ls-wrap"><div class="ls-error-card"><h2>Studio couldn’t load</h2><p>'+esc(e.message)+'</p><button class="btn-primary" id="ls-retry">Try again</button></div></div>'; document.getElementById('ls-retry').addEventListener('click',open); return; }
+            }
+            render(); track('studio_page_viewed',{view});
+        } finally { busy = false; }
     }
     return {open};
 })();

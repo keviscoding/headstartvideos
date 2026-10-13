@@ -620,6 +620,10 @@ def test_original_3d_preview_failure_reaches_real_owned_run_receipt_as_failed(ru
         "HISTORY": [], "LOCK": threading.Lock(), "mv": r.studio.mv, "threading": threading,
         "time": time, "Path": Path, "json": json})
     cells = dict(zip(r.studio._run_spec.__code__.co_freevars, r.studio._run_spec.__closure__))
+    if "run_owned_spec" in cells:
+        # Fresh-attempt binding wraps the owned dispatcher that holds the hook.
+        owned = cells["run_owned_spec"].cell_contents
+        cells = dict(zip(owned.__code__.co_freevars, owned.__closure__))
     monkeypatch.setattr(cells["original_run"], "cell_contents", original)
     receipts = []
     def begin(*a, **kw):
