@@ -147,6 +147,16 @@ def test_chat_reserves_context_before_the_original_thread_starts(runtime, timeli
     assert r.client.post("/api/run", headers=r.headers, json={}).status_code == 200
 
 
+def test_fresh_create_is_not_locked_by_a_historical_allowance_report(runtime, monkeypatch):
+    runtime.cfg["brain_mode"] = "claudecode"
+    monkeypatch.setattr(cr_studio.cr_claude, "status", lambda *a, **k: {
+        "ready": True, "allowance": {"blocked": False, "reported_limit": True,
+                                      "message": "Earlier usage limit; extra usage may now be available."}})
+    response = runtime.client.post("/api/run", headers=runtime.headers, json={})
+    assert response.status_code == 200
+    assert response.get_json()["queued"] == ["native-job"]
+
+
 @pytest.mark.parametrize("status", ["done", "failed", "running"])
 def test_new_run_uses_fresh_session_only_after_previous_video_completed(runtime, monkeypatch, status):
     r = runtime

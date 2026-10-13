@@ -79,7 +79,7 @@ function renderReadiness(){
 }
 function invalidatePreflight(){preflightResult=null;renderReadiness();}
 function renderClaude(){
- const allowance=statusData.claude_code?.allowance; $('claude-allowance').hidden=!allowance?.blocked; $('claude-allowance').textContent=allowance?.message||'';
+ const allowance=statusData.claude_code?.allowance; $('claude-allowance').hidden=!allowance?.reported_limit; $('claude-allowance').textContent=allowance?.message||'';
  const cli=statusData.claude_code||{},models=Array.isArray(cli.models)?cli.models:[],canConnect=cli.installed===true&&cli.authenticated===true&&statusData.connected===true&&statusData.costs_accepted===true,dirty=claudeModelsDirty();
  renderChecks('claude-checks',[{label:'Claude Code installed'+(cli.version?' · '+cli.version:''),ready:cli.installed===true},{label:'Claude account signed in',ready:cli.authenticated===true},{label:'ChannelRecipe tools connected',ready:cli.mcp_connected===true},{label:'Both selected models verified',ready:cli.models_verified===true&&!dirty}]);
  $('claude-account').textContent=cli.authenticated?'Account: '+(cli.account_label||cli.account||'Your signed-in Claude Code account')+'. '+(cli.billing||'Usage and limits belong to this Claude Code account.'):'Sign in using Claude Code’s browser login. Your Claude password is never entered on this page.';
