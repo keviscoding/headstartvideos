@@ -327,7 +327,7 @@ class Runtime:
         try:
             installed_version=json.loads((Path(self.bridge.HOME)/"cr-release.json").read_text())["version"]
         except (OSError,ValueError,KeyError):
-            installed_version=cfg.get("local_version","5.3-admin.42")
+            installed_version=cfg.get("local_version","5.3-admin.43")
         cache = Path(self.bridge.HOME) / "output" / "cr-claude-cache" / project_id / (stage_id + ".json")
         try:
             saved = json.loads(cache.read_text())
@@ -484,6 +484,10 @@ def _verification_workflow(root=None):
 
 def _verification_identity(settings, local, *, root=None):
     workflow = _verification_workflow(root)
+    return _verification_identity_for_workflow(settings, local, workflow)
+
+
+def _verification_identity_for_workflow(settings, local, workflow):
     return _digest({"general":settings.get("general_model"), "visual":settings.get("visual_model"),
         "brain_mode":settings.get("brain_mode"), "workflow":workflow,
         "release":None if workflow else settings.get("local_version"), "claude_version":local.get("version"),
@@ -498,6 +502,20 @@ def _verification_marker(settings, local, *, root=None):
                 or not 0 <= time.time()-verified_at < 86400):
             return None
         if marker.get("identity") == _verification_identity(settings, local, root=root):
+            return marker
+        # A product-name-only migration must not spend another model probe.
+        # Prove the old marker against its exact saved contract and the current
+        # account, models and CLI; only the two reviewed names share this source.
+        previous, current = marker.get("workflow"), _verification_workflow(root)
+        names = {"7b0bef7c7ec842ceb21abf01367533a784a41c4727ebd218e03318e1048d4ed8",
+                 "25efdf9e2e0d26007e0a0b7564ab7ae01075c53bae1047b6eb4ae323ef37237e"}
+        source = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
+        if (marker.get("schema_version") == 2 and isinstance(previous, dict)
+                and previous.get("source") == current.get("source") == source
+                and isinstance(previous.get("workflow"), str) and isinstance(current.get("workflow"), str)
+                and hashlib.sha256(previous["workflow"].encode()).hexdigest() in names
+                and hashlib.sha256(current["workflow"].encode()).hexdigest() in names
+                and marker.get("identity") == _verification_identity_for_workflow(settings, local, previous)):
             return marker
         # Older adapters bound the check to cfg.local_version. Only migrate an
         # exact saved-profile match from this reviewed, unchanged engine family.

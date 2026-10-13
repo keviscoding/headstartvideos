@@ -518,6 +518,7 @@ def require_admin(request: Request) -> dict:
 # The router checks both web sessions and runner Bearer keys on every request.
 from webapp.frontier_studio import make_router as _frontier_router
 app.include_router(_frontier_router(_current_user))
+app.include_router(_frontier_router(_current_user, prefix="/api/studio"))
 
 
 def require_analytics(request: Request) -> dict:

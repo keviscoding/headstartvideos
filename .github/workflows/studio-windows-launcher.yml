@@ -1,0 +1,22 @@
+name: Windows Studio launcher
+on:
+  pull_request:
+    paths:
+      - 'local_runtime/Start on Windows.cmd'
+      - 'tests/test_frontier_launchers.py'
+      - '.github/workflows/studio-windows-launcher.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-launcher:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - run: python -m pip install pytest
+      - name: Exercise the real Windows command interpreter
+        run: python -m pytest -q tests/test_frontier_launchers.py -k windows

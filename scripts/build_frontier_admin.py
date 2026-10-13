@@ -9,6 +9,7 @@ import hashlib
 import json
 import re
 import sys
+import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote, urlsplit
@@ -18,7 +19,8 @@ import requests
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
-VERSION = "5.3-admin.42"
+from scripts import studio_branding
+VERSION = "5.3-admin.43"
 PRIVATE_WORKFLOWS = {
     "cr-style-delivery-prompt.txt": ROOT / "data/frontier/reference2d-compiler.txt",
     "cr-style-study-brief.txt": ROOT / "data/frontier/reference2d-study.txt",
@@ -73,14 +75,14 @@ def compose_claude_instructions(original: bytes, overrides: bytes) -> bytes:
     """Restore private interactive creative context without publishing its text."""
     introduction = (
         "# ChannelRecipe private studio instructions\n\n"
-        "The original Frontier creative guide follows unchanged. Use it for creative direction, "
+        "The private creative guide follows. Use it for creative direction, "
         "style customization, specialist modules, visual verification and editing.\n\n"
         "The ChannelRecipe operational overrides at the end govern setup, account/key handling, "
         "billing, launch commands, MCP authorization and recovery whenever the older guide differs. "
         "Use local setup forms for keys; never collect or reveal them in chat. Launch production "
         "through CR's maintained tools and project/stage checks. Do not follow older standalone "
         "generation commands or API fallback instructions that bypass those checks.\n\n"
-        "## Original Frontier creative guide\n\n"
+        "## ChannelRecipe creative guide\n\n"
     ).encode("utf-8")
     return introduction + original + b"\n\n---\n\n# ChannelRecipe operational overrides\n\n" + overrides
 
@@ -118,41 +120,74 @@ def build(source: Path, target: Path):
     preview_resources = private_preview_resources(ROOT)
     target.parent.mkdir(parents=True, exist_ok=True)
     count = 0
-    with zipfile.ZipFile(source) as original, zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as result:
-        for info in original.infolist():
-            parts = PurePosixPath(info.filename).parts
-            if not parts or parts[0] != "Frontier" or ".." in parts or info.is_dir():
-                continue
-            rel = PurePosixPath(*parts[1:])
-            if not rel.parts:
-                continue
-            if rel.parts[0] in {"samples", ".frontier", "output", "presets", "__MACOSX"}:
-                continue
-            if rel.name in {".env", ".env.example", ".DS_Store"} or rel.suffix == ".pyc":
-                continue
-            # The source and templates remain admin-only for parity testing.
-            name = "ChannelRecipe studio/" + ("FRONTIER_GUIDE.md" if str(rel)=="CLAUDE.md" else str(rel))
-            result.writestr(name, original.read(info))
-            count += 1
-        for path, relative in resources:
-            info = zipfile.ZipInfo("ChannelRecipe studio/" + relative)
-            info.external_attr = (0o100755 if path.suffix == ".command" else 0o100644) << 16
-            info.compress_type = zipfile.ZIP_DEFLATED
-            contents = compose_claude_instructions(private_guide, operational_overrides) if path.name == "CLAUDE.md" else path.read_bytes()
-            result.writestr(info, contents)
-        result.writestr("ChannelRecipe studio/cr-providers.json", (ROOT / "webapp/frontier/providers.json").read_bytes())
-        for name, path in PRIVATE_WORKFLOWS.items():
-            result.writestr("ChannelRecipe studio/" + name, path.read_bytes())
-        for path,relative in preview_resources:
-            result.writestr("ChannelRecipe studio/"+relative,path.read_bytes())
-        result.writestr("ChannelRecipe studio/cr-release.json", json.dumps({
-            "version": VERSION, "access": "admin_only", "source_sha256": SOURCE_SHA256,
-            "public_release_allowed": False, "engine_files": count,
-            "workflow_version": "frontier-5.3-claudecode.1", "preferred_brain": "claudecode",
-            "note": "Owner preview contains original source. Public runtime split remains required."}, indent=2))
+    transformed_files = []
+    logo = ROOT / "scripts/assets/channelrecipe.png"
+    brand_png = logo.read_bytes() if logo.is_file() and not logo.is_symlink() else None
+    # A rejected unknown/binary branding hit must not destroy a prior download.
+    with tempfile.NamedTemporaryFile(dir=target.parent, prefix=".cr-build-", suffix=".zip", delete=False) as temporary:
+        staged = Path(temporary.name)
+    try:
+        with zipfile.ZipFile(source) as original, zipfile.ZipFile(staged, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as result:
+            written = set()
+
+            def write_resource(relative, contents, *, executable=False):
+                branded, data, record = studio_branding.transform_resource(relative, contents, brand_png=brand_png)
+                name = "ChannelRecipe studio/" + branded
+                if name in written:
+                    raise ValueError("Duplicate branded studio resource: " + name)
+                written.add(name)
+                if record:
+                    transformed_files.append(record)
+                info = zipfile.ZipInfo(name)
+                info.external_attr = (0o100755 if executable else 0o100644) << 16
+                info.compress_type = zipfile.ZIP_DEFLATED
+                result.writestr(info, data)
+
+            for info in original.infolist():
+                parts = PurePosixPath(info.filename).parts
+                if not parts or parts[0] != "Frontier" or ".." in parts or info.is_dir():
+                    continue
+                rel = PurePosixPath(*parts[1:])
+                if not rel.parts:
+                    continue
+                if rel.parts[0] in {"samples", ".frontier", "output", "presets", "__MACOSX"}:
+                    continue
+                if rel.name in {".env", ".env.example", ".DS_Store"} or rel.suffix == ".pyc":
+                    continue
+                # Preserve the source inventory and source hash; record every
+                # owned branding transformation instead of claiming byte parity.
+                relative = "CREATIVE_GUIDE.md" if str(rel) == "CLAUDE.md" else str(rel)
+                write_resource(relative, original.read(info), executable=bool(info.external_attr >> 16 & 0o111))
+                count += 1
+            for path, relative in resources:
+                contents = compose_claude_instructions(private_guide, operational_overrides) if path.name == "CLAUDE.md" else path.read_bytes()
+                write_resource(relative, contents, executable=path.suffix == ".command")
+            write_resource("cr-providers.json", (ROOT / "webapp/frontier/providers.json").read_bytes())
+            for name, path in PRIVATE_WORKFLOWS.items():
+                write_resource(name, path.read_bytes())
+            for path, relative in preview_resources:
+                write_resource(relative, path.read_bytes())
+            write_resource("cr-release.json", json.dumps({
+                "version": VERSION, "access": "admin_only", "source_sha256": SOURCE_SHA256,
+                "public_release_allowed": False, "engine_files": count,
+                "workflow_version": "channelrecipe-5.3-claudecode.1", "preferred_brain": "claudecode",
+                "branding_version": studio_branding.BRANDING_VERSION,
+                "note": "Owner preview contains private source. Public runtime split remains required."}, indent=2).encode())
+            write_resource("cr-branding.json", json.dumps({
+                "schema": 1, "branding_version": studio_branding.BRANDING_VERSION,
+                "source_archive_sha256": SOURCE_SHA256, "source_engine_files": count,
+                "transformed_files": transformed_files,
+            }, indent=2).encode())
+        with zipfile.ZipFile(staged) as archive:
+            branding_report = studio_branding.assert_clean_archive(archive)
+        staged.replace(target)
+    finally:
+        staged.unlink(missing_ok=True)
     with target.open("rb") as f:
         digest = hashlib.file_digest(f, "sha256").hexdigest()
-    return {"version": VERSION, "bytes": target.stat().st_size, "sha256": digest, "engine_files": count}
+    return {"version": VERSION, "bytes": target.stat().st_size, "sha256": digest,
+            "engine_files": count, "transformed_files": len(transformed_files),
+            "branding": branding_report}
 
 
 def main():
