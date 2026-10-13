@@ -396,6 +396,8 @@ def create_app():
     cr_media.install(studio.mv)
     cr_capabilities.install(studio)
     cr_render.install(studio.mv)
+    import cr_style_delivery
+    cr_style_delivery.install(studio.mv)
     cr_workers.install()
     cr_submission.install(studio)
     activity = getattr(studio, "_cr_activity", None)
