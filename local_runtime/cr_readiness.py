@@ -89,6 +89,13 @@ def preset(studio, checks, spec):
         return {"ready":False,"checks":results,"blockers":[r["message"] for r in results if not r["ready"]]}
     studio.styles.load_all()
     info = studio.styles.STYLES.get(style) or studio.mv.STYLE_INFO.get(style,{})
+    import cr_style_delivery
+    if cr_style_delivery.selected(info):
+        try:
+            cr_style_delivery._prompt()
+            results.append(item("reference_workflow", "Full reference animation workflow", True))
+        except RuntimeError as error:
+            results.append(item("reference_workflow", "Full reference animation workflow", False, str(error)))
     caps = studio.features.capabilities()
     fcfg = (info or {}).get("features") or {}
     offered = fcfg.get("offered") if isinstance(fcfg.get("offered"),list) else [k for k in studio.features.KEYS if k not in studio.features.EXPLICIT]
@@ -131,6 +138,8 @@ def preset(studio, checks, spec):
         if not cr_media.active(task):
             continue
         if task == "avatars" and not wanted.get("avatar") or task == "motion" and not wanted.get("ai_images"):
+            continue
+        if task == "images" and not wanted.get("ai_images") and "thumbnail" not in steps:
             continue
         try:
             provider,key = cr_media.account(task)

@@ -12,6 +12,7 @@ from contextlib import contextmanager
 import copy
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -25,6 +26,7 @@ from types import FunctionType
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 HOME = Path(__file__).resolve().parent
+STUDY_GUIDANCE = HOME / "cr-style-study-brief.txt"
 MAX_REFERENCES = 3
 PREVIEW_LIMIT = 8
 PHASES = {
@@ -220,6 +222,12 @@ def _spec(home, supplied):
     brief = supplied.get("brief", "")
     if not isinstance(brief, str) or len(brief) > 4000:
         raise ValueError("Keep the style brief under 4,000 characters.")
+    visual_mode = supplied.get("visual_mode", "reference_only")
+    if not isinstance(visual_mode, str) or visual_mode not in {"reference_only", "mixed"}:
+        raise ValueError("Choose reference animation only or a mixed-media style.")
+    attempt_id = supplied.get("attempt_id", "")
+    if attempt_id and (not isinstance(attempt_id, str) or not re.fullmatch(r"[a-f0-9]{32}", attempt_id)):
+        raise ValueError("Start a new style study from its approval form.")
     budget, calls = supplied.get("budget_minutes", 22), supplied.get("max_calls", 40)
     minutes = supplied.get("minutes", 10)
     if (not isinstance(budget, int) or isinstance(budget, bool) or not 15 <= budget <= 30
@@ -232,7 +240,8 @@ def _spec(home, supplied):
     return {"preview_id": preview_id, "reference_url": saved["reference_url"], "references": references,
         "base_style": base, "base_sha256": _file_hash(base_path), "name": requested_name,
         "label": label.strip(), "title": title.strip(), "brief": brief,
-        "budget_minutes": budget, "max_calls": calls, "minutes": minutes}
+        "budget_minutes": budget, "max_calls": calls, "minutes": minutes,
+        "visual_mode": visual_mode, "attempt_id": attempt_id}
 
 
 def prepare(home, supplied, proof, bridge):
@@ -269,13 +278,33 @@ def _saved(home, operation_id, bridge):
     return folder, saved
 
 
+def _native_failure(home, saved):
+    """Read only normalized local stage evidence, never expose provider text."""
+    project_id = saved.get("project_id", "")
+    if not isinstance(project_id, str) or not re.fullmatch(r"crv_[a-f0-9]{24}", project_id):
+        return ""
+    folder = Path(home) / "output/cr-claude-cache" / project_id
+    for path in sorted(folder.glob("cc_*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
+        stage = _read(path)
+        if stage.get("state") in {"failed", "failed_local"}:
+            code = stage.get("error_code")
+            return code if code in {"timeout", "usage_limit", "cancelled", "authentication_required"} else ""
+    return ""
+
+
 def status(home, operation_id, bridge):
     folder, saved = _saved(home, operation_id, bridge)
     state, phase = saved.get("state"), saved.get("phase", "prepared")
     percent, message = PHASES.get(phase, PHASES["prepared"])
+    failure_code = saved.get("failure_code", "")
+    native_failure = _native_failure(home, saved) if state == "failed" else ""
     if state == "failed":
         message = "This study stopped. Review its saved Claude stages in setup before approving any further work. It will not run again automatically."
-        if saved.get("failure_code") == "metadata_handoff_failed":
+        if native_failure == "timeout":
+            message = "Claude timed out while " + PHASES.get(phase, PHASES["prepared"])[1].rstrip(".").lower() + ". Your saved study is intact. Review your references and approve a new study here; setup review is not required to start a separate attempt."
+        elif native_failure == "usage_limit":
+            message = "Claude reported a usage limit during this study. Your saved work is intact. Once your Claude account has available usage, review and approve a new study here."
+        if failure_code == "metadata_handoff_failed":
             message = "Reference study and graphics validation finished, but saving the style stopped. Save the completed study without repeating Claude, downloads or rendering."
     elif state == "complete_local":
         message = "Your validated style is saved locally. Reconnect CR to record completion; no generation needs to repeat."
@@ -291,6 +320,13 @@ def status(home, operation_id, bridge):
         "style_ready": state in {"complete", "complete_local"} and _published(home, saved)}
     result["metadata_recovery_available"] = state == "failed" and (
         _recovery_checkpoint_ready(folder, saved) or _legacy_recovery_possible(home, folder, saved))
+    result["failure_code"] = native_failure or failure_code
+    result["setup_review_required"] = state == "failed" and native_failure not in {"timeout", "usage_limit"} and failure_code != "metadata_handoff_failed"
+    if state == "failed" and not result["metadata_recovery_available"]:
+        result["retry_spec"] = {key: copy.deepcopy(saved["spec"][key]) for key in (
+            "preview_id", "reference_url", "references", "base_style", "name", "label", "title", "brief",
+            "budget_minutes", "max_calls", "minutes") if key in saved["spec"]}
+        result["retry_spec"]["visual_mode"] = saved["spec"].get("visual_mode", "reference_only")
     result["metadata_only"] = saved.get("metadata_only") is True
     result["recovery_of"] = saved.get("recovery_of")
     result["refinement_only"] = saved.get("refinement_only") is True
@@ -432,19 +468,43 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
         return {}
     local_watch = _bind(learner.watch, watch_remote=stop_remote)
     def watch(reference, clock, work):
-        seen = local_watch(reference, clock, work)
-        sheets = seen.get("sheets") or []
-        if not sheets or not any(Path(p).is_file() for p in sheets):
-            return {}
+        strict = spec.get("visual_mode") == "reference_only"
+        references = spec["references"] if strict else [reference]
+        observed = []
+        for row in references:
+            location = Path(work) / "references" / row["id"] if strict else Path(work)
+            location.mkdir(parents=True, exist_ok=True)
+            seen = local_watch(row, clock, location)
+            sheets = [str(p) for p in (seen.get("sheets") or []) if Path(p).is_file()]
+            if not sheets:
+                if strict:
+                    raise StudyStopped("An approved reference could not be inspected. No other reference or default look was substituted.")
+                return {}
+            rows = transcript(row["id"], location, original=True)
+            excerpt = " ".join(str(item[1]) for item in rows if isinstance(item, (list, tuple))
+                               and len(item) == 2 and isinstance(item[0], (int, float)) and 0 <= item[0] < 180)[:1800]
+            observed.append({"id": row["id"], "seen": seen, "sheets": sheets,
+                             "captions_available": bool(rows), "opening_excerpt": excerpt})
+        first = observed[0]
+        seen = copy.deepcopy(first["seen"])
+        if len(observed) > 1:
+            # The original vision learner accepts three sheets. Give each
+            # approved video its own unscaled opening sheet, rather than let
+            # the first reference occupy all three available image slots.
+            seen["sheets"] = [row["sheets"][0] for row in observed]
+            seen["frames"] = [frame for row in observed for frame in row["seen"].get("frames", [])]
         # YouTube's own captions are a free original source helper. Keep the
         # evidence private and report absence honestly; no speech API fallback.
-        rows = transcript(reference["id"], Path(work), original=True)
-        excerpt = " ".join(str(row[1]) for row in rows if isinstance(row, (list, tuple))
-                           and len(row) == 2 and isinstance(row[0], (int, float)) and 0 <= row[0] < 180)[:1800]
-        _write(Path(work) / "reference-evidence.json", {"id": reference["id"], "actual_frames": True,
-            "captions_available": bool(rows), "opening_caption_excerpt": excerpt})
+        evidence = [{"id": row["id"], "actual_frames": True,
+                     "captions_available": row["captions_available"],
+                     "opening_excerpt": row["opening_excerpt"],
+                     "measures": row["seen"].get("measures") or {}} for row in observed]
+        _write(Path(work) / "reference-evidence.json", {"id": first["id"], "actual_frames": True,
+            "captions_available": first["captions_available"], "opening_caption_excerpt": first["opening_excerpt"],
+            "references_studied": evidence})
         seen["measures"] = {"reference_captions_are_source_data": {
-            "available": bool(rows), "opening_excerpt": excerpt}, **(seen.get("measures") or {})}
+            "available": first["captions_available"], "opening_excerpt": first["opening_excerpt"]},
+            **(seen.get("measures") or {}), "approved_reference_evidence": evidence}
         return seen
     # Validation's original _media helper can use a deterministic stand-in.
     # This operation approves Claude study, not extra portrait API generation.
@@ -453,7 +513,12 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
         return original_media(engine, analysis, job, work, fetch=False)
     learned = _bind(learner._learn, research=allowed, match=lambda *args, **kwargs: [],
                     watch=watch, _media=validation_media, _fallback=lambda *args, **kwargs: None)
-    engine.set_extra(spec["brief"])
+    brief = spec["brief"]
+    if spec.get("visual_mode") == "reference_only":
+        if not STUDY_GUIDANCE.is_file():
+            raise StudyStopped("The full reference animation workflow is missing. Update the studio before starting a new study.")
+        brief += "\n\n" + STUDY_GUIDANCE.read_text(encoding="utf-8")
+    engine.set_extra(brief)
     progress("design")
     language = (engine.STYLE_INFO.get(spec["base_style"]) or {}).get("language", "English")
     design = designer.design(engine, spec["title"], language, spec["minutes"], channel=spec["base_style"], log=log)
@@ -468,6 +533,9 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
                      clock, work, spec["base_style"], spec["minutes"])
     if not record or not record.get("kit") or record.get("browser") is not True:
         raise StudyStopped("The original learner did not produce a graphics kit that passed real browser validation. Your study is saved; no plain preset was substituted.")
+    score = (record.get("critique") or {}).get("score")
+    if spec.get("visual_mode") == "reference_only" and (isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(score)):
+        raise StudyStopped("The reference animation kit has not completed its visual comparison. It is saved, but it is not ready to use; no unreviewed preset was substituted.")
     _write(folder / "validated-checkpoint.json", {"schema": 1, "record": record,
         "spec_sha256": _hash(spec), "assets": _validated_assets(folder, record)})
     return finish_original(engine, folder, spec, design, record, progress,
@@ -518,7 +586,11 @@ def finish_original(engine, folder, spec, design, record, progress, *, learner=N
     style.pop("variant_of", None)
     style.update(name=spec["style_id"], label=spec["label"], builtin=False, auto_style=False)
     style["cr_style_clone"] = {"operation_id": folder.name, "reference_ids": [r["id"] for r in spec["references"]],
-        "learned_ref": record.get("ref"), "base_style": spec["base_style"]}
+        "learned_ref": record.get("ref"), "base_style": spec["base_style"],
+        "visual_mode": spec.get("visual_mode", "mixed")}
+    if style["cr_style_clone"]["visual_mode"] == "reference_only":
+        import cr_style_delivery
+        cr_style_delivery.configure_style(style)
     _write(folder / "ready-style.json", style)
     _write(folder / "study-result.json", {"references": [r["id"] for r in spec["references"]],
         "kit": record["kit"], "reference_used": (record.get("reference") or {}).get("id", ""),
@@ -758,7 +830,12 @@ def _creative_budget(minutes):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise subprocess.TimeoutExpired(command, minutes * 60)
-        return original(command, *args, **{**kwargs, "timeout": min(kwargs.get("timeout") or remaining, remaining)})
+        # Original helpers inherit a 900-second CLI cap. An approved study
+        # must use its actual remaining budget for creative calls rather than
+        # aborting a large kit early. Login/version probes retain their short
+        # timeouts; no prompt, model, output cap or retry policy changes.
+        timeout = remaining if kwargs.get("input") is not None else min(kwargs.get("timeout") or remaining, remaining)
+        return original(command, *args, **{**kwargs, "timeout": timeout})
     runtime.real_run = bounded
     try:
         yield

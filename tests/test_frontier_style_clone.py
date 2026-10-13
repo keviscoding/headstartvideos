@@ -43,7 +43,7 @@ def approved(tmp_path, monkeypatch):
         "channel": "Reference creator", "views": 200000, "duration": 900}])
     preview = clone.preview(tmp_path, "https://youtube.com/watch?v=" + VIDEO, learner=metadata)
     spec = {"preview_id": preview["preview_id"], "reference_ids": [VIDEO], "label": "My learned style",
-            "title": "Example story", "acknowledge_costs": True}
+            "title": "Example story", "acknowledge_costs": True, "visual_mode": "mixed"}
     return SimpleNamespace(home=tmp_path, cfg=cfg, proof=proof, bridge=bridge, events=events,
                            preview=preview, spec=spec, metadata=metadata)
 
@@ -231,11 +231,20 @@ def _original_functions(path, names, namespace):
     return namespace
 
 
-def test_actual_original_learner_uses_only_approved_videos_and_keeps_full_creative_steps(approved):
+@pytest.mark.parametrize("visual_mode,reviewed", [("mixed", True), ("reference_only", True), ("reference_only", False)])
+def test_actual_original_learner_uses_only_approved_videos_and_keeps_full_creative_steps(approved, monkeypatch, visual_mode, reviewed):
     events = []
     folder = approved.home / "output/cr-style-clone" / ("op_" + "2" * 24)
     folder.mkdir(parents=True)
     spec = clone._spec(approved.home, approved.spec)
+    spec["visual_mode"] = visual_mode
+    reference_ids = [VIDEO]
+    if visual_mode == "reference_only":
+        reference_ids += [OTHER, "xyzabcdefgh"]
+        spec["references"] += [{**spec["references"][0], "id": identifier} for identifier in reference_ids[1:]]
+        guidance = folder / "study-guidance.txt"
+        guidance.write_text("Full-scene illustration fixture.")
+        monkeypatch.setattr(clone, "STUDY_GUIDANCE", guidance)
     spec["style_id"] = "cr_clone_custom"
     sheet = folder / "actual-downloaded-frame.jpg"
     sheet.write_bytes(b"synthetic frame fixture")
@@ -265,7 +274,8 @@ def test_actual_original_learner_uses_only_approved_videos_and_keeps_full_creati
         "learn_spec": lambda *a: (events.append(("spec", a[4]["id"])) or {"style_name": "Learned", "signatures": [{"id": "a"}], "genome_wants": {}}),
         "build_kit": make_kit,
         "_media": lambda *a, **kw: (events.append(("validation_media", kw.get("fetch"))) or {}),
-        "validate": lambda *a: (events.append(("validate", True)) or {"kept": ["a", "b", "c"], "bad": [], "browser": True}),
+        "validate": lambda *a: (events.append(("validate", True)) or {"kept": ["a", "b", "c"], "bad": [], "browser": True,
+                                                                   "critique": {"score": 8} if reviewed else {}}),
         "_strip_axes_file": lambda *a: {}, "_install": install,
         "board": lambda path, *a: path,
         "_slug": lambda text, n=60: "reference_library", "save_library": lambda *a: (events.append(("library_save", a[2]["id"])) or folder),
@@ -284,11 +294,18 @@ def test_actual_original_learner_uses_only_approved_videos_and_keeps_full_creati
     transcripts = []
     def transcript(video, work, original):
         transcripts.append((video, original)); return [(0, "Reference narration"), (600, "Later narration")]
+    if not reviewed:
+        with pytest.raises(clone.StudyStopped, match="visual comparison"):
+            clone.study_original(engine, folder, spec, lambda phase: None, learner=learner, designer=designer, transcript=transcript)
+        assert not (folder / "ready-style.json").exists()
+        return
     style = clone.study_original(engine, folder, spec, lambda phase: events.append(("phase", phase)),
         learner=learner, designer=designer, transcript=transcript)
     assert [(name, value) for name, value in events if name in {"watch", "spec", "build", "validate", "library_save"}] == [
-        ("watch", VIDEO), ("spec", VIDEO), ("build", "Reference creator"), ("validate", True), ("library_save", VIDEO)]
-    assert ("validation_media", False) in events and transcripts == [(VIDEO, True)]
+        *[("watch", identifier) for identifier in reference_ids], ("spec", VIDEO), ("build", "Reference creator"), ("validate", True), ("library_save", VIDEO)]
+    assert ("validation_media", False) in events and transcripts == [(identifier, True) for identifier in reference_ids]
+    evidence = clone._read(folder / "reflearn/reference-evidence.json")
+    assert [row["id"] for row in evidence["references_studied"]] == reference_ids
     assert "variant_of" not in style and style["name"] == "cr_clone_custom" and style["auto_style"] is False
     assert style["prompts"]["outline"] == "original contract" and style["look"]["graphics"] == "kit"
     assert clone._read(folder / "reflearn/reference-evidence.json")["actual_frames"]
@@ -518,3 +535,65 @@ def test_actual_original_metadata_api_ownership_and_signatures():
     ast_names = {node.name for node in ast.parse((ORIGINAL / "autostyle.py").read_text()).body
                  if isinstance(node, ast.FunctionDef)}
     assert "around" not in ast_names
+
+
+def test_new_study_identity_preserves_failed_attempt_and_same_click_is_idempotent(approved):
+    spec = {**approved.spec, "attempt_id": "a" * 32}
+    one = clone.prepare(approved.home, spec, approved.proof, approved.bridge)
+    saved_path = approved.home / "output/cr-style-clone" / one["operation_id"] / "operation.json"
+    saved = json.loads(saved_path.read_text()); saved["state"] = "failed"
+    clone._write(saved_path, saved); before = saved_path.read_bytes()
+    assert clone.prepare(approved.home, spec, approved.proof, approved.bridge)["operation_id"] == one["operation_id"]
+    two = clone.prepare(approved.home, {**spec, "attempt_id": "b" * 32}, approved.proof, approved.bridge)
+    assert two["operation_id"] != one["operation_id"] and two["state"] == "prepared"
+    assert two["reference_ids"] == one["reference_ids"] and saved_path.read_bytes() == before
+    assert not any(name == "begin" for name, _ in approved.events)
+
+
+def test_timeout_is_shown_without_setup_redirect_or_provider_text(approved):
+    one = clone.prepare(approved.home, approved.spec, approved.proof, approved.bridge)
+    folder = approved.home / "output/cr-style-clone" / one["operation_id"]
+    saved = clone._read(folder / "operation.json")
+    saved.update(state="failed", phase="build", project_id=PROJECT)
+    clone._write(folder / "operation.json", saved)
+    cache = approved.home / "output/cr-claude-cache" / PROJECT / ("cc_" + "1" * 64 + ".json")
+    clone._write(cache, {"state": "failed", "error_code": "timeout", "diagnostic": {"stderr": "SECRET private prompt"}})
+    result = clone.status(approved.home, one["operation_id"], approved.bridge)
+    assert result["failure_code"] == "timeout" and result["setup_review_required"] is False
+    assert "timed out" in result["message"] and "approve a new study" in result["message"]
+    assert "SECRET" not in json.dumps(result)
+    assert result["retry_spec"]["reference_url"] == approved.preview["reference_url"]
+    assert approved.events == [("prepare", approved.proof)]
+
+
+def test_native_kit_can_use_remaining_budget_beyond_inherited_900_second_cap(monkeypatch):
+    clock = [100.0]; calls = []
+    def original(command, **kwargs): calls.append((command, kwargs)); return "result"
+    runtime = SimpleNamespace(real_run=original)
+    monkeypatch.setattr(cr_claude, "_runtime", runtime)
+    monkeypatch.setattr(clone.time, "monotonic", lambda: clock[0])
+    with clone._creative_budget(22):
+        clock[0] = 265.0
+        runtime.real_run(["claude", "-p"], input="unchanged original kit prompt", timeout=900)
+        runtime.real_run(["claude", "auth", "status"], timeout=20)
+    assert calls[0][1] == {"input": "unchanged original kit prompt", "timeout": 1155.0}
+    assert calls[1][1] == {"timeout": 20}
+    assert runtime.real_run is original
+
+
+def test_new_studies_default_to_reference_only_and_reject_unknown_visual_modes(approved):
+    spec = dict(approved.spec); spec.pop("visual_mode")
+    assert clone._spec(approved.home, spec)["visual_mode"] == "reference_only"
+    with pytest.raises(ValueError, match="reference animation"):
+        clone._spec(approved.home, {**spec, "visual_mode": "invalid"})
+    with pytest.raises(ValueError, match="new style study"):
+        clone._spec(approved.home, {**spec, "attempt_id": "invalid"})
+
+
+def test_failed_study_ui_offers_explicit_new_attempt_and_preserves_duplicate_click_identity():
+    html = (Path(__file__).parents[1] / "local_runtime/cr_style_clone.html").read_text()
+    assert 'id="retry-study"' in html and 'id="visual-mode"' in html
+    assert "payload.attempt_id=studyAttempt(payload)" in html
+    assert "localStorage.setItem('cr.styleStudyRequest'" in html
+    assert "$('usage-approved').checked=false" in html
+    assert "data.setup_review_required||data.can_continue_prepared" in html

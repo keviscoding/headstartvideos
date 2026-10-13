@@ -17,7 +17,11 @@ import requests
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
-VERSION = "5.3-admin.36"
+VERSION = "5.3-admin.38"
+PRIVATE_WORKFLOWS = {
+    "cr-style-delivery-prompt.txt": ROOT / "data/frontier/reference2d-compiler.txt",
+    "cr-style-study-brief.txt": ROOT / "data/frontier/reference2d-study.txt",
+}
 
 
 def compose_claude_instructions(original: bytes, overrides: bytes) -> bytes:
@@ -52,6 +56,8 @@ def verify_private(client, bucket, key, endpoint, cdn=""):
 
 
 def build(source: Path, target: Path):
+    if any(not path.is_file() for path in PRIVATE_WORKFLOWS.values()):
+        raise ValueError("The private reference animation workflow resources are required for this admin build.")
     with source.open("rb") as f:
         actual = hashlib.file_digest(f, "sha256").hexdigest()
     if actual != SOURCE_SHA256:
@@ -89,6 +95,8 @@ def build(source: Path, target: Path):
             contents = compose_claude_instructions(private_guide, operational_overrides) if path.name == "CLAUDE.md" else path.read_bytes()
             result.writestr(info, contents)
         result.writestr("ChannelRecipe studio/cr-providers.json", (ROOT / "webapp/frontier/providers.json").read_bytes())
+        for name, path in PRIVATE_WORKFLOWS.items():
+            result.writestr("ChannelRecipe studio/" + name, path.read_bytes())
         result.writestr("ChannelRecipe studio/cr-release.json", json.dumps({
             "version": VERSION, "access": "admin_only", "source_sha256": SOURCE_SHA256,
             "public_release_allowed": False, "engine_files": count,
