@@ -351,7 +351,7 @@ def test_neutral_cwd_does_not_change_existing_probe_stage_cache_or_authorization
 
 @pytest.fixture
 def setup_client(verified,monkeypatch):
-    from flask import Flask
+    from flask import Flask, jsonify
     v = verified
     legacy_marker(v)
     v.cfg["key"] = "cr_mcp_fixture_key"
@@ -360,6 +360,9 @@ def setup_client(verified,monkeypatch):
         styles=SimpleNamespace(STYLES={},load_all=lambda:None),RUNNING={},QUEUE=[],
         features=SimpleNamespace(KEYS=[],EXPLICIT=[],BY_KEY={},resolve=lambda info,asked:{},
                                  capabilities=lambda:{"features":{}}),_run_spec=lambda spec:None)
+    original.app.add_url_rule("/", "original_page", lambda: "Original engine page")
+    original.app.add_url_rule("/api/channels", "original_channels", lambda: jsonify(
+        channels=[], features=[], caps={}, prices={}, dlc={}))
     monkeypatch.setitem(sys.modules,"app",original)
     monkeypatch.setattr(cr_studio,"HOME",v.root)
     monkeypatch.setattr(cr_studio,"configure_video_tools",lambda:None)

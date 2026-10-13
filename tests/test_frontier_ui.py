@@ -348,7 +348,7 @@ def setup_page(page):
         assert request.headers.get("x-cr-local-token") == "ui-fixture-local-token"
         if request.method == "GET" and path == "/cr-status":
             return route.fulfill(json=state)
-        if request.method == "GET" and path == "/api/channels":
+        if request.method == "GET" and path == "/cr-workspace/catalog":
             return route.fulfill(json=catalog)
         if request.method == "GET" and path == "/cr-projects":
             return route.fulfill(json={"projects": control["recovery_projects"]})
@@ -381,10 +381,30 @@ def setup_page(page):
     tab.goto("http://setup-ui-fixture.invalid/cr-setup")
     tab.wait_for_function("document.getElementById('claude-verify').disabled===false")
     tab.select_option("#preflight-style", "original fixture")
-    yield {"page": tab, "state": state, "calls": calls, "control": control,
+    yield {"page": tab, "state": state, "calls": calls, "control": control, "catalog": catalog,
            "pending": pending, "finish_save": finish_save}
     for route, _ in pending:
         route.abort()
+
+
+def test_setup_displays_channelrecipe_recipe_names_without_changing_engine_identity(setup_page):
+    data = setup_page
+    tab = data["page"]
+    data["catalog"]["channels"][0]["label"] = "Illustrated Explainer"
+    data["catalog"]["channels"].append({"name": "cr_clone_custom_fixture", "label": "My specific 2D style",
+        "custom": True, "features": {"offered": [], "on": []}})
+    tab.evaluate("loadStyles()")
+    assert tab.locator('#preflight-style option[value="original fixture"]').inner_text() == "Illustrated Explainer"
+    assert tab.locator('#preflight-style option[value="cr_clone_custom_fixture"]').inner_text() == "My specific 2D style"
+    tab.select_option("#preflight-style", "original fixture")
+    tab.locator("#preflight-check").click()
+    tab.wait_for_function("document.getElementById('launch').getAttribute('href').startsWith('/?cr-preset=')")
+    assert data["calls"] == [("/cr-preflight", {"style": "original fixture", "features": {"stock": True}})]
+    assert tab.locator("#launch").get_attribute("href") == "/?cr-preset=original%20fixture"
+    links = tab.locator('nav[aria-label="Workspace"] .workspace-links a')
+    assert links.all_text_contents() == ["Create", "Projects", "Style library", "Accounts"]
+    assert [links.nth(index).get_attribute("href") for index in range(4)] == [
+        "/#create", "/#projects", "/#styles", "/cr-setup"]
 
 
 @pytest.mark.parametrize("field,choice", [("claude-general", "opus-fixture"),

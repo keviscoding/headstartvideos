@@ -60,7 +60,16 @@ def main():
         for route in ("/api/products/build","/api/farm/queue","/api/tl/test/chat"):
             assert client.post(route,headers=protected,json={}).status_code==409
         assert client.get("/cr-status", headers=local).status_code == 200
-        assert "X-CR-Local-Token" in client.get("/", headers=local).text
+        workspace = client.get("/", headers=local)
+        assert workspace.status_code == 200 and workspace.headers["X-CR-Workspace"] == "1"
+        assert "ChannelRecipe" in workspace.text and "crw-form" in workspace.text
+        assert "X-CR-Local-Token" in client.get("/cr-workspace/studio.js", headers=local).text
+        assert client.get("/cr-workspace/studio.css", headers=local).status_code == 200
+        catalogue = client.get("/cr-workspace/catalog", headers=local)
+        assert catalogue.status_code == 200 and catalogue.json["channels"]
+        assert all(row.get("art_url", "").startswith("/cr-workspace/art/") for row in catalogue.json["channels"])
+        assert client.get("/cr-workspace/art/3d.svg", headers=local).mimetype == "image/svg+xml"
+
         calls = []
         def mock_api(path, payload=None, settings=None):
             calls.append((path, payload))

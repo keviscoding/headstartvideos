@@ -12,6 +12,7 @@ import threading
 import cr_bridge
 import cr_claude
 import cr_readiness
+import cr_presentation
 import cr_style_clone
 import cr_style_refine
 
@@ -148,7 +149,7 @@ def install(studio, activity, setup_status, *, token, home=None):
             studio.styles.load_all()
             studio.styles.apply_to_engine(studio.mv, studio.motion)
             return no_store(jsonify(styles=[{"name": row["name"], "label": row["label"]}
-                                          for row in studio.styles.catalogue()]))
+                                          for row in cr_presentation.presentation_catalog(studio.styles.catalogue(), getattr(studio.styles,"STYLES",{}))]))
         except Exception as error:
             return error_response(error)
 

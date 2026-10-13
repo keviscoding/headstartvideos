@@ -20,6 +20,12 @@ def synthetic_package(tmp_path, monkeypatch):
     (runtime / "CLAUDE.md").write_bytes(overrides)
     (runtime / "START HERE.md").write_text("Use the launcher.")
     (runtime / "Start on Mac.command").write_text("#!/bin/bash\nexit 0\n")
+    workflows = {}
+    for name in package.PRIVATE_WORKFLOWS:
+        path = tmp_path / name
+        path.write_text("Synthetic private workflow resource.")
+        workflows[name] = path
+    monkeypatch.setattr(package, "PRIVATE_WORKFLOWS", workflows)
     monkeypatch.setattr(package, "ROOT", root)
     return tmp_path, overrides
 
@@ -79,3 +85,54 @@ def test_changed_source_is_rejected_before_instruction_composition(synthetic_pac
     with pytest.raises(ValueError, match="Source changed"):
         package.build(source, target)
     assert not target.exists()
+
+
+def test_workspace_browser_resources_ship_without_local_cache_or_secret_files(synthetic_package, monkeypatch):
+    tmp_path, _ = synthetic_package
+    runtime = package.ROOT / "local_runtime"
+    assets = {
+        "cr_workspace.html": "<main>ChannelRecipe</main>",
+        "cr_workspace.js": "window.CR_WORKSPACE_CLIENT = {};",
+        "cr_workspace.css": "main{color:#171b2e}",
+        "cr_workspace.py": "# Synthetic route adapter",
+        "workspace_art/illustrated.svg": '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+    }
+    for name, text in assets.items():
+        path = runtime / name
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(text)
+    (runtime / ".cr-connection.json").write_text('"do not ship"')
+    (runtime / "workspace_art/render.log").write_text("do not ship")
+    (runtime / "workspace_art/nested").mkdir()
+    (runtime / "workspace_art/nested/unknown.svg").write_text("do not ship")
+    source = source_archive(tmp_path, monkeypatch, guide=b"Synthetic guide")
+    target = tmp_path / "release.zip"
+    report = package.build(source, target)
+    with zipfile.ZipFile(target) as archive:
+        for name, text in assets.items():
+            assert archive.read("ChannelRecipe studio/" + name).decode() == text
+        assert not any(name.endswith((".json", ".log")) for name in archive.namelist()
+                       if name not in {"ChannelRecipe studio/cr-release.json", "ChannelRecipe studio/cr-providers.json"})
+        assert not any("nested" in name for name in archive.namelist())
+        assert archive.read("ChannelRecipe studio/example_engine.py") == b"# Synthetic engine fixture only\n"
+    assert report["engine_files"] == 2
+
+
+@pytest.mark.parametrize("resource", ["cr_workspace.js", "workspace_art/example.svg", "workspace_art"])
+def test_symlinked_workspace_resource_is_rejected_before_replacing_zip(synthetic_package, monkeypatch, resource):
+    tmp_path, _ = synthetic_package
+    runtime = package.ROOT / "local_runtime"
+    outside = tmp_path / "outside"
+    if resource == "workspace_art":
+        outside.mkdir()
+    else:
+        outside.write_text("private outside resource")
+    path = runtime / resource
+    path.parent.mkdir(exist_ok=True)
+    path.symlink_to(outside)
+    source = source_archive(tmp_path, monkeypatch, guide=b"Synthetic guide")
+    target = tmp_path / "release.zip"
+    target.write_bytes(b"previous complete release")
+    with pytest.raises(ValueError, match="owned"):
+        package.build(source, target)
+    assert target.read_bytes() == b"previous complete release"
