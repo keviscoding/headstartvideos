@@ -1164,8 +1164,7 @@ def _native_quota_plan(engine, context, assets, ready, directory, key, reference
         return None
     allowance = _read(Path(owner["home"]) / ".cr-claude-allowance.json")
     if (allowance.get("account") != owner["identity"]["native_account_fingerprint"]
-            or not isinstance(allowance.get("reset_at"), (int, float))
-            or allowance["reset_at"] > time.time()):
+            or not isinstance(allowance.get("reset_at"), (int, float))):
         return None
     eligible = []
     for stage in owner["stages"]:

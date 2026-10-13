@@ -1,4 +1,4 @@
-"""A local, account-bound cooldown from an explicit Claude reset message."""
+"""An account-bound usage report, never a live balance or generation lock."""
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
@@ -36,9 +36,14 @@ def status(home, account, *, now=None):
         remaining = float(saved["reset_at"]) - (time.time() if now is None else now)
         if saved.get("account") != account or remaining <= 0 or remaining > 25 * 3600:
             return {"blocked": False}
-        return {"blocked": True, "reset_at": saved["reset_at"], "reset_label": saved["reset_label"],
-                "message": "Claude reported a usage limit until " + saved["reset_label"] +
-                ". Your work is saved. Review the stopped action after the reset; it will not restart automatically."}
+        # Extra usage can be purchased before the reported reset. A saved CLI
+        # error cannot tell us the account's current allowance; the next
+        # explicitly requested action must reach Claude to check it.
+        return {"blocked": False, "reported_limit": True,
+                "reset_at": saved["reset_at"], "reset_label": saved["reset_label"],
+                "message": "Claude last reported a usage limit with a reset at " + saved["reset_label"] +
+                ". If you added usage or access has returned, you can create a new video now. "
+                "Claude checks your current allowance when it starts. Stopped projects stay saved and do not restart automatically."}
     except (OSError, ValueError, KeyError, TypeError):
         return {"blocked": False}
 

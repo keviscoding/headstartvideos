@@ -1,5 +1,6 @@
 """Presentation follows the active account without changing native production."""
 import json
+import ast
 import re
 import shutil
 import subprocess
@@ -51,6 +52,28 @@ def test_only_production_screen_is_adapted():
     result = cr_ui.transform_html(UI, narration=narration())
     assert 'id="cr-account-ui"' in result
     assert cr_ui.transform_html(result, narration=narration()) == result
+
+
+@pytest.mark.parametrize("ready", [True, False])
+def test_saved_claude_limit_is_advisory_and_setup_still_gates_create(page, ready):
+    page, errors = page
+    source = ast.parse((Path(__file__).parents[1] / "local_runtime/cr_studio.py").read_text())
+    guard = next(node.value.value for node in ast.walk(source)
+                 if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "guard" for t in node.targets)
+                 and isinstance(node.value, ast.Constant))
+    status = {"readiness": {"ready": ready}, "brain_mode": "claudecode",
+              "claude_code": {"allowance": {"blocked": False, "reported_limit": True,
+                                             "message": "Earlier limit. You can create a new video now."}}}
+    page.route("https://studio.fixture/cr-status", lambda route: route.fulfill(json=status))
+    page.route("https://studio.fixture/", lambda route: route.fulfill(
+        content_type="text/html", body='<html><body><button id="go">Create video</button>'+guard+'</body></html>'))
+    page.goto("https://studio.fixture/")
+    page.wait_for_function("document.getElementById('cr-generation-readiness').textContent !== 'Checking ChannelRecipe setup…'")
+    assert page.locator("#go").is_disabled() is not ready
+    if ready:
+        assert "new video now" in page.locator("#cr-generation-readiness").inner_text()
+        assert page.locator("#cr-generation-readiness a").count() == 0
+    assert errors == []
 
 
 def test_checked_preset_uses_original_controls_before_original_script():

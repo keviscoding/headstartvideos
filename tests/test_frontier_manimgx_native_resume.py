@@ -74,7 +74,17 @@ def test_reviewed_quota_attempt_preserves_history_and_reuses_completed_source(st
     assert cr_claude._expected_stage.get() is None
 
 
-@pytest.mark.parametrize("change", ["not_reviewed", "already_used", "other_account", "not_reset", "other_model", "has_response", "other_failure"])
+def test_reviewed_quota_attempt_allows_account_topup_before_reported_reset(stopped):
+    s = stopped
+    allowance = gx._read(s.root / ".cr-claude-allowance.json")
+    allowance["reset_at"] = time.time() + 3600
+    gx._write(s.root / ".cr-claude-allowance.json", allowance)
+    result, source = compile_scene(s)
+    assert len(s.calls) == 1 and source.read_text() == SOURCE
+    assert s.journal.read_bytes() == s.original_journal
+
+
+@pytest.mark.parametrize("change", ["not_reviewed", "already_used", "other_account", "other_model", "has_response", "other_failure"])
 def test_ineligible_quota_resume_never_calls_native(stopped, change):
     s = stopped
     if change == "not_reviewed": s.stage["status"] = "failed"
@@ -84,8 +94,7 @@ def test_ineligible_quota_resume_never_calls_native(stopped, change):
     elif change == "other_failure": s.stage["error_code"] = "network_interrupted"
     else:
         allowance = gx._read(s.root / ".cr-claude-allowance.json")
-        if change == "other_account": allowance["account"] = "f" * 64
-        else: allowance["reset_at"] = time.time() + 100
+        allowance["account"] = "f" * 64
         gx._write(s.root / ".cr-claude-allowance.json", allowance)
     with pytest.raises(RuntimeError, match="already started or stopped"): compile_scene(s)
     assert not s.calls and s.journal.read_bytes() == s.original_journal

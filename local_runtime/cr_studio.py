@@ -446,8 +446,6 @@ def create_app():
                 if activity.busy():
                     return jsonify(error="Finish your current video before starting another."), 409
                 checks = setup_status().get_json()
-                if cfg.get("brain_mode") == "claudecode" and checks.get("claude_code", {}).get("allowance", {}).get("blocked"):
-                    return jsonify(error=checks["claude_code"]["allowance"]["message"]),409
                 preflight = cr_readiness.preset(studio,checks,data)
                 if not preflight["ready"]:
                     return jsonify(error="Complete this video's setup before starting.",**preflight),409
@@ -947,8 +945,8 @@ def create_app():
   drawNativeFarm();
  }
  fetch('/cr-status').then(response=>response.json()).then(data=>{
-  ready=data.readiness?.ready===true&&!(data.brain_mode==='claudecode'&&data.claude_code?.allowance?.blocked);settled=true;
-  message=data.brain_mode==='claudecode'&&data.claude_code?.allowance?.blocked?data.claude_code.allowance.message:ready?'Your setup is connected. The selected preset and options will be checked before generation.':'Finish Setup & accounts before generating a video.';
+  ready=data.readiness?.ready===true;settled=true;
+  message=ready?(data.brain_mode==='claudecode'&&data.claude_code?.allowance?.reported_limit?data.claude_code.allowance.message:'Your setup is connected. The selected preset and options will be checked before generation.'):'Finish Setup & accounts before generating a video.';
   if(data.brain_mode==='claudecode')connectNativeFarm();drawGate();
  }).catch(()=>{settled=true;message='Reconnect ChannelRecipe in Setup & accounts before generating.';drawGate();});
  go.addEventListener('click',event=>{if(!ready||(nativeFarm&&farmRequested)){event.preventDefault();event.stopImmediatePropagation();drawGate();if(!ready)location.href='/cr-setup';}},true);
