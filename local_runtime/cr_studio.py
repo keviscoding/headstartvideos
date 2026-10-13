@@ -961,13 +961,19 @@ def create_app():
     # Project context is set per dispatched title, so batches and resumed jobs
     # retain their own receipts rather than billing every title to the first one.
     original_run = studio._run_spec
-    def run_spec(spec):
-        activity.wait_for_editor()
+    def run_owned_spec(spec):
         title = str(spec.get("title") or "Your video")
         style = str(spec.get("style") or "jung")
-        job = studio.mv.job_dir(title, style)
-        marker = job / "cr-project.json"
         try:
+            if spec.get("timeline") and spec.get("job"):
+                job = Path(spec["job"])
+                if hasattr(studio.mv, "find_job"):
+                    found = studio.mv.find_job(spec["slug"])
+                    if found is None or Path(found).resolve() != job.resolve():
+                        raise RuntimeError("Use this timeline's saved video folder.")
+            else:
+                job = studio.mv.job_dir(title, style)
+            marker = job / "cr-project.json"
             previous = json.loads(marker.read_text()) if marker.is_file() else {}
             if spec.get("timeline"):
                 for key in ("render_backend", "manimgx_identity"):
@@ -1004,6 +1010,8 @@ def create_app():
             else:
                 project = cr_bridge.begin_project(title, style, None if spec.get("force") else previous.get("id"))
             job.mkdir(parents=True, exist_ok=True)
+            import cr_attempts
+            cr_attempts.reserve_output(studio.mv, job, spec)
             marker.write_text(json.dumps({**project,"brain_mode":cfg.get("brain_mode","channelrecipe")}, indent=2))
         except Exception as error:
             with studio.LOCK:
@@ -1053,6 +1061,16 @@ def create_app():
                 deferred.close(receipt_saved)
             else:
                 activity.release(render_token)
+    def run_spec(spec):
+        activity.wait_for_editor()
+        import cr_attempts
+        try:
+            with cr_attempts.bind(studio.mv, spec):
+                return run_owned_spec(spec)
+        except Exception as error:
+            with studio.LOCK:
+                studio.JOBS.setdefault(spec["slug"], {}).update(state="error", error=str(error), done=True)
+                studio.RUNNING["slug"] = None
     studio._run_spec = run_spec
     import cr_3d_routes
     cr_3d_routes.install(studio, activity, setup_status)

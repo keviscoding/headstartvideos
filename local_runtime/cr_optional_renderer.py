@@ -279,7 +279,7 @@ def install(studio, activity, *, home, readiness=None):
                                 acknowledge_recovery=True)
                         if result.get("accepted") is not True:
                             raise RuntimeError("The saved source was not accepted. Find saved 3D work again to review its status.")
-                        final = {**state, "state": "validated", "message": "Saved 3D code passed local validation. The video is still stopped. Use its same title, preset and Fast mode option, then explicitly press Create video to resume the original cached workflow and reviews."}
+                        final = {**state, "state": "validated", "message": "Saved 3D code passed local validation. The video is still stopped. Open Setup & accounts, show stopped projects and resume this saved project to keep its cached workflow and reviews. Create video starts a separate new attempt."}
                         cr_claude._private_write(recovery_path, final)
                     except BaseException as error:
                         message = (str(error)[:500] if isinstance(error, (RuntimeError, cr_claude.ClaudeStageStopped))

@@ -30,7 +30,7 @@ def local(tmp_path, monkeypatch):
     app = Flask("3d-controls")
     studio = SimpleNamespace(app=app, OUT=tmp_path / "output", SAFE=re.compile(r"^[a-zA-Z0-9_-]+$"),
         _job=lambda slug: job if slug == "example" else tmp_path / slug,
-        mv=SimpleNamespace(final_video=lambda job: job / "video.mp4"), QUEUE=[], LOCK=threading.Lock())
+        mv=SimpleNamespace(final_video=lambda job: job / "video.mp4"), QUEUE=[], JOBS={}, LOCK=threading.Lock())
     state = {"busy": False, "mode": "claudecode", "ready": True, "parent_status": "done", "threads": [], "released": []}
     activity = SimpleNamespace(busy=lambda: state["busy"], reserve=lambda: state.update(busy=True) or "reservation",
         release=lambda token: (state["released"].append(token), state.update(busy=False)))
@@ -173,8 +173,8 @@ def test_reassembly_uses_original_validation_and_same_job_queue(local, monkeypat
     monkeypatch.setitem(api_run.__globals__, "QUEUE", local.studio.QUEUE)
     monkeypatch.setitem(api_run.__globals__, "LOCK", local.studio.LOCK)
     response = local.client.post("/cr-3d/example", json={"action": "assemble"})
-    assert response.status_code == 200
-    assert local.studio.QUEUE == [{"slug": "example", "cr_project_id": new_id, "render_backend": "original"}]
+    assert response.status_code == 200, response.get_json()
+    assert local.studio.QUEUE == [{"slug": "example", "cr_attempt_slug":"example", "cr_project_id": new_id, "render_backend": "original"}]
     assert dispatched == [True]
     # The completed original marker remains until the normal dispatcher starts.
     assert json.loads((local.job / "cr-project.json").read_text())["id"] == local.parent
