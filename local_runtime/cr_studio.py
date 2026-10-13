@@ -323,8 +323,11 @@ def sync_completion_receipt(bridge, pending):
     if (receipt.get("status") == "failed" and saved.get("status") == "done"
             and saved.get("project_id") == receipt.get("project_id") and saved.get("artifacts")):
         progress = bridge.project_progress(receipt["project_id"])
+        # The server's typed artifact contract includes absent optional fields
+        # as null. Their omission locally is the same metadata, not a change.
+        canonical = lambda rows: [{k:v for k,v in row.items() if v is not None} for row in rows]
         if (progress.get("project", {}).get("status") == "done"
-                and progress.get("artifacts") == saved["artifacts"]
+                and canonical(progress.get("artifacts", [])) == canonical(saved["artifacts"])
                 and not any(s.get("status") in {"authorized", "failed", "retry_allowed"}
                             for s in progress.get("stages", []))):
             # The finished session is immutable. An unsuccessful repeat must
