@@ -66,10 +66,11 @@ def test_incomplete_or_ambiguous_manifest_never_executes(response):
         gx._compiler_result(response, {})
 
 
-def test_vacuous_extra_annotation_retains_all_input_coverage_and_source():
+@pytest.mark.parametrize("placeholder", ["", "n/a", " N/A ", "not applicable"])
+def test_vacuous_extra_annotation_retains_all_input_coverage_and_source(placeholder):
     context = {"scene": VIDEO["scenes"][0]}
     result = manifest(context)
-    result["coverage"]["/scene/objects/0/anim/1/1"] = ""
+    result["coverage"]["/scene/objects/0/anim/1/1"] = placeholder
     assert gx._compiler_result(json.dumps(result), context) == result
 
 
