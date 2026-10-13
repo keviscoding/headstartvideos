@@ -77,6 +77,17 @@
   function error(message) {text('crw-error', message || ''); hide('crw-error', !message);}
   function toast(message) {text('crw-toast', message); hide('crw-toast', false); clearTimeout(toast.timer); toast.timer = setTimeout(() => hide('crw-toast', true), 5500);}
   function encoded(value) {return encodeURIComponent(String(value));}
+  function providerName(id) {return ({kie:'Kie.ai',atlas:'Atlas Cloud',original:''})[id] || '';}
+  // "google/gemini-3-8-flash-tts" → "Gemini 3.8 Flash"; never show raw provider model ids.
+  function friendlyModel(id) {
+    const tail = String(id || '').split('/').pop().replace(/-(tts|preview|latest)$/i,'');
+    if (!tail) return '';
+    const m = tail.match(/^(gemini|eleven(?:labs)?|eleven_)[-_]?(.*)$/i);
+    const words = (m ? (m[1].toLowerCase().startsWith('gemini') ? 'Gemini ' : 'ElevenLabs ') + m[2] : tail)
+      .replace(/(\d)-(\d)/g,'$1.$2').replace(/[-_]+/g,' ').trim();
+    return words.replace(/\b([a-z])/g, c => c.toUpperCase());
+  }
+  const DISCORD_URL = 'https://discord.gg/aUbazAAqw3';
   function number(id, fallback, min, max) {const v = Number($(id)?.value); return Math.max(min, Math.min(max, Number.isFinite(v) ? Math.round(v) : fallback));}
   function checked(id) {return $(id)?.checked === true;}
   function familyKey(value) {return ({'data & graphics': 'data', 'learned style': 'custom', 'my styles': 'custom'})[String(value).toLowerCase()] || String(value).toLowerCase();}
@@ -233,13 +244,25 @@
     if (state.inspected && recipes.includes(state.inspected)) inspect(state.inspected); else if (recipes[0]) inspect(recipes[0]);
   }
   function openGallery() {gallery(); $('crw-gallery').showModal(); $('crw-gallery-search').focus();}
+  function renderAllowance() {
+    const box = $('crw-clone-allowance'); if (!box) return;
+    const clones = state.setup?.account?.style_clones; box.replaceChildren();
+    if (!clones) {box.hidden = true; return;}
+    const used = Number(clones.used || 0), limit = clones.limit;
+    const label = el('span','crw-clone-count', limit == null ? `${used} style${used === 1 ? '' : 's'} cloned · unlimited on your plan` : `${used} of ${limit} style clones used`);
+    box.append(label);
+    if (limit != null) {const bar = el('span','crw-clone-bar'); const fill = el('span'); fill.style.width = `${Math.min(100, limit ? used / limit * 100 : 100)}%`; bar.append(fill); box.append(bar);}
+    if (clones.upgrade_label && limit != null && used >= limit) {const a = el('a','crw-inline-link',`Upgrade to ${clones.upgrade_label} to clone more ↗`); a.href = clones.upgrade_url || 'https://channelrecipe.com/app#billing'; a.target = '_blank'; a.rel = 'noopener'; box.append(a);}
+    box.hidden = false;
+  }
   function renderStyles() {
+    renderAllowance();
     const customs = rows().filter(r => r.custom); const target = $('crw-styles-list'); target.replaceChildren();
     for (const recipe of customs) {const card = recipeCard(recipe,r => {selectRecipe(r); showPage('create');}); target.append(card);}
     hide('crw-styles-empty',!!customs.length);
     if (state.studies.length) {
-      const heading = el('h3','crw-library-subheading','Reference studies'); target.append(heading);
-      for (const study of state.studies) {const a = el('a','crw-study-card'); a.href = study.link; a.append(el('strong','',study.label || study.title),el('span','crw-card-meta',`${study.state === 'running' ? 'In progress' : study.state === 'done' ? 'Saved' : 'Stopped'} · ${study.phase || 'study'}`)); target.append(a);}
+      const heading = el('h3','crw-library-subheading','Your style clones'); target.append(heading);
+      for (const study of state.studies) {const a = el('a','crw-study-card'); a.href = study.link; a.append(el('strong','',study.label || study.title),el('span',`crw-study-state is-${study.state === 'running' ? 'running' : study.state === 'done' ? 'done' : 'stopped'}`,study.state === 'running' ? 'Studying the channel…' : study.state === 'done' ? 'Style saved' : 'Stopped — open to review')); target.append(a);}
     }
   }
   const phaseCopy = line => {
@@ -258,12 +281,12 @@
     const card=el('article','crw-project-card');card.dataset.slug=job.slug;
     const r=findRecipe(job.style);const media=el('div','crw-card-art');
     if(job.hasVideo) {
-      const video=el('video','crw-video-preview');video.controls=true;video.playsInline=true;video.preload='none';
+      const video=el('video','crw-video-preview');video.controls=false;video.playsInline=true;video.preload='none';
       video.dataset.previewPoster=`/cr-workspace/preview/project/${encoded(job.slug)}.jpg`;video.src=`/f/video/${encoded(job.slug)}`;
       video.setAttribute('aria-label',job.title||'Video project');
       const play=el('button','crw-preview-play','▶');play.type='button';play.setAttribute('aria-label',`Play ${job.title||'video'}`);
       play.addEventListener('click',()=>{for(const other of all('.crw-video-preview'))if(other!==video)other.pause();video.play().catch(()=>toast('The video could not start. Open its saved output or check your launcher.'));});
-      video.addEventListener('play',()=>{for(const other of all('.crw-video-preview'))if(other!==video)other.pause();play.hidden=true;});video.addEventListener('pause',()=>{play.hidden=false;});video.addEventListener('ended',()=>{play.hidden=false;});
+      video.addEventListener('play',()=>{for(const other of all('.crw-video-preview'))if(other!==video)other.pause();video.controls=true;play.hidden=true;});video.addEventListener('pause',()=>{play.hidden=false;});video.addEventListener('ended',()=>{video.controls=false;play.hidden=false;});
       media.append(video,play);
       posterObserver?.observe(video);
     } else {media.classList.add('crw-preview-unavailable');media.append(el('span','', ['running','queued'].includes(job.state)?'Video is in production':'No finished video yet'));}
@@ -329,11 +352,30 @@
       $('crw-output').showModal();
     } catch (e) {toast(e.message);}
   }
+  function celebrate(job) {
+    const box = $('crw-finished'); if (!box) return;
+    box.replaceChildren();
+    const copy = el('div','');copy.append(el('strong','',`“${job.title || 'Your video'}” is ready`),el('span','','Watch it, then share it in the Discord — we feature the best community videos.'));
+    const watch = el('button','crw-primary-button','Watch video');watch.type='button';watch.addEventListener('click',()=>{box.hidden=true;openOutput({slug:job.slug,title:job.title,editable:true});});
+    const share = el('a','crw-secondary-button','Share in Discord ↗');share.href=DISCORD_URL;share.target='_blank';share.rel='noopener';share.dataset.discord='finished-banner';
+    const close = el('button','crw-icon-button','×');close.type='button';close.setAttribute('aria-label','Dismiss');close.addEventListener('click',()=>{box.hidden=true;});
+    box.append(copy,watch,share,close);box.hidden=false;
+  }
   async function refreshActivity(initial = false) {
     if (state.refresh) return state.refresh;
     state.refresh = (async()=>{
       const results = await Promise.allSettled([api('/api/queue'),api('/cr-workspace/activity'), initial || state.page === 'projects' ? api('/api/jobs') : Promise.resolve(null)]);
-      if (results[0].status==='fulfilled') state.queue = results[0].value.jobs || [];
+      if (results[0].status==='fulfilled') {
+        const watched = state.queue.filter(q=>['running','queued'].includes(q.state));
+        state.queue = results[0].value.jobs || [];
+        // A project this page watched in production just finished (it either
+        // reports done or leaves the queue): confirm with its status, then say so.
+        for (const was of watched) {
+          const now = state.queue.find(q=>q.slug===was.slug);
+          if (now && ['running','queued'].includes(now.state)) continue;
+          api(`/api/status/${encoded(was.slug)}`).then(st=>{if(st.done && st.state==='done')celebrate({...was,...(now||{})});}).catch(()=>{});
+        }
+      }
       if (results[1].status==='fulfilled') {state.busy=results[1].value.busy===true || results[0].status==='fulfilled' && results[0].value.busy===true;state.studies=results[1].value.operations || [];}
       if (results[2].status==='fulfilled' && results[2].value) state.jobs=results[2].value.jobs || [];
       const active = state.studies.find(x=>x.state==='running') || state.queue.find(x=>['running','queued'].includes(x.state));
@@ -385,7 +427,7 @@
     try {
       const [catalog,setup]=await Promise.all([api('/cr-workspace/catalog'),api('/cr-status')]);state.catalog=catalog;state.setup=setup;
       text('crw-release',setup.local_version?`Studio ${setup.local_version.replace(/^5\.3-admin\./,'')}`:'');
-      const narration=setup.narration||{};text('crw-narration-name',narration.voice||'Your configured narrator');text('crw-narration-account',[narration.label,narration.model_label||narration.model].filter(Boolean).join(' · ')||'Uses the voice account selected in Accounts.');
+      const narration=setup.narration||{};text('crw-narration-name',narration.voice||'Your configured narrator');text('crw-narration-account',[narration.label||providerName(narration.provider),narration.model_label||friendlyModel(narration.model)].filter(Boolean).join(' · ')||'Uses the voice account selected in Accounts.');
       const initial=findRecipe(boot.preset?.style||draft.recipe)||findRecipe('documentary')||rows()[0]; if(!initial)throw new Error('No visual recipes are installed. Update this studio from your ChannelRecipe account.');
       if(boot.preset?.features)state.featureDrafts[initial.name]=boot.preset.features;
       selectRecipe(initial,false);chooseGroup('[data-minutes]','minutes',$('crw-minutes').value);updateOptional();await refreshActivity(true);showPage(location.hash.slice(1)||'create',false);schedule();

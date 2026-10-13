@@ -16,7 +16,7 @@
     <aside class="crw-sidebar" aria-label="Studio navigation">
       <a class="crw-brand" href="/" aria-label="ChannelRecipe studio">
         <svg viewBox="0 0 36 42" width="31" height="36" fill="none" aria-hidden="true"><path d="M7 2h17l9 9v24a5 5 0 0 1-5 5H8a5 5 0 0 1-5-5V7a5 5 0 0 1 4-5Z" fill="#EDEEF5"/><path d="M24 2v7a2 2 0 0 0 2 2h7M14 17v14l12-7-12-7Z" fill="#6D5AE0"/></svg>
-        <span>Channel<span>Recipe</span><small>CREATOR WORKSPACE</small></span>
+        <span>Channel<span>Recipe</span><small>STUDIO</small></span>
       </a>
       <nav class="crw-nav" aria-label="Workspace">
         <button class="is-active" type="button" data-nav="create" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>Create</span></button>
@@ -27,6 +27,7 @@
       <div class="crw-sidebar-bottom">
         <div class="crw-local-card"><span class="crw-status-dot"></span><div><strong>Your local studio</strong><small>Videos render on this computer</small></div></div>
         <a class="crw-account-link" href="https://channelrecipe.com/app#local-studio" target="_blank" rel="noopener">Your ChannelRecipe account <span aria-hidden="true">↗</span></a>
+        <a class="crw-account-link crw-discord-link" href="https://discord.gg/aUbazAAqw3" target="_blank" rel="noopener" data-discord="sidebar">Help &amp; community on Discord <span aria-hidden="true">↗</span></a>
         <span id="crw-release" class="crw-release"></span>
       </div>
     </aside>
@@ -37,26 +38,27 @@
         <a id="crw-connection" class="crw-connection" href="/cr-setup"><span class="crw-status-dot is-checking"></span><span>Checking accounts</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 5 5 5-5 5"/></svg></a>
       </header>
       <main id="crw-main" class="crw-main" tabindex="-1">
+        <div id="crw-finished" class="crw-finished" role="status" hidden></div>
 
         <section id="crw-page-create" class="crw-page" aria-labelledby="crw-create-heading">
-          <div class="crw-page-heading"><div><p class="crw-eyebrow">FROM AN IDEA TO YOUR NEXT FILM</p><h1 id="crw-create-heading">What are we making?</h1><p>Give it a direction. Make it yours.</p></div><button type="button" class="crw-text-button" data-nav="projects">Open your projects <span aria-hidden="true">↗</span></button></div>
+          <div class="crw-page-heading"><div><h1 id="crw-create-heading">Create a video</h1><p>Start with a title or your own script, pick a recipe, and Studio makes the rest.</p></div><button type="button" class="crw-text-button" data-nav="projects">Open your projects <span aria-hidden="true">↗</span></button></div>
           <div id="crw-active-notice" class="crw-notice" role="status" hidden></div>
           <div class="crw-composer-layout">
             <form id="crw-form" class="crw-composer" novalidate>
               <section class="crw-compose-section crw-intent-section" aria-labelledby="crw-intent-heading">
-                <div class="crw-section-top"><h2 id="crw-intent-heading">The starting point</h2><div class="crw-segmented" role="group" aria-label="Writing input"><button type="button" class="is-selected" data-input-mode="idea" aria-pressed="true">My idea</button><button type="button" data-input-mode="script" aria-pressed="false">My script</button></div></div>
+                <div class="crw-section-top"><h2 id="crw-intent-heading">Your idea</h2><div class="crw-segmented" role="group" aria-label="Writing input"><button type="button" class="is-selected" data-input-mode="idea" aria-pressed="true">My idea</button><button type="button" data-input-mode="script" aria-pressed="false">My script</button></div></div>
                 <label class="crw-field-label" for="crw-title">Video title or idea <span>Required</span></label>
                 <textarea id="crw-title" name="title" class="crw-title-input" rows="2" maxlength="280" required placeholder="What if everyone else disappeared tomorrow?"></textarea>
-                <p class="crw-field-help">A clear title gives the writing and visuals a common direction.</p>
+                <p class="crw-field-help">Write it like a YouTube title. Studio researches and writes the video from it.</p>
                 <div id="crw-script-panel" class="crw-script-panel" hidden><label class="crw-field-label" for="crw-script">Your narration script</label><textarea id="crw-script" name="script" rows="8" placeholder="Paste the words you want narrated…"></textarea><p class="crw-field-help">Your words guide the video. The selected workflow can still check factual claims.</p></div>
                 <details class="crw-batch"><summary>Create several videos <span>Optional</span></summary><div class="crw-disclosure-body"><label class="crw-field-label" for="crw-batch-titles">Additional titles</label><textarea id="crw-batch-titles" rows="3" placeholder="One additional title per line"></textarea><p class="crw-field-help">Each title becomes a separate fresh project, made one at a time. An uploaded narration recording belongs to one video.</p></div></details>
               </section>
 
               <section class="crw-compose-section" aria-labelledby="crw-recipe-heading">
-                <div class="crw-section-top"><div><h2 id="crw-recipe-heading">Choose a visual recipe</h2><p>A reusable direction for how your film looks and tells its story.</p></div><button type="button" id="crw-recipe-open" class="crw-secondary-button">Browse recipes <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12m-5-5 5 5-5 5"/></svg></button></div>
+                <div class="crw-section-top"><div><h2 id="crw-recipe-heading">Recipe</h2><p>How your video looks and how its story is told.</p></div><button type="button" id="crw-recipe-open" class="crw-secondary-button">Browse recipes <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12m-5-5 5 5-5 5"/></svg></button></div>
                 <div id="crw-selected-recipe" class="crw-selected-recipe" aria-live="polite"><div class="crw-selected-art"><img id="crw-selected-art" alt="Video screenshot" hidden width="320" height="180"><span data-preview-state>No video preview yet</span></div><div class="crw-selected-copy"><p class="crw-small-label">YOUR RECIPE</p><h3 id="crw-selected-name">Loading your recipes…</h3><p id="crw-selected-description">Your installed library will appear here.</p><div id="crw-selected-tags" class="crw-tags"></div></div></div>
                 <p id="crw-selected-policy" class="crw-policy" hidden></p>
-                <label id="crw-adaptive-section" class="crw-switch-row" hidden><span><strong>Adapt this look to my topic</strong><small>Let the existing style-learning workflow find or reuse a documentary look.</small></span><input id="crw-adaptive" type="checkbox" role="switch"></label>
+                <label id="crw-adaptive-section" class="crw-switch-row" hidden><span><strong>Adapt this look to my topic</strong><small>Studio adjusts the recipe’s look to suit your subject.</small></span><input id="crw-adaptive" type="checkbox" role="switch"></label>
                 <div class="crw-format-row"><div class="crw-duration"><label class="crw-field-label" for="crw-minutes">Target duration</label><div class="crw-duration-controls"><button type="button" data-minutes="5">5 min</button><button type="button" data-minutes="10" class="is-selected" aria-pressed="true">10 min</button><button type="button" data-minutes="20">20 min</button><div class="crw-number-unit"><input id="crw-minutes" type="number" name="minutes" min="1" max="60" value="10" aria-label="Target duration in minutes"><span>min</span></div></div></div><div class="crw-format"><span class="crw-field-label">Canvas</span><span class="crw-canvas"><svg viewBox="0 0 24 18" aria-hidden="true"><rect x="1" y="1" width="22" height="16" rx="2"/></svg>16:9 landscape</span></div></div>
               </section>
 
@@ -72,20 +74,19 @@
             </form>
 
             <aside class="crw-video-summary" aria-labelledby="crw-summary-heading">
-              <div class="crw-summary-heading"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h10l4 4v14H5V3Z"/><path d="M15 3v4h4m-9 4 5 3-5 3v-6Z"/></svg><span>READY WHEN YOU ARE</span></div>
               <h2 id="crw-summary-heading">Your video</h2><p id="crw-summary-title" class="crw-summary-title">Start with an idea above.</p>
               <dl class="crw-summary-list"><div><dt>Recipe</dt><dd id="crw-summary-recipe">Choose a direction</dd></div><div><dt>Duration</dt><dd id="crw-summary-duration">About 10 minutes</dd></div><div><dt>Canvas</dt><dd>16:9 landscape</dd></div><div><dt>Visuals</dt><dd id="crw-summary-visuals">Your recipe’s defaults</dd></div><div><dt>Narration</dt><dd id="crw-summary-voice">Your connected voice</dd></div><div><dt>Rendering</dt><dd id="crw-summary-renderer">On this computer</dd></div></dl>
-              <div class="crw-account-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4v5c0 5-8 9-8 9s-8-4-8-9V7l8-4Z"/><path d="m8 12 3 3 5-6"/></svg><p>Claude uses your connected account. Generated media uses your saved provider keys.</p></div>
+              <div class="crw-account-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4v5c0 5-8 9-8 9s-8-4-8-9V7l8-4Z"/><path d="m8 12 3 3 5-6"/></svg><p>Writing uses your Claude account. Voice and images use your media account’s balance.</p></div>
               <p id="crw-readiness" class="crw-summary-status" role="status">Checking your studio setup…</p>
               <p id="crw-error" class="crw-form-error" role="alert" hidden></p>
               <button id="crw-create" class="crw-create-button" type="submit" form="crw-form" disabled>Create video <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12m-5-5 5 5-5 5"/></svg></button>
-              <p class="crw-fresh-note">Every Create starts a fresh project.<br>Resume saved work from Projects.</p>
+              <p class="crw-fresh-note">Each video is a new project. Find past videos in Projects.</p>
             </aside>
           </div>
         </section>
 
         <section id="crw-page-projects" class="crw-page" aria-labelledby="crw-projects-heading" hidden>
-          <div class="crw-page-heading"><div><p class="crw-eyebrow">YOUR WORK, IN ONE PLACE</p><h1 id="crw-projects-heading">Projects</h1><p>Follow a film from its first idea to the final export.</p></div><button type="button" class="crw-primary-button" data-nav="create">Create a video <span aria-hidden="true">+</span></button></div>
+          <div class="crw-page-heading"><div><h1 id="crw-projects-heading">Projects</h1><p>Everything you’ve made, and anything still in production.</p></div><button type="button" class="crw-primary-button" data-nav="create">Create a video <span aria-hidden="true">+</span></button></div>
           <section id="crw-progress" class="crw-progress" hidden aria-labelledby="crw-progress-title"><div class="crw-progress-top"><div><p class="crw-small-label">IN PRODUCTION</p><h2 id="crw-progress-title">Your video</h2></div><button id="crw-progress-cancel" type="button" class="crw-danger-button" hidden>Cancel render</button></div><div class="crw-progress-status"><strong id="crw-progress-phase">Starting your video</strong><span id="crw-progress-time"></span></div><div class="crw-progress-track" aria-label="Estimated production progress"><div id="crw-progress-bar"></div></div><div id="crw-render-stats" class="crw-render-stats" hidden aria-live="polite"></div><p id="crw-progress-note" class="crw-field-help">Progress follows actual production activity. Some tasks run in parallel.</p><div id="crw-progress-actions" class="crw-progress-actions"></div><details class="crw-production-details"><summary>Production details</summary><pre id="crw-progress-log" tabindex="0"></pre></details></section>
           <div class="crw-library-toolbar"><div id="crw-projects-filter" class="crw-filter-group" role="group" aria-label="Filter projects"><button type="button" data-project-filter="all" class="is-selected" aria-pressed="true">All projects</button><button type="button" data-project-filter="active" aria-pressed="false">In progress</button><button type="button" data-project-filter="done" aria-pressed="false">Completed</button><button type="button" data-project-filter="stopped" aria-pressed="false">Needs attention</button></div><button id="crw-projects-refresh" type="button" class="crw-text-button">Refresh</button></div>
           <div id="crw-projects-list" class="crw-project-grid"></div>
@@ -93,24 +94,24 @@
         </section>
 
         <section id="crw-page-styles" class="crw-page" aria-labelledby="crw-styles-heading" hidden>
-          <div class="crw-page-heading"><div><p class="crw-eyebrow">A REPEATABLE LOOK FOR YOUR CHANNEL</p><h1 id="crw-styles-heading">Style library</h1><p>Your learned styles and the recipes you can build on.</p></div><a class="crw-primary-button" href="/cr-style-clone">Learn from a reference <span aria-hidden="true">↗</span></a></div>
-          <div class="crw-style-intro"><div class="crw-style-intro-art" aria-hidden="true"><span></span><span></span><span></span></div><div><h2>Make a look your own.</h2><p>Study a reference, save its visual language, and use that recipe across new videos. A learned style keeps its own name and visual policy.</p></div><a href="/cr-style-clone">Open style learning <span aria-hidden="true">→</span></a></div>
+          <div class="crw-page-heading"><div><h1 id="crw-styles-heading">Style library</h1><p>Clone the look of a channel you admire, then use it for any video.</p></div><a class="crw-primary-button" href="/cr-style-clone">Clone a style <span aria-hidden="true">↗</span></a></div>
+          <div class="crw-style-intro"><div class="crw-style-intro-art" aria-hidden="true"><span></span><span></span><span></span></div><div><h2>Clone a channel’s style</h2><p>Pick a YouTube channel you admire. Studio watches real frames from its videos and builds a reusable recipe in that style. It copies the look, never the script or footage.</p><div id="crw-clone-allowance" class="crw-clone-allowance" hidden></div></div><a href="/cr-style-clone">Clone a style <span aria-hidden="true">→</span></a></div>
           <div class="crw-library-toolbar"><h2>Saved styles &amp; recipes</h2><button type="button" class="crw-text-button" id="crw-styles-browse">Browse all recipes <span aria-hidden="true">↗</span></button></div>
           <div id="crw-styles-list" class="crw-recipe-grid"></div><p id="crw-styles-empty" class="crw-inline-empty" hidden>Your recipes will appear after the studio connects.</p>
         </section>
       </main>
-      <footer class="crw-workspace-footer"><span>Built for your next chapter.</span><span>ChannelRecipe Studio</span></footer>
+      <footer class="crw-workspace-footer"><span>ChannelRecipe Studio</span><a href="https://discord.gg/aUbazAAqw3" target="_blank" rel="noopener" data-discord="footer">Stuck or have an idea? Tell us on Discord ↗</a></footer>
     </div>
   </div>
 
   <dialog id="crw-gallery" class="crw-gallery" aria-labelledby="crw-gallery-title">
-    <div class="crw-dialog-top"><div><p class="crw-eyebrow">FIND YOUR VISUAL DIRECTION</p><h2 id="crw-gallery-title">Recipe library</h2></div><button id="crw-gallery-close" type="button" class="crw-icon-button" aria-label="Close recipe library"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+    <div class="crw-dialog-top"><div><h2 id="crw-gallery-title">Recipes</h2></div><button id="crw-gallery-close" type="button" class="crw-icon-button" aria-label="Close recipe library"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
     <div class="crw-gallery-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><input id="crw-gallery-search" type="search" placeholder="Search recipes, subjects or visual styles" aria-label="Search visual recipes" autocomplete="off"></div>
     <div id="crw-gallery-filters" class="crw-filter-group crw-gallery-filters" role="group" aria-label="Filter visual family"><button type="button" class="is-selected" data-family="all" aria-pressed="true">All recipes</button><button type="button" data-family="documentary" aria-pressed="false">Documentary</button><button type="button" data-family="animation" aria-pressed="false">Animation</button><button type="button" data-family="presenter" aria-pressed="false">Presenter</button><button type="button" data-family="data" aria-pressed="false">Data &amp; graphics</button><button type="button" data-family="editorial" aria-pressed="false">Editorial</button><button type="button" data-family="custom" aria-pressed="false">My styles</button></div>
     <div class="crw-gallery-body"><div class="crw-gallery-results"><p id="crw-gallery-count" class="crw-result-count" aria-live="polite"></p><div id="crw-gallery-grid" class="crw-recipe-grid"></div><p id="crw-gallery-empty" class="crw-inline-empty" hidden>No recipes match this search. Try another subject or visual family.</p></div><aside id="crw-gallery-detail" class="crw-recipe-detail" aria-label="Recipe details"><div class="crw-detail-art"><img id="crw-detail-art" alt="Video screenshot" hidden width="320" height="180"><span data-preview-state>No video preview yet</span></div><p id="crw-detail-family" class="crw-small-label">REUSABLE VISUAL RECIPE</p><h3 id="crw-detail-name">Choose a recipe</h3><p id="crw-detail-description">Select a card to explore its visual approach.</p><div id="crw-detail-tags" class="crw-tags"></div><p id="crw-detail-policy" class="crw-policy" hidden></p><ul id="crw-detail-points" class="crw-detail-points"></ul><a id="crw-detail-preview" class="crw-secondary-button" href="#" target="_blank" rel="noopener" hidden>Watch an actual sample <span aria-hidden="true">↗</span></a><button id="crw-detail-use" class="crw-primary-button" type="button" disabled>Use this recipe <span aria-hidden="true">→</span></button></aside></div>
   </dialog>
 
-  <dialog id="crw-output" class="crw-output" aria-labelledby="crw-output-title"><div class="crw-dialog-top"><div><p class="crw-eyebrow">YOUR FINISHED FILM</p><h2 id="crw-output-title">Your video</h2></div><button id="crw-output-close" type="button" class="crw-icon-button" aria-label="Close video"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div><video id="crw-output-video" controls playsinline preload="metadata"></video><div class="crw-output-actions"><a id="crw-output-download" class="crw-primary-button" href="#" download>Download video <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 17v4h16v-4"/></svg></a><a id="crw-output-editor" class="crw-secondary-button" href="#">Open timeline <span aria-hidden="true">↗</span></a><button id="crw-output-reveal" type="button" class="crw-text-button">Show in folder</button></div><div id="crw-output-exports" class="crw-export-links"></div><p id="crw-output-message" class="crw-field-help" role="status"></p></dialog>
+  <dialog id="crw-output" class="crw-output" aria-labelledby="crw-output-title"><div class="crw-dialog-top"><div><h2 id="crw-output-title">Your video</h2></div><button id="crw-output-close" type="button" class="crw-icon-button" aria-label="Close video"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div><video id="crw-output-video" controls playsinline preload="metadata"></video><div class="crw-output-actions"><a id="crw-output-download" class="crw-primary-button" href="#" download>Download video <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 17v4h16v-4"/></svg></a><a id="crw-output-editor" class="crw-secondary-button" href="#">Open timeline <span aria-hidden="true">↗</span></a><button id="crw-output-reveal" type="button" class="crw-text-button">Show in folder</button></div><div id="crw-output-exports" class="crw-export-links"></div><p id="crw-output-message" class="crw-field-help" role="status"></p><aside class="crw-share-card"><div><strong>Made something you’re proud of?</strong><p>Share it in the ChannelRecipe Discord. We feature the best videos from the community, and your feedback decides what we build next.</p></div><a class="crw-secondary-button" href="https://discord.gg/aUbazAAqw3" target="_blank" rel="noopener" data-discord="finished-video">Share in Discord ↗</a></aside></dialog>
   <div id="crw-toast" class="crw-toast" role="status" aria-live="polite" hidden></div>
 </body>
 </html>
