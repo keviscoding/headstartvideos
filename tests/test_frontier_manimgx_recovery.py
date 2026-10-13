@@ -144,6 +144,33 @@ def test_procedural_pixel_validation_preserves_completed_native_source(coverage_
     assert invoke(saved, acknowledge_recovery=True)["reused"] and len(saved.checked) == 1
 
 
+@pytest.mark.parametrize("known_failure", [True, False])
+def test_blank_extra_annotation_recovery_uses_exact_completed_source(coverage_saved, known_failure):
+    saved = coverage_saved
+    result = json.loads((saved.old / "compiler-response-1.txt").read_text())
+    result["coverage"] = {p: "Original input requirement preserved" for p in result["coverage"]}
+    result["coverage"]["/scene/objects/4/anim/1/1"] = ""
+    update_completed_response(saved, result)
+    report = json.loads((saved.out / "report.json").read_text())
+    report["scenes"][0]["error"] = "Claude's ManimGX manifest omitted or changed render requirements." if known_failure else "Other failure"
+    write(saved.out / "report.json", report)
+    history = {p.name: p.read_bytes() for p in saved.old.iterdir()}
+    if not known_failure:
+        with pytest.raises(RuntimeError, match="former coverage"):
+            invoke(saved, acknowledge_recovery=True)
+        assert not saved.checked
+        return
+    assert recovery.inspect(saved.home, PROJECT, saved.out, "original", saved.cloud)["starts_model"] is False
+    accepted = invoke(saved, acknowledge_recovery=True)
+    assert accepted["accepted"] and len(saved.checked) == 1
+    assert (saved.destination / "scene.py").read_text() == result["source"]
+    assert all((saved.old / name).read_bytes() == content for name, content in history.items())
+    plan = recovery._prepare(saved.home, PROJECT, saved.out, "original", saved.cloud)
+    assert renderer._accepted_response(saved.destination, renderer._read(saved.destination / "compiler.json"),
+        plan["context"], saved.bundle["assets"])
+    assert invoke(saved, acknowledge_recovery=True)["reused"] and len(saved.checked) == 1
+
+
 @pytest.mark.parametrize("mutation", ["active", "receipt", "model", "image", "reference", "journal", "source", "workflow"])
 def test_changed_or_unowned_proof_never_accepts_source(saved, mutation):
     if mutation == "active": saved.cloud["stages"][0]["status"] = "authorized"

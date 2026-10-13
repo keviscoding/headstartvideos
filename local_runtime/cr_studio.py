@@ -38,17 +38,38 @@ class CreativeActivity:
         self.changed = threading.Condition(self.lock)
         self.active = set()
         self.waiting_editor = False
+        self.awake = None
 
     def reserve(self):
         token = object()
         with self.lock:
+            if sys.platform == "darwin" and (self.awake is None or self.awake.poll() is not None):
+                try:
+                    self.awake = subprocess.Popen(
+                        ["/usr/bin/caffeinate", "-i", "-s", "-w", str(os.getpid())],
+                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except OSError:
+                    self.awake = None
             self.active.add(token)
         return token
 
     def release(self, token):
+        awake = None
         with self.lock:
             self.active.discard(token)
+            if not self.active:
+                awake, self.awake = self.awake, None
             self.changed.notify_all()
+        if awake is not None:
+            try:
+                awake.terminate()
+                awake.wait(timeout=2)
+            except (OSError, subprocess.TimeoutExpired):
+                try:
+                    awake.kill()
+                    awake.wait(timeout=2)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
 
     def wait_for_editor(self):
         """A queued title must not replace a still-running editor's project."""
