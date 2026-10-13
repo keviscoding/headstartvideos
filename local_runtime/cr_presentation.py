@@ -105,7 +105,9 @@ def present(channel, style_info=None, *, automatic=False):
     reference = (info.get("cr_style_clone") or {}) if isinstance(info.get("cr_style_clone"), dict) else {}
     reference_only = reference.get("visual_mode") == "reference_only"
     if reference_only:
-        row.update(family="Animation", capabilities=["Learned animation", "Reference-led", "Animation only"])
+        row.update(family="Animation", capabilities=["Learned animation", "Reference-led", "Animation only"],
+                   description="Your learned animation style carries the whole film, using its saved visual language and pacing.",
+                   tagline="Your learned animation style carries the whole film, using its saved visual language and pacing.")
     row.update(art_url=ART_BASE + "/" + artwork + ".svg",
                art_label="Recipe artwork", art_is_conceptual=True,
                visual_policy="reference_only" if reference_only else "recipe_defaults",
