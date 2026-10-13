@@ -16,6 +16,7 @@ restores them. Uses only the standard library so it runs before any install.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -138,22 +139,58 @@ def latest_version(base: str, key: str, get=http_get) -> str:
     return version
 
 
-def download(base: str, key: str, target: Path, get=http_get) -> None:
+def _status(response) -> int:
+    return int(getattr(response, "status", None) or getattr(response, "code", None) or 200)
+
+
+def download(base: str, key: str, target: Path, get=http_get, attempts: int = 4) -> None:
+    """Download the release, resuming after drops and checking it arrived whole.
+
+    The signed storage link supports byte ranges, so an interrupted transfer
+    continues where it stopped. The finished file must match the size and the
+    SHA-256 the release was uploaded with (when storage reports them).
+    """
+    auth = {"Authorization": "Bearer " + key}
     try:
-        response = get(base + "/api/studio/download", {"Authorization": "Bearer " + key})
-        if getattr(response, "code", 200) in (301, 302, 303, 307, 308):
+        first = get(base + "/api/studio/download", auth)
+        location = None
+        if _status(first) in (301, 302, 303, 307, 308):
             # The signed storage link carries its own authorization.
-            location = response.headers.get("Location", "")
+            location = first.headers.get("Location", "")
             if urlsplit(location).scheme != "https":
                 raise UpdateStopped("The download link wasn't secure. Nothing was changed.")
-            response = get(location, {})
-        with open(target, "wb") as out:
-            shutil.copyfileobj(response, out, 1024 * 1024)
+        size = expected_sha = None
+        target.unlink(missing_ok=True)
+        for attempt in range(attempts):
+            have = target.stat().st_size if target.exists() else 0
+            if location:
+                response = get(location, {"Range": "bytes=%d-" % have} if have else {})
+            else:
+                response, have = (first if attempt == 0 else get(base + "/api/studio/download", auth)), 0
+            if have and _status(response) != 206:
+                have = 0  # the server ignored the range; start again
+            if not have:
+                size = int(response.headers.get("Content-Length") or 0) or None
+                expected_sha = response.headers.get("x-amz-meta-sha256")
+            with open(target, "ab" if have else "wb") as out:
+                try:
+                    shutil.copyfileobj(response, out, 1024 * 1024)
+                except (OSError, http.client.HTTPException):
+                    pass  # resume on the next attempt
+            if size is None or target.stat().st_size >= size:
+                break
+        if size is not None and target.stat().st_size != size:
+            raise UpdateStopped("The download kept getting interrupted. Nothing was changed; check your "
+                                "connection and try again.")
+        if expected_sha and _digest(target) != expected_sha.strip().lower():
+            raise UpdateStopped("The download didn't match the published release. Nothing was changed; try again.")
     except UpdateStopped:
         raise
     except HTTPError as error:
         raise UpdateStopped("The download didn't start (error %s). Nothing was changed; try again shortly." % error.code) from None
-    except (URLError, OSError):
+    except (URLError, OSError, http.client.HTTPException) as error:
+        if _certificate_problem(error):
+            raise UpdateStopped(CERTIFICATE_HELP) from None
         raise UpdateStopped("The download was interrupted. Nothing was changed; check your connection and try again.") from None
 
 
