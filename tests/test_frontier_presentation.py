@@ -71,7 +71,8 @@ def test_custom_name_preserved_and_actual_saved_metadata_defines_visual_policy()
                "features": {"on": ["motion", "sound"]}}
     info = {"cr_style_clone": {"visual_mode": "reference_only"}, "look": {"kit": "private"}}
     row = presentation.present(channel, info)
-    assert row["label"] == channel["label"] and row["description"] == channel["description"]
+    assert row["label"] == channel["label"] and "learned animation" in row["description"]
+    assert channel["description"] == "My creative direction"
     assert row["family"] == "Animation" and row["visual_policy"] == "reference_only"
     assert "no footage" in row["visual_policy_label"] and "Animation only" in row["capabilities"]
     assert row["art_url"].endswith("/custom.svg")
@@ -128,3 +129,13 @@ def test_symlink_cannot_turn_art_lookup_into_private_file_read(tmp_path, monkeyp
     monkeypatch.setattr(presentation, "ART_ROOT", art_root)
     with pytest.raises(ValueError):
         presentation.asset("3d")
+
+
+def test_reference_animation_public_copy_cannot_inherit_a_three_d_base_description():
+    row={"name":"cr_clone_reference","label":"My illustrated story", "custom":True,
+         "description":"Premium 3D documentary with real footage", "tagline":"Animated 3D reconstructions", "features":{"on":["motion","sound"]}}
+    result=presentation.present(row,{"cr_style_clone":{"visual_mode":"reference_only"}})
+    assert result["label"]==row["label"] and result["name"]==row["name"]
+    assert result["description"]==result["tagline"] and "learned animation" in result["description"]
+    assert "3D" not in result["description"] and "footage" not in result["description"]
+    assert row["description"]=="Premium 3D documentary with real footage"

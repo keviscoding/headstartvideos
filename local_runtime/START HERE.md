@@ -10,14 +10,14 @@
 4. Connect media accounts. Kie or Atlas can supply voice, images, image animation
    and supported presenters. Stock and specialist services need their own accounts.
    Enter keys in setup forms, never in chat.
-5. Select a preset and check its requirements. Missing required tools/accounts
+5. Select a video recipe and check its requirements. Missing required tools/accounts
    block generation. Explicitly disable a feature only if you do not want it;
    missing features are not silently removed from your video.
-6. Open the studio, choose preset/title/duration, review options, and generate.
-   The original Frontier workflow researches, writes, directs, generates assets,
+6. Open Create, choose a recipe, title and duration, review options, and create your video.
+   ChannelRecipe researches, writes, directs, generates assets,
    reviews complex visuals and assembles the result locally.
 7. Review the result and timeline. Videos, thumbnails and exports are in
-   **Your videos** and the local **output** folder.
+   **Projects** and the local **output** folder.
 
 For Claude Code conversation control, open Claude Code from this extracted
 folder and approve its project ChannelRecipe MCP connection. Ask it to use CR's
@@ -34,5 +34,4 @@ tools. Use official installers; on Windows add Python to PATH.
 The API-brain form is an explicit alternative using your saved API balance.
 Saving media accounts alone does not change your selected brain.
 
-Access remains restricted to CR admins. This owner download retains original
-Frontier source and prompts; keep it private.
+Access remains restricted to CR admins. This owner download includes private production source and workflows; keep it private.
