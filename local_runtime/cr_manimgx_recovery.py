@@ -7,6 +7,7 @@ mutates the historical response/journal or runs automatically during rendering.
 """
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -496,8 +497,17 @@ def _prepare(home, project_id, outdir, scene_id, cloud_progress):
         manifest_recovery = _manifest_recovery((old / "compiler-response-1.txt").read_text(encoding="utf-8"), context, assets)
         if manifest_recovery is not None:
             kind = "manifest_json"
+        elif any(s.get("id") == scene_id and "verified local media paths" in s.get("error", "")
+                 for s in report.get("scenes", []) if isinstance(s, dict)):
+            pixels_result = renderer._compiler_result((old / "compiler-response-1.txt").read_text(encoding="utf-8"), context, assets)
+            tree = ast.parse(pixels_result["source"])
+            if any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                   and n.func.attr == "ImageMobject" and renderer._local_pixel_array(tree, n,
+                       n.args[0] if n.args else next((k.value for k in n.keywords if k.arg == "filename_or_array"), None))
+                   for n in ast.walk(tree)):
+                kind = "procedural_pixels"
     child_names = {"runtime_api": ".recovery-runtime-api", "coverage_text": ".recovery-coverage-text",
-                   "manifest_json": ".recovery-manifest-json"}
+                   "manifest_json": ".recovery-manifest-json", "procedural_pixels": ".recovery-procedural-pixels"}
     work = directory / child_names[kind] if kind in child_names else directory
     if work.is_symlink():
         raise RuntimeError("The saved recovery path was redirected; no source was accepted.")
@@ -507,7 +517,7 @@ def _prepare(home, project_id, outdir, scene_id, cloud_progress):
         if not _regular(manifest_path):
             raise RuntimeError("An existing compiler manifest is not a regular file. It will not be overwritten.")
         recovered_manifest = _read(manifest_path)
-    if kind != "runtime_api" and ((recovered_manifest is not None and (kind not in {"coverage_text", "manifest_json"} or recovered_manifest.get("recovery_kind") != kind
+    if kind != "runtime_api" and ((recovered_manifest is not None and (kind not in {"coverage_text", "manifest_json", "procedural_pixels"} or recovered_manifest.get("recovery_kind") != kind
             or renderer._read(work / "recovery.json").get("state") not in {"validated", "corrected"}))
             or (old / "compiler-response-2.txt").exists()):
         raise RuntimeError("This compiler request has other acceptance or correction work; use its original recovery controls.")
@@ -586,7 +596,7 @@ def _prepare(home, project_id, outdir, scene_id, cloud_progress):
             _runtime_corrected_result(directory, work, context, assets, plan["proof"], receipt,
                                       _read(work / "compiler-corrected.json"))
         return plan
-    if kind in {"coverage_text", "manifest_json"} and (recovered_manifest is None or receipt.get("state") != "corrected"):
+    if kind in {"coverage_text", "manifest_json", "procedural_pixels"} and (recovered_manifest is None or receipt.get("state") != "corrected"):
         if kind == "manifest_json" and "saved_response" in result and _present(directory / "scene.py"):
             raise RuntimeError("Existing scene source will not be overwritten by JSON manifest recovery.")
         _existing_source(directory / "scene.py", plan["proof"]["source_sha256"])
@@ -666,7 +676,7 @@ def discover(home, job, cloud_progress):
                               else "Local validation stopped. Review its saved diagnostic; no Claude correction is available." if saved.get("state") == "stopped"
                               else "The completed response passed local validation. Resume through the original video controls." if saved.get("state") in {"validated", "corrected"}
                               else "Validate the completed response locally. This generates no media and uses no model calls.",
-                          "can_validate": not saved or completed_available, "can_correct": saved.get("state") == "source_invalid"
+                          "can_validate": not saved or completed_available, "can_correct": plan["kind"] != "procedural_pixels" and saved.get("state") == "source_invalid"
                               and not _present(plan["recovery_directory"] / "correction-attempts.json")
                               and (plan["kind"] not in {"coverage_text", "manifest_json"} or not _present(plan["directory"] / "scene.py"))})
     return found
@@ -797,6 +807,8 @@ def correct(home, project_id, outdir, scene_id, cloud_progress, *, acknowledge_c
         raise RuntimeError("Confirm the single Claude source correction and its account usage first.")
     plan = _prepare(home, project_id, outdir, scene_id, cloud_progress)
     directory, work = plan["directory"], plan["recovery_directory"]
+    if plan["kind"] == "procedural_pixels":
+        raise RuntimeError("This procedural-pixel recovery only revalidates the saved source locally; it cannot start a model correction.")
     receipt = _read(work / "recovery.json")
     saved_input = _read(work / "recovery-input.json")
     saved_result = _read(work / "recovery-result.json")

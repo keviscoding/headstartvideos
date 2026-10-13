@@ -377,6 +377,28 @@ def test_verified_local_asset_is_the_only_accepted_image_source(tmp_path):
             gx._assets({"image": {"src": src}}, tmp_path / "threed/review")
 
 
+def test_image_accepts_documented_procedural_pixels_without_file_access():
+    source = SOURCE.replace("import manimgx as m", "import manimgx as m\nimport numpy as np")
+    source = source.replace("self.add(cube)", "pixels = np.zeros((16, 16, 4), dtype=np.uint8)\n        pixels[..., 3] = 255\n        self.add(cube, m.ImageMobject(pixels))")
+    gx._validate_source(source, "BoardFixture")
+    gx._validate_source(source.replace("m.ImageMobject(pixels)", "m.ImageMobject(filename_or_array=np.ones((16,16,3)))"), "BoardFixture")
+
+
+@pytest.mark.parametrize("setup,image", [
+    ("pixels = '/private/unapproved.jpg'", "m.ImageMobject(pixels)"),
+    ("pixels = np.zeros((16,16,3)); pixels = '/private/unapproved.jpg'", "m.ImageMobject(pixels)"),
+    ("pixels = np.zeros((16,16,3))", "m.SVGMobject(pixels)"),
+    ("np.zeros = m.ImageMobject; pixels = np.zeros('/private/unapproved.jpg')", "m.ImageMobject(pixels)"),
+    ("np = m; pixels = np.zeros((16,16,3))", "m.ImageMobject(pixels)"),
+    ("pixels = np.asarray('/private/unapproved.jpg')", "m.ImageMobject(pixels)"),
+    ("pixels = np.zeros((16,16,3)); pixels += 1", "m.ImageMobject(pixels)")])
+def test_image_pixel_proof_cannot_hide_paths_or_rebinding(setup, image):
+    source = SOURCE.replace("import manimgx as m", "import manimgx as m\nimport numpy as np")
+    source = source.replace("self.add(cube)", setup + "\n        self.add(cube, " + image + ")")
+    with pytest.raises(RuntimeError, match="verified local media paths"):
+        gx._validate_source(source, "BoardFixture")
+
+
 @pytest.mark.parametrize("args", [["--w"], ["--w", "--h", "40"], ["--w", "three"], ["--w", "321"],
     ["--h", "0"], ["--preview-frac", "nan"], ["--preview-frac", "1.1"], ["--preview", "-1"],
     ["--preview", ""], ["--quality", "ultra"], ["--sub", "6"], ["--unknown"], ["stray"]])
