@@ -1042,6 +1042,13 @@ let _checkoutSkipTrial = false;
 let _pendingUpgradeOpts = null;
 
 /** Free account that can still start a Stripe trial (not currently trialing). */
+/** A plan can be bought once its Stripe price is configured on the server. */
+function planAvailable(tier, interval = 'monthly') {
+    const row = (_featureFlags.plan_catalog || []).find(p => p.tier === tier);
+    if (!row) return true; // flags not loaded yet; the server still refuses unknown prices
+    return interval === 'annual' ? row.annual_available !== false : row.available !== false;
+}
+
 /** Free trials are off unless the server advertises a trial length. */
 function trialsEnabled() {
     return Number(_featureFlags.free_trial_days || 0) > 0;
@@ -1290,7 +1297,10 @@ function _refreshPricingCtas() {
     PLAN_CATALOG.forEach(plan => {
         const btn = document.getElementById(`pricing-cta-${plan.tier}`);
         if (!btn) return;
-        if (onTrial) {
+        btn.disabled = !planAvailable(plan.tier, cycle);
+        if (btn.disabled) {
+            btn.textContent = 'Coming soon';
+        } else if (onTrial) {
             // This click bills immediately, so the button names the charge.
             btn.textContent = `Start ${plan.label} — ${planChargeToday(plan.tier, cycle)} today`;
         } else if (subscribed) {

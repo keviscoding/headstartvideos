@@ -10,8 +10,13 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import requests
+from urllib3.exceptions import ConnectTimeoutError, NewConnectionError
 
 HOME = Path(__file__).resolve().parent
+# Back-off before retrying a connection that never reached ChannelRecipe (about
+# 90 seconds in total): long enough to ride out a website deploy or a brief
+# Wi-Fi/DNS drop without stopping a running video.
+CONNECT_RETRY_DELAYS = (2, 4, 8, 15, 30, 30)
 PROTOCOL = "2025-03-26"
 _state = threading.local()
 REQUIRED_TOOLS = {"local_studio_prepare", "local_studio_begin", "local_studio_authorize_stage",
@@ -55,11 +60,49 @@ def _connection(settings):
     return base + "/mcp", key
 
 
+def never_reached_server(error):
+    """True only when the connection failed before any request was sent.
+
+    DNS failures, refused connections and connect timeouts cannot have created
+    work on the server, so retrying them cannot duplicate a stage reservation.
+    Anything after the request was sent (resets, read timeouts, 5xx) is left
+    to the existing explicit review and recovery flow.
+    """
+    pending, seen = [error], set()
+    while pending:
+        current = pending.pop()
+        if current is None or id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, (requests.exceptions.ConnectTimeout, NewConnectionError, ConnectTimeoutError)):
+            return True
+        if isinstance(current, BaseException):
+            pending.extend([getattr(current, "reason", None), current.__cause__, current.__context__,
+                            *[arg for arg in current.args if isinstance(arg, BaseException)]])
+    return False
+
+
+def request_with_connect_retry(send, *, sleep=None):
+    """Run send(); retry only connections that never reached the server."""
+    import time
+    sleep = sleep or time.sleep
+    for delay in CONNECT_RETRY_DELAYS:
+        try:
+            return send()
+        except requests.RequestException as error:
+            if not never_reached_server(error):
+                raise
+            sleep(delay)
+    return send()
+
+
 def _message(url, headers, payload):
-    # No automatic retries: stage reservations must never create duplicate work.
+    # No retries once a request may have reached the server: stage reservations
+    # must never create duplicate work. Connections that never got there are
+    # retried with back-off, which cannot duplicate anything.
     try:
-        with requests.post(url, headers=headers, json=payload, stream=True,
-                           timeout=(10, 45), allow_redirects=False) as response:
+        with request_with_connect_retry(lambda: requests.post(url, headers=headers, json=payload, stream=True,
+                                                              timeout=(10, 45), allow_redirects=False)) as response:
             if response.status_code in {401, 403}:
                 raise RuntimeError("Reconnect your ChannelRecipe account in Setup & accounts.")
             if response.status_code not in {200, 202}:

@@ -119,10 +119,15 @@ def call(path, payload=None, settings=None):
     if not cfg.get("key", "").startswith("cr_mcp_"):
         raise RuntimeError("Connect your ChannelRecipe account in the setup screen first.")
     headers = {"Authorization": "Bearer " + cfg["key"]}
+    try:
+        import cr_mcp
+    except ImportError:
+        from . import cr_mcp
     for attempt in range(4):
         try:
-            res = requests.request("POST" if payload is not None else "GET", base + "/api/studio/" + path,
-                                   headers=headers, json=payload, timeout=(15, 650 if path == "brain" else 220))
+            res = cr_mcp.request_with_connect_retry(lambda: requests.request(
+                "POST" if payload is not None else "GET", base + "/api/studio/" + path,
+                headers=headers, json=payload, timeout=(15, 650 if path == "brain" else 220)))
         except requests.RequestException:
             raise RuntimeError("Could not reach ChannelRecipe. Your work is saved; check your connection.")
         if res.status_code == 429 and attempt < 3:

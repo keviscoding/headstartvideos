@@ -132,6 +132,27 @@ console.log('\nNo free trials (the launch default): free users go straight to pa
     });
 }
 
+console.log('\nPlans without a Stripe price yet are shown but cannot be bought');
+{
+    const { run, sandbox } = makeEnv({ plan: 'free', credits: 0, trialUsed: true, trialDays: 0 });
+    run(`_featureFlags.plan_catalog = [
+        { tier: 'daily', available: true, annual_available: true },
+        { tier: 'studio_pro', available: false, annual_available: false },
+        { tier: 'studio_max', available: true, annual_available: false }]`);
+    run('showPricingModal({})');
+    const doc = sandbox.document;
+    check('unconfigured monthly plan says Coming soon and is disabled', () => {
+        eq(doc.getElementById('pricing-cta-studio_pro').textContent, 'Coming soon', 'pro CTA');
+        eq(doc.getElementById('pricing-cta-studio_pro').disabled, true, 'pro disabled');
+        eq(doc.getElementById('pricing-cta-daily').disabled, false, 'creator enabled');
+    });
+    run('setPricingPlan("annual")');
+    check('a plan missing only its yearly price is disabled on yearly', () => {
+        eq(doc.getElementById('pricing-cta-studio_max').disabled, true, 'max annual disabled');
+        eq(doc.getElementById('pricing-cta-daily').disabled, false, 'creator annual enabled');
+    });
+}
+
 console.log('\nopenUpgradeFlow: free + trial available → access chooser');
 {
     const { run, sandbox } = makeEnv({ plan: 'free', credits: 0, trialUsed: false });

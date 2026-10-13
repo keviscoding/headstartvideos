@@ -109,13 +109,15 @@ window.CRLocalStudio = (() => {
                 const featured = plan.tier === 'studio_pro';
                 const price = annual ? plan.annual.perMonth : plan.monthly.charge;
                 let cta = usedTrial ? 'Get '+plan.label : 'Start free trial';
-                if (onTrial) cta = 'Start '+plan.label+' — '+(annual?plan.annual.charge:plan.monthly.charge)+' today';
+                const open = typeof planAvailable !== 'function' || planAvailable(plan.tier, annual ? 'annual' : 'monthly');
+                if (!open) cta = 'Coming soon';
+                else if (onTrial) cta = 'Start '+plan.label+' — '+(annual?plan.annual.charge:plan.monthly.charge)+' today';
                 else if (subscribed) cta = plan.tier === current ? 'Your plan' : 'Switch to '+plan.label;
                 return '<article class="ls-plan'+(featured?' featured':'')+'">'+(featured?'<span class="ls-plan-badge">Most popular</span>':'')+
                     '<h3>'+esc(plan.label)+'</h3><p class="ls-plan-tag">'+d.tag+'</p>'+
                     '<p class="ls-plan-price"><b>'+esc(price)+'</b>/mo</p><p class="ls-plan-bill">'+(annual?'Billed '+esc(plan.annual.charge)+' yearly':'Billed monthly · cancel anytime')+'</p>'+
                     '<ul>'+d.items.map(item=>'<li>'+icon('check')+'<span>'+item+'</span></li>').join('')+'</ul>'+
-                    '<button class="'+(featured?'btn-primary':'btn-secondary')+'" data-ls-buy="'+esc(plan.tier)+'" '+(subscribed&&plan.tier===current?'disabled':'')+'>'+esc(cta)+'</button></article>';
+                    '<button class="'+(featured?'btn-primary':'btn-secondary')+'" data-ls-buy="'+esc(plan.tier)+'" '+((subscribed&&plan.tier===current)||!open?'disabled':'')+'>'+esc(cta)+'</button></article>';
             }).join('')+'</div>'+
             '<p class="ls-fineprint">Studio runs on your computer. Writing and planning use your own Claude account (Claude Pro or Max); voice, images and animation use your Kie.ai or Atlas Cloud balance. Cloud credits are for Classic (v1) recipes.</p></section>';
     }

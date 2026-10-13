@@ -63,7 +63,7 @@ def test_private_creative_guide_is_automatic_context_with_cr_operational_precede
         assert archive.getinfo("ChannelRecipe studio/Start on Mac.command").external_attr >> 16 & 0o111
         manifest = json.loads(archive.read("ChannelRecipe studio/cr-release.json"))
         assert manifest["version"] == package.VERSION
-        assert manifest["access"] == "admin_only" and not manifest["public_release_allowed"]
+        assert manifest["access"] == "subscriber" and manifest["public_release_allowed"]
     assert report["sha256"] == hashlib.sha256(target.read_bytes()).hexdigest()
 
 
