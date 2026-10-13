@@ -2073,6 +2073,9 @@
         #pricing-modal .pricing-card li { padding: 5px 0; display: flex; align-items: flex-start; gap: 8px; line-height: 1.4; }
         #pricing-modal .pricing-card li svg { flex: none; margin-top: 3px; }
         #pricing-modal .pricing-card button { font-size: 14px; padding: 10px 0; }
+        #pricing-modal .pricing-local-note { margin: 0 28px 14px; padding: 12px 16px; border: 1px solid var(--app-border); border-left: 3px solid var(--success); border-radius: var(--radius-md); background: var(--app-bg); font-family: var(--font-body); font-size: 13px; line-height: 1.5; color: var(--app-ink-2); text-align: left; }
+        #pricing-modal .pricing-local-note strong { color: var(--app-ink); }
+        @media (max-width: 600px) { #pricing-modal .pricing-local-note { margin: 0 16px 14px; } }
         #pricing-modal .pricing-fineprint { padding: 0 28px 22px; font-family: var(--font-body); font-size: 12px; color: var(--app-ink-3); text-align: center; line-height: 1.5; }
         @media (max-width: 860px) {
             #pricing-modal .pricing-grid { grid-template-columns: 1fr; max-width: 440px; margin: 0 auto; }
@@ -2201,6 +2204,7 @@
                     <p style="font-family: var(--font-body); font-size: 12px; color: var(--app-ink-3); margin-top: 14px;">Top-ups add to your balance instantly and don't expire while your plan is active.</p>
                 </div>
             </div>
+            <p class="pricing-local-note"><strong>Studio makes your videos on your own computer.</strong> Making Studio videos never uses credits — you only pay your own Claude and media accounts, at their prices.</p>
             <div class="pricing-grid">
                 <div id="pricing-card-daily" class="pricing-card">
                     <h3 class="cr-display">Creator</h3>
@@ -2209,6 +2213,7 @@
                     <p id="daily-note" class="pricing-note">Billed monthly · cancel anytime</p>
                     <ul>
                         <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span><strong>ChannelRecipe Studio</strong> (v2) + every built-in style</span></li>
+                        <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Videos render on <strong>your computer</strong> — never uses credits</span></li>
                         <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Clone <strong>3</strong> YouTube channel styles</span></li>
                         <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span><span id="daily-videos"><strong>35 credits</strong>/month</span> for Classic recipes</span></li>
                         <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Niche Finder + full niche database in Claude</span></li>
@@ -2224,9 +2229,10 @@
                     <p id="studio_pro-note" class="pricing-note">Billed monthly · cancel anytime</p>
                     <ul>
                         <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Everything in Creator</span></li>
+                        <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Videos render on <strong>your computer</strong> — never uses credits</span></li>
                         <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Clone <strong>15</strong> YouTube channel styles</span></li>
                         <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span><span id="studio_pro-videos"><strong>60 credits</strong>/month</span> for Classic recipes</span></li>
-                        <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Up to <strong>3</strong> cloud videos rendering at once</span></li>
+                        <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Up to <strong>3</strong> Classic cloud videos at once</span></li>
                     </ul>
                     <button id="pricing-cta-studio_pro" onclick="proceedToCheckout('studio_pro')" class="btn-primary w-full">Subscribe now</button>
                 </div>
@@ -2237,6 +2243,7 @@
                     <p id="studio_max-note" class="pricing-note">Billed monthly · cancel anytime</p>
                     <ul>
                         <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Everything in Pro</span></li>
+                        <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Videos render on <strong>your computer</strong> — never uses credits</span></li>
                         <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span><strong>Unlimited</strong> style clones</span></li>
                         <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span><span id="studio_max-videos"><strong>100 credits</strong>/month</span> for Classic recipes</span></li>
                         <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Priority help in Discord</span></li>
@@ -2244,7 +2251,7 @@
                     <button id="pricing-cta-studio_max" onclick="proceedToCheckout('studio_max')" class="btn-secondary w-full">Subscribe now</button>
                 </div>
             </div>
-            <p class="pricing-fineprint">Studio runs on your computer with your own Claude account and media-provider balance, so you choose what each video costs. Credits are for Classic (v1) cloud recipes.</p>
+            <p class="pricing-fineprint">Studio uses your own Claude account (Pro or Max) and a Kie.ai or Atlas Cloud balance for voice and images. Credits are only for Classic (v1) cloud recipes.</p>
             <div id="topup-row" class="hidden" style="padding: 0 28px 20px; text-align: center;">
                 <p style="font-family: var(--font-body); font-size: 12px; color: var(--app-ink-3);">Need more? <button onclick="proceedToTopup(5)" style="background: none; border: none; color: var(--accent); cursor: pointer; font-size: 12px; font-weight: 600; padding: 0;">5 credits · $10</button> or <button onclick="proceedToTopup(15)" style="background: none; border: none; color: var(--accent); cursor: pointer; font-size: 12px; font-weight: 600; padding: 0;">15 credits · $25</button></p>
             </div>
@@ -2322,8 +2329,8 @@
 
     <script src="/static/cr-telemetry.js?v=20260804b"></script>
     <script src="/static/ranking.js?v=20260807f"></script>
-    <link rel="stylesheet" href="/static/local-studio.css?v=20261014-v2">
+    <link rel="stylesheet" href="/static/local-studio.css?v=20261014-v3">
     <script src="/static/app.js?v=20261014-v2"></script>
-    <script src="/static/local-studio.js?v=20261014-v2"></script>
+    <script src="/static/local-studio.js?v=20261014-v3"></script>
 </body>
 </html>

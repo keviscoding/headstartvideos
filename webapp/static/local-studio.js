@@ -91,10 +91,11 @@ window.CRLocalStudio = (() => {
     }
     function planCards() {
         const catalog = typeof PLAN_CATALOG !== 'undefined' ? PLAN_CATALOG : [];
+        const LOCAL = 'Videos render on <b>your computer</b> — never uses credits';
         const details = {
-            daily: {tag:'Start making videos', items:['Studio + every built-in style','Clone <b>3</b> channel styles','35 cloud credits / month','Niche Finder + niche database in Claude']},
-            studio_pro: {tag:'Run several channels', items:['Everything in Creator','Clone <b>15</b> channel styles','60 cloud credits / month','3 cloud videos rendering at once']},
-            studio_max: {tag:'For serious operators', items:['Everything in Pro','<b>Unlimited</b> style clones','100 cloud credits / month','Priority help in Discord']}
+            daily: {tag:'Start making videos', items:['Studio + every built-in style',LOCAL,'Clone <b>3</b> channel styles','35 cloud credits / month for Classic recipes','Niche Finder + niche database in Claude']},
+            studio_pro: {tag:'Run several channels', items:['Everything in Creator',LOCAL,'Clone <b>15</b> channel styles','60 cloud credits / month for Classic recipes','3 Classic cloud videos at once']},
+            studio_max: {tag:'For serious operators', items:['Everything in Pro',LOCAL,'<b>Unlimited</b> style clones','100 cloud credits / month for Classic recipes','Priority help in Discord']}
         };
         const u = user(), annual = cycle() === 'annual';
         const onTrial = typeof isTrialUser === 'function' && isTrialUser();
@@ -104,6 +105,7 @@ window.CRLocalStudio = (() => {
         const usedTrial = !trials || (!!(u && u.trial_used) && !onTrial);
         return '<section class="ls-section" id="ls-plans"><div class="ls-plans-head"><div><h2>Plans</h2><p>Every plan includes Studio. Cancel anytime.</p></div>'+
             '<div class="ls-cycle" role="group" aria-label="Billing period"><button data-ls-cycle="monthly" class="'+(annual?'':'selected')+'">Monthly</button><button data-ls-cycle="annual" class="'+(annual?'selected':'')+'">Yearly <small>2 months free</small></button></div></div>'+
+            '<aside class="ls-local-note">'+icon('computer')+'<p><strong>Studio makes your videos on your own computer.</strong> Making Studio videos never uses credits — you only pay your own Claude and media accounts, at their prices.</p></aside>'+
             '<div class="ls-plans">'+catalog.map(plan=>{
                 const d = details[plan.tier] || {tag:'', items:[]};
                 const featured = plan.tier === 'studio_pro';

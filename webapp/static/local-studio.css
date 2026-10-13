@@ -57,6 +57,10 @@
 .ls-cycle button.selected{background:var(--accent);color:var(--accent-ink)}
 .ls-cycle small{font-size:11px;color:var(--success);margin-left:4px}
 .ls-cycle button.selected small{color:var(--accent-ink);opacity:.85}
+.ls-local-note{display:flex;gap:14px;align-items:flex-start;margin:0 0 18px;padding:14px 18px;border:1px solid var(--app-border);border-left:3px solid var(--success);border-radius:12px;background:var(--app-surface)}
+.ls-local-note svg{width:22px;height:22px;color:#4fd6a2;margin-top:2px}
+.ls-local-note p{margin:0;font-size:14px;line-height:1.6;color:var(--app-ink-2)}
+.ls-local-note strong{color:var(--app-ink)}
 .ls-plans{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:stretch}
 .ls-plan{position:relative;display:flex;flex-direction:column;background:var(--app-surface);border:1px solid var(--app-border);border-radius:var(--radius-card);padding:26px 22px 22px}
 .ls-plan.featured{border:2px solid var(--accent);box-shadow:var(--shadow-accent)}
