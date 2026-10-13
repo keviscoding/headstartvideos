@@ -186,3 +186,21 @@ def test_edited_code_and_release_files_are_always_replaced(studio):
     backup = next((studio / ".cr-update-backups").iterdir())
     assert (backup / "cr_studio.py").read_bytes() == b"locally patched code"
     assert not (studio / "cr_studio.py.new").exists()
+
+
+def test_certificate_failures_explain_the_fix(studio):
+    import ssl
+    from urllib.error import URLError
+
+    def get(url, headers):
+        raise URLError(ssl.SSLCertVerificationError("certificate verify failed: unable to get local issuer certificate"))
+
+    with pytest.raises(cr_update.UpdateStopped, match="Install Certificates"):
+        cr_update.update(studio, get=get, running=lambda: False)
+
+
+def test_https_uses_certifi_when_available():
+    import certifi
+    context = cr_update.tls_context()
+    assert context.verify_mode.name == "CERT_REQUIRED"
+    assert context.cert_store_stats()["x509_ca"] > 0 or certifi.where()

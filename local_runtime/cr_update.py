@@ -21,13 +21,14 @@ import os
 import re
 import shutil
 import socket
+import ssl
 import sys
 import time
 import zipfile
 from pathlib import Path, PurePosixPath
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 HOME = Path(__file__).resolve().parent
 TOP = "ChannelRecipe studio/"
@@ -63,9 +64,33 @@ class _NoRedirect(HTTPRedirectHandler):
         return None
 
 
+def tls_context() -> ssl.SSLContext:
+    """Verify HTTPS with certifi's bundle when present.
+
+    python.org's macOS Python ships without CA certificates until its
+    "Install Certificates" step runs; the studio's .venv always has certifi.
+    """
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return ssl.create_default_context()
+
+
+CERTIFICATE_HELP = ("Python on this computer can't verify secure connections. Run the update with the studio's "
+                    "own Python (Mac: .venv/bin/python cr_update.py, Windows: .venv\\Scripts\\python cr_update.py), "
+                    "or on Mac open your Python folder in Applications and run \"Install Certificates.command\". "
+                    "Nothing was changed.")
+
+
+def _certificate_problem(error: BaseException) -> bool:
+    reason = getattr(error, "reason", error)
+    return isinstance(reason, ssl.SSLCertVerificationError) or "CERTIFICATE_VERIFY_FAILED" in str(reason)
+
+
 def http_get(url: str, headers: dict[str, str]):
     """GET without following redirects (the ChannelRecipe key must never follow one)."""
-    opener = build_opener(_NoRedirect)
+    opener = build_opener(_NoRedirect, HTTPSHandler(context=tls_context()))
     try:
         return opener.open(Request(url, headers=headers), timeout=60)
     except HTTPError as error:
@@ -103,7 +128,9 @@ def latest_version(base: str, key: str, get=http_get) -> str:
             raise UpdateStopped("ChannelRecipe didn't accept this studio's connection. Check your plan includes "
                                 "Studio, or reconnect in the setup page.") from None
         raise UpdateStopped("ChannelRecipe couldn't answer right now. Try again in a few minutes.") from None
-    except (URLError, OSError, ValueError):
+    except (URLError, OSError, ValueError) as error:
+        if _certificate_problem(error):
+            raise UpdateStopped(CERTIFICATE_HELP) from None
         raise UpdateStopped("Couldn't reach ChannelRecipe. Check your internet connection and try again.") from None
     version = data.get("version")
     if not isinstance(version, str) or _build(version) is None:
