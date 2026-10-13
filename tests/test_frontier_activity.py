@@ -182,7 +182,8 @@ def test_new_run_uses_fresh_session_only_after_previous_video_completed(runtime,
     assert (r.job / "video.mp4").read_bytes() == b"saved output"
 
 
-def test_completed_receipt_supersedes_only_matching_failed_repeat(tmp_path):
+@pytest.mark.parametrize("server_optional", [{}, {"duration_seconds":None,"width":None,"height":None}])
+def test_completed_receipt_supersedes_only_matching_failed_repeat(tmp_path, server_optional):
     pid = "crv_" + "1" * 24
     artifacts = [{"name":"video.mp4", "sha256":"a"*64, "media_type":"video/mp4"}]
     saved = {"project_id":pid, "status":"done", "artifacts":artifacts, "error_code":""}
@@ -192,14 +193,14 @@ def test_completed_receipt_supersedes_only_matching_failed_repeat(tmp_path):
     completed.write_text(json.dumps(saved)); original = completed.read_bytes()
     pending.write_text(json.dumps(failed))
     bridge = SimpleNamespace(project_progress=lambda project:{"project":{"status":"done"},
-        "artifacts":artifacts,"stages":[{"status":"complete"}]},
+        "artifacts":[{**a, **server_optional} for a in artifacts],"stages":[{"status":"complete"}]},
         finish_project=lambda *a:pytest.fail("Never downgrade finished work"))
     cr_studio.sync_completion_receipt(bridge, pending)
     assert not pending.exists() and completed.read_bytes() == original
     assert json.loads((tmp_path / ".cr-finish-superseded.json").read_text()) == failed
 
 
-@pytest.mark.parametrize("mismatch", ["project", "status", "artifacts", "active", "failed"])
+@pytest.mark.parametrize("mismatch", ["project", "status", "artifacts", "active", "failed", "metadata"])
 def test_receipt_reconciliation_does_not_hide_unproven_or_active_work(tmp_path, mismatch):
     pid = "crv_" + "1" * 24
     artifacts = [{"name":"video.mp4", "sha256":"a"*64, "media_type":"video/mp4"}]
@@ -209,6 +210,7 @@ def test_receipt_reconciliation_does_not_hide_unproven_or_active_work(tmp_path, 
     if mismatch == "project": saved["project_id"] = "crv_" + "2" * 24
     if mismatch == "status": progress["project"]["status"] = "running"
     if mismatch == "artifacts": progress["artifacts"] = []
+    if mismatch == "metadata": progress["artifacts"] = [{**artifacts[0], "duration_seconds":27.04}]
     if mismatch in {"active", "failed"}: progress["stages"] = [{"status":"authorized" if mismatch == "active" else "failed"}]
     completed = tmp_path / ".cr-finish.json"; completed.write_text(json.dumps(saved))
     pending = tmp_path / ".cr-finish-pending.json"; pending.write_text(json.dumps(failed))
