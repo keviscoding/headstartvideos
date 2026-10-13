@@ -195,6 +195,7 @@ def test_windows_real_cmd_double_click_bootstrap_starts_owned_persistent_window(
     launcher = folder / "Start on Windows.cmd"
     signal = folder / "test-studio-started.json"
     stop = folder / "test-studio-stop"
+    ended = folder / "test-studio-ended"
     nonce = uuid.uuid4().hex
     # Keep this synthetic studio alive until the test has identified its parent
     # cmd.exe. No CR modules, provider keys or installed engine are loaded.
@@ -207,10 +208,25 @@ stop = pathlib.Path({str(stop)!r})
 deadline = time.monotonic() + 30
 while not stop.exists() and time.monotonic() < deadline:
     time.sleep(0.05)
+pathlib.Path({str(ended)!r}).touch()
+raise SystemExit(7)
 ''')
     command = f'"{os.environ["ComSpec"]}" /d /s /c ""{launcher}""'
     saved = None
     bootstrap = None
+    owned_cmd = None
+    def process_info(pid):
+        result = subprocess.run([
+            "powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+            f'Get-CimInstance Win32_Process -Filter "ProcessId = {pid}" '
+            '| Select-Object Name,ParentProcessId,CommandLine,ExecutablePath | ConvertTo-Json -Compress'
+        ], check=True, capture_output=True, text=True, timeout=10)
+        return json.loads(result.stdout) if result.stdout.strip() else None
+    def is_owned_window(process):
+        return (process and process["Name"].lower() == "cmd.exe"
+                and process["ParentProcessId"] == bootstrap.pid
+                and "/k" in (process["CommandLine"] or "").lower()
+                and "--cr-window" in (process["CommandLine"] or ""))
     with (folder / "test-bootstrap.log").open("w") as log:
         try:
             bootstrap = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
@@ -227,30 +243,43 @@ while not stop.exists() and time.monotonic() < deadline:
             assert Path(saved["launcher"]).resolve() == launcher.resolve()
             assert Path(saved["studio_file"]).resolve() == (folder / "cr_studio.py").resolve()
             assert isinstance(saved["parent_pid"], int) and saved["parent_pid"] > 0
-            process = subprocess.run([
-                "powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
-                f'Get-CimInstance Win32_Process -Filter "ProcessId = {saved["parent_pid"]}" '
-                '| Select-Object Name,ParentProcessId,CommandLine | ConvertTo-Json -Compress'
-            ], check=True, capture_output=True, text=True, timeout=15)
-            parent = json.loads(process.stdout)
-            assert parent["Name"].lower() == "cmd.exe"
-            assert parent["ParentProcessId"] == bootstrap.pid
-            assert "/k" in parent["CommandLine"].lower()
-            assert "--cr-window" in parent["CommandLine"]
+            # CPython's Windows venv redirector can insert another python.exe
+            # between the synthetic script and cmd.exe. Follow only this test's
+            # exact venv/base executables, never an arbitrary Python process.
+            allowed_python = {Path(sys.executable).resolve(),
+                              Path(getattr(sys, "_base_executable", sys.executable)).resolve(),
+                              (folder / ".venv/Scripts/python.exe").resolve()}
+            pid = saved["parent_pid"]
+            seen = set()
+            for _ in range(4):
+                assert pid not in seen
+                seen.add(pid)
+                parent = process_info(pid)
+                assert parent is not None, f"Studio ancestor {pid} disappeared"
+                if parent["Name"].lower() == "cmd.exe":
+                    assert is_owned_window(parent), parent
+                    owned_cmd = pid
+                    break
+                assert parent["Name"].lower() == "python.exe", parent
+                assert Path(parent["ExecutablePath"]).resolve() in allowed_python, parent
+                assert "cr_studio.py" in (parent["CommandLine"] or ""), parent
+                pid = parent["ParentProcessId"]
+            assert owned_cmd is not None, "No owned persistent cmd.exe found within bounded ancestry"
+            # The window must survive an actual nonzero studio exit too.
+            stop.touch()
+            deadline = time.monotonic() + 5
+            while not ended.exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert ended.exists()
+            assert is_owned_window(process_info(owned_cmd))
         finally:
             stop.touch()
-            # Only terminate the cmd recorded by our nonce-bound synthetic
-            # studio, whose folder/launcher match this exact test project.
-            if (saved and saved.get("nonce") == nonce
-                    and Path(saved.get("cwd", "")).resolve() == folder.resolve()
-                    and Path(saved.get("launcher", "")).resolve() == launcher.resolve()
-                    and isinstance(saved.get("parent_pid"), int)):
-                listing = subprocess.run([
-                    "tasklist.exe", "/FI", f'PID eq {saved["parent_pid"]}', "/FO", "CSV", "/NH"
-                ], capture_output=True, text=True, timeout=10)
-                if listing.returncode == 0 and listing.stdout.lower().startswith('"cmd.exe",'):
+            # Only kill the verified cmd ancestor of our nonce/folder-bound
+            # synthetic studio. Recheck its ownership immediately before kill.
+            if owned_cmd is not None:
+                if is_owned_window(process_info(owned_cmd)):
                     subprocess.run([
-                        "taskkill.exe", "/PID", str(saved["parent_pid"]), "/T", "/F"
+                        "taskkill.exe", "/PID", str(owned_cmd), "/T", "/F"
                     ], capture_output=True, timeout=10)
 
 
