@@ -13,7 +13,7 @@ if not errorlevel 1 goto create_environment
 set "CR_PYTHON=python3"
 python3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1
 if not errorlevel 1 goto create_environment
-echo Install Python 3.12 from https://www.python.org/downloads/ and select Add Python to PATH. Python 3.10 or newer is required. Then open this file again.
+echo Install Python 3.13 from https://www.python.org/downloads/ and select Add Python to PATH. Standard mode needs Python 3.10 or newer; optional Fast mode needs 3.13 or newer. Then open this file again.
 goto failed
 
 :create_environment
@@ -28,7 +28,7 @@ if errorlevel 1 (
 :check_python
 .venv\Scripts\python.exe -c "import sys; print('Studio Python:', sys.version.split()[0]); raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"
 if errorlevel 1 (
-  echo This studio's .venv uses Python older than 3.10. Install Python 3.12, rename .venv to .venv-old, then reopen this launcher. Your output folder and saved accounts stay in place.
+  echo This studio's .venv uses Python older than 3.10. Install Python 3.13, rename .venv to .venv-old, then reopen this launcher. Your output folder and saved accounts stay in place.
   goto failed
 )
 

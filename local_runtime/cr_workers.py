@@ -55,20 +55,38 @@ def busy():
         return any(p.poll() is None for p in list(_processes))
 
 
+def windows_media_command(command):
+    """Translate only the original Unix media-priority prefix on Windows.
+
+    The native Windows encoder gets the exact same arguments. Shell commands,
+    other priority values and Python/creative-worker prefixes are never parsed
+    or stripped. The caller excludes shell/executable overrides.
+    """
+    if (os.name == "nt" and isinstance(command, (list, tuple))
+            and len(command) >= 4 and list(command[:3]) == ["nice", "-n", "10"]
+            and command[3] in {"ffmpeg", "ffprobe"}):
+        return command[3:]
+    return command
+
+
 def install():
     global _installed
     if _installed:return
     def popen(command,*args,**kwargs):
         import cr_bridge
         project=cr_bridge._project or {}
-        updated=rewrite(command,project.get("id"))
+        rewritten=rewrite(command,project.get("id"))
+        # Positional Popen options may carry shell/executable overrides. Only
+        # ordinary argv+keyword media calls have this compatibility translation.
+        updated=(windows_media_command(rewritten) if not args and not kwargs.get("shell")
+                 and kwargs.get("executable") is None else rewritten)
         if _contained and os.name != "nt":
             kwargs["start_new_session"] = False
             # This process already owns a fresh session/group. A nested CLI or
             # browser cannot escape cancellation into another one.
             kwargs.pop("process_group", None)
         process=_original_popen(updated,*args,**kwargs)
-        if updated != command:
+        if rewritten != command:
             with _lock:_processes.add(process)
         return process
     subprocess.Popen=popen

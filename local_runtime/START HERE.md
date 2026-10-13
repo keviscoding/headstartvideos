@@ -27,9 +27,16 @@ Reopen the launcher to use saved work. Successful stage responses and media IDs
 are cached. Stopped or uncertain Claude work requires review; setup offers one
 explicitly acknowledged recovery attempt, never an automatic paid retry.
 
-Required: Python 3.10+, Node.js LTS, subtitle-capable FFmpeg, and Claude Code
-2.1.268+. The launcher installs libraries and Chromium. Setup explains missing
-tools. Use official installers; on Windows add Python to PATH.
+Required for standard mode: Python 3.10+, Node.js LTS, subtitle-capable FFmpeg
+and ffprobe on PATH, and Claude Code 2.1.268+. The launcher installs libraries
+and Chromium; install these other tools separately using their official installers.
+Setup explains missing tools. On Windows, select **Add Python to PATH**.
+
+For a new Windows setup, we recommend **Python 3.13** so optional Fast mode is
+available too. Fast mode requires Python 3.13+ and its separate setup render
+check; it does not require replacing an existing standard studio environment.
+The pinned Fast-mode package supports native Windows x64; Windows ARM64 has no
+prebuilt package in this release. Keep Fast mode off unless its check passes.
 
 The API-brain form is an explicit alternative using your saved API balance.
 Saving media accounts alone does not change your selected brain.
