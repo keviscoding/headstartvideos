@@ -13,6 +13,7 @@ from urllib.parse import quote
 
 import cr_bridge
 import cr_presentation
+import cr_preview
 import cr_style_clone
 
 HOME = Path(__file__).resolve().parent
@@ -90,6 +91,16 @@ def install(studio, activity, *, token, home=None):
         data.pop("automatic", None)
         if automatic is not None:
             data["automatic"] = cr_presentation.present(automatic, styles, automatic=True)
+        # Real media is resolved once per read. This only inspects existing
+        # local files; a lazy screenshot GET does any necessary frame decoding.
+        outputs = cr_preview.latest_outputs(studio, home)
+        for row in data["channels"] + ([data["automatic"]] if data.get("automatic") else []):
+            source = cr_preview.recipe_source(studio, home, row.get("name"), cr_bridge,
+                latest=outputs, plain=bool(row.get("plain_sample")))
+            row.update(preview_available=source is not None,
+                preview_url=("/cr-workspace/preview/recipe/" + quote(row["name"], safe="") + ".jpg") if source else None,
+                preview_label=source.label if source else "No video preview yet",
+                preview_video_url=source.video_url if source else None)
         return data
 
     def selected_preset():
@@ -155,6 +166,49 @@ def install(studio, activity, *, token, home=None):
         try:
             local_access()
             return protect(jsonify(catalog_data()))
+        except Exception as error:
+            return failure(error)
+
+    def preview_response(source):
+        if source is None:
+            return protect(Response(status=404))
+        try:
+            path = cr_preview.screenshot(home, source)
+            response = protect(send_file(path, mimetype="image/jpeg", conditional=False))
+            response.headers["X-CR-Preview"] = source.label
+            return response
+        except cr_preview.Unavailable:
+            return protect(Response(status=404))
+        except cr_preview.Busy:
+            response = protect(Response(status=503))
+            response.headers["Retry-After"] = "1"
+            return response
+
+    @app.get("/cr-workspace/preview/recipe/<style>.jpg")
+    def cr_workspace_recipe_preview(style):
+        try:
+            local_access()
+            if not _STYLE.fullmatch(style):
+                raise ValueError("Unavailable recipe.")
+            # The original visible catalogue remains the authority. Hidden
+            # variants and arbitrary file paths are never media endpoints.
+            response = app.make_response(original_channels())
+            rows = (response.get_json(silent=True) or {}).get("channels", [])
+            row = next((row for row in rows if isinstance(row, dict) and row.get("name") == style), None)
+            if row is None:
+                return protect(Response(status=404))
+            return preview_response(cr_preview.recipe_source(studio, home, style, cr_bridge,
+                plain=bool(row.get("plain_sample"))))
+        except Exception as error:
+            return failure(error)
+
+    @app.get("/cr-workspace/preview/project/<slug>.jpg")
+    def cr_workspace_project_preview(slug):
+        try:
+            local_access()
+            if not _SLUG.fullmatch(slug) or slug in {".", ".."}:
+                raise ValueError("Unavailable project.")
+            return preview_response(cr_preview.project_source(studio, home, slug))
         except Exception as error:
             return failure(error)
 
