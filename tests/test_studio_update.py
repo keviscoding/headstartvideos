@@ -49,9 +49,26 @@ def studio(tmp_path):
     return tmp_path
 
 
+class Body(io.BytesIO):
+    """An HTTP response body with status and headers, like urllib's."""
+
+    def __init__(self, data, status=200, headers=None, fail_after=None):
+        super().__init__(data)
+        self.status, self.headers, self.fail_after = status, headers or {}, fail_after
+
+    def read(self, size=-1):
+        if self.fail_after is not None and self.tell() >= self.fail_after:
+            raise ConnectionResetError("connection dropped")
+        if self.fail_after is not None and size and size > 0:
+            size = min(size, self.fail_after - self.tell())
+        return super().read(size)
+
+
 class Server:
-    def __init__(self, version, zip_bytes):
+    def __init__(self, version, zip_bytes, drop_first_after=None, sha=None):
         self.version, self.zip_bytes, self.requests = version, zip_bytes, []
+        self.drop_first_after, self.downloads = drop_first_after, 0
+        self.sha = sha if sha is not None else hashlib.sha256(zip_bytes).hexdigest()
 
     def get(self, url, headers):
         self.requests.append((url, dict(headers)))
@@ -62,8 +79,14 @@ class Server:
             redirect = HTTPError(url, 302, "Found", {"Location": "https://storage.example/release.zip?sig=1"}, None)
             return redirect
         if url.startswith("https://storage.example/"):
-            assert headers == {}, "the ChannelRecipe key must never follow a redirect"
-            return io.BytesIO(self.zip_bytes)
+            assert "Authorization" not in headers, "the ChannelRecipe key must never follow a redirect"
+            self.downloads += 1
+            start = int(headers["Range"].split("=")[1].rstrip("-")) if "Range" in headers else 0
+            if start:
+                return Body(self.zip_bytes[start:], status=206)
+            drop = self.drop_first_after if self.downloads == 1 else None
+            return Body(self.zip_bytes, headers={"Content-Length": str(len(self.zip_bytes)),
+                                                 "x-amz-meta-sha256": self.sha}, fail_after=drop)
         raise AssertionError(url)
 
 
@@ -186,3 +209,37 @@ def test_edited_code_and_release_files_are_always_replaced(studio):
     backup = next((studio / ".cr-update-backups").iterdir())
     assert (backup / "cr_studio.py").read_bytes() == b"locally patched code"
     assert not (studio / "cr_studio.py.new").exists()
+
+
+def test_certificate_failures_explain_the_fix(studio):
+    import ssl
+    from urllib.error import URLError
+
+    def get(url, headers):
+        raise URLError(ssl.SSLCertVerificationError("certificate verify failed: unable to get local issuer certificate"))
+
+    with pytest.raises(cr_update.UpdateStopped, match="Install Certificates"):
+        cr_update.update(studio, get=get, running=lambda: False)
+
+
+def test_https_uses_certifi_when_available():
+    import certifi
+    context = cr_update.tls_context()
+    assert context.verify_mode.name == "CERT_REQUIRED"
+    assert context.cert_store_stats()["x509_ca"] > 0 or certifi.where()
+
+
+def test_a_dropped_download_resumes_where_it_stopped(studio):
+    zip_bytes, _ = release("5.3-admin.45", {"cr_studio.py": b"new studio" * 5000, "requirements.txt": b"flask\n"})
+    server = Server("5.3-admin.45", zip_bytes, drop_first_after=len(zip_bytes) // 3)
+    assert "from version 44 to 45" in run(studio, server)
+    ranged = [h for url, h in server.requests if url.startswith("https://storage.example/") and "Range" in h]
+    assert ranged == [{"Range": "bytes=%d-" % (len(zip_bytes) // 3)}]
+    assert (studio / "cr_studio.py").read_bytes() == b"new studio" * 5000
+
+
+def test_a_download_that_does_not_match_the_published_release_changes_nothing(studio):
+    zip_bytes, _ = release("5.3-admin.45", {"cr_studio.py": b"new studio", "requirements.txt": b"flask\n"})
+    with pytest.raises(cr_update.UpdateStopped, match="didn't match the published release"):
+        run(studio, Server("5.3-admin.45", zip_bytes, sha="0" * 64))
+    assert (studio / "cr_studio.py").read_bytes() == b"old studio"

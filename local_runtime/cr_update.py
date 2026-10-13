@@ -16,18 +16,20 @@ restores them. Uses only the standard library so it runs before any install.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 import re
 import shutil
 import socket
+import ssl
 import sys
 import time
 import zipfile
 from pathlib import Path, PurePosixPath
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 HOME = Path(__file__).resolve().parent
 TOP = "ChannelRecipe studio/"
@@ -63,9 +65,33 @@ class _NoRedirect(HTTPRedirectHandler):
         return None
 
 
+def tls_context() -> ssl.SSLContext:
+    """Verify HTTPS with certifi's bundle when present.
+
+    python.org's macOS Python ships without CA certificates until its
+    "Install Certificates" step runs; the studio's .venv always has certifi.
+    """
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return ssl.create_default_context()
+
+
+CERTIFICATE_HELP = ("Python on this computer can't verify secure connections. Run the update with the studio's "
+                    "own Python (Mac: .venv/bin/python cr_update.py, Windows: .venv\\Scripts\\python cr_update.py), "
+                    "or on Mac open your Python folder in Applications and run \"Install Certificates.command\". "
+                    "Nothing was changed.")
+
+
+def _certificate_problem(error: BaseException) -> bool:
+    reason = getattr(error, "reason", error)
+    return isinstance(reason, ssl.SSLCertVerificationError) or "CERTIFICATE_VERIFY_FAILED" in str(reason)
+
+
 def http_get(url: str, headers: dict[str, str]):
     """GET without following redirects (the ChannelRecipe key must never follow one)."""
-    opener = build_opener(_NoRedirect)
+    opener = build_opener(_NoRedirect, HTTPSHandler(context=tls_context()))
     try:
         return opener.open(Request(url, headers=headers), timeout=60)
     except HTTPError as error:
@@ -103,7 +129,9 @@ def latest_version(base: str, key: str, get=http_get) -> str:
             raise UpdateStopped("ChannelRecipe didn't accept this studio's connection. Check your plan includes "
                                 "Studio, or reconnect in the setup page.") from None
         raise UpdateStopped("ChannelRecipe couldn't answer right now. Try again in a few minutes.") from None
-    except (URLError, OSError, ValueError):
+    except (URLError, OSError, ValueError) as error:
+        if _certificate_problem(error):
+            raise UpdateStopped(CERTIFICATE_HELP) from None
         raise UpdateStopped("Couldn't reach ChannelRecipe. Check your internet connection and try again.") from None
     version = data.get("version")
     if not isinstance(version, str) or _build(version) is None:
@@ -111,22 +139,58 @@ def latest_version(base: str, key: str, get=http_get) -> str:
     return version
 
 
-def download(base: str, key: str, target: Path, get=http_get) -> None:
+def _status(response) -> int:
+    return int(getattr(response, "status", None) or getattr(response, "code", None) or 200)
+
+
+def download(base: str, key: str, target: Path, get=http_get, attempts: int = 4) -> None:
+    """Download the release, resuming after drops and checking it arrived whole.
+
+    The signed storage link supports byte ranges, so an interrupted transfer
+    continues where it stopped. The finished file must match the size and the
+    SHA-256 the release was uploaded with (when storage reports them).
+    """
+    auth = {"Authorization": "Bearer " + key}
     try:
-        response = get(base + "/api/studio/download", {"Authorization": "Bearer " + key})
-        if getattr(response, "code", 200) in (301, 302, 303, 307, 308):
+        first = get(base + "/api/studio/download", auth)
+        location = None
+        if _status(first) in (301, 302, 303, 307, 308):
             # The signed storage link carries its own authorization.
-            location = response.headers.get("Location", "")
+            location = first.headers.get("Location", "")
             if urlsplit(location).scheme != "https":
                 raise UpdateStopped("The download link wasn't secure. Nothing was changed.")
-            response = get(location, {})
-        with open(target, "wb") as out:
-            shutil.copyfileobj(response, out, 1024 * 1024)
+        size = expected_sha = None
+        target.unlink(missing_ok=True)
+        for attempt in range(attempts):
+            have = target.stat().st_size if target.exists() else 0
+            if location:
+                response = get(location, {"Range": "bytes=%d-" % have} if have else {})
+            else:
+                response, have = (first if attempt == 0 else get(base + "/api/studio/download", auth)), 0
+            if have and _status(response) != 206:
+                have = 0  # the server ignored the range; start again
+            if not have:
+                size = int(response.headers.get("Content-Length") or 0) or None
+                expected_sha = response.headers.get("x-amz-meta-sha256")
+            with open(target, "ab" if have else "wb") as out:
+                try:
+                    shutil.copyfileobj(response, out, 1024 * 1024)
+                except (OSError, http.client.HTTPException):
+                    pass  # resume on the next attempt
+            if size is None or target.stat().st_size >= size:
+                break
+        if size is not None and target.stat().st_size != size:
+            raise UpdateStopped("The download kept getting interrupted. Nothing was changed; check your "
+                                "connection and try again.")
+        if expected_sha and _digest(target) != expected_sha.strip().lower():
+            raise UpdateStopped("The download didn't match the published release. Nothing was changed; try again.")
     except UpdateStopped:
         raise
     except HTTPError as error:
         raise UpdateStopped("The download didn't start (error %s). Nothing was changed; try again shortly." % error.code) from None
-    except (URLError, OSError):
+    except (URLError, OSError, http.client.HTTPException) as error:
+        if _certificate_problem(error):
+            raise UpdateStopped(CERTIFICATE_HELP) from None
         raise UpdateStopped("The download was interrupted. Nothing was changed; check your connection and try again.") from None
 
 
