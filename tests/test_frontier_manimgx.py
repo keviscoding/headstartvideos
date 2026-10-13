@@ -66,6 +66,36 @@ def test_incomplete_or_ambiguous_manifest_never_executes(response):
         gx._compiler_result(response, {})
 
 
+def test_vacuous_extra_annotation_retains_all_input_coverage_and_source():
+    context = {"scene": VIDEO["scenes"][0]}
+    result = manifest(context)
+    result["coverage"]["/scene/objects/0/anim/1/1"] = ""
+    assert gx._compiler_result(json.dumps(result), context) == result
+
+
+@pytest.mark.parametrize("mutation", ["missing", "nonempty", "nonstring", "bad_escape", "too_many", "required_empty", "unsafe_source"])
+def test_empty_annotations_cannot_weaken_actual_render_requirements(mutation):
+    context = {"scene": VIDEO["scenes"][0]}
+    result = manifest(context)
+    result["coverage"]["/scene/absent"] = ""
+    if mutation == "missing":
+        del result["coverage"]["/scene/dur"]
+    elif mutation == "nonempty":
+        result["coverage"]["/scene/absent"] = "Draw another subject"
+    elif mutation == "nonstring":
+        result["coverage"]["/scene/absent"] = None
+    elif mutation == "bad_escape":
+        result["coverage"]["/scene/~2"] = ""
+    elif mutation == "too_many":
+        result["coverage"].update({f"/scene/absent{i}": "" for i in range(17)})
+    elif mutation == "required_empty":
+        result["coverage"]["/scene/dur"] = ""
+    else:
+        result["source"] += "\nimport os\n"
+    with pytest.raises(RuntimeError):
+        gx._compiler_result(json.dumps(result), context)
+
+
 @pytest.fixture
 def stub_runtime(tmp_path, monkeypatch):
     docs = tmp_path / "docs"

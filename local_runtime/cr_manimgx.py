@@ -416,6 +416,21 @@ def _manifest_json(raw):
     return candidates[0]
 
 
+def _blank_coverage_annotations(context, coverage):
+    """Empty annotations for nonexistent input paths carry no render intent."""
+    if not isinstance(coverage, dict):
+        return None
+    extra = set(coverage) - set(_pointers(context))
+    if len(extra) > 16 or any(
+        not isinstance(pointer, str) or not pointer.startswith("/") or len(pointer) > 1000
+        or any(re.fullmatch(r"(?:[^~]|~[01])*", part) is None for part in pointer.split("/")[1:])
+        or not isinstance(coverage[pointer], str) or coverage[pointer].strip()
+        for pointer in extra
+    ):
+        return None
+    return tuple(sorted(extra))
+
+
 def _compiler_result(raw, context, assets=None):
     if not isinstance(raw, str):
         raise RuntimeError("Claude did not return a ManimGX compiler result.")
@@ -426,9 +441,10 @@ def _compiler_result(raw, context, assets=None):
         raise RuntimeError("ManimGX graphics cannot preserve this scene: " + "; ".join(str(x) for x in result["unsupported"])[:600])
     coverage = result.get("coverage")
     required = set(_pointers(context))
-    if (not isinstance(coverage, dict) or set(coverage) != required or
+    if (not isinstance(coverage, dict) or not required.issubset(coverage)
+            or _blank_coverage_annotations(context, coverage) is None or
             any(not _coverage_description(context, pointer, description)
-                for pointer, description in coverage.items())):
+                for pointer, description in coverage.items() if pointer in required)):
         raise RuntimeError("Claude's ManimGX manifest omitted or changed render requirements. The scene was not rendered.")
     _validate_source(result.get("source"), result.get("scene_class"), assets)
     return result

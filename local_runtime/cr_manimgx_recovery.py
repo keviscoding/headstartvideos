@@ -568,7 +568,11 @@ def _prepare(home, project_id, outdir, scene_id, cloud_progress):
     result = manifest_recovery["result"] if kind == "manifest_json" else renderer._compiler_result(raw, context, assets)
     if kind == "coverage_text":
         descriptions = result["coverage"].values()
-        if (not any(len(value.strip()) < 8 for value in descriptions)
+        empty_annotations = renderer._blank_coverage_annotations(context, result["coverage"])
+        known_empty_failure = bool(empty_annotations) and any(
+            s.get("id") == scene_id and "manifest omitted or changed render requirements" in s.get("error", "")
+            for s in report.get("scenes", []) if isinstance(s, dict))
+        if not known_empty_failure and (not any(len(value.strip()) < 8 for value in descriptions)
                 or any(not isinstance(value, str) or not value.strip() for value in result["coverage"].values())
                 or set(result["coverage"]) != set(renderer._pointers(context)) or result["unsupported"]):
             raise RuntimeError("This response was not rejected solely by the former coverage-description length check.")
