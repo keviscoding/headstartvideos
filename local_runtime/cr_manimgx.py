@@ -701,6 +701,23 @@ def _legacy_contexts(cache):
 def _accepted_response(directory, saved, context, assets):
     """Bind accepted source to its saved successful compile or recovery evidence."""
     key = saved["key"]
+    if saved.get("recovery_kind") == "native_quota":
+        work = directory / ".recovery-native-stage"
+        record = _read(work / "recovery.json")
+        proof = record.get("proof") or {}
+        paths = (directory / "compile-attempts.json", work / "recovery.json", work / "response.txt", work / "failed-native-receipt.json")
+        if (any(not _revision_regular(path, directory) for path in paths)
+                or record.get("state") != "validated" or proof != saved.get("recovery_proof")
+                or proof.get("key") != key or proof.get("context_sha256") != _digest(context)
+                or proof.get("assets_sha256") != _digest(assets)
+                or proof.get("original_journal_sha256") != _file_hash(paths[0])
+                or proof.get("failed_receipt_sha256") != _file_hash(paths[3])
+                or record.get("source_sha256") != saved.get("source_sha256")
+                or record.get("response_sha256") != _file_hash(paths[2])
+                or _compiler_result(paths[2].read_text(), context, assets) != saved["result"]):
+            raise RuntimeError("The accepted native recovery evidence changed before reuse.")
+        return {"kind": "reviewed_native_quota_recovery", "proof": proof,
+                "receipt_sha256": _file_hash(paths[1]), "response_sha256": _file_hash(paths[2])}
     journal = _read(directory / "compile-attempts.json")
     if journal.get("key") == key and journal.get("state") == "validated" and journal.get("calls") in (1, 2):
         raw_path = directory / f"compiler-response-{journal['calls']}.txt"
@@ -1074,6 +1091,133 @@ def _revision_prompt(start):
         + "EXACT OLD→NEW INPUT CHANGES:\n" + json.dumps(start["changes"], ensure_ascii=False, allow_nan=False))
 
 
+def _native_quota_plan(engine, context, assets, ready, directory, key, reference_bundle):
+    """Only an explicitly approved, account-bound quota interruption is eligible."""
+    owner = _revision_owner(engine, directory.parent)
+    if owner is None or reference_bundle is None:
+        return None
+    journal_path = directory / "compile-attempts.json"
+    journal = _read(journal_path)
+    if (journal != {"key": key, "state": "stopped", "calls": 1}
+            or not _revision_regular(journal_path, directory)
+            or any(directory.glob("compiler-response-*.txt"))
+            or any(directory.glob("scene*.py")) or (directory / "compiler.json").exists()
+            or _cache_key(context, assets, ready, reference_bundle) != key):
+        return None
+    allowance = _read(Path(owner["home"]) / ".cr-claude-allowance.json")
+    if (allowance.get("account") != owner["identity"]["native_account_fingerprint"]
+            or not isinstance(allowance.get("reset_at"), (int, float))
+            or allowance["reset_at"] > time.time()):
+        return None
+    eligible = []
+    for stage in owner["stages"]:
+        if not isinstance(stage, dict):
+            continue
+        sid = stage.get("stage_id", "")
+        if (not re.fullmatch(r"cc_[a-f0-9]{64}", sid)
+                or stage.get("status") != "retry_allowed" or stage.get("attempts") != 1
+                or stage.get("error_code") != "usage_limit" or stage.get("model_role") != "visual"
+                or stage.get("selected_model") != owner["identity"]["selected_model"]):
+            continue
+        path = Path(owner["home"]) / "output/cr-claude-cache" / owner["identity"]["project_id"] / (sid + ".json")
+        failed = _read(path)
+        if (_revision_regular(path, path.parent) and failed.get("state") == "failed"
+                and failed.get("input_fingerprint") == sid[3:] and failed.get("error_code") == "usage_limit"):
+            eligible.append((sid, path))
+    if len(eligible) != 1:
+        return None
+    sid, failed = eligible[0]
+    return {"owner": owner, "proof": {"version": 1, "key": key,
+        "context_sha256": _digest(context), "assets_sha256": _digest(assets),
+        "reference_identity": reference_bundle["identity"], "setup_identity": ready["identity"],
+        "original_journal_sha256": _file_hash(journal_path), "failed_receipt_sha256": _file_hash(failed),
+        "identity": owner["identity"], "native_stage_id": sid}}
+
+
+def _resume_quota_source(engine, context, assets, ready, directory, key, reference_bundle, injection):
+    """Use the one reviewed native attempt; retain the original stopped journal."""
+    plan = _native_quota_plan(engine, context, assets, ready, directory, key, reference_bundle)
+    if plan is None:
+        return None
+    work = directory / ".recovery-native-stage"
+    if work.exists() or work.is_symlink():
+        raise RuntimeError("This native graphics recovery already started. Its saved work will not execute again automatically.")
+    import cr_claude
+    import cr_manimgx_refs
+    threed = importlib.import_module("threed")
+    reference_path = directory / "original-reference.txt"
+    if not _revision_regular(reference_path, directory):
+        raise RuntimeError("Restore the exact original renderer reference before native recovery.")
+    original_reference_hash = _file_hash(reference_path)
+    # Compare without rewriting historical evidence. The native request guard
+    # also binds the exact path and contents before authorization.
+    expected_reference = cr_manimgx_refs.reference_text(reference_bundle, reference_path=reference_path).encode("utf-8")
+    if hashlib.sha256(expected_reference).hexdigest() != original_reference_hash:
+        raise RuntimeError("The original renderer reference changed. No native recovery was started.")
+    references = {"identity": reference_bundle["identity"], "reference_file": str(reference_path.resolve()),
+                  "evidence": reference_bundle["context"]}
+    prompt = _prompt(context, assets, ready["docs"], references)
+    work.mkdir(mode=0o700)
+    failed_path = Path(plan["owner"]["home"]) / "output/cr-claude-cache" / plan["proof"]["identity"]["project_id"] / (plan["proof"]["native_stage_id"] + ".json")
+    failed_bytes = failed_path.read_bytes()
+    if hashlib.sha256(failed_bytes).hexdigest() != plan["proof"]["failed_receipt_sha256"]:
+        raise RuntimeError("The original failed native receipt changed before recovery.")
+    _write(work / "failed-native-receipt.json", failed_bytes.decode(), text=True)
+    record = {"state": "prepared", "proof": plan["proof"], "model_calls": 0}
+    _write(work / "recovery.json", record)
+    try:
+        current = _native_quota_plan(engine, context, assets, ready, directory, key, reference_bundle)
+        if current is None or current["proof"] != plan["proof"]:
+            raise RuntimeError("The reviewed native recovery changed before execution.")
+        record.update(state="running", model_calls=1)
+        _write(work / "recovery.json", record)
+        with cr_claude.expect_stage(plan["proof"]["identity"]["project_id"], plan["proof"]["native_stage_id"]):
+            raw = threed._cc(engine, prompt, "opus", [reference_path], what="ManimGX compile")
+        _write(work / "response.txt", raw, text=True)
+        record.update(state="response_saved", response_sha256=_file_hash(work / "response.txt"))
+        _write(work / "recovery.json", record)
+        result = _compiler_result(raw, context, assets)
+        candidate = work / "scene.py"
+        _write(candidate, result["source"], text=True)
+        _typecheck(ready["python"], candidate)
+        after = _revision_owner(engine, directory.parent)
+        if after is None or after["identity"] != plan["owner"]["identity"]:
+            raise RuntimeError("The native account or workflow changed during recovery.")
+        sid = plan["proof"]["native_stage_id"]
+        stage = next((s for s in after["stages"] if s.get("stage_id") == sid), {})
+        path = Path(after["home"]) / "output/cr-claude-cache" / after["identity"]["project_id"] / (sid + ".json")
+        native = _read(path)
+        stdout = native.get("stdout", "")
+        binding = {k: after["identity"][k] for k in ("native_account_fingerprint", "profile_identity", "model_role",
+                    "selected_model", "workflow_version", "engine_source_sha256")}
+        envelope = json.loads(stdout)
+        if (stage.get("status") != "complete" or stage.get("attempts") != 2 or stage.get("error_code")
+                or stage.get("model_role") != "visual" or stage.get("selected_model") != after["identity"]["selected_model"]
+                or not _revision_regular(path, path.parent) or native.get("state") != "complete"
+                or native.get("execution_binding") != binding or native.get("input_fingerprint") != sid[3:]
+                or hashlib.sha256(stdout.encode()).hexdigest() != stage.get("result_fingerprint")
+                or native.get("result_fingerprint") != stage.get("result_fingerprint")
+                or not isinstance(envelope, dict) or envelope.get("is_error") is not False
+                or envelope.get("subtype") != "success" or str(envelope.get("result", "")).strip() != raw.strip()
+                or _file_hash(directory / "compile-attempts.json") != plan["proof"]["original_journal_sha256"]):
+            raise RuntimeError("The native recovery has no matching completed second-attempt receipt.")
+        source_hash = _file_hash(candidate)
+        record.update(state="validated", source_sha256=source_hash, native_result_fingerprint=stage["result_fingerprint"])
+        _write(work / "recovery.json", record)
+        if (directory / "compiler.json").exists() or (directory / "scene.py").exists():
+            raise RuntimeError("The target graphics cache changed before recovery publication.")
+        source = directory / "scene.py"
+        _write(source, result["source"], text=True)
+        _write(directory / "compiler.json", {"key": key, "typed": True, "source_sha256": source_hash,
+            "result": result, "context": context, "output_injection": injection,
+            "recovery_kind": "native_quota", "recovery_proof": plan["proof"]})
+        return result, source
+    except BaseException:
+        record["state"] = "stopped"
+        _write(work / "recovery.json", record)
+        raise
+
+
 def _compiled_source(engine, compiler, context, assets, ready, directory, key, *, reference_bundle=None, injection=None):
     """Cache accepted typed source; one correction only after a known local API failure."""
     directory = Path(directory)
@@ -1094,11 +1238,17 @@ def _compiled_source(engine, compiler, context, assets, ready, directory, key, *
             raise RuntimeError("The cached ManimGX source changed. Review its saved graphics request before continuing.")
         if not _regular(source) or _file_hash(source) != saved["source_sha256"]:
             raise RuntimeError("The cached ManimGX source file changed. Review its saved graphics request before continuing.")
+        if saved.get("recovery_kind") == "native_quota":
+            _accepted_response(directory, saved, context, assets)
         _typecheck(ready["python"], source)
         return result, source
     journal_path = directory / "compile-attempts.json"
     journal = _read(journal_path)
     if journal or journal_path.exists() or journal_path.is_symlink():
+        if compiler is None:
+            resumed = _resume_quota_source(engine, context, assets, ready, directory, key, reference_bundle, injection)
+            if resumed is not None:
+                return resumed
         raise RuntimeError("This ManimGX compiler request already started or stopped. Its saved responses and diagnostics will not execute again automatically.")
     if manifest.exists() or manifest.is_symlink():
         raise RuntimeError("This saved compiler manifest has no accepted API validation. Review its graphics request before continuing.")

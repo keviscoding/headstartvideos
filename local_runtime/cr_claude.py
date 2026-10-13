@@ -16,6 +16,8 @@ import subprocess
 import threading
 import tempfile
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 GENERAL_MODEL = "claude-sonnet-5-5"
 VISUAL_MODEL = "claude-opus-5-5"
@@ -26,6 +28,19 @@ _runtime = None
 _lock = threading.RLock()
 _slots = threading.BoundedSemaphore(2)
 HOME = Path(__file__).resolve().parent
+_expected_stage = ContextVar("cr_expected_native_stage", default=None)
+
+
+@contextmanager
+def expect_stage(project_id, stage_id):
+    """A reviewed recovery may execute only its exact original native request."""
+    if not re.fullmatch(r"crv_[a-f0-9]{24}", project_id or "") or not re.fullmatch(r"cc_[a-f0-9]{64}", stage_id or ""):
+        raise RuntimeError("Choose a valid reviewed native stage.")
+    token = _expected_stage.set((project_id, stage_id))
+    try:
+        yield
+    finally:
+        _expected_stage.reset(token)
 
 
 class ClaudeStageStopped(BaseException):
@@ -301,10 +316,13 @@ class Runtime:
                            "max_tokens": maximum, "read_files": _read_inputs(kwargs["input"], args)}
         fingerprint = _digest(source_contract)
         stage_id = "cc_" + fingerprint
+        expected = _expected_stage.get()
+        if expected is not None and expected != (project_id, stage_id):
+            raise ClaudeStageStopped("The recovered request changed. No replacement stage was authorized or executed.")
         try:
             installed_version=json.loads((Path(self.bridge.HOME)/"cr-release.json").read_text())["version"]
         except (OSError,ValueError,KeyError):
-            installed_version=cfg.get("local_version","5.3-admin.28")
+            installed_version=cfg.get("local_version","5.3-admin.29")
         cache = Path(self.bridge.HOME) / "output" / "cr-claude-cache" / project_id / (stage_id + ".json")
         try:
             saved = json.loads(cache.read_text())

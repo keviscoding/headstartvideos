@@ -420,3 +420,28 @@ def test_legacy_native_cached_result_never_acquires_current_account_binding(tmp_
         lambda *a, **kw: pytest.fail("Cached results cannot execute or restamp"))
     assert runtime.run(args, input="Saved stage", text=True).stdout == "legacy complete"
     assert path.read_bytes() == original and "execution_binding" not in json.loads(path.read_text())
+
+
+@pytest.mark.parametrize("change", ["prompt", "project", "read_file"])
+def test_reviewed_stage_guard_rejects_changed_request_before_authorization(tmp_path, monkeypatch, change):
+    project = "crv_" + "1" * 24
+    reference = tmp_path / "reference.txt"
+    reference.write_text("Original private reference")
+    prompt = "Read this private reference:\n- " + str(reference)
+    args = ["/fake/claude", "--print", "--model", "opus", "--tools", "Read", "--output-format", "json"]
+    fingerprint = cr_claude._digest({"args": args[1:], "input": prompt, "max_tokens": 1000,
+        "read_files": cr_claude._read_inputs(prompt, args)})
+    cfg = {"brain_mode": "claudecode", "costs_accepted": True}
+    monkeypatch.setattr(cr_claude, "status", lambda *a, **kw: {"ready": True})
+    monkeypatch.setattr(cr_claude, "_source_context", lambda: (1000, "threed:_cc"))
+    if change == "prompt": prompt += " Changed"
+    elif change == "project": project = "crv_" + "2" * 24
+    else: reference.write_text("Changed private reference")
+    bridge = SimpleNamespace(HOME=tmp_path, load_settings=lambda: cfg, current_project=lambda: {"id": project},
+        authorize_stage=lambda s: pytest.fail("Changed recovery cannot authorize a replacement"))
+    runtime = cr_claude.Runtime(SimpleNamespace(), bridge, "/fake/claude",
+        lambda *a, **kw: pytest.fail("Changed recovery cannot run Claude"))
+    with pytest.raises(cr_claude.ClaudeStageStopped, match="recovered request changed"):
+        with cr_claude.expect_stage("crv_" + "1" * 24, "cc_" + fingerprint):
+            runtime.run(args, input=prompt, text=True)
+    assert cr_claude._expected_stage.get() is None
