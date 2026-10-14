@@ -1,7 +1,7 @@
 /* ChannelRecipe Studio (v2) page: explains Studio, sells it, and gets subscribers set up.
  * The server enforces plan access independently of anything rendered here. */
 window.CRLocalStudio = (() => {
-    const DISCORD_URL = 'https://discord.gg/aUbazAAqw3';
+    const DISCORD_URL = '/community/discord';
     const SETUP_URL = 'http://127.0.0.1:7860/cr-setup';
     const STUDIO_URL = 'http://127.0.0.1:7860/';
     const CLAUDE_PROMPT = 'Help me install ChannelRecipe Studio on this computer. Check what is missing, '
@@ -134,7 +134,7 @@ window.CRLocalStudio = (() => {
     function discordCard(compact = false) {
         return '<aside class="ls-discord'+(compact?' compact':'')+'"><span class="ls-discord-icon">'+icon('chat')+'</span><div><strong>Join the ChannelRecipe Discord</strong>'+
             '<p>Get help with setup, share the videos you make, and tell us what to build next. We read every message.</p></div>'+
-            '<a class="btn-secondary" href="'+DISCORD_URL+'" target="_blank" rel="noopener" data-ls-discord>Join Discord ↗</a></aside>';
+            '<a class="btn-secondary" href="'+DISCORD_URL+'" target="_blank" rel="noopener" data-ls-discord data-community="discord">Join Discord ↗</a></aside>';
     }
 
     // ---- Member view -----------------------------------------------------
@@ -314,7 +314,7 @@ window.CRLocalStudio = (() => {
             ? '<aside class="ls-version-note"><strong>Your Starter plan includes Classic recipes (v1).</strong> Studio is included from Creator. Switch any time and keep your account.</aside>' : '';
         const body = view === 'member' ? memberBody() : versionNote()+starterNote+features()+planCards()+discordCard(true)+faq();
         root().innerHTML = '<div class="ls-wrap">'+hero()+'<div id="ls-notice" role="status" hidden></div>'+body+
-            '<footer class="ls-footer"><span>ChannelRecipe Studio'+(data?.version?' · '+esc(data.version):'')+'</span><a href="'+DISCORD_URL+'" target="_blank" rel="noopener">Help in Discord ↗</a></footer></div>';
+            '<footer class="ls-footer"><span>ChannelRecipe Studio'+(data?.version?' · '+esc(data.version):'')+'</span><a href="'+DISCORD_URL+'" target="_blank" rel="noopener" data-community="discord">Help in Discord ↗</a></footer></div>';
         bind();
         if (view === 'member') history();
     }

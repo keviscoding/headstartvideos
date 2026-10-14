@@ -254,3 +254,10 @@ def test_engine_machine_checks_are_patched_for_customer_computers():
     assert package.patch_engine("other.py", b"unchanged") == b"unchanged"
     with pytest.raises(ValueError, match="no longer matches"):
         package.patch_engine("reflearn.py", b"a different engine")
+
+
+def test_starting_the_engine_directly_hands_over_to_studio():
+    app = (b'import sys\nHERE = 1\nif __name__ == "__main__":\n    OUT.mkdir(exist_ok=True)\n    print("x")\n')
+    patched = package.patch_engine("app.py", app).decode()
+    assert 'subprocess.call([sys.executable, str(HERE / "cr_studio.py")]' in patched
+    compile(patched, "app.py", "exec")
