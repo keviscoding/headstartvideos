@@ -1364,6 +1364,8 @@ def create_app():
     cr_optional_renderer.install(studio, activity, home=HOME, readiness=setup_status)
     import cr_workspace
     cr_workspace.install(studio, activity, token=token, home=HOME)
+    import cr_style_options
+    cr_style_options.install(studio)
     return studio
 
 
