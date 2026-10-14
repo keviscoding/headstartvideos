@@ -70,6 +70,8 @@ def install(studio, activity, *, token, home=None):
             return protect(jsonify(error=str(error))), 403
         if isinstance(error, ValueError):
             return protect(jsonify(error="Choose an available studio item.")), 400
+        # Show the real cause in the launcher window so it can be fixed.
+        app.logger.error("Workspace request %s failed", request.path, exc_info=error)
         return protect(jsonify(error="The workspace could not load this local item. Your saved work is unchanged.")), 503
 
     def catalog_data():
@@ -93,9 +95,18 @@ def install(studio, activity, *, token, home=None):
             data["automatic"] = cr_presentation.present(automatic, styles, automatic=True)
         # Real media is resolved once per read. This only inspects existing
         # local files; a lazy screenshot GET does any necessary frame decoding.
-        outputs = cr_preview.latest_outputs(studio, home)
+        try:
+            outputs = cr_preview.latest_outputs(studio, home)
+        except Exception:
+            app.logger.exception("Could not list finished videos for recipe previews")
+            outputs = {}
         for row in data["channels"] + ([data["automatic"]] if data.get("automatic") else []):
-            source = cr_preview.recipe_source(studio, home, row.get("name"), cr_bridge, latest=outputs)
+            try:
+                source = cr_preview.recipe_source(studio, home, row.get("name"), cr_bridge, latest=outputs)
+            except Exception:
+                # A preview problem must never hide the recipe list.
+                app.logger.exception("Recipe preview unavailable for %s", row.get("name"))
+                source = None
             row.update(preview_available=source is not None,
                 preview_url=("/cr-workspace/preview/recipe/" + quote(row["name"], safe="") + ".jpg") if source else None,
                 preview_label=source.label if source else "No video preview yet",
