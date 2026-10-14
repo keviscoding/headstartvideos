@@ -26,7 +26,14 @@ import threading
 import time
 import traceback
 
-from cr_claude import ClaudeStageStopped
+if __name__ == "__main__":
+    # The Fast mode sidecar runs this file with only ManimGX installed. It
+    # probes and renders locally and never calls Claude, so it must not import
+    # the studio's service modules (they need the studio's own packages).
+    class ClaudeStageStopped(RuntimeError):
+        pass
+else:
+    from cr_claude import ClaudeStageStopped
 
 MANIMGX_VERSION = "0.1.1"
 TYPECHECKER_VERSION = "0.0.86"

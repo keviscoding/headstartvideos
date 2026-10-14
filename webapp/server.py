@@ -1992,6 +1992,20 @@ async def landing():
     return RedirectResponse("/app")
 
 
+# Browsers, iOS and search engines request these at the site root.
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return FileResponse(str(STATIC_DIR / "favicon.ico"), media_type="image/x-icon",
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/apple-touch-icon.png", include_in_schema=False)
+@app.get("/apple-touch-icon-precomposed.png", include_in_schema=False)
+async def apple_touch_icon():
+    return FileResponse(str(STATIC_DIR / "apple-touch-icon.png"), media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+
 @app.get("/app", response_class=HTMLResponse)
 async def index():
     return FileResponse(str(STATIC_DIR / "index.html"))

@@ -180,7 +180,27 @@
     hide('crw-character-section', strict());
     hide('crw-offer-section', $('crw-offer').options.length<2 || !features.avatar || strict());
     hide('crw-description-options', !checked('crw-description')); hide('crw-thumbnail-options', !checked('crw-thumbnails'));
-    text('crw-fast-status', checked('crw-fast-toggle') ? 'Fast mode is selected for every 3D scene. Its installed setup will be checked before starting.' : 'Standard scene rendering is selected.');
+    text('crw-fast-status', checked('crw-fast-toggle') ? 'Fast mode is on for every 3D scene.' : state.fastReady ? 'Standard scene rendering is selected.' : '');
+  }
+  // Fast mode needs a one-time local install and test render (no Claude or
+  // media usage). Offer it right here, where the switch is.
+  let fastTimer = null;
+  async function refreshFast() {
+    let data; try {data = await api('/cr-renderer');} catch (_) {return;}
+    const running = ['installing', 'checking', 'rendering'].includes(data.setup?.state), failed = data.setup?.state === 'failed';
+    state.fastReady = !!data.ready && !running;
+    const toggle = $('crw-fast-toggle');
+    if (!state.fastReady && toggle.checked) toggle.checked = false;
+    toggle.disabled = !state.fastReady;
+    hide('crw-fast-setup', state.fastReady);
+    text('crw-fast-setup-status', running ? (data.setup?.message || 'Setting up Fast mode…')
+      : failed ? data.setup.message
+      : 'Fast mode needs a one-time setup on this computer. It installs the fast graphics engine and renders a short test. It doesn\'t use your Claude or media accounts, and takes a few minutes.');
+    const button = $('crw-fast-install');
+    button.disabled = running || !!data.busy;
+    button.textContent = running ? 'Setting up…' : failed ? 'Try setup again' : 'Set up Fast mode';
+    clearTimeout(fastTimer); if (running) fastTimer = setTimeout(refreshFast, 2000);
+    updateOptional(); summary();
   }
   function summary() {
     const r = state.selected; text('crw-summary-title', $('crw-title').value.trim() || 'Your next video');
@@ -442,6 +462,8 @@
   for(const b of all('[data-project-filter]'))b.addEventListener('click',()=>{state.projectFilter=b.dataset.projectFilter;chooseGroup('[data-project-filter]','projectFilter',state.projectFilter);renderProjects();});
   for(const b of all('[data-family]'))b.addEventListener('click',()=>{state.family=b.dataset.family;chooseGroup('[data-family]','family',state.family);gallery();});
   $('crw-form').addEventListener('submit',submit);
+  $('crw-fast-install').addEventListener('click',async()=>{$('crw-fast-install').disabled=true;try{await api('/cr-renderer',{method:'POST',body:{action:'install'}});}catch(e){text('crw-fast-setup-status',e.message);}refreshFast();});
+  refreshFast();
   $('crw-form').addEventListener('input',()=>{updateOptional();summary();save();});
   $('crw-form').addEventListener('change',()=>{updateOptional();summary();save();});
   $('crw-recipe-open').addEventListener('click',openGallery);$('crw-styles-browse').addEventListener('click',openGallery);
