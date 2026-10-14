@@ -1,26 +1,65 @@
 [
-  {"build": 52, "date": "2026-10-14", "title": "Faster thumbnails and one-click updates", "items": [
-    "Recipe thumbnails load much faster and stay cached.",
-    "Learning a style from a YouTube channel works on more computers, and says exactly why when YouTube refuses a link.",
-    "Update Studio from inside Studio. It downloads only what changed and restarts in a few seconds.",
-    "See what's new before you update. Updating is always your choice; your current version keeps working."
-  ]},
-  {"build": 51, "date": "2026-10-14", "title": "Easier setup", "items": [
-    "Connect your ChannelRecipe account with one click. No key to copy.",
-    "Setup is three steps with one button each, and every button shows when it's working.",
-    "Set up Claude for videos in one click."
-  ]},
-  {"build": 50, "date": "2026-10-14", "title": "Windows fix", "items": [
-    "Fixed: on some Windows computers the recipe list didn't load."
-  ]},
-  {"build": 49, "date": "2026-10-14", "title": "Fast mode fixed", "items": [
-    "Fixed: Fast mode (quick 3D graphics) couldn't finish its setup. Its setup button now sits right next to the switch."
-  ]},
-  {"build": 48, "date": "2026-10-14", "title": "New look", "items": [
-    "The new ChannelRecipe logo."
-  ]},
-  {"build": 47, "date": "2026-10-14", "title": "Recipe previews", "items": [
-    "Every recipe shows a style reference, so you can see the look before you pick it.",
-    "Recipe names that say what they make, like True Crime Case Files and Dark History 3D."
-  ]}
+  {
+    "build": 53,
+    "date": "2026-10-14",
+    "title": "Choose your narration voice",
+    "items": [
+      "Pick from 70 Gemini voices right on the Create page: press Choose voice in Narration & sound.",
+      "Hear a short preview of any voice before you choose it. Search by name or by style, like warm, deep or clear."
+    ]
+  },
+  {
+    "build": 52,
+    "date": "2026-10-14",
+    "title": "Faster thumbnails and one-click updates",
+    "items": [
+      "Recipe thumbnails load much faster and stay cached.",
+      "Learning a style from a YouTube channel works on more computers, and says exactly why when YouTube refuses a link.",
+      "Update Studio from inside Studio. It downloads only what changed and restarts in a few seconds.",
+      "See what's new before you update. Updating is always your choice; your current version keeps working."
+    ]
+  },
+  {
+    "build": 51,
+    "date": "2026-10-14",
+    "title": "Easier setup",
+    "items": [
+      "Connect your ChannelRecipe account with one click. No key to copy.",
+      "Setup is three steps with one button each, and every button shows when it's working.",
+      "Set up Claude for videos in one click."
+    ]
+  },
+  {
+    "build": 50,
+    "date": "2026-10-14",
+    "title": "Windows fix",
+    "items": [
+      "Fixed: on some Windows computers the recipe list didn't load."
+    ]
+  },
+  {
+    "build": 49,
+    "date": "2026-10-14",
+    "title": "Fast mode fixed",
+    "items": [
+      "Fixed: Fast mode (quick 3D graphics) couldn't finish its setup. Its setup button now sits right next to the switch."
+    ]
+  },
+  {
+    "build": 48,
+    "date": "2026-10-14",
+    "title": "New look",
+    "items": [
+      "The new ChannelRecipe logo."
+    ]
+  },
+  {
+    "build": 47,
+    "date": "2026-10-14",
+    "title": "Recipe previews",
+    "items": [
+      "Every recipe shows a style reference, so you can see the look before you pick it.",
+      "Recipe names that say what they make, like True Crime Case Files and Dark History 3D."
+    ]
+  }
 ]

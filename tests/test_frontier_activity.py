@@ -749,3 +749,36 @@ def test_in_app_update_downloads_in_the_background_and_restarts_only_when_idle(r
     assert restarting.status_code == 200 and restarting.json["state"] == "restarting"
     # Nothing new can start while Studio restarts.
     assert r.client.post("/api/run", headers=r.headers, json={}).status_code == 409
+
+
+def test_voice_picker_lists_previews_once_and_saves_the_choice(runtime, timeline, monkeypatch):
+    r = runtime
+    r.cfg["media_hub"] = {"provider": "kie", "tasks": ["narration"], "voice": "Kore"}
+    monkeypatch.setattr(cr_studio.cr_media, "profile", lambda task=None: dict(r.cfg["media_hub"]) if task == "narration" else {})
+    monkeypatch.setattr(cr_studio.cr_media, "active", lambda task: task == "narration")
+    monkeypatch.setitem(cr_studio.cr_media.PROVIDERS["kie"]["models"], "narration", "google/gemini-3-8-flash-tts")
+    listed = r.client.get("/cr-voices", headers=r.headers).json
+    assert listed["voice"] == "Kore" and "Charon" in listed["voices"] and listed["previews"] == []
+    made = []
+
+    def run(task, inputs, dest, **kwargs):
+        made.append((task, inputs["speakers"][0]["voice_name"]))
+        Path(dest).write_bytes(b"ID3 sample")
+
+    monkeypatch.setattr(cr_studio.cr_media, "run", run)
+    first = r.client.post("/cr-voices/preview", headers=r.headers, json={"voice": "Charon"})
+    assert first.status_code == 200 and first.json["url"] == "/cr-voices/sample/Charon"
+    assert r.client.post("/cr-voices/preview", headers=r.headers, json={"voice": "Charon"}).status_code == 200
+    assert made == [("narration", "Charon")], "each voice's sample is paid for once"
+    sample = r.client.get("/cr-voices/sample/Charon", headers=r.headers)
+    assert sample.status_code == 200 and sample.data == b"ID3 sample"
+    assert r.client.post("/cr-voices/preview", headers=r.headers, json={"voice": "NotAVoice"}).status_code == 400
+    assert "Charon" in r.client.get("/cr-voices", headers=r.headers).json["previews"]
+    # Choosing changes only the voice, in the account that narrates.
+    chosen = r.client.post("/cr-voices/select", headers=r.headers, json={"voice": "Charon"})
+    assert chosen.status_code == 200 and r.cfg["media_hub"] == {"provider": "kie", "tasks": ["narration"], "voice": "Charon"}
+    # Never mid-video.
+    r.client.post("/api/tl/example/chat", headers=r.headers)
+    assert r.client.post("/cr-voices/select", headers=r.headers, json={"voice": "Kore"}).status_code == 409
+    original = timeline.spawned.pop()
+    original.target(*original.args)

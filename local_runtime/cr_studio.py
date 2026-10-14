@@ -923,6 +923,100 @@ def create_app():
         return jsonify(saved=True, message="Narration now uses " + info["label"] +
                        ". Voice generation is charged to that account. Your writing and other media choices are unchanged.")
 
+    # Narration voice picker: list the voices of the narration model in use,
+    # play a short preview (made once with the creator's own account, then
+    # kept), and choose one without touching keys or accounts.
+    VOICE_SAMPLE = "Every great story starts with a single question. Here is what really happened."
+    VOICE_NAME = re.compile(r"[A-Za-z0-9_-]{1,100}\Z")
+
+    def narration_in_use():
+        voice = cr_media.profile("narration") if cr_media.active("narration") else {}
+        provider = voice.get("provider")
+        if provider not in cr_media.PROVIDERS:
+            return None
+        model_id = voice.get("model") or cr_media.PROVIDERS[provider]["models"]["narration"]
+        model = cr_media.narration_model(provider, model_id)
+        return {"provider": provider, "model": model, "voice": voice.get("voice") or model["default_voice"]}
+
+    def preview_file(model, voice):
+        folder = HOME / "output" / ".cr-voice-previews" / model["id"].replace("/", "_")
+        return folder / (voice + "." + model.get("format", "mp3"))
+
+    @studio.app.get("/cr-voices")
+    def voices_list():
+        try:
+            current = narration_in_use()
+        except cr_media.AccountStop as error:
+            return jsonify(error=str(error)), 409
+        if not current:
+            return jsonify(connected=False, voices=[], previews=[])
+        model, provider = current["model"], current["provider"]
+        names = list(model.get("voice_names") or [])
+        return jsonify(connected=True, provider=provider, provider_label=cr_media.PROVIDERS[provider]["label"],
+                       model=model["id"], model_label=model.get("label", model["id"]), voice=current["voice"],
+                       default_voice=model["default_voice"], voices=names,
+                       previews=[name for name in names if preview_file(model, name).is_file()])
+
+    @studio.app.post("/cr-voices/select")
+    def voices_select():
+        voice = str((request.get_json(silent=True) or {}).get("voice", "")).strip()
+        if activity.busy():
+            return jsonify(error="Finish the video that's running, then change the voice for your next one."), 409
+        try:
+            current = narration_in_use()
+        except cr_media.AccountStop as error:
+            return jsonify(error=str(error)), 409
+        if not current:
+            return jsonify(error="Connect a voice account in Setup & accounts first."), 409
+        names = current["model"].get("voice_names") or []
+        if not VOICE_NAME.fullmatch(voice) or (names and voice not in names):
+            return jsonify(error="Choose a voice from the list."), 400
+        cfg = cr_bridge.load_settings()
+        if (cfg.get("narration") or {}).get("provider") == current["provider"]:
+            cfg["narration"] = {**cfg["narration"], "voice": voice}
+        elif (cfg.get("media_hub") or {}).get("provider") == current["provider"]:
+            cfg["media_hub"] = {**cfg["media_hub"], "voice": voice}
+        else:
+            return jsonify(error="Choose your narration account in Setup & accounts first."), 409
+        cr_bridge.save_settings(cfg)
+        return jsonify(saved=True, voice=voice, message="Your next videos use the " + voice + " voice.")
+
+    @studio.app.post("/cr-voices/preview")
+    def voices_preview():
+        voice = str((request.get_json(silent=True) or {}).get("voice", "")).strip()
+        try:
+            current = narration_in_use()
+            if not current:
+                return jsonify(error="Connect a voice account in Setup & accounts first."), 409
+            model = current["model"]
+            names = model.get("voice_names") or []
+            if not VOICE_NAME.fullmatch(voice) or (names and voice not in names):
+                return jsonify(error="Choose a voice from the list."), 400
+            target = preview_file(model, voice)
+            if not target.is_file():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                cr_media.run("narration", cr_media.narration_input(VOICE_SAMPLE, voice, model["id"]), target,
+                             model=model["id"], log=studio.app.logger.info, timeout_s=180)
+        except cr_media.AccountStop as error:
+            return jsonify(error=str(error)), 409
+        except Exception:
+            studio.app.logger.exception("Voice preview failed")
+            return jsonify(error="That preview couldn't be made right now. Try again in a moment."), 502
+        return jsonify(url="/cr-voices/sample/" + voice)
+
+    @studio.app.get("/cr-voices/sample/<voice>")
+    def voices_sample(voice):
+        from flask import send_file
+        try:
+            current = narration_in_use()
+        except cr_media.AccountStop:
+            current = None
+        if not current or not VOICE_NAME.fullmatch(voice) or not preview_file(current["model"], voice).is_file():
+            return jsonify(error="No preview yet."), 404
+        response = send_file(preview_file(current["model"], voice), conditional=True)
+        response.headers["Cache-Control"] = "private, max-age=86400"
+        return response
+
     @studio.app.post("/cr-hub")
     def save_hub():
         data = request.get_json(silent=True) or {}
