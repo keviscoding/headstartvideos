@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 from scripts import studio_branding
-VERSION = "5.3-admin.54"
+VERSION = "5.3-admin.55"
 PRIVATE_WORKFLOWS = {
     "cr-style-delivery-prompt.txt": ROOT / "data/frontier/reference2d-compiler.txt",
     "cr-style-study-brief.txt": ROOT / "data/frontier/reference2d-study.txt",
@@ -82,6 +82,36 @@ def private_preview_resources(root: Path):
 RETIRED_SAMPLES = {"assets/brand/1965 Lotus 38 - Documentary sample.mp4",
                    "assets/brand/POV Paid-Off Civic - 2D Stories sample.mp4",
                    "assets/brand/The Shadow You Keep Feeding Without Knowing It.mp4"}
+
+
+# Reviewed fixes to the pinned engine for customers' computers. Its machine
+# checks were tuned for a dedicated render box: a Mac with under 20 GB free
+# disk skipped the style study's real-browser test (so the study stopped at the
+# end) and made Level-Up Stories wait forever. A few test frames need far less.
+# Every patch must match exactly once, so a new engine can't silently skip one.
+ENGINE_PATCHES = {
+    "reflearn.py": [
+        ('need_lv, need_gb = _envf("REFLEARN_MIN_MEM_LEVEL", 40), _envf("REFLEARN_MIN_DISK_GB", 20)',
+         'need_lv, need_gb = _envf("REFLEARN_MIN_MEM_LEVEL", 20), _envf("REFLEARN_MIN_DISK_GB", 3)'),
+    ],
+    "quest_hud.py": [
+        ("def _wait_machine(log=print, min_level: int = 40, min_free_gb: float = 20.0) -> None:",
+         "def _wait_machine(log=print, min_level: int = 20, min_free_gb: float = 3.0) -> None:"),
+        ("    lvl = 45 if light else 40\n", "    lvl = 25 if light else 20\n"),
+    ],
+}
+
+
+def patch_engine(relative: str, contents: bytes) -> bytes:
+    patches = ENGINE_PATCHES.get(relative)
+    if not patches:
+        return contents
+    text = contents.decode("utf-8")
+    for old, new in patches:
+        if text.count(old) != 1:
+            raise ValueError("Engine patch no longer matches " + relative + ". Review it against the new source.")
+        text = text.replace(old, new)
+    return text.encode("utf-8")
 
 
 def compose_claude_instructions(original: bytes, overrides: bytes) -> bytes:
@@ -209,7 +239,8 @@ def build(source: Path, target: Path, previous: Path | None = None):
                 # Preserve the source inventory and source hash; record every
                 # owned branding transformation instead of claiming byte parity.
                 relative = "CREATIVE_GUIDE.md" if str(rel) == "CLAUDE.md" else str(rel)
-                write_resource(relative, original.read(info), executable=bool(info.external_attr >> 16 & 0o111))
+                write_resource(relative, patch_engine(str(rel), original.read(info)),
+                               executable=bool(info.external_attr >> 16 & 0o111))
                 count += 1
             for path, relative in resources:
                 contents = compose_claude_instructions(private_guide, operational_overrides) if path.name == "CLAUDE.md" else path.read_bytes()

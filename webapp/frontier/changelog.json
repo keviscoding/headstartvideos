@@ -1,5 +1,15 @@
 [
   {
+    "build": 55,
+    "date": "2026-10-14",
+    "title": "Style learning on Macs with less free space",
+    "items": [
+      "Fixed: on a Mac with under 20 GB of free disk space, learning a style stopped near the end. It now needs about 3 GB.",
+      "Fixed: Level-Up Stories could wait forever on a Mac with little free disk space.",
+      "Voice previews play instantly, at no cost to your account."
+    ]
+  },
+  {
     "build": 54,
     "date": "2026-10-14",
     "title": "Style learning fixed",

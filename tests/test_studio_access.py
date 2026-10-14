@@ -147,3 +147,13 @@ def test_studio_status_carries_whats_new(env):
     entries = studio.status(user(1, "studio_pro"))["changelog"]
     assert entries and all(isinstance(entry["build"], int) and entry["items"] for entry in entries)
     assert [entry["build"] for entry in entries] == sorted((entry["build"] for entry in entries), reverse=True)
+
+
+def test_studio_status_lists_hosted_voice_samples(env):
+    from pathlib import Path
+    samples = studio.status(user(1, "studio_pro"))["voice_samples"]["google/gemini-3-8-flash-tts"]
+    assert len(samples) == 70 and "Kore" in samples
+    static = Path(studio.__file__).resolve().parent / "static"
+    for url in samples.values():
+        assert url.startswith("https://channelrecipe.com/static/voices/")
+        assert (static / url.split("/static/", 1)[1]).is_file()
