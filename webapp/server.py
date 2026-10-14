@@ -225,11 +225,11 @@ _jobs: dict[str, dict[str, Any]] = {}
 
 _COOK_DIED_MSG = (
     "This cook stopped responding and was ended automatically. "
-    "Your credits have been returned — please try again."
+    "Your credits have been returned. Please try again."
 )
 _COOK_NEVER_STARTED_MSG = (
     "This cook never started because no worker picked it up. "
-    "Your credits have been returned — please try again."
+    "Your credits have been returned. Please try again."
 )
 
 
@@ -1777,13 +1777,13 @@ async def end_trial_early(request: Request, req: EndTrialRequest | None = None):
 CURATED_VOICES = [
     {
         "id": "leo", "name": "Leo", "tag": "Narrator", "gender": "male",
-        "desc": "Authoritative, instructional — best for documentaries",
+        "desc": "Authoritative and instructional. Best for documentaries",
         "preview_url": "https://data.x.ai/audio-samples/voice_leo.mp3",
         "default": True,
     },
     {
         "id": "rex", "name": "Rex", "tag": "Professional", "gender": "male",
-        "desc": "Polished business tone — great for explainers",
+        "desc": "Polished business tone. Great for explainers",
         "preview_url": "https://data.x.ai/audio-samples/voice_rex.mp3",
     },
     {
@@ -1793,7 +1793,7 @@ CURATED_VOICES = [
     },
     {
         "id": "78a495fdbb39", "name": "James", "tag": "Engaging", "gender": "male",
-        "desc": "Young, energetic English narrator — ideal for listicles",
+        "desc": "Young, energetic English narrator. Ideal for listicles",
         "preview_url": "https://static.atlascloud.ai/media/audios/47_James_78a495fdbb39.mp3",
     },
     {
@@ -1803,22 +1803,22 @@ CURATED_VOICES = [
     },
     {
         "id": "ara", "name": "Ara", "tag": "Warm", "gender": "female",
-        "desc": "Warm and conversational — great for storytelling",
+        "desc": "Warm and conversational. Great for storytelling",
         "preview_url": "https://data.x.ai/audio-samples/voice_ara.mp3",
     },
     {
         "id": "eve", "name": "Eve", "tag": "Upbeat", "gender": "female",
-        "desc": "Energetic and upbeat — strong for viral formats",
+        "desc": "Energetic and upbeat. Strong for viral formats",
         "preview_url": "https://data.x.ai/audio-samples/voice_eve.mp3",
     },
     {
         "id": "f8cf5c2c78d4", "name": "Grace", "tag": "Clear", "gender": "female",
-        "desc": "Young, clear English voice — approachable and bright",
+        "desc": "Young, clear English voice. Approachable and bright",
         "preview_url": "https://static.atlascloud.ai/media/audios/29_Grace_f8cf5c2c78d4.mp3",
     },
     {
         "id": "79f3a8b96d43", "name": "Claire", "tag": "Steady", "gender": "female",
-        "desc": "Calm, middle-aged English narrator — steady pacing",
+        "desc": "Calm, middle-aged English narrator. Steady pacing",
         "preview_url": "https://static.atlascloud.ai/media/audios/46_Claire_79f3a8b96d43.mp3",
     },
 ]
@@ -3314,7 +3314,7 @@ def generate_thumbnail(req: ThumbnailRequest, user: dict = Depends(require_user)
             count=req.count,
         )
         if not paths:
-            raise ValueError("No thumbnails generated — try again in a moment")
+            raise ValueError("No thumbnails generated. Try again in a moment.")
         staged_paths = []
         urls = []
         for i, p in enumerate(paths[:req.count]):
@@ -3358,7 +3358,7 @@ async def generate_thumbnail_with_refs(
     try:
         paths = await asyncio.to_thread(_run)
         if not paths:
-            raise ValueError("No thumbnails generated — try again in a moment")
+            raise ValueError("No thumbnails generated. Try again in a moment.")
         staged_paths = []
         urls = []
         for i, p in enumerate(paths):
@@ -3412,7 +3412,7 @@ def _enforce_user_cook_slot(user: dict) -> None:
         raise HTTPException(
             409,
             f"You're already cooking {active} video{'s' if active != 1 else ''}. "
-            f"Your plan allows {limit} at a time — wait for one to finish before starting another.",
+            f"Your plan allows {limit} at a time. Wait for one to finish before starting another.",
         )
 
 
@@ -3535,7 +3535,7 @@ async def start_build(req: BuildRequest, request: Request):
         raise HTTPException(
             400,
             "Add your Atlas API key in Settings → Integrations before cooking. "
-            "Your cooks bill your Atlas account — not ChannelRecipe's.",
+            "Your cooks bill your Atlas account, not ChannelRecipe's.",
         )
 
     if not is_admin and not plans.is_active_plan(user.get("plan")):
@@ -3701,9 +3701,9 @@ async def start_build(req: BuildRequest, request: Request):
         wait_m = int(qinfo.get("est_wait_minutes") or 0)
         pos = qinfo.get("queue_position") or 1
         msg = (
-            "You're next — starting shortly..."
+            "You're next. Starting shortly..."
             if (pos <= 1 and not qinfo.get("running_count"))
-            else f"Queued — position {pos} (~{max(wait_m, 1)} min wait)"
+            else f"Queued: position {pos} (~{max(wait_m, 1)} min wait)"
         )
         if not any(p.get("message") == msg for p in _jobs[job_id].get("progress") or []):
             _jobs[job_id]["progress"].append({
@@ -3893,7 +3893,7 @@ async def build_result(job_id: str, request: Request):
 # Trial outputs carry a clickable, measurable attribution line in the default
 # description — the only trackable layer of the distribution loop.
 _TRIAL_ATTRIBUTION = (
-    "\n\n———\nMade with ChannelRecipe → "
+    "\n\n---\nMade with ChannelRecipe → "
     "https://channelrecipe.com/?utm_source=youtube&utm_medium=description&utm_campaign=trial"
 )
 
@@ -4656,7 +4656,7 @@ async def generate_storyboard_cast_look(
             or "busy" in detail.lower()
             or "rate limit" in detail.lower()
         ):
-            detail = "Image provider is busy — please try again in a moment."
+            detail = "Image provider is busy. Please try again in a moment."
         raise HTTPException(status, f"Look generation failed: {detail}")
 
     settings = get_user_storyboard_settings(int(admin["id"]))
@@ -5429,7 +5429,7 @@ def _require_storyboard_stills_ready(
         if gaps:
             raise HTTPException(
                 400,
-                "That stretch has gaps in the storyboard — pick a continuous run of scenes.",
+                "That stretch has gaps in the storyboard. Pick a continuous run of scenes.",
             )
         beats = sliced
     missing = [
@@ -5658,7 +5658,7 @@ async def start_storyboard_assemble(
 
     ajob = {
         "status": "queued",
-        "progress": [{"time": time.time(), "message": "Queued — cooking soon…", "phase": "queued"}],
+        "progress": [{"time": time.time(), "message": "Queued. Cooking soon…", "phase": "queued"}],
         "result": None,
         "request": req_payload,
         "user_id": admin["id"],
@@ -5794,7 +5794,7 @@ async def start_storyboard_animate(
             raise HTTPException(
                 400,
                 f"On-site cook is limited to {cook_cap:.0f} minutes. "
-                f"That stretch is ~{selected_mins:.1f} min — select fewer scenes.",
+                f"That stretch is ~{selected_mins:.1f} min. Select fewer scenes.",
             )
     elif selected_mins > cook_cap + 0.05:
         # Full-board cook on a long pack → only the opening window
@@ -5893,12 +5893,12 @@ async def start_storyboard_animate(
         print(f"[sb-animate] create_cook_job failed: {e}")
         raise HTTPException(500, "Could not queue on-site generate.")
 
-    first_msg = "Queued — cooking soon…"
+    first_msg = "Queued. Cooking soon…"
     if cook_clipped:
         lo = min(range_from, range_to) if range_from is not None else 0
         hi = max(range_from, range_to) if range_to is not None else 0
         first_msg = (
-            f"Queued — cooking first ~{target_minutes:.0f} min "
+            f"Queued. Cooking the first ~{target_minutes:.0f} min "
             f"(scenes {lo:03d}–{hi:03d}; on-site cook capped at {cook_cap:.0f} min)…"
         )
     ajob = {
@@ -6130,7 +6130,7 @@ def analyze_niche(req: NicheAnalyzeRequest, user: dict = Depends(require_user)):
             raise HTTPException(
                 503,
                 "Niche video analysis is temporarily unavailable (Google Gemini access denied). "
-                "Pick a recipe manually for now — cooking still works.",
+                "Pick a recipe manually for now. Cooking still works.",
             ) from None
         raise HTTPException(500, "Niche analysis failed. Please try a different video URL.") from None
 
@@ -6513,7 +6513,7 @@ def _test_atlas_key(key: str) -> tuple[bool, str]:
         # Valid key: success, empty wallet, bad payload, or rate limit
         if status in (200, 201, 400, 402, 422, 429):
             if status == 402:
-                return True, "Key works — Atlas balance looks empty. Top up at atlascloud.ai/console/billing before cooking."
+                return True, "Key works, but your Atlas balance looks empty. Top up at atlascloud.ai/console/billing before cooking."
             return True, ""
         return None
 

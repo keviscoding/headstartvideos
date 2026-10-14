@@ -316,7 +316,7 @@ def run_cook_job(
                     heygen_key = get_user_heygen_key(user_id)
                 if not heygen_key:
                     raise ValueError(
-                        "HeyGen API key missing — reconnect it in Settings → Integrations."
+                        "HeyGen API key missing. Reconnect it in Settings → Integrations."
                     )
 
                 def _persist_heygen_id(video_id: str):
@@ -327,7 +327,7 @@ def run_cook_job(
                             request_json=json.dumps(req_data),
                             heartbeat=True,
                         )
-                        on_progress(f"HeyGen job {video_id} queued — render can take 15–45+ min")
+                        on_progress(f"HeyGen job {video_id} queued. Rendering can take 15 to 45+ min")
                     except Exception as e:
                         print(f"[cook] persist heygen_video_id failed: {e}")
 
@@ -423,7 +423,7 @@ def run_cook_job(
         )
         if ephemeral and not storage.is_remote():
             raise RuntimeError(
-                "Spaces is not configured on this cook worker — "
+                "Spaces is not configured on this cook worker, so "
                 "finished videos cannot be saved. Set SPACES_* secrets."
             )
         try:
@@ -436,7 +436,7 @@ def run_cook_job(
                     f"Video upload to Spaces failed (file would be lost): {up_err}"
                 ) from up_err
             print(f"[storage] video upload failed, falling back to local: {up_err}")
-            on_progress("Upload slow — saving local copy...")
+            on_progress("Upload slow. Saving a local copy...")
             output_url = f"/api/files/{os.path.relpath(result['output_path'], str(ROOT))}"
 
         if ephemeral and not (
@@ -710,7 +710,7 @@ def _run_storyboard_pack_job(
                     locked_beats = beats_from_dicts(hydrated)
                     if locked_beats:
                         on_progress(
-                            f"Keeping {len(locked_beats)} preview scenes — continuing the rest…"
+                            f"Keeping {len(locked_beats)} preview scenes. Continuing with the rest…"
                         )
             except Exception as e:
                 print(f"[storyboard] continue-from-preview load failed: {e}")
@@ -908,7 +908,7 @@ def _run_storyboard_pack_job(
             result_json=json.dumps(pack_meta),
             finished=True,
         )
-        on_progress("Pack ready — download your zip.")
+        on_progress("Pack ready. Download your zip.")
         _track(user_id or "anon", "storyboard_pack_complete", {
             "job_id": job_id,
             "beat_count": pack_meta["beat_count"],
@@ -1017,7 +1017,7 @@ def _run_storyboard_assemble_job(
             clip_files = list(clips_dir.iterdir())
             clips = extract_clips_from_uploads(clip_files, local_clips)
         else:
-            raise RuntimeError("Clips folder missing — re-upload your I2V clips.")
+            raise RuntimeError("Clips folder missing. Re-upload your I2V clips.")
 
         if not clips:
             raise RuntimeError("No video clips found. Upload .mp4/.webm/.mov or a zip.")
@@ -1036,7 +1036,7 @@ def _run_storyboard_assemble_job(
         if not matched:
             on_progress(
                 f"Could not match any clips to stills. "
-                "Clips are matched by look (first/last frame hash) — "
+                "Clips are matched by look (first/last frame hash), and "
                 "filenames like hf_… are ignored."
             )
             raise RuntimeError(
@@ -1135,7 +1135,7 @@ def _run_storyboard_assemble_job(
             result_json=json.dumps(meta),
             finished=True,
         )
-        on_progress("Video ready — saved to History.")
+        on_progress("Video ready. Saved to History.")
         _track(user_id or "anon", "storyboard_assemble_complete", {
             "job_id": job_id,
             "parent_job_id": parent_job_id,
@@ -1377,7 +1377,7 @@ def _run_storyboard_animate_job(
             if not ok or not out_clip.is_file():
                 raise RuntimeError(
                     f"Scene {idx:03d} motion failed "
-                    f"(Seedance timed out or Atlas was busy — try again)"
+                    f"(Seedance timed out or Atlas was busy. Try again.)"
                 )
             with done_lock:
                 done_count[0] += 1
@@ -1415,7 +1415,7 @@ def _run_storyboard_animate_job(
             )
         matched.sort(key=lambda m: m["index"])
         if errors:
-            on_progress(f"Cooking scenes… {len(matched)}/{total} ready — finishing…")
+            on_progress(f"Cooking scenes… {len(matched)}/{total} ready, finishing…")
 
         on_progress("Putting your video together…")
         out_mp4 = work / f"{job_id}_assembled.mp4"
@@ -1505,7 +1505,7 @@ def _run_storyboard_animate_job(
             result_json=json.dumps(meta),
             finished=True,
         )
-        on_progress("Video ready — saved to History.")
+        on_progress("Video ready. Saved to History.")
         _track(user_id or "anon", "storyboard_animate_complete", {
             "job_id": job_id,
             "parent_job_id": parent_job_id,
@@ -1680,7 +1680,7 @@ def _run_ranking_countdown_job(
             if vo_ok < len(resolved):
                 raise RuntimeError(
                     f"AI commentary voiceover incomplete ({vo_ok}/{len(resolved)}). "
-                    "Credits refunded — try again."
+                    "Credits refunded. Try again."
                 )
 
         on_progress(f"Assembling {len(resolved)} clip ranking…")

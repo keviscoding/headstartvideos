@@ -21,8 +21,8 @@
   {
     "name": "3d",
     "label": "3D Reconstruction",
-    "description": "Real stories retold as a premium 3D documentary: the places, the ships, the crowds and the people of the story rebuilt in real-time 3D — faceless white figures in era-correct clothes, real light, fog and weather, drone moves through the scene. Claude directs every shot from the narration, looks at preview stills of each one and fixes what is wrong before the final render on this computer's graphics card. Quiet 2D graphics carry the numbers and dates, maps the routes, real footage the rest.",
-    "tagline": "History rebuilt in 3D — directed, checked and fixed by Claude before it renders.",
+    "description": "Real stories retold as a premium 3D documentary: the places, the ships, the crowds and the people of the story rebuilt in real-time 3D: faceless white figures in era-correct clothes, real light, fog and weather, drone moves through the scene. Claude directs every shot from the narration, looks at preview stills of each one and fixes what is wrong before the final render on this computer's graphics card. Quiet 2D graphics carry the numbers and dates, maps the routes, real footage the rest.",
+    "tagline": "History rebuilt in 3D, directed, checked and fixed by Claude before it renders.",
     "family": "3d",
     "features": [
       "threed",
@@ -35,8 +35,8 @@
   {
     "name": "nocturne",
     "label": "Dark History 3D",
-    "description": "True stories of war, spies and assassinations told the way the best 3D history channels tell them: the moments nobody filmed rebuilt in real-time 3D at night — moonlight, haze, silhouettes, FPV drone moves through the clouds and into the scene — cut against short bursts of real black-and-white newsreel on the people and events the narration names. The real photographs lie on a dossier desk under a lamp, a real portrait lights up in a black void, and a negative flash marks every cut between the 3D and the archive. Claude directs every 3D shot from the narration, looks at preview stills of each one and fixes what is wrong before the final render on this computer's graphics card.",
-    "tagline": "The night nobody filmed, rebuilt in 3D — cut against the real archive.",
+    "description": "True stories of war, spies and assassinations told the way the best 3D history channels tell them: the moments nobody filmed rebuilt in real-time 3D at night (moonlight, haze, silhouettes, FPV drone moves through the clouds and into the scene), cut against short bursts of real black-and-white newsreel on the people and events the narration names. The real photographs lie on a dossier desk under a lamp, a real portrait lights up in a black void, and a negative flash marks every cut between the 3D and the archive. Claude directs every 3D shot from the narration, looks at preview stills of each one and fixes what is wrong before the final render on this computer's graphics card.",
+    "tagline": "The night nobody filmed, rebuilt in 3D and cut against the real archive.",
     "family": "3d",
     "features": [
       "threed",
@@ -50,8 +50,8 @@
   {
     "name": "quest",
     "label": "Level-Up Stories",
-    "description": "Real history, real careers and real lives played as a bright 3D video game: \"Level 1. You're a recruit…\". The viewer is the hero — a chibi toy figure with a face, who levels up through every rank in a low-poly toy world while a game HUD tracks it all: the level badge and rank, an XP bar, three stat bars, quests that count up, an item hotbar, level-up cards with a golden sunburst, item pickups, unlocks, a boss bar and achievements. Claude designs the playthrough from the script (the levels, the hero's outfit at every rank, the stats, the quests) and directs every 3D shot; this computer's graphics card renders it.",
-    "tagline": "Every level of anything — played as a 3D video game, with a full game HUD.",
+    "description": "Real history, real careers and real lives played as a bright 3D video game: \"Level 1. You're a recruit…\". The viewer is the hero: a chibi toy figure with a face, who levels up through every rank in a low-poly toy world while a game HUD tracks it all: the level badge and rank, an XP bar, three stat bars, quests that count up, an item hotbar, level-up cards with a golden sunburst, item pickups, unlocks, a boss bar and achievements. Claude designs the playthrough from the script (the levels, the hero's outfit at every rank, the stats, the quests) and directs every 3D shot; this computer's graphics card renders it.",
+    "tagline": "Every level of anything, played as a 3D video game, with a full game HUD.",
     "family": "3d",
     "features": [
       "threed",
@@ -63,8 +63,8 @@
   {
     "name": "courtside",
     "label": "Sports Rise & Fall",
-    "description": "Sports and NBA documentaries cut like a streaming film: real game footage, real photos of every player named (never AI), old newspapers animated on screen, Kodak contact strips, an old television for archive footage, cinematic black-and-white maps, article lines over darkened photos, stats tables, chapter cards, real interview clips with their own sound, and a VHS grade for the old stories — clean and modern for a young star like Lamine Yamal. The story comes first: cold open, rise, fall, what remains.",
-    "tagline": "Real photos, old newspapers, Kodak strips, VHS — the story first.",
+    "description": "Sports and NBA documentaries cut like a streaming film: real game footage, real photos of every player named (never AI), old newspapers animated on screen, Kodak contact strips, an old television for archive footage, cinematic black-and-white maps, article lines over darkened photos, stats tables, chapter cards, real interview clips with their own sound, and a VHS grade for the old stories, clean and modern for a young star like Lamine Yamal. The story comes first: cold open, rise, fall, what remains.",
+    "tagline": "Real photos, old newspapers, Kodak strips, VHS. The story comes first.",
     "family": "documentary",
     "features": [
       "youtube",
@@ -82,8 +82,8 @@
   {
     "name": "jung",
     "label": "Dark Psychology",
-    "description": "The original Frontier look and the cheapest way to make long videos: stock footage, AI pictures and motion graphics under a calm narrator. Dark psychology in the tradition of Carl Jung — rewrite it for your own niche.",
-    "tagline": "The original Frontier look, built for long videos.",
+    "description": "The classic faceless look and the cheapest way to make long videos: stock footage, AI pictures and motion graphics under a calm narrator. Dark psychology in the tradition of Carl Jung. Rewrite it for your own niche.",
+    "tagline": "The classic faceless look, built for long videos.",
     "family": "illustrated",
     "features": [
       "stock",
@@ -96,7 +96,7 @@
       "headlines",
       "sound"
     ],
-    "source_cost_guide": "about $0.05 a minute — about $1–2 for a 30-minute video",
+    "source_cost_guide": "about $0.05 a minute, so about $1 to $2 for a 30-minute video",
     "order": 2
   },
   {
@@ -129,7 +129,7 @@
   {
     "name": "avatar-premium",
     "label": "AI Avatar Premium",
-    "description": "The produced tier. The presenter comes back through the whole video — from a different camera each time, beside the picture or in a corner of it — and every claim he makes is restated on screen as one clean object: a number the size of the frame, a rule with its conditions, two things compared. Pictures move where movement earns its place.",
+    "description": "The produced tier. The presenter comes back through the whole video, from a different camera each time, beside the picture or in a corner of it, and every claim he makes is restated on screen as one clean object: a number the size of the frame, a rule with its conditions, two things compared. Pictures move where movement earns its place.",
     "tagline": "He says it. The screen proves it.",
     "family": "avatar",
     "features": [
@@ -161,7 +161,7 @@
   {
     "name": "workshop",
     "label": "Old-Timer Tips",
-    "description": "The man who has done the job for forty years shows you how, on paper. He is on screen about 18 seconds of every minute — at the bench, by the fire, out in the yard, a different camera every time — and what he explains is drawn as a hand-tinted engraving on an aged sheet laid over his own place: the cut, the tool, the wrong way beside the right one, the list he keeps. His rules land on torn paper strips over the picture, struck out in red or ticked in green. The video is numbered, and the row of chapters in the corner fills in as he goes.",
+    "description": "The man who has done the job for forty years shows you how, on paper. He is on screen about 18 seconds of every minute (at the bench, by the fire, out in the yard, a different camera every time), and what he explains is drawn as a hand-tinted engraving on an aged sheet laid over his own place: the cut, the tool, the wrong way beside the right one, the list he keeps. His rules land on torn paper strips over the picture, struck out in red or ticked in green. The video is numbered, and the row of chapters in the corner fills in as he goes.",
     "tagline": "Forty years of doing it, drawn on paper.",
     "family": "avatar",
     "features": [
@@ -179,7 +179,7 @@
     "name": "pitmaster",
     "label": "BBQ & Cooking Tips",
     "description": "An old pitmaster talks to you from beside his smoker, one cook at a time, and the drawings on aged paper show the cut, the fire and the wrong way beside the right one. Every video also sells his own illustrated pit book: halfway through he points at the real lesson number, the pages land on the table, and a card with a QR code and the video's own short link sends the viewer to the book.",
-    "tagline": "Sixty years on the pit — and his book in every video.",
+    "tagline": "Sixty years on the pit, and his book in every video.",
     "family": "avatar",
     "features": [
       "ai_images",
@@ -194,7 +194,7 @@
   {
     "name": "mentor",
     "label": "AI Mentor",
-    "description": "A real-looking presenter teaches from a dim modern boardroom, and the graphics live in his shot: glossy glass cards slide past him at table height, a neon countdown hangs in front of him, a glass badge beside his head drains to a percentage, his example prompt types itself into a chat bar. The edit keeps moving — wide, medium, close, slow pushes in and out — and between his shots a 2D cartoon of him acts the story out, with big glass objects and real things turning in the light.",
+    "description": "A real-looking presenter teaches from a dim modern boardroom, and the graphics live in his shot: glossy glass cards slide past him at table height, a neon countdown hangs in front of him, a glass badge beside his head drains to a percentage, his example prompt types itself into a chat bar. The edit keeps moving (wide, medium, close, slow pushes in and out), and between his shots a 2D cartoon of him acts the story out, with big glass objects and real things turning in the light.",
     "tagline": "He teaches it. The screen builds around him.",
     "family": "avatar",
     "features": [
@@ -297,7 +297,7 @@
   {
     "name": "legend",
     "label": "Legend Reveals",
-    "description": "\"John Daly Reveals the 5 Most Special Golfers He Ever Saw\" — told by John Daly. The film opens on a real clip of the athlete or star talking on camera, about twenty seconds; their voice is cloned from that very clip, and the story continues in the first person, in their voice, over real footage and real photos of every person named. They are never shown again. Warm memoir look: photos centred over a blurred copy with a cream keyline, a yellow-bordered close-up inset sliding in, numbered chapter cards for each person on the list, lower thirds, scorecards, the narrator's own line as a card, dated years. No captions.",
+    "description": "\"John Daly Reveals the 5 Most Special Golfers He Ever Saw\", told by John Daly. The film opens on a real clip of the athlete or star talking on camera, about twenty seconds; their voice is cloned from that very clip, and the story continues in the first person, in their voice, over real footage and real photos of every person named. They are never shown again. Warm memoir look: photos centred over a blurred copy with a cream keyline, a yellow-bordered close-up inset sliding in, numbered chapter cards for each person on the list, lower thirds, scorecards, the narrator's own line as a card, dated years. No captions.",
     "tagline": "A real clip, then the story in the star's own cloned voice.",
     "family": "documentary",
     "features": [
@@ -346,7 +346,7 @@
   {
     "name": "almanac",
     "label": "Retro Archive Doc",
-    "description": "History told like an encyclopedia entry you cannot put down: who someone was, what a thing was, and how one led to the other. Real archive film and real photographs, printed in three inks — mustard, ink black, paper white. Names rise out of dark bars beside each person's real photo, the objects the story turns on become collector's cards, the era's film runs through a 35 mm strip, every frame its own shot, that spins down onto one frame and dives into it, big figures ring up on cash-register drums, and the verdict is proofed on a printing press and stamped.",
+    "description": "History told like an encyclopedia entry you cannot put down: who someone was, what a thing was, and how one led to the other. Real archive film and real photographs, printed in three inks: mustard, ink black, paper white. Names rise out of dark bars beside each person's real photo, the objects the story turns on become collector's cards, the era's film runs through a 35 mm strip, every frame its own shot, that spins down onto one frame and dives into it, big figures ring up on cash-register drums, and the verdict is proofed on a printing press and stamped.",
     "tagline": "The history of people and things, printed like an almanac: real archive film, collector's cards, press proofs.",
     "family": "documentary",
     "features": [
@@ -364,7 +364,7 @@
   {
     "name": "horizon",
     "label": "Charts & Numbers",
-    "description": "Big questions answered with real numbers: why a country stopped having children, how a currency collapsed, what an ageing world will look like. Real news footage full frame, and between it the numbers drawn big and calm on a near-black navy — the line a country draws while the camera follows its pen, a population pyramid turning over from 1960 to 2100, a hundred people shrinking to five across four generations, a figure that rolls like an odometer, countries side by side, a real document on the table with its translation, a real person's words typed as the narrator reads them. Every figure comes from the World Bank or the UN, fetched by the engine, and the script is fact-checked before the voice. Real newspaper headlines, maps, the real people named, interview soundbites with subtitles. No captions.",
+    "description": "Big questions answered with real numbers: why a country stopped having children, how a currency collapsed, what an ageing world will look like. Real news footage full frame, and between it the numbers drawn big and calm on a near-black navy: the line a country draws while the camera follows its pen, a population pyramid turning over from 1960 to 2100, a hundred people shrinking to five across four generations, a figure that rolls like an odometer, countries side by side, a real document on the table with its translation, a real person's words typed as the narrator reads them. Every figure comes from the World Bank or the UN, fetched by the engine, and the script is fact-checked before the voice. Real newspaper headlines, maps, the real people named, interview soundbites with subtitles. No captions.",
     "tagline": "Real numbers, drawn big: charts, pyramids, documents, quotes.",
     "family": "documentary",
     "features": [
@@ -385,7 +385,7 @@
     "tagline": "A moving picture book: every shot drawn in code, every number on screen, every 'how' on paper.",
     "family": "illustrated",
     "features": [],
-    "source_cost_guide": "the voice costs cents; Claude draws every shot on your Claude Code plan — about $7 of Opus a minute at API prices (a 10-minute video is roughly 2 % of a Claude Max 20x week); rendering runs on this computer, about 20 minutes per minute of video in all",
+    "source_cost_guide": "the voice costs cents; Claude draws every shot on your Claude Code plan, about $7 of Opus a minute at API prices (a 10-minute video is roughly 2 % of a Claude Max 20x week); rendering runs on this computer, about 20 minutes per minute of video in all",
     "order": 22
   },
   {
@@ -405,7 +405,7 @@
   {
     "name": "history",
     "label": "Painted History",
-    "description": "Long-form history told calmly and in order — how a city, an empire or a dynasty rose and changed — in sepia oil paintings that move slowly and dissolve into each other, and an embossed parchment map where empires spread, armies march and battles are marked. Every place, event and dynasty gets a title in Roman capitals, every ruler a round gold-rimmed portrait, the great turning points burn through like paper. No footage, no captions: paintings, maps and a deep, even narrator over an orchestral score.",
+    "description": "Long-form history told calmly and in order (how a city, an empire or a dynasty rose and changed) in sepia oil paintings that move slowly and dissolve into each other, and an embossed parchment map where empires spread, armies march and battles are marked. Every place, event and dynasty gets a title in Roman capitals, every ruler a round gold-rimmed portrait, the great turning points burn through like paper. No footage, no captions: paintings, maps and a deep, even narrator over an orchestral score.",
     "tagline": "History in oil paintings and parchment maps.",
     "family": "documentary",
     "features": [

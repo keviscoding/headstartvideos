@@ -480,14 +480,14 @@ _PENDING_USER_NOTICES = [
         "dramarecap107@gmail.com",
         "credit_refund",
         "Credits refunded",
-        "We refunded 2 credits to your account. Sorry for the trouble — you're all set to cook again.",
+        "We refunded 2 credits to your account. Sorry for the trouble. You're all set to cook again.",
     ),
     (
         "2026-07-20-benarko-refund-notice",
         "benarko2016@gmail.com",
         "credit_refund",
         "Credits refunded",
-        "We refunded 2 credits to your account. Sorry for the trouble — you're all set to cook again.",
+        "We refunded 2 credits to your account. Sorry for the trouble. You're all set to cook again.",
     ),
 ]
 
@@ -1610,11 +1610,11 @@ def announce_queued_jobs() -> None:
         work_ahead = i + running
         wait_m = int(math.ceil(work_ahead / parallelism) * est_min) if work_ahead else 0
         if work_ahead <= 0:
-            msg = "You're next — starting shortly..."
+            msg = "You're next. Starting shortly..."
         elif pos == 1 and running > 0:
-            msg = f"Queued — 1 cook ahead (~{max(wait_m, 1)} min)"
+            msg = f"Queued: 1 cook ahead (~{max(wait_m, 1)} min)"
         else:
-            msg = f"Queued — position {pos} of {total} (~{max(wait_m, 1)} min wait)"
+            msg = f"Queued: position {pos} of {total} (~{max(wait_m, 1)} min wait)"
         try:
             progress = json.loads(row.get("progress_json") or "[]")
         except Exception:
