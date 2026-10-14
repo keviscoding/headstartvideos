@@ -1,5 +1,1 @@
-<svg width="100" height="100" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="ChannelRecipe glyph monochrome">
-  <path d="M18 6 H62 L82 26 V82 A12 12 0 0 1 70 94 H30 A12 12 0 0 1 18 82 V18 A12 12 0 0 1 30 6 Z" fill="currentColor"></path>
-  <path d="M62 6 L82 26 H66 A4 4 0 0 1 62 22 Z" fill="#F7F5F0" fill-opacity="0.9"></path>
-  <path d="M42 40 L42 68 L66 54 Z" fill="#F7F5F0"></path>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none" width="100" height="100" role="img" aria-label="ChannelRecipe glyph monochrome"><g stroke="currentColor" stroke-width="6" stroke-linecap="round"><path d="M37 24C33 19 41 15 37 7"/><path d="M50 24C46 19 54 15 50 7"/><path d="M63 24C59 19 67 15 63 7"/></g><g fill="currentColor"><rect x="44" y="27" width="12" height="6" rx="3"/><rect x="14" y="32" width="72" height="8" rx="4"/><rect x="7" y="49" width="14" height="9" rx="4.5"/><rect x="79" y="49" width="14" height="9" rx="4.5"/><path d="M18 43H82V74A14 14 0 0 1 68 88H32A14 14 0 0 1 18 74Z"/></g><path d="M44 55L44 76L62 65.5Z" fill="#F7F5F0" stroke="#F7F5F0" stroke-width="5" stroke-linejoin="round"/></svg>
