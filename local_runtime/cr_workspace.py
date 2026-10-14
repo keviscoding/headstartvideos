@@ -100,7 +100,7 @@ def install(studio, activity, *, token, home=None):
                 preview_url=("/cr-workspace/preview/recipe/" + quote(row["name"], safe="") + ".jpg") if source else None,
                 preview_label=source.label if source else "No video preview yet",
                 preview_video_url=source.video_url if source else None)
-        return data
+        return cr_presentation.plain_copy(data)
 
     def selected_preset():
         name = request.args.get("cr-preset", "")
