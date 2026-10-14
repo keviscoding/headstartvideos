@@ -14,10 +14,7 @@ from html.parser import HTMLParser
 # Use the same native glyph and tokens as the CR website. Everything is inline:
 # a downloaded studio can draw its chrome without a font/CDN or brand request.
 _BRAND = """<a class="cr-brand" href="/" aria-label="ChannelRecipe studio">
-<svg id="brandmark" width="34" height="34" viewBox="0 0 100 100" fill="none" aria-hidden="true">
-<path d="M18 6 H62 L82 26 V82 A12 12 0 0 1 70 94 H30 A12 12 0 0 1 18 82 V18 A12 12 0 0 1 30 6 Z" fill="#EDEEF5"/>
-<path d="M62 6 L82 26 H66 A4 4 0 0 1 62 22 Z M42 40 L42 68 L66 54 Z" fill="#6D5AE0"/>
-</svg><span id="wordmark">Channel<span>Recipe</span></span></a>"""
+<svg viewBox="0 0 100 100" fill="none" id="brandmark" width="34" height="34" aria-hidden="true"><defs><linearGradient id="crpot-heat" x1="0" y1="1" x2="0.6" y2="0"><stop offset="0" stop-color="#6D5AE0"/><stop offset="0.6" stop-color="#9B5BE6"/><stop offset="1" stop-color="#E8608F"/></linearGradient></defs><g stroke="#FF7A59" stroke-width="6" stroke-linecap="round"><path d="M37 24C33 19 41 15 37 7"/><path d="M50 24C46 19 54 15 50 7"/><path d="M63 24C59 19 67 15 63 7"/></g><rect x="44" y="27" width="12" height="6" rx="3" fill="#9B5BE6"/><rect x="14" y="32" width="72" height="8" rx="4" fill="#9B5BE6"/><rect x="7" y="49" width="14" height="9" rx="4.5" fill="#7F5AE3"/><rect x="79" y="49" width="14" height="9" rx="4.5" fill="#A95BE4"/><path d="M18 43H82V74A14 14 0 0 1 68 88H32A14 14 0 0 1 18 74Z" fill="url(#crpot-heat)"/><path d="M44 55L44 76L62 65.5Z" fill="#F7F5F0" stroke="#F7F5F0" stroke-width="5" stroke-linejoin="round"/></svg><span id="wordmark">Channel<span>Recipe</span></span></a>"""
 
 _HEADER = """<header class="cr-header">
 <div class="cr-topline">""" + _BRAND + """<span class="cr-local">Local studio</span>
