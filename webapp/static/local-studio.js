@@ -36,7 +36,7 @@ window.CRLocalStudio = (() => {
         if (el) { el.textContent = text; el.classList.toggle('ls-error', error); el.hidden = !text; }
     }
     async function api(path, options) {
-        const response = await fetch('/api/frontier/' + path, options);
+        const response = await fetch('/api/studio/' + path, options);
         const body = await response.json().catch(() => ({}));
         if (!response.ok) {
             const error = new Error(typeof body.detail === 'string' ? body.detail : 'This step could not finish. Please try again.');
@@ -144,7 +144,7 @@ window.CRLocalStudio = (() => {
         return '<section class="ls-setup">'+
             '<div class="ls-step"><span class="ls-step-n">1</span><div class="ls-step-body"><h3>Download Studio</h3>'+
                 '<div class="ls-platform" role="group" aria-label="Your computer"><button data-ls-platform="mac" class="'+(platform==='mac'?'selected':'')+'">Mac</button><button data-ls-platform="windows" class="'+(platform==='windows'?'selected':'')+'">Windows</button></div>'+
-                '<a class="btn-primary ls-download-btn '+(ready?'':'ls-disabled')+'" '+(ready?'href="/api/frontier/download" data-ls-download':'aria-disabled="true"')+'>'+icon('download')+(ready?'Download ChannelRecipe Studio':'Preparing the download…')+'</a>'+
+                '<a class="btn-primary ls-download-btn '+(ready?'':'ls-disabled')+'" '+(ready?'href="/api/studio/download" data-ls-download':'aria-disabled="true"')+'>'+icon('download')+(ready?'Download ChannelRecipe Studio':'Preparing the download…')+'</a>'+
                 '<p class="ls-step-note">About 250 MB. When it finishes, <b>extract the whole ZIP</b>'+(platform==='windows'?' (right-click → Extract All)':'')+' into a folder you’ll keep, like Documents.</p></div></div>'+
             '<div class="ls-step"><span class="ls-step-n">2</span><div class="ls-step-body"><h3>Install it</h3>'+
                 '<div class="ls-install-options">'+
