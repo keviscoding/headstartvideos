@@ -1,5 +1,13 @@
 [
   {
+    "build": 54,
+    "date": "2026-10-14",
+    "title": "Style learning fixed",
+    "items": [
+      "Fixed: previewing a YouTube channel to learn its style failed with \"The study could not complete this step\"."
+    ]
+  },
+  {
     "build": 53,
     "date": "2026-10-14",
     "title": "Choose your narration voice",

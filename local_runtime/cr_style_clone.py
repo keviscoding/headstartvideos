@@ -160,13 +160,16 @@ _YT_HELPER = {"updated": False}
 
 
 def _ytdlp_command():
-    """Studio's own yt-dlp (installed and updated with Studio) before an older copy on PATH."""
-    try:
-        import yt_dlp  # noqa: F401
+    """Studio's own yt-dlp (installed and updated with Studio) before an older copy on PATH.
+
+    Only look it up, never import it here: Studio wraps subprocess.Popen for its
+    render workers, and yt-dlp subclasses Popen at import time.
+    """
+    import importlib.util
+    if importlib.util.find_spec("yt_dlp") is not None:
         return [sys.executable, "-m", "yt_dlp"]
-    except ImportError:
-        found = shutil.which("yt-dlp")
-        return [found] if found else []
+    found = shutil.which("yt-dlp")
+    return [found] if found else []
 
 
 def list_videos(url, limit, timeout=90, *, run=subprocess.run):

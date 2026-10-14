@@ -366,3 +366,16 @@ def test_youtube_listing_explains_failures_and_heals_an_outdated_helper(monkeypa
         return Done(stderr="WARNING: x\nERROR: Something unusual happened")
     with pytest.raises(RuntimeError, match=r"\(Something unusual happened\)"):
         clone.list_videos("https://www.youtube.com/@x/videos", 12, run=other)
+
+
+def test_finding_studios_youtube_helper_never_imports_it(monkeypatch):
+    import subprocess
+    import cr_style_clone as clone
+    # Studio replaces subprocess.Popen with a wrapper function for its render
+    # workers; importing yt-dlp in that process would crash.
+    original = subprocess.Popen
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: original(*a, **k))
+    for name in [n for n in sys.modules if n == "yt_dlp" or n.startswith("yt_dlp.")]:
+        monkeypatch.delitem(sys.modules, name)
+    assert clone._ytdlp_command()[1:] == ["-m", "yt_dlp"]
+    assert "yt_dlp" not in sys.modules
