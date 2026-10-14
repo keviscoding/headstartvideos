@@ -483,6 +483,16 @@
   window.CR_WORKSPACE_CLIENT={payload,selectRecipe,featureValues,api,state};
 
 
+  async function copyDiagnostics(button,status){
+ const label=button.textContent;button.disabled=true;button.textContent='Copying…';
+ try{const response=await fetch('/cr-diagnostics',{headers:{'X-CR-Local-Token':boot.token||''},cache:'no-store'});if(!response.ok)throw Error('Refresh this page and try again.');const text=await response.text();
+  try{await navigator.clipboard.writeText(text);}catch(_){const area=document.createElement('textarea');area.value=text;document.body.append(area);area.select();document.execCommand('copy');area.remove();}
+  status.textContent='Copied. Paste it in Discord #help with a screenshot of what you see.';}
+ catch(error){status.textContent=error.message;}
+ finally{button.disabled=false;button.textContent=label;}
+}
+  $('crw-copy-diagnostics').addEventListener('click', () => copyDiagnostics($('crw-copy-diagnostics'), $('crw-diagnostics-status')));
+
   // Narration voice picker: hear a voice, then choose it for your next videos.
   const VOICE_STYLES = {Zephyr:'Bright',Puck:'Upbeat',Charon:'Informative',Kore:'Firm',Fenrir:'Excitable',Leda:'Youthful',Orus:'Firm',Aoede:'Breezy',Callirrhoe:'Easy-going',Autonoe:'Bright',Enceladus:'Breathy',Iapetus:'Clear',Umbriel:'Easy-going',Algieba:'Smooth',Despina:'Smooth',Erinome:'Clear',Algenib:'Gravelly',Rasalgethi:'Informative',Laomedeia:'Upbeat',Achernar:'Soft',Alnilam:'Firm',Schedar:'Even',Gacrux:'Mature',Pulcherrima:'Forward',Achird:'Friendly',Zubenelgenubi:'Casual',Vindemiatrix:'Gentle',Sadachbia:'Lively',Sadaltager:'Knowledgeable',Sulafat:'Warm'};
   const voices = {data: null, previews: new Set(), playing: null};
