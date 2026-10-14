@@ -262,7 +262,7 @@
     hide('crw-styles-empty',!!customs.length);
     if (state.studies.length) {
       const heading = el('h3','crw-library-subheading','Your style clones'); target.append(heading);
-      for (const study of state.studies) {const a = el('a','crw-study-card'); a.href = study.link; a.append(el('strong','',study.label || study.title),el('span',`crw-study-state is-${study.state === 'running' ? 'running' : study.state === 'done' ? 'done' : 'stopped'}`,study.state === 'running' ? 'Studying the channel…' : study.state === 'done' ? 'Style saved' : 'Stopped — open to review')); target.append(a);}
+      for (const study of state.studies) {const a = el('a','crw-study-card'); a.href = study.link; a.append(el('strong','',study.label || study.title),el('span',`crw-study-state is-${study.state === 'running' ? 'running' : study.state === 'done' ? 'done' : 'stopped'}`,study.state === 'running' ? 'Studying the channel…' : study.state === 'done' ? 'Style saved' : 'Stopped. Open to review')); target.append(a);}
     }
   }
   const phaseCopy = line => {
@@ -355,7 +355,7 @@
   function celebrate(job) {
     const box = $('crw-finished'); if (!box) return;
     box.replaceChildren();
-    const copy = el('div','');copy.append(el('strong','',`“${job.title || 'Your video'}” is ready`),el('span','','Watch it, then share it in the Discord — we feature the best community videos.'));
+    const copy = el('div','');copy.append(el('strong','',`“${job.title || 'Your video'}” is ready`),el('span','','Watch it, then share it in the Discord. We feature the best community videos.'));
     const watch = el('button','crw-primary-button','Watch video');watch.type='button';watch.addEventListener('click',()=>{box.hidden=true;openOutput({slug:job.slug,title:job.title,editable:true});});
     const share = el('a','crw-secondary-button','Share in Discord ↗');share.href=DISCORD_URL;share.target='_blank';share.rel='noopener';share.dataset.discord='finished-banner';
     const close = el('button','crw-icon-button','×');close.type='button';close.setAttribute('aria-label','Dismiss');close.addEventListener('click',()=>{box.hidden=true;});

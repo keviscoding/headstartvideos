@@ -13,12 +13,12 @@
 ## Or do it yourself
 
 1. Install these if you don't have them:
-   - **Python 3.13** — https://www.python.org/downloads/ (on Windows, tick
+   - **Python 3.13**: https://www.python.org/downloads/ (on Windows, tick
      **Add Python to PATH**)
-   - **Node.js LTS** — https://nodejs.org
-   - **FFmpeg with subtitle support** — Mac: `brew install ffmpeg-full`;
+   - **Node.js LTS**: https://nodejs.org
+   - **FFmpeg with subtitle support**: Mac: `brew install ffmpeg-full`;
      Windows: `winget install -e --id Gyan.FFmpeg`
-   - **Claude Code** — https://claude.com/download (sign in with your Claude
+   - **Claude Code**: https://claude.com/download (sign in with your Claude
      Pro or Max account)
 2. Open **Start on Mac.command** (if macOS blocks it: right-click → Open) or
    **Start on Windows.cmd**. Keep that window open. The first launch takes a few
@@ -38,4 +38,4 @@ until its setup check passes.
 ## Need help?
 
 Ask in the ChannelRecipe Discord: https://discord.gg/aUbazAAqw3. We answer setup
-questions there every day — and share your videos when they're done.
+questions there every day, and you can share your videos there too.

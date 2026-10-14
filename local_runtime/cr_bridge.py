@@ -1,4 +1,4 @@
-"""Admin preview bridge. No CR platform generation credentials in the download."""
+"""ChannelRecipe Studio bridge. No CR platform generation credentials in the download."""
 from __future__ import annotations
 import base64
 import hashlib
@@ -254,6 +254,6 @@ def install(engine):
     engine.claude_vision = lambda prompt, image_paths, model=None, max_tokens=2000: think(prompt, max_tokens, "vision", image_paths, model=model)
     engine._claude_code_vision = lambda prompt, image_paths: think(prompt, 8000, "vision", image_paths)
     # Some source modules call the CLI directly, outside the common helper.
-    engine._claude_exe = lambda: (_ for _ in ()).throw(RuntimeError("Use the CR brain for this preview."))
+    engine._claude_exe = lambda: (_ for _ in ()).throw(RuntimeError("Use your connected ChannelRecipe Claude route for this step."))
     # Provider endpoint fallback must not bypass CR using a local Anthropic key.
     engine._claude_endpoint = lambda provider: None

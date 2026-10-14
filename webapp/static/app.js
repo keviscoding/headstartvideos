@@ -468,7 +468,7 @@ function syncPipelineChrome() {
     const topicInput = document.getElementById('topic-input');
     if (sb) {
         if (heading) heading.textContent = 'Optional: pick a title';
-        if (sub) sub.textContent = 'Skip or pick a title — you’ll refine it on the episode step.';
+        if (sub) sub.textContent = 'Skip or pick a title. You’ll refine it on the episode step.';
         if (progress) progress.textContent = 'Optional';
         if (nextBtn) nextBtn.textContent = 'Back to episode';
         if (topicInput) topicInput.placeholder = 'Optional seed: exams, lying, jealousy…';
@@ -1102,7 +1102,7 @@ function openUpgradeFlow(opts = {}) {
             ...opts,
             reason: opts.reason || 'trial_convert',
             trialMessage: opts.trialMessage
-                || 'Start your plan now — billed today. Cancel anytime.',
+                || 'Start your plan now. Billed today. Cancel anytime.',
         });
         return;
     }
@@ -1115,8 +1115,8 @@ function openUpgradeFlow(opts = {}) {
             reason: opts.reason || 'subscribe',
             trialMessage: opts.trialMessage
                 || (trialsEnabled() && currentUser.trial_used
-                    ? 'Your free trial was already used. Subscribe to keep creating — billed today.'
-                    : 'Choose a plan to start creating — billed today. Cancel anytime.'),
+                    ? 'Your free trial was already used. Subscribe to keep creating. Billed today.'
+                    : 'Choose a plan to start creating. Billed today. Cancel anytime.'),
         });
         return;
     }
@@ -1176,7 +1176,7 @@ function showPricingModal(opts = {}) {
         }
         const summary = document.getElementById('credits-needed-summary');
         if (summary) {
-            summary.textContent = `Top up to continue — high-quality stills cost ${hqCreditCost()} credits, Standard cooks cost 1.`;
+            summary.textContent = `Top up to continue. High-quality stills cost ${hqCreditCost()} credits, Standard cooks cost 1.`;
         }
         if (creditsPanel) creditsPanel.classList.remove('hidden');
         if (pricingGrid) pricingGrid.style.display = 'none';
@@ -1244,7 +1244,7 @@ function showPricingModal(opts = {}) {
         if (heading) heading.textContent = 'Full access';
         if (subtitle) {
             subtitle.textContent = opts.trialMessage
-                || 'Full niche database in Claude + Niche Finder. Billed today — cancel anytime.';
+                || 'Full niche database in Claude + Niche Finder. Billed today. Cancel anytime.';
         }
     } else if (opts.reason === 'access_chooser_trial' && !usedTrial) {
         if (heading) heading.textContent = 'Start free trial';
@@ -1255,11 +1255,11 @@ function showPricingModal(opts = {}) {
     } else if (opts.reason === 'storyboard' && !usedTrial) {
         if (heading) heading.textContent = 'Ready to build your storyboard';
         if (subtitle) {
-            subtitle.textContent = 'Start your free trial to generate stills — your first 2 storyboards are free (up to 8 min).';
+            subtitle.textContent = 'Start your free trial to generate stills. Your first 2 storyboards are free (up to 8 min).';
         }
     } else if (opts.reason === 'cook' && !usedTrial) {
         if (heading) heading.textContent = 'Your video is ready to cook';
-        if (subtitle) subtitle.textContent = `Start your free trial to cook this video — ${trialCredits()} credits included.`;
+        if (subtitle) subtitle.textContent = `Start your free trial to cook this video. ${trialCredits()} credits included.`;
     } else if (usedTrial) {
         if (heading) heading.textContent = 'Choose your plan';
         if (subtitle) {
@@ -1302,7 +1302,7 @@ function _refreshPricingCtas() {
             btn.textContent = 'Coming soon';
         } else if (onTrial) {
             // This click bills immediately, so the button names the charge.
-            btn.textContent = `Start ${plan.label} — ${planChargeToday(plan.tier, cycle)} today`;
+            btn.textContent = `Start ${plan.label}: ${planChargeToday(plan.tier, cycle)} today`;
         } else if (subscribed) {
             // Plan changes for subscribers go through Stripe's billing portal.
             btn.textContent = plan.tier === current ? 'Your current plan' : `Switch to ${plan.label}`;
@@ -1499,11 +1499,11 @@ function showTrialCreditChangeNotice(onDone) {
                 <strong>${n} free videos</strong>.
             </p>
             <p style="color:var(--app-ink-2,#bbb);margin:0 0 22px;font-size:14px;line-height:1.55;font-family:var(--font-body,sans-serif);">
-                We're sorry for the change — we still want you to fully test ChannelRecipe,
+                We're sorry for the change. We still want you to fully test ChannelRecipe,
                 and every recipe remains available on your trial.
             </p>
             <button type="button" id="trial-credit-notice-ok" style="width:100%;padding:13px 16px;border:none;border-radius:10px;background:var(--accent,#6c5ce7);color:#fff;font-size:15px;font-weight:600;cursor:pointer;font-family:var(--font-body,sans-serif);">
-                Got it — continue with ${n} videos
+                Got it, continue with ${n} videos
             </button>
         </div>
     `;
@@ -1885,13 +1885,13 @@ async function generateScript() {
         if (!res.ok) {
             const detail = (data && (data.detail || data.error)) || (
                 res.status === 502 || res.status === 504
-                    ? 'Server timed out writing the script — try a shorter length or retry.'
+                    ? 'Server timed out writing the script. Try a shorter length or retry.'
                     : `Script request failed (HTTP ${res.status})`
             );
             throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
         }
         if (!data || !data.script) {
-            throw new Error('Script service returned an empty response — please retry.');
+            throw new Error('Script service returned an empty response. Please retry.');
         }
         editor.value = data.script;
         state.script = data.script;
@@ -1917,11 +1917,11 @@ function updateWordCount() {
 // ---------------------------------------------------------------------------
 // Instant fallback so the grid never looks empty while /api/voices loads
 const FALLBACK_VOICES = [
-    { id: 'leo', name: 'Leo', tag: 'Narrator', gender: 'male', desc: 'Authoritative, instructional — best for documentaries', preview_url: 'https://data.x.ai/audio-samples/voice_leo.mp3', default: true },
-    { id: 'rex', name: 'Rex', tag: 'Professional', gender: 'male', desc: 'Polished business tone — great for explainers', preview_url: 'https://data.x.ai/audio-samples/voice_rex.mp3' },
+    { id: 'leo', name: 'Leo', tag: 'Narrator', gender: 'male', desc: 'Authoritative and instructional, best for documentaries', preview_url: 'https://data.x.ai/audio-samples/voice_leo.mp3', default: true },
+    { id: 'rex', name: 'Rex', tag: 'Professional', gender: 'male', desc: 'Polished business tone, great for explainers', preview_url: 'https://data.x.ai/audio-samples/voice_rex.mp3' },
     { id: 'sal', name: 'Sal', tag: 'Neutral', gender: 'male', desc: 'Versatile, clear delivery that fits most niches', preview_url: 'https://data.x.ai/audio-samples/voice_sal.mp3' },
-    { id: 'ara', name: 'Ara', tag: 'Warm', gender: 'female', desc: 'Warm and conversational — great for storytelling', preview_url: 'https://data.x.ai/audio-samples/voice_ara.mp3' },
-    { id: 'eve', name: 'Eve', tag: 'Upbeat', gender: 'female', desc: 'Energetic and upbeat — strong for viral formats', preview_url: 'https://data.x.ai/audio-samples/voice_eve.mp3' },
+    { id: 'ara', name: 'Ara', tag: 'Warm', gender: 'female', desc: 'Warm and conversational, great for storytelling', preview_url: 'https://data.x.ai/audio-samples/voice_ara.mp3' },
+    { id: 'eve', name: 'Eve', tag: 'Upbeat', gender: 'female', desc: 'Energetic and upbeat, strong for viral formats', preview_url: 'https://data.x.ai/audio-samples/voice_eve.mp3' },
 ];
 
 let _voicesLoaded = false;
@@ -2209,7 +2209,7 @@ async function handleVoiceNext() {
     const isUpload = state.voiceMode === 'upload' && state.uploadedVoPath;
 
     if (state.voiceMode === 'clone') {
-        alert('Create a clone first, then pick it under Generate voice — or switch to Upload.');
+        alert('Create a clone first, then pick it under Generate voice, or switch to Upload.');
         setLoading(btn, false);
         return;
     }
@@ -2360,7 +2360,7 @@ async function handleThumbFinalUpload(input) {
 async function regenerateThumbnails() {
     if (!ensureAuth(regenerateThumbnails)) return;
     if (!(state.thumbnailRefs || []).length) {
-        showSoftPrompt('Upload a reference image first — we don’t generate thumbnails cold.');
+        showSoftPrompt('Upload a reference image first. We don’t generate thumbnails cold.');
         return;
     }
     const grid = document.getElementById('thumb-grid');
@@ -2397,8 +2397,8 @@ function populateBuildSummary() {
     document.getElementById('summary-words').textContent = `${wc} words (~${Math.round(wc / 150)} min)`;
     const voiceEl = document.getElementById('summary-voice');
     if (isAvatarRecipe()) {
-        const a = state.avatarName || state.avatarId || '—';
-        const v = state.heygenVoiceName || state.voiceId || '—';
+        const a = state.avatarName || state.avatarId || '–';
+        const v = state.heygenVoiceName || state.voiceId || '–';
         voiceEl.textContent = `${a} · ${v}`;
     } else {
         voiceEl.textContent = state.voice;
@@ -2472,7 +2472,7 @@ function syncImageQualityUI() {
     if (hint) {
         if (!canUseHighQuality()) {
             hint.classList.remove('hidden');
-            hint.textContent = 'High quality is on paid plans — upgrade to unlock Pro visuals.';
+            hint.textContent = 'High quality is on paid plans. Upgrade to unlock Pro visuals.';
         } else if (state.imageQuality === 'high') {
             hint.classList.remove('hidden');
             hint.textContent = `Best for channels where the stills carry the video. Max ${hqMaxMinutes()} min per cook.`;
@@ -2539,8 +2539,8 @@ function _friendlyProgress(raw) {
     if (/illustrations? generated/i.test(raw)) return 'All artwork ready';
     if (/images? prepared/i.test(raw)) return 'Images ready';
     if (/clips? rendered/i.test(raw)) return 'Almost there...';
-    if (/Assembly complete|Assembled/i.test(raw)) return 'Video assembled — uploading...';
-    if (/Total (cinematic )?pipeline/i.test(raw)) return 'Almost done — saving...';
+    if (/Assembly complete|Assembled/i.test(raw)) return 'Video assembled, uploading...';
+    if (/Total (cinematic )?pipeline/i.test(raw)) return 'Almost done, saving...';
     if (/Generating thumbnail/i.test(raw)) return 'Creating thumbnails...';
     if (/watermark/i.test(raw)) return 'Finishing up...';
     return raw.replace(/\[.*?\]\s*/g, '').replace(/Step \d\/\d:\s*/g, '').substring(0, 60);
@@ -2654,8 +2654,8 @@ const cookingManager = {
             if (data.status === 'queued' && (data.queue_position || 0) > 0) {
                 const wait = Math.max(1, Math.round(data.est_wait_minutes || 7));
                 const qMsg = data.queue_position <= 1 && data.status === 'queued'
-                    ? `Queued — waiting for a free cook slot (~${wait} min)`
-                    : `Queued — position ${data.queue_position} (~${wait} min wait)`;
+                    ? `Queued: waiting for a free cook slot (~${wait} min)`
+                    : `Queued: position ${data.queue_position} (~${wait} min wait)`;
                 const progressLog = document.getElementById('progress-log');
                 const statusEl = document.getElementById('cooking-bar-status');
                 const etaEl = document.getElementById('progress-eta');
@@ -3068,7 +3068,7 @@ const cookingManager = {
             const statusEl = document.getElementById('cooking-bar-status');
             if (statusEl) {
                 statusEl.textContent = data.queue_position
-                    ? `Queued — position ${data.queue_position} (~${wait} min)`
+                    ? `Queued: position ${data.queue_position} (~${wait} min)`
                     : `Queued (~${wait} min)`;
             }
         } else if (data && data.last_message) {
@@ -3313,7 +3313,7 @@ const cookingManager = {
 };
 
 function showRenderLostNotice() {
-    alert("We couldn't recover your last render after the page reloaded — it may still be finishing. Check History in a few minutes; if it's not there and your credit wasn't restored, email hello@channelrecipe.com and we'll sort it out.");
+    alert("We couldn't recover your last render after the page reloaded. It may still be finishing. Check History in a few minutes; if it's not there and your credit wasn't restored, email hello@channelrecipe.com and we'll sort it out.");
 }
 
 function dismissToast() {
@@ -3781,7 +3781,7 @@ async function analyzeChannel() {
     if (!ensureAuth(analyzeChannel)) return;
     if (!state.channelData) {
         showSoftPrompt(
-            'Fetch channel data first — then we can analyze what’s working on that channel.',
+            'Fetch channel data first. Then we can analyze what’s working on that channel.',
             'Go to Channel Data',
             () => {
                 navigateTo('script-studio');
@@ -3817,7 +3817,7 @@ async function generateIdeas() {
     // Channel data is optional — we generate general ideas if missing, but nudge them
     if (!state.channelData && !state._ideasGeneralOk) {
         showSoftPrompt(
-            'No channel data yet. We can still generate general viral ideas — or fetch a channel first for better results.',
+            'No channel data yet. We can still generate general viral ideas, or fetch a channel first for better results.',
             'Generate anyway',
             () => {
                 state._ideasGeneralOk = true;
@@ -3885,7 +3885,7 @@ async function generateStudioTitles() {
     const idea = document.getElementById('ss-title-idea').value.trim();
     if (!idea) {
         showSoftPrompt(
-            'Paste a video idea first — then we’ll generate title options.',
+            'Paste a video idea first. Then we’ll generate title options.',
             'Use selected idea',
             () => {
                 const selected = document.getElementById('ss-selected-idea')?.value?.trim();
@@ -3939,7 +3939,7 @@ async function generateStudioScript() {
     const title = document.getElementById('ss-script-title').value.trim();
     if (!title) {
         showSoftPrompt(
-            'Enter a video title first — then we’ll write the full script.',
+            'Enter a video title first. Then we’ll write the full script.',
             'Use selected title',
             () => {
                 const selected = document.getElementById('ss-selected-title')?.value?.trim();
@@ -4014,7 +4014,7 @@ async function loadVoiceOptions() {
         (Array.isArray(voices) ? voices : []).forEach(v => {
             const opt = document.createElement('option');
             opt.value = v.id;
-            opt.textContent = `${v.name} — ${v.tag}`;
+            opt.textContent = `${v.name} · ${v.tag}`;
             sel.appendChild(opt);
         });
         try {
@@ -4024,7 +4024,7 @@ async function loadVoiceOptions() {
                 (cData.clones || []).forEach((c) => {
                     const opt = document.createElement('option');
                     opt.value = c.voice_id;
-                    opt.textContent = `${c.name} — Cloned`;
+                    opt.textContent = `${c.name} · Cloned`;
                     sel.prepend(opt);
                 });
             }
@@ -4043,7 +4043,7 @@ async function generateStudioVoiceover() {
         return;
     }
     if (!script) {
-        showSoftPrompt('Paste a script first — then we’ll generate the voiceover.');
+        showSoftPrompt('Paste a script first. Then we’ll generate the voiceover.');
         document.getElementById('vo-script')?.focus();
         return;
     }
@@ -4786,15 +4786,15 @@ async function cancelNicheFinder() {
         // Always force-clear any zombie running rows
         await fetch('/api/niche-finder/jobs/cancel-running', { method: 'POST' });
         _nfClearActiveJobUi();
-        if (status) status.textContent = 'Cancelled — you can start a new scrape.';
+        if (status) status.textContent = 'Cancelled. You can start a new scrape.';
         if (!res.ok) {
             const data = await readJson(res, null);
             console.warn('cancel niche', data);
         }
     } catch (e) {
         _nfClearActiveJobUi();
-        if (status) status.textContent = 'Cleared local lock — try Add niches again.';
-        alert('Cancel request failed: ' + e.message + ' — UI unlocked anyway.');
+        if (status) status.textContent = 'Cleared local lock. Try Add niches again.';
+        alert('Cancel request failed: ' + e.message + '. UI unlocked anyway.');
     }
 }
 
@@ -4818,7 +4818,7 @@ async function _pollNicheFinderJob(jobId) {
         if (data.status === 'completed') {
             _nfClearActiveJobUi();
             const n = data.channels_upserted || (data.hits || []).length;
-            if (status) status.textContent = `Done — ${n} channel${n === 1 ? '' : 's'} saved to the library.`;
+            if (status) status.textContent = `Done: ${n} channel${n === 1 ? '' : 's'} saved to the library.`;
             await loadNicheFinderFeed();
         } else if (data.status === 'error' || data.status === 'cancelled') {
             _nfClearActiveJobUi();
@@ -4919,7 +4919,7 @@ async function _pollNicheIntelJob(jobId) {
             if (_niPollTimer) { clearInterval(_niPollTimer); _niPollTimer = null; }
             setLoading(btn, false);
             const n = data.channels_ok || 0;
-            let msg = `Done — ${n} channel${n === 1 ? '' : 's'} packed.`;
+            let msg = `Done: ${n} channel${n === 1 ? '' : 's'} packed.`;
             if ((data.errors || []).length) {
                 msg += `\nPartial errors: ${data.errors.map(e => e.error).join('; ')}`;
             }
@@ -5030,9 +5030,9 @@ function _renderNicheFinderHits(hits, opts = {}) {
             </div>
             <div class="flex gap-2 mt-4" style="flex-wrap: wrap;">
                 ${metric('Recent Avg Views', _nfFmt(h.recent_avg_views))}
-                ${metric('Channel Age (days)', h.days_since_start != null ? _nfEsc(h.days_since_start) : '—')}
+                ${metric('Channel Age (days)', h.days_since_start != null ? _nfEsc(h.days_since_start) : '–')}
                 ${metric('Uploads', _nfFmt(h.video_count))}
-                ${metric('Active 14d', h.videos_last_14d != null ? _nfEsc(h.videos_last_14d) : '—')}
+                ${metric('Active 14d', h.videos_last_14d != null ? _nfEsc(h.videos_last_14d) : '–')}
             </div>
             <p class="cr-eyebrow" style="margin: 16px 0 8px;">Most recent videos</p>
             <div class="flex gap-3" style="overflow-x:auto; padding-bottom: 4px;">
@@ -5164,7 +5164,7 @@ async function loadResourcesPage() {
         _setResourcesNewBadges(!!data.has_new);
         const items = data.resources || [];
         if (!items.length) {
-            list.innerHTML = '<p style="font-size: 14px; color: var(--app-ink-3);">No resources yet — check back soon.</p>';
+            list.innerHTML = '<p style="font-size: 14px; color: var(--app-ink-3);">No resources yet. Check back soon.</p>';
             return;
         }
         list.innerHTML = items.map(r => {
@@ -5321,7 +5321,7 @@ async function initRecipeBrainPage() {
         if (!currentUser) {
             note.textContent = 'Sign in to connect Claude to your ChannelRecipe account.';
         } else if (isPaidUser() && !isTrialUser()) {
-            note.textContent = `You’re on ${planLabel(plan)} — full niche database access in MCP.`;
+            note.textContent = `You’re on ${planLabel(plan)}, with full niche database access in MCP.`;
         } else {
             note.textContent = 'Free plan: connect for a taste, then upgrade when Claude hits the limit.';
         }
@@ -5536,7 +5536,7 @@ function renderVideoCard(v, retentionDays) {
     // Local /api/files URLs from ephemeral Fly/worker disks are already gone.
     const broken = !v.url || String(v.url).startsWith('/api/files/');
     const dlBtn = broken
-        ? `<span class="video-btn" style="opacity:.55;cursor:not-allowed" title="File was lost before cloud upload finished — re-cook this video">Unavailable</span>`
+        ? `<span class="video-btn" style="opacity:.55;cursor:not-allowed" title="File was lost before cloud upload finished. Re-cook this video">Unavailable</span>`
         : `<a class="video-btn video-btn-primary" href="${esc(v.url)}" download="${esc(v.title)}.mp4" target="_blank" rel="noopener">Download</a>`;
     return `
     <div class="video-card" id="video-card-${v.id}">
@@ -5677,7 +5677,7 @@ function renderMcpSettings(data) {
         const lim = data.discovery_limits || data.free_limits || {};
         const trialLim = data.trial_limits || {};
         if (data.is_paid) {
-            quota.textContent = `You’re on ${plan} — full niche library access in Claude.`;
+            quota.textContent = `You’re on ${plan}, with full niche library access in Claude.`;
         } else if (data.is_trial || plan.endsWith('_trial')) {
             quota.textContent =
                 `Free trial niche library in Claude: up to `
@@ -5743,7 +5743,7 @@ async function copyMcpUrl() {
         if (statusEl) statusEl.textContent = 'Connector link copied.';
         track('mcp_url_copied', {});
     } catch {
-        if (statusEl) statusEl.textContent = 'Copy failed — select the link and copy manually.';
+        if (statusEl) statusEl.textContent = 'Copy failed. Select the link and copy manually.';
     }
 }
 
@@ -5756,7 +5756,7 @@ async function copyMcpKey() {
         if (statusEl) statusEl.textContent = 'Connect key copied.';
         track('mcp_key_copied', {});
     } catch {
-        if (statusEl) statusEl.textContent = 'Copy failed — select the key and copy manually.';
+        if (statusEl) statusEl.textContent = 'Copy failed. Select the key and copy manually.';
     }
 }
 
@@ -5769,7 +5769,7 @@ async function copyMcpClaudeJson() {
         if (statusEl) statusEl.textContent = 'Desktop config copied.';
         track('mcp_claude_json_copied', {});
     } catch {
-        if (statusEl) statusEl.textContent = 'Copy failed — select the config and copy manually.';
+        if (statusEl) statusEl.textContent = 'Copy failed. Select the config and copy manually.';
     }
 }
 
@@ -5784,7 +5784,7 @@ async function rotateMcpKey() {
             return;
         }
         renderMcpSettings(data);
-        if (statusEl) statusEl.textContent = 'New key ready — paste it into Claude when you reconnect.';
+        if (statusEl) statusEl.textContent = 'New key ready. Paste it into Claude when you reconnect.';
         track('mcp_key_rotated', {});
     } catch (e) {
         if (statusEl) statusEl.textContent = 'New key failed: ' + e.message;
@@ -5822,7 +5822,7 @@ async function saveAtlasKey() {
         if (statusEl) {
             statusEl.style.color = data.warning ? '#fbbf24' : 'var(--success)';
             statusEl.textContent = data.warning
-                || 'Connected — voice & cooks bill your Atlas account.';
+                || 'Connected. Voice & cooks bill your Atlas account.';
         }
         track('atlas_byok_saved', {});
     } catch (e) {
@@ -5867,7 +5867,7 @@ async function saveHeygenKey() {
         }
         document.getElementById('heygen-user-key').value = '';
         renderHeygenStatus(data.heygen || { configured: true });
-        if (statusEl) statusEl.textContent = 'Connected — you can cook Avatar videos.';
+        if (statusEl) statusEl.textContent = 'Connected. You can cook Avatar videos.';
         track('heygen_key_saved', {});
     } catch (e) {
         if (statusEl) statusEl.textContent = 'Save failed: ' + e.message;
@@ -5936,7 +5936,7 @@ async function loadHeygenAvatars() {
         });
     } catch (e) {
         grid.innerHTML = `<p style="font-size:14px;color:var(--app-ink-2);">${esc(e.message)}</p>`
-            + `<p style="font-size:13px;color:var(--app-ink-3);margin-top:8px;">Paste an avatar/look ID below to continue — cooking does not require the grid.</p>`;
+            + `<p style="font-size:13px;color:var(--app-ink-3);margin-top:8px;">Paste an avatar/look ID below to continue. Cooking does not require the grid.</p>`;
     } finally {
         loading?.classList.add('hidden');
     }
@@ -6615,7 +6615,7 @@ function chooseAccessPaid() {
         skipTrial: true,
         reason: parked.reason || 'access_chooser_paid',
         trialMessage: parked.trialMessage
-            || 'Complete niche database in Claude, Niche Finder, and all recipes. Billed today — cancel anytime.',
+            || 'Complete niche database in Claude, Niche Finder, and all recipes. Billed today. Cancel anytime.',
         afterEndTrial: parked.afterEndTrial,
     });
 }
@@ -6700,7 +6700,7 @@ function loadBillingPage() {
             if (btn) btn.textContent = 'See plans';
         } else if (usedTrial) {
             if (title) title.textContent = 'Subscribe to keep creating';
-            if (desc) desc.textContent = 'Your free trial was already used. Choose a plan to continue — billed immediately.';
+            if (desc) desc.textContent = 'Your free trial was already used. Choose a plan to continue. Billed immediately.';
             if (btn) btn.textContent = 'Choose a plan';
         } else {
             if (title) title.textContent = 'Get full access or start a free trial';
@@ -6988,7 +6988,7 @@ async function _sbSyncPackCostUI() {
     if (currentUser && !isPaidUser() && !isAdminUser()) {
         const trialMax = Number(_featureFlags.storyboard_trial_pack_max_minutes || 8);
         const paidMax = _sbPaidPackMaxMinutes();
-        blurb.textContent = `Cast & story are free. Start a free trial to generate stills — first ${Number(_featureFlags.storyboard_trial_pack_limit || 2)} packs free (max ${trialMax} min; paid unlocks up to ${paidMax} min).`;
+        blurb.textContent = `Cast & story are free. Start a free trial to generate stills. First ${Number(_featureFlags.storyboard_trial_pack_limit || 2)} packs free (max ${trialMax} min; paid unlocks up to ${paidMax} min).`;
         return;
     }
     try {
@@ -7001,7 +7001,7 @@ async function _sbSyncPackCostUI() {
             return;
         }
         if (data.requires_trial) {
-            blurb.textContent = `Cast & story are free. Start a free trial to generate stills — first ${data.trial_pack_limit || 2} packs free (max ${data.trial_pack_max_minutes || 8} min; paid unlocks up to ${data.pack_max_minutes || _sbPaidPackMaxMinutes()} min).`;
+            blurb.textContent = `Cast & story are free. Start a free trial to generate stills. First ${data.trial_pack_limit || 2} packs free (max ${data.trial_pack_max_minutes || 8} min; paid unlocks up to ${data.pack_max_minutes || _sbPaidPackMaxMinutes()} min).`;
             return;
         }
         const c = Number(data.credits || 0);
@@ -7124,7 +7124,7 @@ function _sbSyncRangeBar() {
         const hi = Math.max(_sbRangeFrom, _sbRangeTo);
         if (label) {
             label.textContent = stretchTooLong
-                ? `Scenes ${String(lo).padStart(3, '0')}–${String(hi).padStart(3, '0')} · ~${selectedMins.toFixed(1)} min (over ${cap} min cook cap — shorten stretch)`
+                ? `Scenes ${String(lo).padStart(3, '0')}–${String(hi).padStart(3, '0')} · ~${selectedMins.toFixed(1)} min (over ${cap} min cook cap, shorten stretch)`
                 : `Scenes ${String(lo).padStart(3, '0')}–${String(hi).padStart(3, '0')} · ${selected.length} scenes · ~${selectedMins.toFixed(1)} min`;
         }
         clearBtn?.classList.remove('hidden');
@@ -7158,7 +7158,7 @@ function _sbBoardCookReady() {
 function _sbBoardCookBlockReason() {
     if (!_sbJobId) return 'Generate your storyboard first.';
     if (!_sbHasCookRange() && !_sbZipReady && _sbPackStatus !== 'complete') {
-        return 'Wait until every scene still is ready before cooking — or drag a ready stretch.';
+        return 'Wait until every scene still is ready before cooking, or drag a ready stretch.';
     }
     const selected = _sbCookBeats();
     const cap = _sbCookMaxMinutes();
@@ -7236,7 +7236,7 @@ function _sbRenderStyleSelect() {
 
 function sbGoToEpisode() {
     if (!_sbCast.length) {
-        alert('Add at least one character — or extract them from your story/script.');
+        alert('Add at least one character, or extract them from your story/script.');
         return;
     }
     if (!_sbCastHasLook()) {
@@ -7329,7 +7329,7 @@ function renderStoryboardCastGrid() {
     const hint = document.getElementById('sb-cast-hint');
     if (hint) {
         hint.textContent = _sbCastHasLook()
-            ? 'Looks ready — continue when you are happy with the cast.'
+            ? 'Looks ready. Continue when you are happy with the cast.'
             : 'Add at least one character and generate a look to continue. Saved to your account.';
     }
 }
@@ -7625,20 +7625,20 @@ function _sbRenderAssembleMatchLocal() {
     const rows = _sbAssembleFiles
         .filter(f => !/\.zip$/i.test(f.name))
         .map(f => `<tr>
-                <td class="cr-mono">—</td>
+                <td class="cr-mono">–</td>
                 <td>${esc(f.name)}</td>
                 <td style="color:var(--app-ink-3);">awaiting hash match</td>
             </tr>`).join('');
     box.classList.remove('hidden');
     box.innerHTML = `
         <p style="font-family:var(--font-body);font-size:13px;color:var(--app-ink-2);margin-bottom:8px;">
-            Filenames are ignored — run Preview match to pair clips by look (first + last frame).
+            Filenames are ignored. Run Preview match to pair clips by look (first + last frame).
         </p>
         <table style="width:100%;font-family:var(--font-body);font-size:13px;border-collapse:collapse;">
             <thead><tr style="text-align:left;color:var(--app-ink-3);">
                 <th style="padding:6px 8px;">Scene</th><th style="padding:6px 8px;">File</th><th style="padding:6px 8px;">Method</th>
             </tr></thead>
-            <tbody>${rows || '<tr><td colspan="3" style="padding:8px;">Zip selected — match on server.</td></tr>'}</tbody>
+            <tbody>${rows || '<tr><td colspan="3" style="padding:8px;">Zip selected. Match on server.</td></tr>'}</tbody>
         </table>`;
 }
 
@@ -7658,7 +7658,7 @@ function _sbRenderAssembleMatchServer(matched, unmatched) {
         </tr>`;
     }).join('');
     const un = (unmatched || []).map(u =>
-        `<tr><td class="cr-mono" style="padding:6px 8px;color:var(--app-ink-3);">—</td>
+        `<tr><td class="cr-mono" style="padding:6px 8px;color:var(--app-ink-3);">–</td>
          <td style="padding:6px 8px;">${esc(u.filename || '')}</td>
          <td style="padding:6px 8px;color:var(--error, #c55);">unmatched</td></tr>`
     ).join('');
@@ -7783,7 +7783,7 @@ async function pollStoryboardAssemble() {
             const kind = data.kind || '';
             if (summary) {
                 const mins = data.duration_sec ? (data.duration_sec / 60).toFixed(1) : '?';
-                summary.textContent = `Ready — ${data.beat_count || '?'} scenes · ~${mins} min · saved to History`;
+                summary.textContent = `Ready: ${data.beat_count || '?'} scenes · ~${mins} min · saved to History`;
             }
             if (dl) {
                 dl.href = `/api/storyboard/jobs/${_sbAssembleJobId}/download`;
@@ -7827,7 +7827,7 @@ function _friendlySbPackProgress(raw) {
         return m ? `Keeping ${m[1]} preview scenes, generating the rest…` : 'Continuing from your preview…';
     }
     if (/Uploading pack|Zipping|Writing pack/i.test(s)) return 'Saving your storyboard…';
-    if (/Queued|queue/i.test(s)) return 'Queued — starting soon…';
+    if (/Queued|queue/i.test(s)) return 'Queued, starting soon…';
     if (/Planning first-minute|Planning ~/i.test(s)) return 'Planning your scenes…';
     if (/Beat sheet ready|Planning/i.test(s)) return 'Planning your scenes…';
     if (/Locked .* character|character reference/i.test(s)) return 'Matching your cast looks…';
@@ -7853,7 +7853,7 @@ function _friendlySbPackProgress(raw) {
 function _friendlySbProgress(raw) {
     const s = String(raw || '');
     if (/Uploading pack|Zipping|Writing pack/i.test(s)) return 'Saving your storyboard…';
-    if (/Queued|queue/i.test(s)) return 'Queued — cooking soon…';
+    if (/Queued|queue/i.test(s)) return 'Queued, cooking soon…';
     if (/Starting|Joining/i.test(s)) return 'Starting your cook…';
     if (/Adding music/i.test(s)) return 'Adding music…';
     if (/Adding captions|caption/i.test(s)) return 'Adding captions…';
@@ -7927,7 +7927,7 @@ async function _sbSyncAnimateUI() {
     }
     if (!cookAllowed) {
         if (blurb) {
-            blurb.textContent = `Cook ${stretch} into motion — up to ${cap} min. `
+            blurb.textContent = `Cook ${stretch} into motion, up to ${cap} min. `
                 + `${planValueCopy()} See plans →`;
         }
         return;
@@ -8431,9 +8431,9 @@ async function startStoryboardPack(packMode = 'full', opts = {}) {
         if (parentPreviewId) {
             status.textContent = `Continuing from preview: keeping ${_sbBeats.length || '~8'} opening scenes, generating the rest…`;
         } else if (mode === 'preview') {
-            status.textContent = 'Queuing first-minute preview — ~8 opening scenes…';
+            status.textContent = 'Queuing first-minute preview (~8 opening scenes)…';
         } else {
-            status.textContent = 'Queuing full pack — stills will appear as they’re ready…';
+            status.textContent = 'Queuing full pack. Stills will appear as they’re ready…';
         }
     }
     const prog = document.getElementById('sb-progress');
@@ -8527,11 +8527,11 @@ async function pollStoryboardPack() {
             const cookReady = _sbBoardCookReady();
             if (status) {
                 if (mode === 'preview' && cookReady) {
-                    status.textContent = 'First minute ready — cook this preview, or generate the full pack.';
+                    status.textContent = 'First minute ready. Cook this preview, or generate the full pack.';
                 } else if (mode === 'preview') {
-                    status.textContent = 'First minute almost ready — waiting on remaining scene stills…';
+                    status.textContent = 'First minute almost ready. Waiting on remaining scene stills…';
                 } else if (cookReady) {
-                    status.textContent = 'Pack ready — review stills, recreate any weak ones, then cook.';
+                    status.textContent = 'Pack ready. Review stills, recreate any weak ones, then cook.';
                 } else {
                     status.textContent = _sbBoardCookBlockReason() || 'Finishing scene stills…';
                 }
@@ -8541,7 +8541,7 @@ async function pollStoryboardPack() {
             const dl = document.getElementById('sb-download');
             if (summary) {
                 const label = mode === 'preview' ? 'First-minute preview' : (data.title || 'Pack ready');
-                summary.textContent = `${label} — ${data.beat_count || data.beats?.length || '?'} scenes (~${data.target_minutes || (mode === 'preview' ? 1 : '?')} min)`;
+                summary.textContent = `${label}: ${data.beat_count || data.beats?.length || '?'} scenes (~${data.target_minutes || (mode === 'preview' ? 1 : '?')} min)`;
             }
             if (dl) {
                 dl.href = `/api/storyboard/jobs/${_sbJobId}/download`;

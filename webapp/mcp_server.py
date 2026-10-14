@@ -226,7 +226,7 @@ def list_niches(ctx: Context | None = None) -> str:
     bucket = str((user or {}).get("id") or "anon-niches")
     if not _rate_ok(_client_bucket(bucket)):
         return json.dumps({
-            "error": "Rate limit — wait a minute and try again.",
+            "error": "Rate limit reached. Wait a minute and try again.",
             "upgrade": billing.UPGRADE_CTA,
         })
     plan = _plan_of(user)
@@ -279,7 +279,7 @@ def list_niche_subjects(
     bucket = str((user or {}).get("id") or "anon")
     if not _rate_ok(_client_bucket(bucket)):
         return json.dumps({
-            "error": "Rate limit — wait a minute and try again.",
+            "error": "Rate limit reached. Wait a minute and try again.",
             "upgrade": billing.UPGRADE_CTA,
         })
     plan = _plan_of(user)
@@ -331,7 +331,7 @@ def list_niche_channels(
     bucket = str((user or {}).get("id") or "anon-ch")
     if not _rate_ok(_client_bucket(bucket)):
         return json.dumps({
-            "error": "Rate limit — wait a minute and try again.",
+            "error": "Rate limit reached. Wait a minute and try again.",
             "upgrade": billing.UPGRADE_CTA,
         })
     plan = _plan_of(user)
@@ -478,7 +478,7 @@ def generate_thumbnail(
             count=1,
         )
         if not paths:
-            return json.dumps({"error": "No thumbnail generated — try again."})
+            return json.dumps({"error": "No thumbnail generated. Try again."})
         uid = int(user["id"]) if user else 0
         url = storage.store_file(
             paths[0],

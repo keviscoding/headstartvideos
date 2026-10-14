@@ -1087,6 +1087,13 @@ def create_app():
 
 
 def main():
+    try:
+        # Updates from older releases ran an updater that could not remove
+        # retired files, so tidy them on start too.
+        import cr_update
+        cr_update.retire(HOME)
+    except Exception:
+        pass
     studio = create_app()
     studio.OUT.mkdir(exist_ok=True)
     studio._ensure_dispatcher()

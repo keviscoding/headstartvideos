@@ -60,7 +60,7 @@ window.CRLocalStudio = (() => {
             '<h1>'+(member?'Your studio is ready to <em>install.</em>':'Whole faceless videos, made on <em>your computer.</em>')+'</h1>'+
             '<p>'+(member
                 ? 'Three steps and you’re making your first video. Claude can do the installing for you.'
-                : 'Type a title or paste a script. Studio researches, writes, narrates, animates and edits a finished YouTube video in the style you choose — or one it learns from any channel.')+'</p>'+
+                : 'Type a title or paste a script. Studio researches, writes, narrates, animates and edits a finished YouTube video in the style you choose, or in one it learns from any channel.')+'</p>'+
             (member?'':'<div class="ls-hero-actions"><button class="btn-primary" data-ls-plans>See plans '+icon('arrow')+'</button><a class="ls-text-link" href="#ls-how">How it works</a></div>')+
             '</div>'+heroVisual()+'</header>';
     }
@@ -79,9 +79,9 @@ window.CRLocalStudio = (() => {
     }
     function features() {
         const list = [
-            ['film','Any faceless format','Documentaries, explainers, history, true crime, sports, essays and more — dozens of built-in styles.'],
+            ['film','Any faceless format','Documentaries, explainers, history, true crime, sports, essays and more. Dozens of built-in styles.'],
             ['style','Clone a channel’s style','Point it at a YouTube channel you admire. Studio studies the real frames and builds a reusable style.'],
-            ['cube','Motion graphics and 3D','Maps, charts, archival footage, animated scenes and fast 3D graphics — not just slideshows.'],
+            ['cube','Motion graphics and 3D','Maps, charts, archival footage, animated scenes and fast 3D graphics. Not just slideshows.'],
             ['edit','Edit before you publish','Review every scene on a timeline, fix what you don’t like, then export.']];
         return '<section class="ls-section" id="ls-how"><h2>What Studio does</h2><div class="ls-features">'+list.map(([key,title,text])=>
             '<article>'+icon(key)+'<h3>'+title+'</h3><p>'+text+'</p></article>').join('')+'</div>'+
@@ -91,7 +91,7 @@ window.CRLocalStudio = (() => {
     }
     function planCards() {
         const catalog = typeof PLAN_CATALOG !== 'undefined' ? PLAN_CATALOG : [];
-        const LOCAL = 'Videos render on <b>your computer</b> — never uses credits';
+        const LOCAL = 'Videos render on <b>your own computer</b>. No credits needed';
         const details = {
             daily: {tag:'Start making videos', items:['Studio + every built-in style',LOCAL,'Clone <b>3</b> channel styles','35 cloud credits / month for Classic recipes','Niche Finder + niche database in Claude']},
             studio_pro: {tag:'Run several channels', items:['Everything in Creator',LOCAL,'Clone <b>15</b> channel styles','60 cloud credits / month for Classic recipes','3 Classic cloud videos at once']},
@@ -105,7 +105,6 @@ window.CRLocalStudio = (() => {
         const usedTrial = !trials || (!!(u && u.trial_used) && !onTrial);
         return '<section class="ls-section" id="ls-plans"><div class="ls-plans-head"><div><h2>Plans</h2><p>Every plan includes Studio. Cancel anytime.</p></div>'+
             '<div class="ls-cycle" role="group" aria-label="Billing period"><button data-ls-cycle="monthly" class="'+(annual?'':'selected')+'">Monthly</button><button data-ls-cycle="annual" class="'+(annual?'selected':'')+'">Yearly <small>2 months free</small></button></div></div>'+
-            '<aside class="ls-local-note">'+icon('computer')+'<p><strong>Studio makes your videos on your own computer.</strong> Making Studio videos never uses credits — you only pay your own Claude and media accounts, at their prices.</p></aside>'+
             '<div class="ls-plans">'+catalog.map(plan=>{
                 const d = details[plan.tier] || {tag:'', items:[]};
                 const featured = plan.tier === 'studio_pro';
@@ -113,7 +112,7 @@ window.CRLocalStudio = (() => {
                 let cta = usedTrial ? 'Get '+plan.label : 'Start free trial';
                 const open = typeof planAvailable !== 'function' || planAvailable(plan.tier, annual ? 'annual' : 'monthly');
                 if (!open) cta = 'Coming soon';
-                else if (onTrial) cta = 'Start '+plan.label+' — '+(annual?plan.annual.charge:plan.monthly.charge)+' today';
+                else if (onTrial) cta = 'Start '+plan.label+': '+(annual?plan.annual.charge:plan.monthly.charge)+' today';
                 else if (subscribed) cta = plan.tier === current ? 'Your plan' : 'Switch to '+plan.label;
                 return '<article class="ls-plan'+(featured?' featured':'')+'">'+(featured?'<span class="ls-plan-badge">Most popular</span>':'')+
                     '<h3>'+esc(plan.label)+'</h3><p class="ls-plan-tag">'+d.tag+'</p>'+
@@ -126,10 +125,10 @@ window.CRLocalStudio = (() => {
     function faq() {
         const items = [
             ['What do I need?','A Mac or Windows computer, a Claude account (Pro or Max) and a media account from Kie.ai or Atlas Cloud. Studio checks everything during setup and tells you what’s missing.'],
-            ['What does a video cost to make?','It depends on length and style. You pay Claude and your media provider directly at their own prices — we don’t add a markup.'],
+            ['What does a video cost to make?','It depends on length and style. You pay Claude and your media provider directly at their own prices. We don’t add a markup.'],
             ['Is this different from the recipes on ChannelRecipe?','Yes. Classic recipes are ChannelRecipe v1 and run in our cloud. Studio is v2: far more styles, style cloning, motion graphics, 3D and a real editor.'],
             ['Can Claude set it up for me?','Yes. Open the downloaded folder in Claude Code and paste the prompt we give you. It checks your computer, installs what’s missing and starts the studio.'],
-            ['What if I get stuck?','Ask in our Discord — we answer there every day, and it’s where we hear what to build next.']];
+            ['What if I get stuck?','Ask in our Discord. We answer there every day, and it’s where we hear what to build next.']];
         return '<section class="ls-section ls-faq"><h2>Questions</h2>'+items.map(([q,a])=>'<details><summary>'+q+'</summary><p>'+a+'</p></details>').join('')+'</section>';
     }
     function discordCard(compact = false) {
@@ -150,15 +149,15 @@ window.CRLocalStudio = (() => {
             '<div class="ls-step"><span class="ls-step-n">2</span><div class="ls-step-body"><h3>Install it</h3>'+
                 '<div class="ls-install-options">'+
                 '<div class="ls-option recommended"><span class="ls-option-tag">Easiest</span><h4>Let Claude Code install it</h4>'+
-                    '<p>Open the extracted folder in Claude Code — in the Claude desktop app, choose <b>Code</b> and select the folder. Then paste:</p>'+
+                    '<p>Open the extracted folder in Claude Code. In the Claude desktop app, choose <b>Code</b> and select the folder, then paste:</p>'+
                     '<div class="ls-prompt-box"><code>'+esc(CLAUDE_PROMPT)+'</code><button class="btn-ghost" data-ls-copy-prompt>'+icon('copy')+'Copy</button></div>'+
                     '<p class="ls-step-note">No Claude Code yet? <a href="https://claude.com/download" target="_blank" rel="noopener">Download the Claude app</a> and sign in with your Claude account.</p></div>'+
                 '<div class="ls-option"><h4>Or install it yourself</h4>'+
-                    '<p>In the extracted folder, double-click <b>'+launcher+'</b>'+(platform==='mac'?' (if macOS blocks it, right-click → Open)':'')+'. The first launch takes a few minutes. Keep that window open — your setup page opens in the browser.</p>'+
-                    '<details class="ls-mini"><summary>It says something is missing</summary><p>Studio needs Python 3.10 or newer (3.13 recommended'+(platform==='windows'?'; tick “Add Python to PATH” when installing':'')+'), Node.js LTS and FFmpeg. The setup page links each one. Easiest fix: use the Claude Code option — it installs them for you.</p></details></div>'+
+                    '<p>In the extracted folder, double-click <b>'+launcher+'</b>'+(platform==='mac'?' (if macOS blocks it, right-click → Open)':'')+'. The first launch takes a few minutes. Keep that window open. Your setup page opens in the browser.</p>'+
+                    '<details class="ls-mini"><summary>It says something is missing</summary><p>Studio needs Python 3.10 or newer (3.13 recommended'+(platform==='windows'?'; tick “Add Python to PATH” when installing':'')+'), Node.js LTS and FFmpeg. The setup page links each one. Easiest fix: use the Claude Code option, which installs them for you.</p></details></div>'+
                 '</div></div></div>'+
             '<div class="ls-step"><span class="ls-step-n">3</span><div class="ls-step-body"><h3>Connect your account</h3>'+
-                '<p>The setup page asks for your ChannelRecipe key. Copy it here and paste it there. Keep it private — it works like a password for your studio.</p>'+
+                '<p>The setup page asks for your ChannelRecipe key. Copy it here and paste it there. Keep it private. It works like a password for your studio.</p>'+
                 '<div class="ls-step-actions"><button class="btn-secondary" data-ls-copy-key>'+icon('key')+'Copy my ChannelRecipe key</button>'+
                 '<a class="btn-ghost" href="'+SETUP_URL+'" target="_blank" rel="noopener">Open setup page ↗</a></div>'+
                 '<p class="ls-step-note">Setup then signs you in to Claude Code and connects a media account. When it says you’re ready, open the studio and make your first video.</p></div></div>'+
@@ -312,7 +311,7 @@ window.CRLocalStudio = (() => {
         if (!root()) return;
         const u = user();
         const starterNote = view==='upgrade' && u && typeof planTier==='function' && planTier(u.plan)==='starter'
-            ? '<aside class="ls-version-note"><strong>Your Starter plan includes Classic recipes (v1).</strong> Studio is included from Creator — switch any time and keep your account.</aside>' : '';
+            ? '<aside class="ls-version-note"><strong>Your Starter plan includes Classic recipes (v1).</strong> Studio is included from Creator. Switch any time and keep your account.</aside>' : '';
         const body = view === 'member' ? memberBody() : versionNote()+starterNote+features()+planCards()+discordCard(true)+faq();
         root().innerHTML = '<div class="ls-wrap">'+hero()+'<div id="ls-notice" role="status" hidden></div>'+body+
             '<footer class="ls-footer"><span>ChannelRecipe Studio'+(data?.version?' · '+esc(data.version):'')+'</span><a href="'+DISCORD_URL+'" target="_blank" rel="noopener">Help in Discord ↗</a></footer></div>';

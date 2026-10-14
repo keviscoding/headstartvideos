@@ -110,28 +110,10 @@ def latest_outputs(studio, home):
             video = _file(studio.mv.final_video(job), home / "output", _VIDEO)
             if video and video.stat().st_mtime_ns > dates.get(style, -1):
                 dates[style] = video.stat().st_mtime_ns
-                result[style] = Source(video, "Video screenshot", "/f/video/" + quote(job.name, safe=""))
+                result[style] = Source(video, "From your video", "/f/video/" + quote(job.name, safe=""))
         except (OSError, ValueError, RuntimeError, UnicodeError):
             continue
     return result
-
-
-def _sample(home, style, info, *, plain=False):
-    """Mirror original sample lookup, with a stronger local-path boundary."""
-    home = Path(home).resolve()
-    suffix = "-plain" if plain else ""
-    if plain:
-        path = _file(home / "samples" / (style + suffix + ".mp4"), home / "samples", _VIDEO)
-        if path:
-            return Source(path, "Video screenshot", "/sample/" + quote(style, safe="") + "?plain=1")
-    look = info.get("look") if isinstance(info.get("look"), dict) else {}
-    relative = look.get("sample")
-    if isinstance(relative, str) and relative and not Path(relative).is_absolute() and ".." not in Path(relative).parts:
-        path = _file(home / "assets" / relative, home / "assets", _VIDEO)
-        if path:
-            return Source(path, "Video screenshot", "/sample/" + quote(style, safe=""))
-    path = _file(home / "samples" / (style + ".mp4"), home / "samples", _VIDEO)
-    return Source(path, "Video screenshot", "/sample/" + quote(style, safe="")) if path else None
 
 
 @lru_cache(maxsize=128)
@@ -147,14 +129,15 @@ def _packaged_frame(home, style):
     if manifest is None:
         return None
     data = _read(manifest)
-    if data.get("schema") != 1:
-        return None
     frames = data.get("frames") if isinstance(data.get("frames"), dict) else {}
     row = frames.get(style)
-    if not isinstance(row, dict) or row.get("kind") != "video_frame" or row.get("file") != style + ".jpg":
+    # Only labelled style references (schema 2). Retired engine sample frames
+    # (schema 1) are never shown, even if an old file is still on disk.
+    if (data.get("schema") != 2 or not isinstance(row, dict) or row.get("kind") != "style_reference"
+            or row.get("file") != style + ".jpg"):
         return None
-    expected, source = row.get("sha256"), row.get("source_sha256")
-    if not isinstance(expected, str) or not _SHA.fullmatch(expected) or not isinstance(source, str) or not _SHA.fullmatch(source):
+    expected, channel = row.get("sha256"), str(row.get("channel") or "").strip()[:60]
+    if not isinstance(expected, str) or not _SHA.fullmatch(expected) or not channel:
         return None
     path = _file(root / row["file"], root, {".jpg"})
     if path is None:
@@ -162,7 +145,7 @@ def _packaged_frame(home, style):
     try:
         stat = path.stat()
         if _verified_frame(str(path), stat.st_size, stat.st_mtime_ns, expected):
-            return Source(path, "Video screenshot")
+            return Source(path, "Style reference · " + channel)
     except OSError:
         pass
     return None
@@ -223,8 +206,8 @@ def _study_frame(home, style, info, bridge):
     return None
 
 
-def recipe_source(studio, home, style, bridge, *, latest=None, plain=False):
-    """Choose an exact style's existing output, sample or reviewed animation."""
+def recipe_source(studio, home, style, bridge, *, latest=None):
+    """Choose an exact style's own video, learned-style frame or style reference."""
     if not isinstance(style, str) or not _STYLE.fullmatch(style):
         return None
     styles = getattr(studio.styles, "STYLES", {})
@@ -232,8 +215,10 @@ def recipe_source(studio, home, style, bridge, *, latest=None, plain=False):
     if not isinstance(info, dict):
         return None
     outputs = latest if latest is not None else latest_outputs(studio, home)
-    return (outputs.get(style) or _sample(home, style, info, plain=plain)
-            or _study_frame(home, style, info, bridge) or _packaged_frame(home, style))
+    # Your own latest video in this recipe first, then a learned style's own
+    # frames, then the recipe's labelled style reference. The retired engine
+    # sample films are no longer used for previews.
+    return (outputs.get(style) or _study_frame(home, style, info, bridge) or _packaged_frame(home, style))
 
 
 def _prune(root):

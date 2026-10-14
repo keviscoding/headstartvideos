@@ -184,7 +184,7 @@ def run_operation(home,source_project_id,arguments,bridge,proof,execute,operatio
         parent=source.get("project") or {}
         parent_spec=source.get("job_spec") or {}
         if parent.get("id") != source_project_id or source.get("brain_mode") != "claudecode":
-            raise RuntimeError("Reconnect the owner of this saved Claude Code video.")
+            raise RuntimeError("Reconnect the ChannelRecipe account that made this video, then try again.")
         if parent.get("status") != "done":
             raise RuntimeError("Finish the saved video before starting a separate 3D review or repair.")
         path=_journal(job,arguments,operation_id)

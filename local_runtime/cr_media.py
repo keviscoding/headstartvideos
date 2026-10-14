@@ -188,7 +188,7 @@ def download(url, dest):
                 for chunk in res.iter_content(1024 * 1024):
                     size += len(chunk)
                     if size > 512 * 1024 * 1024:
-                        raise AccountStop("The generated file exceeds this preview's download limit.")
+                        raise AccountStop("The generated file is larger than Studio's 512 MB download limit.")
                     f.write(chunk)
             if not size:
                 raise AccountStop("The model account returned an empty media file.")

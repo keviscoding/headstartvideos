@@ -73,7 +73,7 @@ def test_engine_text_research_vision_and_resumption_use_same_bridge(local, monke
     assert len(json.loads(receipt.read_text())) == 3
     bridge.begin_project("Resume", "jung", "crv_" + "1" * 24)
     assert calls[-1][0] == "projects/crv_" + "1" * 24
-    with pytest.raises(RuntimeError, match="CR brain"):
+    with pytest.raises(RuntimeError, match="connected ChannelRecipe Claude route"):
         engine._claude_exe()
     assert engine._claude_endpoint("anthropic") is None
 

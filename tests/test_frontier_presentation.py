@@ -17,7 +17,7 @@ def test_builtin_display_names_preserve_identity_and_creative_fields():
                 "mix": [10, 20, 70], "custom": False, "sample": True}
     saved = copy.deepcopy(original)
     row = presentation.present(original)
-    assert row["label"] == "Cinematic Reconstruction"
+    assert row["label"] == "3D Reconstruction"
     assert row["name"] == "3d" and row["engine"] == "private-original-engine"
     assert row["features"] == original["features"] and row["look"] == original["look"]
     assert row["mix"] == original["mix"] and row["sample"] is True

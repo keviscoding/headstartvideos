@@ -19,7 +19,7 @@ def _brain_readiness():
     configured = isinstance(key, str) and key.startswith("cr_mcp_") and len(key) > len("cr_mcp_")
     result = {"ok": False, "configured": configured, "verification": "before_run"}
     if not configured:
-        return {**result, "why": "Connect your ChannelRecipe account in Setup & accounts before using the CR brain."}
+        return {**result, "why": "Connect your ChannelRecipe account in Setup & accounts before Studio can use Claude."}
     try:
         parsed = urlsplit(cfg.get("url", "https://channelrecipe.com"))
         secure = bool(parsed.hostname) and (parsed.scheme == "https" or
@@ -29,7 +29,7 @@ def _brain_readiness():
     if not secure:
         return {**result, "why": "Connect to ChannelRecipe using a secure HTTPS address in Setup & accounts."}
     if not cfg.get("costs_accepted"):
-        return {**result, "why": "Review provider spending in Setup & accounts before using the CR brain."}
+        return {**result, "why": "Review provider spending in Setup & accounts before Studio can use Claude."}
     if cfg.get("brain_mode") == "claudecode":
         try:
             import cr_claude

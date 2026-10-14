@@ -454,7 +454,7 @@ async function rkImportUrls() {
         done: 0,
         total: batch.length,
         label: 'Downloading clip 1 of ' + batch.length + '…',
-        hint: 'Still working — TikTok/YouTube imports often take 20–90 seconds each.',
+        hint: 'Still working. TikTok/YouTube imports often take 20–90 seconds each.',
     });
 
     for (let i = 0; i < batch.length; i++) {
@@ -485,7 +485,7 @@ async function rkImportUrls() {
             done: i + 1,
             total: batch.length,
             label: i + 1 < batch.length
-                ? `Downloaded ${i + 1} of ${batch.length} — starting next…`
+                ? `Downloaded ${i + 1} of ${batch.length}. Starting next…`
                 : `Finished ${i + 1} of ${batch.length}`,
             hint: fail
                 ? `${ok} imported, ${fail} failed so far.`
@@ -515,7 +515,7 @@ async function rkImportUrls() {
         } else {
             rkSetImportProgress(false);
             status.className = 'rk-url-status is-err';
-            status.textContent = 'All imports failed — try uploading the files instead.';
+            status.textContent = 'All imports failed. Try uploading the files instead.';
         }
     } else if (ok && !fail) {
         setTimeout(() => rkSetImportProgress(false), 3500);
@@ -988,7 +988,7 @@ async function rkRefreshAccess() {
             const left = _rkAccess.ranking_free_left ?? 0;
             badge.textContent = left > 0
                 ? `${left} free ranking short${left === 1 ? '' : 's'} left on your trial`
-                : 'Free ranking shorts used — upgrade to keep cooking';
+                : 'Free ranking shorts used. Upgrade to keep cooking';
         } else if (_rkAccess.can_cook) {
             const base = rkFormatCredits(rkListedCredit('base'));
             const withVo = rkFormatCredits(rkListedCredit('commentary'));
