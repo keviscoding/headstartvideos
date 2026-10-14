@@ -14,7 +14,7 @@
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { min-height: 100vh; background: var(--canvas); color: var(--ink); font-family: "General Sans", system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; padding: 48px 16px; }
         .brand { display: flex; align-items: center; gap: 10px; font-family: "Cabinet Grotesk", system-ui, sans-serif; font-weight: 800; font-size: 20px; margin-bottom: 32px; color: var(--ink); text-decoration: none; }
-        .brand span { color: var(--accent); }
+        .brand b { font-weight: 800; } .brand span { color: var(--accent); }
         .card { width: 100%; max-width: 440px; background: var(--white); border: 1px solid var(--hairline); border-radius: 18px; padding: 32px 28px; box-shadow: 0 18px 50px rgba(22, 22, 26, 0.06); }
         h1 { font-family: "Cabinet Grotesk", system-ui, sans-serif; font-size: 26px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; margin-bottom: 10px; }
         p { color: var(--ink-2); font-size: 15px; line-height: 1.6; margin-bottom: 18px; }
@@ -37,7 +37,7 @@
     </style>
 </head>
 <body>
-    <a class="brand" href="/"><img src="/static/glyph.svg?v=pot1" width="30" height="30" alt="">Channel<span>Recipe</span></a>
+    <a class="brand" href="/"><img src="/static/glyph.svg?v=pot1" width="30" height="30" alt=""><b>Channel<span>Recipe</span></b></a>
     <main class="card">
         <div id="view-loading" class="center"><div class="spinner" aria-hidden="true"></div><p>Checking your account…</p></div>
 
