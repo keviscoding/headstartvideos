@@ -139,3 +139,18 @@ def test_reference_animation_public_copy_cannot_inherit_a_three_d_base_descripti
     assert result["description"]==result["tagline"] and "learned animation" in result["description"]
     assert "3D" not in result["description"] and "footage" not in result["description"]
     assert row["description"]=="Premium 3D documentary with real footage"
+
+
+def test_display_copy_has_no_em_dashes_but_prompts_and_ids_are_untouched():
+    catalog = {"channels": [{"name": "nocturne", "character": "He is in EVERY frame \u2014 always",
+                             "points": ["FPV drone one-takes \u2014 through the clouds"],
+                             "options_note": "Real footage \u2014 found on YouTube \u2014 trimmed"}],
+               "prices": {"features": {"maps": {"note": "drawn on your computer \u2014 free"}}}}
+    shown = presentation.plain_copy(catalog)
+    row = shown["channels"][0]
+    assert row["points"] == ["FPV drone one-takes, through the clouds"]
+    assert row["options_note"] == "Real footage, found on YouTube, trimmed"
+    assert shown["prices"]["features"]["maps"]["note"] == "drawn on your computer, free"
+    assert row["character"] == catalog["channels"][0]["character"]
+    assert row["name"] == "nocturne"
+    assert presentation.plain_copy("\u2014 leading and trailing \u2014") == "leading and trailing"

@@ -115,6 +115,25 @@ def present(channel, style_info=None, *, automatic=False):
     return row
 
 
+_DASH = re.compile(r"\s*\u2014\s*")
+# Identifiers and prompts the studio sends back to the engine stay exactly as
+# written; every other catalogue value is display copy.
+_VERBATIM = frozenset({"name", "id", "style", "character"})
+
+
+def plain_copy(value, key=None):
+    """Catalogue copy for display, without the engine's em dashes."""
+    if key in _VERBATIM:
+        return value
+    if isinstance(value, dict):
+        return {k: plain_copy(v, k) for k, v in value.items()}
+    if isinstance(value, list):
+        return [plain_copy(v, key) for v in value]
+    if isinstance(value, str) and "\u2014" in value:
+        return _DASH.sub(", ", value.strip().strip("\u2014").strip())
+    return value
+
+
 def presentationCatalog(channels, style_info=None):
     """Enrich only existing rows: never expose intentionally hidden variants."""
     return [present(channel, style_info) for channel in channels]
