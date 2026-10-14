@@ -82,6 +82,17 @@ def test_workspace_replaces_only_root_and_preserves_original_controls(env):
         headers={"X-CR-Local-Token": TOKEN}).json == {"queued": ["New title"]}
 
 
+def test_a_broken_preview_never_hides_the_recipe_list(env, monkeypatch):
+    def broken(*args, **kwargs):
+        raise OSError("preview disk error")
+    monkeypatch.setattr(workspace.cr_preview, "recipe_source", broken)
+    monkeypatch.setattr(workspace.cr_preview, "latest_outputs", broken)
+    response = env.get("/cr-workspace/catalog")
+    assert response.status_code == 200
+    assert [row["name"] for row in response.json["channels"]] == [row["name"] for row in env.rows]
+    assert all(row["preview_available"] is False for row in response.json["channels"])
+
+
 def test_catalog_has_actual_capabilities_and_ids_without_private_style_fields(env):
     response = env.get("/cr-workspace/catalog")
     assert response.status_code == 200

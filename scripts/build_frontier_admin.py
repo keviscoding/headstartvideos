@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 from scripts import studio_branding
-VERSION = "5.3-admin.49"
+VERSION = "5.3-admin.50"
 PRIVATE_WORKFLOWS = {
     "cr-style-delivery-prompt.txt": ROOT / "data/frontier/reference2d-compiler.txt",
     "cr-style-study-brief.txt": ROOT / "data/frontier/reference2d-study.txt",
@@ -274,7 +274,11 @@ def main():
         finally:
             client.delete_object(Bucket=bucket, Key=canary)
         try:
-            client.upload_file(str(args.output), bucket, RELEASE_KEY,
+            from boto3.s3.transfer import TransferConfig
+            # Few parallel parts: large single bursts were dropped by the storage endpoint.
+            transfer = TransferConfig(multipart_threshold=16 * 1024 * 1024, multipart_chunksize=16 * 1024 * 1024,
+                                      max_concurrency=2)
+            client.upload_file(str(args.output), bucket, RELEASE_KEY, Config=transfer,
                                ExtraArgs={"ACL": "private", "ContentType": "application/zip",
                                           "CacheControl": "private, no-store", "Metadata": {"sha256": manifest["sha256"]}})
             verify_private(client, bucket, RELEASE_KEY, endpoint, config.SPACES_CDN_ENDPOINT)
