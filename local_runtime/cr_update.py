@@ -299,6 +299,38 @@ def apply(home: Path, staging: Path, files, backup: Path) -> tuple[int, bool, li
     return len(replaced), requirements_changed, kept
 
 
+def retire(home: Path = HOME) -> list[str]:
+    """Remove files an earlier release shipped that this release no longer uses.
+
+    cr-files.json lists each retired path with the hashes it shipped under. A
+    file is removed only while it still has one of those hashes, so anything a
+    creator edited or added is never touched. Safe to run on every start.
+    """
+    try:
+        retired = json.loads((home / "cr-files.json").read_text()).get("retired", {})
+    except (OSError, ValueError):
+        return []
+    removed = []
+    for name, hashes in (retired.items() if isinstance(retired, dict) else ()):
+        relative = PurePosixPath(str(name))
+        if (relative.is_absolute() or ".." in relative.parts or _protected(relative)
+                or not isinstance(hashes, list)):
+            continue
+        target = home.joinpath(*relative.parts)
+        try:
+            if target.is_symlink() or not target.is_file() or _digest(target) not in hashes:
+                continue
+            target.unlink()
+            removed.append(relative.as_posix())
+            parent = target.parent
+            while parent != home and not any(parent.iterdir()):
+                parent.rmdir()
+                parent = parent.parent
+        except OSError:
+            continue
+    return removed
+
+
 def update(home: Path = HOME, *, get=http_get, running=studio_running, now=time.time) -> str:
     try:
         local = json.loads((home / "cr-release.json").read_text())["version"]
@@ -326,6 +358,7 @@ def update(home: Path = HOME, *, get=http_get, running=studio_running, now=time.
     finally:
         shutil.rmtree(staging, ignore_errors=True)
         archive.unlink(missing_ok=True)
+    retire(home)
     if requirements_changed:
         # The launcher installs libraries once; make it check them again.
         (home / ".venv" / ".cr-installed").unlink(missing_ok=True)

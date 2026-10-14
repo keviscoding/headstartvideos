@@ -61,9 +61,10 @@ def packaged(env, style="3d", *, data=None):
     image = root / (style + ".jpg")
     image.write_bytes(jpeg() if data is None else data)
     manifest = root / "manifest.json"
-    saved = json.loads(manifest.read_text()) if manifest.exists() else {"schema": 1, "frames": {}}
-    saved["frames"][style] = {"file": image.name, "kind": "video_frame",
-        "sha256": hashlib.sha256(image.read_bytes()).hexdigest(), "source_sha256": "b" * 64}
+    saved = json.loads(manifest.read_text()) if manifest.exists() else {"schema": 2, "kind": "style_reference", "frames": {}}
+    saved["frames"][style] = {"file": image.name, "kind": "style_reference", "channel": "Reference Channel",
+        "title": "A reference video", "url": "https://www.youtube.com/watch?v=reference",
+        "sha256": hashlib.sha256(image.read_bytes()).hexdigest()}
     manifest.write_text(json.dumps(saved))
     return image
 
@@ -113,10 +114,11 @@ def test_real_packaged_screenshot_catalog_and_route_with_no_decode(env, monkeypa
     row = env.get("/cr-workspace/catalog").json["channels"][0]
     assert row["preview_available"] is True
     assert row["preview_url"] == "/cr-workspace/preview/recipe/3d.jpg"
-    assert row["preview_video_url"] is None and row["preview_label"] == "Video screenshot"
+    # Recipe cards show a labelled style reference that credits its channel.
+    assert row["preview_video_url"] is None and row["preview_label"] == "Style reference · Reference Channel"
     response = env.get(row["preview_url"])
     assert response.status_code == 200 and response.data == target.read_bytes()
-    assert response.mimetype == "image/jpeg" and response.headers["X-CR-Preview"] == "Video screenshot"
+    assert response.mimetype == "image/jpeg" and response.headers["X-CR-Preview"] == "Style reference · Reference Channel"
     assert response.headers["Cache-Control"] == "private, no-store"
     assert str(env.home) not in env.get("/cr-workspace/catalog").text
 
@@ -131,18 +133,22 @@ def test_no_video_sample_does_not_substitute_art_or_reference_picture(env):
     assert env.get("/cr-workspace/preview/recipe/3d.jpg").status_code == 404
 
 
-def test_original_real_sample_paths_are_exact_and_watchable(env):
+def test_retired_engine_samples_and_old_frames_are_never_previews(env):
+    # The old brand's sample films and schema 1 sample frames are retired.
     sample = env.home / "assets/samples/actual.webm"
     sample.parent.mkdir(parents=True)
     sample.write_bytes(b"sample-test")
     env.styles["3d"]["look"]["sample"] = "samples/actual.webm"
-    result = preview.recipe_source(env.studio, env.home, "3d", env.bridge)
-    assert result.path == sample and result.video_url == "/sample/3d"
+    (env.home / "samples").mkdir()
+    (env.home / "samples/3d.mp4").write_bytes(b"old sample")
+    old = env.home / "cr_recipe_frames"
+    old.mkdir()
+    (old / "3d.jpg").write_bytes(jpeg())
+    (old / "manifest.json").write_text(json.dumps({"schema": 1, "frames": {"3d": {"file": "3d.jpg", "kind": "video_frame",
+        "sha256": hashlib.sha256((old / "3d.jpg").read_bytes()).hexdigest(), "source_sha256": "b" * 64}}}))
+    assert preview.recipe_source(env.studio, env.home, "3d", env.bridge) is None
     row = env.get("/cr-workspace/catalog").json["channels"][0]
-    assert row["preview_video_url"] == "/sample/3d"
-    for invalid in ("https://evil.example/movie.mp4", "../private.mp4", str(env.home / "private.mp4")):
-        env.styles["3d"]["look"]["sample"] = invalid
-        assert preview.recipe_source(env.studio, env.home, "3d", env.bridge) is None
+    assert row["preview_available"] is False and row["preview_video_url"] is None
 
 
 def test_latest_finished_output_for_exact_style_wins_and_uses_published_movie(env):

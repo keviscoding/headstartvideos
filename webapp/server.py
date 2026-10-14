@@ -576,7 +576,7 @@ async def auth_send_code(req: AuthSendCodeRequest):
         raise HTTPException(400, "Invalid email")
     domain = email.split("@")[1]
     if domain in _DISPOSABLE_EMAIL_DOMAINS:
-        raise HTTPException(400, "Please use a permanent email address — temporary inboxes aren't supported.")
+        raise HTTPException(400, "Please use a permanent email address. Temporary inboxes aren't supported.")
     code = create_verify_code(email)
     try:
         from webapp.email_service import send_verification_code
@@ -2232,7 +2232,7 @@ async def ranking_import_url(req: RankingImportUrlRequest, user: dict = Depends(
         ) from e
     except Exception as e:
         print(f"[ranking] import-url failed: {e}")
-        raise HTTPException(500, "Import failed — try uploading the file instead.") from e
+        raise HTTPException(500, "Import failed. Try uploading the file instead.") from e
 
     duration = 0.0
     width = height = 0

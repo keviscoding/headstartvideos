@@ -88,7 +88,7 @@ def test_catalog_has_actual_capabilities_and_ids_without_private_style_fields(en
     assert response.json["features"] == [{"key": "threed"}] and response.json["caps"] == {"threed": True}
     assert response.json["prices"] == {"images": 2} and response.json["dlc"] == {"maps": True}
     assert [row["name"] for row in response.json["channels"]] == [row["name"] for row in env.rows]
-    assert response.json["channels"][0]["label"] == "Cinematic Reconstruction"
+    assert response.json["channels"][0]["label"] == "3D Reconstruction"
     assert response.json["channels"][1]["label"] == "My precise 2D style"
     assert response.json["channels"][1]["visual_policy"] == "reference_only"
     assert "automatic" not in response.json

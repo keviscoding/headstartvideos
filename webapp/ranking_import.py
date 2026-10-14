@@ -403,7 +403,7 @@ def _download_via_ytdlp(url: str, out_path: Path, platform: str) -> dict:
         err = ((e.stderr or e.stdout or "")[-300:]).strip() or "Download failed"
         raise RuntimeError(err) from e
     except subprocess.TimeoutExpired as e:
-        raise RuntimeError("Download timed out — try uploading the file instead.") from e
+        raise RuntimeError("Download timed out. Try uploading the file instead.") from e
 
     candidates = sorted(
         out_path.parent.glob(out_path.stem + ".*"),
@@ -482,7 +482,7 @@ def import_ranking_url(url: str, out_path: Path) -> dict:
             raise RuntimeError(friendly) from e
 
     if not out_path.exists():
-        raise RuntimeError("Download failed — no output file")
+        raise RuntimeError("Download failed: no output file")
     size = out_path.stat().st_size
     if size > MAX_IMPORT_BYTES:
         out_path.unlink(missing_ok=True)

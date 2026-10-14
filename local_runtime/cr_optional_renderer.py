@@ -223,7 +223,7 @@ def install(studio, activity, *, home, readiness=None):
             except Exception:
                 unavailable = True
         return jsonify(choices=choices, recovery=recovery_status(), message=(
-            "Some saved projects could not be confirmed. Reconnect their ChannelRecipe owner or review setup."
+            "Some saved projects could not be confirmed. Reconnect the ChannelRecipe account that made them, or review setup."
             if unavailable else ""))
 
     @studio.app.post("/cr-renderer/recovery")

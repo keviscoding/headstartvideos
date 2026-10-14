@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 from scripts import studio_branding
-VERSION = "5.3-admin.44"
+VERSION = "5.3-admin.45"
 PRIVATE_WORKFLOWS = {
     "cr-style-delivery-prompt.txt": ROOT / "data/frontier/reference2d-compiler.txt",
     "cr-style-study-brief.txt": ROOT / "data/frontier/reference2d-study.txt",
@@ -50,25 +50,38 @@ def runtime_resources(root: Path):
 
 
 def private_preview_resources(root: Path):
-    """Package only hash-bound real sample screenshots from the private build."""
-    folder=root / "data/frontier/recipe-previews"
+    """Package hash-bound style reference frames shown on recipe cards.
+
+    These are labelled references for each recipe's look (with the source
+    channel credited), not Studio output. The retired engine sample frames
+    are never packaged.
+    """
+    folder=root / "data/frontier/recipe-references"
     if not folder.exists():
         return []
     manifest=folder / "manifest.json"
     if folder.is_symlink() or not folder.is_dir() or manifest.is_symlink() or not manifest.is_file():
-        raise ValueError("Private video previews must be ordinary owned files.")
+        raise ValueError("Style reference frames must be ordinary owned files.")
     data=json.loads(manifest.read_text())
-    if data.get("schema")!=1 or data.get("source_archive_sha256")!=SOURCE_SHA256 or not isinstance(data.get("frames"),dict):
-        raise ValueError("Private video previews must match the pinned source.")
+    if data.get("schema")!=2 or data.get("kind")!="style_reference" or not isinstance(data.get("frames"),dict):
+        raise ValueError("Style reference frames need a schema 2 manifest.")
     resources=[(manifest,"cr_recipe_frames/manifest.json")]
     for style,row in data["frames"].items():
-        if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,139}",style) or not isinstance(row,dict) or row.get("file")!=style+".jpg" or row.get("kind")!="video_frame":
-            raise ValueError("Invalid private video preview identity.")
+        if (not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,139}",style) or not isinstance(row,dict)
+                or row.get("file")!=style+".jpg" or row.get("kind")!="style_reference"
+                or not str(row.get("channel") or "").strip()):
+            raise ValueError("Invalid style reference identity.")
         path=folder / row["file"]
-        if path.is_symlink() or not path.is_file() or path.stat().st_size>1024*1024 or hashlib.sha256(path.read_bytes()).hexdigest()!=row.get("sha256") or not re.fullmatch(r"[a-f0-9]{64}",str(row.get("source_sha256",""))):
-            raise ValueError("Private video preview changed.")
+        if path.is_symlink() or not path.is_file() or path.stat().st_size>1024*1024 or hashlib.sha256(path.read_bytes()).hexdigest()!=row.get("sha256"):
+            raise ValueError("Style reference frame changed.")
         resources.append((path,"cr_recipe_frames/"+path.name))
     return resources
+
+
+# Engine sample films from the retired brand; recipe cards use style references.
+RETIRED_SAMPLES = {"assets/brand/1965 Lotus 38 - Documentary sample.mp4",
+                   "assets/brand/POV Paid-Off Civic - 2D Stories sample.mp4",
+                   "assets/brand/The Shadow You Keep Feeding Without Knowing It.mp4"}
 
 
 def compose_claude_instructions(original: bytes, overrides: bytes) -> bytes:
@@ -105,7 +118,39 @@ def verify_private(client, bucket, key, endpoint, cdn=""):
             raise RuntimeError("Anonymous access was not denied. Do not publish this bundle.")
 
 
-def build(source: Path, target: Path):
+def previous_release(folder: Path) -> Path | None:
+    """The newest earlier release ZIP built on this machine, if any."""
+    current = int(VERSION.rsplit(".", 1)[1])
+    found = []
+    for path in folder.glob("channelrecipe-5.3-admin.*.zip"):
+        build_number = path.name[len("channelrecipe-5.3-admin."):-len(".zip")]
+        if build_number.isdigit() and int(build_number) < current:
+            found.append((int(build_number), path))
+    return max(found)[1] if found else None
+
+
+def retired_files(previous: Path | None, shipped: set) -> dict:
+    """Files earlier releases shipped that this one doesn't, with every hash they shipped under.
+
+    Installed Studios remove these on update/start only while the file still
+    has one of those hashes, so creator edits are never deleted.
+    """
+    if previous is None:
+        return {}
+    with zipfile.ZipFile(previous) as archive:
+        try:
+            listing = json.loads(archive.read("ChannelRecipe studio/cr-files.json"))
+        except KeyError:
+            return {}
+    retired = {}
+    for path, hashes in (listing.get("retired") or {}).items():
+        retired.setdefault(path, set()).update(hashes)
+    for path, digest in (listing.get("files") or {}).items():
+        retired.setdefault(path, set()).add(digest)
+    return {path: sorted(hashes) for path, hashes in sorted(retired.items()) if path not in shipped}
+
+
+def build(source: Path, target: Path, previous: Path | None = None):
     if any(not path.is_file() for path in PRIVATE_WORKFLOWS.values()):
         raise ValueError("The private reference animation workflow resources are required for this admin build.")
     with source.open("rb") as f:
@@ -159,6 +204,8 @@ def build(source: Path, target: Path):
                     continue
                 if rel.name in {".env", ".env.example", ".DS_Store"} or rel.suffix == ".pyc":
                     continue
+                if str(rel) in RETIRED_SAMPLES:
+                    continue
                 # Preserve the source inventory and source hash; record every
                 # owned branding transformation instead of claiming byte parity.
                 relative = "CREATIVE_GUIDE.md" if str(rel) == "CLAUDE.md" else str(rel)
@@ -184,9 +231,12 @@ def build(source: Path, target: Path):
                 "transformed_files": transformed_files,
             }, indent=2).encode())
             # Every shipped file's hash, so the in-place updater can tell which
-            # installed files a creator edited and keep them.
+            # installed files a creator edited and keep them, plus the files
+            # earlier releases shipped that should now be removed.
+            retired = retired_files(previous, set(shipped) | {"cr-files.json"})
             write_resource("cr-files.json", json.dumps({
                 "schema": 1, "version": VERSION, "files": dict(sorted(shipped.items())),
+                "retired": retired,
             }, indent=1).encode())
         with zipfile.ZipFile(staged) as archive:
             branding_report = studio_branding.assert_clean_archive(archive)
@@ -196,7 +246,7 @@ def build(source: Path, target: Path):
     with target.open("rb") as f:
         digest = hashlib.file_digest(f, "sha256").hexdigest()
     return {"version": VERSION, "bytes": target.stat().st_size, "sha256": digest,
-            "engine_files": count, "transformed_files": len(transformed_files),
+            "engine_files": count, "transformed_files": len(transformed_files), "retired_files": len(retired),
             "branding": branding_report}
 
 
@@ -205,8 +255,11 @@ def main():
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=ROOT / "data/frontier" / ("channelrecipe-" + VERSION + ".zip"))
     parser.add_argument("--upload", action="store_true")
+    parser.add_argument("--previous", type=Path, help="Earlier release ZIP whose dropped files to retire "
+                        "(default: newest earlier release in the output folder)")
     args = parser.parse_args()
-    manifest = build(args.source, args.output)
+    previous = args.previous or previous_release(args.output.parent)
+    manifest = build(args.source, args.output, previous)
     (args.output.parent / "manifest.json").write_text(json.dumps(manifest, indent=2))
     if args.upload:
         from webapp import storage

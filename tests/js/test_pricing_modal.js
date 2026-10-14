@@ -206,7 +206,7 @@ console.log('\nopenUpgradeFlow: active trial → convert pricing (no chooser)');
         eq(chooser.classList.contains('hidden') || chooser.style.display === 'none', true, 'chooser closed');
     });
     check('CTA names the charge today', () => {
-        has(doc.getElementById('pricing-cta-daily').textContent, 'Start Creator — $49 today', 'creator CTA');
+        has(doc.getElementById('pricing-cta-daily').textContent, 'Start Creator: $49 today', 'creator CTA');
     });
     check('canStartFreeTrial is false while on trial', () => {
         eq(run('canStartFreeTrial()'), false, 'canStartFreeTrial');

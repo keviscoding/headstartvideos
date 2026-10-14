@@ -20,10 +20,15 @@ import cr_update  # noqa: E402
 KEY = "cr_mcp_" + "k" * 24
 
 
-def release(version, files):
-    shipped = {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}
+def sha(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def release(version, files, retired=None):
+    shipped = {name: sha(data) for name, data in files.items()}
     files = {**files, "cr-release.json": json.dumps({"version": version}).encode(),
-             "cr-files.json": json.dumps({"schema": 1, "version": version, "files": shipped}).encode()}
+             "cr-files.json": json.dumps({"schema": 1, "version": version, "files": shipped,
+                                          "retired": retired or {}}).encode()}
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
         for name, data in files.items():
@@ -243,3 +248,38 @@ def test_a_download_that_does_not_match_the_published_release_changes_nothing(st
     with pytest.raises(cr_update.UpdateStopped, match="didn't match the published release"):
         run(studio, Server("5.3-admin.45", zip_bytes, sha="0" * 64))
     assert (studio / "cr_studio.py").read_bytes() == b"old studio"
+
+
+def test_retired_files_are_removed_only_while_unchanged(studio):
+    (studio / "assets/brand").mkdir(parents=True)
+    (studio / "assets/brand/old sample.mp4").write_bytes(b"retired film")
+    (studio / "frames").mkdir()
+    (studio / "frames/old.jpg").write_bytes(b"old frame")
+    (studio / "frames/edited.jpg").write_bytes(b"creator changed this")
+    (studio / "output/job/keep.mp4").write_bytes(b"retired film")
+    zip_bytes, _ = release("5.3-admin.45", {"cr_studio.py": b"new studio"}, retired={
+        "assets/brand/old sample.mp4": [sha(b"retired film")],
+        "frames/old.jpg": [sha(b"old frame")],
+        "frames/edited.jpg": [sha(b"the shipped frame")],
+        # Never honoured, even if a release listed them.
+        "output/job/keep.mp4": [sha(b"retired film")],
+        "../outside.mp4": [sha(b"retired film")],
+    })
+    run(studio, Server("5.3-admin.45", zip_bytes))
+    assert not (studio / "assets/brand").exists(), "empty retired folders are tidied too"
+    assert not (studio / "frames/old.jpg").exists()
+    assert (studio / "frames/edited.jpg").read_bytes() == b"creator changed this"
+    assert (studio / "output/job/keep.mp4").exists()
+    assert (studio / "output/job/video.mp4").exists()
+
+
+def test_retire_runs_on_its_own_for_installs_updated_by_an_older_updater(studio):
+    (studio / "assets").mkdir()
+    (studio / "assets/old.mp4").write_bytes(b"retired film")
+    (studio / "assets/logo.png").write_bytes(b"still shipped")
+    listing = json.loads((studio / "cr-files.json").read_text())
+    listing["retired"] = {"assets/old.mp4": [sha(b"retired film")]}
+    (studio / "cr-files.json").write_text(json.dumps(listing))
+    assert cr_update.retire(studio) == ["assets/old.mp4"]
+    assert (studio / "assets/logo.png").exists()
+    assert cr_update.retire(studio) == []

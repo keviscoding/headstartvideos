@@ -523,9 +523,9 @@ def test_failed_save_and_read_only_refresh_keep_unsaved_choice_blocked(setup_pag
 
 
 @pytest.mark.parametrize("purpose,button,approved,guidance", [
-    ("video", "Allow one video-stage attempt", "Approved — resume this video in the studio", "reused from cache"),
-    ("setup", "Allow one model-check attempt", "Approved — repeat model verification", "Approval does not start verification"),
-    (None, "Allow one stage attempt", "Approved — return to the original controls", "original controls that started this work"),
+    ("video", "Allow one video-stage attempt", "Approved. Resume this video in the studio", "reused from cache"),
+    ("setup", "Allow one model-check attempt", "Approved. Repeat model verification", "Approval does not start verification"),
+    (None, "Allow one stage attempt", "Approved. Return to the original controls", "original controls that started this work"),
 ])
 def test_recovery_approval_guidance_matches_work_purpose_without_generation(setup_page, purpose, button, approved, guidance):
     data = setup_page

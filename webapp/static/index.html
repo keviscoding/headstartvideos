@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ChannelRecipe — Proven recipes for faceless YouTube channels</title>
+    <title>ChannelRecipe Studio</title>
     <link rel="icon" href="/static/favicon.svg">
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="/static/styles.css?v=20261014-v2">
+    <link rel="stylesheet" href="/static/styles.css?v=20261014-v4">
     <script>
         tailwind.config = {
             theme: {
@@ -171,7 +171,7 @@
         <div class="max-w-5xl mx-auto px-6 pt-6">
             <div class="v1-banner" role="note">
                 <span class="nav-version">v1</span>
-                <p><strong>You’re using Classic recipes.</strong> ChannelRecipe Studio (v2) makes far better videos — dozens of styles, channel style cloning, motion graphics, 3D and a real editor.</p>
+                <p><strong>You’re using Classic recipes.</strong> ChannelRecipe Studio (v2) makes far better videos, with dozens of styles, channel style cloning, motion graphics, 3D and a real editor.</p>
                 <button type="button" class="btn-primary" onclick="navigateTo('local-studio')">Try Studio v2 →</button>
             </div>
         </div>
@@ -242,7 +242,7 @@
                         </p>
                     </div>
                     <label class="cr-label" for="rk-url-input">Paste links</label>
-                    <textarea id="rk-url-input" class="cr-input rk-url-input" rows="3" placeholder="Paste TikTok / YouTube / Instagram links — one per line&#10;https://www.tiktok.com/@…&#10;https://youtube.com/shorts/…"></textarea>
+                    <textarea id="rk-url-input" class="cr-input rk-url-input" rows="3" placeholder="Paste TikTok / YouTube / Instagram links, one per line&#10;https://www.tiktok.com/@…&#10;https://youtube.com/shorts/…"></textarea>
                     <div class="flex gap-3" style="justify-content:flex-end;margin:8px 0 4px;">
                         <button type="button" id="rk-btn-import-url" class="btn-secondary" onclick="rkImportUrls()">Import links</button>
                     </div>
@@ -253,7 +253,7 @@
                             <span id="rk-import-progress-count" class="cr-mono">0 / 0</span>
                         </div>
                         <div class="rk-import-progress-bar"><div id="rk-import-progress-fill" class="rk-import-progress-fill"></div></div>
-                        <div id="rk-import-progress-hint" class="rk-import-progress-hint">TikTok / YouTube imports can take 20–90s each — keep this tab open.</div>
+                        <div id="rk-import-progress-hint" class="rk-import-progress-hint">TikTok / YouTube imports can take 20–90s each. Keep this tab open.</div>
                     </div>
                     <div id="rk-upload-zone" class="rk-upload-zone" style="margin-top:14px;">
                         <p style="font-weight:700;margin-bottom:6px;">Drop clips here or click to browse</p>
@@ -305,7 +305,7 @@
                         </div>
                         <div class="rk-trim-preview-col">
                             <div class="rk-preview-frame" id="rk-preview-trim"></div>
-                            <div class="rk-preview-tag">Live preview — <span>overlay</span></div>
+                            <div class="rk-preview-tag">Live preview: <span>overlay</span></div>
                         </div>
                     </div>
                     <div class="flex gap-3 mt-6" style="justify-content:space-between;flex-wrap:wrap;">
@@ -324,7 +324,7 @@
                     <div class="mb-6">
                         <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Title &amp; order</h2>
                         <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">
-                            Pick a viral title, style, and drag clips to reorder — then cook.
+                            Pick a viral title, style, and drag clips to reorder, then cook.
                         </p>
                     </div>
                     <div class="rk-title-split">
@@ -413,7 +413,7 @@
                         </div>
                         <div class="rk-title-preview-col">
                             <div class="rk-preview-frame" id="rk-preview-dash" onclick="rkCyclePreviewClip()" title="Click to preview next clip"></div>
-                            <div class="rk-preview-tag">Live preview — <span>overlay</span></div>
+                            <div class="rk-preview-tag">Live preview: <span>overlay</span></div>
                         </div>
                     </div>
                     <div class="flex gap-3 mt-6" style="justify-content:flex-end;flex-wrap:wrap;">
@@ -434,7 +434,7 @@
                         <div>
                             <h2 class="cr-display" style="font-size: 24px; line-height: 1.12;">Cooking your Short</h2>
                             <p style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2); margin-top: 4px;">
-                                You can leave this page — we'll keep cooking.
+                                You can leave this page. We'll keep cooking.
                             </p>
                         </div>
                     </div>
@@ -529,7 +529,7 @@
                     <div class="mb-6">
                         <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Your cast</h2>
                         <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">
-                            Add the characters in your story — or extract them from a script. Generate looks so every scene stays consistent.
+                            Add the characters in your story, or extract them from a script. Generate looks so every scene stays consistent.
                         </p>
                     </div>
                     <div class="flex flex-wrap gap-3 mb-4" style="align-items:flex-end;">
@@ -542,7 +542,7 @@
                     </div>
                     <div class="mb-4 max-w-4xl">
                         <label class="cr-label" for="sb-extract-source">Optional: paste story or script to find characters</label>
-                        <textarea id="sb-extract-source" class="cr-input" rows="3" placeholder="Paste a premise or full script — we’ll propose the recurring cast."></textarea>
+                        <textarea id="sb-extract-source" class="cr-input" rows="3" placeholder="Paste a premise or full script and we’ll propose the recurring cast."></textarea>
                         <button id="btn-sb-extract-cast" type="button" class="btn-secondary" style="margin-top:10px;font-size:13px;padding:10px 14px;">
                             <span class="btn-text">Extract characters</span>
                             <span class="btn-loading hidden"><span class="cr-spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;"></span> Extracting…</span>
@@ -588,7 +588,7 @@
                         </div>
                         <div>
                             <label class="cr-label" for="sb-moral">2. Optional takeaway</label>
-                            <textarea id="sb-moral" class="cr-input" rows="2" placeholder="Only if you want one — e.g. a lesson, theme, or ending beat."></textarea>
+                            <textarea id="sb-moral" class="cr-input" rows="2" placeholder="Only if you want one, e.g. a lesson, theme, or ending beat."></textarea>
                             <button id="btn-sb-suggest-morals" type="button" class="btn-ghost" style="margin-top:10px;font-size:13px;padding:8px 14px;">Suggest takeaways from my story</button>
                             <div id="sb-morals-list" class="space-y-2 mt-3"></div>
                         </div>
@@ -678,11 +678,11 @@
                         <div>
                             <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Your storyboard</h2>
                             <p id="sb-pack-status" style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">
-                                Stills appear here as they’re ready. Click any scene to recreate it. On-site cook is capped at 8 minutes — drag a stretch to pick which window, or we’ll cook the opening 8 minutes.
+                                Stills appear here as they’re ready. Click any scene to recreate it. On-site cook is capped at 8 minutes. Drag a stretch to pick which window, or we’ll cook the opening 8 minutes.
                             </p>
                         </div>
                         <button id="btn-sb-continue-full" type="button" class="btn-primary hidden" style="font-size:13px;padding:10px 16px;">
-                            Looks good — continue full pack
+                            Looks good, continue full pack
                         </button>
                     </div>
                     <div id="sb-range-bar" class="hidden sb-range-bar">
@@ -746,14 +746,14 @@
                         <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Cook your video</h2>
                         <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">
                             Cook the finished video here from your storyboard, or bring clips you made elsewhere.
-                            Your cast carries through. You can leave — we’ll save it to History when it’s done.
+                            Your cast carries through. You can leave. We’ll save it to History when it’s done.
                         </p>
                     </div>
 
                     <div id="sb-animate-panel" class="cr-surface" style="padding:18px 20px;border-radius:var(--radius-md);margin-bottom:18px;">
                         <p style="font-family:var(--font-body);font-size:15px;color:var(--app-ink);margin:0 0 6px;font-weight:600;">Cook on ChannelRecipe</p>
                         <p id="sb-animate-blurb" style="font-family:var(--font-body);font-size:13px;color:var(--app-ink-3);margin:0 0 14px;">
-                            Turns every scene into motion, stitches them, and adds captions — using your cast.
+                            Turns every scene into motion, stitches them, and adds captions, using your cast.
                         </p>
                         <button id="btn-sb-animate-run" type="button" class="btn-primary" style="font-size:13px;padding:10px 16px;" disabled>
                             <span class="btn-text">Cook video</span>
@@ -763,11 +763,11 @@
 
                     <details id="sb-upload-panel" style="margin-bottom:8px;">
                         <summary style="cursor:pointer;font-family:var(--font-body);font-size:14px;font-weight:500;color:var(--app-ink-2);margin-bottom:12px;">
-                            I already have clips — upload them
+                            I already have clips: upload them
                         </summary>
                     <div id="sb-assemble-drop" class="cr-surface" style="padding:28px;border:1px dashed var(--app-border);border-radius:var(--radius-md);text-align:center;cursor:pointer;">
                         <p style="font-family:var(--font-body);font-size:15px;color:var(--app-ink);margin:0 0 8px;">Drop clips or a zip here</p>
-                        <p style="font-family:var(--font-body);font-size:13px;color:var(--app-ink-3);margin:0 0 14px;">.mp4 / .webm / .mov — or one zip of those</p>
+                        <p style="font-family:var(--font-body);font-size:13px;color:var(--app-ink-3);margin:0 0 14px;">.mp4 / .webm / .mov, or one zip of those</p>
                         <label class="btn-secondary" style="font-size:13px;padding:8px 14px;cursor:pointer;display:inline-flex;">
                             Choose files
                             <input id="sb-assemble-files" type="file" accept="video/*,.zip" multiple class="hidden">
@@ -942,8 +942,8 @@
                         <div id="vo-clone-panel" class="hidden max-w-3xl">
                             <div class="cr-surface" style="padding: 20px;">
                                 <p style="font-size: 14px; color: var(--app-ink-2); margin-bottom: 14px;">
-                                    Clone a voice you own or have written permission to use — your channel host, licensed talent, or a VA you hired.
-                                    Easiest: paste a YouTube link, or drop a screen recording — we pull the audio and trim it automatically.
+                                    Clone a voice you own or have written permission to use: your channel host, licensed talent, or a VA you hired.
+                                    Easiest: paste a YouTube link, or drop a screen recording and we pull the audio and trim it automatically.
                                 </p>
                                 <div class="space-y-3">
                                     <div>
@@ -1043,11 +1043,11 @@
                 <div class="cr-panel">
                     <div class="mb-6">
                         <h2 class="cr-display" style="font-size: 28px; line-height: 1.12;">Pick a thumbnail</h2>
-                        <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">We don’t auto-generate. Upload a reference (or your finished thumbnail), then generate — or skip AI entirely.</p>
+                        <p style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); margin-top: 6px;">We don’t auto-generate. Upload a reference (or your finished thumbnail), then generate, or skip AI entirely.</p>
                     </div>
                     <div id="thumb-empty" class="max-w-3xl cr-surface" style="padding: 28px; text-align: center; border: 1px dashed var(--app-border); margin-bottom: 16px;">
                         <p style="font-size: 15px; color: var(--app-ink); font-weight: 600; margin-bottom: 6px;">Upload a reference first</p>
-                        <p style="font-size: 14px; color: var(--app-ink-2); max-width: 28rem; margin: 0 auto 16px;">Drop a channel screenshot or your own thumbnail so AI can match the style — or upload a finished thumbnail and continue.</p>
+                        <p style="font-size: 14px; color: var(--app-ink-2); max-width: 28rem; margin: 0 auto 16px;">Drop a channel screenshot or your own thumbnail so AI can match the style, or upload a finished thumbnail and continue.</p>
                         <div class="flex flex-wrap gap-2 justify-center">
                             <label class="btn-primary cursor-pointer" style="font-size: 14px; padding: 8px 16px;">
                                 Upload reference
@@ -1109,7 +1109,7 @@
                                 <span class="quality-pro-badge">High quality</span>
                                 <span class="quality-card-title">Pro visuals</span>
                                 <span class="quality-card-meta" id="quality-high-meta">3 credits · up to 12 min</span>
-                                <span class="quality-card-desc">Sharper, more polished frames — the option when the look matters.</span>
+                                <span class="quality-card-desc">Sharper, more polished frames for when the look matters.</span>
                             </button>
                         </div>
                         <p id="quality-hq-hint" class="hidden" style="font-family: var(--font-body); font-size: 12px; color: var(--app-ink-3); margin-top: 8px;"></p>
@@ -1158,7 +1158,7 @@
                             <img src="/static/glyph.svg" width="30" height="30" alt="">
                             <div>
                                 <h2 class="cr-display" style="font-size: 24px; line-height: 1.12;">Cooking your video…</h2>
-                                <p style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2); margin-top: 4px;">You can leave this page — we'll keep cooking.</p>
+                                <p style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2); margin-top: 4px;">You can leave this page. We'll keep cooking.</p>
                             </div>
                         </div>
                         <div class="progress-bar-track mb-2">
@@ -1247,7 +1247,7 @@
     <div id="page-script-studio" class="page-container hidden">
         <main class="max-w-4xl mx-auto px-6 py-8">
             <h2 class="cr-display" style="font-size: 32px; margin-bottom: 8px;">Script Studio</h2>
-            <p style="color: var(--app-ink-2); margin-bottom: 24px;">Generate scripts powered by Claude AI — from channel analysis to final script.</p>
+            <p style="color: var(--app-ink-2); margin-bottom: 24px;">Generate scripts powered by Claude AI, from channel analysis to final script.</p>
             <div class="flex gap-1 mb-6" style="border-bottom: 1px solid var(--app-border);">
                 <button class="studio-tab active" data-tab="ss-channel" onclick="switchStudioTab('ss', 'ss-channel', this)">Channel Data</button>
                 <button class="studio-tab" data-tab="ss-ideas" onclick="switchStudioTab('ss', 'ss-ideas', this)">Ideas</button>
@@ -1357,7 +1357,7 @@
         <main class="max-w-5xl mx-auto px-6 py-8">
             <h2 class="cr-display" style="font-size: 32px; margin-bottom: 8px;">Niche Finder</h2>
             <p style="color: var(--app-ink-2); margin-bottom: 24px; max-width: 42rem;">
-                A living library of faceless, enterable long-form niches — ranked by estimated monthly revenue,
+                A living library of faceless, enterable long-form niches, ranked by estimated monthly revenue,
                 avg views, cadence, and outlier hits. Browse what’s already working; discovery runs stay admin-only.
             </p>
 
@@ -1369,10 +1369,10 @@
 
             <div id="nf-workspace" class="hidden space-y-6">
                 <div id="nf-admin-panel" class="hidden cr-surface" style="padding: 20px;">
-                    <p class="cr-eyebrow" style="margin-bottom: 8px;">Admin — grow the library</p>
+                    <p class="cr-eyebrow" style="margin-bottom: 8px;">Admin: grow the library</p>
                     <p style="font-size: 13px; color: var(--app-ink-3); margin-bottom: 12px;">
                         Scrolls real YouTube search (ViewHunt-style), skips videos older than 6 months,
-                        and <strong>adds</strong> channels — never wipes the library. Does not touch video cooks.
+                        and <strong>adds</strong> channels and never wipes the library. Does not touch video cooks.
                     </p>
                     <label class="cr-label">Keywords (one per line, optional)</label>
                     <textarea id="nf-keywords" class="cr-input" rows="4" style="font-family: var(--font-mono); font-size: 13px; resize: vertical;" placeholder="history documentary&#10;true story explained"></textarea>
@@ -1410,7 +1410,7 @@
                     <div class="nf-filters-head">
                         <div>
                             <p class="cr-eyebrow" style="margin-bottom: 4px;">Refine</p>
-                            <p class="nf-filters-sub">Slide, toggle, or search — updates as you go.</p>
+                            <p class="nf-filters-sub">Slide, toggle, or search. Updates as you go.</p>
                         </div>
                         <button type="button" id="nf-clear-filters" class="nf-clear-btn" onclick="clearNicheFilters()" disabled>Clear all</button>
                     </div>
@@ -1567,7 +1567,7 @@
             <h2 class="cr-display" style="font-size: 32px; margin-bottom: 8px;">Analytics</h2>
             <p style="color: var(--app-ink-2); margin-bottom: 24px; max-width: 40rem;">
                 Render health and unit-economics from ChannelRecipe’s own cook log.
-                Read-only — no billing tools, API keys, or admin ops.
+                Read-only: no billing tools, API keys, or admin ops.
             </p>
 
             <div id="analytics-gate" class="hidden cr-surface" style="padding: 28px; margin-bottom: 24px;">
@@ -1608,7 +1608,7 @@
         <main class="max-w-3xl mx-auto px-6 py-8">
             <h2 class="cr-display" style="font-size: 32px; margin-bottom: 8px;">Niche Intel</h2>
             <p style="color: var(--app-ink-2); margin-bottom: 24px; max-width: 40rem;">
-                Admin packager for Shorts competitor research. Downloads a single clean folder zip —
+                Admin packager for Shorts competitor research. Downloads a single clean folder zip.
                 upload the whole thing to your LLM. Channel names stay real; video titles are labeled
                 Video 1 / Video 2 only.
             </p>
@@ -1680,7 +1680,7 @@
             </div>
             <p style="color: var(--app-ink-2); margin-bottom: 28px; max-width: 36rem;">
                 Free prompts and tools from the ChannelRecipe owners' YouTube channel.
-                Sign in to download — no card or trial required.
+                Sign in to download. No card required.
             </p>
 
             <!-- Community Discord -->
@@ -1699,8 +1699,8 @@
                     <strong>October 2026</strong>
                 </p>
                 <ul style="margin: 0; padding: 0 0 0 18px; color: var(--app-ink-2); font-size: 14px; line-height: 1.7;">
-                    <li>Community Discord is open — get help, share feedback, connect with creators. <a href="https://discord.gg/aUbazAAqw3" target="_blank" rel="noopener" style="color: var(--accent);">discord.gg/aUbazAAqw3</a></li>
-                    <li>AI avatar recipe coming — the Avatar + Illustrations recipe is in development, not yet reliable for production.</li>
+                    <li>Community Discord is open: get help, share feedback, connect with creators. <a href="https://discord.gg/aUbazAAqw3" target="_blank" rel="noopener" style="color: var(--accent);">discord.gg/aUbazAAqw3</a></li>
+                    <li>AI avatar recipe coming: the Avatar + Illustrations recipe is in development, not yet reliable for production.</li>
                 </ul>
             </div>
 
@@ -1721,7 +1721,7 @@
                 <h2 class="cr-display" style="font-size: 32px; margin: 0;">Use Claude with ChannelRecipe</h2>
             </div>
             <p style="color: var(--app-ink-2); margin-bottom: 28px; max-width: 40rem;">
-                Ask Claude for niches, subjects, scripts, and thumbnails — pulled from ChannelRecipe’s live library, not old training data.
+                Ask Claude for niches, subjects, scripts, and thumbnails, pulled from ChannelRecipe’s live library, not old training data.
                 Free and trial accounts see a limited niche sample; paid unlocks the full database + Niche Finder in the app.
             </p>
 
@@ -1767,7 +1767,7 @@
     <div id="page-history" class="page-container hidden">
         <main class="max-w-4xl mx-auto px-6 py-8">
             <h2 class="cr-display" style="font-size: 32px; margin-bottom: 8px;">Your videos</h2>
-            <p style="color: var(--app-ink-2); margin-bottom: 24px;">Every video you finish is saved here — download it or grab its upload kit anytime.</p>
+            <p style="color: var(--app-ink-2); margin-bottom: 24px;">Every video you finish is saved here. Download it or grab its upload kit anytime.</p>
             <div class="flex items-center gap-4 mb-6">
                 <button id="btn-history-refresh" class="btn-secondary" style="font-size: 14px; padding: 8px 16px;" onclick="loadHistory()">
                     <span class="btn-text">Refresh</span>
@@ -1827,7 +1827,7 @@
             <!-- Trial: Start plan now (trial users) -->
             <div id="billing-trial-section" style="display:none; background: var(--app-surface); border: 1px solid var(--accent, #6c5ce7); border-radius: var(--radius-card); padding: 24px; margin-bottom: 20px;">
                 <h3 style="font-family: var(--font-display); font-size: 16px; font-weight: 700; margin-bottom: 4px;">Ready to go full speed?</h3>
-                <p style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-2); margin-bottom: 16px;">End your trial to unlock your full allowance right away — monthly or annual, and you can buy extra cook credits whenever you need them. The button shows the exact charge before anything is billed.</p>
+                <p style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-2); margin-bottom: 16px;">End your trial to unlock your full allowance right away, monthly or annual, and you can buy extra cook credits whenever you need them. The button shows the exact charge before anything is billed.</p>
                 <button onclick="endTrialNow({ reason: 'Pick the plan that fits how much you publish.' })" class="btn-primary" style="font-size: 14px; padding: 10px 20px;">Choose your plan →</button>
             </div>
 
@@ -1925,7 +1925,7 @@
                         <div>
                             <h4 style="font-family: var(--font-display); font-size: 16px; font-weight: 700;">Connect Claude</h4>
                             <p style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2); margin-top: 4px; max-width: 36rem;">
-                                Use ChannelRecipe inside Claude on the web — find niches, write scripts, and make thumbnails from chat.
+                                Use ChannelRecipe inside Claude on the web: find niches, write scripts, and make thumbnails from chat.
                             </p>
                         </div>
                         <span id="mcp-status-chip" class="cr-mono" style="font-size: 12px; color: var(--app-ink-3);">Loading…</span>
@@ -1965,7 +1965,7 @@
                         </summary>
                         <div style="margin-top: 12px;">
                             <p style="font-family: var(--font-body); font-size: 13px; color: var(--app-ink-3); margin: 0 0 10px; line-height: 1.5;">
-                                Most people can ignore this. Only needed for the Claude Desktop app — copy the config into Settings → Developer → Edit Config, then restart Claude.
+                                Most people can ignore this. Only needed for the Claude Desktop app. Copy the config into Settings → Developer → Edit Config, then restart Claude.
                             </p>
                             <textarea id="mcp-claude-json" class="setting-input cr-mono" readonly rows="8" style="font-size: 12px; line-height: 1.45; resize: vertical;"></textarea>
                             <button type="button" class="btn-secondary" style="font-size: 13px; padding: 8px 14px; margin-top: 8px;" onclick="copyMcpClaudeJson()">Copy config</button>
@@ -1984,7 +1984,7 @@
             <!-- Admin platform keys -->
             <section id="settings-admin-keys" class="hidden">
                 <h3 style="font-family: var(--font-display); font-size: 18px; font-weight: 700; margin-bottom: 8px;">Platform API keys</h3>
-                <p style="color: var(--app-ink-2); margin-bottom: 16px; font-size: 14px;">Admin only — server-wide keys for ChannelRecipe services.</p>
+                <p style="color: var(--app-ink-2); margin-bottom: 16px; font-size: 14px;">Admin only: server-wide keys for ChannelRecipe services.</p>
                 <div class="space-y-4" id="settings-keys">
                     <div class="setting-row"><div class="flex-1"><label class="cr-label">Gemini API Key <span style="color: var(--accent); font-size: 12px;">(Required)</span></label><input type="password" id="key-gemini" class="setting-input" placeholder="Your Gemini API key..."></div><button class="btn-secondary" style="font-size: 14px; padding: 8px 16px; margin-top: 24px;" onclick="testKey('gemini')">Test</button></div>
                     <div class="setting-row"><div class="flex-1"><label class="cr-label">Claude API Key <span style="color: var(--app-ink-3); font-size: 12px;">(Script Studio)</span></label><input type="password" id="key-claude" class="setting-input" placeholder="Your Anthropic Claude key..."></div><button class="btn-secondary" style="font-size: 14px; padding: 8px 16px; margin-top: 24px;" onclick="testKey('claude')">Test</button></div>
@@ -2171,7 +2171,7 @@
             </div>
             <h2 id="credit-notice-title" class="cr-display" style="font-size: 24px; margin-bottom: 8px;">Credits refunded</h2>
             <p id="credit-notice-body" style="font-family: var(--font-body); font-size: 15px; color: var(--app-ink-2); line-height: 1.45; margin-bottom: 18px;"></p>
-            <button type="button" id="credit-notice-cta" class="btn-primary" style="width: 100%;" onclick="dismissCreditNotice()">Got it — thanks</button>
+            <button type="button" id="credit-notice-cta" class="btn-primary" style="width: 100%;" onclick="dismissCreditNotice()">Got it, thanks</button>
         </div>
     </div>
 
@@ -2204,7 +2204,6 @@
                     <p style="font-family: var(--font-body); font-size: 12px; color: var(--app-ink-3); margin-top: 14px;">Top-ups add to your balance instantly and don't expire while your plan is active.</p>
                 </div>
             </div>
-            <p class="pricing-local-note"><strong>Studio makes your videos on your own computer.</strong> Making Studio videos never uses credits — you only pay your own Claude and media accounts, at their prices.</p>
             <div class="pricing-grid">
                 <div id="pricing-card-daily" class="pricing-card">
                     <h3 class="cr-display">Creator</h3>
@@ -2213,7 +2212,7 @@
                     <p id="daily-note" class="pricing-note">Billed monthly · cancel anytime</p>
                     <ul>
                         <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span><strong>ChannelRecipe Studio</strong> (v2) + every built-in style</span></li>
-                        <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Videos render on <strong>your computer</strong> — never uses credits</span></li>
+                        <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Videos render on <strong>your own computer</strong>. No credits needed</span></li>
                         <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Clone <strong>3</strong> YouTube channel styles</span></li>
                         <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span><span id="daily-videos"><strong>35 credits</strong>/month</span> for Classic recipes</span></li>
                         <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Niche Finder + full niche database in Claude</span></li>
@@ -2229,7 +2228,7 @@
                     <p id="studio_pro-note" class="pricing-note">Billed monthly · cancel anytime</p>
                     <ul>
                         <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Everything in Creator</span></li>
-                        <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Videos render on <strong>your computer</strong> — never uses credits</span></li>
+                        <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Videos render on <strong>your own computer</strong>. No credits needed</span></li>
                         <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Clone <strong>15</strong> YouTube channel styles</span></li>
                         <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span><span id="studio_pro-videos"><strong>60 credits</strong>/month</span> for Classic recipes</span></li>
                         <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Up to <strong>3</strong> Classic cloud videos at once</span></li>
@@ -2243,7 +2242,7 @@
                     <p id="studio_max-note" class="pricing-note">Billed monthly · cancel anytime</p>
                     <ul>
                         <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Everything in Pro</span></li>
-                        <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Videos render on <strong>your computer</strong> — never uses credits</span></li>
+                        <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Videos render on <strong>your own computer</strong>. No credits needed</span></li>
                         <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span><strong>Unlimited</strong> style clones</span></li>
                         <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span><span id="studio_max-videos"><strong>100 credits</strong>/month</span> for Classic recipes</span></li>
                         <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 8l2 2 4-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Priority help in Discord</span></li>
@@ -2273,7 +2272,7 @@
                 <button type="button" id="access-choice-paid" onclick="chooseAccessPaid()" class="btn-primary access-chooser-option" style="width:100%; max-width:100%; box-sizing:border-box; text-align:left; padding:16px 18px; display:block; white-space:normal; height:auto; line-height:1.35;">
                     <div style="font-weight:700; font-size:15px;">Get full access</div>
                     <div style="font-size:13px; opacity:0.92; margin-top:6px; font-weight:500;">
-                        Complete niche database in Claude, Niche Finder, and all recipes. Billed today — cancel anytime.
+                        Complete niche database in Claude, Niche Finder, and all recipes. Billed today. Cancel anytime.
                     </div>
                 </button>
                 <button type="button" id="access-choice-trial" onclick="chooseAccessTrial()" class="btn-secondary access-chooser-option" style="width:100%; max-width:100%; box-sizing:border-box; text-align:left; padding:16px 18px; display:block; white-space:normal; height:auto; line-height:1.35;">
@@ -2328,9 +2327,9 @@
     </div>
 
     <script src="/static/cr-telemetry.js?v=20260804b"></script>
-    <script src="/static/ranking.js?v=20260807f"></script>
-    <link rel="stylesheet" href="/static/local-studio.css?v=20261014-v3">
-    <script src="/static/app.js?v=20261014-v2"></script>
-    <script src="/static/local-studio.js?v=20261014-v3"></script>
+    <script src="/static/ranking.js?v=20261014-v4"></script>
+    <link rel="stylesheet" href="/static/local-studio.css?v=20261014-v4">
+    <script src="/static/app.js?v=20261014-v4"></script>
+    <script src="/static/local-studio.js?v=20261014-v4"></script>
 </body>
 </html>

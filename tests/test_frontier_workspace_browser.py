@@ -282,7 +282,7 @@ def test_gallery_works_with_keyboard_and_a_mobile_viewport(workspace):
     page.locator("#crw-recipe-open").focus()
     page.keyboard.press("Enter")
     assert page.locator("#crw-gallery-search").evaluate("e=>e===document.activeElement")
-    page.locator("#crw-gallery-search").fill("Cinematic Reconstruction")
+    page.locator("#crw-gallery-search").fill("3D Reconstruction")
     cards = page.locator("#crw-gallery-grid .crw-recipe-card")
     assert cards.count() == 1
     cards.first.focus()
@@ -291,7 +291,7 @@ def test_gallery_works_with_keyboard_and_a_mobile_viewport(workspace):
     assert page.locator("#crw-detail-use").evaluate("e=>{const r=e.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;}")
     page.keyboard.press("Enter")
     assert page.locator("#crw-gallery").is_hidden()
-    assert page.locator("#crw-selected-name").inner_text() == "Cinematic Reconstruction"
+    assert page.locator("#crw-selected-name").inner_text() == "3D Reconstruction"
     assert page.locator("#crw-recipe-open").evaluate("e=>e===document.activeElement")
     page.locator("#crw-recipe-open").click()
     # Native search fields consume Escape to clear their current query first.

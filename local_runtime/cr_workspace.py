@@ -95,8 +95,7 @@ def install(studio, activity, *, token, home=None):
         # local files; a lazy screenshot GET does any necessary frame decoding.
         outputs = cr_preview.latest_outputs(studio, home)
         for row in data["channels"] + ([data["automatic"]] if data.get("automatic") else []):
-            source = cr_preview.recipe_source(studio, home, row.get("name"), cr_bridge,
-                latest=outputs, plain=bool(row.get("plain_sample")))
+            source = cr_preview.recipe_source(studio, home, row.get("name"), cr_bridge, latest=outputs)
             row.update(preview_available=source is not None,
                 preview_url=("/cr-workspace/preview/recipe/" + quote(row["name"], safe="") + ".jpg") if source else None,
                 preview_label=source.label if source else "No video preview yet",
@@ -197,8 +196,7 @@ def install(studio, activity, *, token, home=None):
             row = next((row for row in rows if isinstance(row, dict) and row.get("name") == style), None)
             if row is None:
                 return protect(Response(status=404))
-            return preview_response(cr_preview.recipe_source(studio, home, style, cr_bridge,
-                plain=bool(row.get("plain_sample"))))
+            return preview_response(cr_preview.recipe_source(studio, home, style, cr_bridge))
         except Exception as error:
             return failure(error)
 

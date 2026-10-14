@@ -144,22 +144,61 @@ def test_symlinked_workspace_resource_is_rejected_before_replacing_zip(synthetic
     assert target.read_bytes() == b"previous complete release"
 
 
-def test_private_sample_screenshots_ship_with_exact_source_and_image_pins(synthetic_package, monkeypatch):
+def test_style_references_ship_with_credit_and_image_pins(synthetic_package, monkeypatch):
     tmp_path,_=synthetic_package
     source=source_archive(tmp_path,monkeypatch,guide=b"Synthetic creative guide")
-    folder=package.ROOT/"data/frontier/recipe-previews";folder.mkdir(parents=True)
-    image=folder/"quest.jpg";image.write_bytes(b"Synthetic sample screenshot")
-    manifest={"schema":1,"source_archive_sha256":package.SOURCE_SHA256,"frames":{"quest":{"file":"quest.jpg","sha256":hashlib.sha256(image.read_bytes()).hexdigest(),"source_sha256":"a"*64,"kind":"video_frame"}}}
+    folder=package.ROOT/"data/frontier/recipe-references";folder.mkdir(parents=True)
+    image=folder/"quest.jpg";image.write_bytes(b"Synthetic style reference")
+    manifest={"schema":2,"kind":"style_reference","frames":{"quest":{"file":"quest.jpg","kind":"style_reference",
+        "channel":"Reference Channel","title":"A reference","url":"https://www.youtube.com/watch?v=x",
+        "sha256":hashlib.sha256(image.read_bytes()).hexdigest()}}}
     (folder/"manifest.json").write_text(json.dumps(manifest))
     target=tmp_path/"release.zip";package.build(source,target)
     with zipfile.ZipFile(target)as archive:
         assert archive.read("ChannelRecipe studio/cr_recipe_frames/quest.jpg")==image.read_bytes()
         assert json.loads(archive.read("ChannelRecipe studio/cr_recipe_frames/manifest.json"))==manifest
     image.write_bytes(b"changed")
-    with pytest.raises(ValueError,match="preview changed"):
+    with pytest.raises(ValueError,match="reference frame changed"):
         package.build(source,target)
     with zipfile.ZipFile(target)as archive:
-        assert archive.read("ChannelRecipe studio/cr_recipe_frames/quest.jpg")==b"Synthetic sample screenshot"
+        assert archive.read("ChannelRecipe studio/cr_recipe_frames/quest.jpg")==b"Synthetic style reference"
+    del manifest["frames"]["quest"]["channel"]
+    (folder/"manifest.json").write_text(json.dumps(manifest));image.write_bytes(b"Synthetic style reference")
+    with pytest.raises(ValueError,match="Invalid style reference"):
+        package.build(source,target)
+
+
+def test_retired_sample_films_are_not_shipped(synthetic_package, monkeypatch):
+    tmp_path,_=synthetic_package
+    source=source_archive(tmp_path,monkeypatch,guide=b"Synthetic creative guide")
+    with zipfile.ZipFile(source,"a")as archive:
+        for name in package.RETIRED_SAMPLES:
+            archive.writestr("Frontier/"+name,b"old sample film")
+        archive.writestr("Frontier/assets/overlay_dust.mp4",b"kept overlay")
+    monkeypatch.setattr(package,"SOURCE_SHA256",hashlib.sha256(source.read_bytes()).hexdigest())
+    target=tmp_path/"release.zip";package.build(source,target)
+    with zipfile.ZipFile(target)as archive:
+        names=archive.namelist()
+        assert not any("sample.mp4" in n or "Shadow You Keep" in n for n in names)
+        assert "ChannelRecipe studio/assets/overlay_dust.mp4" in names
+
+
+def test_files_a_release_drops_are_listed_for_installed_studios_to_remove(tmp_path):
+    previous = tmp_path / "channelrecipe-5.3-admin.44.zip"
+    with zipfile.ZipFile(previous, "w") as archive:
+        archive.writestr("ChannelRecipe studio/cr-files.json", json.dumps({"files": {
+            "assets/brand/old sample.mp4": "a" * 64, "cr_recipe_frames/quest.jpg": "b" * 64,
+            "cr_studio.py": "c" * 64}, "retired": {"assets/older.mp4": ["d" * 64],
+                                                   "cr_recipe_frames/quest.jpg": ["e" * 64]}}))
+    retired = package.retired_files(previous, {"cr_studio.py", "cr-files.json"})
+    assert retired == {"assets/brand/old sample.mp4": ["a" * 64], "assets/older.mp4": ["d" * 64],
+                       "cr_recipe_frames/quest.jpg": ["b" * 64, "e" * 64]}
+    # A file shipped again is no longer retired.
+    assert "cr_recipe_frames/quest.jpg" not in package.retired_files(previous, {"cr_recipe_frames/quest.jpg"})
+    assert package.retired_files(None, set()) == {}
+    (tmp_path / "channelrecipe-5.3-admin.43.zip").write_bytes(b"")
+    (tmp_path / ("channelrecipe-" + package.VERSION + ".zip")).write_bytes(b"")
+    assert package.previous_release(tmp_path) == previous
 
 
 def test_rebrand_covers_source_owned_runtime_and_private_resources(synthetic_package, monkeypatch):

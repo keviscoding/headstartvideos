@@ -11,7 +11,7 @@ from webapp import plans
 
 UPGRADE_URL = "https://channelrecipe.com/app#billing"
 UPGRADE_CTA = (
-    f"Upgrade at {UPGRADE_URL} — every paid plan unlocks the full live niche "
+    f"Upgrade at {UPGRADE_URL}. Every paid plan unlocks the full live niche "
     "database inside Claude, Niche Finder in the app and ChannelRecipe Studio."
 )
 TRIAL_UPGRADE_CTA = (
