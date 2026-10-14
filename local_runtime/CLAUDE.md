@@ -35,10 +35,18 @@ already passes.
    first run installs libraries and a graphics browser, which takes a few
    minutes. If it fails, read the error in that window with the customer.
 5. **Open setup.** When the launcher says it's ready, open
-   http://127.0.0.1:7860/cr-setup. The customer pastes their ChannelRecipe key
-   there (from the Studio page on channelrecipe.com), signs in to Claude Code,
-   verifies their models and connects a media account (Kie.ai or Atlas Cloud).
-   Keys go into the setup page only — never into this chat.
+   http://127.0.0.1:7860/cr-setup and tell the customer, in plain words, it's
+   three buttons, top to bottom:
+   1. **Connect my ChannelRecipe account**: it opens channelrecipe.com; they
+      sign in if asked and press Approve, then land back on setup. No key to
+      copy. (If that fails, "Paste a key instead" takes the key from the
+      Studio page on channelrecipe.com.)
+   2. **Set up Claude for videos**: connects Claude Code, picks the models and
+      runs a tiny check. Claude Code must be signed in first (`claude`, then
+      the browser login).
+   3. **Paste a Kie.ai key** in step 3 (get one at https://kie.ai/api-key) and
+      press the connect button.
+   Keys go into the setup page only, never into this chat.
 6. **First video.** When setup says ready, open http://127.0.0.1:7860/, pick a
    recipe, type a title and press Create video.
 

@@ -27,6 +27,8 @@ import hashlib
 import re
 
 HOME = Path(__file__).resolve().parent
+CR_URL = "https://channelrecipe.com"
+CONNECT_SECONDS = 900
 _graphics_check = {}
 
 
@@ -690,6 +692,53 @@ def create_app():
         except Exception as e:
             return jsonify(error=str(e)), 400
         return jsonify(connected=True, brain_connected=bool(status.get("brain", {}).get("connected")))
+
+    # One-click connect: the setup page opens channelrecipe.com, the creator
+    # approves, and the browser comes back here with a short-lived code that
+    # only this studio can redeem (it holds the matching verifier).
+    pending_connect = {}
+
+    @studio.app.post("/cr-connect/start")
+    def connect_start():
+        import base64
+        from urllib.parse import urlencode
+        data = request.get_json(silent=True) or {}
+        if data.get("costs_accepted") is not True:
+            return jsonify(error="Confirm how Studio is billed, then connect."), 400
+        now = time.time()
+        for state, entry in list(pending_connect.items()):
+            if now - entry["created"] > CONNECT_SECONDS:
+                pending_connect.pop(state, None)
+        verifier = secrets.token_urlsafe(48)
+        state = secrets.token_urlsafe(24)
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+        pending_connect[state] = {"verifier": verifier, "created": now}
+        return jsonify(url=CR_URL + "/studio/connect?" + urlencode({"challenge": challenge, "state": state}))
+
+    @studio.app.get("/cr-connect/return")
+    def connect_return():
+        import requests
+        from flask import redirect
+        entry = pending_connect.pop(request.args.get("state", ""), None)
+        code = request.args.get("code", "")
+        if not entry or time.time() - entry["created"] > CONNECT_SECONDS or not code or len(code) > 512:
+            return redirect("/cr-setup?connect=expired")
+        if activity.busy():
+            return redirect("/cr-setup?connect=busy")
+        try:
+            response = requests.post(CR_URL + "/api/studio/connect/exchange",
+                                     json={"code": code, "verifier": entry["verifier"]}, timeout=30)
+            if response.status_code == 403:
+                return redirect("/cr-setup?connect=plan")
+            response.raise_for_status()
+            key = str(response.json().get("key") or "")
+            cfg = {**cr_bridge.load_settings(), "url": CR_URL, "key": key, "costs_accepted": True}
+            cr_bridge.call("status", settings=cfg)
+            cr_bridge.save_settings(cfg)
+        except Exception:
+            studio.app.logger.exception("One-click connect could not finish")
+            return redirect("/cr-setup?connect=failed")
+        return redirect("/cr-setup?connect=done")
 
     def write_provider(name, value):
         from dotenv import set_key

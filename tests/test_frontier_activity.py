@@ -682,3 +682,44 @@ def test_cr_run_spec_records_the_render_before_original_deferred_dispatch(deferr
         for reply in d.timeline.spawned:
             reply.target(*reply.args)
     assert not r.studio._cr_activity.busy()
+
+
+def test_one_click_connect_saves_the_key_from_the_approval_round_trip(runtime, monkeypatch):
+    import base64
+    import hashlib
+    from urllib.parse import parse_qs, urlencode, urlsplit
+    import requests
+
+    r = runtime
+    assert r.client.post("/cr-connect/start", headers=r.headers, json={}).status_code == 400
+    url = r.client.post("/cr-connect/start", headers=r.headers, json={"costs_accepted": True}).json["url"]
+    assert url.startswith("https://channelrecipe.com/studio/connect?")
+    query = parse_qs(urlsplit(url).query)
+    sent = {}
+
+    class Reply:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"key": "cr_mcp_" + "n" * 30}
+
+    def post(target, json, timeout):
+        sent.update(url=target, **json)
+        return Reply()
+
+    monkeypatch.setattr(requests, "post", post)
+    back = urlencode({"code": "signed-code", "state": query["state"][0]})
+    # A plain browser visit from channelrecipe.com: no local token is involved.
+    response = r.client.get("/cr-connect/return?" + back, headers={"Host": "127.0.0.1:7860"})
+    assert response.status_code == 302 and response.headers["Location"].endswith("/cr-setup?connect=done")
+    assert sent["url"] == "https://channelrecipe.com/api/studio/connect/exchange" and sent["code"] == "signed-code"
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(sent["verifier"].encode()).digest()).rstrip(b"=").decode()
+    assert challenge == query["challenge"][0]
+    assert r.cfg["key"] == "cr_mcp_" + "n" * 30 and r.cfg["costs_accepted"] is True
+    # Each request can be completed once; unknown requests never reach the server.
+    sent.clear()
+    again = r.client.get("/cr-connect/return?" + back, headers={"Host": "127.0.0.1:7860"})
+    assert again.headers["Location"].endswith("/cr-setup?connect=expired") and sent == {}

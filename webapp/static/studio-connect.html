@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex">
+    <title>Connect ChannelRecipe Studio</title>
+    <link rel="icon" href="/favicon.ico" sizes="48x48">
+    <link rel="icon" href="/static/favicon.svg?v=pot1" type="image/svg+xml">
+    <link rel="preconnect" href="https://api.fontshare.com">
+    <link href="https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@700,800&f[]=general-sans@400,500,600&display=swap" rel="stylesheet">
+    <style>
+        :root { --canvas: #F7F5F0; --ink: #16161A; --ink-2: #55534D; --hairline: #E5E1D8; --accent: #6D5AE0; --accent-hover: #5A48C9; --accent-soft: #EDEAFB; --white: #FFFFFF; --bad: #B4232C; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { min-height: 100vh; background: var(--canvas); color: var(--ink); font-family: "General Sans", system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; padding: 48px 16px; }
+        .brand { display: flex; align-items: center; gap: 10px; font-family: "Cabinet Grotesk", system-ui, sans-serif; font-weight: 800; font-size: 20px; margin-bottom: 32px; color: var(--ink); text-decoration: none; }
+        .brand span { color: var(--accent); }
+        .card { width: 100%; max-width: 440px; background: var(--white); border: 1px solid var(--hairline); border-radius: 18px; padding: 32px 28px; box-shadow: 0 18px 50px rgba(22, 22, 26, 0.06); }
+        h1 { font-family: "Cabinet Grotesk", system-ui, sans-serif; font-size: 26px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; margin-bottom: 10px; }
+        p { color: var(--ink-2); font-size: 15px; line-height: 1.6; margin-bottom: 18px; }
+        label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+        input { width: 100%; font: inherit; font-size: 16px; padding: 12px 14px; border: 1px solid var(--hairline); border-radius: 10px; margin-bottom: 14px; background: var(--white); color: var(--ink); }
+        input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+        button, .button { display: inline-flex; align-items: center; justify-content: center; gap: 10px; width: 100%; font: inherit; font-size: 16px; font-weight: 600; padding: 14px 18px; border-radius: 12px; border: 0; background: var(--accent); color: var(--white); cursor: pointer; text-decoration: none; }
+        button:hover, .button:hover { background: var(--accent-hover); }
+        button:disabled { opacity: 0.6; cursor: wait; }
+        .link { background: none; color: var(--ink-2); width: auto; padding: 0; font-size: 14px; font-weight: 500; text-decoration: underline; margin-top: 16px; }
+        .link:hover { background: none; color: var(--ink); }
+        .who { background: var(--accent-soft); border-radius: 10px; padding: 12px 14px; font-size: 15px; margin-bottom: 18px; color: var(--ink); word-break: break-all; }
+        .fine { font-size: 13px; margin: 14px 0 0; }
+        .error { color: var(--bad); font-size: 14px; margin: 12px 0 0; }
+        .spinner { width: 18px; height: 18px; border-radius: 50%; border: 2.5px solid currentColor; border-right-color: transparent; animation: spin 0.7s linear infinite; flex: none; }
+        .center { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 14px; padding: 12px 0; }
+        .center .spinner { width: 28px; height: 28px; color: var(--accent); }
+        [hidden] { display: none !important; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <a class="brand" href="/"><img src="/static/glyph.svg?v=pot1" width="30" height="30" alt="">Channel<span>Recipe</span></a>
+    <main class="card">
+        <div id="view-loading" class="center"><div class="spinner" aria-hidden="true"></div><p>Checking your account…</p></div>
+
+        <div id="view-signin" hidden>
+            <h1>Sign in to connect Studio</h1>
+            <p>Use the email you subscribed with. We'll email you a 6-digit code.</p>
+            <form id="email-form">
+                <label for="email">Email</label>
+                <input id="email" type="email" autocomplete="email" required>
+                <button type="submit">Email me a code</button>
+            </form>
+            <form id="code-form" hidden>
+                <label for="code">6-digit code</label>
+                <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" required>
+                <button type="submit">Sign in</button>
+                <button type="button" class="link" id="change-email">Use a different email</button>
+            </form>
+        </div>
+
+        <div id="view-approve" hidden>
+            <h1>Connect Studio on this computer?</h1>
+            <p>ChannelRecipe Studio will make videos with this account.</p>
+            <div class="who" id="who"></div>
+            <button type="button" id="approve">Approve and connect</button>
+            <p class="fine">You'll go straight back to Studio. You can disconnect any time from Studio's Accounts page.</p>
+            <button type="button" class="link" id="sign-out">Not you? Sign out</button>
+        </div>
+
+        <div id="view-upgrade" hidden>
+            <h1>Studio isn't on your plan yet</h1>
+            <p>ChannelRecipe Studio is included with the Creator, Pro and Max plans.</p>
+            <a class="button" href="/app#local-studio">See plans</a>
+            <button type="button" class="link" id="upgrade-sign-out">Use a different account</button>
+        </div>
+
+        <div id="view-done" class="center" hidden><div class="spinner" aria-hidden="true"></div><p>Approved. Taking you back to Studio…</p></div>
+
+        <div id="view-invalid" hidden>
+            <h1>This link is incomplete</h1>
+            <p>Go back to the Studio setup page on your computer and press <strong>Connect my ChannelRecipe account</strong> again.</p>
+        </div>
+
+        <p class="error" id="error" role="alert" hidden></p>
+    </main>
+
+    <script>
+    (function () {
+        const params = new URLSearchParams(location.search);
+        const challenge = params.get('challenge') || '';
+        const state = params.get('state') || '';
+        const $ = (id) => document.getElementById(id);
+        const views = ['loading', 'signin', 'approve', 'upgrade', 'done', 'invalid'];
+        function show(name) { views.forEach((v) => { $('view-' + v).hidden = v !== name; }); }
+        function fail(message) { $('error').textContent = message || 'Something went wrong. Please try again.'; $('error').hidden = !message; }
+        function busy(button, on, label) {
+            if (on) { button.dataset.label = button.textContent; button.disabled = true; button.innerHTML = '<span class="spinner" aria-hidden="true"></span>' + (label || 'Working…'); }
+            else { button.disabled = false; button.textContent = button.dataset.label || button.textContent; }
+        }
+        async function call(path, body) {
+            const response = await fetch(path, { method: body ? 'POST' : 'GET', credentials: 'same-origin',
+                headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
+            let data = {}; try { data = await response.json(); } catch (_) {}
+            if (!response.ok) { const error = new Error(typeof data.detail === 'string' ? data.detail : 'Something went wrong. Please try again.'); error.status = response.status; throw error; }
+            return data;
+        }
+        async function start() {
+            if (!/^[A-Za-z0-9_-]{43}$/.test(challenge) || !/^[A-Za-z0-9_-]{16,64}$/.test(state)) { show('invalid'); return; }
+            try {
+                const me = await call('/api/auth/me');
+                if (!me.user) { show('signin'); $('email').focus(); return; }
+                $('who').textContent = 'Signed in as ' + (me.user.email || 'your account');
+                show('approve');
+            } catch (error) { show('signin'); fail(error.message); }
+        }
+        $('email-form').addEventListener('submit', async (event) => {
+            event.preventDefault(); fail('');
+            const button = event.target.querySelector('button');
+            busy(button, true, 'Sending code…');
+            try { await call('/api/auth/send-code', { email: $('email').value.trim() }); $('email-form').hidden = true; $('code-form').hidden = false; $('code').focus(); }
+            catch (error) { fail(error.message); }
+            finally { busy(button, false); }
+        });
+        $('code-form').addEventListener('submit', async (event) => {
+            event.preventDefault(); fail('');
+            const button = event.target.querySelector('button[type="submit"]');
+            busy(button, true, 'Signing in…');
+            try { await call('/api/auth/verify', { email: $('email').value.trim(), code: $('code').value.trim() }); await start(); }
+            catch (error) { fail(error.message); }
+            finally { busy(button, false); }
+        });
+        $('change-email').addEventListener('click', () => { $('code-form').hidden = true; $('email-form').hidden = false; fail(''); });
+        $('approve').addEventListener('click', async () => {
+            fail(''); busy($('approve'), true, 'Connecting…');
+            try {
+                const result = await call('/api/studio/connect/approve', { challenge, state });
+                show('done');
+                location.href = result.redirect;
+            } catch (error) {
+                busy($('approve'), false);
+                if (error.status === 403) { show('upgrade'); return; }
+                if (error.status === 401) { show('signin'); return; }
+                fail(error.message);
+            }
+        });
+        async function signOut() { try { await call('/api/auth/logout', {}); } catch (_) {} $('email-form').hidden = false; $('code-form').hidden = true; show('signin'); }
+        $('sign-out').addEventListener('click', signOut);
+        $('upgrade-sign-out').addEventListener('click', signOut);
+        start();
+    })();
+    </script>
+</body>
+</html>
