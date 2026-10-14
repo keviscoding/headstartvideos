@@ -45,6 +45,7 @@ def browser():
 @pytest.fixture
 def workspace(browser):
     env = SimpleNamespace(mode="ready", creates=[], posts=[], errors=[], preview_gets=[], preview_cached=set(),
+                          local_version="synthetic-studio", account=None, update_state={"state": "idle"},
                           preview_active=0, preview_max_active=0, preview_busy=0, preview_delay=0,
                           finished_jobs=[{"slug": "finished-film", "title": "A finished film", "style": "documentary", "editable": True}])
     preview_lock = threading.Lock()
@@ -96,10 +97,24 @@ def workspace(browser):
     @app.get("/cr-status")
     def status():
         ready = env.mode != "needs_setup"
-        return jsonify(local_version="synthetic-studio", brain_mode="claude_code",
+        return jsonify(local_version=env.local_version, account=env.account, brain_mode="claude_code",
                        readiness={"ready": ready, "blockers": [] if ready else ["Connect your narration account."]},
                        claude_code={"allowance": {"reported_limit": True, "blocked": False}},
                        narration={"voice": "My narrator", "label": "My media account"})
+
+    @app.get("/cr-update")
+    def update_status():
+        return jsonify(env.update_state)
+
+    @app.post("/cr-update/download")
+    def update_download():
+        env.update_state = {"state": "staged", "version": env.account["version"], "done": 1, "total": 1}
+        return jsonify(env.update_state)
+
+    @app.post("/cr-update/restart")
+    def update_restart():
+        env.update_state = {"state": "restarting"}
+        return jsonify(env.update_state)
 
     @app.get("/api/queue")
     def queue():
@@ -320,3 +335,35 @@ def test_project_posters_are_lazy_bounded_and_retry_busy_decoders(workspace):
     assert last.get_attribute('poster') == '/cr-workspace/preview/project/film-23.jpg'
     assert env.preview_max_active <= 2, "Only two screenshot decoders may be warmed concurrently."
     assert not env.posts, "Loading and retrying screenshots must not create creative work."
+
+
+def test_updates_are_optional_explained_and_mentioned_before_discord(workspace):
+    workspace.local_version = "5.3-admin.51"
+    workspace.account = {"version": "5.3-admin.52", "changelog": [
+        {"build": 52, "title": "Faster thumbnails", "items": ["Thumbnails load faster."]},
+        {"build": 51, "title": "Already installed", "items": ["Something this Studio already has."]}]}
+    workspace.open()
+    page = workspace.page
+    page.wait_for_selector("#crw-update:not([hidden])")
+    assert "Studio 52 is available" in page.inner_text("#crw-update")
+    assert "optional" in page.inner_text("#crw-update")
+    # The first Discord click shows what the update fixes instead of leaving.
+    page.click("a[data-discord='sidebar']")
+    assert page.locator("#crw-whatsnew").is_visible()
+    assert "Before you ask" in page.inner_text("#crw-whatsnew-title")
+    listed = page.inner_text("#crw-whatsnew-list")
+    assert "Thumbnails load faster." in listed and "already has" not in listed
+    assert page.locator("#crw-whatsnew-discord").is_visible()
+    page.click("#crw-whatsnew-update")
+    page.wait_for_function("document.querySelector('#crw-update').textContent.includes('The update is ready')")
+    assert any(post["path"] == "/cr-update/download" for post in workspace.posts)
+    page.click("#crw-update .crw-primary-button")
+    page.wait_for_function("document.querySelector('#crw-update').textContent.includes('Restarting')")
+
+
+def test_no_update_banner_when_studio_is_current(workspace):
+    workspace.local_version = "5.3-admin.52"
+    workspace.account = {"version": "5.3-admin.52", "changelog": []}
+    workspace.open()
+    assert workspace.page.locator("#crw-update").is_hidden()
+    assert not any(post["path"].startswith("/cr-update") for post in workspace.posts)

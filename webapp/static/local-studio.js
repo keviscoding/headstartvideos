@@ -162,7 +162,7 @@ window.CRLocalStudio = (() => {
                 '<button class="btn-secondary" data-ls-copy-key>'+icon('key')+'Copy my key instead</button></div>'+
                 '<p class="ls-step-note">Then press <b>Set up Claude for videos</b> and paste a Kie.ai key. When all three steps show ✓ Done, open Studio and make your first video.</p></div></div>'+
             '<div class="ls-step ls-step-quiet"><span class="ls-step-n">↻</span><div class="ls-step-body"><h3>Already installed? Update in place</h3>'+
-                '<p>Studio tells you when a new version is out. Close the launcher, then in your Studio folder ask Claude Code to “Update ChannelRecipe Studio”. Your projects, accounts and styles stay put. Don’t download a fresh copy into a new folder.</p></div></div>'+
+                '<p>Studio shows what’s new when an update is out and updates itself in one click, downloading only what changed. Updating is optional: your current version keeps working. On Studio 51 or older, close the launcher and ask Claude Code in your Studio folder to “Update ChannelRecipe Studio” once. Don’t download a fresh copy into a new folder.</p></div></div>'+
             '</section>';
     }
     function planPanel() {

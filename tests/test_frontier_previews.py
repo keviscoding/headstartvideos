@@ -2,6 +2,7 @@
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import shutil
@@ -113,14 +114,19 @@ def test_real_packaged_screenshot_catalog_and_route_with_no_decode(env, monkeypa
     monkeypatch.setattr(preview.subprocess, "run", lambda *a, **k: pytest.fail("A packaged JPEG launched FFmpeg."))
     row = env.get("/cr-workspace/catalog").json["channels"][0]
     assert row["preview_available"] is True
-    assert row["preview_url"] == "/cr-workspace/preview/recipe/3d.jpg"
+    assert row["preview_url"].startswith("/cr-workspace/preview/recipe/3d.jpg?v=")
     # Recipe cards show a labelled style reference that credits its channel.
     assert row["preview_video_url"] is None and row["preview_label"] == "Style reference · Reference Channel"
     response = env.get(row["preview_url"])
     assert response.status_code == 200 and response.data == target.read_bytes()
     assert response.mimetype == "image/jpeg" and response.headers["X-CR-Preview"] == "Style reference · Reference Channel"
-    assert response.headers["Cache-Control"] == "private, no-store"
+    # The URL carries the picture's version, so the browser keeps it.
+    assert response.headers["Cache-Control"] == "private, max-age=31536000, immutable"
     assert str(env.home) not in env.get("/cr-workspace/catalog").text
+    # A changed picture gets a new URL; the old one is never shown again.
+    changed = packaged(env, data=jpeg() + b"changed")
+    os.utime(changed, (changed.stat().st_atime, changed.stat().st_mtime + 5))
+    assert env.get("/cr-workspace/catalog").json["channels"][0]["preview_url"] != row["preview_url"]
 
 
 def test_no_video_sample_does_not_substitute_art_or_reference_picture(env):

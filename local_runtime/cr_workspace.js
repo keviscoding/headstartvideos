@@ -450,7 +450,7 @@
       const narration=setup.narration||{};text('crw-narration-name',narration.voice||'Your configured narrator');text('crw-narration-account',[narration.label||providerName(narration.provider),narration.model_label||friendlyModel(narration.model)].filter(Boolean).join(' · ')||'Uses the voice account selected in Accounts.');
       const initial=findRecipe(boot.preset?.style||draft.recipe)||findRecipe('documentary')||rows()[0]; if(!initial)throw new Error('No visual recipes are installed. Update this studio from your ChannelRecipe account.');
       if(boot.preset?.features)state.featureDrafts[initial.name]=boot.preset.features;
-      selectRecipe(initial,false);chooseGroup('[data-minutes]','minutes',$('crw-minutes').value);updateOptional();await refreshActivity(true);showPage(location.hash.slice(1)||'create',false);schedule();
+      selectRecipe(initial,false);chooseGroup('[data-minutes]','minutes',$('crw-minutes').value);updateOptional();await refreshActivity(true);showPage(location.hash.slice(1)||'create',false);schedule();checkForUpdate();
     }catch(e){error(e.message);text('crw-readiness','The workspace could not finish loading. Keep the launcher open and refresh this page.');}
     finally{gate();}
   }
@@ -481,5 +481,98 @@
   document.addEventListener('visibilitychange',schedule);
   if(!posterObserver)window.addEventListener('scroll',visiblePosters,{passive:true});
   window.CR_WORKSPACE_CLIENT={payload,selectRecipe,featureValues,api,state};
+
+  // Updates are optional and explained. A banner offers them, the Discord
+  // links mention them once (the fix may already be out), and Update now
+  // downloads only what changed, then restarts Studio when nothing is running.
+  const updates = {timer: null, from: 0, discordShown: false, status: null};
+  function buildNumber(value) {const m = String(value || '').match(/(\d+)$/); return m ? Number(m[1]) : 0;}
+  function pendingUpdate() {
+    const s = state.setup || {}, local = buildNumber(s.local_version), remote = buildNumber(s.account?.version);
+    if (!local || remote <= local) return null;
+    return {local, remote, entries: (s.account?.changelog || []).filter(e => Number(e.build) > local)};
+  }
+  function laterKey(info) {return 'crw-update-later-' + info.remote;}
+  function dismissed(info) {try {return localStorage.getItem(laterKey(info)) === '1';} catch (_) {return false;}}
+  function showWhatsNew(mode) {
+    const info = pendingUpdate(); if (!info) return false;
+    const list = $('crw-whatsnew-list'); list.replaceChildren();
+    for (const entry of info.entries) {const section = el('section'); section.append(el('h3', '', `Studio ${entry.build} · ${entry.title || 'Improvements'}`)); const ul = el('ul'); for (const item of entry.items || []) ul.append(el('li', '', item)); section.append(ul); list.append(section);}
+    if (!info.entries.length) list.append(el('p', 'crw-whatsnew-note', 'Fixes and improvements.'));
+    text('crw-whatsnew-title', mode === 'discord' ? `Before you ask: Studio ${info.remote} is out` : `What’s new in Studio ${info.remote}`);
+    text('crw-whatsnew-note', mode === 'discord' ? 'Your issue may already be fixed. Updating takes about a minute and keeps your projects, accounts and styles.' : 'Updating takes about a minute. Your projects, accounts and styles stay as they are, and your current version keeps working if you wait.');
+    hide('crw-whatsnew-discord', mode !== 'discord');
+    $('crw-whatsnew').showModal(); return true;
+  }
+  function updateBanner(status) {
+    const box = $('crw-update'), info = pendingUpdate(); updates.status = status || updates.status;
+    const s = updates.status || {state: 'idle'};
+    if (!info && !['restarting', 'staged'].includes(s.state)) {box.hidden = true; return;}
+    box.replaceChildren(); const copy = el('div', ''); box.append(copy);
+    const button = (label, cls, handler) => {const b = el('button', cls, label); b.type = 'button'; b.addEventListener('click', handler); box.append(b); return b;};
+    if (s.state === 'downloading') {
+      copy.append(el('strong', '', 'Downloading the update…'), el('span', '', s.total ? `${Math.round(100 * s.done / s.total)}% · only the files that changed` : 'Finding the files that changed'));
+      const bar = el('progress'); bar.max = s.total || 1; bar.value = s.done || 0; if (!s.total) bar.removeAttribute('value'); copy.append(bar);
+    } else if (s.state === 'staged') {
+      copy.append(el('strong', '', 'The update is ready'), el('span', '', 'Restart Studio to finish. It takes a few seconds and this page reloads by itself.'));
+      button('Restart now', 'crw-primary-button', restartForUpdate);
+    } else if (s.state === 'restarting') {
+      copy.append(el('strong', '', 'Restarting Studio…'), el('span', '', 'This page reloads by itself in a few seconds.'));
+    } else if (s.state === 'failed') {
+      copy.append(el('strong', '', 'The update didn’t finish'), el('span', '', s.message || 'Try again in a moment.'));
+      button('Try again', 'crw-secondary-button', startUpdate);
+    } else {
+      if (dismissed(info)) {box.hidden = true; return;}
+      const first = info.entries[0];
+      copy.append(el('strong', '', `Studio ${info.remote} is available`), el('span', '', first ? `${first.title}${info.entries.length > 1 ? ` and ${info.entries.length - 1} more update${info.entries.length > 2 ? 's' : ''}` : ''}. Updating is optional.` : 'Fixes and improvements. Updating is optional.'));
+      button('What’s new', 'crw-secondary-button', () => showWhatsNew('news'));
+      button('Update now', 'crw-primary-button', startUpdate);
+      const close = button('×', 'crw-icon-button', () => {try {localStorage.setItem(laterKey(info), '1');} catch (_) {} box.hidden = true;}); close.setAttribute('aria-label', 'Remind me later');
+    }
+    box.hidden = false;
+  }
+  async function pollUpdate() {
+    clearTimeout(updates.timer);
+    try {const s = await api('/cr-update'); updateBanner(s); if (s.state === 'downloading') updates.timer = setTimeout(pollUpdate, 1000);} catch (_) {}
+  }
+  async function startUpdate() {
+    if ($('crw-whatsnew').open) $('crw-whatsnew').close();
+    try {updateBanner(await api('/cr-update/download', {method: 'POST', body: {}}));} catch (e) {updateBanner({state: 'failed', message: e.message});}
+    pollUpdate();
+  }
+  async function restartForUpdate() {
+    updates.from = buildNumber(state.setup?.local_version);
+    try {updateBanner(await api('/cr-update/restart', {method: 'POST', body: {}})); setTimeout(waitForRestart, 3000);}
+    catch (e) {updateBanner({...updates.status, state: 'staged'}); error(e.message);}
+  }
+  async function waitForRestart() {
+    try {
+      const response = await fetch('/cr-status', {cache: 'no-store'});
+      if (response.ok) {const s = await response.json(); if (buildNumber(s.local_version) > updates.from) {try {sessionStorage.setItem('crw-updated', String(buildNumber(s.local_version)));} catch (_) {} location.reload(); return;}}
+    } catch (_) {}
+    setTimeout(waitForRestart, 1500);
+  }
+  function announceUpdated() {
+    let build = ''; try {build = sessionStorage.getItem('crw-updated') || ''; sessionStorage.removeItem('crw-updated');} catch (_) {}
+    if (!build) return;
+    const box = $('crw-finished'); box.replaceChildren();
+    const copy = el('div', ''); copy.append(el('strong', '', `Updated to Studio ${build}`), el('span', '', 'Your projects, accounts and styles are just as you left them.'));
+    const close = el('button', 'crw-icon-button', '×'); close.type = 'button'; close.setAttribute('aria-label', 'Dismiss'); close.addEventListener('click', () => {box.hidden = true;});
+    box.append(copy, close); box.hidden = false;
+  }
+  async function checkForUpdate() {
+    announceUpdated();
+    if (!pendingUpdate()) return;
+    try {updateBanner(await api('/cr-update'));} catch (_) {updateBanner({state: 'idle'});}
+    if (updates.status?.state === 'downloading') pollUpdate();
+  }
+  $('crw-whatsnew-update').addEventListener('click', startUpdate);
+  $('crw-whatsnew-later').addEventListener('click', () => $('crw-whatsnew').close());
+  $('crw-whatsnew-close').addEventListener('click', () => $('crw-whatsnew').close());
+  document.addEventListener('click', event => {
+    const link = event.target.closest('a[data-discord]');
+    if (!link || link.dataset.discord === 'finished-banner' || updates.discordShown || !pendingUpdate()) return;
+    updates.discordShown = true; event.preventDefault(); showWhatsNew('discord');
+  }, true);
   start();
 })();

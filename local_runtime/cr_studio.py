@@ -420,6 +420,8 @@ def create_app():
     def local_access():
         if request.host not in ("127.0.0.1:7860", "localhost:7860"):
             return jsonify(error="Open the studio on localhost."), 403
+        if getattr(studio, "_cr_restart_for_update", False) and request.method != "GET":
+            return jsonify(error="Studio is restarting to finish its update. Try again in a few seconds."), 409
         origin = request.headers.get("Origin")
         if origin and origin not in ("http://127.0.0.1:7860", "http://localhost:7860"):
             return jsonify(error="Open the studio on localhost."), 403
@@ -692,6 +694,59 @@ def create_app():
         except Exception as e:
             return jsonify(error=str(e)), 400
         return jsonify(connected=True, brain_connected=bool(status.get("brain", {}).get("connected")))
+
+    # In-app updates. Downloading never touches the running studio; restarting
+    # waits until nothing is running and then reopens in the same window.
+    updater = {"state": "idle", "done": 0, "total": 0, "message": "", "version": None, "thread": None}
+
+    def update_snapshot():
+        return {key: updater[key] for key in ("state", "done", "total", "message", "version")}
+
+    @studio.app.get("/cr-update")
+    def update_status():
+        return jsonify(update_snapshot())
+
+    @studio.app.post("/cr-update/download")
+    def update_download():
+        import cr_update
+        if updater["state"] in ("downloading", "restarting"):
+            return jsonify(update_snapshot())
+
+        def run():
+            def progress(done, total):
+                updater.update(done=done, total=total)
+            try:
+                result = cr_update.prepare(HOME, progress=progress)
+                if result["state"] == "current":
+                    updater.update(state="current", message="You already have the latest Studio.")
+                else:
+                    updater.update(state="staged", version=result["version"],
+                                   message="The update is ready. Restart Studio to finish.")
+            except cr_update.UpdateStopped as stopped:
+                updater.update(state="failed", message=str(stopped))
+            except Exception:
+                studio.app.logger.exception("The update could not download")
+                updater.update(state="failed", message="The update couldn't download. Check your connection and try again.")
+
+        updater.update(state="downloading", done=0, total=0, message="Downloading the update…")
+        updater["thread"] = threading.Thread(target=run, daemon=True)
+        updater["thread"].start()
+        return jsonify(update_snapshot())
+
+    @studio.app.post("/cr-update/restart")
+    def update_restart():
+        if updater["state"] != "staged":
+            return jsonify(error="Download the update first."), 409
+        with activity.lock:
+            if activity.busy():
+                return jsonify(error="A video or task is still running. Studio will be ready to restart when it finishes."), 409
+            # From here no new work starts; the server stops after this reply.
+            studio._cr_restart_for_update = True
+            updater.update(state="restarting", message="Restarting Studio…")
+        server = getattr(studio, "_cr_server", None)
+        if server is not None:
+            threading.Timer(0.5, server.shutdown).start()
+        return jsonify(update_snapshot())
 
     # One-click connect: the setup page opens channelrecipe.com, the creator
     # approves, and the browser comes back here with a short-lived code that
@@ -1135,7 +1190,28 @@ def create_app():
     return studio
 
 
+def prefer_studio_ytdlp():
+    """Point the engine at the yt-dlp installed with Studio, unless the creator chose one.
+
+    An older yt-dlp elsewhere on PATH often can't read today's YouTube pages."""
+    configured = os.environ.get("YTDLP_BIN")
+    if not configured:
+        try:
+            from dotenv import dotenv_values
+            configured = dotenv_values(HOME / ".env").get("YTDLP_BIN")
+        except Exception:
+            configured = None
+    if configured:
+        return
+    scripts = Path(sys.executable).parent
+    for name in ("yt-dlp.exe", "yt-dlp"):
+        if (scripts / name).is_file():
+            os.environ["YTDLP_BIN"] = str(scripts / name)
+            return
+
+
 def main():
+    prefer_studio_ytdlp()
     try:
         # Updates from older releases ran an updater that could not remove
         # retired files, so tidy them on start too.
@@ -1151,9 +1227,45 @@ def main():
     def open_page():
         time.sleep(1)
         webbrowser.open("http://127.0.0.1:7860/cr-setup")
-    threading.Thread(target=open_page, daemon=True).start()
+    if not os.environ.pop("CR_RESTARTED_FOR_UPDATE", ""):
+        threading.Thread(target=open_page, daemon=True).start()
     print("ChannelRecipe local studio: http://127.0.0.1:7860/cr-setup")
-    studio.app.run(host="127.0.0.1", port=7860, threaded=True, debug=False)
+    from werkzeug.serving import make_server
+    server = make_server("127.0.0.1", 7860, studio.app, threaded=True)
+    studio._cr_server = server
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
+    if getattr(studio, "_cr_restart_for_update", False):
+        restart_into_update()
+
+
+def restart_into_update():
+    """Install the staged update and start the new Studio in this same window."""
+    import cr_update
+    print("\nInstalling the update…", flush=True)
+    try:
+        # A Windows launcher reads its own file while Studio runs; never rewrite it then.
+        keep = {"Start on Windows.cmd"} if os.name == "nt" else set()
+        result = cr_update.apply_staged(HOME, keep=keep)
+        print("Updated to ChannelRecipe Studio %s." % cr_update._build(result["version"]), flush=True)
+        if result["requirements_changed"]:
+            print("Installing updated libraries. This can take a minute…", flush=True)
+            if (subprocess.call([sys.executable, "-m", "pip", "install", "-r", str(HOME / "requirements.txt")]) == 0
+                    and subprocess.call([sys.executable, "-m", "playwright", "install", "chromium"]) == 0):
+                (HOME / ".venv" / ".cr-installed").touch()
+    except cr_update.UpdateStopped as stopped:
+        print(stopped, flush=True)
+    except Exception as error:
+        print("The update couldn't finish (%s). Your previous version was kept." % error, flush=True)
+    os.environ["CR_RESTARTED_FOR_UPDATE"] = "1"
+    command = [sys.executable, str(HOME / "cr_studio.py")]
+    if os.name == "nt":
+        # Stay as the launcher's process so its window waits for the new Studio.
+        raise SystemExit(subprocess.call(command, cwd=str(HOME)))
+    os.chdir(HOME)
+    os.execv(sys.executable, command)
 
 
 if __name__ == "__main__":
