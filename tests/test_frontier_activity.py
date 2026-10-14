@@ -723,3 +723,29 @@ def test_one_click_connect_saves_the_key_from_the_approval_round_trip(runtime, m
     sent.clear()
     again = r.client.get("/cr-connect/return?" + back, headers={"Host": "127.0.0.1:7860"})
     assert again.headers["Location"].endswith("/cr-setup?connect=expired") and sent == {}
+
+
+def test_in_app_update_downloads_in_the_background_and_restarts_only_when_idle(runtime, timeline, monkeypatch):
+    import cr_update
+    r = runtime
+    assert r.client.post("/cr-update/restart", headers=r.headers, json={}).status_code == 409
+    monkeypatch.setattr(cr_update, "prepare", lambda home, progress=None: (progress(5, 10), {
+        "state": "staged", "version": "5.3-admin.99", "files": 3})[1])
+    r.client.post("/cr-update/download", headers=r.headers, json={})
+    for _ in range(50):
+        status = r.client.get("/cr-update", headers=r.headers).json
+        if status["state"] != "downloading":
+            break
+        time.sleep(0.02)
+    assert status["state"] == "staged" and status["version"] == "5.3-admin.99" and status["done"] == 5
+    # Busy: a running task means no restart, and the update waits.
+    r.client.post("/api/tl/example/chat", headers=r.headers)
+    assert r.studio._cr_activity.busy()
+    assert r.client.post("/cr-update/restart", headers=r.headers, json={}).status_code == 409
+    original = timeline.spawned.pop()
+    original.target(*original.args)
+    assert not r.studio._cr_activity.busy()
+    restarting = r.client.post("/cr-update/restart", headers=r.headers, json={})
+    assert restarting.status_code == 200 and restarting.json["state"] == "restarting"
+    # Nothing new can start while Studio restarts.
+    assert r.client.post("/api/run", headers=r.headers, json={}).status_code == 409

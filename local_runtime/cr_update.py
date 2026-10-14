@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import http.client
+import io
 import json
 import os
 import re
@@ -153,12 +154,7 @@ def download(base: str, key: str, target: Path, get=http_get, attempts: int = 4)
     auth = {"Authorization": "Bearer " + key}
     try:
         first = get(base + "/api/studio/download", auth)
-        location = None
-        if _status(first) in (301, 302, 303, 307, 308):
-            # The signed storage link carries its own authorization.
-            location = first.headers.get("Location", "")
-            if urlsplit(location).scheme != "https":
-                raise UpdateStopped("The download link wasn't secure. Nothing was changed.")
+        location = _signed_location(first)
         size = expected_sha = None
         target.unlink(missing_ok=True)
         for attempt in range(attempts):
@@ -192,6 +188,138 @@ def download(base: str, key: str, target: Path, get=http_get, attempts: int = 4)
         if _certificate_problem(error):
             raise UpdateStopped(CERTIFICATE_HELP) from None
         raise UpdateStopped("The download was interrupted. Nothing was changed; check your connection and try again.") from None
+
+
+def _signed_location(response):
+    """The signed storage link a download redirect points to, or None."""
+    if _status(response) not in (301, 302, 303, 307, 308):
+        return None
+    # The signed storage link carries its own authorization.
+    location = response.headers.get("Location", "")
+    if urlsplit(location).scheme != "https":
+        raise UpdateStopped("The download link wasn't secure. Nothing was changed.")
+    return location
+
+
+class _NoRanges(Exception):
+    """Storage didn't serve byte ranges; use the whole download instead."""
+
+
+class _RangeReader(io.RawIOBase):
+    """A read-only, seekable view of the remote release, fetched in byte ranges.
+
+    zipfile reads the archive's index from the end, then only the members it is
+    asked for, so an update downloads just the files that changed.
+    """
+    BLOCK = 1024 * 1024
+
+    def __init__(self, url, get, size):
+        super().__init__()
+        self.url, self.get, self.size = url, get, size
+        self.pos, self.start, self.block, self.fetched = 0, -1, b"", 0
+
+    def readable(self):
+        return True
+
+    def seekable(self):
+        return True
+
+    def tell(self):
+        return self.pos
+
+    def seek(self, offset, whence=io.SEEK_SET):
+        base = {io.SEEK_SET: 0, io.SEEK_CUR: self.pos, io.SEEK_END: self.size}[whence]
+        self.pos = max(0, base + offset)
+        return self.pos
+
+    def _fill(self, wanted):
+        end = min(self.size, self.pos + max(wanted, self.BLOCK)) - 1
+        response = self.get(self.url, {"Range": "bytes=%d-%d" % (self.pos, end)})
+        data = response.read() if _status(response) == 206 else b""
+        if len(data) != end - self.pos + 1:
+            raise _NoRanges()
+        self.start, self.block = self.pos, data
+        self.fetched += len(data)
+
+    def read(self, size=-1):
+        size = self.size - self.pos if size is None or size < 0 else min(size, self.size - self.pos)
+        out = bytearray()
+        while size > 0:
+            if not self.start <= self.pos < self.start + len(self.block):
+                self._fill(size)
+            piece = self.block[self.pos - self.start:self.pos - self.start + size]
+            out += piece
+            self.pos += len(piece)
+            size -= len(piece)
+        return bytes(out)
+
+    def readinto(self, buffer):
+        data = self.read(len(buffer))
+        buffer[:len(data)] = data
+        return len(data)
+
+
+def _member_path(name: str) -> PurePosixPath | None:
+    """A release member's path inside the studio, or None for folders; unsafe paths stop the update."""
+    if not name.startswith(TOP):
+        raise UpdateStopped("The download had an unexpected layout. Nothing was changed.")
+    relative = PurePosixPath(name[len(TOP):])
+    if not relative.parts:
+        return None
+    if relative.is_absolute() or ".." in relative.parts:
+        raise UpdateStopped("The download had an unsafe file path. Nothing was changed.")
+    return relative
+
+
+def stage_changes(home: Path, base: str, key: str, staging: Path, expected: str, *, get=http_get,
+                  progress=None) -> tuple[list[tuple[PurePosixPath, bool]], int]:
+    """Stage only the files that differ from this install, reading the release in byte ranges.
+
+    Returns the staged files and how many bytes were downloaded. Raises _NoRanges
+    when storage can't serve ranges, so the caller can use the whole download.
+    """
+    first = get(base + "/api/studio/download", {"Authorization": "Bearer " + key})
+    location = _signed_location(first)
+    if not location:
+        raise _NoRanges()
+    probe = get(location, {"Range": "bytes=0-0"})
+    total = int((probe.headers.get("Content-Range") or "").rpartition("/")[2] or 0) if _status(probe) == 206 else 0
+    if not total:
+        raise _NoRanges()
+    reader = _RangeReader(location, get, total)
+    with zipfile.ZipFile(reader) as bundle:
+        try:
+            release = json.loads(bundle.read(TOP + "cr-release.json"))
+            listing = json.loads(bundle.read(TOP + "cr-files.json")).get("files", {})
+        except (KeyError, ValueError):
+            raise UpdateStopped("The download isn't a ChannelRecipe Studio release. Nothing was changed.") from None
+        if release.get("version") != expected:
+            raise UpdateStopped("The download didn't match the expected version. Nothing was changed; try again.")
+        wanted = []
+        for info in bundle.infolist():
+            relative = _member_path(info.filename)
+            if relative is None or info.is_dir() or _protected(relative):
+                continue
+            target = home.joinpath(*relative.parts)
+            digest = listing.get(relative.as_posix())
+            if digest and target.is_file() and not target.is_symlink() and _digest(target) == digest:
+                continue
+            wanted.append((info, relative))
+        need = sum(info.compress_size for info, _ in wanted) or 1
+        done, files = 0, []
+        for info, relative in wanted:
+            data = bundle.read(info)
+            digest = listing.get(relative.as_posix())
+            if digest and hashlib.sha256(data).hexdigest() != digest:
+                raise UpdateStopped("The download was damaged. Nothing was changed; try again.")
+            destination = staging.joinpath(*relative.parts)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(data)
+            files.append((relative, bool(info.external_attr >> 16 & 0o111)))
+            done += info.compress_size
+            if progress:
+                progress(min(done, need), need)
+    return files, reader.fetched
 
 
 def _stage(archive: Path, staging: Path, expected: str) -> list[tuple[PurePosixPath, bool]]:
@@ -331,6 +459,83 @@ def retire(home: Path = HOME) -> list[str]:
     return removed
 
 
+def _fetch(home, base, key, staging, archive, remote, *, get=http_get, progress=None):
+    """Stage the release: only the changed files when possible, else the whole download."""
+    try:
+        files, _ = stage_changes(home, base, key, staging, remote, get=get, progress=progress)
+        return files
+    except UpdateStopped:
+        raise
+    except (_NoRanges, zipfile.BadZipFile, URLError, OSError, http.client.HTTPException, ValueError):
+        shutil.rmtree(staging, ignore_errors=True)
+        staging.mkdir()
+    download(base, key, archive, get)
+    return _stage(archive, staging, remote)
+
+
+def _installed(home: Path) -> str:
+    try:
+        return json.loads((home / "cr-release.json").read_text())["version"]
+    except (OSError, ValueError, KeyError):
+        raise UpdateStopped("This folder isn't a ChannelRecipe Studio install. Run the update from your Studio folder.") from None
+
+
+STAGED = ".cr-update-staging"
+
+
+def prepare(home: Path = HOME, *, get=http_get, progress=None) -> dict:
+    """Download and stage the latest release while Studio keeps running. Nothing is replaced yet."""
+    local = _installed(home)
+    base, key = _settings(home)
+    remote = latest_version(base, key, get)
+    if _build(remote) is None or _build(remote) <= (_build(local) or 0):
+        return {"state": "current", "version": local}
+    staging = home / STAGED
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir()
+    archive = home / ".cr-update-download.zip"
+    try:
+        files = _fetch(home, base, key, staging, archive, remote, get=get, progress=progress)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    finally:
+        archive.unlink(missing_ok=True)
+    (staging / ".cr-staged.json").write_text(json.dumps({
+        "version": remote, "from": local, "files": [[p.as_posix(), x] for p, x in files]}))
+    return {"state": "staged", "version": remote, "files": len(files)}
+
+
+def apply_staged(home: Path = HOME, *, keep=frozenset(), now=time.time) -> dict:
+    """Install a staged release. Files named in keep are left as they are (in use by the launcher)."""
+    staging = home / STAGED
+    try:
+        saved = json.loads((staging / ".cr-staged.json").read_text())
+    except (OSError, ValueError):
+        raise UpdateStopped("No update is ready to install. Download it again.") from None
+    local = _installed(home)
+    if saved.get("from") != local:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise UpdateStopped("Studio changed since this update was downloaded. Download it again.")
+    files = [(PurePosixPath(path), bool(executable)) for path, executable in saved.get("files", [])
+             if path not in keep]
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(now()))
+    backup = home / BACKUPS / ("%s-%s" % (_build(local), stamp))
+    try:
+        changed, requirements_changed, kept = apply(home, staging, files, backup)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    retire(home)
+    if requirements_changed:
+        # The launcher installs libraries once; make it check them again.
+        (home / ".venv" / ".cr-installed").unlink(missing_ok=True)
+    backups = sorted((p for p in (home / BACKUPS).glob("*") if p.is_dir()), key=lambda p: p.stat().st_mtime)
+    for old in backups[:-KEEP_BACKUPS]:
+        shutil.rmtree(old, ignore_errors=True)
+    return {"version": saved["version"], "changed": changed, "requirements_changed": requirements_changed,
+            "kept": kept}
+
+
 def update(home: Path = HOME, *, get=http_get, running=studio_running, now=time.time) -> str:
     try:
         local = json.loads((home / "cr-release.json").read_text())["version"]
@@ -348,8 +553,7 @@ def update(home: Path = HOME, *, get=http_get, running=studio_running, now=time.
     staging.mkdir()
     archive = home / ".cr-update-download.zip"
     try:
-        download(base, key, archive, get)
-        files = _stage(archive, staging, remote)
+        files = _fetch(home, base, key, staging, archive, remote, get=get)
         if running():
             raise UpdateStopped("Studio was opened during the update. Nothing was changed; close it and try again.")
         stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(now()))

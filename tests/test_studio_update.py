@@ -70,8 +70,8 @@ class Body(io.BytesIO):
 
 
 class Server:
-    def __init__(self, version, zip_bytes, drop_first_after=None, sha=None):
-        self.version, self.zip_bytes, self.requests = version, zip_bytes, []
+    def __init__(self, version, zip_bytes, drop_first_after=None, sha=None, ranges=False):
+        self.version, self.zip_bytes, self.requests, self.ranges = version, zip_bytes, [], ranges
         self.drop_first_after, self.downloads = drop_first_after, 0
         self.sha = sha if sha is not None else hashlib.sha256(zip_bytes).hexdigest()
 
@@ -85,8 +85,17 @@ class Server:
             return redirect
         if url.startswith("https://storage.example/"):
             assert "Authorization" not in headers, "the ChannelRecipe key must never follow a redirect"
+            wanted = headers.get("Range", "").partition("=")[2]
+            if wanted and not wanted.endswith("-"):
+                if not self.ranges:
+                    return Body(self.zip_bytes, headers={"Content-Length": str(len(self.zip_bytes))})
+                first, last = (int(n) for n in wanted.split("-"))
+                part = self.zip_bytes[first:last + 1]
+                self.served = getattr(self, "served", 0) + len(part)
+                return Body(part, status=206, headers={
+                    "Content-Range": "bytes %d-%d/%d" % (first, first + len(part) - 1, len(self.zip_bytes))})
             self.downloads += 1
-            start = int(headers["Range"].split("=")[1].rstrip("-")) if "Range" in headers else 0
+            start = int(wanted.rstrip("-")) if wanted else 0
             if start:
                 return Body(self.zip_bytes[start:], status=206)
             drop = self.drop_first_after if self.downloads == 1 else None
@@ -238,7 +247,9 @@ def test_a_dropped_download_resumes_where_it_stopped(studio):
     zip_bytes, _ = release("5.3-admin.45", {"cr_studio.py": b"new studio" * 5000, "requirements.txt": b"flask\n"})
     server = Server("5.3-admin.45", zip_bytes, drop_first_after=len(zip_bytes) // 3)
     assert "from version 44 to 45" in run(studio, server)
-    ranged = [h for url, h in server.requests if url.startswith("https://storage.example/") and "Range" in h]
+    # This storage serves no closed byte ranges, so the whole download is used and resumed.
+    ranged = [h for url, h in server.requests if url.startswith("https://storage.example/")
+              and h.get("Range", "").endswith("-")]
     assert ranged == [{"Range": "bytes=%d-" % (len(zip_bytes) // 3)}]
     assert (studio / "cr_studio.py").read_bytes() == b"new studio" * 5000
 
@@ -283,3 +294,75 @@ def test_retire_runs_on_its_own_for_installs_updated_by_an_older_updater(studio)
     assert cr_update.retire(studio) == ["assets/old.mp4"]
     assert (studio / "assets/logo.png").exists()
     assert cr_update.retire(studio) == []
+
+
+def test_an_update_downloads_only_the_files_that_changed(studio):
+    big = bytes(range(256)) * 20000  # ~5 MB that both releases share
+    for name, data in {"assets/film.bin": big}.items():
+        (studio / name).parent.mkdir(parents=True, exist_ok=True)
+        (studio / name).write_bytes(data)
+    listing = json.loads((studio / "cr-files.json").read_text())
+    listing["files"]["assets/film.bin"] = sha(big)
+    (studio / "cr-files.json").write_text(json.dumps(listing))
+    zip_bytes, _ = release("5.3-admin.45", {"cr_studio.py": b"new studio", "requirements.txt": b"flask\n",
+                                            "styles/history.json": b'{"look": "shipped"}', "obsolete.py": b"kept, harmless",
+                                            "assets/film.bin": big})
+    server = Server("5.3-admin.45", zip_bytes, ranges=True)
+    assert "from version 44 to 45" in run(studio, server)
+    assert (studio / "cr_studio.py").read_bytes() == b"new studio"
+    assert (studio / "assets/film.bin").read_bytes() == big
+    assert server.served < len(zip_bytes) / 2, "the unchanged 5 MB file was not downloaded again"
+
+
+def test_prepare_stages_while_studio_runs_and_apply_installs_later(studio):
+    zip_bytes, _ = release("5.3-admin.45", {"cr_studio.py": b"new studio", "requirements.txt": b"flask\n",
+                                            "Start on Windows.cmd": b"new launcher"})
+    (studio / "Start on Windows.cmd").write_bytes(b"old launcher")
+    staged = cr_update.prepare(studio, get=Server("5.3-admin.45", zip_bytes, ranges=True).get)
+    assert staged["state"] == "staged" and staged["version"] == "5.3-admin.45"
+    assert (studio / "cr_studio.py").read_bytes() == b"old studio", "nothing changes until it's applied"
+    result = cr_update.apply_staged(studio, keep={"Start on Windows.cmd"}, now=lambda: 0)
+    assert result["version"] == "5.3-admin.45" and not result["requirements_changed"]
+    assert (studio / "cr_studio.py").read_bytes() == b"new studio"
+    assert (studio / "Start on Windows.cmd").read_bytes() == b"old launcher", "a running launcher is never rewritten"
+    assert json.loads((studio / "cr-release.json").read_text())["version"] == "5.3-admin.45"
+    assert not (studio / ".cr-update-staging").exists()
+    with pytest.raises(cr_update.UpdateStopped, match="No update is ready"):
+        cr_update.apply_staged(studio)
+
+
+def test_prepare_says_when_studio_is_current(studio):
+    assert cr_update.prepare(studio, get=Server("5.3-admin.44", b"").get)["state"] == "current"
+
+
+class Done:
+    def __init__(self, stdout="", stderr="", returncode=0):
+        self.stdout, self.stderr, self.returncode = stdout, stderr, returncode
+
+
+def test_youtube_listing_explains_failures_and_heals_an_outdated_helper(monkeypatch):
+    import cr_style_clone as clone
+    calls = []
+    good = json.dumps({"id": "Pv-xbgsglGE", "title": "Your Life as Every Rank", "duration": 1353, "channel": "POV Tales"})
+
+    def run(command, **kwargs):
+        calls.append(command)
+        if "pip" in command:
+            return Done()
+        return Done(stderr="ERROR: [youtube] Unable to extract yt initial data") if len(calls) == 1 else Done(stdout=good)
+
+    monkeypatch.setitem(clone._YT_HELPER, "updated", False)
+    rows = clone.list_videos("https://www.youtube.com/@YourPOVtales/videos", 12, run=run)
+    assert rows[0]["id"] == "Pv-xbgsglGE"
+    assert any("pip" in c and "yt-dlp" in c for c in calls), "an outdated helper is updated once, then retried"
+    assert calls[0][1:3] == ["-m", "yt_dlp"], "Studio's own yt-dlp is used, not an older one on PATH"
+
+    def bot(command, **kwargs):
+        return Done(stderr="ERROR: Sign in to confirm you're not a bot")
+    with pytest.raises(RuntimeError, match="confirm it isn't a bot"):
+        clone.list_videos("https://www.youtube.com/@x/videos", 12, run=bot)
+
+    def other(command, **kwargs):
+        return Done(stderr="WARNING: x\nERROR: Something unusual happened")
+    with pytest.raises(RuntimeError, match=r"\(Something unusual happened\)"):
+        clone.list_videos("https://www.youtube.com/@x/videos", 12, run=other)

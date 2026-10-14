@@ -6,15 +6,19 @@ by the original adapters and their local token/readiness guards.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import re
+import time
 from urllib.parse import quote
 
 import cr_bridge
 import cr_presentation
 import cr_preview
 import cr_style_clone
+
+PREVIEW_CACHE_SECONDS = 120
 
 HOME = Path(__file__).resolve().parent
 _STYLE = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,139}\Z")
@@ -74,6 +78,18 @@ def install(studio, activity, *, token, home=None):
         app.logger.error("Workspace request %s failed", request.path, exc_info=error)
         return protect(jsonify(error="The workspace could not load this local item. Your saved work is unchanged.")), 503
 
+    # Recipe previews resolved by the last catalogue read. Thumbnail requests
+    # reuse these instead of re-reading every style for each image.
+    preview_cache = {"at": 0.0, "sources": {}}
+
+    def preview_version(source):
+        try:
+            stat = source.path.stat()
+        except OSError:
+            return "0"
+        identity = f"{source.path}|{stat.st_size}|{stat.st_mtime_ns}|{source.label}"
+        return hashlib.sha256(identity.encode()).hexdigest()[:16]
+
     def catalog_data():
         # Invoke the original view in this existing request context. No nested
         # HTTP request or after-request transformation/synchronization occurs.
@@ -100,6 +116,7 @@ def install(studio, activity, *, token, home=None):
         except Exception:
             app.logger.exception("Could not list finished videos for recipe previews")
             outputs = {}
+        sources = {}
         for row in data["channels"] + ([data["automatic"]] if data.get("automatic") else []):
             try:
                 source = cr_preview.recipe_source(studio, home, row.get("name"), cr_bridge, latest=outputs)
@@ -107,10 +124,13 @@ def install(studio, activity, *, token, home=None):
                 # A preview problem must never hide the recipe list.
                 app.logger.exception("Recipe preview unavailable for %s", row.get("name"))
                 source = None
+            sources[row.get("name")] = source
             row.update(preview_available=source is not None,
-                preview_url=("/cr-workspace/preview/recipe/" + quote(row["name"], safe="") + ".jpg") if source else None,
+                preview_url=("/cr-workspace/preview/recipe/" + quote(row["name"], safe="") + ".jpg?v="
+                             + preview_version(source)) if source else None,
                 preview_label=source.label if source else "No video preview yet",
                 preview_video_url=source.video_url if source else None)
+        preview_cache.update(at=time.monotonic(), sources=sources)
         return cr_presentation.plain_copy(data)
 
     def selected_preset():
@@ -179,12 +199,16 @@ def install(studio, activity, *, token, home=None):
         except Exception as error:
             return failure(error)
 
-    def preview_response(source):
+    def preview_response(source, *, versioned=False):
         if source is None:
             return protect(Response(status=404))
         try:
             path = cr_preview.screenshot(home, source)
-            response = protect(send_file(path, mimetype="image/jpeg", conditional=False))
+            response = protect(send_file(path, mimetype="image/jpeg", conditional=True))
+            # A versioned URL changes whenever its picture does, so the browser
+            # may keep it; unversioned previews revalidate with their ETag.
+            response.headers["Cache-Control"] = ("private, max-age=31536000, immutable" if versioned
+                                                 else "private, no-cache")
             response.headers["X-CR-Preview"] = source.label
             return response
         except cr_preview.Unavailable:
@@ -200,14 +224,13 @@ def install(studio, activity, *, token, home=None):
             local_access()
             if not _STYLE.fullmatch(style):
                 raise ValueError("Unavailable recipe.")
-            # The original visible catalogue remains the authority. Hidden
-            # variants and arbitrary file paths are never media endpoints.
-            response = app.make_response(original_channels())
-            rows = (response.get_json(silent=True) or {}).get("channels", [])
-            row = next((row for row in rows if isinstance(row, dict) and row.get("name") == style), None)
-            if row is None:
+            # The visible catalogue remains the authority: only recipes it lists
+            # have previews, and hidden variants or file paths never do.
+            if time.monotonic() - preview_cache["at"] > PREVIEW_CACHE_SECONDS or style not in preview_cache["sources"]:
+                catalog_data()
+            if style not in preview_cache["sources"]:
                 return protect(Response(status=404))
-            return preview_response(cr_preview.recipe_source(studio, home, style, cr_bridge))
+            return preview_response(preview_cache["sources"][style], versioned=bool(request.args.get("v")))
         except Exception as error:
             return failure(error)
 

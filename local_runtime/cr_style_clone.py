@@ -140,14 +140,90 @@ def normalize_url(value):
     return "https://www.youtube.com/" + channel + "/videos"
 
 
+# Plain-language reasons for yt-dlp failures (matched on its error text).
+_YT_FAILURES = (
+    ("confirm you", "YouTube is asking this computer to confirm it isn't a bot. Wait a few minutes and try again, or try another network."),
+    ("not a bot", "YouTube is asking this computer to confirm it isn't a bot. Wait a few minutes and try again, or try another network."),
+    ("does not have a videos tab", "This channel has no long videos to learn from. Use a channel or video with videos over a minute long."),
+    ("does not exist", "That YouTube channel or video doesn't exist. Check the link."),
+    ("http error 404", "That YouTube page doesn't exist. Check the link."),
+    ("private video", "That video is private. Use a public video or channel."),
+    ("members-only", "That video is for channel members only. Use a public video."),
+    ("video unavailable", "That video isn't available. Try another public video."),
+    ("getaddrinfo", "Studio couldn't reach YouTube. Check your internet connection and try again."),
+    ("unable to download", "YouTube didn't answer. Check your internet connection and try again."),
+)
+# Signs that YouTube changed and Studio's YouTube helper needs its update.
+_YT_OUTDATED = ("unable to extract", "nsig", "http error 400", "http error 403", "precondition",
+                "please report this issue", "no such option", "unrecognized arguments")
+_YT_HELPER = {"updated": False}
+
+
+def _ytdlp_command():
+    """Studio's own yt-dlp (installed and updated with Studio) before an older copy on PATH."""
+    try:
+        import yt_dlp  # noqa: F401
+        return [sys.executable, "-m", "yt_dlp"]
+    except ImportError:
+        found = shutil.which("yt-dlp")
+        return [found] if found else []
+
+
+def list_videos(url, limit, timeout=90, *, run=subprocess.run):
+    """Public videos of a channel or one video, as yt-dlp lists them. Says why when it can't."""
+    command = _ytdlp_command()
+    if not command:
+        raise RuntimeError("Studio's YouTube helper is missing. Ask Claude Code to repair your Studio, then try again.")
+
+    def attempt():
+        try:
+            done = run(command + ["--ignore-config", "--flat-playlist", "--no-warnings", "-j", "--playlist-end",
+                                  str(limit), url], capture_output=True, text=True, timeout=timeout,
+                       encoding="utf-8", errors="replace")
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("YouTube took too long to answer. Try again in a minute.") from None
+        rows = []
+        for line in (done.stdout or "").splitlines():
+            try:
+                item = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(item, dict) and item.get("id"):
+                rows.append({"id": item["id"], "title": str(item.get("title") or ""),
+                             "views": int(item.get("view_count") or 0), "duration": float(item.get("duration") or 0),
+                             "channel": str(item.get("channel") or item.get("uploader") or item.get("playlist_channel") or "")})
+        return rows, done.stderr or ""
+
+    rows, error = attempt()
+    if not rows and any(sign in error.lower() for sign in _YT_OUTDATED) and not _YT_HELPER["updated"]:
+        # YouTube changes often; one quiet update of the helper usually fixes it.
+        _YT_HELPER["updated"] = True
+        upgrade = run([sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "-q", "-U", "yt-dlp"],
+                      capture_output=True, text=True, timeout=240)
+        if upgrade.returncode == 0:
+            command = _ytdlp_command()
+            rows, error = attempt()
+    if rows:
+        return rows
+    lowered = error.lower()
+    for sign, message in _YT_FAILURES:
+        if sign in lowered:
+            raise RuntimeError(message + " No model request was made.")
+    detail = next((line.strip() for line in reversed(error.splitlines()) if line.strip()), "")
+    if detail:
+        raise RuntimeError("YouTube could not list this reference (" + detail.removeprefix("ERROR: ")[:180]
+                           + "). Try another public link; no model request was made.")
+    raise RuntimeError("YouTube didn't list any videos for this link. Try another public link; no model request was made.")
+
+
 def preview(home, url, *, learner=None):
     """Bounded original yt-dlp metadata, without Claude or a video-analysis API."""
     canonical = normalize_url(url)
-    if learner is None:
-        import reflearn as learner
     direct_id = (parse_qs(urlsplit(canonical).query).get("v") or [None])[0]
+    limit = 1 if direct_id else PREVIEW_LIMIT
     candidates = []
-    for row in learner._flat(canonical, 1 if direct_id else PREVIEW_LIMIT, 90):
+    rows = learner._flat(canonical, limit, 90) if learner is not None else list_videos(canonical, limit)
+    for row in rows:
         identifier = row.get("id")
         if not isinstance(identifier, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{11}", identifier):
             continue

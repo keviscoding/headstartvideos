@@ -140,3 +140,10 @@ def test_remote_download_redirects_to_a_short_lived_private_link(env, monkeypatc
     op, params, expires = signed[0]
     assert op == "get_object" and params["Key"] == studio.RELEASE_KEY and expires <= 900
     assert "attachment" in params["ResponseContentDisposition"]
+
+
+
+def test_studio_status_carries_whats_new(env):
+    entries = studio.status(user(1, "studio_pro"))["changelog"]
+    assert entries and all(isinstance(entry["build"], int) and entry["items"] for entry in entries)
+    assert [entry["build"] for entry in entries] == sorted((entry["build"] for entry in entries), reverse=True)
