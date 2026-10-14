@@ -157,10 +157,10 @@ window.CRLocalStudio = (() => {
                     '<details class="ls-mini"><summary>It says something is missing</summary><p>Studio needs Python 3.10 or newer (3.13 recommended'+(platform==='windows'?'; tick “Add Python to PATH” when installing':'')+'), Node.js LTS and FFmpeg. The setup page links each one. Easiest fix: use the Claude Code option, which installs them for you.</p></details></div>'+
                 '</div></div></div>'+
             '<div class="ls-step"><span class="ls-step-n">3</span><div class="ls-step-body"><h3>Connect your account</h3>'+
-                '<p>The setup page asks for your ChannelRecipe key. Copy it here and paste it there. Keep it private. It works like a password for your studio.</p>'+
-                '<div class="ls-step-actions"><button class="btn-secondary" data-ls-copy-key>'+icon('key')+'Copy my ChannelRecipe key</button>'+
-                '<a class="btn-ghost" href="'+SETUP_URL+'" target="_blank" rel="noopener">Open setup page ↗</a></div>'+
-                '<p class="ls-step-note">Setup then signs you in to Claude Code and connects a media account. When it says you’re ready, open the studio and make your first video.</p></div></div>'+
+                '<p>On the setup page, press <b>Connect my ChannelRecipe account</b> and approve. No key to copy.</p>'+
+                '<div class="ls-step-actions"><a class="btn-ghost" href="'+SETUP_URL+'" target="_blank" rel="noopener">Open setup page ↗</a>'+
+                '<button class="btn-secondary" data-ls-copy-key>'+icon('key')+'Copy my key instead</button></div>'+
+                '<p class="ls-step-note">Then press <b>Set up Claude for videos</b> and paste a Kie.ai key. When all three steps show ✓ Done, open Studio and make your first video.</p></div></div>'+
             '<div class="ls-step ls-step-quiet"><span class="ls-step-n">↻</span><div class="ls-step-body"><h3>Already installed? Update in place</h3>'+
                 '<p>Studio tells you when a new version is out. Close the launcher, then in your Studio folder ask Claude Code to “Update ChannelRecipe Studio”. Your projects, accounts and styles stay put. Don’t download a fresh copy into a new folder.</p></div></div>'+
             '</section>';

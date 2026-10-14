@@ -328,6 +328,8 @@ def setup_page(page):
                              "features": {"offered": ["stock"], "on": ["stock"]}}],
                "features": [{"key": "stock", "label": "Original stock footage"}]}
     calls, pending = [], []
+    # Tests drive every control, so they use the page's "Show all settings" mode.
+    tab.add_init_script("localStorage.setItem('cr-setup-all','1')")
     control = {"defer_save": False, "fail_save": False, "recovery_projects": [], "preset_blockers": []}
 
     def finish_save(route, payload):
@@ -564,3 +566,54 @@ def test_creative_recovery_routes_to_original_controls_without_old_stage_replay(
     assert tab.locator("#recovery-projects button").count() == 0
     assert tab.locator("#recovery-projects a").get_attribute("href") == "/"
     assert not any(path == "/cr-recover" for path, _ in data["calls"])
+
+
+def test_simple_setup_shows_one_step_at_a_time_with_one_click_connect(page):
+    tab, _ = page
+    tab.unroute("**/*")
+    html = (Path(__file__).parents[1] / "local_runtime" / "cr_setup.html").read_text()
+    html = html.replace("__LOCAL_TOKEN__", "ui-fixture-local-token")
+    state = {"python": True, "ffmpeg": True, "browser": True, "node": True, "connected": False,
+             "costs_accepted": False, "brain_mode": "claudecode", "local_version": "5.3-admin.50",
+             "model_accounts": {}, "providers": {}, "account": {"brain": {"connected": False}},
+             "claude_code": {"installed": True, "authenticated": True, "models": []},
+             "readiness": {"ready": False, "checks": [], "blockers": ["Connect your CR account."]}}
+    starts = []
+
+    def fixture(route):
+        request = route.request
+        path = urlparse(request.url).path
+        if request.url.startswith("https://channelrecipe.com/studio/connect"):
+            return route.fulfill(body="<p>Approve page</p>", content_type="text/html")
+        if path == "/cr-setup":
+            return route.fulfill(body=html, content_type="text/html")
+        if path == "/cr-status":
+            return route.fulfill(json=state)
+        if path == "/cr-workspace/catalog":
+            return route.fulfill(json={"channels": [], "features": []})
+        if path == "/cr-connect/start":
+            starts.append(request.post_data_json)
+            return route.fulfill(json={"url": "https://channelrecipe.com/studio/connect?challenge=c&state=s"})
+        pytest.fail("Unexpected request: " + request.url)
+
+    tab.route("**/*", fixture)
+    tab.goto("http://setup-ui-fixture.invalid/cr-setup")
+    tab.wait_for_function("document.querySelector('section[data-step=\"account\"]').classList.contains('current')")
+    assert tab.locator("#connect-oneclick").is_visible()
+    assert tab.locator("#connect-key").is_hidden(), "pasting a key is the fallback, folded away"
+    assert tab.locator("#checks").is_hidden(), "a ready computer collapses to one line"
+    assert "later" in tab.locator('section[data-step="claude"]').get_attribute("class")
+    assert tab.locator("#claude-quick").is_disabled()
+    tab.locator("#connect-oneclick").click()
+    tab.wait_for_url("https://channelrecipe.com/studio/connect*")
+    assert starts == [{"costs_accepted": True}]
+
+    # Back from approving: the account step folds to a tick and Claude is next.
+    state.update(connected=True, costs_accepted=True)
+    tab.goto("http://setup-ui-fixture.invalid/cr-setup?connect=done")
+    tab.wait_for_function("document.querySelector('section[data-step=\"claude\"]').classList.contains('current')")
+    assert tab.locator("#connect-oneclick").is_hidden()
+    assert "Done" in tab.locator('section[data-step="account"] .step-state').inner_text()
+    assert "connected" in tab.locator("#notice").inner_text()
+    assert tab.locator("#claude-quick").is_enabled()
+    assert tab.evaluate("location.search") == ""
