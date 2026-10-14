@@ -56,6 +56,8 @@ def install(studio, activity, setup_status, *, token, home=None):
             return jsonify(error=str(error)), 400
         if isinstance(error, RuntimeError):
             return jsonify(error=str(error)), 409
+        # Show the real cause in the launcher window so it can be fixed.
+        app.logger.error("Style study request %s failed", request.path, exc_info=error)
         return jsonify(error="The study could not complete this step. Your saved operation is preserved; review setup before trying again."), 500
 
     def no_store(response):
