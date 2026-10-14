@@ -72,13 +72,13 @@ def mount(page, status, project, progress, *, progress_status=200, legacy=None):
         calls.append((route.request.method, path))
         if path == "/app":
             return route.fulfill(content_type="text/html", body='<div id="page-local-studio"></div><script>const currentUser={is_admin:true};</script>')
-        if path == "/api/frontier/status":
+        if path == "/api/studio/status":
             payload, code = status, 200
-        elif path == "/api/frontier/projects":
+        elif path == "/api/studio/projects":
             payload, code = {"projects": [project]}, 200
-        elif path == "/api/frontier/projects/" + project["id"] + "/progress":
+        elif path == "/api/studio/projects/" + project["id"] + "/progress":
             payload, code = progress, progress_status
-        elif path == "/api/frontier/projects/" + project["id"] + "/requests" and legacy is not None:
+        elif path == "/api/studio/projects/" + project["id"] + "/requests" and legacy is not None:
             payload, code = legacy, 200
         else:
             pytest.fail("Unexpected history request: " + path)
