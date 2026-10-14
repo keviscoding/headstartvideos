@@ -38,7 +38,10 @@ def widen(styles: dict, catalog: list) -> list:
 
 def install(studio):
     """Widen now and every time the engine reloads its styles."""
-    import features
+    try:
+        import features
+    except ImportError:
+        return  # no engine here (a stand-in studio in tests): nothing to widen
     original = studio.styles.load_all
     if getattr(original, "_cr_widened", False):
         return
