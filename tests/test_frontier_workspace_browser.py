@@ -45,7 +45,7 @@ def browser():
 @pytest.fixture
 def workspace(browser):
     env = SimpleNamespace(mode="ready", creates=[], posts=[], errors=[], preview_gets=[], preview_cached=set(),
-                          local_version="synthetic-studio", account=None, update_state={"state": "idle"},
+                          local_version="synthetic-studio", account=None, update_state={"state": "idle"}, voice="Kore",
                           preview_active=0, preview_max_active=0, preview_busy=0, preview_delay=0,
                           finished_jobs=[{"slug": "finished-film", "title": "A finished film", "style": "documentary", "editable": True}])
     preview_lock = threading.Lock()
@@ -101,6 +101,25 @@ def workspace(browser):
                        readiness={"ready": ready, "blockers": [] if ready else ["Connect your narration account."]},
                        claude_code={"allowance": {"reported_limit": True, "blocked": False}},
                        narration={"voice": "My narrator", "label": "My media account"})
+
+    @app.get("/cr-voices")
+    def voice_list():
+        return jsonify(connected=True, provider="kie", provider_label="Kie.ai", model="google/gemini-3-8-flash-tts",
+                       model_label="Gemini 3.8 Flash", voice=env.voice, default_voice="Kore",
+                       voices=["Bodi", "Kore", "Charon", "Sulafat"], previews=[])
+
+    @app.post("/cr-voices/preview")
+    def voice_preview():
+        return jsonify(url="/cr-voices/sample/" + request.json["voice"])
+
+    @app.get("/cr-voices/sample/<name>")
+    def voice_sample(name):
+        return Response(b"", mimetype="audio/mpeg")
+
+    @app.post("/cr-voices/select")
+    def voice_select():
+        env.voice = request.json["voice"]
+        return jsonify(saved=True, voice=env.voice, message="Your next videos use the " + env.voice + " voice.")
 
     @app.get("/cr-update")
     def update_status():
@@ -367,3 +386,25 @@ def test_no_update_banner_when_studio_is_current(workspace):
     workspace.open()
     assert workspace.page.locator("#crw-update").is_hidden()
     assert not any(post["path"].startswith("/cr-update") for post in workspace.posts)
+
+
+def test_choose_a_narration_voice_after_hearing_it(workspace):
+    workspace.open()
+    page = workspace.page
+    assert page.locator("#crw-voices").is_hidden(), "the picker is closed until asked for"
+    page.click("#crw-voice-open")
+    page.wait_for_selector("#crw-voices[open] .crw-voice-row")
+    rows = page.locator(".crw-voice-row strong").all_inner_texts()
+    assert rows[0] == "Kore", "the current voice comes first"
+    assert "Informative voice" in page.inner_text("#crw-voices-list"), "known voices say what they sound like"
+    assert "tiny amount" in page.inner_text("#crw-voices-note"), "paid previews are disclosed"
+    page.fill("#crw-voices-search", "warm")
+    assert page.locator(".crw-voice-row strong").all_inner_texts() == ["Sulafat"]
+    page.fill("#crw-voices-search", "")
+    page.click("button[aria-label='Preview Charon']")
+    page.wait_for_function("document.getElementById('crw-voices-audio').src.endsWith('/cr-voices/sample/Charon')")
+    assert any(post["path"] == "/cr-voices/preview" and post["body"] == {"voice": "Charon"} for post in workspace.posts)
+    page.locator(".crw-voice-row", has_text="Charon").locator("button", has_text="Use").click()
+    page.wait_for_function("document.getElementById('crw-narration-name').textContent === 'Charon'")
+    assert workspace.voice == "Charon"
+    assert "Charon" in page.inner_text("#crw-voices-status")

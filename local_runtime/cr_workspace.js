@@ -482,6 +482,63 @@
   if(!posterObserver)window.addEventListener('scroll',visiblePosters,{passive:true});
   window.CR_WORKSPACE_CLIENT={payload,selectRecipe,featureValues,api,state};
 
+
+  // Narration voice picker: hear a voice, then choose it for your next videos.
+  const VOICE_STYLES = {Zephyr:'Bright',Puck:'Upbeat',Charon:'Informative',Kore:'Firm',Fenrir:'Excitable',Leda:'Youthful',Orus:'Firm',Aoede:'Breezy',Callirrhoe:'Easy-going',Autonoe:'Bright',Enceladus:'Breathy',Iapetus:'Clear',Umbriel:'Easy-going',Algieba:'Smooth',Despina:'Smooth',Erinome:'Clear',Algenib:'Gravelly',Rasalgethi:'Informative',Laomedeia:'Upbeat',Achernar:'Soft',Alnilam:'Firm',Schedar:'Even',Gacrux:'Mature',Pulcherrima:'Forward',Achird:'Friendly',Zubenelgenubi:'Casual',Vindemiatrix:'Gentle',Sadachbia:'Lively',Sadaltager:'Knowledgeable',Sulafat:'Warm'};
+  const voices = {data: null, previews: new Set(), playing: null};
+  function sharedSample(name) {const samples = state.setup?.account?.voice_samples?.[voices.data?.model] || {}; return samples[name] || '';}
+  function renderVoices() {
+    const list = $('crw-voices-list'), query = $('crw-voices-search').value.trim().toLowerCase(), data = voices.data;
+    list.replaceChildren();
+    const names = data.voices.filter(name => !query || name.toLowerCase().includes(query) || (VOICE_STYLES[name] || '').toLowerCase().includes(query));
+    const ordered = [data.voice, ...names.filter(name => name !== data.voice && VOICE_STYLES[name]), ...names.filter(name => name !== data.voice && !VOICE_STYLES[name])].filter(name => names.includes(name));
+    for (const name of ordered) {
+      const row = el('div', 'crw-voice-row' + (name === data.voice ? ' is-current' : '')); row.setAttribute('role', 'listitem');
+      const play = el('button', 'crw-secondary-button crw-voice-play', '▶'); play.type = 'button'; play.setAttribute('aria-label', 'Preview ' + name); play.addEventListener('click', () => previewVoice(name, play));
+      const copy = el('div'); copy.append(el('strong', '', name), el('span', '', VOICE_STYLES[name] ? VOICE_STYLES[name] + ' voice' : 'Gemini voice'));
+      row.append(play, copy);
+      if (name === data.voice) row.append(el('span', 'crw-voice-badge', 'Selected'));
+      else {const use = el('button', 'crw-primary-button', 'Use'); use.type = 'button'; use.addEventListener('click', () => chooseVoice(name, use)); row.append(use);}
+      list.append(row);
+    }
+    if (!ordered.length) list.append(el('p', 'crw-voices-note', 'No voices match that search.'));
+  }
+  async function openVoices() {
+    text('crw-voices-status', ''); $('crw-voices-search').value = '';
+    try {voices.data = await api('/cr-voices');} catch (e) {error(e.message); return;}
+    if (!voices.data.connected) {error('Connect a voice account in Setup & accounts first.'); return;}
+    if (!voices.data.voices.length) {location.href = '/cr-setup'; return;}
+    voices.previews = new Set(voices.data.previews || []);
+    text('crw-voices-sub', `${voices.data.model_label} on ${voices.data.provider_label} · ${voices.data.voices.length} voices`);
+    const shared = Object.keys(state.setup?.account?.voice_samples?.[voices.data.model] || {}).length;
+    text('crw-voices-note', shared ? 'Press ▶ to hear a voice.' : `Press ▶ to hear a voice. The first play of each voice makes a short sample with your ${voices.data.provider_label} account (a tiny amount of your balance); after that it replays free.`);
+    renderVoices(); $('crw-voices').showModal(); $('crw-voices-search').focus();
+  }
+  async function previewVoice(name, button) {
+    const audio = $('crw-voices-audio');
+    if (voices.playing === name && !audio.paused) {audio.pause(); return;}
+    let url = sharedSample(name) || (voices.previews.has(name) ? '/cr-voices/sample/' + encodeURIComponent(name) : '');
+    if (!url) {
+      button.classList.add('is-loading'); button.disabled = true; text('crw-voices-status', `Making a short ${name} sample…`);
+      try {url = (await api('/cr-voices/preview', {method: 'POST', body: {voice: name}})).url; voices.previews.add(name); text('crw-voices-status', '');}
+      catch (e) {text('crw-voices-status', e.message); return;}
+      finally {button.classList.remove('is-loading'); button.disabled = false;}
+    }
+    voices.playing = name; audio.src = url; audio.play().catch(() => text('crw-voices-status', 'Press ▶ again to play.'));
+  }
+  async function chooseVoice(name, button) {
+    button.disabled = true;
+    try {
+      const result = await api('/cr-voices/select', {method: 'POST', body: {voice: name}});
+      voices.data.voice = name; if (state.setup?.narration) state.setup.narration.voice = name;
+      text('crw-narration-name', name); text('crw-voices-status', result.message); renderVoices(); summary();
+    } catch (e) {text('crw-voices-status', e.message); button.disabled = false;}
+  }
+  $('crw-voice-open').addEventListener('click', openVoices);
+  $('crw-voices-search').addEventListener('input', renderVoices);
+  $('crw-voices-close').addEventListener('click', () => $('crw-voices').close());
+  $('crw-voices').addEventListener('close', () => $('crw-voices-audio').pause());
+
   // Updates are optional and explained. A banner offers them, the Discord
   // links mention them once (the fix may already be out), and Update now
   // downloads only what changed, then restarts Studio when nothing is running.
