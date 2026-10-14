@@ -782,3 +782,38 @@ def test_voice_picker_lists_previews_once_and_saves_the_choice(runtime, timeline
     assert r.client.post("/cr-voices/select", headers=r.headers, json={"voice": "Kore"}).status_code == 409
     original = timeline.spawned.pop()
     original.target(*original.args)
+
+
+def test_copy_diagnostics_explains_setup_without_secrets(runtime):
+    r = runtime
+    cr_studio.RECENT_OUTPUT.clear()
+    cr_studio.RECENT_OUTPUT.extend([
+        '127.0.0.1 - - [14/Oct/2026 19:00:00] "GET /api/queue HTTP/1.1" 200 -',
+        "Style study request /cr-style-clone/preview failed",
+        "connecting with key cr_mcp_" + "s" * 30,
+        "Traceback (most recent call last): " + str(Path.home()) + "/studio/app.py"])
+    assert r.client.get("/cr-diagnostics", headers={"Host": "127.0.0.1:7860"}).status_code == 403
+    text = r.client.get("/cr-diagnostics", headers=r.headers).get_data(as_text=True)
+    assert text.startswith("ChannelRecipe Studio diagnostics")
+    assert "ChannelRecipe account connected: yes" in text and "Tools: Python yes" in text
+    assert "Style study request /cr-style-clone/preview failed" in text
+    assert "cr_mcp_" not in text and "[hidden]" in text, "keys never leave the computer"
+    assert '"GET /api/queue' not in text, "page polling isn't noise in a support request"
+    assert str(Path.home()) not in text
+
+
+def test_a_second_start_opens_the_running_studio_instead_of_crashing(monkeypatch):
+    import cr_update
+    opened = []
+    monkeypatch.setattr(cr_update, "studio_running", lambda: True)
+    monkeypatch.setattr(cr_studio, "already_running", lambda: True)
+    monkeypatch.setattr(cr_studio.webbrowser, "open", opened.append)
+    monkeypatch.setattr(cr_studio, "create_app", lambda: pytest.fail("a second Studio must not start"))
+    monkeypatch.delenv("CR_RESTARTED_FOR_UPDATE", raising=False)
+    monkeypatch.setattr(cr_studio.sys, "stdout", cr_studio.sys.stdout)
+    monkeypatch.setattr(cr_studio.sys, "stderr", cr_studio.sys.stderr)
+    cr_studio.main()
+    assert opened == ["http://127.0.0.1:7860/"]
+    monkeypatch.setattr(cr_studio, "already_running", lambda: False)
+    with pytest.raises(SystemExit):
+        cr_studio.main()

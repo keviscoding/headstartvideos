@@ -42,6 +42,23 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 # ---------------------------------------------------------------------------
 # Telemetry (all optional — completely inert if keys are not configured)
 # ---------------------------------------------------------------------------
+def _expected_provider_outcome(exc):
+    """'code (detail)' for provider-side request outcomes, '' for anything that may be ours."""
+    diagnostics = getattr(exc, "diagnostics", None)
+    if not isinstance(diagnostics, dict):
+        return ""
+    code = diagnostics.get("code")
+    upstream = diagnostics.get("upstream_error_type") or diagnostics.get("upstream_http") or ""
+    # A malformed request or an unreadable answer could be our bug: keep those.
+    if code in {"unreadable", "unsupported_model", "research_unsupported"}:
+        return ""
+    if code == "upstream_stream_error" and upstream in {"invalid_request_error", "other"}:
+        return ""
+    if code == "upstream_http" and upstream in (400, 404, 422):
+        return ""
+    return f"{code} ({upstream})" if upstream else str(code)
+
+
 if config.SENTRY_DSN:
     try:
         import sentry_sdk
@@ -75,6 +92,13 @@ if config.SENTRY_DSN:
             exc_info = hint.get("exc_info")
             if exc_info:
                 exc = exc_info[1]
+                # A model provider stopping an answer (overloaded, rate limited,
+                # timed out, network) is recorded for the creator to review in
+                # Studio; it isn't a product bug. Log it, don't alert on it.
+                outcome = _expected_provider_outcome(exc)
+                if outcome:
+                    print(f"[brain] provider stopped a request: {outcome}")
+                    return None
                 # Fly machine stop / deploy / Ctrl-C — not app bugs
                 if isinstance(exc, (KeyboardInterrupt, SystemExit, GeneratorExit)):
                     return None

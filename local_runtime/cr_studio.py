@@ -28,6 +28,44 @@ import re
 
 HOME = Path(__file__).resolve().parent
 CR_URL = "https://channelrecipe.com"
+STUDIO_URL = "http://127.0.0.1:7860"
+# The black launcher window isn't saved anywhere, so keep its recent lines
+# for Copy diagnostics (secrets are hidden when they're copied).
+import collections
+RECENT_OUTPUT = collections.deque(maxlen=400)
+
+
+class _RecentOutput:
+    """Write to the window as usual and remember the last lines."""
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, text):
+        try:
+            written = self._stream.write(text)
+        except Exception:
+            written = len(text)
+        for line in str(text).splitlines():
+            if line.strip():
+                RECENT_OUTPUT.append(line[:500])
+        return written
+
+    def flush(self):
+        try:
+            self._stream.flush()
+        except Exception:
+            pass
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
+_SECRET = re.compile(r"(cr_mcp_[A-Za-z0-9_-]+|sk-[A-Za-z0-9_-]{8,}|(?i:(?:key|token|secret|authorization|password)\s*[=:]\s*)\S+"
+                     r"|[A-Za-z0-9+/_-]{40,})")
+
+
+def redact(text):
+    return _SECRET.sub("[hidden]", str(text))
 CONNECT_SECONDS = 900
 _graphics_check = {}
 
@@ -695,6 +733,51 @@ def create_app():
             return jsonify(error=str(e)), 400
         return jsonify(connected=True, brain_connected=bool(status.get("brain", {}).get("connected")))
 
+    @studio.app.get("/cr-diagnostics")
+    def diagnostics():
+        import platform
+        if request.headers.get("X-CR-Local-Token") != token:
+            return jsonify(error="Refresh your studio page and try again."), 403
+        try:
+            checks = setup_status().get_json()
+        except Exception as error:
+            checks = {"error": type(error).__name__}
+        tick = lambda value: "yes" if value else "no"
+        cli = checks.get("claude_code") or {}
+        hub, voice = checks.get("media_hub") or {}, checks.get("narration") or {}
+        readiness = checks.get("readiness") or {}
+        try:
+            running = "yes" if activity.busy() else "no"
+        except Exception:
+            running = "unknown"
+        lines = [
+            "ChannelRecipe Studio diagnostics",
+            "Studio: %s" % checks.get("local_version", "unknown"),
+            "Computer: %s %s (%s) · Python %s" % (platform.system(), platform.release(), platform.machine(),
+                                                   platform.python_version()),
+            "Tools: Python %s · FFmpeg %s · graphics browser %s · Node %s" % (
+                tick(checks.get("python")), tick(checks.get("ffmpeg")), tick(checks.get("browser")), tick(checks.get("node"))),
+            "ChannelRecipe account connected: %s" % tick(checks.get("connected")),
+            "Claude Code: installed %s%s · signed in %s · tools connected %s · models verified %s" % (
+                tick(cli.get("installed")), (" " + str(cli["version"])) if cli.get("version") else "",
+                tick(cli.get("authenticated")), tick(cli.get("mcp_connected")), tick(cli.get("models_verified"))),
+            "Writing route: %s" % checks.get("brain_mode", "unknown"),
+            "Voice and images: %s%s · narration %s" % (hub.get("provider", "none"),
+                (" (" + ", ".join(hub.get("tasks", [])) + ")") if hub.get("tasks") else "", tick(voice.get("connected"))),
+            "Setup ready: %s" % tick(readiness.get("ready")),
+            "Working right now: %s" % running,
+        ]
+        blockers = readiness.get("blockers") or []
+        if blockers:
+            lines.append("Setup still needs: " + "; ".join(str(b.get("message") if isinstance(b, dict) else b) for b in blockers)[:600])
+        recent = [line for line in RECENT_OUTPUT if '" 200 -' not in line and '" 304 -' not in line]
+        problems = [line for line in recent if any(word in line.lower() for word in ("error", "traceback", "failed", "exception", "stopped"))]
+        lines += ["", "Recent problems:"] + (problems[-30:] or ["none"])
+        lines += ["", "Recent Studio window output:"] + (recent[-40:] or ["none"])
+        home = str(Path.home())
+        text = redact("\n".join(lines)).replace(home, "~")
+        return Response(text, mimetype="text/plain", headers={"Cache-Control": "private, no-store"})
+
     # In-app updates. Downloading never touches the running studio; restarting
     # waits until nothing is running and then reopens in the same window.
     updater = {"state": "idle", "done": 0, "total": 0, "message": "", "version": None, "thread": None}
@@ -1304,7 +1387,40 @@ def prefer_studio_ytdlp():
             return
 
 
+def already_running():
+    """True when a ChannelRecipe Studio already answers on this computer."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(STUDIO_URL + "/cr-status", timeout=5) as response:
+            return response.status == 200
+    except Exception:
+        return False
+
+
+def banner():
+    line = "=" * 64
+    print("\n".join(["", line, "  ChannelRecipe Studio is running.",
+                     "  Open it in your browser: " + STUDIO_URL,
+                     "  Keep this window open while you use Studio.",
+                     "  To stop Studio, close this window.", line, ""]), flush=True)
+
+
 def main():
+    import logging
+    if not isinstance(sys.stdout, _RecentOutput):
+        sys.stdout, sys.stderr = _RecentOutput(sys.stdout), _RecentOutput(sys.stderr)
+    # Every page poll printed a line; keep the window for what matters.
+    logging.getLogger("werkzeug").setLevel(logging.WARNING)
+    import cr_update
+    if cr_update.studio_running():
+        if already_running():
+            print("ChannelRecipe Studio is already running in another window. Opening it in your browser.", flush=True)
+            if not os.environ.get("CR_RESTARTED_FOR_UPDATE"):
+                webbrowser.open(STUDIO_URL + "/")
+            return
+        print("Another program is using Studio's address (port 7860). Close it, or restart your computer, "
+              "then open Studio again.", flush=True)
+        raise SystemExit(1)
     prefer_studio_ytdlp()
     try:
         # Updates from older releases ran an updater that could not remove
@@ -1323,10 +1439,10 @@ def main():
         webbrowser.open("http://127.0.0.1:7860/cr-setup")
     if not os.environ.pop("CR_RESTARTED_FOR_UPDATE", ""):
         threading.Thread(target=open_page, daemon=True).start()
-    print("ChannelRecipe local studio: http://127.0.0.1:7860/cr-setup")
     from werkzeug.serving import make_server
     server = make_server("127.0.0.1", 7860, studio.app, threaded=True)
     studio._cr_server = server
+    banner()
     try:
         server.serve_forever()
     finally:

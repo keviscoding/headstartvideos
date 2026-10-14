@@ -102,6 +102,12 @@ def workspace(browser):
                        claude_code={"allowance": {"reported_limit": True, "blocked": False}},
                        narration={"voice": "My narrator", "label": "My media account"})
 
+    @app.get("/cr-diagnostics")
+    def diagnostics():
+        if request.headers.get("X-CR-Local-Token") != TOKEN:
+            return jsonify(error="token"), 403
+        return Response("ChannelRecipe Studio diagnostics\nStudio: synthetic", mimetype="text/plain")
+
     @app.get("/cr-voices")
     def voice_list():
         return jsonify(connected=True, provider="kie", provider_label="Kie.ai", model="google/gemini-3-8-flash-tts",
@@ -408,3 +414,11 @@ def test_choose_a_narration_voice_after_hearing_it(workspace):
     page.wait_for_function("document.getElementById('crw-narration-name').textContent === 'Charon'")
     assert workspace.voice == "Charon"
     assert "Charon" in page.inner_text("#crw-voices-status")
+
+
+def test_copy_diagnostics_for_support(workspace):
+    workspace.open()
+    page = workspace.page
+    page.click("#crw-copy-diagnostics")
+    page.wait_for_function("document.getElementById('crw-diagnostics-status').textContent.startsWith('Copied')")
+    assert "Discord #help" in page.inner_text("#crw-diagnostics-status")

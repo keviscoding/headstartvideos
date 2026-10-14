@@ -1,5 +1,15 @@
 [
   {
+    "build": 57,
+    "date": "2026-10-14",
+    "title": "Easier to get help",
+    "items": [
+      "Copy diagnostics: one button on the setup page and in the sidebar copies everything support needs (never your keys). Paste it in Discord #help.",
+      "The Studio window now says clearly that Studio is running, and no longer fills up with page requests.",
+      "Opening Studio twice just brings up the one that's already running."
+    ]
+  },
+  {
     "build": 56,
     "date": "2026-10-14",
     "title": "Always opens the right screen",

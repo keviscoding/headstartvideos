@@ -41,3 +41,18 @@ def test_discord_is_for_members_only(monkeypatch):
 def test_public_pages_never_carry_the_invite():
     for name in ("landing.html", "index.html", "local-studio.js", "app.js"):
         assert "discord.gg" not in (server.STATIC_DIR / name).read_text(), name
+
+
+def test_provider_outcomes_are_logged_not_alerted():
+    from webapp import frontier_providers as providers
+    outcome = server._expected_provider_outcome
+    failure = providers.ProviderFailure
+    assert outcome(failure("stopped", "upstream_stream_error", upstream_error_type="overloaded_error")) == \
+        "upstream_stream_error (overloaded_error)"
+    assert outcome(failure("busy", "upstream_http", upstream_http=429)) == "upstream_http (429)"
+    assert outcome(failure("slow", "generation_timeout")) == "generation_timeout"
+    # Anything that could be our bug still alerts.
+    assert outcome(failure("x", "upstream_stream_error", upstream_error_type="invalid_request_error")) == ""
+    assert outcome(failure("x", "unreadable")) == ""
+    assert outcome(failure("x", "upstream_http", upstream_http=400)) == ""
+    assert outcome(ValueError("ours")) == ""
