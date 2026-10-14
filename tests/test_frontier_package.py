@@ -241,3 +241,16 @@ def test_unknown_binary_branding_rejection_preserves_previous_complete_release(s
         package.build(source, target)
     assert target.read_bytes() == b"previous complete release"
     assert not list(target.parent.glob(".cr-build-*"))
+
+
+def test_engine_machine_checks_are_patched_for_customer_computers():
+    reflearn = b'x = 1\n    need_lv, need_gb = _envf("REFLEARN_MIN_MEM_LEVEL", 40), _envf("REFLEARN_MIN_DISK_GB", 20)\n'
+    patched = package.patch_engine("reflearn.py", reflearn).decode()
+    assert '_envf("REFLEARN_MIN_DISK_GB", 3)' in patched and '"REFLEARN_MIN_MEM_LEVEL", 20' in patched
+    quest = (b"def _wait_machine(log=print, min_level: int = 40, min_free_gb: float = 20.0) -> None:\n"
+             b"    pass\n    lvl = 45 if light else 40\n")
+    patched = package.patch_engine("quest_hud.py", quest).decode()
+    assert "min_free_gb: float = 3.0" in patched and "lvl = 25 if light else 20" in patched
+    assert package.patch_engine("other.py", b"unchanged") == b"unchanged"
+    with pytest.raises(ValueError, match="no longer matches"):
+        package.patch_engine("reflearn.py", b"a different engine")
