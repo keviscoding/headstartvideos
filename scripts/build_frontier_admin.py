@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 from scripts import studio_branding
-VERSION = "5.3-admin.55"
+VERSION = "5.3-admin.56"
 PRIVATE_WORKFLOWS = {
     "cr-style-delivery-prompt.txt": ROOT / "data/frontier/reference2d-compiler.txt",
     "cr-style-study-brief.txt": ROOT / "data/frontier/reference2d-study.txt",
@@ -93,6 +93,18 @@ ENGINE_PATCHES = {
     "reflearn.py": [
         ('need_lv, need_gb = _envf("REFLEARN_MIN_MEM_LEVEL", 40), _envf("REFLEARN_MIN_DISK_GB", 20)',
          'need_lv, need_gb = _envf("REFLEARN_MIN_MEM_LEVEL", 20), _envf("REFLEARN_MIN_DISK_GB", 3)'),
+    ],
+    # The engine's own guide says "python app.py", which started the bare engine
+    # (no setup page, keys in .env). Starting it that way now opens Studio.
+    "app.py": [
+        ('if __name__ == "__main__":\n    OUT.mkdir(exist_ok=True)\n',
+         'if __name__ == "__main__":\n'
+         '    # ChannelRecipe Studio runs this engine inside its own app (setup, accounts and\n'
+         '    # workspace). Starting the engine on its own hands over to Studio.\n'
+         '    import subprocess\n'
+         '    print("Starting ChannelRecipe Studio...", flush=True)\n'
+         '    raise SystemExit(subprocess.call([sys.executable, str(HERE / "cr_studio.py")], cwd=str(HERE)))\n'
+         'if False:\n    OUT.mkdir(exist_ok=True)\n'),
     ],
     "quest_hud.py": [
         ("def _wait_machine(log=print, min_level: int = 40, min_free_gb: float = 20.0) -> None:",

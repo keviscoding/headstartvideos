@@ -1,5 +1,13 @@
 [
   {
+    "build": 56,
+    "date": "2026-10-14",
+    "title": "Always opens the right screen",
+    "items": [
+      "Fixed: if Studio was started a different way (for example by Claude Code running the engine directly), it opened an older screen without setup. Studio now always opens its own setup and workspace."
+    ]
+  },
+  {
     "build": 55,
     "date": "2026-10-14",
     "title": "Style learning on Macs with less free space",

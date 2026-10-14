@@ -1995,6 +1995,28 @@ async def landing():
     return RedirectResponse("/app")
 
 
+# The community Discord is for members. The invite never appears in public
+# pages: links go through here, and only an active plan is sent on to it.
+DISCORD_INVITE_URL = os.getenv("DISCORD_INVITE_URL", "https://discord.gg/aUbazAAqw3").strip()
+
+
+def _community_member(request: Request) -> bool:
+    user = _current_user(request)
+    return bool(user) and (plans.is_active_plan(user.get("plan")) or _is_admin_email(user.get("email", "")))
+
+
+@app.get("/api/community/access", include_in_schema=False)
+async def community_access(request: Request):
+    return JSONResponse({"member": _community_member(request)}, headers={"Cache-Control": "private, no-store"})
+
+
+@app.get("/community/discord", include_in_schema=False)
+async def community_discord(request: Request):
+    if _community_member(request):
+        return RedirectResponse(DISCORD_INVITE_URL, status_code=302)
+    return FileResponse(str(STATIC_DIR / "community.html"), headers={"Cache-Control": "private, no-store"})
+
+
 # Browsers, iOS and search engines request these at the site root.
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
