@@ -14,7 +14,7 @@ ART_BASE = "/cr-workspace/art"
 # label, family, short explanation, capability labels. These describe the recipe,
 # not a promise that a conceptual thumbnail is a completed generated film.
 RECIPES = {
-    "3d": ("3D Reconstruction", "Animation", "Directed 3D scenes rebuild what happened — disasters, crashes, battles and mysteries.", ("3D scenes", "Maps", "Narrated stories")),
+    "3d": ("3D Reconstruction", "Animation", "Directed 3D scenes rebuild what happened: disasters, crashes, battles and mysteries.", ("3D scenes", "Maps", "Narrated stories")),
     "folio": ("Illustrated Explainer", "Animation", "A moving illustrated story with recurring characters and explanatory diagrams.", ("Drawn animation", "Characters", "Diagrams")),
     "stories": ("2D Life Stories", "Animation", "An animated character lives through one decision and where it leads, years later.", ("2D characters", "Storytelling", "Illustrated scenes")),
     "atlas": ("Cartoon History", "Animation", "Bold cartoon history with playful characters, eras and illustrated maps.", ("Cartoon imagery", "Maps", "History")),

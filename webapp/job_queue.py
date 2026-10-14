@@ -128,11 +128,11 @@ def _announce_queue_unlocked() -> None:
         ahead = i + len(_running)
         wait_m = round(ahead * EST_MINUTES_PER_COOK)
         if ahead <= 0:
-            msg = "You're next — starting shortly..."
+            msg = "You're next. Starting shortly..."
         elif pos == 1 and len(_running) > 0:
-            msg = f"Queued — 1 cook ahead (~{max(wait_m, 1)} min)"
+            msg = f"Queued: 1 cook ahead (~{max(wait_m, 1)} min)"
         else:
-            msg = f"Queued — position {pos} of {total} (~{max(wait_m, 1)} min wait)"
+            msg = f"Queued: position {pos} of {total} (~{max(wait_m, 1)} min wait)"
         # Avoid spamming identical lines
         prev = job["progress"][-1]["message"] if job.get("progress") else ""
         if prev != msg:

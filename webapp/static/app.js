@@ -3694,7 +3694,7 @@ function _showChannelResult(payload, { batch = false } = {}) {
     const pre = document.getElementById('ss-channel-data');
     if (pre) {
         const note = batch
-            ? `/* ${payload.count || 0} channel(s) fetched — Download JSON has all. Analyze uses the first. */\n`
+            ? `/* ${payload.count || 0} channel(s) fetched. Download JSON has all. Analyze uses the first. */\n`
             : '';
         pre.textContent = note + JSON.stringify(payload, null, 2);
     }
