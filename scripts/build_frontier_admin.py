@@ -250,6 +250,13 @@ ENGINE_PATCHES = {
         ('    cuts = bool((os.environ.get("WAVESPEED_API_KEY") or "").strip())\n',
          '    cuts = bool((os.environ.get("WAVESPEED_API_KEY") or "").strip() or (os.environ.get("KIE_API_KEY") or "").strip())\n'),
     ],
+    # A footage search YouTube refused ("Sign in to confirm you're not a bot") was not recorded, so the video's
+    # "no real footage" warning could not say why or what fixes it; the refused search now notes yt-dlp's error.
+    "youtube.py": [
+        ("        except subprocess.TimeoutExpired:\n            return []\n        for line in p.stdout.splitlines():\n",
+         "        except subprocess.TimeoutExpired:\n            return []\n        if p.returncode:\n"
+         "            _note_err(p.stderr)\n        for line in p.stdout.splitlines():\n"),
+    ],
     "quest_hud.py": [
         ("def _wait_machine(log=print, min_level: int = 40, min_free_gb: float = 20.0) -> None:",
          "def _wait_machine(log=print, min_level: int = 20, min_free_gb: float = 3.0) -> None:"),

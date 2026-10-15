@@ -256,6 +256,14 @@ def test_engine_machine_checks_are_patched_for_customer_computers():
         package.patch_engine("reflearn.py", b"a different engine")
 
 
+def test_a_refused_footage_search_records_why():
+    engine = (b"def search(q):\n    if True:\n        try:\n            p = run()\n"
+              b"        except subprocess.TimeoutExpired:\n            return []\n        for line in p.stdout.splitlines():\n"
+              b"            pass\n")
+    patched = package.patch_engine("youtube.py", engine).decode()
+    assert "        if p.returncode:\n            _note_err(p.stderr)\n        for line in p.stdout" in patched
+
+
 def test_starting_the_engine_directly_hands_over_to_studio():
     app = (b'import sys\nHERE = 1\nif __name__ == "__main__":\n    OUT.mkdir(exist_ok=True)\n    print("x")\n')
     patched = package.patch_engine("app.py", app).decode()
