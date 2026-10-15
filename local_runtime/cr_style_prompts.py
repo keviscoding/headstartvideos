@@ -55,9 +55,10 @@ those exact words every time. If THE CAST is given, copy each cast member's desc
 are in frame.
 
 BE A STORYTELLER: frames follow each other like a comic. Vary the shot the way an editor would: the wide scene, a
-close reaction, the hands, the object on its own. Never repeat a frame or a layout twice in a row. Never illustrate an
-idea with a symbol; show the real moment. Describe the scene, not the art style: the channel's picture style is added
-to every prompt for you.
+close reaction on a face, the object on its own. Never repeat a frame or a layout twice in a row. Never illustrate an
+idea with a symbol; show the real moment. Keep every person whole in the frame, or clearly one person in a close-up:
+never a lone arm or hand reaching in from the edge without the person it belongs to. Describe the scene, not the art
+style: the channel's picture style is added to every prompt for you.
 
 Return ONLY a JSON array of [INSERT COUNT HERE] objects, in narration order. Laid end to end, the "text" fields are the
 narration itself, with nothing skipped:
