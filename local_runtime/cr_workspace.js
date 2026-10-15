@@ -173,7 +173,19 @@
     text('crw-features-note', strict(recipe) ? 'Every visual scene uses your learned animation kit. Narration, captions and sound remain available.' : 'Choose the sources this recipe can use. Account requirements are checked before generation.');
     $('crw-character').value = recipe.character || '';
     hide('crw-panels-section', !recipe.panels); if (recipe.panels) loadPanels();
+    const pics = recipe.pictures; hide('crw-pictures-section', !pics || strict(recipe));
+    if (pics) {const r = $('crw-pictures'); r.min = pics.floor; r.max = pics.ceiling; r.value = pics.default; showPictures();}
     updateOptional(); summary(); gate(); if (persist) save();
+  }
+  function showPictures() {
+    const pics = state.selected?.pictures; if (!pics) return; const v = Number($('crw-pictures').value);
+    text('crw-pictures-value', `· ${v}`);
+    text('crw-pictures-help', `The recipe draws ${pics.default} a minute. Fewer pictures cost less (about $${(v * 0.02).toFixed(2)} a minute in pictures); never fewer than ${pics.floor}, so each picture stays on its own words.`);
+  }
+  function withPalette(extra, features) {
+    const palette = $('crw-palette').value;
+    if (!palette || !features.threed || strict()) return extra;
+    return (extra ? extra + '\n' : '') + `3D SCENE PALETTE: every 3D scene uses only ${palette}; keep it minimal and contrasting.`;
   }
   function ctaValue() {
     if (!checked('crw-cta-on')) return null;
@@ -200,6 +212,7 @@
   }
   function updateOptional() {
     const features = featureValues(); hide('crw-fast-section', !features.threed || strict());
+    hide('crw-palette-section', !features.threed || strict());
     hide('crw-avatar-section', !features.avatar || strict());
     hide('crw-character-section', strict());
     hide('crw-offer-section', $('crw-offer').options.length<2 || !features.avatar || strict());
@@ -439,14 +452,15 @@
     if (state.narration==='own' && title.includes('\n')) throw new Error('Use one title for an uploaded narration recording.');
     const features=featureValues(); const steps=['script','voiceover','images','pexels','video'];if(checked('crw-thumbnails'))steps.push('thumbnail');
     const p={title,style:state.selected.name,minutes:number('crw-minutes',10,1,60),steps,
-      script:state.input==='script'?$('crw-script').value.trim():'',extra:$('crw-extra').value.trim(),byo_audio:state.narration==='own'?state.audio:'',
+      script:state.input==='script'?$('crw-script').value.trim():'',extra:withPalette($('crw-extra').value.trim(),features),byo_audio:state.narration==='own'?state.audio:'',
       burn_subs:checked('crw-captions'),force:false,thumb_count:number('crw-thumbnail-count',2,1,4),
       desc:checked('crw-description'),chapters:checked('crw-description')?number('crw-chapters',5,0,20):0,
       sources:checked('crw-description')&&checked('crw-sources')?number('crw-source-count',3,0,10):0,
       features,render_backend:features.threed&&checked('crw-fast-toggle')&&!strict()?'manimgx':'original',
       character:strict()?'':$('crw-character').value.trim(),character_image:strict()?'':$('crw-character-image').value,
       avatar_id:features.avatar&&!strict()?$('crw-avatar-id').value:'',avatar_s:number('crw-avatar-seconds',8,0,15),avatar_count:number('crw-avatar-count',1,1,6),
-      offer:$('crw-offer').value,offer_plugs:number('crw-offer-plugs',0,0,2),panels:state.selected.panels?state.panels:'',cta:ctaValue()};
+      offer:$('crw-offer').value,offer_plugs:number('crw-offer-plugs',0,0,2),panels:state.selected.panels?state.panels:'',cta:ctaValue(),
+      pictures_per_min:state.selected.pictures&&Number($('crw-pictures').value)!==state.selected.pictures.default?Number($('crw-pictures').value):null};
     if(p.panels && title.includes('\n')) throw new Error('Use one title for a set of panels.');
     if(state.selected.auto_style)p.auto_style=checked('crw-adaptive'); return p;
   }
@@ -510,6 +524,7 @@
   $('crw-output-reveal').addEventListener('click',async()=>{if(!state.currentOutput)return;try{await api(`/api/reveal/${encoded(state.currentOutput.slug)}`,{method:'POST',body:{}});text('crw-output-message','The video folder is open on this computer.');}catch(e){text('crw-output-message',e.message);}});
   $('crw-projects-refresh').addEventListener('click',()=>refreshActivity(true));
   $('crw-progress-cancel').addEventListener('click',async()=>{const b=$('crw-progress-cancel');if(!b.dataset.run||!state.openJob)return;b.disabled=true;try{await api(`/cr-video/${encoded(state.openJob)}/cancel`,{method:'POST',body:{run_id:b.dataset.run}});toast('Cancellation requested. Completed work stays saved.');await refreshActivity();}catch(e){text('crw-progress-note',e.message);}});
+  $('crw-pictures').addEventListener('input',()=>{showPictures();summary();});
   $('crw-cta-on').addEventListener('change',()=>{hide('crw-cta-fields',!checked('crw-cta-on'));save();});
   $('crw-cta-image').addEventListener('change',async()=>{const file=$('crw-cta-image').files[0];if(!file)return;state.uploading=true;gate();text('crw-cta-status','Saving your picture…');const form=new FormData();form.append('file',file);try{const result=await api('/cr-workspace/cta-image',{method:'POST',body:form});state.ctaImage=result.image;text('crw-cta-status','Your picture is on the card.');}catch(e){state.ctaImage='';text('crw-cta-status',e.message);}finally{state.uploading=false;gate();}});
   $('crw-panels-recent').addEventListener('change',()=>{showPanels((state.panelSets||[]).find(s=>s.id===$('crw-panels-recent').value));});

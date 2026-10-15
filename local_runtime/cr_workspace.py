@@ -128,6 +128,10 @@ def install(studio, activity, *, token, home=None):
             info = styles.get(row.get("name")) if isinstance(styles, dict) else None
             # a recipe that shows the creator's own comic panels instead of drawing pictures (cr_panels)
             row["panels"] = bool(isinstance(info, dict) and isinstance(info.get("look"), dict) and info["look"].get("panels"))
+            # a story recipe's pictures a minute, with its quality floor (create page slider)
+            import cr_media
+            span = None if row["panels"] else cr_media.picture_range(info if isinstance(info, dict) else {})
+            row["pictures"] = {"floor": span[0], "default": span[1], "ceiling": span[2]} if span else None
             row.update(preview_available=source is not None,
                 preview_url=("/cr-workspace/preview/recipe/" + quote(row["name"], safe="") + ".jpg?v="
                              + preview_version(source)) if source else None,

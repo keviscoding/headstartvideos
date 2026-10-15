@@ -85,3 +85,10 @@ def test_the_script_asks_for_the_mentions_only_in_videos_that_have_one(tmp_path)
     engine.generate_script("t", 12, job, False)
     engine.generate_script("t", 12, tmp_path / "other", False)
     assert "CALL TO ACTION" in seen[0] and seen[1] == "EXTRA"
+
+
+def test_story_recipes_offer_a_picture_count_with_a_quality_floor():
+    import cr_media
+    assert cr_media.picture_range({"pacing": {"photo_every_s": 3.0}}) == (10.0, 20.0, 30.0)
+    assert cr_media.picture_range({"pacing": {"photo_every_s": 12.0}}) == (4.0, 5.0, 7.5)
+    assert cr_media.picture_range({"pacing": {}}) is None

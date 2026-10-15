@@ -343,6 +343,27 @@ def image_model(model):
     raise AccountStop("Choose a supported Kie image model in Setup & accounts.")
 
 
+def picture_range(style: dict):
+    """(floor, default, ceiling) pictures a minute a story recipe allows, or None for other recipes. The floor
+    keeps quality: never fewer than half the recipe's own pace, nor under four a minute."""
+    try:
+        every = float(((style or {}).get("pacing") or {}).get("photo_every_s") or 0)
+    except (TypeError, ValueError):
+        return None
+    if every <= 0:
+        return None
+    default = round(60.0 / every, 1)
+    return max(4.0, round(default * 0.5, 1)), default, min(30.0, round(default * 1.5, 1))
+
+
+def pictures_per_min(job) -> float:
+    try:
+        spec = json.loads((Path(job) / "run_spec.json").read_text(encoding="utf-8"))
+        return float(spec.get("cr_pictures_per_min") or 0)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return 0.0
+
+
 # The picture model the current job's style asks for (look.image_model). Jobs run one per worker process.
 _style_model = {"id": ""}
 
@@ -554,6 +575,16 @@ def install(engine):
             current["style"] = style
             look = ((getattr(engine, "STYLE_INFO", {}) or {}).get(style) or {}).get("look") or {}
             _style_model["id"] = str(look.get("image_model") or "") if isinstance(look, dict) else ""
+            # the creator's pictures-per-minute for a story recipe (create page slider), this job only
+            every = getattr(engine, "STYLE_PHOTO_EVERY", {})
+            ppm = pictures_per_min(job)
+            if ppm and style in every:
+                before = every[style]
+                every[style] = round(60.0 / ppm, 2)
+                try:
+                    return original_visuals(script, job, force, style, *args, **kwargs)
+                finally:
+                    every[style] = before
             return original_visuals(script, job, force, style, *args, **kwargs)
         visuals._cr_style = True
         engine.generate_astrology_visuals = visuals
