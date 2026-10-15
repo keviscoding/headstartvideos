@@ -62,6 +62,9 @@ Return ONE JSON object:
    text appear, where the edit breathes"],
  "craft": "story (one person's or one event's story, told in order) or teaching (the viewer learns how something
    works or what to do)",
+ "broll": ["6 to 10 short stock-footage searches (2 to 4 words each) for the generic b-roll this channel cuts to
+   between its specific shots, in its subject area and mood (for a money channel: 'counting cash close up', 'bank
+   building exterior'); never names, never the reference video's own story"],
  "hook_notes": "one or two sentences: how the first 30 seconds run",
  "body_notes": "one or two sentences: how the edit runs after the hook"
 }
@@ -182,6 +185,8 @@ def check(answer: dict, *, banned: list, candid: bool = False) -> dict:
     for key in ("script_voice", "editor_notes"):
         rows = answer.get(key) if isinstance(answer.get(key), list) else []
         out[key] = [_clean(x, 220, banned) for x in rows if str(x).strip()][:6]
+    rows = answer.get("broll") if isinstance(answer.get("broll"), list) else []
+    out["broll"] = [q for q in (_clean(x, 60, banned) for x in rows) if 2 <= len(q.split()) <= 6][:10]
     return out
 
 
@@ -205,6 +210,9 @@ def overrides(art: dict) -> dict:
         out["tagline"] = art["tagline"]
     if art.get("script_voice"):
         out["script_notes"] = art["script_voice"]
+    if art.get("broll"):
+        # the channel's own fallback b-roll searches (without them the engine falls back to a cosmic default pool)
+        out["stock_queries"] = art["broll"]
     if art.get("editor_notes"):
         out["director_notes"] = art["editor_notes"]
     pacing = {k: art[k] for k in ("hook_notes", "body_notes") if art.get(k)}

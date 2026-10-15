@@ -306,6 +306,13 @@ def test_a_long_picture_style_is_cut_at_a_sentence_and_the_avoid_list_reads_clea
     assert art.overrides(out)["look"]["still_suffix"].endswith("Avoid: photorealism, no 3D.")
 
 
+def test_the_art_director_gives_the_channel_its_own_fallback_b_roll():
+    out = art.check({**ANSWER, "broll": ["counting cash close up", "bank building exterior", "x", "Pip Explains logo shot"]},
+                    banned=["Pip Explains"])
+    assert out["broll"] == ["counting cash close up", "bank building exterior", "the reference logo shot"]
+    assert art.overrides(out)["stock_queries"] == out["broll"]
+
+
 def test_a_candid_photo_style_never_asks_for_glossy_studio_pictures():
     glossy = ("Photorealistic phone photos of an older butcher in a home kitchen, commercial supermarket lighting, "
               "crisp focus, glossy finish, cinematic lighting, warm colours, everyday clutter on the counters.")
