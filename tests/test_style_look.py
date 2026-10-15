@@ -266,6 +266,33 @@ def test_samples_and_the_sheet_are_drawn_with_the_style_picture_model(home):
     assert models == ["nano-banana-2-1"] * 4, "three samples and the character sheet"
 
 
+def test_a_creator_who_uploads_their_own_character_gets_no_drawn_sheet(home):
+    import io
+    import cr_style_anchor as anchor
+    from PIL import Image
+    _, done, _ = run_look(home)
+    op = saved_v2_style(home, done["look_id"])
+    path = clone._folder(home) / op / "operation.json"
+    saved = json.loads(path.read_text())
+    saved["spec"]["answers"] = {"host": "Yes, I'll upload mine"}
+    path.write_text(json.dumps(saved))
+    gen = lambda prompt, dest, label, ref_urls=None: Path(dest).parent.mkdir(parents=True, exist_ok=True) or Path(dest).write_bytes(b"x")
+    anchor.start(home, op, generate=gen, upload=lambda p: "https://f/x.jpg", thread=False)
+    chosen = anchor.choose(home, op, 0, generate=lambda *a, **k: pytest.fail("no sheet: they upload theirs"),
+                           upload=lambda p: "u")
+    assert chosen["upload_character"] and not chosen["character"] and "upload your character" in chosen["message"]
+    buf = io.BytesIO()
+    Image.new("RGB", (400, 600), (240, 240, 240)).save(buf, "PNG")
+    done_ = anchor.upload_character(home, op, buf.getvalue())
+    style = json.loads((home / "styles" / "cr_clone_toby.json").read_text())
+    assert done_["character"] and style["look"]["character_image"] == "styles/learned/cr_clone_toby/character.png"
+    assert style["look"]["character"].startswith("THE CAST — Toby: exactly the character in the character reference")
+    with pytest.raises(ValueError, match="larger picture"):
+        tiny = io.BytesIO()
+        Image.new("RGB", (100, 100)).save(tiny, "PNG")
+        anchor.upload_character(home, op, tiny.getvalue())
+
+
 def test_samples_are_only_for_styles_saved_by_a_new_study(home):
     import cr_style_anchor as anchor
     with pytest.raises(RuntimeError):

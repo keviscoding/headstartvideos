@@ -312,6 +312,18 @@ def install(studio, activity, setup_status, *, token, home=None):
         except Exception as error:
             return error_response(error)
 
+    @app.post("/cr-style-clone/<operation>/character")
+    def cr_style_character(operation):
+        """The creator's own host or mascot for a learned style."""
+        try:
+            local_access()
+            upload = request.files.get("file")
+            if upload is None:
+                raise ValueError("Choose a picture of your character.")
+            return no_store(jsonify(cr_style_anchor.upload_character(home, operation, upload.read())))
+        except Exception as error:
+            return error_response(error)
+
     @app.get("/cr-style-clone/<operation>/samples/<int:index>")
     def cr_style_sample_image(operation, index):
         try:
