@@ -89,15 +89,11 @@ def of_job(job) -> dict:
 # ── the script ─────────────────────────────────────────────────────────────────────────────────────────────
 
 def places(count: int, minutes: float) -> list:
-    """Where the mentions go, as words of the narration: the first `count` of 40%, 70% and the end, never in
-    the first three minutes (a short video keeps only the closing mention)."""
-    out = []
-    for frac in PLACES[:max(1, min(3, count))]:
-        if frac is None:
-            out.append("in the closing lines, before the goodbye")
-        elif minutes * frac * 60 >= FIRST_S:
-            out.append(f"about {int(frac * 100)}% of the way through")
-    return out or ["in the closing lines, before the goodbye"]
+    """Where the mentions go, as words of the narration: the first `count` of 40%, 70% and the end that fall after
+    the first three minutes, so a spot too early moves to the next one (a short video keeps only the closing one)."""
+    allowed = ["in the closing lines, before the goodbye" if frac is None else f"about {int(frac * 100)}% of the way through"
+               for frac in PLACES if frac is None or minutes * frac * 60 >= FIRST_S]
+    return allowed[:max(1, min(3, count))]
 
 
 def script_block(cfg: dict, minutes: float) -> str:

@@ -34,7 +34,9 @@ def test_settings_are_checked_before_any_work(tmp_path, monkeypatch):
 def test_mentions_never_land_in_the_first_three_minutes():
     assert cta.places(3, 20) == ["about 40% of the way through", "about 70% of the way through",
                                  "in the closing lines, before the goodbye"]
-    assert cta.places(2, 6) == ["about 70% of the way through"], "40% of six minutes is under three minutes"
+    assert cta.places(2, 6) == ["about 70% of the way through", "in the closing lines, before the goodbye"], \
+        "40% of six minutes is under three minutes, so that mention moves later and the count is kept"
+    assert cta.places(1, 20) == ["about 40% of the way through"]
     assert cta.places(1, 1) == ["in the closing lines, before the goodbye"]
     block = cta.script_block(CFG, 12)
     assert "mention 1 about 40%" in block and "mention 2 about 70%" in block and '"link on screen"' in block
