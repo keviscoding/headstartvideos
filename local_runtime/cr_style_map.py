@@ -511,7 +511,7 @@ def _features(plan: Plan, profile: dict, base: str, base_style: dict):
     # Options starts from these ticks; a creator's own change in Options still wins
     plan.overrides["features"]["channel_on"] = list(on)
     plan.drop("features.auto_own", "the learned channel decides its own switches")
-    if base == "documentary" and fam:
+    if base in ("documentary", "jung", "nocturne") and fam:
         # the middle share is every footage slot: YouTube footage and stock share them (YouTube first), so all the
         # watched footage counts there, not only the stock part of it
         ai = round((fam.get("generated", 0) + fam.get("generated_motion", 0)) * 100)

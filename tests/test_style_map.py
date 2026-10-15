@@ -250,3 +250,10 @@ def test_a_whiteboard_channel_draws_each_picture_on_instead_of_sliding_cut_outs(
     assert ov["pacing"]["clips_per_min"] == 0.0
     stick = profile({"generated": 0.9}, **{"motion__classes": axis({"still": 0.3, "moving": 0.7})})
     assert "reveal" not in cm.plan_style(stick, STYLES)["overrides"]["look"]
+
+
+def test_an_essay_channel_gets_its_measured_mix_of_pictures_footage_and_cards():
+    essay = profile({"generated": 0.4, "footage": 0.33, "graphic": 0.27}, {"painting": 0.23, "stock_footage": 0.19},
+                    **{"look__drawn": axis(0.3), "motion__classes": axis({"still": 0.6, "moving": 0.4})})
+    plan = cm.plan_style(essay, STYLES, base="jung")
+    assert plan["overrides"]["pacing"]["mix"] == [40, 33, 27]
