@@ -124,6 +124,20 @@ def test_music_filling_the_pauses_is_measured_against_the_voice(tmp_path, monkey
     assert sound["pauses_per_min"]["0.6"] > 15
 
 
+def test_music_heard_in_only_some_pauses_is_measured_where_it_plays(tmp_path, monkeypatch):
+    # music 30 dB under the voice in two of the five pauses, silence in the rest
+    gap = int(0.8 * m.AUDIO_SR)
+    parts = []
+    for k in range(5):
+        parts.append(tone(2, 220, 0.5))
+        parts.append(tone(0.8, 440, 0.5 * 10 ** (-30 / 20))[:gap] if k in (1, 3) else np.zeros(gap, np.float32))
+    path = write_wav(tmp_path / "some.wav", np.concatenate(parts))
+    monkeypatch.setattr(m, "speech_spans", lambda x: [(i * 2.8, i * 2.8 + 2) for i in range(5)])
+    sound = m.measure_sound(path, 14)
+    assert sound["filled_pauses_share"] < 0.6 and sound["bed_in_pauses_db"] < -40, "the median over every pause is silence"
+    assert -34 <= sound["bed_when_heard_db"] <= -26, "where the music plays, it is 30 dB under the voice"
+
+
 def test_silent_pauses_are_measured_as_silent(tmp_path, monkeypatch):
     voice = np.concatenate([tone(2, 220, 0.5), np.zeros(int(0.8 * m.AUDIO_SR), np.float32)] * 5)
     path = write_wav(tmp_path / "dry.wav", voice)

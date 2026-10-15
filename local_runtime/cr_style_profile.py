@@ -442,6 +442,7 @@ def build(references: list) -> dict:
     pool = with_music if music_disagrees else snd
     fill = _mean([s.get("filled_pauses_share") for s in pool])
     bed = _mean([s.get("bed_in_pauses_db") for s in pool])
+    heard = _mean([s.get("bed_when_heard_db") for s in pool])
     tonal = _mean([(s.get("pause_fill") or {}).get("tonal") for s in pool])
     w_share = _mean([(s.get("music") or {}).get("share") for s in seen if s])
     level = music_level(bed, fill, tonal)
@@ -461,7 +462,8 @@ def build(references: list) -> dict:
     profile["sound"] = {
         "music": _axis(role or ("story score" if measured_music else "none"),
                        music_conf, (["measured"] if fill is not None else []) + (["watched"] if has_w else []), level=level,
-                       share=w_share, bed_in_pauses_db=bed, filled_pauses=fill, tonal_in_pauses=tonal,
+                       share=w_share, bed_in_pauses_db=bed, bed_when_heard_db=heard, filled_pauses=fill,
+                       tonal_in_pauses=tonal,
                        genres=_dedupe([x for s in seen for x in (s.get("music") or {}).get("genres") or []], 4),
                        moods=_dedupe([x for s in seen for x in (s.get("music") or {}).get("moods") or []], 8),
                        instruments=_dedupe([x for s in seen for x in (s.get("music") or {}).get("instruments") or []], 8),

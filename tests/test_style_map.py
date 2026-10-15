@@ -218,4 +218,13 @@ def test_a_very_quiet_music_bed_stays_very_quiet():
     quiet = profile({"generated": 0.9}, **{"sound__music": axis("quiet background", level="quiet", bed_in_pauses_db=-42.6,
                                                                 filled_pauses=0.4, moods=["calm"], genres=[])})
     snd = cm.plan_style(quiet, STYLES)["overrides"]["look"]["sound"]
-    assert snd["music_rel_db"] == -38.0 and snd["target"] == {"bed_in_pauses_db": -42.6, "pauses_filled": 0.4}
+    assert snd["music_rel_db"] == -30.0, "music heard in 40% of pauses: set from where it plays, not the silent median"
+    assert snd["target"] == {"bed_in_pauses_db": -42.6, "pauses_filled": 0.4}
+    heard = profile({"generated": 0.9}, **{"sound__music": axis("quiet background", level="quiet", bed_in_pauses_db=-42.6,
+                                                                bed_when_heard_db=-36.0, filled_pauses=0.4,
+                                                                moods=["calm"], genres=[])})
+    assert cm.plan_style(heard, STYLES)["overrides"]["look"]["sound"]["music_rel_db"] == -32.0
+    steady = profile({"generated": 0.9}, **{"sound__music": axis("quiet background", level="quiet", bed_in_pauses_db=-41.0,
+                                                                 filled_pauses=0.9, moods=["calm"], genres=[])})
+    assert cm.plan_style(steady, STYLES)["overrides"]["look"]["sound"]["music_rel_db"] == -37.0, \
+        "a quiet bed in every pause stays that quiet"
