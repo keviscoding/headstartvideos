@@ -442,8 +442,21 @@ def test_the_white_studio_3d_look_reaches_the_renderer_and_the_director():
     looks = package.patch_engine("threed/director/looks.json",
                                  b'{\n "documentary": {\n  "director": "x"\n }\n}\n')
     looks = json.loads(looks)
-    assert list(looks)[0] == "white_studio" and "high key" in looks["white_studio"]["director"]
+    assert list(looks)[0] == "white_studio" and "soft overcast daylight" in looks["white_studio"]["director"]
     assert "never flag the look itself" in looks["white_studio"]["qa"].lower()
-    presets = package.patch_engine("threed/engine/core/presets.js",
-                                   b"export const PRESETS = {\n  documentary: null,\n};\n").decode()
-    assert "white_studio: {" in presets and "mono: 0.92" in presets and "scrim_max: 0.86" in presets
+    presets = package.patch_engine("threed/engine/core/presets.js", (
+        b"export const PRESETS = {\n  documentary: null,\n};\n"
+        b"  if (P.ink) { g.outline = JSON.parse(JSON.stringify(P.ink)); g.labelMask = true; }   // grade.outline (grade.ink is"
+        b" the mono ink colour); never across a label\n")).decode()
+    assert "white_studio: {" in presets and "labelInk: 'dark'" in presets and "midAt: 0.35" in presets
+    assert "if (P.labelKeep) { g.labelKeep = true; g.labelMask = true; }" in presets
+    post = package.patch_engine("threed/engine/core/post.js", (
+        b"uWhite: { value: 0 }, uWhiteCol: { value: new THREE.Vector3(1, 1, 1) }, uTime: { value: 0 },\n"
+        b"uniform float uWhite; uniform vec3 uWhiteCol; uniform float uTime;\n"
+        b"c = mix(c, ${film ? 'fMonoCol(l)' : 'mix(uInk, uPaper, smoothstep(0.0, 1.0, l))'}, ${film ? 'fMono' : 'uMono'});\n"
+        b"u.uWhite.value = g.white ?? 0; u.uWhiteCol.value.set(...(g.whiteCol ?? [1, 1, 1]));\n")).decode()
+    assert "(1.0 - labelMask(vUv) * uLabelKeep)" in post and "u.uLabelKeep.value = g.labelKeep ? 1 : 0;" in post
+    main = package.patch_engine("threed/engine/core/main.js", (
+        b"    const shot = (mode) => { it.res.measureMode(mode); post.frame(1, (j) => renderSub(t, j, 1), Math.round(t * FPS),"
+        b" gradeAt(t), t); const r = region(it); it.res.measureMode(null); return r; };\n")).decode()
+    assert "cur.P?.labelInk === 'dark'" in main and "it.res.setInk(true)" in main
