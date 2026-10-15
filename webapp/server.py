@@ -2072,6 +2072,13 @@ async def terms_page():
     return FileResponse(str(STATIC_DIR / "terms.html"))
 
 
+# Free guides linked from the owner's videos (lead magnets): public pages with their downloads beside them.
+@app.get("/3d-harness", response_class=HTMLResponse)
+async def harness_3d_page():
+    return FileResponse(str(STATIC_DIR / "harness" / "3d-documentary-harness.html"),
+                        headers={"Cache-Control": "public, max-age=300"})
+
+
 # ---------------------------------------------------------------------------
 # Niches
 # ---------------------------------------------------------------------------
