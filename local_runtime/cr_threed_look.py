@@ -53,7 +53,8 @@ def install(engine=None):
 
     def remembering(fn):
         def run(*args, **kwargs):
-            job = kwargs.get("job") or next((a for a in args if isinstance(a, Path)), None)
+            # the job folder: _add_to_timeline(segs, srt, job, ...) is handed the subtitle file first
+            job = kwargs.get("job") or next((a for a in args if isinstance(a, Path) and a.is_dir()), None)
             before = getattr(_current, "job", None)
             _current.job = job
             try:

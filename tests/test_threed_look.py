@@ -35,8 +35,12 @@ def job(tmp_path, name, choice):
 
 def test_a_video_gets_the_3d_look_its_creator_chose(tmp_path, threed):
     mod, seen = threed
-    mod._add_to_timeline([], None, job(tmp_path, "colour", "documentary"), "cr-3d", False, None, 60.0)
-    mod._add_to_timeline([], None, job(tmp_path, "own", None), "cr-3d", False, None, 60.0)
+    colour, own = job(tmp_path, "colour", "documentary"), job(tmp_path, "own", None)
+    for j in (colour, own):
+        (j / "subs.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nOne\n")
+    # the engine hands the subtitle file before the job folder
+    mod._add_to_timeline([], colour / "subs.srt", colour, "cr-3d", False, None, 60.0)
+    mod._add_to_timeline([], own / "subs.srt", own, "cr-3d", False, None, 60.0)
     assert seen == ["documentary", "white_studio"], "the recipe's own look when nothing was chosen"
     assert mod._cfg(None, "cr-3d")["preset"] == "white_studio", "outside a video the recipe's look stands"
 
