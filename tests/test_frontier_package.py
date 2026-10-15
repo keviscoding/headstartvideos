@@ -268,6 +268,8 @@ def test_a_story_with_moving_pictures_shows_each_picture_on_its_own_sentence(tmp
               b"def _build_story_plan(job: Path, total: float, photos: list) -> list:\n"
               b"    items = json.loads((job / 'astro_scenes.json').read_text())\n"
               b"    pairs = [(it if isinstance(it, dict) else {}, p) for it, p in zip(items, photos) if p]\n"
+              b"    n = len(items)\n"
+              b"    beat = 2.5                              # shortest a picture may hold\n"
               b"    return [(it['text'], Path(p).name) for it, p in pairs]\n\n\n"
               b"def _story_order(job, total, photos):\n"
               b"    items = json.loads((job / 'astro_scenes.json').read_text())\n"
@@ -305,6 +307,7 @@ def test_a_story_with_moving_pictures_shows_each_picture_on_its_own_sentence(tmp
     assert zoom("still", 3, 0.2, 50) == "(1)" and zoom("in", 3, 0.2, 50).startswith("(1+0.2")
     assert sum(zoom("mix:0.9", i, 0.2, 50) == "(1)" for i in range(100)) == 90
     assert zoom("mix:0.0:alternate", 1, 0.2, 50) == "alternate"
+    assert "0.55 * total / max(1, n)" in patched, "a fast story's shortest hold follows its pace"
 
 
 def test_ready_made_recipes_ship_as_built_in_styles_with_only_their_own_pictures(tmp_path):

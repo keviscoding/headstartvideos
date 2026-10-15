@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 from scripts import studio_branding
-VERSION = "5.3-admin.60"
+VERSION = "5.3-admin.61"
 PRIVATE_WORKFLOWS = {
     "cr-style-delivery-prompt.txt": ROOT / "data/frontier/reference2d-compiler.txt",
     "cr-style-study-brief.txt": ROOT / "data/frontier/reference2d-study.txt",
@@ -218,6 +218,11 @@ ENGINE_PATCHES = {
          "    by_i = {i + _vn: p for i, p in by_i.items() if i + _vn < len(items)}\n"
          "    if len(by_i) < max(3, len(photos) // 2):\n        return []\n"
          "    idx = sorted(by_i)\n"),
+        # A fast story (a picture every 2.6 s) has no slack against a fixed 2.5 s shortest hold: one short sentence
+        # pushed every later picture, and the timeline set into a 2.5 s grid that drifted up to 4 s off the words.
+        # The shortest hold scales with the story's own pace (1.2 to 2.5 s); slower stories keep 2.5 s.
+        ("    beat = 2.5                              # shortest a picture may hold\n",
+         "    beat = min(2.5, max(1.2, 0.55 * total / max(1, n)))   # shortest hold, from the story's own pace\n"),
         # Channels that hold their pictures still (stick-figure stories hold 9 in 10) could only push in or
         # alternate. look.zoom "still" holds every still; "mix:<share>[:alternate]" holds that share, spread evenly.
         ('    p = f"min(on/{max(1, frames - 1)}\\\\,1)"\n'
