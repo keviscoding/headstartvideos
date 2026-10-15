@@ -99,6 +99,9 @@ def _has_words(text, *words):
     return any(w in text for w in words)
 
 
+PICTURE_MODEL = "nano-banana-2-1"                # Kie image model for styles drawn against a style drawing
+
+
 class Plan:
     """Collects overrides and the reasons for them."""
 
@@ -205,6 +208,11 @@ def _pictures(plan: Plan, profile: dict, base: str, base_style: dict):
                            "polish": polish, "looks": art.get("looks", [])[:4]})
         if draws:
             plan.needs.append("style_image")
+            # every picture copies the style drawing: Nano Banana 2.1 keeps the style and whole bodies where the
+            # first Nano Banana copied the drawing's layout (half-blank frames, arms without a body), same price
+            plan.set("look.image_model", PICTURE_MODEL, area="Pictures", label="Picture model",
+                     why="follows the style drawing closely and draws whole people, at the same price per picture",
+                     show="Nano Banana 2.1")
     # a cast is drawn only for generated pictures: real people in footage are filmed, not designed
     cast = [c for c in _v(pics.get("characters"), []) or [] if c.get("look")] if draws else []
     # Only a host or mascot returns in every video; the people of a reference's own story belong to that video.

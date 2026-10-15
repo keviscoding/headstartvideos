@@ -65,6 +65,8 @@ def test_a_drawn_channel_builds_on_the_picture_recipe_and_drops_its_cast():
     assert styled["look"]["character"] == "" and "character_image" not in styled["look"]
     assert styled["pacing"]["photo_every_s"] == 2.6, "the measured pace, not the base's 5.5 s"
     assert "style_image" in plan["needs"]
+    assert styled["look"]["image_model"] == "nano-banana-2-1", "drawn against the style drawing on Nano Banana 2.1"
+    assert any(r["path"] == "look.image_model" and r["value"] == "Nano Banana 2.1" for r in plan["settings"])
 
 
 def test_drawn_pictures_that_move_slide_as_cut_outs_rather_than_ai_video():

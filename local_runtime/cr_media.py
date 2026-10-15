@@ -27,7 +27,10 @@ if not CATALOG.is_file():  # Repository tests; the builder supplies the same cat
     CATALOG = HOME.parent / "webapp/frontier/providers.json"
 PROVIDERS = json.loads(CATALOG.read_text())
 TASKS = {"images", "narration", "motion", "avatars"}
-_slots = threading.BoundedSemaphore(2)
+# Tasks in flight per kind. Pictures run four at a time (a video needs dozens and Kie takes up to a minute for
+# each); voice, motion and avatars stay at two.
+_slots = {"images": threading.BoundedSemaphore(4)}
+_other_slots = threading.BoundedSemaphore(2)
 _lock = threading.RLock()
 _references = {}
 _native_images = None
@@ -249,7 +252,7 @@ def run(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
     marker = dest.parent / ".cr-tasks" / (dest.name + "-" + fingerprint[:24] + ".json")
     headers = {"Authorization": "Bearer " + key}
     base = "https://api.kie.ai/api/v1/jobs" if provider == "kie" else "https://api.atlascloud.ai/api/v1/model"
-    with _slots:
+    with _slots.get(task, _other_slots):
         with _lock:
             previous = json.loads(marker.read_text()) if marker.is_file() else {}
             if previous.get("status") == "complete" and dest.is_file() and previous.get("file_sha256") == hashlib.sha256(dest.read_bytes()).hexdigest():
@@ -340,12 +343,25 @@ def image_model(model):
     raise AccountStop("Choose a supported Kie image model in Setup & accounts.")
 
 
-def image_plan(cfg):
-    primary = image_model(cfg.get("model") or PROVIDERS["kie"]["models"]["images"])["id"]
+# The picture model the current job's style asks for (look.image_model). Jobs run one per worker process.
+_style_model = {"id": ""}
+
+
+def image_plan(cfg, prefer=None):
+    """The image models to try, in order. A style's own model (prefer) goes first while the creator keeps the
+    default model in Setup; a model the creator chose there always wins."""
+    default = image_model(PROVIDERS["kie"]["models"]["images"])["id"]
+    primary = image_model(cfg.get("model") or default)["id"]
     fallbacks = cfg.get("fallbacks", PROVIDERS["kie"]["image_fallbacks"])
     if not isinstance(fallbacks, list) or len(fallbacks) > 4:
         raise AccountStop("Choose at most four image fallbacks in Setup & accounts.")
-    return list(dict.fromkeys([primary] + [image_model(m)["id"] for m in fallbacks]))
+    plan = [primary] + [image_model(m)["id"] for m in fallbacks]
+    if prefer and primary == default:
+        try:
+            plan.insert(0, image_model(prefer)["id"])
+        except AccountStop:
+            pass                                   # a model this Studio doesn't offer: keep the creator's plan
+    return list(dict.fromkeys(plan))
 
 
 def image_input(choice, prompt, refs):
@@ -355,7 +371,7 @@ def image_input(choice, prompt, refs):
     return choice["edit" if refs else "generate"], inputs
 
 
-def image(prompt, dest, label="image", ref_urls=None, **kwargs):
+def image(prompt, dest, label="image", ref_urls=None, model=None, **kwargs):
     cfg = profile("images")
     provider = cfg["provider"]
     refs = list(ref_urls or [])
@@ -366,7 +382,7 @@ def image(prompt, dest, label="image", ref_urls=None, **kwargs):
             inputs["images"] = refs[:8]
         return run("images", inputs, dest, model=model)
     last = None
-    plan = image_plan(cfg)
+    plan = image_plan(cfg, prefer=model or _style_model["id"])
     for index, model_id in enumerate(plan):
         choice = image_model(model_id)
         model, inputs = image_input(choice, prompt, refs)
@@ -534,6 +550,8 @@ def install(engine):
     if original_visuals and not getattr(original_visuals, "_cr_style", False):
         def visuals(script, job, force, style="", *args, **kwargs):
             current["style"] = style
+            look = ((getattr(engine, "STYLE_INFO", {}) or {}).get(style) or {}).get("look") or {}
+            _style_model["id"] = str(look.get("image_model") or "") if isinstance(look, dict) else ""
             return original_visuals(script, job, force, style, *args, **kwargs)
         visuals._cr_style = True
         engine.generate_astrology_visuals = visuals

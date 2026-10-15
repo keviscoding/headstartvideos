@@ -393,3 +393,27 @@ def test_supported_image_models_preserve_reference_edits(family):
     assert model == choice["edit"] and inputs[choice["reference_field"]] == refs
     assert inputs["aspect_ratio"] == "16:9"
     assert media.image_model(choice["generate"]) == media.image_model(choice["edit"]) == choice
+
+
+def test_a_style_picture_model_goes_first_unless_the_creator_chose_another(hub, monkeypatch):
+    refs = ["https://files.example/style.png"]
+    creates = kie_tasks(monkeypatch, ["success", "success", "success"])
+    media.image("A kitchen", hub / "styled.png", ref_urls=refs, model="nano-banana-2-1")
+    assert creates[-1]["model"] == "nano-banana-2-1" and creates[-1]["input"]["image_input"] == refs
+    # the current job's style (look.image_model) works the same way, and the default model stays the backup
+    monkeypatch.setitem(media._style_model, "id", "nano-banana-2-1")
+    media.image("A street", hub / "job.png", ref_urls=refs)
+    assert creates[-1]["model"] == "nano-banana-2-1"
+    assert media.image_plan({"model": "google/nano-banana"}, prefer="nano-banana-2-1")[:2] == \
+        ["nano-banana-2-1", "google/nano-banana"]
+    # a model the creator picked in Setup wins over the style; an unknown style model is ignored
+    assert media.image_plan({"model": "gpt-image-2"}, prefer="nano-banana-2-1")[0] == "gpt-image-2"
+    assert media.image_plan({}, prefer="no-such-model")[0] == "google/nano-banana"
+    media.cr_bridge.save_settings({"costs_accepted": True, "media_hub": {"provider": "kie", "tasks": sorted(media.TASKS)},
+                                   "images": {"provider": "kie", "model": "gpt-image-2", "fallbacks": []}})
+    media.image("A kitchen", hub / "chosen.png", ref_urls=refs)
+    assert creates[-1]["model"] == "gpt-image-2-image-to-image"
+
+
+def test_pictures_run_four_at_a_time_and_other_tasks_two():
+    assert media._slots["images"]._value == 4 and media._other_slots._value == 2

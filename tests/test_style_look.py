@@ -247,6 +247,25 @@ def test_a_style_without_a_cast_gets_no_character_sheet_and_unknown_samples_are_
     assert "character_image" not in json.loads((home / "styles" / "cr_clone_toby.json").read_text())["look"]
 
 
+def test_samples_and_the_sheet_are_drawn_with_the_style_picture_model(home):
+    import cr_style_anchor as anchor
+    _, done, _ = run_look(home)
+    op = saved_v2_style(home, done["look_id"])
+    path = home / "styles" / "cr_clone_toby.json"
+    style = json.loads(path.read_text())
+    style["look"]["image_model"] = "nano-banana-2-1"
+    path.write_text(json.dumps(style))
+    models = []
+
+    def gen(prompt, dest, label, ref_urls=None, model=None):
+        models.append(model)
+        Path(dest).parent.mkdir(parents=True, exist_ok=True)
+        Path(dest).write_bytes(b"x")
+    anchor.start(home, op, generate=gen, upload=lambda p: "https://f/x.jpg", thread=False)
+    anchor.choose(home, op, 0, generate=gen, upload=lambda p: "https://f/x.jpg")
+    assert models == ["nano-banana-2-1"] * 4, "three samples and the character sheet"
+
+
 def test_samples_are_only_for_styles_saved_by_a_new_study(home):
     import cr_style_anchor as anchor
     with pytest.raises(RuntimeError):

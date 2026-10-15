@@ -22,16 +22,16 @@ import time
 from pathlib import Path
 
 HOME = Path(__file__).resolve().parent
-# Neutral style sheets: how people and places are drawn, with no story, era or setting to copy (a sample of a
-# particular scene made every later picture repeat that scene's people and walls).
+# Ordinary full-frame scenes in plain modern settings. The image model copies a reference's composition as well as
+# its style: a split "style sheet" made every later picture half blank, and a sample with an arm reaching in from the
+# edge filled a video with disembodied arms. So samples are whole, ordinary, complete pictures, people fully in frame.
 SUBJECTS = [
-    "A style sheet split into two halves. Left: three different people standing side by side on a plain background, "
-    "full body, facing the viewer (a man, a woman, an older person). Right: an empty everyday room with a window, a "
-    "table and a door, nobody in it. No text, no logos.",
-    "A style sheet split into two halves. Left: one person shown walking, sitting and pointing, on a plain background. "
-    "Right: an empty outdoor street corner with a tree and a bench, nobody in it. No text, no logos.",
-    "A style sheet split into two halves. Left: four faces in close-up showing surprise, worry, anger and joy, on a "
-    "plain background. Right: a single object on a plain table under soft light. No text, no logos.",
+    "A full-frame everyday scene: three people in plain modern clothes talking on an ordinary street corner with a "
+    "tree and a bench, daytime, everyone fully in frame from head to toe. No text, no logos.",
+    "A full-frame everyday scene: one person in plain modern clothes sitting at a kitchen table with a mug, a window "
+    "behind them, the whole person in frame. No text, no logos.",
+    "A full-frame everyday scene: two people in plain modern clothes in a simple living room, one surprised and one "
+    "explaining, both fully in frame. No text, no logos.",
 ]
 SHEET = ("A character sheet on a plain light background: the same character three times, front view, three-quarter "
          "view and full body, neutral pose, no text, no labels. The character: ")
@@ -70,6 +70,12 @@ def _learned(home, operation_id):
     if not saved or not style or style.get("cr_style_clone", {}).get("operation_id") != folder.name or not learned:
         raise RuntimeError("Choose a style saved by a recent style study.")
     return folder, saved, style_path, style
+
+
+def _model(style) -> dict:
+    """{"model": the style's picture model} so samples are drawn the way its videos will be, or {}."""
+    model = str((style.get("look") or {}).get("image_model") or "")
+    return {"model": model} if model else {}
 
 
 def _frames(home, style) -> list:
@@ -114,9 +120,10 @@ def start(home, operation_id, *, generate=None, upload=None, thread=True) -> dic
             refs = [put(frames[min(k, len(frames) - 1)]) for k in range(len(SUBJECTS))]
             _write(folder / "anchors" / "anchors.json", {"state": "running", "message": "Drawing three samples.",
                                                          "samples": SUBJECTS})
+            model = _model(style)
             for k, subject in enumerate(SUBJECTS):
                 gen(STYLE_NOTE + subject + suffix, folder / "anchors" / f"sample_{k}.jpg", f"style sample {k + 1}",
-                    ref_urls=[refs[k]])
+                    ref_urls=[refs[k]], **model)
             _write(folder / "anchors" / "anchors.json", {"state": "done", "samples": SUBJECTS, "at": time.time(),
                                                          "message": "Choose the sample that looks most like your channel."})
         except BaseException as exc:                            # noqa: BLE001 - shown to the creator, nothing retried
@@ -154,7 +161,7 @@ def choose(home, operation_id, index: int, *, generate=None, upload=None) -> dic
         gen = generate or cr_media.image
         put = upload or (lambda path: cr_media.upload(path, task="images"))
         sheet = target.with_name("character.png")
-        gen(STYLE_NOTE + SHEET + cast[:1500], sheet, "character sheet", ref_urls=[put(target)])
+        gen(STYLE_NOTE + SHEET + cast[:1500], sheet, "character sheet", ref_urls=[put(target)], **_model(style))
         style["look"]["character_image"] = sheet.relative_to(assets).as_posix()
     _write(style_path, style)
     import cr_style_clone
