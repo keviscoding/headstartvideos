@@ -26,6 +26,9 @@ W, H, FPS = 1920, 1080, 30
 INK = 110                           # darker than this is a line
 FILL_S, HOLD_S = 0.45, 0.3
 WORDS_PER_S = 2.8
+SCRIBBLE_DB = -4.0                  # over the channel's effects level (look.sound.sfx_db, -19 dB unless learned)
+SQUEAK_S = 0.7                      # a marker squeak about this often while the lines are drawn
+SLOW_MAX = 1.35                     # the engine plays a clip in a longer slot up to this much slower (YT_SLOW_MAX)
 
 
 def wanted(look) -> bool:
@@ -190,15 +193,30 @@ def draw_all(job, photos, log=print, workers: int = 3) -> int:
     return made[0]
 
 
+def _clip_s(anim: Path) -> float:
+    try:
+        return float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
+                                     str(anim)], capture_output=True, text=True, timeout=30).stdout.strip())
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return 0.0
+
+
 def cues(plan_, look) -> list:
-    """[(second, sound, dB)]: the marker squeaking while each picture draws itself on."""
+    """[(second, sound, dB over the effects level)]: the marker squeaking while each picture's lines are drawn.
+
+    A squeak is shorter than a drawing, so they come about every SQUEAK_S through it, on the slot's clock (a slot
+    longer than its clip plays the drawing up to SLOW_MAX slower); the first is the loudest."""
     if not wanted(look):
         return []
     out, t = [], 0.0
     for kind, path, _leak, dur in plan_ or []:
         anim = Path(str(path)).with_suffix(".anim.mp4")
         if kind == "photo" and re.search(r"scene_\d+\.(?:jpg|png)$", str(path)) and anim.is_file():
-            out.append((round(t + 0.05, 2), "scribble", -21.0))
+            clip = _clip_s(anim)
+            stretch = min(float(dur) / clip, SLOW_MAX) if clip > 0 and float(dur) / clip > 1.02 else 1.0
+            drawing = max(0.5, clip - FILL_S - HOLD_S) * stretch if clip > 0 else 1.0
+            for k in range(max(1, int(drawing / SQUEAK_S + 0.5))):
+                out.append((round(t + 0.05 + k * SQUEAK_S, 2), "scribble", SCRIBBLE_DB - (3.0 if k else 0.0)))
         t += float(dur)
     return out
 

@@ -71,7 +71,10 @@ def test_only_a_whiteboard_style_draws_and_the_marker_is_heard(tmp_path, monkeyp
     engine.generate_astrology_visuals("s", job, False, "board")
     assert len(drawn) == 1, "a fresh drawing is kept"
     plan = [("photo", str(still), False, 3.0), ("motion", "kit.mp4", False, 2.0), ("photo", str(still), False, 3.0)]
-    assert drawon.cues(plan, {"reveal": "draw"}) == [(0.05, "scribble", -21.0), (5.05, "scribble", -21.0)]
+    monkeypatch.setattr(drawon, "_clip_s", lambda anim: 1.0 + drawon.FILL_S + drawon.HOLD_S)    # 1 s of lines
+    # a 3 s slot plays the 1.75 s drawing 1.35x slower: 1.35 s of lines, a squeak at its start and 0.7 s on
+    assert drawon.cues(plan, {"reveal": "draw"}) == [(0.05, "scribble", -4.0), (0.75, "scribble", -7.0),
+                                                     (5.05, "scribble", -4.0), (5.75, "scribble", -7.0)]
     assert drawon.cues(plan, {}) == []
     (job / "style.txt").write_text("plain\n")
     (job / "images" / "scene_00.anim.mp4").unlink()
