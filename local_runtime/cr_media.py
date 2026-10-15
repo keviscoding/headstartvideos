@@ -602,6 +602,8 @@ def install(engine):
         import cr_cta
         cr_panels.install(engine)
         cr_cta.install(engine)                      # your call to action: in the script, on screen, in the description
+        import cr_presenters
+        cr_presenters.install()                     # your own presenters, listed first
     except ImportError:
         pass
     # Native Kie motion and the history kit previously bypassed the hub.

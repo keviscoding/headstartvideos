@@ -236,6 +236,22 @@ def install(studio, activity, *, token, home=None):
         except Exception as error:
             return panel_error(error)
 
+    @app.post("/cr-workspace/presenter")
+    def cr_workspace_presenter():
+        """Your own presenter: a photo, a name and the voice they speak with."""
+        try:
+            local_access()
+            import cr_presenters
+            upload = request.files.get("file")
+            if upload is None:
+                raise ValueError("Choose a photo of your presenter.")
+            row = cr_presenters.save(upload.read(), name=request.form.get("name", ""),
+                                     gender=request.form.get("gender", ""), persona=request.form.get("persona", ""),
+                                     folder=home / "assets" / "avatars" / "my")
+            return protect(jsonify(presenter={k: row[k] for k in ("id", "name", "gender", "persona")}))
+        except Exception as error:
+            return panel_error(error)
+
     @app.post("/cr-workspace/cta-image")
     def cr_workspace_cta_image():
         """A cover or screenshot for a call-to-action card."""
