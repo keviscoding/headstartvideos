@@ -281,7 +281,8 @@ def _youtube_engine() -> bytes:
             '    return cmd\n'
             'def search(q):\n    if True:\n        try:\n            p = run()\n'
             '        except subprocess.TimeoutExpired:\n            return []\n        for line in p.stdout.splitlines():\n'
-            '            pass\n').encode()
+            '            pass\n'
+            + 'def _kie_log(vid: str, prompt: str, work: Path, span: tuple = None) -> str:\n    # kie\'s gateway answers a busy minute with {"code": 500, "msg": "Network error, please try again later."}.\n    # The upload is the slow part, so it is done once and only the watching is tried again.\n    url = _kie_upload(_low_copy(vid, work, span))\n    last = None\n    for wait in (0, 20, 60):\n        if wait:\n            time.sleep(wait)\n        try:\n            return _chat_log("https://api.kie.ai/gemini-2.5-flash/v1/chat/completions", _env("KIE_API_KEY"), "",\n                             {"type": "image_url", "image_url": {"url": url}}, prompt)\n        except RuntimeError as e:                               # noqa: PERF203 - three tries, then the next model\n            last = e\n            if "HTTP 4" in str(e):\n                break\n    raise last\n').encode()
 
 
 def test_a_refused_footage_search_records_why():
@@ -485,3 +486,21 @@ def test_the_white_studio_3d_look_reaches_the_renderer_and_the_director():
 def test_a_stalled_footage_upload_is_tried_again_after_minutes_not_fifteen():
     patched = package.patch_engine("youtube.py", _youtube_engine()).decode()
     assert "timeout=(15, 180)" in patched and "for attempt in (1, 2):" in patched and "timeout=900" not in patched
+
+
+def test_footage_watching_stops_asking_kie_after_three_videos_fail_in_a_row(monkeypatch):
+    patched = package.patch_engine("youtube.py", _youtube_engine()).decode()
+    calls = []
+    def chat(*args):
+        calls.append(args)
+        raise RuntimeError("api.kie.ai said: internal error, please try again later.")
+    space = {"Path": __import__("pathlib").Path, "time": __import__("types").SimpleNamespace(sleep=lambda s: None), "_chat_log": chat,
+             "_env": lambda k: "key", "_low_copy": lambda *a: "low.mp4", "_kie_upload": lambda p: "https://u"}
+    exec(compile(patched[patched.index("_KIE_DOWN = "):], "youtube.py", "exec"), space)
+    for vid in "abc":
+        with pytest.raises(RuntimeError, match="internal error"):
+            space["_kie_log"](vid, "watch", None)
+    assert len(calls) == 9, "three tries for each of the first three videos"
+    with pytest.raises(RuntimeError, match="goes on without it"):
+        space["_kie_log"]("d", "watch", None)
+    assert len(calls) == 9, "the fourth is not uploaded or asked"
