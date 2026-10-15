@@ -612,6 +612,8 @@ def install(engine):
         cr_cta.install(engine)                      # your call to action: in the script, on screen, in the description
         import cr_presenters
         cr_presenters.install()                     # your own presenters, listed first
+        import cr_drawon
+        cr_drawon.install(engine)                   # whiteboard styles: each picture draws itself on
     except ImportError:
         pass
     # Native Kie motion and the history kit previously bypassed the hub.

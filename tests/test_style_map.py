@@ -237,3 +237,16 @@ def test_a_documentary_that_opens_on_a_broadcast_clip_keeps_its_first_seconds_fo
     ov = cm.plan_style(doc, STYLES)["overrides"]
     assert ov["pacing"]["cold_open_s"] == 6.0, "however little of the rest plays with its own sound"
     assert "soundbites" not in ov.get("look", {})
+
+
+def test_a_whiteboard_channel_draws_each_picture_on_instead_of_sliding_cut_outs():
+    board = profile({"generated": 0.9}, **{"motion__classes": axis({"still": 0.3, "moving": 0.7}),
+                                           "pictures__art_style": axis("Digital whiteboard animation with a human hand "
+                                                                       "sketching black marker lines.")})
+    plan = cm.plan_style(board, STYLES)
+    ov = plan["overrides"]
+    assert ov["look"]["reveal"] == "draw"
+    assert "depth" not in ov["features"]["on"] and "photofx" not in ov["look"], "the drawing is the motion"
+    assert ov["pacing"]["clips_per_min"] == 0.0
+    stick = profile({"generated": 0.9}, **{"motion__classes": axis({"still": 0.3, "moving": 0.7})})
+    assert "reveal" not in cm.plan_style(stick, STYLES)["overrides"]["look"]

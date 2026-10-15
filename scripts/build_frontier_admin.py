@@ -37,6 +37,11 @@ def runtime_resources(root: Path):
         if path.is_symlink():
             raise ValueError("Runtime resources must be ordinary owned files.")
         yield path, path.name
+    hand = runtime / "drawon_art" / "hand.png"           # the whiteboard reveal's drawing hand (cr_drawon)
+    if hand.exists():
+        if hand.is_symlink() or not hand.is_file() or hand.stat().st_size > 2 * 1024 * 1024:
+            raise ValueError("The drawing hand must be a small ordinary picture.")
+        yield hand, "drawon_art/hand.png"
     art = runtime / "workspace_art"
     if art.exists():
         if art.is_symlink() or not art.is_dir():

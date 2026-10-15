@@ -301,6 +301,15 @@ def _pace(plan: Plan, profile: dict, base: str):
                  why=f"{round(flashes * 100)}% of changes flash white", source="measured")
 
 
+def _whiteboard(profile) -> bool:
+    """The references are whiteboard animation: a hand draws the pictures live (as watched)."""
+    words = " ".join([str(_v(_get(profile, "pictures", "art_style"), "") or "")]
+                     + [str(x) for x in (_get(profile, "pictures", "art_style", "alternatives", default=[]) or [])]
+                     + [str(x) for x in (profile.get("recognisable") or [])]).lower()
+    return "whiteboard" in words or bool(re.search(r"\bhands?\b[\w\s-]{0,24}\b(draw|drawing|draws|sketch|sketching)\b",
+                                                   words))
+
+
 def _motion(plan: Plan, profile: dict, base: str, minutes_hint: float = 10.0):
     motion = profile.get("motion") or {}
     kinds = _v(motion.get("kinds"), {}) or {}
@@ -318,7 +327,13 @@ def _motion(plan: Plan, profile: dict, base: str, minutes_hint: float = 10.0):
         _v(_get(profile, "pictures", "art_style"), ""), "drawn", "drawing", "cartoon", "stick", "illustrat", "vector",
         "doodle", "comic", "whiteboard", "sketch", "manga", "manhwa", "webtoon", "paint")
     clips = 0.0
-    if generated >= 0.3 and moving_generated >= 0.15:
+    if generated >= 0.3 and _whiteboard(profile):
+        # a whiteboard channel's motion is the drawing itself: a hand draws each picture's lines on (cr_drawon)
+        plan.set("look.reveal", "draw", area="Motion", label="Drawn on by hand",
+                 why="the references draw each picture live, a hand tracing the lines with a marker (watched)",
+                 source="watched", show="every picture draws itself on")
+        clips = 0.0
+    elif generated >= 0.3 and moving_generated >= 0.15:
         if drawn or cutout >= 0.08:
             # drawn figures move the way these channels move them: lifted off the background and slid, not AI video
             plan.motion_cutout = True
