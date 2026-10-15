@@ -228,3 +228,12 @@ def test_a_very_quiet_music_bed_stays_very_quiet():
                                                                  filled_pauses=0.9, moods=["calm"], genres=[])})
     assert cm.plan_style(steady, STYLES)["overrides"]["look"]["sound"]["music_rel_db"] == -37.0, \
         "a quiet bed in every pause stays that quiet"
+
+
+def test_a_documentary_that_opens_on_a_broadcast_clip_keeps_its_first_seconds_for_footage():
+    doc = profile({"footage": 0.4, "graphic": 0.5}, {"motion_graphic": 0.5, "news_clip": 0.1},
+                  **{"edit__source_clips": axis(0.035),
+                     "edit__hook": axis(["A cold broadcast clip asking an audience a question, then a jump cut."])})
+    ov = cm.plan_style(doc, STYLES)["overrides"]
+    assert ov["pacing"]["cold_open_s"] == 6.0, "however little of the rest plays with its own sound"
+    assert "soundbites" not in ov.get("look", {})

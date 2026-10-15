@@ -516,17 +516,21 @@ def _features(plan: Plan, profile: dict, base: str, base_style: dict):
 
 def _real_clips(plan: Plan, profile: dict, base: str):
     share = float(_v(_get(profile, "edit", "source_clips"), 0) or 0)
-    if share < 0.15 or base not in ("documentary", "nocturne", "jung"):
+    if base not in ("documentary", "nocturne", "jung"):
+        return
+    # a channel that opens on a real clip (a cold broadcast clip, raw bodycam) keeps its first seconds for footage,
+    # however little of the rest plays with its own sound
+    hook = " ".join(_v(_get(profile, "edit", "hook"), []) or []).lower()
+    if share >= 0.3 or _has_words(hook, "clip", "footage", "bodycam", "raw", "broadcast", "news"):
+        plan.set("pacing.cold_open_s", 6.0, area="Edit", label="Open on a real clip",
+                 why="the references open on raw footage before the narration", source="watched")
+    if share < 0.15:
         return
     quotes = int(_clamp(round(share * 24), 2, 16))      # about two clips per minute of a 10-minute video at 50%
     plan.set("look.soundbites", {"quotes": quotes, "max_s": 20.0, "soundups": 3, "montage": True}, area="Edit",
              label="Real clips with their own sound",
              why=f"real footage plays with its own sound {round(share * 100)}% of the runtime", source="watched",
              show=f"about {quotes} clips, up to 20 s each, opening on raw moments")
-    hook = " ".join(_v(_get(profile, "edit", "hook"), []) or []).lower()
-    if share >= 0.3 or _has_words(hook, "clip", "footage", "bodycam", "raw"):
-        plan.set("pacing.cold_open_s", 6.0, area="Edit", label="Open on a real clip",
-                 why="the references open on raw footage before the narration", source="watched")
 
 
 def _sound(plan: Plan, profile: dict):
