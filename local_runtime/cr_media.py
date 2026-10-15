@@ -233,6 +233,14 @@ def upload(path, cache_file=None, *, task=None):
             raise AccountStop("The reference upload stopped. Check your model account connection.")
 
 
+def _never_sent(error) -> bool:
+    """Whether a failed request certainly never reached the provider: the connection was not opened."""
+    if isinstance(error, requests.exceptions.ConnectTimeout):
+        return True
+    text = repr(error)
+    return any(sign in text for sign in ("NewConnectionError", "NameResolutionError", "Failed to establish a new connection"))
+
+
 def run(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
     provider, key = account(task)
     dest = Path(dest)
@@ -268,7 +276,19 @@ def run(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
                 _write(marker, previous)  # Crash before ID is recorded is uncertain, never auto-resubmit.
                 suffix = "/createTask" if provider == "kie" else {"images": "/generateImage", "narration": "/generateAudio", "motion": "/generateVideo", "avatars": "/generateVideo"}[task]
                 try:
-                    res = requests.post(base + suffix, headers=headers, json=payload, timeout=(15, 90), allow_redirects=False)
+                    for attempt in (1, 2, 3):
+                        try:
+                            res = requests.post(base + suffix, headers=headers, json=payload, timeout=(15, 90),
+                                                allow_redirects=False)
+                            break
+                        except requests.ConnectionError as error:
+                            # A connection that never opened sent nothing, so nothing was created: a network blip
+                            # at that moment no longer stops the video. Anything after sending stays uncertain.
+                            previous["submit_error"] = type(error).__name__
+                            if attempt == 3 or not _never_sent(error):
+                                _write(marker, previous)
+                                raise
+                            time.sleep(5 * attempt)
                     # Only an explicit client rejection is known not to have
                     # created a job. A 5xx/timeout without an ID stays uncertain.
                     if provider == "kie":

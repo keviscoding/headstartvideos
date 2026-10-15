@@ -63,6 +63,37 @@ def test_uncertain_submission_never_resubmits_or_changes_wallet(hub, monkeypatch
     assert len(calls) == 1
 
 
+def test_a_connection_that_never_opened_is_tried_again_and_creates_one_task(hub, monkeypatch):
+    creates = []
+    def create(url, **kw):
+        creates.append(kw)
+        if len(creates) < 3:
+            raise media.requests.ConnectTimeout("the provider did not answer the connection")
+        return response({"code": 200, "data": {"taskId": "task-9"}})
+    monkeypatch.setattr(media.requests, "post", create)
+    monkeypatch.setattr(media.requests, "get", lambda url, **kw: response({"code": 200, "data": {
+        "state": "success", "resultJson": json.dumps({"resultUrls": ["https://files.example/i.png"]})}}))
+    assert media.run("images", {"prompt": "Example"}, hub / "i.png") == "https://files.example/i.png"
+    assert len(creates) == 3
+
+
+@pytest.mark.parametrize("error", ["ReadTimeout", "aborted"])
+def test_a_request_that_may_have_arrived_is_never_sent_twice(hub, monkeypatch, error):
+    calls = []
+    def create(*a, **kw):
+        calls.append(kw)
+        if error == "ReadTimeout":
+            raise media.requests.ReadTimeout("no answer")
+        raise media.requests.ConnectionError("('Connection aborted.', RemoteDisconnected('closed'))")
+    monkeypatch.setattr(media.requests, "post", create)
+    with pytest.raises(media.AccountStop, match="interrupted"):
+        media.run("images", {"prompt": "Example"}, hub / "u.png")
+    assert len(calls) == 1
+    receipt = json.loads(next((hub / ".cr-tasks").glob("u.png-*.json")).read_text())
+    assert receipt["status"] == "submitting"
+    assert receipt.get("submit_error", "ReadTimeout") in ("ReadTimeout", "ConnectionError")
+
+
 def test_kie_http_200_error_stops_without_paid_fallback(hub, monkeypatch):
     monkeypatch.setattr(media.requests, "post", lambda *a, **k: response({"code": 429, "msg": "upstream secret"}))
     with pytest.raises(media.AccountStop, match="refused") as error:
