@@ -442,6 +442,16 @@
     try{const result=await api('/api/products');for(const row of result.products||[]){const o=el('option','',row.title||row.name||row.slug);o.value=row.slug;$('crw-offer').append(o);} hide('crw-offer-section', !(result.products||[]).length);}catch(_){hide('crw-offer-section',true);}
     try{const result=await api(`/api/avatars?style=${encoded(state.selected?.name||'')}`);for(const row of result.avatars||[]){const o=el('option','',row.persona||row.id);o.value=row.id;$('crw-avatar-id').append(o);} if(result.seconds){$('crw-avatar-seconds').min=result.seconds.min;$('crw-avatar-seconds').max=result.seconds.max;}if(result.count)$('crw-avatar-count').max=result.count.max;}catch(_){text('crw-avatar-portraits','Presenter choices are available after account setup.');}
   }
+  // Studio's Claude model check lasts a day. When it is the only thing in the way, run it here (two tiny "reply OK"
+  // calls on the creator's Claude) instead of sending them back to setup every morning.
+  async function autoVerify() {
+    const r = state.setup?.readiness || {}, b = r.blockers || [], cc = state.setup?.claude_code || {};
+    if (r.ready || state.autoVerified || b.length !== 1 || !/Verify both Claude models/.test(b[0]) || !cc.authenticated || !cc.mcp_connected) return;
+    state.autoVerified = true; text('crw-readiness', 'Checking your Claude models (a tiny check, about 20 seconds)…');
+    try {await api('/cr-claude/setup', {method: 'POST', body: {action: 'verify'}}); state.setup = await api('/cr-status');}
+    catch (_) {/* Setup explains what still needs attention. */}
+    finally {gate();}
+  }
   async function start() {
     const draft=restore();
     try {
@@ -450,7 +460,7 @@
       const narration=setup.narration||{};text('crw-narration-name',narration.voice||'Your configured narrator');text('crw-narration-account',[narration.label||providerName(narration.provider),narration.model_label||friendlyModel(narration.model)].filter(Boolean).join(' · ')||'Uses the voice account selected in Accounts.');
       const initial=findRecipe(boot.preset?.style||draft.recipe)||findRecipe('documentary')||rows()[0]; if(!initial)throw new Error('No visual recipes are installed. Update this studio from your ChannelRecipe account.');
       if(boot.preset?.features)state.featureDrafts[initial.name]=boot.preset.features;
-      selectRecipe(initial,false);chooseGroup('[data-minutes]','minutes',$('crw-minutes').value);updateOptional();await refreshActivity(true);showPage(location.hash.slice(1)||'create',false);schedule();checkForUpdate();
+      selectRecipe(initial,false);chooseGroup('[data-minutes]','minutes',$('crw-minutes').value);updateOptional();await refreshActivity(true);showPage(location.hash.slice(1)||'create',false);schedule();checkForUpdate();autoVerify();
     }catch(e){error(e.message);text('crw-readiness','The workspace could not finish loading. Keep the launcher open and refresh this page.');}
     finally{gate();}
   }
@@ -564,7 +574,7 @@
   function showWhatsNew(mode) {
     const info = pendingUpdate(); if (!info) return false;
     const list = $('crw-whatsnew-list'); list.replaceChildren();
-    for (const entry of info.entries) {const section = el('section'); section.append(el('h3', '', `Studio ${entry.build} · ${entry.title || 'Improvements'}`)); const ul = el('ul'); for (const item of entry.items || []) ul.append(el('li', '', item)); section.append(ul); list.append(section);}
+    for (const entry of info.entries) {const section = el('section'); section.append(el('h3', '', `Studio ${entry.build} · ${entry.title || 'Improvements'}`)); const ul = el('ul'); for (const item of entry.items || []) {const m = /^(New|Improved|Fixed):\s*/.exec(item); const li = el('li'); if (m) {li.className = 'crw-tagged'; li.append(el('span', `crw-tag crw-tag-${m[1].toLowerCase()}`, m[1]), document.createTextNode(item.slice(m[0].length)));} else li.textContent = item; ul.append(li);} section.append(ul); list.append(section);}
     if (!info.entries.length) list.append(el('p', 'crw-whatsnew-note', 'Fixes and improvements.'));
     text('crw-whatsnew-title', mode === 'discord' ? `Before you ask: Studio ${info.remote} is out` : `What’s new in Studio ${info.remote}`);
     text('crw-whatsnew-note', mode === 'discord' ? 'Your issue may already be fixed. Updating takes about a minute and keeps your projects, accounts and styles.' : 'Updating takes about a minute. Your projects, accounts and styles stay as they are, and your current version keeps working if you wait.');

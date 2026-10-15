@@ -36,6 +36,7 @@ PHASES = {
     "watch": (30, "Studying actual reference frames, pacing, graphics and sound."),
     "build": (58, "Writing the original learner's graphics kit."),
     "validate": (78, "Rendering and reviewing the learned graphics against the reference."),
+    "art": (88, "Writing the picture style, cast and voice from what Studio saw."),
     "publish": (94, "Saving your validated style in the studio's preset library."),
     "complete": (100, "Your learned style is saved and ready to use."),
 }
@@ -304,6 +305,18 @@ def _spec(home, supplied):
     visual_mode = supplied.get("visual_mode", "reference_only")
     if not isinstance(visual_mode, str) or visual_mode not in {"reference_only", "mixed"}:
         raise ValueError("Choose reference animation only or a mixed-media style.")
+    look_id, answers = supplied.get("look_id"), supplied.get("answers") or {}
+    if look_id is not None:
+        import cr_style_look
+        looked = cr_style_look.status(home, look_id)
+        if looked.get("state") != "done" or sorted(r["id"] for r in looked["references"]) != sorted(selected):
+            raise ValueError("Look at these references again before starting the study.")
+        questions = {q["id"]: q.get("options") or [] for q in (looked.get("mapping") or {}).get("questions") or []}
+        if (not isinstance(answers, dict) or len(answers) > 12
+                or any(k not in questions or v not in questions[k] for k, v in answers.items())):
+            raise ValueError("Answer the questions from what Studio saw.")
+    elif answers:
+        raise ValueError("Look at the references before answering questions about them.")
     attempt_id = supplied.get("attempt_id", "")
     if attempt_id and (not isinstance(attempt_id, str) or not re.fullmatch(r"[a-f0-9]{32}", attempt_id)):
         raise ValueError("Start a new style study from its approval form.")
@@ -320,7 +333,8 @@ def _spec(home, supplied):
         "base_style": base, "base_sha256": _file_hash(base_path), "name": requested_name,
         "label": label.strip(), "title": title.strip(), "brief": brief,
         "budget_minutes": budget, "max_calls": calls, "minutes": minutes,
-        "visual_mode": visual_mode, "attempt_id": attempt_id}
+        "visual_mode": visual_mode, "attempt_id": attempt_id,
+        **({"look_id": look_id, "answers": dict(answers)} if look_id else {})}
 
 
 def prepare(home, supplied, proof, bridge):
@@ -545,7 +559,23 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
     def stop_remote(*args, **kwargs):
         log("Reference download did not provide actual frames. No video-analysis API or alternate brain was used.")
         return {}
-    local_watch = _bind(learner.watch, watch_remote=stop_remote)
+    looked = _look_material(folder, spec)
+    def local_watch(row, clock, location):
+        # A study after a look reuses the sections the look downloaded (the same windows Gemini watched).
+        if looked and row["id"] in looked["media"]:
+            spans = [(a, b) for a, b, _ in looked["media"][row["id"]]]
+            cached = {(a, b): path for a, b, path in looked["media"][row["id"]]}
+            def download(vid, a, b, dest, timeout=300):
+                source = cached.get((a, b))
+                if vid == row["id"] and source and Path(source).is_file():
+                    shutil.copyfile(source, dest)
+                    return Path(dest)
+                return learner._download(vid, a, b, dest, timeout=timeout)
+            bound = _bind(learner.watch, watch_remote=stop_remote, _sections=lambda dur: list(spans),
+                          _download=download)
+        else:
+            bound = _bind(learner.watch, watch_remote=stop_remote)
+        return bound(row, clock, location)
     def watch(reference, clock, work):
         strict = spec.get("visual_mode") == "reference_only"
         references = spec["references"] if strict else [reference]
@@ -617,8 +647,101 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
         raise StudyStopped("The reference animation kit has not completed its visual comparison. It is saved, but it is not ready to use; no unreviewed preset was substituted.")
     _write(folder / "validated-checkpoint.json", {"schema": 1, "record": record,
         "spec_sha256": _hash(spec), "assets": _validated_assets(folder, record)})
+    if looked:
+        progress("art")
+        _art_director(folder, spec, looked, lambda prompt, images: learner._see(engine, clock, "art", prompt, images),
+                      log)
     return finish_original(engine, folder, spec, design, record, progress,
         learner=learner, designer=designer, log=log, report=clock.report())
+
+
+def _studio_home(folder):
+    """The studio folder an operation lives in (<home>/output/cr-style-clone/op_...)."""
+    return Path(folder).resolve().parents[2]
+
+
+def _look_material(folder, spec):
+    """What the look before this study saw: cached sections, frames, captions and the profile. {} without a look."""
+    if not spec.get("look_id"):
+        return {}
+    import cr_style_look
+    home = _studio_home(folder)
+    look_folder = cr_style_look.folder(home, spec["look_id"])
+    looked = _read(look_folder / "look.json")
+    if looked.get("state") != "done":
+        raise StudyStopped("The look at these references is missing. Look at them again before studying.")
+    media = {}
+    for path in sorted((look_folder / "work" / "media").glob("*_*_*.mp4")):
+        match = re.fullmatch(r"([A-Za-z0-9_-]{11})_(\d+)_(\d+)", path.stem)
+        if match:
+            media.setdefault(match.group(1), []).append((int(match.group(2)), int(match.group(3)), str(path)))
+    sheets = [str(look_folder / "sheets" / (row["id"] + ".jpg")) for row in looked.get("sheets", [])
+              if (look_folder / "sheets" / (row["id"] + ".jpg")).is_file()]
+    return {"profile": looked.get("profile") or {}, "media": media, "sheets": sheets,
+            "excerpts": looked.get("excerpts") or {},
+            "channels": sorted({r.get("channel", "") for r in looked.get("references", []) if r.get("channel")})}
+
+
+def _installed_styles(home):
+    return {path.stem: _read(path) for path in sorted((Path(home) / "styles").glob("*.json"))
+            if not path.stem.startswith(("_", "cr_clone_"))}
+
+
+def _art_director(folder, spec, looked, see, log):
+    """One Claude vision call, saved so a recovery never repeats it."""
+    import cr_style_art
+    import cr_style_map
+    checkpoint = folder / "art-checkpoint.json"
+    saved = _read(checkpoint)
+    if saved.get("spec_sha256") == _hash(spec):
+        return saved.get("art") or {}
+    home = _studio_home(folder)
+    profile = cr_style_map.answer(looked["profile"], spec.get("answers") or {})
+    mapping = cr_style_map.plan_style(profile, _installed_styles(home), base=spec["base_style"])
+    excerpt = " ".join(looked["excerpts"].get(r["id"], "") for r in spec["references"])[:1500]
+    banned = looked["channels"] + [r.get("channel", "") for r in spec["references"]]
+    try:
+        art = cr_style_art.direct(see, profile, mapping, title=spec["title"], brief=spec.get("brief", ""),
+                                  base=spec["base_style"], excerpt=excerpt, sheets=looked["sheets"][:3],
+                                  banned=banned, log=log)
+    except Exception as error:                              # noqa: BLE001 - the learned settings stand without it
+        log(f"  art director: stopped ({type(error).__name__}); the learned settings are kept without it")
+        art = {}
+    _write(checkpoint, {"schema": 1, "art": art, "spec_sha256": _hash(spec)})
+    return art
+
+
+def _apply_learned(folder, spec, style, log):
+    """The look's settings and the art director's words over the built style. Metadata only: no model call."""
+    import cr_style_look
+    import cr_style_map
+    home = _studio_home(folder)
+    looked = _read(cr_style_look.folder(home, spec["look_id"]) / "look.json")
+    if looked.get("state") != "done":
+        return style
+    mapping = cr_style_map.plan_style(looked.get("profile") or {}, _installed_styles(home), base=spec["base_style"],
+                                      answers=spec.get("answers") or {})
+    learned = cr_style_map.apply(style, mapping)
+    if mapping["base"] in ("stories", "avatar-premium"):
+        # The engine's automatic documentary look adds documentary script and edit guidance; a picture-led channel
+        # has its own voice from the art director instead.
+        learned.pop("auto", None)
+    art = (_read(folder / "art-checkpoint.json").get("art") or {})
+    import cr_style_prompts
+    # a recipe built around one niche (money stories, dark psychology) writes neutrally for the learned channel
+    cr_style_map._merge(learned, cr_style_prompts.overrides(
+        mapping["base"], (art.get("art") or {}).get("craft", ""),
+        (art.get("overrides") or {}).get("description") or learned.get("description", "")))
+    if art.get("overrides"):
+        cr_style_map._merge(learned, art["overrides"])
+    learned.setdefault("cr_style_clone", {}).update(
+        learned_v2={"look_id": spec["look_id"], "base": mapping["base"], "base_why": mapping["base_why"],
+                    "needs": mapping["needs"], "cost": mapping["cost"], "art_director": bool(art.get("overrides")),
+                    "settings": [{k: r.get(k) for k in ("area", "label", "value", "why")} for r in mapping["settings"]
+                                 if r.get("path") != "features.offered"]})
+    log(f"  learned settings applied: {len(mapping['settings'])} settings over {mapping['base']}"
+        + (", art director's picture style and cast" if art.get("overrides") else ""))
+    return learned
 
 
 def _validated_assets(folder, record):
@@ -667,6 +790,8 @@ def finish_original(engine, folder, spec, design, record, progress, *, learner=N
     style["cr_style_clone"] = {"operation_id": folder.name, "reference_ids": [r["id"] for r in spec["references"]],
         "learned_ref": record.get("ref"), "base_style": spec["base_style"],
         "visual_mode": spec.get("visual_mode", "mixed")}
+    if spec.get("look_id"):
+        style = _apply_learned(folder, spec, style, log or print)
     if style["cr_style_clone"]["visual_mode"] == "reference_only":
         import cr_style_delivery
         cr_style_delivery.configure_style(style)

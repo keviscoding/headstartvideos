@@ -1,0 +1,165 @@
+"""From a Style Profile to Studio settings: the right base, the learned channel's own look, and no inherited cast."""
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).parents[1] / "local_runtime"))
+import cr_style_map as cm  # noqa: E402
+
+STYLES = {
+    "stories": {"look": {"character": "THE MAIN CHARACTER is the man from the reference image",
+                         "character_image": "characters/stories.png", "reference": "styles/stories.jpg",
+                         "still_suffix": " Flat 2D cartoon"}, "features": {"offered": ["depth", "avatar"], "on": ["depth"]},
+                "pacing": {"photo_every_s": 5.5}},
+    "documentary": {"look": {}, "features": {"offered": ["youtube", "maps", "headlines", "motion", "sound"],
+                                             "auto_own": ["ai_images"]}},
+    "avatar-premium": {"look": {"avatar": {"provider": "pruna", "per_min": 24, "window_s": 10}},
+                       "features": {"offered": ["ai_images", "avatar", "sound"]}},
+    "3d": {"look": {}, "features": {"offered": ["threed", "maps", "sound"]}},
+    "nocturne": {"look": {}, "features": {"offered": ["threed", "youtube", "maps", "sound"]}},
+    "jung": {"look": {}, "features": {"offered": ["stock", "ai_images", "motion", "sound"]}},
+}
+
+
+def axis(value, confidence=0.8, **extra):
+    return {"value": value, "confidence": confidence, "from": ["watched"], **extra}
+
+
+def profile(families, sources=None, **over):
+    p = {
+        "pictures": {"sources": axis(sources or {}, families=families),
+                     "art_style": axis("Stick figures with round white heads on watercolour backgrounds."),
+                     "polish": axis("clean"), "characters": axis([])},
+        "look": {"grade": axis("bright", luma=200, saturation=0.3, filter=[]), "grain": axis("none", measured=0.2),
+                 "palette": axis([{"hex": "#D04A2C", "share": 0.1}, {"hex": "#1A1A1A", "share": 0.4}]),
+                 "drawn": axis(0.6)},
+        "motion": {"classes": axis({"still": 0.6, "camera": 0.3, "moving": 0.1}),
+                   "kinds": axis({"still": 0.5, "zoom_in": 0.4, "animated": 0.1}),
+                   "camera": axis({"zoom_in_share": 0.6, "zoom_out_share": 0.3})},
+        "edit": {"median_shot_s": axis(2.4, opening=1.8, body=2.6), "transitions": axis({"cut": 0.95, "start": 0.05}),
+                 "source_clips": axis(0.0), "hook": axis([])},
+        "text": {"density": axis({"none": 0.8, "label": 0.2}), "lettering": axis("typeset"), "style": axis([]),
+                 "graphics": axis([])},
+        "sound": {"music": axis("none", level="none", bed_in_pauses_db=-60, moods=[], genres=[]),
+                  "sfx": axis("sparse", kinds=["pop", "whoosh"]), "ambience": axis([], present=False)},
+        "voice": axis({"gender": "male", "age": "adult", "tone": "dry, conversational", "pace": "fast"}),
+        "format": {"presenter": axis(0.0, who=[]), "cta": axis([], kinds=[])},
+        "questions": [],
+    }
+    for path, value in over.items():
+        cur = p
+        keys = path.split("__")
+        for k in keys[:-1]:
+            cur = cur[k]
+        cur[keys[-1]] = value
+    return p
+
+
+def test_a_drawn_channel_builds_on_the_picture_recipe_and_drops_its_cast():
+    plan = cm.plan_style(profile({"generated": 0.9, "graphic": 0.1}), STYLES)
+    assert plan["base"] == "stories"
+    removed = {r["path"] for r in plan["remove"]}
+    assert {"look.character_image", "look.reference"} <= removed
+    styled = cm.apply(STYLES["stories"], plan)
+    assert styled["look"]["character"] == "" and "character_image" not in styled["look"]
+    assert styled["pacing"]["photo_every_s"] == 2.6, "the measured pace, not the base's 5.5 s"
+    assert "style_image" in plan["needs"]
+
+
+def test_drawn_pictures_that_move_slide_as_cut_outs_rather_than_ai_video():
+    moving = profile({"generated": 0.9}, **{"motion__classes": axis({"still": 0.4, "moving": 0.6})})
+    plan = cm.plan_style(moving, STYLES)
+    on = plan["overrides"]["features"]["on"]
+    assert "depth" in on
+    assert plan["overrides"]["pacing"]["clips_per_min"] <= 1.0
+
+
+def test_stills_only_channels_get_no_moving_pictures():
+    still = profile({"generated": 0.9}, **{"motion__classes": axis({"still": 0.96, "moving": 0.04}),
+                                           "motion__kinds": axis({"animated": 0.9})})
+    plan = cm.plan_style(still, STYLES)
+    assert plan["overrides"]["pacing"]["clips_per_min"] == 0.0, "measured stillness beats a model calling it animated"
+    assert "depth" not in plan["overrides"]["features"]["on"]
+
+
+def test_photoreal_pictures_that_move_get_image_to_video():
+    photo = profile({"generated": 0.8}, **{"motion__classes": axis({"still": 0.3, "moving": 0.7}),
+                                           "look__drawn": axis(0.1),
+                                           "pictures__art_style": axis("Cinematic photoreal AI footage of cities.")})
+    plan = cm.plan_style(photo, STYLES)
+    assert plan["overrides"]["pacing"]["clips_per_min"] >= 3
+
+
+def test_a_talking_presenter_channel_gets_its_measured_screen_time_and_product():
+    p = profile({"generated": 0.5, "footage": 0.35, "presenter": 0.15},
+                {"ai_image": 0.5, "stock_footage": 0.1, "presenter": 0.15},
+                **{"format__presenter": axis(0.09, who=[{"name": "Frank", "look": "older man, white beard", "role": "presenter"}]),
+                   "format__cta": axis([{"kind": "ebook or pdf"}], kinds=["ebook or pdf", "qr code"]),
+                   "pictures__art_style": axis("Realistic photos of an older butcher at home."),
+                   "look__drawn": axis(0.1)})
+    plan = cm.plan_style(p, STYLES)
+    assert plan["base"] == "avatar-premium"
+    assert plan["overrides"]["look"]["avatar"]["per_min"] == pytest.approx(5.4)
+    assert plan["overrides"]["look"]["avatar"]["provider"] == "pruna", "the base's presenter machinery is kept"
+    assert plan["overrides"]["look"]["offer"]["at"] == [0.4, 0.7]
+    assert {"presenter", "product"} <= set(plan["needs"])
+    assert any(n.get("polish_rule", "").startswith("candid") for n in plan["notes"]), \
+        "photoreal AI pictures get the everyday phone look, not a glossy advert"
+
+
+def test_real_footage_channels_build_on_the_documentary_with_their_own_clips():
+    crime = profile({"footage": 0.8, "graphic": 0.2}, {"bodycam_cctv": 0.45, "archival_footage": 0.35, "map": 0.05},
+                    **{"edit__source_clips": axis(0.5), "edit__hook": axis(["Opens on raw bodycam footage."]),
+                       "look__grade": axis("dark", luma=70, saturation=0.14, filter=["desaturated, dark"]),
+                       "sound__music": axis("ambient bed", level="score", bed_in_pauses_db=-20, moods=["tense", "eerie"],
+                                            genres=[]),
+                       "sound__sfx": axis("none", kinds=[]),
+                       "pictures__art_style": axis("Raw bodycam footage.")})
+    plan = cm.plan_style(crime, STYLES)
+    ov = plan["overrides"]
+    assert plan["base"] == "documentary"
+    assert ov["look"]["soundbites"]["quotes"] >= 10 and ov["pacing"]["cold_open_s"] > 0
+    assert ov["look"]["fx"]["grade"] == "bleach_bypass"
+    assert ov["look"]["sound"]["music"] is True and ov["look"]["sound"]["sfx_db"] == -60.0
+    assert ov["look"]["sound"]["vibe"] == "tense_investigation"
+    assert "maps" in ov["features"]["on"] and "youtube" in ov["features"]["on"]
+    assert "character_image" not in plan["needs"], "real people in footage are filmed, not designed"
+    assert "auto_own" in {r["path"].split(".")[-1] for r in plan["remove"]}
+
+
+def test_3d_and_measured_music_levels():
+    p = profile({"3d": 0.6, "graphic": 0.4}, **{"sound__music": axis("story score", level="score",
+                                                                         bed_in_pauses_db=-16, moods=["tense"],
+                                                                         genres=[])})
+    plan = cm.plan_style(p, STYLES)
+    assert plan["base"] == "3d"
+    assert plan["overrides"]["look"]["sound"]["music_rel_db"] == -12.0
+    assert cm.plan_style(profile({"3d": 0.5, "footage": 0.3}), STYLES)["base"] == "nocturne"
+
+
+def test_hand_lettering_and_subtitles_follow_the_references():
+    p = profile({"generated": 0.9}, **{"text__lettering": axis("comic"),
+                                       "text__density": axis({"caption": 0.5, "none": 0.5})})
+    ov = cm.plan_style(p, STYLES)["overrides"]
+    assert ov["look"]["captions"] == {"off": False, "font": "Caveat"}
+    assert ov["look"]["textfx"]["fonts"]["head"] == "Caveat"
+
+
+def test_every_setting_says_why():
+    plan = cm.plan_style(profile({"generated": 0.9}), STYLES)
+    assert plan["settings"] and all(row["why"] and row["label"] for row in plan["settings"])
+    assert plan["cost"]["usd_per_min"] > 0
+
+
+def test_a_base_the_creator_chose_is_kept_and_a_missing_one_refused():
+    assert cm.plan_style(profile({"generated": 0.9}), STYLES, base="jung")["base"] == "jung"
+    with pytest.raises(ValueError):
+        cm.plan_style(profile({"generated": 0.9}), STYLES, base="folio")
+
+
+def test_apply_keeps_the_base_unchanged():
+    plan = cm.plan_style(profile({"generated": 0.9}), STYLES)
+    before = str(STYLES["stories"])
+    cm.apply(STYLES["stories"], plan)
+    assert str(STYLES["stories"]) == before

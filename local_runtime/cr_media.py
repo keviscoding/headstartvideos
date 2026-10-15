@@ -501,6 +501,13 @@ def install(engine):
     """Keep native providers when a task is unticked; resolve settings per call."""
     import cr_watch
     cr_watch.install()
+    try:
+        import cr_score                     # a learned style's own score, on the creator's Kie account
+        import cr_sfx_library               # and ChannelRecipe's recorded effects
+        cr_score.install(engine)
+        cr_sfx_library.install(engine)
+    except ImportError:
+        pass
     original_whisper=getattr(engine,"_get_whisper",None)
     if original_whisper and not getattr(original_whisper,"_cr_pcm_io",False):
         class WhisperIO:
@@ -520,7 +527,25 @@ def install(engine):
         setattr(engine, name, lambda *a, **k: replacement(*a, **k) if active(task) else original(*a, **k))
     hook("image_gen", "images", image)
     hook("_image_provider", "images", lambda: "channelrecipe-hub")
-    hook("_kie_still_with_url", "images", lambda prompt, dest, label, retries=4: image(prompt, dest, label))
+    # The first frame of a moving picture is drawn against the channel's style drawing too (look.style_image),
+    # like every still, so an animated picture keeps the same look. Jobs run one per worker process.
+    current = {"style": ""}
+    original_visuals = getattr(engine, "generate_astrology_visuals", None)
+    if original_visuals and not getattr(original_visuals, "_cr_style", False):
+        def visuals(script, job, force, style="", *args, **kwargs):
+            current["style"] = style
+            return original_visuals(script, job, force, style, *args, **kwargs)
+        visuals._cr_style = True
+        engine.generate_astrology_visuals = visuals
+
+    def still_with_url(prompt, dest, label, retries=4):
+        try:
+            refs = engine._style_refs(current["style"]) if current["style"] else []
+        except Exception:
+            refs = []
+        note = getattr(engine, "STYLE_REF_NOTE", "") if refs else ""
+        return image(note + prompt, dest, label, ref_urls=refs)
+    hook("_kie_still_with_url", "images", still_with_url)
     # Native Kie motion and the history kit previously bypassed the hub.
     # Both must use the same cheap model and the same durable receipts.
     engine._kie_video_gen = native_motion

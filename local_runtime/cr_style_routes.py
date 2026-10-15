@@ -13,7 +13,9 @@ import cr_bridge
 import cr_claude
 import cr_readiness
 import cr_presentation
+import cr_style_anchor
 import cr_style_clone
+import cr_style_look
 import cr_style_refine
 
 HOME = Path(__file__).resolve().parent
@@ -163,6 +165,37 @@ def install(studio, activity, setup_status, *, token, home=None):
         except Exception as error:
             return error_response(error)
 
+    @app.post("/cr-style-clone/look")
+    def cr_style_look_start():
+        """Look at the chosen references (measure here, Gemini watches): free for the creator, no Claude."""
+        try:
+            payload = data()
+            return no_store(jsonify(cr_style_look.start(home, payload.get("preview_id"), payload.get("reference_ids"))))
+        except Exception as error:
+            return error_response(error)
+
+    @app.get("/cr-style-clone/look/<look_id>")
+    def cr_style_look_status(look_id):
+        try:
+            local_access()
+            return no_store(jsonify(cr_style_look.status(home, look_id)))
+        except Exception as error:
+            return error_response(error)
+
+    @app.get("/cr-style-clone/look/<look_id>/sheet/<video_id>")
+    def cr_style_look_sheet(look_id, video_id):
+        try:
+            local_access()
+            folder = cr_style_look.folder(home, look_id) / "sheets"
+            if not isinstance(video_id, str) or not __import__("re").fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
+                raise ValueError("Choose a reference video.")
+            sheet = folder / (video_id + ".jpg")
+            if not sheet.is_file() or not sheet.resolve().is_relative_to(folder.resolve()):
+                return jsonify(error="No frames were saved for this reference."), 404
+            return no_store(send_file(sheet, mimetype="image/jpeg", conditional=False))
+        except Exception as error:
+            return error_response(error)
+
     @app.post("/cr-style-clone/start")
     def cr_style_start():
         try:
@@ -249,6 +282,45 @@ def install(studio, activity, setup_status, *, token, home=None):
                 # Preparation is indexed by the owned source. Repeated POSTs
                 # return the same operation; stopped/completed work never starts.
                 return no_store(jsonify(start_worker(result["operation_id"])))
+        except Exception as error:
+            return error_response(error)
+
+    @app.get("/cr-style-clone/<operation>/samples")
+    def cr_style_samples(operation):
+        try:
+            local_access()
+            return no_store(jsonify(cr_style_anchor.status(home, operation)))
+        except Exception as error:
+            return error_response(error)
+
+    @app.post("/cr-style-clone/<operation>/samples")
+    def cr_style_samples_start(operation):
+        """Draw three samples of the learned style on the creator's image account (approved first)."""
+        try:
+            payload = data()
+            if payload.get("acknowledge_costs") is not True:
+                raise ValueError("Approve drawing the samples on your image account first.")
+            return no_store(jsonify(cr_style_anchor.start(home, operation)))
+        except Exception as error:
+            return error_response(error)
+
+    @app.post("/cr-style-clone/<operation>/samples/choose")
+    def cr_style_samples_choose(operation):
+        try:
+            payload = data()
+            return no_store(jsonify(cr_style_anchor.choose(home, operation, payload.get("index"))))
+        except Exception as error:
+            return error_response(error)
+
+    @app.get("/cr-style-clone/<operation>/samples/<int:index>")
+    def cr_style_sample_image(operation, index):
+        try:
+            local_access()
+            folder = cr_style_clone._operation(home, operation) / "anchors"
+            sample = folder / f"sample_{index}.jpg"
+            if not sample.is_file() or not sample.resolve().is_relative_to(folder.resolve()):
+                return jsonify(error="That sample isn't drawn yet."), 404
+            return no_store(send_file(sample, mimetype="image/jpeg", conditional=False))
         except Exception as error:
             return error_response(error)
 
