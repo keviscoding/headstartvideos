@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The 3D Documentary Harness · ChannelRecipe</title>
+<meta name="description" content="The two rules behind the 3D reconstruction channels blowing up right now: the Visual DNA rule and Rule 13, the investigative hook and script structure. Free from ChannelRecipe.">
+<meta property="og:title" content="The 3D Documentary Harness">
+<meta property="og:description" content="Lock the look with Visual DNA. Open every story with Rule 13. Free harness for 3D documentary channels.">
+<meta property="og:type" content="article">
+<link rel="icon" href="/favicon.ico" sizes="48x48">
+<link rel="icon" href="/static/favicon.svg?v=pot1" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png?v=pot1">
+<style>
+  @import url("https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@500,700,800&display=swap");
+  @import url("https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600&display=swap");
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --canvas: #F7F5F0; --paper: #FFFFFF; --ink: #16161A; --ink-2: #45454E; --ink-3: #6E6E79; --hairline: #E5E1D8;
+    --violet: #6D5AE0; --purple: #9B5BE6; --pink: #E8608F; --ember: #FF7A59; --night: #15121F; --lilac: #B79CFF;
+    --red: #C8372D; --blue: #2F6FD6;
+    --display: "Cabinet Grotesk", system-ui, sans-serif; --body: "General Sans", Inter, system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  html { scroll-behavior: smooth; }
+  body { font-family: var(--body); background: var(--canvas); color: var(--ink); line-height: 1.6; -webkit-font-smoothing: antialiased; }
+  a { color: var(--violet); }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; }
+  h1, h2, h3 { font-family: var(--display); letter-spacing: -0.02em; line-height: 1.08; }
+  .kicker { font-family: var(--display); font-weight: 700; font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--violet); margin-bottom: 10px; }
+  /* hero */
+  .hero { background: var(--night); color: #F7F5F0; position: relative; overflow: hidden; }
+  .hero::before { content: ""; position: absolute; width: 760px; height: 760px; right: -260px; top: -300px; border-radius: 50%;
+    background: radial-gradient(circle at 40% 40%, rgba(155,91,230,.55), rgba(109,90,224,.16) 45%, transparent 70%); }
+  .hero::after { content: ""; position: absolute; width: 560px; height: 560px; left: -240px; bottom: -320px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(232,96,143,.32), transparent 65%); }
+  .hero .wrap { position: relative; z-index: 1; padding-top: 28px; padding-bottom: 72px; }
+  .brand { display: inline-flex; align-items: center; gap: 10px; color: #fff; text-decoration: none; font-family: var(--display); font-weight: 800; font-size: 20px; }
+  .brand svg { width: 34px; height: 34px; }
+  .brand span { color: var(--lilac); }
+  .hero .kicker { color: var(--lilac); margin-top: 72px; }
+  .hero h1 { font-size: clamp(42px, 8vw, 76px); font-weight: 800; max-width: 760px; }
+  .hero h1 em { font-style: normal; background: linear-gradient(90deg, #B79CFF, #E8608F 60%, #FF9A7A); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .hero p.sub { font-size: clamp(17px, 2.4vw, 20px); color: #CFC9E3; max-width: 640px; margin-top: 18px; }
+  .downloads { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; font-family: var(--display); font-weight: 700; font-size: 16px; text-decoration: none; border-radius: 999px; padding: 13px 22px; }
+  .btn.primary { background: linear-gradient(90deg, #6D5AE0, #9B5BE6 55%, #E8608F); color: #fff; }
+  .btn.ghost { border: 1.5px solid rgba(183,156,255,.45); color: #fff; }
+  .btn svg { width: 18px; height: 18px; }
+  .inside { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 48px; }
+  .inside a { display: block; text-decoration: none; border: 1px solid rgba(183,156,255,.28); background: rgba(255,255,255,.04); border-radius: 14px; padding: 14px 16px; }
+  .inside b { display: block; font-family: var(--display); color: #fff; font-size: 17px; }
+  .inside span { font-size: 14px; color: #BDB6D6; }
+  /* sections */
+  section.block { padding-top: 72px; padding-bottom: 8px; }
+  section.block h2 { font-size: clamp(30px, 5vw, 44px); font-weight: 800; margin-bottom: 10px; }
+  .lede { font-size: 18px; color: var(--ink-2); max-width: 680px; margin-bottom: 22px; }
+  .steps { list-style: none; counter-reset: s; display: grid; gap: 12px; max-width: 720px; }
+  .steps li { counter-increment: s; position: relative; padding-left: 44px; color: var(--ink-2); font-size: 16px; }
+  .steps li::before { content: counter(s); position: absolute; left: 0; top: -2px; width: 30px; height: 30px; border-radius: 50%; background: var(--violet); color: #fff; font-family: var(--display); font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .steps b { color: var(--ink); }
+  .rule { border: 1.5px solid var(--violet); border-radius: 18px; padding: 20px; background: linear-gradient(180deg, #F2EEFF, #FFFFFF); margin: 6px 0 18px; }
+  .rule .q { font-family: var(--display); font-weight: 700; font-size: 20px; margin-bottom: 12px; }
+  .tiers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .tiers div { border-radius: 12px; padding: 12px 14px; font-size: 15px; color: var(--ink-2); }
+  .tiers b { display: block; color: var(--ink); }
+  .tiers .a { background: #E9E3FF; } .tiers .b { background: #F3F0F8; } .tiers .c { background: #FAF9FC; color: var(--ink-3); }
+  .tip { background: var(--paper); border-left: 4px solid var(--ember); border-radius: 0 12px 12px 0; padding: 14px 18px; color: var(--ink-2); margin: 16px 0; }
+  .tip b { color: var(--ink); }
+  .trait { background: var(--paper); border: 1px solid var(--hairline); border-radius: 18px; padding: 20px; margin-top: 16px; }
+  .trait h3 { font-size: 22px; font-weight: 800; display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
+  .trait h3 .n { font-size: 14px; background: var(--ink); color: #fff; border-radius: 7px; padding: 2px 9px; }
+  .rows { display: grid; gap: 0; }
+  .row { display: grid; grid-template-columns: 150px 1fr 1fr; gap: 16px; padding: 12px 0; border-top: 1px solid var(--hairline); font-size: 15px; }
+  .row.head { border-top: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3); font-weight: 600; padding-top: 0; }
+  .row .m { font-weight: 600; }
+  .row .how { color: var(--ink-2); }
+  .row .val { color: var(--violet); font-weight: 500; }
+  .sw { display: inline-block; width: 11px; height: 11px; border-radius: 3px; vertical-align: -1px; margin-right: 4px; }
+  .code { position: relative; background: var(--night); border-radius: 18px; margin-top: 8px; }
+  .code pre { font-family: var(--mono); font-size: 14px; line-height: 1.55; color: #E9E5F7; padding: 22px; overflow-x: auto; }
+  .code .k { color: #B79CFF; } .code .c { color: #8C86A6; } .code .s { color: #FFB59E; }
+  .copy { position: absolute; top: 14px; right: 14px; font-family: var(--display); font-weight: 700; font-size: 14px; border: 0; border-radius: 999px; padding: 8px 14px; background: #fff; color: var(--ink); cursor: pointer; }
+  .ingredients { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 8px 0 22px; }
+  .ing { border-radius: 18px; padding: 20px; color: #fff; }
+  .ing .num { font-family: var(--display); font-size: 40px; font-weight: 800; opacity: .5; line-height: 1; }
+  .ing b { display: block; font-family: var(--display); font-size: 20px; margin: 8px 0 6px; line-height: 1.15; }
+  .ing span { font-size: 15px; opacity: .92; }
+  .i1 { background: linear-gradient(160deg, #6D5AE0, #4B3BB8); } .i2 { background: linear-gradient(160deg, #9B5BE6, #7A3FC9); } .i3 { background: linear-gradient(160deg, #E8608F, #C93C6E); }
+  .formula { font-family: var(--display); font-size: 19px; line-height: 1.9; border: 1.5px dashed #C9BFF2; border-radius: 16px; padding: 16px 20px; background: #FCFBFF; }
+  .formula .f { background: #E9E3FF; color: var(--violet); border-radius: 6px; padding: 1px 7px; font-weight: 700; }
+  .example { background: var(--night); color: #F2EEFF; border-radius: 18px; padding: 22px; margin: 18px 0 8px; }
+  .example .tag { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--lilac); font-weight: 600; margin-bottom: 8px; }
+  .example blockquote { font-family: var(--display); font-size: clamp(19px, 2.6vw, 24px); font-weight: 700; line-height: 1.35; }
+  .example p { font-size: 15px; color: #BDB6D6; margin-top: 10px; }
+  .bullets { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 24px; margin-top: 14px; }
+  .bullets div { position: relative; padding-left: 18px; color: var(--ink-2); font-size: 15px; }
+  .bullets div::before { content: ""; position: absolute; left: 0; top: 9px; width: 7px; height: 7px; border-radius: 50%; background: var(--pink); }
+  .bullets b { color: var(--ink); }
+  .beats { background: var(--paper); border: 1px solid var(--hairline); border-radius: 18px; overflow: hidden; }
+  .beat { display: grid; grid-template-columns: 44px 170px 120px 1fr; gap: 12px; padding: 14px 18px; border-top: 1px solid var(--hairline); font-size: 15px; align-items: start; }
+  .beat:first-child { border-top: 0; }
+  .beat.hook { background: #F3EFFF; }
+  .beat .n { font-family: var(--display); font-weight: 800; color: var(--violet); font-size: 18px; }
+  .beat .b { font-family: var(--display); font-weight: 700; font-size: 17px; }
+  .beat .t { color: var(--ink-3); font-weight: 500; white-space: nowrap; }
+  .beat .w { color: var(--ink-2); }
+  .niche { background: var(--paper); border: 1px solid var(--hairline); border-radius: 18px; overflow: hidden; }
+  .ch { display: grid; grid-template-columns: 1.1fr 1.1fr 1.6fr 80px; gap: 12px; padding: 14px 18px; border-top: 1px solid var(--hairline); font-size: 15px; }
+  .ch:first-child { border-top: 0; }
+  .ch.head { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3); font-weight: 600; background: #FBFAF7; }
+  .ch .name { font-weight: 600; } .ch .name small { display: block; font-weight: 400; color: var(--ink-3); }
+  .ch .views { color: var(--violet); font-weight: 700; font-family: var(--display); }
+  .ch .what { color: var(--ink-2); }
+  .soon { padding: 16px 18px; color: var(--ink-3); font-size: 15px; border-top: 1px dashed var(--hairline); background: #FBFAF7; }
+  /* CTA */
+  .cta { background: var(--night); color: #F7F5F0; margin-top: 80px; position: relative; overflow: hidden; }
+  .cta::before { content: ""; position: absolute; width: 900px; height: 900px; left: -300px; top: 120px; border-radius: 50%; background: radial-gradient(circle, rgba(109,90,224,.45), transparent 65%); }
+  .cta .wrap { position: relative; padding-top: 80px; padding-bottom: 80px; }
+  .cta h2 { font-size: clamp(36px, 6vw, 60px); font-weight: 800; }
+  .cta h2 em { font-style: normal; background: linear-gradient(90deg, #B79CFF, #E8608F 60%, #FF9A7A); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .cta .lede { color: #CFC9E3; margin-top: 12px; }
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 24px 0 32px; }
+  .card { border: 1px solid rgba(183,156,255,.3); background: rgba(255,255,255,.04); border-radius: 18px; padding: 20px; }
+  .card .ic { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-family: var(--display); font-weight: 800; color: #fff; margin-bottom: 12px; }
+  .card b { display: block; font-family: var(--display); font-size: 19px; color: #fff; margin-bottom: 6px; }
+  .card span { font-size: 15px; color: #CFC9E3; }
+  footer { padding: 28px 0 40px; color: var(--ink-3); font-size: 14px; }
+  footer .wrap { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  @media (max-width: 760px) {
+    .inside, .tiers, .ingredients, .cards, .bullets { grid-template-columns: 1fr; }
+    .row { grid-template-columns: 1fr; gap: 4px; }
+    .row.head { display: none; }
+    .row .m { font-family: var(--display); font-size: 16px; }
+    .beat { grid-template-columns: 34px 1fr; }
+    .beat .t, .beat .w { grid-column: 2; }
+    .ch { grid-template-columns: 1fr 70px; }
+    .ch .what, .ch .vid { grid-column: 1 / -1; }
+    .ch.head { display: none; }
+    .hero .wrap { padding-bottom: 52px; }
+    .wrap { padding-left: 16px; padding-right: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <a class="brand" href="/" aria-label="ChannelRecipe home">
+      <svg viewBox="0 0 100 100" fill="none" aria-hidden="true"><defs><linearGradient id="h" x1="0" y1="1" x2="0.6" y2="0"><stop offset="0" stop-color="#6D5AE0"/><stop offset="0.6" stop-color="#9B5BE6"/><stop offset="1" stop-color="#E8608F"/></linearGradient></defs><g stroke="#FF7A59" stroke-width="6" stroke-linecap="round"><path d="M37 24C33 19 41 15 37 7"/><path d="M50 24C46 19 54 15 50 7"/><path d="M63 24C59 19 67 15 63 7"/></g><rect x="44" y="27" width="12" height="6" rx="3" fill="#9B5BE6"/><rect x="14" y="32" width="72" height="8" rx="4" fill="#9B5BE6"/><rect x="7" y="49" width="14" height="9" rx="4.5" fill="#7F5AE3"/><rect x="79" y="49" width="14" height="9" rx="4.5" fill="#A95BE4"/><path d="M18 43H82V74A14 14 0 0 1 68 88H32A14 14 0 0 1 18 74Z" fill="url(#h)"/><path d="M44 55L44 76L62 65.5Z" fill="#F7F5F0" stroke="#F7F5F0" stroke-width="5" stroke-linejoin="round"/></svg>
+      Channel<span>Recipe</span>
+    </a>
+    <div class="kicker">Free harness · 3D documentaries</div>
+    <h1>The 3D Documentary <em>Harness</em></h1>
+    <p class="sub">The two rules behind the 3D reconstruction channels blowing up right now: lock the look with Visual DNA, and open every story with Rule 13.</p>
+    <div class="downloads">
+      <a class="btn primary" href="/static/harness/3D-Documentary-Harness.pdf" download><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 21h14"/></svg>Download the PDF</a>
+      <a class="btn ghost" href="/static/harness/3D-Documentary-Harness.md" download><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 21h14"/></svg>Get the .md harness</a>
+    </div>
+    <div class="inside">
+      <a href="#visual-dna"><b>Rule 1 · Visual DNA</b><span>Camera, light, mannequins, pacing and call-outs, taken from 3+ reference videos</span></a>
+      <a href="#rule-13"><b>Rule 13 · The hook</b><span>Coordinates, one human in one seat, the sudden failure</span></a>
+      <a href="#script"><b>Rule 13 · The script</b><span>Ten beats from the cold open to the last line</span></a>
+    </div>
+  </div>
+</header>
+
+<main>
+<section class="block wrap">
+  <div class="kicker">Start here</div>
+  <h2>How to use this harness</h2>
+  <p class="lede">Paste the <a href="/static/harness/3D-Documentary-Harness.md" download>.md harness</a> into your AI's project instructions (a Claude Project, a <code>CLAUDE.md</code> or a custom GPT). Then give it your reference videos and your topic.</p>
+  <ol class="steps">
+    <li><b>Pick 3 or more reference videos</b> from one channel or one niche. Use their best performers, not their latest uploads.</li>
+    <li><b>Run Rule 1</b> on every one of them and fill in the Visual DNA block.</li>
+    <li><b>Write your script with Rule 13:</b> the hook first, then the ten beats.</li>
+    <li><b>Hand over both together:</b> give your 3D tool or editor the DNA block and the script, and check every shot against the DNA before you render.</li>
+  </ol>
+</section>
+
+<section class="block wrap" id="visual-dna">
+  <div class="kicker">Rule 1</div>
+  <h2>The Visual DNA rule</h2>
+  <div class="rule">
+    <div class="q">A trait belongs to the Visual DNA only if it appears in every reference video.</div>
+    <div class="tiers">
+      <div class="a"><b>In all of them</b>It's DNA. Never break it.</div>
+      <div class="b"><b>In some</b>It's allowed: use it when the story needs it.</div>
+      <div class="c"><b>In one</b>Ignore it. That was a one-off, not the style.</div>
+    </div>
+  </div>
+  <p class="lede">Score the references on five traits, in this order. Each trait has a starter value. Replace it with what you measure.</p>
+
+  <div class="trait">
+    <h3><span class="n">1</span>Camera: focal length and the slow isometric dolly</h3>
+    <div class="rows">
+      <div class="row head"><div>Measure</div><div>How to measure it</div><div>Starter value</div></div>
+      <div class="row"><div class="m">Focal length</div><div class="how">Do straight lines bend at the edges? Do near objects balloon? Match it to 24, 35, 50 or 85 mm (full-frame equivalent).</div><div class="val">35 mm wides, 50 mm mid shots and inserts, never fisheye</div></div>
+      <div class="row"><div class="m">Camera angle</div><div class="how">How far the camera looks down on the scene</div><div class="val">Isometric feel: 30 to 35° down, the camera 1.5 to 2× the subject's height</div></div>
+      <div class="row"><div class="m">Dolly speed</div><div class="how">Time how long the frame takes to travel one frame-width</div><div class="val">2 to 3% of the frame width per second (a full cross takes about 40 s)</div></div>
+      <div class="row"><div class="m">Move style</div><div class="how">Constant speed, or eased? Does it ever stop?</div><div class="val">Constant glide with a 0.5 s ease in and out; never cut mid-acceleration</div></div>
+    </div>
+  </div>
+
+  <div class="trait">
+    <h3><span class="n">2</span>Lighting: single-point volumetric light in a dark room</h3>
+    <div class="rows">
+      <div class="row head"><div>Measure</div><div>How to measure it</div><div>Starter value</div></div>
+      <div class="row"><div class="m">Light sources</div><div class="how">Count the shadows each object casts</div><div class="val">One key light (a spot or practical lamp), 45° above and to the side</div></div>
+      <div class="row"><div class="m">Volume</div><div class="how">Can you see the beam in the air?</div><div class="val">A visible beam: haze or fog at 10 to 20%</div></div>
+      <div class="row"><div class="m">Darkness</div><div class="how">How dark the background gets, from 0 (black) to 255 (white)</div><div class="val">The background falls close to black (under about 25 of 255); no fill light</div></div>
+      <div class="row"><div class="m">Separation</div><div class="how">How subjects separate from the dark</div><div class="val">A faint rim light on silhouettes</div></div>
+    </div>
+  </div>
+
+  <div class="trait">
+    <h3><span class="n">3</span>Mannequins: consistent red and blue shaders</h3>
+    <div class="rows">
+      <div class="row head"><div>Measure</div><div>How to measure it</div><div>Starter value</div></div>
+      <div class="row"><div class="m">Faces</div><div class="how">Are the people detailed or faceless?</div><div class="val">Faceless mannequins, no hair, no texture</div></div>
+      <div class="row"><div class="m">Colour code</div><div class="how">Which side gets which colour, every time</div><div class="val"><span class="sw" style="background:var(--red)"></span>Red = the people in danger<br><span class="sw" style="background:var(--blue)"></span>Blue = everyone else. Never swapped.</div></div>
+      <div class="row"><div class="m">Material</div><div class="how">Glossy, matte or plastic?</div><div class="val">One matte shader per colour, the same hex values all video long</div></div>
+    </div>
+  </div>
+
+  <div class="trait">
+    <h3><span class="n">4</span>Shot pacing</h3>
+    <div class="rows">
+      <div class="row head"><div>Measure</div><div>How to measure it</div><div>Starter value</div></div>
+      <div class="row"><div class="m">Hook shots</div><div class="how">Median shot length in the first 30 s</div><div class="val">1.8 to 2.5 s</div></div>
+      <div class="row"><div class="m">Body shots</div><div class="how">Median shot length after the hook</div><div class="val">3.5 to 5 s</div></div>
+      <div class="row"><div class="m">Longest hold</div><div class="how">The longest single shot</div><div class="val">About 8 s, saved for the money shot</div></div>
+      <div class="row"><div class="m">Breathing beats</div><div class="how">What happens before each new section</div><div class="val">1 to 1.5 s with no narration, music only</div></div>
+    </div>
+  </div>
+
+  <div class="trait">
+    <h3><span class="n">5</span>3D text call-outs</h3>
+    <div class="rows">
+      <div class="row head"><div>Measure</div><div>How to measure it</div><div>Starter value</div></div>
+      <div class="row"><div class="m">Position</div><div class="how">Where labels sit in the frame</div><div class="val">Anchored to the object with a thin leader line, in the upper third, never over the action</div></div>
+      <div class="row"><div class="m">Size</div><div class="how">Text height as a share of the frame height</div><div class="val">About 3.5% of the frame height, uppercase sans-serif</div></div>
+      <div class="row"><div class="m">Timing</div><div class="how">How long each stays on screen</div><div class="val">At least 2 s; one call-out per shot</div></div>
+      <div class="row"><div class="m">Entrance</div><div class="how">How it appears</div><div class="val">A quick fade-and-scale (about 6 frames), no bounce</div></div>
+    </div>
+  </div>
+  <div class="tip"><b>Tip:</b> watch each reference at half speed with a stopwatch, and screenshot a frame every 2 seconds. Lay the screenshots side by side, and what stays the same jumps out.</div>
+
+  <h3 style="font-size:24px;font-weight:800;margin-top:30px">Your Visual DNA block</h3>
+  <p class="lede" style="margin-top:6px">Fill this in from your references and paste it above every script. It's the contract every shot has to keep.</p>
+  <div class="code">
+    <button class="copy" type="button" data-copy="dna">Copy</button>
+<pre id="dna"><span class="k">visual_dna:</span>
+  <span class="k">references:</span> [video 1, video 2, video 3]
+  <span class="k">camera:</span>
+    <span class="k">focal_length_mm:</span> { wide: 35, mid: 50 }
+    <span class="k">angle:</span> isometric, 30-35 deg down
+    <span class="k">dolly_speed:</span> 2-3% of frame width per second, constant, 0.5 s ease
+  <span class="k">lighting:</span>
+    <span class="k">key:</span> single point, 45 deg high and to the side
+    <span class="k">volume:</span> visible beam, haze 10-20%
+    <span class="k">background:</span> near black, no fill, faint rim
+  <span class="k">mannequins:</span>
+    <span class="k">faces:</span> none
+    <span class="k">red:</span> <span class="s">"#C8372D"</span>   <span class="c"># the people in danger</span>
+    <span class="k">blue:</span> <span class="s">"#2F6FD6"</span>  <span class="c"># everyone else</span>
+    <span class="k">material:</span> matte, one shader per colour, never changes
+  <span class="k">pacing:</span>
+    <span class="k">hook_median_s:</span> 2.0
+    <span class="k">body_median_s:</span> 4.0
+    <span class="k">longest_hold_s:</span> 8
+    <span class="k">breathing_beat_s:</span> 1.2
+  <span class="k">callouts:</span>
+    <span class="k">anchor:</span> object, thin leader line
+    <span class="k">zone:</span> upper third, never over the action
+    <span class="k">size:</span> 3.5% of frame height, uppercase sans-serif
+    <span class="k">min_on_screen_s:</span> 2
+    <span class="k">per_shot:</span> 1
+  <span class="k">allowed_not_dna:</span> []   <span class="c"># traits seen in only some references</span></pre>
+  </div>
+  <div class="tip"><b>Check every shot before it renders.</b> If a shot breaks a DNA rule, fix the shot, not the rule.</div>
+</section>
+
+<section class="block wrap" id="rule-13">
+  <div class="kicker">Rule 13</div>
+  <h2>The investigative hook</h2>
+  <p class="lede">Open on three ingredients, in this order, within the first 15 to 20 seconds.</p>
+  <div class="ingredients">
+    <div class="ing i1"><div class="num">01</div><b>Exact coordinates and the vessel's stats</b><span>The precise time, the altitude, depth or location, then what it is: its type, its size, how many aboard. Real numbers, spoken exactly.</span></div>
+    <div class="ing i2"><div class="num">02</div><b>One specific human in a specific seat</b><span>A name, a role, exactly where they sit. The viewer rides the rest of the video in that seat.</span></div>
+    <div class="ing i3"><div class="num">03</div><b>The sudden mechanical failure</b><span>The moment the machine stops behaving: the part, the sound, the warning light. Don't explain it yet.</span></div>
+  </div>
+  <h3 style="font-size:22px;font-weight:800;margin-bottom:10px">The fill-in formula</h3>
+  <div class="formula">
+    <span class="f">Exact time and date</span>. <span class="f">Altitude, depth or location</span> above or below <span class="f">place</span>.<br>
+    <span class="f">Vessel type</span>, <span class="f">size or key stat</span>, <span class="f">number</span> people on board.<br>
+    In <span class="f">seat or station</span>, <span class="f">full name</span>, <span class="f">role</span>, <span class="f">one human detail</span>.<br>
+    Then <span class="f">the part</span> <span class="f">fails, in one verb</span>.
+  </div>
+  <div class="example">
+    <div class="tag">Example · B-59, October 1962</div>
+    <blockquote>October 27th, 1962. One Soviet submarine. Eleven American warships. And one nuclear torpedo. B-59 is trapped off Cuba. Batteries dying. Air thick with carbon dioxide.</blockquote>
+    <p>Coordinates, vessel stats and a failing machine in under 15 seconds. The human in the seat, Vasily Arkhipov, is held back for the decision point.</p>
+  </div>
+  <h3 style="font-size:20px;font-weight:800;margin-top:22px">Hook rules</h3>
+  <div class="bullets">
+    <div>Every number is exact and sourced: altitude, time, headcount.</div>
+    <div>Present tense. It is happening now.</div>
+    <div>No "in this video we will…". The failure is the promise.</div>
+    <div>Each sentence gets its own shot, and every shot keeps the DNA.</div>
+  </div>
+</section>
+
+<section class="block wrap" id="script">
+  <div class="kicker">Rule 13 · The script structure</div>
+  <h2>Where, who, what broke</h2>
+  <p class="lede">The hook is only the first beat. The whole script runs on the same three ingredients. These beats fit an 8 to 12 minute video.</p>
+  <div class="beats">
+    <div class="beat hook"><div class="n">1</div><div class="b">Cold open</div><div class="t">0:00 – 0:20</div><div class="w">The three Rule 13 ingredients, on fast hook cuts.</div></div>
+    <div class="beat"><div class="n">2</div><div class="b">Stakes and promise</div><div class="t">0:20 – 0:45</div><div class="w">One hard number (the odds, the toll, what was at risk) and what we will reconstruct, minute by minute.</div></div>
+    <div class="beat"><div class="n">3</div><div class="b">The machine</div><div class="t">0:45 – 2:00</div><div class="w">A 3D cutaway of the vessel: the three facts that made it <i>should-have-been-safe</i>. A breathing beat before the next section.</div></div>
+    <div class="beat"><div class="n">4</div><div class="b">The people</div><div class="t">2:00 – 3:00</div><div class="w">Two to four specific humans: name, seat or station, one trait each. Red or blue by side, all video long.</div></div>
+    <div class="beat"><div class="n">5</div><div class="b">The timeline</div><div class="t">3:00 – 7:00</div><div class="w">Minute by minute with the clock on screen: normal, then the first anomaly, then the failure, then each decision. Present tense.</div></div>
+    <div class="beat"><div class="n">6</div><div class="b">The decision point</div><div class="t">7:00 – 8:00</div><div class="w">One person, one choice, in the seat from the hook. Slow down and hold the money shot.</div></div>
+    <div class="beat"><div class="n">7</div><div class="b">The outcome</div><div class="t">8:00 – 9:00</div><div class="w">What happened, shown plainly.</div></div>
+    <div class="beat"><div class="n">8</div><div class="b">The investigation</div><div class="t">9:00 – 10:30</div><div class="w">What the recorders, reports or survivors revealed, and what everyone got wrong at the time.</div></div>
+    <div class="beat"><div class="n">9</div><div class="b">What changed</div><div class="t">10:30 – 11:30</div><div class="w">The rule, design or procedure that exists because of this.</div></div>
+    <div class="beat"><div class="n">10</div><div class="b">The last line</div><div class="t">final 15 s</div><div class="w">Back to the human in the seat: a quote, a final number, or the one thing they did.</div></div>
+  </div>
+  <h3 style="font-size:20px;font-weight:800;margin-top:24px">Script rules</h3>
+  <div class="bullets">
+    <div><b>One sentence, one shot.</b> Every sentence can be a single 3D scene.</div>
+    <div><b>Numbers spoken exactly</b>, and every one sourced.</div>
+    <div><b>Never invent dialogue.</b> Quote the record, or say nobody knows.</div>
+    <div><b>A breathing beat</b> of 1 to 1.5 s before each new section.</div>
+    <div><b>Every call-out names something real:</b> a part, a place, a time, a person.</div>
+    <div><b>The last line goes back to the seat</b> from the hook.</div>
+  </div>
+</section>
+
+<section class="block wrap" id="niches">
+  <div class="kicker">The niche list</div>
+  <h2>Channels blowing up this week</h2>
+  <p class="lede">Study the breakouts, not the averages. Run Rule 1 on each channel's top three videos.</p>
+  <div class="niche">
+    <div class="ch head"><div>Channel</div><div>What they make</div><div>Breakout video</div><div>Views</div></div>
+    <div class="ch"><div class="name">Reconstructed<small>@Reconstructednews</small></div><div class="what">3D cockpit and incident reconstructions</div><div class="vid">What Really Happened Inside the flydubai Cockpit</div><div class="views">3.2M</div></div>
+    <div class="ch"><div class="name">Neurox-EK<small>@Neurox-EK</small></div><div class="what">Minute-by-minute flight reconstructions</div><div class="vid">What Really Happened Inside the Four 9/11 Flights</div><div class="views">169K</div></div>
+    <div class="ch"><div class="name">Scary Interesting</div><div class="what">Investigative disaster stories</div><div class="vid">The Most Dangerous Mountain You've Never Heard Of</div><div class="views">911K</div></div>
+    <div class="soon">More channels are added every week.</div>
+  </div>
+</section>
+</main>
+
+<section class="cta">
+  <div class="wrap">
+    <div class="kicker" style="color:var(--lilac)">ChannelRecipe</div>
+    <h2>Skip the days of setup.<br><em>Get cooking.</em></h2>
+    <p class="lede">Doing all of this by hand takes days. ChannelRecipe does it for you, on your own computer.</p>
+    <div class="cards">
+      <div class="card"><div class="ic" style="background:#6D5AE0">1</div><b>Clone a channel's style</b><span>Paste your reference videos. Studio measures their cuts, motion, colour, music and sound effects, watches them, and learns the look as a recipe you can reuse. That's Rule 1, done for you.</span></div>
+      <div class="card"><div class="ic" style="background:#9B5BE6">2</div><b>Use the 3D Reconstruction recipe</b><span>Paste a Rule 13 script and press Create video. Studio directs, reviews and renders the 3D scenes.</span></div>
+      <div class="card"><div class="ic" style="background:#E8608F">3</div><b>Make it yours</b><span>Pick your narrator, your palette and your 3D look: a clean white studio or colour film.</span></div>
+    </div>
+    <div class="downloads">
+      <a class="btn primary" href="/app">Start cooking</a>
+      <a class="btn ghost" href="/static/harness/3D-Documentary-Harness.pdf" download>Download the PDF</a>
+    </div>
+  </div>
+</section>
+
+<footer><div class="wrap"><span>© ChannelRecipe · Creative Tube Ltd</span><span><a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></span></div></footer>
+
+<script>
+  document.querySelectorAll('[data-copy]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var text = document.getElementById(button.dataset.copy).innerText;
+      var done = function () { button.textContent = 'Copied'; setTimeout(function () { button.textContent = 'Copy'; }, 1600); };
+      if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, function () {});
+    });
+  });
+</script>
+</body>
+</html>
