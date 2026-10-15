@@ -175,6 +175,13 @@
     hide('crw-panels-section', !recipe.panels); if (recipe.panels) loadPanels();
     updateOptional(); summary(); gate(); if (persist) save();
   }
+  function ctaValue() {
+    if (!checked('crw-cta-on')) return null;
+    const what = $('crw-cta-what').value.trim(), link = $('crw-cta-link').value.trim();
+    if (!what) throw new Error('Say what you are promoting, or switch the call to action off.');
+    if (!/^https?:\/\/\S{3,}$/.test(link)) throw new Error('Give your call to action a full link, starting with https://.');
+    return {what, link, count: Number($('crw-cta-count').value) || 1, image: state.ctaImage || ''};
+  }
   function showPanels(set) {
     state.panels = set ? set.id : ''; const strip = $('crw-panels-strip'); strip.replaceChildren();
     if (set) {
@@ -439,7 +446,7 @@
       features,render_backend:features.threed&&checked('crw-fast-toggle')&&!strict()?'manimgx':'original',
       character:strict()?'':$('crw-character').value.trim(),character_image:strict()?'':$('crw-character-image').value,
       avatar_id:features.avatar&&!strict()?$('crw-avatar-id').value:'',avatar_s:number('crw-avatar-seconds',8,0,15),avatar_count:number('crw-avatar-count',1,1,6),
-      offer:$('crw-offer').value,offer_plugs:number('crw-offer-plugs',0,0,2),panels:state.selected.panels?state.panels:''};
+      offer:$('crw-offer').value,offer_plugs:number('crw-offer-plugs',0,0,2),panels:state.selected.panels?state.panels:'',cta:ctaValue()};
     if(p.panels && title.includes('\n')) throw new Error('Use one title for a set of panels.');
     if(state.selected.auto_style)p.auto_style=checked('crw-adaptive'); return p;
   }
@@ -503,6 +510,8 @@
   $('crw-output-reveal').addEventListener('click',async()=>{if(!state.currentOutput)return;try{await api(`/api/reveal/${encoded(state.currentOutput.slug)}`,{method:'POST',body:{}});text('crw-output-message','The video folder is open on this computer.');}catch(e){text('crw-output-message',e.message);}});
   $('crw-projects-refresh').addEventListener('click',()=>refreshActivity(true));
   $('crw-progress-cancel').addEventListener('click',async()=>{const b=$('crw-progress-cancel');if(!b.dataset.run||!state.openJob)return;b.disabled=true;try{await api(`/cr-video/${encoded(state.openJob)}/cancel`,{method:'POST',body:{run_id:b.dataset.run}});toast('Cancellation requested. Completed work stays saved.');await refreshActivity();}catch(e){text('crw-progress-note',e.message);}});
+  $('crw-cta-on').addEventListener('change',()=>{hide('crw-cta-fields',!checked('crw-cta-on'));save();});
+  $('crw-cta-image').addEventListener('change',async()=>{const file=$('crw-cta-image').files[0];if(!file)return;state.uploading=true;gate();text('crw-cta-status','Saving your picture…');const form=new FormData();form.append('file',file);try{const result=await api('/cr-workspace/cta-image',{method:'POST',body:form});state.ctaImage=result.image;text('crw-cta-status','Your picture is on the card.');}catch(e){state.ctaImage='';text('crw-cta-status',e.message);}finally{state.uploading=false;gate();}});
   $('crw-panels-recent').addEventListener('change',()=>{showPanels((state.panelSets||[]).find(s=>s.id===$('crw-panels-recent').value));});
   $('crw-panels-file').addEventListener('change',async()=>{const files=[...$('crw-panels-file').files];if(!files.length)return;state.uploading=true;gate();text('crw-panels-status',`Saving ${files.length} file${files.length>1?'s':''}…`);const form=new FormData();for(const f of files)form.append('files',f);try{const result=await api('/cr-workspace/panels',{method:'POST',body:form});showPanels(result.panels);}catch(e){text('crw-panels-status',e.message);}finally{state.uploading=false;$('crw-panels-file').value='';gate();}});
   $('crw-audio-recent').addEventListener('change',()=>{state.audio=$('crw-audio-recent').value;$('crw-audio-player').src=`/api/voiceover/${encoded(state.audio)}`;hide('crw-audio-player',!state.audio);summary();gate();});

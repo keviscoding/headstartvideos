@@ -232,6 +232,33 @@ def install(studio, activity, *, token, home=None):
         except Exception as error:
             return panel_error(error)
 
+    @app.post("/cr-workspace/cta-image")
+    def cr_workspace_cta_image():
+        """A cover or screenshot for a call-to-action card."""
+        try:
+            local_access()
+            import cr_cta
+            upload = request.files.get("file")
+            if upload is None:
+                raise ValueError("Choose a picture for your call to action.")
+            return protect(jsonify(image=cr_cta.save_image(upload.read(), home / "uploads" / "cta")))
+        except Exception as error:
+            return panel_error(error)
+
+    @app.get("/cr-workspace/cta-image/<image>.jpg")
+    def cr_workspace_cta_image_file(image):
+        try:
+            local_access()
+            import cr_cta
+            if not cr_cta.IMAGE_ID.fullmatch(image or ""):
+                raise ValueError("Choose your picture again.")
+            path = home / "uploads" / "cta" / f"{image}.jpg"
+            if not path.is_file():
+                raise ValueError("Choose your picture again.")
+            return protect(send_file(path, mimetype="image/jpeg", conditional=False))
+        except Exception as error:
+            return panel_error(error)
+
     @app.get("/cr-workspace/catalog")
     def cr_workspace_catalog():
         try:

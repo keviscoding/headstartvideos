@@ -26,6 +26,12 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
     backend = payload.get("render_backend", "original")
     if backend not in {"original", "manimgx"}:
         raise ValueError("Choose the standard renderer or Fast mode.")
+    import cr_cta
+    try:
+        cta = cr_cta.clean(payload.get("cta"))         # your call to action (cr_cta), checked before any work
+    except ValueError as error:
+        from flask import jsonify
+        return studio.app.make_response((jsonify(error=str(error)), 400))
     panels = payload.get("panels") or ""
     if panels:
         # your own comic panels (cr_panels): one set is one video
@@ -75,6 +81,8 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
         spec["render_backend"] = backend
         if panels:
             spec["cr_panels"] = panels
+        if cta:
+            spec["cr_cta"] = cta
         if backend == "manimgx":
             spec["manimgx_identity"] = payload.get("manimgx_identity")
     if before_publish is not None:

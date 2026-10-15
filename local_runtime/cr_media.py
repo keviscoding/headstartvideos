@@ -568,7 +568,9 @@ def install(engine):
     hook("_kie_still_with_url", "images", still_with_url)
     try:
         import cr_panels
+        import cr_cta
         cr_panels.install(engine)
+        cr_cta.install(engine)                      # your call to action: in the script, on screen, in the description
     except ImportError:
         pass
     # Native Kie motion and the history kit previously bypassed the hub.
