@@ -28,6 +28,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 HOME = Path(__file__).resolve().parent
 STUDY_GUIDANCE = HOME / "cr-style-study-brief.txt"
 MAX_REFERENCES = 3
+MAX_REFERENCE_S = 24 * 3600
 PREVIEW_LIMIT = 8
 PHASES = {
     "prepared": (0, "Your approved reference study is ready to start."),
@@ -238,8 +239,10 @@ def preview(home, url, *, learner=None):
             "title": str(row.get("title") or "Untitled reference")[:300],
             "channel": str(row.get("channel") or "")[:160],
             "views": max(0, int(row.get("views") or 0)), "duration_seconds": duration,
-            "eligible": 60 <= duration <= 4 * 3600,
-            "eligibility_note": "" if 60 <= duration <= 4 * 3600 else "Choose a reference between one minute and four hours with a known duration."})
+            # a look samples a few minutes of each reference, so marathon recaps (manhwa channels post 5 to 12
+            # hour videos) can be studied too
+            "eligible": 60 <= duration <= MAX_REFERENCE_S,
+            "eligibility_note": "" if 60 <= duration <= MAX_REFERENCE_S else "Choose a reference between one minute and 24 hours with a known duration."})
         if len(candidates) == PREVIEW_LIMIT:
             break
     if not candidates:
