@@ -228,6 +228,11 @@ def _pictures(plan: Plan, profile: dict, base: str, base_style: dict):
     # in every frame only when the style has a cast, and a learned style's cast is its host or mascot alone.
     photo = any(_has_words(a.get("look"), "photo", "realistic", "footage", "camera") for a in art.get("looks", [])) \
         or _has_words(art.get("value"), "photo", "realistic")
+    # a designed picture (paper collage, cut-outs, charts, drawings, renders) is not a candid photograph, even when
+    # it is made of photographic pieces: it keeps its crisp finish
+    if _has_words(art.get("value"), "collage", "cutout", "cut-out", "paper", "graphic", "chart", "illustrat", "drawn",
+                  "drawing", "render", "vector", "cartoon", "animat"):
+        photo = False
     if photo and polish in ("clean", "candid") and draws:
         # glossy, evenly lit AI photographs read as fake; an everyday phone-camera frame reads as real
         polish = "candid"

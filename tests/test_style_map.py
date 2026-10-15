@@ -195,6 +195,9 @@ def test_candid_photo_pictures_get_the_phone_camera_finish():
     assert cm.plan_style(warm, STYLES)["overrides"]["look"]["fx"]["grade"] == "natural", "never graded like film"
     drawn = cm.plan_style(profile({"generated": 0.9}), STYLES)
     assert "stills" not in drawn["overrides"].get("look", {}), "drawn pictures are never degraded"
+    collage = profile({"generated": 0.6}, **{"pictures__polish": axis("clean"), "look__drawn": axis(0.04),
+                      "pictures__art_style": axis("Paper cutout collage with photographic cutouts on cutting mats.")})
+    assert "stills" not in cm.plan_style(collage, STYLES)["overrides"].get("look", {}), "designed pictures stay crisp"
 
 
 def test_a_channel_that_holds_its_pictures_still_is_not_pushed_on_every_one():
