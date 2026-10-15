@@ -26,8 +26,9 @@ W, H, FPS = 1920, 1080, 30
 INK = 110                           # darker than this is a line
 FILL_S, HOLD_S = 0.45, 0.3
 WORDS_PER_S = 2.8
-SCRIBBLE_DB = -4.0                  # over the channel's effects level (look.sound.sfx_db, -19 dB unless learned)
-SQUEAK_S = 0.7                      # a marker squeak about this often while the lines are drawn
+HOLD_MAX_S = 8.0
+SCRIBBLE_DB = -6.0                  # over the channel's effects level (look.sound.sfx_db, -19 dB unless learned)
+SQUEAK_S = 0.8                      # a marker squeak about this often while the lines are drawn, the later ones softer
 SLOW_MAX = 1.35                     # the engine plays a clip in a longer slot up to this much slower (YT_SLOW_MAX)
 
 
@@ -46,8 +47,16 @@ def _fit(img):
 
 
 def draw_seconds(words: int) -> float:
-    """How long the lines take: about half of the time the picture's words are spoken, 1 to 2.6 s."""
-    return round(min(2.6, max(1.0, 0.55 * max(1.5, words / WORDS_PER_S))), 2)
+    """How long the lines take: about a third of the time the picture's words are spoken, 0.8 to 2 s, so the finished
+    picture is what stays on screen (a test video drawn over half of each picture's time read as line art)."""
+    return round(min(2.0, max(0.8, 0.35 * max(1.5, words / WORDS_PER_S))), 2)
+
+
+def hold_seconds(words: int) -> float:
+    """How long the clip holds the finished picture: past the end of its words, so the engine never has to slow the
+    drawing down to fill a longer slot (it plays a short clip up to 1.35x slower)."""
+    spoken = max(1.5, words / WORDS_PER_S)
+    return round(min(HOLD_MAX_S, max(HOLD_S, spoken - draw_seconds(words) - FILL_S + 1.0)), 2)
 
 
 def plan(img):
@@ -96,7 +105,7 @@ def render(still: Path, dest: Path, words: int = 8) -> Path:
     orig = np.asarray(img, dtype=np.uint8)
     order, paper = plan(img)
     draw_s = draw_seconds(words)
-    n_draw, n_fill, n_hold = int(draw_s * FPS), int(FILL_S * FPS), int(HOLD_S * FPS)
+    n_draw, n_fill, n_hold = int(draw_s * FPS), int(FILL_S * FPS), int(hold_seconds(words) * FPS)
     hand = Image.open(HAND).convert("RGBA") if HAND.is_file() else None
     flat_o = orig.reshape(-1, 3)
     canvas = np.empty_like(orig)
@@ -148,6 +157,7 @@ def render(still: Path, dest: Path, words: int = 8) -> Path:
         tmp.unlink(missing_ok=True)
         raise
     tmp.replace(dest)
+    dest.with_suffix(".json").write_text(json.dumps({"draw_s": draw_s, "words": words}), encoding="utf-8")
     return dest
 
 
@@ -201,6 +211,14 @@ def _clip_s(anim: Path) -> float:
         return 0.0
 
 
+def _drawing_s(anim: Path, clip: float) -> float:
+    """How long a clip's lines take: saved beside it (scene_NN.anim.json); an older clip is lines, colour and a short hold."""
+    try:
+        return float(json.loads(anim.with_suffix(".json").read_text(encoding="utf-8"))["draw_s"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return max(0.5, clip - FILL_S - HOLD_S)
+
+
 def cues(plan_, look) -> list:
     """[(second, sound, dB over the effects level)]: the marker squeaking while each picture's lines are drawn.
 
@@ -214,9 +232,9 @@ def cues(plan_, look) -> list:
         if kind == "photo" and re.search(r"scene_\d+\.(?:jpg|png)$", str(path)) and anim.is_file():
             clip = _clip_s(anim)
             stretch = min(float(dur) / clip, SLOW_MAX) if clip > 0 and float(dur) / clip > 1.02 else 1.0
-            drawing = max(0.5, clip - FILL_S - HOLD_S) * stretch if clip > 0 else 1.0
+            drawing = _drawing_s(anim, clip) * stretch if clip > 0 else 1.0
             for k in range(max(1, int(drawing / SQUEAK_S + 0.5))):
-                out.append((round(t + 0.05 + k * SQUEAK_S, 2), "scribble", SCRIBBLE_DB - (3.0 if k else 0.0)))
+                out.append((round(t + 0.05 + k * SQUEAK_S, 2), "scribble", SCRIBBLE_DB - (4.0 if k else 0.0)))
         t += float(dur)
     return out
 

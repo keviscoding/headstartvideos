@@ -32,7 +32,8 @@ def test_a_drawing_draws_its_lines_left_to_right_with_the_hand_then_its_colour(t
     dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
                                 str(anim)], capture_output=True, text=True).stdout)
     draw = drawon.draw_seconds(8)
-    assert abs(dur - (draw + drawon.FILL_S + drawon.HOLD_S)) < 0.15
+    assert abs(dur - (draw + drawon.FILL_S + drawon.hold_seconds(8))) < 0.15
+    assert json.loads(anim.with_suffix('.json').read_text())['draw_s'] == draw, "the clip says how long its lines take"
     early = frame(anim, draw * 0.3)
     assert early[310:790, 201:208].mean() < 60, "the left box's line is drawn first"
     assert early[540, 1700].mean() > 200, "the right circle is not drawn yet"
@@ -46,8 +47,16 @@ def test_a_drawing_draws_its_lines_left_to_right_with_the_hand_then_its_colour(t
 
 
 def test_how_long_the_lines_take_follows_the_words():
-    assert drawon.draw_seconds(2) == 1.0 and drawon.draw_seconds(60) == 2.6
-    assert 1.0 < drawon.draw_seconds(9) < 2.6
+    assert drawon.draw_seconds(2) == 0.8 and drawon.draw_seconds(60) == 2.0
+    assert 0.8 < drawon.draw_seconds(9) < 2.0
+
+
+def test_the_finished_picture_holds_past_its_words_so_the_drawing_is_never_slowed():
+    for words in (3, 8, 20):
+        spoken = words / drawon.WORDS_PER_S
+        clip = drawon.draw_seconds(words) + drawon.FILL_S + drawon.hold_seconds(words)
+        assert clip >= spoken + 0.9, words
+        assert drawon.draw_seconds(words) <= 0.4 * max(spoken, 2.3), "lines take about a third of the picture"
 
 
 def test_only_a_whiteboard_style_draws_and_the_marker_is_heard(tmp_path, monkeypatch):
@@ -71,10 +80,11 @@ def test_only_a_whiteboard_style_draws_and_the_marker_is_heard(tmp_path, monkeyp
     engine.generate_astrology_visuals("s", job, False, "board")
     assert len(drawn) == 1, "a fresh drawing is kept"
     plan = [("photo", str(still), False, 3.0), ("motion", "kit.mp4", False, 2.0), ("photo", str(still), False, 3.0)]
-    monkeypatch.setattr(drawon, "_clip_s", lambda anim: 1.0 + drawon.FILL_S + drawon.HOLD_S)    # 1 s of lines
-    # a 3 s slot plays the 1.75 s drawing 1.35x slower: 1.35 s of lines, a squeak at its start and 0.7 s on
-    assert drawon.cues(plan, {"reveal": "draw"}) == [(0.05, "scribble", -4.0), (0.75, "scribble", -7.0),
-                                                     (5.05, "scribble", -4.0), (5.75, "scribble", -7.0)]
+    monkeypatch.setattr(drawon, "_clip_s", lambda anim: 4.0)
+    (job / "images" / "scene_00.anim.json").write_text(json.dumps({"draw_s": 1.6}))
+    # 1.6 s of lines: a squeak at its start and a softer one 0.8 s on
+    assert drawon.cues(plan, {"reveal": "draw"}) == [(0.05, "scribble", -6.0), (0.85, "scribble", -10.0),
+                                                     (5.05, "scribble", -6.0), (5.85, "scribble", -10.0)]
     assert drawon.cues(plan, {}) == []
     (job / "style.txt").write_text("plain\n")
     (job / "images" / "scene_00.anim.mp4").unlink()
