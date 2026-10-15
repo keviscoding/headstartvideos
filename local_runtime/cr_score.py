@@ -69,6 +69,10 @@ def style_text(cfg: dict, mood: str, role: str) -> str:
     moods = [m for m in [mood_words] + list(cfg.get("moods") or [])[:4] if m]
     if moods:
         parts.append(", ".join(dict.fromkeys(moods)))
+    beat = {"none": "no drums, beatless", "soft": "soft laid-back beat", "driving": "steady driving beat"}.get(
+        str(cfg.get("beat") or ""))
+    if beat:
+        parts.append(beat)
     parts.append("instrumental")
     parts.append(ROLES.get(role, ROLES["body"]))
     return "; ".join(parts)[:950]

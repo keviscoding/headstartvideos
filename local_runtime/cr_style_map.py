@@ -413,10 +413,16 @@ def _text(plan: Plan, profile: dict):
     else:
         plan.set("look.captions.off", False, area="Text", label="Subtitles",
                  why=f"subtitles on {round(captions * 100)}% of the runtime", source="watched", show="on")
-    if lettering in ("hand-drawn", "comic") or (lettering == "mixed" and density.get("handwritten", 0) >= 0.25):
+    if lettering == "comic":
+        # bold comic-book display letters for words on screen, an easy-to-read hand for subtitles
+        plan.set("look.textfx.fonts.head", "Bangers", area="Text", label="Lettering",
+                 why="the references letter their words like a comic book", source="watched", show="comic")
+        plan.set("look.captions.font", "PatrickHand", area="Text", label="Subtitle lettering",
+                 why="hand lettering that stays easy to read", source="watched", show="hand-lettered")
+    elif lettering == "hand-drawn" or (lettering == "mixed" and density.get("handwritten", 0) >= 0.25):
         plan.set("look.textfx.fonts.head", "Caveat", area="Text", label="Lettering",
                  why="the references letter their words by hand", source="watched", show="hand-drawn")
-        plan.set("look.captions.font", "Caveat", area="Text", label="Subtitle lettering",
+        plan.set("look.captions.font", "PatrickHand", area="Text", label="Subtitle lettering",
                  why="the references letter their words by hand", source="watched", show="hand-drawn")
     style = _v(text.get("style"), []) or []
     if style:
@@ -505,6 +511,8 @@ def _sound(plan: Plan, profile: dict):
         snd["score"] = {"genres": [g for g in (music.get("genres") or []) if g and g.lower() != "none"][:2],
                         "moods": [m for m in (music.get("moods") or [])][:5],
                         "instruments": [i for i in (music.get("instruments") or [])][:5]}
+        if music.get("beat") in ("none", "soft", "driving"):
+            snd["score"]["beat"] = music["beat"]
     moods = " ".join((music.get("moods") or []) + (music.get("genres") or [])).lower()
     vibe = _vibe(moods) if snd.get("music") is not False else ""
     if vibe:
@@ -605,6 +613,12 @@ def answer(profile: dict, answers: dict) -> dict:
         art = pics.setdefault("art_style", {})
         art.update(value=answers["art_style"].strip(), consistent=True, confidence=1.0, **{"from": ["asked"]})
     host = str(answers.get("host") or "")
+    chars = (pics.get("characters") or {}).get("value") or []
+    if host.startswith("Yes") and not any(c.get("role") in ("mascot", "presenter") for c in chars):
+        import cr_style_profile
+        lead = cr_style_profile.lead_character(p)
+        if lead:                                     # the character who carries the video becomes the channel's mascot
+            lead["role"] = "mascot"
     if host.startswith("No"):
         chars = pics.get("characters") or {}
         chars["value"] = [c for c in chars.get("value") or [] if c.get("role") not in ("mascot", "presenter")]

@@ -279,6 +279,30 @@ def test_a_long_picture_style_is_cut_at_a_sentence_and_the_avoid_list_reads_clea
     assert art.overrides(out)["look"]["still_suffix"].endswith("Avoid: photorealism, no 3D.")
 
 
+def test_a_candid_photo_style_never_asks_for_glossy_studio_pictures():
+    glossy = ("Photorealistic phone photos of an older butcher in a home kitchen, commercial supermarket lighting, "
+              "crisp focus, glossy finish, cinematic lighting, warm colours, everyday clutter on the counters.")
+    out = art.check({**ANSWER, "still_suffix": glossy}, banned=[], candid=True)
+    text = out["still_suffix"].lower()
+    assert not any(w in text for w in ("commercial", "crisp", "glossy", "cinematic"))
+    assert "natural light" in text and "deep focus" in text and "everyday clutter" in text
+    assert "commercial" in art.check({**ANSWER, "still_suffix": glossy}, banned=[])["still_suffix"], \
+        "only candid styles are rewritten"
+
+
+def test_presenter_time_counts_talking_video_not_pictures_of_the_presenter():
+    import cr_style_profile as prof
+    log = {"shots": [{"len_s": 4, "source": "ai_video", "motion": "live_action", "who": "Frank",
+                      "what": "butcher talking to camera"},
+                     {"len_s": 6, "source": "ai_video", "motion": "live_action", "who": "Frank",
+                      "what": "butcher slicing liver on board"},
+                     {"len_s": 5, "source": "presenter", "motion": "still", "who": "Frank",
+                      "what": "smiling butcher looking at camera"},
+                     {"len_s": 5, "source": "ai_image", "motion": "still", "who": "", "what": "stew in a pot"}]}
+    assert prof.talking_share(log, 20) == 0.2
+    assert prof.talking_share({"shots": []}, 20) is None
+
+
 def test_styles_built_on_a_niche_recipe_get_neutral_writing_and_storyboard_prompts(home):
     import cr_style_prompts as sp
     _, done, _ = run_look(home)

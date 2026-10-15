@@ -41,8 +41,9 @@ Return ONE JSON object:
  "description": "one sentence for the recipe card: what this channel makes and how it looks (no channel names)",
  "tagline": "at most eight words",
  "still_suffix": "60 to 110 words appended to EVERY picture prompt: the medium, line, shading, palette, light, camera
-   and finish of the pictures, specific enough that every picture of a video matches. Describe style only, never
-   subject matter. [POLISH]",
+   and finish of the pictures, and how any words that appear in them are lettered (for example bold outlined comic
+   letters, marker handwriting, a clean sans-serif), specific enough that every picture of a video matches. Describe
+   style only, never subject matter. [POLISH]",
  "avoid": "15 to 40 words: what the pictures must never look like (the usual mistakes for this style)",
  "cast": "ONLY characters who return in EVERY video of the channel (a host, a mascot, a narrator character):
    'THE CAST — ' then each in drawable words (body, face, hair, clothes, one distinguishing item), with a new name.
@@ -64,7 +65,13 @@ Return ONE JSON object:
 Write in English. Never name the reference channel, its creator, any artist or any studio; describe instead."""
 
 CANDID = ("The pictures are photographs: write them as everyday phone-camera frames (deep focus, natural mixed light, "
-          "unstaged framing, mild noise), never glossy, studio-lit or cinematic.")
+          "unstaged framing, mild noise), never glossy, studio-lit or cinematic. Where the profile calls the light "
+          "commercial, studio or crisp, ignore it: AI photographs that look that perfect read as fake.")
+# Words that make an image model draw glossy, perfect photographs; a candid style never carries them.
+_GLOSSY = re.compile(r"\b(commercial|studio|professional|glossy|polished|cinematic|dramatic|crisp|flawless|high-end|"
+                     r"editorial|advertising)[ -]+(?:(?:product|food|kitchen|supermarket|warehouse)\s+)?(lighting|light|"
+                     r"lit|look|finish|photography|photos?|focus|clarity|quality|grade|style)\b", re.I)
+_GLOSSY_WORD = re.compile(r"\b(glossy|cinematic|polished|flawless|studio-lit|airbrushed)\b,?\s*", re.I)
 LO_FI = "The pictures are visibly degraded: compressed, soft, VHS or webcam-like."
 _FIELDS = ("description", "tagline", "still_suffix", "avoid", "cast", "people", "video_motion", "hook_notes",
            "body_notes")
@@ -133,10 +140,34 @@ def _clean(text, limit: int, banned: list) -> str:
     return text
 
 
-def check(answer: dict, *, banned: list) -> dict:
-    """The art director's answer, cleaned: bounded lengths, the reference channel's names removed."""
+def _candid(text: str) -> str:
+    """A candid picture style without the words that make a model draw glossy, perfect photographs."""
+    def plain(match):
+        words = match.group(0).lower()
+        if "light" in words or words.endswith("lit"):
+            return "natural light"
+        if "focus" in words or "clarity" in words:
+            return "deep focus"
+        if words.endswith(("photo", "photos")):
+            return "everyday photos"
+        return "everyday photo look"
+    text = _GLOSSY_WORD.sub("", _GLOSSY.sub(plain, text))
+    for phrase in ("natural light", "deep focus", "everyday photo look"):        # say each once
+        first = text.lower().find(phrase)
+        if first >= 0:
+            head, tail = text[:first + len(phrase)], text[first + len(phrase):]
+            text = head + re.sub(r",?\s*" + phrase, "", tail, flags=re.I)
+    return re.sub(r"\s+([,.;])", r"\1", re.sub(r"\s{2,}", " ", text)).strip()
+
+
+def check(answer: dict, *, banned: list, candid: bool = False) -> dict:
+    """The art director's answer, cleaned: bounded lengths, the reference channel's names removed, and for a
+    candid photographic style no glossy words in the picture prompt."""
     limits = {"cast": 1200, "still_suffix": 1400, "avoid": 500}
     out = {key: _clean(answer.get(key), limits.get(key, 700), banned) for key in _FIELDS}
+    if candid:
+        for key in ("still_suffix", "people", "description"):
+            out[key] = _candid(out[key])
     words = len(out["still_suffix"].split())
     if words < 20:
         raise ValueError("the picture style came back too short to steer an image model")
@@ -187,8 +218,10 @@ def direct(see, profile: dict, mapping: dict, *, title: str, brief: str, base: s
     if not answer:
         log("  art director: no usable answer; the learned settings are kept without written picture style")
         return {}
+    rule = next((n.get("polish_rule") for n in mapping.get("notes") or [] if n.get("polish_rule")), "")
+    polish = (((profile.get("pictures") or {}).get("polish") or {}).get("value") or "")
     try:
-        art = check(answer, banned=banned)
+        art = check(answer, banned=banned, candid=rule.startswith("candid") or polish == "candid")
     except ValueError as exc:
         log(f"  art director: {exc}; the learned settings are kept without it")
         return {}
