@@ -147,7 +147,8 @@ V2_SHOT = {"t": "0:00", "len_s": 4, "source": "ai_image", "style": "candid phone
 
 
 def v2_log(**extra):
-    log = {"narration": "voiceover", "shots": [V2_SHOT, dict(V2_SHOT, t="0:04", source="presenter", motion="live_action")],
+    log = {"narration": "voiceover", "shots": [V2_SHOT, dict(V2_SHOT, t="0:04", source="presenter", motion="live_action",
+                                                             what="Frank talks to camera")],
            "music": {"share": 0.6, "role": "lofi", "genre": "lofi hip-hop", "moods": ["calm"]},
            "sfx": {"density": "none"}, "ambience": {"present": True, "kinds": ["rain", "birds"], "share": 0.5,
                                                      "where": "in pauses"},
@@ -170,7 +171,8 @@ def test_prompt_v2_fields_reach_the_profile():
     assert profile["pictures"]["sources"]["value"] == {"ai_image": 0.5, "presenter": 0.5}, \
         "the call-to-action window adds its promotion, not its pictures"
     assert profile["format"]["cta"]["kinds"] == ["ebook or pdf"]
-    assert profile["format"]["presenter"]["value"] == 0.09
+    # talking on video half the logged opening, for its three minutes of a ten-minute video; none later
+    assert profile["format"]["presenter"]["value"] == 0.15
     assert profile["text"]["lettering"]["value"] == "hand-drawn"
     assert profile["sound"]["ambience"]["present"] is True and profile["sound"]["ambience"]["value"] == ["rain", "birds"]
     assert profile["sound"]["music"]["genres"] == ["lofi hip-hop"]
@@ -193,3 +195,19 @@ def test_watch_labels_each_window_by_why_it_was_watched():
     out = sw.watch("abcdefghijk", 1500, call=call, log=lambda m: None, sleep=lambda s: None,
                    transcript=[(1100, "today's sponsor is a free guide, link below")])
     assert [w["purpose"] for w in out["windows"]] == ["opening", "middle", "cta"]
+
+
+def test_references_that_disagree_on_music_keep_the_music_and_ask():
+    quiet_bed = stick_reference()
+    quiet_bed["measures"] = dict(quiet_bed["measures"], sound={"filled_pauses_share": 1.0, "bed_in_pauses_db": -20,
+                                                                 "pause_fill": {"tonal": 0.8}})
+    silent = stick_reference()
+    silent["measures"] = dict(silent["measures"], sound={"filled_pauses_share": 0.0, "bed_in_pauses_db": -106,
+                                                          "pause_fill": {"tonal": 0.0}})
+    profile = sp.build([quiet_bed, silent])
+    music = profile["sound"]["music"]
+    assert music["level"] == "score" and music["references_disagree"] and music["per_reference"] == ["score", "none"]
+    asked = [q for q in profile["questions"] if q["id"] == "music"]
+    assert asked and asked[0]["options"][0] == "A story score under the whole video" and "No music" in asked[0]["options"]
+    agree = sp.build([silent, silent])["sound"]["music"]
+    assert agree["level"] == "none" and not agree["references_disagree"]

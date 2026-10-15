@@ -102,6 +102,25 @@ def _axis(value, confidence, sources, **extra):
 
 # ── one reference ───────────────────────────────────────────────────────────────────────────────────────────
 
+TALKING = re.compile(r"\b(talk|speak|address|explain|lectur|tell|gestur|emphatic)\w*|\b(to|into|at) (the )?"
+                     r"(camera|lens|viewer|audience)", re.I)
+
+
+def talking_share(log: dict, seconds: float):
+    """Share of a watched window in which a presenter talks on video: a moving shot of a named person talking to
+    camera. Pictures of the presenter doing things are not talking time. None when the window has no shot list."""
+    shots = [s for s in (log or {}).get("shots") or [] if isinstance(s, dict)]
+    if not shots:
+        return None
+    talk = sum(max(0.2, _num(s.get("len_s"), 1.0)) for s in shots
+               if str(s.get("motion") or "").lower() not in ("still", "zoom_in", "zoom_out", "pan", "ken_burns")
+               and (s.get("who") or str(s.get("source") or "").lower() in ("presenter", "avatar"))
+               and TALKING.search(str(s.get("what") or "")))
+    logged = sum(max(0.2, _num(s.get("len_s"), 1.0)) for s in shots)
+    # a share of the time the model logged (a log that stops early still reads its share right)
+    return round(min(1.0, talk / max(1.0, min(seconds, logged) if logged else seconds)), 3)
+
+
 def watched_summary(watch: dict) -> dict:
     """Aggregate Gemini's shot logs of one reference into shares and lists (counted here, not by the model).
     A window watched only for a call to action adds its promotion, never its pictures (a sponsor read isn't the
@@ -146,16 +165,21 @@ def watched_summary(watch: dict) -> dict:
     amb = [_ambience(lg.get("ambience")) for lg in logs]
     presenter = [lg.get("presenter") for lg in logs if isinstance(lg.get("presenter"), dict)]
     # presenter time by window: the opening, and the rest of the video as every later window samples it (the
-    # call-to-action window included: a presenter often holds the product there, and that is screen time too)
+    # call-to-action window included: a presenter often holds the product there, and that is screen time too).
+    # Counted from the shot list (seconds the presenter talks on video), not the model's own share, which also
+    # counted pictures of the presenter doing things.
     opening_p, later = None, []
     for w in windows:
         pr, span = w["log"].get("presenter"), w.get("span") or [0, 0]
-        if not isinstance(pr, dict):
-            continue
+        share = talking_share(w["log"], max(1.0, _num(span[1]) - _num(span[0])))
+        if share is None:
+            if not isinstance(pr, dict):
+                continue
+            share = _num(pr.get("on_camera_share"), None)
         if span[0] == 0:
-            opening_p = _num(pr.get("on_camera_share"), None)
+            opening_p = share
         else:
-            later.append((_num(pr.get("on_camera_share")), max(1.0, _num(span[1]) - _num(span[0]))))
+            later.append((share or 0.0, max(1.0, _num(span[1]) - _num(span[0]))))
     later_p = sum(v * w for v, w in later) / sum(w for _, w in later) if later else None
     out = {
         "shots_logged": len(shots), "seconds_logged": round(total, 1),
@@ -180,6 +204,7 @@ def watched_summary(watch: dict) -> dict:
                   "moods": _dedupe([x for m in music for x in m.get("moods") or []], 8),
                   "instruments": _dedupe([x for m in music for x in m.get("instruments") or []], 8),
                   "under_voice": _majority([m.get("under_voice") for m in music], "none"),
+                  "beat": _majority([m.get("beat") for m in music if m.get("beat")]),
                   "changes": _dedupe([m.get("changes") for m in music], 2)},
         "sfx": {"density": _ordinal_mean([s.get("density") for s in sfx]),
                 "kinds": _dedupe([x for s in sfx for x in s.get("kinds") or []], 10),
@@ -395,9 +420,17 @@ def build(references: list) -> dict:
     # sound: music, effects, ambience. How LOUD the music sits is measured (a listening model called a bed 32 dB
     # under the voice "well balanced"); what it sounds like (role, moods, instruments) is watched.
     snd = [m.get("sound") or {} for m in measured]
-    fill = _mean([s.get("filled_pauses_share") for s in snd])
-    bed = _mean([s.get("bed_in_pauses_db") for s in snd])
-    tonal = _mean([(s.get("pause_fill") or {}).get("tonal") for s in snd])
+    # Each reference's music is judged on its own: averaging decibels across a video with a bed and one that is
+    # silent between sentences made a channel that uses music read as "none". When they disagree, the music the
+    # creator can hear is kept and a question asks which way to go.
+    per_ref = [music_level(s.get("bed_in_pauses_db"), s.get("filled_pauses_share"),
+                           (s.get("pause_fill") or {}).get("tonal")) for s in snd]
+    with_music = [s for s, lv in zip(snd, per_ref) if lv in ("score", "bed")]
+    music_disagrees = bool(with_music) and len(with_music) < len([lv for lv in per_ref if lv is not None])
+    pool = with_music if music_disagrees else snd
+    fill = _mean([s.get("filled_pauses_share") for s in pool])
+    bed = _mean([s.get("bed_in_pauses_db") for s in pool])
+    tonal = _mean([(s.get("pause_fill") or {}).get("tonal") for s in pool])
     w_share = _mean([(s.get("music") or {}).get("share") for s in seen if s])
     level = music_level(bed, fill, tonal)
     measured_music = None if level is None else level in ("score", "bed")
@@ -406,6 +439,8 @@ def build(references: list) -> dict:
         music_conf = 0.9 if measured_music == (w_share >= 0.4) else 0.55   # measured level wins a disagreement
     elif measured_music is not None:
         music_conf = 0.7
+    if music_disagrees:
+        music_conf = min(music_conf, 0.6)
     role = _majority([(s.get("music") or {}).get("role") for s in seen if s], "")
     if level in ("none", "quiet"):
         role = "none" if level == "none" else "quiet background"
@@ -419,6 +454,9 @@ def build(references: list) -> dict:
                        moods=_dedupe([x for s in seen for x in (s.get("music") or {}).get("moods") or []], 8),
                        instruments=_dedupe([x for s in seen for x in (s.get("music") or {}).get("instruments") or []], 8),
                        under_voice=_majority([(s.get("music") or {}).get("under_voice") for s in seen if s]),
+                       per_reference=per_ref, references_disagree=music_disagrees,
+                       beat=_majority([(s.get("music") or {}).get("beat") for s in seen if s and
+                                       (s.get("music") or {}).get("beat")]),
                        changes=_dedupe([x for s in seen for x in (s.get("music") or {}).get("changes") or []], 2)),
         "sfx": _axis(_ordinal_mean([(s.get("sfx") or {}).get("density") for s in seen if s]), 0.6 if has_w else 0,
                      ["watched"] if has_w else [],
@@ -494,6 +532,14 @@ def music_level(bed_db, filled, tonal) -> str | None:
     return "score" if bed_db >= -24 and filled >= 0.8 else "bed"
 
 
+def lead_character(profile: dict):
+    """The character who carries the video (on screen at least 30% of the time), when the channel has no named
+    host or mascot; else None."""
+    chars = ((profile.get("pictures") or {}).get("characters") or {}).get("value") or []
+    leads = [c for c in chars if isinstance(c, dict) and _num(c.get("screen_share")) >= 0.3 and c.get("look")]
+    return max(leads, key=lambda c: _num(c.get("screen_share"))) if leads else None
+
+
 def questions(profile: dict) -> list:
     """Short questions only where the profile is unsure or the creator has a real choice."""
     out = []
@@ -503,16 +549,30 @@ def questions(profile: dict) -> list:
                     "every video keep?", "options": [pics["art_style"]["value"]] + pics["art_style"].get(
                         "alternatives", [])[:2]})
     people = [p for p in pics.get("characters", {}).get("value") or [] if p.get("role") in ("mascot", "presenter")]
+    lead = None if people else lead_character(profile)
     if people:
         out.append({"id": "host", "ask": f"The channel has a recurring {people[0]['role']} ({people[0]['name']}). "
                     "Should your videos have one too?", "options": ["Yes, design one for my channel",
                                                                      "Yes, I'll upload mine", "No host"]})
+    elif lead:
+        # one character carries the whole video (an everyman like "Tom"): the channel's mascot, or this story's
+        # hero? One reference can't show whether he returns, so the creator decides.
+        out.append({"id": "host", "ask": f"{lead['name']} is on screen {round(lead['screen_share'] * 100)}% of the "
+                    "time. Should every video keep one recurring character like that?",
+                    "options": ["Yes, design one for my channel", "Yes, I'll upload mine",
+                                "No, a new cast for each story"], "lead": lead["name"]})
     if set(profile.get("format", {}).get("cta", {}).get("kinds") or []) & {"own product", "ebook or pdf", "course",
                                                                               "qr code", "link"}:
         out.append({"id": "cta", "ask": "The reference promotes something in the video. Add your own calls to "
                     "action?", "options": ["Yes", "No"]})
     music = profile.get("sound", {}).get("music", {})
-    if music.get("confidence", 1) < 0.5:
+    if music.get("references_disagree"):
+        level = music.get("level")
+        out.append({"id": "music", "ask": "Some of your references have music under the voice and some have none. "
+                    "What do you want?",
+                    "options": (["A story score under the whole video", "Light music in places"] if level == "score"
+                                else ["Light music in places", "A story score under the whole video"]) + ["No music"]})
+    elif music.get("confidence", 1) < 0.5:
         out.append({"id": "music", "ask": "We couldn't tell how much music the channel uses. What do you want?",
                     "options": ["A story score under the whole video", "Light music in places", "No music"]})
     grade = profile.get("look", {}).get("grade", {})

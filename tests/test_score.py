@@ -35,6 +35,8 @@ def test_each_cue_is_asked_for_in_the_channels_sound_with_its_job_in_the_story()
     assert opening.startswith("dark synth drone; sub bass, piano; tense, dramatic")
     assert "cold open" in opening and "instrumental" in opening
     assert "steady underscore" in score.style_text(cfg, "quiet", "body")
+    assert "soft laid-back beat" in score.style_text(dict(cfg, beat="soft"), "calm", "body")
+    assert "beatless" in score.style_text(dict(cfg, beat="none"), "calm", "body")
     assert score.roles(4) == ["open", "body", "body", "end"] and score.roles(1) == ["open"]
     avoid = score.avoid_text({"genres": ["lofi hip-hop"], "instruments": ["acoustic guitar"]})
     assert "vocals" in avoid and "folk" in avoid and "acoustic guitar" not in avoid and "lo-fi" not in avoid

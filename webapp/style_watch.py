@@ -35,7 +35,7 @@ from webapp import database as db
 from webapp import plans
 from webapp.frontier_studio import is_admin
 
-PROMPT_VERSION = 2
+PROMPT_VERSION = 3
 MAX_WINDOW_S = 200
 BUSY_WAITS_S = (15, 45, 90)                     # retries when Gemini is busy (the job has time; Studio is polling)
 STALE_S = 900
@@ -77,7 +77,9 @@ Return ONE JSON object with exactly these keys:
  "audio_events": [{"t": "m:ss", "kind": "music_in | music_change | music_out | music_drop | riser | hit | whoosh |
                    foley | ambience | source_clip | silence", "what": "a few words"}],
  "music": {"share": 0.0, "role": "story score | ambient bed | lofi | upbeat | none",
-           "genre": "e.g. lofi hip-hop, dark synth drone, cinematic orchestral, acoustic folk, upbeat electronic",
+           "genre": "e.g. lofi hip-hop, ambient piano, dark synth drone, cinematic orchestral, acoustic folk, upbeat
+                     electronic",
+           "beat": "none | soft | driving",
            "moods": ["..."], "instruments": ["..."], "under_voice": "loud | moderate | quiet | none",
            "changes": "how often and where the music changes"},
  "sfx": {"density": "none | sparse | moderate | dense", "kinds": ["..."], "on": "what triggers them"},
@@ -90,7 +92,7 @@ Return ONE JSON object with exactly these keys:
  "polish": {"overall": "cinematic | clean | candid | lo-fi", "notes": "what makes the pictures look that way"},
  "art_style": "one or two sentences: the picture style a new video must keep, specific enough to prompt an image
                generator (medium, line, shading, colour, how characters are drawn, backgrounds, camera and light)",
- "lettering": "hand-drawn | typeset | mixed | none",
+ "lettering": "hand-drawn | comic | typeset | mixed | none",
  "text_style": "how on-screen words look and move, or empty",
  "graphics": ["recurring graphic devices: maps, charts, highlighted documents, logos, timelines, counters ..."],
  "recurring": [{"name": "...", "look": "how to draw them consistently", "role": "mascot | presenter | character"}],
@@ -106,8 +108,11 @@ evenly lit, sharp, staged like an advert; candid = everyday phone-camera look, n
 framing, a little soft or noisy; lo-fi = visibly degraded, compressed, VHS or webcam. "presenter.on_camera_share" is
 the fraction of the window where a presenter or avatar talks to camera; "pictures_share" where they appear in other
 pictures. "cta" lists every spoken or shown promotion. "music.share" is the fraction of the window with audible music,
-however quiet. Use the vocabularies exactly. If something is absent, use an empty list, "none", false, 0 or an empty
-string; never invent."""
+however quiet; "music.beat" is whether it has drums or a pulse (lofi hip-hop has a soft beat, ambient pads and drones
+have none). "lettering" is how the words on screen LOOK, whether drawn by hand or set in a font that imitates it:
+hand-drawn = handwriting, marker, chalk or brush letters; comic = bold comic-book display letters (outlined, bouncy,
+uneven) and speech bubbles; typeset = an ordinary clean font set straight; mixed = both kinds often. Use the
+vocabularies exactly. If something is absent, use an empty list, "none", false, 0 or an empty string; never invent."""
 
 
 def prompt(start: float, end: float) -> str:

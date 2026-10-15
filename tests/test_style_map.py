@@ -144,8 +144,11 @@ def test_hand_lettering_and_subtitles_follow_the_references():
     p = profile({"generated": 0.9}, **{"text__lettering": axis("comic"),
                                        "text__density": axis({"caption": 0.5, "none": 0.5})})
     ov = cm.plan_style(p, STYLES)["overrides"]
-    assert ov["look"]["captions"] == {"off": False, "font": "Caveat"}
-    assert ov["look"]["textfx"]["fonts"]["head"] == "Caveat"
+    assert ov["look"]["captions"] == {"off": False, "font": "PatrickHand"}
+    assert ov["look"]["textfx"]["fonts"]["head"] == "Bangers", "comic lettering gets comic display letters"
+    marker = profile({"generated": 0.9}, **{"text__lettering": axis("hand-drawn"),
+                                            "text__density": axis({"caption": 0.5, "none": 0.5})})
+    assert cm.plan_style(marker, STYLES)["overrides"]["look"]["textfx"]["fonts"]["head"] == "Caveat"
 
 
 def test_every_setting_says_why():
@@ -165,3 +168,17 @@ def test_apply_keeps_the_base_unchanged():
     before = str(STYLES["stories"])
     cm.apply(STYLES["stories"], plan)
     assert str(STYLES["stories"]) == before
+
+
+def test_a_character_who_carries_the_video_is_offered_as_the_channels_mascot():
+    import cr_style_profile as sp
+    tom = {"name": "Tom", "look": "curly dark hair, light blue shirt, grey trousers", "role": "character",
+           "screen_share": 0.51}
+    p = profile({"generated": 0.9}, **{"pictures__characters": axis([tom])})
+    asked = [q for q in sp.questions(p) if q["id"] == "host"]
+    assert asked and asked[0]["lead"] == "Tom" and "51%" in asked[0]["ask"]
+    assert "character_image" not in cm.plan_style(p, STYLES)["needs"], "not without the creator's yes"
+    plan = cm.plan_style(p, STYLES, answers={"host": "Yes, design one for my channel"})
+    assert "character_image" in plan["needs"]
+    assert p["pictures"]["characters"]["value"][0]["role"] == "character", "the measured profile is kept as it was"
+    assert "character_image" not in cm.plan_style(p, STYLES, answers={"host": "No, a new cast for each story"})["needs"]
