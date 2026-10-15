@@ -294,3 +294,23 @@ def test_actual_ffmpeg_extracts_finished_movie_frame_without_changing_project(en
     assert blue > green > red
     assert hashlib.sha256(video.read_bytes()).hexdigest() == digest
     assert sorted(p.name for p in job.iterdir()) == before
+
+
+def test_a_learned_style_shows_the_sample_its_creator_chose(env):
+    sample = env.home / "assets/styles/learned" / STYLE / "style.jpg"
+    sample.parent.mkdir(parents=True)
+    sample.write_bytes(jpeg())
+    env.styles[STYLE]["look"] = {"style_image": f"styles/learned/{STYLE}/style.jpg"}
+    source = preview.recipe_source(env.studio, env.home, STYLE, env.bridge)
+    assert source.path == sample.resolve() and source.label == "Your style sample"
+    env.styles[STYLE]["look"] = {"style_image": "styles/learned/../../../outside.jpg"}
+    assert preview.recipe_source(env.studio, env.home, STYLE, env.bridge) is None
+
+
+def test_a_ready_made_recipe_shows_a_picture_studio_drew(env):
+    image = packaged(env)
+    manifest = env.home / "cr_recipe_frames/manifest.json"
+    saved = json.loads(manifest.read_text())
+    saved["frames"]["3d"] = {"file": "3d.jpg", "kind": "studio_sample", "sha256": hashlib.sha256(image.read_bytes()).hexdigest()}
+    manifest.write_text(json.dumps(saved))
+    assert preview.recipe_source(env.studio, env.home, "3d", env.bridge).label == "Made with ChannelRecipe Studio"

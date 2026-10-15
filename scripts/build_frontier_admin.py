@@ -68,8 +68,8 @@ def private_preview_resources(root: Path):
     resources=[(manifest,"cr_recipe_frames/manifest.json")]
     for style,row in data["frames"].items():
         if (not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,139}",style) or not isinstance(row,dict)
-                or row.get("file")!=style+".jpg" or row.get("kind")!="style_reference"
-                or not str(row.get("channel") or "").strip()):
+                or row.get("file")!=style+".jpg" or row.get("kind") not in ("style_reference","studio_sample")
+                or (row.get("kind")=="style_reference" and not str(row.get("channel") or "").strip())):
             raise ValueError("Invalid style reference identity.")
         path=folder / row["file"]
         if path.is_symlink() or not path.is_file() or path.stat().st_size>1024*1024 or hashlib.sha256(path.read_bytes()).hexdigest()!=row.get("sha256"):
