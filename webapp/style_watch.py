@@ -35,12 +35,12 @@ from webapp import database as db
 from webapp import plans
 from webapp.frontier_studio import is_admin
 
-PROMPT_VERSION = 1
+PROMPT_VERSION = 2
 MAX_WINDOW_S = 200
 STALE_S = 900
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
-# A day's watches per account. A study watches up to three references, an opening and a later window each.
-DAILY_WATCHES = {"daily": 12, "studio_pro": 24, "studio_max": 40}
+# A day's watches per account. A study watches up to three references: the opening, the middle, and a call to action.
+DAILY_WATCHES = {"daily": 20, "studio_pro": 40, "studio_max": 60}
 _ready = set()
 _ready_lock = threading.Lock()
 _pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="style-watch")
@@ -55,7 +55,7 @@ MOTIONS = ("still", "zoom_in", "zoom_out", "pan", "shake", "animated", "live_act
 
 WATCH_PROMPT = """You are logging the PRODUCTION STYLE of this YouTube video between [A] and [B], so that a studio
 can make new videos in the same style about other topics. Do not summarise the story; describe how it is made.
-Watch every shot and listen to the whole soundtrack.
+Watch every shot and listen to the whole soundtrack, including what plays quietly under the voice.
 
 Return ONE JSON object with exactly these keys:
 {
@@ -63,9 +63,11 @@ Return ONE JSON object with exactly these keys:
  "shots": [   // every shot in order; a shot ends at any cut or transition
    {"t": "m:ss", "len_s": 2.5,
     "source": "<one of: [SOURCES]>",
-    "art": "a few words on how this picture looks (e.g. 'watercolour painting, soft edges', 'low-poly 3D, flat
-            pastel colours', 'grainy bodycam', 'glossy stock footage', 'black-and-white manga panel',
-            'stick figure on a detailed painted background')",
+    "style": "how the picture is MADE, never what it shows: medium, line, shading, colour, rendering (e.g.
+              'watercolour wash, soft edges', 'low-poly 3D, flat pastel', 'grainy bodycam', 'flat vector, bold
+              outlines', 'black-and-white manga ink')",
+    "what": "what it shows, at most six words",
+    "polish": "cinematic | clean | candid | lo-fi",
     "motion": "<one of: [MOTIONS]>",
     "text": "none | caption | label | headline | quote | handwritten | kinetic | data | cta",
     "who": "short stable name of a recurring character or presenter in this shot, or empty",
@@ -74,26 +76,37 @@ Return ONE JSON object with exactly these keys:
  "audio_events": [{"t": "m:ss", "kind": "music_in | music_change | music_out | music_drop | riser | hit | whoosh |
                    foley | ambience | source_clip | silence", "what": "a few words"}],
  "music": {"share": 0.0, "role": "story score | ambient bed | lofi | upbeat | none",
+           "genre": "e.g. lofi hip-hop, dark synth drone, cinematic orchestral, acoustic folk, upbeat electronic",
            "moods": ["..."], "instruments": ["..."], "under_voice": "loud | moderate | quiet | none",
            "changes": "how often and where the music changes"},
  "sfx": {"density": "none | sparse | moderate | dense", "kinds": ["..."], "on": "what triggers them"},
- "ambience": "environmental sound beds, or empty",
+ "ambience": {"present": false, "kinds": ["rain, wind, birds, forest, city, crowd, room tone, fire, waves ..."],
+              "share": 0.0, "where": "under the voice, in pauses, or on empty shots"},
  "voice": {"gender": "...", "age": "young | adult | older", "accent": "...", "tone": "...",
            "pace": "slow | moderate | fast"},
  "look": {"grade": "dark | neutral | bright", "filter": "colour treatment, overlays, texture", "grain": "none | light |
           heavy", "palette": ["#RRGGBB"]},
+ "polish": {"overall": "cinematic | clean | candid | lo-fi", "notes": "what makes the pictures look that way"},
  "art_style": "one or two sentences: the picture style a new video must keep, specific enough to prompt an image
-               generator (medium, line, shading, colour, how characters are drawn, backgrounds)",
+               generator (medium, line, shading, colour, how characters are drawn, backgrounds, camera and light)",
+ "lettering": "hand-drawn | typeset | mixed | none",
  "text_style": "how on-screen words look and move, or empty",
  "graphics": ["recurring graphic devices: maps, charts, highlighted documents, logos, timelines, counters ..."],
  "recurring": [{"name": "...", "look": "how to draw them consistently", "role": "mascot | presenter | character"}],
- "cta": [{"t": "m:ss", "what": "what is promoted and how it is shown (e.g. ebook cover and QR code)"}],
+ "presenter": {"on_camera_share": 0.0, "pictures_share": 0.0},
+ "cta": [{"t": "m:ss", "kind": "sponsor | own product | ebook or pdf | course | qr code | link | subscribe",
+          "what": "what is promoted and how it is shown (cover, QR code, link, price, the host holding it)"}],
  "hook": "how the first seconds grab attention, if [A] is 0:00; else empty",
  "breathing": "where the edit pauses (music swells, empty shots, silence) and how long",
  "recognisable": ["the 3 to 6 things that make this channel instantly recognisable, most important first"]
 }
-Use the vocabularies exactly. "share" is the fraction of the window with audible music. If something is absent, use
-an empty list, "none" or an empty string; never invent."""
+Definitions: "polish" is how finished the picture looks: cinematic = dramatic light, shallow focus, graded; clean =
+evenly lit, sharp, staged like an advert; candid = everyday phone-camera look, natural indoor or daylight, unstaged
+framing, a little soft or noisy; lo-fi = visibly degraded, compressed, VHS or webcam. "presenter.on_camera_share" is
+the fraction of the window where a presenter or avatar talks to camera; "pictures_share" where they appear in other
+pictures. "cta" lists every spoken or shown promotion. "music.share" is the fraction of the window with audible music,
+however quiet. Use the vocabularies exactly. If something is absent, use an empty list, "none", false, 0 or an empty
+string; never invent."""
 
 
 def prompt(start: float, end: float) -> str:
@@ -167,9 +180,12 @@ def _row(job_id: str) -> dict | None:
     return dict(row) if row else None
 
 
-def public(row: dict) -> dict:
+def public(row: dict, admin: bool = False) -> dict:
     out = {"job": row["id"], "status": row["status"], "video_id": row["video_id"],
            "start": row["start_s"], "end": row["end_s"], "model": row["model"], "cached": bool(row["cached"])}
+    if admin:                                   # what the call cost, for tuning windows and prompts
+        out["usage"] = {"tokens_in": row.get("tokens_in", 0), "tokens_out": row.get("tokens_out", 0),
+                        "cost_usd": round(float(row.get("cost_usd") or 0), 5)}
     if row["status"] == "done":
         out["log"] = json.loads(row["result_json"] or "{}")
     if row["status"] == "failed":
@@ -259,9 +275,9 @@ def start(user: dict, video_id: str, start_s: float, end_s: float, *, submit=Non
             conn.execute(db._q("""INSERT INTO style_watch_jobs (id,user_id,video_id,start_s,end_s,prompt_version,model,
                 status,result_json,cached,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'done',?,1,?,?)"""),
                 (job, user["id"], video_id, a, b, PROMPT_VERSION, name, same["result_json"], now, now))
-            return public({**dict(same), "id": job, "cached": 1})
+            return public({**dict(same), "id": job, "cached": 1}, is_admin(user))
         if same:                                                # someone is watching this window right now
-            return public(dict(same))
+            return public(dict(same), is_admin(user))
         limit = _daily_limit(user)
         if limit is not None:
             used = conn.execute(db._q("""SELECT COUNT(*) AS n FROM style_watch_jobs WHERE user_id=? AND cached=0
@@ -277,7 +293,7 @@ def start(user: dict, video_id: str, start_s: float, end_s: float, *, submit=Non
             status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'running',?,?)"""),
             (job, user["id"], video_id, a, b, PROMPT_VERSION, name, now, now))
     (submit or _pool.submit)(_run, job)
-    return public(_row(job))
+    return public(_row(job), is_admin(user))
 
 
 def get(user: dict, job_id: str) -> dict:
@@ -292,7 +308,7 @@ def get(user: dict, job_id: str) -> dict:
             conn.execute(db._q("UPDATE style_watch_jobs SET status='failed', error=?, updated_at=? WHERE id=? AND status='running'"),
                          ("The watch stopped before it finished. Start it again.", time.time(), job_id))
         row = _row(job_id)
-    return public(row)
+    return public(row, is_admin(user))
 
 
 class WatchRequest(BaseModel):
