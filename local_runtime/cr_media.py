@@ -156,7 +156,11 @@ def _data(res, provider):
             raise ValueError()
         # Kie uses HTTP 200 for errors; Atlas uses code 0/200 on success.
         if data.get("code") not in ((200,) if provider == "kie" else (None, 0, 200)):
-            raise AccountStop(f"{PROVIDERS[provider]['label']} refused this request. Check its API access, balance and task log.")
+            # The code says which refusal it was (kie: 455 unavailable, 500 server error, 501 generation failed...);
+            # the provider's own wording stays out of the message.
+            code = re.sub(r"[^0-9A-Za-z_-]", "", str(data.get("code")))[:12]
+            raise AccountStop(f"{PROVIDERS[provider]['label']} refused this request (code {code}). Check its API access, "
+                              "balance and task log.")
         return data
     except (ValueError, TypeError):
         raise AccountStop("The model account returned an unreadable response. Check its task log.")
@@ -305,7 +309,12 @@ def run(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
                                 raise TaskFailed(provider, previous, task)
                         except (ValueError, TypeError, AttributeError):
                             pass
-                    data = _data(res, provider)
+                    try:
+                        data = _data(res, provider)
+                    except AccountStop as stop:
+                        previous["submit_error"] = str(stop)[:160]      # which refusal, kept with the receipt
+                        _write(marker, previous)
+                        raise
                     detail = data.get("data") or data
                     task_id = detail.get("taskId" if provider == "kie" else "id")
                     if not task_id or not re.fullmatch(r"[A-Za-z0-9_\-]+", str(task_id)):

@@ -94,6 +94,15 @@ def test_a_request_that_may_have_arrived_is_never_sent_twice(hub, monkeypatch, e
     assert receipt.get("submit_error", "ReadTimeout") in ("ReadTimeout", "ConnectionError")
 
 
+def test_a_refusal_says_which_code_and_keeps_it_with_the_receipt(hub, monkeypatch):
+    monkeypatch.setattr(media.requests, "post", lambda *a, **k: response({"code": 500, "msg": "upstream wording"}))
+    with pytest.raises(media.AccountStop, match=r"refused this request \(code 500\)") as stop:
+        media.run("avatars", {"image_url": "https://i", "audio_url": "https://a"}, hub / "avatar.mp4")
+    assert "upstream" not in str(stop.value)
+    receipt = json.loads(next((hub / ".cr-tasks").glob("avatar.mp4-*.json")).read_text())
+    assert "code 500" in receipt["submit_error"] and receipt["status"] == "submitting"
+
+
 def test_kie_http_200_error_stops_without_paid_fallback(hub, monkeypatch):
     monkeypatch.setattr(media.requests, "post", lambda *a, **k: response({"code": 429, "msg": "upstream secret"}))
     with pytest.raises(media.AccountStop, match="refused") as error:
