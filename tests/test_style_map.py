@@ -257,3 +257,15 @@ def test_an_essay_channel_gets_its_measured_mix_of_pictures_footage_and_cards():
                     **{"look__drawn": axis(0.3), "motion__classes": axis({"still": 0.6, "moving": 0.4})})
     plan = cm.plan_style(essay, STYLES, base="jung")
     assert plan["overrides"]["pacing"]["mix"] == [40, 33, 27]
+
+
+def test_a_white_3d_channel_renders_its_3d_as_an_all_white_matte_world():
+    white = profile({"3d": 0.5, "graphic": 0.5}, {"3d_render": 0.49},
+                    **{"look__grade": axis("bright", luma=185, saturation=0.05, filter=[]),
+                       "pictures__art_style": axis("Minimalist all-white matte 3D reconstructions with mannequins.")})
+    plan = cm.plan_style(white, STYLES)
+    assert plan["base"] == "3d" and plan["overrides"]["look"]["threed"]["preset"] == "white_studio"
+    dark = profile({"3d": 0.5, "graphic": 0.5}, {"3d_render": 0.49},
+                   **{"look__grade": axis("dark", luma=60, saturation=0.4, filter=[]),
+                      "pictures__art_style": axis("Moody realistic 3D night recreations.")})
+    assert "threed" not in cm.plan_style(dark, STYLES)["overrides"].get("look", {})

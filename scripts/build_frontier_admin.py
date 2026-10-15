@@ -199,6 +199,9 @@ RETIRED_SAMPLES = {"assets/brand/1965 Lotus 38 - Documentary sample.mp4",
 # disk skipped the style study's real-browser test (so the study stopped at the
 # end) and made Level-Up Stories wait forever. A few test frames need far less.
 # Every patch must match exactly once, so a new engine can't silently skip one.
+PRESET_WHITE_STUDIO = "  documentary: null,\n\n  // WHITE STUDIO (ChannelRecipe, learned 2026-10-15 from clean 3D reconstruction channels): an all-white matte world.\n  // Every surface reads as white or pale grey plaster (albedo desaturated and lifted), the faceless mannequins white, the\n  // frame a pale duotone from a light cool grey to white, so a night or an interior stays high key (night is a cooler,\n  // slightly dimmer white). Soft shadows, no grain, a faint vignette; labels take the darkest plate (dark grey pills).\n  white_studio: {\n    desc: 'all-white matte 3D reconstruction: every surface white or pale grey plaster, white faceless mannequins, a pale grey seamless world, soft studio light, high key even at night, no grain',\n    stylised: true, tragedy_ok: true,\n    grade: { mul: { exposure: 1.18 }, add: { lift: [0.03, 0.03, 0.034] },\n      set: { mono: 0.92, ink: [0.5, 0.53, 0.58], paper: [0.975, 0.975, 0.98], contrast: 1.0, vignette: 0.08, grain: 0, bloom: 0.04, shoulder: 0.92, sat: 0.6 } },\n    night: { mul: { exposure: 2.4 }, add: { lift: [0.06, 0.065, 0.075] },\n      set: { mono: 0.92, ink: [0.46, 0.5, 0.57], paper: [0.95, 0.96, 0.98], contrast: 1.0, vignette: 0.1, grain: 0, bloom: 0.04, shoulder: 0.92, sat: 0.6 } },\n    atmos: { tint: [0.9, 0.91, 0.93], tintAmt: 0.8, sky: [0.9, 0.91, 0.93] },\n    world: { tufts: false },\n    material: { rough: [0.72, 0.95], metal: 0.0, env: 0.4, skin: 0xEEEEEE,\n      look: { flat: 6, nrm: 0, pal: 1, sat: 0.0, gamma: 0.7 } },\n    shadow: { soft: 2.6 },\n    qa: { hot_start: 0.95, hot_target: 0.9, hot_area: 0.97, face_white: 0.97, face_mean: 253, scrim_max: 0.86 },\n  },\n"
+LOOK_WHITE_STUDIO = ' "white_studio": {"director": "THE LOOK (this film\'s preset: WHITE STUDIO — the engine renders every shot as an all-white matte world on top of your look block; you never set it and never imitate it with grades): a clean 3D reconstruction in white and pale grey plaster, faceless white mannequins for every person (never a human face), a pale seamless ground and sky, soft even studio light. It stays high key at night too: keep the story\'s time of day, the preset turns night into a cooler white, so stage night scenes for shape and silhouette, not for darkness. Real shapes, era-accurate ships, vehicles and buildings, read at a glance as white models. Captions live in the bottom quarter of the frame: keep it free of text and of the subject\'s key action.", "review": "THE LOOK IS INTENTIONAL — this film uses the WHITE STUDIO preset: every surface white or pale grey, white faceless mannequins, a pale world, soft light, high key even at night. That is the look: do not score it as washed out, flat, overexposed, colourless or low-detail, and do not fix it back toward realism or darkness (no grade, exposure, fog or night-darkening changes against the look). Judge craft INSIDE the look: the story, the subject reading at a glance by its shape, the motion, the hard fails H1-H8 (all still apply), faceless mannequins.", "qa": "THE LOOK OF THIS FILM IS INTENTIONAL: WHITE STUDIO — an all-white matte world, white faceless mannequins, pale sky and ground, soft light, high key even at night. Never flag the look itself as washed out, overexposed or colourless; flag only what is wrong inside it.", "cookbook": "LOOK PRESET white_studio (this film) — stage it like a white scale model on a studio table: clear shapes and silhouettes, medium and wide views that read as models (ships, rooms, vehicles, crowds of white mannequins as counts), slow orbit or push_in, few props with strong outlines. Avoid scenes whose meaning depends on colour or on darkness."},\n'
+
 ENGINE_PATCHES = {
     "reflearn.py": [
         ('need_lv, need_gb = _envf("REFLEARN_MIN_MEM_LEVEL", 40), _envf("REFLEARN_MIN_DISK_GB", 20)',
@@ -241,6 +244,16 @@ ENGINE_PATCHES = {
         ("                        for _sc, mp4 in jobs:\n                            _leak_in(Path(mp4))\n",
          "                        for _sc, mp4 in jobs:\n                            if _wants_leak(look):\n"
          "                                _leak_in(Path(mp4))\n"),
+    ],
+    # The clean 3D reconstruction channels render an all-white matte world (watched: monochrome white models and
+    # mannequins, brightness 185 of 255, almost no colour); the engine's looks rendered the same story dark and
+    # colourful. WHITE STUDIO is that look, for the renderer (presets.js) and for the director, reviewer and QA
+    # (looks.json, which also lists the look so a style may ask for it).
+    "threed/engine/core/presets.js": [
+        ("  documentary: null,\n", PRESET_WHITE_STUDIO),
+    ],
+    "threed/director/looks.json": [
+        ('{\n "documentary": {\n', '{\n' + LOOK_WHITE_STUDIO + ' "documentary": {\n'),
     ],
     "make_video.py": [
         # A dark chapter card in a slot longer than itself held its faded-out last frame: two seconds of black while

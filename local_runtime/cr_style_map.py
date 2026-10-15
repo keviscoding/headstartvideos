@@ -481,6 +481,17 @@ def _text(plan: Plan, profile: dict):
         plan.notes.append({"for": "text", "text_style": style[:2], "graphics": (_v(text.get("graphics"), []) or [])[:6]})
 
 
+def _white_3d(profile) -> bool:
+    """The references' 3D is white models: bright and nearly colourless (measured), or watched as white or monochrome."""
+    grade = _get(profile, "look", "grade") or {}
+    luma, sat = grade.get("luma"), grade.get("saturation")
+    words = " ".join([str(_v(_get(profile, "pictures", "art_style"), "") or "")]
+                     + [str(x) for x in (profile.get("recognisable") or [])]).lower()
+    measured = luma is not None and sat is not None and float(luma) >= 150 and float(sat) <= 0.12
+    watched = bool(re.search(r"all[- ]white|white matte|matte[- ]white|monochrom\w* (matte[- ])?white", words))
+    return measured or watched
+
+
 def _features(plan: Plan, profile: dict, base: str, base_style: dict):
     fam = _families(profile)
     sources = _v(_get(profile, "pictures", "sources"), {}) or {}
@@ -522,6 +533,10 @@ def _features(plan: Plan, profile: dict, base: str, base_style: dict):
         mix[2] = 100 - mix[0] - mix[1]
         plan.set("pacing.mix", mix, area="Options", label="Picture mix (AI, footage, graphics)",
                  why="the share of each in the watched shots", source="watched", show=f"{mix[0]} / {mix[1]} / {mix[2]}")
+    if want["threed"] and _white_3d(profile):
+        plan.set("look.threed.preset", "white_studio", area="Look", label="3D look",
+                 why="the references' 3D is an all-white matte world (watched and measured)", source="watched",
+                 show="all-white matte models")
     if fam.get("graphic", 0) >= 0.15 and base in ("stories", "avatar-premium"):
         plan.set("pacing.graphics", True, area="Options", label="Graphics between pictures",
                  why=f"{round(fam['graphic'] * 100)}% of the runtime is charts, maps or graphics", source="watched")

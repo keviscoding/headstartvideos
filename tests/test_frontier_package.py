@@ -436,3 +436,14 @@ def test_a_chapter_card_holds_its_title_and_a_learned_look_has_no_light_leak_it_
     assert ns["leaked"] == [], "a learned look that cuts to black at chapters gets no film burn"
     ns["cards"]([({}, "chapter_01.mp4")], {"look": "built-in"})
     assert len(ns["leaked"]) == 1, "the built-in recipes keep it"
+
+
+def test_the_white_studio_3d_look_reaches_the_renderer_and_the_director():
+    looks = package.patch_engine("threed/director/looks.json",
+                                 b'{\n "documentary": {\n  "director": "x"\n }\n}\n')
+    looks = json.loads(looks)
+    assert list(looks)[0] == "white_studio" and "high key" in looks["white_studio"]["director"]
+    assert "never flag the look itself" in looks["white_studio"]["qa"].lower()
+    presets = package.patch_engine("threed/engine/core/presets.js",
+                                   b"export const PRESETS = {\n  documentary: null,\n};\n").decode()
+    assert "white_studio: {" in presets and "mono: 0.92" in presets and "scrim_max: 0.86" in presets
