@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 from scripts import studio_branding
-VERSION = "5.3-admin.59"
+VERSION = "5.3-admin.60"
 PRIVATE_WORKFLOWS = {
     "cr-style-delivery-prompt.txt": ROOT / "data/frontier/reference2d-compiler.txt",
     "cr-style-study-brief.txt": ROOT / "data/frontier/reference2d-study.txt",
@@ -75,6 +75,22 @@ def private_preview_resources(root: Path):
         if path.is_symlink() or not path.is_file() or path.stat().st_size>1024*1024 or hashlib.sha256(path.read_bytes()).hexdigest()!=row.get("sha256"):
             raise ValueError("Style reference frame changed.")
         resources.append((path,"cr_recipe_frames/"+path.name))
+    return resources
+
+
+def private_sound_resources(root: Path):
+    """ChannelRecipe's recorded effects library (generated once, owned), shipped under assets/sfx/cr/."""
+    folder = root / "data/frontier/sfx-library"
+    if not folder.exists():
+        return []
+    if folder.is_symlink() or not folder.is_dir():
+        raise ValueError("The effects library must be an ordinary owned folder.")
+    resources = []
+    for path in sorted(folder.iterdir()):
+        if path.name == "library.json" or (path.suffix == ".wav" and re.fullmatch(r"[a-z_]+_\d+\.wav", path.name)):
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > 2 * 1024 * 1024:
+                raise ValueError("Effects library files must be small ordinary files.")
+            resources.append((path, "assets/sfx/cr/" + path.name))
     return resources
 
 
@@ -207,7 +223,7 @@ def build(source: Path, target: Path, previous: Path | None = None):
     operational_overrides = (ROOT / "local_runtime/CLAUDE.md").read_bytes()
     # Validate the complete resource inventory before replacing an existing ZIP.
     resources = list(runtime_resources(ROOT))
-    preview_resources = private_preview_resources(ROOT)
+    preview_resources = private_preview_resources(ROOT) + private_sound_resources(ROOT)
     target.parent.mkdir(parents=True, exist_ok=True)
     count = 0
     transformed_files = []

@@ -145,6 +145,18 @@ def watched_summary(watch: dict) -> dict:
     look = [lg.get("look") or {} for lg in logs]
     amb = [_ambience(lg.get("ambience")) for lg in logs]
     presenter = [lg.get("presenter") for lg in logs if isinstance(lg.get("presenter"), dict)]
+    # presenter time by window: the opening, and the rest of the video as every later window samples it (the
+    # call-to-action window included: a presenter often holds the product there, and that is screen time too)
+    opening_p, later = None, []
+    for w in windows:
+        pr, span = w["log"].get("presenter"), w.get("span") or [0, 0]
+        if not isinstance(pr, dict):
+            continue
+        if span[0] == 0:
+            opening_p = _num(pr.get("on_camera_share"), None)
+        else:
+            later.append((_num(pr.get("on_camera_share")), max(1.0, _num(span[1]) - _num(span[0]))))
+    later_p = sum(v * w for v, w in later) / sum(w for _, w in later) if later else None
     out = {
         "shots_logged": len(shots), "seconds_logged": round(total, 1),
         "narration": _majority([lg.get("narration") for lg in logs], "voiceover"),
@@ -159,7 +171,9 @@ def watched_summary(watch: dict) -> dict:
         "lettering": _majority([lg.get("lettering") for lg in logs]),
         "recurring": _merge_people(recurring),
         "presenter": {"on_camera": _mean([_num(p.get("on_camera_share")) for p in presenter]),
-                      "in_pictures": _mean([_num(p.get("pictures_share")) for p in presenter])} if presenter else {},
+                      "in_pictures": _mean([_num(p.get("pictures_share")) for p in presenter]),
+                      "opening": opening_p, "middle": later_p}
+                     if presenter else {},
         "music": {"share": round(sum(_num(m.get("share")) for m in music) / len(music), 3),
                   "role": _majority([m.get("role") for m in music], "none"),
                   "genres": _dedupe([m.get("genre") for m in music], 3),
@@ -190,15 +204,20 @@ def watched_summary(watch: dict) -> dict:
     return out
 
 
+_NOT_AMBIENCE = re.compile(r"^(quiet |faint |subtle |low )?(room tone|silence|none|hum|mic hum|room hum)$", re.I)
+
+
 def _ambience(value) -> dict:
-    """Prompt v2 answers {"present", "kinds", "share", "where"}; v1 answered with a phrase."""
+    """Prompt v2 answers {"present", "kinds", "share", "where"}; v1 answered with a phrase. A room's own tone is not
+    environmental sound design, so it alone doesn't count."""
     if isinstance(value, dict):
-        kinds = [k for k in value.get("kinds") or [] if isinstance(k, str) and k.strip()]
-        present = bool(value.get("present")) or bool(kinds)
+        kinds = [k for k in value.get("kinds") or [] if isinstance(k, str) and k.strip()
+                 and not _NOT_AMBIENCE.match(k.strip())]
+        present = bool(kinds)
         return {"present": present, "kinds": kinds if present else [], "share": _num(value.get("share")) if present else 0.0,
                 "where": str(value.get("where") or "") if present else ""}
     text = str(value or "").strip()
-    present = bool(text) and text.lower() not in ("none", "no", "n/a")
+    present = bool(text) and text.lower() not in ("no", "n/a") and not _NOT_AMBIENCE.match(text)
     return {"present": present, "kinds": [text] if present else [], "share": 0.0, "where": ""}
 
 
@@ -282,8 +301,9 @@ def build(references: list) -> dict:
     art_style = _dedupe([x for s in seen for x in s.get("art_style") or []], 4)
     top_art = sorted(art, key=lambda a: -a["share"])[:6]
     # one picture style throughout: every window's (and reference's) own description of it says much the same
-    statements = [x for s in seen for x in s.get("art_style") or []]
-    one_style = bool(statements) and _similar(statements) >= 0.2
+    # (one reference is one channel: its windows describe the same style in different words)
+    per_ref = [" ".join(s.get("art_style") or []) for s in seen if s and s.get("art_style")]
+    one_style = bool(per_ref) and (len(per_ref) < 2 or _similar(per_ref) >= 0.2)
     profile["pictures"] = {
         "sources": _axis(sources, _consistency([max(s.get("sources") or {"": 0}, key=(s.get("sources") or {"": 0}).get)
                                                  for s in seen if s]) if has_w else 0, ["watched"] if has_w else [],
@@ -302,12 +322,13 @@ def build(references: list) -> dict:
     lumas = [((m.get("look") or {}).get("luma")) for m in measured]
     grades_m = [_grade_from(x) for x in lumas if x is not None]
     grades_w = [s.get("grade") for s in seen if s.get("grade")]
-    grade = _majority(grades_m + grades_w, "neutral")
+    grade = _majority(grades_m, "") or _majority(grades_w, "neutral")      # measured brightness decides
     agree = sum(1 for g in grades_w if g == _majority(grades_m, g)) / len(grades_w) if grades_w and grades_m else 0.5
     profile["look"] = {
         "grade": _axis(grade, 0.5 * _consistency(grades_m + grades_w) + 0.5 * agree,
                        (["measured"] if grades_m else []) + (["watched"] if grades_w else []),
-                       luma=_mean(lumas), dark_share=_mean([(m.get("look") or {}).get("dark_share") for m in measured]),
+                       luma=_mean(lumas), measured_grades=grades_m,
+                       dark_share=_mean([(m.get("look") or {}).get("dark_share") for m in measured]),
                        saturation=_mean([(m.get("look") or {}).get("saturation") for m in measured]),
                        filter=_dedupe([f for s in seen for f in s.get("filter") or []], 3)),
         "grain": _axis(_majority([s.get("grain") for s in seen]) or ("light" if (_mean([(m.get("look") or {}).get(
@@ -417,7 +438,7 @@ def build(references: list) -> dict:
         "narration": _axis(_majority([s.get("narration") for s in seen if s], "voiceover"),
                            _consistency([s.get("narration") for s in seen if s]) if has_w else 0.3,
                            ["watched"] if has_w else []),
-        "presenter": _presenter_axis(seen, has_w),
+        "presenter": _presenter_axis(seen, has_w, [_num(r.get("duration"), 0) for r in refs]),
         "cta": _axis([c for s in seen for c in s.get("cta") or []][:8], 0.6 if has_w else 0,
                      ["watched"] if has_w else [],
                      kinds=sorted({str(c.get("kind") or "").lower() for s in seen for c in s.get("cta") or []
@@ -442,10 +463,16 @@ def _ambience_axis(seen: list, snd: list, has_w: bool) -> dict:
                  where=_dedupe([w for a in amb for w in a.get("where") or []], 2), noisy_in_pauses=noisy)
 
 
-def _presenter_axis(seen: list, has_w: bool) -> dict:
-    """How much a presenter or avatar talks to camera, and how often they appear in the other pictures."""
+def _presenter_axis(seen: list, has_w: bool, durations: list = ()) -> dict:
+    """How much a presenter or avatar talks to camera over the whole video, and how often they appear in the other
+    pictures. The opening is where a presenter talks most, so its share counts for its three minutes only and the
+    middle window's share for the rest."""
     rows = [s.get("presenter") for s in seen if s.get("presenter")]
-    on_camera = _mean([r.get("on_camera") for r in rows])
+    whole = []
+    for r, dur in zip([s.get("presenter") or {} for s in seen], list(durations) + [0] * len(seen)):
+        if r.get("opening") is not None and r.get("middle") is not None and dur and dur > 180:
+            whole.append((r["opening"] * 180 + r["middle"] * (dur - 180)) / dur)
+    on_camera = _mean(whole) if whole else _mean([r.get("on_camera") for r in rows])
     if on_camera is None:                                      # prompt v1: count presenter shots instead
         on_camera = _mean([(s.get("sources") or {}).get("presenter", 0) + (s.get("sources") or {}).get("avatar", 0)
                            for s in seen if s])
@@ -480,7 +507,8 @@ def questions(profile: dict) -> list:
         out.append({"id": "host", "ask": f"The channel has a recurring {people[0]['role']} ({people[0]['name']}). "
                     "Should your videos have one too?", "options": ["Yes, design one for my channel",
                                                                      "Yes, I'll upload mine", "No host"]})
-    if profile.get("format", {}).get("cta", {}).get("value"):
+    if set(profile.get("format", {}).get("cta", {}).get("kinds") or []) & {"own product", "ebook or pdf", "course",
+                                                                              "qr code", "link"}:
         out.append({"id": "cta", "ask": "The reference promotes something in the video. Add your own calls to "
                     "action?", "options": ["Yes", "No"]})
     music = profile.get("sound", {}).get("music", {})
@@ -488,7 +516,8 @@ def questions(profile: dict) -> list:
         out.append({"id": "music", "ask": "We couldn't tell how much music the channel uses. What do you want?",
                     "options": ["A story score under the whole video", "Light music in places", "No music"]})
     grade = profile.get("look", {}).get("grade", {})
-    if grade.get("confidence", 1) < 0.5:
+    measured = [g for g in grade.get("measured_grades") or [] if g]
+    if len(set(measured)) > 1:              # the references themselves differ; a model disagreeing is not a reason
         out.append({"id": "grade", "ask": "Your references differ in how dark they are. Which look?",
                     "options": ["Dark and cinematic", "Neutral", "Bright and clean"]})
     return out

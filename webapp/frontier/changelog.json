@@ -1,5 +1,22 @@
 [
   {
+    "build": 60,
+    "date": "2026-10-15",
+    "title": "Style learning that sees the whole channel",
+    "items": [
+      "New: Style cloning looks before it learns. Studio measures a few minutes of each video (cuts, motion, colour, music and sound effects) and ChannelRecipe's Gemini watches them, then shows what it saw: the recipe it recommends, every setting with its reason, and the cost per minute. Nothing runs on your Claude or picture accounts until you continue.",
+      "New: Learned styles keep the channel's own look instead of the starting recipe's: picture style, how people are drawn, pace, camera moves, colour, captions, music level, sound effects and narrator, with a script voice written for the channel.",
+      "New: Choose the picture style every video keeps. After a study, Studio draws three sample pictures in the learned style; the one you pick is copied by every picture, and a channel host gets a character sheet.",
+      "New: Music written for each video. Styles whose channels use music get one cue per section, made for that video in the channel's own sound on your Kie account (about 6 cents a section).",
+      "New: Recorded sound effects (whooshes, hits, risers, paper, marker, coins) for learned styles, placed on the actions your pictures show.",
+      "Improved: Learned styles draw with Nano Banana 2.1, which keeps the style and draws whole people, at the same price per picture. A picture model you chose in Setup still comes first.",
+      "Improved: Pictures are made four at a time, so a video's pictures finish sooner.",
+      "Improved: Moving pictures copy the same style drawing as the stills.",
+      "Improved: What's new marks each change as new, improved or fixed.",
+      "Fixed: Studio re-runs its daily Claude model check by itself instead of sending you back to setup."
+    ]
+  },
+  {
     "build": 59,
     "date": "2026-10-15",
     "title": "Steadier writing with API accounts",

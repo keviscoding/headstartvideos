@@ -15,6 +15,7 @@ import cr_claude
 import cr_readiness
 import cr_studio
 import cr_style_clone as clone
+import cr_style_look
 import cr_style_routes as routes
 import cr_ui
 
@@ -90,6 +91,22 @@ def env(tmp_path, monkeypatch):
         clone.run(tmp_path, argv[-1], bridge, readiness=lambda: cr_readiness.proof(checks, purpose="creative"), execute=_saved_kit)
         return SimpleNamespace(returncode=0)
     monkeypatch.setattr(routes, "subprocess", SimpleNamespace(run=subprocess_run, STDOUT=-2))
+    def look_spawn(home, look_id):
+        # The look's own process, finished at once: what Studio saw, with a recommended recipe.
+        path = cr_style_look.folder(home, look_id) / "look.json"
+        saved = json.loads(path.read_text())
+        saved.update(state="done", phase="done", finished_at=__import__("time").time(), sheets=[], not_watched=[],
+                     profile={"recognisable": ["Painted stick figures on watercolour backgrounds"]},
+                     mapping={"base": "documentary", "base_why": "most pictures are real footage",
+                              "base_for": "real footage, documents, maps and graphics", "needs": [],
+                              "settings": [{"area": "Pace", "label": "Footage cut length", "value": "3 s",
+                                            "why": "the references cut every 3 s", "path": "pacing.cut_s"}],
+                              "questions": [{"id": "music", "ask": "How much music?",
+                                             "options": ["A story score under the whole video", "No music"]}],
+                              "cost": {"usd_per_min": 0}})
+        path.write_text(json.dumps(saved))
+        calls.append(("look", look_id))
+    monkeypatch.setattr(cr_style_look, "_spawn", look_spawn)
     app = Flask(__name__)
     app.config["TESTING"] = True
     @app.get("/api/styles")
@@ -467,6 +484,13 @@ def test_browser_approved_reference_order_to_saved_style_and_no_script_collision
             assert "primary: Backup 1" in page.locator("#selection-summary").inner_text()
             assert not env.targets
             page.locator("#next-button").click()
+            page.locator("#look-result").wait_for(state="visible")
+            assert page.locator("#look-base").inner_text() == "Editorial Documentary"
+            assert "Painted stick figures" in page.locator("#look-recognisable").inner_text()
+            assert "Footage cut length" in page.locator("#look-settings").inner_text()
+            page.locator("input[name='q-music']").nth(1).check()
+            assert not env.targets, "looking never starts a study"
+            page.locator("#look-next").click()
             page.locator("#style-label").fill("My science stories")
             page.locator("#example-title").fill("How bees build homes")
             page.locator("#style-brief").fill("Clear diagrams and measured pacing")
@@ -475,6 +499,10 @@ def test_browser_approved_reference_order_to_saved_style_and_no_script_collision
             page.locator("#usage-approved").check()
             page.locator("#candidate-list input").nth(2).uncheck()
             assert not page.locator("#usage-approved").is_checked()
+            assert page.locator("#brief-panel").is_hidden(), "changed references are looked at again first"
+            page.locator("#next-button").click()
+            page.locator("#look-result").wait_for(state="visible")
+            page.locator("#look-next").click()
             page.locator("#usage-approved").check()
             page.locator("#start-button").click()
             page.locator("#progress-panel").wait_for(state="visible")
@@ -483,6 +511,8 @@ def test_browser_approved_reference_order_to_saved_style_and_no_script_collision
             assert [ref["id"] for ref in saved["spec"]["references"]] == [BACKUP, VIDEO]
             assert saved["spec"]["title"] == "How bees build homes" and saved["spec"]["brief"] == "Clear diagrams and measured pacing"
             assert saved["spec"]["base_style"] == "documentary"
+            assert saved["spec"]["look_id"].startswith("lk_")
+            assert saved["spec"]["answers"] == {"music": "A story score under the whole video"}
             env.targets.pop()()
             page.reload()
             page.locator("#saved-result").wait_for(state="visible")
