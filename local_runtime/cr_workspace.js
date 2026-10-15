@@ -172,7 +172,24 @@
     }
     text('crw-features-note', strict(recipe) ? 'Every visual scene uses your learned animation kit. Narration, captions and sound remain available.' : 'Choose the sources this recipe can use. Account requirements are checked before generation.');
     $('crw-character').value = recipe.character || '';
+    hide('crw-panels-section', !recipe.panels); if (recipe.panels) loadPanels();
     updateOptional(); summary(); gate(); if (persist) save();
+  }
+  function showPanels(set) {
+    state.panels = set ? set.id : ''; const strip = $('crw-panels-strip'); strip.replaceChildren();
+    if (set) {
+      text('crw-panels-status', `${set.count} panels ready · ${set.name}`);
+      for (let n = 1; n <= Math.min(set.count, 8); n++) {const img = el('img'); img.alt = `Panel ${n}`; img.loading = 'lazy'; img.src = `/cr-workspace/panels/${encoded(set.id)}/${n}.jpg`; strip.append(img);}
+    } else text('crw-panels-status', '');
+    gate();
+  }
+  async function loadPanels() {
+    if ($('crw-panels-recent').dataset.loaded) return;
+    try {
+      const result = await api('/cr-workspace/panels'); state.panelSets = result.panels || [];
+      for (const set of state.panelSets) {const o = el('option', '', `${set.name} · ${set.count} panels`); o.value = set.id; $('crw-panels-recent').append(o);}
+      $('crw-panels-recent').dataset.loaded = '1';
+    } catch (e) {text('crw-panels-status', e.message);}
   }
   function updateOptional() {
     const features = featureValues(); hide('crw-fast-section', !features.threed || strict());
@@ -212,9 +229,10 @@
   }
   function gate() {
     const ready = state.setup?.readiness?.ready === true;
-    const blocked = state.submitting || state.uploading || !state.catalog || !ready || state.busy || (state.narration === 'own' && !state.audio);
+    const needsPanels = !!state.selected?.panels && !state.panels;
+    const blocked = state.submitting || state.uploading || !state.catalog || !ready || state.busy || (state.narration === 'own' && !state.audio) || needsPanels;
     $('crw-create').disabled = blocked;
-    let message = !state.catalog ? 'Loading your visual recipes…' : !ready ? (state.setup?.readiness?.blockers || ['Finish account setup before creating a video.']).join(' ') : state.busy ? 'A project is using this studio. Its progress is available in Projects.' : state.narration === 'own' && !state.audio ? 'Choose a narration recording to continue.' : 'Ready. Each Create starts a separate new project.';
+    let message = !state.catalog ? 'Loading your visual recipes…' : !ready ? (state.setup?.readiness?.blockers || ['Finish account setup before creating a video.']).join(' ') : state.busy ? 'A project is using this studio. Its progress is available in Projects.' : state.narration === 'own' && !state.audio ? 'Choose a narration recording to continue.' : needsPanels ? 'Choose your panels to continue.' : 'Ready. Each Create starts a separate new project.';
     text('crw-readiness', message);
     const status = $('crw-connection'); status.querySelector('span:last-of-type').textContent = ready ? 'Accounts connected' : 'Accounts need attention';
     status.querySelector('.crw-status-dot').className = `crw-status-dot ${ready ? 'is-ready' : 'is-warning'}`;
@@ -421,7 +439,8 @@
       features,render_backend:features.threed&&checked('crw-fast-toggle')&&!strict()?'manimgx':'original',
       character:strict()?'':$('crw-character').value.trim(),character_image:strict()?'':$('crw-character-image').value,
       avatar_id:features.avatar&&!strict()?$('crw-avatar-id').value:'',avatar_s:number('crw-avatar-seconds',8,0,15),avatar_count:number('crw-avatar-count',1,1,6),
-      offer:$('crw-offer').value,offer_plugs:number('crw-offer-plugs',0,0,2)};
+      offer:$('crw-offer').value,offer_plugs:number('crw-offer-plugs',0,0,2),panels:state.selected.panels?state.panels:''};
+    if(p.panels && title.includes('\n')) throw new Error('Use one title for a set of panels.');
     if(state.selected.auto_style)p.auto_style=checked('crw-adaptive'); return p;
   }
   async function submit(event) {
@@ -484,6 +503,8 @@
   $('crw-output-reveal').addEventListener('click',async()=>{if(!state.currentOutput)return;try{await api(`/api/reveal/${encoded(state.currentOutput.slug)}`,{method:'POST',body:{}});text('crw-output-message','The video folder is open on this computer.');}catch(e){text('crw-output-message',e.message);}});
   $('crw-projects-refresh').addEventListener('click',()=>refreshActivity(true));
   $('crw-progress-cancel').addEventListener('click',async()=>{const b=$('crw-progress-cancel');if(!b.dataset.run||!state.openJob)return;b.disabled=true;try{await api(`/cr-video/${encoded(state.openJob)}/cancel`,{method:'POST',body:{run_id:b.dataset.run}});toast('Cancellation requested. Completed work stays saved.');await refreshActivity();}catch(e){text('crw-progress-note',e.message);}});
+  $('crw-panels-recent').addEventListener('change',()=>{showPanels((state.panelSets||[]).find(s=>s.id===$('crw-panels-recent').value));});
+  $('crw-panels-file').addEventListener('change',async()=>{const files=[...$('crw-panels-file').files];if(!files.length)return;state.uploading=true;gate();text('crw-panels-status',`Saving ${files.length} file${files.length>1?'s':''}…`);const form=new FormData();for(const f of files)form.append('files',f);try{const result=await api('/cr-workspace/panels',{method:'POST',body:form});showPanels(result.panels);}catch(e){text('crw-panels-status',e.message);}finally{state.uploading=false;$('crw-panels-file').value='';gate();}});
   $('crw-audio-recent').addEventListener('change',()=>{state.audio=$('crw-audio-recent').value;$('crw-audio-player').src=`/api/voiceover/${encoded(state.audio)}`;hide('crw-audio-player',!state.audio);summary();gate();});
   $('crw-audio-file').addEventListener('change',async()=>{const file=$('crw-audio-file').files[0];if(!file)return;state.uploading=true;gate();text('crw-audio-status','Saving your narration recording…');const form=new FormData();form.append('file',file);try{const result=await api('/api/voiceover',{method:'POST',body:form});state.audio=result.voiceover.id;$('crw-audio-player').src=`/api/voiceover/${encoded(state.audio)}`;hide('crw-audio-player',false);text('crw-audio-status',`${result.voiceover.name} · ${Math.round(result.voiceover.seconds)} seconds`);}catch(e){text('crw-audio-status',e.message);}finally{state.uploading=false;summary();gate();}});
   for(const detail of all('details'))detail.addEventListener('toggle',()=>{if(detail.open&&detail.querySelector('#crw-character'))optionalAccounts();});

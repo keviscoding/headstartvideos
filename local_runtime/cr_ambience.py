@@ -122,7 +122,7 @@ def scenes(job, plan, look) -> list:
         index = None
         if (m := re.search(r"scene_(\d+)\.(?:jpg|png)$", path)):
             index = clips + int(m.group(1))
-        elif (m := re.search(r"clip_(\d+)\.mp4$", path)):
+        elif (m := re.search(r"(?:clip|vsrc)_(\d+)\.(?:mp4|jpg)$", path)):
             index = int(m.group(1))
         frame = frames[index] if index is not None and 0 <= index < len(frames) and isinstance(frames[index], dict) else {}
         kind = place_of(frame.get("prompt"), suffix)

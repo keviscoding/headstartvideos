@@ -261,3 +261,38 @@ def test_starting_the_engine_directly_hands_over_to_studio():
     patched = package.patch_engine("app.py", app).decode()
     assert 'subprocess.call([sys.executable, str(HERE / "cr_studio.py")]' in patched
     compile(patched, "app.py", "exec")
+
+
+def test_a_story_with_moving_pictures_shows_each_picture_on_its_own_sentence(tmp_path):
+    engine = (b"import json, re, shutil\nfrom pathlib import Path\n\n\n"
+              b"def _build_story_plan(job: Path, total: float, photos: list) -> list:\n"
+              b"    items = json.loads((job / 'astro_scenes.json').read_text())\n"
+              b"    pairs = [(it if isinstance(it, dict) else {}, p) for it, p in zip(items, photos) if p]\n"
+              b"    return [(it['text'], Path(p).name) for it, p in pairs]\n\n\n"
+              b"def _story_order(job, total, photos):\n"
+              b"    items = json.loads((job / 'astro_scenes.json').read_text())\n"
+              b"    by_i = {}\n    for p in photos:\n"
+              b"        m = re.search(r\"scene_(\\d+)\\.jpg$\", str(p))\n"
+              b"        if m and int(m.group(1)) < len(items):\n"
+              b"            by_i[int(m.group(1))] = str(p)\n"
+              b"    if len(by_i) < max(3, len(photos) // 2):\n        return []\n"
+              b"    idx = sorted(by_i)\n"
+              b"    return [(items[i]['text'], Path(by_i[i]).name) for i in idx]\n")
+    patched = package.patch_engine("make_video.py", engine).decode()
+    ns = {}
+    exec(compile(patched, "make_video.py", "exec"), ns)
+    job = tmp_path / "job"
+    for d in ("images", "clip_src", "clips"):
+        (job / d).mkdir(parents=True)
+    texts = ["London, 1820s.", "Your family hands you over.", "The sweep grins.", "You climb.", "Soot falls."]
+    (job / "astro_scenes.json").write_text(json.dumps([{"text": t} for t in texts]))
+    (job / "clip_src/vsrc_00.jpg").write_bytes(b"first frame")
+    (job / "clips/clip_00.mp4").write_bytes(b"m" * 30_000)
+    photos = [str(job / "images" / f"scene_{k:02d}.jpg") for k in range(4)]
+    for p in photos:
+        ns["Path"](p).write_bytes(b"still")
+    plan = ns["_build_story_plan"](job, 20.0, photos)
+    assert plan == [("London, 1820s.", "vsrc_00.jpg"), ("Your family hands you over.", "scene_00.jpg"),
+                    ("The sweep grins.", "scene_01.jpg"), ("You climb.", "scene_02.jpg"), ("Soot falls.", "scene_03.jpg")]
+    assert (job / "clip_src/vsrc_00.anim.mp4").read_bytes() == b"m" * 30_000, "the clip plays in its own slot"
+    assert ns["_story_order"](job, 20.0, photos)[0] == ("Your family hands you over.", "scene_00.jpg")

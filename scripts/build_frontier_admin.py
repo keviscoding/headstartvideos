@@ -132,6 +132,52 @@ ENGINE_PATCHES = {
          '    raise SystemExit(subprocess.call([sys.executable, str(HERE / "cr_studio.py")], cwd=str(HERE)))\n'
          'if False:\n    OUT.mkdir(exist_ok=True)\n'),
     ],
+    # A story with moving pictures animates its FIRST storyboard items and draws stills from the rest, so still
+    # scene_k belongs to item video_n + k. The story timeline zipped the items with the stills, which put every
+    # picture one sentence early and never showed the clips (found 2026-10-15 in a test video: the family picture
+    # played over "London, 1820s"). Each still now sits on its own item, a clip plays in its own slot through its
+    # first frame (the still renderer plays <still>.anim.mp4), and a clip that failed shows its first frame.
+    "make_video.py": [
+        ("def _build_story_plan(job: Path, total: float, photos: list) -> list:\n",
+         "def _story_media(job: Path, items: list, photos: list) -> list:\n"
+         "    \"\"\"The picture for each storyboard item, in item order (ChannelRecipe fix): clips first, then stills by\n"
+         "    their file number; the stills as given when they don't follow the scene_NN names.\"\"\"\n"
+         "    job = Path(job)\n"
+         "    video_n = len(list(job.glob(\"clip_src/vsrc_*.jpg\")))\n"
+         "    scenes = {}\n"
+         "    for p in photos:\n"
+         "        m = re.search(r\"scene_(\\d+)\\.jpg$\", str(p))\n"
+         "        if m:\n"
+         "            scenes[int(m.group(1))] = str(p)\n"
+         "    out = []\n"
+         "    for k in range(len(items)):\n"
+         "        if k < video_n:\n"
+         "            still = job / \"clip_src\" / f\"vsrc_{k:02d}.jpg\"\n"
+         "            clip = job / \"clips\" / f\"clip_{k:02d}.mp4\"\n"
+         "            anim = still.with_suffix(\".anim.mp4\")\n"
+         "            if clip.exists() and clip.stat().st_size > 20_000 and not anim.exists():\n"
+         "                try:\n"
+         "                    shutil.copyfile(clip, anim)\n"
+         "                except OSError:\n"
+         "                    pass\n"
+         "            out.append(str(still) if still.exists() else None)\n"
+         "        else:\n"
+         "            out.append(scenes.get(k - video_n))\n"
+         "    if sum(1 for x in out if x) < max(1, len([p for p in photos if p]) // 2):\n"
+         "        return list(photos)\n"
+         "    return out\n\n\n"
+         "def _build_story_plan(job: Path, total: float, photos: list) -> list:\n"),
+        ("    pairs = [(it if isinstance(it, dict) else {}, p) for it, p in zip(items, photos) if p]\n",
+         "    pairs = [(it if isinstance(it, dict) else {}, p) for it, p in zip(items, _story_media(job, items, photos)) if p]\n"),
+        ("            by_i[int(m.group(1))] = str(p)\n    if len(by_i) < max(3, len(photos) // 2):\n        return []\n"
+         "    idx = sorted(by_i)\n",
+         "            by_i[int(m.group(1))] = str(p)\n"
+         "    # ChannelRecipe fix: a story's first items are its clips, so still scene_k is item video_n + k\n"
+         "    _vn = len(list(Path(job).glob(\"clip_src/vsrc_*.jpg\")))\n"
+         "    by_i = {i + _vn: p for i, p in by_i.items() if i + _vn < len(items)}\n"
+         "    if len(by_i) < max(3, len(photos) // 2):\n        return []\n"
+         "    idx = sorted(by_i)\n"),
+    ],
     "quest_hud.py": [
         ("def _wait_machine(log=print, min_level: int = 40, min_free_gb: float = 20.0) -> None:",
          "def _wait_machine(log=print, min_level: int = 20, min_free_gb: float = 3.0) -> None:"),

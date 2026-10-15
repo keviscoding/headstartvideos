@@ -182,3 +182,12 @@ def test_a_character_who_carries_the_video_is_offered_as_the_channels_mascot():
     assert "character_image" in plan["needs"]
     assert p["pictures"]["characters"]["value"][0]["role"] == "character", "the measured profile is kept as it was"
     assert "character_image" not in cm.plan_style(p, STYLES, answers={"host": "No, a new cast for each story"})["needs"]
+
+
+def test_candid_photo_pictures_get_the_phone_camera_finish():
+    candid = profile({"generated": 0.8}, **{"pictures__polish": axis("clean"), "look__drawn": axis(0.05),
+                                           "pictures__art_style": axis("Realistic photos of an older butcher at home.")})
+    plan = cm.plan_style(candid, STYLES)
+    assert plan["overrides"]["look"]["stills"] == {"realism": "home_video"}
+    drawn = cm.plan_style(profile({"generated": 0.9}), STYLES)
+    assert "stills" not in drawn["overrides"].get("look", {}), "drawn pictures are never degraded"

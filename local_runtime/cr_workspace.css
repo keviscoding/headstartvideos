@@ -62,3 +62,6 @@ dialog{padding:0;border:1px solid #555A76;border-radius:19px;background:var(--cr
 .crw-output>.crw-share-card{margin:0 24px 24px}
 
 .crw-whatsnew-list li.crw-tagged{list-style:none;margin-left:-20px;margin-bottom:6px}.crw-tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;border-radius:20px;padding:1px 8px;margin-right:8px;vertical-align:1px}.crw-tag-new{background:#2c2742;color:#d6c9ff}.crw-tag-improved{background:#18303a;color:#8fd7e8}.crw-tag-fixed{background:#173025;color:#8fe0b1}
+
+.crw-panels-strip{display:flex;gap:6px;overflow-x:auto;margin:8px 0 2px}
+.crw-panels-strip img{height:72px;width:auto;border-radius:6px;border:1px solid var(--crw-line, #d8dce3);flex:none}

@@ -233,6 +233,12 @@ def _pictures(plan: Plan, profile: dict, base: str, base_style: dict):
     if polish == "candid":
         plan.notes.append({"for": "still_suffix", "polish_rule": "candid: an everyday phone-camera frame, natural "
                            "mixed light, unstaged framing, deep focus, mild noise; never cinematic or studio-lit"})
+        if photo and draws:
+            # words alone still come back too perfect: each photo is also made to look like a frame of a phone
+            # video (softer capture, sensor noise, phone sharpening, compression; the engine's realism step)
+            plan.set("look.stills.realism", "home_video", area="Pictures", label="Phone-camera finish",
+                     why="the references' photos look like ordinary phone pictures, not glossy AI photographs",
+                     source="watched", show="on")
     elif polish == "lo-fi":
         plan.notes.append({"for": "still_suffix", "polish_rule": "lo-fi: visibly degraded, compressed, VHS or webcam"})
     drawn = float(_v(_get(profile, "look", "drawn"), 0) or 0)
@@ -628,7 +634,7 @@ def answer(profile: dict, answers: dict) -> dict:
         import cr_style_profile
         lead = cr_style_profile.lead_character(p)
         if lead:                                     # the character who carries the video becomes the channel's mascot
-            lead["role"] = "mascot"
+            lead.update(role="mascot", promoted=True)
     if host.startswith("No"):
         chars = pics.get("characters") or {}
         chars["value"] = [c for c in chars.get("value") or [] if c.get("role") not in ("mascot", "presenter")]

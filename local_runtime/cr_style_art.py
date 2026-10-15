@@ -50,7 +50,10 @@ Return ONE JSON object:
    Never the people of the reference video's own story (they belong to that one video). Usually empty.",
  "people": "one or two sentences: how ANY person in this channel is drawn (body, head, face, proportions), so new
    characters in new stories look like they belong",
- "mascot": {"name": "a new name", "look": "drawable words", "role": "host or explainer"} or null,
+ "mascot": {"name": "a new name", "look": "drawable words", "role": "host or explainer"} or null. When a character
+   in the profile is marked promoted, the creator wants every video to keep a recurring character like them: design
+   that mascot the way they are drawn, keep their look only where it is not tied to that one story (never its costume,
+   uniform, era clothing or props), and give them one distinguishing item (a cap, a scarf, glasses),
  "video_motion": "25 to 50 words: how a picture of this style may move when it is animated (what moves, how much,
    what never changes); for cut-out styles say the figures slide as flat cut-outs",
  "script_voice": ["3 to 6 short lines for the script writer: point of view (you / I / they), tone, sentence length,
@@ -88,7 +91,7 @@ def _compact(profile: dict, mapping: dict) -> dict:
         "recognisable": profile.get("recognisable", [])[:8],
         "art_style": v("pictures", "art_style", "value"), "art_alternatives": v("pictures", "art_style", "alternatives"),
         "picture_finish": v("pictures", "polish", "value"), "picture_sources": v("pictures", "sources", "value"),
-        "characters": [{k: c.get(k) for k in ("name", "look", "role", "screen_share")}
+        "characters": [{k: c.get(k) for k in ("name", "look", "role", "screen_share", "promoted") if k in c}
                        for c in (v("pictures", "characters", "value") or [])[:5]],
         "grade": {k: v("look", "grade", k) for k in ("value", "luma", "filter")},
         "motion": v("motion", "classes", "value"), "motion_kinds": v("motion", "kinds", "value"),

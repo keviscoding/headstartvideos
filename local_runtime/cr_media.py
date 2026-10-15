@@ -566,6 +566,11 @@ def install(engine):
         note = getattr(engine, "STYLE_REF_NOTE", "") if refs else ""
         return image(note + prompt, dest, label, ref_urls=refs)
     hook("_kie_still_with_url", "images", still_with_url)
+    try:
+        import cr_panels
+        cr_panels.install(engine)
+    except ImportError:
+        pass
     # Native Kie motion and the history kit previously bypassed the hub.
     # Both must use the same cheap model and the same durable receipts.
     engine._kie_video_gen = native_motion

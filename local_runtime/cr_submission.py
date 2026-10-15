@@ -26,6 +26,17 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
     backend = payload.get("render_backend", "original")
     if backend not in {"original", "manimgx"}:
         raise ValueError("Choose the standard renderer or Fast mode.")
+    panels = payload.get("panels") or ""
+    if panels:
+        # your own comic panels (cr_panels): one set is one video
+        import cr_panels
+        from flask import jsonify
+        try:
+            cr_panels.panel_set(panels)
+        except ValueError as error:
+            return studio.app.make_response((jsonify(error=str(error)), 400))
+        if len([t for t in str(payload.get("title") or "").split("\n") if t.strip()]) > 1:
+            return studio.app.make_response((jsonify(error="Use one title for a set of panels."), 400))
     staged = []
     staged_jobs = {}
     globals_ = {**original.__globals__, "QUEUE": staged, "JOBS": staged_jobs, "_ensure_dispatcher": lambda: None}
@@ -62,6 +73,8 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
                 queued[index]["slug"] = slug
         published_jobs[spec["slug"]] = dict(staged_jobs.get(old_slug, {"state":"queued", "title":spec.get("title", payload.get("title", old_slug))}))
         spec["render_backend"] = backend
+        if panels:
+            spec["cr_panels"] = panels
         if backend == "manimgx":
             spec["manimgx_identity"] = payload.get("manimgx_identity")
     if before_publish is not None:

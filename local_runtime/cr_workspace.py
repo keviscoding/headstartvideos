@@ -125,6 +125,9 @@ def install(studio, activity, *, token, home=None):
                 app.logger.exception("Recipe preview unavailable for %s", row.get("name"))
                 source = None
             sources[row.get("name")] = source
+            info = styles.get(row.get("name")) if isinstance(styles, dict) else None
+            # a recipe that shows the creator's own comic panels instead of drawing pictures (cr_panels)
+            row["panels"] = bool(isinstance(info, dict) and isinstance(info.get("look"), dict) and info["look"].get("panels"))
             row.update(preview_available=source is not None,
                 preview_url=("/cr-workspace/preview/recipe/" + quote(row["name"], safe="") + ".jpg?v="
                              + preview_version(source)) if source else None,
@@ -190,6 +193,44 @@ def install(studio, activity, *, token, home=None):
             return protect(send_file(cr_presentation.asset(name), mimetype="image/svg+xml", conditional=False))
         except Exception as error:
             return failure(error)
+
+    def panel_error(error):
+        if isinstance(error, (ValueError, PermissionError)):
+            return protect(jsonify(error=str(error))), 403 if isinstance(error, PermissionError) else 400
+        app.logger.error("Panel request %s failed", request.path, exc_info=error)
+        return protect(jsonify(error="Your panels could not be saved. Nothing was changed.")), 503
+
+    @app.post("/cr-workspace/panels")
+    def cr_workspace_panels_upload():
+        """Your own comic panels for a panel recipe: pictures, or one .zip/.cbz of them."""
+        try:
+            local_access()
+            import cr_panels
+            files = [(f.filename or "", f.read()) for f in request.files.getlist("files")]
+            return protect(jsonify(panels=cr_panels.save(files, home / "uploads" / "panels")))
+        except Exception as error:
+            return panel_error(error)
+
+    @app.get("/cr-workspace/panels")
+    def cr_workspace_panels_recent():
+        try:
+            local_access()
+            import cr_panels
+            return protect(jsonify(panels=cr_panels.recent(home / "uploads" / "panels")))
+        except Exception as error:
+            return panel_error(error)
+
+    @app.get("/cr-workspace/panels/<set_id>/<int:number>.jpg")
+    def cr_workspace_panel(set_id, number):
+        try:
+            local_access()
+            import cr_panels
+            files = cr_panels.panel_set(set_id, home / "uploads" / "panels")["files"]
+            if not 1 <= number <= len(files):
+                raise ValueError("That panel is not in this set.")
+            return protect(send_file(files[number - 1], mimetype="image/jpeg", conditional=False))
+        except Exception as error:
+            return panel_error(error)
 
     @app.get("/cr-workspace/catalog")
     def cr_workspace_catalog():

@@ -79,9 +79,10 @@ def story_cues(job, plan, look) -> list:
     clips = len(list((Path(job) / "clip_src").glob("vsrc_*.jpg")))
     out, t, last = [], 0.0, -99.0
     for kind, path, _leak, dur in plan:
-        match = re.search(r"scene_(\d+)\.(?:jpg|png)$", str(path))
+        match = re.search(r"(scene|vsrc)_(\d+)\.(?:jpg|png)$", str(path))
         if match and t - last >= gap:
-            index = clips + int(match.group(1))
+            # a story's clips are its first items (their first frame stands in the timeline), then the stills
+            index = int(match.group(2)) + (clips if match.group(1) == "scene" else 0)
             frame = frames[index] if 0 <= index < len(frames) and isinstance(frames[index], dict) else {}
             # what the picture shows, without the channel's own style words appended to every prompt
             shown = str(frame.get("prompt") or "").replace(suffix, "")[:400].lower() if suffix else \
