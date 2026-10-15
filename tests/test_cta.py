@@ -48,7 +48,7 @@ def test_the_card_lands_on_the_words_link_on_screen(tmp_path):
     (tmp_path / "words_heard.json").write_text(json.dumps(words))
     assert cta.mention_times(tmp_path, 2, 600.0) == [200.0, 400.0]
     assert cta.mention_times(tmp_path / "none", 2, 600.0) == [240.0, 420.0], "the planned places when unsaid"
-    assert cta.mention_times(tmp_path / "none", 2, 360.0) == [252.0, 360.0 - cta.CARD_S - 4], \
+    assert cta.mention_times(tmp_path / "none", 2, 360.0) == pytest.approx([252.0, 360.0 - cta.CARD_S - 4]), \
         "an early place moves on to the closing lines, as the script was told"
 
 
