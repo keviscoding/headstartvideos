@@ -132,6 +132,10 @@ def test_a_panel_on_a_white_page_margin_fills_the_frame_without_the_margin(tmp_p
     left_edge = framed.getpixel((int(1920 * 0.5 - 1080 * 0.94 * 600 / 480 / 2) + 6, 540))
     assert left_edge[2] > 120 and left_edge[0] < 90, "the art starts where the white margin was"
     assert max(framed.getpixel((960, 540))) < 200
-    art = Image.new("RGB", (900, 600), (240, 240, 240))
+    edged = Image.new("RGB", (800, 456), "white")
+    ImageDraw.Draw(edged).rectangle((72, 0, 799, 455), fill=(30, 60, 50))
+    ImageDraw.Draw(edged).line((0, 0, 0, 455), fill=(212, 212, 212))
+    assert panels._trim(edged).size == (728, 456), "a faint line at the image's edge keeps no white strip"
+    art = Image.new("RGB", (900, 600), (120, 90, 60))
     ImageDraw.Draw(art).rectangle((0, 0, 899, 299), fill=(250, 250, 250))
-    assert panels._trim(art).size == (900, 600), "a pale picture with no margin is left whole"
+    assert panels._trim(art).size[1] >= 400, "never more than a third of a side"

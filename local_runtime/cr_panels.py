@@ -163,19 +163,26 @@ def recent(root: Path = None, limit: int = 12) -> list:
     return sorted(rows, key=lambda r: -float(r.get("created") or 0))[:limit]
 
 
-def _trim(img, tolerance: int = 24):
-    """The panel without the page's plain white or black margin around it (only rows and columns that are all
-    margin colour go, so the art itself is never cut)."""
-    from PIL import Image, ImageChops
-    w, h = img.size
-    for colour in dict.fromkeys(img.getpixel(c) for c in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1))):
-        if not (min(colour) >= 225 or max(colour) <= 30):
-            continue
-        diff = ImageChops.difference(img, Image.new("RGB", img.size, colour)).convert("L")
-        box = diff.point(lambda v: 255 if v > tolerance else 0).getbbox()
-        if box and (box[2] - box[0]) * (box[3] - box[1]) >= 0.4 * w * h:
-            img, (w, h) = img.crop(box), (box[2] - box[0], box[3] - box[1])
-    return img
+def _trim(img):
+    """The panel without the page's plain margin around it: from each side inward, rows and columns that are almost
+    all light (or all dark) go, so a faint line at the image's edge doesn't keep a white strip; never more than a third
+    of a side, so the art itself is never cut away."""
+    import numpy as np
+    a = np.asarray(img.convert("L"), dtype=np.uint8)
+    h, w = a.shape
+
+    def margin(line) -> bool:
+        return bool((line >= 200).mean() >= 0.97 or (line <= 40).mean() >= 0.97)
+    top, bottom, left, right = 0, h, 0, w
+    while top < h // 3 and margin(a[top]):
+        top += 1
+    while bottom > h - h // 3 and margin(a[bottom - 1]):
+        bottom -= 1
+    while left < w // 3 and margin(a[top:bottom, left]):
+        left += 1
+    while right > w - w // 3 and margin(a[top:bottom, right - 1]):
+        right -= 1
+    return img if (left, top, right, bottom) == (0, 0, w, h) else img.crop((left, top, right, bottom))
 
 
 def frame(src: Path, dest: Path) -> Path:
