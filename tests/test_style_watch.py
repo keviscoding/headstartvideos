@@ -189,3 +189,60 @@ def test_a_refusal_is_not_retried(env, monkeypatch):
     with pytest.raises(RuntimeError, match="400"):
         sw.watch_once("dN_RMA8LVi0", 0, 60, post=refuse)
     assert calls == []
+
+
+class Upload:
+    """Gemini's file service and model, as the uploaded-video watch uses them."""
+    def __init__(self):
+        self.calls = []
+
+    def post(self, url, headers=None, json=None, data=None, timeout=None):
+        self.calls.append({"url": url, "headers": headers or {}, "json": json, "data": data})
+        if url == sw.UPLOAD_BASE:
+            return SimpleNamespace(status_code=200, headers={"X-Goog-Upload-URL": "https://upload.example/session"},
+                                   json=lambda: {})
+        if url == "https://upload.example/session":
+            return SimpleNamespace(status_code=200, headers={}, json=lambda: {
+                "file": {"name": "files/abc", "uri": "https://files.example/abc", "state": "PROCESSING"}})
+        return SimpleNamespace(status_code=200, headers={}, json=lambda: {
+            "candidates": [{"content": {"parts": [{"text": __import__("json").dumps(LOG)}]}}],
+            "usageMetadata": {"promptTokenCount": 9000, "candidatesTokenCount": 800}})
+
+    def get(self, url, headers=None, timeout=None):
+        self.calls.append({"url": url, "headers": headers or {}})
+        return SimpleNamespace(status_code=200, json=lambda: {"name": "files/abc", "uri": "https://files.example/abc",
+                                                              "state": "ACTIVE"})
+
+
+def test_an_admin_has_a_test_video_watched_with_the_reference_instructions(env, monkeypatch):
+    import base64
+    up = Upload()
+    monkeypatch.setattr(sw.requests, "post", up.post)
+    monkeypatch.setattr(sw.requests, "get", up.get)
+    monkeypatch.setattr(sw, "_sleep", lambda s: None)
+    env.users["owner"] = {"id": 1, "email": "owner@example.com", "plan": "studio_max"}
+    body = {"data_b64": base64.b64encode(b"a light mp4 copy").decode(), "mime": "video/mp4", "start": 0, "end": 75}
+    started = env.client.post("/api/studio/style/watch-upload", json=body, headers={"x-test-user": "owner"}).json()
+    assert started["status"] == "running" and started["video_id"].startswith("file:")
+    env.pool.drain()
+    done = env.client.get(f"/api/studio/style/watch/{started['job']}", headers={"x-test-user": "owner"}).json()
+    assert done["status"] == "done" and done["log"]["recognisable"] == ["stick men"]
+    assert up.calls[0]["headers"]["X-Goog-Upload-Header-Content-Length"] == str(len(b"a light mp4 copy"))
+    assert up.calls[1]["data"] == b"a light mp4 copy" and up.calls[2]["url"].endswith("/files/abc")
+    watched = up.calls[3]["json"]["contents"][0]["parts"]
+    assert watched[0]["fileData"] == {"fileUri": "https://files.example/abc", "mimeType": "video/mp4"}
+    assert watched[1]["text"] == sw.prompt(0, 75), "the very instructions the references were watched with"
+    again = env.client.post("/api/studio/style/watch-upload", json=body, headers={"x-test-user": "owner"}).json()
+    assert again["job"] == started["job"] and len(up.calls) == 4, "the same copy and window is watched once"
+
+
+def test_uploaded_videos_are_for_admins_only_and_bounded(env):
+    import base64
+    body = {"data_b64": base64.b64encode(b"x").decode(), "start": 0, "end": 60}
+    assert env.client.post("/api/studio/style/watch-upload", json=body, headers={"x-test-user": "max"}).status_code == 403
+    env.users["owner"] = {"id": 1, "email": "owner@example.com", "plan": "studio_max"}
+    bad = env.client.post("/api/studio/style/watch-upload", json={**body, "mime": "text/html"},
+                          headers={"x-test-user": "owner"})
+    assert bad.status_code == 400
+    long = env.client.post("/api/studio/style/watch-upload", json={**body, "end": 900}, headers={"x-test-user": "owner"})
+    assert long.status_code == 400

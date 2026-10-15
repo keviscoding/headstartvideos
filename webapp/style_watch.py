@@ -16,9 +16,14 @@ Every call records its tokens and cost.
 
 A watch takes longer than the hosting's 100 s request limit, so it runs as a job:
 POST starts it (or returns the cached log), GET polls it.
+
+ChannelRecipe's admins can also have a video Studio made watched (watch-upload): a light copy goes to Gemini's file
+service and is logged with the very same instructions, so a test video is compared with its references shot by shot.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
 import re
@@ -40,6 +45,9 @@ MAX_WINDOW_S = 200
 BUSY_WAITS_S = (15, 45, 90)                     # retries when Gemini is busy (the job has time; Studio is polling)
 STALE_S = 900
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
+UPLOAD_BASE = "https://generativelanguage.googleapis.com/upload/v1beta/files"
+MAX_UPLOAD_BYTES = 30 * 1024 * 1024             # a light copy of a test video (360p), not a finished master
+UPLOAD_MIMES = ("video/mp4", "video/webm", "video/quicktime")
 # A day's watches per account. A study watches up to three references: the opening, the middle, and a call to action.
 DAILY_WATCHES = {"daily": 20, "studio_pro": 40, "studio_max": 60}
 _ready = set()
@@ -217,11 +225,41 @@ def _parse(text: str) -> dict:
     return value
 
 
-def watch_once(video_id: str, start: int, end: int, *, post=None) -> tuple[dict, int, int]:
-    """One Gemini watch of a YouTube window: (log, input tokens, output tokens)."""
+def upload_file(data: bytes, mime: str, *, post=None, get=None) -> str:
+    """A video on Gemini's file service (kept there for two days), ready to watch: its URI."""
+    post, get = post or requests.post, get or requests.get
+    head = {"x-goog-api-key": _key()}
+    res = post(UPLOAD_BASE, headers={**head, "X-Goog-Upload-Protocol": "resumable", "X-Goog-Upload-Command": "start",
+                                     "X-Goog-Upload-Header-Content-Length": str(len(data)),
+                                     "X-Goog-Upload-Header-Content-Type": mime},
+               json={"file": {"display_name": "studio-review"}}, timeout=(15, 60))
+    url = (getattr(res, "headers", None) or {}).get("X-Goog-Upload-URL") or \
+        (getattr(res, "headers", None) or {}).get("x-goog-upload-url")
+    if res.status_code != 200 or not url:
+        raise RuntimeError(f"Gemini upload HTTP {res.status_code}")
+    res = post(url, headers={**head, "X-Goog-Upload-Offset": "0", "X-Goog-Upload-Command": "upload, finalize"},
+               data=data, timeout=(15, 300))
+    if res.status_code != 200:
+        raise RuntimeError(f"Gemini upload HTTP {res.status_code}")
+    file = res.json().get("file") or {}
+    for _ in range(100):
+        if file.get("state") == "ACTIVE" and file.get("uri"):
+            return file["uri"]
+        if file.get("state") == "FAILED" or not file.get("name"):
+            raise RuntimeError("Gemini could not read this video")
+        _sleep(3)
+        file = get(f"{GEMINI_BASE}/{file['name']}", headers=head, timeout=(15, 60)).json()
+    raise RuntimeError("Gemini took too long to read this video")
+
+
+def watch_once(video_id: str, start: int, end: int, *, post=None, file_uri: str = "",
+               mime: str = "video/mp4") -> tuple[dict, int, int]:
+    """One Gemini watch of a YouTube window, or of an uploaded video's (file_uri): (log, input tokens, output tokens)."""
     post = post or requests.post
+    source = ({"fileUri": file_uri, "mimeType": mime} if file_uri else
+              {"fileUri": f"https://www.youtube.com/watch?v={video_id}", "mimeType": "video/*"})
     body = {"contents": [{"parts": [
-                {"fileData": {"fileUri": f"https://www.youtube.com/watch?v={video_id}", "mimeType": "video/*"},
+                {"fileData": source,
                  "videoMetadata": {"startOffset": f"{start}s", "endOffset": f"{end}s", "fps": 2}},
                 {"text": prompt(start, end)}]}],
             "generationConfig": {"responseMimeType": "application/json",
@@ -250,12 +288,13 @@ def watch_once(video_id: str, start: int, end: int, *, post=None) -> tuple[dict,
     return _parse(text), tokens_in, tokens_out
 
 
-def _run(job_id: str):
+def _run(job_id: str, data: bytes = b"", mime: str = "video/mp4"):
     row = _row(job_id)
     if not row or row["status"] != "running":
         return
     try:
-        log, tin, tout = watch_once(row["video_id"], row["start_s"], row["end_s"])
+        uri = upload_file(data, mime) if data else ""
+        log, tin, tout = watch_once(row["video_id"], row["start_s"], row["end_s"], file_uri=uri, mime=mime)
         values = ("done", json.dumps(log), "", tin, tout, cost(tin, tout))
     except Exception as exc:                                    # noqa: BLE001 - recorded on the job
         print(f"[style-watch] {row['video_id']} {row['start_s']}-{row['end_s']}: {exc}", flush=True)
@@ -311,6 +350,37 @@ def start(user: dict, video_id: str, start_s: float, end_s: float, *, submit=Non
     return public(_row(job), is_admin(user))
 
 
+def start_upload(user: dict, data: bytes, mime: str, start_s: float, end_s: float, *, submit=None) -> dict:
+    """An admin's video (a Studio test render) watched with the reference instructions; the same file and window is
+    watched once. Returns the job, as start() does."""
+    initialize()
+    if not is_admin(user):
+        raise HTTPException(403, "Watching an uploaded video is for ChannelRecipe's team.")
+    if mime not in UPLOAD_MIMES or not data or len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(400, f"Send an MP4, WebM or MOV copy under {MAX_UPLOAD_BYTES // (1024 * 1024)} MB.")
+    a, b = int(max(0, start_s)), int(end_s)
+    if not 5 <= b - a <= MAX_WINDOW_S:
+        raise HTTPException(400, f"Watch between 5 and {MAX_WINDOW_S} seconds at a time.")
+    if not _key():
+        raise HTTPException(503, "Style watching isn't available right now.")
+    video_id, now, name = "file:" + hashlib.sha256(data).hexdigest()[:20], time.time(), model()
+    with db._conn() as conn:
+        same = conn.execute(db._q("""SELECT * FROM style_watch_jobs WHERE video_id=? AND start_s=? AND end_s=?
+            AND prompt_version=? AND model=? AND (status='done' OR (status='running' AND updated_at>?))
+            ORDER BY status='done' DESC, created_at DESC LIMIT 1"""),
+            (video_id, a, b, PROMPT_VERSION, name, now - STALE_S)).fetchone()
+        if same:
+            return public(dict(same), True)
+        if _spent_today(conn) >= _env_float("STYLE_WATCH_DAILY_USD", 15.0):
+            raise HTTPException(503, "Style watching is busy today.")
+        job = "sw_" + secrets.token_hex(10)
+        conn.execute(db._q("""INSERT INTO style_watch_jobs (id,user_id,video_id,start_s,end_s,prompt_version,model,
+            status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'running',?,?)"""),
+            (job, user["id"], video_id, a, b, PROMPT_VERSION, name, now, now))
+    (submit or _pool.submit)(_run, job, data, mime)
+    return public(_row(job), True)
+
+
 def get(user: dict, job_id: str) -> dict:
     initialize()
     row = _row(job_id) if isinstance(job_id, str) and job_id.startswith("sw_") else None
@@ -332,6 +402,13 @@ class WatchRequest(BaseModel):
     end: float
 
 
+class UploadWatchRequest(BaseModel):
+    data_b64: str
+    mime: str = "video/mp4"
+    start: float = 0
+    end: float
+
+
 def make_router(access) -> APIRouter:
     """`access` is the Studio dependency (a Studio plan, by session or Studio key)."""
     router = APIRouter(prefix="/api/studio/style", tags=["ChannelRecipe Studio"])
@@ -339,6 +416,18 @@ def make_router(access) -> APIRouter:
     @router.post("/watch")
     def post_watch(req: WatchRequest, user=Depends(access)):
         return start(user, req.video_id, req.start, req.end)
+
+    @router.post("/watch-upload")
+    def post_watch_upload(req: UploadWatchRequest, user=Depends(access)):
+        if not is_admin(user):
+            raise HTTPException(403, "Watching an uploaded video is for ChannelRecipe's team.")
+        if len(req.data_b64) > MAX_UPLOAD_BYTES * 4 // 3 + 8:
+            raise HTTPException(400, f"Send a copy under {MAX_UPLOAD_BYTES // (1024 * 1024)} MB.")
+        try:
+            data = base64.b64decode(req.data_b64, validate=True)
+        except ValueError:
+            raise HTTPException(400, "The video copy could not be read.") from None
+        return start_upload(user, data, req.mime, req.start, req.end)
 
     @router.get("/watch/{job_id}")
     def get_watch(job_id: str, user=Depends(access)):
