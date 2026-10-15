@@ -405,17 +405,16 @@ def _look(plan: Plan, profile: dict):
              why=f"{value} picture (brightness {round(luma) if luma is not None else '?'}/255)"
                  + (f", {grade['filter'][0]}" if grade.get("filter") else ""), source=",".join(grade.get("from", [])),
              confidence=grade.get("confidence"))
-    finish = {}
+    # always written: a base recipe's own film finish (a soft vignette, a film weave) darkens and roughens a channel
+    # whose references are clean, such as flat white drawings
     measured_grain = (look.get("grain") or {}).get("measured") or 0
     drawn = float(_v(look.get("drawn"), 0) or 0) >= 0.4
-    if grain == "heavy" or (grain == "light" and measured_grain >= 1.0 and not drawn):
-        finish["weave"] = True
-    if _has_words(filters, "vignette"):
-        finish["vignette"] = "soft"
-    if finish:
-        plan.set("look.fx.finish", finish, area="Look", label="Film finish",
-                 why=", ".join(k for k in ("grain" if finish.get("weave") else "", "vignette" if finish.get("vignette")
-                                         else "") if k), source="watched")
+    finish = {"weave": grain == "heavy" or (grain == "light" and measured_grain >= 1.0 and not drawn),
+              "vignette": "soft" if _has_words(filters, "vignette") else "none"}
+    seen = [k for k in ("grain" if finish["weave"] else "", "vignette" if finish["vignette"] != "none" else "") if k]
+    plan.set("look.fx.finish", finish, area="Look", label="Film finish", show=", ".join(seen) or "clean",
+             why=("the references show " + " and ".join(seen)) if seen else "the references have no grain or vignette",
+             source="watched")
     palette = [c["hex"] for c in _v(look.get("palette"), []) or [] if isinstance(c, dict) and c.get("hex")]
     accents = [h for h in palette if _saturation(h) >= 0.35 and _value(h) >= 0.35][:3]
     if accents:
