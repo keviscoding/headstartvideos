@@ -163,3 +163,29 @@ def test_the_prompt_names_the_window_and_the_fixed_vocabularies():
     assert "between 1:05 and 3:05" in text
     assert "stick_figure" in text and "cutout_move" in text and "[SOURCES]" not in text
     json.dumps(text)
+
+
+def test_a_busy_gemini_is_asked_again_before_the_watch_fails(env, monkeypatch):
+    answers = [503, 503, 200]
+    waits = []
+    monkeypatch.setattr(sw, "_sleep", waits.append)
+
+    def flaky(url, headers=None, json=None, timeout=None):
+        code = answers.pop(0)
+        body = {"candidates": [{"content": {"parts": [{"text": __import__("json").dumps(LOG)}]}}],
+                "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 5}} if code == 200 else \
+            {"error": {"message": "This model is currently experiencing high demand."}}
+        return SimpleNamespace(status_code=code, json=lambda: body)
+    log, tin, tout = sw.watch_once("dN_RMA8LVi0", 0, 60, post=flaky)
+    assert log == LOG and waits == [15, 45]
+
+
+def test_a_refusal_is_not_retried(env, monkeypatch):
+    calls = []
+    monkeypatch.setattr(sw, "_sleep", lambda s: calls.append(s))
+
+    def refuse(url, headers=None, json=None, timeout=None):
+        return SimpleNamespace(status_code=400, json=lambda: {"error": {"message": "Video unavailable"}})
+    with pytest.raises(RuntimeError, match="400"):
+        sw.watch_once("dN_RMA8LVi0", 0, 60, post=refuse)
+    assert calls == []
