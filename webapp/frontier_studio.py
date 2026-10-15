@@ -1077,10 +1077,8 @@ class _BrandedWorkflowRoute(APIRoute):
         return branded
 
 
-def make_router(session_user, *, prefix="/api/frontier"):
-    options = {"route_class": _BrandedWorkflowRoute} if prefix == "/api/studio" else {}
-    router = APIRouter(prefix=prefix, tags=["ChannelRecipe Studio"], **options)
-
+def studio_access(session_user):
+    """FastAPI dependency: a Studio plan, by web session or by the Studio's account key."""
     def access(request: Request):
         authorization = request.headers.get("authorization", "")
         if authorization:
@@ -1090,6 +1088,13 @@ def make_router(session_user, *, prefix="/api/frontier"):
         else:
             user = session_user(request)
         return require_studio_user(user)
+    return access
+
+
+def make_router(session_user, *, prefix="/api/frontier"):
+    options = {"route_class": _BrandedWorkflowRoute} if prefix == "/api/studio" else {}
+    router = APIRouter(prefix=prefix, tags=["ChannelRecipe Studio"], **options)
+    access = studio_access(session_user)
 
     @router.get("/status")
     def get_status(user=Depends(access)):

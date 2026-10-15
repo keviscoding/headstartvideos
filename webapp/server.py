@@ -543,8 +543,10 @@ def require_admin(request: Request) -> dict:
 # and runner Bearer keys on every request. One-click connect comes first so its
 # /api/studio/connect/* paths are never shadowed.
 from webapp import studio_connect as _studio_connect
-from webapp.frontier_studio import make_router as _frontier_router
+from webapp import style_watch as _style_watch
+from webapp.frontier_studio import make_router as _frontier_router, studio_access as _studio_access
 app.include_router(_studio_connect.make_router(_current_user))
+app.include_router(_style_watch.make_router(_studio_access(_current_user)))
 app.include_router(_frontier_router(_current_user))
 app.include_router(_frontier_router(_current_user, prefix="/api/studio"))
 
