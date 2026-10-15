@@ -328,3 +328,27 @@ def test_ready_made_recipes_ship_as_built_in_styles_with_only_their_own_pictures
     with pytest.raises(ValueError, match="no study records"):
         package.private_recipe_resources(tmp_path)
     assert package.private_recipe_resources(tmp_path / "elsewhere") == []
+
+
+def test_cut_out_movement_runs_on_a_kie_only_setup():
+    photofx = (b'import os\n'
+               b'def depth_slots(cfg, every):\n'
+               b'    if not cfg["depth"] or every <= 0 or not os.environ.get("WAVESPEED_API_KEY"):\n'
+               b'        return set()\n'
+               b'    return {1}\n'
+               b'def scenes():\n'
+               b'    cuts = bool((os.environ.get("WAVESPEED_API_KEY") or "").strip())\n'
+               b'    return cuts\n')
+    patched = package.patch_engine("photofx.py", photofx).decode()
+    ns = {}
+    exec(compile(patched, "photofx.py", "exec"), ns)
+    import os
+    saved = {k: os.environ.pop(k, None) for k in ("WAVESPEED_API_KEY", "KIE_API_KEY")}
+    try:
+        os.environ["KIE_API_KEY"] = "kie-test"
+        assert ns["depth_slots"]({"depth": True}, 3) == {1} and ns["scenes"]() is True
+    finally:
+        os.environ.pop("KIE_API_KEY", None)
+        for k, v in saved.items():
+            if v is not None:
+                os.environ[k] = v

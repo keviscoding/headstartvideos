@@ -242,6 +242,14 @@ ENGINE_PATCHES = {
          '        mode = "alternate" if "alternate" in parts[2:] else "in"\n'
          '    if mode != "alternate":\n'),
     ],
+    # The background remover (removebg.py) works on kie.ai alone, but cut-out movement, photo spotlights and
+    # objects were switched off without a WaveSpeed key, so drawn styles got no figure moves on a Kie-only setup.
+    "photofx.py": [
+        ('    if not cfg["depth"] or every <= 0 or not os.environ.get("WAVESPEED_API_KEY"):\n',
+         '    if not cfg["depth"] or every <= 0 or not (os.environ.get("WAVESPEED_API_KEY") or os.environ.get("KIE_API_KEY")):\n'),
+        ('    cuts = bool((os.environ.get("WAVESPEED_API_KEY") or "").strip())\n',
+         '    cuts = bool((os.environ.get("WAVESPEED_API_KEY") or "").strip() or (os.environ.get("KIE_API_KEY") or "").strip())\n'),
+    ],
     "quest_hud.py": [
         ("def _wait_machine(log=print, min_level: int = 40, min_free_gb: float = 20.0) -> None:",
          "def _wait_machine(log=print, min_level: int = 20, min_free_gb: float = 3.0) -> None:"),
