@@ -165,16 +165,110 @@ The hook is only the first beat. The whole script runs on the same three ingredi
 
 ---
 
-## The niche list: channels blowing up this week
+## The niche list: proven niches you can break into today
 
-| Channel | What they make | Breakout video | Views |
-|---|---|---|---|
-| Reconstructed (@Reconstructednews) | 3D cockpit and incident reconstructions | What Really Happened Inside the flydubai Cockpit | 3.2M |
-| Neurox-EK (@Neurox-EK) | Minute-by-minute flight reconstructions | What Really Happened Inside the Four 9/11 Flights | 169K |
-| Scary Interesting | Investigative disaster stories | The Most Dangerous Mountain You've Never Heard Of | 911K |
-| | | | |
-| | | | |
-| | | | |
+The goal isn't a million-dollar channel. It's a steady $3,000 to $5,000 a month from a niche that has worked for years, with over a billion views between its channels. Every style below is one you can clone in ChannelRecipe today.
+
+Views are for each channel's breakout video. Run Rule 1 on each channel's top three videos.
+
+### 1. Footage documentary
+
+- [LEMMiNO](https://www.youtube.com/watch?v=I2O7blSSzpI), 42M
+- [SunnyV2](https://www.youtube.com/watch?v=nFWDteOZLFM), 10M
+- [Aperture](https://www.youtube.com/watch?v=IqXpzcfdtn4), 3.2M
+- [Newsthink](https://www.youtube.com/watch?v=Y1oahLVhlpU), 1.5M
+
+### 2. 3D reconstruction
+
+- [Fern](https://www.youtube.com/watch?v=wLFY_Zu_O08), 15M
+- [Neurox](https://www.youtube.com/watch?v=jr2qm1C8DHQ), 168K, rising
+- [Plano](https://www.youtube.com/watch?v=xXH3JZCsAHo), 112K, rising
+- [3D Crash](https://www.youtube.com/watch?v=SStzg9hh0cI), 85K
+
+### 3. Finance and charts
+
+- [The Swedish Investor](https://www.youtube.com/watch?v=5Vxjyz9DZ6k), 5.3M
+- [Economics Explained](https://www.youtube.com/watch?v=F_VUBpALcVE), 3.6M
+- [How Money Works](https://www.youtube.com/watch?v=QmWyQ-BCD8E), 3.0M
+- [PolyMatter](https://www.youtube.com/watch?v=d7SVsqg4Jzk), 1.5M
+
+### 4. True crime (all rising channels)
+
+- [Bodycam Verdicts](https://www.youtube.com/watch?v=NrTaqT_PgmI), 745K
+- [DOCS187s](https://www.youtube.com/watch?v=hPkSuPn12PY), 445K
+- [Law Decoded](https://www.youtube.com/watch?v=5eYQQtuK6Go), 220K
+- [Cold Room Interrogations](https://www.youtube.com/watch?v=hyLxrj3m-68), 78K
+
+### 5. AI avatar presenter
+
+- [Frank Miller Cuts](https://www.youtube.com/watch?v=wR1l5k8CKgg), 491K
+- [Wade Cooper Pours](https://www.youtube.com/watch?v=IxBYiI5j-MI), 190K
+- [Markus Stein](https://www.youtube.com/watch?v=GxzDTocI3DM), 141K, German
+- [Aussie Trucker Life](https://www.youtube.com/watch?v=3dXr3IC3XUQ), 128K
+
+### 6. Anime stories
+
+- [Tobs Manhwa](https://www.youtube.com/watch?v=t8JEQXEAKSs), 865K
+- [AniTiger](https://www.youtube.com/watch?v=x0S1o25N8vU), 563K
+- [Amagi](https://www.youtube.com/watch?v=loDprUgqTYs), 521K, "what if" style
+
+### 7. Kinetic text and motion essay
+
+- [Sisyphus 55](https://www.youtube.com/watch?v=sSo2b4y5nnA), 2.2M
+- [Academy of Ideas](https://www.youtube.com/watch?v=sNg5FXt_DDM), 786K
+
+### 8. Stick figures on detailed backgrounds
+
+- [StickTory](https://www.youtube.com/watch?v=k8YGIx-HWkw), 1.0M
+- [Stickfigurist](https://www.youtube.com/watch?v=dN_RMA8LVi0), 100K
+
+### 9. 2D cartoon history
+
+- [Sam O'Nella Academy](https://www.youtube.com/watch?v=0zMSMJZc9EA), 23M
+- [Serious History](https://www.youtube.com/watch?v=0fA_SpTVBnE), 2.7M
+- [History Matters](https://www.youtube.com/watch?v=QdmJsqDceV4), 2.4M
+- [Simple History](https://www.youtube.com/watch?v=d3tXkJkgbQw), 1.9M
+
+### 10. Geopolitics maps
+
+- [Wendover Productions](https://www.youtube.com/watch?v=yIZRffLA294), 3.9M
+- [Caspian Report](https://www.youtube.com/watch?v=rgCrnyf5JEI), 3.2M
+- [Kings and Generals](https://www.youtube.com/watch?v=5ij0tDYhIhg), 929K
+
+### 11. Painting and art-led history
+
+- [Fall of Civilizations](https://www.youtube.com/watch?v=d2lJUOv0hLA), 40M
+- [Epic History](https://www.youtube.com/watch?v=2Ih1ffiuwj0), 3.7M
+- [Sleepless Historian](https://www.youtube.com/watch?v=4mMTjYJ3zd4), 363K
+- [History Calling](https://www.youtube.com/watch?v=4lz_G9jj9Hg), 334K
+
+### 12. Hidden-billionaire AI mini-movie
+
+- [Life Turns](https://www.youtube.com/watch?v=NW6vsvGOXoc), 549K
+- [Bitter Echoes](https://www.youtube.com/watch?v=vqw9sSGtrdU), 280K
+- [Bitter Whispers](https://www.youtube.com/watch?v=uST5eNc-4YM), 196K
+- [Bike Heart Stories](https://www.youtube.com/watch?v=3BNIxqdWzTc), 188K
+
+### 13. Dark psychology and stoic essay
+
+- [RF Motivational Vibes](https://www.youtube.com/watch?v=VCzK1x39iQM), 841K
+- [Philosophies for Life](https://www.youtube.com/watch?v=m4Nrs0fSF-4), 177K
+
+### 14. Rise and fall of companies
+
+- [Modern MBA](https://www.youtube.com/watch?v=Ha2oNXDZuSg), 2.2M
+- [Bagholder Association](https://www.youtube.com/watch?v=3v5rU97gyoc), 1.1M
+- [Old American Empires](https://www.youtube.com/watch?v=XSzEWQhLhGM), 431K
+- [Everything Fender](https://www.youtube.com/watch?v=8JQSOHnR3Zk), 296K
+
+### 15. Over-60 AI-host tips
+
+- [Garrett Pruitt Trucker](https://www.youtube.com/watch?v=tLrx_EkSnus), 298K
+- [Cruiser Pro](https://www.youtube.com/watch?v=bS4AytvFgEM), 156K
+- [Susan Parker Travel](https://www.youtube.com/watch?v=oj1kx4veIL4), 83K
+- [Logan Murry](https://www.youtube.com/watch?v=CR9S5VInGz0), 78K
+
+**Clone any of these styles in ChannelRecipe today.** Paste three of a channel's videos and Studio learns its look, pacing, music and voice as your own recipe.
 
 ---
 

@@ -68,3 +68,5 @@ def test_the_3d_harness_page_and_its_downloads_are_public():
         assert got.status_code == 200 and len(got.content) > 5000, link
     assert client.get("/static/harness/3D-Documentary-Harness.pdf").content.startswith(b"%PDF")
     assert "discord.gg" not in page.text
+    assert page.text.count('class="ncard"') == 15 and "Proven niches you can break into today" in page.text
+    assert "LEMMiNO" in client.get("/static/harness/3D-Documentary-Harness.md").text
