@@ -1,5 +1,14 @@
 [
   {
+    "build": 59,
+    "date": "2026-10-15",
+    "title": "Steadier writing with API accounts",
+    "items": [
+      "Fixed: videos using an API account could lose parts of their research with \"The brain is busy\", \"could not answer\" or \"This request stopped\". Studio now queues its requests and waits patiently, and a request is never paid for twice.",
+      "When your AI account is rate limited, Studio waits and tries again instead of stopping."
+    ]
+  },
+  {
     "build": 58,
     "date": "2026-10-14",
     "title": "Every option for learned styles",

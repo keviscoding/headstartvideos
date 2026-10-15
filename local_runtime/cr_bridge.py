@@ -110,7 +110,25 @@ def save_settings(data):
     tmp.replace(SETTINGS)
 
 
+# Model requests from this computer: a few at a time, queued here rather than
+# turned away by the server or the creator's provider.
+BRAIN_AT_ONCE = 3
+BRAIN_PATIENCE_S = 900
+_brain_slots = threading.BoundedSemaphore(BRAIN_AT_ONCE)
+# What the hosting gateway sends when it cuts a long request (not ChannelRecipe's answer).
+GATEWAY_CUT = {502, 503, 504, 520, 521, 522, 523, 524}
+
+
 def call(path, payload=None, settings=None):
+    if path == "brain":
+        with _brain_slots:
+            return _call(path, payload, settings, patient=True)
+    return _call(path, payload, settings)
+
+
+def _call(path, payload=None, settings=None, *, patient=False, sleep=None, clock=None):
+    """Brain requests are idempotent by request ID: sending one again collects the same
+    answer (the server never starts a second paid request), so they wait patiently."""
     cfg = settings if settings is not None else load_settings()
     base = cfg.get("url", "https://channelrecipe.com").rstrip("/")
     parsed = urlsplit(base)
@@ -123,24 +141,39 @@ def call(path, payload=None, settings=None):
         import cr_mcp
     except ImportError:
         from . import cr_mcp
-    for attempt in range(4):
+    sleep, clock = sleep or time.sleep, clock or time.monotonic
+    deadline = clock() + BRAIN_PATIENCE_S
+    attempt = 0
+    while True:
+        attempt += 1
         try:
             res = cr_mcp.request_with_connect_retry(lambda: requests.request(
                 "POST" if payload is not None else "GET", base + "/api/studio/" + path,
                 headers=headers, json=payload, timeout=(15, 650 if path == "brain" else 220)))
         except requests.RequestException:
+            if patient and clock() < deadline:
+                sleep(10)  # the connection dropped; the server keeps the request
+                continue
             raise RuntimeError("Could not reach ChannelRecipe. Your work is saved; check your connection.")
-        if res.status_code == 429 and attempt < 3:
-            time.sleep(min(20, int(res.headers.get("Retry-After", "10"))))
+        reply_headers = getattr(res, "headers", None) or {}
+        wait = int(reply_headers.get("Retry-After", "10") or 10)
+        if res.status_code == 429 and (attempt < 4 or (patient and clock() < deadline)):
+            sleep(min(60 if patient else 20, max(1, wait)))
+            continue
+        if (patient and res.status_code == 409 and reply_headers.get("X-CR-Request-State") == "running"
+                and clock() < deadline):
+            sleep(min(30, max(1, wait)))
             continue
         try:
             data = res.json()
         except ValueError:
+            if patient and res.status_code in GATEWAY_CUT and clock() < deadline:
+                sleep(10)  # cut at the gateway's time limit while the server keeps working
+                continue
             raise RuntimeError("ChannelRecipe could not answer. Try again after checking your connection.")
         if res.status_code != 200:
             raise RuntimeError(str(data.get("detail", "ChannelRecipe could not complete this step.")))
         return workflow_view(data)
-    raise RuntimeError("The brain is busy. Wait a moment and resume your video.")
 
 
 def begin_project(title, style, resume_id=None, *, proof=None, job_spec=None, purpose="video"):

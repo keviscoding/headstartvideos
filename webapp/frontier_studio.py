@@ -30,16 +30,43 @@ from webapp import plans
 from cryptography.fernet import Fernet, InvalidToken
 from webapp import frontier_providers as providers
 
-VERSION = "5.3-admin.58"
+VERSION = "5.3-admin.59"
 CATALOG = Path(__file__).resolve().parent / "frontier" / "catalog.json"
-RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.58.zip"
+RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.59.zip"
 WORKFLOW_VERSION = "frontier-5.3-claudecode.1"
 BRANDED_WORKFLOW_VERSION = "channelrecipe-5.3-claudecode.1"
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 NATIVE_STAGE_LIMIT = 2
 DOWNLOAD_LINK_SECONDS = 600
 GEMINI_MODEL = "gemini-3.8-flash"
-_slots = threading.BoundedSemaphore(2)
+# Model requests in flight: fair per person, bounded for the server. Each one
+# waits on its provider, so a few at a time per creator is plenty.
+BRAIN_PER_USER = 3
+BRAIN_TOTAL = 12
+_brain_lock = threading.Lock()
+_brain_active: dict = {}
+# DigitalOcean cuts a request after 100 s. A creator's Studio asks again for a
+# request still being written; the server waits this long for it each time.
+RUNNING_WAIT_S = 75
+# A request "running" longer than any answer can take was cut off (e.g. a deploy).
+RUNNING_STALE_S = 900
+
+
+def _take_slot(user_id) -> bool:
+    with _brain_lock:
+        if sum(_brain_active.values()) >= BRAIN_TOTAL or _brain_active.get(user_id, 0) >= BRAIN_PER_USER:
+            return False
+        _brain_active[user_id] = _brain_active.get(user_id, 0) + 1
+        return True
+
+
+def _give_slot(user_id):
+    with _brain_lock:
+        left = _brain_active.get(user_id, 0) - 1
+        if left > 0:
+            _brain_active[user_id] = left
+        else:
+            _brain_active.pop(user_id, None)
 _schema_lock = threading.Lock()
 _schema_ready = set()
 
@@ -151,7 +178,8 @@ def initialize():
                 status TEXT NOT NULL, result_json TEXT NOT NULL DEFAULT '',
                 created_at DOUBLE PRECISION NOT NULL)""")
             additions = {"attempts": "INTEGER NOT NULL DEFAULT 1", "error_json": "TEXT NOT NULL DEFAULT ''",
-                         "context_json": "TEXT NOT NULL DEFAULT ''"}
+                         "context_json": "TEXT NOT NULL DEFAULT ''",
+                         "started_at": "DOUBLE PRECISION NOT NULL DEFAULT 0"}
             columns = set() if db.IS_PG else {r["name"] for r in conn.execute("PRAGMA table_info(frontier_requests)").fetchall()}
             for name, definition in additions.items():
                 if db.IS_PG:
@@ -440,6 +468,44 @@ def _record_failure(req, attempt, error):
                 (time.time(), failure.get("input_tokens", 0), failure.get("output_tokens", 0), req.project_id))
 
 
+def _release_busy(req, attempt, retried):
+    with db._conn() as conn:
+        if retried:
+            conn.execute(db._q("""UPDATE frontier_requests SET status='retry_allowed',attempts=?
+                WHERE id=? AND project_id=? AND status='running' AND attempts=?"""),
+                (attempt - 1, req.request_id, req.project_id, attempt))
+            conn.execute(db._q("UPDATE frontier_retries SET used_at=NULL WHERE request_id=?"), (req.request_id,))
+        else:
+            conn.execute(db._q("DELETE FROM frontier_requests WHERE id=? AND project_id=? AND status='running' AND attempts=1"),
+                         (req.request_id, req.project_id))
+        conn.execute(db._q("""UPDATE frontier_projects SET calls=CASE WHEN calls>0 THEN calls-1 ELSE 0 END,
+            status=CASE WHEN EXISTS (SELECT 1 FROM frontier_requests WHERE project_id=? AND status='needs_review')
+            THEN 'needs_review' ELSE 'ready' END,updated_at=? WHERE id=?"""),
+            (req.project_id, time.time(), req.project_id))
+
+
+def _collect_running(user, req, fingerprint, legacy_fingerprint):
+    """Asked again for a request still being written (the first connection was cut at
+    100 s): wait for it and hand back the saved answer. Never starts a second request."""
+    deadline = time.monotonic() + RUNNING_WAIT_S
+    while True:
+        with db._conn() as conn:
+            row = conn.execute(db._q("""SELECT r.* FROM frontier_requests r JOIN frontier_projects p ON p.id=r.project_id
+                WHERE r.id=? AND r.project_id=? AND p.user_id=?"""), (req.request_id, req.project_id, user["id"])).fetchone()
+        if row is None or row["fingerprint"] not in (fingerprint, legacy_fingerprint) or row["status"] != "running":
+            return None  # the normal path answers: new, complete, stopped or someone else's
+        started = float(row["started_at"] or row["created_at"] or 0)
+        if time.time() - started > RUNNING_STALE_S:
+            with db._conn() as conn:
+                conn.execute(db._q("UPDATE frontier_requests SET status='needs_review' WHERE id=? AND status='running'"),
+                             (req.request_id,))
+            return None
+        if time.monotonic() >= deadline:
+            raise HTTPException(409, "This request is still being written. Studio will collect it when it's ready.",
+                                headers={"Retry-After": "5", "X-CR-Request-State": "running"})
+        time.sleep(2)
+
+
 def generate(user: dict, req: BrainRequest) -> dict:
     """Compatibility relay for owners only. Never expose this tool to paid users."""
     require_studio_user(user)
@@ -464,9 +530,13 @@ def generate(user: dict, req: BrainRequest) -> dict:
         parts.append({"inlineData": {"mimeType": "image/png", "data": data}})
     fingerprint = hashlib.sha256(req.model_dump_json().encode()).hexdigest()
     legacy_fingerprint = hashlib.sha256(req.model_dump_json(exclude={"model_role", "requested_model"}).encode()).hexdigest()
-    if not _slots.acquire(blocking=False):
-        raise HTTPException(429, "The brain is busy. Your local runner will retry shortly.", headers={"Retry-After": "10"})
+    collected = _collect_running(user, req, fingerprint, legacy_fingerprint)
+    if collected is not None:
+        return collected
+    if not _take_slot(user["id"]):
+        raise HTTPException(429, "The brain is busy. Your local runner will retry shortly.", headers={"Retry-After": "5"})
     reserved = False
+    retried = False
     attempt = 1
     context = json.dumps({"provider": c["provider"], "model": model, "model_role": req.model_role,
                           "requested_model": req.requested_model, "kind": req.kind, "max_tokens": req.max_tokens,
@@ -503,6 +573,7 @@ def generate(user: dict, req: BrainRequest) -> dict:
                 if approval["account_hash"] != _account_hash(c, key):
                     raise HTTPException(409, "Reconnect the model account used to allow this retry before resuming.")
                 attempt = existing["attempts"] + 1
+                retried = True
             if row["calls"] >= row["max_calls"]:
                 raise HTTPException(409, "This project reached its brain request limit. Review its usage before starting more work.")
             conn.execute(db._q("UPDATE frontier_projects SET calls=calls+1,status='running',updated_at=? WHERE id=?"), (time.time(), req.project_id))
@@ -510,12 +581,12 @@ def generate(user: dict, req: BrainRequest) -> dict:
                 errors = _errors(existing["error_json"])
                 if not errors:
                     errors = [{"attempt": 1, "code": "unrecorded", "message": "The original error was not retained by the earlier preview."}]
-                conn.execute(db._q("UPDATE frontier_requests SET status='running',attempts=?,context_json=?,error_json=?,fingerprint=? WHERE id=?"),
-                             (attempt, context, json.dumps(errors), fingerprint, req.request_id))
+                conn.execute(db._q("UPDATE frontier_requests SET status='running',attempts=?,context_json=?,error_json=?,fingerprint=?,started_at=? WHERE id=?"),
+                             (attempt, context, json.dumps(errors), fingerprint, time.time(), req.request_id))
                 conn.execute(db._q("UPDATE frontier_retries SET used_at=? WHERE request_id=?"), (time.time(), req.request_id))
             else:
-                conn.execute(db._q("INSERT INTO frontier_requests (id,project_id,fingerprint,status,created_at,context_json) VALUES (?,?,?,?,?,?)"),
-                             (req.request_id, req.project_id, fingerprint, "running", time.time(), context))
+                conn.execute(db._q("INSERT INTO frontier_requests (id,project_id,fingerprint,status,created_at,context_json,started_at) VALUES (?,?,?,?,?,?,?)"),
+                             (req.request_id, req.project_id, fingerprint, "running", time.time(), context, time.time()))
             reserved = True
         text, incoming, outgoing = providers.generate(c["provider"], key, model, parts, req.kind, req.max_tokens)
         result = {"text": text, "provider": c["provider"], "model": model, "model_role": req.model_role, "input_tokens": incoming,
@@ -528,6 +599,12 @@ def generate(user: dict, req: BrainRequest) -> dict:
                 THEN 'needs_review' ELSE 'ready' END,updated_at=? WHERE id=?"""),
                          (incoming, outgoing, req.project_id, time.time(), req.project_id))
         return result
+    except providers.ProviderBusy as busy:
+        # Turned away at the door: nothing was generated or charged. Release the
+        # request so the creator's Studio can simply send it again.
+        if reserved:
+            _release_busy(req, attempt, retried)
+        raise HTTPException(429, busy.detail, headers={"Retry-After": str(busy.retry_after)}) from None
     except HTTPException as error:
         if reserved:
             _record_failure(req, attempt, error)
@@ -537,7 +614,7 @@ def generate(user: dict, req: BrainRequest) -> dict:
             _record_failure(req, attempt, error)
         raise HTTPException(502, "CR could not complete this request. Open Local studio in CR to review its recorded status.") from None
     finally:
-        _slots.release()
+        _give_slot(user["id"])
 
 
 class SafeContract(BaseModel):
@@ -652,7 +729,7 @@ def _runtime_compatible(version, workflow):
     approved = ("5.3-admin.8", "5.3-admin.9", "5.3-admin.10", "5.3-admin.11", "5.3-admin.12",
                 "5.3-admin.13", "5.3-admin.14", "5.3-admin.15", "5.3-admin.16", "5.3-admin.17",
                 "5.3-admin.18", "5.3-admin.19", "5.3-admin.20", "5.3-admin.21", "5.3-admin.22",
-                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43", "5.3-admin.44", "5.3-admin.45", "5.3-admin.46", "5.3-admin.47", "5.3-admin.48", "5.3-admin.49", "5.3-admin.50", "5.3-admin.51", "5.3-admin.52", "5.3-admin.53", "5.3-admin.54", "5.3-admin.55", "5.3-admin.56", "5.3-admin.57", "5.3-admin.58")
+                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43", "5.3-admin.44", "5.3-admin.45", "5.3-admin.46", "5.3-admin.47", "5.3-admin.48", "5.3-admin.49", "5.3-admin.50", "5.3-admin.51", "5.3-admin.52", "5.3-admin.53", "5.3-admin.54", "5.3-admin.55", "5.3-admin.56", "5.3-admin.57", "5.3-admin.58", "5.3-admin.59")
     current = workflow_contract()
     if (version not in approved or workflow.get("required_release") not in approved or VERSION not in approved
             or workflow.get("workflow_version") != current["workflow_version"]
