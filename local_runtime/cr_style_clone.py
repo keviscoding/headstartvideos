@@ -168,10 +168,11 @@ def _ytdlp_command():
     render workers, and yt-dlp subclasses Popen at import time.
     """
     import importlib.util
+    ipv4 = ["--force-ipv4"] if os.environ.get("YT_FORCE_IPV4", "") not in ("", "0", "no", "off", "false") else []
     if importlib.util.find_spec("yt_dlp") is not None:
-        return [sys.executable, "-m", "yt_dlp"]
+        return [sys.executable, "-m", "yt_dlp"] + ipv4
     found = shutil.which("yt-dlp")
-    return [found] if found else []
+    return [found] + ipv4 if found else []
 
 
 def list_videos(url, limit, timeout=90, *, run=subprocess.run):

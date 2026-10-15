@@ -298,6 +298,10 @@ ENGINE_PATCHES = {
     # A footage search YouTube refused ("Sign in to confirm you're not a bot") was not recorded, so the video's
     # "no real footage" warning could not say why or what fixes it; the refused search now notes yt-dlp's error.
     "youtube.py": [
+        # Studio sets YT_FORCE_IPV4 when this computer reaches YouTube over IPv4, which YouTube refuses far less often
+        ("    if _num_env(\"YT_SLEEP\") > 0:\n",
+         "    if _env(\"YT_FORCE_IPV4\") not in (\"\", \"0\", \"no\", \"off\", \"false\"):\n"
+         "        cmd += [\"--force-ipv4\"]\n    if _num_env(\"YT_SLEEP\") > 0:\n"),
         ("        except subprocess.TimeoutExpired:\n            return []\n        for line in p.stdout.splitlines():\n",
          "        except subprocess.TimeoutExpired:\n            return []\n        if p.returncode:\n"
          "            _note_err(p.stderr)\n        for line in p.stdout.splitlines():\n"),

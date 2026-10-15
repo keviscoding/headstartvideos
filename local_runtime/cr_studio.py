@@ -1395,9 +1395,27 @@ def prefer_studio_ytdlp():
 POLITE_YOUTUBE = {"YT_SLEEP": "1", "YT_WORKERS": "3"}
 
 
-def polite_youtube():
+def polite_youtube(reach=None):
     for key, value in POLITE_YOUTUBE.items():
         os.environ.setdefault(key, value)
+    # YouTube scores IPv6 addresses harder (a whole /64 counts as one): on 2026-10-15 a computer it refused over IPv6
+    # was let through over IPv4 at once. Asked over IPv4 whenever this computer reaches YouTube that way.
+    if "YT_FORCE_IPV4" not in os.environ and (reach or _youtube_over_ipv4)():
+        os.environ["YT_FORCE_IPV4"] = "1"
+
+
+def _youtube_over_ipv4(timeout=2.0) -> bool:
+    import socket
+    try:
+        for family, kind, proto, _, address in socket.getaddrinfo("www.youtube.com", 443, socket.AF_INET,
+                                                                    socket.SOCK_STREAM)[:2]:
+            with socket.socket(family, kind, proto) as sock:
+                sock.settimeout(timeout)
+                sock.connect(address)
+                return True
+    except OSError:
+        pass
+    return False
 
 
 def already_running():

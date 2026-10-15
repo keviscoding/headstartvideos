@@ -269,7 +269,8 @@ def test_real_photo_searches_never_pick_youtube_thumbnails():
 
 
 def test_a_refused_footage_search_records_why():
-    engine = (b"def search(q):\n    if True:\n        try:\n            p = run()\n"
+    engine = (b"def ytdlp():\n    if _num_env(\"YT_SLEEP\") > 0:\n        pass\n"
+              b"def search(q):\n    if True:\n        try:\n            p = run()\n"
               b"        except subprocess.TimeoutExpired:\n            return []\n        for line in p.stdout.splitlines():\n"
               b"            pass\n")
     patched = package.patch_engine("youtube.py", engine).decode()
