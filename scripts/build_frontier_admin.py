@@ -104,6 +104,47 @@ def private_sound_resources(root: Path):
     return resources
 
 
+READY_MADE = re.compile(r"cr-[a-z0-9]+(?:-[a-z0-9]+){0,6}")
+
+
+def private_recipe_resources(root: Path):
+    """ChannelRecipe's ready-made recipes: styles learned from benchmark channels and tested end to end here,
+    shipped as built-in styles (styles/<name>.json) with their own style drawing and character sheet
+    (assets/styles/cr/<name>/). A recipe may only point at its own pictures."""
+    folder = root / "data/frontier/recipes"
+    if not folder.exists():
+        return []
+    if folder.is_symlink() or not folder.is_dir():
+        raise ValueError("Ready-made recipes must be an ordinary owned folder.")
+    resources = []
+    for recipe in sorted(folder.iterdir()):
+        if recipe.name.startswith(".") or not recipe.is_dir():
+            continue
+        if recipe.is_symlink() or not READY_MADE.fullmatch(recipe.name):
+            raise ValueError("A ready-made recipe folder must be named cr-<words>.")
+        style_path = recipe / "style.json"
+        if style_path.is_symlink() or not style_path.is_file():
+            raise ValueError(f"{recipe.name} has no style.json.")
+        style = json.loads(style_path.read_text())
+        if style.get("name") != recipe.name or "cr_style_clone" in style:
+            raise ValueError(f"{recipe.name}: the style must carry its own name and no study records.")
+        look = style.get("look") if isinstance(style.get("look"), dict) else {}
+        own = {f"styles/cr/{recipe.name}/style.jpg", f"styles/cr/{recipe.name}/character.png"}
+        for key in ("style_image", "character_image", "reference", "sample"):
+            if look.get(key) and look[key] not in own:
+                raise ValueError(f"{recipe.name}: look.{key} must be one of its own pictures.")
+            if look.get(key) and not (recipe / Path(look[key]).name).is_file():
+                raise ValueError(f"{recipe.name}: look.{key} is missing.")
+        resources.append((style_path, f"styles/{recipe.name}.json"))
+        for name in ("style.jpg", "character.png"):
+            path = recipe / name
+            if path.exists():
+                if path.is_symlink() or not path.is_file() or path.stat().st_size > 4 * 1024 * 1024:
+                    raise ValueError(f"{recipe.name}/{name} must be a small ordinary picture.")
+                resources.append((path, f"assets/styles/cr/{recipe.name}/{name}"))
+    return resources
+
+
 # Engine sample films from the retired brand; recipe cards use style references.
 RETIRED_SAMPLES = {"assets/brand/1965 Lotus 38 - Documentary sample.mp4",
                    "assets/brand/POV Paid-Off Civic - 2D Stories sample.mp4",
@@ -279,7 +320,8 @@ def build(source: Path, target: Path, previous: Path | None = None):
     operational_overrides = (ROOT / "local_runtime/CLAUDE.md").read_bytes()
     # Validate the complete resource inventory before replacing an existing ZIP.
     resources = list(runtime_resources(ROOT))
-    preview_resources = private_preview_resources(ROOT) + private_sound_resources(ROOT)
+    preview_resources = (private_preview_resources(ROOT) + private_sound_resources(ROOT)
+                         + private_recipe_resources(ROOT))
     target.parent.mkdir(parents=True, exist_ok=True)
     count = 0
     transformed_files = []

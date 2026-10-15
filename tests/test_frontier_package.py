@@ -296,3 +296,23 @@ def test_a_story_with_moving_pictures_shows_each_picture_on_its_own_sentence(tmp
                     ("The sweep grins.", "scene_01.jpg"), ("You climb.", "scene_02.jpg"), ("Soot falls.", "scene_03.jpg")]
     assert (job / "clip_src/vsrc_00.anim.mp4").read_bytes() == b"m" * 30_000, "the clip plays in its own slot"
     assert ns["_story_order"](job, 20.0, photos)[0] == ("Your family hands you over.", "scene_00.jpg")
+
+
+def test_ready_made_recipes_ship_as_built_in_styles_with_only_their_own_pictures(tmp_path):
+    recipe = tmp_path / "data/frontier/recipes/cr-stick-stories"
+    recipe.mkdir(parents=True)
+    (recipe / "style.jpg").write_bytes(b"jpg")
+    style = {"name": "cr-stick-stories", "look": {"style_image": "styles/cr/cr-stick-stories/style.jpg"}}
+    (recipe / "style.json").write_text(json.dumps(style))
+    shipped = {dest for _, dest in package.private_recipe_resources(tmp_path)}
+    assert shipped == {"styles/cr-stick-stories.json", "assets/styles/cr/cr-stick-stories/style.jpg"}
+    style["look"]["character_image"] = "characters/someone_else.png"
+    (recipe / "style.json").write_text(json.dumps(style))
+    with pytest.raises(ValueError, match="its own pictures"):
+        package.private_recipe_resources(tmp_path)
+    style["look"].pop("character_image")
+    style["cr_style_clone"] = {"operation_id": "op_x"}
+    (recipe / "style.json").write_text(json.dumps(style))
+    with pytest.raises(ValueError, match="no study records"):
+        package.private_recipe_resources(tmp_path)
+    assert package.private_recipe_resources(tmp_path / "elsewhere") == []

@@ -154,3 +154,11 @@ def test_display_copy_has_no_em_dashes_but_prompts_and_ids_are_untouched():
     assert row["character"] == catalog["channels"][0]["character"]
     assert row["name"] == "nocturne"
     assert presentation.plain_copy("\u2014 leading and trailing \u2014") == "leading and trailing"
+
+
+def test_ready_made_recipes_have_their_own_names_and_the_nearest_artwork():
+    rows = presentation.presentationCatalog([{"name": name} for name in sorted(presentation.READY_MADE_IDS)])
+    assert len({row["label"] for row in rows}) == len(presentation.READY_MADE_IDS) == 9
+    assert all(row["capabilities"] and row["family"] and row["description"] for row in rows)
+    assert presentation.asset("cr-manga-recaps.svg") == presentation.ART_ROOT / "folio.svg"
+    assert not presentation.READY_MADE_IDS & presentation.BUILTIN_IDS
