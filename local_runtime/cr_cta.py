@@ -125,11 +125,10 @@ def mention_times(job, count: int, total: float) -> list:
             t = words[i][1]
             if (t >= min(FIRST_S, total * 0.6) or total < FIRST_S + CARD_S) and all(abs(t - f) > CARD_S for f in found):
                 found.append(t)
-    if not found:
-        for frac in PLACES[:count]:
-            t = total - CARD_S - 4 if frac is None else total * frac
-            if t >= min(FIRST_S, total - CARD_S - 4):
-                found.append(t)
+    if not found:                                       # the planned places, an early one moved on like places()
+        end = total - CARD_S - 4
+        found = [t for t in (end if frac is None else total * frac for frac in PLACES)
+                 if t >= min(FIRST_S, end)][:count]
     return sorted(found)[:count] or [max(0.0, total - CARD_S - 4)]
 
 
