@@ -294,6 +294,64 @@ def _result(stdout, output_format):
     return data.get("usage") or {}, rendered
 
 
+# A long answer through Claude Code: the source's API budget (3D director and review: 32k) is for the answer alone,
+# but Claude Code's reasoning shares one message's output with it. Past Claude Code's default limit the answer went on
+# in further messages and only the last part came back: a 3D review of 25 scenes lost every fix that way.
+LONG_ANSWER_TOKENS = 16000          # a call asking for this much answer
+LONG_OUTPUT_TOKENS = 128000         # may use this much output in one message (Claude Code caps it at the model's)
+CONTINUED = "Output token limit hit"
+
+
+def _stream_rows(stdout):
+    rows = []
+    for line in str(stdout).splitlines():
+        if line.strip().startswith("{"):
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
+    return rows
+
+
+def _texts(content):
+    if isinstance(content, str):
+        return [content]
+    return [str(c.get("text", "")) for c in content or [] if isinstance(c, dict) and c.get("type") == "text"]
+
+
+def _whole_answer(stdout):
+    """Claude Code's stream as the json result the source reads, with an answer continued past the output limit
+    joined back together (its final result holds only the last part)."""
+    rows = _stream_rows(stdout)
+    data = next((row for row in reversed(rows) if row.get("type") == "result"), None)
+    if not isinstance(data, dict):
+        # no result (a failed run): what it said, without the stream's routine rate-limit and system events
+        return "\n".join(line for line in str(stdout).splitlines()
+                         if not any(row is not None and row.get("type") in ("rate_limit_event", "system")
+                                    for row in _stream_rows(line) or [None]))
+    parts, seen, continued = [], set(), False
+    for row in rows:
+        message = row.get("message") if isinstance(row.get("message"), dict) else {}
+        if row.get("type") == "user":
+            content = message.get("content")
+            if any(text.startswith(CONTINUED) for text in _texts(content)):
+                continued = True                     # the same answer goes on in the next message
+            elif isinstance(content, list) and any(isinstance(c, dict) and c.get("type") == "tool_result"
+                                                   for c in content):
+                parts, continued = [], False         # a tool's result: the answer starts after it
+        elif row.get("type") == "assistant":
+            for text in _texts(message.get("content")):
+                key = (message.get("id"), text)
+                if text and key not in seen:
+                    seen.add(key)
+                    parts.append(text)
+    if continued and parts:
+        data = dict(data, result="".join(parts))
+    return json.dumps(data, ensure_ascii=False)
+
+
 class Runtime:
     def __init__(self, engine, bridge, executable, real_run):
         self.engine, self.bridge, self.executable, self.real_run = engine, bridge, executable, real_run
@@ -374,6 +432,12 @@ class Runtime:
         # tools. The runner calls the authenticated CR MCP before/after them.
         command = _replace_option(command, "--settings", '{"apiKeyHelper":""}')
         env = clean_environment(kwargs.get("env"))
+        if maximum is not None and maximum >= LONG_ANSWER_TOKENS:
+            env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(LONG_OUTPUT_TOKENS)
+        streamed = _option(args, "--output-format", "text") == "json"
+        if streamed:
+            # Every message, so an answer continued past the output limit comes back whole (_whole_answer).
+            command = _replace_option(command, "--output-format", "stream-json") + ["--verbose"]
         # Execution evidence is captured only on the actual authorized CLI
         # branch. Completed-cache returns above never acquire new provenance.
         workflow = _verification_workflow(self.bridge.HOME)
@@ -393,6 +457,11 @@ class Runtime:
         completed=None
         try:
             completed = self.real_run(command, **options)
+            if streamed and completed is not None:
+                # The stream lists rate-limit events on every run: classify a failure by its result alone.
+                completed = subprocess.CompletedProcess(getattr(completed, "args", command), completed.returncode,
+                                                        _whole_answer(getattr(completed, "stdout", "") or ""),
+                                                        getattr(completed, "stderr", ""))
             failure_code,failure_message=failure_info(getattr(completed,"stdout",""),getattr(completed,"stderr",""))
             if completed.returncode:
                 raise ValueError("cli_failed")
