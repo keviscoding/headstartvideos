@@ -163,10 +163,25 @@ def recent(root: Path = None, limit: int = 12) -> list:
     return sorted(rows, key=lambda r: -float(r.get("created") or 0))[:limit]
 
 
+def _trim(img, tolerance: int = 24):
+    """The panel without the page's plain white or black margin around it (only rows and columns that are all
+    margin colour go, so the art itself is never cut)."""
+    from PIL import Image, ImageChops
+    w, h = img.size
+    for colour in dict.fromkeys(img.getpixel(c) for c in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1))):
+        if not (min(colour) >= 225 or max(colour) <= 30):
+            continue
+        diff = ImageChops.difference(img, Image.new("RGB", img.size, colour)).convert("L")
+        box = diff.point(lambda v: 255 if v > tolerance else 0).getbbox()
+        if box and (box[2] - box[0]) * (box[3] - box[1]) >= 0.4 * w * h:
+            img, (w, h) = img.crop(box), (box[2] - box[0], box[3] - box[1])
+    return img
+
+
 def frame(src: Path, dest: Path) -> Path:
-    """The panel on a 16:9 frame: whole, as large as fits, over a darkened, blurred copy of itself."""
+    """The panel on a 16:9 frame: whole (its page margin trimmed), as large as fits, over a darkened, blurred copy."""
     from PIL import Image, ImageFilter, ImageEnhance
-    img = Image.open(src).convert("RGB")
+    img = _trim(Image.open(src).convert("RGB"))
     w, h = img.size
     scale = max(W / w, H / h)
     bg = img.resize((int(w * scale) + 1, int(h * scale) + 1))

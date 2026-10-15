@@ -120,3 +120,18 @@ def test_a_panel_job_shows_its_panels_and_draws_nothing(tmp_path, monkeypatch):
     other = tmp_path / "other"
     other.mkdir()
     assert engine._sources_block(other, "t") == "", "other jobs are untouched"
+
+
+def test_a_panel_on_a_white_page_margin_fills_the_frame_without_the_margin(tmp_path):
+    from PIL import Image, ImageDraw
+    page = Image.new("RGB", (900, 600), "white")
+    ImageDraw.Draw(page).rectangle((150, 60, 750, 540), fill=(40, 90, 160))
+    page.save(tmp_path / "p.png")
+    out = panels.frame(tmp_path / "p.png", tmp_path / "f.jpg")
+    framed = Image.open(out).convert("RGB")
+    left_edge = framed.getpixel((int(1920 * 0.5 - 1080 * 0.94 * 600 / 480 / 2) + 6, 540))
+    assert left_edge[2] > 120 and left_edge[0] < 90, "the art starts where the white margin was"
+    assert max(framed.getpixel((960, 540))) < 200
+    art = Image.new("RGB", (900, 600), (240, 240, 240))
+    ImageDraw.Draw(art).rectangle((0, 0, 899, 299), fill=(250, 250, 250))
+    assert panels._trim(art).size == (900, 600), "a pale picture with no margin is left whole"
