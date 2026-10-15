@@ -1389,6 +1389,17 @@ def prefer_studio_ytdlp():
             return
 
 
+# YouTube answers a burst of requests from one computer with "Sign in to confirm you're not a bot" and then refuses
+# every footage search and download for hours. A pause between requests and fewer downloads at once make that rare;
+# a creator's own YT_SLEEP / YT_WORKERS in .env still win (the engine reads .env over these).
+POLITE_YOUTUBE = {"YT_SLEEP": "1", "YT_WORKERS": "3"}
+
+
+def polite_youtube():
+    for key, value in POLITE_YOUTUBE.items():
+        os.environ.setdefault(key, value)
+
+
 def already_running():
     """True when a ChannelRecipe Studio already answers on this computer."""
     import urllib.request
@@ -1424,6 +1435,7 @@ def main():
               "then open Studio again.", flush=True)
         raise SystemExit(1)
     prefer_studio_ytdlp()
+    polite_youtube()
     try:
         # Updates from older releases ran an updater that could not remove
         # retired files, so tidy them on start too.
