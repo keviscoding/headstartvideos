@@ -126,8 +126,8 @@ def private_recipe_resources(root: Path):
         if style_path.is_symlink() or not style_path.is_file():
             raise ValueError(f"{recipe.name} has no style.json.")
         style = json.loads(style_path.read_text())
-        if style.get("name") != recipe.name or "cr_style_clone" in style:
-            raise ValueError(f"{recipe.name}: the style must carry its own name and no study records.")
+        if style.get("name") != recipe.name or "cr_style_clone" in style or style.get("builtin") is not True:
+            raise ValueError(f"{recipe.name}: the style must carry its own name, builtin: true and no study records.")
         look = style.get("look") if isinstance(style.get("look"), dict) else {}
         own = {f"styles/cr/{recipe.name}/style.jpg", f"styles/cr/{recipe.name}/character.png"}
         for key in ("style_image", "character_image", "reference", "sample"):

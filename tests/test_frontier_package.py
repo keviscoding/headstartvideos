@@ -311,7 +311,7 @@ def test_ready_made_recipes_ship_as_built_in_styles_with_only_their_own_pictures
     recipe = tmp_path / "data/frontier/recipes/cr-stick-stories"
     recipe.mkdir(parents=True)
     (recipe / "style.jpg").write_bytes(b"jpg")
-    style = {"name": "cr-stick-stories", "look": {"style_image": "styles/cr/cr-stick-stories/style.jpg"}}
+    style = {"name": "cr-stick-stories", "builtin": True, "look": {"style_image": "styles/cr/cr-stick-stories/style.jpg"}}
     (recipe / "style.json").write_text(json.dumps(style))
     shipped = {dest for _, dest in package.private_recipe_resources(tmp_path)}
     assert shipped == {"styles/cr-stick-stories.json", "assets/styles/cr/cr-stick-stories/style.jpg"}
