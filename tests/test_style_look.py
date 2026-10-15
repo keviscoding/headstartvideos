@@ -151,7 +151,7 @@ def test_the_art_directors_answer_becomes_style_settings_without_the_references_
                      banned=["Pip Explains"], log=lambda m: None)
     ov = out["overrides"]
     assert "Pip Explains" not in json.dumps(ov)
-    assert ov["look"]["still_suffix"].endswith("Avoid: photographs, 3D renders, gradients.")
+    assert ov["look"]["still_suffix"].endswith("Avoid: photographs, 3D renders, gradients." + art.LETTERING)
     assert "Toby (host)" in ov["look"]["character"] and ov["script_notes"][0] == "Second person, present tense."
     assert ov["pacing"]["hook_notes"] == "Open on the absurd moment."
 
