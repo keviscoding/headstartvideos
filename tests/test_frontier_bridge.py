@@ -22,27 +22,55 @@ def test_connection_file_is_private_and_unsecured_remote_url_is_rejected(local):
         bridge.call("status", settings={"url": "http://remote.example", "key": "cr_mcp_test_only"})
 
 
-def test_network_failure_is_not_automatically_repeated(local, monkeypatch):
+def test_a_dropped_connection_resends_the_same_request_which_the_server_never_repeats(local, monkeypatch):
+    """The server keys model requests by ID: sending one again collects the same answer
+    (or reports it stopped). Re-sending can never start a second paid request."""
+    calls, sleeps = [], []
+    replies = iter([bridge.requests.ReadTimeout(), SimpleNamespace(status_code=200, headers={},
+                    json=lambda: {"text": "A decision", "request_id": "recorded"})])
+
+    def send(*a, **kw):
+        calls.append(kw["json"])
+        reply = next(replies)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    monkeypatch.setattr(bridge.requests, "request", send)
+    monkeypatch.setattr(bridge.time, "sleep", sleeps.append)
+    assert bridge.call("brain", {"request_id": "recorded"})["text"] == "A decision"
+    assert calls == [{"request_id": "recorded"}] * 2 and sleeps == [10]
+
+
+def test_other_requests_are_not_repeated_after_a_dropped_connection(local, monkeypatch):
     calls = []
+
     def fail(*a, **kw):
         calls.append(kw)
         raise bridge.requests.ReadTimeout()
+
     monkeypatch.setattr(bridge.requests, "request", fail)
     with pytest.raises(RuntimeError, match="Could not reach"):
-        bridge.call("brain", {"request_id": "recorded"})
+        bridge.call("projects", {"title": "x"})
     assert len(calls) == 1
 
 
-def test_capacity_retry_is_bounded_and_keeps_same_payload(local, monkeypatch):
-    calls, sleeps = [], []
+def test_capacity_waits_are_bounded_and_keep_the_same_payload(local, monkeypatch):
+    calls, now = [], [0.0]
+
     def reply(*a, **kw):
         calls.append(kw)
         return SimpleNamespace(status_code=429, headers={"Retry-After": "10"}, json=lambda: {"detail": "Busy"})
+
+    def sleep(seconds):
+        now[0] += seconds
+
     monkeypatch.setattr(bridge.requests, "request", reply)
-    monkeypatch.setattr(bridge.time, "sleep", sleeps.append)
+    monkeypatch.setattr(bridge.time, "sleep", sleep)
+    monkeypatch.setattr(bridge.time, "monotonic", lambda: now[0])
     with pytest.raises(RuntimeError, match="Busy"):
         bridge.call("brain", {"request_id": "same-id"})
-    assert len(calls) == 4 and sleeps == [10, 10, 10]
+    assert bridge.BRAIN_PATIENCE_S <= now[0] < bridge.BRAIN_PATIENCE_S + 61
     assert all(c["json"] == {"request_id": "same-id"} for c in calls)
 
 

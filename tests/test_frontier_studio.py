@@ -499,12 +499,11 @@ def test_concurrent_resumption_consumes_one_retry_only(env, monkeypatch):
         try:
             assert started.wait(5)
             duplicate = pool.submit(studio.generate, env.owner, req)
-            with pytest.raises(HTTPException) as error:
-                duplicate.result(timeout=5)
-            assert error.value.status_code == 409
         finally:
             release.set()
-        assert first.result(timeout=5)["text"] == "An outline."
+        assert first.result(timeout=10)["text"] == "An outline."
+        # The duplicate waits for the same answer; it never starts a second paid attempt.
+        assert duplicate.result(timeout=10) == first.result()
     assert len(calls) == 1 and studio.project(env.owner, p["id"])["calls"] == 2
 
 
@@ -517,3 +516,77 @@ def test_concurrent_approval_is_idempotent(env, monkeypatch):
     with studio.db._conn() as conn:
         assert conn.execute("SELECT COUNT(*) AS n FROM frontier_retries").fetchone()["n"] == 1
     assert studio.project(env.owner, p["id"])["calls"] == 1
+
+
+def test_a_provider_rate_limit_is_released_and_the_same_request_works_later(env, monkeypatch):
+    env.connect(env.owner)
+    p = studio.create_project(env.owner, studio.ProjectRequest(title="Example"))
+    answers = [SimpleNamespace(status_code=429, headers={"retry-after": "7"}, close=lambda: None), reply()]
+    calls = []
+
+    def provider(*args, **kwargs):
+        calls.append(1)
+        return answers.pop(0)
+
+    monkeypatch.setattr(studio.requests, "post", provider)
+    req = request_for(p["id"])
+    with pytest.raises(HTTPException) as busy:
+        studio.generate(env.owner, req)
+    assert busy.value.status_code == 429 and busy.value.headers["Retry-After"] == "7"
+    with studio.db._conn() as conn:
+        assert conn.execute("SELECT COUNT(*) AS n FROM frontier_requests").fetchone()["n"] == 0
+    assert studio.project(env.owner, p["id"])["calls"] == 0, "a refusal at the door isn't a paid call"
+    assert studio.generate(env.owner, req)["text"]
+    assert len(calls) == 2 and studio.project(env.owner, p["id"])["calls"] == 1
+
+
+def test_asking_again_collects_a_request_still_being_written(env, monkeypatch):
+    import threading
+    env.connect(env.owner)
+    p = studio.create_project(env.owner, studio.ProjectRequest(title="Example"))
+    monkeypatch.setattr(studio.requests, "post", lambda *a, **k: pytest.fail("never a second paid request"))
+    monkeypatch.setattr(studio, "RUNNING_WAIT_S", 3)
+    req = request_for(p["id"])
+    fingerprint = studio.hashlib.sha256(req.model_dump_json().encode()).hexdigest()
+    with studio.db._conn() as conn:
+        conn.execute("INSERT INTO frontier_requests (id,project_id,fingerprint,status,created_at,started_at) VALUES (?,?,?,?,?,?)",
+                     (req.request_id, p["id"], fingerprint, "running", studio.time.time(), studio.time.time()))
+    saved = {"text": "the saved answer", "request_id": req.request_id}
+
+    def finish():
+        studio.time.sleep(1)
+        with studio.db._conn() as conn:
+            conn.execute("UPDATE frontier_requests SET status='complete',result_json=? WHERE id=?",
+                         (json.dumps(saved), req.request_id))
+
+    threading.Thread(target=finish).start()
+    assert studio.generate(env.owner, req) == saved
+
+    # Still running after the wait: Studio is told to come back, not that it stopped.
+    later = req.model_copy(update={"request_id": "still_running_123456"})
+    print_ = studio.hashlib.sha256(later.model_dump_json().encode()).hexdigest()
+    with studio.db._conn() as conn:
+        conn.execute("INSERT INTO frontier_requests (id,project_id,fingerprint,status,created_at,started_at) VALUES (?,?,?,?,?,?)",
+                     (later.request_id, p["id"], print_, "running", studio.time.time(), studio.time.time()))
+    monkeypatch.setattr(studio, "RUNNING_WAIT_S", 0)
+    with pytest.raises(HTTPException) as running:
+        studio.generate(env.owner, later)
+    assert running.value.status_code == 409 and running.value.headers["X-CR-Request-State"] == "running"
+
+    # Running for longer than any answer can take: it was cut off, so it needs review.
+    with studio.db._conn() as conn:
+        conn.execute("UPDATE frontier_requests SET started_at=? WHERE id=?", (studio.time.time() - 2000, later.request_id))
+    with pytest.raises(HTTPException) as stopped:
+        studio.generate(env.owner, later)
+    assert stopped.value.status_code == 409 and "X-CR-Request-State" not in (stopped.value.headers or {})
+    with studio.db._conn() as conn:
+        assert conn.execute("SELECT status FROM frontier_requests WHERE id=?", (later.request_id,)).fetchone()["status"] == "needs_review"
+
+
+def test_model_requests_are_shared_fairly(monkeypatch):
+    monkeypatch.setattr(studio, "_brain_active", {})
+    assert all(studio._take_slot(1) for _ in range(studio.BRAIN_PER_USER))
+    assert not studio._take_slot(1), "one creator can't take every slot"
+    assert studio._take_slot(2), "others still get through"
+    studio._give_slot(1)
+    assert studio._take_slot(1)

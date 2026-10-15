@@ -130,7 +130,9 @@ def test_older_or_image_model_does_not_receive_unsupported_settings(monkeypatch,
 
 def test_unreadable_stream_and_upstream_http_close_connection(monkeypatch):
     for response, code in [(Response({"error": {"message": "private provider error"}}), "unreadable"),
-                           (Response(status=503), "upstream_http")]:
+                           (Response(status=500), "upstream_http"),
+                           # Turned away at the door: nothing generated, so it can be sent again.
+                           (Response(status=503), "upstream_busy"), (Response(status=429), "upstream_busy")]:
         with pytest.raises(providers.ProviderFailure) as error:
             send(monkeypatch, response)
         assert response.closed and error.value.diagnostics["code"] == code

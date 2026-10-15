@@ -21,6 +21,25 @@ class ProviderFailure(HTTPException):
         self.diagnostics = {"code": code, "message": message, **metadata}
 
 
+class ProviderBusy(ProviderFailure):
+    """The provider turned the request away before doing any work (rate limited or overloaded).
+
+    Nothing was generated or charged, so the same request may simply be sent again later.
+    """
+    def __init__(self, label, status, retry_after):
+        super().__init__(f"{label} is busy right now (HTTP {status}). Studio will try again shortly.",
+                         "upstream_busy", upstream_http=status)
+        self.retry_after = retry_after
+
+
+def _retry_after(res, default=20):
+    try:
+        seconds = int(float((getattr(res, "headers", {}) or {}).get("retry-after", default)))
+    except (TypeError, ValueError):
+        seconds = default
+    return max(5, min(120, seconds))
+
+
 def brain_model(provider, model):
     """The verified model contract, shared with setup and request validation."""
     return next((m for m in PROVIDERS.get(provider, {}).get("brain_models", []) if m["id"] == model), None)
@@ -340,6 +359,8 @@ def generate(provider, key, model, parts, kind, max_tokens):
     try:
         res = requests.post(url, headers=headers, json=payload, timeout=(15, READ_TIMEOUT),
                             allow_redirects=False, stream=claude or provider != "kie")
+        if res.status_code in (429, 503, 529):
+            raise ProviderBusy(label, res.status_code, _retry_after(res))
         if res.status_code != 200:
             raise ProviderFailure(f"{label} could not complete this request (HTTP {res.status_code}). No other account was used.",
                                   "upstream_http", upstream_http=res.status_code)
