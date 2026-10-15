@@ -35,7 +35,7 @@ FALLBACK = ("documentary", "jung", "stories")
 # Rough costs for the review screen (Kie, October 2026); real costs show in the render log.
 PICTURE_USD = 0.02          # one generated still
 CLIP_USD = 0.12             # one 5-second image-to-video clip
-PRESENTER_USD_S = 0.025     # one second of talking presenter
+PRESENTER_USD_S = 0.0375    # one second of talking presenter (Kling Standard on Kie)
 
 # The engine's own lists (lookreg); a value outside them falls back to the base's
 GRADE_WORDS = {"natural": "natural colour", "clean709": "clean and bright", "bleach_bypass": "dark and desaturated",

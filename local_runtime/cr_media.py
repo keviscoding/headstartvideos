@@ -456,7 +456,11 @@ def native_motion(*args, **kwargs):
 
 def avatar_clip(provider, image_url, audio_url, dest, log=print):
     if provider not in ("kling-standard", "kling-pro"):
-        raise AccountStop("This presenter model needs its original service. Choose Kling Standard/Pro for the model account, or turn off its presenter replacement in setup.")
+        # Setup's "Kling Standard / Pro presenters": every presenter on this account is Kling. A recipe written for
+        # another presenter model (Pruna on WaveSpeed) speaks through Kling Standard, as the engine itself does when
+        # that service can't render it, instead of stopping the video.
+        log(f"    avatar: {provider} presenter shots run as Kling Standard on your model account")
+        provider = "kling-standard"
     hub = profile()["provider"]
     inputs = {"image_url": image_url, "audio_url": audio_url} if hub == "kie" else {"image": image_url, "audio": audio_url}
     model = PROVIDERS[hub]["models"]["avatar_pro" if provider == "kling-pro" else "avatars"]

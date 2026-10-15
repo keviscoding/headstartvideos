@@ -82,8 +82,12 @@ def test_image_refs_motion_and_presenter_use_correct_protocol(hub, monkeypatch, 
     assert calls[0][0][1]["image_urls" if provider == "kie" else "images"]
     assert ("image_url" if provider == "kie" else "image") in calls[1][0][1]
     assert calls[2][1]["model"] == media.PROVIDERS[provider]["models"]["avatar_pro"]
-    with pytest.raises(media.AccountStop, match="original service"):
-        media.avatar_clip("pruna", "image", "audio", hub / "presenter.mp4")
+    said = []
+    media.avatar_clip("pruna", "https://files.example/face", "https://files.example/voice", hub / "presenter.mp4",
+                      log=said.append)
+    assert calls[3][1]["model"] == media.PROVIDERS[provider]["models"]["avatars"], \
+        "a recipe's other presenter model speaks through Kling Standard instead of stopping the video"
+    assert "Kling Standard" in said[0]
 
 
 def test_kie_motion_cost_choice_and_pending_task_are_preserved_on_resume(hub, monkeypatch):
