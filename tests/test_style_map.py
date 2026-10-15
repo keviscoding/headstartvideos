@@ -129,6 +129,7 @@ def test_real_footage_channels_build_on_the_documentary_with_their_own_clips():
     assert ov["look"]["sound"]["music"] is True and ov["look"]["sound"]["sfx_db"] == -60.0
     assert ov["look"]["sound"]["vibe"] == "tense_investigation"
     assert "maps" in ov["features"]["on"] and "youtube" in ov["features"]["on"]
+    assert "spotlight" in ov["features"]["on"], "real photos of who is named fill what footage can't show"
     assert ov["pacing"]["mix"] == [0, 80, 20], "bodycam and archive footage fill the footage slots, not graphics"
     assert "character_image" not in plan["needs"], "real people in footage are filmed, not designed"
     assert "auto_own" in {r["path"].split(".")[-1] for r in plan["remove"]}

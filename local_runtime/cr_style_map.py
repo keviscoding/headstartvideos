@@ -509,9 +509,15 @@ def _features(plan: Plan, profile: dict, base: str, base_style: dict):
         "sound": True,
         "depth": plan.motion_cutout,
     }
+    # real photos (and cut-outs) of the people and things the narration names: what these channels show between their
+    # clips, and what fills the sentences real footage can't show (a 1-minute business documentary found footage for 20 of
+    # its 50 seconds and stretched a chapter card over the rest)
+    photos = sources.get("archival_photo", 0) + sources.get("cutout", 0) + sources.get("photo", 0)
+    want["spotlight"] = base in ("documentary", "nocturne", "jung") and (photos >= 0.03 or want["youtube"])
     offered = list((base_style.get("features") or {}).get("offered") or [])
     on = [k for k, v in want.items() if v]
     reasons = {"youtube": "real footage", "stock": "stock footage", "ai_images": "generated pictures", "maps": "maps",
+               "spotlight": "real photos of who and what is named",
                "headlines": "articles and screenshots", "motion": "motion graphics", "threed": "3D scenes",
                "avatar": "a presenter on camera", "sound": "sound design", "depth": "cut-out movement"}
     plan.set("features.on", on, area="Options", label="Switched on",
