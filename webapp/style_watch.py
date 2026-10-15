@@ -37,6 +37,7 @@ from webapp.frontier_studio import is_admin
 
 PROMPT_VERSION = 2
 MAX_WINDOW_S = 200
+BUSY_WAITS_S = (15, 45, 90)                     # retries when Gemini is busy (the job has time; Studio is polling)
 STALE_S = 900
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
 # A day's watches per account. A study watches up to three references: the opening, the middle, and a call to action.
@@ -117,6 +118,10 @@ def prompt(start: float, end: float) -> str:
 def _mmss(t: float) -> str:
     t = int(round(t))
     return f"{t // 60}:{t % 60:02d}"
+
+
+def _sleep(seconds: float):
+    time.sleep(seconds)
 
 
 def _env_float(name: str, default: float) -> float:
@@ -217,8 +222,13 @@ def watch_once(video_id: str, start: int, end: int, *, post=None) -> tuple[dict,
             "generationConfig": {"responseMimeType": "application/json",
                                  "mediaResolution": "MEDIA_RESOLUTION_LOW",
                                  "thinkingConfig": {"thinkingLevel": "low"}}}
-    res = post(f"{GEMINI_BASE}/models/{model()}:generateContent", headers={"x-goog-api-key": _key()},
-               json=body, timeout=(15, 600))
+    for wait in BUSY_WAITS_S + (None,):
+        res = post(f"{GEMINI_BASE}/models/{model()}:generateContent", headers={"x-goog-api-key": _key()},
+                   json=body, timeout=(15, 600))
+        # Google's "high demand" answers are brief; nothing was generated or billed, so wait and ask again
+        if res.status_code not in (429, 500, 503) or wait is None:
+            break
+        _sleep(wait)
     if res.status_code != 200:
         detail = ""
         try:
