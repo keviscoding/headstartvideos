@@ -25,7 +25,7 @@ HOME = Path(__file__).resolve().parent
 LIBRARY = HOME / "assets" / "sfx" / "cr" / "ambience"
 SR = 48000
 FADE_S = 1.2                  # crossfade between two places
-CARRY_S = 20.0                # a place is still heard this long after the last picture that showed it
+CARRY_S = 10.0                # a place is still heard this long after the last picture that showed it
 
 # What a picture shows -> the place it sounds like. First match wins, so specific places come before general ones.
 PLACES = [
@@ -38,9 +38,10 @@ PLACES = [
     ("police", r"\bpolice (?:car|cruiser|radio)\b|\bsquad car\b|\bpatrol car\b|\bdispatch"),
     ("prison", r"\bprison\b|\bjail\b|\bcell ?block\b|\b(?:prison|jail) cell\b|\binmates?\b|\bcorrectional\b"),
     ("hospital", r"\bhospital\b|\bward\b|\bsurgery\b|\boperating (?:room|table)\b|\bicu\b|\bclinic\b"),
+    ("crowd", r"\barena\b|\bcolosseum\b|\bamphithea|\bstadium\b"),              # before a market's stalls
     ("tavern", r"\btavern\b|\binn\b|\bpub\b|\bsaloon\b|\bbar counter\b"),
     ("market", r"\bmarket(?:place)?\b|\bbazaar\b|\bstalls?\b|\bmerchants?\b|\bvendors?\b"),
-    ("crowd", r"\bcrowd(?:ed|s)?\b|\baudience\b|\bstadium\b|\bspectators\b|\bcourtroom\b|\bassembly hall\b"),
+    ("crowd", r"\bcrowd(?:ed|s)?\b|\baudience\b|\bspectators\b|\bcourtroom\b|\bassembly hall\b"),
     ("office", r"\boffice\b|\bcubicle\b|\bnewsroom\b|\btrading floor\b|\bcall cent(?:er|re)\b"),
     ("cave", r"\bcave(?:rn)?s?\b|\bmine shaft\b|\bunderground tunnel\b|\bcatacomb"),
     ("fire", r"\bfire ?place\b|\bcamp ?fire\b|\bbonfire\b|\bhearth\b|\bburning (?:logs|wood)\b|\bforge\b"),
