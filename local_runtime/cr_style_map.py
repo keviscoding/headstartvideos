@@ -325,6 +325,13 @@ def _motion(plan: Plan, profile: dict, base: str, minutes_hint: float = 10.0):
             plan.settings.append({"area": "Motion", "label": "Cut-out movement", "value": "on", "from": "measured",
                                   "why": f"{round(moving * 100)}% of the runtime moves; drawn figures move as cut-outs",
                                   "path": "features.on"})
+            # as often as the references move, and any drawn figure or prop may be lifted (not only people)
+            every = 2 if moving >= 0.3 else 3 if moving >= 0.15 else 4
+            plan.set("look.photofx.depth_every", every, area="Motion", label="Pictures that move as cut-outs",
+                     why=f"{round(moving * 100)}% of the references' runtime moves", source="measured",
+                     show=f"one in {every}")
+            plan.set("look.photofx.depth_subjects", "any", area="Motion", label="What lifts off the picture",
+                     why="any drawn figure or prop can slide as a cut-out", source="measured", show="figures and props")
             clips = 1.0 if moving_generated >= 0.4 else 0.0
         else:
             clips = round(_clamp(moving_generated * 6, 1.0, 6.0), 1)

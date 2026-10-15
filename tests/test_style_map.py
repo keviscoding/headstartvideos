@@ -75,6 +75,7 @@ def test_drawn_pictures_that_move_slide_as_cut_outs_rather_than_ai_video():
     on = plan["overrides"]["features"]["on"]
     assert "depth" in on
     assert plan["overrides"]["pacing"]["clips_per_min"] <= 1.0
+    assert plan["overrides"]["look"]["photofx"] == {"depth_every": 2, "depth_subjects": "any"}
 
 
 def test_stills_only_channels_get_no_moving_pictures():
