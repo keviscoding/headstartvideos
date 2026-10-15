@@ -425,3 +425,19 @@ def test_a_style_saved_with_an_older_storyboard_prompt_draws_with_todays():
     sp.install(engine)
     assert "never a lone arm" in engine._scene_prompts("stick")[0]
     assert engine._scene_prompts("builtin")[0] == "A recipe's own storyboard prompt."
+
+
+def test_a_learned_style_draws_with_the_storyboard_its_channel_needs():
+    import cr_style_prompts as sp
+    engine = type("E", (), {})()
+    engine.STYLE_INFO = {"explainer": {"look": {"storyboard": "explain"}}, "story": {"look": {"storyboard": "literal"}},
+                         "essay": {"look": {}}, "builtin": {"look": {"scene_prompt": "A recipe's own storyboard prompt."}}}
+    engine._scene_prompts = lambda s: (engine.STYLE_INFO[s]["look"].get("scene_prompt") or "ENGINE ATMOSPHERE", "", "")
+    sp.install(engine)
+    explain = engine._scene_prompts("explainer")[0]
+    assert explain.startswith("You are the storyboard artist") and "EXPLAIN, NEVER DECORATE" in explain
+    assert "with a symbol" not in explain, "an explainer acts ideas out instead"
+    literal = engine._scene_prompts("story")[0]
+    assert "show the" in literal and "real moment" in literal and "EXPLAIN" not in literal
+    assert engine._scene_prompts("essay")[0] == "ENGINE ATMOSPHERE", "a channel that never asked keeps the engine's"
+    assert engine._scene_prompts("builtin")[0] == "A recipe's own storyboard prompt."

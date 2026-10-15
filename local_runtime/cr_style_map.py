@@ -310,6 +310,27 @@ def _whiteboard(profile) -> bool:
                                                    words))
 
 
+def _storyboard(plan: Plan, profile: dict, base: str):
+    """What the AI pictures do (look.storyboard, cr_style_prompts). An explainer (most of the runtime carries numbers,
+    headlines or quotes on screen, with charts or documents beside drawn pictures) acts each idea out as a labelled
+    visual metaphor; a story or presenter channel shows exactly what each line says. Any other channel keeps the recipe's
+    own storyboard: an engine default drew mood pictures for a money explainer, and they explained nothing."""
+    fam = _families(profile)
+    generated = fam.get("generated", 0) + fam.get("generated_motion", 0)
+    dens = _v(_get(profile, "text", "density"), {}) or {}
+    info = sum(float(dens.get(k) or 0) for k in ("data", "headline", "quote", "label"))
+    proof = fam.get("graphic", 0) + fam.get("document", 0)
+    if info >= 0.55 and proof >= 0.15 and generated >= 0.1:
+        plan.set("look.storyboard", "explain", area="Pictures", label="What the pictures do",
+                 why=f"{round(info * 100)}% of the runtime carries numbers, headlines or quotes on screen, with charts "
+                     "and documents beside the drawn pictures", source="watched",
+                 show="each picture acts out its line, labelled")
+    elif base in ("stories", "avatar-premium") and generated >= 0.1:
+        plan.set("look.storyboard", "literal", area="Pictures", label="What the pictures do",
+                 why="the references' pictures show the moment each line describes", source="watched",
+                 show="each picture shows exactly what is said")
+
+
 def _motion(plan: Plan, profile: dict, base: str, minutes_hint: float = 10.0):
     motion = profile.get("motion") or {}
     kinds = _v(motion.get("kinds"), {}) or {}
@@ -757,6 +778,7 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
     base_style = styles[chosen]
     plan = Plan()
     _pictures(plan, profile, chosen, base_style)
+    _storyboard(plan, profile, chosen)
     _pace(plan, profile, chosen)
     _motion(plan, profile, chosen, minutes_hint)
     _look(plan, profile)

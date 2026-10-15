@@ -11,6 +11,8 @@ engine adds to every image prompt.
 """
 from __future__ import annotations
 
+import re
+
 NICHE_BASES = {"stories", "jung"}
 
 OUTLINE = """You plan one episode of a faceless YouTube channel.
@@ -117,6 +119,28 @@ def with_original_sound(style: dict) -> dict:
     return style
 
 
+SYMBOL_RULE = re.compile(r"Never\s+illustrate\s+an\s+idea\s+with\s+a\s+symbol;\s+show\s+the\s+real\s+moment\.")
+EXPLAIN_RULE = ("EXPLAIN, NEVER DECORATE: every frame makes the line's point visible, the way the best explainer channels "
+                "draw it. A line about a mechanism or an idea is acted out as one clear visual metaphor: the channel's "
+                "recurring host or cut-out figures DO the thing (a banker pocketing the gap between two rates, a hand "
+                "turning a dial marked with the rate, money draining through a funnel labelled with what drains it), "
+                "with short labels on the objects carrying the line's numbers and names. A line about a real event "
+                "shows that event. Never a decorative establishing shot, never a picture that only sets a mood.")
+STORYBOARDS = ("literal", "explain")         # look.storyboard: what a learned style's pictures do
+
+
+def storyboard_prompt(look) -> str:
+    """The storyboard prompt a learned style draws with: its own, or Studio's (each frame shows exactly what the line
+    says) when its look asks for one (look.storyboard): "literal", or "explain" for explainer channels, whose
+    pictures act ideas out as labelled visual metaphors. "" when the engine's own prompt stands."""
+    look = look if isinstance(look, dict) else {}
+    kind = str(look.get("storyboard") or "")
+    scene = current_scene(look.get("scene_prompt")) if look.get("scene_prompt") else (SCENE if kind in STORYBOARDS else "")
+    if scene and kind == "explain":
+        scene = SYMBOL_RULE.sub(EXPLAIN_RULE, scene)
+    return scene or ""
+
+
 def current_scene(scene):
     """Studio's storyboard prompt as it is today, for a learned style saved with an older one (an older one let a lone
     arm reach into the frame); any other prompt is returned unchanged."""
@@ -127,15 +151,18 @@ def current_scene(scene):
 
 
 def install(engine):
-    """Learned styles saved with an older storyboard prompt draw with today's (in memory: their files stay as saved)."""
+    """Learned styles draw with today's storyboard prompt, the kind their look asks for (in memory: their files stay
+    as saved)."""
     original = getattr(engine, "_scene_prompts", None)
     if original is None or getattr(original, "_cr_current", False):
         return
 
     def _scene_prompts(style):
         look = ((getattr(engine, "STYLE_INFO", {}) or {}).get(style) or {}).get("look")
-        if isinstance(look, dict) and look.get("scene_prompt"):
-            look["scene_prompt"] = current_scene(look["scene_prompt"])
+        if isinstance(look, dict):
+            scene = storyboard_prompt(look)
+            if scene:
+                look["scene_prompt"] = scene
         return original(style)
     _scene_prompts._cr_current = True
     engine._scene_prompts = _scene_prompts

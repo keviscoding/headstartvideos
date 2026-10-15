@@ -271,3 +271,16 @@ def test_a_white_3d_channel_renders_its_3d_as_an_all_white_matte_world():
                    **{"look__grade": axis("dark", luma=60, saturation=0.4, filter=[]),
                       "pictures__art_style": axis("Moody realistic 3D night recreations.")})
     assert "threed" not in cm.plan_style(dark, STYLES)["overrides"].get("look", {})
+
+
+def test_an_explainer_acts_its_ideas_out_and_a_story_shows_each_line():
+    explainer = profile({"generated": 0.26, "footage": 0.49, "graphic": 0.19, "document": 0.05},
+                        **{"text__density": axis({"data": 0.31, "headline": 0.29, "quote": 0.05, "label": 0.04,
+                                                  "none": 0.22})})
+    plan = cm.plan_style(explainer, STYLES)
+    assert plan["overrides"]["look"]["storyboard"] == "explain"
+    story = cm.plan_style(profile({"generated": 0.9, "graphic": 0.1}), STYLES)
+    assert story["base"] == "stories" and story["overrides"]["look"]["storyboard"] == "literal"
+    documentary = profile({"footage": 0.8, "graphic": 0.2}, **{"text__density": axis({"none": 0.9, "label": 0.1})})
+    assert "storyboard" not in (cm.plan_style(documentary, STYLES)["overrides"].get("look") or {}), \
+        "a channel whose pictures set a mood keeps its recipe's storyboard"
