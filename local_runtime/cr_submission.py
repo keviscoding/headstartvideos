@@ -27,8 +27,10 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
     if backend not in {"original", "manimgx"}:
         raise ValueError("Choose the standard renderer or Fast mode.")
     import cr_cta
+    import cr_threed_look
     try:
         cta = cr_cta.clean(payload.get("cta"))         # your call to action (cr_cta), checked before any work
+        threed_look = cr_threed_look.clean(payload.get("threed_look"))
     except ValueError as error:
         from flask import jsonify
         return studio.app.make_response((jsonify(error=str(error)), 400))
@@ -102,6 +104,8 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
             spec["cr_cta"] = cta
         if ppm:
             spec["cr_pictures_per_min"] = ppm
+        if threed_look:
+            spec["cr_threed_look"] = threed_look
         if backend == "manimgx":
             spec["manimgx_identity"] = payload.get("manimgx_identity")
     if before_publish is not None:

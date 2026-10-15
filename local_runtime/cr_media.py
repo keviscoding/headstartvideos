@@ -614,6 +614,8 @@ def install(engine):
         cr_presenters.install()                     # your own presenters, listed first
         import cr_drawon
         cr_drawon.install(engine)                   # whiteboard styles: each picture draws itself on
+        import cr_threed_look
+        cr_threed_look.install(engine)              # the 3D look chosen in Create for one video
     except ImportError:
         pass
     # Native Kie motion and the history kit previously bypassed the hub.

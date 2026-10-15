@@ -182,9 +182,14 @@
     text('crw-pictures-value', `· ${v}`);
     text('crw-pictures-help', `The recipe draws ${pics.default} a minute. Fewer pictures cost less (about $${(v * 0.02).toFixed(2)} a minute in pictures); never fewer than ${pics.floor}, so each picture stays on its own words.`);
   }
+  function threedLook(features) {
+    const v = $('crw-palette').value;
+    if (!v || !features.threed || strict()) return '';
+    return v.startsWith('look:') ? v.slice(5) : 'documentary';      // a palette's colours need the colour look
+  }
   function withPalette(extra, features) {
     const palette = $('crw-palette').value;
-    if (!palette || !features.threed || strict()) return extra;
+    if (!palette || palette.startsWith('look:') || !features.threed || strict()) return extra;
     return (extra ? extra + '\n' : '') + `3D SCENE PALETTE: every 3D scene uses only ${palette}; keep it minimal and contrasting.`;
   }
   function ctaValue() {
@@ -461,7 +466,8 @@
       character:strict()?'':$('crw-character').value.trim(),character_image:strict()?'':$('crw-character-image').value,
       avatar_id:features.avatar&&!strict()?$('crw-avatar-id').value:'',avatar_s:number('crw-avatar-seconds',8,0,15),avatar_count:number('crw-avatar-count',1,1,6),
       offer:$('crw-offer').value,offer_plugs:number('crw-offer-plugs',0,0,2),panels:state.selected.panels?state.panels:'',cta:ctaValue(),
-      pictures_per_min:state.selected.pictures&&Number($('crw-pictures').value)!==state.selected.pictures.default?Number($('crw-pictures').value):null};
+      pictures_per_min:state.selected.pictures&&Number($('crw-pictures').value)!==state.selected.pictures.default?Number($('crw-pictures').value):null,
+      threed_look:threedLook(features)};
     if(p.panels && title.includes('\n')) throw new Error('Use one title for a set of panels.');
     if(state.selected.auto_style)p.auto_style=checked('crw-adaptive'); return p;
   }
