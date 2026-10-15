@@ -125,6 +125,7 @@ def test_real_footage_channels_build_on_the_documentary_with_their_own_clips():
     ov = plan["overrides"]
     assert plan["base"] == "documentary"
     assert ov["look"]["soundbites"]["quotes"] >= 10 and ov["pacing"]["cold_open_s"] > 0
+    assert ov["look"]["soundbites"]["montage"] is False, "raw footage opens it, never commentators saying the name"
     assert ov["look"]["fx"]["grade"] == "bleach_bypass"
     assert ov["look"]["sound"]["music"] is True and ov["look"]["sound"]["sfx_db"] == -60.0
     assert ov["look"]["sound"]["vibe"] == "tense_investigation"

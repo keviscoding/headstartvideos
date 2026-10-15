@@ -379,9 +379,16 @@ def test_a_ready_made_recipe_ships_its_own_graphics_kit_and_never_a_path_on_this
 
 def test_a_learned_kit_is_found_inside_the_studio_folder():
     engine = (b"def kit_of(look):\n    if look:\n"
-              b"        register_gen_kit(look[\"genkit\"][\"manifest\"])\n")
+              b"        register_gen_kit(look[\"genkit\"][\"manifest\"])\n"
+              b"def place(pics, placed, used):\n    for k, (at, sc) in enumerate(placed):\n        if True:\n"
+              b"            timed, still = [], []\n            pick = (timed or still or [None])[0]\n"
+              b"        yield pick\n")
     patched = package.patch_engine("kits.py", engine).decode()
     assert 'register_gen_kit(HERE / str(look["genkit"]["manifest"]))' in patched
+    ns = {}
+    exec(patched, ns)
+    assert list(ns["place"]([(4.0, "a.jpg"), (20.0, "b.jpg")], [(18.0, {})], set())) == [(20.0, "b.jpg")], \
+        "an overlay with every picture used sits on the nearest one, never on black"
 
 
 def test_cut_out_movement_runs_on_a_kie_only_setup():

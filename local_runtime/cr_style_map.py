@@ -563,7 +563,10 @@ def _real_clips(plan: Plan, profile: dict, base: str):
     if share < 0.15:
         return
     quotes = int(_clamp(round(share * 24), 2, 16))      # about two clips per minute of a 10-minute video at 50%
-    plan.set("look.soundbites", {"quotes": quotes, "max_s": 20.0, "soundups": 3, "montage": True}, area="Edit",
+    # the name montage (people saying the name to camera: interviews, podcasts, talk shows) is a sports or celebrity
+    # documentary's opening; a true crime channel opens on its raw footage (sound-ups), never on commentators
+    montage = _has_words(hook, "montage") and _has_words(hook, "interview", "talk", "says", "saying", "anchor", "host")
+    plan.set("look.soundbites", {"quotes": quotes, "max_s": 20.0, "soundups": 3, "montage": montage}, area="Edit",
              label="Real clips with their own sound",
              why=f"real footage plays with its own sound {round(share * 100)}% of the runtime", source="watched",
              show=f"about {quotes} clips, up to 20 s each, opening on raw moments")

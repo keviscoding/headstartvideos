@@ -376,6 +376,12 @@ ENGINE_PATCHES = {
     # A learned style's own kit is named by its manifest path; Studio saves it relative to the Studio folder (so a
     # moved Studio, and a ready-made recipe shipped under assets/styles/cr/, keep their graphics).
     "kits.py": [
+        # an overlay graphic (a name card, a place tag) sits on the picture of its seconds; when every picture already
+        # grounded a scene it went on black. The nearest picture serves again.
+        ("            pick = (timed or still or [None])[0]\n",
+         "            pick = (timed or still or [None])[0]\n"
+         "            if pick is None and pics:            # every picture grounds a scene already: the nearest again, never black\n"
+         "                pick = min(pics, key=lambda p: abs(p[0] - at) if p[0] >= 0 else 1e9)\n"),
         ('        register_gen_kit(look["genkit"]["manifest"])\n',
          '        register_gen_kit(HERE / str(look["genkit"]["manifest"]))\n'),
     ],
