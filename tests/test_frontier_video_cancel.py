@@ -488,10 +488,16 @@ def test_a_busy_progress_file_on_windows_never_stops_the_video(tmp_path, monkeyp
     assert result["job"]["done"] and result["job"]["lines"] == ["working"]
 
 
-def test_studio_says_when_it_was_closed_from_outside(tmp_path):
+def test_studio_says_when_it_was_closed_in_the_middle_of_a_video(tmp_path):
     assert cr_studio.session_started(tmp_path) == ""
     cr_studio.session_stopped("ctrl-c", tmp_path)
     assert cr_studio.session_started(tmp_path) == "", "a Studio that stopped itself is not news"
-    note = cr_studio.session_started(tmp_path)                      # the last one never said how it ended
-    assert "closed from outside" in note and "Claude Code" in note and "launcher" in note
-    assert cr_studio.session_started(tmp_path) != ""
+    assert cr_studio.session_started(tmp_path) == "", "closing its window between videos is how Studio stops"
+    _, _, progress = cancel.worker_files(tmp_path, RUN)
+    progress.parent.mkdir(parents=True)
+    cancel._write(progress, {"project_id": PROJECT, "run_id": RUN, "job": {"state": "running", "done": False,
+                                                                           "title": "The Hindenburg"}})
+    note = cr_studio.session_started(tmp_path)                      # closed from outside while that video ran
+    assert '"The Hindenburg"' in note and "Claude Code" in note and "launcher window" in note
+    cancel._write(progress, {"project_id": PROJECT, "run_id": RUN, "job": {"state": "done", "done": True}})
+    assert cr_studio.session_started(tmp_path) == ""

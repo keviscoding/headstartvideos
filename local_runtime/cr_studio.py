@@ -1439,23 +1439,39 @@ def banner():
 SESSION = Path("output") / ".cr-studio-session.json"
 
 
+def _cut_off(home, since: float) -> list:
+    """Titles of the videos a Studio was making when it closed: their worker's last progress, saved after it
+    started, still says running."""
+    titles = []
+    for progress in (Path(home) / "output" / "cr-video-workers").glob("video_*/progress.json"):
+        try:
+            if progress.stat().st_mtime < since:
+                continue
+            job = json.loads(progress.read_text(encoding="utf-8")).get("job") or {}
+        except (OSError, ValueError, AttributeError):
+            continue
+        if isinstance(job, dict) and job.get("state") == "running" and not job.get("done"):
+            titles.append(str(job.get("title") or "a video"))
+    return titles
+
+
 def session_started(home=HOME) -> str:
-    """Note this Studio as running; a plain note when the previous one never said how it ended.
+    """Note this Studio as running; a plain note when the previous one closed in the middle of a video.
 
     A Studio that stops itself (Ctrl+C, an update, an error) records how. One that never did was closed from
-    outside while running: its window, Task Manager, Windows signing out, or a program that started Studio and then
-    ended (a Claude Code command that finished or timed out closes everything it started). Any video it was making
-    stopped with it."""
+    outside: its window (the usual way to stop it), Task Manager, Windows signing out, or a program that started
+    Studio and then ended (a Claude Code command that finished or timed out closes everything it started). That only
+    matters when a video was being made: it stopped with Studio."""
     path = Path(home) / SESSION
     note = ""
     try:
         last = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(last, dict) and not last.get("ended"):
-            began = time.strftime("%d %b %H:%M", time.localtime(float(last.get("started") or 0)))
-            note = ("Last time, Studio (started %s) was closed from outside while it ran: its window was closed, "
-                    "Task Manager ended it, or the program that started it ended (for example a Claude Code "
-                    "command). Any video it was making stopped with it; saved work is kept. Start Studio with its "
-                    "launcher and keep that window open while videos are made." % began)
+        cut = _cut_off(home, float(last.get("started") or 0)) if isinstance(last, dict) and not last.get("ended") else []
+        if cut:
+            note = ("Last time, Studio closed while it was making \"%s\": its window was closed, Task Manager ended "
+                    "it, or the program that started it ended (for example a Claude Code command). That video "
+                    "stopped with it; its saved work is kept. Keep Studio's launcher window open until a video "
+                    "finishes." % "\", \"".join(cut[:3]))
     except (OSError, ValueError, TypeError):
         pass
     try:
