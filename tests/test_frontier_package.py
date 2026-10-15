@@ -419,7 +419,8 @@ def test_a_chapter_card_holds_its_title_and_a_learned_look_has_no_light_leak_it_
     exec(compile(engine.decode().replace(old, new), "make_video.py", "exec"), ns)
     from pathlib import Path
     assert ns["_held_before_fade"](Path("chapter_01.mp4"), 1.9, 3.7), "its title holds, then it fades"
-    assert not ns["_held_before_fade"](Path("kit_02_name.mp4"), 1.9, 3.7)
+    assert ns["_held_before_fade"](Path("kit_02_name.mp4"), 1.9, 3.7), "a learned graphic too"
+    assert not ns["_held_before_fade"](Path("yt_002_0.mp4"), 1.9, 3.7), "footage plays as cut"
     cinema = ("from pathlib import Path\nleaked = []\n\n\n"
               "def cards(jobs, look, creative=False, kit=False, workers=1):\n"
               "    if True:\n        if creative:\n            if True:\n                    if jobs:\n"

@@ -279,10 +279,11 @@ ENGINE_PATCHES = {
         ('{\n "documentary": {\n', '{\n' + LOOK_WHITE_STUDIO + ' "documentary": {\n'),
     ],
     "make_video.py": [
-        # A dark chapter card in a slot longer than itself held its faded-out last frame: two seconds of black while
-        # the new section's first words played. Like a documentary graphic, it now holds its title before the fade.
+        # A dark chapter card or learned graphic in a slot longer than itself held its faded-out last frame: seconds of
+        # black while the narration went on (the brightness test misses dark cards). Like a documentary graphic, each now
+        # holds its last full picture before the fade.
         ('    if tail > 0.35 and src_dur > 1.6 and (src.name.startswith("doc_") or _fades_out(src, src_dur)):\n',
-         '    if tail > 0.35 and src_dur > 1.6 and (src.name.startswith(("doc_", "chapter_")) or _fades_out(src, src_dur)):\n'),
+         '    if tail > 0.35 and src_dur > 1.6 and (src.name.startswith(("doc_", "chapter_", "kit_")) or _fades_out(src, src_dur)):\n'),
         ("def _build_story_plan(job: Path, total: float, photos: list) -> list:\n",
          "def _story_media(job: Path, items: list, photos: list) -> list:\n"
          "    \"\"\"The picture for each storyboard item, in item order (ChannelRecipe fix): clips first, then stills by\n"
