@@ -216,7 +216,32 @@ ENGINE_PATCHES = {
     # picture one sentence early and never showed the clips (found 2026-10-15 in a test video: the family picture
     # played over "London, 1820s"). Each still now sits on its own item, a clip plays in its own slot through its
     # first frame (the still renderer plays <still>.anim.mp4), and a clip that failed shows its first frame.
+    "cinema.py": [
+        # Every chapter card opened with a film-burn light leak, so a learned documentary whose references cut to black
+        # at chapters flashed orange there. A learned look (autostyle v2 fx) gets it only when its references use a
+        # leak_burst transition; the built-in recipes keep it.
+        ("def _leak_in(mp4: Path) -> None:\n",
+         "def _wants_leak(look) -> bool:\n"
+         "    fx = look.get(\"fx\") if isinstance(look, dict) else None\n"
+         "    if not isinstance(fx, dict):\n"
+         "        return True\n"
+         "    return any(isinstance(t, dict) and t.get(\"id\") == \"leak_burst\" for t in fx.get(\"transitions\") or [])\n"
+         "\n\n"
+         "def _leak_in(mp4: Path) -> None:\n"),
+        ("                docgfx.render(jobs, workers=max(1, min(2, workers)), look=look)\n"
+         "                for _sc, mp4 in jobs:\n                    _leak_in(Path(mp4))\n",
+         "                docgfx.render(jobs, workers=max(1, min(2, workers)), look=look)\n"
+         "                for _sc, mp4 in jobs:\n                    if _wants_leak(look):\n"
+         "                        _leak_in(Path(mp4))\n"),
+        ("                        for _sc, mp4 in jobs:\n                            _leak_in(Path(mp4))\n",
+         "                        for _sc, mp4 in jobs:\n                            if _wants_leak(look):\n"
+         "                                _leak_in(Path(mp4))\n"),
+    ],
     "make_video.py": [
+        # A dark chapter card in a slot longer than itself held its faded-out last frame: two seconds of black while
+        # the new section's first words played. Like a documentary graphic, it now holds its title before the fade.
+        ('    if tail > 0.35 and src_dur > 1.6 and (src.name.startswith("doc_") or _fades_out(src, src_dur)):\n',
+         '    if tail > 0.35 and src_dur > 1.6 and (src.name.startswith(("doc_", "chapter_")) or _fades_out(src, src_dur)):\n'),
         ("def _build_story_plan(job: Path, total: float, photos: list) -> list:\n",
          "def _story_media(job: Path, items: list, photos: list) -> list:\n"
          "    \"\"\"The picture for each storyboard item, in item order (ChannelRecipe fix): clips first, then stills by\n"

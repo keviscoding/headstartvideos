@@ -305,7 +305,11 @@ def test_a_story_with_moving_pictures_shows_each_picture_on_its_own_sentence(tmp
               b'    p = f"min(on/{max(1, frames - 1)}\\\\,1)"\n'
               b'    if (mode or "in").lower() != "alternate":\n'
               b'        return f"(1+{amount:.5f}*{p})"\n'
-              b'    return "alternate"\n')
+              b'    return "alternate"\n\n\n'
+              b'def _held_before_fade(src, tail, src_dur):\n'
+              b'    if tail > 0.35 and src_dur > 1.6 and (src.name.startswith("doc_") or _fades_out(src, src_dur)):\n'
+              b'        return True\n'
+              b'    return False\n')
     patched = package.patch_engine("make_video.py", engine).decode()
     ns = {}
     exec(compile(patched, "make_video.py", "exec"), ns)
@@ -404,3 +408,31 @@ def test_cut_out_movement_runs_on_a_kie_only_setup():
         for k, v in saved.items():
             if v is not None:
                 os.environ[k] = v
+
+
+def test_a_chapter_card_holds_its_title_and_a_learned_look_has_no_light_leak_it_never_used():
+    engine = (b'from pathlib import Path\n\n\ndef _held_before_fade(src, tail, src_dur):\n'
+              b'    if tail > 0.35 and src_dur > 1.6 and (src.name.startswith("doc_") or _fades_out(src, src_dur)):\n'
+              b'        return True\n    return False\n')
+    ns = {"_fades_out": lambda src, d: False}       # a dark card is too dim for the brightness test
+    old, new = next(p for p in package.ENGINE_PATCHES["make_video.py"] if '"chapter_"' in p[1])
+    exec(compile(engine.decode().replace(old, new), "make_video.py", "exec"), ns)
+    from pathlib import Path
+    assert ns["_held_before_fade"](Path("chapter_01.mp4"), 1.9, 3.7), "its title holds, then it fades"
+    assert not ns["_held_before_fade"](Path("kit_02_name.mp4"), 1.9, 3.7)
+    cinema = ("from pathlib import Path\nleaked = []\n\n\n"
+              "def cards(jobs, look, creative=False, kit=False, workers=1):\n"
+              "    if True:\n        if creative:\n            if True:\n                    if jobs:\n"
+              "                        docgfx.render(jobs, workers=max(1, min(2, workers)), look=look)\n"
+              "                        for _sc, mp4 in jobs:\n                            _leak_in(Path(mp4))\n"
+              "        else:\n"
+              "                docgfx.render(jobs, workers=max(1, min(2, workers)), look=look)\n"
+              "                for _sc, mp4 in jobs:\n                    _leak_in(Path(mp4))\n\n\n"
+              "def _leak_in(mp4: Path) -> None:\n    leaked.append(mp4)\n").encode()
+    code = package.patch_engine("cinema.py", cinema).decode()
+    ns = {"docgfx": type("D", (), {"render": staticmethod(lambda *a, **k: None)})}
+    exec(compile(code, "cinema.py", "exec"), ns)
+    ns["cards"]([({}, "chapter_01.mp4")], {"fx": {"transitions": [{"id": "dip_black", "at": "chapter"}]}})
+    assert ns["leaked"] == [], "a learned look that cuts to black at chapters gets no film burn"
+    ns["cards"]([({}, "chapter_01.mp4")], {"look": "built-in"})
+    assert len(ns["leaked"]) == 1, "the built-in recipes keep it"
