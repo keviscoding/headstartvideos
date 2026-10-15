@@ -616,6 +616,8 @@ def install(engine):
         cr_drawon.install(engine)                   # whiteboard styles: each picture draws itself on
         import cr_threed_look
         cr_threed_look.install(engine)              # the 3D look chosen in Create for one video
+        import cr_style_prompts
+        cr_style_prompts.install(engine)            # learned styles draw with today's storyboard prompt
     except ImportError:
         pass
     # Native Kie motion and the history kit previously bypassed the hub.

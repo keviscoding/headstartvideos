@@ -413,3 +413,15 @@ def test_a_style_that_plays_real_clips_asks_its_script_to_mark_them():
     assert style["prompts"] == before, "added once"
     plain = {"look": {"soundbites": {"soundups": 1}}, "prompts": {"outline": "Plan.", "script": "Write."}}
     assert sp.with_original_sound(plain)["prompts"] == {"outline": "Plan.", "script": "Write."}
+
+
+def test_a_style_saved_with_an_older_storyboard_prompt_draws_with_todays():
+    import cr_style_prompts as sp
+    old = "You are the storyboard artist for a faceless YouTube video.\n\nCHANNEL: [INSERT CHANNEL HERE]\n\nDraw frames."
+    style = {"look": {"scene_prompt": old}}
+    engine = type("E", (), {})()
+    engine.STYLE_INFO = {"stick": style, "builtin": {"look": {"scene_prompt": "A recipe's own storyboard prompt."}}}
+    engine._scene_prompts = lambda s: (engine.STYLE_INFO[s]["look"]["scene_prompt"], "", "")
+    sp.install(engine)
+    assert "never a lone arm" in engine._scene_prompts("stick")[0]
+    assert engine._scene_prompts("builtin")[0] == "A recipe's own storyboard prompt."

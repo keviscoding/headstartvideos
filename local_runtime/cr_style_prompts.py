@@ -115,3 +115,27 @@ def with_original_sound(style: dict) -> dict:
         if isinstance(text, str) and text and "ORIGINAL SOUND" not in text:
             prompts[key] = text.rstrip() + add
     return style
+
+
+def current_scene(scene):
+    """Studio's storyboard prompt as it is today, for a learned style saved with an older one (an older one let a lone
+    arm reach into the frame); any other prompt is returned unchanged."""
+    if (isinstance(scene, str) and scene.startswith("You are the storyboard artist for a faceless YouTube video.")
+            and "[INSERT CHANNEL HERE]" in scene and scene != SCENE):
+        return SCENE
+    return scene
+
+
+def install(engine):
+    """Learned styles saved with an older storyboard prompt draw with today's (in memory: their files stay as saved)."""
+    original = getattr(engine, "_scene_prompts", None)
+    if original is None or getattr(original, "_cr_current", False):
+        return
+
+    def _scene_prompts(style):
+        look = ((getattr(engine, "STYLE_INFO", {}) or {}).get(style) or {}).get("look")
+        if isinstance(look, dict) and look.get("scene_prompt"):
+            look["scene_prompt"] = current_scene(look["scene_prompt"])
+        return original(style)
+    _scene_prompts._cr_current = True
+    engine._scene_prompts = _scene_prompts
