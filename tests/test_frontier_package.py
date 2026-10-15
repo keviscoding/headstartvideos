@@ -268,12 +268,24 @@ def test_real_photo_searches_never_pick_youtube_thumbnails():
     assert "ytimg.com" in scope["STOCK_HOSTS"] and "ytimg.com" in scope["SHOP_HOSTS"]
 
 
+def _youtube_engine() -> bytes:
+    """The lines of youtube.py the engine patches change (each patch must find its line once)."""
+    return ('def _kie_upload(path: Path) -> str:\n'
+            '    with open(path, "rb") as fh:\n'
+            '        r = requests.post("https://kieai.redpandaai.co/api/file-stream-upload",\n'
+            '                          headers={"Authorization": f"Bearer {_env(\'KIE_API_KEY\')}"},\n'
+            '                          data={"uploadPath": "frontier", "fileName": path.name},\n'
+            '                          files={"file": (path.name, fh, "video/mp4")}, timeout=900)\n'
+            '    r.raise_for_status()\n'
+            'def ytdlp():\n    cmd = ["yt-dlp"]\n    if _num_env("YT_SLEEP") > 0:\n        cmd += ["--sleep-requests", "1"]\n'
+            '    return cmd\n'
+            'def search(q):\n    if True:\n        try:\n            p = run()\n'
+            '        except subprocess.TimeoutExpired:\n            return []\n        for line in p.stdout.splitlines():\n'
+            '            pass\n').encode()
+
+
 def test_a_refused_footage_search_records_why():
-    engine = (b"def ytdlp():\n    if _num_env(\"YT_SLEEP\") > 0:\n        pass\n"
-              b"def search(q):\n    if True:\n        try:\n            p = run()\n"
-              b"        except subprocess.TimeoutExpired:\n            return []\n        for line in p.stdout.splitlines():\n"
-              b"            pass\n")
-    patched = package.patch_engine("youtube.py", engine).decode()
+    patched = package.patch_engine("youtube.py", _youtube_engine()).decode()
     assert "        if p.returncode:\n            _note_err(p.stderr)\n        for line in p.stdout" in patched
 
 
@@ -468,3 +480,8 @@ def test_the_white_studio_3d_look_reaches_the_renderer_and_the_director():
         b"    const shot = (mode) => { it.res.measureMode(mode); post.frame(1, (j) => renderSub(t, j, 1), Math.round(t * FPS),"
         b" gradeAt(t), t); const r = region(it); it.res.measureMode(null); return r; };\n")).decode()
     assert "cur.P?.labelInk === 'dark'" in main and "it.res.setInk(true)" in main
+
+
+def test_a_stalled_footage_upload_is_tried_again_after_minutes_not_fifteen():
+    patched = package.patch_engine("youtube.py", _youtube_engine()).decode()
+    assert "timeout=(15, 180)" in patched and "for attempt in (1, 2):" in patched and "timeout=900" not in patched

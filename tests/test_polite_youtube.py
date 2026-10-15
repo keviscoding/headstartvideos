@@ -37,11 +37,9 @@ def test_youtube_is_asked_over_ipv4_when_this_computer_reaches_it_that_way(monke
 def test_the_engine_passes_ipv4_to_every_youtube_request():
     sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
     import build_frontier_admin as package
-    engine = (b'def ytdlp():\n    cmd = ["yt-dlp"]\n    if _num_env("YT_SLEEP") > 0:\n        cmd += ["--sleep-requests", "1"]\n'
-              b'    return cmd\n'
-              b'def search():\n        try:\n            p = 1\n        except subprocess.TimeoutExpired:\n            return []\n'
-              b'        for line in p.stdout.splitlines():\n            pass\n')
-    patched = package.patch_engine("youtube.py", engine).decode()
+    sys.path.insert(0, str(Path(__file__).parent))
+    from test_frontier_package import _youtube_engine
+    patched = package.patch_engine("youtube.py", _youtube_engine()).decode()
     scope = {"_env": lambda k: {"YT_FORCE_IPV4": "1"}.get(k, ""), "_num_env": lambda k: 0}
-    exec(patched.split("def search")[0], scope)
+    exec(patched[patched.index("def ytdlp"):patched.index("def search")], scope)
     assert scope["ytdlp"]() == ["yt-dlp", "--force-ipv4"]
