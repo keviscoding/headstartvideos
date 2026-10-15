@@ -223,6 +223,14 @@ def install(engine):
             getattr(engine, "log", print)(f"  whiteboard: skipped ({type(e).__name__}: {str(e)[:100]})")
         return out
     engine.generate_astrology_visuals = visuals
+    depth = getattr(engine, "_depth_dlc", None)
+    if depth is not None:
+        def depth_dlc(plan_, style, job, candidates):
+            # A drawn style's pictures draw themselves on. Lifted off as cut-outs over a dimmed picture, they never
+            # drew at all and sat on grey paper, so cut-out movement passes them by even when it is switched on.
+            look = ((getattr(engine, "STYLE_INFO", {}) or {}).get(style) or {}).get("look") or {}
+            return depth(plan_, style, job, [] if wanted(look) else candidates)
+        engine._depth_dlc = depth_dlc
     try:
         import sfx
     except ImportError:

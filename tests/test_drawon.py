@@ -62,7 +62,10 @@ def test_only_a_whiteboard_style_draws_and_the_marker_is_heard(tmp_path, monkeyp
     engine.log = lambda m: None
     engine.STYLE_INFO = {"board": {"look": {"reveal": "draw"}}, "plain": {"look": {}}}
     engine.generate_astrology_visuals = lambda script, job_, force, style="": ([str(still)], [])
+    engine._depth_dlc = lambda plan_, style, job_, candidates: ("photofx", set(candidates))
     drawon.install(engine)
+    assert engine._depth_dlc([], "board", job, [0, 2]) == ("photofx", set()), "drawn pictures never become cut-outs"
+    assert engine._depth_dlc([], "plain", job, [0, 2]) == ("photofx", {0, 2})
     engine.generate_astrology_visuals("s", job, False, "board")
     assert drawn == [("scene_00.jpg", 6)]
     engine.generate_astrology_visuals("s", job, False, "board")
