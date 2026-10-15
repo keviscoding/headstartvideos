@@ -212,3 +212,10 @@ def test_a_channel_that_holds_its_pictures_still_is_not_pushed_on_every_one():
     pushed = profile({"generated": 0.9}, **{"motion__classes": axis({"still": 0.05, "camera": 0.8, "moving": 0.15}),
                                              "motion__camera": axis({"zoom_in_share": 0.9, "zoom_out_share": 0.0})})
     assert cm.plan_style(pushed, STYLES)["overrides"]["look"]["zoom"] == "in"
+
+
+def test_a_very_quiet_music_bed_stays_very_quiet():
+    quiet = profile({"generated": 0.9}, **{"sound__music": axis("quiet background", level="quiet", bed_in_pauses_db=-42.6,
+                                                                filled_pauses=0.4, moods=["calm"], genres=[])})
+    snd = cm.plan_style(quiet, STYLES)["overrides"]["look"]["sound"]
+    assert snd["music_rel_db"] == -38.0 and snd["target"] == {"bed_in_pauses_db": -42.6, "pauses_filled": 0.4}

@@ -540,7 +540,9 @@ def _sound(plan: Plan, profile: dict):
         why = "the references' pauses have no music (measured)"
     elif level in ("score", "bed", "quiet"):
         # the engine's bed level is against the narration's own loudness, a few dB under its peak
-        rel = round(_clamp((bed if bed is not None else -20) + 4, -26, -4), 1)
+        # down to -38 dB: a recap channel's quiet bed sits about 43 dB under the voice, and a floor at -26 dB made it
+        # 9 dB too loud (measured, 2026-10-15)
+        rel = round(_clamp((bed if bed is not None else -20) + 4, -38, -4), 1)
         snd.update(music=True, music_rel_db=rel, duck_db=-6.0 if level == "score" else -8.0)
         why = f"music in the pauses about {abs(bed or 0):.0f} dB under the voice (measured)"
     else:
