@@ -49,7 +49,8 @@ Return ONE JSON object:
    'THE CAST — ' then each in drawable words (body, face, hair, clothes, one distinguishing item), with a new name.
    Never the people of the reference video's own story (they belong to that one video). Usually empty.",
  "people": "one or two sentences: how ANY person in this channel is drawn (body, head, face, proportions), so new
-   characters in new stories look like they belong",
+   characters in new stories look like they belong. Every person is whole in the frame or one clear close-up; never
+   people shown only as hands, arms or a back (image models draw those as lone limbs)",
  "mascot": {"name": "a new name", "look": "drawable words", "role": "host or explainer"} or null. When a character
    in the profile is marked promoted, the creator wants every video to keep a recurring character like them: design
    that mascot the way they are drawn, keep their look only where it is not tied to that one story (never its costume,
@@ -146,9 +147,23 @@ def _clean(text, limit: int, banned: list) -> str:
     return text
 
 
+_NEGATED = re.compile(r"\b(no|not|never|without|nor|avoid)\s+(?:\w+[ -]+){0,2}$", re.I)
+# people shown only in part: the picture model draws them as a lone hand or arm reaching into the frame
+_PARTIAL = re.compile(r"\b(in part|partly|partially|disembodied|only (?:as |their )?(?:hands|arms)|such as (?:their )?hands"
+                      r"|hands or (?:a |their )?backs?|(?:just|only) (?:a |their )?(?:hands?|arms?))\b", re.I)
+
+
+def _whole_people(text: str) -> str:
+    """The text without any sentence that asks for people shown in part (only hands, arms or a back)."""
+    kept = [s for s in re.split(r"(?<=[.!?])\s+", text or "") if not _PARTIAL.search(s)]
+    return " ".join(kept).strip()
+
+
 def _candid(text: str) -> str:
     """A candid picture style without the words that make a model draw glossy, perfect photographs."""
     def plain(match):
+        if _NEGATED.search(match.string[:match.start()]):
+            return match.group(0)                       # "no studio light" already says it plainly
         words = match.group(0).lower()
         if "light" in words or words.endswith("lit"):
             return "natural light"
@@ -174,6 +189,8 @@ def check(answer: dict, *, banned: list, candid: bool = False) -> dict:
     if candid:
         for key in ("still_suffix", "people", "description"):
             out[key] = _candid(out[key])
+    for key in ("still_suffix", "people", "cast"):
+        out[key] = _whole_people(out[key])
     words = len(out["still_suffix"].split())
     if words < 20:
         raise ValueError("the picture style came back too short to steer an image model")

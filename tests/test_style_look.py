@@ -339,6 +339,18 @@ def test_a_candid_photo_style_never_asks_for_glossy_studio_pictures():
     assert "natural light" in text and "deep focus" in text and "everyday clutter" in text
     assert "commercial" in art.check({**ANSWER, "still_suffix": glossy}, banned=[])["still_suffix"], \
         "only candid styles are rewritten"
+    negated = ("Everyday phone photos of a home kitchen, mixed natural window light and ordinary overhead light, "
+               "uneven exposure, no studio light, no shallow bokeh, deep focus throughout.")
+    text = art.check({**ANSWER, "still_suffix": negated}, banned=[], candid=True)["still_suffix"]
+    assert "no studio light" in text and "no natural light" not in text, "a negated phrase is never turned around"
+
+
+def test_people_are_never_asked_for_as_lone_hands_or_backs():
+    answer = {**ANSWER, "people": "Real, ordinary adults with natural proportions. Bystanders are often shown from "
+                                  "behind or in part, such as hands or a back."}
+    out = art.check(answer, banned=[], candid=True)
+    assert out["people"] == "Real, ordinary adults with natural proportions."
+    assert "lone limbs" in art.ART_PROMPT
 
 
 def test_presenter_time_counts_talking_video_not_pictures_of_the_presenter():
