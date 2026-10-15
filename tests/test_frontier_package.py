@@ -256,6 +256,18 @@ def test_engine_machine_checks_are_patched_for_customer_computers():
         package.patch_engine("reflearn.py", b"a different engine")
 
 
+def test_real_photo_searches_never_pick_youtube_thumbnails():
+    engine = ('STOCK_HOSTS = ("gettyimages.",\n               "pngwing.", "kindpng.", "pngitem.", "seekpng.", "clipart", '
+              '"wallpaperaccess.", "wallpapercave.")\n'
+              'SHOP_HOSTS = ("ebay.",\n              "posterazzi.", "fineartamerica.", "pixels.com", "displate.")\n'
+              '    if not cfg["depth"] or every <= 0 or not os.environ.get("WAVESPEED_API_KEY"):\n'
+              '    cuts = bool((os.environ.get("WAVESPEED_API_KEY") or "").strip())\n').encode()
+    patched = package.patch_engine("photofx.py", engine).decode()
+    scope = {}
+    exec(patched.split("    if not cfg")[0], scope)
+    assert "ytimg.com" in scope["STOCK_HOSTS"] and "ytimg.com" in scope["SHOP_HOSTS"]
+
+
 def test_a_refused_footage_search_records_why():
     engine = (b"def search(q):\n    if True:\n        try:\n            p = run()\n"
               b"        except subprocess.TimeoutExpired:\n            return []\n        for line in p.stdout.splitlines():\n"
@@ -340,6 +352,8 @@ def test_ready_made_recipes_ship_as_built_in_styles_with_only_their_own_pictures
 
 def test_cut_out_movement_runs_on_a_kie_only_setup():
     photofx = (b'import os\n'
+               b'STOCK_HOSTS = ("a.", "pngwing.", "kindpng.", "pngitem.", "seekpng.", "clipart", "wallpaperaccess.", "wallpapercave.")\n'
+               b'SHOP_HOSTS = ("b.",\n              "posterazzi.", "fineartamerica.", "pixels.com", "displate.")\n'
                b'def depth_slots(cfg, every):\n'
                b'    if not cfg["depth"] or every <= 0 or not os.environ.get("WAVESPEED_API_KEY"):\n'
                b'        return set()\n'

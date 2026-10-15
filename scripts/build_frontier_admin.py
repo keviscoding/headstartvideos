@@ -245,6 +245,13 @@ ENGINE_PATCHES = {
     # The background remover (removebg.py) works on kie.ai alone, but cut-out movement, photo spotlights and
     # objects were switched off without a WaveSpeed key, so drawn styles got no figure moves on a Kie-only setup.
     "photofx.py": [
+        # a YouTube video's thumbnail is another creator's designed picture (their face, logo and title text), never
+        # a plain photo of the subject: true crime pictures came back as other channels' thumbnails
+        ('"pngwing.", "kindpng.", "pngitem.", "seekpng.", "clipart", "wallpaperaccess.", "wallpapercave.")\n',
+         '"pngwing.", "kindpng.", "pngitem.", "seekpng.", "clipart", "wallpaperaccess.", "wallpapercave.",\n'
+         '               "ytimg.com", "youtube.com", "youtu.be")\n'),
+        ('              "posterazzi.", "fineartamerica.", "pixels.com", "displate.")\n',
+         '              "posterazzi.", "fineartamerica.", "pixels.com", "displate.", "ytimg.com", "youtube.com", "youtu.be")\n'),
         ('    if not cfg["depth"] or every <= 0 or not os.environ.get("WAVESPEED_API_KEY"):\n',
          '    if not cfg["depth"] or every <= 0 or not (os.environ.get("WAVESPEED_API_KEY") or os.environ.get("KIE_API_KEY")):\n'),
         ('    cuts = bool((os.environ.get("WAVESPEED_API_KEY") or "").strip())\n',
