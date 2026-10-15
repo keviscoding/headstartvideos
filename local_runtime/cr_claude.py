@@ -256,7 +256,16 @@ def _private_write(path, data):
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(data, handle, ensure_ascii=False)
-        temporary.replace(path)
+        # Windows refuses to replace a file another process has open (Studio reading a video's progress.json):
+        # PermissionError [WinError 5]. It is free again a moment later.
+        for attempt in range(8):
+            try:
+                temporary.replace(path)
+                break
+            except PermissionError:
+                if attempt == 7:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
     finally:
         temporary.unlink(missing_ok=True)
 

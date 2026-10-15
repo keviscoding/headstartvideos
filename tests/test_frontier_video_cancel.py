@@ -449,3 +449,49 @@ def test_child_capabilities_preserve_selected_cr_media_with_original_feature_res
     after = original.resolve(style, requested)
     assert after["ai_images"] == requested["ai_images"] and after["avatar"]
     assert not any(after[key] for key in after if key not in {"ai_images", "avatar"})
+
+
+def test_a_busy_progress_file_on_windows_never_stops_the_video(tmp_path, monkeypatch):
+    # Windows refuses to replace a file Studio has open (PermissionError [WinError 5]); a moment later it is free.
+    import cr_claude
+    target = tmp_path / "progress.json"
+    real, refused = Path.replace, []
+    def busy(self, dest):
+        if Path(dest) == target and len(refused) < 3:
+            refused.append(dest)
+            raise PermissionError(13, "Access is denied", str(dest))
+        return real(self, dest)
+    monkeypatch.setattr(Path, "replace", busy)
+    cr_claude._private_write(target, {"state": "running"})
+    assert len(refused) == 3 and json.loads(target.read_text()) == {"state": "running"}
+    assert not list(tmp_path.glob(".progress.json.*.tmp"))
+
+    studio = fixture_studio(tmp_path)
+    studio.mv = SimpleNamespace(job_dir=lambda *a: tmp_path / "job")
+    def original(spec_):
+        studio.JOBS["selected"]["lines"].append("working")
+        time.sleep(1.3)
+        studio.JOBS["selected"].update(state="done", done=True)
+    studio._run_spec = original
+    folder, spec_path, progress = cancel.worker_files(tmp_path, RUN)
+    cancel._write(spec_path, {"project_id": PROJECT, "spec": spec()})
+    writes, real_write = [], cancel._write
+    def flaky(path, data):
+        writes.append(path)
+        if path == progress and len(writes) <= 2:
+            raise PermissionError(13, "Access is denied", str(path))
+        return real_write(path, data)
+    monkeypatch.setattr(cancel, "_write", flaky)
+    cancel.run_original_worker(tmp_path, PROJECT, RUN, studio)
+    assert len(writes) >= 3, "progress kept being saved after the busy file"
+    result = json.loads(progress.read_text())
+    assert result["job"]["done"] and result["job"]["lines"] == ["working"]
+
+
+def test_studio_says_when_it_was_closed_from_outside(tmp_path):
+    assert cr_studio.session_started(tmp_path) == ""
+    cr_studio.session_stopped("ctrl-c", tmp_path)
+    assert cr_studio.session_started(tmp_path) == "", "a Studio that stopped itself is not news"
+    note = cr_studio.session_started(tmp_path)                      # the last one never said how it ended
+    assert "closed from outside" in note and "Claude Code" in note and "launcher" in note
+    assert cr_studio.session_started(tmp_path) != ""

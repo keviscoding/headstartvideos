@@ -1436,6 +1436,47 @@ def banner():
                      "  To stop Studio, close this window.", line, ""]), flush=True)
 
 
+SESSION = Path("output") / ".cr-studio-session.json"
+
+
+def session_started(home=HOME) -> str:
+    """Note this Studio as running; a plain note when the previous one never said how it ended.
+
+    A Studio that stops itself (Ctrl+C, an update, an error) records how. One that never did was closed from
+    outside while running: its window, Task Manager, Windows signing out, or a program that started Studio and then
+    ended (a Claude Code command that finished or timed out closes everything it started). Any video it was making
+    stopped with it."""
+    path = Path(home) / SESSION
+    note = ""
+    try:
+        last = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(last, dict) and not last.get("ended"):
+            began = time.strftime("%d %b %H:%M", time.localtime(float(last.get("started") or 0)))
+            note = ("Last time, Studio (started %s) was closed from outside while it ran: its window was closed, "
+                    "Task Manager ended it, or the program that started it ended (for example a Claude Code "
+                    "command). Any video it was making stopped with it; saved work is kept. Start Studio with its "
+                    "launcher and keep that window open while videos are made." % began)
+    except (OSError, ValueError, TypeError):
+        pass
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"pid": os.getpid(), "started": time.time()}), encoding="utf-8")
+    except OSError:
+        pass
+    return note
+
+
+def session_stopped(how: str, home=HOME):
+    path = Path(home) / SESSION
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        if record.get("pid") == os.getpid():
+            record.update(ended=time.time(), how=how)
+            path.write_text(json.dumps(record), encoding="utf-8")
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
 def main():
     import logging
     if not isinstance(sys.stdout, _RecentOutput):
@@ -1475,9 +1516,18 @@ def main():
     server = make_server("127.0.0.1", 7860, studio.app, threaded=True)
     studio._cr_server = server
     banner()
+    note = session_started()
+    if note:
+        print(note + "\n", flush=True)
+    how = "error"
     try:
         server.serve_forever()
+        how = "update" if getattr(studio, "_cr_restart_for_update", False) else "stopped"
+    except KeyboardInterrupt:
+        how = "ctrl-c"
+        raise
     finally:
+        session_stopped(how)
         server.server_close()
     if getattr(studio, "_cr_restart_for_update", False):
         restart_into_update()

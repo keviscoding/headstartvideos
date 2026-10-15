@@ -71,6 +71,9 @@ def guard_parent(home, project_id, run_id):
     def watch():
         while alive():
             time.sleep(0.5)
+        # Said in this video's worker.log, so a closed Studio is never mistaken for a crash.
+        print(time.strftime("%Y-%m-%d %H:%M:%S") + " The Studio that started this video closed, so the video "
+              "stopped with it (its Claude and media steps too). Saved work is kept.", file=sys.stderr, flush=True)
         stop()
 
     threading.Thread(target=watch, daemon=True).start()
@@ -100,7 +103,10 @@ def run_original_worker(home, project_id, run_id, studio):
 
     def follow():
         while not stopped.wait(0.5):
-            save()
+            try:
+                save()
+            except OSError:
+                pass            # a busy progress file shows on the next tick; it never stops the video
 
     watcher = threading.Thread(target=follow, daemon=True)
     watcher.start()
@@ -111,7 +117,14 @@ def run_original_worker(home, project_id, run_id, studio):
     finally:
         stopped.set()
         watcher.join(2)
-        save()
+        for attempt in range(20):           # the finished state must reach Studio, even past a busy file
+            try:
+                save()
+                break
+            except OSError:
+                if attempt == 19:
+                    raise
+                time.sleep(0.5)
 
 
 class VideoWorkers:
