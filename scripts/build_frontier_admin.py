@@ -91,6 +91,16 @@ def private_sound_resources(root: Path):
             if path.is_symlink() or not path.is_file() or path.stat().st_size > 2 * 1024 * 1024:
                 raise ValueError("Effects library files must be small ordinary files.")
             resources.append((path, "assets/sfx/cr/" + path.name))
+    # the sound of each place (cr_ambience): seamless loops, one folder deeper
+    places = folder / "ambience"
+    if places.exists():
+        if places.is_symlink() or not places.is_dir():
+            raise ValueError("The ambience library must be an ordinary owned folder.")
+        for path in sorted(places.iterdir()):
+            if path.name == "library.json" or re.fullmatch(r"[a-z]+_\d+\.mp3", path.name):
+                if path.is_symlink() or not path.is_file() or path.stat().st_size > 2 * 1024 * 1024:
+                    raise ValueError("Ambience library files must be small ordinary files.")
+                resources.append((path, "assets/sfx/cr/ambience/" + path.name))
     return resources
 
 

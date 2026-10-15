@@ -216,7 +216,9 @@ def _pictures(plan: Plan, profile: dict, base: str, base_style: dict):
     # a cast is drawn only for generated pictures: real people in footage are filmed, not designed
     cast = [c for c in _v(pics.get("characters"), []) or [] if c.get("look")] if draws else []
     # Only a host or mascot returns in every video; the people of a reference's own story belong to that video.
-    main = [c for c in cast if c.get("role") in ("mascot", "presenter")]
+    import cr_style_profile
+    main = [c for c in cast if c.get("role") in ("mascot", "presenter")
+            and float(c.get("screen_share") or 0) >= cr_style_profile.MASCOT_SHARE]
     if cast:
         plan.notes.append({"for": "cast", "characters": cast[:4]})
     if main:
@@ -526,12 +528,20 @@ def _sound(plan: Plan, profile: dict):
     snd["sfx_flavor"] = ("analog_paper" if _has_words(kinds, "paper", "marker", "pen", "chalk", "pop") else
                          "tech_digital" if _has_words(kinds, "click", "ui", "glitch", "digital", "keyboard") else
                          "cinematic_subtle")
+    amb = sound.get("ambience") or {}
+    if amb.get("present") and _v(amb, []):
+        # the air of each place under the pictures (cr_ambience): heard throughout, the channel's usual place fills
+        # the gaps; heard in places only, it plays only where a picture shows a place
+        # no default place: what a reference was heard to have belongs to its story (a prison story's corridor);
+        # each picture brings its own place
+        snd["ambience"] = {"scenes": True, "db": -14.0 if snd.get("music") is False else -18.0, "default": ""}
+        why += f"; the sound of each place under the pictures ({', '.join(_v(amb, [])[:3])})"
     plan.set("look.sound", snd, area="Sound", label="Music and effects",
              why=why + f"; effects {sfx or 'unknown'}" + (f"; mood {vibe.replace('_', ' ')}" if vibe else ""),
              source="measured,watched",
              show=("no music" if snd.get("music") is False else
                    f"music {snd.get('music_rel_db', 'as recipe')} dB" if snd.get("music") else "recipe default")
-                  + f", effects {sfx or 'default'}")
+                  + f", effects {sfx or 'default'}" + (", the sound of each place" if snd.get("ambience") else ""))
     plan.notes.append({"for": "sound", "music_level": level, "bed_in_pauses_db": bed,
                        "genres": music.get("genres") or [], "moods": (music.get("moods") or [])[:6],
                        "instruments": (music.get("instruments") or [])[:6], "sfx": sfx,
