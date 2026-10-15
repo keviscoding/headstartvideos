@@ -49,3 +49,14 @@ def test_only_known_looks_are_accepted():
     assert look.clean("") == "" and look.clean("white_studio") == "white_studio"
     with pytest.raises(ValueError, match="white studio or colour"):
         look.clean("neon")
+
+
+def test_studio_colour_paints_the_clean_studio_models_in_the_creators_palette():
+    assert look.clean("studio_color") == "studio_color"
+    runtime = Path(__file__).parents[1] / "local_runtime"
+    page = (runtime / "cr_workspace.html").read_text()
+    assert 'value="studio:warm ivory white surfaces, signal yellow accents, deep charcoal shadows"' in page
+    assert ">Colour film · Night blue and signal orange<" in page, "night palettes stay colour film"
+    script = (runtime / "cr_workspace.js").read_text()
+    assert "v.startsWith('studio:') ? 'studio_color' : 'documentary'" in script
+    assert "palette.startsWith('studio:') ? palette.slice(7) : palette" in script, "the director gets the colours alone"

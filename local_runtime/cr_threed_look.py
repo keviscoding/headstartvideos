@@ -1,4 +1,5 @@
-"""The 3D look a creator chooses for one video: the recipe's own, white studio (all-white models) or colour film.
+"""The 3D look a creator chooses for one video: the recipe's own, white studio (all-white models), studio colour
+(the clean studio models painted in the creator's palette) or colour film.
 
 A recipe's 3D look is its look.threed.preset (white_studio for the clean 3D reconstruction channels). In Create the
 creator may choose another for one video (run_spec cr_threed_look); a colour palette always comes with the colour look,
@@ -11,7 +12,7 @@ import json
 import threading
 from pathlib import Path
 
-LOOKS = ("white_studio", "documentary")
+LOOKS = ("white_studio", "studio_color", "documentary")
 _current = threading.local()
 
 
