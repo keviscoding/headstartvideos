@@ -277,7 +277,12 @@ def test_a_story_with_moving_pictures_shows_each_picture_on_its_own_sentence(tmp
               b"            by_i[int(m.group(1))] = str(p)\n"
               b"    if len(by_i) < max(3, len(photos) // 2):\n        return []\n"
               b"    idx = sorted(by_i)\n"
-              b"    return [(items[i]['text'], Path(by_i[i]).name) for i in idx]\n")
+              b"    return [(items[i]['text'], Path(by_i[i]).name) for i in idx]\n\n\n"
+              b"def _zoom_expr(mode, idx, amount, frames):\n"
+              b'    p = f"min(on/{max(1, frames - 1)}\\\\,1)"\n'
+              b'    if (mode or "in").lower() != "alternate":\n'
+              b'        return f"(1+{amount:.5f}*{p})"\n'
+              b'    return "alternate"\n')
     patched = package.patch_engine("make_video.py", engine).decode()
     ns = {}
     exec(compile(patched, "make_video.py", "exec"), ns)
@@ -296,6 +301,10 @@ def test_a_story_with_moving_pictures_shows_each_picture_on_its_own_sentence(tmp
                     ("The sweep grins.", "scene_01.jpg"), ("You climb.", "scene_02.jpg"), ("Soot falls.", "scene_03.jpg")]
     assert (job / "clip_src/vsrc_00.anim.mp4").read_bytes() == b"m" * 30_000, "the clip plays in its own slot"
     assert ns["_story_order"](job, 20.0, photos)[0] == ("Your family hands you over.", "scene_00.jpg")
+    zoom = ns["_zoom_expr"]
+    assert zoom("still", 3, 0.2, 50) == "(1)" and zoom("in", 3, 0.2, 50).startswith("(1+0.2")
+    assert sum(zoom("mix:0.9", i, 0.2, 50) == "(1)" for i in range(100)) == 90
+    assert zoom("mix:0.0:alternate", 1, 0.2, 50) == "alternate"
 
 
 def test_ready_made_recipes_ship_as_built_in_styles_with_only_their_own_pictures(tmp_path):

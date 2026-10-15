@@ -218,6 +218,24 @@ ENGINE_PATCHES = {
          "    by_i = {i + _vn: p for i, p in by_i.items() if i + _vn < len(items)}\n"
          "    if len(by_i) < max(3, len(photos) // 2):\n        return []\n"
          "    idx = sorted(by_i)\n"),
+        # Channels that hold their pictures still (stick-figure stories hold 9 in 10) could only push in or
+        # alternate. look.zoom "still" holds every still; "mix:<share>[:alternate]" holds that share, spread evenly.
+        ('    p = f"min(on/{max(1, frames - 1)}\\\\,1)"\n'
+         '    if (mode or "in").lower() != "alternate":\n',
+         '    p = f"min(on/{max(1, frames - 1)}\\\\,1)"\n'
+         '    mode = (mode or "in").lower()\n'
+         '    if mode == "still":\n'
+         '        return "(1)"\n'
+         '    if mode.startswith("mix:"):\n'
+         '        parts = mode.split(":")\n'
+         '        try:\n'
+         '            share = max(0.0, min(1.0, float(parts[1])))\n'
+         '        except (IndexError, ValueError):\n'
+         '            share = 0.0\n'
+         '        if (idx * 0.6180339887) % 1.0 < share:\n'
+         '            return "(1)"\n'
+         '        mode = "alternate" if "alternate" in parts[2:] else "in"\n'
+         '    if mode != "alternate":\n'),
     ],
     "quest_hud.py": [
         ("def _wait_machine(log=print, min_level: int = 40, min_free_gb: float = 20.0) -> None:",

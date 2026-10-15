@@ -195,3 +195,13 @@ def test_candid_photo_pictures_get_the_phone_camera_finish():
     assert cm.plan_style(warm, STYLES)["overrides"]["look"]["fx"]["grade"] == "natural", "never graded like film"
     drawn = cm.plan_style(profile({"generated": 0.9}), STYLES)
     assert "stills" not in drawn["overrides"].get("look", {}), "drawn pictures are never degraded"
+
+
+def test_a_channel_that_holds_its_pictures_still_is_not_pushed_on_every_one():
+    held = profile({"generated": 0.9}, **{"motion__classes": axis({"still": 0.55, "camera": 0.05, "moving": 0.4})})
+    assert cm.plan_style(held, STYLES)["overrides"]["look"]["zoom"] == "mix:0.92:alternate"
+    frozen = profile({"generated": 0.9}, **{"motion__classes": axis({"still": 0.9, "camera": 0.0, "moving": 0.1})})
+    assert cm.plan_style(frozen, STYLES)["overrides"]["look"]["zoom"] == "still"
+    pushed = profile({"generated": 0.9}, **{"motion__classes": axis({"still": 0.05, "camera": 0.8, "moving": 0.15}),
+                                             "motion__camera": axis({"zoom_in_share": 0.9, "zoom_out_share": 0.0})})
+    assert cm.plan_style(pushed, STYLES)["overrides"]["look"]["zoom"] == "in"

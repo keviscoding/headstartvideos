@@ -335,13 +335,25 @@ def _motion(plan: Plan, profile: dict, base: str, minutes_hint: float = 10.0):
                  source="measured", show=f"about {clips:g} a minute")
     zin, zout = cam.get("zoom_in_share", 0), cam.get("zoom_out_share", 0)
     still_cam = classes.get("camera", 0)
-    if still_cam >= 0.08 or zin or zout:
-        mode = "alternate" if zout >= 0.15 or (zin and zout) else "in"
-        plan.set("look.zoom", mode, area="Motion", label="Camera on still pictures",
-                 show=PUSH_WORDS["alternate" if mode == "alternate" else "slow_in"],
-                 why=f"the camera moves over {round(still_cam * 100)}% of the runtime"
-                     + (", pushing in and pulling out" if mode == "alternate" else ", pushing in"),
+    still = classes.get("still", 0)
+    # of the pictures that are not moving on their own, how many the camera leaves alone (a channel that holds
+    # its pictures still must not get a push on every one: the engine's default)
+    held = still / (still + still_cam) if still + still_cam > 0 else 0.0
+    mode = "alternate" if zout >= 0.15 or (zin and zout) else "in"
+    if still + still_cam > 0:
+        if held >= 0.97:
+            value, show = "still", "held still"
+        elif held >= 0.25:
+            value = f"mix:{round(held, 2)}" + (":alternate" if mode == "alternate" else "")
+            show = f"held still {round(held * 100)}% of the time, otherwise " + PUSH_WORDS[
+                "alternate" if mode == "alternate" else "slow_in"]
+        else:
+            value, show = mode, PUSH_WORDS["alternate" if mode == "alternate" else "slow_in"]
+        plan.set("look.zoom", value, area="Motion", label="Camera on still pictures", show=show,
+                 why=f"the camera moves over {round(still_cam * 100)}% of the runtime and holds still over "
+                     f"{round(still * 100)}%" + (", pushing in and pulling out" if mode == "alternate" else ""),
                  source="measured")
+    if still_cam >= 0.08 or zin or zout:
         push = "alternate" if mode == "alternate" else "slow_in"
         if kinds.get("shake", 0) >= 0.1:
             push = "handheld_micro"
