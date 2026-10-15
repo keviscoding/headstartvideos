@@ -85,3 +85,33 @@ def overrides(base: str, craft: str = "", channel: str = "") -> dict:
     if craft in ("story", "teaching"):
         out["script_craft"] = craft
     return out
+
+
+OUTLINE_SOUND = """
+
+ORIGINAL SOUND: this channel lets the real recordings speak (a 911 call, an officer's words on bodycam, a witness, a
+statement, a verdict, an executive on stage). Plan about one such moment for each minute of the video, at least one:
+the narration sets it up, then the real recording plays with its own sound. Note each in its beat as
+"[CLIP: who says what, where]", and only moments that were really recorded and published."""
+
+SCRIPT_SOUND = """
+
+ORIGINAL SOUND HANDOFFS: where the plan marks [CLIP: ...], write the narration so it hands off to the real recording,
+then put one line holding only "[[clip: who says what, in a few words]]" on its own line right after that paragraph
+(for example "[[clip: the 911 caller describing the van]]"). The edit finds the real recording and cuts to it there,
+with its own sound and its words on screen, and the narration waits. Never repeat the recording's words in the
+narration."""
+
+
+def with_original_sound(style: dict) -> dict:
+    """A style whose videos play real clips with their own sound (look.soundbites.quotes) asks its outline to plan
+    those moments and its script to mark them ([[clip: ...]]): the clips are found only where the script marks them."""
+    sb = ((style.get("look") or {}).get("soundbites") or {})
+    prompts = style.get("prompts") if isinstance(style.get("prompts"), dict) else {}
+    if not (isinstance(sb, dict) and int(sb.get("quotes") or 0) > 0) or not prompts:
+        return style
+    for key, add in (("outline", OUTLINE_SOUND), ("script", SCRIPT_SOUND)):
+        text = prompts.get(key)
+        if isinstance(text, str) and text and "ORIGINAL SOUND" not in text:
+            prompts[key] = text.rstrip() + add
+    return style

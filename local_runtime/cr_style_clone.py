@@ -751,6 +751,7 @@ def _apply_learned(folder, spec, style, log):
         (art.get("overrides") or {}).get("description") or learned.get("description", "")))
     if art.get("overrides"):
         cr_style_map._merge(learned, art["overrides"])
+    cr_style_prompts.with_original_sound(learned)      # real clips are found only where the script marks them
     learned.setdefault("cr_style_clone", {}).update(
         learned_v2={"look_id": spec["look_id"], "base": mapping["base"], "base_why": mapping["base_why"],
                     "needs": mapping["needs"], "cost": mapping["cost"], "art_director": bool(art.get("overrides")),

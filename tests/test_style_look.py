@@ -400,3 +400,16 @@ def test_a_learned_style_names_its_kit_relative_to_the_studio_folder(tmp_path):
     assert out["look"]["genkit"]["manifest"] == "output/cr-style-clone/op_1/genkit/kit.json"
     assert out["auto"]["genome"]["learned"]["board"] == "output/cr-style-clone/op_1/reflearn/board.jpg"
     assert out["look"]["style_image"] == "styles/learned/x/style.jpg" and out["elsewhere"] == "/Users/someone/file.png"
+
+
+def test_a_style_that_plays_real_clips_asks_its_script_to_mark_them():
+    import cr_style_prompts as sp
+    style = {"look": {"soundbites": {"quotes": 13}}, "prompts": {"outline": "Plan the beats.", "script": "Write it."}}
+    sp.with_original_sound(style)
+    assert "[CLIP: who says what, where]" in style["prompts"]["outline"]
+    assert '"[[clip: who says what, in a few words]]"' in style["prompts"]["script"]
+    before = dict(style["prompts"])
+    sp.with_original_sound(style)
+    assert style["prompts"] == before, "added once"
+    plain = {"look": {"soundbites": {"soundups": 1}}, "prompts": {"outline": "Plan.", "script": "Write."}}
+    assert sp.with_original_sound(plain)["prompts"] == {"outline": "Plan.", "script": "Write."}
