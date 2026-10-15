@@ -542,9 +542,11 @@ def install(engine):
         import cr_score                     # a learned style's own score, on the creator's Kie account
         import cr_sfx_library               # and ChannelRecipe's recorded effects
         import cr_ambience                  # and the sound of each place under a story's pictures
+        import cr_storyboard                # the sound storyboard a scored video follows
         cr_score.install(engine)
         cr_sfx_library.install(engine)
         cr_ambience.install(engine)
+        cr_storyboard.install(engine)
     except ImportError:
         pass
     original_whisper=getattr(engine,"_get_whisper",None)
