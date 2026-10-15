@@ -108,6 +108,7 @@ class Plan:
     def __init__(self):
         self.overrides, self.remove, self.settings, self.needs, self.notes = {}, [], [], [], []
         self.motion_cutout = False
+        self.candid_photo = False
 
     def set(self, path: str, value, *, area: str, label: str, why: str, source: str = "", confidence: float = None,
             show=None):
@@ -234,6 +235,7 @@ def _pictures(plan: Plan, profile: dict, base: str, base_style: dict):
         plan.notes.append({"for": "still_suffix", "polish_rule": "candid: an everyday phone-camera frame, natural "
                            "mixed light, unstaged framing, deep focus, mild noise; never cinematic or studio-lit"})
         if photo and draws:
+            plan.candid_photo = True
             # words alone still come back too perfect: each photo is also made to look like a frame of a phone
             # video (softer capture, sensor noise, phone sharpening, compression; the engine's realism step)
             plan.set("look.stills.realism", "home_video", area="Pictures", label="Phone-camera finish",
@@ -370,6 +372,10 @@ def _look(plan: Plan, profile: dict):
     elif _has_words(filters, "warm", "golden", "amber"):
         pick = "kodachrome_warm"
     else:
+        pick = "natural"
+    if plan.candid_photo and pick in ("kodachrome_warm", "tungsten_night", "teal_steel"):
+        # a phone photo is never graded like film; the phone-camera finish carries its look
+        filters = "an everyday phone photo, never graded like film"
         pick = "natural"
     plan.set("look.fx.grade", pick, area="Look", label="Colour grade", show=GRADE_WORDS.get(pick, pick),
              why=f"{value} picture (brightness {round(luma) if luma is not None else '?'}/255)"

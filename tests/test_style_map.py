@@ -189,5 +189,9 @@ def test_candid_photo_pictures_get_the_phone_camera_finish():
                                            "pictures__art_style": axis("Realistic photos of an older butcher at home.")})
     plan = cm.plan_style(candid, STYLES)
     assert plan["overrides"]["look"]["stills"] == {"realism": "home_video"}
+    warm = profile({"generated": 0.8}, **{"pictures__polish": axis("clean"), "look__drawn": axis(0.05),
+                                         "pictures__art_style": axis("Realistic photos of an older butcher at home."),
+                                         "look__grade": axis("neutral", luma=120, saturation=0.3, filter=["warm tones"])})
+    assert cm.plan_style(warm, STYLES)["overrides"]["look"]["fx"]["grade"] == "natural", "never graded like film"
     drawn = cm.plan_style(profile({"generated": 0.9}), STYLES)
     assert "stills" not in drawn["overrides"].get("look", {}), "drawn pictures are never degraded"
