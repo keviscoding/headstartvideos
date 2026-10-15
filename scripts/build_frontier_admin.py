@@ -135,6 +135,9 @@ def private_recipe_resources(root: Path):
                 raise ValueError(f"{recipe.name}: look.{key} must be one of its own pictures.")
             if look.get(key) and not (recipe / Path(look[key]).name).is_file():
                 raise ValueError(f"{recipe.name}: look.{key} is missing.")
+        if _machine_paths(style):
+            raise ValueError(f"{recipe.name}: the style points at files on the computer it was made on: "
+                             + ", ".join(_machine_paths(style)[:3]))
         resources.append((style_path, f"styles/{recipe.name}.json"))
         for name in ("style.jpg", "character.png"):
             path = recipe / name
@@ -142,7 +145,42 @@ def private_recipe_resources(root: Path):
                 if path.is_symlink() or not path.is_file() or path.stat().st_size > 4 * 1024 * 1024:
                     raise ValueError(f"{recipe.name}/{name} must be a small ordinary picture.")
                 resources.append((path, f"assets/styles/cr/{recipe.name}/{name}"))
+        resources += _recipe_kit(recipe, look)
     return resources
+
+
+KIT_FILES = re.compile(r"(kit\.json|kit\.js|look_overrides\.json|fonts/[A-Za-z0-9 _.-]+\.(ttf|otf|woff2))")
+
+
+def _machine_paths(value, at="") -> list:
+    """Every setting holding an absolute path: [setting path]."""
+    if isinstance(value, dict):
+        return [p for k, v in value.items() for p in _machine_paths(v, f"{at}.{k}" if at else k)]
+    if isinstance(value, list):
+        return [p for i, v in enumerate(value) for p in _machine_paths(v, f"{at}[{i}]")]
+    return [at] if isinstance(value, str) and re.match(r"^(/|[A-Za-z]:[\\/]|~)", value) else []
+
+
+def _recipe_kit(recipe: Path, look: dict) -> list:
+    """A ready-made recipe's own graphics kit (genkit/): its manifest, code, look overrides and any faces of its own,
+    shipped under assets/styles/cr/<name>/genkit/ and named there by the style."""
+    kit = recipe / "genkit"
+    manifest = (look.get("genkit") or {}).get("manifest") if isinstance(look.get("genkit"), dict) else None
+    want = f"assets/styles/cr/{recipe.name}/genkit/kit.json"
+    if not manifest and not kit.exists():
+        return []
+    if manifest != want or kit.is_symlink() or not (kit / "kit.json").is_file() or not (kit / "kit.js").is_file():
+        raise ValueError(f"{recipe.name}: look.genkit.manifest must be {want}, with genkit/kit.json and kit.js beside it.")
+    spec = json.loads((kit / "kit.json").read_text())
+    if spec.get("js", "kit.js") != "kit.js" or not isinstance(spec.get("types"), dict) or not spec["types"]:
+        raise ValueError(f"{recipe.name}: genkit/kit.json must name kit.js and its graphics.")
+    out = []
+    for path in sorted(p for p in kit.rglob("*") if p.is_file() or p.is_symlink()):
+        rel = path.relative_to(kit).as_posix()
+        if path.is_symlink() or not KIT_FILES.fullmatch(rel) or path.stat().st_size > 4 * 1024 * 1024:
+            raise ValueError(f"{recipe.name}/genkit/{rel} is not a kit file.")
+        out.append((path, f"assets/styles/cr/{recipe.name}/genkit/{rel}"))
+    return out
 
 
 # Engine sample films from the retired brand; recipe cards use style references.
@@ -263,6 +301,12 @@ ENGINE_PATCHES = {
         ("        except subprocess.TimeoutExpired:\n            return []\n        for line in p.stdout.splitlines():\n",
          "        except subprocess.TimeoutExpired:\n            return []\n        if p.returncode:\n"
          "            _note_err(p.stderr)\n        for line in p.stdout.splitlines():\n"),
+    ],
+    # A learned style's own kit is named by its manifest path; Studio saves it relative to the Studio folder (so a
+    # moved Studio, and a ready-made recipe shipped under assets/styles/cr/, keep their graphics).
+    "kits.py": [
+        ('        register_gen_kit(look["genkit"]["manifest"])\n',
+         '        register_gen_kit(HERE / str(look["genkit"]["manifest"]))\n'),
     ],
     "quest_hud.py": [
         ("def _wait_machine(log=print, min_level: int = 40, min_free_gb: float = 20.0) -> None:",

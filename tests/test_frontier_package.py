@@ -350,6 +350,35 @@ def test_ready_made_recipes_ship_as_built_in_styles_with_only_their_own_pictures
     assert package.private_recipe_resources(tmp_path / "elsewhere") == []
 
 
+def test_a_ready_made_recipe_ships_its_own_graphics_kit_and_never_a_path_on_this_computer(tmp_path):
+    recipe = tmp_path / "data/frontier/recipes/cr-true-crime"
+    (recipe / "genkit" / "fonts").mkdir(parents=True)
+    (recipe / "genkit" / "kit.json").write_text(json.dumps({"name": "gen_x", "js": "kit.js", "types": {"dateline": 6}}))
+    (recipe / "genkit" / "kit.js").write_text("// kit")
+    (recipe / "genkit" / "fonts" / "Face.ttf").write_bytes(b"ttf")
+    style = {"name": "cr-true-crime", "builtin": True,
+             "look": {"genkit": {"manifest": "/private/tmp/dev62/ChannelRecipe studio/output/op_x/genkit/kit.json"}}}
+    (recipe / "style.json").write_text(json.dumps(style))
+    with pytest.raises(ValueError, match="computer it was made on: look.genkit.manifest"):
+        package.private_recipe_resources(tmp_path)
+    style["look"]["genkit"]["manifest"] = "assets/styles/cr/cr-true-crime/genkit/kit.json"
+    (recipe / "style.json").write_text(json.dumps(style))
+    shipped = {dest for _, dest in package.private_recipe_resources(tmp_path)}
+    assert shipped == {"styles/cr-true-crime.json", "assets/styles/cr/cr-true-crime/genkit/kit.json",
+                       "assets/styles/cr/cr-true-crime/genkit/kit.js",
+                       "assets/styles/cr/cr-true-crime/genkit/fonts/Face.ttf"}
+    (recipe / "genkit" / "notes.sh").write_text("echo")
+    with pytest.raises(ValueError, match="not a kit file"):
+        package.private_recipe_resources(tmp_path)
+
+
+def test_a_learned_kit_is_found_inside_the_studio_folder():
+    engine = (b"def kit_of(look):\n    if look:\n"
+              b"        register_gen_kit(look[\"genkit\"][\"manifest\"])\n")
+    patched = package.patch_engine("kits.py", engine).decode()
+    assert 'register_gen_kit(HERE / str(look["genkit"]["manifest"]))' in patched
+
+
 def test_cut_out_movement_runs_on_a_kie_only_setup():
     photofx = (b'import os\n'
                b'STOCK_HOSTS = ("a.", "pngwing.", "kindpng.", "pngitem.", "seekpng.", "clipart", "wallpaperaccess.", "wallpapercave.")\n'

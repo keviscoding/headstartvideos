@@ -386,3 +386,17 @@ def test_styles_built_on_a_niche_recipe_get_neutral_writing_and_storyboard_promp
     assert "[INSERT OUTLINE HERE]" in sp.SCRIPT and "[INSERT TARGET LENGTH]" in sp.SCRIPT
     assert "[INSERT COUNT HERE]" in sp.SCENE and "[INSERT SCRIPT HERE]" in sp.SCENE
     assert sp.overrides("documentary") == {}, "format recipes keep their own writing"
+
+
+def test_a_learned_style_names_its_kit_relative_to_the_studio_folder(tmp_path):
+    import cr_style_clone
+    home = tmp_path / "ChannelRecipe studio"
+    style = {"look": {"genkit": {"manifest": str(home / "output/cr-style-clone/op_1/genkit/kit.json")},
+                      "style_image": "styles/learned/x/style.jpg"},
+             "auto": {"genome": {"learned": {"board": str(home / "output/cr-style-clone/op_1/reflearn/board.jpg")}}},
+             "elsewhere": "/Users/someone/file.png"}
+    home.mkdir()
+    out = cr_style_clone._portable(style, home)
+    assert out["look"]["genkit"]["manifest"] == "output/cr-style-clone/op_1/genkit/kit.json"
+    assert out["auto"]["genome"]["learned"]["board"] == "output/cr-style-clone/op_1/reflearn/board.jpg"
+    assert out["look"]["style_image"] == "styles/learned/x/style.jpg" and out["elsewhere"] == "/Users/someone/file.png"

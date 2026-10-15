@@ -658,6 +658,19 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
         learner=learner, designer=designer, log=log, report=clock.report())
 
 
+def _portable(value, home):
+    """The style with every path inside this Studio written relative to it (its kit's manifest, the study board), so
+    the style keeps working when the Studio folder moves; the engine reads them from the Studio folder."""
+    root = str(Path(home).resolve()) + "/"
+    if isinstance(value, dict):
+        return {k: _portable(v, home) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_portable(v, home) for v in value]
+    if isinstance(value, str) and value.startswith(root):
+        return value[len(root):]
+    return value
+
+
 def _studio_home(folder):
     """The studio folder an operation lives in (<home>/output/cr-style-clone/op_...)."""
     return Path(folder).resolve().parents[2]
@@ -798,6 +811,7 @@ def finish_original(engine, folder, spec, design, record, progress, *, learner=N
     if style["cr_style_clone"]["visual_mode"] == "reference_only":
         import cr_style_delivery
         cr_style_delivery.configure_style(style)
+    style = _portable(style, _studio_home(folder))
     _write(folder / "ready-style.json", style)
     _write(folder / "study-result.json", {"references": [r["id"] for r in spec["references"]],
         "kit": record["kit"], "reference_used": (record.get("reference") or {}).get("id", ""),
