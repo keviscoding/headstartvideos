@@ -498,13 +498,15 @@ def _features(plan: Plan, profile: dict, base: str, base_style: dict):
     plan.overrides["features"]["channel_on"] = list(on)
     plan.drop("features.auto_own", "the learned channel decides its own switches")
     if base == "documentary" and fam:
+        # the middle share is every footage slot: YouTube footage and stock share them (YouTube first), so all the
+        # watched footage counts there, not only the stock part of it
         ai = round((fam.get("generated", 0) + fam.get("generated_motion", 0)) * 100)
-        stock = round(sources.get("stock_footage", 0) * 100)
+        footage = round(fam.get("footage", 0) * 100)
         gfx = round(fam.get("graphic", 0) * 100)
-        total = max(1, ai + stock + gfx)
-        mix = [round(ai * 100 / total), round(stock * 100 / total), 0]
+        total = max(1, ai + footage + gfx)
+        mix = [round(ai * 100 / total), round(footage * 100 / total), 0]
         mix[2] = 100 - mix[0] - mix[1]
-        plan.set("pacing.mix", mix, area="Options", label="Picture mix (AI, stock, graphics)",
+        plan.set("pacing.mix", mix, area="Options", label="Picture mix (AI, footage, graphics)",
                  why="the share of each in the watched shots", source="watched", show=f"{mix[0]} / {mix[1]} / {mix[2]}")
     if fam.get("graphic", 0) >= 0.15 and base in ("stories", "avatar-premium"):
         plan.set("pacing.graphics", True, area="Options", label="Graphics between pictures",

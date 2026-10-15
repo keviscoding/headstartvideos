@@ -95,6 +95,23 @@ def test_a_failed_download_is_reported_and_the_rest_carries_on(home):
     _, done, _ = run_look(home, download=broken)
     assert done["state"] == "done", "Gemini's watching still gives a profile"
     assert done["profile"]["edit"]["median_shot_s"]["value"] is None
+    assert len(done["not_measured"]) == 1 and "none of it could be measured" in done["not_measured"][0]
+    assert "asked this computer to sign in" in done["not_measured"][0]
+
+
+def test_a_download_that_fails_once_is_tried_again(home):
+    tries = []
+
+    def flaky(vid, a, b, dest):
+        tries.append(a)
+        if tries.count(a) == 1:
+            raise RuntimeError("ERROR: ffmpeg exited with code 8")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"0" * 60_000)
+        return dest
+    _, done, _ = run_look(home, download=flaky)
+    assert done["not_measured"] == [] and done["profile"]["edit"]["median_shot_s"]["value"] == 2.0
+    assert len(tries) == 4, "each of the two parts once more, never more"
 
 
 def test_only_previewed_references_can_be_looked_at(home):

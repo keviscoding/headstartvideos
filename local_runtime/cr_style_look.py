@@ -19,13 +19,13 @@ import glob
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import subprocess
 import sys
 import threading
 import time
 import traceback
+from pathlib import Path
 
 HOME = Path(__file__).resolve().parent
 SCHEMA = 1
@@ -126,11 +126,24 @@ def status(home, look_id) -> dict:
                           for r in saved.get("references", [])]}
     if saved.get("state") == "done":
         out.update(profile=saved.get("profile"), mapping=saved.get("mapping"), sheets=saved.get("sheets", []),
-                   not_watched=saved.get("not_watched", []))
+                   not_watched=saved.get("not_watched", []), not_measured=saved.get("not_measured", []))
     return out
 
 
 # ── the work ───────────────────────────────────────────────────────────────────────────────────────────────
+
+BOT_CHECK = re.compile(r"not a bot|sign in to confirm|429|too many requests", re.I)
+
+
+def _lost_note(ref, lost, total) -> str:
+    """What the creator reads when parts of a reference couldn't be downloaded: its cuts, motion and sound then come
+    from the other parts and references only (Gemini's watching runs on ChannelRecipe's server and is unaffected)."""
+    name = ref.get("title") or ref["id"]
+    why = ("YouTube asked this computer to sign in; it usually lets downloads through again within an hour"
+           if any(BOT_CHECK.search(e) for _, _, e in lost) else "the download failed")
+    part = "none of it" if len(lost) >= total else f"{len(lost)} of its {total} parts"
+    return f"{name}: {part} could be measured ({why})"
+
 
 def _download(video_id, a, b, dest: Path, timeout=420) -> Path:
     import cr_style_clone
@@ -198,7 +211,7 @@ def run(home, look_id, *, call=None, download=_download, transcript=_transcript,
 
     refs = saved["references"]
     work = path / "work"
-    built = []
+    built, unmeasured = [], []
     watched = {}
 
     def watch_one(ref, captions):
@@ -214,13 +227,20 @@ def run(home, look_id, *, call=None, download=_download, transcript=_transcript,
             thread.start()
             threads.append(thread)
             spans = [w for w in cr_style_watch.windows(duration)]           # what Gemini watches, minus promotions
-            sections = []
+            sections, lost = [], []
             for a, b in spans:
                 progress("download", f"Downloading {_mmss(a)}-{_mmss(b)} of {ref.get('title') or vid}.")
-                try:
-                    sections.append((a, download(vid, a, b, work / "media" / f"{vid}_{a}_{b}.mp4")))
-                except Exception as exc:                               # noqa: BLE001
-                    log(f"  download {vid} {_mmss(a)}-{_mmss(b)}: {exc}")
+                for attempt in (1, 2):
+                    try:
+                        sections.append((a, download(vid, a, b, work / "media" / f"{vid}_{a}_{b}.mp4")))
+                        break
+                    except Exception as exc:                           # noqa: BLE001
+                        log(f"  download {vid} {_mmss(a)}-{_mmss(b)}: {exc}")
+                        if attempt == 2 or BOT_CHECK.search(str(exc)):
+                            lost.append((a, b, str(exc)))
+                            break
+            if lost:
+                unmeasured.append(_lost_note(ref, lost, len(spans)))
             progress("measure", f"Measuring {ref.get('title') or vid}.")
             measured = [measure(file, start=a, keyframes=True) for a, file in sections]
             _stills(sections, measured, path / "frames", vid)
@@ -255,6 +275,7 @@ def run(home, look_id, *, call=None, download=_download, transcript=_transcript,
         saved.update(state="done", phase="done", profile=profile, mapping=mapping, finished_at=now(),
                      sheets=[{"id": r["id"], "file": Path(r["sheet"]).name} for r in built if r.get("sheet")],
                      not_watched=[m for r in built for m in (r["watch"].get("missing") or [])],
+                     not_measured=unmeasured,
                      excerpts={r["id"]: r["excerpt"] for r in built}, message="")
         progress("done")
     except Exception as exc:                                           # noqa: BLE001
