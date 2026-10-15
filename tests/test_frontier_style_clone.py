@@ -606,3 +606,25 @@ def test_failed_study_ui_offers_explicit_new_attempt_and_preserves_duplicate_cli
     assert "localStorage.setItem('cr.styleStudyRequest'" in html
     assert "$('usage-approved').checked=false" in html
     assert "data.setup_review_required||data.can_continue_prepared" in html
+
+
+def test_a_stopped_study_says_why_and_offers_to_start_again_here(approved):
+    one = clone.prepare(approved.home, approved.spec, approved.proof, approved.bridge)
+    folder = approved.home / "output/cr-style-clone" / one["operation_id"]
+    saved = clone._read(folder / "operation.json")
+    saved.update(state="failed", phase="validate", project_id=PROJECT)
+    try:
+        raise clone.StudyStopped("The original learner did not produce a graphics kit that passed real browser validation.")
+    except clone.StudyStopped as error:
+        clone._record_failure(folder, saved, error)
+    clone._write(folder / "operation.json", saved)
+    result = clone.status(approved.home, one["operation_id"], approved.bridge)
+    assert result["message"].startswith("The original learner did not produce a graphics kit")
+    assert "start it again here" in result["message"] and result["stop_reason"]
+    assert result["setup_review_required"] is False, "setup has nothing to review for a stop the study explains"
+    assert result["retry_spec"]["reference_url"] == approved.preview["reference_url"]
+    try:
+        raise ValueError("provider said SECRET things")
+    except ValueError as error:
+        clone._record_failure(folder, saved, error)
+    assert "SECRET" not in json.dumps(clone.status(approved.home, one["operation_id"], approved.bridge))

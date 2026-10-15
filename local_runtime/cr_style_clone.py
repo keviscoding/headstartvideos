@@ -395,8 +395,13 @@ def status(home, operation_id, bridge):
     percent, message = PHASES.get(phase, PHASES["prepared"])
     failure_code = saved.get("failure_code", "")
     native_failure = _native_failure(home, saved) if state == "failed" else ""
+    said, stop_type = "", ""
     if state == "failed":
+        failure = _read(folder / "failure.json")
+        said, stop_type = str(failure.get("message") or "").strip(), str(failure.get("exception_type") or "")
         message = "This study stopped. Review its saved Claude stages in setup before approving any further work. It will not run again automatically."
+        if said:
+            message = said + " Your study is saved; start it again here when you're ready."
         if native_failure == "timeout":
             message = "Claude timed out while " + PHASES.get(phase, PHASES["prepared"])[1].rstrip(".").lower() + ". Your saved study is intact. Review your references and approve a new study here; setup review is not required to start a separate attempt."
         elif native_failure == "usage_limit":
@@ -418,7 +423,11 @@ def status(home, operation_id, bridge):
     result["metadata_recovery_available"] = state == "failed" and (
         _recovery_checkpoint_ready(folder, saved) or _legacy_recovery_possible(home, folder, saved))
     result["failure_code"] = native_failure or failure_code
-    result["setup_review_required"] = state == "failed" and native_failure not in {"timeout", "usage_limit"} and failure_code != "metadata_handoff_failed"
+    # setup can help only with Claude itself (sign-in, model access); a stop the study explains is retried here
+    result["setup_review_required"] = (state == "failed" and native_failure not in {"timeout", "usage_limit"}
+                                       and failure_code != "metadata_handoff_failed"
+                                       and not (said and stop_type == "StudyStopped"))
+    result["stop_reason"] = said
     if state == "failed" and not result["metadata_recovery_available"]:
         result["retry_spec"] = {key: copy.deepcopy(saved["spec"][key]) for key in (
             "preview_id", "reference_url", "references", "base_style", "name", "label", "title", "brief",
@@ -468,8 +477,10 @@ def _record_failure(folder, saved, error):
     """Persist useful private frames, without provider text or secrets."""
     saved["failure_code"] = ("metadata_handoff_failed" if _recovery_checkpoint_ready(folder, saved)
                              else "study_failed")
+    # a stop Studio itself explains (its own wording, never provider text) is kept, so the page can say why
+    said = str(error)[:400] if type(error).__name__ in ("StudyStopped", "ClaudeStageStopped") else ""
     _write(folder / "failure.json", {"schema": 1, "failure_code": saved["failure_code"],
-        "exception_type": type(error).__name__, "phase": saved.get("phase"), "at": time.time(),
+        "exception_type": type(error).__name__, "message": said, "phase": saved.get("phase"), "at": time.time(),
         "frames": [{"file": Path(frame.filename).name, "function": frame.name, "line": frame.lineno}
                    for frame in traceback.extract_tb(error.__traceback__)]})
 
