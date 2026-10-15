@@ -320,7 +320,10 @@ def test_a_long_picture_style_is_cut_at_a_sentence_and_the_avoid_list_reads_clea
     long = " ".join(f"Sentence {i} describes the flat vector style in some detail." for i in range(40))
     out = art.check({**ANSWER, "still_suffix": long, "avoid": "No photorealism, no 3D"}, banned=[])
     assert out["still_suffix"].endswith(".") and len(out["still_suffix"]) <= 1400
-    assert art.overrides(out)["look"]["still_suffix"].endswith("Avoid: photorealism, no 3D.")
+    suffix = art.overrides(out)["look"]["still_suffix"]
+    assert "Avoid: photorealism, no 3D." in suffix
+    assert suffix.endswith(art.LETTERING) and "never an invented caption, date" in suffix, \
+        "an archival picture never gets a made-up caption or date"
 
 
 def test_the_art_director_gives_the_channel_its_own_fallback_b_roll():

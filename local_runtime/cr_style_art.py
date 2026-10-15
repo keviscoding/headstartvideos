@@ -207,11 +207,18 @@ def check(answer: dict, *, banned: list, candid: bool = False) -> dict:
     return out
 
 
+# An image model dresses an archival picture with its own caption strip ("ALPINE CLUB, 1968" on a 1930s scene): every
+# learned style's pictures carry only the words their scene asks for.
+LETTERING = (" Lettering: only the words the scene itself names, on the thing they belong to; never an invented caption, "
+             "date, title, place name or archive label.")
+
+
 def overrides(art: dict) -> dict:
     """Style settings from a checked answer (deep-merged over the mapping's own)."""
     avoid = re.sub(r"^(no|never|avoid)[:\s]+", "", art.get("avoid") or "", flags=re.I).rstrip(".")
     people = (" People: " + art["people"].rstrip(".") + ".") if art.get("people") else ""
-    look = {"still_suffix": " " + art["still_suffix"].rstrip(".") + "." + people + (f" Avoid: {avoid}." if avoid else "")}
+    look = {"still_suffix": " " + art["still_suffix"].rstrip(".") + "." + people + (f" Avoid: {avoid}." if avoid else "")
+            + LETTERING}
     cast = art.get("cast", "")
     if art.get("mascot"):
         m = art["mascot"]
