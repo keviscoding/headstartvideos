@@ -601,6 +601,8 @@ def install(engine):
         import cr_panels
         import cr_cta
         cr_panels.install(engine)
+        import cr_sound_qc
+        cr_sound_qc.install(engine)                 # the sound check on every finished video (measured)
         cr_cta.install(engine)                      # your call to action: in the script, on screen, in the description
         import cr_presenters
         cr_presenters.install()                     # your own presenters, listed first

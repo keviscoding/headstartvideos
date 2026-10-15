@@ -552,6 +552,9 @@ def _sound(plan: Plan, profile: dict):
     snd["sfx_flavor"] = ("analog_paper" if _has_words(kinds, "paper", "marker", "pen", "chalk", "pop") else
                          "tech_digital" if _has_words(kinds, "click", "ui", "glitch", "digital", "keyboard") else
                          "cinematic_subtle")
+    if bed is not None and music.get("filled_pauses") is not None:
+        # what the references measure, kept so every video's sound check can say how close it came (cr_sound_qc)
+        snd["target"] = {"bed_in_pauses_db": round(float(bed), 1), "pauses_filled": round(float(music["filled_pauses"]), 2)}
     amb = sound.get("ambience") or {}
     if amb.get("present") and _v(amb, []):
         # the air of each place under the pictures (cr_ambience): heard throughout, the channel's usual place fills

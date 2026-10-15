@@ -411,9 +411,12 @@ def install(studio, activity, *, token, home=None):
             available = (valid and saved.get("brain_mode") == "claudecode"
                          and saved.get("purpose", "video") == "video"
                          and state not in {"done", "queued", "running"})
+            qc = _read(job / "sound_qc.json") if (job / "sound_qc.json").is_file() else {}
+            sound = [{"state": _text(r.get("state"), 8), "text": _text(r.get("text"), 200)}
+                     for r in (qc.get("lines") or []) if isinstance(r, dict)][:4]
             return protect(jsonify(slug=slug, project_id=project_id if valid else None,
                 available_for_resume=bool(available), title=_text(live.get("title") or saved.get("title"), 300),
                 style=_text(spec.get("style") or saved.get("style"), 140), status=state,
-                link="/editor/" + quote(slug, safe="")))
+                link="/editor/" + quote(slug, safe=""), sound_check=sound))
         except Exception as error:
             return failure(error)
