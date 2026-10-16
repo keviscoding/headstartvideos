@@ -246,3 +246,12 @@
 .ls-statcard dl{margin:14px 0 0;display:grid;grid-template-columns:1fr 1fr;gap:12px 18px}
 .ls-statcard dt{font:11px var(--font-mono);letter-spacing:.05em;text-transform:uppercase;color:var(--app-ink-3)}
 .ls-statcard dd{margin:3px 0 0;font:700 17px var(--font-display);color:var(--app-ink)}
+.ls-niches{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.ls-niche{display:flex;flex-direction:column;background:var(--app-surface);border:1px solid var(--app-border);border-radius:14px;overflow:hidden;color:inherit;text-decoration:none;transition:border-color .15s}
+.ls-niche:hover{border-color:#8A79BB}
+.ls-niche img,.ls-niche-blank{display:block;width:100%;aspect-ratio:16/9;object-fit:cover;background:var(--app-surface-2)}
+.ls-niche>div{padding:12px 14px 14px;display:flex;flex-direction:column;gap:4px}
+.ls-niche strong{font:700 15px/1.25 var(--font-display)}
+.ls-niche small{font:12px var(--font-mono);color:var(--app-ink-2)}
+.ls-niche span{font-size:13px;line-height:1.45;color:var(--app-ink-3)}
+@media (max-width:900px){.ls-niches{grid-template-columns:repeat(2,minmax(0,1fr))}}
