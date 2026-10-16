@@ -92,3 +92,15 @@ def test_the_homepage_welcomes_back_customers_and_stays_light():
     assert "you'd" not in html and "you’d" in html, "typographic apostrophes in the copy"
     js = (web_assets.STATIC_DIR / "app.js").read_text()
     assert "function maybeOpenSignIn()" in js and "maybeOpenSignIn();" in js
+
+
+def test_every_classic_recipe_preview_it_names_exists():
+    import json
+    root = web_assets.STATIC_DIR.parent / "niches"
+    missing = []
+    for f in sorted(root.glob("*.json")):
+        gif = json.loads(f.read_text()).get("preview_gif") or ""
+        if gif.startswith("/static/") and not (web_assets.STATIC_DIR / gif[len("/static/"):]).is_file():
+            missing.append((f.name, gif))
+    # avatar_generator's preview was never added (a known gap; its card shows no animation)
+    assert missing in ([], [("avatar_generator.json", "/static/previews/avatar_generator.gif")]), missing
