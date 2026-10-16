@@ -259,7 +259,7 @@
     const needsPanels = !!state.selected?.panels && !state.panels;
     const blocked = state.submitting || state.uploading || !state.catalog || !ready || state.busy || (state.narration === 'own' && !state.audio) || needsPanels;
     $('crw-create').disabled = blocked;
-    let message = !state.catalog ? 'Loading your visual recipes…' : !ready ? (state.setup?.readiness?.blockers || ['Finish account setup before creating a video.']).join(' ') : state.busy ? 'A project is using this studio. Its progress is available in Projects.' : state.narration === 'own' && !state.audio ? 'Choose a narration recording to continue.' : needsPanels ? 'Choose your panels to continue.' : 'Ready. Each Create starts a separate new project.';
+    let message = !state.catalog ? 'Loading your visual recipes…' : !ready && mustUpdate() ? 'A new Studio is out. Press Update now at the top of this page to keep making new videos: it takes a minute and keeps your projects.' : !ready ? (state.setup?.readiness?.blockers || ['Finish account setup before creating a video.']).join(' ') : state.busy ? 'A project is using this studio. Its progress is available in Projects.' : state.narration === 'own' && !state.audio ? 'Choose a narration recording to continue.' : needsPanels ? 'Choose your panels to continue.' : 'Ready. Each Create starts a separate new project.';
     text('crw-readiness', message);
     const status = $('crw-connection'); status.querySelector('span:last-of-type').textContent = ready ? 'Accounts connected' : 'Accounts need attention';
     status.querySelector('.crw-status-dot').className = `crw-status-dot ${ready ? 'is-ready' : 'is-warning'}`;
@@ -325,9 +325,11 @@
     const customs = rows().filter(r => r.custom); const target = $('crw-styles-list'); target.replaceChildren();
     for (const recipe of customs) {const card = recipeCard(recipe,r => {selectRecipe(r); showPage('create');}); target.append(card);}
     hide('crw-styles-empty',!!customs.length);
-    if (state.studies.length) {
-      const heading = el('h3','crw-library-subheading','Your style clones'); target.append(heading);
-      for (const study of state.studies) {const a = el('a','crw-study-card'); a.href = study.link; a.append(el('strong','',study.label || study.title),el('span',`crw-study-state is-${study.state === 'running' ? 'running' : study.state === 'done' ? 'done' : 'stopped'}`,study.state === 'running' ? 'Studying the channel…' : study.state === 'done' ? 'Style saved' : 'Stopped. Open to review')); target.append(a);}
+    // a finished study is already a saved style above; only studies still running or stopped are listed here
+    const studies = state.studies.filter(study => study.state !== 'done');
+    if (studies.length) {
+      const heading = el('h3','crw-library-subheading','Style studies'); target.append(heading);
+      for (const study of studies) {const a = el('a','crw-study-card'); a.href = study.link; a.append(el('strong','',study.label || study.title),el('span',`crw-study-state is-${study.state === 'running' ? 'running' : study.state === 'done' ? 'done' : 'stopped'}`,study.state === 'running' ? 'Studying the channel…' : study.state === 'done' ? 'Style saved' : 'Stopped. Open to review')); target.append(a);}
     }
   }
   const phaseCopy = line => {
@@ -426,7 +428,27 @@
     const share = el('a','crw-secondary-button','Share in Discord ↗');share.href=DISCORD_URL;share.target='_blank';share.rel='noopener';share.dataset.discord='finished-banner';
     const close = el('button','crw-icon-button','×');close.type='button';close.setAttribute('aria-label','Dismiss');close.addEventListener('click',()=>{box.hidden=true;});
     box.append(copy,watch,share,close);box.hidden=false;
+    if (document.hidden) {
+      state.readyTitle = job.title || 'Your video';
+      try {if ('Notification' in window && Notification.permission === 'granted') {const n = new Notification('Your video is ready', {body: state.readyTitle, icon: '/cr-workspace/icon.svg?state=done', tag: 'cr-ready-' + (job.slug || '')}); n.onclick = () => {window.focus(); n.close();};}} catch (_) {/* notifications are optional */}
+    }
+    tabStatus();
   }
+  // The browser tab says what the studio is doing, so a long video can run in the background: a violet dot and
+  // "Making …" while it works, a green dot and "Ready: …" when a video finished while you were in another tab.
+  const BASE_TITLE = document.title;
+  function tabStatus() {
+    const running = state.queue.filter(q=>q.state==='running'), queued = state.queue.filter(q=>q.state==='queued').length;
+    const study = state.studies.find(x=>x.state==='running');
+    let title = BASE_TITLE, dot = '';
+    if (state.readyTitle) {title = `Ready: ${state.readyTitle.slice(0,50)} · ChannelRecipe`; dot = 'done';}
+    else if (running.length) {title = `Making “${(running[0].title || 'your video').slice(0,40)}”${queued?` (+${queued} queued)`:''} · ChannelRecipe`; dot = 'busy';}
+    else if (study) {title = `Learning a style${Number.isFinite(study.percent)?' '+Math.round(study.percent)+'%':''} · ChannelRecipe`; dot = 'busy';}
+    if (document.title !== title) document.title = title;
+    const icon = $('crw-favicon'), href = '/cr-workspace/icon.svg' + (dot ? '?state=' + dot : '');
+    if (icon && icon.getAttribute('href') !== href) icon.setAttribute('href', href);
+  }
+  document.addEventListener('visibilitychange', () => {if (!document.hidden && state.readyTitle) {state.readyTitle = ''; tabStatus();}});
   async function refreshActivity(initial = false) {
     if (state.refresh) return state.refresh;
     state.refresh = (async()=>{
@@ -447,8 +469,13 @@
       const active = state.studies.find(x=>x.state==='running') || state.queue.find(x=>['running','queued'].includes(x.state));
       const notice=$('crw-active-notice');notice.replaceChildren();notice.hidden=!state.busy;
       if (state.busy) {notice.append(el('strong','',active?.label || active?.title || 'Production in progress'),el('span','',active?.operation_id?'Your reference study is using the creative workspace.':'This studio is finishing a project.'));
-        const a=el('a','crw-inline-link','View progress');a.href=active?.link || '#projects';notice.append(a);}
-      renderProjects(); if(state.page==='styles')renderStyles(); gate(); await refreshProgress();
+        const a=el('a','crw-inline-link','View progress');a.href=active?.link || '#projects';notice.append(a);
+        if ('Notification' in window && Notification.permission === 'default') {
+          const ask=el('button','crw-inline-link','Notify me when it’s ready');ask.type='button';
+          ask.addEventListener('click',async()=>{try{await Notification.requestPermission();}catch(_){}ask.remove();toast(Notification.permission==='granted'?'We’ll let you know when it’s ready, even in another tab.':'Notifications are off. The tab still shows when it’s ready.');});
+          notice.append(ask);
+        }}
+      renderProjects(); if(state.page==='styles')renderStyles(); gate(); tabStatus(); await refreshProgress();
     })().finally(()=>{state.refresh=null;}); return state.refresh;
   }
   function schedule() {clearTimeout(state.timer);state.timer=setTimeout(async()=>{await refreshActivity();schedule();},document.hidden?15000:state.busy||state.openJob?2500:10000);}
@@ -504,7 +531,9 @@
   async function start() {
     const draft=restore();
     try {
-      const [catalog,setup]=await Promise.all([api('/cr-workspace/catalog'),api('/cr-status')]);state.catalog=catalog;state.setup=setup;
+      // the studio's last check draws the page at once; a fresh one follows in the background
+      const [catalog,setup]=await Promise.all([api('/cr-workspace/catalog'),api('/cr-status?cached=1')]);state.catalog=catalog;state.setup=setup;
+      if(setup.cached)api('/cr-status').then(fresh=>{state.setup=fresh;gate();autoVerify();checkForUpdate();}).catch(()=>{});
       text('crw-release',setup.local_version?`Studio ${setup.local_version.replace(/^5\.3-admin\./,'')}`:'');
       const narration=setup.narration||{};text('crw-narration-name',narration.voice||'Your configured narrator');text('crw-narration-account',[narration.label||providerName(narration.provider),narration.model_label||friendlyModel(narration.model)].filter(Boolean).join(' · ')||'Uses the voice account selected in Accounts.');
       const initial=findRecipe(boot.preset?.style||draft.recipe)||findRecipe('documentary')||rows()[0]; if(!initial)throw new Error('No visual recipes are installed. Update this studio from your ChannelRecipe account.');
@@ -625,7 +654,10 @@
     return {local, remote, entries: (s.account?.changelog || []).filter(e => Number(e.build) > local)};
   }
   function laterKey(info) {return 'crw-update-later-' + info.remote;}
-  function dismissed(info) {try {return localStorage.getItem(laterKey(info)) === '1';} catch (_) {return false;}}
+  // New videos need the Studio release your account offers (each project pins it); a project already running
+  // finishes on this one. While an update is required the banner stays, so Update now is always one click away.
+  const mustUpdate = () => (state.setup?.readiness?.checks || []).some(c => c.key === 'release' && !c.ready);
+  function dismissed(info) {if (mustUpdate()) return false; try {return localStorage.getItem(laterKey(info)) === '1';} catch (_) {return false;}}
   function showWhatsNew(mode) {
     const info = pendingUpdate(); if (!info) return false;
     const list = $('crw-whatsnew-list'); list.replaceChildren();
@@ -656,7 +688,7 @@
     } else {
       if (dismissed(info)) {box.hidden = true; return;}
       const first = info.entries[0];
-      copy.append(el('strong', '', `Studio ${info.remote} is available`), el('span', '', first ? `${first.title}${info.entries.length > 1 ? ` and ${info.entries.length - 1} more update${info.entries.length > 2 ? 's' : ''}` : ''}. Updating is optional.` : 'Fixes and improvements. Updating is optional.'));
+      copy.append(el('strong', '', `Studio ${info.remote} is available`), el('span', '', (first ? `${first.title}${info.entries.length > 1 ? ` and ${info.entries.length - 1} more update${info.entries.length > 2 ? 's' : ''}` : ''}.` : 'Fixes and improvements.') + (mustUpdate() ? ' Update to keep making new videos; your projects and settings stay.' : ' It takes a minute and keeps your projects and settings.')));
       button('What’s new', 'crw-secondary-button', () => showWhatsNew('news'));
       button('Update now', 'crw-primary-button', startUpdate);
       const close = button('×', 'crw-icon-button', () => {try {localStorage.setItem(laterKey(info), '1');} catch (_) {} box.hidden = true;}); close.setAttribute('aria-label', 'Remind me later');

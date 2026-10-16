@@ -264,7 +264,7 @@ def screenshot(home, source, *, run=None):
     if root.is_symlink():
         raise Unavailable()
     stat = source.path.stat()
-    identity = f"frame-v1\0{source.path}\0{stat.st_size}\0{stat.st_mtime_ns}\0{stat.st_ino}"
+    identity = f"frame-v2\0{source.path}\0{stat.st_size}\0{stat.st_mtime_ns}\0{stat.st_ino}"
     name = hashlib.sha256(identity.encode()).hexdigest() + ".jpg"
     cached = _file(root / name, root, {".jpg"})
     if cached and cached.stat().st_size <= _MAX_IMAGE:
@@ -281,7 +281,8 @@ def screenshot(home, source, *, run=None):
             raise Unavailable()
         temporary = root / ("." + secrets.token_hex(12) + ".jpg")
         deadline = time.monotonic() + 10
-        for second in (1, 0):
+        # eight seconds in shows the story rather than a dark cold open; short films fall back to 1 s, then 0 s
+        for second in (8, 1, 0):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break

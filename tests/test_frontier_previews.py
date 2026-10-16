@@ -265,7 +265,7 @@ def test_decoder_timeout_short_video_busy_and_cache_limits_are_bounded(env, monk
         if calls[-1] == "0":
             Path(command[-1]).write_bytes(jpeg())
         return SimpleNamespace(returncode=0)
-    assert preview.screenshot(env.home, source, run=short).is_file() and calls == ["1", "0"]
+    assert preview.screenshot(env.home, source, run=short).is_file() and calls == ["8", "1", "0"]
     source.path.write_bytes(b"new movie identity")
     monkeypatch.setattr(preview, "_WORKERS", SimpleNamespace(acquire=lambda **kwargs: False))
     with pytest.raises(preview.Busy):

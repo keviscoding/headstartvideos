@@ -14,6 +14,7 @@ import time
 from urllib.parse import quote
 
 import cr_bridge
+import cr_favicon
 import cr_presentation
 import cr_preview
 import cr_style_clone
@@ -189,6 +190,20 @@ def install(studio, activity, *, token, home=None):
             return protect(send_file(path, mimetype=mimetype, conditional=False))
         except Exception as error:
             return failure(error)
+
+    # The tab icon: the brand mark, with a status dot the page asks for while it works or when a video is ready.
+    @app.get("/favicon.ico")
+    def cr_favicon_ico():
+        response = Response(cr_favicon.ICO, mimetype="image/x-icon")
+        response.headers["Cache-Control"] = "public, max-age=86400"
+        return response
+
+    @app.get("/cr-workspace/icon.svg")
+    def cr_favicon_svg():
+        response = Response(cr_favicon.svg(request.args.get("state", "")), mimetype="image/svg+xml")
+        response.headers["Cache-Control"] = "public, max-age=86400"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
 
     @app.get("/cr-workspace/art/<name>")
     def cr_workspace_art(name):
