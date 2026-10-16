@@ -43,10 +43,27 @@ RECIPES = {
     "gaming": ("Gaming Briefing", "Documentary", "Gameplay and trailers meet sourced articles and explanatory graphics.", ("Gameplay", "Gaming news", "Editorial graphics")),
     "grooming": ("Personal Care Guide", "Editorial", "Routine footage, practical steps and clear product explanations.", ("How-to steps", "Routine footage", "Products")),
     "automatic": ("Adaptive Documentary", "Documentary", "Discover or reuse a documentary look for your topic through style learning.", ("Style learning", "Documentary", "Reusable graphics")),
+    # Ready-made recipes: styles learned from benchmark channels and tested end to end (data/frontier/recipes)
+    "cr-stick-stories": ("Stick Figure Stories", "Animation", "Funny stick-figure stories from history and everyday life, on painted backgrounds with a recurring mascot.", ("Stick figures", "Recurring mascot", "Painted scenes")),
+    "cr-handdrawn-finance": ("Hand-Drawn Money", "Animation", "Money explained with whiteboard drawings, a recurring drawn everyman and handwritten notes.", ("Whiteboard drawings", "Recurring character", "Handwritten notes")),
+    "cr-paper-finance": ("Paper Economics", "Documentary", "Economics and money over real footage, paper documents and clean graphs, with a paper cut-out host.", ("Real footage", "Paper graphics", "Cut-out host")),
+    "cr-business-doc": ("Business Story Doc", "Documentary", "Company rise-and-fall stories over real footage, highlighted articles and logos, with a driving score.", ("Real footage", "Highlighted articles", "Story score")),
+    "cr-3d-reconstruction": ("Clean 3D Reconstruction", "Animation", "Clean 3D reconstructions of real events in ivory and signal yellow, with technical overlays and maps.", ("3D scenes", "Technical overlays", "Maps")),
+    "cr-true-crime": ("Bodycam True Crime", "Documentary", "Real case footage plays with its own sound between the narration: bodycam, interrogations and maps, under a dark grade.", ("Real case footage", "Original audio", "Maps")),
+    "cr-expert-presenter": ("Old-Timer Expert", "Presenter", "An older expert presenter opens the video; raw phone-camera photos of them doing what they say carry the rest.", ("AI presenter", "Phone-camera photos", "Own product")),
+    "cr-quiet-essays": ("Quiet Video Essays", "Editorial", "Reflective essays over filtered footage and art, with film grain, the sound of each place and calm music.", ("Filtered footage", "Ambience", "Calm narration")),
+    "cr-manga-recaps": ("Manga Recaps", "Animation", "Your own manga, manhwa or webtoon panels, read and retold as a gripping recap.", ("Your own panels", "Recap writing", "No picture costs")),
+    "cr-deadly-places": ("Deadly Places Documentary", "Documentary", "Calm investigations of the world's deadliest places and disasters, over aged archival-style pictures, engravings and old maps.", ("Archival-style pictures", "Old maps", "Calm narration")),
 }
+# Ready-made recipes use the nearest owned artwork until they have their own.
+ART_ALIAS = {"cr-stick-stories": "atlas", "cr-handdrawn-finance": "hustle", "cr-paper-finance": "almanac",
+             "cr-business-doc": "documentary", "cr-3d-reconstruction": "3d", "cr-true-crime": "dossier",
+             "cr-expert-presenter": "workshop", "cr-quiet-essays": "jung", "cr-manga-recaps": "folio",
+             "cr-deadly-places": "history"}
 
-BUILTIN_IDS = frozenset(RECIPES) - {"automatic", "gaming", "grooming"}
-ART_IDS = frozenset(RECIPES) | {"custom"}
+READY_MADE_IDS = frozenset(ART_ALIAS)
+BUILTIN_IDS = frozenset(RECIPES) - {"automatic", "gaming", "grooming"} - READY_MADE_IDS
+ART_IDS = (frozenset(RECIPES) - READY_MADE_IDS) | {"custom"}
 _SAFE_NAME = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,139}\Z")
 
 
@@ -57,6 +74,7 @@ def asset(name):
     value = name[:-4] if name.endswith(".svg") else name
     if not _SAFE_NAME.fullmatch(value):
         raise ValueError("Invalid recipe artwork name.")
+    value = ART_ALIAS.get(value, value)
     value = value if value in ART_IDS else "custom"
     path = ART_ROOT / (value + ".svg")
     if not path.is_file() or path.resolve().parent != ART_ROOT.resolve():

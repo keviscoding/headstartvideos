@@ -211,3 +211,24 @@ def test_references_that_disagree_on_music_keep_the_music_and_ask():
     assert asked and asked[0]["options"][0] == "A story score under the whole video" and "No music" in asked[0]["options"]
     agree = sp.build([silent, silent])["sound"]["music"]
     assert agree["level"] == "none" and not agree["references_disagree"]
+
+
+def test_only_talking_to_the_viewer_on_video_counts_as_presenter_time():
+    shots = [{"len_s": 5, "source": "drawing", "motion": "animated", "who": "Tom", "what": "Tom talking to librarian"},
+             {"len_s": 5, "source": "live_footage", "motion": "live_action", "who": "officer",
+              "what": "officer speaking to suspect"},
+             {"len_s": 5, "source": "ai_video", "motion": "live_action", "who": "Frank",
+              "what": "butcher addressing the camera"},
+             {"len_s": 5, "source": "presenter", "motion": "live_action", "who": "Wade", "what": "presenter explaining"}]
+    assert sp.talking_share({"shots": shots}, 20) == 0.5
+
+
+def test_a_lead_character_is_offered_as_a_mascot_only_in_drawn_pictures():
+    lead = {"name": "Dalia", "look": "young woman, dark hair", "role": "character", "screen_share": 0.49}
+    filmed = {"pictures": {"characters": {"value": [lead]}, "sources": {"families": {"footage": 0.9}}}}
+    drawn = {"pictures": {"characters": {"value": [lead]}, "sources": {"families": {"generated": 0.8}}}}
+    assert not [q for q in sp.questions(filmed) if q["id"] == "host"]
+    assert [q for q in sp.questions(drawn) if q["id"] == "host"]
+    logo = {"name": "QQ Penguin", "look": "penguin logo", "role": "mascot", "screen_share": 0.04}
+    assert not [q for q in sp.questions({"pictures": {"characters": {"value": [logo]}}}) if q["id"] == "host"], \
+        "a brand's logo character is not the channel's mascot"

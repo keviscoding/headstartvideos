@@ -256,8 +256,251 @@ def test_engine_machine_checks_are_patched_for_customer_computers():
         package.patch_engine("reflearn.py", b"a different engine")
 
 
+def test_real_photo_searches_never_pick_youtube_thumbnails():
+    engine = ('STOCK_HOSTS = ("gettyimages.",\n               "pngwing.", "kindpng.", "pngitem.", "seekpng.", "clipart", '
+              '"wallpaperaccess.", "wallpapercave.")\n'
+              'SHOP_HOSTS = ("ebay.",\n              "posterazzi.", "fineartamerica.", "pixels.com", "displate.")\n'
+              '    if not cfg["depth"] or every <= 0 or not os.environ.get("WAVESPEED_API_KEY"):\n'
+              '    cuts = bool((os.environ.get("WAVESPEED_API_KEY") or "").strip())\n').encode()
+    patched = package.patch_engine("photofx.py", engine).decode()
+    scope = {}
+    exec(patched.split("    if not cfg")[0], scope)
+    assert "ytimg.com" in scope["STOCK_HOSTS"] and "ytimg.com" in scope["SHOP_HOSTS"]
+
+
+def _youtube_engine() -> bytes:
+    """The lines of youtube.py the engine patches change (each patch must find its line once)."""
+    return ('def _kie_upload(path: Path) -> str:\n'
+            '    with open(path, "rb") as fh:\n'
+            '        r = requests.post("https://kieai.redpandaai.co/api/file-stream-upload",\n'
+            '                          headers={"Authorization": f"Bearer {_env(\'KIE_API_KEY\')}"},\n'
+            '                          data={"uploadPath": "frontier", "fileName": path.name},\n'
+            '                          files={"file": (path.name, fh, "video/mp4")}, timeout=900)\n'
+            '    r.raise_for_status()\n'
+            'def ytdlp():\n    cmd = ["yt-dlp"]\n    if _num_env("YT_SLEEP") > 0:\n        cmd += ["--sleep-requests", "1"]\n'
+            '    return cmd\n'
+            'def search(q):\n    if True:\n        try:\n            p = run()\n'
+            '        except subprocess.TimeoutExpired:\n            return []\n        for line in p.stdout.splitlines():\n'
+            '            pass\n'
+            + 'def _kie_log(vid: str, prompt: str, work: Path, span: tuple = None) -> str:\n    # kie\'s gateway answers a busy minute with {"code": 500, "msg": "Network error, please try again later."}.\n    # The upload is the slow part, so it is done once and only the watching is tried again.\n    url = _kie_upload(_low_copy(vid, work, span))\n    last = None\n    for wait in (0, 20, 60):\n        if wait:\n            time.sleep(wait)\n        try:\n            return _chat_log("https://api.kie.ai/gemini-2.5-flash/v1/chat/completions", _env("KIE_API_KEY"), "",\n                             {"type": "image_url", "image_url": {"url": url}}, prompt)\n        except RuntimeError as e:                               # noqa: PERF203 - three tries, then the next model\n            last = e\n            if "HTTP 4" in str(e):\n                break\n    raise last\n').encode()
+
+
+def test_a_refused_footage_search_records_why():
+    patched = package.patch_engine("youtube.py", _youtube_engine()).decode()
+    assert "        if p.returncode:\n            _note_err(p.stderr)\n        for line in p.stdout" in patched
+
+
 def test_starting_the_engine_directly_hands_over_to_studio():
     app = (b'import sys\nHERE = 1\nif __name__ == "__main__":\n    OUT.mkdir(exist_ok=True)\n    print("x")\n')
     patched = package.patch_engine("app.py", app).decode()
     assert 'subprocess.call([sys.executable, str(HERE / "cr_studio.py")]' in patched
     compile(patched, "app.py", "exec")
+
+
+def test_a_story_with_moving_pictures_shows_each_picture_on_its_own_sentence(tmp_path):
+    engine = (b"import json, re, shutil\nfrom pathlib import Path\n\n\n"
+              b"def _build_story_plan(job: Path, total: float, photos: list) -> list:\n"
+              b"    items = json.loads((job / 'astro_scenes.json').read_text())\n"
+              b"    pairs = [(it if isinstance(it, dict) else {}, p) for it, p in zip(items, photos) if p]\n"
+              b"    n = len(items)\n"
+              b"    beat = 2.5                              # shortest a picture may hold\n"
+              b"    return [(it['text'], Path(p).name) for it, p in pairs]\n\n\n"
+              b"def _story_order(job, total, photos):\n"
+              b"    items = json.loads((job / 'astro_scenes.json').read_text())\n"
+              b"    by_i = {}\n    for p in photos:\n"
+              b"        m = re.search(r\"scene_(\\d+)\\.jpg$\", str(p))\n"
+              b"        if m and int(m.group(1)) < len(items):\n"
+              b"            by_i[int(m.group(1))] = str(p)\n"
+              b"    if len(by_i) < max(3, len(photos) // 2):\n        return []\n"
+              b"    idx = sorted(by_i)\n"
+              b"    return [(items[i]['text'], Path(by_i[i]).name) for i in idx]\n\n\n"
+              b"def _zoom_expr(mode, idx, amount, frames):\n"
+              b'    p = f"min(on/{max(1, frames - 1)}\\\\,1)"\n'
+              b'    if (mode or "in").lower() != "alternate":\n'
+              b'        return f"(1+{amount:.5f}*{p})"\n'
+              b'    return "alternate"\n\n\n'
+              b'def _held_before_fade(src, tail, src_dur):\n'
+              b'    if tail > 0.35 and src_dur > 1.6 and (src.name.startswith("doc_") or _fades_out(src, src_dur)):\n'
+              b'        return True\n'
+              b'    return False\n')
+    patched = package.patch_engine("make_video.py", engine).decode()
+    ns = {}
+    exec(compile(patched, "make_video.py", "exec"), ns)
+    job = tmp_path / "job"
+    for d in ("images", "clip_src", "clips"):
+        (job / d).mkdir(parents=True)
+    texts = ["London, 1820s.", "Your family hands you over.", "The sweep grins.", "You climb.", "Soot falls."]
+    (job / "astro_scenes.json").write_text(json.dumps([{"text": t} for t in texts]))
+    (job / "clip_src/vsrc_00.jpg").write_bytes(b"first frame")
+    (job / "clips/clip_00.mp4").write_bytes(b"m" * 30_000)
+    photos = [str(job / "images" / f"scene_{k:02d}.jpg") for k in range(4)]
+    for p in photos:
+        ns["Path"](p).write_bytes(b"still")
+    plan = ns["_build_story_plan"](job, 20.0, photos)
+    assert plan == [("London, 1820s.", "vsrc_00.jpg"), ("Your family hands you over.", "scene_00.jpg"),
+                    ("The sweep grins.", "scene_01.jpg"), ("You climb.", "scene_02.jpg"), ("Soot falls.", "scene_03.jpg")]
+    assert (job / "clip_src/vsrc_00.anim.mp4").read_bytes() == b"m" * 30_000, "the clip plays in its own slot"
+    assert ns["_story_order"](job, 20.0, photos)[0] == ("Your family hands you over.", "scene_00.jpg")
+    zoom = ns["_zoom_expr"]
+    assert zoom("still", 3, 0.2, 50) == "(1)" and zoom("in", 3, 0.2, 50).startswith("(1+0.2")
+    assert sum(zoom("mix:0.9", i, 0.2, 50) == "(1)" for i in range(100)) == 90
+    assert zoom("mix:0.0:alternate", 1, 0.2, 50) == "alternate"
+    assert "0.55 * total / max(1, n)" in patched, "a fast story's shortest hold follows its pace"
+
+
+def test_ready_made_recipes_ship_as_built_in_styles_with_only_their_own_pictures(tmp_path):
+    recipe = tmp_path / "data/frontier/recipes/cr-stick-stories"
+    recipe.mkdir(parents=True)
+    (recipe / "style.jpg").write_bytes(b"jpg")
+    style = {"name": "cr-stick-stories", "builtin": True, "look": {"style_image": "styles/cr/cr-stick-stories/style.jpg"}}
+    (recipe / "style.json").write_text(json.dumps(style))
+    shipped = {dest for _, dest in package.private_recipe_resources(tmp_path)}
+    assert shipped == {"styles/cr-stick-stories.json", "assets/styles/cr/cr-stick-stories/style.jpg"}
+    style["look"]["character_image"] = "characters/someone_else.png"
+    (recipe / "style.json").write_text(json.dumps(style))
+    with pytest.raises(ValueError, match="its own pictures"):
+        package.private_recipe_resources(tmp_path)
+    style["look"].pop("character_image")
+    style["cr_style_clone"] = {"operation_id": "op_x"}
+    (recipe / "style.json").write_text(json.dumps(style))
+    with pytest.raises(ValueError, match="no study records"):
+        package.private_recipe_resources(tmp_path)
+    assert package.private_recipe_resources(tmp_path / "elsewhere") == []
+
+
+def test_a_ready_made_recipe_ships_its_own_graphics_kit_and_never_a_path_on_this_computer(tmp_path):
+    recipe = tmp_path / "data/frontier/recipes/cr-true-crime"
+    (recipe / "genkit" / "fonts").mkdir(parents=True)
+    (recipe / "genkit" / "kit.json").write_text(json.dumps({"name": "gen_x", "js": "kit.js", "types": {"dateline": 6}}))
+    (recipe / "genkit" / "kit.js").write_text("// kit")
+    (recipe / "genkit" / "fonts" / "Face.ttf").write_bytes(b"ttf")
+    style = {"name": "cr-true-crime", "builtin": True,
+             "look": {"genkit": {"manifest": "/private/tmp/dev62/ChannelRecipe studio/output/op_x/genkit/kit.json"}}}
+    (recipe / "style.json").write_text(json.dumps(style))
+    with pytest.raises(ValueError, match="computer it was made on: look.genkit.manifest"):
+        package.private_recipe_resources(tmp_path)
+    style["look"]["genkit"]["manifest"] = "assets/styles/cr/cr-true-crime/genkit/kit.json"
+    (recipe / "style.json").write_text(json.dumps(style))
+    shipped = {dest for _, dest in package.private_recipe_resources(tmp_path)}
+    assert shipped == {"styles/cr-true-crime.json", "assets/styles/cr/cr-true-crime/genkit/kit.json",
+                       "assets/styles/cr/cr-true-crime/genkit/kit.js",
+                       "assets/styles/cr/cr-true-crime/genkit/fonts/Face.ttf"}
+    (recipe / "genkit" / "notes.sh").write_text("echo")
+    with pytest.raises(ValueError, match="not a kit file"):
+        package.private_recipe_resources(tmp_path)
+
+
+def test_a_learned_kit_is_found_inside_the_studio_folder():
+    engine = (b"def kit_of(look):\n    if look:\n"
+              b"        register_gen_kit(look[\"genkit\"][\"manifest\"])\n"
+              b"def place(pics, placed, used):\n    for k, (at, sc) in enumerate(placed):\n        if True:\n"
+              b"            timed, still = [], []\n            pick = (timed or still or [None])[0]\n"
+              b"        yield pick\n")
+    patched = package.patch_engine("kits.py", engine).decode()
+    assert 'register_gen_kit(HERE / str(look["genkit"]["manifest"]))' in patched
+    ns = {}
+    exec(patched, ns)
+    assert list(ns["place"]([(4.0, "a.jpg"), (20.0, "b.jpg")], [(18.0, {})], set())) == [(20.0, "b.jpg")], \
+        "an overlay with every picture used sits on the nearest one, never on black"
+
+
+def test_cut_out_movement_runs_on_a_kie_only_setup():
+    photofx = (b'import os\n'
+               b'STOCK_HOSTS = ("a.", "pngwing.", "kindpng.", "pngitem.", "seekpng.", "clipart", "wallpaperaccess.", "wallpapercave.")\n'
+               b'SHOP_HOSTS = ("b.",\n              "posterazzi.", "fineartamerica.", "pixels.com", "displate.")\n'
+               b'def depth_slots(cfg, every):\n'
+               b'    if not cfg["depth"] or every <= 0 or not os.environ.get("WAVESPEED_API_KEY"):\n'
+               b'        return set()\n'
+               b'    return {1}\n'
+               b'def scenes():\n'
+               b'    cuts = bool((os.environ.get("WAVESPEED_API_KEY") or "").strip())\n'
+               b'    return cuts\n')
+    patched = package.patch_engine("photofx.py", photofx).decode()
+    ns = {}
+    exec(compile(patched, "photofx.py", "exec"), ns)
+    import os
+    saved = {k: os.environ.pop(k, None) for k in ("WAVESPEED_API_KEY", "KIE_API_KEY")}
+    try:
+        os.environ["KIE_API_KEY"] = "kie-test"
+        assert ns["depth_slots"]({"depth": True}, 3) == {1} and ns["scenes"]() is True
+    finally:
+        os.environ.pop("KIE_API_KEY", None)
+        for k, v in saved.items():
+            if v is not None:
+                os.environ[k] = v
+
+
+def test_a_chapter_card_holds_its_title_and_a_learned_look_has_no_light_leak_it_never_used():
+    engine = (b'from pathlib import Path\n\n\ndef _held_before_fade(src, tail, src_dur):\n'
+              b'    if tail > 0.35 and src_dur > 1.6 and (src.name.startswith("doc_") or _fades_out(src, src_dur)):\n'
+              b'        return True\n    return False\n')
+    ns = {"_fades_out": lambda src, d: False}       # a dark card is too dim for the brightness test
+    old, new = next(p for p in package.ENGINE_PATCHES["make_video.py"] if '"chapter_"' in p[1])
+    exec(compile(engine.decode().replace(old, new), "make_video.py", "exec"), ns)
+    from pathlib import Path
+    assert ns["_held_before_fade"](Path("chapter_01.mp4"), 1.9, 3.7), "its title holds, then it fades"
+    assert ns["_held_before_fade"](Path("kit_02_name.mp4"), 1.9, 3.7), "a learned graphic too"
+    assert not ns["_held_before_fade"](Path("yt_002_0.mp4"), 1.9, 3.7), "footage plays as cut"
+    cinema = ("from pathlib import Path\nleaked = []\n\n\n"
+              "def cards(jobs, look, creative=False, kit=False, workers=1):\n"
+              "    if True:\n        if creative:\n            if True:\n                    if jobs:\n"
+              "                        docgfx.render(jobs, workers=max(1, min(2, workers)), look=look)\n"
+              "                        for _sc, mp4 in jobs:\n                            _leak_in(Path(mp4))\n"
+              "        else:\n"
+              "                docgfx.render(jobs, workers=max(1, min(2, workers)), look=look)\n"
+              "                for _sc, mp4 in jobs:\n                    _leak_in(Path(mp4))\n\n\n"
+              "def _leak_in(mp4: Path) -> None:\n    leaked.append(mp4)\n").encode()
+    code = package.patch_engine("cinema.py", cinema).decode()
+    ns = {"docgfx": type("D", (), {"render": staticmethod(lambda *a, **k: None)})}
+    exec(compile(code, "cinema.py", "exec"), ns)
+    ns["cards"]([({}, "chapter_01.mp4")], {"fx": {"transitions": [{"id": "dip_black", "at": "chapter"}]}})
+    assert ns["leaked"] == [], "a learned look that cuts to black at chapters gets no film burn"
+    ns["cards"]([({}, "chapter_01.mp4")], {"look": "built-in"})
+    assert len(ns["leaked"]) == 1, "the built-in recipes keep it"
+
+
+def test_the_white_studio_3d_look_reaches_the_renderer_and_the_director():
+    looks = package.patch_engine("threed/director/looks.json",
+                                 b'{\n "documentary": {\n  "director": "x"\n }\n}\n')
+    looks = json.loads(looks)
+    assert list(looks)[0] == "white_studio" and "soft overcast daylight" in looks["white_studio"]["director"]
+    assert "never flag the look itself" in looks["white_studio"]["qa"].lower()
+    presets = package.patch_engine("threed/engine/core/presets.js", (
+        b"export const PRESETS = {\n  documentary: null,\n};\n"
+        b"  if (P.ink) { g.outline = JSON.parse(JSON.stringify(P.ink)); g.labelMask = true; }   // grade.outline (grade.ink is"
+        b" the mono ink colour); never across a label\n")).decode()
+    assert "white_studio: {" in presets and "labelInk: 'dark'" in presets and "midAt: 0.35" in presets
+    assert "if (P.labelKeep) { g.labelKeep = true; g.labelMask = true; }" in presets
+    post = package.patch_engine("threed/engine/core/post.js", (
+        b"uWhite: { value: 0 }, uWhiteCol: { value: new THREE.Vector3(1, 1, 1) }, uTime: { value: 0 },\n"
+        b"uniform float uWhite; uniform vec3 uWhiteCol; uniform float uTime;\n"
+        b"c = mix(c, ${film ? 'fMonoCol(l)' : 'mix(uInk, uPaper, smoothstep(0.0, 1.0, l))'}, ${film ? 'fMono' : 'uMono'});\n"
+        b"u.uWhite.value = g.white ?? 0; u.uWhiteCol.value.set(...(g.whiteCol ?? [1, 1, 1]));\n")).decode()
+    assert "(1.0 - labelMask(vUv) * uLabelKeep)" in post and "u.uLabelKeep.value = g.labelKeep ? 1 : 0;" in post
+    main = package.patch_engine("threed/engine/core/main.js", (
+        b"    const shot = (mode) => { it.res.measureMode(mode); post.frame(1, (j) => renderSub(t, j, 1), Math.round(t * FPS),"
+        b" gradeAt(t), t); const r = region(it); it.res.measureMode(null); return r; };\n")).decode()
+    assert "cur.P?.labelInk === 'dark'" in main and "it.res.setInk(true)" in main
+
+
+def test_a_stalled_footage_upload_is_tried_again_after_minutes_not_fifteen():
+    patched = package.patch_engine("youtube.py", _youtube_engine()).decode()
+    assert "timeout=(15, 180)" in patched and "for attempt in (1, 2):" in patched and "timeout=900" not in patched
+
+
+def test_footage_watching_stops_asking_kie_after_three_videos_fail_in_a_row(monkeypatch):
+    patched = package.patch_engine("youtube.py", _youtube_engine()).decode()
+    calls = []
+    def chat(*args):
+        calls.append(args)
+        raise RuntimeError("api.kie.ai said: internal error, please try again later.")
+    space = {"Path": __import__("pathlib").Path, "time": __import__("types").SimpleNamespace(sleep=lambda s: None), "_chat_log": chat,
+             "_env": lambda k: "key", "_low_copy": lambda *a: "low.mp4", "_kie_upload": lambda p: "https://u"}
+    exec(compile(patched[patched.index("_KIE_DOWN = "):], "youtube.py", "exec"), space)
+    for vid in "abc":
+        with pytest.raises(RuntimeError, match="internal error"):
+            space["_kie_log"](vid, "watch", None)
+    assert len(calls) == 9, "three tries for each of the first three videos"
+    with pytest.raises(RuntimeError, match="goes on without it"):
+        space["_kie_log"]("d", "watch", None)
+    assert len(calls) == 9, "the fourth is not uploaded or asked"

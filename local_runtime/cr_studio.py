@@ -1389,6 +1389,35 @@ def prefer_studio_ytdlp():
             return
 
 
+# YouTube answers a burst of requests from one computer with "Sign in to confirm you're not a bot" and then refuses
+# every footage search and download for hours. A pause between requests and fewer downloads at once make that rare;
+# a creator's own YT_SLEEP / YT_WORKERS in .env still win (the engine reads .env over these).
+POLITE_YOUTUBE = {"YT_SLEEP": "1", "YT_WORKERS": "3"}
+
+
+def polite_youtube(reach=None):
+    for key, value in POLITE_YOUTUBE.items():
+        os.environ.setdefault(key, value)
+    # YouTube scores IPv6 addresses harder (a whole /64 counts as one): on 2026-10-15 a computer it refused over IPv6
+    # was let through over IPv4 at once. Asked over IPv4 whenever this computer reaches YouTube that way.
+    if "YT_FORCE_IPV4" not in os.environ and (reach or _youtube_over_ipv4)():
+        os.environ["YT_FORCE_IPV4"] = "1"
+
+
+def _youtube_over_ipv4(timeout=2.0) -> bool:
+    import socket
+    try:
+        for family, kind, proto, _, address in socket.getaddrinfo("www.youtube.com", 443, socket.AF_INET,
+                                                                    socket.SOCK_STREAM)[:2]:
+            with socket.socket(family, kind, proto) as sock:
+                sock.settimeout(timeout)
+                sock.connect(address)
+                return True
+    except OSError:
+        pass
+    return False
+
+
 def already_running():
     """True when a ChannelRecipe Studio already answers on this computer."""
     import urllib.request
@@ -1405,6 +1434,63 @@ def banner():
                      "  Open it in your browser: " + STUDIO_URL,
                      "  Keep this window open while you use Studio.",
                      "  To stop Studio, close this window.", line, ""]), flush=True)
+
+
+SESSION = Path("output") / ".cr-studio-session.json"
+
+
+def _cut_off(home, since: float) -> list:
+    """Titles of the videos a Studio was making when it closed: their worker's last progress, saved after it
+    started, still says running."""
+    titles = []
+    for progress in (Path(home) / "output" / "cr-video-workers").glob("video_*/progress.json"):
+        try:
+            if progress.stat().st_mtime < since:
+                continue
+            job = json.loads(progress.read_text(encoding="utf-8")).get("job") or {}
+        except (OSError, ValueError, AttributeError):
+            continue
+        if isinstance(job, dict) and job.get("state") == "running" and not job.get("done"):
+            titles.append(str(job.get("title") or "a video"))
+    return titles
+
+
+def session_started(home=HOME) -> str:
+    """Note this Studio as running; a plain note when the previous one closed in the middle of a video.
+
+    A Studio that stops itself (Ctrl+C, an update, an error) records how. One that never did was closed from
+    outside: its window (the usual way to stop it), Task Manager, Windows signing out, or a program that started
+    Studio and then ended (a Claude Code command that finished or timed out closes everything it started). That only
+    matters when a video was being made: it stopped with Studio."""
+    path = Path(home) / SESSION
+    note = ""
+    try:
+        last = json.loads(path.read_text(encoding="utf-8"))
+        cut = _cut_off(home, float(last.get("started") or 0)) if isinstance(last, dict) and not last.get("ended") else []
+        if cut:
+            note = ("Last time, Studio closed while it was making \"%s\": its window was closed, Task Manager ended "
+                    "it, or the program that started it ended (for example a Claude Code command). That video "
+                    "stopped with it; its saved work is kept. Keep Studio's launcher window open until a video "
+                    "finishes." % "\", \"".join(cut[:3]))
+    except (OSError, ValueError, TypeError):
+        pass
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"pid": os.getpid(), "started": time.time()}), encoding="utf-8")
+    except OSError:
+        pass
+    return note
+
+
+def session_stopped(how: str, home=HOME):
+    path = Path(home) / SESSION
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        if record.get("pid") == os.getpid():
+            record.update(ended=time.time(), how=how)
+            path.write_text(json.dumps(record), encoding="utf-8")
+    except (OSError, ValueError, AttributeError):
+        pass
 
 
 def main():
@@ -1424,6 +1510,7 @@ def main():
               "then open Studio again.", flush=True)
         raise SystemExit(1)
     prefer_studio_ytdlp()
+    polite_youtube()
     try:
         # Updates from older releases ran an updater that could not remove
         # retired files, so tidy them on start too.
@@ -1445,9 +1532,18 @@ def main():
     server = make_server("127.0.0.1", 7860, studio.app, threaded=True)
     studio._cr_server = server
     banner()
+    note = session_started()
+    if note:
+        print(note + "\n", flush=True)
+    how = "error"
     try:
         server.serve_forever()
+        how = "update" if getattr(studio, "_cr_restart_for_update", False) else "stopped"
+    except KeyboardInterrupt:
+        how = "ctrl-c"
+        raise
     finally:
+        session_stopped(how)
         server.server_close()
     if getattr(studio, "_cr_restart_for_update", False):
         restart_into_update()

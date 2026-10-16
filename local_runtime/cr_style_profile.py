@@ -102,8 +102,12 @@ def _axis(value, confidence, sources, **extra):
 
 # ── one reference ───────────────────────────────────────────────────────────────────────────────────────────
 
-TALKING = re.compile(r"\b(talk|speak|address|explain|lectur|tell|gestur|emphatic)\w*|\b(to|into|at) (the )?"
-                     r"(camera|lens|viewer|audience)", re.I)
+TALKING = re.compile(r"\b(talk|speak|address|explain|lectur|tell|gestur|emphatic)\w*", re.I)
+TO_CAMERA = re.compile(r"\b(?:to|into|at|addressing|address(?:es)?|facing)\s+(?:the\s+)?(?:camera|lens|viewer|audience)s?\b",
+                       re.I)
+# pictures that are drawn: a drawn character talking is a mascot or a story, never presenter time on video
+DRAWN_SOURCES = {"drawing", "painting", "stick_figure", "cutout", "manga_panel", "3d_render", "motion_graphic",
+                 "text_card", "meme_gif", "chart", "map", "document", "screenshot_web"}
 
 
 def talking_share(log: dict, seconds: float):
@@ -112,10 +116,18 @@ def talking_share(log: dict, seconds: float):
     shots = [s for s in (log or {}).get("shots") or [] if isinstance(s, dict)]
     if not shots:
         return None
-    talk = sum(max(0.2, _num(s.get("len_s"), 1.0)) for s in shots
-               if str(s.get("motion") or "").lower() not in ("still", "zoom_in", "zoom_out", "pan", "ken_burns")
-               and (s.get("who") or str(s.get("source") or "").lower() in ("presenter", "avatar"))
-               and TALKING.search(str(s.get("what") or "")))
+    def talks(s):
+        source, what = str(s.get("source") or "").lower(), str(s.get("what") or "")
+        if str(s.get("motion") or "").lower() in ("still", "zoom_in", "zoom_out", "pan", "ken_burns"):
+            return False
+        if source in ("presenter", "avatar"):                 # the model names the host's own shots
+            return bool(TALKING.search(what) or TO_CAMERA.search(what))
+        if source in DRAWN_SOURCES:
+            return False
+        # filmed or generated video of a named person: only talking TO the viewer is a presenter (people talking
+        # to each other in footage are the story)
+        return bool(s.get("who")) and bool(TO_CAMERA.search(what))
+    talk = sum(max(0.2, _num(s.get("len_s"), 1.0)) for s in shots if talks(s))
     logged = sum(max(0.2, _num(s.get("len_s"), 1.0)) for s in shots)
     # a share of the time the model logged (a log that stops early still reads its share right)
     return round(min(1.0, talk / max(1.0, min(seconds, logged) if logged else seconds)), 3)
@@ -430,6 +442,7 @@ def build(references: list) -> dict:
     pool = with_music if music_disagrees else snd
     fill = _mean([s.get("filled_pauses_share") for s in pool])
     bed = _mean([s.get("bed_in_pauses_db") for s in pool])
+    heard = _mean([s.get("bed_when_heard_db") for s in pool])
     tonal = _mean([(s.get("pause_fill") or {}).get("tonal") for s in pool])
     w_share = _mean([(s.get("music") or {}).get("share") for s in seen if s])
     level = music_level(bed, fill, tonal)
@@ -449,7 +462,8 @@ def build(references: list) -> dict:
     profile["sound"] = {
         "music": _axis(role or ("story score" if measured_music else "none"),
                        music_conf, (["measured"] if fill is not None else []) + (["watched"] if has_w else []), level=level,
-                       share=w_share, bed_in_pauses_db=bed, filled_pauses=fill, tonal_in_pauses=tonal,
+                       share=w_share, bed_in_pauses_db=bed, bed_when_heard_db=heard, filled_pauses=fill,
+                       tonal_in_pauses=tonal,
                        genres=_dedupe([x for s in seen for x in (s.get("music") or {}).get("genres") or []], 4),
                        moods=_dedupe([x for s in seen for x in (s.get("music") or {}).get("moods") or []], 8),
                        instruments=_dedupe([x for s in seen for x in (s.get("music") or {}).get("instruments") or []], 8),
@@ -532,6 +546,9 @@ def music_level(bed_db, filled, tonal) -> str | None:
     return "score" if bed_db >= -24 and filled >= 0.8 else "bed"
 
 
+MASCOT_SHARE = 0.08          # a channel's host or mascot is on screen this often; a brand's logo character is not
+
+
 def lead_character(profile: dict):
     """The character who carries the video (on screen at least 30% of the time), when the channel has no named
     host or mascot; else None."""
@@ -548,8 +565,13 @@ def questions(profile: dict) -> list:
         out.append({"id": "art_style", "ask": "Your references use more than one picture style. Which should "
                     "every video keep?", "options": [pics["art_style"]["value"]] + pics["art_style"].get(
                         "alternatives", [])[:2]})
-    people = [p for p in pics.get("characters", {}).get("value") or [] if p.get("role") in ("mascot", "presenter")]
-    lead = None if people else lead_character(profile)
+    people = [p for p in pics.get("characters", {}).get("value") or [] if p.get("role") in ("mascot", "presenter")
+              and _num(p.get("screen_share")) >= MASCOT_SHARE]
+    fam = (pics.get("sources") or {}).get("families") or {}
+    drawn = _num(fam.get("generated")) + _num(fam.get("generated_motion")) >= 0.3
+    # a lead character is offered as a mascot only when the pictures are drawn or generated (real people in footage
+    # are the story's)
+    lead = None if people or not drawn else lead_character(profile)
     if people:
         out.append({"id": "host", "ask": f"The channel has a recurring {people[0]['role']} ({people[0]['name']}). "
                     "Should your videos have one too?", "options": ["Yes, design one for my channel",

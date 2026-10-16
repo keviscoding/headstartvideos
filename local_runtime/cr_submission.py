@@ -26,6 +26,42 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
     backend = payload.get("render_backend", "original")
     if backend not in {"original", "manimgx"}:
         raise ValueError("Choose the standard renderer or Fast mode.")
+    import cr_cta
+    import cr_threed_look
+    try:
+        cta = cr_cta.clean(payload.get("cta"))         # your call to action (cr_cta), checked before any work
+        threed_look = cr_threed_look.clean(payload.get("threed_look"))
+    except ValueError as error:
+        from flask import jsonify
+        return studio.app.make_response((jsonify(error=str(error)), 400))
+    ppm = payload.get("pictures_per_min")
+    if ppm not in (None, "", 0):
+        # the creator's picture count for a story recipe, kept between the recipe's quality floor and ceiling
+        import cr_media
+        styles = getattr(getattr(studio, "styles", None), "STYLES", {}) or {}
+        allowed = cr_media.picture_range(styles.get(payload.get("style")) or {})
+        try:
+            ppm = float(ppm)
+        except (TypeError, ValueError):
+            ppm = None
+        if not allowed or ppm is None or not allowed[0] <= ppm <= allowed[2]:
+            from flask import jsonify
+            low, high = (allowed[0], allowed[2]) if allowed else (0, 0)
+            return studio.app.make_response((jsonify(error=f"Choose between {low:g} and {high:g} pictures a minute."
+                                                     if allowed else "This recipe sets its own pictures."), 400))
+    else:
+        ppm = None
+    panels = payload.get("panels") or ""
+    if panels:
+        # your own comic panels (cr_panels): one set is one video
+        import cr_panels
+        from flask import jsonify
+        try:
+            cr_panels.panel_set(panels)
+        except ValueError as error:
+            return studio.app.make_response((jsonify(error=str(error)), 400))
+        if len([t for t in str(payload.get("title") or "").split("\n") if t.strip()]) > 1:
+            return studio.app.make_response((jsonify(error="Use one title for a set of panels."), 400))
     staged = []
     staged_jobs = {}
     globals_ = {**original.__globals__, "QUEUE": staged, "JOBS": staged_jobs, "_ensure_dispatcher": lambda: None}
@@ -62,6 +98,14 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
                 queued[index]["slug"] = slug
         published_jobs[spec["slug"]] = dict(staged_jobs.get(old_slug, {"state":"queued", "title":spec.get("title", payload.get("title", old_slug))}))
         spec["render_backend"] = backend
+        if panels:
+            spec["cr_panels"] = panels
+        if cta:
+            spec["cr_cta"] = cta
+        if ppm:
+            spec["cr_pictures_per_min"] = ppm
+        if threed_look:
+            spec["cr_threed_look"] = threed_look
         if backend == "manimgx":
             spec["manimgx_identity"] = payload.get("manimgx_identity")
     if before_publish is not None:

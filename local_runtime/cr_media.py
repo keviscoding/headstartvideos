@@ -156,7 +156,11 @@ def _data(res, provider):
             raise ValueError()
         # Kie uses HTTP 200 for errors; Atlas uses code 0/200 on success.
         if data.get("code") not in ((200,) if provider == "kie" else (None, 0, 200)):
-            raise AccountStop(f"{PROVIDERS[provider]['label']} refused this request. Check its API access, balance and task log.")
+            # The code says which refusal it was (kie: 455 unavailable, 500 server error, 501 generation failed...);
+            # the provider's own wording stays out of the message.
+            code = re.sub(r"[^0-9A-Za-z_-]", "", str(data.get("code")))[:12]
+            raise AccountStop(f"{PROVIDERS[provider]['label']} refused this request (code {code}). Check its API access, "
+                              "balance and task log.")
         return data
     except (ValueError, TypeError):
         raise AccountStop("The model account returned an unreadable response. Check its task log.")
@@ -233,6 +237,14 @@ def upload(path, cache_file=None, *, task=None):
             raise AccountStop("The reference upload stopped. Check your model account connection.")
 
 
+def _never_sent(error) -> bool:
+    """Whether a failed request certainly never reached the provider: the connection was not opened."""
+    if isinstance(error, requests.exceptions.ConnectTimeout):
+        return True
+    text = repr(error)
+    return any(sign in text for sign in ("NewConnectionError", "NameResolutionError", "Failed to establish a new connection"))
+
+
 def run(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
     provider, key = account(task)
     dest = Path(dest)
@@ -268,7 +280,19 @@ def run(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
                 _write(marker, previous)  # Crash before ID is recorded is uncertain, never auto-resubmit.
                 suffix = "/createTask" if provider == "kie" else {"images": "/generateImage", "narration": "/generateAudio", "motion": "/generateVideo", "avatars": "/generateVideo"}[task]
                 try:
-                    res = requests.post(base + suffix, headers=headers, json=payload, timeout=(15, 90), allow_redirects=False)
+                    for attempt in (1, 2, 3):
+                        try:
+                            res = requests.post(base + suffix, headers=headers, json=payload, timeout=(15, 90),
+                                                allow_redirects=False)
+                            break
+                        except requests.ConnectionError as error:
+                            # A connection that never opened sent nothing, so nothing was created: a network blip
+                            # at that moment no longer stops the video. Anything after sending stays uncertain.
+                            previous["submit_error"] = type(error).__name__
+                            if attempt == 3 or not _never_sent(error):
+                                _write(marker, previous)
+                                raise
+                            time.sleep(5 * attempt)
                     # Only an explicit client rejection is known not to have
                     # created a job. A 5xx/timeout without an ID stays uncertain.
                     if provider == "kie":
@@ -285,7 +309,12 @@ def run(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
                                 raise TaskFailed(provider, previous, task)
                         except (ValueError, TypeError, AttributeError):
                             pass
-                    data = _data(res, provider)
+                    try:
+                        data = _data(res, provider)
+                    except AccountStop as stop:
+                        previous["submit_error"] = str(stop)[:160]      # which refusal, kept with the receipt
+                        _write(marker, previous)
+                        raise
                     detail = data.get("data") or data
                     task_id = detail.get("taskId" if provider == "kie" else "id")
                     if not task_id or not re.fullmatch(r"[A-Za-z0-9_\-]+", str(task_id)):
@@ -341,6 +370,27 @@ def image_model(model):
         if model in (choice["id"], choice["generate"], choice["edit"]):
             return choice
     raise AccountStop("Choose a supported Kie image model in Setup & accounts.")
+
+
+def picture_range(style: dict):
+    """(floor, default, ceiling) pictures a minute a story recipe allows, or None for other recipes. The floor
+    keeps quality: never fewer than half the recipe's own pace, nor under four a minute."""
+    try:
+        every = float(((style or {}).get("pacing") or {}).get("photo_every_s") or 0)
+    except (TypeError, ValueError):
+        return None
+    if every <= 0:
+        return None
+    default = round(60.0 / every, 1)
+    return max(4.0, round(default * 0.5, 1)), default, min(30.0, round(default * 1.5, 1))
+
+
+def pictures_per_min(job) -> float:
+    try:
+        spec = json.loads((Path(job) / "run_spec.json").read_text(encoding="utf-8"))
+        return float(spec.get("cr_pictures_per_min") or 0)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return 0.0
 
 
 # The picture model the current job's style asks for (look.image_model). Jobs run one per worker process.
@@ -435,7 +485,11 @@ def native_motion(*args, **kwargs):
 
 def avatar_clip(provider, image_url, audio_url, dest, log=print):
     if provider not in ("kling-standard", "kling-pro"):
-        raise AccountStop("This presenter model needs its original service. Choose Kling Standard/Pro for the model account, or turn off its presenter replacement in setup.")
+        # Setup's "Kling Standard / Pro presenters": every presenter on this account is Kling. A recipe written for
+        # another presenter model (Pruna on WaveSpeed) speaks through Kling Standard, as the engine itself does when
+        # that service can't render it, instead of stopping the video.
+        log(f"    avatar: {provider} presenter shots run as Kling Standard on your model account")
+        provider = "kling-standard"
     hub = profile()["provider"]
     inputs = {"image_url": image_url, "audio_url": audio_url} if hub == "kie" else {"image": image_url, "audio": audio_url}
     model = PROVIDERS[hub]["models"]["avatar_pro" if provider == "kling-pro" else "avatars"]
@@ -520,8 +574,12 @@ def install(engine):
     try:
         import cr_score                     # a learned style's own score, on the creator's Kie account
         import cr_sfx_library               # and ChannelRecipe's recorded effects
+        import cr_ambience                  # and the sound of each place under a story's pictures
+        import cr_storyboard                # the sound storyboard a scored video follows
         cr_score.install(engine)
         cr_sfx_library.install(engine)
+        cr_ambience.install(engine)
+        cr_storyboard.install(engine)
     except ImportError:
         pass
     original_whisper=getattr(engine,"_get_whisper",None)
@@ -552,6 +610,16 @@ def install(engine):
             current["style"] = style
             look = ((getattr(engine, "STYLE_INFO", {}) or {}).get(style) or {}).get("look") or {}
             _style_model["id"] = str(look.get("image_model") or "") if isinstance(look, dict) else ""
+            # the creator's pictures-per-minute for a story recipe (create page slider), this job only
+            every = getattr(engine, "STYLE_PHOTO_EVERY", {})
+            ppm = pictures_per_min(job)
+            if ppm and style in every:
+                before = every[style]
+                every[style] = round(60.0 / ppm, 2)
+                try:
+                    return original_visuals(script, job, force, style, *args, **kwargs)
+                finally:
+                    every[style] = before
             return original_visuals(script, job, force, style, *args, **kwargs)
         visuals._cr_style = True
         engine.generate_astrology_visuals = visuals
@@ -564,6 +632,23 @@ def install(engine):
         note = getattr(engine, "STYLE_REF_NOTE", "") if refs else ""
         return image(note + prompt, dest, label, ref_urls=refs)
     hook("_kie_still_with_url", "images", still_with_url)
+    try:
+        import cr_panels
+        import cr_cta
+        cr_panels.install(engine)
+        import cr_sound_qc
+        cr_sound_qc.install(engine)                 # the sound check on every finished video (measured)
+        cr_cta.install(engine)                      # your call to action: in the script, on screen, in the description
+        import cr_presenters
+        cr_presenters.install()                     # your own presenters, listed first
+        import cr_drawon
+        cr_drawon.install(engine)                   # whiteboard styles: each picture draws itself on
+        import cr_threed_look
+        cr_threed_look.install(engine)              # the 3D look chosen in Create for one video
+        import cr_style_prompts
+        cr_style_prompts.install(engine)            # learned styles draw with today's storyboard prompt
+    except ImportError:
+        pass
     # Native Kie motion and the history kit previously bypassed the hub.
     # Both must use the same cheap model and the same durable receipts.
     engine._kie_video_gen = native_motion

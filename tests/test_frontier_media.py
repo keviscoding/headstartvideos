@@ -63,6 +63,46 @@ def test_uncertain_submission_never_resubmits_or_changes_wallet(hub, monkeypatch
     assert len(calls) == 1
 
 
+def test_a_connection_that_never_opened_is_tried_again_and_creates_one_task(hub, monkeypatch):
+    creates = []
+    def create(url, **kw):
+        creates.append(kw)
+        if len(creates) < 3:
+            raise media.requests.ConnectTimeout("the provider did not answer the connection")
+        return response({"code": 200, "data": {"taskId": "task-9"}})
+    monkeypatch.setattr(media.requests, "post", create)
+    monkeypatch.setattr(media.requests, "get", lambda url, **kw: response({"code": 200, "data": {
+        "state": "success", "resultJson": json.dumps({"resultUrls": ["https://files.example/i.png"]})}}))
+    assert media.run("images", {"prompt": "Example"}, hub / "i.png") == "https://files.example/i.png"
+    assert len(creates) == 3
+
+
+@pytest.mark.parametrize("error", ["ReadTimeout", "aborted"])
+def test_a_request_that_may_have_arrived_is_never_sent_twice(hub, monkeypatch, error):
+    calls = []
+    def create(*a, **kw):
+        calls.append(kw)
+        if error == "ReadTimeout":
+            raise media.requests.ReadTimeout("no answer")
+        raise media.requests.ConnectionError("('Connection aborted.', RemoteDisconnected('closed'))")
+    monkeypatch.setattr(media.requests, "post", create)
+    with pytest.raises(media.AccountStop, match="interrupted"):
+        media.run("images", {"prompt": "Example"}, hub / "u.png")
+    assert len(calls) == 1
+    receipt = json.loads(next((hub / ".cr-tasks").glob("u.png-*.json")).read_text())
+    assert receipt["status"] == "submitting"
+    assert receipt.get("submit_error", "ReadTimeout") in ("ReadTimeout", "ConnectionError")
+
+
+def test_a_refusal_says_which_code_and_keeps_it_with_the_receipt(hub, monkeypatch):
+    monkeypatch.setattr(media.requests, "post", lambda *a, **k: response({"code": 500, "msg": "upstream wording"}))
+    with pytest.raises(media.AccountStop, match=r"refused this request \(code 500\)") as stop:
+        media.run("avatars", {"image_url": "https://i", "audio_url": "https://a"}, hub / "avatar.mp4")
+    assert "upstream" not in str(stop.value)
+    receipt = json.loads(next((hub / ".cr-tasks").glob("avatar.mp4-*.json")).read_text())
+    assert "code 500" in receipt["submit_error"] and receipt["status"] == "submitting"
+
+
 def test_kie_http_200_error_stops_without_paid_fallback(hub, monkeypatch):
     monkeypatch.setattr(media.requests, "post", lambda *a, **k: response({"code": 429, "msg": "upstream secret"}))
     with pytest.raises(media.AccountStop, match="refused") as error:
@@ -82,8 +122,12 @@ def test_image_refs_motion_and_presenter_use_correct_protocol(hub, monkeypatch, 
     assert calls[0][0][1]["image_urls" if provider == "kie" else "images"]
     assert ("image_url" if provider == "kie" else "image") in calls[1][0][1]
     assert calls[2][1]["model"] == media.PROVIDERS[provider]["models"]["avatar_pro"]
-    with pytest.raises(media.AccountStop, match="original service"):
-        media.avatar_clip("pruna", "image", "audio", hub / "presenter.mp4")
+    said = []
+    media.avatar_clip("pruna", "https://files.example/face", "https://files.example/voice", hub / "presenter.mp4",
+                      log=said.append)
+    assert calls[3][1]["model"] == media.PROVIDERS[provider]["models"]["avatars"], \
+        "a recipe's other presenter model speaks through Kling Standard instead of stopping the video"
+    assert "Kling Standard" in said[0]
 
 
 def test_kie_motion_cost_choice_and_pending_task_are_preserved_on_resume(hub, monkeypatch):

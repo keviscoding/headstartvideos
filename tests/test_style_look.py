@@ -95,6 +95,23 @@ def test_a_failed_download_is_reported_and_the_rest_carries_on(home):
     _, done, _ = run_look(home, download=broken)
     assert done["state"] == "done", "Gemini's watching still gives a profile"
     assert done["profile"]["edit"]["median_shot_s"]["value"] is None
+    assert len(done["not_measured"]) == 1 and "none of it could be measured" in done["not_measured"][0]
+    assert "asked this computer to sign in" in done["not_measured"][0]
+
+
+def test_a_download_that_fails_once_is_tried_again(home):
+    tries = []
+
+    def flaky(vid, a, b, dest):
+        tries.append(a)
+        if tries.count(a) == 1:
+            raise RuntimeError("ERROR: ffmpeg exited with code 8")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"0" * 60_000)
+        return dest
+    _, done, _ = run_look(home, download=flaky)
+    assert done["not_measured"] == [] and done["profile"]["edit"]["median_shot_s"]["value"] == 2.0
+    assert len(tries) == 4, "each of the two parts once more, never more"
 
 
 def test_only_previewed_references_can_be_looked_at(home):
@@ -134,7 +151,7 @@ def test_the_art_directors_answer_becomes_style_settings_without_the_references_
                      banned=["Pip Explains"], log=lambda m: None)
     ov = out["overrides"]
     assert "Pip Explains" not in json.dumps(ov)
-    assert ov["look"]["still_suffix"].endswith("Avoid: photographs, 3D renders, gradients.")
+    assert ov["look"]["still_suffix"].endswith("Avoid: photographs, 3D renders, gradients." + art.LETTERING)
     assert "Toby (host)" in ov["look"]["character"] and ov["script_notes"][0] == "Second person, present tense."
     assert ov["pacing"]["hook_notes"] == "Open on the absurd moment."
 
@@ -266,6 +283,33 @@ def test_samples_and_the_sheet_are_drawn_with_the_style_picture_model(home):
     assert models == ["nano-banana-2-1"] * 4, "three samples and the character sheet"
 
 
+def test_a_creator_who_uploads_their_own_character_gets_no_drawn_sheet(home):
+    import io
+    import cr_style_anchor as anchor
+    from PIL import Image
+    _, done, _ = run_look(home)
+    op = saved_v2_style(home, done["look_id"])
+    path = clone._folder(home) / op / "operation.json"
+    saved = json.loads(path.read_text())
+    saved["spec"]["answers"] = {"host": "Yes, I'll upload mine"}
+    path.write_text(json.dumps(saved))
+    gen = lambda prompt, dest, label, ref_urls=None: Path(dest).parent.mkdir(parents=True, exist_ok=True) or Path(dest).write_bytes(b"x")
+    anchor.start(home, op, generate=gen, upload=lambda p: "https://f/x.jpg", thread=False)
+    chosen = anchor.choose(home, op, 0, generate=lambda *a, **k: pytest.fail("no sheet: they upload theirs"),
+                           upload=lambda p: "u")
+    assert chosen["upload_character"] and not chosen["character"] and "upload your character" in chosen["message"]
+    buf = io.BytesIO()
+    Image.new("RGB", (400, 600), (240, 240, 240)).save(buf, "PNG")
+    done_ = anchor.upload_character(home, op, buf.getvalue())
+    style = json.loads((home / "styles" / "cr_clone_toby.json").read_text())
+    assert done_["character"] and style["look"]["character_image"] == "styles/learned/cr_clone_toby/character.png"
+    assert style["look"]["character"].startswith("THE CAST — Toby: exactly the character in the character reference")
+    with pytest.raises(ValueError, match="larger picture"):
+        tiny = io.BytesIO()
+        Image.new("RGB", (100, 100)).save(tiny, "PNG")
+        anchor.upload_character(home, op, tiny.getvalue())
+
+
 def test_samples_are_only_for_styles_saved_by_a_new_study(home):
     import cr_style_anchor as anchor
     with pytest.raises(RuntimeError):
@@ -276,7 +320,17 @@ def test_a_long_picture_style_is_cut_at_a_sentence_and_the_avoid_list_reads_clea
     long = " ".join(f"Sentence {i} describes the flat vector style in some detail." for i in range(40))
     out = art.check({**ANSWER, "still_suffix": long, "avoid": "No photorealism, no 3D"}, banned=[])
     assert out["still_suffix"].endswith(".") and len(out["still_suffix"]) <= 1400
-    assert art.overrides(out)["look"]["still_suffix"].endswith("Avoid: photorealism, no 3D.")
+    suffix = art.overrides(out)["look"]["still_suffix"]
+    assert "Avoid: photorealism, no 3D." in suffix
+    assert suffix.endswith(art.LETTERING) and "never an invented caption, date" in suffix, \
+        "an archival picture never gets a made-up caption or date"
+
+
+def test_the_art_director_gives_the_channel_its_own_fallback_b_roll():
+    out = art.check({**ANSWER, "broll": ["counting cash close up", "bank building exterior", "x", "Pip Explains logo shot"]},
+                    banned=["Pip Explains"])
+    assert out["broll"] == ["counting cash close up", "bank building exterior", "the reference logo shot"]
+    assert art.overrides(out)["stock_queries"] == out["broll"]
 
 
 def test_a_candid_photo_style_never_asks_for_glossy_studio_pictures():
@@ -288,6 +342,18 @@ def test_a_candid_photo_style_never_asks_for_glossy_studio_pictures():
     assert "natural light" in text and "deep focus" in text and "everyday clutter" in text
     assert "commercial" in art.check({**ANSWER, "still_suffix": glossy}, banned=[])["still_suffix"], \
         "only candid styles are rewritten"
+    negated = ("Everyday phone photos of a home kitchen, mixed natural window light and ordinary overhead light, "
+               "uneven exposure, no studio light, no shallow bokeh, deep focus throughout.")
+    text = art.check({**ANSWER, "still_suffix": negated}, banned=[], candid=True)["still_suffix"]
+    assert "no studio light" in text and "no natural light" not in text, "a negated phrase is never turned around"
+
+
+def test_people_are_never_asked_for_as_lone_hands_or_backs():
+    answer = {**ANSWER, "people": "Real, ordinary adults with natural proportions. Bystanders are often shown from "
+                                  "behind or in part, such as hands or a back."}
+    out = art.check(answer, banned=[], candid=True)
+    assert out["people"] == "Real, ordinary adults with natural proportions."
+    assert "lone limbs" in art.ART_PROMPT
 
 
 def test_presenter_time_counts_talking_video_not_pictures_of_the_presenter():
@@ -323,3 +389,58 @@ def test_styles_built_on_a_niche_recipe_get_neutral_writing_and_storyboard_promp
     assert "[INSERT OUTLINE HERE]" in sp.SCRIPT and "[INSERT TARGET LENGTH]" in sp.SCRIPT
     assert "[INSERT COUNT HERE]" in sp.SCENE and "[INSERT SCRIPT HERE]" in sp.SCENE
     assert sp.overrides("documentary") == {}, "format recipes keep their own writing"
+
+
+def test_a_learned_style_names_its_kit_relative_to_the_studio_folder(tmp_path):
+    import cr_style_clone
+    home = tmp_path / "ChannelRecipe studio"
+    style = {"look": {"genkit": {"manifest": str(home / "output/cr-style-clone/op_1/genkit/kit.json")},
+                      "style_image": "styles/learned/x/style.jpg"},
+             "auto": {"genome": {"learned": {"board": str(home / "output/cr-style-clone/op_1/reflearn/board.jpg")}}},
+             "elsewhere": "/Users/someone/file.png"}
+    home.mkdir()
+    out = cr_style_clone._portable(style, home)
+    assert out["look"]["genkit"]["manifest"] == "output/cr-style-clone/op_1/genkit/kit.json"
+    assert out["auto"]["genome"]["learned"]["board"] == "output/cr-style-clone/op_1/reflearn/board.jpg"
+    assert out["look"]["style_image"] == "styles/learned/x/style.jpg" and out["elsewhere"] == "/Users/someone/file.png"
+
+
+def test_a_style_that_plays_real_clips_asks_its_script_to_mark_them():
+    import cr_style_prompts as sp
+    style = {"look": {"soundbites": {"quotes": 13}}, "prompts": {"outline": "Plan the beats.", "script": "Write it."}}
+    sp.with_original_sound(style)
+    assert "[CLIP: who says what, where]" in style["prompts"]["outline"]
+    assert '"[[clip: who says what, in a few words]]"' in style["prompts"]["script"]
+    before = dict(style["prompts"])
+    sp.with_original_sound(style)
+    assert style["prompts"] == before, "added once"
+    plain = {"look": {"soundbites": {"soundups": 1}}, "prompts": {"outline": "Plan.", "script": "Write."}}
+    assert sp.with_original_sound(plain)["prompts"] == {"outline": "Plan.", "script": "Write."}
+
+
+def test_a_style_saved_with_an_older_storyboard_prompt_draws_with_todays():
+    import cr_style_prompts as sp
+    old = "You are the storyboard artist for a faceless YouTube video.\n\nCHANNEL: [INSERT CHANNEL HERE]\n\nDraw frames."
+    style = {"look": {"scene_prompt": old}}
+    engine = type("E", (), {})()
+    engine.STYLE_INFO = {"stick": style, "builtin": {"look": {"scene_prompt": "A recipe's own storyboard prompt."}}}
+    engine._scene_prompts = lambda s: (engine.STYLE_INFO[s]["look"]["scene_prompt"], "", "")
+    sp.install(engine)
+    assert "never a lone arm" in engine._scene_prompts("stick")[0]
+    assert engine._scene_prompts("builtin")[0] == "A recipe's own storyboard prompt."
+
+
+def test_a_learned_style_draws_with_the_storyboard_its_channel_needs():
+    import cr_style_prompts as sp
+    engine = type("E", (), {})()
+    engine.STYLE_INFO = {"explainer": {"look": {"storyboard": "explain"}}, "story": {"look": {"storyboard": "literal"}},
+                         "essay": {"look": {}}, "builtin": {"look": {"scene_prompt": "A recipe's own storyboard prompt."}}}
+    engine._scene_prompts = lambda s: (engine.STYLE_INFO[s]["look"].get("scene_prompt") or "ENGINE ATMOSPHERE", "", "")
+    sp.install(engine)
+    explain = engine._scene_prompts("explainer")[0]
+    assert explain.startswith("You are the storyboard artist") and "EXPLAIN, NEVER DECORATE" in explain
+    assert "with a symbol" not in explain, "an explainer acts ideas out instead"
+    literal = engine._scene_prompts("story")[0]
+    assert "show the" in literal and "real moment" in literal and "EXPLAIN" not in literal
+    assert engine._scene_prompts("essay")[0] == "ENGINE ATMOSPHERE", "a channel that never asked keeps the engine's"
+    assert engine._scene_prompts("builtin")[0] == "A recipe's own storyboard prompt."

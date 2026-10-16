@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 from scripts import studio_branding
-VERSION = "5.3-admin.60"
+VERSION = "5.3-admin.61"
 PRIVATE_WORKFLOWS = {
     "cr-style-delivery-prompt.txt": ROOT / "data/frontier/reference2d-compiler.txt",
     "cr-style-study-brief.txt": ROOT / "data/frontier/reference2d-study.txt",
@@ -37,6 +37,11 @@ def runtime_resources(root: Path):
         if path.is_symlink():
             raise ValueError("Runtime resources must be ordinary owned files.")
         yield path, path.name
+    hand = runtime / "drawon_art" / "hand.png"           # the whiteboard reveal's drawing hand (cr_drawon)
+    if hand.exists():
+        if hand.is_symlink() or not hand.is_file() or hand.stat().st_size > 2 * 1024 * 1024:
+            raise ValueError("The drawing hand must be a small ordinary picture.")
+        yield hand, "drawon_art/hand.png"
     art = runtime / "workspace_art"
     if art.exists():
         if art.is_symlink() or not art.is_dir():
@@ -68,8 +73,8 @@ def private_preview_resources(root: Path):
     resources=[(manifest,"cr_recipe_frames/manifest.json")]
     for style,row in data["frames"].items():
         if (not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,139}",style) or not isinstance(row,dict)
-                or row.get("file")!=style+".jpg" or row.get("kind")!="style_reference"
-                or not str(row.get("channel") or "").strip()):
+                or row.get("file")!=style+".jpg" or row.get("kind") not in ("style_reference","studio_sample")
+                or (row.get("kind")=="style_reference" and not str(row.get("channel") or "").strip())):
             raise ValueError("Invalid style reference identity.")
         path=folder / row["file"]
         if path.is_symlink() or not path.is_file() or path.stat().st_size>1024*1024 or hashlib.sha256(path.read_bytes()).hexdigest()!=row.get("sha256"):
@@ -91,7 +96,96 @@ def private_sound_resources(root: Path):
             if path.is_symlink() or not path.is_file() or path.stat().st_size > 2 * 1024 * 1024:
                 raise ValueError("Effects library files must be small ordinary files.")
             resources.append((path, "assets/sfx/cr/" + path.name))
+    # the sound of each place (cr_ambience): seamless loops, one folder deeper
+    places = folder / "ambience"
+    if places.exists():
+        if places.is_symlink() or not places.is_dir():
+            raise ValueError("The ambience library must be an ordinary owned folder.")
+        for path in sorted(places.iterdir()):
+            if path.name == "library.json" or re.fullmatch(r"[a-z]+_\d+\.mp3", path.name):
+                if path.is_symlink() or not path.is_file() or path.stat().st_size > 2 * 1024 * 1024:
+                    raise ValueError("Ambience library files must be small ordinary files.")
+                resources.append((path, "assets/sfx/cr/ambience/" + path.name))
     return resources
+
+
+READY_MADE = re.compile(r"cr-[a-z0-9]+(?:-[a-z0-9]+){0,6}")
+
+
+def private_recipe_resources(root: Path):
+    """ChannelRecipe's ready-made recipes: styles learned from benchmark channels and tested end to end here,
+    shipped as built-in styles (styles/<name>.json) with their own style drawing and character sheet
+    (assets/styles/cr/<name>/). A recipe may only point at its own pictures."""
+    folder = root / "data/frontier/recipes"
+    if not folder.exists():
+        return []
+    if folder.is_symlink() or not folder.is_dir():
+        raise ValueError("Ready-made recipes must be an ordinary owned folder.")
+    resources = []
+    for recipe in sorted(folder.iterdir()):
+        if recipe.name.startswith(".") or not recipe.is_dir():
+            continue
+        if recipe.is_symlink() or not READY_MADE.fullmatch(recipe.name):
+            raise ValueError("A ready-made recipe folder must be named cr-<words>.")
+        style_path = recipe / "style.json"
+        if style_path.is_symlink() or not style_path.is_file():
+            raise ValueError(f"{recipe.name} has no style.json.")
+        style = json.loads(style_path.read_text())
+        if style.get("name") != recipe.name or "cr_style_clone" in style or style.get("builtin") is not True:
+            raise ValueError(f"{recipe.name}: the style must carry its own name, builtin: true and no study records.")
+        look = style.get("look") if isinstance(style.get("look"), dict) else {}
+        own = {f"styles/cr/{recipe.name}/style.jpg", f"styles/cr/{recipe.name}/character.png"}
+        for key in ("style_image", "character_image", "reference", "sample"):
+            if look.get(key) and look[key] not in own:
+                raise ValueError(f"{recipe.name}: look.{key} must be one of its own pictures.")
+            if look.get(key) and not (recipe / Path(look[key]).name).is_file():
+                raise ValueError(f"{recipe.name}: look.{key} is missing.")
+        if _machine_paths(style):
+            raise ValueError(f"{recipe.name}: the style points at files on the computer it was made on: "
+                             + ", ".join(_machine_paths(style)[:3]))
+        resources.append((style_path, f"styles/{recipe.name}.json"))
+        for name in ("style.jpg", "character.png"):
+            path = recipe / name
+            if path.exists():
+                if path.is_symlink() or not path.is_file() or path.stat().st_size > 4 * 1024 * 1024:
+                    raise ValueError(f"{recipe.name}/{name} must be a small ordinary picture.")
+                resources.append((path, f"assets/styles/cr/{recipe.name}/{name}"))
+        resources += _recipe_kit(recipe, look)
+    return resources
+
+
+KIT_FILES = re.compile(r"(kit\.json|kit\.js|look_overrides\.json|fonts/[A-Za-z0-9 _.-]+\.(ttf|otf|woff2))")
+
+
+def _machine_paths(value, at="") -> list:
+    """Every setting holding an absolute path: [setting path]."""
+    if isinstance(value, dict):
+        return [p for k, v in value.items() for p in _machine_paths(v, f"{at}.{k}" if at else k)]
+    if isinstance(value, list):
+        return [p for i, v in enumerate(value) for p in _machine_paths(v, f"{at}[{i}]")]
+    return [at] if isinstance(value, str) and re.match(r"^(/|[A-Za-z]:[\\/]|~)", value) else []
+
+
+def _recipe_kit(recipe: Path, look: dict) -> list:
+    """A ready-made recipe's own graphics kit (genkit/): its manifest, code, look overrides and any faces of its own,
+    shipped under assets/styles/cr/<name>/genkit/ and named there by the style."""
+    kit = recipe / "genkit"
+    manifest = (look.get("genkit") or {}).get("manifest") if isinstance(look.get("genkit"), dict) else None
+    want = f"assets/styles/cr/{recipe.name}/genkit/kit.json"
+    if not manifest and not kit.exists():
+        return []
+    if manifest != want or kit.is_symlink() or not (kit / "kit.json").is_file() or not (kit / "kit.js").is_file():
+        raise ValueError(f"{recipe.name}: look.genkit.manifest must be {want}, with genkit/kit.json and kit.js beside it.")
+    spec = json.loads((kit / "kit.json").read_text())
+    if spec.get("js", "kit.js") != "kit.js" or not isinstance(spec.get("types"), dict) or not spec["types"]:
+        raise ValueError(f"{recipe.name}: genkit/kit.json must name kit.js and its graphics.")
+    out = []
+    for path in sorted(p for p in kit.rglob("*") if p.is_file() or p.is_symlink()):
+        rel = path.relative_to(kit).as_posix()
+        if path.is_symlink() or not KIT_FILES.fullmatch(rel) or path.stat().st_size > 4 * 1024 * 1024:
+            raise ValueError(f"{recipe.name}/genkit/{rel} is not a kit file.")
+        out.append((path, f"assets/styles/cr/{recipe.name}/genkit/{rel}"))
+    return out
 
 
 # Engine sample films from the retired brand; recipe cards use style references.
@@ -105,6 +199,11 @@ RETIRED_SAMPLES = {"assets/brand/1965 Lotus 38 - Documentary sample.mp4",
 # disk skipped the style study's real-browser test (so the study stopped at the
 # end) and made Level-Up Stories wait forever. A few test frames need far less.
 # Every patch must match exactly once, so a new engine can't silently skip one.
+PRESET_WHITE_STUDIO = "  documentary: null,\n\n  // WHITE STUDIO (learned 2026-10-15 from clean 3D reconstruction channels): an all-white matte world. Every surface reads\n  // as white or pale grey plaster (albedo desaturated and lifted), the faceless mannequins white, the frame a pale duotone\n  // from a light cool grey to white, so a night or an interior stays high key: night is a cooler, slightly dimmer white.\n  // Soft shadows and soft grey outlines (models and label tags stay readable on white), no grain, a faint vignette; fire keeps a hint of its colour. Accents come from the graphics laid over the 3D.\n  white_studio: {\n    desc: 'all-white matte 3D reconstruction: every surface white or pale grey plaster, white faceless mannequins, a pale grey seamless world, soft studio light, high key even at night, no grain',\n    stylised: true, tragedy_ok: true,\n    grade: { mul: { exposure: 1.05 }, add: { lift: [0.015, 0.015, 0.018] },\n      set: { mono: 0.8, ink: [0.2, 0.22, 0.26], mid: [0.7, 0.72, 0.75], midAt: 0.35, paper: [0.95, 0.95, 0.955], sat: 0.5,\n        contrast: 1.3, vignette: 0.12, vigPow: 1.3, grain: 0, bloom: 0.04, shoulder: 0.9 } },\n    night: { mul: { exposure: 1.7 }, add: { lift: [0.03, 0.032, 0.038] },\n      set: { mono: 0.95, ink: [0.19, 0.21, 0.26], mid: [0.68, 0.7, 0.74], midAt: 0.35, paper: [0.93, 0.94, 0.95], sat: 0.5,\n        contrast: 1.1, vignette: 0.14, vigPow: 1.3, grain: 0, bloom: 0.04, shoulder: 0.9 } },\n    atmos: { tint: [0.9, 0.91, 0.93], tintAmt: 0.5, density: 0.25, sky: [0.9, 0.91, 0.93] },\n    ink: { amt: 0.55, px: 1.6, pxC: 0.9, col: [0.35, 0.36, 0.4], far: [400, 1200], depthK: 0.03, crease: 0.85 },\n    labelKeep: true, labelInk: 'dark',\n    world: { tufts: false },\n    material: { rough: [0.72, 0.95], metal: 0.0, env: 0.12, skin: 0xE6E6E6,\n      look: { flat: 6, nrm: 0, pal: 1, sat: 0.0, gamma: 0.5 } },\n    shadow: { soft: 2.6 },\n    qa: { hot_start: 0.95, hot_target: 0.9, hot_area: 0.97, face_white: 1.0, face_mean: 256, dark_sep: 0, scrim_max: 0.86 },\n  },\n"
+LOOK_WHITE_STUDIO = ' "white_studio": {"director": "THE LOOK (this film\'s preset: WHITE STUDIO — the engine renders every shot as an all-white matte world on top of your look block; you never set it and never imitate it with grades): a clean 3D reconstruction in white and pale grey plaster, faceless white mannequins for every person (never a human face), a pale seamless ground and sky. Light EVERY scene as soft overcast daylight (time afternoon or morning, sky overcast, grade neutral), even when the story happens at night: this world is a timeless white model, and night is told by the words and the labels, not by darkness. Never stage a shot whose subject is only fog, sky or open water: always show a model (the ship, the room, the figures) at a scale that reads. A white model alone against the open sky disappears: frame aircraft and airships from above or level with the ground, a hangar, a mast or the horizon behind them, and keep a large subject at medium distance, never a speck far away. Real shapes, era-accurate ships, vehicles and buildings. Captions live in the bottom quarter of the frame: keep it free of text and of the subject\'s key action.", "review": "THE LOOK IS INTENTIONAL — this film uses the WHITE STUDIO preset: every surface white or pale grey, white faceless mannequins, a pale world, soft daylight even for night, labels in dark ink on pale tags. That is the look: do not score it as washed out, flat, colourless or low-detail, and do not fix it back toward realism, colour or darkness. Judge craft INSIDE the look: the story, the subject reading at a glance by its shape and shading, the motion, the hard fails H1-H8 (all still apply), faceless mannequins. Flag a shot that shows only fog, sky or water, and a white model that disappears against a white sky (fix: reframe it with the ground or a structure behind it, or bring it closer).", "qa": "THE LOOK OF THIS FILM IS INTENTIONAL: WHITE STUDIO — an all-white matte world, white faceless mannequins, pale sky and ground, soft daylight, labels in dark ink. Never flag the look itself as washed out or colourless; flag only what is wrong inside it, and a shot whose subject cannot be seen.", "cookbook": "LOOK PRESET white_studio (this film) — stage it like a white scale model on a studio table: soft overcast daylight in every scene, clear shapes and silhouettes, medium and wide views that read as models (ships, rooms, vehicles, crowds of white mannequins as counts), slow orbit or push_in, few props with strong outlines; aircraft and airships framed with the ground or a structure behind them, never alone against the sky. Avoid night lighting, fog-only shots and scenes whose meaning depends on colour or darkness."},\n'
+PRESET_STUDIO_COLOR = "\n  // STUDIO COLOUR (2026-10-16): white studio's clean daylight models painted in the creator's palette (a base colour on most\n  // surfaces, one accent on what matters, a dark for contrast): matte painted plaster that keeps its colour, soft daylight\n  // even at night or underwater, a light seamless world, soft grey outlines, no grain. For creators who find white on white flat.\n  studio_color: {\n    desc: 'clean studio 3D reconstruction in the creator palette: matte painted models in a base colour with one accent and a dark, soft daylight, a light seamless world, no grain',\n    stylised: true, tragedy_ok: true,\n    grade: { mul: { exposure: 1.0 }, add: { lift: [0.012, 0.012, 0.012] },\n      set: { mono: 0.1, ink: [0.14, 0.14, 0.15], mid: [0.6, 0.58, 0.55], midAt: 0.4, paper: [0.96, 0.94, 0.88], sat: 0.95,\n        contrast: 1.2, vignette: 0.12, vigPow: 1.3, grain: 0, bloom: 0.04, shoulder: 0.9 } },\n    night: { mul: { exposure: 1.5 }, add: { lift: [0.025, 0.025, 0.028] },\n      set: { mono: 0.1, ink: [0.13, 0.13, 0.15], mid: [0.58, 0.57, 0.55], midAt: 0.4, paper: [0.94, 0.92, 0.87], sat: 0.95,\n        contrast: 1.2, vignette: 0.14, vigPow: 1.3, grain: 0, bloom: 0.04, shoulder: 0.9 } },\n    atmos: { tint: [0.9, 0.88, 0.83], tintAmt: 0.4, density: 0.15, sky: [0.88, 0.86, 0.8] },\n    ink: { amt: 0.5, px: 1.5, pxC: 0.8, col: [0.25, 0.25, 0.27], far: [400, 1200], depthK: 0.03, crease: 0.85 },\n    labelKeep: true, labelInk: 'dark',\n    world: { tufts: false },\n    material: { rough: [0.6, 0.95], metal: 0.0, env: 0.15, skin: 0xEDE6D6,\n      look: { flat: 6, nrm: 0, pal: 1, sat: 0.8, gamma: 0.85 } },\n    shadow: { soft: 2.6 },\n    qa: { hot_start: 0.95, hot_target: 0.9, hot_area: 0.97, face_white: 1.0, face_mean: 256, dark_sep: 0, scrim_max: 0.86 },\n  },\n"
+LOOK_STUDIO_COLOR = ' "studio_color": {"director": "THE LOOK (this film\'s preset: STUDIO COLOUR — the engine renders every shot as a clean painted scale model on top of your look block; you never set it and never imitate it with grades): a clean 3D reconstruction like a painted model on a studio table. Paint it ONLY in the film\'s palette (3D SCENE PALETTE in the creative direction): its base colour on most surfaces, models and the faceless mannequins, its accent on the one thing that matters in each shot (the torpedo, the warning light, the key person\'s detail, the label), its dark for shadows, hulls and contrast; never real-world colour beyond the palette. Light EVERY scene as soft daylight (time afternoon or morning, sky overcast or clear, grade neutral), even when the story happens at night, in the dark or underwater: depth, night and danger are told by the words, the labels and the accent colour, never by darkness. No pitch-dark interiors, no night grades, no glowing red rooms. Never stage a shot whose subject is only fog, sky, open water or darkness: always show a model at a scale that reads, framed with the ground, a structure or the horizon behind it. Real shapes, era-accurate ships, vehicles and buildings. Captions live in the bottom quarter of the frame: keep it free of text and of the subject\'s key action.", "review": "THE LOOK IS INTENTIONAL — this film uses the STUDIO COLOUR preset: clean matte models painted in the film\'s palette (a base colour, one accent, a dark), soft daylight even for night or underwater scenes, labels in dark ink on pale tags. Do not score it as unrealistic or flat, and do not fix it toward realism, night or darkness. Judge craft INSIDE the look: the story, the subject reading at a glance, the motion, the hard fails H1-H8 (all still apply), faceless mannequins. Flag a dark, night-lit or underwater-dark shot (fix: soft daylight, the palette\'s base colour), a shot whose subject disappears into the background, and a shot that uses colours outside the palette or loses the accent on what matters.", "qa": "THE LOOK OF THIS FILM IS INTENTIONAL: STUDIO COLOUR — clean painted models in the film\'s palette, soft daylight even at night, labels in dark ink. Never flag the look itself as unrealistic; flag a dark shot, a subject that cannot be seen, and colours outside the palette.", "cookbook": "LOOK PRESET studio_color (this film) — stage it like a painted scale model on a studio table: soft daylight in every scene, the palette\'s base colour on most surfaces, its accent on one thing per shot, clear shapes and silhouettes, medium and wide views that read as models, slow orbit or push_in; subjects framed with the ground or a structure behind them. Avoid night lighting, dark interiors, underwater darkness, fog-only shots and colours outside the palette."},\n'
+
 ENGINE_PATCHES = {
     "reflearn.py": [
         ('need_lv, need_gb = _envf("REFLEARN_MIN_MEM_LEVEL", 40), _envf("REFLEARN_MIN_DISK_GB", 20)',
@@ -121,6 +220,178 @@ ENGINE_PATCHES = {
          '    print("Starting ChannelRecipe Studio...", flush=True)\n'
          '    raise SystemExit(subprocess.call([sys.executable, str(HERE / "cr_studio.py")], cwd=str(HERE)))\n'
          'if False:\n    OUT.mkdir(exist_ok=True)\n'),
+    ],
+    # A story with moving pictures animates its FIRST storyboard items and draws stills from the rest, so still
+    # scene_k belongs to item video_n + k. The story timeline zipped the items with the stills, which put every
+    # picture one sentence early and never showed the clips (found 2026-10-15 in a test video: the family picture
+    # played over "London, 1820s"). Each still now sits on its own item, a clip plays in its own slot through its
+    # first frame (the still renderer plays <still>.anim.mp4), and a clip that failed shows its first frame.
+    "cinema.py": [
+        # Every chapter card opened with a film-burn light leak, so a learned documentary whose references cut to black
+        # at chapters flashed orange there. A learned look (autostyle v2 fx) gets it only when its references use a
+        # leak_burst transition; the built-in recipes keep it.
+        ("def _leak_in(mp4: Path) -> None:\n",
+         "def _wants_leak(look) -> bool:\n"
+         "    fx = look.get(\"fx\") if isinstance(look, dict) else None\n"
+         "    if not isinstance(fx, dict):\n"
+         "        return True\n"
+         "    return any(isinstance(t, dict) and t.get(\"id\") == \"leak_burst\" for t in fx.get(\"transitions\") or [])\n"
+         "\n\n"
+         "def _leak_in(mp4: Path) -> None:\n"),
+        ("                docgfx.render(jobs, workers=max(1, min(2, workers)), look=look)\n"
+         "                for _sc, mp4 in jobs:\n                    _leak_in(Path(mp4))\n",
+         "                docgfx.render(jobs, workers=max(1, min(2, workers)), look=look)\n"
+         "                for _sc, mp4 in jobs:\n                    if _wants_leak(look):\n"
+         "                        _leak_in(Path(mp4))\n"),
+        ("                        for _sc, mp4 in jobs:\n                            _leak_in(Path(mp4))\n",
+         "                        for _sc, mp4 in jobs:\n                            if _wants_leak(look):\n"
+         "                                _leak_in(Path(mp4))\n"),
+    ],
+    # The clean 3D reconstruction channels render an all-white matte world (watched: monochrome white models and
+    # mannequins, brightness 185 of 255, almost no colour); the engine's looks rendered the same story dark and
+    # colourful. WHITE STUDIO is that look, for the renderer (presets.js) and for the director, reviewer and QA
+    # (looks.json, which also lists the look so a style may ask for it).
+    "threed/engine/core/presets.js": [
+        ("  documentary: null,\n", PRESET_WHITE_STUDIO + PRESET_STUDIO_COLOR),
+        ("  if (P.ink) { g.outline = JSON.parse(JSON.stringify(P.ink)); g.labelMask = true; }   // grade.outline (grade.ink is the mono ink colour); never across a label\n",
+         "  if (P.ink) { g.outline = JSON.parse(JSON.stringify(P.ink)); g.labelMask = true; }   // grade.outline (grade.ink is the mono ink colour); never across a label\n"
+         "  if (P.labelKeep) { g.labelKeep = true; g.labelMask = true; }   // the labels keep their own colours through a mono grade (white studio)\n"),
+    ],
+    # a look may keep its labels out of the mono grade (labelKeep), so dark ink stays dark on a white world
+    "threed/engine/core/post.js": [
+        ("uWhite: { value: 0 }, uWhiteCol: { value: new THREE.Vector3(1, 1, 1) }, uTime: { value: 0 },",
+         "uWhite: { value: 0 }, uWhiteCol: { value: new THREE.Vector3(1, 1, 1) }, uTime: { value: 0 }, uLabelKeep: { value: 0 },"),
+        ("uniform float uWhite; uniform vec3 uWhiteCol; uniform float uTime;",
+         "uniform float uWhite; uniform vec3 uWhiteCol; uniform float uTime; uniform float uLabelKeep;"),
+        ("c = mix(c, ${film ? 'fMonoCol(l)' : 'mix(uInk, uPaper, smoothstep(0.0, 1.0, l))'}, ${film ? 'fMono' : 'uMono'});",
+         "c = mix(c, ${film ? 'fMonoCol(l)' : 'mix(uInk, uPaper, smoothstep(0.0, 1.0, l))'}, ${film ? 'fMono' : 'uMono'} * (1.0 - labelMask(vUv) * uLabelKeep));"),
+        ("u.uWhite.value = g.white ?? 0; u.uWhiteCol.value.set(...(g.whiteCol ?? [1, 1, 1]));",
+         "u.uWhite.value = g.white ?? 0; u.uWhiteCol.value.set(...(g.whiteCol ?? [1, 1, 1])); u.uLabelKeep.value = g.labelKeep ? 1 : 0;"),
+    ],
+    # a look may set every label in dark ink on a pale tag (labelInk: 'dark'): no metering, no scrim
+    "threed/engine/core/main.js": [
+        ("    const shot = (mode) => { it.res.measureMode(mode); post.frame(1, (j) => renderSub(t, j, 1), Math.round(t * FPS), gradeAt(t), t); const r = region(it); it.res.measureMode(null); return r; };\n",
+         "    const shot = (mode) => { it.res.measureMode(mode); post.frame(1, (j) => renderSub(t, j, 1), Math.round(t * FPS), gradeAt(t), t); const r = region(it); it.res.measureMode(null); return r; };\n"
+         "    if (cur.P?.labelInk === 'dark') {   // a look whose labels are dark ink on a pale tag (white studio)\n"
+         "      it.res.setScrim(0.62); it.res.setInk(true);\n"
+         "      out.changes.push(`labels:${it.index} \"${String(q.text || '').slice(0, 40)}\": dark ink on a pale plate (the look's labels)`);\n"
+         "      continue;\n    }\n"),
+    ],
+    "threed/director/looks.json": [
+        ('{\n "documentary": {\n', '{\n' + LOOK_WHITE_STUDIO + LOOK_STUDIO_COLOR + ' "documentary": {\n'),
+    ],
+    "make_video.py": [
+        # A dark chapter card or learned graphic in a slot longer than itself held its faded-out last frame: seconds of
+        # black while the narration went on (the brightness test misses dark cards). Like a documentary graphic, each now
+        # holds its last full picture before the fade.
+        ('    if tail > 0.35 and src_dur > 1.6 and (src.name.startswith("doc_") or _fades_out(src, src_dur)):\n',
+         '    if tail > 0.35 and src_dur > 1.6 and (src.name.startswith(("doc_", "chapter_", "kit_")) or _fades_out(src, src_dur)):\n'),
+        ("def _build_story_plan(job: Path, total: float, photos: list) -> list:\n",
+         "def _story_media(job: Path, items: list, photos: list) -> list:\n"
+         "    \"\"\"The picture for each storyboard item, in item order (ChannelRecipe fix): clips first, then stills by\n"
+         "    their file number; the stills as given when they don't follow the scene_NN names.\"\"\"\n"
+         "    job = Path(job)\n"
+         "    video_n = len(list(job.glob(\"clip_src/vsrc_*.jpg\")))\n"
+         "    scenes = {}\n"
+         "    for p in photos:\n"
+         "        m = re.search(r\"scene_(\\d+)\\.jpg$\", str(p))\n"
+         "        if m:\n"
+         "            scenes[int(m.group(1))] = str(p)\n"
+         "    out = []\n"
+         "    for k in range(len(items)):\n"
+         "        if k < video_n:\n"
+         "            still = job / \"clip_src\" / f\"vsrc_{k:02d}.jpg\"\n"
+         "            clip = job / \"clips\" / f\"clip_{k:02d}.mp4\"\n"
+         "            anim = still.with_suffix(\".anim.mp4\")\n"
+         "            if clip.exists() and clip.stat().st_size > 20_000 and not anim.exists():\n"
+         "                try:\n"
+         "                    shutil.copyfile(clip, anim)\n"
+         "                except OSError:\n"
+         "                    pass\n"
+         "            out.append(str(still) if still.exists() else None)\n"
+         "        else:\n"
+         "            out.append(scenes.get(k - video_n))\n"
+         "    if sum(1 for x in out if x) < max(1, len([p for p in photos if p]) // 2):\n"
+         "        return list(photos)\n"
+         "    return out\n\n\n"
+         "def _build_story_plan(job: Path, total: float, photos: list) -> list:\n"),
+        ("    pairs = [(it if isinstance(it, dict) else {}, p) for it, p in zip(items, photos) if p]\n",
+         "    pairs = [(it if isinstance(it, dict) else {}, p) for it, p in zip(items, _story_media(job, items, photos)) if p]\n"),
+        ("            by_i[int(m.group(1))] = str(p)\n    if len(by_i) < max(3, len(photos) // 2):\n        return []\n"
+         "    idx = sorted(by_i)\n",
+         "            by_i[int(m.group(1))] = str(p)\n"
+         "    # ChannelRecipe fix: a story's first items are its clips, so still scene_k is item video_n + k\n"
+         "    _vn = len(list(Path(job).glob(\"clip_src/vsrc_*.jpg\")))\n"
+         "    by_i = {i + _vn: p for i, p in by_i.items() if i + _vn < len(items)}\n"
+         "    if len(by_i) < max(3, len(photos) // 2):\n        return []\n"
+         "    idx = sorted(by_i)\n"),
+        # A fast story (a picture every 2.6 s) has no slack against a fixed 2.5 s shortest hold: one short sentence
+        # pushed every later picture, and the timeline set into a 2.5 s grid that drifted up to 4 s off the words.
+        # The shortest hold scales with the story's own pace (1.2 to 2.5 s); slower stories keep 2.5 s.
+        ("    beat = 2.5                              # shortest a picture may hold\n",
+         "    beat = min(2.5, max(1.2, 0.55 * total / max(1, n)))   # shortest hold, from the story's own pace\n"),
+        # Channels that hold their pictures still (stick-figure stories hold 9 in 10) could only push in or
+        # alternate. look.zoom "still" holds every still; "mix:<share>[:alternate]" holds that share, spread evenly.
+        ('    p = f"min(on/{max(1, frames - 1)}\\\\,1)"\n'
+         '    if (mode or "in").lower() != "alternate":\n',
+         '    p = f"min(on/{max(1, frames - 1)}\\\\,1)"\n'
+         '    mode = (mode or "in").lower()\n'
+         '    if mode == "still":\n'
+         '        return "(1)"\n'
+         '    if mode.startswith("mix:"):\n'
+         '        parts = mode.split(":")\n'
+         '        try:\n'
+         '            share = max(0.0, min(1.0, float(parts[1])))\n'
+         '        except (IndexError, ValueError):\n'
+         '            share = 0.0\n'
+         '        if (idx * 0.6180339887) % 1.0 < share:\n'
+         '            return "(1)"\n'
+         '        mode = "alternate" if "alternate" in parts[2:] else "in"\n'
+         '    if mode != "alternate":\n'),
+    ],
+    # The background remover (removebg.py) works on kie.ai alone, but cut-out movement, photo spotlights and
+    # objects were switched off without a WaveSpeed key, so drawn styles got no figure moves on a Kie-only setup.
+    "photofx.py": [
+        # a YouTube video's thumbnail is another creator's designed picture (their face, logo and title text), never
+        # a plain photo of the subject: true crime pictures came back as other channels' thumbnails
+        ('"pngwing.", "kindpng.", "pngitem.", "seekpng.", "clipart", "wallpaperaccess.", "wallpapercave.")\n',
+         '"pngwing.", "kindpng.", "pngitem.", "seekpng.", "clipart", "wallpaperaccess.", "wallpapercave.",\n'
+         '               "ytimg.com", "youtube.com", "youtu.be")\n'),
+        ('              "posterazzi.", "fineartamerica.", "pixels.com", "displate.")\n',
+         '              "posterazzi.", "fineartamerica.", "pixels.com", "displate.", "ytimg.com", "youtube.com", "youtu.be")\n'),
+        ('    if not cfg["depth"] or every <= 0 or not os.environ.get("WAVESPEED_API_KEY"):\n',
+         '    if not cfg["depth"] or every <= 0 or not (os.environ.get("WAVESPEED_API_KEY") or os.environ.get("KIE_API_KEY")):\n'),
+        ('    cuts = bool((os.environ.get("WAVESPEED_API_KEY") or "").strip())\n',
+         '    cuts = bool((os.environ.get("WAVESPEED_API_KEY") or "").strip() or (os.environ.get("KIE_API_KEY") or "").strip())\n'),
+    ],
+    # A footage search YouTube refused ("Sign in to confirm you're not a bot") was not recorded, so the video's
+    # "no real footage" warning could not say why or what fixes it; the refused search now notes yt-dlp's error.
+    "youtube.py": [
+        # footage watching: a stalled upload to kie's file host fails in minutes, not fifteen, and is tried once more
+        ('def _kie_upload(path: Path) -> str:\n    with open(path, "rb") as fh:\n        r = requests.post("https://kieai.redpandaai.co/api/file-stream-upload",\n                          headers={"Authorization": f"Bearer {_env(\'KIE_API_KEY\')}"},\n                          data={"uploadPath": "frontier", "fileName": path.name},\n                          files={"file": (path.name, fh, "video/mp4")}, timeout=900)\n    r.raise_for_status()\n',
+         'def _kie_upload(path: Path) -> str:\n    # a low copy uploads in seconds; when kie\'s file host stalls, waiting fifteen minutes per video made a 1-minute\n    # video\'s footage take over half an hour. Two tries of three minutes (an upload costs nothing), then the next watcher.\n    for attempt in (1, 2):\n        try:\n            with open(path, "rb") as fh:\n                r = requests.post("https://kieai.redpandaai.co/api/file-stream-upload",\n                                  headers={"Authorization": f"Bearer {_env(\'KIE_API_KEY\')}"},\n                                  data={"uploadPath": "frontier", "fileName": path.name},\n                                  files={"file": (path.name, fh, "video/mp4")}, timeout=(15, 180))\n            break\n        except requests.exceptions.Timeout:\n            if attempt == 2:\n                raise\n    r.raise_for_status()\n'),
+        # Studio sets YT_FORCE_IPV4 when this computer reaches YouTube over IPv4, which YouTube refuses far less often
+        ("    if _num_env(\"YT_SLEEP\") > 0:\n",
+         "    if _env(\"YT_FORCE_IPV4\") not in (\"\", \"0\", \"no\", \"off\", \"false\"):\n"
+         "        cmd += [\"--force-ipv4\"]\n    if _num_env(\"YT_SLEEP\") > 0:\n"),
+        ("        except subprocess.TimeoutExpired:\n            return []\n        for line in p.stdout.splitlines():\n",
+         "        except subprocess.TimeoutExpired:\n            return []\n        if p.returncode:\n"
+         "            _note_err(p.stderr)\n        for line in p.stdout.splitlines():\n"),
+        # kie's video watcher down for a while: three failed videos in a row and the rest of the search skips it
+        ('def _kie_log(vid: str, prompt: str, work: Path, span: tuple = None) -> str:\n    # kie\'s gateway answers a busy minute with {"code": 500, "msg": "Network error, please try again later."}.\n    # The upload is the slow part, so it is done once and only the watching is tried again.\n    url = _kie_upload(_low_copy(vid, work, span))\n    last = None\n    for wait in (0, 20, 60):\n        if wait:\n            time.sleep(wait)\n        try:\n            return _chat_log("https://api.kie.ai/gemini-2.5-flash/v1/chat/completions", _env("KIE_API_KEY"), "",\n                             {"type": "image_url", "image_url": {"url": url}}, prompt)\n        except RuntimeError as e:                               # noqa: PERF203 - three tries, then the next model\n            last = e\n            if "HTTP 4" in str(e):\n                break\n    raise last\n',
+         '# When kie\'s watcher is down ("internal error" video after video), each video still cost an upload and three tries\n# over 80 s: one footage search took 58 minutes to find nothing. After three videos in a row the rest skip it.\n_KIE_DOWN = {"fails": 0}\n\n\ndef _kie_log(vid: str, prompt: str, work: Path, span: tuple = None) -> str:\n    # kie\'s gateway answers a busy minute with {"code": 500, "msg": "Network error, please try again later."}.\n    # The upload is the slow part, so it is done once and only the watching is tried again.\n    if _KIE_DOWN["fails"] >= 3:\n        raise RuntimeError("kie\'s video watcher failed three videos in a row (its server\'s error) - this search "\n                           "goes on without it")\n    url = _kie_upload(_low_copy(vid, work, span))\n    last = None\n    for wait in (0, 20, 60):\n        if wait:\n            time.sleep(wait)\n        try:\n            text = _chat_log("https://api.kie.ai/gemini-2.5-flash/v1/chat/completions", _env("KIE_API_KEY"), "",\n                             {"type": "image_url", "image_url": {"url": url}}, prompt)\n            _KIE_DOWN["fails"] = 0\n            return text\n        except RuntimeError as e:                               # noqa: PERF203 - three tries, then the next model\n            last = e\n            if "HTTP 4" in str(e):\n                break\n    if "HTTP 4" not in str(last):\n        _KIE_DOWN["fails"] += 1\n    raise last\n'),
+    ],
+    # A learned style's own kit is named by its manifest path; Studio saves it relative to the Studio folder (so a
+    # moved Studio, and a ready-made recipe shipped under assets/styles/cr/, keep their graphics).
+    "kits.py": [
+        # an overlay graphic (a name card, a place tag) sits on the picture of its seconds; when every picture already
+        # grounded a scene it went on black. The nearest picture serves again.
+        ("            pick = (timed or still or [None])[0]\n",
+         "            pick = (timed or still or [None])[0]\n"
+         "            if pick is None and pics:            # every picture grounds a scene already: the nearest again, never black\n"
+         "                pick = min(pics, key=lambda p: abs(p[0] - at) if p[0] >= 0 else 1e9)\n"),
+        ('        register_gen_kit(look["genkit"]["manifest"])\n',
+         '        register_gen_kit(HERE / str(look["genkit"]["manifest"]))\n'),
     ],
     "quest_hud.py": [
         ("def _wait_machine(log=print, min_level: int = 40, min_free_gb: float = 20.0) -> None:",
@@ -223,7 +494,8 @@ def build(source: Path, target: Path, previous: Path | None = None):
     operational_overrides = (ROOT / "local_runtime/CLAUDE.md").read_bytes()
     # Validate the complete resource inventory before replacing an existing ZIP.
     resources = list(runtime_resources(ROOT))
-    preview_resources = private_preview_resources(ROOT) + private_sound_resources(ROOT)
+    preview_resources = (private_preview_resources(ROOT) + private_sound_resources(ROOT)
+                         + private_recipe_resources(ROOT))
     target.parent.mkdir(parents=True, exist_ok=True)
     count = 0
     transformed_files = []

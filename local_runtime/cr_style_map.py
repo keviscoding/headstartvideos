@@ -35,7 +35,7 @@ FALLBACK = ("documentary", "jung", "stories")
 # Rough costs for the review screen (Kie, October 2026); real costs show in the render log.
 PICTURE_USD = 0.02          # one generated still
 CLIP_USD = 0.12             # one 5-second image-to-video clip
-PRESENTER_USD_S = 0.025     # one second of talking presenter
+PRESENTER_USD_S = 0.0375    # one second of talking presenter (Kling Standard on Kie)
 
 # The engine's own lists (lookreg); a value outside them falls back to the base's
 GRADE_WORDS = {"natural": "natural colour", "clean709": "clean and bright", "bleach_bypass": "dark and desaturated",
@@ -108,6 +108,7 @@ class Plan:
     def __init__(self):
         self.overrides, self.remove, self.settings, self.needs, self.notes = {}, [], [], [], []
         self.motion_cutout = False
+        self.candid_photo = False
 
     def set(self, path: str, value, *, area: str, label: str, why: str, source: str = "", confidence: float = None,
             show=None):
@@ -216,7 +217,9 @@ def _pictures(plan: Plan, profile: dict, base: str, base_style: dict):
     # a cast is drawn only for generated pictures: real people in footage are filmed, not designed
     cast = [c for c in _v(pics.get("characters"), []) or [] if c.get("look")] if draws else []
     # Only a host or mascot returns in every video; the people of a reference's own story belong to that video.
-    main = [c for c in cast if c.get("role") in ("mascot", "presenter")]
+    import cr_style_profile
+    main = [c for c in cast if c.get("role") in ("mascot", "presenter")
+            and float(c.get("screen_share") or 0) >= cr_style_profile.MASCOT_SHARE]
     if cast:
         plan.notes.append({"for": "cast", "characters": cast[:4]})
     if main:
@@ -225,12 +228,24 @@ def _pictures(plan: Plan, profile: dict, base: str, base_style: dict):
     # in every frame only when the style has a cast, and a learned style's cast is its host or mascot alone.
     photo = any(_has_words(a.get("look"), "photo", "realistic", "footage", "camera") for a in art.get("looks", [])) \
         or _has_words(art.get("value"), "photo", "realistic")
+    # a designed picture (paper collage, cut-outs, charts, drawings, renders) is not a candid photograph, even when
+    # it is made of photographic pieces: it keeps its crisp finish
+    if _has_words(art.get("value"), "collage", "cutout", "cut-out", "paper", "graphic", "chart", "illustrat", "drawn",
+                  "drawing", "render", "vector", "cartoon", "animat"):
+        photo = False
     if photo and polish in ("clean", "candid") and draws:
         # glossy, evenly lit AI photographs read as fake; an everyday phone-camera frame reads as real
         polish = "candid"
     if polish == "candid":
         plan.notes.append({"for": "still_suffix", "polish_rule": "candid: an everyday phone-camera frame, natural "
                            "mixed light, unstaged framing, deep focus, mild noise; never cinematic or studio-lit"})
+        if photo and draws:
+            plan.candid_photo = True
+            # words alone still come back too perfect: each photo is also made to look like a frame of a phone
+            # video (softer capture, sensor noise, phone sharpening, compression; the engine's realism step)
+            plan.set("look.stills.realism", "home_video", area="Pictures", label="Phone-camera finish",
+                     why="the references' photos look like ordinary phone pictures, not glossy AI photographs",
+                     source="watched", show="on")
     elif polish == "lo-fi":
         plan.notes.append({"for": "still_suffix", "polish_rule": "lo-fi: visibly degraded, compressed, VHS or webcam"})
     drawn = float(_v(_get(profile, "look", "drawn"), 0) or 0)
@@ -286,6 +301,36 @@ def _pace(plan: Plan, profile: dict, base: str):
                  why=f"{round(flashes * 100)}% of changes flash white", source="measured")
 
 
+def _whiteboard(profile) -> bool:
+    """The references are whiteboard animation: a hand draws the pictures live (as watched)."""
+    words = " ".join([str(_v(_get(profile, "pictures", "art_style"), "") or "")]
+                     + [str(x) for x in (_get(profile, "pictures", "art_style", "alternatives", default=[]) or [])]
+                     + [str(x) for x in (profile.get("recognisable") or [])]).lower()
+    return "whiteboard" in words or bool(re.search(r"\bhands?\b[\w\s-]{0,24}\b(draw|drawing|draws|sketch|sketching)\b",
+                                                   words))
+
+
+def _storyboard(plan: Plan, profile: dict, base: str):
+    """What the AI pictures do (look.storyboard, cr_style_prompts). An explainer (most of the runtime carries numbers,
+    headlines or quotes on screen, with charts or documents beside drawn pictures) acts each idea out as a labelled
+    visual metaphor; a story or presenter channel shows exactly what each line says. Any other channel keeps the recipe's
+    own storyboard: an engine default drew mood pictures for a money explainer, and they explained nothing."""
+    fam = _families(profile)
+    generated = fam.get("generated", 0) + fam.get("generated_motion", 0)
+    dens = _v(_get(profile, "text", "density"), {}) or {}
+    info = sum(float(dens.get(k) or 0) for k in ("data", "headline", "quote", "label"))
+    proof = fam.get("graphic", 0) + fam.get("document", 0)
+    if info >= 0.55 and proof >= 0.15 and generated >= 0.1:
+        plan.set("look.storyboard", "explain", area="Pictures", label="What the pictures do",
+                 why=f"{round(info * 100)}% of the runtime carries numbers, headlines or quotes on screen, with charts "
+                     "and documents beside the drawn pictures", source="watched",
+                 show="each picture acts out its line, labelled")
+    elif base in ("stories", "avatar-premium") and generated >= 0.1:
+        plan.set("look.storyboard", "literal", area="Pictures", label="What the pictures do",
+                 why="the references' pictures show the moment each line describes", source="watched",
+                 show="each picture shows exactly what is said")
+
+
 def _motion(plan: Plan, profile: dict, base: str, minutes_hint: float = 10.0):
     motion = profile.get("motion") or {}
     kinds = _v(motion.get("kinds"), {}) or {}
@@ -303,13 +348,26 @@ def _motion(plan: Plan, profile: dict, base: str, minutes_hint: float = 10.0):
         _v(_get(profile, "pictures", "art_style"), ""), "drawn", "drawing", "cartoon", "stick", "illustrat", "vector",
         "doodle", "comic", "whiteboard", "sketch", "manga", "manhwa", "webtoon", "paint")
     clips = 0.0
-    if generated >= 0.3 and moving_generated >= 0.15:
+    if generated >= 0.3 and _whiteboard(profile):
+        # a whiteboard channel's motion is the drawing itself: a hand draws each picture's lines on (cr_drawon)
+        plan.set("look.reveal", "draw", area="Motion", label="Drawn on by hand",
+                 why="the references draw each picture live, a hand tracing the lines with a marker (watched)",
+                 source="watched", show="every picture draws itself on")
+        clips = 0.0
+    elif generated >= 0.3 and moving_generated >= 0.15:
         if drawn or cutout >= 0.08:
             # drawn figures move the way these channels move them: lifted off the background and slid, not AI video
             plan.motion_cutout = True
             plan.settings.append({"area": "Motion", "label": "Cut-out movement", "value": "on", "from": "measured",
                                   "why": f"{round(moving * 100)}% of the runtime moves; drawn figures move as cut-outs",
                                   "path": "features.on"})
+            # as often as the references move, and any drawn figure or prop may be lifted (not only people)
+            every = 2 if moving >= 0.3 else 3 if moving >= 0.15 else 4
+            plan.set("look.photofx.depth_every", every, area="Motion", label="Pictures that move as cut-outs",
+                     why=f"{round(moving * 100)}% of the references' runtime moves", source="measured",
+                     show=f"one in {every}")
+            plan.set("look.photofx.depth_subjects", "any", area="Motion", label="What lifts off the picture",
+                     why="any drawn figure or prop can slide as a cut-out", source="measured", show="figures and props")
             clips = 1.0 if moving_generated >= 0.4 else 0.0
         else:
             clips = round(_clamp(moving_generated * 6, 1.0, 6.0), 1)
@@ -325,13 +383,25 @@ def _motion(plan: Plan, profile: dict, base: str, minutes_hint: float = 10.0):
                  source="measured", show=f"about {clips:g} a minute")
     zin, zout = cam.get("zoom_in_share", 0), cam.get("zoom_out_share", 0)
     still_cam = classes.get("camera", 0)
-    if still_cam >= 0.08 or zin or zout:
-        mode = "alternate" if zout >= 0.15 or (zin and zout) else "in"
-        plan.set("look.zoom", mode, area="Motion", label="Camera on still pictures",
-                 show=PUSH_WORDS["alternate" if mode == "alternate" else "slow_in"],
-                 why=f"the camera moves over {round(still_cam * 100)}% of the runtime"
-                     + (", pushing in and pulling out" if mode == "alternate" else ", pushing in"),
+    still = classes.get("still", 0)
+    # of the pictures that are not moving on their own, how many the camera leaves alone (a channel that holds
+    # its pictures still must not get a push on every one: the engine's default)
+    held = still / (still + still_cam) if still + still_cam > 0 else 0.0
+    mode = "alternate" if zout >= 0.15 or (zin and zout) else "in"
+    if still + still_cam > 0:
+        if held >= 0.97:
+            value, show = "still", "held still"
+        elif held >= 0.25:
+            value = f"mix:{round(held, 2)}" + (":alternate" if mode == "alternate" else "")
+            show = f"held still {round(held * 100)}% of the time, otherwise " + PUSH_WORDS[
+                "alternate" if mode == "alternate" else "slow_in"]
+        else:
+            value, show = mode, PUSH_WORDS["alternate" if mode == "alternate" else "slow_in"]
+        plan.set("look.zoom", value, area="Motion", label="Camera on still pictures", show=show,
+                 why=f"the camera moves over {round(still_cam * 100)}% of the runtime and holds still over "
+                     f"{round(still * 100)}%" + (", pushing in and pulling out" if mode == "alternate" else ""),
                  source="measured")
+    if still_cam >= 0.08 or zin or zout:
         push = "alternate" if mode == "alternate" else "slow_in"
         if kinds.get("shake", 0) >= 0.1:
             push = "handheld_micro"
@@ -363,21 +433,24 @@ def _look(plan: Plan, profile: dict):
         pick = "kodachrome_warm"
     else:
         pick = "natural"
+    if plan.candid_photo and pick in ("kodachrome_warm", "tungsten_night", "teal_steel"):
+        # a phone photo is never graded like film; the phone-camera finish carries its look
+        filters = "an everyday phone photo, never graded like film"
+        pick = "natural"
     plan.set("look.fx.grade", pick, area="Look", label="Colour grade", show=GRADE_WORDS.get(pick, pick),
              why=f"{value} picture (brightness {round(luma) if luma is not None else '?'}/255)"
                  + (f", {grade['filter'][0]}" if grade.get("filter") else ""), source=",".join(grade.get("from", [])),
              confidence=grade.get("confidence"))
-    finish = {}
+    # always written: a base recipe's own film finish (a soft vignette, a film weave) darkens and roughens a channel
+    # whose references are clean, such as flat white drawings
     measured_grain = (look.get("grain") or {}).get("measured") or 0
     drawn = float(_v(look.get("drawn"), 0) or 0) >= 0.4
-    if grain == "heavy" or (grain == "light" and measured_grain >= 1.0 and not drawn):
-        finish["weave"] = True
-    if _has_words(filters, "vignette"):
-        finish["vignette"] = "soft"
-    if finish:
-        plan.set("look.fx.finish", finish, area="Look", label="Film finish",
-                 why=", ".join(k for k in ("grain" if finish.get("weave") else "", "vignette" if finish.get("vignette")
-                                         else "") if k), source="watched")
+    finish = {"weave": grain == "heavy" or (grain == "light" and measured_grain >= 1.0 and not drawn),
+              "vignette": "soft" if _has_words(filters, "vignette") else "none"}
+    seen = [k for k in ("grain" if finish["weave"] else "", "vignette" if finish["vignette"] != "none" else "") if k]
+    plan.set("look.fx.finish", finish, area="Look", label="Film finish", show=", ".join(seen) or "clean",
+             why=("the references show " + " and ".join(seen)) if seen else "the references have no grain or vignette",
+             source="watched")
     palette = [c["hex"] for c in _v(look.get("palette"), []) or [] if isinstance(c, dict) and c.get("hex")]
     accents = [h for h in palette if _saturation(h) >= 0.35 and _value(h) >= 0.35][:3]
     if accents:
@@ -429,6 +502,17 @@ def _text(plan: Plan, profile: dict):
         plan.notes.append({"for": "text", "text_style": style[:2], "graphics": (_v(text.get("graphics"), []) or [])[:6]})
 
 
+def _white_3d(profile) -> bool:
+    """The references' 3D is white models: bright and nearly colourless (measured), or watched as white or monochrome."""
+    grade = _get(profile, "look", "grade") or {}
+    luma, sat = grade.get("luma"), grade.get("saturation")
+    words = " ".join([str(_v(_get(profile, "pictures", "art_style"), "") or "")]
+                     + [str(x) for x in (profile.get("recognisable") or [])]).lower()
+    measured = luma is not None and sat is not None and float(luma) >= 150 and float(sat) <= 0.12
+    watched = bool(re.search(r"all[- ]white|white matte|matte[- ]white|monochrom\w* (matte[- ])?white", words))
+    return measured or watched
+
+
 def _features(plan: Plan, profile: dict, base: str, base_style: dict):
     fam = _families(profile)
     sources = _v(_get(profile, "pictures", "sources"), {}) or {}
@@ -446,9 +530,15 @@ def _features(plan: Plan, profile: dict, base: str, base_style: dict):
         "sound": True,
         "depth": plan.motion_cutout,
     }
+    # real photos (and cut-outs) of the people and things the narration names: what these channels show between their
+    # clips, and what fills the sentences real footage can't show (a 1-minute business documentary found footage for 20 of
+    # its 50 seconds and stretched a chapter card over the rest)
+    photos = sources.get("archival_photo", 0) + sources.get("cutout", 0) + sources.get("photo", 0)
+    want["spotlight"] = base in ("documentary", "nocturne", "jung") and (photos >= 0.03 or want["youtube"])
     offered = list((base_style.get("features") or {}).get("offered") or [])
     on = [k for k, v in want.items() if v]
     reasons = {"youtube": "real footage", "stock": "stock footage", "ai_images": "generated pictures", "maps": "maps",
+               "spotlight": "real photos of who and what is named",
                "headlines": "articles and screenshots", "motion": "motion graphics", "threed": "3D scenes",
                "avatar": "a presenter on camera", "sound": "sound design", "depth": "cut-out movement"}
     plan.set("features.on", on, area="Options", label="Switched on",
@@ -459,15 +549,21 @@ def _features(plan: Plan, profile: dict, base: str, base_style: dict):
     # Options starts from these ticks; a creator's own change in Options still wins
     plan.overrides["features"]["channel_on"] = list(on)
     plan.drop("features.auto_own", "the learned channel decides its own switches")
-    if base == "documentary" and fam:
+    if base in ("documentary", "jung", "nocturne") and fam:
+        # the middle share is every footage slot: YouTube footage and stock share them (YouTube first), so all the
+        # watched footage counts there, not only the stock part of it
         ai = round((fam.get("generated", 0) + fam.get("generated_motion", 0)) * 100)
-        stock = round(sources.get("stock_footage", 0) * 100)
+        footage = round(fam.get("footage", 0) * 100)
         gfx = round(fam.get("graphic", 0) * 100)
-        total = max(1, ai + stock + gfx)
-        mix = [round(ai * 100 / total), round(stock * 100 / total), 0]
+        total = max(1, ai + footage + gfx)
+        mix = [round(ai * 100 / total), round(footage * 100 / total), 0]
         mix[2] = 100 - mix[0] - mix[1]
-        plan.set("pacing.mix", mix, area="Options", label="Picture mix (AI, stock, graphics)",
+        plan.set("pacing.mix", mix, area="Options", label="Picture mix (AI, footage, graphics)",
                  why="the share of each in the watched shots", source="watched", show=f"{mix[0]} / {mix[1]} / {mix[2]}")
+    if want["threed"] and _white_3d(profile):
+        plan.set("look.threed.preset", "white_studio", area="Look", label="3D look",
+                 why="the references' 3D is an all-white matte world (watched and measured)", source="watched",
+                 show="all-white matte models")
     if fam.get("graphic", 0) >= 0.15 and base in ("stories", "avatar-premium"):
         plan.set("pacing.graphics", True, area="Options", label="Graphics between pictures",
                  why=f"{round(fam['graphic'] * 100)}% of the runtime is charts, maps or graphics", source="watched")
@@ -477,17 +573,24 @@ def _features(plan: Plan, profile: dict, base: str, base_style: dict):
 
 def _real_clips(plan: Plan, profile: dict, base: str):
     share = float(_v(_get(profile, "edit", "source_clips"), 0) or 0)
-    if share < 0.15 or base not in ("documentary", "nocturne", "jung"):
+    if base not in ("documentary", "nocturne", "jung"):
+        return
+    # a channel that opens on a real clip (a cold broadcast clip, raw bodycam) keeps its first seconds for footage,
+    # however little of the rest plays with its own sound
+    hook = " ".join(_v(_get(profile, "edit", "hook"), []) or []).lower()
+    if share >= 0.3 or _has_words(hook, "clip", "footage", "bodycam", "raw", "broadcast", "news"):
+        plan.set("pacing.cold_open_s", 6.0, area="Edit", label="Open on a real clip",
+                 why="the references open on raw footage before the narration", source="watched")
+    if share < 0.15:
         return
     quotes = int(_clamp(round(share * 24), 2, 16))      # about two clips per minute of a 10-minute video at 50%
-    plan.set("look.soundbites", {"quotes": quotes, "max_s": 20.0, "soundups": 3, "montage": True}, area="Edit",
+    # the name montage (people saying the name to camera: interviews, podcasts, talk shows) is a sports or celebrity
+    # documentary's opening; a true crime channel opens on its raw footage (sound-ups), never on commentators
+    montage = _has_words(hook, "montage") and _has_words(hook, "interview", "talk", "says", "saying", "anchor", "host")
+    plan.set("look.soundbites", {"quotes": quotes, "max_s": 20.0, "soundups": 3, "montage": montage}, area="Edit",
              label="Real clips with their own sound",
              why=f"real footage plays with its own sound {round(share * 100)}% of the runtime", source="watched",
              show=f"about {quotes} clips, up to 20 s each, opening on raw moments")
-    hook = " ".join(_v(_get(profile, "edit", "hook"), []) or []).lower()
-    if share >= 0.3 or _has_words(hook, "clip", "footage", "bodycam", "raw"):
-        plan.set("pacing.cold_open_s", 6.0, area="Edit", label="Open on a real clip",
-                 why="the references open on raw footage before the narration", source="watched")
 
 
 def _sound(plan: Plan, profile: dict):
@@ -500,8 +603,18 @@ def _sound(plan: Plan, profile: dict):
         snd.update(music=False)
         why = "the references' pauses have no music (measured)"
     elif level in ("score", "bed", "quiet"):
-        # the engine's bed level is against the narration's own loudness, a few dB under its peak
-        rel = round(_clamp((bed if bed is not None else -20) + 4, -26, -4), 1)
+        # the engine's bed level is against the narration's own loudness, a few dB under its peak. Music heard in
+        # only some pauses is set from its level where it plays: the median over every pause is mostly silence then
+        # (a recap channel read -43 dB, and a bed set from that was too quiet to hear in 96% of the pauses)
+        heard, fill = music.get("bed_when_heard_db"), music.get("filled_pauses")
+        intermittent = fill is not None and fill < 0.6
+        if intermittent and heard is not None:
+            at = heard
+        elif intermittent:
+            at = max(bed if bed is not None else -20, -34.0)   # profiles measured before the level where it plays
+        else:
+            at = bed if bed is not None else -20
+        rel = round(_clamp(at + 4, -38, -4), 1)
         snd.update(music=True, music_rel_db=rel, duck_db=-6.0 if level == "score" else -8.0)
         why = f"music in the pauses about {abs(bed or 0):.0f} dB under the voice (measured)"
     else:
@@ -526,12 +639,23 @@ def _sound(plan: Plan, profile: dict):
     snd["sfx_flavor"] = ("analog_paper" if _has_words(kinds, "paper", "marker", "pen", "chalk", "pop") else
                          "tech_digital" if _has_words(kinds, "click", "ui", "glitch", "digital", "keyboard") else
                          "cinematic_subtle")
+    if bed is not None and music.get("filled_pauses") is not None:
+        # what the references measure, kept so every video's sound check can say how close it came (cr_sound_qc)
+        snd["target"] = {"bed_in_pauses_db": round(float(bed), 1), "pauses_filled": round(float(music["filled_pauses"]), 2)}
+    amb = sound.get("ambience") or {}
+    if amb.get("present") and _v(amb, []):
+        # the air of each place under the pictures (cr_ambience): heard throughout, the channel's usual place fills
+        # the gaps; heard in places only, it plays only where a picture shows a place
+        # no default place: what a reference was heard to have belongs to its story (a prison story's corridor);
+        # each picture brings its own place
+        snd["ambience"] = {"scenes": True, "db": -14.0 if snd.get("music") is False else -18.0, "default": ""}
+        why += f"; the sound of each place under the pictures ({', '.join(_v(amb, [])[:3])})"
     plan.set("look.sound", snd, area="Sound", label="Music and effects",
              why=why + f"; effects {sfx or 'unknown'}" + (f"; mood {vibe.replace('_', ' ')}" if vibe else ""),
              source="measured,watched",
              show=("no music" if snd.get("music") is False else
                    f"music {snd.get('music_rel_db', 'as recipe')} dB" if snd.get("music") else "recipe default")
-                  + f", effects {sfx or 'default'}")
+                  + f", effects {sfx or 'default'}" + (", the sound of each place" if snd.get("ambience") else ""))
     plan.notes.append({"for": "sound", "music_level": level, "bed_in_pauses_db": bed,
                        "genres": music.get("genres") or [], "moods": (music.get("moods") or [])[:6],
                        "instruments": (music.get("instruments") or [])[:6], "sfx": sfx,
@@ -618,7 +742,7 @@ def answer(profile: dict, answers: dict) -> dict:
         import cr_style_profile
         lead = cr_style_profile.lead_character(p)
         if lead:                                     # the character who carries the video becomes the channel's mascot
-            lead["role"] = "mascot"
+            lead.update(role="mascot", promoted=True)
     if host.startswith("No"):
         chars = pics.get("characters") or {}
         chars["value"] = [c for c in chars.get("value") or [] if c.get("role") not in ("mascot", "presenter")]
@@ -654,6 +778,7 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
     base_style = styles[chosen]
     plan = Plan()
     _pictures(plan, profile, chosen, base_style)
+    _storyboard(plan, profile, chosen)
     _pace(plan, profile, chosen)
     _motion(plan, profile, chosen, minutes_hint)
     _look(plan, profile)

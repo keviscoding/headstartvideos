@@ -34,6 +34,9 @@ already passes.
    `start "" "Start on Windows.cmd"`. The launcher window must stay open; its
    first run installs libraries and a graphics browser, which takes a few
    minutes. If it fails, read the error in that window with the customer.
+   Never run `cr_studio.py` yourself inside a command or a background shell:
+   when that command ends or times out, Studio closes, and any video it is
+   making stops with it. Only the launcher's own window keeps it running.
 5. **Open setup.** When the launcher says it's ready, open
    http://127.0.0.1:7860/cr-setup and tell the customer, in plain words, it's
    three buttons, top to bottom:

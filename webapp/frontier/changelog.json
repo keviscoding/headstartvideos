@@ -1,5 +1,35 @@
 [
   {
+    "build": 61,
+    "date": "2026-10-16",
+    "title": "Ready-made recipes, Studio colour 3D and your own call to action",
+    "items": [
+      "New: Five ready-made recipes learned from top channels and tested end to end: Stick Figure Stories, Hand-Drawn Money, Clean 3D Reconstruction, Deadly Places Documentary and Manga Recaps.",
+      "New: Whiteboard styles draw every picture on: a hand with a marker traces the lines, you hear the marker, then the colour comes in.",
+      "New: Manga Recaps uses your own panels. Upload pictures or a .zip or .cbz; long webtoon strips are cut into panels and page margins trimmed for you. Studio reads them, writes the recap and shows each panel on the words that tell it, with no picture costs.",
+      "New: A call to action in any video. Say what you promote and its link, add a cover or screenshot and choose one to three mentions. The narrator mentions it after the first three minutes, a card with a QR code appears as they say it, and the description opens with your link.",
+      "New: Add your own presenter. Upload a photo, name them and choose their voice; they talk to camera lip-synced and appear in the pictures doing what is said.",
+      "New: The sound of each place. Learned styles whose channels use ambience lay rain, wind, a crowd or a quiet room under the pictures that show those places.",
+      "New: Choose how many pictures a minute a story recipe draws, down to a floor that keeps each picture on its own words.",
+      "New: Choose each video's 3D look: a clean white studio, Studio colour (the same clean models painted in your palette, ivory with signal yellow unless you pick another) or colour film.",
+      "Improved: Learned picture styles draw what the narrator explains, not mood pictures: the money leaving a bank, the gap between two numbers. Story styles draw the moment being told.",
+      "Improved: Pictures never carry an invented caption, date, place name or archive label; only the words the scene itself names.",
+      "Improved: Style cloning matches channels more closely: their real share of footage, their film finish, how loud their music sits even when it comes and goes, a cold open on a real clip, presenter screen time, hand-drawn and comic lettering, recurring characters, and channels that hold their pictures still.",
+      "Improved: Real footage fails far less often. Studio asks YouTube gently and over IPv4 when your connection has it, and when YouTube refuses, the video says why and what fixes it. Real-photo searches no longer pick other channels' thumbnails.",
+      "Improved: Photo styles look like real phone pictures instead of glossy AI images, and people are never drawn as a lone hand reaching into the frame.",
+      "Improved: Documentary chapter cards hold their title while the new section begins, with no film burn unless the channel uses one.",
+      "Improved: Studies references up to 24 hours long, retries a failed download, and tells you when part of a reference couldn't be measured.",
+      "Improved: \"I'll upload my own\" host or mascot now asks for your character after you choose a sample.",
+      "Fixed: Presenter recipes on a Kie account no longer stop with \"needs its original service\"; the presenter speaks through Kling.",
+      "Fixed: In stories with moving pictures every picture now appears on its own sentence; it used to arrive one sentence early, and the moving pictures were missing.",
+      "Improved: A style study that stops now says why, and you can start it again right there.",
+      "Fixed: On Windows, a video no longer stops when Studio reads its progress at the same moment (\"PermissionError [WinError 5]\"). If Studio is closed while it makes a video, it tells you so the next time it starts.",
+      "Fixed: A long Claude Code answer, such as the 3D review of a long video, comes back whole instead of being cut off.",
+      "Fixed: A network blip before a picture or clip request is sent no longer stops the video, and a refused request says which error code it was.",
+      "Fixed: When the footage search service is down, Studio stops asking it after a few tries instead of waiting most of an hour."
+    ]
+  },
+  {
     "build": 60,
     "date": "2026-10-15",
     "title": "Style learning that sees the whole channel",

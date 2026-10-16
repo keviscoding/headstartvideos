@@ -11,6 +11,8 @@ engine adds to every image prompt.
 """
 from __future__ import annotations
 
+import re
+
 NICHE_BASES = {"stories", "jung"}
 
 OUTLINE = """You plan one episode of a faceless YouTube channel.
@@ -55,9 +57,10 @@ those exact words every time. If THE CAST is given, copy each cast member's desc
 are in frame.
 
 BE A STORYTELLER: frames follow each other like a comic. Vary the shot the way an editor would: the wide scene, a
-close reaction, the hands, the object on its own. Never repeat a frame or a layout twice in a row. Never illustrate an
-idea with a symbol; show the real moment. Describe the scene, not the art style: the channel's picture style is added
-to every prompt for you.
+close reaction on a face, the object on its own. Never repeat a frame or a layout twice in a row. Never illustrate an
+idea with a symbol; show the real moment. Keep every person whole in the frame, or clearly one person in a close-up:
+never a lone arm or hand reaching in from the edge without the person it belongs to. Describe the scene, not the art
+style: the channel's picture style is added to every prompt for you.
 
 Return ONLY a JSON array of [INSERT COUNT HERE] objects, in narration order. Laid end to end, the "text" fields are the
 narration itself, with nothing skipped:
@@ -84,3 +87,82 @@ def overrides(base: str, craft: str = "", channel: str = "") -> dict:
     if craft in ("story", "teaching"):
         out["script_craft"] = craft
     return out
+
+
+OUTLINE_SOUND = """
+
+ORIGINAL SOUND: this channel lets the real recordings speak (a 911 call, an officer's words on bodycam, a witness, a
+statement, a verdict, an executive on stage). Plan about one such moment for each minute of the video, at least one:
+the narration sets it up, then the real recording plays with its own sound. Note each in its beat as
+"[CLIP: who says what, where]", and only moments that were really recorded and published."""
+
+SCRIPT_SOUND = """
+
+ORIGINAL SOUND HANDOFFS: where the plan marks [CLIP: ...], write the narration so it hands off to the real recording,
+then put one line holding only "[[clip: who says what, in a few words]]" on its own line right after that paragraph
+(for example "[[clip: the 911 caller describing the van]]"). The edit finds the real recording and cuts to it there,
+with its own sound and its words on screen, and the narration waits. Never repeat the recording's words in the
+narration."""
+
+
+def with_original_sound(style: dict) -> dict:
+    """A style whose videos play real clips with their own sound (look.soundbites.quotes) asks its outline to plan
+    those moments and its script to mark them ([[clip: ...]]): the clips are found only where the script marks them."""
+    sb = ((style.get("look") or {}).get("soundbites") or {})
+    prompts = style.get("prompts") if isinstance(style.get("prompts"), dict) else {}
+    if not (isinstance(sb, dict) and int(sb.get("quotes") or 0) > 0) or not prompts:
+        return style
+    for key, add in (("outline", OUTLINE_SOUND), ("script", SCRIPT_SOUND)):
+        text = prompts.get(key)
+        if isinstance(text, str) and text and "ORIGINAL SOUND" not in text:
+            prompts[key] = text.rstrip() + add
+    return style
+
+
+SYMBOL_RULE = re.compile(r"Never\s+illustrate\s+an\s+idea\s+with\s+a\s+symbol;\s+show\s+the\s+real\s+moment\.")
+EXPLAIN_RULE = ("EXPLAIN, NEVER DECORATE: every frame makes the line's point visible, the way the best explainer channels "
+                "draw it. A line about a mechanism or an idea is acted out as one clear visual metaphor: the channel's "
+                "recurring host or cut-out figures DO the thing (a banker pocketing the gap between two rates, a hand "
+                "turning a dial marked with the rate, money draining through a funnel labelled with what drains it), "
+                "with short labels on the objects carrying the line's numbers and names. A line about a real event "
+                "shows that event. Never a decorative establishing shot, never a picture that only sets a mood.")
+STORYBOARDS = ("literal", "explain")         # look.storyboard: what a learned style's pictures do
+
+
+def storyboard_prompt(look) -> str:
+    """The storyboard prompt a learned style draws with: its own, or Studio's (each frame shows exactly what the line
+    says) when its look asks for one (look.storyboard): "literal", or "explain" for explainer channels, whose
+    pictures act ideas out as labelled visual metaphors. "" when the engine's own prompt stands."""
+    look = look if isinstance(look, dict) else {}
+    kind = str(look.get("storyboard") or "")
+    scene = current_scene(look.get("scene_prompt")) if look.get("scene_prompt") else (SCENE if kind in STORYBOARDS else "")
+    if scene and kind == "explain":
+        scene = SYMBOL_RULE.sub(EXPLAIN_RULE, scene)
+    return scene or ""
+
+
+def current_scene(scene):
+    """Studio's storyboard prompt as it is today, for a learned style saved with an older one (an older one let a lone
+    arm reach into the frame); any other prompt is returned unchanged."""
+    if (isinstance(scene, str) and scene.startswith("You are the storyboard artist for a faceless YouTube video.")
+            and "[INSERT CHANNEL HERE]" in scene and scene != SCENE):
+        return SCENE
+    return scene
+
+
+def install(engine):
+    """Learned styles draw with today's storyboard prompt, the kind their look asks for (in memory: their files stay
+    as saved)."""
+    original = getattr(engine, "_scene_prompts", None)
+    if original is None or getattr(original, "_cr_current", False):
+        return
+
+    def _scene_prompts(style):
+        look = ((getattr(engine, "STYLE_INFO", {}) or {}).get(style) or {}).get("look")
+        if isinstance(look, dict):
+            scene = storyboard_prompt(look)
+            if scene:
+                look["scene_prompt"] = scene
+        return original(style)
+    _scene_prompts._cr_current = True
+    engine._scene_prompts = _scene_prompts

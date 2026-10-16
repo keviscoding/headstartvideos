@@ -133,11 +133,12 @@ def _packaged_frame(home, style):
     row = frames.get(style)
     # Only labelled style references (schema 2). Retired engine sample frames
     # (schema 1) are never shown, even if an old file is still on disk.
-    if (data.get("schema") != 2 or not isinstance(row, dict) or row.get("kind") != "style_reference"
-            or row.get("file") != style + ".jpg"):
+    # A labelled style reference credits its channel; a ready-made recipe's own picture was drawn by Studio.
+    if (data.get("schema") != 2 or not isinstance(row, dict)
+            or row.get("kind") not in ("style_reference", "studio_sample") or row.get("file") != style + ".jpg"):
         return None
     expected, channel = row.get("sha256"), str(row.get("channel") or "").strip()[:60]
-    if not isinstance(expected, str) or not _SHA.fullmatch(expected) or not channel:
+    if not isinstance(expected, str) or not _SHA.fullmatch(expected) or (row["kind"] == "style_reference" and not channel):
         return None
     path = _file(root / row["file"], root, {".jpg"})
     if path is None:
@@ -145,10 +146,23 @@ def _packaged_frame(home, style):
     try:
         stat = path.stat()
         if _verified_frame(str(path), stat.st_size, stat.st_mtime_ns, expected):
-            return Source(path, "Style reference · " + channel)
+            return Source(path, "Style reference · " + channel if row["kind"] == "style_reference"
+                          else "Made with ChannelRecipe Studio")
     except OSError:
         pass
     return None
+
+
+def _learned_sample(home, info):
+    """The sample a creator chose for a learned style (look.style_image under assets/styles/learned/), or None."""
+    rel = str(((info.get("look") or {}) if isinstance(info.get("look"), dict) else {}).get("style_image") or "")
+    if not rel.startswith("styles/learned/") or ".." in rel:
+        return None
+    root = Path(home).resolve() / "assets"
+    path = _file(root / rel, root / "styles" / "learned", {".jpg", ".png"})
+    if path is None or path.stat().st_size > _MAX_IMAGE:
+        return None
+    return Source(path, "Your style sample")
 
 
 def _study_frame(home, style, info, bridge):
@@ -218,7 +232,8 @@ def recipe_source(studio, home, style, bridge, *, latest=None):
     # Your own latest video in this recipe first, then a learned style's own
     # frames, then the recipe's labelled style reference. The retired engine
     # sample films are no longer used for previews.
-    return (outputs.get(style) or _study_frame(home, style, info, bridge) or _packaged_frame(home, style))
+    return (outputs.get(style) or _learned_sample(home, info) or _study_frame(home, style, info, bridge)
+            or _packaged_frame(home, style))
 
 
 def _prune(root):

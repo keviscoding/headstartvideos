@@ -49,8 +49,12 @@ Return ONE JSON object:
    'THE CAST — ' then each in drawable words (body, face, hair, clothes, one distinguishing item), with a new name.
    Never the people of the reference video's own story (they belong to that one video). Usually empty.",
  "people": "one or two sentences: how ANY person in this channel is drawn (body, head, face, proportions), so new
-   characters in new stories look like they belong",
- "mascot": {"name": "a new name", "look": "drawable words", "role": "host or explainer"} or null,
+   characters in new stories look like they belong. Every person is whole in the frame or one clear close-up; never
+   people shown only as hands, arms or a back (image models draw those as lone limbs)",
+ "mascot": {"name": "a new name", "look": "drawable words", "role": "host or explainer"} or null. When a character
+   in the profile is marked promoted, the creator wants every video to keep a recurring character like them: design
+   that mascot the way they are drawn, keep their look only where it is not tied to that one story (never its costume,
+   uniform, era clothing or props), and give them one distinguishing item (a cap, a scarf, glasses),
  "video_motion": "25 to 50 words: how a picture of this style may move when it is animated (what moves, how much,
    what never changes); for cut-out styles say the figures slide as flat cut-outs",
  "script_voice": ["3 to 6 short lines for the script writer: point of view (you / I / they), tone, sentence length,
@@ -59,6 +63,9 @@ Return ONE JSON object:
    text appear, where the edit breathes"],
  "craft": "story (one person's or one event's story, told in order) or teaching (the viewer learns how something
    works or what to do)",
+ "broll": ["6 to 10 short stock-footage searches (2 to 4 words each) for the generic b-roll this channel cuts to
+   between its specific shots, in its subject area and mood (for a money channel: 'counting cash close up', 'bank
+   building exterior'); never names, never the reference video's own story"],
  "hook_notes": "one or two sentences: how the first 30 seconds run",
  "body_notes": "one or two sentences: how the edit runs after the hook"
 }
@@ -88,7 +95,7 @@ def _compact(profile: dict, mapping: dict) -> dict:
         "recognisable": profile.get("recognisable", [])[:8],
         "art_style": v("pictures", "art_style", "value"), "art_alternatives": v("pictures", "art_style", "alternatives"),
         "picture_finish": v("pictures", "polish", "value"), "picture_sources": v("pictures", "sources", "value"),
-        "characters": [{k: c.get(k) for k in ("name", "look", "role", "screen_share")}
+        "characters": [{k: c.get(k) for k in ("name", "look", "role", "screen_share", "promoted") if k in c}
                        for c in (v("pictures", "characters", "value") or [])[:5]],
         "grade": {k: v("look", "grade", k) for k in ("value", "luma", "filter")},
         "motion": v("motion", "classes", "value"), "motion_kinds": v("motion", "kinds", "value"),
@@ -140,9 +147,23 @@ def _clean(text, limit: int, banned: list) -> str:
     return text
 
 
+_NEGATED = re.compile(r"\b(no|not|never|without|nor|avoid)\s+(?:\w+[ -]+){0,2}$", re.I)
+# people shown only in part: the picture model draws them as a lone hand or arm reaching into the frame
+_PARTIAL = re.compile(r"\b(in part|partly|partially|disembodied|only (?:as |their )?(?:hands|arms)|such as (?:their )?hands"
+                      r"|hands or (?:a |their )?backs?|(?:just|only) (?:a |their )?(?:hands?|arms?))\b", re.I)
+
+
+def _whole_people(text: str) -> str:
+    """The text without any sentence that asks for people shown in part (only hands, arms or a back)."""
+    kept = [s for s in re.split(r"(?<=[.!?])\s+", text or "") if not _PARTIAL.search(s)]
+    return " ".join(kept).strip()
+
+
 def _candid(text: str) -> str:
     """A candid picture style without the words that make a model draw glossy, perfect photographs."""
     def plain(match):
+        if _NEGATED.search(match.string[:match.start()]):
+            return match.group(0)                       # "no studio light" already says it plainly
         words = match.group(0).lower()
         if "light" in words or words.endswith("lit"):
             return "natural light"
@@ -168,6 +189,8 @@ def check(answer: dict, *, banned: list, candid: bool = False) -> dict:
     if candid:
         for key in ("still_suffix", "people", "description"):
             out[key] = _candid(out[key])
+    for key in ("still_suffix", "people", "cast"):
+        out[key] = _whole_people(out[key])
     words = len(out["still_suffix"].split())
     if words < 20:
         raise ValueError("the picture style came back too short to steer an image model")
@@ -179,14 +202,23 @@ def check(answer: dict, *, banned: list, candid: bool = False) -> dict:
     for key in ("script_voice", "editor_notes"):
         rows = answer.get(key) if isinstance(answer.get(key), list) else []
         out[key] = [_clean(x, 220, banned) for x in rows if str(x).strip()][:6]
+    rows = answer.get("broll") if isinstance(answer.get("broll"), list) else []
+    out["broll"] = [q for q in (_clean(x, 60, banned) for x in rows) if 2 <= len(q.split()) <= 6][:10]
     return out
+
+
+# An image model dresses an archival picture with its own caption strip ("ALPINE CLUB, 1968" on a 1930s scene): every
+# learned style's pictures carry only the words their scene asks for.
+LETTERING = (" Lettering: only the words the scene itself names, on the thing they belong to; never an invented caption, "
+             "date, title, place name or archive label.")
 
 
 def overrides(art: dict) -> dict:
     """Style settings from a checked answer (deep-merged over the mapping's own)."""
     avoid = re.sub(r"^(no|never|avoid)[:\s]+", "", art.get("avoid") or "", flags=re.I).rstrip(".")
     people = (" People: " + art["people"].rstrip(".") + ".") if art.get("people") else ""
-    look = {"still_suffix": " " + art["still_suffix"].rstrip(".") + "." + people + (f" Avoid: {avoid}." if avoid else "")}
+    look = {"still_suffix": " " + art["still_suffix"].rstrip(".") + "." + people + (f" Avoid: {avoid}." if avoid else "")
+            + LETTERING}
     cast = art.get("cast", "")
     if art.get("mascot"):
         m = art["mascot"]
@@ -202,6 +234,9 @@ def overrides(art: dict) -> dict:
         out["tagline"] = art["tagline"]
     if art.get("script_voice"):
         out["script_notes"] = art["script_voice"]
+    if art.get("broll"):
+        # the channel's own fallback b-roll searches (without them the engine falls back to a cosmic default pool)
+        out["stock_queries"] = art["broll"]
     if art.get("editor_notes"):
         out["director_notes"] = art["editor_notes"]
     pacing = {k: art[k] for k in ("hook_notes", "body_notes") if art.get(k)}

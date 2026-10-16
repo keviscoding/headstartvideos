@@ -28,6 +28,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 HOME = Path(__file__).resolve().parent
 STUDY_GUIDANCE = HOME / "cr-style-study-brief.txt"
 MAX_REFERENCES = 3
+MAX_REFERENCE_S = 24 * 3600
 PREVIEW_LIMIT = 8
 PHASES = {
     "prepared": (0, "Your approved reference study is ready to start."),
@@ -167,10 +168,11 @@ def _ytdlp_command():
     render workers, and yt-dlp subclasses Popen at import time.
     """
     import importlib.util
+    ipv4 = ["--force-ipv4"] if os.environ.get("YT_FORCE_IPV4", "") not in ("", "0", "no", "off", "false") else []
     if importlib.util.find_spec("yt_dlp") is not None:
-        return [sys.executable, "-m", "yt_dlp"]
+        return [sys.executable, "-m", "yt_dlp"] + ipv4
     found = shutil.which("yt-dlp")
-    return [found] if found else []
+    return [found] + ipv4 if found else []
 
 
 def list_videos(url, limit, timeout=90, *, run=subprocess.run):
@@ -238,8 +240,10 @@ def preview(home, url, *, learner=None):
             "title": str(row.get("title") or "Untitled reference")[:300],
             "channel": str(row.get("channel") or "")[:160],
             "views": max(0, int(row.get("views") or 0)), "duration_seconds": duration,
-            "eligible": 60 <= duration <= 4 * 3600,
-            "eligibility_note": "" if 60 <= duration <= 4 * 3600 else "Choose a reference between one minute and four hours with a known duration."})
+            # a look samples a few minutes of each reference, so marathon recaps (manhwa channels post 5 to 12
+            # hour videos) can be studied too
+            "eligible": 60 <= duration <= MAX_REFERENCE_S,
+            "eligibility_note": "" if 60 <= duration <= MAX_REFERENCE_S else "Choose a reference between one minute and 24 hours with a known duration."})
         if len(candidates) == PREVIEW_LIMIT:
             break
     if not candidates:
@@ -391,8 +395,13 @@ def status(home, operation_id, bridge):
     percent, message = PHASES.get(phase, PHASES["prepared"])
     failure_code = saved.get("failure_code", "")
     native_failure = _native_failure(home, saved) if state == "failed" else ""
+    said, stop_type = "", ""
     if state == "failed":
+        failure = _read(folder / "failure.json")
+        said, stop_type = str(failure.get("message") or "").strip(), str(failure.get("exception_type") or "")
         message = "This study stopped. Review its saved Claude stages in setup before approving any further work. It will not run again automatically."
+        if said:
+            message = said + " Your study is saved; start it again here when you're ready."
         if native_failure == "timeout":
             message = "Claude timed out while " + PHASES.get(phase, PHASES["prepared"])[1].rstrip(".").lower() + ". Your saved study is intact. Review your references and approve a new study here; setup review is not required to start a separate attempt."
         elif native_failure == "usage_limit":
@@ -414,7 +423,11 @@ def status(home, operation_id, bridge):
     result["metadata_recovery_available"] = state == "failed" and (
         _recovery_checkpoint_ready(folder, saved) or _legacy_recovery_possible(home, folder, saved))
     result["failure_code"] = native_failure or failure_code
-    result["setup_review_required"] = state == "failed" and native_failure not in {"timeout", "usage_limit"} and failure_code != "metadata_handoff_failed"
+    # setup can help only with Claude itself (sign-in, model access); a stop the study explains is retried here
+    result["setup_review_required"] = (state == "failed" and native_failure not in {"timeout", "usage_limit"}
+                                       and failure_code != "metadata_handoff_failed"
+                                       and not (said and stop_type == "StudyStopped"))
+    result["stop_reason"] = said
     if state == "failed" and not result["metadata_recovery_available"]:
         result["retry_spec"] = {key: copy.deepcopy(saved["spec"][key]) for key in (
             "preview_id", "reference_url", "references", "base_style", "name", "label", "title", "brief",
@@ -464,8 +477,10 @@ def _record_failure(folder, saved, error):
     """Persist useful private frames, without provider text or secrets."""
     saved["failure_code"] = ("metadata_handoff_failed" if _recovery_checkpoint_ready(folder, saved)
                              else "study_failed")
+    # a stop Studio itself explains (its own wording, never provider text) is kept, so the page can say why
+    said = str(error)[:400] if type(error).__name__ in ("StudyStopped", "ClaudeStageStopped") else ""
     _write(folder / "failure.json", {"schema": 1, "failure_code": saved["failure_code"],
-        "exception_type": type(error).__name__, "phase": saved.get("phase"), "at": time.time(),
+        "exception_type": type(error).__name__, "message": said, "phase": saved.get("phase"), "at": time.time(),
         "frames": [{"file": Path(frame.filename).name, "function": frame.name, "line": frame.lineno}
                    for frame in traceback.extract_tb(error.__traceback__)]})
 
@@ -655,6 +670,19 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
         learner=learner, designer=designer, log=log, report=clock.report())
 
 
+def _portable(value, home):
+    """The style with every path inside this Studio written relative to it (its kit's manifest, the study board), so
+    the style keeps working when the Studio folder moves; the engine reads them from the Studio folder."""
+    root = str(Path(home).resolve()) + "/"
+    if isinstance(value, dict):
+        return {k: _portable(v, home) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_portable(v, home) for v in value]
+    if isinstance(value, str) and value.startswith(root):
+        return value[len(root):]
+    return value
+
+
 def _studio_home(folder):
     """The studio folder an operation lives in (<home>/output/cr-style-clone/op_...)."""
     return Path(folder).resolve().parents[2]
@@ -734,6 +762,7 @@ def _apply_learned(folder, spec, style, log):
         (art.get("overrides") or {}).get("description") or learned.get("description", "")))
     if art.get("overrides"):
         cr_style_map._merge(learned, art["overrides"])
+    cr_style_prompts.with_original_sound(learned)      # real clips are found only where the script marks them
     learned.setdefault("cr_style_clone", {}).update(
         learned_v2={"look_id": spec["look_id"], "base": mapping["base"], "base_why": mapping["base_why"],
                     "needs": mapping["needs"], "cost": mapping["cost"], "art_director": bool(art.get("overrides")),
@@ -795,6 +824,7 @@ def finish_original(engine, folder, spec, design, record, progress, *, learner=N
     if style["cr_style_clone"]["visual_mode"] == "reference_only":
         import cr_style_delivery
         cr_style_delivery.configure_style(style)
+    style = _portable(style, _studio_home(folder))
     _write(folder / "ready-style.json", style)
     _write(folder / "study-result.json", {"references": [r["id"] for r in spec["references"]],
         "kit": record["kit"], "reference_used": (record.get("reference") or {}).get("id", ""),

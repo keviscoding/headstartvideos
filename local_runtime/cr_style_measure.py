@@ -445,6 +445,9 @@ def measure_sound(path, seconds: float) -> dict:
         out["silent_pauses_share"] = round(float((gap_db < -40).mean()), 3)
         sounding = inner[gap_db >= -40]
         if len(sounding):
+            # how loud the music is where it plays: with music in a few pauses only, the median over every pause is
+            # mostly silence and reads it ten dB quieter than it is
+            out["bed_when_heard_db"] = round(float(np.median(gap_db[gap_db >= -40])), 1)
             flat = b["flat"][sounding]
             out["pause_fill"] = {"tonal": round(float((flat < 0.08).mean()), 3),     # music, a held note
                                  "noisy": round(float((flat > 0.3).mean()), 3)}      # rain, room, wind, whooshes
@@ -549,7 +552,7 @@ def combine(sections: list) -> dict:
         out["look"] = {k: v for k, v in look.items() if v is not None}
     sounds = [dict(sec["sound"], _w=sec["sound"].get("seconds", 1)) for sec in sections if sec.get("sound")]
     if sounds:
-        snd = {k: _weighted(sounds, k) for k in ("speech_share", "bed_in_pauses_db", "silent_pauses_share",
+        snd = {k: _weighted(sounds, k) for k in ("speech_share", "bed_in_pauses_db", "bed_when_heard_db", "silent_pauses_share",
                                                  "filled_pauses_share", "hits_in_pauses_per_min", "booms_per_min",
                                                  "longest_pause_s", "sub_bass_under_speech_db", "voice_peak_dbfs")}
         per = [s["pauses_per_min"] for s in sounds if isinstance(s.get("pauses_per_min"), dict)]

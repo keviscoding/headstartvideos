@@ -205,16 +205,19 @@ def ensure_music(job: Path, look: dict, total: float, log=print, *, generate_fn=
     import epidemic_sound
     generate_fn = generate_fn or generate
     try:
+        import cr_storyboard
+        board = cr_storyboard.board_for(job, look, total, log) if sections is None else {}
         sections = sections if sections is not None else epidemic_sound._sections(job, total)
         if not sections:
             return None
+        hints = [cr_storyboard.hint(board, a) for a, _, _, _ in sections]
         sig = hashlib.sha1(json.dumps([[round(a, 2), round(b, 2), m] for a, b, m, _ in sections]
-                                      + [cfg]).encode()).hexdigest()[:12]
+                                      + [cfg] + hints).encode()).hexdigest()[:12]
         plan_f = job / "sound" / "score_plan.json"
         if plan_f.is_file():
             got = json.loads(plan_f.read_text(encoding="utf-8"))
             if got.get("sig") == sig and all((job / "sound" / "music" / p["file"]).is_file() for p in got["tracks"]):
-                return epidemic_sound._bed(job, got["tracks"], total)
+                return cr_storyboard.shape(epidemic_sound._bed(job, got["tracks"], total), board)
         jobs = roles(len(sections))
         folder = job / "sound" / "music"
         folder.mkdir(parents=True, exist_ok=True)
@@ -226,7 +229,8 @@ def ensure_music(job: Path, look: dict, total: float, log=print, *, generate_fn=
             want = (b - a) + (epidemic_sound.XFADE_S if i < len(sections) - 1 else 2.0)
             inputs = {"custom_mode": True, "instrumental": True, "model": SUNO,
                       "title": re.sub(r"[^\w ]+", "", str(title or f"Section {i + 1}"))[:60] or f"Section {i + 1}",
-                      "style": style_text(cfg, mood, jobs[i]), "negative_tags": avoid_text(cfg),
+                      "style": (style_text(cfg, mood, jobs[i]) + ("; " + hints[i] if hints[i] else ""))[:990],
+                      "negative_tags": avoid_text(cfg),
                       "duration": int(min(360, max(10, round(want))))}
             takes = generate_fn(inputs, folder / f"{i + 1:02d}_score", log=log)
             scored = sorted(((fit(envelope(t), jobs[i], want), t) for t in takes), key=lambda x: -x[0])
@@ -239,7 +243,7 @@ def ensure_music(job: Path, look: dict, total: float, log=print, *, generate_fn=
         plan_f.write_text(json.dumps({"sig": sig, "tracks": plan}, indent=1), encoding="utf-8")
         for p in plan:
             log(f"  score {p['t0'] / 60:5.1f}-{p['t1'] / 60:5.1f} min [{p['role']}, {p['mood'] or '-'}] {p['file']}")
-        return epidemic_sound._bed(job, plan, total)
+        return cr_storyboard.shape(epidemic_sound._bed(job, plan, total), board)
     except Exception as exc:                                       # noqa: BLE001 - the usual music stays
         log(f"  score: not made ({type(exc).__name__}: {str(exc)[:140]}); the channel's usual music plays")
         return None

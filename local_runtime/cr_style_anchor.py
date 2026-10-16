@@ -86,8 +86,13 @@ def _frames(home, style) -> list:
     return sorted(cr_style_look.folder(home, look_id).glob("frames/*.jpg"))
 
 
+def _wants_upload(saved: dict) -> bool:
+    """The creator answered that they will upload their own host or mascot."""
+    return str(((saved.get("spec") or {}).get("answers") or {}).get("host") or "").startswith("Yes, I'll upload")
+
+
 def status(home, operation_id) -> dict:
-    folder, _, _, style = _learned(home, operation_id)
+    folder, saved, _, style = _learned(home, operation_id)
     state = _read(folder / "anchors" / "anchors.json")
     with _lock:
         running = operation_id in _jobs
@@ -97,7 +102,8 @@ def status(home, operation_id) -> dict:
                                                                                     f"sample_{i}.jpg").is_file()],
             "chosen": state.get("chosen"), "character": bool(look.get("character_image")),
             "has_cast": bool(str(look.get("character") or "").strip()),
-            "style_image": bool(look.get("style_image")), "cost_usd": round(0.02 * (len(SUBJECTS) + 1), 2)}
+            "style_image": bool(look.get("style_image")), "cost_usd": round(0.02 * (len(SUBJECTS) + 1), 2),
+            "upload_character": _wants_upload(saved)}
 
 
 def start(home, operation_id, *, generate=None, upload=None, thread=True) -> dict:
@@ -156,7 +162,7 @@ def choose(home, operation_id, index: int, *, generate=None, upload=None) -> dic
     first = re.split(r"\n|(?<=\.)\s+(?=[A-Z][\w' -]{1,40}(?: \([^)]*\))?:)", re.sub(r"^THE CAST\s*[—-]\s*", "", cast))[0]
     if first.strip():
         cast = first.strip()
-    if cast:
+    if cast and not _wants_upload(saved):         # a creator who uploads their own character gets no drawn sheet
         import cr_media
         gen = generate or cr_media.image
         put = upload or (lambda path: cr_media.upload(path, task="images"))
@@ -168,6 +174,43 @@ def choose(home, operation_id, index: int, *, generate=None, upload=None) -> dic
     saved["style_sha256"] = cr_style_clone._file_hash(style_path)      # the study still owns its saved style
     cr_style_clone._write(folder / "operation.json", saved)
     state = _read(folder / "anchors" / "anchors.json")
-    state.update(chosen=int(index), message="Every picture in this style now copies the drawing you chose.")
+    state.update(chosen=int(index), message="Every picture in this style now copies the drawing you chose."
+                 + (" Now upload your character." if _wants_upload(saved) and not style["look"].get("character_image")
+                    else ""))
+    _write(folder / "anchors" / "anchors.json", state)
+    return status(home, operation_id)
+
+
+def upload_character(home, operation_id, data: bytes) -> dict:
+    """The creator's own host or mascot as the style's character reference: every picture keeps them."""
+    from PIL import Image, ImageOps
+    import io
+    folder, saved, style_path, style = _learned(home, operation_id)
+    if len(data) > 20 * 1024 * 1024:
+        raise ValueError("Use a picture under 20 MB.")
+    try:
+        img = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert("RGBA")
+    except Exception as e:                                              # noqa: BLE001
+        raise ValueError("That file could not be read as a picture.") from e
+    if min(img.size) < 256:
+        raise ValueError("Use a larger picture of your character: at least 256 pixels on its short side.")
+    img.thumbnail((1600, 1600))
+    name = re.sub(r"[^a-z0-9_-]", "", style["name"])
+    assets = Path(home) / "assets"
+    target = assets / "styles" / "learned" / name / "character.png"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    img.save(target)
+    look = style.setdefault("look", {})
+    look["character_image"] = target.relative_to(assets).as_posix()
+    who = re.match(r"(?:THE CAST\s*[—-]\s*)?([A-Z][\w' -]{1,40}?)\s*(?:\(|:)", str(look.get("character") or ""))
+    label = who.group(1).strip() if who else "The host"
+    look["character"] = (f"THE CAST — {label}: exactly the character in the character reference image, with the same "
+                         "face, body, colours and clothes in every picture they appear in.")
+    _write(style_path, style)
+    import cr_style_clone
+    saved["style_sha256"] = cr_style_clone._file_hash(style_path)
+    cr_style_clone._write(folder / "operation.json", saved)
+    state = _read(folder / "anchors" / "anchors.json")
+    state.update(message="Your character is in this style now: every picture keeps them.")
     _write(folder / "anchors" / "anchors.json", state)
     return status(home, operation_id)

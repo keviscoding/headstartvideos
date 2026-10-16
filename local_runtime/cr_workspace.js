@@ -172,10 +172,54 @@
     }
     text('crw-features-note', strict(recipe) ? 'Every visual scene uses your learned animation kit. Narration, captions and sound remain available.' : 'Choose the sources this recipe can use. Account requirements are checked before generation.');
     $('crw-character').value = recipe.character || '';
+    hide('crw-panels-section', !recipe.panels); if (recipe.panels) loadPanels();
+    const pics = recipe.pictures; hide('crw-pictures-section', !pics || strict(recipe));
+    if (pics) {const r = $('crw-pictures'); r.min = pics.floor; r.max = pics.ceiling; r.value = pics.default; showPictures();}
     updateOptional(); summary(); gate(); if (persist) save();
+  }
+  function showPictures() {
+    const pics = state.selected?.pictures; if (!pics) return; const v = Number($('crw-pictures').value);
+    text('crw-pictures-value', `· ${v}`);
+    text('crw-pictures-help', `The recipe draws ${pics.default} a minute. Fewer pictures cost less (about $${(v * 0.02).toFixed(2)} a minute in pictures); never fewer than ${pics.floor}, so each picture stays on its own words.`);
+  }
+  function threedLook(features) {
+    const v = $('crw-palette').value;
+    if (!v || !features.threed || strict()) return '';
+    if (v.startsWith('look:')) return v.slice(5);
+    return v.startsWith('studio:') ? 'studio_color' : 'documentary';      // a palette's colours need a colour look
+  }
+  function withPalette(extra, features) {
+    const palette = $('crw-palette').value;
+    if (!palette || palette.startsWith('look:') || !features.threed || strict()) return extra;
+    const colours = palette.startsWith('studio:') ? palette.slice(7) : palette;
+    return (extra ? extra + '\n' : '') + `3D SCENE PALETTE: every 3D scene uses only ${colours}; keep it minimal and contrasting.`;
+  }
+  function ctaValue() {
+    if (!checked('crw-cta-on')) return null;
+    const what = $('crw-cta-what').value.trim(), link = $('crw-cta-link').value.trim();
+    if (!what) throw new Error('Say what you are promoting, or switch the call to action off.');
+    if (!/^https?:\/\/\S{3,}$/.test(link)) throw new Error('Give your call to action a full link, starting with https://.');
+    return {what, link, count: Number($('crw-cta-count').value) || 1, image: state.ctaImage || ''};
+  }
+  function showPanels(set) {
+    state.panels = set ? set.id : ''; const strip = $('crw-panels-strip'); strip.replaceChildren();
+    if (set) {
+      text('crw-panels-status', `${set.count} panels ready · ${set.name}`);
+      for (let n = 1; n <= Math.min(set.count, 8); n++) {const img = el('img'); img.alt = `Panel ${n}`; img.loading = 'lazy'; img.src = `/cr-workspace/panels/${encoded(set.id)}/${n}.jpg`; strip.append(img);}
+    } else text('crw-panels-status', '');
+    gate();
+  }
+  async function loadPanels() {
+    if ($('crw-panels-recent').dataset.loaded) return;
+    try {
+      const result = await api('/cr-workspace/panels'); state.panelSets = result.panels || [];
+      for (const set of state.panelSets) {const o = el('option', '', `${set.name} · ${set.count} panels`); o.value = set.id; $('crw-panels-recent').append(o);}
+      $('crw-panels-recent').dataset.loaded = '1';
+    } catch (e) {text('crw-panels-status', e.message);}
   }
   function updateOptional() {
     const features = featureValues(); hide('crw-fast-section', !features.threed || strict());
+    hide('crw-palette-section', !features.threed || strict());
     hide('crw-avatar-section', !features.avatar || strict());
     hide('crw-character-section', strict());
     hide('crw-offer-section', $('crw-offer').options.length<2 || !features.avatar || strict());
@@ -212,9 +256,10 @@
   }
   function gate() {
     const ready = state.setup?.readiness?.ready === true;
-    const blocked = state.submitting || state.uploading || !state.catalog || !ready || state.busy || (state.narration === 'own' && !state.audio);
+    const needsPanels = !!state.selected?.panels && !state.panels;
+    const blocked = state.submitting || state.uploading || !state.catalog || !ready || state.busy || (state.narration === 'own' && !state.audio) || needsPanels;
     $('crw-create').disabled = blocked;
-    let message = !state.catalog ? 'Loading your visual recipes…' : !ready ? (state.setup?.readiness?.blockers || ['Finish account setup before creating a video.']).join(' ') : state.busy ? 'A project is using this studio. Its progress is available in Projects.' : state.narration === 'own' && !state.audio ? 'Choose a narration recording to continue.' : 'Ready. Each Create starts a separate new project.';
+    let message = !state.catalog ? 'Loading your visual recipes…' : !ready ? (state.setup?.readiness?.blockers || ['Finish account setup before creating a video.']).join(' ') : state.busy ? 'A project is using this studio. Its progress is available in Projects.' : state.narration === 'own' && !state.audio ? 'Choose a narration recording to continue.' : needsPanels ? 'Choose your panels to continue.' : 'Ready. Each Create starts a separate new project.';
     text('crw-readiness', message);
     const status = $('crw-connection'); status.querySelector('span:last-of-type').textContent = ready ? 'Accounts connected' : 'Accounts need attention';
     status.querySelector('.crw-status-dot').className = `crw-status-dot ${ready ? 'is-ready' : 'is-warning'}`;
@@ -369,6 +414,7 @@
       const exports = [['audio','Narration','audio'],['script','Script','script'],['srt','Subtitles','srt'],['desc','Description','desc']];
       $('crw-output-exports').replaceChildren(); for (const [key,label,kind] of exports) if (data[key]) {const a=el('a','crw-export-link',label);a.href=`/f/${kind}/${encoded(job.slug)}`;a.download='';$('crw-output-exports').append(a);}
       for (const name of data.thumbs || data.thumbnails || []) {const filename=typeof name==='string'?name:name.name; if (!filename) continue;const a=el('a','crw-export-link','Thumbnail');a.href=`/f/thumb/${encoded(job.slug)}/${encoded(filename)}`;a.download='';$('crw-output-exports').append(a);}
+      try {const saved = await api(`/cr-workspace/project/${encoded(job.slug)}`); const lines = (saved.sound_check || []).map(r => (r.state === 'ok' ? '✓ ' : '• ') + r.text); text('crw-output-message', lines.length ? 'Sound check: ' + lines.join(' · ') : '');} catch (_) {/* the sound check is optional */}
       $('crw-output').showModal();
     } catch (e) {toast(e.message);}
   }
@@ -414,14 +460,17 @@
     if (state.narration==='own' && title.includes('\n')) throw new Error('Use one title for an uploaded narration recording.');
     const features=featureValues(); const steps=['script','voiceover','images','pexels','video'];if(checked('crw-thumbnails'))steps.push('thumbnail');
     const p={title,style:state.selected.name,minutes:number('crw-minutes',10,1,60),steps,
-      script:state.input==='script'?$('crw-script').value.trim():'',extra:$('crw-extra').value.trim(),byo_audio:state.narration==='own'?state.audio:'',
+      script:state.input==='script'?$('crw-script').value.trim():'',extra:withPalette($('crw-extra').value.trim(),features),byo_audio:state.narration==='own'?state.audio:'',
       burn_subs:checked('crw-captions'),force:false,thumb_count:number('crw-thumbnail-count',2,1,4),
       desc:checked('crw-description'),chapters:checked('crw-description')?number('crw-chapters',5,0,20):0,
       sources:checked('crw-description')&&checked('crw-sources')?number('crw-source-count',3,0,10):0,
       features,render_backend:features.threed&&checked('crw-fast-toggle')&&!strict()?'manimgx':'original',
       character:strict()?'':$('crw-character').value.trim(),character_image:strict()?'':$('crw-character-image').value,
       avatar_id:features.avatar&&!strict()?$('crw-avatar-id').value:'',avatar_s:number('crw-avatar-seconds',8,0,15),avatar_count:number('crw-avatar-count',1,1,6),
-      offer:$('crw-offer').value,offer_plugs:number('crw-offer-plugs',0,0,2)};
+      offer:$('crw-offer').value,offer_plugs:number('crw-offer-plugs',0,0,2),panels:state.selected.panels?state.panels:'',cta:ctaValue(),
+      pictures_per_min:state.selected.pictures&&Number($('crw-pictures').value)!==state.selected.pictures.default?Number($('crw-pictures').value):null,
+      threed_look:threedLook(features)};
+    if(p.panels && title.includes('\n')) throw new Error('Use one title for a set of panels.');
     if(state.selected.auto_style)p.auto_style=checked('crw-adaptive'); return p;
   }
   async function submit(event) {
@@ -484,6 +533,12 @@
   $('crw-output-reveal').addEventListener('click',async()=>{if(!state.currentOutput)return;try{await api(`/api/reveal/${encoded(state.currentOutput.slug)}`,{method:'POST',body:{}});text('crw-output-message','The video folder is open on this computer.');}catch(e){text('crw-output-message',e.message);}});
   $('crw-projects-refresh').addEventListener('click',()=>refreshActivity(true));
   $('crw-progress-cancel').addEventListener('click',async()=>{const b=$('crw-progress-cancel');if(!b.dataset.run||!state.openJob)return;b.disabled=true;try{await api(`/cr-video/${encoded(state.openJob)}/cancel`,{method:'POST',body:{run_id:b.dataset.run}});toast('Cancellation requested. Completed work stays saved.');await refreshActivity();}catch(e){text('crw-progress-note',e.message);}});
+  $('crw-presenter-add').addEventListener('click',async()=>{const file=$('crw-presenter-photo').files[0];if(!file){text('crw-presenter-status','Choose a photo of your presenter.');return;}state.uploading=true;gate();text('crw-presenter-status','Adding your presenter…');const form=new FormData();form.append('file',file);form.append('name',$('crw-presenter-name').value);form.append('gender',$('crw-presenter-gender').value);form.append('persona',$('crw-presenter-persona').value);try{const result=await api('/cr-workspace/presenter',{method:'POST',body:form});const row=result.presenter;const o=el('option','',row.name||row.id);o.value=row.id;$('crw-avatar-id').prepend(o);$('crw-avatar-id').value=row.id;text('crw-presenter-status',`${row.name} is ready to present.`);}catch(e){text('crw-presenter-status',e.message);}finally{state.uploading=false;gate();}});
+  $('crw-pictures').addEventListener('input',()=>{showPictures();summary();});
+  $('crw-cta-on').addEventListener('change',()=>{hide('crw-cta-fields',!checked('crw-cta-on'));save();});
+  $('crw-cta-image').addEventListener('change',async()=>{const file=$('crw-cta-image').files[0];if(!file)return;state.uploading=true;gate();text('crw-cta-status','Saving your picture…');const form=new FormData();form.append('file',file);try{const result=await api('/cr-workspace/cta-image',{method:'POST',body:form});state.ctaImage=result.image;text('crw-cta-status','Your picture is on the card.');}catch(e){state.ctaImage='';text('crw-cta-status',e.message);}finally{state.uploading=false;gate();}});
+  $('crw-panels-recent').addEventListener('change',()=>{showPanels((state.panelSets||[]).find(s=>s.id===$('crw-panels-recent').value));});
+  $('crw-panels-file').addEventListener('change',async()=>{const files=[...$('crw-panels-file').files];if(!files.length)return;state.uploading=true;gate();text('crw-panels-status',`Saving ${files.length} file${files.length>1?'s':''}…`);const form=new FormData();for(const f of files)form.append('files',f);try{const result=await api('/cr-workspace/panels',{method:'POST',body:form});showPanels(result.panels);}catch(e){text('crw-panels-status',e.message);}finally{state.uploading=false;$('crw-panels-file').value='';gate();}});
   $('crw-audio-recent').addEventListener('change',()=>{state.audio=$('crw-audio-recent').value;$('crw-audio-player').src=`/api/voiceover/${encoded(state.audio)}`;hide('crw-audio-player',!state.audio);summary();gate();});
   $('crw-audio-file').addEventListener('change',async()=>{const file=$('crw-audio-file').files[0];if(!file)return;state.uploading=true;gate();text('crw-audio-status','Saving your narration recording…');const form=new FormData();form.append('file',file);try{const result=await api('/api/voiceover',{method:'POST',body:form});state.audio=result.voiceover.id;$('crw-audio-player').src=`/api/voiceover/${encoded(state.audio)}`;hide('crw-audio-player',false);text('crw-audio-status',`${result.voiceover.name} · ${Math.round(result.voiceover.seconds)} seconds`);}catch(e){text('crw-audio-status',e.message);}finally{state.uploading=false;summary();gate();}});
   for(const detail of all('details'))detail.addEventListener('toggle',()=>{if(detail.open&&detail.querySelector('#crw-character'))optionalAccounts();});

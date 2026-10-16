@@ -221,10 +221,17 @@ def test_running_study_holds_global_isolation_lock(approved):
     assert not any(name == "begin" for name, _ in approved.events)
 
 
-def _original_functions(path, names, namespace):
+def _original_functions(path, names, namespace, patched=False):
     if not path.is_file():
         pytest.skip("Pinned original runtime is not installed on this test computer")
-    tree = ast.parse(path.read_text())
+    source = path.read_text()
+    if patched:                                 # the engine as Studio ships it: the build's reviewed engine patches
+        sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
+        import build_frontier_admin
+        for old, new in build_frontier_admin.ENGINE_PATCHES.get(path.name, []):
+            if new not in source:
+                source = source.replace(old, new, 1)
+    tree = ast.parse(source)
     definitions = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
     assert {node.name for node in definitions} == set(names)
     exec(compile(ast.Module(body=definitions, type_ignores=[]), str(path), "exec"), namespace)
@@ -324,9 +331,10 @@ def _catalogue_accepts_style(home, style):
     namespace = _original_functions(ORIGINAL / "styles.py", {"_files", "is_builtin", "catalogue"}, namespace)
     namespace["STYLES"] = {style["name"]: json.loads(path.read_text())}
     assert style["name"] in [row["name"] for row in namespace["catalogue"]()]
-    kit_namespace = {"Path": Path, "json": json, "KITS": {}, "_FONT_CACHE": {}}
-    _original_functions(ORIGINAL / "kits.py", {"kit_of", "register_gen_kit"}, kit_namespace)
-    manifest = Path(style["look"]["genkit"]["manifest"])
+    kit_namespace = {"Path": Path, "json": json, "KITS": {}, "_FONT_CACHE": {}, "HERE": home}
+    _original_functions(ORIGINAL / "kits.py", {"kit_of", "register_gen_kit"}, kit_namespace, patched=True)
+    assert not Path(style["look"]["genkit"]["manifest"]).is_absolute(), "saved relative to the Studio folder"
+    manifest = home / style["look"]["genkit"]["manifest"]
     metadata = json.loads(manifest.read_text())
     metadata.update(palette={"accent": "#ffffff"})
     manifest.write_text(json.dumps(metadata))
@@ -440,7 +448,8 @@ def test_completed_study_recovery_owns_new_operation_preserves_source_and_never_
     assert again["operation_id"] == result["operation_id"] and sum(name == "begin" for name, _ in approved.events) == 2
     recovered = clone._operation(approved.home, result["operation_id"])
     style = clone._read(recovered / "ready-style.json")
-    assert style["look"]["genkit"]["manifest"].startswith(str(recovered))
+    manifest = style["look"]["genkit"]["manifest"]
+    assert not Path(manifest).is_absolute() and (approved.home / manifest).resolve().is_relative_to(recovered.resolve())
     if os.name != "nt":
         assert (recovered / "auto_style.json").stat().st_mode & 0o777 == 0o600
 
@@ -597,3 +606,25 @@ def test_failed_study_ui_offers_explicit_new_attempt_and_preserves_duplicate_cli
     assert "localStorage.setItem('cr.styleStudyRequest'" in html
     assert "$('usage-approved').checked=false" in html
     assert "data.setup_review_required||data.can_continue_prepared" in html
+
+
+def test_a_stopped_study_says_why_and_offers_to_start_again_here(approved):
+    one = clone.prepare(approved.home, approved.spec, approved.proof, approved.bridge)
+    folder = approved.home / "output/cr-style-clone" / one["operation_id"]
+    saved = clone._read(folder / "operation.json")
+    saved.update(state="failed", phase="validate", project_id=PROJECT)
+    try:
+        raise clone.StudyStopped("The original learner did not produce a graphics kit that passed real browser validation.")
+    except clone.StudyStopped as error:
+        clone._record_failure(folder, saved, error)
+    clone._write(folder / "operation.json", saved)
+    result = clone.status(approved.home, one["operation_id"], approved.bridge)
+    assert result["message"].startswith("The original learner did not produce a graphics kit")
+    assert "start it again here" in result["message"] and result["stop_reason"]
+    assert result["setup_review_required"] is False, "setup has nothing to review for a stop the study explains"
+    assert result["retry_spec"]["reference_url"] == approved.preview["reference_url"]
+    try:
+        raise ValueError("provider said SECRET things")
+    except ValueError as error:
+        clone._record_failure(folder, saved, error)
+    assert "SECRET" not in json.dumps(clone.status(approved.home, one["operation_id"], approved.bridge))

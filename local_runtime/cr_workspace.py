@@ -125,6 +125,13 @@ def install(studio, activity, *, token, home=None):
                 app.logger.exception("Recipe preview unavailable for %s", row.get("name"))
                 source = None
             sources[row.get("name")] = source
+            info = styles.get(row.get("name")) if isinstance(styles, dict) else None
+            # a recipe that shows the creator's own comic panels instead of drawing pictures (cr_panels)
+            row["panels"] = bool(isinstance(info, dict) and isinstance(info.get("look"), dict) and info["look"].get("panels"))
+            # a story recipe's pictures a minute, with its quality floor (create page slider)
+            import cr_media
+            span = None if row["panels"] else cr_media.picture_range(info if isinstance(info, dict) else {})
+            row["pictures"] = {"floor": span[0], "default": span[1], "ceiling": span[2]} if span else None
             row.update(preview_available=source is not None,
                 preview_url=("/cr-workspace/preview/recipe/" + quote(row["name"], safe="") + ".jpg?v="
                              + preview_version(source)) if source else None,
@@ -190,6 +197,87 @@ def install(studio, activity, *, token, home=None):
             return protect(send_file(cr_presentation.asset(name), mimetype="image/svg+xml", conditional=False))
         except Exception as error:
             return failure(error)
+
+    def panel_error(error):
+        if isinstance(error, (ValueError, PermissionError)):
+            return protect(jsonify(error=str(error))), 403 if isinstance(error, PermissionError) else 400
+        app.logger.error("Panel request %s failed", request.path, exc_info=error)
+        return protect(jsonify(error="Your panels could not be saved. Nothing was changed.")), 503
+
+    @app.post("/cr-workspace/panels")
+    def cr_workspace_panels_upload():
+        """Your own comic panels for a panel recipe: pictures, or one .zip/.cbz of them."""
+        try:
+            local_access()
+            import cr_panels
+            files = [(f.filename or "", f.read()) for f in request.files.getlist("files")]
+            return protect(jsonify(panels=cr_panels.save(files, home / "uploads" / "panels")))
+        except Exception as error:
+            return panel_error(error)
+
+    @app.get("/cr-workspace/panels")
+    def cr_workspace_panels_recent():
+        try:
+            local_access()
+            import cr_panels
+            return protect(jsonify(panels=cr_panels.recent(home / "uploads" / "panels")))
+        except Exception as error:
+            return panel_error(error)
+
+    @app.get("/cr-workspace/panels/<set_id>/<int:number>.jpg")
+    def cr_workspace_panel(set_id, number):
+        try:
+            local_access()
+            import cr_panels
+            files = cr_panels.panel_set(set_id, home / "uploads" / "panels")["files"]
+            if not 1 <= number <= len(files):
+                raise ValueError("That panel is not in this set.")
+            return protect(send_file(files[number - 1], mimetype="image/jpeg", conditional=False))
+        except Exception as error:
+            return panel_error(error)
+
+    @app.post("/cr-workspace/presenter")
+    def cr_workspace_presenter():
+        """Your own presenter: a photo, a name and the voice they speak with."""
+        try:
+            local_access()
+            import cr_presenters
+            upload = request.files.get("file")
+            if upload is None:
+                raise ValueError("Choose a photo of your presenter.")
+            row = cr_presenters.save(upload.read(), name=request.form.get("name", ""),
+                                     gender=request.form.get("gender", ""), persona=request.form.get("persona", ""),
+                                     folder=home / "assets" / "avatars" / "my")
+            return protect(jsonify(presenter={k: row[k] for k in ("id", "name", "gender", "persona")}))
+        except Exception as error:
+            return panel_error(error)
+
+    @app.post("/cr-workspace/cta-image")
+    def cr_workspace_cta_image():
+        """A cover or screenshot for a call-to-action card."""
+        try:
+            local_access()
+            import cr_cta
+            upload = request.files.get("file")
+            if upload is None:
+                raise ValueError("Choose a picture for your call to action.")
+            return protect(jsonify(image=cr_cta.save_image(upload.read(), home / "uploads" / "cta")))
+        except Exception as error:
+            return panel_error(error)
+
+    @app.get("/cr-workspace/cta-image/<image>.jpg")
+    def cr_workspace_cta_image_file(image):
+        try:
+            local_access()
+            import cr_cta
+            if not cr_cta.IMAGE_ID.fullmatch(image or ""):
+                raise ValueError("Choose your picture again.")
+            path = home / "uploads" / "cta" / f"{image}.jpg"
+            if not path.is_file():
+                raise ValueError("Choose your picture again.")
+            return protect(send_file(path, mimetype="image/jpeg", conditional=False))
+        except Exception as error:
+            return panel_error(error)
 
     @app.get("/cr-workspace/catalog")
     def cr_workspace_catalog():
@@ -323,9 +411,12 @@ def install(studio, activity, *, token, home=None):
             available = (valid and saved.get("brain_mode") == "claudecode"
                          and saved.get("purpose", "video") == "video"
                          and state not in {"done", "queued", "running"})
+            qc = _read(job / "sound_qc.json") if (job / "sound_qc.json").is_file() else {}
+            sound = [{"state": _text(r.get("state"), 8), "text": _text(r.get("text"), 200)}
+                     for r in (qc.get("lines") or []) if isinstance(r, dict)][:4]
             return protect(jsonify(slug=slug, project_id=project_id if valid else None,
                 available_for_resume=bool(available), title=_text(live.get("title") or saved.get("title"), 300),
                 style=_text(spec.get("style") or saved.get("style"), 140), status=state,
-                link="/editor/" + quote(slug, safe="")))
+                link="/editor/" + quote(slug, safe=""), sound_check=sound))
         except Exception as error:
             return failure(error)
