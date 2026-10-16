@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import Cookie, Depends, FastAPI, File, Form, HTTPException, Header, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
@@ -31,6 +31,7 @@ from dotenv import load_dotenv
 load_dotenv(ROOT / ".env", override=True)
 
 import config
+from webapp import web_assets
 
 WEBAPP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = WEBAPP_DIR / "static"
@@ -239,11 +240,15 @@ async def _app_lifespan(app: FastAPI):
         yield
 
 
-app = FastAPI(title="ChannelRecipe", docs_url="/docs", lifespan=_app_lifespan)
+# The API reference stays private: set CR_API_DOCS=1 to serve /docs and /openapi.json (local development).
+_API_DOCS = os.getenv("CR_API_DOCS", "").strip() == "1"
+app = FastAPI(title="ChannelRecipe", lifespan=_app_lifespan, docs_url="/docs" if _API_DOCS else None,
+              redoc_url="/redoc" if _API_DOCS else None, openapi_url="/openapi.json" if _API_DOCS else None)
+app.add_middleware(web_assets.SecurityHeaders)
 
 # MCP is wrapped at module end (wrap_fastapi_with_mcp) so OAuth
 # /.well-known routes live at the domain root for Claude.ai.
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.mount("/static", web_assets.CachedStatic(directory=str(STATIC_DIR)), name="static")
 
 _jobs: dict[str, dict[str, Any]] = {}
 
@@ -2017,7 +2022,7 @@ class KeyTestRequest(BaseModel):
 async def landing():
     lp = STATIC_DIR / "landing.html"
     if lp.exists():
-        return FileResponse(str(lp))
+        return web_assets.html_page(lp)
     return RedirectResponse("/app")
 
 
@@ -2040,7 +2045,7 @@ async def community_access(request: Request):
 async def community_discord(request: Request):
     if _community_member(request):
         return RedirectResponse(DISCORD_INVITE_URL, status_code=302)
-    return FileResponse(str(STATIC_DIR / "community.html"), headers={"Cache-Control": "private, no-store"})
+    return web_assets.html_page(STATIC_DIR / "community.html", cache="private, no-store")
 
 
 # Browsers, iOS and search engines request these at the site root.
@@ -2059,24 +2064,23 @@ async def apple_touch_icon():
 
 @app.get("/app", response_class=HTMLResponse)
 async def index():
-    return FileResponse(str(STATIC_DIR / "index.html"))
+    return web_assets.html_page(STATIC_DIR / "index.html", cache=web_assets.APP)
 
 
 @app.get("/privacy", response_class=HTMLResponse)
 async def privacy_page():
-    return FileResponse(str(STATIC_DIR / "privacy.html"))
+    return web_assets.html_page(STATIC_DIR / "privacy.html")
 
 
 @app.get("/terms", response_class=HTMLResponse)
 async def terms_page():
-    return FileResponse(str(STATIC_DIR / "terms.html"))
+    return web_assets.html_page(STATIC_DIR / "terms.html")
 
 
 # Free guides linked from the owner's videos (lead magnets): public pages with their downloads beside them.
 @app.get("/3d-harness", response_class=HTMLResponse)
 async def harness_3d_page():
-    return FileResponse(str(STATIC_DIR / "harness" / "3d-documentary-harness.html"),
-                        headers={"Cache-Control": "public, max-age=300"})
+    return web_assets.html_page(STATIC_DIR / "harness" / "3d-documentary-harness.html")
 
 
 # ---------------------------------------------------------------------------
@@ -2090,7 +2094,20 @@ async def health():
 
 @app.get("/robots.txt")
 async def robots_txt():
-    return PlainTextResponse("User-agent: *\nAllow: /\nDisallow: /api/\n")
+    return PlainTextResponse("User-agent: *\nAllow: /\nDisallow: /api/\n\nSitemap: https://channelrecipe.com/sitemap.xml\n",
+                             headers={"Cache-Control": web_assets.PAGE})
+
+
+# The public pages search engines should list.
+SITEMAP_PAGES = ("/", "/3d-harness", "/privacy", "/terms")
+
+
+@app.get("/sitemap.xml", include_in_schema=False)
+async def sitemap_xml():
+    urls = "".join(f"<url><loc>https://channelrecipe.com{p}</loc></url>" for p in SITEMAP_PAGES)
+    body = ('<?xml version="1.0" encoding="UTF-8"?>'
+            f'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{urls}</urlset>')
+    return Response(body, media_type="application/xml", headers={"Cache-Control": web_assets.PAGE})
 
 
 @app.get("/api/config")
