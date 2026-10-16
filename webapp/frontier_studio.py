@@ -34,6 +34,15 @@ from webapp import frontier_providers as providers
 VERSION = "5.3-admin.61"
 CATALOG = Path(__file__).resolve().parent / "frontier" / "catalog.json"
 RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.61.zip"
+# Every release the server still serves (older ones keep running projects alive). Append each new release; never
+# remove one, or projects pinned to it stop.
+APPROVED_RELEASES = ("5.3-admin.8", "5.3-admin.9", "5.3-admin.10", "5.3-admin.11", "5.3-admin.12",
+                "5.3-admin.13", "5.3-admin.14", "5.3-admin.15", "5.3-admin.16", "5.3-admin.17",
+                "5.3-admin.18", "5.3-admin.19", "5.3-admin.20", "5.3-admin.21", "5.3-admin.22",
+                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43", "5.3-admin.44", "5.3-admin.45", "5.3-admin.46", "5.3-admin.47", "5.3-admin.48", "5.3-admin.49", "5.3-admin.50", "5.3-admin.51", "5.3-admin.52", "5.3-admin.53", "5.3-admin.54", "5.3-admin.55", "5.3-admin.56", "5.3-admin.57", "5.3-admin.58", "5.3-admin.59", "5.3-admin.60", "5.3-admin.61")
+# Releases that may also START a new video: the newest two. A customer who hasn't pressed Update yet keeps making
+# videos the morning after a release; the project pins the release it started on.
+SUPPORTED_RELEASES = APPROVED_RELEASES[-2:]
 WORKFLOW_VERSION = "frontier-5.3-claudecode.1"
 BRANDED_WORKFLOW_VERSION = "channelrecipe-5.3-claudecode.1"
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
@@ -273,7 +282,9 @@ def status(user: dict) -> dict:
             "generation_billing": "Your provider accounts", "rendering": "Your computer",
             "changelog": changelog(), "voice_samples": voice_samples(),
             "milestones": milestones.of(user["id"]),
-            "production_workflow": workflow_contract()}
+            "production_workflow": workflow_contract(),
+            # the releases that may start a new video (the Studio's readiness accepts any of them)
+            "supported_versions": list(SUPPORTED_RELEASES)}
 
 
 def release_ready() -> bool:
@@ -710,10 +721,12 @@ class NativeRetryStage(SafeContract):
     acknowledge_costs: bool = Field(default=False,strict=True)
 
 
-def workflow_contract():
+def workflow_contract(release=None):
+    """The production contract. A new project pins the release it starts on: the customer's own when it is one of
+    SUPPORTED_RELEASES, else the newest (VERSION)."""
     choices = [row["id"] for row in providers.PROVIDERS["anthropic"]["brain_models"]]
     return {"workflow_version": WORKFLOW_VERSION, "schema_version": 1,
-            "required_release": VERSION, "engine_source_sha256": SOURCE_SHA256,
+            "required_release": release if release in SUPPORTED_RELEASES else VERSION, "engine_source_sha256": SOURCE_SHA256,
             "mode": "claudecode", "models": choices, "default_general_model": "claude-sonnet-5-5",
             "default_visual_model": "claude-opus-5-5", "max_active_stages": NATIVE_STAGE_LIMIT,
             "access": "subscriber", "public_release_allowed": True,
@@ -728,10 +741,7 @@ def workflow_contract():
 def _runtime_compatible(version, workflow):
     # Adapter-only upgrades keep the pinned creative engine and workflow. A
     # changed engine or workflow must explicitly migrate projects instead.
-    approved = ("5.3-admin.8", "5.3-admin.9", "5.3-admin.10", "5.3-admin.11", "5.3-admin.12",
-                "5.3-admin.13", "5.3-admin.14", "5.3-admin.15", "5.3-admin.16", "5.3-admin.17",
-                "5.3-admin.18", "5.3-admin.19", "5.3-admin.20", "5.3-admin.21", "5.3-admin.22",
-                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43", "5.3-admin.44", "5.3-admin.45", "5.3-admin.46", "5.3-admin.47", "5.3-admin.48", "5.3-admin.49", "5.3-admin.50", "5.3-admin.51", "5.3-admin.52", "5.3-admin.53", "5.3-admin.54", "5.3-admin.55", "5.3-admin.56", "5.3-admin.57", "5.3-admin.58", "5.3-admin.59", "5.3-admin.60", "5.3-admin.61")
+    approved = APPROVED_RELEASES
     current = workflow_contract()
     if (version not in approved or workflow.get("required_release") not in approved or VERSION not in approved
             or workflow.get("workflow_version") != current["workflow_version"]
@@ -766,7 +776,7 @@ def _setup_issues(setup, workflow):
 
 def native_prepare(user, setup: NativeSetup | None = None):
     require_studio_user(user)
-    workflow = workflow_contract()
+    workflow = workflow_contract(setup.local_version if setup else None)
     issues = _setup_issues(setup, workflow) if setup else ["Run the downloaded studio's local setup checks first."]
     if not release_ready():
         issues.append("The required protected runtime download is being prepared.")

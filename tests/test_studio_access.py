@@ -188,3 +188,16 @@ def test_a_studio_calling_with_its_key_is_seen_and_a_download_is_recorded(env, m
     assert client.get("/api/frontier/download").status_code == 200
     got = milestones.of(1)
     assert got["seen_at"] and got["downloaded_at"]
+
+
+def test_the_last_two_releases_may_start_a_new_video_and_older_ones_are_asked_to_update(env):
+    member = user(1, "studio_pro")
+    newest, previous, older = studio.APPROVED_RELEASES[-1], studio.APPROVED_RELEASES[-2], studio.APPROVED_RELEASES[-3]
+    assert newest == studio.VERSION and studio.status(member)["supported_versions"] == [previous, newest]
+    begun = studio.native_begin(member, studio.NativeBegin(begin_id="older_release_0001", title="A video", style="history",
+                                                           setup={**env.proof, "local_version": previous}))
+    assert begun["workflow"]["required_release"] == previous, "the project pins the release it started on"
+    with pytest.raises(HTTPException) as err:
+        studio.native_begin(member, studio.NativeBegin(begin_id="older_release_0002", title="A video", style="history",
+                                                       setup={**env.proof, "local_version": older}))
+    assert err.value.status_code == 409 and "Download the release" in err.value.detail
