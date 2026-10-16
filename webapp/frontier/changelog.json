@@ -1,5 +1,19 @@
 [
   {
+    "build": 62,
+    "date": "2026-10-16",
+    "title": "Studio tells you when your video is ready, and opens instantly",
+    "items": [
+      "New: The browser tab shows what Studio is doing: \"Making\" and your title with a violet dot while it works, and \"Ready\" with a green dot when a video finishes while you're in another tab. Press \"Notify me when it's ready\" for a desktop notification too.",
+      "New: Studio has its own tab icon.",
+      "Improved: Studio opens instantly. It shows your last account check straight away and refreshes it in the background.",
+      "Fixed: Real-footage search no longer stalls on a slow connection (\"Connection aborted ... write operation timed out\" for every video). The clips sent to the video watcher are about a tenth of the size, a stalled upload gives up after two minutes, and after three failures in a row the search carries on without the watcher.",
+      "Improved: From this release on, the previous Studio can still start new videos after an update comes out. When an update is needed, Create says to press Update now (it keeps your projects), and the update banner stays until you do.",
+      "Improved: Project pictures show the story instead of a dark first frame.",
+      "Improved: The style library lists each style once; style studies appear while they run."
+    ]
+  },
+  {
     "build": 61,
     "date": "2026-10-16",
     "title": "Ready-made recipes, Studio colour 3D and your own call to action",
