@@ -249,6 +249,9 @@ window.CRLocalStudio = (() => {
     function memberBody() {
         if (returning()) {
             return '<section class="ls-section ls-first"><div class="ls-section-row"><h2>Your projects</h2><button class="btn-ghost" data-ls-refresh>Refresh</button></div><div id="ls-history"><p class="ls-muted">Loading…</p></div></section>'+
+                '<section class="ls-section" id="ls-niches-section" hidden><div class="ls-section-row"><div><h2 id="ls-niches-title">Fresh niches this week</h2>'+
+                '<p class="ls-section-sub">Faceless channels the Niche Finder found growing right now. Pick one, then clone its look in Studio’s Style library.</p></div>'+
+                '<button class="btn-ghost" data-ls-niche-finder>Open Niche Finder</button></div><div id="ls-niches" class="ls-niches"></div></section>'+
                 whatsNew()+readyMade()+discordCard()+
                 '<details class="ls-advanced ls-reinstall"><summary>Install Studio on another computer</summary>'+setupSteps()+'</details>'+
                 '<div class="ls-home-plan">'+planPanel(true)+'</div>'+
@@ -257,6 +260,34 @@ window.CRLocalStudio = (() => {
         return '<div class="ls-member-grid">'+setupSteps()+planPanel()+'</div>'+discordCard()+
             '<section class="ls-section"><div class="ls-section-row"><h2>Your projects</h2><button class="btn-ghost" data-ls-refresh>Refresh</button></div><div id="ls-history"><p class="ls-muted">Loading…</p></div></section>'+
             '<details class="ls-advanced"><summary>Advanced: use an API key instead of Claude Code</summary><p>Most people should use Claude Code. If you’d rather pay per request with an API key, save it here, then choose “API brain” in the studio’s setup page.</p>'+brainForm()+'</details>';
+    }
+
+    // Ideas to come back for: channels the Niche Finder added this week (or the top earners when the week was quiet).
+    const compact = n => { n = Number(n) || 0; return n >= 1e6 ? (n/1e6).toFixed(n >= 1e7 ? 0 : 1)+'M' : n >= 1e3 ? (n/1e3).toFixed(n >= 1e4 ? 0 : 1)+'k' : String(Math.round(n)); };
+    async function freshNiches() {
+        const box = document.getElementById('ls-niches'), section = document.getElementById('ls-niches-section');
+        if (!box || !section) return;
+        const get = async query => { const r = await fetch('/api/niche-finder/channels?'+query); return r.ok ? ((await r.json()).channels || []) : null; };
+        try {
+            let rows = await get('added_within_days=7&limit=6&has_recent_avg=true'), fresh = true;
+            if (rows === null) return;                       // a plan without the Niche Finder: no section
+            if (rows.length < 3) { rows = await get('sort=recent_revenue&limit=6&has_recent_avg=true') || []; fresh = false; }
+            if (!rows.length) return;
+            document.getElementById('ls-niches-title').textContent = fresh ? 'Fresh niches this week' : 'Top niches right now';
+            box.innerHTML = rows.slice(0, 6).map(c => {
+                const video = (c.popular_videos || [])[0] || (c.recent_videos || [])[0] || {};
+                const picture = video.thumbnail || c.avatar_url || '';
+                const days = c.first_seen_at ? Math.max(0, Math.round((Date.now()/1000 - c.first_seen_at) / 86400)) : null;
+                const money = Number(c.est_recent_monthly_revenue_usd || c.est_monthly_revenue_usd || 0);
+                return '<a class="ls-niche" href="'+esc(c.channel_url || '#')+'" target="_blank" rel="noopener">'+
+                    (picture ? '<img src="'+esc(picture)+'" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">' : '<span class="ls-niche-blank"></span>')+
+                    '<div><strong>'+esc(c.channel_name || 'A growing channel')+'</strong>'+
+                    '<small>'+(money ? 'est. $'+compact(money)+'/mo · ' : '')+compact(c.recent_avg_views)+' avg views'+
+                    (fresh && days !== null ? ' · found '+(days === 0 ? 'today' : days === 1 ? 'yesterday' : days+' days ago') : '')+'</small>'+
+                    (video.title ? '<span>“'+esc(String(video.title).slice(0, 90))+'”</span>' : '')+'</div></a>';
+            }).join('');
+            section.hidden = false;
+        } catch (_) { /* ideas are a bonus: the page works without them */ }
     }
 
     // ---- API brain (alternative route) ---------------------------------
@@ -391,7 +422,7 @@ window.CRLocalStudio = (() => {
         root().innerHTML = '<div class="ls-wrap">'+hero()+'<div id="ls-notice" role="status" hidden></div>'+body+
             '<footer class="ls-footer"><span>ChannelRecipe '+(data?.version?esc(studioName(data.version)):'Studio')+'</span><a href="'+DISCORD_URL+'" target="_blank" rel="noopener" data-community="discord">Help in Discord ↗</a></footer></div>';
         bind();
-        if (view === 'member') history();
+        if (view === 'member') { history(); if (returning()) freshNiches(); }
     }
     function bind() {
         const r = root();
@@ -423,6 +454,7 @@ window.CRLocalStudio = (() => {
         });
         r.querySelectorAll('[data-ls-discord]').forEach(el=>el.addEventListener('click',()=>track('discord_clicked',{source:'studio_page'})));
         r.querySelector('[data-ls-refresh]')?.addEventListener('click',history);
+        r.querySelector('[data-ls-niche-finder]')?.addEventListener('click',()=>{ track('studio_home_niche_finder'); navigateTo('niche-finder'); });
         r.querySelector('#ls-key-form')?.addEventListener('submit',async event=>{
             event.preventDefault(); const button = event.target.querySelector('button'); button.disabled = true; button.textContent = 'Checking…';
             try {
