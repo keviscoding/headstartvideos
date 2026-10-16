@@ -2,6 +2,7 @@
 import hashlib
 import json
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -483,9 +484,61 @@ def test_the_white_studio_3d_look_reaches_the_renderer_and_the_director():
     assert "cur.P?.labelInk === 'dark'" in main and "it.res.setInk(true)" in main
 
 
-def test_a_stalled_footage_upload_is_tried_again_after_minutes_not_fifteen():
+def test_a_stalled_footage_upload_gives_up_after_two_minutes_not_fifteen():
     patched = package.patch_engine("youtube.py", _youtube_engine()).decode()
-    assert "timeout=(15, 180)" in patched and "for attempt in (1, 2):" in patched and "timeout=900" not in patched
+    assert "timeout=(15, 120)" in patched and "for attempt in (1, 2):" in patched and "timeout=900" not in patched
+
+
+def _upload_space(patched, post, clock):
+    import types
+    exceptions = types.SimpleNamespace(Timeout=type("Timeout", (Exception,), {}),
+                                       ConnectionError=type("ConnectionError", (Exception,), {}))
+    space = {"Path": __import__("pathlib").Path, "_env": lambda k: "key", "open": lambda *a: __import__("io").BytesIO(b"x"),
+             "time": types.SimpleNamespace(monotonic=clock),
+             "requests": types.SimpleNamespace(post=post, exceptions=exceptions)}
+    start = patched.index("def _kie_upload(")
+    # the stub engine stops at raise_for_status; the real function goes on to read the URL
+    body = patched[start:patched.index("def ytdlp", start)] + "    return r.json()['data']['downloadUrl']\n"
+    exec(compile(body, "youtube.py", "exec"), space)
+    return space, exceptions
+
+
+def test_a_dropped_upload_is_tried_once_more_but_a_stalled_one_is_not(tmp_path):
+    patched = package.patch_engine("youtube.py", _youtube_engine()).decode()
+    ok = type("R", (), {"raise_for_status": lambda self: None, "json": lambda self: {"data": {"downloadUrl": "https://u"}}, "text": ""})()
+    tries, now = [], {"t": 0.0}
+    def dropped(*a, **k):
+        tries.append(1)
+        if len(tries) == 1:
+            raise space["requests"].exceptions.ConnectionError("Connection aborted.")
+        return ok
+    space, _ = _upload_space(patched, dropped, lambda: now["t"])
+    assert space["_kie_upload"](tmp_path / "a.mp4") == "https://u" and len(tries) == 2
+    tries.clear()
+    def stalled(*a, **k):
+        tries.append(1); now["t"] += 120
+        raise space["requests"].exceptions.ConnectionError("('Connection aborted.', TimeoutError('The write operation timed out'))")
+    space, exceptions = _upload_space(patched, stalled, lambda: now["t"])
+    with pytest.raises(exceptions.ConnectionError):
+        space["_kie_upload"](tmp_path / "a.mp4")
+    assert len(tries) == 1, "two minutes of a stalled upload are not spent twice"
+
+
+def test_a_big_low_copy_goes_up_light(tmp_path):
+    import types
+    patched = package.patch_engine("youtube.py", _youtube_engine()).decode()
+    calls = []
+    def run(cmd, **k):
+        calls.append(cmd); Path(cmd[-1]).write_bytes(b"x" * 20000)
+    space = {"Path": Path, "subprocess": types.SimpleNamespace(run=run, TimeoutExpired=TimeoutError)}
+    start = patched.index("def _watch_copy(")
+    exec(compile(patched[start:patched.index("def _kie_upload(", start)], "youtube.py", "exec"), space)
+    small = tmp_path / "small.mp4"; small.write_bytes(b"x" * 1000)
+    assert space["_watch_copy"](small) == small and not calls
+    big = tmp_path / "big.mp4"; big.write_bytes(b"x" * 9_000_000)
+    light = space["_watch_copy"](big)
+    assert light.name == "big_w.mp4" and "-r" in calls[0] and calls[0][calls[0].index("-r") + 1] == "6"
+    assert space["_watch_copy"](big) == light and len(calls) == 1, "made once per video"
 
 
 def test_footage_watching_stops_asking_kie_after_three_videos_fail_in_a_row(monkeypatch):
@@ -495,7 +548,8 @@ def test_footage_watching_stops_asking_kie_after_three_videos_fail_in_a_row(monk
         calls.append(args)
         raise RuntimeError("api.kie.ai said: internal error, please try again later.")
     space = {"Path": __import__("pathlib").Path, "time": __import__("types").SimpleNamespace(sleep=lambda s: None), "_chat_log": chat,
-             "_env": lambda k: "key", "_low_copy": lambda *a: "low.mp4", "_kie_upload": lambda p: "https://u"}
+             "_env": lambda k: "key", "_low_copy": lambda *a: "low.mp4", "_kie_upload": lambda p: "https://u",
+             "_watch_copy": lambda p: p}
     exec(compile(patched[patched.index("_KIE_DOWN = "):], "youtube.py", "exec"), space)
     for vid in "abc":
         with pytest.raises(RuntimeError, match="internal error"):
@@ -504,3 +558,21 @@ def test_footage_watching_stops_asking_kie_after_three_videos_fail_in_a_row(monk
     with pytest.raises(RuntimeError, match="goes on without it"):
         space["_kie_log"]("d", "watch", None)
     assert len(calls) == 9, "the fourth is not uploaded or asked"
+
+
+def test_footage_watching_stops_after_three_uploads_fail_in_a_row():
+    patched = package.patch_engine("youtube.py", _youtube_engine()).decode()
+    uploads = []
+    def upload(p):
+        uploads.append(p)
+        raise ConnectionError("('Connection aborted.', TimeoutError('The write operation timed out'))")
+    space = {"Path": __import__("pathlib").Path, "time": __import__("types").SimpleNamespace(sleep=lambda s: None),
+             "_chat_log": lambda *a: pytest.fail("nothing to watch without an upload"), "_env": lambda k: "key",
+             "_low_copy": lambda *a: "low.mp4", "_kie_upload": upload, "_watch_copy": lambda p: p}
+    exec(compile(patched[patched.index("_KIE_DOWN = "):], "youtube.py", "exec"), space)
+    for vid in "abc":
+        with pytest.raises(ConnectionError):
+            space["_kie_log"](vid, "watch", None)
+    with pytest.raises(RuntimeError, match="goes on without it"):
+        space["_kie_log"]("d", "watch", None)
+    assert len(uploads) == 3, "after three stalled uploads the rest of the search skips the watcher"
