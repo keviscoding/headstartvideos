@@ -33,7 +33,7 @@
   --app-border: #262B45;
   --app-ink: #EDEEF5;
   --app-ink-2: #A7ACC4;
-  --app-ink-3: #6C7192;
+  --app-ink-3: #868CAB;   /* muted text that still passes WCAG AA (4.5:1) on every dark surface */
   --accent-soft-dark: #23213F;
 
   /* Status semantics */
@@ -998,6 +998,7 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  white-space: nowrap;
   font-family: var(--font-mono);
   font-size: 12px;
   letter-spacing: 0.01em;
@@ -1858,3 +1859,6 @@
 @media (max-width: 640px) {
   .v1-banner { flex-direction: column; align-items: flex-start; }
 }
+
+/* Phones: the credits chip (Classic cloud credits) gives way to the logo and the menu */
+@media (max-width: 520px) { #credits-display { display: none !important; } }

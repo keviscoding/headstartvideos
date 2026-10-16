@@ -25,6 +25,7 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
 
 import config
+from webapp import milestones
 from webapp import database as db
 from webapp import plans
 from cryptography.fernet import Fernet, InvalidToken
@@ -271,6 +272,7 @@ def status(user: dict) -> dict:
             "local_url": "http://127.0.0.1:7860/cr-setup",
             "generation_billing": "Your provider accounts", "rendering": "Your computer",
             "changelog": changelog(), "voice_samples": voice_samples(),
+            "milestones": milestones.of(user["id"]),
             "production_workflow": workflow_contract()}
 
 
@@ -1084,9 +1086,10 @@ def studio_access(session_user):
         if authorization:
             if not authorization.startswith("Bearer cr_mcp_"):
                 raise HTTPException(401, "Reconnect your ChannelRecipe account.")
-            user = db.get_user_by_mcp_api_key(authorization[7:])
-        else:
-            user = session_user(request)
+            user = require_studio_user(db.get_user_by_mcp_api_key(authorization[7:]))
+            milestones.seen(user["id"])                 # the customer's Studio called in
+            return user
+        user = session_user(request)
         return require_studio_user(user)
     return access
 
@@ -1169,6 +1172,7 @@ def make_router(session_user, *, prefix="/api/frontier"):
     @router.get("/download")
     def download(user=Depends(access)):
         headers = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}
+        milestones.record(user["id"], milestones.DOWNLOADED)
         local = os.getenv("FRONTIER_RELEASE_PATH", "")
         filename = "ChannelRecipe-local-studio-%s.zip" % VERSION
         if local and Path(local).is_file():

@@ -157,3 +157,34 @@ def test_studio_status_lists_hosted_voice_samples(env):
     for url in samples.values():
         assert url.startswith("https://channelrecipe.com/static/voices/")
         assert (static / url.split("/static/", 1)[1]).is_file()
+
+
+def test_status_says_how_far_the_customer_has_got(env, monkeypatch):
+    from webapp import milestones
+    monkeypatch.setattr(milestones, "_ready", set())
+    member = user(1, "studio_pro")
+    assert studio.status(member)["milestones"]["connected_at"] is None
+    milestones.record(1, milestones.CONNECTED)
+    studio.native_begin(member, studio.NativeBegin(begin_id="first_video_0001", title="A video", style="history",
+                                                   setup=env.proof))
+    got = studio.status(member)["milestones"]
+    assert got["connected_at"] and got["projects"] == 1 and got["finished"] == 0
+
+
+def test_a_studio_calling_with_its_key_is_seen_and_a_download_is_recorded(env, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from webapp import milestones
+    monkeypatch.setattr(milestones, "_ready", set())
+    monkeypatch.setattr(milestones, "_seen", {})
+    member = user(1, "studio_pro")
+    monkeypatch.setattr(studio.db, "get_user_by_mcp_api_key", lambda key: member if key == "cr_mcp_good" else None)
+    release = studio.db.DB_PATH.parent / "release.zip"
+    release.write_bytes(b"PK\x05\x06" + b"\0" * 18)
+    monkeypatch.setenv("FRONTIER_RELEASE_PATH", str(release))
+    app = FastAPI(); app.include_router(studio.make_router(lambda req: member))
+    client = TestClient(app)
+    assert client.get("/api/frontier/status", headers={"Authorization": "Bearer cr_mcp_good"}).status_code == 200
+    assert client.get("/api/frontier/download").status_code == 200
+    got = milestones.of(1)
+    assert got["seen_at"] and got["downloaded_at"]

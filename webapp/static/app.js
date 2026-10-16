@@ -6436,9 +6436,9 @@ function updateAuthUI() {
         userBtn.classList.add('hidden');
         const cc = document.getElementById('credits-count');
         const cp = document.getElementById('credits-plan');
-        if (cc) cc.textContent = 'Sign in';
+        if (cc) cc.textContent = '';
         if (cp) cp.textContent = '';
-        creditsDisplay.classList.remove('hidden');
+        creditsDisplay.classList.add('hidden');      // signed out: the Sign in button is enough
         if (navUpgrade) navUpgrade.classList.add('hidden');
         if (cookingUpgrade) cookingUpgrade.classList.add('hidden');
         try { window.Sentry?.setUser(null); } catch (_) {}

@@ -26,6 +26,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 import config
+from webapp import milestones
 from webapp import database as db
 from webapp.frontier_studio import require_studio_user
 
@@ -114,6 +115,7 @@ def make_router(session_user) -> APIRouter:
     async def exchange(body: ExchangeRequest):
         user_id = read_code(body.code, body.verifier)
         user = require_studio_user(db.get_user_by_id(user_id))
+        milestones.record(int(user["id"]), milestones.CONNECTED)
         return {"key": db.ensure_user_mcp_api_key(int(user["id"]))}
 
     return router
