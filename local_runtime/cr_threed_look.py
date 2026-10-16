@@ -14,6 +14,11 @@ from pathlib import Path
 
 LOOKS = ("white_studio", "studio_color", "documentary")
 _current = threading.local()
+_ACTIVE: dict = {}          # the same job for the director's worker threads (one video per engine process)
+
+
+def _job():
+    return getattr(_current, "job", None) or _ACTIVE.get("job")
 
 
 def chosen(job) -> str:
@@ -33,7 +38,47 @@ def clean(value) -> str:
     return value
 
 
+DEFAULT_PALETTE = "warm ivory white surfaces, signal yellow accents, deep charcoal shadows"
+PALETTE_LINE = "3D SCENE PALETTE: every 3D scene uses only {}; keep it minimal and contrasting."
+
+
+def recipe_palette(engine, job) -> str:
+    """The palette a studio-colour video paints in when its creator chose none in Create: the recipe's own
+    (look.threed.palette), else ivory with signal-yellow accents. "" for any other look."""
+    try:
+        style = (Path(job) / "style.txt").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    look = ((getattr(engine, "STYLE_INFO", {}) or {}).get(style) or {}).get("look") or {}
+    lt = look.get("threed") if isinstance(look.get("threed"), dict) else {}
+    if (chosen(job) or str(lt.get("preset") or "")) != "studio_color":
+        return ""
+    return str(lt.get("palette") or DEFAULT_PALETTE)
+
+
+def _with_palette(engine):
+    """The 3D director's creative direction carries the recipe's palette when the creator gave none."""
+    original = getattr(engine, "_extra_block", None)
+    if original is None or getattr(original, "_cr_palette", False):
+        return
+
+    def _extra_block():
+        out = original() or ""
+        job = _job()
+        if job and "3D SCENE PALETTE" not in out:
+            palette = recipe_palette(engine, job)
+            if palette:
+                line = PALETTE_LINE.format(palette)
+                out = (out.rstrip("\n") + "\n" + line + "\n") if out else (
+                    "\n\nEXTRA INSTRUCTIONS FROM THE CREATOR FOR THIS VIDEO — follow them wherever they apply:\n" + line + "\n")
+        return out
+    _extra_block._cr_palette = True
+    engine._extra_block = _extra_block
+
+
 def install(engine=None):
+    if engine is not None:
+        _with_palette(engine)
     try:
         import threed
     except Exception:                                           # noqa: BLE001 - no 3D here
@@ -44,7 +89,7 @@ def install(engine=None):
 
     def _cfg(engine_, style):
         c = original_cfg(engine_, style)
-        job = getattr(_current, "job", None)
+        job = _job()
         look = chosen(job) if job else ""
         if look and look in (getattr(threed.SB, "PRESETS", None) or LOOKS):
             c["preset"] = look
@@ -56,12 +101,12 @@ def install(engine=None):
         def run(*args, **kwargs):
             # the job folder: _add_to_timeline(segs, srt, job, ...) is handed the subtitle file first
             job = kwargs.get("job") or next((a for a in args if isinstance(a, Path) and a.is_dir()), None)
-            before = getattr(_current, "job", None)
-            _current.job = job
+            before, active = getattr(_current, "job", None), _ACTIVE.get("job")
+            _current.job = _ACTIVE["job"] = job
             try:
                 return fn(*args, **kwargs)
             finally:
-                _current.job = before
+                _current.job, _ACTIVE["job"] = before, active
         return run
     for name in ("_add_to_timeline", "_repair_cli", "_cli_setup"):
         if hasattr(threed, name):
