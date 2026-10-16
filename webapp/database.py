@@ -7,11 +7,13 @@ and multiple instances), and falls back to a local SQLite file otherwise
 """
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import re
 import secrets
 import sqlite3
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -329,8 +331,40 @@ CREATE TABLE IF NOT EXISTS niche_hunt_runs (
 """
 
 
+# Postgres connections come from a small pool: opening one costs a TLS handshake and a login (100+ ms to the managed
+# database), and the database allows about 22 at once while the web process serves 32 requests in parallel. Pooled,
+# a request reuses a warm connection, and a burst waits briefly for one instead of failing with "too many clients".
+# DB_POOL_MAX leaves room for the cloud workers; without psycopg_pool installed, each query connects as before.
+_POOL = None
+_POOL_LOCK = threading.Lock()
+
+
+def _pool():
+    global _POOL
+    if _POOL is None:
+        with _POOL_LOCK:
+            if _POOL is None:
+                try:
+                    from psycopg_pool import ConnectionPool
+                except ImportError:
+                    _POOL = False
+                    return _POOL
+                _POOL = ConnectionPool(
+                    DATABASE_URL, name="cr-web",
+                    min_size=int(os.getenv("DB_POOL_MIN", "1")), max_size=int(os.getenv("DB_POOL_MAX", "12")),
+                    kwargs={"row_factory": dict_row, "connect_timeout": 10},
+                    check=ConnectionPool.check_connection,      # a connection the server dropped is replaced, not used
+                    max_idle=300, max_lifetime=1800, timeout=30, open=True)
+                atexit.register(_POOL.close)
+    return _POOL
+
+
 @contextmanager
 def _conn():
+    if IS_PG and _pool():
+        with _pool().connection() as conn:              # commits on success, rolls back on an error
+            yield conn
+        return
     if IS_PG:
         conn = psycopg.connect(
             DATABASE_URL,
