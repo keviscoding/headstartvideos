@@ -79,3 +79,16 @@ def test_every_public_page_has_a_share_card_and_a_canonical_link():
         assert '<meta name="twitter:card" content="summary_large_image">' in html and 'name="description"' in html, page
         got = c.get(f"/static/{image}")
         assert got.status_code == 200 and got.content[:3] == b"\xff\xd8\xff" and len(got.content) < 300_000
+
+
+def test_the_homepage_welcomes_back_customers_and_stays_light():
+    html = client().get("/").text
+    assert 'href="/app?signin=1#local-studio" class="nav-login">Log in</a>' in html and 'href="/3d-harness"' in html
+    assert ".gif" not in html, "previews are small looping videos, not 1.6 MB of GIFs"
+    assert html.count('data-src="/static/previews/') == 4 and 'preload="none"' in html
+    assert "b59-3d-reconstruction-v1.mp4" in html and "killer-mountain-deadly-places-v1.mp4" in html
+    assert html.index('id="showcase"') < html.index("Classic recipes for quick cloud videos"), "Studio before Classic"
+    assert 'class="cookie-bar"' in html and "youtube.com/@editarick" in html
+    assert "you'd" not in html and "you’d" in html, "typographic apostrophes in the copy"
+    js = (web_assets.STATIC_DIR / "app.js").read_text()
+    assert "function maybeOpenSignIn()" in js and "maybeOpenSignIn();" in js
