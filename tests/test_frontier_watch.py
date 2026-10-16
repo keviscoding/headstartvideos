@@ -103,6 +103,9 @@ def actual_watch(tmp_path):
     names = {"_chat_log", "_kie_upload", "_kie_log"}
     nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
     assert {node.name for node in nodes} == names
+    # Studio 61+ guards the watcher with a breaker for kie outages (module state the functions read)
+    nodes = [node for node in tree.body if isinstance(node, ast.Assign)
+             and any(isinstance(t, ast.Name) and t.id == "_KIE_DOWN" for t in node.targets)] + nodes
     clip = tmp_path / "already-cut-source.mp4"
     clip.write_bytes(b"fixture-video-file")
     calls, slices = [], []
@@ -198,9 +201,11 @@ def actual_search(tmp_path):
         pytest.skip("Owner's private search source is required; it is not published with these tests.")
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     tree = ast.parse(source.read_text(encoding="utf-8"))
-    names, constants = {"search", "_official"}, {"SKIP_WORDS", "OFFICIAL", "MAX_VIDEO_S"}
+    # Studio 61+ keeps yt-dlp's first error for the run summary (_note_err and its list)
+    names, constants = {"search", "_official", "_note_err"}, {"SKIP_WORDS", "OFFICIAL", "MAX_VIDEO_S", "_YTDLP_ERR"}
     nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names
-             or isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id in constants for target in node.targets)]
+             or isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id in constants for target in node.targets)
+             or isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id in constants]
     calls = []
     state = SimpleNamespace(result=subprocess.CompletedProcess([], 0, "", ""), timeout=False)
     command = ["fixture-yt-dlp", "--cookies", "/private/secret/cookies.txt"]
