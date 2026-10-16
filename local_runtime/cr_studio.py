@@ -431,7 +431,7 @@ def create_app():
     os.environ["SCRIPT_PROVIDER"] = os.environ["CLAUDE_PROVIDER"]
     os.environ["CLAUDE_HANDOFF_DIR"] = ""
     import app as studio
-    from flask import Response, g, jsonify, request
+    from flask import Response, g, has_request_context, jsonify, request
     cr_bridge.install(studio.mv)
     cr_media.install(studio.mv)
     cr_capabilities.install(studio)
@@ -530,8 +530,16 @@ def create_app():
         text = (HOME / "cr_setup.html").read_text()
         return Response(text.replace("__LOCAL_TOKEN__", token), mimetype="text/html", headers={"Cache-Control": "no-store"})
 
+    # The full check runs Claude Code, its tools list and an account call: about 2.5 s. Pages that only need to draw
+    # ask for the last result (?cached=1, up to five minutes old) and refresh in the background; anything that
+    # starts work (preflight, setup) always gets a fresh check.
+    last_status = {}
+
     @studio.app.get("/cr-status")
     def setup_status():
+        if (has_request_context() and request.args.get("cached") == "1"
+                and last_status.get("at", 0) > time.monotonic() - 300):
+            return jsonify({**last_status["checks"], "cached": True})
         cfg = cr_bridge.load_settings()
         checks = {"python": sys.version_info >= (3,10), "ffmpeg": video_tools_ready(),
                   "node": tool_ready("node", "--version") or tool_ready("deno", "--version"),
@@ -587,6 +595,7 @@ def create_app():
         checks["brain_mode"] = readiness["brain_mode"]
         checks["claude_code"] = readiness.pop("claude_code")
         checks["readiness"] = readiness
+        last_status.update(at=time.monotonic(), checks=checks)
         return jsonify(checks)
 
     @studio.app.post("/cr-preflight")

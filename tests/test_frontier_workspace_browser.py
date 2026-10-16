@@ -96,9 +96,11 @@ def workspace(browser):
 
     @app.get("/cr-status")
     def status():
-        ready = env.mode != "needs_setup"
+        ready = env.mode not in ("needs_setup", "needs_update")
+        blockers = [] if ready else ["A new Studio is out."] if env.mode == "needs_update" else ["Connect your narration account."]
+        checks = [{"key": "release", "ready": False, "message": blockers[0]}] if env.mode == "needs_update" else []
         return jsonify(local_version=env.local_version, account=env.account, brain_mode="claude_code",
-                       readiness={"ready": ready, "blockers": [] if ready else ["Connect your narration account."]},
+                       readiness={"ready": ready, "blockers": blockers, "checks": checks},
                        claude_code={"allowance": {"reported_limit": True, "blocked": False}},
                        narration={"voice": "My narrator", "label": "My media account"})
 
@@ -362,7 +364,7 @@ def test_project_posters_are_lazy_bounded_and_retry_busy_decoders(workspace):
     assert not env.posts, "Loading and retrying screenshots must not create creative work."
 
 
-def test_updates_are_optional_explained_and_mentioned_before_discord(workspace):
+def test_updates_are_explained_and_mentioned_before_discord(workspace):
     workspace.local_version = "5.3-admin.51"
     workspace.account = {"version": "5.3-admin.52", "changelog": [
         {"build": 52, "title": "Faster thumbnails", "items": ["Thumbnails load faster."]},
@@ -371,7 +373,7 @@ def test_updates_are_optional_explained_and_mentioned_before_discord(workspace):
     page = workspace.page
     page.wait_for_selector("#crw-update:not([hidden])")
     assert "Studio 52 is available" in page.inner_text("#crw-update")
-    assert "optional" in page.inner_text("#crw-update")
+    assert "keeps your projects" in page.inner_text("#crw-update")
     # The first Discord click shows what the update fixes instead of leaving.
     page.click("a[data-discord='sidebar']")
     assert page.locator("#crw-whatsnew").is_visible()
@@ -384,6 +386,20 @@ def test_updates_are_optional_explained_and_mentioned_before_discord(workspace):
     assert any(post["path"] == "/cr-update/download" for post in workspace.posts)
     page.click("#crw-update .crw-primary-button")
     page.wait_for_function("document.querySelector('#crw-update').textContent.includes('Restarting')")
+
+
+def test_a_required_update_says_how_and_its_banner_cannot_be_put_off(workspace):
+    workspace.mode = "needs_update"
+    workspace.local_version = "5.3-admin.51"
+    workspace.account = {"version": "5.3-admin.52", "changelog": [{"build": 52, "title": "Faster thumbnails", "items": ["x"]}]}
+    workspace.open()
+    page = workspace.page
+    page.wait_for_selector("#crw-update:not([hidden])")
+    assert "keep making new videos" in page.inner_text("#crw-update")
+    assert "Update now" in page.inner_text("#crw-readiness") and "download" not in page.inner_text("#crw-readiness").lower()
+    page.click("#crw-update .crw-icon-button")              # "Remind me later"
+    page.reload(); page.wait_for_selector("#crw-update:not([hidden])")
+    assert page.locator("#crw-update").is_visible(), "while an update is required the way out stays on screen"
 
 
 def test_no_update_banner_when_studio_is_current(workspace):
@@ -422,3 +438,18 @@ def test_copy_diagnostics_for_support(workspace):
     page.click("#crw-copy-diagnostics")
     page.wait_for_function("document.getElementById('crw-diagnostics-status').textContent.startsWith('Copied')")
     assert "Discord #help" in page.inner_text("#crw-diagnostics-status")
+
+
+def test_the_tab_says_what_the_studio_is_making(workspace):
+    workspace.mode = "active"
+    workspace.open()
+    page = workspace.page
+    page.wait_for_function("document.title.startsWith('Making')")
+    assert "A film in production" in page.title()
+    assert page.get_attribute("#crw-favicon", "href") == "/cr-workspace/icon.svg?state=busy"
+
+
+def test_the_tab_is_plain_when_nothing_is_running(workspace):
+    workspace.open()
+    assert workspace.page.title() == "ChannelRecipe · Studio"
+    assert workspace.page.get_attribute("#crw-favicon", "href") == "/cr-workspace/icon.svg"

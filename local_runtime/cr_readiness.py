@@ -28,8 +28,10 @@ def basic(checks, *, verify_mcp=True):
     results = [item("python","Python 3.10 or newer",checks.get("python") is True,"Install Python 3.12, then reopen the launcher."),
         item("connection", "ChannelRecipe account", bool(account), "Connect your CR account in step 2."),
         item("spending", "Account spending acknowledged", cfg.get("costs_accepted"), "Review account costs in step 2."),
-        item("release", "Current workflow installed", account.get("version") == checks.get("local_version"),
-             "Download and start the current studio from ChannelRecipe."),
+        # the releases that may start new videos: the latest, or any the account lists as still supported
+        item("release", "Current workflow installed", checks.get("local_version") in (
+            account.get("supported_versions") or [account.get("version")]),
+             "A new Studio is out. Press Update now at the top of the studio page: it keeps your projects."),
         item("ffmpeg", "Video and caption tools", checks.get("ffmpeg"), "Install FFmpeg with subtitles, H.264, AAC and MP3 support, then reopen the launcher."),
         item("browser", "Graphics browser", checks.get("browser"), "Reopen the launcher to install its graphics browser."),
         item("node", "JavaScript runtime", checks.get("node"), "Install Node.js LTS, then reopen the launcher.")]

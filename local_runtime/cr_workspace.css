@@ -65,3 +65,4 @@ dialog{padding:0;border:1px solid #555A76;border-radius:19px;background:var(--cr
 
 .crw-panels-strip{display:flex;gap:6px;overflow-x:auto;margin:8px 0 2px}
 .crw-panels-strip img{height:72px;width:auto;border-radius:6px;border:1px solid var(--crw-line, #d8dce3);flex:none}
+button.crw-inline-link{background:none;border:0;padding:0;color:var(--crw-violet-ink);cursor:pointer}button.crw-inline-link:hover{text-decoration:underline}
