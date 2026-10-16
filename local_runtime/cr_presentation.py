@@ -48,16 +48,18 @@ RECIPES = {
     "cr-handdrawn-finance": ("Hand-Drawn Money", "Animation", "Money explained with whiteboard drawings, a recurring drawn everyman and handwritten notes.", ("Whiteboard drawings", "Recurring character", "Handwritten notes")),
     "cr-paper-finance": ("Paper Economics", "Documentary", "Economics and money over real footage, paper documents and clean graphs, with a paper cut-out host.", ("Real footage", "Paper graphics", "Cut-out host")),
     "cr-business-doc": ("Business Story Doc", "Documentary", "Company rise-and-fall stories over real footage, highlighted articles and logos, with a driving score.", ("Real footage", "Highlighted articles", "Story score")),
-    "cr-3d-reconstruction": ("Clean 3D Reconstruction", "Animation", "Minimal white 3D reconstructions of real events, with technical overlays and maps.", ("3D scenes", "Technical overlays", "Maps")),
+    "cr-3d-reconstruction": ("Clean 3D Reconstruction", "Animation", "Clean 3D reconstructions of real events in ivory and signal yellow, with technical overlays and maps.", ("3D scenes", "Technical overlays", "Maps")),
     "cr-true-crime": ("Bodycam True Crime", "Documentary", "Real case footage plays with its own sound between the narration: bodycam, interrogations and maps, under a dark grade.", ("Real case footage", "Original audio", "Maps")),
     "cr-expert-presenter": ("Old-Timer Expert", "Presenter", "An older expert presenter opens the video; raw phone-camera photos of them doing what they say carry the rest.", ("AI presenter", "Phone-camera photos", "Own product")),
     "cr-quiet-essays": ("Quiet Video Essays", "Editorial", "Reflective essays over filtered footage and art, with film grain, the sound of each place and calm music.", ("Filtered footage", "Ambience", "Calm narration")),
     "cr-manga-recaps": ("Manga Recaps", "Animation", "Your own manga, manhwa or webtoon panels, read and retold as a gripping recap.", ("Your own panels", "Recap writing", "No picture costs")),
+    "cr-deadly-places": ("Deadly Places Documentary", "Documentary", "Calm investigations of the world's deadliest places and disasters, over aged archival-style pictures, engravings and old maps.", ("Archival-style pictures", "Old maps", "Calm narration")),
 }
 # Ready-made recipes use the nearest owned artwork until they have their own.
 ART_ALIAS = {"cr-stick-stories": "atlas", "cr-handdrawn-finance": "hustle", "cr-paper-finance": "almanac",
              "cr-business-doc": "documentary", "cr-3d-reconstruction": "3d", "cr-true-crime": "dossier",
-             "cr-expert-presenter": "workshop", "cr-quiet-essays": "jung", "cr-manga-recaps": "folio"}
+             "cr-expert-presenter": "workshop", "cr-quiet-essays": "jung", "cr-manga-recaps": "folio",
+             "cr-deadly-places": "history"}
 
 READY_MADE_IDS = frozenset(ART_ALIAS)
 BUILTIN_IDS = frozenset(RECIPES) - {"automatic", "gaming", "grooming"} - READY_MADE_IDS
