@@ -410,6 +410,10 @@ function navigateTo(page) {
     } catch (_) {}
 
     if (page === 'settings') {
+        const email = document.getElementById('settings-account-email');
+        if (email) email.textContent = currentUser?.email || '';
+        const plan = document.getElementById('settings-account-plan');
+        if (plan) plan.textContent = currentUser ? planLabel(currentUser.plan) + ' plan' : '';
         loadIntegrations();
         loadSettingsFromServer();
         const adminKeys = document.getElementById('settings-admin-keys');
@@ -5515,7 +5519,7 @@ async function loadHistory() {
         window._videoLibrary = data.videos || [];
         if (!data.videos || data.videos.length === 0) {
             list.className = '';
-            list.innerHTML = '<p style="color: var(--app-ink-3); text-align: center; padding: 32px 0;">No videos yet. Finish a video in the pipeline and it will appear here.</p>';
+            list.innerHTML = '<div class="cr-empty"><h3>No Classic videos yet</h3><p>Videos you make in Studio stay on your computer: open Studio and find them under Projects. Classic recipes made in our cloud appear here.</p><div class="cr-empty-actions"><button class="btn-primary" onclick="navigateTo(\'local-studio\')">Go to Studio</button><button class="btn-secondary" onclick="navigateTo(\'pipeline\')">Make a Classic video</button></div></div>';
             return;
         }
         list.className = 'video-grid';

@@ -6,7 +6,12 @@
 /* ---- Fonts ---- */
 @import url("https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@500,700,800,900&display=swap");
 @import url("https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600,700&display=swap");
-@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap");
+@font-face {
+  /* JetBrains Mono (SIL Open Font License, see /static/fonts/JetBrainsMono-OFL.txt), served by us: no Google request */
+  font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400 600; font-display: swap;
+  src: url('/static/fonts/jetbrains-mono-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
 
 /* ---- Tokens ---- */
 :root {
@@ -1862,3 +1867,9 @@
 
 /* Phones: the credits chip (Classic cloud credits) gives way to the logo and the menu */
 @media (max-width: 520px) { #credits-display { display: none !important; } }
+
+/* Empty states say what belongs here and offer the next step */
+.cr-empty { text-align: center; padding: 40px 24px; border: 1px dashed var(--app-border); border-radius: var(--radius-card); background: var(--app-surface); }
+.cr-empty h3 { font-family: var(--font-display); font-weight: 800; font-size: 20px; color: var(--app-ink); margin-bottom: 8px; }
+.cr-empty p { color: var(--app-ink-2); font-size: 15px; max-width: 520px; margin: 0 auto 18px; line-height: 1.55; }
+.cr-empty-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
