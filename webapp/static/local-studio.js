@@ -200,7 +200,7 @@ window.CRLocalStudio = (() => {
             return '<li>'+(m?'<span class="ls-tag ls-tag-'+m[1].toLowerCase()+'">'+m[1]+'</span>'+esc(m[2]):esc(text))+'</li>'; };
         const items = latest.items || [];
         return '<section class="ls-section" id="ls-whats-new"><div class="ls-section-row"><div><h2>What’s new in Studio '+esc(latest.build)+'</h2>'+
-            '<p class="ls-section-sub">'+esc(latest.title || '')+'. Studio offers the update itself; it’s optional and downloads only what changed.</p></div></div>'+
+            '<p class="ls-section-sub">'+esc(latest.title || '')+'. Studio offers the update itself in one click and downloads only what changed. New videos need the latest Studio; projects already running finish on yours.</p></div></div>'+
             '<div class="ls-news"><ul>'+items.slice(0,5).map(item).join('')+'</ul>'+
             (items.length>5?'<details class="ls-mini"><summary>All '+items.length+' changes</summary><ul>'+items.slice(5).map(item).join('')+'</ul></details>':'')+
             (older.length?'<details class="ls-mini"><summary>Earlier updates</summary><ul class="ls-older">'+older.slice(0,8).map(r=>'<li><b>Studio '+esc(r.build)+'</b> · '+esc(r.title||'')+'</li>').join('')+'</ul></details>':'')+
@@ -230,7 +230,7 @@ window.CRLocalStudio = (() => {
                 '<button class="btn-secondary" data-ls-copy-key>'+icon('key')+'Copy my key instead</button></div>'+
                 '<p class="ls-step-note">Then press <b>Set up Claude for videos</b> and paste a Kie.ai key. When all three steps show ✓ Done, open Studio and make your first video.</p></div></div>'+
             '<div class="ls-step ls-step-quiet"><span class="ls-step-n">↻</span><div class="ls-step-body"><h3>Already installed? Update in place</h3>'+
-                '<p>Studio shows what’s new when an update is out and updates itself in one click, downloading only what changed. Updating is optional: your current version keeps working. On Studio 51 or older, close the launcher and ask Claude Code in your Studio folder to “Update ChannelRecipe Studio” once. Don’t download a fresh copy into a new folder.</p></div></div>'+
+                '<p>Studio shows what’s new when an update is out and updates itself in one click, downloading only what changed. Your projects, styles and settings stay. New videos need the latest Studio, so press Update now when it asks. On Studio 51 or older, close the launcher and ask Claude Code in your Studio folder to “Update ChannelRecipe Studio” once. Don’t download a fresh copy into a new folder.</p></div></div>'+
             '</section>';
     }
     function planPanel(home = false) {
