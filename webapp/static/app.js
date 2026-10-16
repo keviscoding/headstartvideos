@@ -8766,3 +8766,25 @@ document.addEventListener('DOMContentLoaded', () => {
         scriptInput.addEventListener('input', debounce(updateAvatarCost, 500));
     }
 });
+
+
+// Admin: email a Studio release's notes (Settings → Release email). The first press asks to confirm.
+async function sendReleaseEmail() {
+    const button = document.getElementById('release-email-send');
+    const status = document.getElementById('release-email-status');
+    const build = Number(document.getElementById('release-email-build').value);
+    if (!Number.isInteger(build) || build < 1) { status.textContent = 'Enter a Studio build number, like 62.'; return; }
+    if (button.dataset.confirm !== String(build)) {
+        button.dataset.confirm = String(build);
+        button.textContent = `Yes, email Studio ${build} notes to customers`;
+        status.textContent = 'Press again to send. Each customer gets it once.';
+        return;
+    }
+    button.disabled = true;
+    try {
+        const res = await fetch('/api/admin/lifecycle/release-email', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({build})});
+        const body = await res.json().catch(() => ({}));
+        status.textContent = res.ok ? `Sending Studio ${build} notes in the background.` : (body.detail || 'Could not start sending.');
+    } catch (_) { status.textContent = 'Could not reach the server. Try again.'; }
+    finally { button.disabled = false; button.dataset.confirm = ''; button.textContent = 'Send release email'; }
+}

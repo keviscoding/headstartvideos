@@ -2019,6 +2019,16 @@
 
             <!-- Admin platform keys -->
             <section id="settings-admin-keys" class="hidden">
+                <div class="cr-surface" style="padding: 20px 24px; border-radius: var(--radius-card); border: 1px solid var(--app-border); margin-bottom: 28px;">
+                    <h3 style="font-family: var(--font-display); font-size: 18px; font-weight: 700;">Release email</h3>
+                    <p style="color: var(--app-ink-2); margin: 6px 0 14px; font-size: 14px;">Admin only: email a Studio release's notes to every Studio customer who hasn't had them (and hasn't unsubscribed). Each build goes once.</p>
+                    <div class="flex items-center gap-3 flex-wrap">
+                        <label class="cr-label" for="release-email-build" style="margin: 0;">Studio build</label>
+                        <input id="release-email-build" type="number" min="1" class="setting-input" style="width: 110px;">
+                        <button id="release-email-send" class="btn-secondary" style="font-size: 14px;" onclick="sendReleaseEmail()">Send release email</button>
+                        <span id="release-email-status" style="font-size: 14px; color: var(--app-ink-2);"></span>
+                    </div>
+                </div>
                 <h3 style="font-family: var(--font-display); font-size: 18px; font-weight: 700; margin-bottom: 8px;">Platform API keys</h3>
                 <p style="color: var(--app-ink-2); margin-bottom: 16px; font-size: 14px;">Admin only: server-wide keys for ChannelRecipe services.</p>
                 <div class="space-y-4" id="settings-keys">

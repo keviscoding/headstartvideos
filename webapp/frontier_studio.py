@@ -1032,6 +1032,10 @@ def native_finish_project(user, req: NativeFinishProject):
         conn.execute(db._q("UPDATE frontier_native_sessions SET artifacts_json=?,error_code=?,updated_at=? WHERE project_id=?"),
                      (json.dumps(artifacts), req.error_code, now, req.project_id))
         conn.execute(db._q("UPDATE frontier_projects SET status=?,updated_at=? WHERE id=?"), (req.status, now, req.project_id))
+        title, purpose = row["title"], json.loads(session["setup_json"]).get("purpose", "video")
+    if req.status == "done" and purpose == "video":
+        from webapp import lifecycle_email
+        lifecycle_email.on_video_finished(user, title)              # the first one gets a short "it's done" email
     return {"saved": True, "reused": False, "status": req.status, "project_id": req.project_id}
 
 

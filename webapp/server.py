@@ -32,6 +32,7 @@ load_dotenv(ROOT / ".env", override=True)
 
 import config
 from webapp import web_assets
+from webapp import lifecycle_email as _lifecycle_email
 
 WEBAPP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = WEBAPP_DIR / "static"
@@ -472,6 +473,8 @@ async def _startup_tasks():
 
     # Defined later in module; resolved at task run time after import finishes.
     asyncio.create_task(_daily_niche_populator())
+    # Setup emails: the hourly "need a hand installing?" check (webapp/lifecycle_email.py)
+    asyncio.create_task(_lifecycle_email.run_loop())
 
 _startup_fn = _startup_tasks
 
@@ -1296,6 +1299,7 @@ async def stripe_webhook(request: Request):
                                 stripe_sub_id=sub_id,
                                 trial_used=1)
                     print(f"[stripe] User {user_id} subscribed (no trial) → {plan_label} ({credits} credits)")
+                    _lifecycle_email.on_subscribed(int(user_id))
                     identify_user(user_id, {"plan": plan_label, "credits": credits, "trial_used": True})
                     _money_track(
                         user_id, "subscription_started",
@@ -1326,6 +1330,7 @@ async def stripe_webhook(request: Request):
                                 stripe_sub_id=sub_id,
                                 trial_used=1)
                     print(f"[stripe] User {user_id} started trial ({plan_label}, {trial_credits} credits)")
+                    _lifecycle_email.on_subscribed(int(user_id))
                     identify_user(user_id, {"plan": plan_label, "credits": trial_credits, "trial_used": True})
                     _money_track(
                         user_id, "trial_started",
@@ -2090,6 +2095,41 @@ async def harness_3d_page():
 async def health():
     """Liveness probe — no DB, no secrets. Safe for DigitalOcean health checks."""
     return {"status": "ok"}
+
+
+# One-click unsubscribe from the setup and release emails (the link is signed per customer). POST is the
+# mail clients' one-click (List-Unsubscribe-Post); GET is the link in the email.
+_UNSUB_PAGE = ("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
+               "<title>ChannelRecipe emails</title><body style=\"font-family:system-ui,sans-serif;background:#F7F5F0;"
+               "color:#16161A;display:grid;place-items:center;min-height:90vh;margin:0;padding:24px\"><div style=\"max-width:420px\">"
+               "<h1 style=\"font-size:24px\">{heading}</h1><p style=\"color:#45454E;line-height:1.55\">{text}</p>"
+               "<p><a href=\"/\" style=\"color:#5A48C9\">channelrecipe.com</a></p></div></body>")
+
+
+@app.api_route("/email/unsubscribe", methods=["GET", "POST"], include_in_schema=False)
+async def email_unsubscribe(u: int = 0, t: str = ""):
+    ok = await asyncio.to_thread(_lifecycle_email.opt_out, u, t)
+    page = _UNSUB_PAGE.format(
+        heading="You're unsubscribed" if ok else "That link didn't work",
+        text=("You won't get setup or release emails from ChannelRecipe any more. Sign-in codes and receipts still arrive."
+              if ok else "Open the newest email from us and press its unsubscribe link, or write to hello@channelrecipe.com."))
+    return HTMLResponse(page, status_code=200 if ok else 400, headers={"Cache-Control": "no-store"})
+
+
+class ReleaseEmailRequest(BaseModel):
+    build: int
+
+
+@app.post("/api/admin/lifecycle/release-email", include_in_schema=False)
+async def admin_release_email(req: ReleaseEmailRequest, admin: dict = Depends(require_admin)):
+    """Email one Studio release's notes to every Studio customer who hasn't had them (runs in the background)."""
+    from webapp import frontier_studio
+    entry = next((row for row in frontier_studio.changelog(50) if row.get("build") == req.build), None)
+    if not entry:
+        raise HTTPException(404, "No changelog entry for that build.")
+    import threading
+    threading.Thread(target=lambda: print("[lifecycle] release", _lifecycle_email.send_release(entry)), daemon=True).start()
+    return {"started": True, "build": req.build}
 
 
 @app.get("/robots.txt")
