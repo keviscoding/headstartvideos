@@ -70,3 +70,12 @@ def test_the_3d_harness_page_and_its_downloads_are_public():
     assert "discord.gg" not in page.text
     assert page.text.count('class="ncard"') == 15 and "Proven niches you can break into today" in page.text
     assert "LEMMiNO" in client.get("/static/harness/3D-Documentary-Harness.md").text
+
+
+def test_the_harness_example_videos_load_only_when_played():
+    page = TestClient(server.app).get("/3d-harness").text
+    cdn = "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/harness/"
+    for stem in ("b59-3d-reconstruction-v1.mp4", "killer-mountain-deadly-places-v1.mp4"):
+        assert f'data-src="{cdn}{stem}"' in page
+    assert page.count('class="ex"') == 2 and page.count('loading="lazy"') >= 2
+    assert "<video" not in page, "no video is fetched until someone presses play"

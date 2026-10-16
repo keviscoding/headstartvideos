@@ -132,6 +132,23 @@
     background: var(--night); color: #E9E5F7; border-radius: 18px; padding: 18px 20px; font-size: 16px; }
   @media (max-width: 960px) { .niches, .inside { grid-template-columns: repeat(2, 1fr); } }
   @media (max-width: 620px) { .niches, .inside { grid-template-columns: 1fr; } }
+  /* example videos: a poster until play, so the page loads no video */
+  .examples { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+  .ex { margin: 0; }
+  .ex .play, .ex video { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 16px; overflow: hidden; background: var(--night); }
+  .ex .play { position: relative; border: 0; padding: 0; cursor: pointer; }
+  .ex .play:focus-visible { outline: 3px solid var(--violet); outline-offset: 3px; }
+  .ex img { display: block; width: 100%; height: 100%; object-fit: cover; transition: transform .3s ease; }
+  .ex .play:hover img { transform: scale(1.02); }
+  .ex .pbtn { position: absolute; left: 14px; bottom: 14px; width: 58px; height: 58px; border-radius: 50%;
+    display: grid; place-items: center; background: linear-gradient(135deg, #6D5AE0, #9B5BE6 55%, #E8608F); box-shadow: 0 10px 30px rgba(21,18,31,.35); }
+  .ex .pbtn svg { width: 24px; height: 24px; margin-left: 3px; fill: #fff; }
+  .ex .play:hover .pbtn { transform: scale(1.06); } .ex .pbtn { transition: transform .2s ease; }
+  .ex .dur { position: absolute; right: 10px; bottom: 10px; background: rgba(21,18,31,.82); color: #fff; font-size: 13px; font-weight: 600; border-radius: 6px; padding: 2px 8px; }
+  .ex figcaption { margin-top: 10px; }
+  .ex figcaption b { display: block; font-family: var(--display); font-weight: 800; font-size: 19px; line-height: 1.25; }
+  .ex figcaption span { color: var(--ink-3); font-size: 15px; }
+  @media (max-width: 620px) { .examples { grid-template-columns: 1fr; } }
   /* CTA */
   .cta { background: var(--night); color: #F7F5F0; margin-top: 80px; position: relative; overflow: hidden; }
   .cta::before { content: ""; position: absolute; width: 900px; height: 900px; left: -300px; top: 120px; border-radius: 50%; background: radial-gradient(circle, rgba(109,90,224,.45), transparent 65%); }
@@ -196,6 +213,30 @@
     <li><b>Write your script with Rule 13:</b> the hook first, then the ten beats.</li>
     <li><b>Hand over both together:</b> give your 3D tool or editor the DNA block and the script, and check every shot against the DNA before you render.</li>
   </ol>
+</section>
+
+<section class="block wrap" id="examples">
+  <div class="kicker">See it made</div>
+  <h2>Watch two videos made with ChannelRecipe</h2>
+  <p class="lede">Both started as a script pasted into ChannelRecipe Studio. Studio made the narration, every scene, the music and the edit. Press play to watch either one in full.</p>
+  <div class="examples">
+    <figure class="ex">
+      <button class="play" type="button" data-src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/harness/b59-3d-reconstruction-v1.mp4" aria-label="Play B-59: The Submarine That Almost Started WW3">
+        <img src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/harness/b59-poster-v1.webp" alt="Two faceless 3D officers in a submarine, labelled 2 keys, 2 officers" width="1280" height="720" loading="lazy" decoding="async">
+        <span class="pbtn" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 4.5v15l12.5-7.5z"/></svg></span>
+        <span class="dur">1:06</span>
+      </button>
+      <figcaption><b>B-59: The Submarine That Almost Started WW3</b><span>Clean 3D Reconstruction recipe</span></figcaption>
+    </figure>
+    <figure class="ex">
+      <button class="play" type="button" data-src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/harness/killer-mountain-deadly-places-v1.mp4" aria-label="Play The Killer Mountain Where Dozens Died Before Anyone Reached the Top">
+        <img src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/harness/killer-mountain-poster-v1.webp" alt="Climbers seated around a lantern-lit table under the title Nanga Parbat" width="1280" height="720" loading="lazy" decoding="async">
+        <span class="pbtn" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 4.5v15l12.5-7.5z"/></svg></span>
+        <span class="dur">1:07</span>
+      </button>
+      <figcaption><b>The Killer Mountain Where Dozens Died Before Anyone Reached the Top</b><span>Deadly Places Documentary recipe</span></figcaption>
+    </figure>
+  </div>
 </section>
 
 <section class="block wrap" id="visual-dna">
@@ -388,6 +429,21 @@
 <footer><div class="wrap"><span>© ChannelRecipe · Creative Tube Ltd</span><span><a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></span></div></footer>
 
 <script>
+  // the example videos load only when played
+  document.querySelectorAll('.ex .play').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var video = document.createElement('video');
+      video.src = button.dataset.src;
+      video.controls = true;
+      video.playsInline = true;
+      video.setAttribute('aria-label', button.getAttribute('aria-label').replace(/^Play /, ''));
+      video.addEventListener('play', function () {
+        document.querySelectorAll('.ex video').forEach(function (other) { if (other !== video) other.pause(); });
+      });
+      button.replaceWith(video);
+      video.play().catch(function () {});
+    });
+  });
   document.querySelectorAll('[data-copy]').forEach(function (button) {
     button.addEventListener('click', function () {
       var text = document.getElementById(button.dataset.copy).innerText;
