@@ -189,7 +189,7 @@ async function initAnalytics() {
     // Sentry (error tracking) — legitimate interest, load regardless of consent.
     if (cfg.sentry_dsn) {
         const s = document.createElement('script');
-        s.src = 'https://browser.sentry-cdn.com/7.120.0/bundle.min.js';
+        s.src = 'https://browser.sentry-cdn.com/8.55.0/bundle.min.js';
         s.crossOrigin = 'anonymous';
         s.onload = () => {
             try {
