@@ -359,6 +359,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     else navigateTo('local-studio');
 
     maybeShowWelcomeCelebration();
+    maybeOpenSignIn();
 });
 
 // ---------------------------------------------------------------------------
@@ -1417,6 +1418,16 @@ function hideCelebration() {
             if (step === 6) populateBuildSummary();
         }
     }, 350);
+}
+
+// The site's "Log in" links (/app?signin=1) open sign-in straight away for someone signed out.
+function maybeOpenSignIn() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('signin') !== '1') return;
+    params.delete('signin');
+    const qs = params.toString();
+    window.history.replaceState({}, '', window.location.pathname + (qs ? '?' + qs : '') + window.location.hash);
+    if (!currentUser) showAuthModal();
 }
 
 function maybeShowWelcomeCelebration() {
