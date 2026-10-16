@@ -56,3 +56,17 @@ def test_provider_outcomes_are_logged_not_alerted():
     assert outcome(failure("x", "unreadable")) == ""
     assert outcome(failure("x", "upstream_http", upstream_http=400)) == ""
     assert outcome(ValueError("ours")) == ""
+
+
+def test_the_3d_harness_page_and_its_downloads_are_public():
+    client = TestClient(server.app)
+    page = client.get("/3d-harness")
+    assert page.status_code == 200 and "The 3D Documentary" in page.text and "Rule 13" in page.text
+    for link in ("/static/harness/3D-Documentary-Harness.pdf", "/static/harness/3D-Documentary-Harness.md"):
+        assert link in page.text
+        got = client.get(link)
+        assert got.status_code == 200 and len(got.content) > 5000, link
+    assert client.get("/static/harness/3D-Documentary-Harness.pdf").content.startswith(b"%PDF")
+    assert "discord.gg" not in page.text
+    assert page.text.count('class="ncard"') == 15 and "Proven niches you can break into today" in page.text
+    assert "LEMMiNO" in client.get("/static/harness/3D-Documentary-Harness.md").text
