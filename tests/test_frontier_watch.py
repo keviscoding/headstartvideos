@@ -101,8 +101,8 @@ def actual_watch(tmp_path):
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     tree = ast.parse(source.read_text(encoding="utf-8"))
     names = {"_chat_log", "_kie_upload", "_kie_log"}
-    nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
-    assert {node.name for node in nodes} == names
+    nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names | {"_watch_copy"}]
+    assert {node.name for node in nodes} - {"_watch_copy"} == names     # Studio 62+ sends a light copy (_watch_copy)
     # Studio 61+ guards the watcher with a breaker for kie outages (module state the functions read)
     nodes = [node for node in tree.body if isinstance(node, ast.Assign)
              and any(isinstance(t, ast.Name) and t.id == "_KIE_DOWN" for t in node.targets)] + nodes
@@ -138,7 +138,8 @@ def actual_watch(tmp_path):
 
     requests = SimpleNamespace(post=post)
     env = {"Path": Path, "json": json, "requests": requests,
-           "time": SimpleNamespace(sleep=lambda _: pytest.fail("Successful watcher must not retry")),
+           "time": SimpleNamespace(sleep=lambda _: pytest.fail("Successful watcher must not retry"),
+                                   monotonic=lambda: 0.0),           # Studio 62+ times a failed upload
            "_env": lambda name: "fixture-no-real-key" if name == "KIE_API_KEY" else "",
            "_low_copy": low_copy}
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), "exec"), env)
