@@ -72,6 +72,8 @@ def mount(page, status, project, progress, *, progress_status=200, legacy=None):
         calls.append((route.request.method, path))
         if path == "/app":
             return route.fulfill(content_type="text/html", body='<div id="page-local-studio"></div><script>const currentUser={is_admin:true};</script>')
+        if path.startswith("/static/recipes/"):              # the returning customer's home shows recipe pictures
+            return route.fulfill(status=200, content_type="image/webp", body=b"")
         if path == "/api/studio/status":
             payload, code = status, 200
         elif path == "/api/studio/projects":

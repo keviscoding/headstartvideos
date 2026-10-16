@@ -199,3 +199,50 @@
     .ls-project article{flex-direction:column;align-items:flex-start}
     .ls-footer{flex-direction:column}
 }
+
+/* Returning customers' home and the setup checklist */
+.ls-hero-home{grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr)}
+.ls-hero-actions a.btn-primary{text-decoration:none}
+.ls-hero-hint{margin-top:16px !important;font-size:13px !important;color:var(--app-ink-3) !important}
+.ls-hero-hint b{color:var(--app-ink-2)}
+.ls-checklist{background:var(--app-surface);border:1px solid var(--app-border);border-radius:var(--radius-card);padding:20px 22px;margin:0 0 24px}
+.ls-hero .ls-checklist{margin:0}
+.ls-checklist-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:10px}
+.ls-checklist-head strong{font:800 18px var(--font-display)}
+.ls-checklist-head span{font:12px var(--font-mono);color:var(--app-ink-2)}
+.ls-checklist ol{list-style:none;margin:16px 0 0;padding:0;display:flex;flex-direction:column;gap:14px}
+.ls-checklist li{display:flex;gap:12px;align-items:flex-start}
+.ls-checklist li b{display:block;font-size:15px}
+.ls-checklist li small{display:block;font-size:13px;color:var(--app-ink-2);margin-top:2px}
+.ls-check{flex:none;display:grid;place-items:center;width:24px;height:24px;border-radius:50%;border:2px solid var(--app-border);margin-top:1px}
+.ls-checklist li.done .ls-check{background:var(--success);border-color:var(--success);color:#fff}
+.ls-checklist li.done b{color:var(--app-ink-2);text-decoration:line-through;text-decoration-color:var(--app-ink-3)}
+.ls-check svg{width:14px;height:14px}
+.ls-section-sub{color:var(--app-ink-2);font-size:15px;margin:6px 0 0;max-width:680px}
+.ls-section.ls-first{margin-top:16px}
+.ls-ready{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px}
+.ls-ready article{background:var(--app-surface);border:1px solid var(--app-border);border-radius:14px;overflow:hidden;display:flex;flex-direction:column}
+.ls-ready img{display:block;width:100%;aspect-ratio:16/9;object-fit:cover;background:var(--app-surface-2)}
+.ls-ready article>div{padding:12px 14px 14px}
+.ls-ready h3{font:700 15px/1.25 var(--font-display);margin:0 0 6px}
+.ls-ready p{font-size:13px;line-height:1.5;color:var(--app-ink-2);margin:0}
+.ls-news{background:var(--app-surface);border:1px solid var(--app-border);border-radius:var(--radius-card);padding:18px 22px}
+.ls-news ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.ls-news li{font-size:14px;line-height:1.55;color:var(--app-ink-2)}
+.ls-news .ls-mini{margin-top:14px}
+.ls-news .ls-mini ul{margin-top:10px}
+.ls-tag{display:inline-block;font:700 10px var(--font-mono);letter-spacing:.06em;text-transform:uppercase;border-radius:6px;padding:2px 6px;margin-right:8px;vertical-align:1px}
+.ls-tag-new{background:var(--accent-soft-dark);color:#c9beff}
+.ls-tag-improved{background:rgba(20,184,122,.14);color:#7fe0b6}
+.ls-tag-fixed{background:rgba(232,161,60,.14);color:#f3c27f}
+.ls-older li b{color:var(--app-ink)}
+.ls-home-plan{margin-top:24px;max-width:420px}
+.ls-home-plan .ls-plan-panel{position:static}
+.ls-reinstall{margin-top:24px}
+.ls-reinstall .ls-setup{margin-top:16px}
+@media (max-width:1100px){.ls-ready{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:760px){.ls-ready{grid-template-columns:repeat(2,minmax(0,1fr))}.ls-hero-home{grid-template-columns:1fr}}
+.ls-request-list[hidden]{display:none !important}
+.ls-statcard dl{margin:14px 0 0;display:grid;grid-template-columns:1fr 1fr;gap:12px 18px}
+.ls-statcard dt{font:11px var(--font-mono);letter-spacing:.05em;text-transform:uppercase;color:var(--app-ink-3)}
+.ls-statcard dd{margin:3px 0 0;font:700 17px var(--font-display);color:var(--app-ink)}

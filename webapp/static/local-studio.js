@@ -23,7 +23,9 @@ window.CRLocalStudio = (() => {
         download:'<path d="M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4"/>',
         copy:'<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
         chat:'<path d="M4 5h16v11H8l-4 4z"/>',
-        key:'<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9m-4 4 3 3"/>'
+        key:'<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9m-4 4 3 3"/>',
+        external:'<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
+        spark:'<path d="M12 3v4m0 10v4M3 12h4m10 0h4M6 6l2.5 2.5m7 7L18 18M6 18l2.5-2.5m7-7L18 6"/>'
     };
     const icon = key => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+icons[key]+'</svg>';
     const providerInfo = () => data?.providers?.[brainChoice] || {label:'Claude API', brain_models:[]};
@@ -51,10 +53,26 @@ window.CRLocalStudio = (() => {
         catch { notice('Your browser blocked copying. Select the text and copy it yourself.', true); }
     }
     function track(event, props = {}) { try { _track(event, props); } catch (_) {} }
+    const studioName = version => { const m = /(\d+)$/.exec(String(version || '')); return m ? 'Studio '+m[1] : String(version || ''); };
 
     // ---- Shared sections -------------------------------------------------
+    // A returning customer has connected Studio, been seen by it, or made a project: they get their home, not the
+    // install guide. Everyone else gets the three steps to a first video, ticked off as they go.
+    const progress = () => data?.milestones || {};
+    const returning = () => { const m = progress(); return !!(m.connected_at || m.seen_at || m.projects); };
     function hero() {
         const member = view === 'member';
+        if (member && returning()) {
+            const latest = (data.changelog || [])[0];
+            return '<header class="ls-hero ls-hero-home"><div class="ls-hero-copy">'+
+                '<span class="ls-version-chip">'+icon('film')+'ChannelRecipe Studio'+(latest?' <b>'+esc(latest.build)+'</b>':'')+'</span>'+
+                '<h1>Welcome back. <em>What are we making?</em></h1>'+
+                '<p>Studio runs on your computer. Open it to make a video, clone a style or pick up a project.</p>'+
+                '<div class="ls-hero-actions"><a class="btn-primary" href="'+STUDIO_URL+'" target="_blank" rel="noopener" data-ls-open-studio>Open Studio '+icon('external')+'</a>'+
+                '<a class="ls-text-link" href="#ls-whats-new">What’s new</a></div>'+
+                '<p class="ls-hero-hint">Not opening? Start Studio first: double-click <b>'+(platform==='mac'?'Start on Mac.command':'Start on Windows.cmd')+'</b> in your Studio folder.</p>'+
+                '</div>'+checklist()+'</header>';
+        }
         return '<header class="ls-hero"><div class="ls-hero-copy">'+
             '<span class="ls-version-chip">'+icon('film')+'ChannelRecipe Studio <b>v2</b></span>'+
             '<h1>'+(member?'Your studio is ready to <em>install.</em>':'Whole faceless videos, made on <em>your computer.</em>')+'</h1>'+
@@ -62,7 +80,7 @@ window.CRLocalStudio = (() => {
                 ? 'Three steps and you’re making your first video. Claude can do the installing for you.'
                 : 'Type a title or paste a script. Studio researches, writes, narrates, animates and edits a finished YouTube video in the style you choose, or in one it learns from any channel.')+'</p>'+
             (member?'':'<div class="ls-hero-actions"><button class="btn-primary" data-ls-plans>See plans '+icon('arrow')+'</button><a class="ls-text-link" href="#ls-how">How it works</a></div>')+
-            '</div>'+heroVisual()+'</header>';
+            '</div>'+(member?checklist():heroVisual())+'</header>';
     }
     function heroVisual() {
         const stages = [['idea','Your idea','“Why the Romans never invented the steam engine”'],
@@ -138,6 +156,56 @@ window.CRLocalStudio = (() => {
     }
 
     // ---- Member view -----------------------------------------------------
+    function checklist() {
+        const m = progress();
+        const steps = [
+            ['Download Studio', !!m.downloaded_at || !!m.connected_at || !!m.projects, 'Mac or Windows, about 250 MB'],
+            ['Install and connect it', !!m.connected_at || !!m.seen_at || !!m.projects, 'Claude Code can do it for you'],
+            ['Make your first video', Number(m.finished || 0) > 0, Number(m.finished || 0) > 0
+                ? Number(m.finished)+' finished '+(Number(m.finished)===1?'video':'videos') : 'Type a title, pick a recipe, press Create']];
+        const done = steps.filter(s=>s[1]).length;
+        if (done === steps.length) {
+            // all set: what's worth knowing at a glance instead of three struck-through steps
+            const ago = t => { if (!t) return 'not yet'; const m = Math.max(1, Math.round((Date.now()/1000 - t)/60));
+                return m < 60 ? m+' min ago' : m < 1440 ? Math.round(m/60)+' h ago' : Math.round(m/1440)+' days ago'; };
+            const clones = data.style_clones || {};
+            const rows = [['Studio last online', ago(m.seen_at)], ['Videos finished', String(Number(m.finished || 0))],
+                ['Projects', String(Number(m.projects || 0))],
+                ['Style clones', clones.limit==null ? Number(clones.used||0)+' · unlimited' : Number(clones.used||0)+' of '+clones.limit]];
+            return '<aside class="ls-checklist ls-statcard" aria-label="Your studio"><div class="ls-checklist-head"><strong>Your studio</strong>'+
+                '<span class="ls-pill ok">Connected</span></div><dl>'+rows.map(([k,v])=>'<div><dt>'+k+'</dt><dd>'+esc(v)+'</dd></div>').join('')+'</dl></aside>';
+        }
+        return '<aside class="ls-checklist" aria-label="Your progress"><div class="ls-checklist-head"><strong>'+
+            (done===steps.length?'You’re all set':'Your first video in 3 steps')+'</strong><span>'+done+' of '+steps.length+'</span></div>'+
+            '<div class="ls-meter-bar"><span style="width:'+Math.round(done/steps.length*100)+'%"></span></div><ol>'+
+            steps.map(([title,ok,note])=>'<li class="'+(ok?'done':'')+'"><span class="ls-check">'+(ok?icon('check'):'')+'</span><div><b>'+title+'</b><small>'+esc(note)+'</small></div></li>').join('')+
+            '</ol></aside>';
+    }
+    const READY = [
+        ['stick-stories','Stick Figure Stories','Funny stick-figure stories on painted backgrounds, with a recurring mascot.'],
+        ['clean-3d','Clean 3D Reconstruction','Real events rebuilt as clean 3D scenes in ivory and signal yellow.'],
+        ['deadly-places','Deadly Places Documentary','Calm investigations of deadly places over archival-style pictures and old maps.'],
+        ['handdrawn-money','Hand-Drawn Money','Money explained with whiteboard drawings that draw themselves on.'],
+        ['manga-recaps','Manga Recaps','Your own manga panels, read and retold as a gripping recap.']];
+    function readyMade() {
+        return '<section class="ls-section"><div class="ls-section-row"><div><h2>Ready-made recipes</h2>'+
+            '<p class="ls-section-sub">Learned from top channels and tested end to end. In Studio, choose <b>Create → Browse recipes</b>.</p></div></div>'+
+            '<div class="ls-ready">'+READY.map(([id,name,text])=>'<article><img src="/static/recipes/'+id+'.webp" alt="" width="640" height="360" loading="lazy" decoding="async">'+
+            '<div><h3>'+esc(name)+'</h3><p>'+esc(text)+'</p></div></article>').join('')+'</div></section>';
+    }
+    function whatsNew() {
+        const rows = data.changelog || []; if (!rows.length) return '';
+        const [latest, ...older] = rows;
+        const item = text => { const m = /^(New|Improved|Fixed):\s*(.*)$/.exec(text || '');
+            return '<li>'+(m?'<span class="ls-tag ls-tag-'+m[1].toLowerCase()+'">'+m[1]+'</span>'+esc(m[2]):esc(text))+'</li>'; };
+        const items = latest.items || [];
+        return '<section class="ls-section" id="ls-whats-new"><div class="ls-section-row"><div><h2>What’s new in Studio '+esc(latest.build)+'</h2>'+
+            '<p class="ls-section-sub">'+esc(latest.title || '')+'. Studio offers the update itself; it’s optional and downloads only what changed.</p></div></div>'+
+            '<div class="ls-news"><ul>'+items.slice(0,5).map(item).join('')+'</ul>'+
+            (items.length>5?'<details class="ls-mini"><summary>All '+items.length+' changes</summary><ul>'+items.slice(5).map(item).join('')+'</ul></details>':'')+
+            (older.length?'<details class="ls-mini"><summary>Earlier updates</summary><ul class="ls-older">'+older.slice(0,8).map(r=>'<li><b>Studio '+esc(r.build)+'</b> · '+esc(r.title||'')+'</li>').join('')+'</ul></details>':'')+
+            '</div></section>';
+    }
     function setupSteps() {
         const launcher = platform === 'mac' ? 'Start on Mac.command' : 'Start on Windows.cmd';
         const ready = !!data.download_ready;
@@ -165,7 +233,7 @@ window.CRLocalStudio = (() => {
                 '<p>Studio shows what’s new when an update is out and updates itself in one click, downloading only what changed. Updating is optional: your current version keeps working. On Studio 51 or older, close the launcher and ask Claude Code in your Studio folder to “Update ChannelRecipe Studio” once. Don’t download a fresh copy into a new folder.</p></div></div>'+
             '</section>';
     }
-    function planPanel() {
+    function planPanel(home = false) {
         const clones = data.style_clones || {};
         const limit = clones.limit;
         const used = Number(clones.used || 0);
@@ -175,10 +243,17 @@ window.CRLocalStudio = (() => {
             '<div class="ls-meter"><div class="ls-meter-label"><span>Style clones</span><b>'+(limit==null?used+' used · unlimited':used+' of '+limit+' used')+'</b></div>'+
             (limit==null?'':'<div class="ls-meter-bar"><span style="width:'+pct+'%"></span></div>')+'</div>'+
             (clones.upgrade_label?'<button class="btn-ghost ls-upgrade" data-ls-plans>Upgrade to '+esc(clones.upgrade_label)+' for more →</button>':'')+
-            '<div class="ls-needs"><strong>You’ll also need</strong><ul><li>A Claude account (Pro or Max)</li><li>A Kie.ai or Atlas Cloud account for voice and images</li></ul></div>'+
-            '<div class="ls-open-studio"><a class="btn-secondary" href="'+STUDIO_URL+'" target="_blank" rel="noopener">Open my studio ↗</a><small>Works while Studio is running on this computer.</small></div></aside>';
+            (home?'':'<div class="ls-needs"><strong>You’ll also need</strong><ul><li>A Claude account (Pro or Max)</li><li>A Kie.ai or Atlas Cloud account for voice and images</li></ul></div>'+
+            '<div class="ls-open-studio"><a class="btn-secondary" href="'+STUDIO_URL+'" target="_blank" rel="noopener">Open my studio ↗</a><small>Works while Studio is running on this computer.</small></div>')+'</aside>';
     }
     function memberBody() {
+        if (returning()) {
+            return '<section class="ls-section ls-first"><div class="ls-section-row"><h2>Your projects</h2><button class="btn-ghost" data-ls-refresh>Refresh</button></div><div id="ls-history"><p class="ls-muted">Loading…</p></div></section>'+
+                whatsNew()+readyMade()+discordCard()+
+                '<details class="ls-advanced ls-reinstall"><summary>Install Studio on another computer</summary>'+setupSteps()+'</details>'+
+                '<div class="ls-home-plan">'+planPanel(true)+'</div>'+
+                '<details class="ls-advanced"><summary>Advanced: use an API key instead of Claude Code</summary><p>Most people should use Claude Code. If you’d rather pay per request with an API key, save it here, then choose “API brain” in the studio’s setup page.</p>'+brainForm()+'</details>';
+        }
         return '<div class="ls-member-grid">'+setupSteps()+planPanel()+'</div>'+discordCard()+
             '<section class="ls-section"><div class="ls-section-row"><h2>Your projects</h2><button class="btn-ghost" data-ls-refresh>Refresh</button></div><div id="ls-history"><p class="ls-muted">Loading…</p></div></section>'+
             '<details class="ls-advanced"><summary>Advanced: use an API key instead of Claude Code</summary><p>Most people should use Claude Code. If you’d rather pay per request with an API key, save it here, then choose “API brain” in the studio’s setup page.</p>'+brainForm()+'</details>';
@@ -219,7 +294,7 @@ window.CRLocalStudio = (() => {
             el.innerHTML = projects.length ? '<div class="ls-projects">'+projects.slice(0,20).map(p=>{
                 const stopped = ['needs_review','failed'].includes(p.status);
                 const status = p.status==='done'?'Finished':stopped?'Needs attention':'In progress';
-                return '<div class="ls-project"><article><div><strong>'+esc(p.title)+'</strong><small>'+new Date(p.created_at*1000).toLocaleDateString()+' · <span class="ls-pill '+(p.status==='done'?'ok':stopped?'warn':'')+'">'+status+'</span> · '+Number(p.calls)+' model requests</small></div>'+
+                return '<div class="ls-project"><article><div><strong>'+esc(p.title)+'</strong><small>'+new Date(p.created_at*1000).toLocaleDateString()+' · <span class="ls-pill '+(p.status==='done'?'ok':stopped?'warn':'')+'">'+status+'</span>'+(Number(p.calls)?' · '+Number(p.calls)+' model requests':'')+'</small></div>'+
                     '<button class="btn-ghost ls-view-requests" data-ls-requests="'+esc(p.id)+'" aria-expanded="false">Details</button></article><div id="ls-requests-'+esc(p.id)+'" class="ls-request-list" hidden></div></div>';
             }).join('')+'</div><p class="ls-step-note">Your finished videos, timelines and exports live in Studio on your computer. Claude Code uses your Claude account and its limits; voice, image and video charges stay in your media accounts.</p>'
             : '<p class="ls-muted">No projects yet. Once Studio is set up, your videos appear here.</p>';
@@ -314,7 +389,7 @@ window.CRLocalStudio = (() => {
             ? '<aside class="ls-version-note"><strong>Your Starter plan includes Classic recipes (v1).</strong> Studio is included from Creator. Switch any time and keep your account.</aside>' : '';
         const body = view === 'member' ? memberBody() : versionNote()+starterNote+features()+planCards()+discordCard(true)+faq();
         root().innerHTML = '<div class="ls-wrap">'+hero()+'<div id="ls-notice" role="status" hidden></div>'+body+
-            '<footer class="ls-footer"><span>ChannelRecipe Studio'+(data?.version?' · '+esc(data.version):'')+'</span><a href="'+DISCORD_URL+'" target="_blank" rel="noopener" data-community="discord">Help in Discord ↗</a></footer></div>';
+            '<footer class="ls-footer"><span>ChannelRecipe '+(data?.version?esc(studioName(data.version)):'Studio')+'</span><a href="'+DISCORD_URL+'" target="_blank" rel="noopener" data-community="discord">Help in Discord ↗</a></footer></div>';
         bind();
         if (view === 'member') history();
     }
@@ -338,6 +413,7 @@ window.CRLocalStudio = (() => {
         }));
         r.querySelectorAll('[data-ls-platform]').forEach(el=>el.addEventListener('click',()=>{ platform = el.dataset.lsPlatform; render(); }));
         r.querySelector('[data-ls-download]')?.addEventListener('click',()=>track('studio_download_clicked',{platform}));
+        r.querySelector('[data-ls-open-studio]')?.addEventListener('click',()=>track('studio_open_clicked',{source:'home'}));
         r.querySelector('[data-ls-copy-prompt]')?.addEventListener('click',()=>{ track('studio_prompt_copied'); copy(CLAUDE_PROMPT,'Copied. Paste it into Claude Code in your Studio folder.'); });
         r.querySelector('[data-ls-copy-key]')?.addEventListener('click',async()=>{
             try {
