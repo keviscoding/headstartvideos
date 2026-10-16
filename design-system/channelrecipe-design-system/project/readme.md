@@ -1,6 +1,6 @@
 # ChannelRecipe — Design System
 
-The brand & product design system for **ChannelRecipe**, a web app that turns proven YouTube niches into finished, uploadable faceless videos in ~15 minutes.
+The brand & product design system for **ChannelRecipe**, which turns proven YouTube niches into finished, uploadable faceless videos: **ChannelRecipe Studio** (Mac and Windows) makes whole videos on the creator's own computer, and the **Classic recipes** (v1) make quick videos in our cloud.
 
 > **One line:** Proven recipes for faceless YouTube channels.
 > **Tagline:** "Pick a recipe. We handle the cooking."
@@ -9,7 +9,7 @@ The brand & product design system for **ChannelRecipe**, a web app that turns pr
 
 ## 1. Product context
 
-Users pick a **recipe** (a validated niche card with a preset format, voice, and thumbnail style); the app generates the script, voiceover, thumbnail, and rendered video, and hands back a complete **Upload Kit** (video file + title + description + tags). A new proven recipe drops every week. Free trial: 3 videos, 7 days, no card. One plan: **$27/month ≈ 15 videos**. The whole brand posture is **proof-first** — real dashboard receipts, never hype.
+Users pick a **recipe** (a validated niche card with a preset format, voice, and thumbnail style); the app generates the script, voiceover, thumbnail, and rendered video, and hands back a complete **Upload Kit** (video file + title + description + tags). Plans (October 2026): **Creator $49, Pro $79, Max $119 a month** (yearly saves two months); every plan includes Studio, and Classic recipes use monthly cloud credits. There is no free trial at the moment. The whole brand posture is **proof-first** — real dashboard receipts, never hype.
 
 **Audience:** beginners starting faceless YouTube channels. Budget-conscious, globally distributed, heavily ESL, phone-first, deeply scam-wary. They want to be told exactly what to do, shown that it works, at a price they can afford. Keep all copy simple, concrete, jargon-free.
 
@@ -20,7 +20,8 @@ Users pick a **recipe** (a validated niche card with a preset format, voice, and
 ## 2. The recipe metaphor — CRITICAL RULE
 
 The recipe metaphor lives in **language and structure only — never literal food imagery.**
-- ❌ Never: chef hats, whisks, forks, spoons, pots, steam, aprons, plates, kitchen scenes, food photos, cooking clipart.
+- ❌ Never: chef hats, whisks, forks, spoons, aprons, plates, kitchen scenes, food photos, cooking clipart.
+- Exception: the brand mark itself is a cooking pot with steam and a play triangle (`assets/glyph.svg`, adopted after this brief). Use it as the logo only; keep food imagery out of everything else.
 - ✅ Instead: the **recipe card** (a clean software card with steps, ingredients metadata, and a cook time) carries the metaphor. The vocabulary does the work; visuals stay product/software.
 
 **Brand vocabulary — use consistently:**
@@ -37,7 +38,7 @@ The recipe metaphor lives in **language and structure only — never literal foo
 
 ## 3. Sources
 
-This system was generated from a **written brand & design brief** (no codebase, Figma file, or slide deck was attached). All values below are authored from that brief. There is **no pre-existing logo** — the glyph and wordmark in `assets/` are an **original mark designed for this brief** to the spec it provided (recipe card with a folded-corner-as-play-triangle). If a real brand mark exists, replace the files in `assets/` and the `Logo` component.
+This system was generated from a **written brand & design brief** (no codebase, Figma file, or slide deck was attached). All values below are authored from that brief. The files in `assets/` are now the **live brand mark** (the violet pot with steam and a play triangle, as served by channelrecipe.com). The original brief's folded-card glyph is retired; the `Logo` component should draw the pot.
 
 Fonts are the free families named in the brief, loaded from their official hosted stylesheets (see Fonts below) — not substitutions.
 
@@ -64,7 +65,7 @@ Fonts are the free families named in the brief, loaded from their official hoste
 - Progress: "Cooking your video — about 3 minutes."
 - Success: "Recipe followed. Video ready."
 - Failure (a trust moment): "That render failed — your credit is back in your account. Try again."
-- Trust line: "3 free videos · no card · 2-minute setup"
+- Trust line: "Mac & Windows · cancel anytime"
 - Weekly email subject: "This week's recipe just dropped"
 - Footer signature: "From the team behind HeadStart Channels."
 

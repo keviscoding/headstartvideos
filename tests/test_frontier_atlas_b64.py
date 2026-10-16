@@ -11,6 +11,13 @@ from unittest.mock import Mock, patch, MagicMock
 import pytest
 
 
+
+@pytest.fixture(autouse=True)
+def no_real_waiting(monkeypatch):
+    """The Atlas client waits between retries and polls (12-36 s each); the tests don't need the wall clock."""
+    import core.frontier_atlas as atlas
+    monkeypatch.setattr(atlas.time, "sleep", lambda s: None)
+
 def test_atlas_create_poll_download_success():
     """
     Test the PROVEN Mac path: create → poll → download from URL.

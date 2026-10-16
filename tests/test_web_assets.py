@@ -102,5 +102,4 @@ def test_every_classic_recipe_preview_it_names_exists():
         gif = json.loads(f.read_text()).get("preview_gif") or ""
         if gif.startswith("/static/") and not (web_assets.STATIC_DIR / gif[len("/static/"):]).is_file():
             missing.append((f.name, gif))
-    # avatar_generator's preview was never added (a known gap; its card shows no animation)
-    assert missing in ([], [("avatar_generator.json", "/static/previews/avatar_generator.gif")]), missing
+    assert missing == [], missing
