@@ -62,6 +62,8 @@ def main():
     cr_render.install(engine)
     import cr_style_delivery
     cr_style_delivery.install(engine)
+    import cr_shorts
+    cr_shorts.install(engine)
     if mode=="claudecode":
         progress=cr_bridge.project_progress(args.project)
         version=json.loads((HOME/"cr-release.json").read_text())["version"]

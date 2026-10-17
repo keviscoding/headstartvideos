@@ -177,3 +177,22 @@ def test_download_alias_keeps_file_bytes_headers_and_private_stream(api, monkeyp
     assert response.headers["location"] == "https://private-bucket.example/release.zip?sig=1"
     assert response.headers["cache-control"] == "private, no-store"
     assert signed[0]["Bucket"] == "private-bucket" and "ChannelRecipe-local-studio" in signed[0]["ResponseContentDisposition"]
+
+
+def test_shorts_pack_is_a_signed_private_link_for_a_studio_plan_only(api, monkeypatch):
+    assert api.client.get("/api/studio/shorts-pack", follow_redirects=False).status_code == 401
+    assert api.client.get("/api/studio/shorts-pack", headers={"Authorization": "Bearer cr_mcp_bad"},
+                          follow_redirects=False).status_code == 401
+    from webapp import storage
+    signed = []
+    def presign(op, Params, ExpiresIn):
+        signed.append((Params, ExpiresIn))
+        return "https://private-bucket.example/shorts.zip?sig=1"
+    monkeypatch.setattr(storage, "is_remote", lambda: True)
+    monkeypatch.setattr(storage, "_spaces_creds", lambda: ("unused", "unused", "private-bucket"))
+    monkeypatch.setattr(storage, "_get_client", lambda: SimpleNamespace(generate_presigned_url=presign))
+    response = api.client.get("/api/studio/shorts-pack", headers=api.headers, follow_redirects=False)
+    assert response.status_code == 302 and response.headers["location"].startswith("https://private-bucket.example/")
+    assert response.headers["cache-control"] == "private, no-store"
+    params, expires = signed[0]
+    assert params["Key"] == studio.SHORTS_PACK_KEY and params["Key"].startswith("private/") and expires <= 900
