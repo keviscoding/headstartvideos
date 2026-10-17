@@ -146,9 +146,20 @@
     summary(); gate();
   }
   function tags(id, values) {const n = $(id); n.replaceChildren(...(values || []).slice(0, 4).map(v => el('span', 'crw-tag', v)));}
+  // Shorts recipes (family "Shorts"): a vertical Short of 15-60 seconds; the long-form options don't apply
+  const isShort = (r) => String(r?.family || '') === 'Shorts';
+  const SHORT_ONLY_HIDDEN = ['crw-fast-section','crw-palette-section','crw-avatar-section','crw-character-section','crw-offer-section','crw-cta-section','crw-pictures-section'];
+  function shortsMode() {
+    const s = isShort(state.selected);
+    hide('crw-short-duration', !s); hide('crw-long-duration', s);
+    text('crw-canvas-label', s ? '9:16 vertical' : '16:9 landscape'); text('crw-summary-canvas', s ? '9:16 vertical' : '16:9 landscape');
+    if (s) for (const id of SHORT_ONLY_HIDDEN) hide(id, true);
+  }
   function selectRecipe(recipe, persist = true) {
     if (state.selected) state.featureDrafts[state.selected.name] = featureValues();
+    const fresh = !state.selected || state.selected.name !== recipe?.name;
     state.selected = recipe;
+    if (fresh && isShort(recipe) && recipe.short_seconds) { $('crw-seconds').value = recipe.short_seconds; chooseGroup('[data-seconds]', 'seconds', String(recipe.short_seconds)); }   // its own length
     text('crw-selected-name', recipe.label); text('crw-selected-description', recipe.description || recipe.tagline);
     recipePreview($('crw-selected-art'),recipe);
     tags('crw-selected-tags', recipe.capabilities);
@@ -225,6 +236,7 @@
     hide('crw-offer-section', $('crw-offer').options.length<2 || !features.avatar || strict());
     hide('crw-description-options', !checked('crw-description')); hide('crw-thumbnail-options', !checked('crw-thumbnails'));
     text('crw-fast-status', checked('crw-fast-toggle') ? 'Fast mode is on for every 3D scene.' : state.fastReady ? 'Standard scene rendering is selected.' : '');
+    shortsMode();
   }
   // Fast mode needs a one-time local install and test render (no Claude or
   // media usage). Offer it right here, where the switch is.
@@ -249,7 +261,7 @@
   function summary() {
     const r = state.selected; text('crw-summary-title', $('crw-title').value.trim() || 'Your next video');
     text('crw-summary-recipe', r?.label || 'Choose a recipe');
-    text('crw-summary-duration', state.narration === 'own' ? 'Length of your recording' : `${number('crw-minutes',10,1,60)} minutes`);
+    text('crw-summary-duration', isShort(r) ? `${number('crw-seconds',25,15,60)} seconds` : state.narration === 'own' ? 'Length of your recording' : `${number('crw-minutes',10,1,60)} minutes`);
     text('crw-summary-visuals', strict(r) ? 'Reference animation throughout' : Object.entries(featureValues()).filter(([k,v]) => v && k !== 'sound').map(([k]) => (featureCopy[k] || [k])[0]).join(', ') || 'Recipe defaults');
     text('crw-summary-voice', state.narration === 'own' ? 'Your uploaded narration' : state.setup?.narration?.voice || 'Connected narration account');
     text('crw-summary-renderer', checked('crw-fast-toggle') && featureValues().threed && !strict() ? 'Fast mode · local render' : 'Local render');
@@ -303,6 +315,7 @@
     b.append(art,body); b.addEventListener('click',()=>action(recipe)); return b;
   }
   function gallery() {
+    { const tab = document.querySelector('[data-family="shorts"]'); if (tab) tab.hidden = !rows().some(isShort); }   // private recipes: no tab without them
     const query = $('crw-gallery-search').value.trim().toLowerCase();
     const recipes = rows().filter(r => (state.family === 'all' || (state.family === 'custom' ? r.custom : familyKey(r.family) === state.family)) && [r.label,r.description,...(r.capabilities || [])].join(' ').toLowerCase().includes(query));
     $('crw-gallery-grid').replaceChildren(...recipes.map(r => recipeCard(r, selected=>inspect(selected,true)))); text('crw-gallery-count', `${recipes.length} ${recipes.length === 1 ? 'recipe' : 'recipes'}`); hide('crw-gallery-empty',!!recipes.length); hide('crw-gallery-detail',!recipes.length);
@@ -481,7 +494,7 @@
   function schedule() {clearTimeout(state.timer);state.timer=setTimeout(async()=>{await refreshActivity();schedule();},document.hidden?15000:state.busy||state.openJob?2500:10000);}
   function payload() {
     const title = [$('crw-title').value.trim(),...$('crw-batch-titles').value.split('\n').map(v=>v.trim()).filter(Boolean)].filter(Boolean).join('\n');
-    if (!title) throw new Error('Give your video a title or idea.'); if (title.split('\n').some(t=>t.length>280)) throw new Error('Keep each title under 280 characters. Put detailed guidance in Extra instructions.'); if (title.split('\n').length>30) throw new Error('Create up to 30 titles in one batch.'); const duration=Number($('crw-minutes').value); if (!Number.isInteger(duration)||duration<1||duration>60) throw new Error('Choose a whole-number duration between 1 and 60 minutes.'); if (!state.selected) throw new Error('Choose a visual recipe.');
+    if (!title) throw new Error('Give your video a title or idea.'); if (title.split('\n').some(t=>t.length>280)) throw new Error('Keep each title under 280 characters. Put detailed guidance in Extra instructions.'); if (title.split('\n').length>30) throw new Error('Create up to 30 titles in one batch.'); if (!state.selected) throw new Error('Choose a visual recipe.'); const short=isShort(state.selected); if (short) {const sec=Number($('crw-seconds').value); if (!Number.isInteger(sec)||sec<15||sec>60) throw new Error('Choose a Short length between 15 and 60 seconds.'); if (state.narration==='own') throw new Error('Shorts write and voice their own narration. Choose My idea.');} else {const duration=Number($('crw-minutes').value); if (!Number.isInteger(duration)||duration<1||duration>60) throw new Error('Choose a whole-number duration between 1 and 60 minutes.');}
     if (state.input==='script' && !$('crw-script').value.trim()) throw new Error('Paste your narration script, or choose My idea.');
     if (state.narration==='own' && !state.audio) throw new Error('Choose your narration recording first.');
     if (state.narration==='own' && title.includes('\n')) throw new Error('Use one title for an uploaded narration recording.');
@@ -497,6 +510,7 @@
       offer:$('crw-offer').value,offer_plugs:number('crw-offer-plugs',0,0,2),panels:state.selected.panels?state.panels:'',cta:ctaValue(),
       pictures_per_min:state.selected.pictures&&Number($('crw-pictures').value)!==state.selected.pictures.default?Number($('crw-pictures').value):null,
       threed_look:threedLook(features)};
+    if(short){p.minutes=1;p.extra=`[[short_seconds=${number('crw-seconds',25,15,60)}]] `+(p.extra||'');p.avatar_id='';p.cta=null;p.offer='';p.character='';p.character_image='';p.threed_look='';}
     if(p.panels && title.includes('\n')) throw new Error('Use one title for a set of panels.');
     if(state.selected.auto_style)p.auto_style=checked('crw-adaptive'); return p;
   }
@@ -546,6 +560,8 @@
   for(const b of all('[data-input-mode]'))b.addEventListener('click',()=>setInput(b.dataset.inputMode));
   for(const b of all('[data-narration-mode]'))b.addEventListener('click',()=>setNarration(b.dataset.narrationMode));
   for(const b of all('[data-minutes]'))b.addEventListener('click',()=>{$('crw-minutes').value=b.dataset.minutes;chooseGroup('[data-minutes]','minutes',b.dataset.minutes);summary();save();});
+  for(const b of all('[data-seconds]'))b.addEventListener('click',()=>{$('crw-seconds').value=b.dataset.seconds;chooseGroup('[data-seconds]','seconds',b.dataset.seconds);summary();});
+  $('crw-seconds').addEventListener('input',()=>{chooseGroup('[data-seconds]','seconds',$('crw-seconds').value);summary();});
   $('crw-minutes').addEventListener('input',()=>chooseGroup('[data-minutes]','minutes',$('crw-minutes').value));
   for(const b of all('[data-project-filter]'))b.addEventListener('click',()=>{state.projectFilter=b.dataset.projectFilter;chooseGroup('[data-project-filter]','projectFilter',state.projectFilter);renderProjects();});
   for(const b of all('[data-family]'))b.addEventListener('click',()=>{state.family=b.dataset.family;chooseGroup('[data-family]','family',state.family);gallery();});

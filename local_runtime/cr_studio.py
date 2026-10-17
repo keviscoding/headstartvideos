@@ -438,6 +438,8 @@ def create_app():
     cr_render.install(studio.mv)
     import cr_style_delivery
     cr_style_delivery.install(studio.mv)
+    import cr_shorts
+    cr_shorts.install(studio.mv)
     cr_workers.install()
     cr_submission.install(studio)
     activity = getattr(studio, "_cr_activity", None)

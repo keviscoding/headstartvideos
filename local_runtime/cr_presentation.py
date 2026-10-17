@@ -53,13 +53,17 @@ RECIPES = {
     "cr-expert-presenter": ("Old-Timer Expert", "Presenter", "An older expert presenter opens the video; raw phone-camera photos of them doing what they say carry the rest.", ("AI presenter", "Phone-camera photos", "Own product")),
     "cr-quiet-essays": ("Quiet Video Essays", "Editorial", "Reflective essays over filtered footage and art, with film grain, the sound of each place and calm music.", ("Filtered footage", "Ambience", "Calm narration")),
     "cr-manga-recaps": ("Manga Recaps", "Animation", "Your own manga, manhwa or webtoon panels, read and retold as a gripping recap.", ("Your own panels", "Recap writing", "No picture costs")),
+    # Shorts: vertical 15-60 s videos made by the Shorts pipelines (cr_shorts.py)
+    "cr-shorts-3d": ("3D Explainer Shorts", "Shorts", "Weird facts and true stories acted out by realistic 3D people and animals in real sets, with fast cinematic cutting and a score made for each story.", ("9:16 Shorts", "3D people & animals", "Own score per story")),
+    "cr-shorts-3d-dark": ("3D Dark Stories", "Shorts", "True crime and horror with a real twist: cold opens, clues planted on screen, night sets, recovered footage and a score that dies before the reveal.", ("9:16 Shorts", "Twist endings", "Night-vision & CCTV")),
+    "cr-shorts-photo": ("Photo Comedy Shorts", "Shorts", "Funny photo-collage stories with a recurring host, googly-eyed characters, comic overlays and timing.", ("9:16 Shorts", "Recurring host", "Comic timing")),
     "cr-deadly-places": ("Deadly Places Documentary", "Documentary", "Calm investigations of the world's deadliest places and disasters, over aged archival-style pictures, engravings and old maps.", ("Archival-style pictures", "Old maps", "Calm narration")),
 }
 # Ready-made recipes use the nearest owned artwork until they have their own.
 ART_ALIAS = {"cr-stick-stories": "atlas", "cr-handdrawn-finance": "hustle", "cr-paper-finance": "almanac",
              "cr-business-doc": "documentary", "cr-3d-reconstruction": "3d", "cr-true-crime": "dossier",
              "cr-expert-presenter": "workshop", "cr-quiet-essays": "jung", "cr-manga-recaps": "folio",
-             "cr-deadly-places": "history"}
+             "cr-deadly-places": "history", "cr-shorts-3d": "3d", "cr-shorts-3d-dark": "dossier", "cr-shorts-photo": "stories"}
 
 READY_MADE_IDS = frozenset(ART_ALIAS)
 BUILTIN_IDS = frozenset(RECIPES) - {"automatic", "gaming", "grooming"} - READY_MADE_IDS

@@ -133,6 +133,9 @@ def install(studio, activity, *, token, home=None):
             import cr_media
             span = None if row["panels"] else cr_media.picture_range(info if isinstance(info, dict) else {})
             row["pictures"] = {"floor": span[0], "default": span[1], "ceiling": span[2]} if span else None
+            # a Shorts recipe's own length (seconds), the Create page's starting point for it
+            shorts = info.get("shorts") if isinstance(info, dict) and info.get("format") == "short" else None
+            row["short_seconds"] = int(shorts.get("seconds") or 25) if isinstance(shorts, dict) else None
             row.update(preview_available=source is not None,
                 preview_url=("/cr-workspace/preview/recipe/" + quote(row["name"], safe="") + ".jpg?v="
                              + preview_version(source)) if source else None,

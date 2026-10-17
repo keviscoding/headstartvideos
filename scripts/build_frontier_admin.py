@@ -109,6 +109,31 @@ def private_sound_resources(root: Path):
     return resources
 
 
+SHORTS_SUFFIXES = {".py", ".js", ".mjs", ".json", ".md", ".html", ".css", ".txt", ".ttf", ".otf", ".woff2", ".woff", ".onnx",
+                   ".glsl", ".wasm", ".png", ".jpg", ".svg", ".bin", ".hdr", ".ktx2", ".basis", ".wav"}
+
+
+def private_shorts_resources(root: Path):
+    """The Shorts pipelines (the 3D and photo Shorts recipes): their code and the Shorts 3D engine's code, shipped under
+    shorts/. Assets (people, animals, mocap, places, the host, sound libraries) come in the first-use asset pack."""
+    folder = root / "data/frontier/shorts"
+    if not folder.exists():
+        return []
+    if folder.is_symlink() or not folder.is_dir():
+        raise ValueError("The Shorts pipelines must be an ordinary owned folder.")
+    resources = []
+    for path in sorted(p for p in folder.rglob("*") if p.is_file() or p.is_symlink()):
+        rel = path.relative_to(folder).as_posix()
+        if "__pycache__" in rel or path.name.startswith("."):
+            continue
+        if path.is_symlink() or path.suffix.lower() not in SHORTS_SUFFIXES or path.stat().st_size > 8 * 1024 * 1024:
+            raise ValueError("Shorts files must be small ordinary code or data files: " + rel)
+        if rel.split("/")[0] not in {"zack", "hoodie", "sound", "rbx"}:
+            raise ValueError("Unexpected Shorts folder: " + rel)
+        resources.append((path, "shorts/" + rel))
+    return resources
+
+
 READY_MADE = re.compile(r"cr-[a-z0-9]+(?:-[a-z0-9]+){0,6}")
 
 
@@ -480,7 +505,7 @@ def retired_files(previous: Path | None, shipped: set) -> dict:
     return {path: sorted(hashes) for path, hashes in sorted(retired.items()) if path not in shipped}
 
 
-def build(source: Path, target: Path, previous: Path | None = None):
+def build(source: Path, target: Path, previous: Path | None = None, with_shorts: bool = False):
     if any(not path.is_file() for path in PRIVATE_WORKFLOWS.values()):
         raise ValueError("The private reference animation workflow resources are required for this admin build.")
     with source.open("rb") as f:
@@ -495,8 +520,12 @@ def build(source: Path, target: Path, previous: Path | None = None):
     operational_overrides = (ROOT / "local_runtime/CLAUDE.md").read_bytes()
     # Validate the complete resource inventory before replacing an existing ZIP.
     resources = list(runtime_resources(ROOT))
+    # the Shorts recipes are the owner's private tools for now: a customer release leaves them out entirely
+    # (pass --with-shorts for the owner's own build)
+    shorts = with_shorts
+    recipes = [r for r in private_recipe_resources(ROOT) if shorts or not r[1].startswith("styles/cr-shorts-")]
     preview_resources = (private_preview_resources(ROOT) + private_sound_resources(ROOT)
-                         + private_recipe_resources(ROOT))
+                         + recipes + (private_shorts_resources(ROOT) if shorts else []))
     target.parent.mkdir(parents=True, exist_ok=True)
     count = 0
     transformed_files = []
@@ -587,11 +616,12 @@ def main():
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=ROOT / "data/frontier" / ("channelrecipe-" + VERSION + ".zip"))
     parser.add_argument("--upload", action="store_true")
+    parser.add_argument("--with-shorts", action="store_true", help="include the private Shorts recipes and pipelines (the owner's own build only)")
     parser.add_argument("--previous", type=Path, help="Earlier release ZIP whose dropped files to retire "
                         "(default: newest earlier release in the output folder)")
     args = parser.parse_args()
     previous = args.previous or previous_release(args.output.parent)
-    manifest = build(args.source, args.output, previous)
+    manifest = build(args.source, args.output, previous, with_shorts=args.with_shorts)
     (args.output.parent / "manifest.json").write_text(json.dumps(manifest, indent=2))
     if args.upload:
         from webapp import storage
