@@ -64,6 +64,40 @@ def ready(home: Path = HOME) -> list:
     return missing
 
 
+PACK_INDEX = ("rbx", "r3d", "engine", "skins", "rbx", "index.json")   # the last file unpacked: present = the pack is whole
+
+
+def ensure_pack(sink=None, engine=None, home: Path = HOME) -> None:
+    """The Shorts asset pack (people, animals, motion, sounds; about 400 MB): fetched from ChannelRecipe and unpacked into
+    shorts/ the first time a Short is made on this computer. Later Shorts find it in place."""
+    import zipfile
+    root = shorts_root(home)
+    if root.joinpath(*PACK_INDEX).is_file():
+        return
+    import cr_update
+    target = home / ".cr-shorts-pack.zip"
+    try:
+        base, key = cr_update._settings(home)
+        _say(sink, engine, "First Short on this computer: downloading the Shorts pack (about 400 MB, only once)")
+        cr_update.download(base, key, target, path="/api/studio/shorts-pack")
+    except cr_update.UpdateStopped as error:
+        target.unlink(missing_ok=True)
+        why = re.sub(r"Nothing was changed; (\w)", lambda m: m.group(1).upper(), str(error)).replace("Nothing was changed. ", "")
+        raise RuntimeError("The Shorts pack couldn't be downloaded. " + why) from None
+    _say(sink, engine, "Unpacking the Shorts pack")
+    index = "/".join(PACK_INDEX)
+    with zipfile.ZipFile(target) as pack:
+        members = pack.infolist()
+        for m in members:                                        # nothing may land outside shorts/
+            parts = Path(m.filename).parts
+            if m.filename.startswith(("/", "\\")) or ".." in parts or (parts and ":" in parts[0]):
+                raise RuntimeError("The Shorts pack looks damaged. Try again.")
+        for m in sorted(members, key=lambda m: m.filename == index):   # the index last: an interrupted unpack is redone
+            pack.extract(m, root)
+    target.unlink(missing_ok=True)
+    _say(sink, engine, "Shorts pack ready")
+
+
 def _srt(words: list, path: Path):
     """captions of 2-3 words a line from the voice's word timings"""
     def ts(t):
@@ -107,6 +141,7 @@ def _say(sink, engine, line: str):
 
 def run_short(engine, title: str, style: str, info: dict, *, features=None, sink=None, extra: str = "") -> Path:
     """Make the Short for `title` with the Shorts recipe `style`; returns the job folder."""
+    ensure_pack(sink, engine)
     blockers = ready()
     if blockers:
         raise RuntimeError(" ".join(blockers))

@@ -1,5 +1,18 @@
 [
   {
+    "build": 63,
+    "date": "2026-10-18",
+    "title": "Shorts: make vertical Shorts from a topic, in 3D or photo style",
+    "items": [
+      "New: A Shorts tab in Create. Pick a Shorts recipe, type a topic and choose a length from 15 to 60 seconds. Studio writes the script, voices it, scores it with its own music and sound effects, and delivers a finished 9:16 Short with captions.",
+      "New: 3D Explainer Shorts. A narrator explains a weird fact, a how-to or a what-if while realistic 3D people act it out in sets built for your story, shot like a film. Animals, sea creatures and dinosaurs are built for the story too, on land or under the sea.",
+      "New: 3D Dark Stories. True crime and horror in the same 3D style. For a real case, Studio researches it on the web first, the script uses only checked facts, and the sources go into your description.",
+      "New: Photo Comedy Shorts. A fast photo-collage comedy Short with a host, scene photos made for every line and punchy sound design.",
+      "New: Explainer Shorts check their facts on the web before the script is written, so every number in the narration is real.",
+      "Good to know: the first Short downloads the Shorts pack once (about 400 MB). Shorts use your Claude subscription and your Kie key, like your other videos."
+    ]
+  },
+  {
     "build": 62,
     "date": "2026-10-16",
     "title": "Studio tells you when your video is ready, and opens instantly",

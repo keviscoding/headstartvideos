@@ -40,3 +40,63 @@ def test_a_studio_without_the_pipelines_or_the_pack_says_what_is_missing(tmp_pat
     index.parent.mkdir(parents=True)
     index.write_text("{}")
     assert shorts.ready(tmp_path) == []
+
+
+def _pack(path, names):
+    import zipfile
+    with zipfile.ZipFile(path, "w") as z:
+        for n in names:
+            z.writestr(n, "x")
+
+
+def test_the_pack_downloads_once_and_unpacks_into_shorts_with_its_index_last(tmp_path, monkeypatch):
+    import types
+    index = "/".join(shorts.PACK_INDEX)
+    calls = []
+    fake = types.ModuleType("cr_update")
+    class UpdateStopped(Exception):
+        pass
+    fake.UpdateStopped = UpdateStopped
+    fake._settings = lambda home: ("https://channelrecipe.com", "cr_mcp_k")
+    def download(base, key, target, path="/api/studio/download"):
+        calls.append(path)
+        _pack(target, [index, "rbx/r3d/engine/skins/animals/dog.glb", "hoodie/host1/pose.png"])
+    fake.download = download
+    monkeypatch.setitem(sys.modules, "cr_update", fake)
+    said = []
+    shorts.ensure_pack(said.append, None, home=tmp_path)
+    root = tmp_path / "shorts"
+    assert calls == ["/api/studio/shorts-pack"]
+    assert (root / index).is_file() and (root / "hoodie" / "host1" / "pose.png").is_file()
+    assert not (tmp_path / ".cr-shorts-pack.zip").exists()
+    shorts.ensure_pack(said.append, None, home=tmp_path)          # in place: no second download
+    assert calls == ["/api/studio/shorts-pack"]
+
+
+def test_a_pack_that_would_write_outside_shorts_is_refused(tmp_path, monkeypatch):
+    import types
+    fake = types.ModuleType("cr_update")
+    fake.UpdateStopped = type("UpdateStopped", (Exception,), {})
+    fake._settings = lambda home: ("https://channelrecipe.com", "cr_mcp_k")
+    fake.download = lambda base, key, target, path=None: _pack(target, ["../evil.py"])
+    monkeypatch.setitem(sys.modules, "cr_update", fake)
+    import pytest
+    with pytest.raises(RuntimeError, match="damaged"):
+        shorts.ensure_pack(None, None, home=tmp_path)
+    assert not (tmp_path / "evil.py").exists()
+
+
+def test_a_failed_pack_download_says_why_in_plain_words(tmp_path, monkeypatch):
+    import types
+    fake = types.ModuleType("cr_update")
+    class UpdateStopped(Exception):
+        pass
+    fake.UpdateStopped = UpdateStopped
+    fake._settings = lambda home: ("https://channelrecipe.com", "cr_mcp_k")
+    def download(*a, **k):
+        raise UpdateStopped("The download was interrupted. Nothing was changed; check your connection and try again.")
+    fake.download = download
+    monkeypatch.setitem(sys.modules, "cr_update", fake)
+    import pytest
+    with pytest.raises(RuntimeError, match="Shorts pack couldn't be downloaded. The download was interrupted. Check your connection"):
+        shorts.ensure_pack(None, None, home=tmp_path)

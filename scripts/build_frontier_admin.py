@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 from scripts import studio_branding
-VERSION = "5.3-admin.62"
+VERSION = "5.3-admin.63"
 PRIVATE_WORKFLOWS = {
     "cr-style-delivery-prompt.txt": ROOT / "data/frontier/reference2d-compiler.txt",
     "cr-style-study-brief.txt": ROOT / "data/frontier/reference2d-study.txt",
@@ -505,7 +505,7 @@ def retired_files(previous: Path | None, shipped: set) -> dict:
     return {path: sorted(hashes) for path, hashes in sorted(retired.items()) if path not in shipped}
 
 
-def build(source: Path, target: Path, previous: Path | None = None, with_shorts: bool = False):
+def build(source: Path, target: Path, previous: Path | None = None, with_shorts: bool = True):
     if any(not path.is_file() for path in PRIVATE_WORKFLOWS.values()):
         raise ValueError("The private reference animation workflow resources are required for this admin build.")
     with source.open("rb") as f:
@@ -520,8 +520,8 @@ def build(source: Path, target: Path, previous: Path | None = None, with_shorts:
     operational_overrides = (ROOT / "local_runtime/CLAUDE.md").read_bytes()
     # Validate the complete resource inventory before replacing an existing ZIP.
     resources = list(runtime_resources(ROOT))
-    # the Shorts recipes are the owner's private tools for now: a customer release leaves them out entirely
-    # (pass --with-shorts for the owner's own build)
+    # the Shorts recipes and their pipelines ship with every release since 63 (their asset pack downloads on first use);
+    # --without-shorts builds a release without them
     shorts = with_shorts
     recipes = [r for r in private_recipe_resources(ROOT) if shorts or not r[1].startswith("styles/cr-shorts-")]
     preview_resources = (private_preview_resources(ROOT) + private_sound_resources(ROOT)
@@ -616,12 +616,12 @@ def main():
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=ROOT / "data/frontier" / ("channelrecipe-" + VERSION + ".zip"))
     parser.add_argument("--upload", action="store_true")
-    parser.add_argument("--with-shorts", action="store_true", help="include the private Shorts recipes and pipelines (the owner's own build only)")
+    parser.add_argument("--without-shorts", action="store_true", help="leave the Shorts recipes and pipelines out")
     parser.add_argument("--previous", type=Path, help="Earlier release ZIP whose dropped files to retire "
                         "(default: newest earlier release in the output folder)")
     args = parser.parse_args()
     previous = args.previous or previous_release(args.output.parent)
-    manifest = build(args.source, args.output, previous, with_shorts=args.with_shorts)
+    manifest = build(args.source, args.output, previous, with_shorts=not args.without_shorts)
     (args.output.parent / "manifest.json").write_text(json.dumps(manifest, indent=2))
     if args.upload:
         from webapp import storage

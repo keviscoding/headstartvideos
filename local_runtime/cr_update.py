@@ -144,7 +144,7 @@ def _status(response) -> int:
     return int(getattr(response, "status", None) or getattr(response, "code", None) or 200)
 
 
-def download(base: str, key: str, target: Path, get=http_get, attempts: int = 4) -> None:
+def download(base: str, key: str, target: Path, get=http_get, attempts: int = 4, path: str = "/api/studio/download") -> None:
     """Download the release, resuming after drops and checking it arrived whole.
 
     The signed storage link supports byte ranges, so an interrupted transfer
@@ -153,7 +153,7 @@ def download(base: str, key: str, target: Path, get=http_get, attempts: int = 4)
     """
     auth = {"Authorization": "Bearer " + key}
     try:
-        first = get(base + "/api/studio/download", auth)
+        first = get(base + path, auth)
         location = _signed_location(first)
         size = expected_sha = None
         target.unlink(missing_ok=True)
@@ -162,7 +162,7 @@ def download(base: str, key: str, target: Path, get=http_get, attempts: int = 4)
             if location:
                 response = get(location, {"Range": "bytes=%d-" % have} if have else {})
             else:
-                response, have = (first if attempt == 0 else get(base + "/api/studio/download", auth)), 0
+                response, have = (first if attempt == 0 else get(base + path, auth)), 0
             if have and _status(response) != 206:
                 have = 0  # the server ignored the range; start again
             if not have:

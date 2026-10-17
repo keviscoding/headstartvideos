@@ -31,15 +31,15 @@ from webapp import plans
 from cryptography.fernet import Fernet, InvalidToken
 from webapp import frontier_providers as providers
 
-VERSION = "5.3-admin.62"
+VERSION = "5.3-admin.63"
 CATALOG = Path(__file__).resolve().parent / "frontier" / "catalog.json"
-RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.62.zip"
+RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.63.zip"
 # Every release the server still serves (older ones keep running projects alive). Append each new release; never
 # remove one, or projects pinned to it stop.
 APPROVED_RELEASES = ("5.3-admin.8", "5.3-admin.9", "5.3-admin.10", "5.3-admin.11", "5.3-admin.12",
                 "5.3-admin.13", "5.3-admin.14", "5.3-admin.15", "5.3-admin.16", "5.3-admin.17",
                 "5.3-admin.18", "5.3-admin.19", "5.3-admin.20", "5.3-admin.21", "5.3-admin.22",
-                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43", "5.3-admin.44", "5.3-admin.45", "5.3-admin.46", "5.3-admin.47", "5.3-admin.48", "5.3-admin.49", "5.3-admin.50", "5.3-admin.51", "5.3-admin.52", "5.3-admin.53", "5.3-admin.54", "5.3-admin.55", "5.3-admin.56", "5.3-admin.57", "5.3-admin.58", "5.3-admin.59", "5.3-admin.60", "5.3-admin.61", "5.3-admin.62")
+                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43", "5.3-admin.44", "5.3-admin.45", "5.3-admin.46", "5.3-admin.47", "5.3-admin.48", "5.3-admin.49", "5.3-admin.50", "5.3-admin.51", "5.3-admin.52", "5.3-admin.53", "5.3-admin.54", "5.3-admin.55", "5.3-admin.56", "5.3-admin.57", "5.3-admin.58", "5.3-admin.59", "5.3-admin.60", "5.3-admin.61", "5.3-admin.62", "5.3-admin.63")
 # Releases that may also START a new video: the newest two. A customer who hasn't pressed Update yet keeps making
 # videos the morning after a release; the project pins the release it started on.
 SUPPORTED_RELEASES = APPROVED_RELEASES[-2:]
@@ -48,6 +48,10 @@ BRANDED_WORKFLOW_VERSION = "channelrecipe-5.3-claudecode.1"
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 NATIVE_STAGE_LIMIT = 2
 DOWNLOAD_LINK_SECONDS = 600
+# The Shorts asset pack (people, animals, motion clips, the prop and creature libraries, sound libraries, the 2D host):
+# a Studio downloads it the first time someone makes a Short (local_runtime/cr_shorts.py ensure_pack). A private
+# object; each entitled request gets a short-lived signed link. Built by shorts-clone tools/pack_shorts.py.
+SHORTS_PACK_KEY = "private/frontier/shorts-assets-675889f34246.zip"
 GEMINI_MODEL = "gemini-3.8-flash"
 # Model requests in flight: fair per person, bounded for the server. Each one
 # waits on its provider, so a few at a time per creator is plenty.
@@ -1182,6 +1186,21 @@ def make_router(session_user, *, prefix="/api/frontier"):
     @router.post("/stages/retry")
     def runtime_retry(req:NativeRetryStage,user=Depends(access)):
         return native_retry_stage(user,req)
+
+    @router.get("/shorts-pack")
+    def shorts_pack(user=Depends(access)):
+        headers = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}
+        from webapp import storage
+        if not storage.is_remote():
+            raise HTTPException(503, "The Shorts pack is being prepared. Please try again shortly.")
+        try:
+            url = storage._get_client().generate_presigned_url("get_object", Params={
+                "Bucket": storage._spaces_creds()[2], "Key": SHORTS_PACK_KEY,
+                "ResponseContentDisposition": 'attachment; filename="shorts-assets.zip"',
+                "ResponseContentType": "application/zip"}, ExpiresIn=DOWNLOAD_LINK_SECONDS)
+        except Exception:
+            raise HTTPException(503, "The Shorts pack is being prepared. Please try again shortly.")
+        return RedirectResponse(url, status_code=302, headers=headers)
 
     @router.get("/download")
     def download(user=Depends(access)):
