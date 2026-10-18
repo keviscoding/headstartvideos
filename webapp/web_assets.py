@@ -10,6 +10,7 @@ nothing, so each visit re-downloads app.js, the fonts' CSS and the pictures from
 from __future__ import annotations
 
 import hashlib
+import mimetypes
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -19,6 +20,10 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+# The server's slim Linux image has no /etc/mime.types entry for WebP, so the posters went out as
+# application/octet-stream. Name the types we serve rather than trust the host's table.
+mimetypes.add_type("image/webp", ".webp")
+mimetypes.add_type("video/mp4", ".mp4")
 YEAR = "public, max-age=31536000, immutable"
 HOUR = "public, max-age=3600"
 # marketing pages: browsers and the edge keep them a minute and serve them while they refresh
