@@ -13,13 +13,22 @@ def test_root_icons_are_served():
     assert touch.status_code == 200 and touch.content.startswith(b"\x89PNG")
 
 
-def test_landing_page_has_the_launch_video_and_icons():
+def test_landing_page_has_the_moodboard_and_icons():
+    import json, re
     page = (server.STATIC_DIR / "landing.html").read_text()
-    assert 'data-yt-id="lxVILY1ha6w"' in page and "UQwQi4jK76I" not in page
     assert 'href="/favicon.ico"' in page and "apple-touch-icon" in page
-    for name in ("studio-2d", "studio-3d-honeycomb", "studio-3d-story", "studio-painted-history"):
-        assert (server.STATIC_DIR / "showcase" / f"{name}.mp4").is_file()
-        assert (server.STATIC_DIR / "showcase" / f"{name}.jpg").is_file()
+    assert "youtube-nocookie" not in page and "data-yt-id" not in page  # the launch video is gone
+    wall = json.loads(re.search(r'<script type="application/json" id="wall-clips">(.*?)</script>', page, re.S).group(1))
+    assert len(wall) >= 30 and {c["t"] for c in wall} == {0, 1}  # Shorts and long videos both on the wall
+    links = re.findall(r'"/static/(moodboard/[^"?]+)"', page)
+    assert len(page.split('class="mood ')) - 1 >= 30
+    for rel in set(links) | {c["v"][8:] for c in wall} | {c["p"][8:] for c in wall}:
+        assert (server.STATIC_DIR / rel).is_file(), rel
+    # served with every clip at its content version, so the edge can keep them for a year
+    served = TestClient(server.app).get("/").text
+    assert re.search(r'/static/moodboard/[a-z0-9-]+\.mp4\?v=[0-9a-f]{10}', served)
+    clip = TestClient(server.app).get("/static/moodboard/" + wall[0]["v"].rsplit("/", 1)[1])
+    assert clip.status_code == 200 and clip.headers["content-type"] == "video/mp4"
 
 
 def test_discord_is_for_members_only(monkeypatch):

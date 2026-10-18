@@ -4,22 +4,22 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ChannelRecipe Studio: whole faceless YouTube videos, in any style</title>
-    <meta name="description" content="Type a title or paste a script. ChannelRecipe Studio researches, writes, narrates, animates and edits a finished faceless YouTube video in the style you choose.">
+    <meta name="description" content="Type a title or paste a script. ChannelRecipe Studio researches, writes, narrates, animates and edits a finished faceless YouTube video or Short in the style you choose: 3D, stick figures, paintings, documentary, or a style it learns from any channel you admire.">
     <link rel="canonical" href="https://channelrecipe.com/">
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="ChannelRecipe">
     <meta property="og:url" content="https://channelrecipe.com/">
     <meta property="og:title" content="ChannelRecipe Studio: whole faceless YouTube videos, in any style">
-    <meta property="og:description" content="Type a title or paste a script. Studio researches, writes, narrates, animates and edits a finished faceless YouTube video on your computer, in dozens of styles or one it learns from any channel.">
+    <meta property="og:description" content="Long videos and Shorts in 3D, stick figures, paintings, manga or documentary, or a style learned from any channel. Studio writes, voices, animates and edits the whole video on your computer.">
     <meta property="og:image" content="https://channelrecipe.com/static/og/home.jpg">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
     <meta property="og:image:alt" content="ChannelRecipe: whole faceless YouTube videos in any style, with frames from videos Studio made">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="ChannelRecipe Studio: whole faceless YouTube videos, in any style">
-    <meta name="twitter:description" content="Type a title or paste a script. Studio researches, writes, narrates, animates and edits a finished faceless YouTube video on your computer, in dozens of styles or one it learns from any channel.">
+    <meta name="twitter:description" content="Long videos and Shorts in 3D, stick figures, paintings, manga or documentary, or a style learned from any channel. Studio writes, voices, animates and edits the whole video on your computer.">
     <meta name="twitter:image" content="https://channelrecipe.com/static/og/home.jpg">
-    <meta name="theme-color" content="#F7F5F0">
+    <meta name="theme-color" content="#0B0B10">
     <link rel="icon" href="/favicon.ico" sizes="48x48">
     <link rel="icon" href="/static/favicon.svg?v=pot1" type="image/svg+xml">
     <link rel="icon" href="/static/favicon-192.png?v=pot1" type="image/png" sizes="192x192">
@@ -44,7 +44,6 @@
           size-adjust: 93.23%; ascent-override: 93.31%; descent-override: 30.03%; line-gap-override: 9.65%; }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
-
         :root {
             --canvas: #F7F5F0;
             --canvas-2: #F1EEE6;
@@ -57,41 +56,306 @@
             --accent-soft: #EDEAFB;
             --white: #FFFFFF;
             --success: #14B87A;
+            /* the dark, cinematic half of the page: the moodboard plays on it */
+            --night: #0B0B10;
+            --night-2: #121219;
+            --night-3: #1A1A23;
+            --on-night: #F4F2EC;
+            --on-night-2: #B4B2BE;
+            --on-night-3: #8A8896;
+            --night-line: rgba(255, 255, 255, 0.09);
+            --glow: #A99BFF;
+            --warm: #FFB46B;
             --font-display: "Cabinet Grotesk", "Cabinet Grotesk Fallback", "General Sans", system-ui, sans-serif;
             --font-body: "General Sans", "General Sans Fallback", "Inter", system-ui, sans-serif;
             --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
         }
-
+        html { scroll-behavior: smooth; }
+        @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
         body {
             font-family: var(--font-body);
             background: var(--canvas);
             color: var(--ink);
             -webkit-font-smoothing: antialiased;
             line-height: 1.6;
+            overflow-x: hidden;
         }
-
-        .container { max-width: 960px; margin: 0 auto; padding: 0 24px; }
-
-
-        /* -- Header -- */
-        .site-header { padding: 16px 0; border-bottom: 1px solid var(--hairline); }
-        .site-nav { display: flex; align-items: center; gap: 24px; }
-        .brand { display: inline-flex; align-items: center; gap: 8px; color: var(--ink); text-decoration: none;
-            font-family: var(--font-display); font-weight: 800; font-size: 18px; letter-spacing: -0.01em; }
-        .brand .accent { color: var(--accent); }
-        .nav-links { display: flex; gap: 22px; margin-left: 12px; }
-        .nav-links a, .nav-login { color: var(--ink-2); text-decoration: none; font-size: 15px; font-weight: 600; }
-        .nav-links a:hover, .nav-login:hover { color: var(--ink); }
-        .nav-actions { margin-left: auto; display: flex; align-items: center; gap: 18px; }
-        .cta-btn.nav-cta { font-size: 14px; padding: 10px 20px; border-radius: 10px; white-space: nowrap; }
-        .nav-login { white-space: nowrap; }
+        .container { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+        .narrow { max-width: 960px; }
+        @media (max-width: 480px) { .container { padding: 0 16px; } }
         a:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
-        @media (max-width: 760px) { .nav-links { display: none; } }
+        .night a:focus-visible, .night button:focus-visible { outline-color: var(--glow); }
+
+        /* -- Header (floats over the moodboard) -- */
+        .site-header { position: absolute; top: 0; left: 0; right: 0; z-index: 20; padding: 18px 0; }
+        .site-nav { display: flex; align-items: center; gap: 24px; }
+        .brand { display: inline-flex; align-items: center; gap: 8px; color: var(--on-night); text-decoration: none;
+            font-family: var(--font-display); font-weight: 800; font-size: 18px; letter-spacing: -0.01em; }
+        .brand .accent { color: var(--glow); }
+        .nav-links { display: flex; gap: 22px; margin-left: 12px; }
+        .nav-links a, .nav-login { color: var(--on-night-2); text-decoration: none; font-size: 15px; font-weight: 600; transition: color .15s; }
+        .nav-links a:hover, .nav-login:hover { color: #fff; }
+        .nav-actions { margin-left: auto; display: flex; align-items: center; gap: 18px; }
+        .cta-btn.nav-cta { font-size: 14px; padding: 10px 20px; border-radius: 10px; white-space: nowrap; box-shadow: none; }
+        .nav-login { white-space: nowrap; }
+        @media (max-width: 820px) { .nav-links { display: none; } }
         @media (max-width: 420px) { .nav-actions { gap: 14px; } .cta-btn.nav-cta { padding: 9px 14px; font-size: 13px; } .brand { font-size: 17px; } }
 
+        /* -- Buttons -- */
+        .cta-btn {
+            display: inline-flex; align-items: center; gap: 10px;
+            background: var(--accent); color: var(--white);
+            font-size: 17px; font-weight: 700; padding: 16px 32px; border-radius: 12px;
+            border: none; cursor: pointer; text-decoration: none;
+            transition: background .2s, transform .2s, box-shadow .2s;
+        }
+        .cta-btn:hover { background: var(--accent-hover); }
+        .night .cta-btn { box-shadow: 0 12px 40px rgba(109, 90, 224, .45), inset 0 1px 0 rgba(255, 255, 255, .18); }
+        .night .cta-btn:hover { transform: translateY(-1px); box-shadow: 0 16px 48px rgba(109, 90, 224, .55), inset 0 1px 0 rgba(255, 255, 255, .18); }
+        .ghost-btn {
+            display: inline-flex; align-items: center; gap: 8px; color: var(--on-night); text-decoration: none;
+            font-size: 16px; font-weight: 600; padding: 15px 24px; border-radius: 12px;
+            background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .16); transition: background .2s;
+        }
+        .ghost-btn:hover { background: rgba(255, 255, 255, .13); }
+        .cta-micro { display: block; font-size: 13px; color: var(--ink-3); margin-top: 14px; }
+        .night .cta-micro { color: var(--on-night-3); }
+
+        /* -- Hero: the moodboard wall -- */
+        .night { background: var(--night); color: var(--on-night); }
+        .hero {
+            position: relative; overflow: hidden; isolation: isolate;
+            min-height: max(720px, min(100svh, 960px));
+            display: flex; align-items: center; justify-content: center;
+            padding: 120px 0 96px;
+        }
+        .wall {
+            position: absolute; z-index: -2; top: -60px; bottom: -60px; left: -24px; right: -24px;
+            display: grid; grid-template-columns: repeat(var(--cols, 6), minmax(0, 1fr)); gap: 12px;
+        }
+        .wall-col { position: relative; }
+        .wall .tile {
+            position: absolute; left: 0; top: 0; width: 100%; border-radius: 14px; overflow: hidden;
+            background: var(--night-3); will-change: transform;
+        }
+        .wall .tile video { display: block; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .6s ease; }
+        .wall .tile.on video { opacity: 1; }
+        .hero-shade {
+            position: absolute; inset: 0; z-index: -1; pointer-events: none;
+            background:
+                radial-gradient(ellipse 58% 52% at 50% 50%, rgba(11, 11, 16, .93) 0%, rgba(11, 11, 16, .84) 42%, rgba(11, 11, 16, .38) 78%, rgba(11, 11, 16, .22) 100%),
+                linear-gradient(180deg, rgba(11, 11, 16, .9) 0%, rgba(11, 11, 16, 0) 22%, rgba(11, 11, 16, 0) 74%, var(--night) 100%);
+        }
+        .hero-copy { position: relative; text-align: center; max-width: 860px; }
+        .hero-kicker {
+            display: inline-flex; align-items: center; gap: 10px; margin-bottom: 26px;
+            font-size: 13px; font-weight: 600; letter-spacing: .01em; color: var(--on-night-2);
+            padding: 7px 14px 7px 12px; border-radius: 999px; background: rgba(255, 255, 255, .06); border: 1px solid var(--night-line);
+        }
+        .rec { width: 8px; height: 8px; border-radius: 50%; background: #FF5A4E; box-shadow: 0 0 0 4px rgba(255, 90, 78, .18); animation: rec 1.6s ease-in-out infinite; }
+        @keyframes rec { 50% { opacity: .35; } }
+        .hero h1 {
+            font-family: var(--font-display); font-weight: 900;
+            font-size: clamp(40px, 6.6vw, 86px); line-height: .98; letter-spacing: -0.04em;
+            margin: 0 auto 26px; text-wrap: balance;
+        }
+        .shine {
+            background: linear-gradient(92deg, #C8BEFF 0%, var(--glow) 38%, var(--warm) 100%);
+            -webkit-background-clip: text; background-clip: text; color: transparent;
+        }
+        .hero .sub { font-size: 19px; line-height: 1.55; color: var(--on-night-2); max-width: 620px; margin: 0 auto 34px; text-wrap: pretty; }
+        .hero-ctas { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+        @media (max-width: 640px) {
+            .hero { padding: 104px 0 72px; min-height: 100svh; }
+            .hero h1 { font-size: clamp(36px, 10.4vw, 48px); margin-bottom: 18px; }
+            .hero .sub { font-size: 16px; margin-bottom: 26px; }
+            .hero-kicker { font-size: 12px; margin-bottom: 20px; }
+            .hero-ctas .cta-btn, .hero-ctas .ghost-btn { width: 100%; justify-content: center; }
+            .hero-kicker .wide { display: none; }
+            .hero-shade {
+                background:
+                    radial-gradient(ellipse 100% 60% at 50% 52%, rgba(11, 11, 16, .9) 0%, rgba(11, 11, 16, .74) 55%, rgba(11, 11, 16, .4) 100%),
+                    linear-gradient(180deg, rgba(11, 11, 16, .9) 0%, rgba(11, 11, 16, 0) 16%, rgba(11, 11, 16, 0) 84%, var(--night) 100%);
+            }
+        }
+
+        /* -- Style names, scrolling -- */
+        .ticker { position: relative; overflow: hidden; border-top: 1px solid var(--night-line); border-bottom: 1px solid var(--night-line); padding: 18px 0; }
+        .ticker::before, .ticker::after { content: ""; position: absolute; top: 0; bottom: 0; width: 80px; z-index: 1; pointer-events: none; }
+        .ticker::before { left: 0; background: linear-gradient(90deg, var(--night), transparent); }
+        .ticker::after { right: 0; background: linear-gradient(270deg, var(--night), transparent); }
+        .ticker-track { display: flex; width: max-content; animation: ticker 60s linear infinite; }
+        .ticker-track span { white-space: nowrap; font-family: var(--font-display); font-weight: 800; font-size: 20px; letter-spacing: -0.01em; color: var(--on-night-2); padding: 0 18px; }
+        .ticker-track span::after { content: "✦"; color: var(--glow); font-size: 13px; margin-left: 36px; vertical-align: 3px; }
+        @keyframes ticker { to { transform: translateX(-50%); } }
+        @media (prefers-reduced-motion: reduce) { .ticker-track { animation: none; } .rec { animation: none; } }
+
+        /* -- Section headings -- */
+        .eyebrow { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--accent-hover); text-align: center; margin-bottom: 12px; }
+        .night .eyebrow { color: var(--glow); }
+        .section-heading { font-family: var(--font-display); font-size: clamp(30px, 4.4vw, 52px); line-height: 1.04; font-weight: 900; letter-spacing: -0.035em; text-align: center; margin: 0 auto 16px; max-width: 820px; text-wrap: balance; }
+        .section-sub { text-align: center; color: var(--ink-2); font-size: 17px; line-height: 1.6; max-width: 620px; margin: 0 auto 40px; text-wrap: pretty; }
+        .night .section-sub { color: var(--on-night-2); }
+
+        /* -- The moodboard of every style -- */
+        .styles-section { padding: 96px 0 88px; }
+        .chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 0 auto 32px; }
+        .chip {
+            font: 600 14px var(--font-body); color: var(--on-night-2); background: rgba(255, 255, 255, .05);
+            border: 1px solid var(--night-line); border-radius: 999px; padding: 8px 16px; cursor: pointer; transition: all .15s;
+        }
+        .chip:hover { color: #fff; background: rgba(255, 255, 255, .1); }
+        .chip[aria-pressed="true"] { color: var(--night); background: var(--on-night); border-color: var(--on-night); }
+        .board { columns: 5 170px; column-gap: 12px; }
+        @media (min-width: 1200px) { .styles-section .container { max-width: 1280px; } .board { columns: 6 170px; } }
+        @media (max-width: 560px) { .board { columns: 2; column-gap: 10px; } .mood { margin-bottom: 10px; border-radius: 12px; } }
+        .mood { position: relative; break-inside: avoid; margin: 0 0 12px; border-radius: 16px; overflow: hidden; background: var(--night-3); }
+        .mood.tall { aspect-ratio: 9 / 16; }
+        .mood.wide { aspect-ratio: 16 / 9; }
+        .mood video { display: block; width: 100%; height: 100%; object-fit: cover; }
+        .mood figcaption {
+            position: absolute; left: 0; right: 0; bottom: 0; padding: 28px 14px 12px;
+            background: linear-gradient(180deg, transparent, rgba(8, 8, 12, .82));
+            display: flex; flex-direction: column; gap: 1px; pointer-events: none;
+        }
+        .mood figcaption b { font-family: var(--font-display); font-weight: 800; font-size: 15px; letter-spacing: -0.01em; color: #fff; line-height: 1.2; }
+        .mood figcaption span { font-size: 12px; color: rgba(255, 255, 255, .7); font-weight: 500; }
+        .mood[hidden] { display: none; }
+        .board-more { text-align: center; color: var(--on-night-2); font-size: 15px; margin-top: 26px; }
+        .board-more a { color: var(--glow); font-weight: 600; }
+
+        /* -- Shorts -- */
+        .shorts-section { position: relative; padding: 96px 0; overflow: hidden; background: radial-gradient(ellipse 70% 60% at 50% 0%, rgba(109, 90, 224, .22), transparent 70%), var(--night-2); }
+        .phones { display: grid; grid-template-columns: repeat(3, minmax(0, 300px)); justify-content: center; gap: 28px; }
+        .phone-card { text-align: center; }
+        .phone {
+            position: relative; aspect-ratio: 9 / 16; border-radius: 30px; overflow: hidden; background: #000;
+            border: 6px solid #22222C; box-shadow: 0 30px 80px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .06);
+        }
+        .phone video { display: block; width: 100%; height: 100%; object-fit: cover; }
+        .phone-play {
+            position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 2;
+            display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;
+            font: 700 14px var(--font-body); color: #fff; background: rgba(12, 12, 18, .72); border: 1px solid rgba(255, 255, 255, .22);
+            border-radius: 999px; padding: 10px 16px; cursor: pointer; transition: background .15s, transform .15s;
+        }
+        .phone-play:hover { background: var(--accent); transform: translateX(-50%) scale(1.03); }
+        .phone-play svg { width: 14px; height: 14px; fill: currentColor; }
+        .phone-card h3 { font-family: var(--font-display); font-weight: 800; font-size: 21px; letter-spacing: -0.01em; margin: 20px 0 4px; }
+        .phone-card p { font-size: 14px; color: var(--on-night-2); line-height: 1.55; max-width: 290px; margin: 0 auto; }
+        .shorts-steps { display: flex; justify-content: center; flex-wrap: wrap; gap: 10px 28px; margin: 48px auto 0; color: var(--on-night-2); font-size: 15px; }
+        .shorts-steps b { color: var(--on-night); }
+        @media (max-width: 860px) {
+            .phones { grid-template-columns: repeat(3, 72vw); justify-content: start; overflow-x: auto; scroll-snap-type: x mandatory; padding: 4px 16px 18px; margin: 0 -24px; scrollbar-width: none; }
+            .phones::-webkit-scrollbar { display: none; }
+            .phone-card { scroll-snap-align: center; }
+        }
+        @media (max-width: 480px) { .phones { grid-template-columns: repeat(3, 78vw); margin: 0 -16px; } }
+
+        /* -- Whole videos -- */
+        .films-section { padding: 0 0 104px; background: var(--night-2); }
+        .films-title { font-family: var(--font-display); font-weight: 800; font-size: 26px; letter-spacing: -0.02em; text-align: center; }
+        .films-sub { text-align: center; color: var(--on-night-2); font-size: 15px; margin: 6px auto 24px; }
+        .demo-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px; }
+        .demo-card { margin: 0; }
+        .demo-play, .demo-card video { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 16px; overflow: hidden; background: #000; }
+        .demo-play { position: relative; border: 0; padding: 0; cursor: pointer; }
+        .demo-play img { display: block; width: 100%; height: 100%; object-fit: cover; transition: transform .3s ease; }
+        .demo-play:hover img { transform: scale(1.02); }
+        .demo-btn { position: absolute; left: 14px; bottom: 14px; width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center;
+            background: var(--accent); box-shadow: 0 10px 30px rgba(0, 0, 0, .4); transition: transform .2s ease; }
+        .demo-play:hover .demo-btn { transform: scale(1.06); }
+        .demo-btn svg { width: 22px; height: 22px; margin-left: 3px; fill: #fff; }
+        .demo-dur { position: absolute; right: 10px; bottom: 10px; background: rgba(10, 10, 16, .82); color: #fff; font-size: 13px; font-weight: 600; border-radius: 6px; padding: 2px 8px; }
+        .demo-card figcaption { margin-top: 12px; text-align: left; }
+        .demo-card figcaption b { display: block; font-family: var(--font-display); font-weight: 800; font-size: 18px; line-height: 1.25; color: var(--on-night); }
+        .demo-card figcaption span { color: var(--on-night-3); font-size: 14px; }
+        @media (max-width: 680px) { .demo-grid { grid-template-columns: 1fr; } }
+
+        /* -- How it works -- */
+        .how-section { padding: 96px 0; background: var(--canvas); }
+        .steps-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 8px; }
+        @media (max-width: 760px) { .steps-grid { grid-template-columns: 1fr; } }
+        .step-card { background: var(--white); border-radius: 18px; padding: 28px; border: 1px solid var(--hairline); }
+        .step-num { font-family: var(--font-display); font-weight: 900; font-size: 44px; line-height: 1; letter-spacing: -0.04em; color: var(--accent); margin-bottom: 14px; }
+        .step-card h3 { font-family: var(--font-display); font-size: 20px; font-weight: 800; margin-bottom: 6px; letter-spacing: -0.01em; }
+        .step-card p { font-size: 15px; color: var(--ink-2); line-height: 1.6; }
+
+        /* -- Pricing -- */
+        .pricing-section { padding: 96px 0; background: var(--canvas-2); }
+        .pricing-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; max-width: 1040px; margin: 0 auto; align-items: stretch; }
+        .pricing-cards .price-card { display: flex; flex-direction: column; text-align: left; }
+        .pricing-cards .price-features { flex: 1; }
+        @media (max-width: 900px) { .pricing-cards { grid-template-columns: 1fr; max-width: 440px; } }
+        .price-card { background: var(--white); border-radius: 18px; padding: 32px; border: 1px solid var(--hairline); }
+        .price-card.featured { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 20px 50px rgba(109, 90, 224, .14); position: relative; }
+        .price-card.featured::before {
+            content: 'Most popular'; position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
+            background: var(--accent); color: white; font-size: 11px; font-weight: 700; padding: 4px 14px; border-radius: 999px;
+            text-transform: uppercase; letter-spacing: 0.05em;
+        }
+        .price-name { font-family: var(--font-display); font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+        .price-amount { font-family: var(--font-display); font-size: 44px; font-weight: 900; letter-spacing: -0.03em; margin: 8px 0; }
+        .price-amount span { font-size: 16px; font-weight: 500; color: var(--ink-3); }
+        .price-desc { font-size: 14px; color: var(--ink-2); margin-bottom: 20px; }
+        .price-features { list-style: none; text-align: left; margin-bottom: 24px; }
+        .price-features li { font-size: 14px; color: var(--ink-2); padding: 6px 0; display: flex; align-items: flex-start; gap: 8px; line-height: 1.45; }
+        .price-features li::before { content: '✓'; color: var(--success); font-weight: 700; }
+        .price-card .cta-btn { width: 100%; justify-content: center; font-size: 15px; padding: 12px 24px; }
+        .price-card .cta-btn.outline { background: transparent; color: var(--accent); border: 2px solid var(--accent); }
+        .price-card .cta-btn.outline:hover { background: var(--accent-soft); }
+        .price-note { text-align: center; margin: 22px auto 0; font-size: 13px; color: var(--ink-3); max-width: 720px; line-height: 1.6; }
+
+        /* -- Classic recipes -- */
+        .recipes-section { padding: 96px 0; }
+        .recipe-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+        @media (max-width: 980px) { .recipe-grid { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 520px) { .recipe-grid { grid-template-columns: 1fr; } }
+        .recipe-card { background: var(--white); border-radius: 16px; overflow: hidden; border: 1px solid var(--hairline); transition: transform .25s, box-shadow .25s; text-decoration: none; color: inherit; }
+        .recipe-card:hover { transform: translateY(-4px); box-shadow: 0 12px 40px rgba(0, 0, 0, .1); }
+        .recipe-preview { position: relative; aspect-ratio: 16 / 9; overflow: hidden; background: #1a1a2e; }
+        .recipe-preview video { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .recipe-tag-overlay { position: absolute; top: 10px; left: 10px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 10px; font-weight: 700; padding: 3px 10px; border-radius: 4px; text-transform: uppercase; letter-spacing: .06em; }
+        .recipe-tag-overlay.hot { background: #C8372D; }
+        .recipe-body { padding: 14px 16px 16px; }
+        .recipe-body h3 { font-family: var(--font-display); font-size: 17px; font-weight: 800; margin-bottom: 4px; }
+        .recipe-desc { font-size: 13px; color: var(--ink-2); line-height: 1.5; margin-bottom: 10px; }
+        .recipe-stats { display: flex; align-items: center; gap: 12px; font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); }
+        .recipe-stats .stat { display: flex; align-items: center; gap: 4px; }
+        .recipe-stats .stat-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+        .rpm-highlight { color: var(--success); font-weight: 600; }
+
+        /* -- FAQ -- */
+        .faq-section { padding: 96px 0; background: var(--canvas-2); }
+        .faq-list { max-width: 680px; margin: 0 auto; }
+        .faq-item { border-bottom: 1px solid var(--hairline); padding: 20px 0; }
+        .faq-q { font-size: 17px; font-weight: 700; cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+        .faq-q::after { content: '+'; font-size: 22px; color: var(--ink-3); transition: transform 0.2s; }
+        .faq-item.open .faq-q::after { transform: rotate(45deg); }
+        .faq-a { font-size: 15px; color: var(--ink-2); line-height: 1.65; max-height: 0; overflow: hidden; transition: max-height 0.3s, padding 0.3s; padding-top: 0; }
+        .faq-item.open .faq-a { max-height: 600px; padding-top: 12px; }
+
+        /* -- Final call, over a still moodboard -- */
+        .final-cta { position: relative; overflow: hidden; isolation: isolate; padding: 120px 0; text-align: center; }
+        .final-strip { position: absolute; inset: -20px; z-index: -2; display: grid; grid-template-columns: repeat(8, 1fr); gap: 10px; opacity: .55; }
+        .final-strip img { width: 100%; height: 100%; object-fit: cover; border-radius: 10px; display: block; }
+        .final-cta::before { content: ""; position: absolute; inset: 0; z-index: -1; background: radial-gradient(ellipse 60% 70% at 50% 50%, rgba(11, 11, 16, .94), rgba(11, 11, 16, .72)); }
+        .final-cta .section-heading { margin-bottom: 28px; }
+        @media (max-width: 640px) { .final-strip { grid-template-columns: repeat(4, 1fr); } }
+
+        /* -- Footer -- */
+        .footer-section { padding: 48px 0; text-align: center; background: var(--night); color: var(--on-night-3); border-top: 1px solid var(--night-line); }
+        .footer-brand { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 12px; font-family: var(--font-display); font-weight: 700; font-size: 14px; color: var(--on-night); }
+        .footer-brand .accent { color: var(--glow); }
+        .footer-section p { font-size: 13px; }
+        .footer-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 18px; margin-top: 10px; }
+        .footer-links a { color: var(--on-night-2); text-decoration: none; font-size: 13px; }
+        .footer-links a:hover { color: #fff; text-decoration: underline; }
+
+        /* -- Cookies -- */
         .cookie-bar { position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 200; max-width: 640px; margin: 0 auto;
             display: flex; align-items: center; gap: 12px; background: var(--ink); color: #EDEEF5; border-radius: 12px;
-            padding: 10px 10px 10px 16px; box-shadow: 0 10px 30px rgba(0,0,0,.25); }
+            padding: 10px 10px 10px 16px; box-shadow: 0 10px 30px rgba(0,0,0,.25); border: 1px solid rgba(255,255,255,.08); }
         .cookie-bar p { flex: 1; font-size: 13px; line-height: 1.4; margin: 0; }
         .cookie-bar a { color: #C9BEFF; }
         .cookie-actions { display: flex; gap: 6px; flex-shrink: 0; }
@@ -99,547 +363,19 @@
         .cookie-actions button { font: 600 13px var(--font-body); border-radius: 8px; padding: 8px 12px; cursor: pointer; border: 0; }
         .cookie-no { background: transparent; color: #EDEEF5; border: 1px solid rgba(255,255,255,.25) !important; }
         .cookie-yes { background: var(--accent); color: #fff; }
-
-        .footer-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 18px; margin-top: 10px; }
-        .footer-links a { color: var(--ink-2); text-decoration: none; font-size: 13px; }
-        .footer-links a:hover { color: var(--accent-hover); text-decoration: underline; }
-
-        /* -- Hero -- */
-        .hero {
-            padding: 80px 0;
-            text-align: center;
-        }
-        .hero-stack { display: flex; flex-direction: column; align-items: center; }
-        .hero-video { order: 1; width: 100%; margin-top: 56px; text-align: left; }
-        @media (max-width: 640px) {
-            /* Phones: the launch video sits right under the headline, above the fold. */
-            .hero { padding: 24px 0 56px; }
-            .hero-badge { margin-bottom: 14px; }
-            .hero h1 { font-size: 29px; margin-bottom: 18px; }
-            .hero-video { order: 0; margin: 0 0 22px; }
-            .demo-frame { border-radius: 12px; }
-            .hero .sub { font-size: 16px; margin-bottom: 24px; }
-        }
-        .hero-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            background: var(--accent-soft);
-            color: var(--accent-hover);
-            font-size: 13px;
-            font-weight: 600;
-            padding: 6px 14px;
-            border-radius: 999px;
-            margin-bottom: 24px;
-        }
-        .hero h1 {
-            font-family: var(--font-display);
-            font-size: clamp(32px, 5vw, 52px);
-            font-weight: 800;
-            line-height: 1.1;
-            letter-spacing: -0.03em;
-            max-width: 720px;
-            margin: 0 auto 20px;
-        }
-        .hero h1 .accent { color: var(--accent); }
-        .hero .sub {
-            font-size: 18px;
-            color: var(--ink-2);
-            max-width: 540px;
-            margin: 0 auto 32px;
-            line-height: 1.6;
-        }
-        .cta-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 10px;
-            background: var(--accent);
-            color: var(--white);
-            font-size: 17px;
-            font-weight: 700;
-            padding: 16px 36px;
-            border-radius: 12px;
-            border: none;
-            cursor: pointer;
-            text-decoration: none;
-            transition: background 0.2s;
-        }
-        .cta-btn:hover { background: var(--accent-hover); }
-        .cta-micro {
-            display: block;
-            font-size: 13px;
-            color: var(--ink-3);
-            margin-top: 12px;
-        }
-
-        /* -- Demo -- */
-        .demo-section {
-            padding: 0 0 80px;
-        }
-        .demo-frame {
-            background: var(--ink);
-            border-radius: 16px;
-            overflow: hidden;
-            aspect-ratio: 16/9;
-            position: relative;
-            box-shadow: 0 24px 80px rgba(0,0,0,0.15);
-        }
-        /* Click-to-play facade: avoids blank YouTube iframes hanging on CDN */
-        .yt-facade {
-            position: absolute;
-            inset: 0;
-            display: block;
-            width: 100%;
-            height: 100%;
-            padding: 0;
-            border: 0;
-            cursor: pointer;
-            background: #0b0d14;
-            color: inherit;
-        }
-        .yt-facade img {
-            position: absolute;
-            inset: 0;
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-        .yt-facade::after {
-            content: "";
-            position: absolute;
-            inset: 0;
-            background: linear-gradient(180deg, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0.35) 100%);
-            pointer-events: none;
-        }
-        .yt-play {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            z-index: 1;
-            width: 72px;
-            height: 72px;
-            border-radius: 50%;
-            background: rgba(255, 255, 255, 0.94);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            box-shadow: 0 8px 28px rgba(0,0,0,0.35);
-            transition: transform 0.15s ease, background 0.15s ease;
-        }
-        .yt-facade:hover .yt-play,
-        .yt-facade:focus-visible .yt-play {
-            transform: translate(-50%, -50%) scale(1.06);
-            background: #fff;
-        }
-        .yt-play svg {
-            margin-left: 4px;
-            color: var(--accent);
-        }
-        .demo-frame iframe {
-            width: 100%;
-            height: 100%;
-            position: absolute;
-            top: 0;
-            left: 0;
-            border: 0;
-        }
-
-        /* -- How it works -- */
-        .how-section {
-            padding: 80px 0;
-            background: var(--canvas-2);
-        }
-        .section-title {
-            font-size: 14px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            color: var(--accent-hover);
-            text-align: center;
-            margin-bottom: 12px;
-        }
-        .section-heading {
-            font-family: var(--font-display);
-            font-size: clamp(26px, 3.5vw, 38px);
-            font-weight: 800;
-            text-align: center;
-            letter-spacing: -0.02em;
-            margin-bottom: 48px;
-        }
-        .steps-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 24px;
-        }
-        @media (max-width: 640px) {
-            .steps-grid { grid-template-columns: 1fr; }
-        }
-        .step-card {
-            background: var(--white);
-            border-radius: 16px;
-            padding: 28px;
-            border: 1px solid var(--hairline);
-        }
-        .step-num {
-            width: 36px;
-            height: 36px;
-            background: var(--accent-soft);
-            color: var(--accent);
-            font-weight: 800;
-            font-size: 16px;
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-bottom: 16px;
-        }
-        .step-card h3 {
-            font-family: var(--font-display);
-            font-size: 18px;
-            font-weight: 700;
-            margin-bottom: 8px;
-        }
-        .step-card p {
-            font-size: 14px;
-            color: var(--ink-2);
-            line-height: 1.6;
-        }
-
-
-        /* -- Studio showcase -- */
-        .showcase-section { padding: 80px 0; background: var(--canvas); }
-        .showcase-sub { text-align: center; color: var(--ink-2); font-size: 16px; margin: -32px auto 36px; max-width: 560px; line-height: 1.6; }
-        .showcase-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
-        .showcase-card { margin: 0; background: var(--white); border: 1px solid var(--hairline); border-radius: 16px; overflow: hidden; display: flex; flex-direction: column; }
-        .showcase-wide { grid-column: 1 / -1; display: grid; grid-template-columns: 1.7fr 1fr; }
-        .showcase-media { position: relative; aspect-ratio: 16/9; background: #0b0d14; }
-        .showcase-media video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
-        .showcase-card figcaption { padding: 18px 20px 22px; }
-        .showcase-wide figcaption { padding: 28px; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; }
-        .showcase-chip { display: inline-block; font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); background: var(--accent-soft); padding: 4px 10px; border-radius: 999px; margin-bottom: 10px; }
-        .showcase-card h3 { font-family: var(--font-display); font-size: 19px; font-weight: 800; margin-bottom: 6px; letter-spacing: -0.01em; }
-        .showcase-wide h3 { font-size: 24px; line-height: 1.25; }
-        .showcase-card p { font-size: 14px; color: var(--ink-2); line-height: 1.6; }
-        .demos { margin-top: 44px; }
-        .demos-title { font-family: var(--font-display); font-weight: 800; font-size: 24px; letter-spacing: -0.02em; text-align: center; }
-        .demos-sub { text-align: center; color: var(--ink-2); font-size: 15px; margin: 6px auto 20px; }
-        .demo-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
-        .demo-card { margin: 0; }
-        .demo-play, .demo-card video { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 16px; overflow: hidden; background: #0b0d14; }
-        .demo-play { position: relative; border: 0; padding: 0; cursor: pointer; }
-        .demo-play img { display: block; width: 100%; height: 100%; object-fit: cover; transition: transform .3s ease; }
-        .demo-play:hover img { transform: scale(1.02); }
-        .demo-btn { position: absolute; left: 14px; bottom: 14px; width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center;
-            background: var(--accent); box-shadow: 0 10px 30px rgba(22,22,26,.35); transition: transform .2s ease; }
-        .demo-play:hover .demo-btn { transform: scale(1.06); }
-        .demo-btn svg { width: 22px; height: 22px; margin-left: 3px; fill: #fff; }
-        .demo-dur { position: absolute; right: 10px; bottom: 10px; background: rgba(15,18,34,.82); color: #fff; font-size: 13px; font-weight: 600; border-radius: 6px; padding: 2px 8px; }
-        .demo-card figcaption { margin-top: 10px; text-align: left; }
-        .demo-card figcaption b { display: block; font-family: var(--font-display); font-weight: 800; font-size: 18px; line-height: 1.25; }
-        .demo-card figcaption span { color: var(--ink-3); font-size: 14px; }
-        @media (max-width: 640px) { .demo-grid { grid-template-columns: 1fr; } }
-        .showcase-more { text-align: center; color: var(--ink-2); font-size: 15px; margin-top: 28px; }
-        @media (max-width: 900px) {
-            .showcase-grid { grid-template-columns: 1fr; }
-            .showcase-wide { display: flex; }
-            .showcase-wide figcaption { padding: 18px 20px 22px; }
-        }
-
-        /* -- Recipe wall -- */
-        .recipes-section {
-            padding: 80px 0;
-        }
-        .recipe-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 24px;
-        }
-        @media (max-width: 640px) {
-            .recipe-grid { grid-template-columns: 1fr; }
-        }
-        .recipe-card {
-            background: var(--white);
-            border-radius: 16px;
-            overflow: hidden;
-            border: 1px solid var(--hairline);
-            transition: transform 0.25s, box-shadow 0.25s;
-            cursor: pointer;
-        }
-        .recipe-card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 12px 40px rgba(0,0,0,0.1);
-        }
-        .recipe-preview {
-            position: relative;
-            aspect-ratio: 16/9;
-            overflow: hidden;
-            background: #1a1a2e;
-        }
-        .recipe-preview img, .recipe-preview video {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            transition: transform 0.4s;
-        }
-        .recipe-card:hover .recipe-preview img, .recipe-card:hover .recipe-preview video {
-            transform: scale(1.05);
-        }
-        .recipe-preview .views-badge {
-            position: absolute;
-            bottom: 8px;
-            right: 8px;
-            background: rgba(0,0,0,0.8);
-            color: #fff;
-            font-family: var(--font-mono);
-            font-size: 11px;
-            font-weight: 600;
-            padding: 3px 8px;
-            border-radius: 4px;
-            display: flex;
-            align-items: center;
-            gap: 4px;
-        }
-        .recipe-preview .recipe-tag-overlay {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            background: var(--accent);
-            color: #fff;
-            font-family: var(--font-mono);
-            font-size: 10px;
-            font-weight: 700;
-            padding: 3px 10px;
-            border-radius: 4px;
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-        }
-        .recipe-preview .recipe-tag-overlay.hot {
-            background: #C8372D;
-        }
-        .recipe-body {
-            padding: 16px 18px 18px;
-        }
-        .recipe-body h3 {
-            font-family: var(--font-display);
-            font-size: 18px;
-            font-weight: 700;
-            margin-bottom: 4px;
-            color: var(--ink);
-        }
-        .recipe-body .recipe-desc {
-            font-size: 13px;
-            color: var(--ink-2);
-            line-height: 1.5;
-            margin-bottom: 12px;
-        }
-        .recipe-stats {
-            display: flex;
-            align-items: center;
-            gap: 14px;
-            font-family: var(--font-mono);
-            font-size: 11px;
-            color: var(--ink-3);
-            letter-spacing: 0.01em;
-        }
-        .recipe-stats .stat {
-            display: flex;
-            align-items: center;
-            gap: 4px;
-        }
-        .recipe-stats .stat-dot {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-            background: var(--success);
-        }
-        .recipe-stats .rpm-highlight {
-            color: var(--success);
-            font-weight: 600;
-        }
-
-        /* -- Pricing -- */
-        .pricing-section {
-            padding: 80px 0;
-            background: var(--canvas-2);
-        }
-        .pricing-cards {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 20px;
-            max-width: 1040px;
-            margin: 0 auto;
-            align-items: stretch;
-        }
-        .pricing-cards .price-card { display: flex; flex-direction: column; text-align: left; }
-        .pricing-cards .price-features { flex: 1; }
-        @media (max-width: 900px) {
-            .pricing-cards { grid-template-columns: 1fr; max-width: 440px; }
-        }
-        .price-card {
-            background: var(--white);
-            border-radius: 16px;
-            padding: 32px;
-            border: 1px solid var(--hairline);
-            text-align: center;
-        }
-        .price-card.featured {
-            border-color: var(--accent);
-            box-shadow: 0 0 0 1px var(--accent);
-            position: relative;
-        }
-        .price-card.featured::before {
-            content: 'Most popular';
-            position: absolute;
-            top: -12px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: var(--accent);
-            color: white;
-            font-size: 11px;
-            font-weight: 700;
-            padding: 4px 14px;
-            border-radius: 999px;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-        .price-name {
-            font-family: var(--font-display);
-            font-size: 18px;
-            font-weight: 700;
-            margin-bottom: 4px;
-        }
-        .price-amount {
-            font-family: var(--font-display);
-            font-size: 42px;
-            font-weight: 800;
-            letter-spacing: -0.03em;
-            margin: 8px 0;
-        }
-        .price-amount span {
-            font-size: 16px;
-            font-weight: 500;
-            color: var(--ink-3);
-        }
-        .price-desc {
-            font-size: 14px;
-            color: var(--ink-2);
-            margin-bottom: 20px;
-        }
-        .price-features {
-            list-style: none;
-            text-align: left;
-            margin-bottom: 24px;
-        }
-        .price-features li {
-            font-size: 14px;
-            color: var(--ink-2);
-            padding: 6px 0;
-            display: flex;
-            align-items: flex-start;
-            gap: 8px;
-            line-height: 1.45;
-        }
-        .price-features li::before {
-            content: '✓';
-            color: var(--success);
-            font-weight: 700;
-        }
-        .price-card .cta-btn {
-            width: 100%;
-            justify-content: center;
-            font-size: 15px;
-            padding: 12px 24px;
-        }
-        .price-card .cta-btn.outline {
-            background: transparent;
-            color: var(--accent);
-            border: 2px solid var(--accent);
-        }
-        .price-card .cta-btn.outline:hover {
-            background: var(--accent-soft);
-        }
-        .price-per-video {
-            font-size: 12px;
-            color: var(--ink-3);
-            margin-top: 10px;
-            font-family: var(--font-mono);
-        }
-
-        /* -- FAQ -- */
-        .faq-section {
-            padding: 80px 0;
-            background: var(--canvas-2);
-        }
-        .faq-list {
-            max-width: 640px;
-            margin: 0 auto;
-        }
-        .faq-item {
-            border-bottom: 1px solid var(--hairline);
-            padding: 20px 0;
-        }
-        .faq-q {
-            font-size: 16px;
-            font-weight: 700;
-            cursor: pointer;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .faq-q::after {
-            content: '+';
-            font-size: 20px;
-            color: var(--ink-3);
-            transition: transform 0.2s;
-        }
-        .faq-item.open .faq-q::after {
-            transform: rotate(45deg);
-        }
-        .faq-a {
-            font-size: 14px;
-            color: var(--ink-2);
-            line-height: 1.6;
-            max-height: 0;
-            overflow: hidden;
-            transition: max-height 0.3s, padding 0.3s;
-            padding-top: 0;
-        }
-        .faq-item.open .faq-a {
-            max-height: 500px;
-            padding-top: 12px;
-        }
-
-        /* -- Footer -- */
-        .footer-section {
-            padding: 48px 0;
-            text-align: center;
-            border-top: 1px solid var(--hairline);
-        }
-        .footer-section p {
-            font-size: 13px;
-            color: var(--ink-3);
-        }
-
-        /* -- Final CTA -- */
-        .final-cta {
-            padding: 80px 0;
-            text-align: center;
-            background: var(--canvas); border-top: 1px solid var(--hairline);
-        }
+        .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
     </style>
 </head>
 <body>
-
-    <!-- Nav -->
-    <header class="site-header">
+    <header class="site-header night-ink">
         <div class="container site-nav">
             <a class="brand" href="/" aria-label="ChannelRecipe home">
                 <img src="/static/glyph.svg?v=pot1" width="28" height="28" alt="">
                 <span>Channel<span class="accent">Recipe</span></span>
             </a>
             <nav class="nav-links" aria-label="Main">
-                <a href="#showcase">Examples</a>
+                <a href="#styles">Styles</a>
+                <a href="#shorts">Shorts</a>
                 <a href="#pricing">Pricing</a>
                 <a href="/3d-harness">Free guide</a>
             </nav>
@@ -649,121 +385,149 @@
             </div>
         </div>
     </header>
-
     <main>
-    <!-- Hero -->
-    <section class="hero">
-        <div class="container hero-stack">
-            <div class="hero-badge">
-                <svg width="14" height="14" viewBox="0 0 14 14"><path d="M4 2.5 L4 11.5 L11 7 Z" fill="currentColor"/></svg>
-                New: ChannelRecipe Studio v2
+    <!-- Hero: every clip on the wall was made in Studio -->
+    <section class="hero night" aria-labelledby="hero-title">
+        <div class="wall" aria-hidden="true"></div>
+        <div class="hero-shade"></div>
+        <div class="container hero-copy">
+            <p class="hero-kicker"><span class="rec" aria-hidden="true"></span><span>Every clip here was made in <span class="wide">ChannelRecipe </span>Studio</span></p>
+            <h1 id="hero-title">Whole faceless videos, in <span class="shine">any style</span> you want</h1>
+            <p class="sub">Long videos and Shorts in 3D, stick figures, paintings, manga, documentary, or a style learned from any channel you admire. Type a title. Studio writes, voices, animates and edits the whole thing on your computer.</p>
+            <div class="hero-ctas">
+                <a href="/app#local-studio" class="cta-btn">
+                    <svg width="18" height="18" viewBox="0 0 14 14" aria-hidden="true"><path d="M4 2.5 L4 11.5 L11 7 Z" fill="currentColor"/></svg>
+                    Get ChannelRecipe Studio
+                </a>
+                <a href="#styles" class="ghost-btn">See every style</a>
             </div>
-            <h1>Whole faceless YouTube videos, in <span class="accent">any style</span> you want</h1>
-            <div class="hero-video">
-                <div class="demo-frame" id="demo-player" data-yt-id="lxVILY1ha6w">
-                    <button type="button" class="yt-facade" id="yt-facade" aria-label="Play the ChannelRecipe Studio launch video">
-                        <img
-                            src="/static/launch-thumb-640.jpg"
-                            srcset="/static/launch-thumb-640.jpg 640w, /static/launch-thumb.jpg 1280w"
-                            sizes="(max-width: 960px) 100vw, 912px"
-                            alt="ChannelRecipe Studio launch video"
-                            width="1280"
-                            height="720"
-                            loading="eager"
-                            fetchpriority="high"
-                            decoding="async"
-                        >
-                        <span class="yt-play" aria-hidden="true">
-                            <svg width="28" height="28" viewBox="0 0 14 14"><path d="M4 2.5 L4 11.5 L11 7 Z" fill="currentColor"/></svg>
-                        </span>
-                    </button>
-                </div>
+            <span class="cta-micro">Mac &amp; Windows · long videos and Shorts · cancel anytime</span>
+        </div>
+        <script type="application/json" id="wall-clips">[{"v":"/static/moodboard/orca-dunkleosteus.mp4","p":"/static/moodboard/orca-dunkleosteus.webp","t":1,"l":"3D Explainer Shorts"},{"v":"/static/moodboard/nanga-parbat-climber.mp4","p":"/static/moodboard/nanga-parbat-climber.webp","t":0,"l":"Deadly Places Documentary"},{"v":"/static/moodboard/orca-cambrian.mp4","p":"/static/moodboard/orca-cambrian.webp","t":1,"l":"3D Explainer Shorts"},{"v":"/static/moodboard/nanga-parbat-title.mp4","p":"/static/moodboard/nanga-parbat-title.webp","t":0,"l":"Deadly Places Documentary"},{"v":"/static/moodboard/deep-sea-jelly.mp4","p":"/static/moodboard/deep-sea-jelly.webp","t":1,"l":"3D Explainer Shorts"},{"v":"/static/moodboard/titanic-lifeboat.mp4","p":"/static/moodboard/titanic-lifeboat.webp","t":0,"l":"Clean 3D Reconstruction"},{"v":"/static/moodboard/grape-plasma.mp4","p":"/static/moodboard/grape-plasma.webp","t":1,"l":"3D Explainer Shorts"},{"v":"/static/moodboard/titanic-iceberg.mp4","p":"/static/moodboard/titanic-iceberg.webp","t":0,"l":"Clean 3D Reconstruction"},{"v":"/static/moodboard/grape-lens.mp4","p":"/static/moodboard/grape-lens.webp","t":1,"l":"3D Explainer Shorts"},{"v":"/static/moodboard/titanic-clock.mp4","p":"/static/moodboard/titanic-clock.webp","t":0,"l":"Clean 3D Reconstruction"},{"v":"/static/moodboard/carsick-xray.mp4","p":"/static/moodboard/carsick-xray.webp","t":1,"l":"3D Explainer Shorts"},{"v":"/static/moodboard/b59-officers.mp4","p":"/static/moodboard/b59-officers.webp","t":0,"l":"Clean 3D Reconstruction"},{"v":"/static/moodboard/ears-xray.mp4","p":"/static/moodboard/ears-xray.webp","t":1,"l":"3D Explainer Shorts"},{"v":"/static/moodboard/honeycomb.mp4","p":"/static/moodboard/honeycomb.webp","t":0,"l":"3D Reconstruction"},{"v":"/static/moodboard/cow.mp4","p":"/static/moodboard/cow.webp","t":1,"l":"3D Explainer Shorts"},{"v":"/static/moodboard/empty-city.mp4","p":"/static/moodboard/empty-city.webp","t":0,"l":"3D Reconstruction"},{"v":"/static/moodboard/beagle.mp4","p":"/static/moodboard/beagle.webp","t":1,"l":"3D Explainer Shorts"},{"v":"/static/moodboard/empty-city-doorway.mp4","p":"/static/moodboard/empty-city-doorway.webp","t":0,"l":"3D Reconstruction"},{"v":"/static/moodboard/powerline.mp4","p":"/static/moodboard/powerline.webp","t":1,"l":"3D Explainer Shorts"},{"v":"/static/moodboard/gladiator-sold.mp4","p":"/static/moodboard/gladiator-sold.webp","t":0,"l":"Stick Figure Stories"},{"v":"/static/moodboard/cabin-pop.mp4","p":"/static/moodboard/cabin-pop.webp","t":1,"l":"3D Explainer Shorts"},{"v":"/static/moodboard/peasant-fire.mp4","p":"/static/moodboard/peasant-fire.webp","t":0,"l":"Stick Figure Stories"},{"v":"/static/moodboard/cooper-money.mp4","p":"/static/moodboard/cooper-money.webp","t":1,"l":"3D Dark Stories"},{"v":"/static/moodboard/chimney-sweeps.mp4","p":"/static/moodboard/chimney-sweeps.webp","t":0,"l":"Stick Figure Stories"},{"v":"/static/moodboard/motel-phone.mp4","p":"/static/moodboard/motel-phone.webp","t":1,"l":"3D Dark Stories"},{"v":"/static/moodboard/parliament.mp4","p":"/static/moodboard/parliament.webp","t":0,"l":"Stick Figure Stories"},{"v":"/static/moodboard/night-vision.mp4","p":"/static/moodboard/night-vision.webp","t":1,"l":"3D Dark Stories"},{"v":"/static/moodboard/hand-drawn-money.mp4","p":"/static/moodboard/hand-drawn-money.webp","t":0,"l":"Hand-Drawn Money"},{"v":"/static/moodboard/doorbell-figure.mp4","p":"/static/moodboard/doorbell-figure.webp","t":1,"l":"3D Dark Stories"},{"v":"/static/moodboard/paper-bank.mp4","p":"/static/moodboard/paper-bank.webp","t":0,"l":"Paper Economics"},{"v":"/static/moodboard/hippo-yawn.mp4","p":"/static/moodboard/hippo-yawn.webp","t":1,"l":"Photo Comedy Shorts"},{"v":"/static/moodboard/seventies-kids.mp4","p":"/static/moodboard/seventies-kids.webp","t":0,"l":"Painted History"},{"v":"/static/moodboard/hippo-underwater.mp4","p":"/static/moodboard/hippo-underwater.webp","t":1,"l":"Photo Comedy Shorts"},{"v":"/static/moodboard/seventies-hose.mp4","p":"/static/moodboard/seventies-hose.webp","t":0,"l":"Painted History"},{"v":"/static/moodboard/sloth-nap.mp4","p":"/static/moodboard/sloth-nap.webp","t":1,"l":"Photo Comedy Shorts"},{"v":"/static/moodboard/luck-elevator.mp4","p":"/static/moodboard/luck-elevator.webp","t":0,"l":"Cloned style"},{"v":"/static/moodboard/sloth-xray.mp4","p":"/static/moodboard/sloth-xray.webp","t":1,"l":"Photo Comedy Shorts"},{"v":"/static/moodboard/lights-fail.mp4","p":"/static/moodboard/lights-fail.webp","t":0,"l":"Cloned style"},{"v":"/static/moodboard/great-fire-bucket.mp4","p":"/static/moodboard/great-fire-bucket.webp","t":1,"l":"Photo Comedy Shorts"},{"v":"/static/moodboard/empty-street-dog.mp4","p":"/static/moodboard/empty-street-dog.webp","t":0,"l":"Cloned style"},{"v":"/static/moodboard/great-fire-city.mp4","p":"/static/moodboard/great-fire-city.webp","t":1,"l":"Photo Comedy Shorts"},{"v":"/static/moodboard/empty-street-run.mp4","p":"/static/moodboard/empty-street-run.webp","t":0,"l":"Cloned style"},{"v":"/static/moodboard/octopus-neurons.mp4","p":"/static/moodboard/octopus-neurons.webp","t":1,"l":"Photo Comedy Shorts"},{"v":"/static/moodboard/bacon-skillet.mp4","p":"/static/moodboard/bacon-skillet.webp","t":0,"l":"Old-Timer Expert"},{"v":"/static/moodboard/fly-gut.mp4","p":"/static/moodboard/fly-gut.webp","t":1,"l":"Photo Comedy Shorts"},{"v":"/static/moodboard/forgotten-ruins.mp4","p":"/static/moodboard/forgotten-ruins.webp","t":0,"l":"Quiet Video Essays"},{"v":"/static/moodboard/fly-eyes.mp4","p":"/static/moodboard/fly-eyes.webp","t":1,"l":"Photo Comedy Shorts"},{"v":"/static/moodboard/mantis-shrimp.mp4","p":"/static/moodboard/mantis-shrimp.webp","t":1,"l":"Photo Comedy Shorts"},{"v":"/static/moodboard/gladiator-interview.mp4","p":"/static/moodboard/gladiator-interview.webp","t":1,"l":"Photo Comedy Shorts"}]</script>
+    </section>
+
+    <div class="ticker night" aria-label="Some of the styles in Studio">
+        <div class="ticker-track">
+            <span>3D Explainer Shorts</span><span>Stick Figure Stories</span><span>Clean 3D Reconstruction</span><span>Photo Comedy Shorts</span><span>Painted History</span><span>Deadly Places Documentary</span><span>3D Dark Stories</span><span>Hand-Drawn Money</span><span>Manga Recaps</span><span>Paper Economics</span><span>Quiet Video Essays</span><span>Cartoon History</span><span>True Crime Case Files</span><span>Old-Timer Expert</span><span>Any channel you clone</span>
+            <span aria-hidden="true">3D Explainer Shorts</span><span aria-hidden="true">Stick Figure Stories</span><span aria-hidden="true">Clean 3D Reconstruction</span><span aria-hidden="true">Photo Comedy Shorts</span><span aria-hidden="true">Painted History</span><span aria-hidden="true">Deadly Places Documentary</span><span aria-hidden="true">3D Dark Stories</span><span aria-hidden="true">Hand-Drawn Money</span><span aria-hidden="true">Manga Recaps</span><span aria-hidden="true">Paper Economics</span><span aria-hidden="true">Quiet Video Essays</span><span aria-hidden="true">Cartoon History</span><span aria-hidden="true">True Crime Case Files</span><span aria-hidden="true">Old-Timer Expert</span><span aria-hidden="true">Any channel you clone</span>
+        </div>
+    </div>
+
+    <!-- The moodboard of every style -->
+    <section class="styles-section night" id="styles">
+        <div id="showcase"></div>
+        <div class="container">
+            <p class="eyebrow">The moodboard</p>
+            <h2 class="section-heading">One Studio. Every look.</h2>
+            <p class="section-sub">Each clip comes from a video Studio made start to finish. No animator, no editor, no stock-footage slideshow. Pick a ready-made recipe, or show Studio a channel you admire and it learns the look.</p>
+            <div class="chips" role="group" aria-label="Show styles">
+                <button type="button" class="chip" data-f="all" aria-pressed="true">All</button>
+                <button type="button" class="chip" data-f="shorts" aria-pressed="false">Shorts</button>
+                <button type="button" class="chip" data-f="3d" aria-pressed="false">3D</button>
+                <button type="button" class="chip" data-f="2d" aria-pressed="false">Animation</button>
+                <button type="button" class="chip" data-f="doc" aria-pressed="false">Documentary &amp; painted</button>
+                <button type="button" class="chip" data-f="clone" aria-pressed="false">Cloned styles</button>
             </div>
-            <p class="sub">Type a title or paste a script. Studio researches, writes, narrates, animates and edits a finished video on your computer, in one of dozens of styles or one it learns from any channel you admire.</p>
-            <a href="/app#local-studio" class="cta-btn">
-                <svg width="18" height="18" viewBox="0 0 14 14"><path d="M4 2.5 L4 11.5 L11 7 Z" fill="currentColor"/></svg>
-                Get ChannelRecipe Studio
-            </a>
-            <span class="cta-micro">Mac &amp; Windows · cancel anytime</span>
+            <div class="board">
+                <!-- moodboard:gallery -->
+                <figure class="mood tall" data-g="shorts"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/orca-dunkleosteus.webp" data-src="/static/moodboard/orca-dunkleosteus.mp4"></video><figcaption><b>3D Explainer Shorts</b><span>Short</span></figcaption></figure>
+                <figure class="mood wide" data-g="3d"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/titanic-lifeboat.webp" data-src="/static/moodboard/titanic-lifeboat.mp4"></video><figcaption><b>Clean 3D Reconstruction</b><span>Long video</span></figcaption></figure>
+                <figure class="mood tall" data-g="shorts"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/hippo-yawn.webp" data-src="/static/moodboard/hippo-yawn.mp4"></video><figcaption><b>Photo Comedy Shorts</b><span>Short</span></figcaption></figure>
+                <figure class="mood wide" data-g="doc"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/nanga-parbat-climber.webp" data-src="/static/moodboard/nanga-parbat-climber.mp4"></video><figcaption><b>Deadly Places Documentary</b><span>Long video</span></figcaption></figure>
+                <figure class="mood tall" data-g="shorts"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/night-vision.webp" data-src="/static/moodboard/night-vision.mp4"></video><figcaption><b>3D Dark Stories</b><span>Short</span></figcaption></figure>
+                <figure class="mood wide" data-g="2d"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/gladiator-sold.webp" data-src="/static/moodboard/gladiator-sold.mp4"></video><figcaption><b>Stick Figure Stories</b><span>Long video</span></figcaption></figure>
+                <figure class="mood wide" data-g="3d"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/honeycomb.webp" data-src="/static/moodboard/honeycomb.mp4"></video><figcaption><b>3D Reconstruction</b><span>Long video</span></figcaption></figure>
+                <figure class="mood tall" data-g="shorts"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/grape-plasma.webp" data-src="/static/moodboard/grape-plasma.mp4"></video><figcaption><b>3D Explainer Shorts</b><span>Short</span></figcaption></figure>
+                <figure class="mood wide" data-g="clone"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/luck-elevator.webp" data-src="/static/moodboard/luck-elevator.mp4"></video><figcaption><b>Cloned style</b><span>Flat what-if</span></figcaption></figure>
+                <figure class="mood wide" data-g="doc"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/seventies-kids.webp" data-src="/static/moodboard/seventies-kids.mp4"></video><figcaption><b>Painted History</b><span>Long video</span></figcaption></figure>
+                <figure class="mood tall" data-g="shorts"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/sloth-xray.webp" data-src="/static/moodboard/sloth-xray.mp4"></video><figcaption><b>Photo Comedy Shorts</b><span>Short</span></figcaption></figure>
+                <figure class="mood wide" data-g="2d"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/hand-drawn-money.webp" data-src="/static/moodboard/hand-drawn-money.mp4"></video><figcaption><b>Hand-Drawn Money</b><span>Long video</span></figcaption></figure>
+                <figure class="mood tall" data-g="shorts"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/motel-phone.webp" data-src="/static/moodboard/motel-phone.mp4"></video><figcaption><b>3D Dark Stories</b><span>Short</span></figcaption></figure>
+                <figure class="mood wide" data-g="3d"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/b59-officers.webp" data-src="/static/moodboard/b59-officers.mp4"></video><figcaption><b>Clean 3D Reconstruction</b><span>Long video</span></figcaption></figure>
+                <figure class="mood tall" data-g="shorts"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/deep-sea-jelly.webp" data-src="/static/moodboard/deep-sea-jelly.mp4"></video><figcaption><b>3D Explainer Shorts</b><span>Short</span></figcaption></figure>
+                <figure class="mood wide" data-g="2d"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/chimney-sweeps.webp" data-src="/static/moodboard/chimney-sweeps.mp4"></video><figcaption><b>Stick Figure Stories</b><span>Long video</span></figcaption></figure>
+                <figure class="mood tall" data-g="shorts"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/octopus-neurons.webp" data-src="/static/moodboard/octopus-neurons.mp4"></video><figcaption><b>Photo Comedy Shorts</b><span>Short</span></figcaption></figure>
+                <figure class="mood wide" data-g="clone"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/lights-fail.webp" data-src="/static/moodboard/lights-fail.mp4"></video><figcaption><b>Cloned style</b><span>Paper collage</span></figcaption></figure>
+                <figure class="mood wide" data-g="3d"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/titanic-iceberg.webp" data-src="/static/moodboard/titanic-iceberg.mp4"></video><figcaption><b>Clean 3D Reconstruction</b><span>Long video</span></figcaption></figure>
+                <figure class="mood tall" data-g="shorts"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/doorbell-figure.webp" data-src="/static/moodboard/doorbell-figure.mp4"></video><figcaption><b>3D Dark Stories</b><span>Short</span></figcaption></figure>
+                <figure class="mood wide" data-g="2d"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/paper-bank.webp" data-src="/static/moodboard/paper-bank.mp4"></video><figcaption><b>Paper Economics</b><span>Long video</span></figcaption></figure>
+                <figure class="mood tall" data-g="shorts"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/carsick-xray.webp" data-src="/static/moodboard/carsick-xray.mp4"></video><figcaption><b>3D Explainer Shorts</b><span>Short</span></figcaption></figure>
+                <figure class="mood wide" data-g="doc"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/forgotten-ruins.webp" data-src="/static/moodboard/forgotten-ruins.mp4"></video><figcaption><b>Quiet Video Essays</b><span>Long video</span></figcaption></figure>
+                <figure class="mood tall" data-g="shorts"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/fly-gut.webp" data-src="/static/moodboard/fly-gut.mp4"></video><figcaption><b>Photo Comedy Shorts</b><span>Short</span></figcaption></figure>
+                <figure class="mood wide" data-g="3d"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/empty-city-doorway.webp" data-src="/static/moodboard/empty-city-doorway.mp4"></video><figcaption><b>3D Reconstruction</b><span>Long video</span></figcaption></figure>
+                <figure class="mood tall" data-g="shorts"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/cow.webp" data-src="/static/moodboard/cow.mp4"></video><figcaption><b>3D Explainer Shorts</b><span>Short</span></figcaption></figure>
+                <figure class="mood wide" data-g="clone"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/empty-street-run.webp" data-src="/static/moodboard/empty-street-run.mp4"></video><figcaption><b>Cloned style</b><span>Painted cartoon</span></figcaption></figure>
+                <figure class="mood wide" data-g="2d"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/peasant-fire.webp" data-src="/static/moodboard/peasant-fire.mp4"></video><figcaption><b>Stick Figure Stories</b><span>Long video</span></figcaption></figure>
+                <figure class="mood tall" data-g="shorts"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/great-fire-bucket.webp" data-src="/static/moodboard/great-fire-bucket.mp4"></video><figcaption><b>Photo Comedy Shorts</b><span>Short</span></figcaption></figure>
+                <figure class="mood wide" data-g="doc"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/bacon-skillet.webp" data-src="/static/moodboard/bacon-skillet.mp4"></video><figcaption><b>Old-Timer Expert</b><span>Long video</span></figcaption></figure>
+                <figure class="mood tall" data-g="shorts"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/mantis-shrimp.webp" data-src="/static/moodboard/mantis-shrimp.mp4"></video><figcaption><b>Photo Comedy Shorts</b><span>Short</span></figcaption></figure>
+                <figure class="mood wide" data-g="clone"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/empty-street-dog.webp" data-src="/static/moodboard/empty-street-dog.mp4"></video><figcaption><b>Cloned style</b><span>Flat illustration</span></figcaption></figure>
+                <figure class="mood wide" data-g="doc"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/nanga-parbat-title.webp" data-src="/static/moodboard/nanga-parbat-title.mp4"></video><figcaption><b>Deadly Places Documentary</b><span>Long video</span></figcaption></figure>
+                <figure class="mood tall" data-g="shorts"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/cabin-pop.webp" data-src="/static/moodboard/cabin-pop.mp4"></video><figcaption><b>3D Explainer Shorts</b><span>Short</span></figcaption></figure>
+                <figure class="mood wide" data-g="2d"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/parliament.webp" data-src="/static/moodboard/parliament.mp4"></video><figcaption><b>Stick Figure Stories</b><span>Long video</span></figcaption></figure>
+                <figure class="mood wide" data-g="3d"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/titanic-clock.webp" data-src="/static/moodboard/titanic-clock.mp4"></video><figcaption><b>Clean 3D Reconstruction</b><span>Long video</span></figcaption></figure>
+                <figure class="mood wide" data-g="doc"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/seventies-hose.webp" data-src="/static/moodboard/seventies-hose.mp4"></video><figcaption><b>Painted History</b><span>Long video</span></figcaption></figure>
+                <figure class="mood wide" data-g="3d"><video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/empty-city.webp" data-src="/static/moodboard/empty-city.mp4"></video><figcaption><b>3D Reconstruction</b><span>Long video</span></figcaption></figure>
+                <!-- /moodboard:gallery -->
+            </div>
+            <p class="board-more">Plus 30+ more recipes, from Cartoon History to True Crime Case Files. Or <a href="/app#local-studio">clone any channel you admire</a>.</p>
         </div>
     </section>
 
-    <!-- How it works -->
-    <section class="how-section">
+    <!-- Shorts -->
+    <section class="shorts-section night" id="shorts">
         <div class="container">
-            <p class="section-title">How it works</p>
-            <h2 class="section-heading">Three steps. One finished video.</h2>
-            <div class="steps-grid">
-                <div class="step-card">
-                    <div class="step-num">1</div>
-                    <h3>Install Studio</h3>
-                    <p>Download ChannelRecipe Studio for Mac or Windows. Claude Code can install it for you: just paste the prompt we give you.</p>
-                </div>
-                <div class="step-card">
-                    <div class="step-num">2</div>
-                    <h3>Pick or clone a style</h3>
-                    <p>Choose a built-in style (documentary, history, true crime, sports, explainer) or point Studio at a channel and it learns that look.</p>
-                </div>
-                <div class="step-card">
-                    <div class="step-num">3</div>
-                    <h3>Type a title, review, post</h3>
-                    <p>Studio researches, writes, voices, animates and edits the video. Review every scene on the timeline, then export the video, thumbnail and description.</p>
-                </div>
+            <p class="eyebrow">New in Studio</p>
+            <h2 class="section-heading">Shorts, from one topic</h2>
+            <p class="section-sub">Pick a Shorts recipe, type a topic and choose 15 to 60 seconds. Studio fact-checks the script, directs every shot, scores it and cuts it vertical for the feed.</p>
+            <div class="phones">
+                <figure class="phone-card">
+                    <div class="phone">
+                        <video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/reel-3d-explainer.webp" data-src="/static/moodboard/reel-3d-explainer.mp4"></video>
+                        <button type="button" class="phone-play" data-full="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/landing/short-3d-explainer-orca-v1.mp4" aria-label="Watch a whole 3D Explainer Short with sound: the orca against every sea monster">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l12.5-7.5z"/></svg>Watch one with sound
+                        </button>
+                    </div>
+                    <figcaption>
+                        <h3>3D Explainer Shorts</h3>
+                        <p>Weird facts and true stories acted out by 3D people and animals in real sets, with fast cinematic cutting.</p>
+                    </figcaption>
+                </figure>
+                <figure class="phone-card">
+                    <div class="phone">
+                        <video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/reel-photo-comedy.webp" data-src="/static/moodboard/reel-photo-comedy.mp4"></video>
+                        <button type="button" class="phone-play" data-full="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/landing/short-photo-comedy-sloth-v1.mp4" aria-label="Watch a whole Photo Comedy Short with sound: the sloth">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l12.5-7.5z"/></svg>Watch one with sound
+                        </button>
+                    </div>
+                    <figcaption>
+                        <h3>Photo Comedy Shorts</h3>
+                        <p>Funny photo-collage stories with a recurring host, googly-eyed characters and comic timing.</p>
+                    </figcaption>
+                </figure>
+                <figure class="phone-card">
+                    <div class="phone">
+                        <video muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1" data-poster="/static/moodboard/reel-3d-dark.webp" data-src="/static/moodboard/reel-3d-dark.mp4"></video>
+                        <button type="button" class="phone-play" data-full="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/landing/short-3d-dark-motel-v1.mp4" aria-label="Watch a whole 3D Dark Story with sound: the call to room 9">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l12.5-7.5z"/></svg>Watch one with sound
+                        </button>
+                    </div>
+                    <figcaption>
+                        <h3>3D Dark Stories</h3>
+                        <p>True crime and horror with a real twist: cold opens, planted clues, night-vision and CCTV.</p>
+                    </figcaption>
+                </figure>
             </div>
+            <p class="shorts-steps"><span><b>1.</b> Pick a Shorts recipe</span><span><b>2.</b> Type a topic</span><span><b>3.</b> Choose 15 to 60 seconds</span></p>
         </div>
     </section>
 
-    <section class="showcase-section" id="showcase">
-        <div class="container">
-            <p class="section-title">Made in Studio</p>
-            <h2 class="section-heading">2D, 3D, painted history, or any style you show it</h2>
-            <p class="showcase-sub">Real videos made start to finish in ChannelRecipe Studio. No animator, no editor, no stock-footage slideshow.</p>
-            <div class="showcase-grid">
-                <figure class="showcase-card showcase-wide">
-                    <div class="showcase-media">
-                        <video muted loop playsinline preload="none" poster="/static/showcase/studio-2d.jpg" data-src="/static/showcase/studio-2d.mp4" aria-label="2D animation, learned from one video, made in ChannelRecipe Studio"></video>
-                    </div>
-                    <figcaption>
-                        <span class="showcase-chip">Style clone</span>
-                        <h3>2D animation, learned from one video</h3>
-                        <p>Show Studio a video you love. It learns the look, the character and the pacing, then makes brand new videos in that style.</p>
-                    </figcaption>
-                </figure>
-                <figure class="showcase-card">
-                    <div class="showcase-media">
-                        <video muted loop playsinline preload="none" poster="/static/showcase/studio-3d-honeycomb.jpg" data-src="/static/showcase/studio-3d-honeycomb.mp4" aria-label="3D documentaries, made in ChannelRecipe Studio"></video>
-                    </div>
-                    <figcaption>
-                        <span class="showcase-chip">3D</span>
-                        <h3>3D documentaries</h3>
-                        <p>Real 3D scenes, lit and filmed like a documentary. Claude directs every shot and your computer renders it.</p>
-                    </figcaption>
-                </figure>
-                <figure class="showcase-card">
-                    <div class="showcase-media">
-                        <video muted loop playsinline preload="none" poster="/static/showcase/studio-3d-story.jpg" data-src="/static/showcase/studio-3d-story.mp4" aria-label="Dark 3D stories, made in ChannelRecipe Studio"></video>
-                    </div>
-                    <figcaption>
-                        <span class="showcase-chip">3D</span>
-                        <h3>Dark 3D stories</h3>
-                        <p>Moody 3D for what-if, mystery and history channels. Empty cities, lonely corridors, one light in the dark.</p>
-                    </figcaption>
-                </figure>
-                <figure class="showcase-card">
-                    <div class="showcase-media">
-                        <video muted loop playsinline preload="none" poster="/static/showcase/studio-painted-history.jpg" data-src="/static/showcase/studio-painted-history.mp4" aria-label="Painted history, made in ChannelRecipe Studio"></video>
-                    </div>
-                    <figcaption>
-                        <span class="showcase-chip">Paintings</span>
-                        <h3>Painted history</h3>
-                        <p>Oil-painting scenes and old maps for history and nostalgia channels. Every scene painted for your script.</p>
-                    </figcaption>
-                </figure>
-            </div>
-            <div class="demos">
-                <h3 class="demos-title">Watch the full demos</h3>
-                <p class="demos-sub">The two videos from the launch video, start to finish. Each began as a pasted script.</p>
-                <div class="demo-grid">
+    <!-- Whole long videos -->
+    <section class="films-section night" aria-labelledby="films-title">
+        <div class="container narrow">
+            <h2 class="films-title" id="films-title">Watch whole videos, with sound</h2>
+            <p class="films-sub">Each began as a pasted script.</p>
+            <div class="demo-grid">
                 <figure class="demo-card">
                     <button class="demo-play" type="button" data-src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/harness/b59-3d-reconstruction-v1.mp4" aria-label="Play B-59: The Submarine That Almost Started WW3">
                         <img src="https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/harness/b59-poster-v1.webp" alt="Two faceless 3D officers in a submarine, labelled 2 keys, 2 officers" width="1280" height="720" loading="lazy" decoding="async">
@@ -780,17 +544,42 @@
                     </button>
                     <figcaption><b>The Killer Mountain Where Dozens Died Before Anyone Reached the Top</b><span>Deadly Places Documentary recipe</span></figcaption>
                 </figure>
+            </div>
+        </div>
+    </section>
+
+    <!-- How it works -->
+    <section class="how-section">
+        <div class="container">
+            <p class="eyebrow">How it works</p>
+            <h2 class="section-heading">Three steps. One finished video.</h2>
+            <p class="section-sub">Studio runs on your computer with your own Claude account, so there are no per-video credits for Studio videos.</p>
+            <div class="steps-grid">
+                <div class="step-card">
+                    <div class="step-num">01</div>
+                    <h3>Install Studio</h3>
+                    <p>Download ChannelRecipe Studio for Mac or Windows. Claude Code can install it for you: just paste the prompt we give you.</p>
+                </div>
+                <div class="step-card">
+                    <div class="step-num">02</div>
+                    <h3>Pick or clone a style</h3>
+                    <p>Choose a ready-made recipe for long videos or Shorts, or point Studio at a channel you admire and it learns that look.</p>
+                </div>
+                <div class="step-card">
+                    <div class="step-num">03</div>
+                    <h3>Type a title, review, post</h3>
+                    <p>Studio researches, writes, voices, animates and edits. Review every scene on the timeline, then export the video, thumbnail and description.</p>
                 </div>
             </div>
-            <p class="showcase-more">Plus 30+ recipes, including ready-made ones learned from top channels: Stick Figure Stories, Clean 3D Reconstruction, Deadly Places Documentary, Hand-Drawn Money and Manga Recaps. Or clone any channel you admire.</p>
         </div>
     </section>
 
     <!-- Pricing -->
     <section class="pricing-section" id="pricing">
         <div class="container">
-            <p class="section-title">Simple pricing</p>
+            <p class="eyebrow">Simple pricing</p>
             <h2 class="section-heading">Every plan includes Studio. Cancel anytime.</h2>
+            <p class="section-sub">Every style on this page, long videos and Shorts, on every plan.</p>
             <div class="pricing-cards">
                 <div class="price-card">
                     <p class="price-name">Creator</p>
@@ -833,20 +622,18 @@
                     <a href="/app#local-studio" class="cta-btn outline">Get started</a>
                 </div>
             </div>
-            <p style="text-align: center; margin-top: 20px; font-size: 13px; color: var(--ink-3); max-width: 720px; margin-left: auto; margin-right: auto; line-height: 1.6;">Yearly plans save 2 months. Studio runs on your computer with your own Claude account (Pro or Max) and a Kie.ai or Atlas Cloud balance for voice and images, so you pay those providers directly with no markup.</p>
+            <p class="price-note">Yearly plans save 2 months. Studio runs on your computer with your own Claude account (Pro or Max) and a Kie.ai or Atlas Cloud balance for voice and images, so you pay those providers directly with no markup.</p>
         </div>
     </section>
 
-    <!-- FAQ -->
-    <!-- Recipe wall -->
+    <!-- Classic recipes -->
     <section class="recipes-section">
         <div class="container">
-            <p class="section-title">Also included</p>
+            <p class="eyebrow">Also included</p>
             <h2 class="section-heading">Classic recipes for quick cloud videos</h2>
-            <p style="text-align: center; color: var(--ink-2); font-size: 15px; margin-top: -32px; margin-bottom: 40px;">The original ChannelRecipe (v1): made in our cloud from a single recipe. Every plan includes monthly credits for them.</p>
+            <p class="section-sub">The original ChannelRecipe (v1): made in our cloud from a single recipe. Every plan includes monthly credits for them.</p>
             <div class="recipe-grid">
-
-                <a href="/app" class="recipe-card" style="text-decoration: none; color: inherit;">
+                <a href="/app" class="recipe-card">
                     <div class="recipe-preview">
                         <video muted loop playsinline preload="none" poster="/static/previews/animated_explainer.jpg" data-src="/static/previews/animated_explainer.mp4" aria-label="Animated Explainer preview"></video>
                         <span class="recipe-tag-overlay hot">Trending</span>
@@ -865,8 +652,7 @@
                         </div>
                     </div>
                 </a>
-
-                <a href="/app" class="recipe-card" style="text-decoration: none; color: inherit;">
+                <a href="/app" class="recipe-card">
                     <div class="recipe-preview">
                         <video muted loop playsinline preload="none" poster="/static/previews/broll_cinematic.jpg" data-src="/static/previews/broll_cinematic.mp4" aria-label="Cinematic B-Roll preview"></video>
                         <span class="recipe-tag-overlay">Premium</span>
@@ -885,8 +671,7 @@
                         </div>
                     </div>
                 </a>
-
-                <a href="/app" class="recipe-card" style="text-decoration: none; color: inherit;">
+                <a href="/app" class="recipe-card">
                     <div class="recipe-preview">
                         <video muted loop playsinline preload="none" poster="/static/previews/broll_only.jpg" data-src="/static/previews/broll_only.mp4" aria-label="B-Roll Documentary preview"></video>
                         <span class="recipe-tag-overlay">Classic</span>
@@ -905,8 +690,7 @@
                         </div>
                     </div>
                 </a>
-
-                <a href="/app" class="recipe-card" style="text-decoration: none; color: inherit;">
+                <a href="/app" class="recipe-card">
                     <div class="recipe-preview">
                         <video muted loop playsinline preload="none" poster="/static/previews/avatar_plus_broll.jpg" data-src="/static/previews/avatar_plus_broll.mp4" aria-label="Avatar + Illustrations preview"></video>
                         <span class="recipe-tag-overlay">AI Avatar</span>
@@ -925,15 +709,14 @@
                         </div>
                     </div>
                 </a>
-
             </div>
         </div>
     </section>
 
-    <!-- Studio showcase -->
+    <!-- FAQ -->
     <section class="faq-section">
         <div class="container">
-            <p class="section-title">Questions</p>
+            <p class="eyebrow">Questions</p>
             <h2 class="section-heading">Frequently asked</h2>
             <div class="faq-list">
                 <div class="faq-item open">
@@ -947,6 +730,10 @@
                 <div class="faq-item">
                     <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">What’s the difference between Studio and Classic recipes?</div>
                     <div class="faq-a">Studio (v2) is the current ChannelRecipe: it runs on your computer, has dozens of styles, clones the style of channels you admire, and adds motion graphics, 3D and a real timeline editor. Classic recipes (v1) are the original quick cloud videos. They’re still included, with monthly credits on every plan.</div>
+                </div>
+                <div class="faq-item">
+                    <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">Can Studio make Shorts?</div>
+                    <div class="faq-a">Yes. Studio has three Shorts recipes: 3D Explainer Shorts, 3D Dark Stories and Photo Comedy Shorts. Type a topic and choose 15 to 60 seconds; Studio writes and fact-checks the script, directs every shot, scores it and cuts a vertical 9:16 video. Your first Short downloads a one-time pack of 3D characters, sets and sounds (about 400 MB). 3D Shorts render on your own computer, so a recent machine is best.</div>
                 </div>
                 <div class="faq-item">
                     <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">What do I need to use Studio?</div>
@@ -976,26 +763,25 @@
         </div>
     </section>
 
-    <!-- Final CTA -->
-    <section class="final-cta">
+    <!-- Final call -->
+    <section class="final-cta night">
+        <div class="final-strip" aria-hidden="true"><img src="/static/moodboard/orca-dunkleosteus.webp" alt="" loading="lazy" decoding="async" width="360" height="640"><img src="/static/moodboard/titanic-lifeboat.webp" alt="" loading="lazy" decoding="async" width="360" height="640"><img src="/static/moodboard/hippo-yawn.webp" alt="" loading="lazy" decoding="async" width="360" height="640"><img src="/static/moodboard/nanga-parbat-climber.webp" alt="" loading="lazy" decoding="async" width="360" height="640"><img src="/static/moodboard/grape-plasma.webp" alt="" loading="lazy" decoding="async" width="360" height="640"><img src="/static/moodboard/gladiator-sold.webp" alt="" loading="lazy" decoding="async" width="360" height="640"><img src="/static/moodboard/honeycomb.webp" alt="" loading="lazy" decoding="async" width="360" height="640"><img src="/static/moodboard/seventies-kids.webp" alt="" loading="lazy" decoding="async" width="360" height="640"><img src="/static/moodboard/night-vision.webp" alt="" loading="lazy" decoding="async" width="360" height="640"><img src="/static/moodboard/hand-drawn-money.webp" alt="" loading="lazy" decoding="async" width="360" height="640"><img src="/static/moodboard/deep-sea-jelly.webp" alt="" loading="lazy" decoding="async" width="360" height="640"><img src="/static/moodboard/luck-elevator.webp" alt="" loading="lazy" decoding="async" width="360" height="640"><img src="/static/moodboard/chimney-sweeps.webp" alt="" loading="lazy" decoding="async" width="360" height="640"><img src="/static/moodboard/octopus-neurons.webp" alt="" loading="lazy" decoding="async" width="360" height="640"><img src="/static/moodboard/titanic-iceberg.webp" alt="" loading="lazy" decoding="async" width="360" height="640"><img src="/static/moodboard/paper-bank.webp" alt="" loading="lazy" decoding="async" width="360" height="640"></div>
         <div class="container">
-            <h2 class="section-heading">Ready to make your first video?</h2>
+            <h2 class="section-heading">Your channel, in any of these styles</h2>
             <a href="/app#local-studio" class="cta-btn">
-                <svg width="18" height="18" viewBox="0 0 14 14"><path d="M4 2.5 L4 11.5 L11 7 Z" fill="currentColor"/></svg>
+                <svg width="18" height="18" viewBox="0 0 14 14" aria-hidden="true"><path d="M4 2.5 L4 11.5 L11 7 Z" fill="currentColor"/></svg>
                 Get ChannelRecipe Studio
             </a>
             <span class="cta-micro">Mac &amp; Windows · cancel anytime</span>
         </div>
     </section>
-
     </main>
 
-    <!-- Footer -->
     <footer class="footer-section">
         <div class="container">
-            <div style="display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 12px;">
+            <div class="footer-brand">
                 <img src="/static/glyph.svg?v=pot1" width="20" height="20" alt="">
-                <span style="font-family: var(--font-display); font-weight: 700; font-size: 14px;">Channel<span style="color: var(--accent);">Recipe</span></span>
+                <span>Channel<span class="accent">Recipe</span></span>
             </div>
             <p>&copy; 2026 ChannelRecipe by Creative Tube Ltd. Proven recipes for faceless YouTube channels.</p>
             <nav class="footer-links" aria-label="Footer">
@@ -1009,7 +795,6 @@
             </nav>
         </div>
     </footer>
-
     <!-- Cookie consent + analytics -->
     <div id="cookie-banner" class="cookie-bar" role="region" aria-label="Cookie choice" style="display:none">
         <p>We use analytics cookies<span class="cookie-long"> to improve ChannelRecipe</span>. <a href="/privacy">Privacy</a></p>
@@ -1017,7 +802,6 @@
             <button type="button" onclick="crDeclineCookies()" class="cookie-no">Decline</button>
             <button type="button" onclick="crAcceptCookies()" class="cookie-yes">Accept</button>
         </div>
-    </div>
     </div>
     <script src="/static/cr-telemetry.js"></script>
     <script>
@@ -1037,6 +821,7 @@
                     var label = (a.textContent || '').trim().slice(0, 80);
                     var placement = a.closest('header') ? 'nav'
                         : a.closest('.hero') ? 'hero'
+                        : a.closest('.styles-section') ? 'styles'
                         : a.closest('.price-card') ? 'pricing'
                         : a.closest('.final-cta') ? 'final'
                         : a.closest('.recipe-card') ? 'recipe_card'
@@ -1053,26 +838,6 @@
                 });
             });
         } catch (_) {}
-    })();
-    </script>
-    <script>
-    (function () {
-        const facade = document.getElementById('yt-facade');
-        const frame = document.getElementById('demo-player');
-        if (!facade || !frame) return;
-        facade.addEventListener('click', function () {
-            const id = frame.getAttribute('data-yt-id') || 'lxVILY1ha6w';
-            const iframe = document.createElement('iframe');
-            iframe.src = 'https://www.youtube-nocookie.com/embed/' + id + '?autoplay=1&rel=0&modestbranding=1';
-            iframe.title = 'ChannelRecipe Demo';
-            iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
-            iframe.allowFullscreen = true;
-            iframe.setAttribute('allowfullscreen', '');
-            try {
-                if (window.posthog) window.posthog.capture('landing_demo_played', { video_id: id });
-            } catch (_) {}
-            facade.replaceWith(iframe);
-        });
     })();
     </script>
     <script>
@@ -1139,43 +904,203 @@
         };
     })();
     </script>
-
     <script src="/static/community.js?v=1" defer></script>
     <script>
-    // Showcase and recipe clips: load and play only while visible.
+    // The moodboard wall: columns of clips drifting up and down behind the headline. A tile that leaves one end is
+    // moved to the other, so the wall never runs out; only the clips on screen load and play.
     (function () {
-        const videos = document.querySelectorAll('.showcase-media video[data-src], .recipe-preview video[data-src]');
-        if (!videos.length || !('IntersectionObserver' in window)) return;
-        if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-        const seen = new IntersectionObserver((entries) => {
-            for (const entry of entries) {
-                const video = entry.target;
-                if (entry.isIntersecting) {
-                    if (!video.src) video.src = video.dataset.src;
-                    video.play().catch(() => {});
-                } else {
-                    video.pause();
-                }
+        var wall = document.querySelector('.wall'), hero = document.querySelector('.hero');
+        var clips = [];
+        try { clips = JSON.parse(document.getElementById('wall-clips').textContent); } catch (_) {}
+        if (!wall || !clips.length) return;
+        var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        var conn = navigator.connection || {};
+        var lite = reduce || conn.saveData === true || /(^|-)2g$/.test(conn.effectiveType || '');
+        var GAP = 12, EDGE = 40;
+        var cols = [], raf = 0, last = 0, heroSeen = true, width = 0;
+        var watch = 'IntersectionObserver' in window ? new IntersectionObserver(function (entries) {
+            entries.forEach(function (e) { e.isIntersecting ? show(e.target._t) : hide(e.target._t); });
+        }, { rootMargin: '140px 0px' }) : null;
+
+        function count() { var w = window.innerWidth; return w >= 1280 ? 7 : w >= 1000 ? 6 : w >= 720 ? 5 : w >= 500 ? 4 : 3; }
+        function running() { return heroSeen && !document.hidden && !lite; }
+
+        function show(t) {
+            clearTimeout(t.off); t.seen = true;
+            if (!t.el.style.backgroundImage) t.el.style.backgroundImage = 'url("' + t.clip.p + '")';
+            if (lite) return;
+            if (!t.v.getAttribute('src')) t.v.src = t.clip.v;
+            if (running()) { var p = t.v.play(); if (p && p.catch) p.catch(function () {}); }
+        }
+        function hide(t) {
+            t.seen = false; t.v.pause();
+            clearTimeout(t.off);
+            t.off = setTimeout(function () {
+                if (t.seen || !t.v.getAttribute('src')) return;
+                t.v.removeAttribute('src'); t.v.load(); t.el.classList.remove('on');
+            }, 4000);
+        }
+        function tile(col, clip, y, w) {
+            var h = Math.round(clip.t ? w * 16 / 9 : w * 9 / 16);
+            var el = document.createElement('div');
+            el.className = 'tile'; el.style.height = h + 'px';
+            el.style.backgroundSize = 'cover'; el.style.backgroundPosition = 'center';
+            var v = document.createElement('video');
+            v.muted = true; v.defaultMuted = true; v.loop = true; v.playsInline = true; v.preload = 'none';
+            v.setAttribute('muted', ''); v.setAttribute('playsinline', ''); v.setAttribute('disablepictureinpicture', '');
+            v.setAttribute('disableremoteplayback', ''); v.setAttribute('tabindex', '-1');
+            v.addEventListener('playing', function () { el.classList.add('on'); });
+            el.appendChild(v); col.el.appendChild(el);
+            var t = { el: el, v: v, clip: clip, h: h, y: y };
+            el._t = t;
+            el.style.transform = 'translate3d(0,' + y + 'px,0)';
+            if (watch) watch.observe(el); else show(t);
+            return t;
+        }
+        function build() {
+            cols.forEach(function (c) { c.tiles.forEach(function (t) { clearTimeout(t.off); if (watch) watch.unobserve(t.el); t.v.removeAttribute('src'); t.v.load(); }); });
+            wall.textContent = ''; cols = [];
+            var n = count(); wall.style.setProperty('--cols', n);
+            for (var k = 0; k < n; k++) {
+                var el = document.createElement('div'); el.className = 'wall-col'; wall.appendChild(el);
+                cols.push({ el: el, tiles: [], dir: k % 2 ? 1 : -1, speed: 10 + ((k * 3) % 5) * 2.6 });
             }
-        }, { rootMargin: '200px 0px' });
-        videos.forEach((video) => seen.observe(video));
+            var H = wall.clientHeight, i = Math.floor(Math.random() * clips.length);
+            cols.forEach(function (c, k) {
+                var w = c.el.clientWidth, tall = w * 16 / 9;
+                // up columns overhang the bottom by a tall tile, down columns the top, so neither end ever shows a gap
+                var y = c.dir < 0 ? -((k * 83) % 200) : -(tall + EDGE + ((k * 83) % 200));
+                var end = c.dir < 0 ? H + tall + EDGE : H + EDGE;
+                while (y < end) {
+                    var t = tile(c, clips[i++ % clips.length], y, w);
+                    c.tiles.push(t); y += t.h + GAP;
+                }
+            });
+        }
+        function tick(now) {
+            raf = requestAnimationFrame(tick);
+            var dt = last ? Math.min(0.05, (now - last) / 1000) : 0; last = now;
+            var H = wall.clientHeight;
+            cols.forEach(function (c) {
+                var top = Infinity, bottom = -Infinity, dy = c.dir * c.speed * dt;
+                c.tiles.forEach(function (t) { t.y += dy; if (t.y < top) top = t.y; if (t.y + t.h > bottom) bottom = t.y + t.h; });
+                c.tiles.forEach(function (t) {
+                    if (c.dir < 0 && t.y + t.h < -EDGE) { t.y = bottom + GAP; bottom = t.y + t.h; }
+                    else if (c.dir > 0 && t.y > H + EDGE) { t.y = top - GAP - t.h; top = t.y; }
+                    t.el.style.transform = 'translate3d(0,' + t.y.toFixed(1) + 'px,0)';
+                });
+            });
+        }
+        function sync() {
+            var on = running();
+            if (on && !raf) { last = 0; raf = requestAnimationFrame(tick); }
+            if (!on && raf) { cancelAnimationFrame(raf); raf = 0; }
+            cols.forEach(function (c) { c.tiles.forEach(function (t) {
+                if (!t.seen) return;
+                if (on) { if (t.v.getAttribute('src')) { var p = t.v.play(); if (p && p.catch) p.catch(function () {}); } }
+                else t.v.pause();
+            }); });
+        }
+        width = window.innerWidth; build(); sync();
+        if ('IntersectionObserver' in window) {
+            new IntersectionObserver(function (e) { heroSeen = e[0].isIntersecting; sync(); }).observe(hero);
+        }
+        document.addEventListener('visibilitychange', sync);
+        var again = 0;
+        window.addEventListener('resize', function () {
+            if (window.innerWidth === width) return;  // phones resize the height as the address bar moves
+            clearTimeout(again);
+            again = setTimeout(function () { width = window.innerWidth; build(); sync(); }, 250);
+        });
     })();
     </script>
     <script>
-    // The full demos load only when played.
-    document.querySelectorAll('.demo-play').forEach(function (button) {
-        button.addEventListener('click', function () {
-            var video = document.createElement('video');
-            video.src = button.dataset.src; video.controls = true; video.playsInline = true;
-            video.setAttribute('aria-label', button.getAttribute('aria-label').replace(/^Play /, ''));
-            video.addEventListener('play', function () {
-                document.querySelectorAll('.demo-card video').forEach(function (o) { if (o !== video) o.pause(); });
+    // The style board, the Shorts reels and the Classic previews: load and play only while visible, and let go of
+    // the ones far away so the phone never holds dozens of videos at once.
+    (function () {
+        var vids = document.querySelectorAll('.board video[data-src], .phone video[data-src], .recipe-preview video[data-src]');
+        var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        var conn = navigator.connection || {};
+        var lite = reduce || conn.saveData === true || /(^|-)2g$/.test(conn.effectiveType || '');
+        function start(v) { if (!v.getAttribute('src')) v.src = v.dataset.src; var p = v.play(); if (p && p.catch) p.catch(function () {}); }
+        if (!('IntersectionObserver' in window)) {
+            vids.forEach(function (v) { if (v.dataset.poster) v.poster = v.dataset.poster; });
+            return;
+        }
+        var seen = new IntersectionObserver(function (entries) {
+            entries.forEach(function (e) {
+                var v = e.target;
+                if (e.isIntersecting) {
+                    clearTimeout(v._off); v._seen = true;
+                    if (v.dataset.poster && !v.getAttribute('poster')) v.poster = v.dataset.poster;
+                    if (!lite) start(v);
+                } else {
+                    v._seen = false; v.pause();
+                    clearTimeout(v._off);
+                    v._off = setTimeout(function () {
+                        if (!v._seen && v.getAttribute('src')) { v.removeAttribute('src'); v.load(); }
+                    }, 6000);
+                }
             });
-            button.replaceWith(video);
-            video.play().catch(function () {});
-            try { if (window.posthog) window.posthog.capture('landing_demo_full_played', { video: button.dataset.src.split('/').pop() }); } catch (_) {}
+        }, { rootMargin: '400px 0px' });
+        vids.forEach(function (v) { seen.observe(v); });
+        if (lite) {
+            // reduced motion: posters until someone taps a clip
+            document.querySelectorAll('.board .mood').forEach(function (m) {
+                m.style.cursor = 'pointer';
+                m.addEventListener('click', function () { var v = m.querySelector('video'); v.paused ? start(v) : v.pause(); });
+            });
+        }
+    })();
+    </script>
+    <script>
+    // Style filters
+    (function () {
+        var chips = document.querySelectorAll('.chips .chip'), tiles = document.querySelectorAll('.board .mood');
+        chips.forEach(function (chip) {
+            chip.addEventListener('click', function () {
+                var f = chip.dataset.f;
+                chips.forEach(function (c) { c.setAttribute('aria-pressed', String(c === chip)); });
+                tiles.forEach(function (t) { t.hidden = f !== 'all' && t.dataset.g !== f; });
+                try { if (window.posthog) window.posthog.capture('landing_style_filter', { filter: f }); } catch (_) {}
+            });
         });
-    });
+    })();
+    </script>
+    <script>
+    // Whole Shorts and long videos with sound, loaded only when someone asks for one. One plays at a time.
+    (function () {
+        function solo(video) {
+            video.addEventListener('play', function () {
+                document.querySelectorAll('.phone video[controls], .demo-card video').forEach(function (o) { if (o !== video) o.pause(); });
+            });
+        }
+        document.querySelectorAll('.phone-play').forEach(function (button) {
+            button.addEventListener('click', function () {
+                var phone = button.closest('.phone'), reel = phone.querySelector('video');
+                var video = document.createElement('video');
+                video.src = button.dataset.full; video.controls = true; video.playsInline = true;
+                video.setAttribute('playsinline', '');
+                video.setAttribute('aria-label', button.getAttribute('aria-label').replace(/^Watch a whole /, ''));
+                solo(video);
+                if (reel) { reel.pause(); reel.replaceWith(video); } else phone.appendChild(video);
+                button.remove();
+                var p = video.play(); if (p && p.catch) p.catch(function () {});
+                try { if (window.posthog) window.posthog.capture('landing_short_played', { video: button.dataset.full.split('/').pop() }); } catch (_) {}
+            });
+        });
+        document.querySelectorAll('.demo-play').forEach(function (button) {
+            button.addEventListener('click', function () {
+                var video = document.createElement('video');
+                video.src = button.dataset.src; video.controls = true; video.playsInline = true;
+                video.setAttribute('aria-label', button.getAttribute('aria-label').replace(/^Play /, ''));
+                solo(video);
+                button.replaceWith(video);
+                var p = video.play(); if (p && p.catch) p.catch(function () {});
+                try { if (window.posthog) window.posthog.capture('landing_demo_full_played', { video: button.dataset.src.split('/').pop() }); } catch (_) {}
+            });
+        });
+    })();
     </script>
 </body>
 </html>
