@@ -29,6 +29,8 @@ def test_landing_page_has_the_moodboard_and_icons():
     assert re.search(r'/static/moodboard/[a-z0-9-]+\.mp4\?v=[0-9a-f]{10}', served)
     clip = TestClient(server.app).get("/static/moodboard/" + wall[0]["v"].rsplit("/", 1)[1])
     assert clip.status_code == 200 and clip.headers["content-type"] == "video/mp4"
+    poster = TestClient(server.app).get("/static/moodboard/" + wall[0]["p"].rsplit("/", 1)[1])
+    assert poster.status_code == 200 and poster.headers["content-type"] == "image/webp"
 
 
 def test_discord_is_for_members_only(monkeypatch):
