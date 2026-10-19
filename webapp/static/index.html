@@ -66,6 +66,7 @@
                     <button class="nav-btn" data-page="niche-finder" onclick="navigateTo('niche-finder')">Niche Finder</button>
                     <button id="nav-niche-intel" class="nav-btn hidden" data-page="niche-intel" onclick="navigateTo('niche-intel')">Niche Intel</button>
                     <button id="nav-analytics" class="nav-btn hidden" data-page="analytics" onclick="navigateTo('analytics')">Analytics</button>
+                    <button id="nav-showcase" class="nav-btn hidden" data-page="showcase" onclick="navigateTo('showcase')">Showcase</button>
                     <div class="relative" id="tools-dropdown">
                         <button class="nav-btn" data-page="tools" onclick="toggleToolsMenu(event)" style="position:relative;">
                             Tools
@@ -129,6 +130,7 @@
             <button class="mobile-nav-btn" onclick="navigateTo('niche-finder')">Niche Finder</button>
             <button id="nav-niche-intel-mobile" class="mobile-nav-btn hidden" onclick="navigateTo('niche-intel')">Niche Intel</button>
             <button id="nav-analytics-mobile" class="mobile-nav-btn hidden" onclick="navigateTo('analytics')">Analytics</button>
+            <button id="nav-showcase-mobile" class="mobile-nav-btn hidden" onclick="navigateTo('showcase')">Showcase</button>
             <button class="mobile-nav-btn" onclick="navigateTo('script-studio')">Script Studio</button>
             <button class="mobile-nav-btn" onclick="navigateTo('voiceover-studio')">Voiceover Studio</button>
             <button class="mobile-nav-btn" onclick="navigateTo('thumbnail-studio')">Thumbnail Studio</button>
@@ -1620,6 +1622,30 @@
                     <pre id="analytics-queue" style="font-family: var(--font-mono); font-size: 12px; white-space: pre-wrap; margin: 0; color: var(--app-ink);"></pre>
                 </div>
             </div>
+        </main>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- PAGE: Showcase (admins: the newest Studio videos, ready to post) -->
+    <!-- ============================================================ -->
+    <div id="page-showcase" class="page-container hidden">
+        <main class="max-w-6xl mx-auto px-6 py-8">
+            <h2 class="cr-display" style="font-size: 32px; margin-bottom: 8px;">Showcase</h2>
+            <p style="color: var(--app-ink-2); margin-bottom: 20px; max-width: 44rem;">
+                The newest videos made with Studio, private to admins. Each has a 30-second snippet ready for Telegram and the
+                full video. Hide anything that should not be posted.
+            </p>
+            <div class="showcase-bar">
+                <div class="showcase-chips" role="group" aria-label="Show">
+                    <button type="button" class="showcase-chip" data-f="all" aria-pressed="true">All</button>
+                    <button type="button" class="showcase-chip" data-f="short" aria-pressed="false">Shorts</button>
+                    <button type="button" class="showcase-chip" data-f="long" aria-pressed="false">Long videos</button>
+                    <button type="button" class="showcase-chip" data-f="hidden" aria-pressed="false">Hidden</button>
+                </div>
+                <button type="button" class="btn-secondary" style="font-size: 13px; padding: 8px 14px;" onclick="loadShowcase(true)">Refresh</button>
+            </div>
+            <div id="showcase-status" style="color: var(--app-ink-2); font-size: 14px; margin: 12px 0;"></div>
+            <div id="showcase-grid" class="showcase-grid"></div>
         </main>
     </div>
 

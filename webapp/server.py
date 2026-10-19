@@ -547,6 +547,11 @@ def require_admin(request: Request) -> dict:
     return user
 
 
+# The admins' Showcase: the newest Studio videos, private, with signed download links (webapp/showcase.py).
+from webapp import showcase as _showcase
+app.include_router(_showcase.make_router(require_admin))
+
+
 # ChannelRecipe Studio for subscribers. The router checks both web sessions
 # and runner Bearer keys on every request. One-click connect comes first so its
 # /api/studio/connect/* paths are never shadowed.
