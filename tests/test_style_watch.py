@@ -246,3 +246,26 @@ def test_uploaded_videos_are_for_admins_only_and_bounded(env):
     assert bad.status_code == 400
     long = env.client.post("/api/studio/style/watch-upload", json={**body, "end": 900}, headers={"x-test-user": "owner"})
     assert long.status_code == 400
+
+
+def test_an_admin_can_ask_their_own_research_question(env, monkeypatch):
+    import base64
+    up = Upload()
+    monkeypatch.setattr(sw.requests, "post", up.post)
+    monkeypatch.setattr(sw.requests, "get", up.get)
+    monkeypatch.setattr(sw, "_sleep", lambda s: None)
+    env.users["owner"] = {"id": 1, "email": "owner@example.com", "plan": "studio_max"}
+    body = {"data_b64": base64.b64encode(b"a ranking short").decode(), "start": 0, "end": 30,
+            "question": "Log every clip of this ranking Short as JSON."}
+    started = env.client.post("/api/studio/style/watch-upload", json=body, headers={"x-test-user": "owner"}).json()
+    env.pool.drain()
+    done = env.client.get(f"/api/studio/style/watch/{started['job']}", headers={"x-test-user": "owner"}).json()
+    assert done["status"] == "done"
+    asked = up.calls[3]["json"]
+    assert asked["contents"][0]["parts"][1]["text"] == body["question"]
+    assert asked["contents"][0]["parts"][0]["videoMetadata"]["fps"] == 4 and "mediaResolution" not in asked["generationConfig"]
+    plain = env.client.post("/api/studio/style/watch-upload", json={**body, "question": ""},
+                            headers={"x-test-user": "owner"}).json()
+    assert plain["job"] != started["job"], "a different question is a different watch, not the cached one"
+    customer = env.client.post("/api/studio/style/watch-upload", json=body, headers={"x-test-user": "max"})
+    assert customer.status_code == 403
