@@ -19,3 +19,9 @@ def test_walkthrough_loads_only_when_asked():
 def test_walkthrough_is_for_members_not_the_landing_page():
     guest = JS[JS.index("function features()"):JS.index("function planCards()")]
     assert "setupVideo" not in guest
+
+
+def test_studio_setup_page_plays_it_too():
+    html = (Path(__file__).resolve().parents[1] / "local_runtime" / "cr_setup.html").read_text()
+    assert 'id="walk-open"' in html and "public/onboarding/studio-setup-walkthrough-v1.mp4" in html
+    assert 'preload="none"' in html and "WALK_CHAPTERS" in html

@@ -513,7 +513,7 @@
       threed_look:threedLook(features)};
     if(short&&isRanking(state.selected)){const handle=$('crw-rank-handle').value.trim().replace(/[^@\w.]/g,'').slice(0,40);
       const ranking={ranks:number('crw-ranks',5,3,10),commentary:checked('crw-rank-commentary'),booms:checked('crw-rank-booms'),sfx:$('crw-rank-sfx').value,
-        punch_ins:checked('crw-rank-punch'),captions:checked('crw-rank-captions'),use_credits:checked('crw-rank-credits'),...(handle?{handle}:{})};
+        punch_ins:checked('crw-rank-punch'),clean:checked('crw-rank-clean'),captions:checked('crw-rank-captions'),use_credits:checked('crw-rank-credits'),...(handle?{handle}:{})};
       p.extra=`[[ranking=${JSON.stringify(ranking)}]] `+(p.extra||'');}
     if(short){p.minutes=1;p.extra=`[[short_seconds=${number('crw-seconds',25,15,60)}]] `+(p.extra||'');p.avatar_id='';p.cta=null;p.offer='';p.character='';p.character_image='';p.threed_look='';}
     if(p.panels && title.includes('\n')) throw new Error('Use one title for a set of panels.');

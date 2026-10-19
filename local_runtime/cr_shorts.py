@@ -39,7 +39,7 @@ MARK = re.compile(r"\[\[short_seconds=(\d{1,3})\]\]\s*")
 
 RANKING = re.compile(r"\[\[ranking=(\{[^\]]{0,2000}\})\]\]\s*")
 RANKING_KEYS = {"ranks": int, "commentary": bool, "booms": bool, "sfx": str, "captions": bool, "punch_ins": bool,
-                "voice": str, "handle": str, "board": str, "use_credits": bool}
+                "clean": bool, "voice": str, "handle": str, "board": str, "use_credits": bool}
 
 
 def split_extra(extra: str):

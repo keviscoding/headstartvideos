@@ -13,6 +13,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parents[1] / "local_runtime"))
 import cr_ui
 
+ONBOARDING_MEDIA = "https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/onboarding/"  # the setup walkthrough
+
 
 UI = """<!doctype html><html><head><meta charset="utf-8"></head><body>
 <span id="costHint"></span><div class="cp-cost" title="about $0.08 with the free tier">$0.08</div>
@@ -347,6 +349,8 @@ def setup_page(page):
         path = urlparse(request.url).path
         if request.method == "GET" and path == "/cr-setup":
             return route.fulfill(body=html, content_type="text/html")
+        if request.url.startswith(ONBOARDING_MEDIA):         # the setup walkthrough's poster, from the media CDN
+            return route.fulfill(status=200, content_type="image/jpeg", body=b"")
         assert request.headers.get("x-cr-local-token") == "ui-fixture-local-token"
         if request.method == "GET" and path == "/cr-status":
             return route.fulfill(json=state)
@@ -582,6 +586,8 @@ def test_simple_setup_shows_one_step_at_a_time_with_one_click_connect(page):
 
     def fixture(route):
         request = route.request
+        if request.url.startswith(ONBOARDING_MEDIA):         # the setup walkthrough's poster, from the media CDN
+            return route.fulfill(status=200, content_type="image/jpeg", body=b"")
         path = urlparse(request.url).path
         if request.url.startswith("https://channelrecipe.com/studio/connect"):
             return route.fulfill(body="<p>Approve page</p>", content_type="text/html")

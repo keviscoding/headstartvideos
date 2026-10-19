@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 from scripts import studio_branding
-VERSION = "5.3-admin.65"
+VERSION = "5.3-admin.66"
 PRIVATE_WORKFLOWS = {
     "cr-style-delivery-prompt.txt": ROOT / "data/frontier/reference2d-compiler.txt",
     "cr-style-study-brief.txt": ROOT / "data/frontier/reference2d-study.txt",
@@ -231,10 +231,13 @@ PRESET_STUDIO_COLOR = "\n  // STUDIO COLOUR (2026-10-16): white studio's clean d
 LOOK_STUDIO_COLOR = ' "studio_color": {"director": "THE LOOK (this film\'s preset: STUDIO COLOUR — the engine renders every shot as a clean painted scale model on top of your look block; you never set it and never imitate it with grades): a clean 3D reconstruction like a painted model on a studio table. Paint it ONLY in the film\'s palette (3D SCENE PALETTE in the creative direction): its base colour on most surfaces, models and the faceless mannequins, its accent on the one thing that matters in each shot (the torpedo, the warning light, the key person\'s detail, the label), its dark for shadows, hulls and contrast; never real-world colour beyond the palette. Light EVERY scene as soft daylight (time afternoon or morning, sky overcast or clear, grade neutral), even when the story happens at night, in the dark or underwater: depth, night and danger are told by the words, the labels and the accent colour, never by darkness. No pitch-dark interiors, no night grades, no glowing red rooms. Never stage a shot whose subject is only fog, sky, open water or darkness: always show a model at a scale that reads, framed with the ground, a structure or the horizon behind it. Real shapes, era-accurate ships, vehicles and buildings. Captions live in the bottom quarter of the frame: keep it free of text and of the subject\'s key action.", "review": "THE LOOK IS INTENTIONAL — this film uses the STUDIO COLOUR preset: clean matte models painted in the film\'s palette (a base colour, one accent, a dark), soft daylight even for night or underwater scenes, labels in dark ink on pale tags. Do not score it as unrealistic or flat, and do not fix it toward realism, night or darkness. Judge craft INSIDE the look: the story, the subject reading at a glance, the motion, the hard fails H1-H8 (all still apply), faceless mannequins. Flag a dark, night-lit or underwater-dark shot (fix: soft daylight, the palette\'s base colour), a shot whose subject disappears into the background, and a shot that uses colours outside the palette or loses the accent on what matters.", "qa": "THE LOOK OF THIS FILM IS INTENTIONAL: STUDIO COLOUR — clean painted models in the film\'s palette, soft daylight even at night, labels in dark ink. Never flag the look itself as unrealistic; flag a dark shot, a subject that cannot be seen, and colours outside the palette.", "cookbook": "LOOK PRESET studio_color (this film) — stage it like a painted scale model on a studio table: soft daylight in every scene, the palette\'s base colour on most surfaces, its accent on one thing per shot, clear shapes and silhouettes, medium and wide views that read as models, slow orbit or push_in; subjects framed with the ground or a structure behind them. Avoid night lighting, dark interiors, underwater darkness, fog-only shots and colours outside the palette."},\n'
 
 ENGINE_PATCHES = {
-    # TikTok (Ranking Shorts' pasted links) answers yt-dlp only through browser impersonation: its curl-cffi extra
+    # TikTok (Ranking Shorts' pasted links) answers yt-dlp only through browser impersonation: its curl-cffi extra.
+    # Ranking Shorts take burned-in captions and watermarks off clips on this computer: RapidOCR finds the text
+    # (LaMa, which paints it out, is a model file fetched on first use).
     "requirements.txt": [
         ('yt-dlp>=2025.10.22; python_version >= "3.10"',
-         'yt-dlp[default,curl-cffi]>=2025.10.22; python_version >= "3.10"'),
+         'yt-dlp[default,curl-cffi]>=2025.10.22; python_version >= "3.10"\n'
+         'rapidocr-onnxruntime>=1.2; python_version >= "3.10"   # Ranking Shorts: finds burned-in text to remove'),
     ],
     "reflearn.py": [
         ('need_lv, need_gb = _envf("REFLEARN_MIN_MEM_LEVEL", 40), _envf("REFLEARN_MIN_DISK_GB", 20)',
