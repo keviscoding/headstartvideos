@@ -253,18 +253,21 @@ def upload_file(data: bytes, mime: str, *, post=None, get=None) -> str:
 
 
 def watch_once(video_id: str, start: int, end: int, *, post=None, file_uri: str = "",
-               mime: str = "video/mp4", question: str = "") -> tuple[dict, int, int]:
+               mime: str = "video/mp4", question: str = "", fps: int | None = None,
+               low_res: bool | None = None) -> tuple[dict, int, int]:
     """One Gemini watch of a YouTube window, or of an uploaded video's (file_uri): (log, input tokens, output tokens).
-    An admin's own `question` (research on a format) replaces the style instructions and looks closer."""
+    An admin's own `question` (research on a format) replaces the style instructions and looks closer. `fps` and
+    `low_res` override how closely it looks (Ranking Shorts scouts many clips cheaply, then looks closely at a few)."""
     post = post or requests.post
     source = ({"fileUri": file_uri, "mimeType": mime} if file_uri else
               {"fileUri": f"https://www.youtube.com/watch?v={video_id}", "mimeType": "video/*"})
     config = {"responseMimeType": "application/json", "thinkingConfig": {"thinkingLevel": "low"}}
-    if not question:
+    if (not question) if low_res is None else low_res:
         config["mediaResolution"] = "MEDIA_RESOLUTION_LOW"
     body = {"contents": [{"parts": [
                 {"fileData": source,
-                 "videoMetadata": {"startOffset": f"{start}s", "endOffset": f"{end}s", "fps": 4 if question else 2}},
+                 "videoMetadata": {"startOffset": f"{start}s", "endOffset": f"{end}s",
+                                   "fps": fps or (4 if question else 2)}},
                 {"text": question or prompt(start, end)}]}],
             "generationConfig": config}
     for wait in BUSY_WAITS_S + (None,):
