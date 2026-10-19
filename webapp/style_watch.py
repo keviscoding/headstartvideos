@@ -373,7 +373,8 @@ def start_upload(user: dict, data: bytes, mime: str, start_s: float, end_s: floa
     if not _key():
         raise HTTPException(503, "Style watching isn't available right now.")
     video_id, now, name = "file:" + hashlib.sha256(data).hexdigest()[:20], time.time(), model()
-    version = ("q:" + hashlib.sha256(question.encode()).hexdigest()[:16]) if question else PROMPT_VERSION
+    # prompt_version is an integer column: a question gets its own number, far above the style prompt's versions
+    version = (10_000 + int(hashlib.sha256(question.encode()).hexdigest()[:7], 16)) if question else PROMPT_VERSION
     with db._conn() as conn:
         same = conn.execute(db._q("""SELECT * FROM style_watch_jobs WHERE video_id=? AND start_s=? AND end_s=?
             AND prompt_version=? AND model=? AND (status='done' OR (status='running' AND updated_at>?))
