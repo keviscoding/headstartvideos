@@ -1,133 +1,231 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Clip Board · ChannelRecipe</title><link rel="icon" href="/cr-workspace/icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://api.fontshare.com"><link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@700,800,900&f[]=general-sans@400,500,600,700&display=swap">
 <style>
-:root{color-scheme:dark;--bg:#0f1222;--panel:#181c30;--card:#1c2136;--line:#343b58;--text:#f2f1f8;--muted:#b7bdd1;--accent:#b7a5ff;--action:#6d5ae0;--action-hover:#7460e2;--good:#83e0b1;--bad:#ffadc0;--gold:#ffd21f}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.55 system-ui,-apple-system,sans-serif}
+:root{color-scheme:dark;--night:#0B0B10;--night-2:#12121A;--night-3:#1A1A26;--card:#151520;--line:rgba(255,255,255,.09);--line-2:rgba(255,255,255,.16);
+--text:#F4F2FB;--muted:#A9A7BA;--dim:#6F6D82;--accent:#6D5AE0;--accent-2:#8B7BFF;--glow:#B7A5FF;--gold:#FFD21F;--silver:#D5DAE3;--bronze:#E8924A;--good:#57E0A2;--bad:#FF8FAA;
+--display:"Cabinet Grotesk","Arial Black",system-ui,sans-serif;--body:"General Sans","Inter",system-ui,sans-serif}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;min-height:100vh;background:var(--night);color:var(--text);font:16px/1.55 var(--body);-webkit-font-smoothing:antialiased;overflow-x:hidden}
 body>a[href="/cr-setup"]:first-child{display:none!important}
-main{max-width:1180px;margin:auto;padding:28px 24px 190px}a{color:var(--accent);text-underline-offset:4px}
-nav{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:26px}
-.brand{display:flex;align-items:center;gap:9px;font-size:20px;color:var(--text);text-decoration:none;font-weight:600}
-.eyebrow{color:var(--accent);font-size:13px;letter-spacing:.08em;text-transform:uppercase;font-weight:600}
-h1{font-size:clamp(28px,4vw,40px);line-height:1.15;margin:6px 0 10px}p.intro{color:var(--muted);max-width:760px;margin:0 0 22px}
-.find{display:flex;gap:10px;flex-wrap:wrap;align-items:stretch;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
-.find input[type=text]{flex:1 1 320px;min-height:48px;border-radius:10px;border:1px solid var(--line);background:#11152a;color:var(--text);padding:0 14px;font-size:16px}
-button{font:inherit;cursor:pointer;border-radius:10px;border:1px solid var(--line);background:#232845;color:var(--text);min-height:44px;padding:0 16px}
-button.primary{background:var(--action);border-color:var(--action);font-weight:600}button.primary:hover{background:var(--action-hover)}
-button:disabled{opacity:.5;cursor:not-allowed}
-.meta{display:flex;gap:18px;flex-wrap:wrap;color:var(--muted);font-size:13.5px;margin:10px 2px 0}
-.drop{margin-top:14px;border:1.5px dashed var(--line);border-radius:14px;padding:16px;color:var(--muted);text-align:center;font-size:14.5px}
-.drop.over{border-color:var(--accent);background:#1d2140;color:var(--text)}
-.progress{margin:18px 0 6px;color:var(--muted);font-size:14px;min-height:22px;display:flex;gap:10px;align-items:center}
-.spinner{width:16px;height:16px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--accent);animation:spin 1s linear infinite;flex:none}
-@keyframes spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.spinner{animation:none}}
-.message{border-radius:10px;padding:10px 14px;margin:12px 0;background:#3a2232;color:var(--bad)}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px;margin-top:10px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;position:relative}
-.card.picked{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent) inset}
-.thumb{position:relative;aspect-ratio:16/10;background:#0b0e1b;overflow:hidden}
-.thumb img,.thumb iframe,.thumb video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border:0}
-.score{position:absolute;top:8px;left:8px;background:rgba(0,0,0,.72);border-radius:8px;padding:2px 8px;font-weight:700;font-size:14px}
-.score.hi{color:var(--gold)}.own{position:absolute;top:8px;right:8px;background:var(--action);border-radius:8px;padding:2px 8px;font-size:12px}
-.body{padding:10px 12px 12px;display:flex;flex-direction:column;gap:6px;flex:1}
-.label{font-weight:700;font-size:16px}.what{font-size:13.5px;color:var(--text)}.why{font-size:12.5px;color:var(--muted)}
-.chips{display:flex;gap:6px;flex-wrap:wrap}.chip{font-size:11.5px;border:1px solid var(--line);border-radius:20px;padding:1px 9px;color:var(--muted)}
-.tick{margin-top:auto;display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;min-height:40px}
-.tick input{width:20px;height:20px;accent-color:var(--action)}
-.strip{position:fixed;left:0;right:0;bottom:0;background:rgba(15,18,34,.96);border-top:1px solid var(--line);backdrop-filter:blur(8px);padding:12px 18px 14px;z-index:5}
-.strip-in{max-width:1180px;margin:auto;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
-.slots{display:flex;gap:8px;flex:1 1 520px;overflow-x:auto;min-height:74px;align-items:stretch}
-.slot{flex:0 0 150px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px 8px;cursor:grab;font-size:12.5px;position:relative;display:flex;flex-direction:column;gap:2px}
-.slot b{font-size:18px}.slot b.n1{color:var(--gold)}.slot.dragging{opacity:.4}.slot button{position:absolute;top:2px;right:2px;min-height:24px;height:24px;padding:0 7px;border-radius:6px;font-size:12px}
-.slot-empty{color:var(--muted);font-size:13.5px;align-self:center}
-details.opts{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin-top:18px}
-details.opts summary{cursor:pointer;font-weight:600}.opt{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:8px 0;border-top:1px solid var(--line);font-size:14.5px}
-.opt small{display:block;color:var(--muted);font-size:12.5px}.opt input[type=checkbox]{width:20px;height:20px;accent-color:var(--action)}
-.opt select,.opt input[type=text]{background:#11152a;color:var(--text);border:1px solid var(--line);border-radius:8px;min-height:36px;padding:0 8px}
-.boards{margin-top:14px;font-size:13.5px;color:var(--muted)}.boards button{min-height:32px;padding:0 10px;font-size:13px;margin:4px 6px 0 0}
-@media(max-width:600px){main{padding:20px 16px 230px}.slot{flex-basis:120px}}
-</style></head><body><main>
-<nav aria-label="Workspace"><a class="brand" href="/">ChannelRecipe Studio</a><a href="/#create">Back to Create</a></nav>
-<div class="eyebrow">Ranking Shorts · Clip Board</div>
-<h1>Pick the clips. Set the countdown.</h1>
-<p class="intro">Say what you want to rank. Studio searches for viral clips, watches each one for its best moment and lays them out here with a score. Tick the ones you want, drag them into order (the last one is #1), add your own clips, and make the Short.</p>
-<form class="find" id="find"><input id="topic" type="text" maxlength="120" placeholder="What do you want to rank today? e.g. Funniest Dog Moments" aria-label="What to rank" required><button class="primary" id="find-button" type="submit">Find clips</button></form>
-<div class="meta"><span id="allowance">Checking your clip watches…</span><span>A board watches about 26 videos.</span></div>
-<div class="boards" id="boards" hidden></div>
-<div class="drop" id="drop" hidden>Drop your own clips here, or <label style="color:var(--accent);cursor:pointer;text-decoration:underline">choose files<input id="files" type="file" accept="video/mp4,video/quicktime,video/webm,.m4v" multiple hidden></label>. Studio watches them for their best moments too.</div>
+button,input,select{font:inherit;color:inherit}a{color:var(--glow);text-underline-offset:4px}
+.sky{position:fixed;inset:0;pointer-events:none;z-index:0;overflow:hidden}
+.orb{position:absolute;border-radius:50%;filter:blur(90px);opacity:.38;animation:drift 22s ease-in-out infinite alternate}
+.orb.a{width:520px;height:520px;background:#6D5AE0;top:-160px;left:-120px}.orb.b{width:420px;height:420px;background:#2E8CFF;top:120px;right:-140px;animation-delay:-8s;opacity:.22}
+.orb.c{width:380px;height:380px;background:#FF4F9A;bottom:-160px;left:30%;animation-delay:-14s;opacity:.16}
+@keyframes drift{to{transform:translate(60px,40px) scale(1.12)}}
+main{position:relative;z-index:1;max-width:1240px;margin:auto;padding:22px 24px 200px}
+nav{display:flex;justify-content:space-between;align-items:center;margin-bottom:46px}
+.brand{display:flex;align-items:center;gap:10px;color:var(--text);text-decoration:none;font-family:var(--display);font-weight:800;font-size:19px;letter-spacing:-.01em}
+.brand i{width:28px;height:28px;border-radius:9px;background:conic-gradient(from 210deg,#6D5AE0,#B7A5FF,#2E8CFF,#6D5AE0);box-shadow:0 0 24px rgba(109,90,224,.6)}
+.navlink{color:var(--muted);text-decoration:none;font-size:14px;border:1px solid var(--line);padding:8px 14px;border-radius:999px}.navlink:hover{color:var(--text);border-color:var(--line-2)}
+.hero{text-align:center;max-width:860px;margin:0 auto 26px}
+.eyebrow{display:inline-flex;gap:8px;align-items:center;font-size:12.5px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--glow);border:1px solid rgba(183,165,255,.25);background:rgba(109,90,224,.1);padding:6px 12px;border-radius:999px}
+.eyebrow b{width:7px;height:7px;border-radius:50%;background:var(--good);box-shadow:0 0 10px var(--good)}
+h1{font-family:var(--display);font-weight:900;font-size:clamp(40px,6.4vw,78px);line-height:.98;letter-spacing:-.045em;margin:18px 0 16px;text-wrap:balance}
+h1 em{font-style:normal;background:linear-gradient(100deg,#FFE37A,#FFD21F 30%,#FF9F4A 70%,#FF5FA2);-webkit-background-clip:text;background-clip:text;color:transparent}
+.sub{color:var(--muted);font-size:clamp(16px,1.6vw,18.5px);max-width:640px;margin:0 auto}
+.find{display:flex;gap:8px;max-width:720px;margin:30px auto 12px;padding:8px;border-radius:999px;background:rgba(255,255,255,.05);border:1px solid var(--line-2);box-shadow:0 20px 60px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.06);backdrop-filter:blur(14px)}
+.find:focus-within{border-color:rgba(183,165,255,.6);box-shadow:0 0 0 4px rgba(109,90,224,.22),0 20px 60px rgba(0,0,0,.45)}
+.find input{flex:1;min-width:0;background:transparent;border:0;outline:0;padding:0 18px;font-size:17px;color:var(--text)}
+.find input::placeholder{color:var(--dim)}
+.cta{border:0;cursor:pointer;border-radius:999px;padding:14px 26px;font-weight:700;background:linear-gradient(135deg,#7B68F0,#5A48C9);color:#fff;box-shadow:0 10px 30px rgba(109,90,224,.45),inset 0 1px 0 rgba(255,255,255,.25);transition:transform .15s,box-shadow .15s;white-space:nowrap}
+.cta:hover{transform:translateY(-1px);box-shadow:0 14px 40px rgba(109,90,224,.6),inset 0 1px 0 rgba(255,255,255,.25)}.cta:disabled{opacity:.45;cursor:not-allowed;transform:none}
+.ideas{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin:10px auto 0;max-width:760px}
+.idea{cursor:pointer;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--muted);border-radius:999px;padding:7px 14px;font-size:13.5px;transition:all .15s}.idea:hover{color:var(--text);border-color:rgba(183,165,255,.45);background:rgba(109,90,224,.12)}
+.meta{display:flex;justify-content:center;gap:18px;flex-wrap:wrap;margin-top:16px;color:var(--dim);font-size:13px}
+.meta span{display:inline-flex;gap:6px;align-items:center}.meta svg{width:14px;height:14px}
+.recent{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:14px}.recent button{cursor:pointer;background:transparent;border:1px dashed var(--line-2);color:var(--muted);border-radius:12px;padding:6px 12px;font-size:13px}.recent button:hover{color:var(--text);border-style:solid}
+.message{max-width:720px;margin:14px auto;border-radius:14px;padding:12px 16px;background:rgba(255,95,140,.12);border:1px solid rgba(255,143,170,.3);color:var(--bad)}
+.working{max-width:720px;margin:26px auto 6px;padding:16px 18px;border-radius:18px;background:rgba(255,255,255,.04);border:1px solid var(--line)}
+.working-top{display:flex;justify-content:space-between;gap:12px;font-size:14px;color:var(--muted)}.working-top b{color:var(--text);font-weight:600}
+.bar{height:6px;border-radius:999px;background:rgba(255,255,255,.07);margin-top:12px;overflow:hidden}.bar i{display:block;height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,#6D5AE0,#B7A5FF,#57E0A2);transition:width .6s ease;box-shadow:0 0 18px rgba(183,165,255,.7)}
+.board-head{display:flex;justify-content:space-between;align-items:end;gap:12px;flex-wrap:wrap;margin:40px 0 16px}
+.board-head h2{font-family:var(--display);font-weight:800;font-size:clamp(24px,3vw,34px);letter-spacing:-.03em;margin:0}.board-head p{margin:2px 0 0;color:var(--muted);font-size:14px}
+.tools{display:flex;gap:8px;flex-wrap:wrap}
+.ghost{cursor:pointer;border:1px solid var(--line-2);background:rgba(255,255,255,.04);border-radius:999px;padding:9px 16px;font-size:14px;color:var(--text);display:inline-flex;gap:8px;align-items:center}.ghost:hover{border-color:rgba(183,165,255,.5);background:rgba(109,90,224,.12)}
+.ghost svg{width:16px;height:16px}
+.grid{columns:5 220px;column-gap:14px}
+.card{break-inside:avoid;margin:0 0 14px;position:relative;border-radius:18px;overflow:hidden;background:var(--card);border:1px solid var(--line);cursor:pointer;
+  transform:translateY(14px);opacity:0;animation:rise .5s cubic-bezier(.2,.7,.2,1) forwards;transition:transform .2s,box-shadow .2s,border-color .2s;display:block;width:100%;text-align:left;padding:0}
+@keyframes rise{to{transform:none;opacity:1}}
+.card:hover{transform:translateY(-3px);box-shadow:0 18px 50px rgba(0,0,0,.55);border-color:var(--line-2)}
+.card.picked{border-color:transparent;box-shadow:0 0 0 2px var(--accent-2),0 0 38px rgba(139,123,255,.45)}
+.card:focus-visible{outline:3px solid var(--glow);outline-offset:3px}
+.media{position:relative;aspect-ratio:9/14;background:var(--night-3);overflow:hidden}
+.media img,.media iframe,.media video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border:0}
+.media img{transform:scale(1.36);transition:transform .6s ease,filter .3s}.card:hover .media img{transform:scale(1.42)}
+.media iframe{opacity:0;transition:opacity .35s}.media iframe.on{opacity:1}
+.shade{position:absolute;inset:auto 0 0 0;height:62%;background:linear-gradient(to top,rgba(11,11,16,.95),rgba(11,11,16,.5) 55%,transparent);pointer-events:none}
+.score{position:absolute;top:10px;left:10px;width:46px;height:46px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:900;font-size:17px;
+  background:conic-gradient(var(--ring) calc(var(--s)*10%),rgba(255,255,255,.12) 0);box-shadow:0 6px 18px rgba(0,0,0,.5)}
+.score span{width:38px;height:38px;border-radius:50%;background:rgba(11,11,16,.88);display:grid;place-items:center}
+.chip-views{position:absolute;top:12px;right:10px;font-size:11.5px;font-weight:600;background:rgba(11,11,16,.72);border:1px solid var(--line);backdrop-filter:blur(6px);border-radius:999px;padding:3px 9px}
+.chip-own{position:absolute;top:12px;right:10px;font-size:11.5px;font-weight:700;background:var(--accent);border-radius:999px;padding:3px 10px}
+.slotbadge{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) scale(.4);opacity:0;font-family:var(--display);font-weight:900;font-size:64px;line-height:1;letter-spacing:-.04em;
+  color:#fff;text-shadow:0 6px 30px rgba(0,0,0,.6);transition:all .25s cubic-bezier(.3,1.6,.5,1)}
+.card.picked .slotbadge{opacity:1;transform:translate(-50%,-50%) scale(1)}.slotbadge.n1{color:var(--gold)}.slotbadge.n2{color:var(--silver)}.slotbadge.n3{color:var(--bronze)}
+.cap{position:absolute;left:0;right:0;bottom:0;padding:14px 14px 13px}
+.label{font-family:var(--display);font-weight:800;font-size:21px;letter-spacing:-.02em;line-height:1.1;padding-right:34px}
+.type{display:inline-block;margin-top:7px;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--glow)}
+.what{font-size:13px;color:#D9D7E6;margin-top:6px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.why{font-size:12px;color:var(--muted);margin-top:0;max-height:0;overflow:hidden;transition:max-height .3s,margin .3s}.card:hover .why{max-height:80px;margin-top:6px}
+.tick{position:absolute;top:62px;left:18px;width:30px;height:30px;border-radius:50%;border:2px solid rgba(255,255,255,.55);display:grid;place-items:center;background:rgba(11,11,16,.5);transition:all .2s}
+.card.picked .tick{background:var(--accent-2);border-color:var(--accent-2)}.tick svg{width:16px;height:16px;opacity:0}.card.picked .tick svg{opacity:1}
+.links{margin:0 0 18px;padding:14px;border-radius:18px;background:rgba(255,255,255,.04);border:1px solid var(--line-2);display:grid;gap:10px}
+.links textarea{width:100%;resize:vertical;background:var(--night-3);border:1px solid var(--line-2);border-radius:12px;padding:12px;color:var(--text);font:inherit}
+.links div{display:flex;gap:8px;flex-wrap:wrap}.links[hidden]{display:none}
+.dock{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);width:min(1180px,calc(100% - 24px));z-index:6;border-radius:24px;padding:12px 12px 12px 18px;
+  background:rgba(18,18,26,.78);border:1px solid var(--line-2);backdrop-filter:blur(18px);box-shadow:0 24px 70px rgba(0,0,0,.6);display:flex;gap:14px;align-items:center}
+.dock-title{flex:none;font-family:var(--display);font-weight:800;font-size:15px;line-height:1.1;color:var(--muted);width:92px}.dock-title b{display:block;color:var(--text);font-size:22px}
+.slots{flex:1;display:flex;gap:8px;overflow-x:auto;padding:2px;scrollbar-width:none}.slots::-webkit-scrollbar{display:none}
+.slot{flex:0 0 74px;height:96px;border-radius:14px;position:relative;overflow:hidden;background:var(--night-3) center/cover;border:1px solid var(--line-2);cursor:grab;transition:transform .15s}
+.slot:hover{transform:translateY(-2px)}.slot.dragging{opacity:.35}.slot.over{outline:2px solid var(--glow)}
+.slot::after{content:"";position:absolute;inset:0;background:linear-gradient(to top,rgba(11,11,16,.9),transparent 60%)}
+.slot b{position:absolute;left:7px;bottom:4px;z-index:1;font-family:var(--display);font-weight:900;font-size:24px;letter-spacing:-.04em}
+.slot b.n1{color:var(--gold);text-shadow:0 0 14px rgba(255,210,31,.6)}.slot b.n2{color:var(--silver)}.slot b.n3{color:var(--bronze)}
+.slot .x{position:absolute;top:4px;right:4px;z-index:2;width:22px;height:22px;border-radius:50%;border:0;cursor:pointer;background:rgba(11,11,16,.75);color:#fff;font-size:13px;line-height:22px;opacity:0;transition:opacity .15s}.slot:hover .x,.slot:focus-within .x{opacity:1}
+.slot.ghostslot{border-style:dashed;background:transparent;cursor:default;display:grid;place-items:center;color:var(--dim);font-family:var(--display);font-weight:800;font-size:20px}.slot.ghostslot::after{display:none}
+.dock .cta{flex:none;padding:16px 22px}
+.drawer{position:fixed;inset:0;z-index:20;display:none}.drawer.open{display:block}
+.drawer-bg{position:absolute;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(3px)}
+.sheet{position:absolute;right:16px;top:16px;bottom:16px;width:min(420px,calc(100% - 32px));background:var(--night-2);border:1px solid var(--line-2);border-radius:22px;padding:22px;overflow:auto;box-shadow:0 30px 80px rgba(0,0,0,.6);animation:slide .25s ease}
+@keyframes slide{from{transform:translateX(30px);opacity:0}}
+.sheet h3{font-family:var(--display);font-weight:800;font-size:24px;letter-spacing:-.02em;margin:0 0 4px}.sheet>p{color:var(--muted);font-size:14px;margin:0 0 14px}
+.opt{display:flex;justify-content:space-between;gap:14px;align-items:center;padding:14px 0;border-top:1px solid var(--line)}
+.opt span{font-weight:600}.opt small{display:block;color:var(--muted);font-weight:400;font-size:13px;margin-top:2px}
+.switch{appearance:none;flex:none;width:46px;height:28px;border-radius:999px;background:rgba(255,255,255,.14);position:relative;cursor:pointer;transition:background .2s}
+.switch::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;transition:transform .2s;box-shadow:0 2px 6px rgba(0,0,0,.4)}
+.switch:checked{background:var(--accent-2)}.switch:checked::after{transform:translateX(18px)}.switch:focus-visible{outline:3px solid var(--glow);outline-offset:2px}
+.opt select,.opt input[type=text]{background:var(--night-3);border:1px solid var(--line-2);border-radius:10px;padding:8px 10px;min-width:150px;color:var(--text)}
+.dropzone{position:fixed;inset:0;z-index:30;display:none;place-items:center;background:rgba(11,11,16,.82);backdrop-filter:blur(6px)}
+.dropzone.on{display:grid}.dropzone div{border:2px dashed var(--glow);border-radius:28px;padding:60px 70px;text-align:center;font-family:var(--display);font-weight:800;font-size:28px}
+.dropzone small{display:block;font-family:var(--body);font-weight:400;font-size:15px;color:var(--muted);margin-top:8px}
+.spinner{width:14px;height:14px;border-radius:50%;border:2px solid rgba(255,255,255,.2);border-top-color:var(--glow);animation:spin 1s linear infinite;display:inline-block;vertical-align:-2px;margin-right:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}.card{opacity:1;transform:none}}
+@media(max-width:700px){main{padding:16px 16px 190px}nav{margin-bottom:28px}.find{border-radius:22px;flex-direction:column}.find input{padding:12px}.grid{columns:2 150px;column-gap:10px}.card{margin-bottom:10px}
+  .label{font-size:17px}.dock{flex-wrap:wrap;padding:10px;gap:10px;border-radius:20px}.dock-title{display:none}.slots{flex-basis:100%}.dock .cta{flex:1}.slot{flex-basis:62px;height:82px}}
+</style></head><body>
+<div class="sky" aria-hidden="true"><i class="orb a"></i><i class="orb b"></i><i class="orb c"></i></div>
+<main>
+<nav aria-label="Workspace"><a class="brand" href="/"><i></i>ChannelRecipe Studio</a><a class="navlink" href="/#create">Back to Create</a></nav>
+<section class="hero">
+  <span class="eyebrow"><b></b>Ranking Shorts · Clip Board</span>
+  <h1>Rank anything. <em>Viral clips,</em> counted down.</h1>
+  <p class="sub">Say what to rank. Studio hunts down viral clips, watches every one for its best moment and lays them out here. Tap the ones you love, set the order, make the Short.</p>
+  <form class="find" id="find"><input id="topic" type="text" maxlength="120" placeholder="What do you want to rank today?" aria-label="What to rank" required autocomplete="off"><button class="cta" id="find-button" type="submit">Find clips</button></form>
+  <div class="ideas" id="ideas">
+    <button type="button" class="idea">Funniest Dog Moments</button><button type="button" class="idea">Best Shark Moments</button><button type="button" class="idea">Craziest Trampoline Fails</button>
+    <button type="button" class="idea">Satisfying Wasp Nest Removal</button><button type="button" class="idea">Weirdest Sea Creatures</button><button type="button" class="idea">Funniest Mascot Moments</button>
+  </div>
+  <div class="meta"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/></svg><span id="allowance">Checking your clip watches…</span></span><span>About 26 videos watched a board</span></div>
+  <div class="recent" id="recent"></div>
+</section>
 <div id="notice" class="message" role="alert" hidden></div>
-<div class="progress" id="progress" aria-live="polite"></div>
-<div class="grid" id="grid"></div>
-<details class="opts" id="opts"><summary>Short options</summary>
-<label class="opt"><span>Narrator lines<small>A punchy one-liner on each clip: a setup before the payoff or a punchline after it.</small></span><input id="o-commentary" type="checkbox" checked></label>
-<label class="opt"><span>Vine booms<small>On the beats where the joke lands, with a punch-in on faces.</small></span><input id="o-booms" type="checkbox" checked></label>
-<label class="opt"><span>Meme sound effects</span><select id="o-sfx"><option value="full">Full: up to two a clip</option><option value="light">Light: one a clip</option><option value="off">Off</option></select></label>
-<label class="opt"><span>Punch-ins<small>The picture jumps in on a reaction at the boom.</small></span><input id="o-punch" type="checkbox" checked></label>
-<label class="opt"><span>Word captions<small>What people say in the clips, word by word.</small></span><input id="o-captions" type="checkbox" checked></label>
-<label class="opt"><span>Your handle</span><input id="o-handle" type="text" maxlength="40" placeholder="@yourchannel"></label>
-<label class="opt"><span>Use credits if my clip watches run out<small>Each watch past your monthly clip watches costs 0.02 credits, only if this is on.</small></span><input id="o-credits" type="checkbox"></label>
-</details>
+<section class="working" id="working" hidden aria-live="polite"><div class="working-top"><span><span class="spinner"></span><b id="work-line">Starting…</b></span><span id="work-count"></span></div><div class="bar"><i id="work-bar"></i></div></section>
+<section id="board" hidden>
+  <div class="board-head"><div><h2 id="board-title">Your clips</h2><p id="board-sub"></p></div>
+    <div class="tools"><label class="ghost" for="files"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Add your clips</label><input id="files" type="file" accept="video/mp4,video/quicktime,video/webm,.m4v" multiple hidden>
+    <button class="ghost" type="button" id="open-links"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>Paste links</button>
+    <button class="ghost" type="button" id="open-opts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2.5"/><circle cx="15" cy="17" r="2.5"/></svg>Short options</button></div></div>
+  <form class="links" id="links" hidden><textarea id="links-text" rows="3" placeholder="Paste links to clips, one a line: TikTok, YouTube, Instagram…" aria-label="Links to clips"></textarea><div><button class="cta" type="submit">Add these clips</button><button class="ghost" type="button" id="links-cancel">Cancel</button></div></form>
+  <div class="grid" id="grid"></div>
+</section>
 </main>
-<div class="strip" aria-label="Your countdown"><div class="strip-in"><div class="slots" id="slots"></div><button class="primary" id="make" disabled>Make this Short</button></div></div>
+<div class="dock" aria-label="Your countdown"><div class="dock-title">Your countdown<b id="dock-count">0 / 10</b></div><div class="slots" id="slots"></div><button class="cta" id="make" disabled>Make this Short</button></div>
+<div class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="opts-title"><div class="drawer-bg" data-close></div><div class="sheet">
+  <h3 id="opts-title">Short options</h3><p>How your countdown sounds and looks.</p>
+  <label class="opt"><span>Narrator lines<small>A punchy one-liner on each clip.</small></span><input class="switch" id="o-commentary" type="checkbox" checked></label>
+  <label class="opt"><span>Vine booms<small>Where the joke lands, with a punch-in on faces.</small></span><input class="switch" id="o-booms" type="checkbox" checked></label>
+  <label class="opt"><span>Meme sound effects</span><select id="o-sfx"><option value="full">Full: two a clip</option><option value="light">Light: one a clip</option><option value="off">Off</option></select></label>
+  <label class="opt"><span>Punch-ins<small>The picture jumps in on a reaction.</small></span><input class="switch" id="o-punch" type="checkbox" checked></label>
+  <label class="opt"><span>Word captions<small>What people say, word by word.</small></span><input class="switch" id="o-captions" type="checkbox" checked></label>
+  <label class="opt"><span>Your handle</span><input id="o-handle" type="text" maxlength="40" placeholder="@yourchannel"></label>
+  <label class="opt"><span>Use credits if my clip watches run out<small>0.02 credits a watch, only if this is on.</small></span><input class="switch" id="o-credits" type="checkbox"></label>
+  <p style="margin-top:18px"><button class="cta" type="button" data-close>Done</button></p>
+</div></div>
+<div class="dropzone" id="dropzone" aria-hidden="true"><div>Drop your clips<small>Studio watches them for their best moments too</small></div></div>
 <script>
 const localToken=__LOCAL_TOKEN_JSON__;const $=id=>document.getElementById(id);
-let board=null,picks=[],timer=null;
+let board=null,picks=[],moments=[],timer=null,dragFiles=0;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const remember=id=>{try{localStorage.setItem('cr-ranking-board',id);}catch(e){}};
 async function api(path,body,form){const o={headers:{'X-CR-Local-Token':localToken}};if(form){o.method='POST';o.body=form;}else if(body!==undefined){o.method='POST';o.headers['Content-Type']='application/json';o.body=JSON.stringify(body);}
   const r=await fetch(path,{...o,cache:'no-store'});let d;try{d=await r.json();}catch{throw new Error('The studio could not answer. Check that the launcher is still open.');}if(!r.ok){const e=new Error(d.error||d.detail||'This step could not finish.');e.data=d;throw e;}return d;}
 function notice(t){$('notice').textContent=t||'';$('notice').hidden=!t;}
-function views(n){return n>=1e6?(n/1e6).toFixed(n>=1e7?0:1)+'M views':n>=1e3?Math.round(n/1e3)+'K views':n?n+' views':''}
-async function allowance(){try{const a=await api('/cr-ranking/allowance');$('allowance').textContent=a.limit==null?'Clip watches: unlimited on your plan.':`${a.remaining} of ${a.limit} clip watches left this month.`;}catch(e){$('allowance').textContent=e.message;}}
-async function boards(){try{const b=(await api('/cr-ranking/boards')).boards;if(!b.length)return;$('boards').hidden=false;$('boards').innerHTML='Your boards: '+b.map(x=>`<button type="button" data-board="${esc(x.id)}">${esc(x.topic)} · ${x.moments}</button>`).join('');}catch(e){}}
-$('boards').addEventListener('click',e=>{const id=e.target.dataset?.board;if(id){picks=[];openBoard(id);}});
-const remember=id=>{try{localStorage.setItem('cr-ranking-board',id);}catch(e){}};
+function views(n){return n>=1e6?(n/1e6).toFixed(n>=1e7?0:1)+'M':n>=1e3?Math.round(n/1e3)+'K':n?String(n):''}
+async function allowance(){try{const a=await api('/cr-ranking/allowance');$('allowance').textContent=a.limit==null?'Unlimited clip watches on your plan':`${a.remaining} of ${a.limit} clip watches left this month`;}catch(e){$('allowance').textContent='Clip watches: '+e.message;}}
+async function recent(){try{const b=(await api('/cr-ranking/boards')).boards;$('recent').innerHTML=b.slice(0,6).map(x=>`<button type="button" data-board="${esc(x.id)}">${esc(x.topic)} · ${x.moments} clips</button>`).join('');}catch(e){}}
+$('recent').addEventListener('click',e=>{const id=e.target.dataset?.board;if(id){picks=[];moments=[];$('grid').innerHTML='';openBoard(id);}});
+$('ideas').addEventListener('click',e=>{if(e.target.classList.contains('idea')){$('topic').value=e.target.textContent;$('topic').focus();}});
 async function openBoard(id){board=id;remember(id);await refresh();}
+function progress(s){const last=(s.progress||[]).slice(-1)[0]||'Starting…';const m=/(\d+) of (\d+) watched/.exec(last);
+  $('working').hidden=!s.running;$('work-line').textContent=last.replace(/^(finding|watching|picking)\s+/,'').replace(/^./,c=>c.toUpperCase());
+  $('work-count').textContent=m?`${m[1]} / ${m[2]}`:'';$('work-bar').style.width=m?(100*m[1]/m[2])+'%':(/search/i.test(last)?'6%':'2%');}
 async function refresh(){if(!board)return;let s;try{s=await api('/cr-ranking/boards/'+board);}catch(e){notice(e.message);return;}
-  $('topic').value=s.topic||$('topic').value;$('drop').hidden=false;
-  $('progress').innerHTML=s.running?`<span class="spinner"></span><span>${esc(s.progress.slice(-1)[0]||'Starting…')}</span>`:s.stopped?'':s.moments.length?`${s.moments.length} moments found. Tick the ones you want.`:'';
-  if(s.stopped)notice(s.stopped);
-  render(s.moments);clearTimeout(timer);if(s.running)timer=setTimeout(refresh,3000);else{allowance();}}
-function card(m){const pickedNow=picks.some(p=>p.id===m.id);const s0=Math.max(0,Math.floor((m.cut||[0])[0]||0)),s1=Math.ceil((m.cut||[0,0])[1]||0);
-  const thumb=m.own?`<video src="/cr-ranking/boards/${esc(board)}/clips/${esc(m.clip)}#t=${s0},${s1}" muted preload="metadata" playsinline></video>`:`<img loading="lazy" alt="" src="https://i.ytimg.com/vi/${esc(m.vid)}/hqdefault.jpg">`;
-  return `<article class="card${pickedNow?' picked':''}" data-id="${esc(m.id)}" data-vid="${esc(m.vid||'')}" data-s0="${s0}" data-s1="${s1}" data-own="${m.own?1:0}">
-  <div class="thumb">${thumb}<span class="score${m.score>=8?' hi':''}">${Number(m.score||0).toFixed(0)}/10</span>${m.own?'<span class="own">Your clip</span>':''}</div>
-  <div class="body"><div class="label">${esc(m.label||m.type)}</div><div class="chips"><span class="chip">${esc(m.type||'')}</span>${m.views?`<span class="chip">${views(m.views)}</span>`:''}</div>
-  <div class="what">${esc(m.what||'')}</div><div class="why">${esc(m.why||'')}</div>
-  <label class="tick"><input type="checkbox" ${pickedNow?'checked':''} data-pick="${esc(m.id)}"> Use this clip</label></div></article>`;}
-let moments=[];
-function render(list){moments=list;$('grid').innerHTML=list.map(card).join('');slots();}
-$('grid').addEventListener('change',e=>{const id=e.target.dataset?.pick;if(!id)return;const m=moments.find(x=>x.id===id);
-  if(e.target.checked){if(picks.length>=10){e.target.checked=false;notice('A countdown holds up to 10 clips.');return;}picks.push(m);}else picks=picks.filter(p=>p.id!==id);
-  e.target.closest('.card').classList.toggle('picked',e.target.checked);slots();});
-// preview: hover (or tap) plays the moment itself
-$('grid').addEventListener('mouseover',e=>{const c=e.target.closest('.card');if(!c||c.dataset.playing)return;c.dataset.playing=1;const t=c.querySelector('.thumb');
+  if(s.topic)$('topic').value=s.topic;progress(s);if(s.stopped)notice(s.stopped);
+  $('board').hidden=!s.moments.length&&!s.running;$('board-title').textContent=s.topic||'Your clips';
+  $('board-sub').textContent=s.moments.length?`${s.moments.length} moments found${s.running?' so far':''}. Tap the ones you want; the last one you pick is #1.`:'Clips appear here as Studio watches them.';
+  render(s.moments);clearTimeout(timer);if(s.running)timer=setTimeout(refresh,2500);else allowance();}
+const ringColor=s=>s>=9?'#FFD21F':s>=7?'#8B7BFF':s>=5?'#57E0A2':'#6F6D82';
+function card(m,i){const n=picks.findIndex(p=>p.id===m.id),slot=n<0?0:picks.length-n;const s0=Math.max(0,Math.floor((m.cut||[0])[0]||0)),s1=Math.ceil((m.cut||[0,0])[1]||0);
+  const local=!!m.clip;const media=local?`<video src="/cr-ranking/boards/${esc(board)}/clips/${esc(m.clip)}#t=${s0},${s1}" muted preload="metadata" playsinline></video>`:`<img loading="lazy" alt="" src="https://i.ytimg.com/vi/${esc(m.vid)}/hqdefault.jpg">`;
+  const sc=Math.round(Number(m.score||0));
+  return `<button type="button" class="card${n>=0?' picked':''}" style="animation-delay:${Math.min(i,18)*35}ms" data-id="${esc(m.id)}" data-vid="${esc(m.vid||'')}" data-s0="${s0}" data-s1="${s1}" data-own="${local?1:0}" aria-pressed="${n>=0}">
+  <div class="media">${media}<div class="shade"></div>
+   <span class="score" style="--s:${sc};--ring:${ringColor(sc)}" aria-label="Score ${sc} of 10"><span>${sc}</span></span>${m.own?'<span class="chip-own">Your clip</span>':m.picked_by_you?`<span class="chip-own">Your link${m.views?' · '+views(m.views):''}</span>`:m.views?`<span class="chip-views">${views(m.views)} views</span>`:''}
+   <span class="slotbadge n${slot}">${slot?'#'+slot:''}</span>
+   <span class="tick" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3"><path d="M5 12l5 5 9-10"/></svg></span>
+   <div class="cap"><div class="label">${esc(m.label||m.type)}</div><span class="type">${esc(m.type||'')}</span><div class="what">${esc(m.what||'')}</div><div class="why">${esc(m.why||'')}</div></div></div></button>`;}
+function render(list){const known=new Set([...document.querySelectorAll('.card')].map(c=>c.dataset.id));moments=list;
+  const add=list.filter(m=>!known.has(m.id));if(add.length===list.length)$('grid').innerHTML=list.map(card).join('');else if(add.length)$('grid').insertAdjacentHTML('beforeend',add.map(card).join(''));sync();slots();}
+function sync(){for(const el of document.querySelectorAll('.card')){const n=picks.findIndex(p=>p.id===el.dataset.id),slot=n<0?0:picks.length-n;el.classList.toggle('picked',n>=0);el.setAttribute('aria-pressed',String(n>=0));
+  const b=el.querySelector('.slotbadge');b.className='slotbadge n'+slot;b.textContent=slot?'#'+slot:'';}}
+$('grid').addEventListener('click',e=>{const c=e.target.closest('.card');if(!c)return;const id=c.dataset.id,at=picks.findIndex(p=>p.id===id);
+  if(at>=0)picks.splice(at,1);else{if(picks.length>=10){notice('A countdown holds up to 10 clips.');return;}picks.push(moments.find(x=>x.id===id));}notice('');sync();slots();});
+$('grid').addEventListener('mouseover',e=>{const c=e.target.closest('.card');if(!c||c.dataset.playing)return;c.dataset.playing=1;const t=c.querySelector('.media');
   if(c.dataset.own==='1'){const v=t.querySelector('video');v.currentTime=Number(c.dataset.s0);v.play().catch(()=>{});return;}
-  const f=document.createElement('iframe');f.allow='autoplay';f.title='Clip preview';
-  f.src=`https://www.youtube-nocookie.com/embed/${encodeURIComponent(c.dataset.vid)}?start=${c.dataset.s0}&end=${c.dataset.s1}&autoplay=1&mute=1&controls=0&playsinline=1&loop=1&playlist=${encodeURIComponent(c.dataset.vid)}`;t.appendChild(f);});
+  const f=document.createElement('iframe');f.allow='autoplay';f.title='Clip preview';f.tabIndex=-1;
+  f.src=`https://www.youtube-nocookie.com/embed/${encodeURIComponent(c.dataset.vid)}?start=${c.dataset.s0}&end=${c.dataset.s1}&autoplay=1&mute=1&controls=0&playsinline=1&loop=1&modestbranding=1&playlist=${encodeURIComponent(c.dataset.vid)}`;
+  f.addEventListener('load',()=>setTimeout(()=>f.classList.add('on'),350));t.insertBefore(f,t.querySelector('.shade'));});
 $('grid').addEventListener('mouseout',e=>{const c=e.target.closest('.card');if(!c||c.contains(e.relatedTarget))return;delete c.dataset.playing;const f=c.querySelector('iframe');if(f)f.remove();const v=c.querySelector('video');if(v)v.pause();});
-function slots(){const n=picks.length;$('slots').innerHTML=n?picks.map((m,i)=>`<div class="slot" draggable="true" data-i="${i}"><b class="${n-i===1?'n1':''}">#${n-i}</b><span>${esc(m.label||m.type)}</span><button type="button" data-drop="${esc(m.id)}" aria-label="Remove">×</button></div>`).join(''):'<span class="slot-empty">Tick 3 to 10 clips. They play left to right; the last one is #1.</span>';
-  $('make').disabled=n<3||!board;}
+function thumb(m){return m.clip?'':`https://i.ytimg.com/vi/${m.vid}/mqdefault.jpg`;}
+function slots(){const n=picks.length,ghosts=Math.max(0,5-n);
+  $('slots').innerHTML=picks.map((m,i)=>`<div class="slot" draggable="true" data-i="${i}" style="background-image:url('${esc(thumb(m))}')" title="${esc(m.label||m.type)}"><b class="n${n-i}">#${n-i}</b><button type="button" class="x" data-drop="${esc(m.id)}" aria-label="Remove ${esc(m.label||'clip')}">×</button></div>`).join('')
+    +Array.from({length:ghosts},()=>`<div class="slot ghostslot" aria-hidden="true">+</div>`).join('');
+  $('dock-count').textContent=`${n} / 10`;$('make').disabled=n<3||!board;$('make').textContent=n<3?`Pick ${3-n} more`:`Make this Short · ${n} clips`;}
 let drag=null;
-$('slots').addEventListener('dragstart',e=>{drag=Number(e.target.dataset.i);e.target.classList.add('dragging');});
-$('slots').addEventListener('dragend',e=>e.target.classList.remove('dragging'));
-$('slots').addEventListener('dragover',e=>e.preventDefault());
-$('slots').addEventListener('drop',e=>{e.preventDefault();const to=e.target.closest('.slot');if(drag==null||!to)return;const [m]=picks.splice(drag,1);picks.splice(Number(to.dataset.i),0,m);drag=null;slots();});
-$('slots').addEventListener('click',e=>{const id=e.target.dataset?.drop;if(!id)return;picks=picks.filter(p=>p.id!==id);const box=document.querySelector(`[data-pick="${CSS.escape(id)}"]`);if(box){box.checked=false;box.closest('.card').classList.remove('picked');}slots();});
-$('find').addEventListener('submit',async e=>{e.preventDefault();notice('');$('find-button').disabled=true;picks=[];
-  try{const s=await api('/cr-ranking/boards',{topic:$('topic').value,use_credits:$('o-credits').checked});board=s.id;remember(board);await refresh();boards();}catch(err){notice(err.message);}finally{$('find-button').disabled=false;}});
-async function upload(files){if(!files.length)return;notice('');
-  try{if(!board){const s=await api('/cr-ranking/boards',{topic:$('topic').value||'My clips',find:false});board=s.id;}
+$('slots').addEventListener('dragstart',e=>{const s=e.target.closest('.slot');if(!s||s.classList.contains('ghostslot'))return;drag=Number(s.dataset.i);s.classList.add('dragging');});
+$('slots').addEventListener('dragend',()=>{document.querySelectorAll('.slot').forEach(s=>s.classList.remove('dragging','over'));});
+$('slots').addEventListener('dragover',e=>{e.preventDefault();document.querySelectorAll('.slot.over').forEach(s=>s.classList.remove('over'));e.target.closest('.slot:not(.ghostslot)')?.classList.add('over');});
+$('slots').addEventListener('drop',e=>{e.preventDefault();const to=e.target.closest('.slot:not(.ghostslot)');if(drag==null||!to)return;const [m]=picks.splice(drag,1);picks.splice(Number(to.dataset.i),0,m);drag=null;sync();slots();});
+$('slots').addEventListener('click',e=>{const id=e.target.dataset?.drop;if(!id)return;picks=picks.filter(p=>p.id!==id);sync();slots();});
+$('find').addEventListener('submit',async e=>{e.preventDefault();notice('');$('find-button').disabled=true;picks=[];moments=[];$('grid').innerHTML='';
+  try{const s=await api('/cr-ranking/boards',{topic:$('topic').value,use_credits:$('o-credits').checked});board=s.id;remember(board);await refresh();recent();$('working').scrollIntoView({behavior:'smooth',block:'center'});}catch(err){notice(err.message);}finally{$('find-button').disabled=false;}});
+async function upload(files){files=files.filter(f=>/\.(mp4|mov|webm|m4v)$/i.test(f.name));if(!files.length){notice('Add MP4, MOV, WebM or M4V clips.');return;}notice('');
+  try{if(!board){const s=await api('/cr-ranking/boards',{topic:$('topic').value||'My clips',find:false});board=s.id;remember(board);}
     const f=new FormData();for(const x of files)f.append('clips',x);if($('o-credits').checked)f.append('use_credits','1');await api('/cr-ranking/boards/'+board+'/clips',undefined,f);await refresh();}catch(err){notice(err.message);}}
 $('files').addEventListener('change',e=>upload([...e.target.files]));
-for(const ev of ['dragenter','dragover'])$('drop').addEventListener(ev,e=>{e.preventDefault();$('drop').classList.add('over');});
-for(const ev of ['dragleave','drop'])$('drop').addEventListener(ev,e=>{e.preventDefault();$('drop').classList.remove('over');});
-$('drop').addEventListener('drop',e=>upload([...e.dataTransfer.files]));
+addEventListener('dragenter',e=>{if([...(e.dataTransfer?.types||[])].includes('Files')){dragFiles++;$('dropzone').classList.add('on');}});
+addEventListener('dragleave',()=>{if(dragFiles&&--dragFiles<=0){dragFiles=0;$('dropzone').classList.remove('on');}});
+addEventListener('dragover',e=>{if(dragFiles)e.preventDefault();});
+addEventListener('drop',e=>{if(!dragFiles)return;e.preventDefault();dragFiles=0;$('dropzone').classList.remove('on');upload([...e.dataTransfer.files]);});
+$('open-links').addEventListener('click',()=>{$('links').hidden=false;$('links-text').focus();});
+$('links-cancel').addEventListener('click',()=>{$('links').hidden=true;});
+$('links').addEventListener('submit',async e=>{e.preventDefault();notice('');const urls=$('links-text').value.split(/\s+/).filter(u=>/^https?:\/\//.test(u));if(!urls.length){notice('Paste links that start with http.');return;}
+  try{if(!board){const s=await api('/cr-ranking/boards',{topic:$('topic').value||'My clips',find:false});board=s.id;remember(board);}
+    await api('/cr-ranking/boards/'+board+'/links',{links:urls,use_credits:$('o-credits').checked});$('links-text').value='';$('links').hidden=true;await refresh();}catch(err){notice(err.message);}});
+$('open-opts').addEventListener('click',()=>{$('drawer').classList.add('open');$('o-commentary').focus();});
+$('drawer').addEventListener('click',e=>{if(e.target.dataset.close!==undefined)$('drawer').classList.remove('open');});
+addEventListener('keydown',e=>{if(e.key==='Escape')$('drawer').classList.remove('open');});
 $('make').addEventListener('click',async()=>{notice('');$('make').disabled=true;$('make').textContent='Starting…';
   try{const c=await api('/cr-ranking/boards/'+board+'/choice',{picks:picks.map(p=>p.id)});
     const handle=$('o-handle').value.trim().replace(/[^@\w.]/g,'').slice(0,40);
     const ranking={ranks:picks.length,board,commentary:$('o-commentary').checked,booms:$('o-booms').checked,sfx:$('o-sfx').value,punch_ins:$('o-punch').checked,captions:$('o-captions').checked,use_credits:$('o-credits').checked,...(handle?{handle}:{})};
     await api('/api/run',{title:c.topic,style:'cr-shorts-ranking',minutes:1,steps:['script','voiceover','images','pexels','video'],burn_subs:false,extra:`[[short_seconds=25]] [[ranking=${JSON.stringify(ranking)}]]`});
     location.href='/#projects';}
-  catch(err){notice((err.data?.blockers||[]).join(' ')||err.message);$('make').disabled=false;$('make').textContent='Make this Short';}});
-allowance();boards();let last=null;try{last=localStorage.getItem('cr-ranking-board');}catch(e){}if(last)openBoard(last).catch(()=>{});slots();
+  catch(err){notice((err.data?.blockers||[]).join(' ')||err.message);slots();}});
+allowance();recent();let last=null;try{last=localStorage.getItem('cr-ranking-board');}catch(e){}if(last)openBoard(last).catch(()=>{});slots();
 </script></body></html>

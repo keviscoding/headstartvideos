@@ -55,11 +55,11 @@ def summary(path: Path, running: bool) -> dict:
     log = (path / "progress.log").read_text(encoding="utf-8", errors="replace").splitlines()[-6:] \
         if (path / "progress.log").is_file() else []
     keep = ("id", "vid", "title", "channel", "views", "type", "score", "label", "what", "payoff_is", "why", "payoff",
-            "cut", "framing", "quality", "own", "dur")
+            "cut", "framing", "quality", "own", "dur", "linked", "picked_by_you")
     cards = []
     for m in moments if isinstance(moments, list) else []:
         card = {k: m.get(k) for k in keep if k in m}
-        if m.get("own") and m.get("file"):
+        if m.get("file"):                                       # a clip on this computer: the page previews the file
             card["clip"] = Path(m["file"]).name
         cards.append(card)
     stopped = [line for line in log if " stopped " in line]
@@ -203,6 +203,22 @@ def install(studio, *, token, home=None):
                     raise ValueError("Keep each clip under 400 MB.")
                 saved.append(str(dest))
             start(path, ["add", *saved], request.form.get("use_credits") == "1")
+            return no_store(jsonify(summary(path, running(board_id))))
+        except Exception as error:                                  # noqa: BLE001
+            return failed(error)
+
+    @app.post("/cr-ranking/boards/<board_id>/links")
+    def cr_ranking_add_links(board_id):
+        """Links the creator pasted (YouTube, TikTok, Instagram ...): the worker fetches and watches them."""
+        try:
+            local_access(True)
+            path = board_dir(home, board_id)
+            body = request.get_json(silent=True) or {}
+            urls = [u.strip() for u in body.get("links") or [] if isinstance(u, str)]
+            urls = [u for u in urls if re.fullmatch(r"https?://[^\s\"'<>]{4,600}", u)][:20]
+            if not urls:
+                raise ValueError("Paste one or more links to clips (one a line).")
+            start(path, ["links", *urls], body.get("use_credits") is True)
             return no_store(jsonify(summary(path, running(board_id))))
         except Exception as error:                                  # noqa: BLE001
             return failed(error)

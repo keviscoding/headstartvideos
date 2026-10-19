@@ -576,3 +576,9 @@ def test_footage_watching_stops_after_three_uploads_fail_in_a_row():
     with pytest.raises(RuntimeError, match="goes on without it"):
         space["_kie_log"]("d", "watch", None)
     assert len(uploads) == 3, "after three stalled uploads the rest of the search skips the watcher"
+
+
+def test_the_studio_installs_yt_dlp_with_browser_impersonation_for_tiktok():
+    engine = b'# YouTube footage\nyt-dlp>=2025.10.22; python_version >= "3.10"\nrequests\n'
+    patched = package.patch_engine("requirements.txt", engine).decode()
+    assert 'yt-dlp[default,curl-cffi]>=2025.10.22; python_version >= "3.10"' in patched and "requests" in patched
