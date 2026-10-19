@@ -23,6 +23,8 @@ import config
 
 ANNUAL_MONTHS = 12
 TRIAL_STYLE_CLONES = 1
+# Clip watches a trialing Studio may use for the Ranking Shorts recipe (about two Shorts).
+TRIAL_RANKING_WATCHES = 60
 
 
 @dataclass(frozen=True)
@@ -35,6 +37,8 @@ class Tier:
     studio: bool
     # Completed or running style studies a customer may keep. None = unlimited.
     style_clones: int | None
+    # Gemini clip watches a month for the Ranking Shorts recipe (a Short watches about 30 candidates and picks).
+    ranking_watches: int
     # Offered to new customers on the pricing page.
     public: bool
     # config attributes holding this tier's monthly and annual Stripe prices.
@@ -42,13 +46,13 @@ class Tier:
 
 
 TIERS: dict[str, Tier] = {
-    "starter": Tier("starter", "Starter", 27, 270, 15, studio=False, style_clones=0, public=False,
+    "starter": Tier("starter", "Starter", 27, 270, 15, studio=False, style_clones=0, ranking_watches=0, public=False,
                     price_attrs=("STRIPE_PRICE_STARTER_MONTHLY", "STRIPE_PRICE_STARTER_ANNUAL")),
-    "daily": Tier("daily", "Creator", 49, 490, 35, studio=True, style_clones=3, public=True,
+    "daily": Tier("daily", "Creator", 49, 490, 35, studio=True, style_clones=3, ranking_watches=300, public=True,
                   price_attrs=("STRIPE_PRICE_DAILY_MONTHLY", "STRIPE_PRICE_DAILY_ANNUAL")),
-    "studio_pro": Tier("studio_pro", "Pro", 79, 790, 60, studio=True, style_clones=15, public=True,
+    "studio_pro": Tier("studio_pro", "Pro", 79, 790, 60, studio=True, style_clones=15, ranking_watches=900, public=True,
                        price_attrs=("STRIPE_PRICE_PRO_MONTHLY", "STRIPE_PRICE_PRO_ANNUAL")),
-    "studio_max": Tier("studio_max", "Max", 119, 1190, 100, studio=True, style_clones=None, public=True,
+    "studio_max": Tier("studio_max", "Max", 119, 1190, 100, studio=True, style_clones=None, ranking_watches=2400, public=True,
                        price_attrs=("STRIPE_PRICE_MAX_MONTHLY", "STRIPE_PRICE_MAX_ANNUAL")),
 }
 PAID_TIERS = tuple(TIERS)
@@ -196,6 +200,17 @@ def style_clone_limit(plan: str | None, *, is_admin: bool = False) -> int | None
     if is_trial_plan(plan):
         return TRIAL_STYLE_CLONES
     return TIERS[tier_of(plan)].style_clones
+
+
+def ranking_watch_limit(plan: str | None, *, is_admin: bool = False) -> int | None:
+    """Clip watches a month for the Ranking Shorts recipe. None means unlimited."""
+    if is_admin:
+        return None
+    if not has_studio(plan):
+        return 0
+    if is_trial_plan(plan):
+        return TRIAL_RANKING_WATCHES
+    return TIERS[tier_of(plan)].ranking_watches
 
 
 def studio_upgrade_tier(plan: str | None, *, is_admin: bool = False) -> str:
