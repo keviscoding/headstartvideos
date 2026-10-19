@@ -422,6 +422,9 @@ function navigateTo(page) {
     if (page === 'analytics') {
         try { loadAnalyticsDashboard(); } catch (_) {}
     }
+    if (page === 'showcase') {
+        try { loadShowcase(); } catch (_) {}
+    }
     if (page === 'local-studio') window.CRLocalStudio?.open();
 
     // Close menus
@@ -3534,6 +3537,117 @@ function canViewAnalytics() {
     return !!(currentUser && (currentUser.can_view_analytics || currentUser.is_admin));
 }
 
+// ---------------------------------------------------------------------------
+// Showcase (admins): the newest Studio videos, a 30-second snippet ready for Telegram and the full video.
+// ---------------------------------------------------------------------------
+const showcaseState = { items: [], filter: 'all', loadedAt: 0 };
+
+async function loadShowcase(force) {
+    const status = document.getElementById('showcase-status');
+    if (!isAdminUser()) {
+        if (status) status.textContent = 'The Showcase is for admins.';
+        return;
+    }
+    // signed links last an hour: reload after 45 minutes (or on Refresh)
+    if (!force && showcaseState.items.length && Date.now() - showcaseState.loadedAt < 45 * 60 * 1000) {
+        renderShowcase();
+        return;
+    }
+    if (status) status.textContent = 'Loading…';
+    try {
+        const res = await fetch('/api/admin/showcase');
+        const data = await readJson(res, {});
+        if (!res.ok) {
+            if (status) status.textContent = friendlyApiError(data, 'Could not load the Showcase');
+            return;
+        }
+        showcaseState.items = data.items || [];
+        showcaseState.loadedAt = Date.now();
+        renderShowcase();
+    } catch (_) {
+        if (status) status.textContent = 'Could not load the Showcase. Check your connection and press Refresh.';
+    }
+}
+
+function showcaseWhen(iso) {
+    const d = new Date(iso);
+    return isNaN(d) ? '' : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
+
+function showcaseLength(s) {
+    s = Math.round(Number(s) || 0);
+    return s >= 60 ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` : `${s}s`;
+}
+
+function renderShowcase() {
+    const grid = document.getElementById('showcase-grid');
+    const status = document.getElementById('showcase-status');
+    if (!grid) return;
+    const f = showcaseState.filter;
+    const items = showcaseState.items.filter(i => f === 'hidden' ? i.hidden : !i.hidden && (f === 'all' || i.kind === f));
+    const shown = showcaseState.items.filter(i => !i.hidden).length;
+    if (status) status.textContent = f === 'hidden'
+        ? `${items.length} hidden`
+        : `${shown} video${shown === 1 ? '' : 's'} ready to post` + (items.length !== shown ? ` · ${items.length} here` : '');
+    grid.innerHTML = items.length ? items.map(i => `
+        <article class="showcase-card ${i.kind === 'short' ? 'is-short' : ''}" data-id="${escapeHtml(i.id)}">
+            <button type="button" class="showcase-media" aria-label="Play the snippet of ${escapeHtml(i.title)}">
+                <img src="${escapeHtml(i.poster)}" alt="" loading="lazy" decoding="async">
+                <span class="showcase-play" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 4.5v15l12.5-7.5z"/></svg></span>
+                <span class="showcase-len">${showcaseLength(i.duration)}</span>
+            </button>
+            <div class="showcase-body">
+                <h3>${escapeHtml(i.title)}</h3>
+                <p>${escapeHtml(i.recipe || 'Studio')} · ${i.kind === 'short' ? 'Short' : 'Long video'} · ${showcaseWhen(i.created)}</p>
+                <div class="showcase-actions">
+                    <a class="btn-primary" href="${escapeHtml(i.snippet_download)}" download>${Math.round(i.snippet_s || 30)}s snippet</a>
+                    <a class="btn-secondary" href="${escapeHtml(i.full_download)}" download>Full video</a>
+                    <button type="button" class="btn-ghost" data-hide="${i.hidden ? '0' : '1'}">${i.hidden ? 'Show' : 'Hide'}</button>
+                </div>
+            </div>
+        </article>`).join('') : `<p style="color: var(--app-ink-2);">${f === 'hidden' ? 'Nothing hidden.' : 'No videos yet. New Studio videos appear here as they finish.'}</p>`;
+}
+
+document.addEventListener('click', async (e) => {
+    const chip = e.target.closest('.showcase-chip');
+    if (chip) {
+        showcaseState.filter = chip.dataset.f;
+        document.querySelectorAll('.showcase-chip').forEach(c => c.setAttribute('aria-pressed', String(c === chip)));
+        renderShowcase();
+        return;
+    }
+    const card = e.target.closest('.showcase-card');
+    if (!card) return;
+    const item = showcaseState.items.find(i => i.id === card.dataset.id);
+    if (!item) return;
+    const media = e.target.closest('.showcase-media');
+    if (media) {
+        const video = document.createElement('video');
+        video.src = item.snippet; video.controls = true; video.playsInline = true; video.autoplay = true;
+        video.className = 'showcase-video';
+        media.replaceWith(video);
+        video.play().catch(() => {});
+        return;
+    }
+    const hide = e.target.closest('[data-hide]');
+    if (hide) {
+        hide.disabled = true;
+        try {
+            const res = await fetch(`/api/admin/showcase/${encodeURIComponent(item.id)}/hidden`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ hidden: hide.dataset.hide === '1' }),
+            });
+            const data = await readJson(res, {});
+            if (!res.ok) throw new Error(friendlyApiError(data, 'Could not change it'));
+            item.hidden = !!data.hidden;
+            renderShowcase();
+        } catch (err) {
+            hide.disabled = false;
+            const st = document.getElementById('showcase-status'); if (st) st.textContent = err.message || 'Could not change it';
+        }
+    }
+});
+
 async function loadAnalyticsDashboard() {
     const gate = document.getElementById('analytics-gate');
     const workspace = document.getElementById('analytics-workspace');
@@ -6389,6 +6503,8 @@ function updateAuthUI() {
     if (state.page === 'local-studio') window.CRLocalStudio?.open();
     document.getElementById('nav-niche-intel')?.classList.toggle('hidden', !isAdmin);
     document.getElementById('nav-niche-intel-mobile')?.classList.toggle('hidden', !isAdmin);
+    document.getElementById('nav-showcase')?.classList.toggle('hidden', !isAdmin);
+    document.getElementById('nav-showcase-mobile')?.classList.toggle('hidden', !isAdmin);
     const showAnalytics = canViewAnalytics();
     document.getElementById('nav-analytics')?.classList.toggle('hidden', !showAnalytics);
     document.getElementById('nav-analytics-mobile')?.classList.toggle('hidden', !showAnalytics);

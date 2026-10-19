@@ -1886,3 +1886,29 @@
 /* The app opens on Studio, and every page fills the window, so the footer never jumps into view while a page
    swaps in after sign-in is checked (this was most of the app's layout shift). */
 .page-container { min-height: calc(100vh - 64px); }
+
+/* ---- Showcase (admins) ---- */
+.showcase-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.showcase-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.showcase-chip { font: 600 13px var(--font-body, inherit); color: var(--app-ink-2); background: var(--app-surface);
+  border: 1px solid var(--app-border); border-radius: 999px; padding: 7px 14px; cursor: pointer; }
+.showcase-chip[aria-pressed="true"] { color: var(--app-bg); background: var(--app-ink); border-color: var(--app-ink); }
+.showcase-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 18px; align-items: start; }
+.showcase-card { background: var(--app-surface-2); border: 1px solid var(--app-border); border-radius: var(--radius-md, 14px);
+  overflow: hidden; display: flex; flex-direction: column; }
+.showcase-media, .showcase-video { position: relative; display: block; width: 100%; aspect-ratio: 16 / 9; background: #000;
+  border: 0; padding: 0; cursor: pointer; }
+.showcase-card.is-short .showcase-media, .showcase-card.is-short .showcase-video { aspect-ratio: 9 / 16; max-height: 460px; }
+.showcase-media img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.showcase-video { object-fit: contain; cursor: default; }
+.showcase-play { position: absolute; left: 12px; bottom: 12px; width: 46px; height: 46px; border-radius: 50%;
+  display: grid; place-items: center; background: rgba(12, 12, 18, .72); }
+.showcase-play svg { width: 18px; height: 18px; margin-left: 3px; fill: #fff; }
+.showcase-len { position: absolute; right: 10px; bottom: 10px; background: rgba(12, 12, 18, .8); color: #fff;
+  font-size: 12px; font-weight: 600; border-radius: 6px; padding: 2px 7px; }
+.showcase-body { padding: 14px 16px 16px; }
+.showcase-body h3 { font-weight: 700; font-size: 16px; line-height: 1.3; color: var(--app-ink); margin: 0 0 4px; }
+.showcase-body p { font-size: 13px; color: var(--app-ink-3); margin: 0 0 12px; }
+.showcase-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.showcase-actions .btn-primary, .showcase-actions .btn-secondary { font-size: 13px; padding: 8px 12px; text-decoration: none; }
+.showcase-actions .btn-ghost { font-size: 13px; margin-left: auto; }
