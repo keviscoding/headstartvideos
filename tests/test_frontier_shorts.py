@@ -109,6 +109,7 @@ def test_a_ranking_shorts_options_travel_in_their_own_marker_and_only_known_kind
     assert shorts.split_extra(extra) == (25, "Keep it savage.")
     assert shorts.ranking_options(extra) == {"ranks": 7, "booms": False, "sfx": "light", "board": "dogs-1a2b3c"}
     assert shorts.ranking_options('[[ranking={"ranks": 40}]]') == {"ranks": 10}
+    assert shorts.ranking_options('[[ranking={"clean": false}]]') == {"clean": False}   # burned-in text left on
     assert shorts.ranking_options('[[ranking={not json}]]') == {}
     assert shorts.ranking_options("no marker") == {}
 

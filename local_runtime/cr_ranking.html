@@ -141,6 +141,7 @@ h1 em{font-style:normal;background:linear-gradient(100deg,#FFE37A,#FFD21F 30%,#F
   <label class="opt"><span>Vine booms<small>Where the joke lands, with a punch-in on faces.</small></span><input class="switch" id="o-booms" type="checkbox" checked></label>
   <label class="opt"><span>Meme sound effects</span><select id="o-sfx"><option value="full">Full: two a clip</option><option value="light">Light: one a clip</option><option value="off">Off</option></select></label>
   <label class="opt"><span>Punch-ins<small>The picture jumps in on a reaction.</small></span><input class="switch" id="o-punch" type="checkbox" checked></label>
+  <label class="opt"><span>Clean clips<small>Burned-in captions and watermarks taken off, free on this computer.</small></span><input class="switch" id="o-clean" type="checkbox" checked></label>
   <label class="opt"><span>Word captions<small>What people say, word by word.</small></span><input class="switch" id="o-captions" type="checkbox" checked></label>
   <label class="opt"><span>Your handle</span><input id="o-handle" type="text" maxlength="40" placeholder="@yourchannel"></label>
   <label class="opt"><span>Use credits if my clip watches run out<small>0.02 credits a watch, only if this is on.</small></span><input class="switch" id="o-credits" type="checkbox"></label>
@@ -223,7 +224,7 @@ addEventListener('keydown',e=>{if(e.key==='Escape')$('drawer').classList.remove(
 $('make').addEventListener('click',async()=>{notice('');$('make').disabled=true;$('make').textContent='Starting…';
   try{const c=await api('/cr-ranking/boards/'+board+'/choice',{picks:picks.map(p=>p.id)});
     const handle=$('o-handle').value.trim().replace(/[^@\w.]/g,'').slice(0,40);
-    const ranking={ranks:picks.length,board,commentary:$('o-commentary').checked,booms:$('o-booms').checked,sfx:$('o-sfx').value,punch_ins:$('o-punch').checked,captions:$('o-captions').checked,use_credits:$('o-credits').checked,...(handle?{handle}:{})};
+    const ranking={ranks:picks.length,board,commentary:$('o-commentary').checked,booms:$('o-booms').checked,sfx:$('o-sfx').value,punch_ins:$('o-punch').checked,clean:$('o-clean').checked,captions:$('o-captions').checked,use_credits:$('o-credits').checked,...(handle?{handle}:{})};
     await api('/api/run',{title:c.topic,style:'cr-shorts-ranking',minutes:1,steps:['script','voiceover','images','pexels','video'],burn_subs:false,extra:`[[short_seconds=25]] [[ranking=${JSON.stringify(ranking)}]]`});
     location.href='/#projects';}
   catch(err){notice((err.data?.blockers||[]).join(' ')||err.message);slots();}});

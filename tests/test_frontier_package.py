@@ -582,3 +582,4 @@ def test_the_studio_installs_yt_dlp_with_browser_impersonation_for_tiktok():
     engine = b'# YouTube footage\nyt-dlp>=2025.10.22; python_version >= "3.10"\nrequests\n'
     patched = package.patch_engine("requirements.txt", engine).decode()
     assert 'yt-dlp[default,curl-cffi]>=2025.10.22; python_version >= "3.10"' in patched and "requests" in patched
+    assert 'rapidocr-onnxruntime>=1.2; python_version >= "3.10"' in patched
