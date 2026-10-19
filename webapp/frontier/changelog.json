@@ -1,5 +1,16 @@
 [
   {
+    "build": 65,
+    "date": "2026-10-19",
+    "title": "A new-look Clip Board, and TikTok links",
+    "items": [
+      "New look: the Clip Board is redesigned. Every clip is a card that plays its moment when you hover, with a score ring and its views; tap to pick it, and your countdown builds in a dock at the bottom with #1 in gold. Drag the slots to reorder.",
+      "New: paste links on the Clip Board. TikTok, Instagram and YouTube links become cards like the clips Studio found, watched for their best moment.",
+      "Improved: Ranking Shorts skip cartoons, games and movie scenes unless your topic asks for them, so a funny-animals countdown stays real footage.",
+      "Good to know: this update installs a small library that lets Studio download TikTok clips. It happens by itself when Studio restarts."
+    ]
+  },
+  {
     "build": 64,
     "date": "2026-10-19",
     "title": "Ranking Shorts: viral clips counted down to #1, found for you",

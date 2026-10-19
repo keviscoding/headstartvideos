@@ -107,3 +107,16 @@ def test_a_studio_without_the_pipeline_says_to_update(board):
     (board.home / "shorts" / "ranking" / "board.py").unlink()
     r = board.client.post("/cr-ranking/boards", json={"topic": "Funniest Dog Moments"}, headers=HEAD)
     assert r.status_code == 409 and "Update the Studio" in r.get_json()["error"]
+
+
+def test_pasted_links_go_to_the_worker_and_only_web_links_pass(board):
+    started = board.client.post("/cr-ranking/boards", json={"topic": "Funniest Dog Moments", "find": False}, headers=HEAD).get_json()
+    sent = board.client.post(f"/cr-ranking/boards/{started['id']}/links", headers=HEAD, json={"links": [
+        "https://www.tiktok.com/@someone/video/7300000000000000000", "javascript:alert(1)", "file:///etc/passwd",
+        "https://youtu.be/dN_RMA8LVi0"]})
+    assert sent.status_code == 200
+    wait(board, started["id"])
+    args = json.loads((board.home / "output" / "ranking-boards" / started["id"] / "args.json").read_text())
+    assert args == ["links", "https://www.tiktok.com/@someone/video/7300000000000000000", "https://youtu.be/dN_RMA8LVi0"]
+    assert board.client.post(f"/cr-ranking/boards/{started['id']}/links", headers=HEAD,
+                             json={"links": ["ftp://x"]}).status_code == 400
