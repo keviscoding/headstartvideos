@@ -1,5 +1,19 @@
 [
   {
+    "build": 66,
+    "date": "2026-10-19",
+    "title": "Cleaner, consistent Ranking Shorts and an easier setup",
+    "items": [
+      "Improved: every clip in a Ranking Short now plays in the same window under the title, so long-form clips, Shorts and re-uploads look like one video. Re-uploads are cut down to their real footage: no tweet frames, blurred copies or borders.",
+      "New: burned-in captions, watermarks and banners are taken off clips for free on your computer. Turn it off with the Clean clips switch.",
+      "Improved: the window follows the faces in each clip, so both people in a reaction stay in shot.",
+      "Improved: the narrator uses ElevenLabs v4 when you connect your own ElevenLabs account, and lines never talk over the clip's own dialogue.",
+      "New: Setup lets you pick the narration voice in step 3. Paste an ElevenLabs key and Studio reads a line so you can hear it.",
+      "New: stuck on setup? Press Watch the whole setup on the Setup page for a three-minute walkthrough with chapters.",
+      "Good to know: this update installs a small text finder, and the first clip it cleans downloads a 208 MB model once."
+    ]
+  },
+  {
     "build": 65,
     "date": "2026-10-19",
     "title": "A new-look Clip Board, and TikTok links",
