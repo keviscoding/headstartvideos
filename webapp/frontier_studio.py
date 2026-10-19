@@ -20,7 +20,7 @@ from typing import Literal
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -136,15 +136,47 @@ def style_clone_usage(user: dict) -> dict:
     """
     initialize()
     with db._conn() as conn:
+        grant = conn.execute(db._q("SELECT extra, counted_from FROM style_clone_grants WHERE user_id=?"),
+                             (user["id"],)).fetchone()
+        extra, since = (int(grant["extra"]), float(grant["counted_from"])) if grant else (0, 0.0)
         used = conn.execute(db._q("""SELECT COUNT(*) AS n FROM frontier_projects
-            WHERE user_id=? AND title LIKE ? AND status != 'failed'"""),
-            (user["id"], STYLE_STUDY_PREFIX + "%")).fetchone()["n"]
+            WHERE user_id=? AND title LIKE ? AND status != 'failed' AND created_at > ?"""),
+            (user["id"], STYLE_STUDY_PREFIX + "%", since)).fetchone()["n"]
     limit = plans.style_clone_limit(user.get("plan"), is_admin=is_admin(user))
+    if limit is not None:
+        limit += extra
     upgrade = plans.studio_upgrade_tier(user.get("plan"), is_admin=is_admin(user))
     return {"used": int(used), "limit": limit,
             "remaining": None if limit is None else max(0, limit - int(used)),
             "upgrade_tier": upgrade, "upgrade_label": plans.TIERS[upgrade].label if upgrade else "",
             "upgrade_url": UPGRADE_URL}
+
+
+def grant_style_clones(admin: dict, email: str, extra: int, reset: bool, note: str = "") -> dict:
+    """Support: give one account extra style clones and/or restart its count from now. Admins only."""
+    if not is_admin(admin):
+        raise HTTPException(403, "Only ChannelRecipe's team can change style clone allowances.")
+    target = db.get_user_by_email((email or "").strip().lower())
+    if not target:
+        raise HTTPException(404, "No account with that email.")
+    initialize()
+    now = time.time()
+    with db._conn() as conn:
+        old = conn.execute(db._q("SELECT counted_from FROM style_clone_grants WHERE user_id=?"),
+                           (target["id"],)).fetchone()
+        since = now if reset else (float(old["counted_from"]) if old else 0.0)
+        conn.execute(db._q("DELETE FROM style_clone_grants WHERE user_id=?"), (target["id"],))
+        conn.execute(db._q("""INSERT INTO style_clone_grants (user_id, extra, counted_from, note, updated_at)
+            VALUES (?,?,?,?,?)"""), (target["id"], max(0, min(100, int(extra))), since,
+                                     f"{note.strip()[:200]} (by {admin.get('email')})".strip(), now))
+    return {"email": target["email"], **style_clone_usage(target)}
+
+
+class StyleCloneGrant(BaseModel):
+    email: str
+    extra: int = 0
+    reset: bool = False
+    note: str = ""
 
 
 def _require_style_clone_allowance(user: dict) -> None:
@@ -223,6 +255,11 @@ def initialize():
                 conn.execute("ALTER TABLE frontier_native_stages ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 1")
             elif "attempts" not in {r["name"] for r in conn.execute("PRAGMA table_info(frontier_native_stages)").fetchall()}:
                 conn.execute("ALTER TABLE frontier_native_stages ADD COLUMN attempts INTEGER NOT NULL DEFAULT 1")
+            # an admin's extra style clones for one account (support), and the time its count restarts from
+            conn.execute("""CREATE TABLE IF NOT EXISTS style_clone_grants (
+                user_id INTEGER PRIMARY KEY, extra INTEGER NOT NULL DEFAULT 0,
+                counted_from DOUBLE PRECISION NOT NULL DEFAULT 0, note TEXT NOT NULL DEFAULT '',
+                updated_at DOUBLE PRECISION NOT NULL)""")
         _schema_ready.add(schema_key)
 
 
@@ -1116,6 +1153,11 @@ def make_router(session_user, *, prefix="/api/frontier"):
     options = {"route_class": _BrandedWorkflowRoute} if prefix == "/api/studio" else {}
     router = APIRouter(prefix=prefix, tags=["ChannelRecipe Studio"], **options)
     access = studio_access(session_user)
+
+    @router.post("/admin/style-clones")
+    def post_style_clone_grant(req: StyleCloneGrant, user=Depends(access)):
+        return JSONResponse(grant_style_clones(user, req.email, req.extra, req.reset, req.note),
+                            headers={"Cache-Control": "private, no-store"})
 
     @router.get("/status")
     def get_status(user=Depends(access)):

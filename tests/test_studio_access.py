@@ -201,3 +201,21 @@ def test_the_last_two_releases_may_start_a_new_video_and_older_ones_are_asked_to
         studio.native_begin(member, studio.NativeBegin(begin_id="older_release_0002", title="A video", style="history",
                                                        setup={**env.proof, "local_version": older}))
     assert err.value.status_code == 409 and "Download the release" in err.value.detail
+
+
+def test_an_admin_can_restart_and_raise_one_accounts_style_clones(env, monkeypatch):
+    customer = user(5, "daily", "drawer@example.com")
+    for n in range(3):
+        studio.native_begin(customer, study(env, n))
+    assert studio.style_clone_usage(customer)["remaining"] == 0
+    monkeypatch.setattr(studio.db, "get_user_by_email", lambda email: customer if email == customer["email"] else None)
+    with pytest.raises(studio.HTTPException) as no:
+        studio.grant_style_clones(user(6, "studio_max"), customer["email"], 5, True)
+    assert no.value.status_code == 403
+    out = studio.grant_style_clones(user(1, "daily", "owner@example.com"), "Drawer@Example.com ", 5, True, "support call")
+    assert out["used"] == 0 and out["limit"] == 8 and out["remaining"] == 8, "count restarted and 3 + 5 clones"
+    studio.native_begin(customer, study(env, 9))
+    assert studio.style_clone_usage(customer)["remaining"] == 7
+    again = studio.grant_style_clones(user(1, "daily", "owner@example.com"), customer["email"], 2, False)
+    assert again["used"] == 1 and again["limit"] == 5, "without reset the restart time is kept"
+    assert studio.style_clone_usage(user(7, "daily"))["limit"] == 3, "nobody else changes"
