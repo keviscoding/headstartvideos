@@ -817,3 +817,40 @@ def test_a_second_start_opens_the_running_studio_instead_of_crashing(monkeypatch
     monkeypatch.setattr(cr_studio, "already_running", lambda: False)
     with pytest.raises(SystemExit):
         cr_studio.main()
+
+
+class _Answer:
+    def __init__(self, status, content=b"", text=""):
+        self.status_code, self.content, self.text = status, content, text
+
+
+def test_own_elevenlabs_narration_is_checked_by_one_spoken_line(runtime, monkeypatch):
+    r = runtime
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "")               # restored after the test (the endpoint saves the key)
+    asked = []
+
+    def post(url, headers=None, json=None, timeout=None):
+        asked.append(json["model_id"])
+        if json["model_id"] == "eleven_v4":
+            return _Answer(422, text='{"detail": {"message": "model eleven_v4 is not available for this account"}}')
+        return _Answer(200, content=b"ID3 spoken line")
+
+    monkeypatch.setattr("requests.post", post)
+    done = r.client.post("/cr-voice/elevenlabs", headers=r.headers, json={"key": "sk_" + "a" * 48})
+    assert done.status_code == 200 and done.json["model"] == "eleven_v3", "an account without v4 falls back to v3"
+    assert asked == ["eleven_v4", "eleven_v3"]
+    assert done.json["sample"].startswith("data:audio/mpeg;base64,")
+    assert r.cfg["narration"] == {"provider": "original"}, "the studio's own voice settings read the scripts"
+    assert "ELEVENLABS_API_KEY" in (r.job / ".env").read_text()
+
+
+def test_restricted_elevenlabs_key_is_refused_and_nothing_changes(runtime, monkeypatch):
+    r = runtime
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "")
+    r.cfg["narration"] = {"provider": "kie", "model": "elevenlabs/text-to-speech-turbo-2-5"}
+    monkeypatch.setattr("requests.post", lambda *a, **k: _Answer(
+        401, text='{"detail": {"message": "The API key you used is missing the permission text_to_speech"}}'))
+    refused = r.client.post("/cr-voice/elevenlabs", headers=r.headers, json={"key": "sk_" + "b" * 48})
+    assert refused.status_code == 400 and "Text to Speech" in refused.json["error"]
+    assert r.cfg["narration"]["provider"] == "kie"
+    assert not (r.job / ".env").exists() or "ELEVENLABS_API_KEY" not in (r.job / ".env").read_text()

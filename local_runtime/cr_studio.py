@@ -1017,6 +1017,58 @@ def create_app():
         return jsonify(saved=True, message="Narration now uses " + info["label"] +
                        ". Voice generation is charged to that account. Your writing and other media choices are unchanged.")
 
+    # The creator's own ElevenLabs account for narration: Eleven v4, ElevenLabs' newest and most expressive model,
+    # through the studio's own voice settings (and its whole voice library in the Create page's voice picker). The
+    # key is checked the only way that proves it can speak - a restricted key can list voices yet not make speech -
+    # by reading one short line, which comes back as the sample the creator hears.
+    ELEVEN_SAMPLE = "Hey! This is your narrator. Let's make something people can't stop watching."
+    ELEVEN_SAMPLE_VOICE = "JBFqnCBsd6RMkjVDRZzb"
+
+    @studio.app.post("/cr-voice/elevenlabs")
+    def use_elevenlabs():
+        import base64
+        import requests
+        data = request.get_json(silent=True) or {}
+        cfg = cr_bridge.load_settings()
+        if not cfg.get("key") or not cfg.get("costs_accepted"):
+            return jsonify(error="Connect CR and review the spending agreement first."), 409
+        supplied = str(data.get("key", "")).strip()
+        key = supplied or os.getenv("ELEVENLABS_API_KEY", "").strip()
+        if not 16 <= len(key) <= 512 or any(c.isspace() for c in key):
+            return jsonify(error="Paste your complete ElevenLabs API key."), 400
+        sample, used = None, ""
+        for model in ("eleven_v4", "eleven_v3"):
+            try:
+                r = requests.post(f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVEN_SAMPLE_VOICE}"
+                                  "?output_format=mp3_44100_64", headers={"xi-api-key": key},
+                                  json={"text": ELEVEN_SAMPLE, "model_id": model}, timeout=(10, 60))
+            except requests.RequestException:
+                return jsonify(error="ElevenLabs didn't answer. Check your connection and try again."), 502
+            detail = r.text[:400].lower() if r.status_code != 200 else ""
+            if r.status_code == 200 and r.content:
+                sample, used = r.content, model
+                break
+            if r.status_code in (400, 403, 404, 422) and "model" in detail and model != "eleven_v3":
+                continue                                       # an account without v4 yet: v3
+            if r.status_code == 401 and "permission" in detail:
+                return jsonify(error="This ElevenLabs key is restricted and can't make speech. In ElevenLabs, create "
+                                     "a key with Text to Speech access and paste that one."), 400
+            if r.status_code == 401:
+                return jsonify(error="ElevenLabs didn't accept this key. Copy it again from ElevenLabs → API keys."), 400
+            if r.status_code in (402, 429) or "quota" in detail or "credits" in detail:
+                return jsonify(error="Your ElevenLabs plan has no characters left. Top it up, then try again."), 400
+            return jsonify(error=f"ElevenLabs couldn't read the check line (HTTP {r.status_code})."), 400
+        if sample is None:
+            return jsonify(error="ElevenLabs couldn't read the check line."), 400
+        if supplied:
+            write_provider("ELEVENLABS_API_KEY", key)
+        cfg["narration"] = {"provider": "original"}
+        cr_bridge.save_settings(cfg)
+        label = "Eleven v4" if used == "eleven_v4" else "Eleven v3"
+        return jsonify(saved=True, model=used, sample="data:audio/mpeg;base64," + base64.b64encode(sample).decode(),
+                       message=f"ElevenLabs connected: narration now uses {label} from your ElevenLabs account. "
+                               "Pick any voice from its library in Create → Choose voice.")
+
     # Narration voice picker: list the voices of the narration model in use,
     # play a short preview (made once with the creator's own account, then
     # kept), and choose one without touching keys or accounts.
