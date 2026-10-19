@@ -1,5 +1,17 @@
 [
   {
+    "build": 64,
+    "date": "2026-10-19",
+    "title": "Ranking Shorts: viral clips counted down to #1, found for you",
+    "items": [
+      "New: Ranking Shorts, a Shorts recipe for the format with hundreds of millions of views. Type what to rank (Funniest Dog Moments, Best Shark Moments) and Studio searches YouTube for viral clips, watches every one for its best moment, picks and trims them the way the top ranking channels cut, and counts them down to #1.",
+      "New: the Clip Board. Prefer to choose? Open it from the Ranking Shorts options: every moment Studio found appears as a card with its score, plays when you hover over it, and you tick the ones you want and drag them into order. Drop in your own clips too.",
+      "New: a punchy narrator. Every clip gets a short setup or punchline written for it, read by ElevenLabs v3 when you have an ElevenLabs key (Gemini otherwise).",
+      "New: sound design learned from 260 viral ranking Shorts: vine booms where the joke lands, a punch-in on faces, and meme sound effects from a library of 362 named sounds.",
+      "Good to know: finding clips uses your plan's monthly clip watches (about 30 a Short). Creator includes 300 a month, Pro 900 and Max 2,400. If you run out, you can switch on \"Use credits\" and each further watch costs 0.02 credits."
+    ]
+  },
+  {
     "build": 63,
     "date": "2026-10-18",
     "title": "Shorts: make vertical Shorts from a topic, in 3D or photo style",

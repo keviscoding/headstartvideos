@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 from scripts import studio_branding
-VERSION = "5.3-admin.63"
+VERSION = "5.3-admin.64"
 PRIVATE_WORKFLOWS = {
     "cr-style-delivery-prompt.txt": ROOT / "data/frontier/reference2d-compiler.txt",
     "cr-style-study-brief.txt": ROOT / "data/frontier/reference2d-study.txt",
@@ -110,12 +110,13 @@ def private_sound_resources(root: Path):
 
 
 SHORTS_SUFFIXES = {".py", ".js", ".mjs", ".json", ".md", ".html", ".css", ".txt", ".ttf", ".otf", ".woff2", ".woff", ".onnx",
-                   ".glsl", ".wasm", ".png", ".jpg", ".svg", ".bin", ".hdr", ".ktx2", ".basis", ".wav"}
+                   ".glsl", ".wasm", ".png", ".jpg", ".svg", ".bin", ".hdr", ".ktx2", ".basis", ".wav", ".mp3"}
 
 
 def private_shorts_resources(root: Path):
-    """The Shorts pipelines (the 3D and photo Shorts recipes): their code and the Shorts 3D engine's code, shipped under
-    shorts/. Assets (people, animals, mocap, places, the host, sound libraries) come in the first-use asset pack."""
+    """The Shorts pipelines (the 3D, photo and Ranking Shorts recipes): their code and the Shorts 3D engine's code,
+    shipped under shorts/. Assets (people, animals, mocap, places, the host, sound libraries) come in the first-use
+    asset pack; the Ranking Shorts' meme sound library (about 17 MB of MP3s) ships with its pipeline."""
     folder = root / "data/frontier/shorts"
     if not folder.exists():
         return []
@@ -128,7 +129,7 @@ def private_shorts_resources(root: Path):
             continue
         if path.is_symlink() or path.suffix.lower() not in SHORTS_SUFFIXES or path.stat().st_size > 8 * 1024 * 1024:
             raise ValueError("Shorts files must be small ordinary code or data files: " + rel)
-        if rel.split("/")[0] not in {"zack", "hoodie", "sound", "rbx"}:
+        if rel.split("/")[0] not in {"zack", "hoodie", "sound", "rbx", "ranking"}:
             raise ValueError("Unexpected Shorts folder: " + rel)
         resources.append((path, "shorts/" + rel))
     return resources

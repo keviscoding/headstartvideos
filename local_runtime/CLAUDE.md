@@ -135,6 +135,22 @@ visual language separate from copying the reference script or footage. Each plan
 includes a number of style clones; if the studio reports the limit is reached,
 point the customer to https://channelrecipe.com/app#billing.
 
+## Ranking Shorts and the Clip Board
+
+Ranking Shorts is a Shorts recipe: real viral clips counted down to #1. In Create, pick Ranking Shorts, type what to
+rank (for example "Funniest Dog Moments"), choose how many clips, and set the switches (narrator lines, vine booms,
+meme sound effects, punch-ins, captions). Studio searches YouTube, has every candidate watched for its best moment,
+picks and trims the clips, writes the narrator's lines, designs the sound and edits the Short.
+
+To choose the clips yourself, open http://127.0.0.1:7860/cr-ranking (the Clip Board): find clips for a topic, hover a
+card to watch its moment, tick 3 to 10 clips, drag them into order (the last one is #1), drop in your own clips if you
+like, and press Make this Short.
+
+Finding clips uses the plan's monthly clip watches (about 30 a Short). If they run out, the Short stops and says so;
+the customer can turn on "Use credits if my clip watches run out" (0.02 credits a watch) or wait for next month. Never
+turn that on for them. The narrator speaks with ElevenLabs v3 when an ElevenLabs key is set in setup (otherwise Gemini
+through Kie). Footage belongs to the people who filmed it; the channel owner decides how they use it.
+
 ## Fast mode (ManimGX)
 
 The production page offers an optional Fast mode toggle for new projects with 3D
