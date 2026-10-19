@@ -267,5 +267,7 @@ def test_an_admin_can_ask_their_own_research_question(env, monkeypatch):
     plain = env.client.post("/api/studio/style/watch-upload", json={**body, "question": ""},
                             headers={"x-test-user": "owner"}).json()
     assert plain["job"] != started["job"], "a different question is a different watch, not the cached one"
+    row = sw._row(started["job"])
+    assert isinstance(row["prompt_version"], int) and row["prompt_version"] > 10_000, "the column is an integer in Postgres"
     customer = env.client.post("/api/studio/style/watch-upload", json=body, headers={"x-test-user": "max"})
     assert customer.status_code == 403
