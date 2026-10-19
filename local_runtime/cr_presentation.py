@@ -57,13 +57,14 @@ RECIPES = {
     "cr-shorts-3d": ("3D Explainer Shorts", "Shorts", "Weird facts and true stories acted out by realistic 3D people and animals in real sets, with fast cinematic cutting and a score made for each story.", ("9:16 Shorts", "3D people & animals", "Own score per story")),
     "cr-shorts-3d-dark": ("3D Dark Stories", "Shorts", "True crime and horror with a real twist: cold opens, clues planted on screen, night sets, recovered footage and a score that dies before the reveal.", ("9:16 Shorts", "Twist endings", "Night-vision & CCTV")),
     "cr-shorts-photo": ("Photo Comedy Shorts", "Shorts", "Funny photo-collage stories with a recurring host, googly-eyed characters, comic overlays and timing.", ("9:16 Shorts", "Recurring host", "Comic timing")),
+    "cr-shorts-ranking": ("Ranking Shorts", "Shorts", "Real viral clips counted down to #1: Studio finds them, picks each one's best moment, and adds the narrator's one-liners, vine booms and meme sound effects. Or pick the clips yourself on the Clip Board.", ("9:16 Shorts", "Finds viral clips", "Vine booms & meme SFX")),
     "cr-deadly-places": ("Deadly Places Documentary", "Documentary", "Calm investigations of the world's deadliest places and disasters, over aged archival-style pictures, engravings and old maps.", ("Archival-style pictures", "Old maps", "Calm narration")),
 }
 # Ready-made recipes use the nearest owned artwork until they have their own.
 ART_ALIAS = {"cr-stick-stories": "atlas", "cr-handdrawn-finance": "hustle", "cr-paper-finance": "almanac",
              "cr-business-doc": "documentary", "cr-3d-reconstruction": "3d", "cr-true-crime": "dossier",
              "cr-expert-presenter": "workshop", "cr-quiet-essays": "jung", "cr-manga-recaps": "folio",
-             "cr-deadly-places": "history", "cr-shorts-3d": "3d", "cr-shorts-3d-dark": "dossier", "cr-shorts-photo": "stories"}
+             "cr-deadly-places": "history", "cr-shorts-3d": "3d", "cr-shorts-3d-dark": "dossier", "cr-shorts-photo": "stories", "cr-shorts-ranking": "pulse"}
 
 READY_MADE_IDS = frozenset(ART_ALIAS)
 BUILTIN_IDS = frozenset(RECIPES) - {"automatic", "gaming", "grooming"} - READY_MADE_IDS

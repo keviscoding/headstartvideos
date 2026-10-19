@@ -148,10 +148,11 @@
   function tags(id, values) {const n = $(id); n.replaceChildren(...(values || []).slice(0, 4).map(v => el('span', 'crw-tag', v)));}
   // Shorts recipes (family "Shorts"): a vertical Short of 15-60 seconds; the long-form options don't apply
   const isShort = (r) => String(r?.family || '') === 'Shorts';
+  const isRanking = (r) => !!r?.ranking;   // Ranking Shorts: real clips counted down; their length comes from the clips
   const SHORT_ONLY_HIDDEN = ['crw-fast-section','crw-palette-section','crw-avatar-section','crw-character-section','crw-offer-section','crw-cta-section','crw-pictures-section'];
   function shortsMode() {
-    const s = isShort(state.selected);
-    hide('crw-short-duration', !s); hide('crw-long-duration', s);
+    const s = isShort(state.selected), rk = isRanking(state.selected);
+    hide('crw-short-duration', !s || rk); hide('crw-long-duration', s); hide('crw-ranking-ranks', !rk); hide('crw-ranking-section', !rk);
     text('crw-canvas-label', s ? '9:16 vertical' : '16:9 landscape'); text('crw-summary-canvas', s ? '9:16 vertical' : '16:9 landscape');
     if (s) for (const id of SHORT_ONLY_HIDDEN) hide(id, true);
   }
@@ -261,7 +262,7 @@
   function summary() {
     const r = state.selected; text('crw-summary-title', $('crw-title').value.trim() || 'Your next video');
     text('crw-summary-recipe', r?.label || 'Choose a recipe');
-    text('crw-summary-duration', isShort(r) ? `${number('crw-seconds',25,15,60)} seconds` : state.narration === 'own' ? 'Length of your recording' : `${number('crw-minutes',10,1,60)} minutes`);
+    text('crw-summary-duration', isRanking(r) ? `${number('crw-ranks',5,3,10)} ranked clips` : isShort(r) ? `${number('crw-seconds',25,15,60)} seconds` : state.narration === 'own' ? 'Length of your recording' : `${number('crw-minutes',10,1,60)} minutes`);
     text('crw-summary-visuals', strict(r) ? 'Reference animation throughout' : Object.entries(featureValues()).filter(([k,v]) => v && k !== 'sound').map(([k]) => (featureCopy[k] || [k])[0]).join(', ') || 'Recipe defaults');
     text('crw-summary-voice', state.narration === 'own' ? 'Your uploaded narration' : state.setup?.narration?.voice || 'Connected narration account');
     text('crw-summary-renderer', checked('crw-fast-toggle') && featureValues().threed && !strict() ? 'Fast mode · local render' : 'Local render');
@@ -510,6 +511,10 @@
       offer:$('crw-offer').value,offer_plugs:number('crw-offer-plugs',0,0,2),panels:state.selected.panels?state.panels:'',cta:ctaValue(),
       pictures_per_min:state.selected.pictures&&Number($('crw-pictures').value)!==state.selected.pictures.default?Number($('crw-pictures').value):null,
       threed_look:threedLook(features)};
+    if(short&&isRanking(state.selected)){const handle=$('crw-rank-handle').value.trim().replace(/[^@\w.]/g,'').slice(0,40);
+      const ranking={ranks:number('crw-ranks',5,3,10),commentary:checked('crw-rank-commentary'),booms:checked('crw-rank-booms'),sfx:$('crw-rank-sfx').value,
+        punch_ins:checked('crw-rank-punch'),captions:checked('crw-rank-captions'),use_credits:checked('crw-rank-credits'),...(handle?{handle}:{})};
+      p.extra=`[[ranking=${JSON.stringify(ranking)}]] `+(p.extra||'');}
     if(short){p.minutes=1;p.extra=`[[short_seconds=${number('crw-seconds',25,15,60)}]] `+(p.extra||'');p.avatar_id='';p.cta=null;p.offer='';p.character='';p.character_image='';p.threed_look='';}
     if(p.panels && title.includes('\n')) throw new Error('Use one title for a set of panels.');
     if(state.selected.auto_style)p.auto_style=checked('crw-adaptive'); return p;
@@ -561,6 +566,8 @@
   for(const b of all('[data-narration-mode]'))b.addEventListener('click',()=>setNarration(b.dataset.narrationMode));
   for(const b of all('[data-minutes]'))b.addEventListener('click',()=>{$('crw-minutes').value=b.dataset.minutes;chooseGroup('[data-minutes]','minutes',b.dataset.minutes);summary();save();});
   for(const b of all('[data-seconds]'))b.addEventListener('click',()=>{$('crw-seconds').value=b.dataset.seconds;chooseGroup('[data-seconds]','seconds',b.dataset.seconds);summary();});
+  for(const b of all('[data-ranks]'))b.addEventListener('click',()=>{$('crw-ranks').value=b.dataset.ranks;chooseGroup('[data-ranks]','ranks',b.dataset.ranks);summary();});
+  $('crw-ranks').addEventListener('input',()=>{chooseGroup('[data-ranks]','ranks',$('crw-ranks').value);summary();});
   $('crw-seconds').addEventListener('input',()=>{chooseGroup('[data-seconds]','seconds',$('crw-seconds').value);summary();});
   $('crw-minutes').addEventListener('input',()=>chooseGroup('[data-minutes]','minutes',$('crw-minutes').value));
   for(const b of all('[data-project-filter]'))b.addEventListener('click',()=>{state.projectFilter=b.dataset.projectFilter;chooseGroup('[data-project-filter]','projectFilter',state.projectFilter);renderProjects();});

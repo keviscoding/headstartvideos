@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -100,3 +101,57 @@ def test_a_failed_pack_download_says_why_in_plain_words(tmp_path, monkeypatch):
     import pytest
     with pytest.raises(RuntimeError, match="Shorts pack couldn't be downloaded. The download was interrupted. Check your connection"):
         shorts.ensure_pack(None, None, home=tmp_path)
+
+
+def test_a_ranking_shorts_options_travel_in_their_own_marker_and_only_known_kinds_pass():
+    extra = '[[short_seconds=25]] [[ranking={"ranks": 7, "booms": false, "sfx": "light", "board": "dogs-1a2b3c", ' \
+            '"ranks_typo": 3, "commentary": "yes", "punch_ins": 1}]] Keep it savage.'
+    assert shorts.split_extra(extra) == (25, "Keep it savage.")
+    assert shorts.ranking_options(extra) == {"ranks": 7, "booms": False, "sfx": "light", "board": "dogs-1a2b3c"}
+    assert shorts.ranking_options('[[ranking={"ranks": 40}]]') == {"ranks": 10}
+    assert shorts.ranking_options('[[ranking={not json}]]') == {}
+    assert shorts.ranking_options("no marker") == {}
+
+
+def test_the_ranking_pipeline_needs_no_asset_pack_and_says_so_when_it_is_missing(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(shorts, "ensure_pack", lambda *a, **k: calls.append("pack"))
+    monkeypatch.setenv("CR_SHORTS_ROOT", str(tmp_path / "shorts"))
+
+    class Engine:
+        def job_dir(self, title, style):
+            return str(tmp_path / "job")
+    info = {"format": "short", "shorts": {"pipeline": "ranking"}}
+    try:
+        shorts.run_short(Engine(), "Funniest Dog Moments", "cr-shorts-ranking", info, extra='[[ranking={"ranks": 5}]]')
+    except RuntimeError as error:
+        assert "Ranking Shorts pipeline is not installed" in str(error)
+    else:
+        raise AssertionError("a Studio without the pipeline must say so")
+    assert calls == [], "no 400 MB pack download for a ranking Short"
+
+
+def test_the_ranking_pipeline_gets_its_options_and_progress_reads_in_plain_words(tmp_path, monkeypatch):
+    root = tmp_path / "shorts"
+    (root / "ranking").mkdir(parents=True)
+    (root / "ranking" / "make_ranking.py").write_text(
+        "import json, os, sys, pathlib\n"
+        "work = pathlib.Path(sys.argv[2])\n"
+        "print('12:00:00 watching 5 of 26 watched', flush=True)\n"
+        "(work / 'opts.json').write_text(os.environ['CR_RANKING'])\n"
+        "(work / 'short.mp4').write_bytes(b'mp4')\n"
+        "(work / 'plan.json').write_text(json.dumps({'title': 'Ranking Funniest Dog Moments', 'narration': 'Bro.'}))\n"
+        "(work / 'voice.json').write_text(json.dumps({'words': [[0.1, 0.4, 'Bro.']]}))\n")
+    monkeypatch.setenv("CR_SHORTS_ROOT", str(root))
+    said = []
+
+    class Engine:
+        def job_dir(self, title, style):
+            return str(tmp_path / "job")
+    info = {"format": "short", "label": "Ranking Shorts", "shorts": {"pipeline": "ranking"}}
+    job = shorts.run_short(Engine(), "Funniest Dog Moments", "cr-shorts-ranking", info, sink=said.append,
+                           extra='[[short_seconds=25]] [[ranking={"ranks": 6, "commentary": false}]]')
+    assert json.loads((job / "short" / "opts.json").read_text()) == {"ranks": 6, "commentary": False}
+    assert (job / "video.mp4").read_bytes() == b"mp4" and "Bro." in (job / "subs.srt").read_text()
+    assert any(line.startswith("Watching candidate clips") for line in said)
+    assert any("6 ranks" in line for line in said)

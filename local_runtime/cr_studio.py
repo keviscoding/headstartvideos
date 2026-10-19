@@ -1371,6 +1371,8 @@ def create_app():
     cr_3d_routes.install(studio, activity, setup_status)
     import cr_style_routes
     cr_style_routes.install(studio, activity, setup_status, token=token, home=HOME)
+    import cr_ranking_routes
+    cr_ranking_routes.install(studio, token=token, home=HOME)
     import cr_optional_renderer
     cr_optional_renderer.install(studio, activity, home=HOME, readiness=setup_status)
     import cr_workspace

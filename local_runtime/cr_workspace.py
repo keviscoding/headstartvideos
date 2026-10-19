@@ -136,6 +136,7 @@ def install(studio, activity, *, token, home=None):
             # a Shorts recipe's own length (seconds), the Create page's starting point for it
             shorts = info.get("shorts") if isinstance(info, dict) and info.get("format") == "short" else None
             row["short_seconds"] = int(shorts.get("seconds") or 25) if isinstance(shorts, dict) else None
+            row["ranking"] = bool(isinstance(shorts, dict) and shorts.get("pipeline") == "ranking")
             row.update(preview_available=source is not None,
                 preview_url=("/cr-workspace/preview/recipe/" + quote(row["name"], safe="") + ".jpg?v="
                              + preview_version(source)) if source else None,

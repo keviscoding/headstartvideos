@@ -1,8 +1,9 @@
 """Shorts recipes: a vertical Short (15-60 s) from a topic, made by the Shorts pipelines in the Studio's shorts/ folder.
 
 A style whose JSON says "format": "short" is a Shorts recipe. `install(engine)` wraps the engine's run_custom /
-run_pipeline: those jobs go to the Shorts pipeline named by the style ("shorts": {"pipeline": "zack3d" | "photo2d"}),
-every other job runs exactly as before. The finished Short is left in the job folder the way a long video is
+run_pipeline: those jobs go to the Shorts pipeline named by the style ("shorts": {"pipeline": "zack3d" | "photo2d" |
+"ranking"}), every other job runs exactly as before. The ranking pipeline (Ranking Shorts: real viral clips counted
+down to #1) finds its own clips and needs no asset pack; its options arrive as a [[ranking={...}]] marker. The finished Short is left in the job folder the way a long video is
 (video.mp4, title.txt, script.txt, subs.srt, youtube.txt) and published by the engine itself, so Projects, the player,
 reveal and re-render work unchanged.
 """
@@ -17,7 +18,9 @@ import sys
 from pathlib import Path
 
 HOME = Path(__file__).resolve().parent
-PIPELINES = {"zack3d": ("zack", "make_zack.py"), "photo2d": ("hoodie", "make_short.py")}
+PIPELINES = {"zack3d": ("zack", "make_zack.py"), "photo2d": ("hoodie", "make_short.py"),
+             "ranking": ("ranking", "make_ranking.py")}
+PACKLESS = {"ranking"}                                       # pipelines that need no Shorts asset pack
 SECONDS = (15, 60)
 
 
@@ -34,11 +37,38 @@ def is_short(info) -> bool:
 MARK = re.compile(r"\[\[short_seconds=(\d{1,3})\]\]\s*")
 
 
+RANKING = re.compile(r"\[\[ranking=(\{[^\]]{0,2000}\})\]\]\s*")
+RANKING_KEYS = {"ranks": int, "commentary": bool, "booms": bool, "sfx": str, "captions": bool, "punch_ins": bool,
+                "voice": str, "handle": str, "board": str, "use_credits": bool}
+
+
 def split_extra(extra: str):
     """The Create page sends the Short's length as a marker at the front of the extra instructions (the run route keeps
     only known on/off features): (seconds or None, the instructions without it)."""
     m = MARK.search(extra or "")
-    return (int(m.group(1)) if m else None), MARK.sub("", extra or "").strip()
+    rest = RANKING.sub("", MARK.sub("", extra or ""))
+    return (int(m.group(1)) if m else None), rest.strip()
+
+
+def ranking_options(extra: str) -> dict:
+    """A Ranking Short's options from its [[ranking={...}]] marker: only known keys of the right kind."""
+    m = RANKING.search(extra or "")
+    try:
+        raw = json.loads(m.group(1)) if m else {}
+    except ValueError:
+        raw = {}
+    out = {}
+    for key, kind in RANKING_KEYS.items():
+        value = raw.get(key) if isinstance(raw, dict) else None
+        if value is None or isinstance(value, bool) != (kind is bool):
+            continue
+        if kind is int and isinstance(value, int):
+            out[key] = max(3, min(10, value))
+        elif kind is str and isinstance(value, str):
+            out[key] = value[:300]
+        elif kind is bool:
+            out[key] = value
+    return out
 
 
 def seconds_of(info: dict, features, extra: str = "") -> int:
@@ -53,9 +83,11 @@ def seconds_of(info: dict, features, extra: str = "") -> int:
 
 
 def ready(home: Path = HOME) -> list:
-    """What is missing before a Short can be made on this computer ([] when ready)."""
+    """What is missing before a pack-based Short (3D, photo) can be made on this computer ([] when ready)."""
     root, missing = shorts_root(home), []
-    for folder, script in PIPELINES.values():
+    for name, (folder, script) in PIPELINES.items():
+        if name in PACKLESS:
+            continue
         if not (root / folder / script).is_file():
             missing.append("The Shorts pipelines are not installed in this Studio.")
             break
@@ -113,7 +145,11 @@ def _srt(words: list, path: Path):
 
 
 # the pipelines' step lines, in the words Studio's progress view knows (cr_workspace.js phaseCopy)
-STEPS = [(r"^director", "Writing the script: planning the story, sets and shots"),
+STEPS = [(r"^(finding|picking)", "Finding the clips: searching for the moments that rank"),
+         (r"^watching", "Watching candidate clips for their best moments"),
+         (r"^writing", "Writing the script: the narrator's lines"),
+         (r"^sound design", "Designing the sound: vine booms, punch-ins and sound effects"),
+         (r"^director", "Writing the script: planning the story, sets and shots"),
          (r"^(sets \+ props|props)", "Building the sets and the story's props"),
          (r"^voice", "Creating narration voice"),
          (r"^(scenes|scene pictures|render)", "Building visual scenes"),
@@ -141,16 +177,21 @@ def _say(sink, engine, line: str):
 
 def run_short(engine, title: str, style: str, info: dict, *, features=None, sink=None, extra: str = "") -> Path:
     """Make the Short for `title` with the Shorts recipe `style`; returns the job folder."""
-    ensure_pack(sink, engine)
-    blockers = ready()
-    if blockers:
-        raise RuntimeError(" ".join(blockers))
     pipe = str((info.get("shorts") or {}).get("pipeline") or "zack3d")
     if pipe not in PIPELINES:
         raise RuntimeError(f"Unknown Shorts pipeline {pipe!r}.")
     folder, script = PIPELINES[pipe]
     root = shorts_root()
+    if pipe in PACKLESS:
+        if not (root / folder / script).is_file():
+            raise RuntimeError("The Ranking Shorts pipeline is not installed in this Studio. Update the Studio.")
+    else:
+        ensure_pack(sink, engine)
+        blockers = ready()
+        if blockers:
+            raise RuntimeError(" ".join(blockers))
     seconds = seconds_of(info, features, extra)
+    ranking = ranking_options(extra)
     extra = split_extra(extra)[1]
     job = Path(engine.job_dir(title, style))
     job.mkdir(parents=True, exist_ok=True)
@@ -166,9 +207,12 @@ def run_short(engine, title: str, style: str, info: dict, *, features=None, sink
     tone = str((info.get("shorts") or {}).get("tone") or "").strip().lower()
     if tone:
         env["CR_SHORTS_TONE"] = tone                             # dark: true crime / horror (the director's dark-story rules)
+    if pipe == "ranking":
+        env["CR_RANKING"] = json.dumps(ranking)
     args = [sys.executable, str(root / folder / script), str(HOME), str(work), title]
     args += (["auto", str(seconds)] if pipe == "photo2d" else [str(seconds)])
-    _say(sink, engine, f"Short: {info.get('label') or style}, about {seconds} seconds")
+    _say(sink, engine, f"Short: {info.get('label') or style}, " + (f"{ranking.get('ranks', 5)} ranks" if pipe == "ranking"
+                                                                    else f"about {seconds} seconds"))
     proc = subprocess.Popen(args, cwd=str(root / folder), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True, encoding="utf-8", errors="replace")
     tail = []
