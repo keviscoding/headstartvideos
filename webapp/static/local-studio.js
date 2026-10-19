@@ -25,7 +25,8 @@ window.CRLocalStudio = (() => {
         chat:'<path d="M4 5h16v11H8l-4 4z"/>',
         key:'<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9m-4 4 3 3"/>',
         external:'<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
-        spark:'<path d="M12 3v4m0 10v4M3 12h4m10 0h4M6 6l2.5 2.5m7 7L18 18M6 18l2.5-2.5m7-7L18 6"/>'
+        spark:'<path d="M12 3v4m0 10v4M3 12h4m10 0h4M6 6l2.5 2.5m7 7L18 18M6 18l2.5-2.5m7-7L18 6"/>',
+        play:'<path d="M8 5.5v13a.5.5 0 0 0 .77.42l10-6.5a.5.5 0 0 0 0-.84l-10-6.5A.5.5 0 0 0 8 5.5z" fill="currentColor" stroke="none"/>'
     };
     const icon = key => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+icons[key]+'</svg>';
     const providerInfo = () => data?.providers?.[brainChoice] || {label:'Claude API', brain_models:[]};
@@ -179,7 +180,7 @@ window.CRLocalStudio = (() => {
             (done===steps.length?'You’re all set':'Your first video in 3 steps')+'</strong><span>'+done+' of '+steps.length+'</span></div>'+
             '<div class="ls-meter-bar"><span style="width:'+Math.round(done/steps.length*100)+'%"></span></div><ol>'+
             steps.map(([title,ok,note])=>'<li class="'+(ok?'done':'')+'"><span class="ls-check">'+(ok?icon('check'):'')+'</span><div><b>'+title+'</b><small>'+esc(note)+'</small></div></li>').join('')+
-            '</ol></aside>';
+            '</ol>'+(view==='member'?'<a class="ls-walk-link" href="#ls-setup-video">'+icon('play')+'Stuck? Watch the 3-minute setup</a>':'')+'</aside>';
     }
     const READY = [
         ['stick-stories','Stick Figure Stories','Funny stick-figure stories on painted backgrounds, with a recurring mascot.'],
@@ -206,10 +207,28 @@ window.CRLocalStudio = (() => {
             (older.length?'<details class="ls-mini"><summary>Earlier updates</summary><ul class="ls-older">'+older.slice(0,8).map(r=>'<li><b>Studio '+esc(r.build)+'</b> · '+esc(r.title||'')+'</li>').join('')+'</ul></details>':'')+
             '</div></section>';
     }
+    // The owner's own three-minute walkthrough of the whole setup, with chapters, so anyone stuck on one step can jump
+    // straight to it. It plays from the media CDN, only when asked.
+    const WALKTHROUGH = 'https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/onboarding/studio-setup-walkthrough-v1';
+    const CHAPTERS = [[0,'What you need'],[26,'Download Studio'],[31,'Open it in Claude Code'],[51,'Paste the install prompt'],
+        [62,'The Mac security warning'],[81,'Connect your account'],[90,'Set up Claude'],[100,'Your Kie.ai key'],
+        [119,'Make your first video'],[131,'Choose a voice'],[152,'What came out']];
+    const clock = t => Math.floor(t/60)+':'+String(t%60).padStart(2,'0');
+    function setupVideo() {
+        return '<section class="ls-walk" id="ls-setup-video" aria-label="Watch the whole setup">'+
+            '<div class="ls-walk-head"><span class="ls-walk-chip">'+icon('play')+'3 min · start to finish</span>'+
+            '<h3>Watch the whole setup first</h3>'+
+            '<p>Download, Claude Code, the Mac security prompt, your Kie.ai key and your first video, done for real. Stuck on one step? Jump straight to it.</p></div>'+
+            '<div class="ls-walk-player"><video id="ls-walk-video" preload="none" playsinline poster="'+WALKTHROUGH+'.jpg" '+
+                'aria-label="The whole ChannelRecipe Studio setup, start to finish"><source src="'+WALKTHROUGH+'.mp4" type="video/mp4"></video>'+
+            '<button type="button" class="ls-walk-play" data-ls-walk-seek="0">'+icon('play')+'Watch the setup <small>3:10</small></button></div>'+
+            '<ol class="ls-chapters">'+CHAPTERS.map(([t,label])=>'<li><button type="button" data-ls-walk-seek="'+t+'"><span>'+clock(t)+'</span>'+label+'</button></li>').join('')+'</ol>'+
+            '</section>';
+    }
     function setupSteps() {
         const launcher = platform === 'mac' ? 'Start on Mac.command' : 'Start on Windows.cmd';
         const ready = !!data.download_ready;
-        return '<section class="ls-setup">'+
+        return '<section class="ls-setup">'+setupVideo()+
             '<div class="ls-step"><span class="ls-step-n">1</span><div class="ls-step-body"><h3>Download Studio</h3>'+
                 '<div class="ls-platform" role="group" aria-label="Your computer"><button data-ls-platform="mac" class="'+(platform==='mac'?'selected':'')+'">Mac</button><button data-ls-platform="windows" class="'+(platform==='windows'?'selected':'')+'">Windows</button></div>'+
                 '<a class="btn-primary ls-download-btn '+(ready?'':'ls-disabled')+'" '+(ready?'href="/api/studio/download" data-ls-download':'aria-disabled="true"')+'>'+icon('download')+(ready?'Download ChannelRecipe Studio':'Preparing the download…')+'</a>'+
@@ -445,6 +464,17 @@ window.CRLocalStudio = (() => {
         r.querySelectorAll('[data-ls-platform]').forEach(el=>el.addEventListener('click',()=>{ platform = el.dataset.lsPlatform; render(); }));
         r.querySelector('[data-ls-download]')?.addEventListener('click',()=>track('studio_download_clicked',{platform}));
         r.querySelector('[data-ls-open-studio]')?.addEventListener('click',()=>track('studio_open_clicked',{source:'home'}));
+        r.querySelectorAll('[data-ls-walk-seek]').forEach(el=>el.addEventListener('click',()=>{
+            const video = r.querySelector('#ls-walk-video'); if (!video) return;
+            const at = Number(el.dataset.lsWalkSeek) || 0;
+            const first = !video.controls;
+            video.controls = true;
+            video.closest('.ls-walk-player')?.classList.add('playing');
+            const go = () => { try { video.currentTime = at; } catch (_) {} video.play().catch(()=>{}); };
+            if (video.readyState >= 1) go(); else { video.addEventListener('loadedmetadata', go, {once:true}); video.load(); }
+            if (!el.classList.contains('ls-walk-play')) video.scrollIntoView({block:'nearest', behavior:'smooth'});
+            track('studio_setup_video_played', {at, first});
+        }));
         r.querySelector('[data-ls-copy-prompt]')?.addEventListener('click',()=>{ track('studio_prompt_copied'); copy(CLAUDE_PROMPT,'Copied. Paste it into Claude Code in your Studio folder.'); });
         r.querySelector('[data-ls-copy-key]')?.addEventListener('click',async()=>{
             try {

@@ -74,6 +74,8 @@ def mount(page, status, project, progress, *, progress_status=200, legacy=None):
             return route.fulfill(content_type="text/html", body='<div id="page-local-studio"></div><script>const currentUser={is_admin:true};</script>')
         if path.startswith("/static/recipes/"):              # the returning customer's home shows recipe pictures
             return route.fulfill(status=200, content_type="image/webp", body=b"")
+        if path.startswith("https://channelrecipe-media.sfo3.cdn.digitaloceanspaces.com/public/onboarding/"):
+            return route.fulfill(status=200, content_type="image/jpeg", body=b"")   # the setup walkthrough's poster
         if path.startswith("/api/niche-finder/"):            # its niche ideas: a plan without the Niche Finder
             return route.fulfill(status=402, content_type="application/json", body="{}")
         if path == "/api/studio/status":
