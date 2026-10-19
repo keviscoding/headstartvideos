@@ -13,6 +13,15 @@ send use_credits and each further watch costs WATCH_CREDITS of the account's clo
 through billing; the Studio shows that before it asks. A failed watch is not counted and its credits come back.
 A watch of a public video with the same instructions is shared: the second account gets it free and instantly.
 Every call records its tokens and cost; a global daily spend cap stops runaway bills.
+
+TikTok search: the recipe also looks for clips on TikTok (keyword search through ScrapeCreators, on ChannelRecipe's
+key, SCRAPECREATORS_API_KEY; about $0.002 a search). Without the key it answers 503 and the recipe searches YouTube
+only. Each account may run TIKTOK_DAILY searches a day.
+
+Cloud text removal: a clip whose burned-in text is too big for the Studio's own painter (a caption plate across the
+action) can be cleaned by PiAPI's video remove-subtitle model (temporal, about $0.006 a second, on ChannelRecipe's
+key, PIAPI_API_KEY). The clip is stored privately for an hour, PiAPI fetches it by a signed link, and it is deleted
+when PiAPI is done. Without the key it answers 503 and the Studio paints the text out itself.
 """
 from __future__ import annotations
 
@@ -36,6 +45,15 @@ from webapp import style_watch as sw
 from webapp.frontier_studio import is_admin
 
 STALE_S = 900
+TIKTOK_DAILY = 300                       # TikTok searches an account may run a day (a Short needs about 4-8)
+TIKTOK_URL = "https://api.scrapecreators.com/v1/tiktok/search/keyword"
+PIAPI_URL = "https://api.piapi.ai/api/v1/task"
+CLEAN_DAILY = 80                         # cloud cleans an account may run a day (a Short needs at most 5)
+CLEAN_MAX_BYTES = 60 * 1024 * 1024       # PiAPI's limit
+_cleans: dict[str, dict] = {}
+_clean_used: dict[tuple[int, str], int] = {}
+_tiktok_used: dict[tuple[int, str], int] = {}
+_tiktok_lock = threading.Lock()
 WATCH_CREDITS = 0.02                    # cloud credits for one watch past the monthly allowance
 MODES = {"scout": {"fps": 1, "low_res": True, "max_s": 240},
          "detail": {"fps": 4, "low_res": False, "max_s": 40}}
@@ -220,6 +238,122 @@ def get(user: dict, job_id: str) -> dict:
     return public(row, is_admin(user))
 
 
+class TikTokSearch(BaseModel):
+    query: str = Field(..., min_length=2, max_length=120)
+
+
+def tiktok_search(user: dict, query: str) -> dict:
+    """TikTok videos for a search, most relevant first: [{id, url, title, channel, views, dur}]."""
+    import requests
+    key = os.getenv("SCRAPECREATORS_API_KEY", "").strip()
+    if not key:
+        raise HTTPException(503, "TikTok search is not set up yet.")
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    with _tiktok_lock:
+        used = _tiktok_used.get((int(user["id"]), day), 0)
+        if used >= TIKTOK_DAILY and not is_admin(user):
+            raise HTTPException(429, "Today's TikTok searches are used up. YouTube search still works.")
+        _tiktok_used[(int(user["id"]), day)] = used + 1
+    try:
+        r = requests.get(TIKTOK_URL, params={"query": query.strip(), "trim": "true"}, headers={"x-api-key": key},
+                         timeout=(10, 40))
+        body = r.json() if r.status_code == 200 else {}
+    except (requests.RequestException, ValueError):
+        body = {}
+    if not body.get("search_item_list") and not body.get("success"):
+        raise HTTPException(502, "TikTok search didn't answer. YouTube search still works.")
+    videos, seen = [], set()
+    for item in body.get("search_item_list") or []:
+        a = (item or {}).get("aweme_info") or {}
+        vid = str(a.get("aweme_id") or "")
+        if not vid.isdigit() or vid in seen:
+            continue
+        seen.add(vid)
+        author = str((a.get("author") or {}).get("unique_id") or "")
+        dur = float((a.get("video") or {}).get("duration") or 0)
+        videos.append({"id": vid, "url": a.get("share_url") or f"https://www.tiktok.com/@{author}/video/{vid}",
+                       "title": str(a.get("desc") or "")[:300], "channel": author,
+                       "views": int((a.get("statistics") or {}).get("play_count") or 0),
+                       "dur": round(dur / 1000 if dur > 1000 else dur, 1)})
+    return {"videos": videos}
+
+
+class CleanRequest(BaseModel):
+    data_b64: str
+    region: dict | None = None            # {"x", "y", "width", "height"} in the clip's own pixels; None: found by PiAPI
+
+
+def clean_start(user: dict, data_b64: str, region: dict | None) -> dict:
+    """One clip sent to PiAPI's remove-subtitle model: the job to ask about."""
+    import requests
+    from webapp import storage
+    key = os.getenv("PIAPI_API_KEY", "").strip()
+    if not key:
+        raise HTTPException(503, "Cloud text removal is not set up yet.")
+    if len(data_b64) > CLEAN_MAX_BYTES * 4 // 3 + 8:
+        raise HTTPException(400, "Send a clip under 60 MB.")
+    try:
+        data = base64.b64decode(data_b64, validate=True)
+    except ValueError:
+        raise HTTPException(400, "The clip could not be read.") from None
+    if not data:
+        raise HTTPException(400, "The clip is empty.")
+    if region is not None:
+        try:
+            region = {k: int(region[k]) for k in ("x", "y", "width", "height")}
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(400, "A region needs x, y, width and height.") from None
+        if min(region.values()) < 0 or not region["width"] or not region["height"]:
+            raise HTTPException(400, "That region is empty.")
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    with _tiktok_lock:
+        used = _clean_used.get((int(user["id"]), day), 0)
+        if used >= CLEAN_DAILY and not is_admin(user):
+            raise HTTPException(429, "Today's cloud cleans are used up. Studio cleans clips itself meanwhile.")
+        _clean_used[(int(user["id"]), day)] = used + 1
+    object_key = f"private/ranking-clean/{hashlib.sha256(data).hexdigest()[:24]}.mp4"
+    client = storage._make_client()                           # private: PiAPI reads it by a signed link
+    client.put_object(Bucket=storage._spaces_creds()[2], Key=object_key, Body=data, ContentType="video/mp4")
+    link = storage.presigned_get_url(object_key, 3600)
+    try:
+        r = requests.post(PIAPI_URL, headers={"x-api-key": key}, timeout=(10, 60), json={
+            "model": "Qubico/video-toolkit", "task_type": "remove-subtitle",
+            "input": {"video": link, **({"region": region} if region else {})}})
+        task = ((r.json() or {}).get("data") or {}).get("task_id") if r.status_code == 200 else None
+    except (requests.RequestException, ValueError):
+        task = None
+    if not task:
+        storage.delete_key(object_key)
+        raise HTTPException(502, "Cloud text removal didn't start. Studio cleans the clip itself.")
+    job = secrets.token_hex(10)
+    _cleans[job] = {"user": int(user["id"]), "task": task, "key": object_key, "status": "running",
+                    "video_url": "", "error": "", "t": time.time()}
+    return {"job": job, "status": "running"}
+
+
+def clean_get(user: dict, job: str) -> dict:
+    import requests
+    from webapp import storage
+    j = _cleans.get(job)
+    if not j or j["user"] != int(user["id"]):
+        raise HTTPException(404, "That clean was not found.")
+    if j["status"] == "running":
+        try:
+            r = requests.get(f"{PIAPI_URL}/{j['task']}", headers={"x-api-key": os.getenv("PIAPI_API_KEY", "")},
+                             timeout=(10, 30))
+            data = (r.json() or {}).get("data") or {}
+        except (requests.RequestException, ValueError):
+            data = {}
+        status = str(data.get("status") or "")
+        if status == "completed" and (data.get("output") or {}).get("video_url"):
+            j.update(status="done", video_url=data["output"]["video_url"])
+        elif status in ("failed", "canceled") or time.time() - j["t"] > 1800:
+            j.update(status="failed", error=str((data.get("error") or {}).get("message") or "PiAPI could not clean it"))
+        if j["status"] != "running":
+            storage.delete_key(j["key"])
+    return {"status": j["status"], "video_url": j["video_url"], "error": j["error"]}
+
+
 class WatchRequest(BaseModel):
     video_id: str
     start: float = 0
@@ -273,5 +407,17 @@ def make_router(access) -> APIRouter:
     @router.get("/watch/{job_id}")
     def get_watch(job_id: str, user=Depends(access)):
         return get(user, job_id)
+
+    @router.post("/tiktok-search")
+    def post_tiktok_search(req: TikTokSearch, user=Depends(access)):
+        return tiktok_search(user, req.query)
+
+    @router.post("/clean")
+    def post_clean(req: CleanRequest, user=Depends(access)):
+        return clean_start(user, req.data_b64, req.region)
+
+    @router.get("/clean/{job}")
+    def get_clean(job: str, user=Depends(access)):
+        return clean_get(user, job)
 
     return router

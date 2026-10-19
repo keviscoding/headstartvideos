@@ -188,3 +188,81 @@ def test_plans_give_each_studio_tier_a_monthly_allowance():
     assert plans.ranking_watch_limit("studio_max_trial") == plans.TRIAL_RANKING_WATCHES
     assert plans.ranking_watch_limit("starter") == 0 and plans.ranking_watch_limit("free") == 0
     assert plans.ranking_watch_limit("free", is_admin=True) is None
+
+
+def test_tiktok_search_answers_not_set_up_until_the_key_is_there(env, monkeypatch):
+    monkeypatch.delenv("SCRAPECREATORS_API_KEY", raising=False)
+    r = env.client.post("/api/studio/ranking/tiktok-search", headers={"x-test-user": "creator"}, json={"query": "cat fails"})
+    assert r.status_code == 503 and "not set up" in r.json()["detail"]
+
+
+def test_tiktok_search_lists_videos_once_each_and_has_a_daily_cap(env, monkeypatch):
+    import requests
+    monkeypatch.setenv("SCRAPECREATORS_API_KEY", "sc-test-key")
+    monkeypatch.setattr(sr, "TIKTOK_DAILY", 2)
+    sr._tiktok_used.clear()
+    asked = []
+    item = lambda vid, views: {"aweme_info": {"aweme_id": vid, "desc": "cat vs cucumber 😭", "author": {"unique_id": "catclips"},
+                                              "statistics": {"play_count": views}, "video": {"duration": 14200},
+                                              "share_url": f"https://www.tiktok.com/@catclips/video/{vid}"}}
+
+    def get(url, params=None, headers=None, timeout=None):
+        asked.append((url, params, headers))
+        return SimpleNamespace(status_code=200, json=lambda: {"success": True, "search_item_list": [
+            item("7301", 900000), item("7301", 900000), item("7302", 12000), {"aweme_info": {"aweme_id": "bad"}}]})
+    monkeypatch.setattr(requests, "get", get)
+    r = env.client.post("/api/studio/ranking/tiktok-search", headers={"x-test-user": "creator"}, json={"query": "cat fails"})
+    assert r.status_code == 200
+    videos = r.json()["videos"]
+    assert [v["id"] for v in videos] == ["7301", "7302"]
+    assert videos[0] == {"id": "7301", "url": "https://www.tiktok.com/@catclips/video/7301", "title": "cat vs cucumber 😭",
+                         "channel": "catclips", "views": 900000, "dur": 14.2}
+    assert asked[0][2] == {"x-api-key": "sc-test-key"} and asked[0][1]["query"] == "cat fails"
+    env.client.post("/api/studio/ranking/tiktok-search", headers={"x-test-user": "creator"}, json={"query": "dog fails"})
+    capped = env.client.post("/api/studio/ranking/tiktok-search", headers={"x-test-user": "creator"}, json={"query": "x y"})
+    assert capped.status_code == 429
+
+
+def test_cloud_clean_is_off_without_its_key(env, monkeypatch):
+    monkeypatch.delenv("PIAPI_API_KEY", raising=False)
+    import base64
+    r = env.client.post("/api/studio/ranking/clean", headers={"x-test-user": "creator"},
+                        json={"data_b64": base64.b64encode(b"mp4").decode()})
+    assert r.status_code == 503
+
+
+def test_cloud_clean_stores_privately_signs_a_link_and_deletes_it_when_done(env, monkeypatch):
+    import base64, requests
+    from webapp import storage
+    monkeypatch.setenv("PIAPI_API_KEY", "pi-test-key")
+    stored, deleted, sent = {}, [], []
+
+    class Client:
+        def put_object(self, **kw):
+            stored.update(kw)
+    monkeypatch.setattr(storage, "_make_client", lambda: Client())
+    monkeypatch.setattr(storage, "_spaces_creds", lambda: ("k", "s", "bucket", "sfo3", "e"))
+    monkeypatch.setattr(storage, "presigned_get_url", lambda key, expires=0: f"https://signed/{key}?exp={expires}")
+    monkeypatch.setattr(storage, "delete_key", deleted.append)
+    states = iter([{"status": "processing"}, {"status": "completed", "output": {"video_url": "https://piapi/out.mp4"}}])
+
+    def post(url, headers=None, json=None, timeout=None):
+        sent.append((url, headers, json))
+        return SimpleNamespace(status_code=200, json=lambda: {"code": 200, "data": {"task_id": "task-9", "status": "pending"}})
+    monkeypatch.setattr(requests, "post", post)
+    monkeypatch.setattr(requests, "get", lambda url, headers=None, timeout=None: SimpleNamespace(
+        status_code=200, json=lambda d=next(states): {"code": 200, "data": d}))
+    r = env.client.post("/api/studio/ranking/clean", headers={"x-test-user": "creator"},
+                        json={"data_b64": base64.b64encode(b"clip bytes").decode(),
+                              "region": {"x": 0, "y": 860, "width": 1080, "height": 200}})
+    job = r.json()["job"]
+    assert "ACL" not in stored and stored["Bucket"] == "bucket" and stored["Key"].startswith("private/ranking-clean/")
+    body = sent[0][2]
+    assert sent[0][1] == {"x-api-key": "pi-test-key"} and body["task_type"] == "remove-subtitle"
+    assert body["input"]["video"].startswith("https://signed/private/ranking-clean/") and body["input"]["region"]["y"] == 860
+    first = env.client.get(f"/api/studio/ranking/clean/{job}", headers={"x-test-user": "creator"}).json()
+    assert first["status"] == "running" and not deleted
+    done = env.client.get(f"/api/studio/ranking/clean/{job}", headers={"x-test-user": "creator"}).json()
+    assert done == {"status": "done", "video_url": "https://piapi/out.mp4", "error": ""}
+    assert deleted == [stored["Key"]], "the staged clip is deleted once PiAPI is done with it"
+    assert env.client.get(f"/api/studio/ranking/clean/{job}", headers={"x-test-user": "trial"}).status_code == 404
