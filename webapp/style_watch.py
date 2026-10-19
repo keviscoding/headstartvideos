@@ -34,7 +34,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from webapp import database as db
 from webapp import plans
@@ -253,18 +253,20 @@ def upload_file(data: bytes, mime: str, *, post=None, get=None) -> str:
 
 
 def watch_once(video_id: str, start: int, end: int, *, post=None, file_uri: str = "",
-               mime: str = "video/mp4") -> tuple[dict, int, int]:
-    """One Gemini watch of a YouTube window, or of an uploaded video's (file_uri): (log, input tokens, output tokens)."""
+               mime: str = "video/mp4", question: str = "") -> tuple[dict, int, int]:
+    """One Gemini watch of a YouTube window, or of an uploaded video's (file_uri): (log, input tokens, output tokens).
+    An admin's own `question` (research on a format) replaces the style instructions and looks closer."""
     post = post or requests.post
     source = ({"fileUri": file_uri, "mimeType": mime} if file_uri else
               {"fileUri": f"https://www.youtube.com/watch?v={video_id}", "mimeType": "video/*"})
+    config = {"responseMimeType": "application/json", "thinkingConfig": {"thinkingLevel": "low"}}
+    if not question:
+        config["mediaResolution"] = "MEDIA_RESOLUTION_LOW"
     body = {"contents": [{"parts": [
                 {"fileData": source,
-                 "videoMetadata": {"startOffset": f"{start}s", "endOffset": f"{end}s", "fps": 2}},
-                {"text": prompt(start, end)}]}],
-            "generationConfig": {"responseMimeType": "application/json",
-                                 "mediaResolution": "MEDIA_RESOLUTION_LOW",
-                                 "thinkingConfig": {"thinkingLevel": "low"}}}
+                 "videoMetadata": {"startOffset": f"{start}s", "endOffset": f"{end}s", "fps": 4 if question else 2}},
+                {"text": question or prompt(start, end)}]}],
+            "generationConfig": config}
     for wait in BUSY_WAITS_S + (None,):
         res = post(f"{GEMINI_BASE}/models/{model()}:generateContent", headers={"x-goog-api-key": _key()},
                    json=body, timeout=(15, 600))
@@ -288,13 +290,18 @@ def watch_once(video_id: str, start: int, end: int, *, post=None, file_uri: str 
     return _parse(text), tokens_in, tokens_out
 
 
+_QUESTIONS: dict[str, str] = {}
+
+
 def _run(job_id: str, data: bytes = b"", mime: str = "video/mp4"):
     row = _row(job_id)
+    question = _QUESTIONS.pop(job_id, "")
     if not row or row["status"] != "running":
         return
     try:
         uri = upload_file(data, mime) if data else ""
-        log, tin, tout = watch_once(row["video_id"], row["start_s"], row["end_s"], file_uri=uri, mime=mime)
+        log, tin, tout = watch_once(row["video_id"], row["start_s"], row["end_s"], file_uri=uri, mime=mime,
+                                    question=question)
         values = ("done", json.dumps(log), "", tin, tout, cost(tin, tout))
     except Exception as exc:                                    # noqa: BLE001 - recorded on the job
         print(f"[style-watch] {row['video_id']} {row['start_s']}-{row['end_s']}: {exc}", flush=True)
@@ -350,9 +357,11 @@ def start(user: dict, video_id: str, start_s: float, end_s: float, *, submit=Non
     return public(_row(job), is_admin(user))
 
 
-def start_upload(user: dict, data: bytes, mime: str, start_s: float, end_s: float, *, submit=None) -> dict:
-    """An admin's video (a Studio test render) watched with the reference instructions; the same file and window is
-    watched once. Returns the job, as start() does."""
+def start_upload(user: dict, data: bytes, mime: str, start_s: float, end_s: float, *, submit=None,
+                 question: str = "") -> dict:
+    """An admin's video (a Studio test render, or a reference being researched) watched with the reference
+    instructions or the admin's own question; the same file, window and question is watched once. Returns the job,
+    as start() does."""
     initialize()
     if not is_admin(user):
         raise HTTPException(403, "Watching an uploaded video is for ChannelRecipe's team.")
@@ -364,11 +373,12 @@ def start_upload(user: dict, data: bytes, mime: str, start_s: float, end_s: floa
     if not _key():
         raise HTTPException(503, "Style watching isn't available right now.")
     video_id, now, name = "file:" + hashlib.sha256(data).hexdigest()[:20], time.time(), model()
+    version = ("q:" + hashlib.sha256(question.encode()).hexdigest()[:16]) if question else PROMPT_VERSION
     with db._conn() as conn:
         same = conn.execute(db._q("""SELECT * FROM style_watch_jobs WHERE video_id=? AND start_s=? AND end_s=?
             AND prompt_version=? AND model=? AND (status='done' OR (status='running' AND updated_at>?))
             ORDER BY status='done' DESC, created_at DESC LIMIT 1"""),
-            (video_id, a, b, PROMPT_VERSION, name, now - STALE_S)).fetchone()
+            (video_id, a, b, version, name, now - STALE_S)).fetchone()
         if same:
             return public(dict(same), True)
         if _spent_today(conn) >= _env_float("STYLE_WATCH_DAILY_USD", 15.0):
@@ -376,7 +386,9 @@ def start_upload(user: dict, data: bytes, mime: str, start_s: float, end_s: floa
         job = "sw_" + secrets.token_hex(10)
         conn.execute(db._q("""INSERT INTO style_watch_jobs (id,user_id,video_id,start_s,end_s,prompt_version,model,
             status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'running',?,?)"""),
-            (job, user["id"], video_id, a, b, PROMPT_VERSION, name, now, now))
+            (job, user["id"], video_id, a, b, version, name, now, now))
+    if question:
+        _QUESTIONS[job] = question
     (submit or _pool.submit)(_run, job, data, mime)
     return public(_row(job), True)
 
@@ -407,6 +419,7 @@ class UploadWatchRequest(BaseModel):
     mime: str = "video/mp4"
     start: float = 0
     end: float
+    question: str = Field("", max_length=20000)    # an admin's own research question instead of the style log
 
 
 def make_router(access) -> APIRouter:
@@ -427,7 +440,7 @@ def make_router(access) -> APIRouter:
             data = base64.b64decode(req.data_b64, validate=True)
         except ValueError:
             raise HTTPException(400, "The video copy could not be read.") from None
-        return start_upload(user, data, req.mime, req.start, req.end)
+        return start_upload(user, data, req.mime, req.start, req.end, question=req.question.strip())
 
     @router.get("/watch/{job_id}")
     def get_watch(job_id: str, user=Depends(access)):
