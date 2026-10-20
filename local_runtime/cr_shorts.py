@@ -39,7 +39,9 @@ MARK = re.compile(r"\[\[short_seconds=(\d{1,3})\]\]\s*")
 
 RANKING = re.compile(r"\[\[ranking=(\{[^\]]{0,2000}\})\]\]\s*")
 RANKING_KEYS = {"ranks": int, "commentary": bool, "booms": bool, "sfx": str, "captions": bool, "punch_ins": bool,
-                "clean": bool, "voice": str, "handle": str, "board": str, "use_credits": bool}
+                "clean": bool, "voice": str, "handle": str, "board": str, "choice": str, "use_credits": bool}
+# Names that become paths in make_ranking (output/ranking-boards/<board>/<choice>): nothing else gets through.
+RANKING_NAMES = {"board": re.compile(r"[a-z0-9-]{1,80}"), "choice": re.compile(r"choice-[A-Za-z0-9-]{1,80}\.json")}
 
 
 def split_extra(extra: str):
@@ -65,6 +67,8 @@ def ranking_options(extra: str) -> dict:
         if kind is int and isinstance(value, int):
             out[key] = max(3, min(10, value))
         elif kind is str and isinstance(value, str):
+            if key in RANKING_NAMES and not RANKING_NAMES[key].fullmatch(value):
+                continue
             out[key] = value[:300]
         elif kind is bool:
             out[key] = value
@@ -144,23 +148,31 @@ def _srt(words: list, path: Path):
     path.write_text("\n".join(out), encoding="utf-8")
 
 
-# the pipelines' step lines, in the words Studio's progress view knows (cr_workspace.js phaseCopy)
+# the pipelines' step lines, in the words Studio's progress view knows (cr_workspace.js phaseCopy). The ranking
+# pipeline's step words are fixed by its contract: finding, picking, watching, looking, writing, sound design, voice,
+# edit, captions, sound, note, done:.
 STEPS = [(r"^(finding|picking)", "Finding the clips: searching for the moments that rank"),
          (r"^watching", "Watching candidate clips for their best moments"),
+         (r"^looking", "Watching the picks closely for their best seconds"),
          (r"^writing", "Writing the script: the narrator's lines"),
          (r"^sound design", "Designing the sound: vine booms, punch-ins and sound effects"),
          (r"^director", "Writing the script: planning the story, sets and shots"),
          (r"^(sets \+ props|props)", "Building the sets and the story's props"),
          (r"^voice", "Creating narration voice"),
          (r"^(scenes|scene pictures|render)", "Building visual scenes"),
+         # text removal is the edit's long part (minutes a clip): its own words, so a frozen-looking render reads right
+         (r"^edit\b.*\b(clean|declutter|paint)", "final render: taking burned-in text off the clips"),
          (r"^edit", "final render: cutting the shots together"),
          (r"^(captions|sound)", "Timing narration and subtitles, music and sound effects")]
+NOTE = re.compile(r"^note\b[:\s]*")
 
 
 def _say(sink, engine, line: str):
     line = line.rstrip()
     if not line:
         return
+    if NOTE.match(line.strip()):                                  # something the creator should know, as it is
+        line = "Note: " + NOTE.sub("", line.strip())
     for pat, words in STEPS:
         if re.match(pat, line.strip()):
             line = f"{words} ({line.strip()})"
@@ -173,6 +185,63 @@ def _say(sink, engine, line: str):
             except Exception:                                    # noqa: BLE001 - progress must never stop the Short
                 continue
     print(line, flush=True)
+
+
+def child_env(**extra) -> dict:
+    """The environment of a Shorts pipeline process (a Short, or a Clip Board worker). UTF-8 everywhere: on Windows a
+    child's files and pipes default to the cp1252 code page, so the ranking pipeline died at import (lines_bank.json
+    holds emoji), then on the first emoji label it printed and on every picked.json, plan.json and edit.json it wrote.
+    PYTHONIOENCODING too, because it outranks UTF-8 mode for the pipes when a creator has it set."""
+    return {**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8:replace",
+            **{k: str(v) for k, v in extra.items()}}
+
+
+def low_priority() -> dict:
+    """Popen arguments for a pipeline process: below normal priority on Windows (it paints, encodes and transcribes on
+    every core for minutes; the Studio and the creator's computer stay responsive). Its ffmpeg and Claude children
+    inherit it. POSIX gets nice() through lower_priority() once the process exists."""
+    if os.name == "nt":
+        return {"creationflags": getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0x4000)}
+    return {}
+
+
+def lower_priority(proc) -> None:
+    """nice 10 for a pipeline process on Mac and Linux, set before it has started any work of its own."""
+    if os.name == "nt" or not hasattr(os, "setpriority"):
+        return
+    try:
+        os.setpriority(os.PRIO_PROCESS, proc.pid, max(10, os.getpriority(os.PRIO_PROCESS, proc.pid)))
+    except OSError:                                              # already gone, or not ours to change: run as it is
+        pass
+
+
+TIMESTAMP = re.compile(r"^\d\d:\d\d:\d\d ")
+
+
+def stop_message(work: Path, tail: list) -> str:
+    """Why a Short stopped, in the creator's words. The ranking pipeline writes work/error.json on every stop it
+    understands ({code, message, action, saved}); anything else is the last line Python printed, never a traceback.
+    The whole output tail goes to short/stopped.log for support."""
+    text = "".join(tail)
+    try:
+        (work / "stopped.log").write_text(text, encoding="utf-8")
+    except OSError:
+        pass
+    try:
+        got = json.loads((work / "error.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        got = None
+    if isinstance(got, dict) and str(got.get("message") or "").strip():
+        message, action = str(got["message"]).strip(), str(got.get("action") or "").strip()
+        return message if not action or action in message else f"{message} {action}"
+    lines = [l.strip() for l in tail if l.strip()]
+    last = lines[-1] if lines else ""
+    progress = bool(TIMESTAMP.match(last)) or "done:" in last
+    if last and not progress and "Traceback (most recent call last)" not in text:
+        return last                                              # the pipeline's own message (SystemExit)
+    last = TIMESTAMP.sub("", last)                               # an exception's last line, or the step it was on
+    return ("The Short stopped unexpectedly" + (f" ({last[:300]})" if last else "") + ". Your progress is saved: make "
+            "it again to carry on from where it stopped. The details are in the project's short/stopped.log.")
 
 
 def run_short(engine, title: str, style: str, info: dict, *, features=None, sink=None, extra: str = "") -> Path:
@@ -190,6 +259,9 @@ def run_short(engine, title: str, style: str, info: dict, *, features=None, sink
         blockers = ready()
         if blockers:
             raise RuntimeError(" ".join(blockers))
+    if pipe == "ranking" and re.match(r"\s*(https?://|www\.)", title or "", re.I):
+        raise RuntimeError("Type what to rank, for example Funniest Dog Moments, not a link. To make a Short from "
+                           "clips you have links to, paste them on the Clip Board.")
     seconds = seconds_of(info, features, extra)
     ranking = ranking_options(extra)
     extra = split_extra(extra)[1]
@@ -197,44 +269,57 @@ def run_short(engine, title: str, style: str, info: dict, *, features=None, sink
     job.mkdir(parents=True, exist_ok=True)
     if hasattr(engine, "_unpublish"):
         engine._unpublish(job, title)                            # a re-render of the same title starts from its own work
-    work = job / "short"
-    work.mkdir(exist_ok=True)
-    (job / "title.txt").write_text(title + "\n", encoding="utf-8")
-    (job / "style.txt").write_text(style + "\n", encoding="utf-8")           # the sound check reads the recipe from here
-    env ={**os.environ, "CR_STUDIO": str(HOME), "CR_SHORTS_ROOT": str(root), "PYTHONUNBUFFERED": "1"}
-    if extra:
-        env["CR_SHORTS_EXTRA"] = str(extra)[:4000]
-    tone = str((info.get("shorts") or {}).get("tone") or "").strip().lower()
-    if tone:
-        env["CR_SHORTS_TONE"] = tone                             # dark: true crime / horror (the director's dark-story rules)
-    if pipe == "ranking":
-        env["CR_RANKING"] = json.dumps(ranking)
-    args = [sys.executable, str(root / folder / script), str(HOME), str(work), title]
-    args += (["auto", str(seconds)] if pipe == "photo2d" else [str(seconds)])
-    _say(sink, engine, f"Short: {info.get('label') or style}, " + (f"{ranking.get('ranks', 5)} ranks" if pipe == "ranking"
-                                                                    else f"about {seconds} seconds"))
-    proc = subprocess.Popen(args, cwd=str(root / folder), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True, encoding="utf-8", errors="replace")
-    tail = []
-    for line in proc.stdout:
-        tail = (tail + [line])[-40:]
-        if re.match(r"^\d\d:\d\d:\d\d ", line) or "done:" in line:   # the pipeline's own progress lines
-            _say(sink, engine, line[9:] if re.match(r"^\d\d:\d\d:\d\d ", line) else line)
-    if proc.wait() != 0 or not (work / "short.mp4").is_file():
-        raise RuntimeError("The Short stopped: " + "".join(tail)[-900:].strip())
-    shutil.copyfile(work / "short.mp4", job / "video.mp4")
-    plan = json.loads((work / "plan.json").read_text(encoding="utf-8")) if (work / "plan.json").is_file() else {}
-    narration = plan.get("narration") or " ".join(l.get("text", "") for l in plan.get("lines") or [])
-    (job / "script.txt").write_text(narration.strip() + "\n", encoding="utf-8")
-    voice = json.loads((work / "voice.json").read_text(encoding="utf-8")) if (work / "voice.json").is_file() else {}
-    if voice.get("words"):
-        _srt(voice["words"], job / "subs.srt")
-    name = plan.get("title") or title
-    case = json.loads((work / "research.json").read_text(encoding="utf-8")) if (work / "research.json").is_file() else {}
-    sources = "".join(f"\n{u}" for u in (case.get("sources") or [])[:8]) if case.get("real") else ""
-    (job / "youtube.txt").write_text(f"{name}\n\n{narration.strip()}\n" + (f"\nSources:{sources}\n" if sources else "") + "\n#shorts\n", encoding="utf-8")
-    if hasattr(engine, "publish_named_copy"):
-        engine.publish_named_copy(job, title)
+    published = False
+    try:
+        work = job / "short"
+        work.mkdir(exist_ok=True)
+        (work / "error.json").unlink(missing_ok=True)            # an earlier attempt's stop must not explain this one
+        (job / "title.txt").write_text(title + "\n", encoding="utf-8")
+        (job / "style.txt").write_text(style + "\n", encoding="utf-8")       # the sound check reads the recipe from here
+        env = child_env(CR_STUDIO=HOME, CR_SHORTS_ROOT=root)
+        if extra:
+            env["CR_SHORTS_EXTRA"] = str(extra)[:4000]
+        tone = str((info.get("shorts") or {}).get("tone") or "").strip().lower()
+        if tone:
+            env["CR_SHORTS_TONE"] = tone                         # dark: true crime / horror (the director's dark-story rules)
+        if pipe == "ranking":
+            env["CR_RANKING"] = json.dumps(ranking)
+        args = [sys.executable, str(root / folder / script), str(HOME), str(work), title]
+        args += (["auto", str(seconds)] if pipe == "photo2d" else [str(seconds)])
+        _say(sink, engine, f"Short: {info.get('label') or style}, " + (f"{ranking.get('ranks', 5)} ranks" if pipe == "ranking"
+                                                                        else f"about {seconds} seconds"))
+        proc = subprocess.Popen(args, cwd=str(root / folder), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, encoding="utf-8", errors="replace", **low_priority())
+        lower_priority(proc)
+        tail = []
+        for line in proc.stdout:
+            tail = (tail + [line])[-40:]
+            if TIMESTAMP.match(line) or "done:" in line:          # the pipeline's own progress lines
+                _say(sink, engine, line[9:] if TIMESTAMP.match(line) else line)
+        if proc.wait() != 0 or not (work / "short.mp4").is_file():
+            raise RuntimeError(stop_message(work, tail))
+        shutil.copyfile(work / "short.mp4", job / "video.mp4")
+        plan = json.loads((work / "plan.json").read_text(encoding="utf-8")) if (work / "plan.json").is_file() else {}
+        narration = plan.get("narration") or " ".join(l.get("text", "") for l in plan.get("lines") or [])
+        (job / "script.txt").write_text(narration.strip() + "\n", encoding="utf-8")
+        voice = json.loads((work / "voice.json").read_text(encoding="utf-8")) if (work / "voice.json").is_file() else {}
+        if voice.get("words"):
+            _srt(voice["words"], job / "subs.srt")
+        name = plan.get("title") or title
+        case = json.loads((work / "research.json").read_text(encoding="utf-8")) if (work / "research.json").is_file() else {}
+        sources = "".join(f"\n{u}" for u in (case.get("sources") or [])[:8]) if case.get("real") else ""
+        (job / "youtube.txt").write_text(f"{name}\n\n{narration.strip()}\n" + (f"\nSources:{sources}\n" if sources else "") + "\n#shorts\n", encoding="utf-8")
+        if hasattr(engine, "publish_named_copy"):
+            engine.publish_named_copy(job, title)
+        published = True
+    finally:
+        # A re-render that stopped hands the creator's published video back to their output folder (_unpublish moved
+        # it into the job; the engine's own run would put it back in its finally, which this path never reaches).
+        if not published and hasattr(engine, "_republish_if_left"):
+            try:
+                engine._republish_if_left(job, title)
+            except Exception:                                    # noqa: BLE001 - never mask why the Short stopped
+                pass
     _say(sink, engine, "Short finished.")
     return job
 
