@@ -73,10 +73,13 @@ def _page(path: str, mtime_ns: int) -> str:
     return versioned(Path(path).read_text(encoding="utf-8"))
 
 
-def html_page(path: Path, cache: str = PAGE, headers: dict | None = None) -> HTMLResponse:
-    """A page from /static with its links versioned (worked out once per file change)."""
+def html_page(path: Path, cache: str = PAGE, headers: dict | None = None, fill: dict | None = None) -> HTMLResponse:
+    """A page from /static with its links versioned (worked out once per file change). `fill` swaps exact pieces of
+    text (a shared result's title and share picture), already HTML-escaped by the caller."""
     path = Path(path)
     body = _page(str(path), path.stat().st_mtime_ns)
+    for old, new in (fill or {}).items():
+        body = body.replace(old, new)
     return HTMLResponse(body, headers={"Cache-Control": cache, **(headers or {})})
 
 
@@ -95,7 +98,12 @@ class CachedStatic(StaticFiles):
 
 class SecurityHeaders:
     """Plain ASGI middleware (it never buffers a stream) adding the standard protective headers to every response;
-    pages may only be framed by this site."""
+    pages may only be framed by this site.
+
+    Sign in with Google (accounts.google.com/gsi/client) works with these as they are: the CSP only limits who may
+    frame *our* pages (Google's button is Google's iframe inside ours), the referrer policy still sends the origin
+    Google checks, and there is no Cross-Origin-Opener-Policy to cut off its pop-up. A script-src, frame-src or
+    COOP added here later must allow https://accounts.google.com (tests/test_google_signin.py checks)."""
 
     BASE = [(b"x-content-type-options", b"nosniff"),
             (b"referrer-policy", b"strict-origin-when-cross-origin"),

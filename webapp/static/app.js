@@ -418,6 +418,7 @@ function navigateTo(page) {
         loadSettingsFromServer();
         const adminKeys = document.getElementById('settings-admin-keys');
         if (adminKeys) adminKeys.classList.toggle('hidden', !(currentUser && currentUser.is_admin));
+        if (currentUser && currentUser.is_admin) loadLeadsStats();
     }
     if (page === 'analytics') {
         try { loadAnalyticsDashboard(); } catch (_) {}
@@ -6593,6 +6594,7 @@ function showAuthModal() {
     document.getElementById('auth-email-error')?.classList.add('hidden');
     document.getElementById('auth-code-error')?.classList.add('hidden');
     if (!already) _track('auth_modal_shown', { page: state.page || '', plan: 'anon' });
+    _mountGoogleSignIn();
     setTimeout(() => email?.focus(), 100);
 }
 
@@ -6656,27 +6658,7 @@ async function authVerifyCode() {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Invalid code');
-        currentUser = data.user;
-        updateAuthUI();
-        loadNiches();
-        try {
-            if (window.CRTelemetry) window.CRTelemetry.identifyUser(currentUser);
-            else window.posthog?.identify(String(currentUser.id), { email: currentUser.email, plan: currentUser.plan });
-        } catch (_) {}
-        _track(data.user && data.is_new ? 'signup_completed_client' : 'login_client', {
-            new_user: !!data.is_new,
-            plan: currentUser.plan || 'free',
-        });
-        hideAuthModal();
-        cookingManager.restore();
-        if (pendingAuthAction) {
-            const action = pendingAuthAction;
-            pendingAuthAction = null;
-            setTimeout(action, 150);
-        } else if (data.is_new) {
-            // First account creation only — never on every login.
-            setTimeout(() => maybeShowAccessChooser({ fromSignup: true }), 200);
-        }
+        _afterSignIn(data, 'email');
     } catch (e) {
         document.getElementById('auth-code-error').textContent = e.message;
         document.getElementById('auth-code-error').classList.remove('hidden');
@@ -6684,6 +6666,48 @@ async function authVerifyCode() {
         btn.disabled = false;
         btn.textContent = 'Verify';
     }
+}
+
+// Signed in (email code or Google): the same next steps either way.
+function _afterSignIn(data, method) {
+    currentUser = data.user;
+    updateAuthUI();
+    loadNiches();
+    try {
+        if (window.CRTelemetry) window.CRTelemetry.identifyUser(currentUser);
+        else window.posthog?.identify(String(currentUser.id), { email: currentUser.email, plan: currentUser.plan });
+    } catch (_) {}
+    _track(data.user && data.is_new ? 'signup_completed_client' : 'login_client', {
+        new_user: !!data.is_new,
+        plan: currentUser.plan || 'free',
+        method,
+    });
+    hideAuthModal();
+    cookingManager.restore();
+    if (pendingAuthAction) {
+        const action = pendingAuthAction;
+        pendingAuthAction = null;
+        setTimeout(action, 150);
+    } else if (data.is_new) {
+        // First account creation only — never on every login.
+        setTimeout(() => maybeShowAccessChooser({ fromSignup: true }), 200);
+    }
+}
+
+// Sign in with Google in the sign-in box, when the server has a Google client id (hidden otherwise).
+function _mountGoogleSignIn() {
+    const box = document.getElementById('auth-google');
+    if (!box || !window.CRGoogle || box.dataset.mounted) return;
+    box.dataset.mounted = '1';
+    window.CRGoogle.mount(box, {
+        width: 316,
+        onShown: () => document.getElementById('auth-google-or')?.classList.remove('hidden'),
+        onSignedIn: (data) => _afterSignIn(data, 'google'),
+        onError: (message) => {
+            const el = document.getElementById('auth-email-error');
+            if (el) { el.textContent = message; el.classList.remove('hidden'); }
+        },
+    }).then((shown) => { if (!shown) delete box.dataset.mounted; });
 }
 
 function _accessChooserStorageKey() {
@@ -8903,4 +8927,38 @@ async function sendReleaseEmail() {
         status.textContent = res.ok ? `Sending Studio ${build} notes in the background.` : (body.detail || 'Could not start sending.');
     } catch (_) { status.textContent = 'Could not reach the server. Try again.'; }
     finally { button.disabled = false; button.dataset.confirm = ''; button.textContent = 'Send release email'; }
+}
+
+
+// Admin: the free tools' leads list (Settings → Leads email). Shows the list's size; the first press asks to confirm.
+async function loadLeadsStats() {
+    const el = document.getElementById('leads-stats');
+    if (!el) return;
+    try {
+        const res = await fetch('/api/admin/leads');
+        if (!res.ok) return;
+        const s = await res.json();
+        el.textContent = `${s.subscribed} subscribed (${s.by_source.quiz} from the quiz, ${s.by_source.harness} from the harness), ` +
+            `${s.unsubscribed} unsubscribed. ${s.breakouts_now} new breakout channels in the last two weeks.`;
+    } catch (_) {}
+}
+
+async function sendLeadsEmail() {
+    const button = document.getElementById('leads-email-send');
+    const status = document.getElementById('leads-email-status');
+    const issue = (document.getElementById('leads-issue').value || new Date().toISOString().slice(0, 10)).trim();
+    if (!/^[A-Za-z0-9_-]{1,20}$/.test(issue)) { status.textContent = 'Name the issue like 2026-10-20.'; return; }
+    if (button.dataset.confirm !== issue) {
+        button.dataset.confirm = issue;
+        button.textContent = `Yes, email issue ${issue} to leads`;
+        status.textContent = 'Press again to send. Each lead gets an issue once.';
+        return;
+    }
+    button.disabled = true;
+    try {
+        const res = await fetch('/api/admin/leads/breakout-email', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({issue})});
+        const body = await res.json().catch(() => ({}));
+        status.textContent = res.ok ? `Sending issue ${body.issue} in the background.` : (body.detail || 'Could not start sending.');
+    } catch (_) { status.textContent = 'Could not reach the server. Try again.'; }
+    finally { button.disabled = false; button.dataset.confirm = ''; button.textContent = 'Send leads email'; }
 }

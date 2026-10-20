@@ -62,6 +62,8 @@
         <table>
             <tr><th>Category</th><th>Examples</th><th>Why</th></tr>
             <tr><td>Account data</td><td>Email address, plan, credit balance</td><td>To create and manage your account and subscription</td></tr>
+            <tr><td>Sign in with Google</td><td>Your Google account's email address and whether Google has verified it (scopes: openid, email, profile)</td><td>To sign you in to the same account as your email address. We don't post anything or see your Google password</td></tr>
+            <tr><td>Free-tool email list (only if you tick the box)</td><td>Email address, where you signed up (the money-niche quiz or a free guide), your chosen niche, and when you agreed</td><td>To send what you asked for: the guide's PDF and lists of new breakout channels. Every email has a one-click unsubscribe</td></tr>
             <tr><td>Usage &amp; product analytics</td><td>Pages viewed, buttons clicked, steps completed, device/browser type</td><td>To understand how the product is used and improve it</td></tr>
             <tr><td>Generation metadata</td><td>Which recipe was chosen, script length, render duration, success/failure, estimated cost</td><td>To operate the Service, diagnose failures, and manage costs</td></tr>
             <tr><td>Billing data</td><td>Handled by Stripe (we store only a customer ID and subscription status)</td><td>To process payments</td></tr>
@@ -74,7 +76,7 @@
         <ul>
             <li><strong>Contract</strong> — to provide the Service you signed up for (account, generations, billing).</li>
             <li><strong>Legitimate interests</strong> — to secure the Service, prevent abuse, fix bugs, and improve the product.</li>
-            <li><strong>Consent</strong> — for non-essential analytics cookies, which you can accept or decline.</li>
+            <li><strong>Consent</strong> — for non-essential analytics cookies, which you can accept or decline, and for the free-tool email list, which you can leave at any time.</li>
         </ul>
 
         <h2>3. Cookies &amp; analytics</h2>
@@ -86,7 +88,8 @@
             <li><strong>Stripe</strong> — payment processing</li>
             <li><strong>PostHog</strong> — product analytics</li>
             <li><strong>Sentry</strong> — error monitoring</li>
-            <li><strong>Resend</strong> — transactional email (verification codes, notifications)</li>
+            <li><strong>Resend</strong> — email delivery (verification codes, notifications, and the free-tool email list if you joined it)</li>
+            <li><strong>Google</strong> — if you choose Sign in with Google</li>
             <li><strong>Google, Anthropic, and image/voice model providers</strong> — to generate the media you request</li>
             <li><strong>DigitalOcean</strong> — hosting</li>
         </ul>
