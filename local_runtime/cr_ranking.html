@@ -44,6 +44,9 @@ body>a[href="/cr-setup"]:first-child{display:none!important}
 .cb-working-top{display:flex;justify-content:space-between;align-items:flex-end;gap:16px}
 .cb-working h2{font-size:20px;margin:0;font-weight:700;letter-spacing:-.02em}
 .cb-working-top .mono{font-size:13px;color:var(--crw-muted);white-space:nowrap}
+.cb-working-side{display:flex;align-items:center;gap:12px}
+.cb-stop{width:auto;margin:0;min-height:32px;padding:6px 12px;font-size:12.5px;cursor:pointer}
+.cb-stop:hover:not(:disabled){background:var(--crw-surface-raised)}
 .cb-work-line{margin:4px 0 0;font-size:13px;color:var(--crw-muted)}
 .cb-bar{height:4px;border-radius:999px;background:var(--crw-surface-raised);margin:16px 0 14px;overflow:hidden}
 .cb-bar i{display:block;height:100%;width:0;background:var(--crw-violet);border-radius:inherit;transition:width .36s var(--cb-ease)}
@@ -183,7 +186,7 @@ body>a[href="/cr-setup"]:first-child{display:none!important}
   <div class="crw-workspace">
     <header class="crw-topbar">
       <div class="crw-breadcrumb"><span>Ranking Shorts</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m8 5 5 5-5 5"/></svg><strong>Clip Board</strong></div>
-      <span class="cb-allow" title="Each video Studio watches for its best moment uses one clip watch"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/></svg><span id="allowance">Checking clip watches…</span></span>
+      <span class="cb-allow" title="Each video Studio watches for its best moment uses one clip watch. A Short uses about 30 to 60."><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/></svg><span id="allowance">Checking clip watches…</span></span>
     </header>
     <main id="main" class="crw-main" tabindex="-1">
       <div class="crw-page-heading">
@@ -204,13 +207,13 @@ body>a[href="/cr-setup"]:first-child{display:none!important}
           <button type="button" class="cb-idea">Funniest dog moments</button><button type="button" class="cb-idea">Best shark moments</button><button type="button" class="cb-idea">Craziest trampoline fails</button>
           <button type="button" class="cb-idea">Most satisfying wasp nest removals</button><button type="button" class="cb-idea">Weirdest sea creatures</button><button type="button" class="cb-idea">Funniest mascot moments</button>
         </div>
-        <div class="cb-find-foot"><span>Studio searches YouTube and watches about <span class="mono">26</span> videos for their best moment.</span>
+        <div class="cb-find-foot"><span>Studio searches YouTube and watches <span class="mono">26</span> to <span class="mono">72</span> videos for their best moment, one clip watch each.</span>
           <span class="cb-or">Have clips already? <button type="button" class="cb-link" id="open-links-2">Paste links</button> or <label class="cb-link" for="files">add your own</label></span></div>
       </section>
       <div class="cb-recent" id="recent-wrap" hidden><p class="crw-small-label">RECENT BOARDS</p><ul id="recent"></ul></div>
 
       <section class="cb-panel cb-working" id="working" hidden aria-live="polite">
-        <div class="cb-working-top"><div><p class="crw-small-label">FINDING CLIPS</p><h2 id="work-stage">Planning the searches</h2><p class="cb-work-line" id="work-line"></p></div><span class="mono" id="work-count"></span></div>
+        <div class="cb-working-top"><div><p class="crw-small-label">FINDING CLIPS</p><h2 id="work-stage">Planning the searches</h2><p class="cb-work-line" id="work-line"></p></div><div class="cb-working-side"><span class="mono" id="work-count"></span><button type="button" class="crw-secondary-button cb-stop" id="stop" title="Stop this search. Watches already made stay saved and are never charged twice.">Stop</button></div></div>
         <div class="cb-bar"><i id="work-bar"></i></div>
         <ol class="cb-stages" id="stages"><li data-stage="plan">Plan the searches</li><li data-stage="search">Search YouTube</li><li data-stage="watch">Watch every video</li><li data-stage="done">Moments ready</li></ol>
       </section>
@@ -356,12 +359,16 @@ $('open-links').addEventListener('click',openLinks);$('open-links-2').addEventLi
 $('links-cancel').addEventListener('click',()=>{$('links').hidden=true;if(!moments.length&&!board){$('board').hidden=true;$('ways').hidden=false;}});
 $('links').addEventListener('submit',async e=>{e.preventDefault();notice('');const urls=$('links-text').value.split(/\s+/).filter(u=>/^https?:\/\//.test(u));if(!urls.length){notice('Paste links that start with http.');return;}
   try{await ensureBoard();await api('/cr-ranking/boards/'+board+'/links',{links:urls,use_credits:$('o-credits').checked});$('links-text').value='';$('links').hidden=true;await refresh();recent();}catch(err){notice(err.message);}});
+$('stop').addEventListener('click',async()=>{if(!board)return;$('stop').disabled=true;
+  try{await api('/cr-ranking/boards/'+board+'/stop',{});clearTimeout(timer);await refresh();recent();}catch(err){notice(err.message);}finally{$('stop').disabled=false;}});
 $('open-opts').addEventListener('click',()=>$('opts').showModal());
 $('opts').addEventListener('click',e=>{if(e.target.closest('[data-close]')||e.target===$('opts'))$('opts').close();});
-$('make').addEventListener('click',async()=>{notice('');$('make').disabled=true;$('make').textContent='Starting…';
-  try{const c=await api('/cr-ranking/boards/'+board+'/choice',{picks:picks.map(p=>p.id)});
+$('make').addEventListener('click',async()=>{notice('');const topic=$('topic').value.trim();
+  if(topic.length<3||/^my clips$/i.test(topic)){notice('Name this countdown first: type what it ranks in the box at the top, for example Funniest Dog Moments. It becomes the Short\'s title.');$('topic').focus();return;}
+  $('make').disabled=true;$('make').textContent='Starting…';
+  try{const c=await api('/cr-ranking/boards/'+board+'/choice',{picks:picks.map(p=>p.id),topic});
     const handle=$('o-handle').value.trim().replace(/[^@\w.]/g,'').slice(0,40);
-    const ranking={ranks:picks.length,board,commentary:$('o-commentary').checked,booms:$('o-booms').checked,sfx:$('o-sfx').value,punch_ins:$('o-punch').checked,clean:$('o-clean').checked,captions:$('o-captions').checked,use_credits:$('o-credits').checked,...(handle?{handle}:{})};
+    const ranking={ranks:picks.length,board,choice:c.choice,commentary:$('o-commentary').checked,booms:$('o-booms').checked,sfx:$('o-sfx').value,punch_ins:$('o-punch').checked,clean:$('o-clean').checked,captions:$('o-captions').checked,use_credits:$('o-credits').checked,...(handle?{handle}:{})};
     await api('/api/run',{title:c.topic,style:'cr-shorts-ranking',minutes:1,steps:['script','voiceover','images','pexels','video'],burn_subs:false,extra:`[[short_seconds=25]] [[ranking=${JSON.stringify(ranking)}]]`});
     location.href='/#projects';}
   catch(err){notice((err.data?.blockers||[]).join(' ')||err.message);slots();}});
