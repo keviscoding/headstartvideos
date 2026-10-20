@@ -271,3 +271,42 @@ def test_the_live_pulse_and_the_catalogue_are_public_and_honest(env):
     assert len(niches) == 15 and all(n["board"] and n["angles"] and n["looks"] for n in niches)
     assert "proofs" not in niches[0] and "earnings" not in str(niches)
     assert env.client.get("/money-niche").text.count("/static/money-niche.css?v=") == 1
+
+
+def test_the_niche_finders_best_niches_sorted_by_what_the_videos_are_about(env):
+    db.upsert_niche_channels([
+        channel("sp1", "Cosmos Daily", "related video", "What is inside a black hole"),
+        channel("sp2", "Deep Universe", "related video", "The biggest planet in the galaxy", views=150_000),
+        channel("tc1", "Case Room", "related video", "The bodycam moment that changed the case"),
+        channel("tc2", "Verdict Files", "related video", "He thought the bodycam was off", views=120_000),
+        channel("odd", "Random Vlogs", "related video", "My day at the mall"),
+        channel("old", "Old Giant", "related video", "black hole facts", subs=2_000_000)])
+    mn._topic_cache.clear()
+    board = {t["id"]: t for t in mn.leaderboard()}
+    assert {c["name"] for c in board["space"]["channels"]} == {"Cosmos Daily", "Deep Universe"}, "not the big channel"
+    assert board["true_crime"]["niche_id"] == "true_crime" and board["space"]["niche_id"] is None
+    assert board["space"]["rpm"] == [2.0, 8.0] and board["space"]["earnings"][0] < board["space"]["earnings"][1]
+    assert "related video" not in str([t["label"] for t in board.values()]), "topics come from the titles"
+    assert all(t["count"] >= 2 for t in board.values())
+    assert env.client.get("/api/money-niche/leaderboard").json()[0]["channels"]
+
+
+def test_the_full_result_has_a_feed_of_viral_niches_and_proven_ones_can_be_picked(env):
+    db.upsert_niche_channels([
+        channel("tc1", "Case Room", "related video", "The bodycam moment that changed the case"),
+        channel("tc2", "Verdict Files", "related video", "He thought the bodycam was off", views=120_000),
+        channel("sp1", "Cosmos Daily", "related video", "What is inside a black hole"),
+        channel("sp2", "Deep Universe", "related video", "The biggest planet in the galaxy", views=150_000)])
+    mn._proof_cache.clear(); mn._topic_cache.clear()
+    taste = env.client.post("/api/money-niche/quiz", json={**BASE, "loves": ["mysteries", "history"]}).json()
+    assert taste["viral_count"] >= 2 and all("thumbnail" in x and "views" in x for x in taste["peek"])
+    assert "earnings" not in str(taste["peek"])
+    sign_in(env)
+    full = env.client.get(f"/api/money-niche/result/{taste['id']}").json()
+    ids = [t["id"] for t in full["topics"]]
+    assert "space" in ids and ids.index("space") < len(ids), "a topic they'd love, from the Niche Finder"
+    crime = next(t for t in full["topics"] if t["niche_id"] == "true_crime") if "true_crime" in ids else None
+    pick = crime["niche_id"] if crime else full["niches"][1]["id"]
+    res = env.client.post("/api/money-niche/choose", json={"result": taste["id"], "niche": pick})
+    assert res.status_code == 200 and env.client.get("/api/auth/me").json()["user"]["money_niche"]["id"] == pick
+    assert env.client.post("/api/money-niche/choose", json={"result": taste["id"], "niche": "space"}).status_code == 404

@@ -560,7 +560,7 @@ def _query_channels(niche: dict, *, strict: bool, limit: int = 12) -> list[dict]
 
 
 def _proof(hit: dict, rpm: tuple[float, float]) -> dict:
-    recent = [v for v in (hit.get("recent_videos") or []) if isinstance(v, dict)][:3]
+    recent = [v for v in (hit.get("recent_videos") or []) if isinstance(v, dict)][:4]
     days = hit.get("days_since_start")
     return {
         "name": hit.get("channel_name") or "",
@@ -572,7 +572,8 @@ def _proof(hit: dict, rpm: tuple[float, float]) -> dict:
         "recent_avg_views": int(hit.get("recent_avg_views") or 0),
         "uploads_per_month": round(float(hit.get("uploads_per_month") or 0), 1),
         "recent": [{"title": v.get("title") or "", "url": v.get("url") or "", "thumbnail": v.get("thumbnail") or "",
-                    "views": int(v.get("view_count") or 0)} for v in recent],
+                    "views": int(v.get("view_count") or 0), "seconds": int(v.get("duration_sec") or 0),
+                    "published_at": v.get("published_at") or ""} for v in recent],
         "earnings": monthly_earnings(hit, rpm),
         "breakout_after": videos_before_breakout(hit),
     }
@@ -726,7 +727,117 @@ def compute(answers: dict, *, proofs=None) -> dict:
             "recipe": recipe(niche, answers), "studio": niche.get("studio") or "",
             "board": board(niche), "looks": looks(niche), "angles": angles(niche),
         })
-    return {"answers": answers, "niches": top, "ypp_note": YPP_NOTE, "estimate_note": ESTIMATE_NOTE}
+    # the Niche Finder's best niches, the ones they'd love first: the "more viral niches" feed
+    return {"answers": answers, "niches": top, "topics": topics_for(answers, {n["id"] for n in top}),
+            "ypp_note": YPP_NOTE, "estimate_note": ESTIMATE_NOTE}
+
+
+# ---- the Niche Finder's best niches: every breakout channel sorted into a topic by what its videos are about -----
+
+# Topics beyond the 15 proven niches. (id, label, LOVES ids it suits, words found in channel names and video titles)
+EXTRA_TOPICS = [
+    ("space", "Space and the universe", ["mysteries", "mind"], ["space", "universe", "black hole", "planet", "galaxy", "nasa", "astronaut", "cosmos"]),
+    ("ocean", "Ocean and the deep sea", ["mysteries", "disasters"], ["ocean", "deep sea", "submarine", "underwater", "sea creature"]),
+    ("animals", "Animals and wildlife", ["stories", "mysteries"], ["animal", "animals", "wildlife", "predator", "shark", "snake", "lion", "insect"]),
+    ("military", "Military and war", ["history", "world"], ["military", "army", "tank", "fighter jet", "navy", "ww2", "wwii", "world war", "soldier", "weapon"]),
+    ("aviation", "Planes and aviation", ["disasters", "mysteries"], ["plane", "airplane", "pilot", "aviation", "airport", "airline", "jet"]),
+    ("cars", "Cars and engines", ["tips", "money"], ["car", "cars", "engine", "supercar", "motor", "racing"]),
+    ("horror", "Horror and scary stories", ["mysteries", "stories"], ["horror", "scary", "creepy", "haunted", "paranormal", "ghost", "nightmare"]),
+    ("reddit", "Reddit stories", ["stories"], ["reddit", "aita", "entitled", "askreddit", "tifu"]),
+    ("mythology", "Mythology and legends", ["history", "stories"], ["myth", "mythology", "greek gods", "norse", "legend", "zeus", "odin"]),
+    ("bible", "Bible stories", ["stories", "mind"], ["bible", "jesus", "biblical", "god's", "prayer", "scripture"]),
+    ("sleep", "Sleep and calm", ["mind", "history"], ["sleep", "sleepy", "relaxing", "bedtime", "asmr", "fall asleep"]),
+    ("celebrity", "Celebrities and drama", ["stories", "money"], ["celebrity", "hollywood", "actor", "actress", "rapper", "famous"]),
+    ("sports", "Sports stories", ["stories"], ["football", "nba", "soccer", "boxing", "ufc", "athlete", "nfl"]),
+    ("gaming", "Gaming lore", ["stories"], ["minecraft", "gta", "lore", "zelda", "pokemon", "roblox", "fortnite", "elden ring"]),
+    ("food", "Food and old recipes", ["tips", "history"], ["food", "recipe", "recipes", "cooking", "kitchen", "chef", "meal"]),
+    ("health", "Health and the body", ["mind", "tips"], ["body", "health", "doctor", "brain", "diet", "disease", "medical"]),
+    ("science", "Science explained", ["mind", "disasters"], ["science", "physics", "chemistry", "experiment", "how does", "scientists"]),
+    ("luxury", "Luxury and the super-rich", ["money"], ["luxury", "rich", "richest", "mansion", "yacht", "expensive"]),
+    ("tech", "Tech and AI", ["money", "mind"], ["chatgpt", "iphone", "tech", "apple", "robot", "artificial intelligence", "gadget"]),
+    ("survival", "Survival stories", ["disasters", "stories"], ["survival", "survive", "survived", "wilderness", "stranded", "lost at sea"]),
+    ("hustle", "Side hustles and making money", ["money", "tips"], ["side hustle", "passive income", "make money", "real estate", "dropshipping", "business idea"]),
+    ("rankings", "Top 10 and rankings", ["stories", "mysteries"], ["top 10", "top 5", "ranking", "ranked", "tier list"]),
+    ("motivation", "Motivation and mindset", ["mind", "tips"], ["motivation", "discipline", "mindset", "success", "self improvement"]),
+    ("conspiracy", "Secrets and conspiracies", ["mysteries", "world"], ["conspiracy", "secret", "secrets", "classified", "cover up", "illuminati"]),
+]
+TOPICS = ([(n["id"], n["name"], n["interests"], n.get("keywords") or [], n["id"]) for n in NICHES if n.get("keywords")]
+          + [(i, label, loves, words, None) for i, label, loves, words in EXTRA_TOPICS])
+_topic_cache: dict = {}
+LEAD_POOL = 3000
+
+
+def _words(text: str) -> str:
+    return " " + re.sub(r"[^a-z0-9']+", " ", (text or "").lower()) + " "
+
+
+_TOPIC_WORDS = [(topic, [_words(w) for w in topic[3]]) for topic in TOPICS]      # " black hole " etc., once
+
+
+def classify(hit: dict) -> tuple | None:
+    """The topic whose words appear most in a channel's name and video titles (proven niches win ties)."""
+    titles = [v.get("title") or "" for v in (hit.get("recent_videos") or []) + (hit.get("popular_videos") or [])
+              if isinstance(v, dict)]
+    text = _words(" ".join([hit.get("channel_name") or ""] + titles))
+    best, best_hits = None, 0
+    for topic, words in _TOPIC_WORDS:
+        hits = sum(text.count(w) for w in words)
+        if hits > best_hits:
+            best, best_hits = topic, hits
+    return best
+
+
+def leaderboard(*, now: float | None = None) -> list[dict]:
+    """Every topic with channels breaking out in it: young, small channels with big views, sorted by what they
+    plausibly earn. The Niche Finder's best niches, from its own catalogue; cached until the next hunt."""
+    bucket = int((now or time.time()) // BUCKET_S)
+    key = (db.IS_PG, getattr(db, "DB_PATH", ""), bucket)
+    if key in _topic_cache:
+        return _topic_cache[key]
+    try:
+        with db._conn() as conn:
+            rows = conn.execute(db._q("""SELECT * FROM niche_channels WHERE active=1
+                AND subscriber_count BETWEEN 1000 AND 500000 AND recent_avg_views>=20000
+                AND video_count BETWEEN 3 AND 200 AND (days_since_start IS NULL OR days_since_start<=730)
+                AND COALESCE(production_format,'')!='presenter'
+                ORDER BY est_recent_monthly_revenue_usd DESC LIMIT ?"""), (LEAD_POOL,)).fetchall()
+    except Exception as e:                                          # noqa: BLE001 - the page works without it
+        print(f"[money-niche] leaderboard failed: {e}")
+        rows = []
+    groups: dict = {}
+    for r in rows:
+        hit = db._niche_row_to_hit(dict(r))
+        topic = classify(hit)
+        if topic:
+            groups.setdefault(topic[0], (topic, []))[1].append(hit)
+    out = []
+    for tid, (topic, hits) in groups.items():
+        if len(hits) < 2:
+            continue
+        niche = BY_ID.get(topic[4] or "")
+        rpm = rpm_range(niche) if niche else (2.0, 8.0)             # the Niche Finder's own range when unknown
+        proofs = [_proof(h, rpm) for h in hits]
+        proofs.sort(key=lambda p: -((p["earnings"] or (0, 0))[1]))
+        earned = sorted(p["earnings"] for p in proofs if p.get("earnings"))
+        ages = [p["months"] for p in proofs if p.get("months")]
+        out.append({"id": tid, "label": topic[1], "niche_id": topic[4], "loves": topic[2], "count": len(hits),
+                    "views": int(statistics.median(p["recent_avg_views"] for p in proofs)),
+                    "youngest_months": min(ages) if ages else None,
+                    "earnings": list(earned[len(earned) // 2]) if earned else None,     # a typical channel's range
+                    "top_earnings": list(earned[-1]) if earned else None,
+                    "rpm": list(rpm), "channels": proofs[:4]})
+    out.sort(key=lambda t: (-(t["earnings"] or [0, 0])[1] * min(t["count"], 5), -t["views"]))
+    if len(_topic_cache) > 20:
+        _topic_cache.clear()
+    _topic_cache[key] = out
+    return out
+
+
+def topics_for(answers: dict, exclude: set) -> list[dict]:
+    """The leaderboard re-ordered for someone: topics they'd love first, then the money."""
+    loves = set(answers.get("loves") or [])
+    ranked = [t for t in leaderboard() if t["id"] not in exclude and t.get("niche_id") not in exclude]
+    return sorted(ranked, key=lambda t: (-len(loves & set(t["loves"])),))[:20]
 
 
 # ---- storage, caching and what a visitor may see -----------------------------------------------------------
@@ -806,10 +917,23 @@ def teaser(rid: str, result: dict) -> dict:
         proof = {"kind": "established", "name": r["name"], "url": r["url"], "views_label": r["views_label"],
                  "thumbnail": r["thumbnail"]}
     if proof and proof["kind"] == "fresh":                   # the views chart: the same public counts, no money
-        proof["recent"] = [{"views": v["views"], "thumbnail": v["thumbnail"]} for v in first["proofs"][0]["recent"]]
+        proof["recent"] = [{k: v[k] for k in ("title", "url", "thumbnail", "views", "seconds", "published_at")}
+                           for v in first["proofs"][0]["recent"]]
+        proof["videos"] = first["proofs"][0]["videos"]
+    # a peek at the other viral niches: names and one video each (public numbers, no money)
+    peek = []
+    for n in result["niches"][1:]:
+        v = next((v for p in n["proofs"] for v in p["recent"] if v.get("thumbnail")), None)
+        if v:
+            peek.append({"name": n["name"], "thumbnail": v["thumbnail"], "views": v["views"]})
+    for t in result.get("topics", []):
+        v = next((v for p in t["channels"] for v in p["recent"] if v.get("thumbnail")), None)
+        if v:
+            peek.append({"name": t["label"], "thumbnail": v["thumbnail"], "views": v["views"]})
     return {"id": rid, "gated": True, "niche": {"id": first["id"], "name": first["name"], "pitch": first["pitch"]},
             "proof": proof, "more": len(result["niches"]) - 1,
-            "board": first.get("board") or board(BY_ID[first["id"]]), "why": first.get("why", [])}
+            "viral_count": len(result["niches"]) - 1 + len(result.get("topics", [])),
+            "peek": peek[:8], "board": first.get("board") or board(BY_ID[first["id"]]), "why": first.get("why", [])}
 
 
 def public(rid: str, result: dict, user: dict | None, *, titles=None) -> dict:
@@ -940,8 +1064,12 @@ def choose(user: dict, rid: str, niche_id: str, angle_id: str = "", look_id: str
     if not result:
         raise LookupError("That result has expired. Take the quiz again.")
     niche = next((n for n in result["niches"] if n["id"] == niche_id), None)
+    if not niche and niche_id in BY_ID and any(t.get("niche_id") == niche_id for t in result.get("topics", [])):
+        niche = {"id": niche_id, "name": BY_ID[niche_id]["name"]}            # a proven niche from the feed
     if not niche:
-        raise LookupError("Pick one of the three niches in your result.")
+        raise LookupError("Pick one of the niches in your result.")
+    niche.setdefault("proofs", [])
+    niche.setdefault("recipe", {"kind": "long", "format": FORMATS[BY_ID[niche_id]["formats"][0]][0]})
     angle = next((a for a in angles(BY_ID[niche_id]) if a["id"] == angle_id), None)
     look = next((x for x in looks(BY_ID[niche_id]) if x["id"] == look_id), None)
     title = re.sub(r"\s+", " ", str(title or "")).strip()[:120] or (angle["title"] if angle else "")
@@ -1038,6 +1166,12 @@ def pulse(*, now: float | None = None) -> dict:
     out = {"week": int(n or 0), "channels": [
         {"name": c["name"], "url": c["url"], "avatar": c["avatar"], "subscribers": c["subscribers"],
          "months": c["months"], "recent_avg_views": c["recent_avg_views"],
-         "thumbnail": c["recent"][0]["thumbnail"] if c["recent"] else ""} for c in channels]}
+         "thumbnail": c["recent"][0]["thumbnail"] if c["recent"] else ""} for c in channels],
+        # a home-feed of their latest videos, newest channels first
+        "videos": [{"title": v["title"], "url": v["url"], "thumbnail": v["thumbnail"], "views": v["views"],
+                    "seconds": v["seconds"], "published_at": v["published_at"], "channel": c["name"],
+                    "channel_url": c["url"], "avatar": c["avatar"], "subscribers": c["subscribers"],
+                    "months": c["months"]}
+                   for c in channels for v in c["recent"][:2] if v.get("thumbnail")][:12]}
     _pulse[key] = (now, out)
     return out

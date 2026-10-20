@@ -4,6 +4,7 @@
 - GET  /api/money-niche/result/{id}      the taste for a visitor; the full result for anyone signed in
 - POST /api/money-niche/choose           a signed-in person's pick (niche, angle, look, first title), stored on their
                                          account so the app opens on their recipe
+- GET  /api/money-niche/leaderboard      the Niche Finder's best niches: every breakout channel sorted into a topic
 - GET  /api/money-niche/pulse            the live strip: small channels the Niche Finder caught breaking out this week
 - POST /api/channel-check                "I already have a channel": their channel as a dashboard + the biggest problem
 - GET  /api/channel-check/{id}           the taste for a visitor; every finding, plan and idea for anyone signed in
@@ -223,6 +224,11 @@ def make_router(current_user, require_user, require_admin, track, disposable=fro
                               "format": money_niche.FORMATS[n["formats"][0]][0], "board": money_niche.board(n),
                               "looks": money_niche.looks(n), "angles": money_niche.angles(n)}
                              for n in money_niche.NICHES], headers={"Cache-Control": "public, max-age=3600"})
+
+    @router.get("/api/money-niche/leaderboard", include_in_schema=False)
+    def get_leaderboard():
+        """The Niche Finder's best niches right now (the first thing on the page): public numbers, estimates."""
+        return JSONResponse(money_niche.leaderboard()[:12], headers={"Cache-Control": "public, max-age=300"})
 
     @router.get("/api/money-niche/pulse", include_in_schema=False)
     def get_pulse():
