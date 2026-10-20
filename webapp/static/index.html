@@ -2055,6 +2055,17 @@
                         <span id="release-email-status" style="font-size: 14px; color: var(--app-ink-2);"></span>
                     </div>
                 </div>
+                <div class="cr-surface" style="padding: 20px 24px; border-radius: var(--radius-card); border: 1px solid var(--app-border); margin-bottom: 28px;">
+                    <h3 style="font-family: var(--font-display); font-size: 18px; font-weight: 700;">Leads email: new breakout channels</h3>
+                    <p style="color: var(--app-ink-2); margin: 6px 0 6px; font-size: 14px;">Admin only: email everyone who asked for niche emails (the money-niche quiz and the 3D harness page) the Niche Finder's new breakout channels in their niche. Leads whose niche had none this time are skipped. Each issue goes once; nothing is ever sent automatically.</p>
+                    <p id="leads-stats" style="color: var(--app-ink-3); margin: 0 0 14px; font-size: 13px;"></p>
+                    <div class="flex items-center gap-3 flex-wrap">
+                        <label class="cr-label" for="leads-issue" style="margin: 0;">Issue</label>
+                        <input id="leads-issue" type="text" placeholder="2026-10-20" class="setting-input" style="width: 140px;">
+                        <button id="leads-email-send" class="btn-secondary" style="font-size: 14px;" onclick="sendLeadsEmail()">Send leads email</button>
+                        <span id="leads-email-status" style="font-size: 14px; color: var(--app-ink-2);"></span>
+                    </div>
+                </div>
                 <h3 style="font-family: var(--font-display); font-size: 18px; font-weight: 700; margin-bottom: 8px;">Platform API keys</h3>
                 <p style="color: var(--app-ink-2); margin-bottom: 16px; font-size: 14px;">Admin only: server-wide keys for ChannelRecipe services.</p>
                 <div class="space-y-4" id="settings-keys">
@@ -2369,8 +2380,10 @@
                 <h2 class="cr-display" style="font-size: 22px;">Sign in to ChannelRecipe</h2>
                 <p style="font-family: var(--font-body); font-size: 14px; color: var(--app-ink-2); margin-top: 6px;">We’ll email you a sign-in code. No password needed.</p>
             </div>
-            <!-- Step 1: Email -->
+            <!-- Step 1: Email (or Google, when GOOGLE_CLIENT_ID is set) -->
             <div id="auth-step-email">
+                <div id="auth-google" hidden style="display: none; justify-content: center; min-height: 44px;"></div>
+                <div id="auth-google-or" class="hidden" style="display: flex; align-items: center; gap: 10px; color: var(--app-ink-3); font-size: 12px; margin: 14px 0;"><span style="flex: 1; height: 1px; background: var(--app-border);"></span>or<span style="flex: 1; height: 1px; background: var(--app-border);"></span></div>
                 <input id="auth-email" type="email" placeholder="you@example.com" class="cr-input" style="width: 100%; text-align: center; font-size: 15px;">
                 <button id="btn-send-code" class="btn-primary" style="width: 100%; margin-top: 12px;" onclick="authSendCode()">Send verification code</button>
                 <div id="auth-email-error" class="hidden" style="color: var(--error); font-size: 13px; text-align: center; margin-top: 8px;"></div>
@@ -2399,6 +2412,7 @@
     </div>
 
     <script src="/static/cr-telemetry.js?v=20260804b"></script>
+    <script src="/static/google-signin.js"></script>
     <script src="/static/ranking.js?v=20261014-v5"></script>
     <link rel="stylesheet" href="/static/local-studio.css?v=20261014-v5">
     <script src="/static/app.js?v=20261014-v5"></script>

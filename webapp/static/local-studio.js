@@ -189,10 +189,23 @@ window.CRLocalStudio = (() => {
         ['handdrawn-money','Hand-Drawn Money','Money explained with whiteboard drawings that draw themselves on.'],
         ['manga-recaps','Manga Recaps','Your own manga panels, read and retold as a gripping recap.']];
     function readyMade() {
+        const picked = chosenNiche()?.studio || '';
         return '<section class="ls-section"><div class="ls-section-row"><div><h2>Ready-made recipes</h2>'+
             '<p class="ls-section-sub">Learned from top channels and tested end to end. In Studio, choose <b>Create → Browse recipes</b>.</p></div></div>'+
-            '<div class="ls-ready">'+READY.map(([id,name,text])=>'<article><img src="/static/recipes/'+id+'.webp" alt="" width="640" height="360" loading="lazy" decoding="async">'+
-            '<div><h3>'+esc(name)+'</h3><p>'+esc(text)+'</p></div></article>').join('')+'</div></section>';
+            '<div class="ls-ready">'+READY.map(([id,name,text])=>'<article'+(id===picked?' class="ls-ready-picked"':'')+'><img src="/static/recipes/'+id+'.webp" alt="" width="640" height="360" loading="lazy" decoding="async">'+
+            '<div>'+(id===picked?'<span class="ls-pill ok">Your niche</span>':'')+'<h3>'+esc(name)+'</h3><p>'+esc(text)+'</p></div></article>').join('')+'</div></section>';
+    }
+    // The niche picked in the money-niche quiz (/money-niche), stored on the account: Studio starts from it.
+    const chosenNiche = () => user()?.money_niche || null;
+    function nicheNote() {
+        const n = chosenNiche(); if (!n) return '';
+        const ready = READY.find(([id]) => id === n.studio);
+        const how = ready
+            ? 'In Studio, choose <b>Create → Browse recipes → '+esc(ready[1])+'</b>'+(view==='member'&&returning()?' (marked below).':'.')
+            : (n.proof ? 'In Studio, open the <b>Style library</b> and clone the look of <a href="'+esc(n.proof_url||'#')+'" target="_blank" rel="noopener">'+esc(n.proof)+'</a>: paste three of its videos.'
+                       : 'In Studio, open the <b>Style library</b> and clone a channel from your result.');
+        return '<aside class="ls-version-note ls-niche-pick"><strong>Your money niche: '+esc(n.name)+'.</strong> '+esc(n.format||'')+
+            (n.kind==='shorts'?' · Shorts':'')+'. '+how+' <a class="ls-text-link" href="/money-niche'+(n.result?'/r/'+encodeURIComponent(n.result):'')+'">See your result</a></aside>';
     }
     function whatsNew() {
         const rows = data.changelog || []; if (!rows.length) return '';
@@ -438,7 +451,7 @@ window.CRLocalStudio = (() => {
         const starterNote = view==='upgrade' && u && typeof planTier==='function' && planTier(u.plan)==='starter'
             ? '<aside class="ls-version-note"><strong>Your Starter plan includes Classic recipes (v1).</strong> Studio is included from Creator. Switch any time and keep your account.</aside>' : '';
         const body = view === 'member' ? memberBody() : versionNote()+starterNote+features()+planCards()+discordCard(true)+faq();
-        root().innerHTML = '<div class="ls-wrap">'+hero()+'<div id="ls-notice" role="status" hidden></div>'+body+
+        root().innerHTML = '<div class="ls-wrap">'+hero()+'<div id="ls-notice" role="status" hidden></div>'+nicheNote()+body+
             '<footer class="ls-footer"><span>ChannelRecipe '+(data?.version?esc(studioName(data.version)):'Studio')+'</span><a href="'+DISCORD_URL+'" target="_blank" rel="noopener" data-community="discord">Help in Discord ↗</a></footer></div>';
         bind();
         if (view === 'member') { history(); if (returning()) freshNiches(); }

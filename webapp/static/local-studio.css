@@ -258,6 +258,8 @@
 .ls-ready article>div{padding:12px 14px 14px}
 .ls-ready h3{font:700 15px/1.25 var(--font-display);margin:0 0 6px}
 .ls-ready p{font-size:13px;line-height:1.5;color:var(--app-ink-2);margin:0}
+.ls-ready article.ls-ready-picked{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
+.ls-ready-picked .ls-pill{display:inline-block;margin-bottom:6px}
 .ls-news{background:var(--app-surface);border:1px solid var(--app-border);border-radius:var(--radius-card);padding:18px 22px}
 .ls-news ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
 .ls-news li{font-size:14px;line-height:1.55;color:var(--app-ink-2)}
