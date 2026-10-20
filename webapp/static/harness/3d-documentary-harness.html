@@ -173,6 +173,22 @@
   .card .ic { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-family: var(--display); font-weight: 800; color: #fff; margin-bottom: 12px; }
   .card b { display: block; font-family: var(--display); font-size: 19px; color: #fff; margin-bottom: 6px; }
   .card span { font-size: 15px; color: #CFC9E3; }
+  /* email capture: optional, the page reads the same without it */
+  .mail { margin-top: 28px; background: var(--paper); border: 1px solid var(--hairline); border-radius: 20px; padding: 22px; display: grid; grid-template-columns: 1fr 1.1fr; gap: 18px; align-items: center; }
+  .mail h3 { font-size: 22px; font-weight: 800; }
+  .mail p { color: var(--ink-2); font-size: 15px; margin-top: 6px; }
+  .mail form { display: grid; gap: 10px; }
+  .mail .line { display: flex; gap: 8px; }
+  .mail input[type=email] { flex: 1; min-width: 0; border: 1.5px solid var(--hairline); border-radius: 999px; padding: 12px 16px; font: inherit; font-size: 16px; background: var(--canvas); color: var(--ink); }
+  .mail input[type=email]:focus { outline: none; border-color: var(--violet); }
+  .mail button { border: 0; cursor: pointer; white-space: nowrap; justify-content: center; }
+  .mail button[disabled] { opacity: .45; cursor: default; }
+  .mail label { display: flex; gap: 8px; align-items: flex-start; font-size: 13.5px; color: var(--ink-2); cursor: pointer; }
+  .mail label input { margin-top: 3px; accent-color: var(--violet); width: 16px; height: 16px; flex: none; }
+  .mail .msg { font-size: 14px; color: var(--ink-2); min-height: 1em; }
+  .mail .msg.bad { color: var(--red); }
+  .quizlink { display: inline-block; margin-top: 14px; font-family: var(--display); font-weight: 700; }
+  @media (max-width: 760px) { .mail { grid-template-columns: 1fr; padding: 18px; } .mail .line { flex-direction: column; } }
   footer { padding: 28px 0 40px; color: var(--ink-3); font-size: 14px; }
   footer .wrap { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
   @media (max-width: 760px) {
@@ -214,6 +230,23 @@
     </div>
   </div>
 </header>
+
+<div class="wrap">
+  <div class="mail" id="get-by-email">
+    <div>
+      <h3>Get the PDF + the next niche lists by email</h3>
+      <p>The harness as a PDF now, then new small channels the Niche Finder catches breaking out. The whole page stays free to read here.</p>
+    </div>
+    <form id="lead-form" novalidate>
+      <div class="line">
+        <input type="email" name="email" autocomplete="email" placeholder="you@example.com" aria-label="Your email" required>
+        <button class="btn primary" type="submit" disabled>Email it to me</button>
+      </div>
+      <label><input type="checkbox" name="consent"> <span>Email me the PDF and the next niche lists. Unsubscribe anytime. See our <a href="/privacy">privacy policy</a>.</span></label>
+      <p class="msg" role="status"></p>
+    </form>
+  </div>
+</div>
 
 <main>
 <section class="block wrap">
@@ -417,6 +450,7 @@
   <h2>Proven niches you can break into today</h2>
   <p class="lede">The goal isn&#x27;t a million-dollar channel. It&#x27;s a steady $3,000 to $5,000 a month from a niche that has worked for years, with over a billion views between its channels. Every style below is one you can clone in ChannelRecipe today.</p>
   <p class="nlegend">Views are for each channel's breakout video. Study the breakouts, not the averages, and run Rule 1 on each channel's top three videos.</p>
+  <a class="quizlink" href="/money-niche">Not sure which is yours? Find your money niche in 60 seconds →</a>
   <div class="niches"><div class="ncard"><div class="nhead"><span class="nn">01</span><b>Footage documentary</b></div><ul><li><a href="https://www.youtube.com/watch?v=I2O7blSSzpI" target="_blank" rel="noopener">LEMMiNO</a><span class="v">42M</span></li><li><a href="https://www.youtube.com/watch?v=nFWDteOZLFM" target="_blank" rel="noopener">SunnyV2</a><span class="v">10M</span></li><li><a href="https://www.youtube.com/watch?v=IqXpzcfdtn4" target="_blank" rel="noopener">Aperture</a><span class="v">3.2M</span></li><li><a href="https://www.youtube.com/watch?v=Y1oahLVhlpU" target="_blank" rel="noopener">Newsthink</a><span class="v">1.5M</span></li></ul></div><div class="ncard"><div class="nhead"><span class="nn">02</span><b>3D reconstruction</b></div><ul><li><a href="https://www.youtube.com/watch?v=wLFY_Zu_O08" target="_blank" rel="noopener">Fern</a><span class="v">15M</span></li><li><a href="https://www.youtube.com/watch?v=jr2qm1C8DHQ" target="_blank" rel="noopener">Neurox</a><span class="tag">rising</span><span class="v">168K</span></li><li><a href="https://www.youtube.com/watch?v=xXH3JZCsAHo" target="_blank" rel="noopener">Plano</a><span class="tag">rising</span><span class="v">112K</span></li><li><a href="https://www.youtube.com/watch?v=SStzg9hh0cI" target="_blank" rel="noopener">3D Crash</a><span class="v">85K</span></li></ul></div><div class="ncard"><div class="nhead"><span class="nn">03</span><b>Finance and charts</b></div><ul><li><a href="https://www.youtube.com/watch?v=5Vxjyz9DZ6k" target="_blank" rel="noopener">The Swedish Investor</a><span class="v">5.3M</span></li><li><a href="https://www.youtube.com/watch?v=F_VUBpALcVE" target="_blank" rel="noopener">Economics Explained</a><span class="v">3.6M</span></li><li><a href="https://www.youtube.com/watch?v=QmWyQ-BCD8E" target="_blank" rel="noopener">How Money Works</a><span class="v">3.0M</span></li><li><a href="https://www.youtube.com/watch?v=d7SVsqg4Jzk" target="_blank" rel="noopener">PolyMatter</a><span class="v">1.5M</span></li></ul></div><div class="ncard"><div class="nhead"><span class="nn">04</span><b>True crime</b><small>all rising channels</small></div><ul><li><a href="https://www.youtube.com/watch?v=NrTaqT_PgmI" target="_blank" rel="noopener">Bodycam Verdicts</a><span class="v">745K</span></li><li><a href="https://www.youtube.com/watch?v=hPkSuPn12PY" target="_blank" rel="noopener">DOCS187s</a><span class="v">445K</span></li><li><a href="https://www.youtube.com/watch?v=5eYQQtuK6Go" target="_blank" rel="noopener">Law Decoded</a><span class="v">220K</span></li><li><a href="https://www.youtube.com/watch?v=hyLxrj3m-68" target="_blank" rel="noopener">Cold Room Interrogations</a><span class="v">78K</span></li></ul></div><div class="ncard"><div class="nhead"><span class="nn">05</span><b>AI avatar presenter</b></div><ul><li><a href="https://www.youtube.com/watch?v=wR1l5k8CKgg" target="_blank" rel="noopener">Frank Miller Cuts</a><span class="v">491K</span></li><li><a href="https://www.youtube.com/watch?v=IxBYiI5j-MI" target="_blank" rel="noopener">Wade Cooper Pours</a><span class="v">190K</span></li><li><a href="https://www.youtube.com/watch?v=GxzDTocI3DM" target="_blank" rel="noopener">Markus Stein</a><span class="tag">German</span><span class="v">141K</span></li><li><a href="https://www.youtube.com/watch?v=3dXr3IC3XUQ" target="_blank" rel="noopener">Aussie Trucker Life</a><span class="v">128K</span></li></ul></div><div class="ncard"><div class="nhead"><span class="nn">06</span><b>Anime stories</b></div><ul><li><a href="https://www.youtube.com/watch?v=t8JEQXEAKSs" target="_blank" rel="noopener">Tobs Manhwa</a><span class="v">865K</span></li><li><a href="https://www.youtube.com/watch?v=x0S1o25N8vU" target="_blank" rel="noopener">AniTiger</a><span class="v">563K</span></li><li><a href="https://www.youtube.com/watch?v=loDprUgqTYs" target="_blank" rel="noopener">Amagi</a><span class="tag">&quot;what if&quot; style</span><span class="v">521K</span></li></ul></div><div class="ncard"><div class="nhead"><span class="nn">07</span><b>Kinetic text and motion essay</b></div><ul><li><a href="https://www.youtube.com/watch?v=sSo2b4y5nnA" target="_blank" rel="noopener">Sisyphus 55</a><span class="v">2.2M</span></li><li><a href="https://www.youtube.com/watch?v=sNg5FXt_DDM" target="_blank" rel="noopener">Academy of Ideas</a><span class="v">786K</span></li></ul></div><div class="ncard"><div class="nhead"><span class="nn">08</span><b>Stick figures on detailed backgrounds</b></div><ul><li><a href="https://www.youtube.com/watch?v=k8YGIx-HWkw" target="_blank" rel="noopener">StickTory</a><span class="v">1.0M</span></li><li><a href="https://www.youtube.com/watch?v=dN_RMA8LVi0" target="_blank" rel="noopener">Stickfigurist</a><span class="v">100K</span></li></ul></div><div class="ncard"><div class="nhead"><span class="nn">09</span><b>2D cartoon history</b></div><ul><li><a href="https://www.youtube.com/watch?v=0zMSMJZc9EA" target="_blank" rel="noopener">Sam O&#x27;Nella Academy</a><span class="v">23M</span></li><li><a href="https://www.youtube.com/watch?v=0fA_SpTVBnE" target="_blank" rel="noopener">Serious History</a><span class="v">2.7M</span></li><li><a href="https://www.youtube.com/watch?v=QdmJsqDceV4" target="_blank" rel="noopener">History Matters</a><span class="v">2.4M</span></li><li><a href="https://www.youtube.com/watch?v=d3tXkJkgbQw" target="_blank" rel="noopener">Simple History</a><span class="v">1.9M</span></li></ul></div><div class="ncard"><div class="nhead"><span class="nn">10</span><b>Geopolitics maps</b></div><ul><li><a href="https://www.youtube.com/watch?v=yIZRffLA294" target="_blank" rel="noopener">Wendover Productions</a><span class="v">3.9M</span></li><li><a href="https://www.youtube.com/watch?v=rgCrnyf5JEI" target="_blank" rel="noopener">Caspian Report</a><span class="v">3.2M</span></li><li><a href="https://www.youtube.com/watch?v=5ij0tDYhIhg" target="_blank" rel="noopener">Kings and Generals</a><span class="v">929K</span></li></ul></div><div class="ncard"><div class="nhead"><span class="nn">11</span><b>Painting and art-led history</b></div><ul><li><a href="https://www.youtube.com/watch?v=d2lJUOv0hLA" target="_blank" rel="noopener">Fall of Civilizations</a><span class="v">40M</span></li><li><a href="https://www.youtube.com/watch?v=2Ih1ffiuwj0" target="_blank" rel="noopener">Epic History</a><span class="v">3.7M</span></li><li><a href="https://www.youtube.com/watch?v=4mMTjYJ3zd4" target="_blank" rel="noopener">Sleepless Historian</a><span class="v">363K</span></li><li><a href="https://www.youtube.com/watch?v=4lz_G9jj9Hg" target="_blank" rel="noopener">History Calling</a><span class="v">334K</span></li></ul></div><div class="ncard"><div class="nhead"><span class="nn">12</span><b>Hidden-billionaire AI mini-movie</b></div><ul><li><a href="https://www.youtube.com/watch?v=NW6vsvGOXoc" target="_blank" rel="noopener">Life Turns</a><span class="v">549K</span></li><li><a href="https://www.youtube.com/watch?v=vqw9sSGtrdU" target="_blank" rel="noopener">Bitter Echoes</a><span class="v">280K</span></li><li><a href="https://www.youtube.com/watch?v=uST5eNc-4YM" target="_blank" rel="noopener">Bitter Whispers</a><span class="v">196K</span></li><li><a href="https://www.youtube.com/watch?v=3BNIxqdWzTc" target="_blank" rel="noopener">Bike Heart Stories</a><span class="v">188K</span></li></ul></div><div class="ncard"><div class="nhead"><span class="nn">13</span><b>Dark psychology and stoic essay</b></div><ul><li><a href="https://www.youtube.com/watch?v=VCzK1x39iQM" target="_blank" rel="noopener">RF Motivational Vibes</a><span class="v">841K</span></li><li><a href="https://www.youtube.com/watch?v=m4Nrs0fSF-4" target="_blank" rel="noopener">Philosophies for Life</a><span class="v">177K</span></li></ul></div><div class="ncard"><div class="nhead"><span class="nn">14</span><b>Rise and fall of companies</b></div><ul><li><a href="https://www.youtube.com/watch?v=Ha2oNXDZuSg" target="_blank" rel="noopener">Modern MBA</a><span class="v">2.2M</span></li><li><a href="https://www.youtube.com/watch?v=3v5rU97gyoc" target="_blank" rel="noopener">Bagholder Association</a><span class="v">1.1M</span></li><li><a href="https://www.youtube.com/watch?v=XSzEWQhLhGM" target="_blank" rel="noopener">Old American Empires</a><span class="v">431K</span></li><li><a href="https://www.youtube.com/watch?v=8JQSOHnR3Zk" target="_blank" rel="noopener">Everything Fender</a><span class="v">296K</span></li></ul></div><div class="ncard"><div class="nhead"><span class="nn">15</span><b>Over-60 AI-host tips</b></div><ul><li><a href="https://www.youtube.com/watch?v=tLrx_EkSnus" target="_blank" rel="noopener">Garrett Pruitt Trucker</a><span class="v">298K</span></li><li><a href="https://www.youtube.com/watch?v=bS4AytvFgEM" target="_blank" rel="noopener">Cruiser Pro</a><span class="v">156K</span></li><li><a href="https://www.youtube.com/watch?v=oj1kx4veIL4" target="_blank" rel="noopener">Susan Parker Travel</a><span class="v">83K</span></li><li><a href="https://www.youtube.com/watch?v=CR9S5VInGz0" target="_blank" rel="noopener">Logan Murry</a><span class="v">78K</span></li></ul></div></div>
   <div class="clonebar"><span>Clone any of these styles in ChannelRecipe today: paste three of a channel's videos and Studio learns its look, pacing, music and voice as your own recipe.</span><a class="btn primary" href="/app">Start cooking</a></div>
 </section>
@@ -464,6 +498,30 @@
       if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, function () {});
     });
   });
+  // "Get the PDF by email": only with the box ticked; the PDF link appears straight away too
+  (function () {
+    var form = document.getElementById('lead-form');
+    if (!form) return;
+    var email = form.querySelector('input[type=email]'), consent = form.querySelector('input[name=consent]');
+    var button = form.querySelector('button'), msg = form.querySelector('.msg');
+    var sync = function () { button.disabled = !consent.checked; };
+    consent.addEventListener('change', sync);
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      msg.className = 'msg';
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.value.trim())) { msg.textContent = 'Enter your email address.'; msg.className = 'msg bad'; return; }
+      if (!consent.checked) { msg.textContent = 'Tick the box so we may email you.'; msg.className = 'msg bad'; return; }
+      button.disabled = true; button.textContent = 'Sending…';
+      fetch('/api/leads', {method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({source: 'harness', consent: true, email: email.value.trim()})})
+        .then(function (res) { return res.json().catch(function () { return {}; }).then(function (body) { return {ok: res.ok, body: body}; }); })
+        .then(function (r) {
+          if (!r.ok) throw new Error(r.body.detail || 'That didn’t work. Try again.');
+          form.innerHTML = '<p class="msg"><b>Done.</b> Check your inbox for the PDF, or <a href="/static/harness/3D-Documentary-Harness.pdf" download>download it now</a>.</p>';
+        })
+        .catch(function (e) { msg.textContent = e.message; msg.className = 'msg bad'; button.textContent = 'Email it to me'; sync(); });
+    });
+  })();
 </script>
 </body>
 </html>

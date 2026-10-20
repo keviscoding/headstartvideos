@@ -33,6 +33,7 @@ load_dotenv(ROOT / ".env", override=True)
 import config
 from webapp import web_assets
 from webapp import lifecycle_email as _lifecycle_email
+from webapp import money_niche as _money_niche
 
 WEBAPP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = WEBAPP_DIR / "static"
@@ -637,12 +638,18 @@ async def auth_verify(req: AuthVerifyRequest, request: Request):
     email = req.email.strip().lower()
     if not verify_code(email, req.code):
         raise HTTPException(400, "Invalid or expired code")
+    return _sign_in(email, request, req.attribution, method="email")
+
+
+def _sign_in(email: str, request: Request, attribution: dict | None, *, method: str) -> JSONResponse:
+    """Sign in (or sign up) the account for a verified email address: one account per address, however they
+    proved it (an emailed code or Google)."""
     user = get_user_by_email(email)
     is_new = user is None
     if not user:
         user = create_user(email)
     attr = {}
-    if isinstance(req.attribution, dict):
+    if isinstance(attribution, dict):
         # Only allow known marketing keys — never free-form PII dumps.
         allow = {
             "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term",
@@ -651,7 +658,7 @@ async def auth_verify(req: AuthVerifyRequest, request: Request):
             "initial_utm_content", "initial_utm_term", "initial_gclid", "initial_fbclid",
             "initial_msclkid", "initial_ttclid", "initial_ref", "initial_landing_path",
         }
-        for k, v in req.attribution.items():
+        for k, v in attribution.items():
             if k in allow and v is not None and str(v).strip():
                 attr[k] = str(v).strip()[:200]
     person = {"email": email, "plan": user["plan"], **attr}
@@ -662,6 +669,7 @@ async def auth_verify(req: AuthVerifyRequest, request: Request):
             pass
     track(user["id"], "signup_completed" if is_new else "login", {
         "new_user": is_new,
+        "method": method,
         **{k: attr[k] for k in ("utm_source", "utm_medium", "utm_campaign", "initial_utm_source", "initial_utm_campaign") if k in attr},
     })
     token = create_session(user["id"])
@@ -669,6 +677,43 @@ async def auth_verify(req: AuthVerifyRequest, request: Request):
     is_secure = request.url.scheme == "https" or os.getenv("FORCE_SECURE_COOKIES") == "1"
     resp.set_cookie("session", token, httponly=True, samesite="lax", secure=is_secure, max_age=30 * 86400, path="/")
     return resp
+
+
+# Sign in with Google (Google Identity Services, scopes openid email profile only). The button shows only when
+# GOOGLE_CLIENT_ID is set. Google signs an ID token for our client id; we check it and sign in the account with
+# that verified email, so someone who first used an email code keeps the same account.
+class AuthGoogleRequest(BaseModel):
+    credential: str = Field(max_length=8192)
+    attribution: dict | None = None
+
+
+def _google_client_id() -> str:
+    return os.getenv("GOOGLE_CLIENT_ID", "").strip()
+
+
+def _google_claims(credential: str, client_id: str) -> dict:
+    """The verified claims of a Google ID token (signature, expiry, issuer and audience checked). Raises ValueError."""
+    from google.auth.transport import requests as google_requests
+    from google.oauth2 import id_token
+    return id_token.verify_oauth2_token(credential, google_requests.Request(), client_id)
+
+
+@app.post("/api/auth/google")
+async def auth_google(req: AuthGoogleRequest, request: Request):
+    client_id = _google_client_id()
+    if not client_id:
+        raise HTTPException(404, "Google sign-in isn't available. Use an email code instead.")
+    try:
+        claims = await asyncio.to_thread(_google_claims, req.credential, client_id)
+    except Exception as e:                                      # noqa: BLE001 - any failure is "not signed in"
+        print(f"[auth] Google token rejected: {e}")
+        raise HTTPException(400, "Google sign-in didn't work. Try again, or use an email code.") from None
+    email = str(claims.get("email") or "").strip().lower()
+    verified = claims.get("email_verified") in (True, "true")
+    if (claims.get("aud") != client_id or claims.get("iss") not in ("accounts.google.com", "https://accounts.google.com")
+            or not email or "@" not in email or not verified):
+        raise HTTPException(400, "That Google account has no verified email. Use an email code instead.")
+    return _sign_in(email, request, req.attribution, method="google")
 
 
 @app.get("/api/auth/me")
@@ -768,6 +813,8 @@ def _safe_user(u: dict) -> dict:
         # A failed renewal forces plan='free' but leaves the Stripe subscription
         # live, so the UI must still offer the portal or they cannot cancel.
         "has_billing_account": bool((u.get("stripe_customer_id") or "").strip()),
+        # the niche picked in the money-niche quiz: Studio opens on it
+        "money_niche": _money_niche.chosen_of(u),
     }
 
 
@@ -2095,6 +2142,44 @@ async def harness_3d_page():
     return web_assets.html_page(STATIC_DIR / "harness" / "3d-documentary-harness.html")
 
 
+# Find My Money Niche: the free quiz (webapp/money_niche.py). A shared result opens on its own page with its own
+# share picture; what anyone sees there is only the taste (niche #1 and one proof channel).
+@app.get("/money-niche", response_class=HTMLResponse)
+async def money_niche_page():
+    return web_assets.html_page(STATIC_DIR / "money-niche.html")
+
+
+@app.get("/money-niche/c/{cid}", response_class=HTMLResponse)
+async def money_niche_channel_check(cid: str):
+    # a channel check's own address (private to whoever has the link; no share card)
+    return web_assets.html_page(STATIC_DIR / "money-niche.html", cache="private, no-store")
+
+
+@app.get("/money-niche/r/{rid}", response_class=HTMLResponse)
+async def money_niche_shared(rid: str):
+    from webapp.money_niche_web import share_text
+    text = await asyncio.to_thread(share_text, rid)
+    if not text:
+        return RedirectResponse("/money-niche", status_code=302)
+    import html as _html
+    e = lambda v: _html.escape(v, quote=True)
+    url = f"https://channelrecipe.com/money-niche/r/{rid}"
+    return web_assets.html_page(STATIC_DIR / "money-niche.html", fill={
+        "https://channelrecipe.com/money-niche/card.png": f"https://channelrecipe.com/money-niche/card/{rid}.png",
+        '<link rel="canonical" href="https://channelrecipe.com/money-niche">': f'<link rel="canonical" href="{url}">',
+        'content="https://channelrecipe.com/money-niche"': f'content="{url}"',
+        "Find My Money Niche: which faceless channel should you make?": e(text["title"]),
+        "Four taps, sixty seconds: the faceless YouTube niche that fits you, with real small channels as proof.":
+            e(text["description"]),
+    })
+
+
+from webapp import money_niche_web as _money_niche_web
+app.include_router(_money_niche_web.make_router(_current_user, require_user, require_admin,
+                                                lambda *a, **k: track(*a, **k), frozenset(_DISPOSABLE_EMAIL_DOMAINS),
+                                                youtube_key=lambda: config.YOUTUBE_API_KEY))
+
+
 # ---------------------------------------------------------------------------
 # Niches
 # ---------------------------------------------------------------------------
@@ -2114,12 +2199,17 @@ _UNSUB_PAGE = ("<!doctype html><meta charset=utf-8><meta name=viewport content='
 
 
 @app.api_route("/email/unsubscribe", methods=["GET", "POST"], include_in_schema=False)
-async def email_unsubscribe(u: int = 0, t: str = ""):
-    ok = await asyncio.to_thread(_lifecycle_email.opt_out, u, t)
+async def email_unsubscribe(u: int = 0, t: str = "", l: int = 0):
+    # u: a customer's setup and release emails; l: a lead from the free tools (the quiz, /3d-harness)
+    if l:
+        ok = await asyncio.to_thread(_lifecycle_email.lead_opt_out, l, t)
+        done = "You won't get niche emails from ChannelRecipe any more."
+    else:
+        ok = await asyncio.to_thread(_lifecycle_email.opt_out, u, t)
+        done = "You won't get setup or release emails from ChannelRecipe any more. Sign-in codes and receipts still arrive."
     page = _UNSUB_PAGE.format(
         heading="You're unsubscribed" if ok else "That link didn't work",
-        text=("You won't get setup or release emails from ChannelRecipe any more. Sign-in codes and receipts still arrive."
-              if ok else "Open the newest email from us and press its unsubscribe link, or write to hello@channelrecipe.com."))
+        text=(done if ok else "Open the newest email from us and press its unsubscribe link, or write to hello@channelrecipe.com."))
     return HTMLResponse(page, status_code=200 if ok else 400, headers={"Cache-Control": "no-store"})
 
 
@@ -2146,7 +2236,7 @@ async def robots_txt():
 
 
 # The public pages search engines should list.
-SITEMAP_PAGES = ("/", "/3d-harness", "/privacy", "/terms")
+SITEMAP_PAGES = ("/", "/money-niche", "/3d-harness", "/privacy", "/terms")
 
 
 @app.get("/sitemap.xml", include_in_schema=False)
@@ -2182,6 +2272,8 @@ async def get_client_config():
         "annual_plans_available": all(t["annual_available"] for t in plans.catalog() if t["available"]),
         "plan_catalog": plans.catalog(),
         "free_trial_days": int(getattr(config, "FREE_TRIAL_DAYS", 0) or 0),
+        # Sign in with Google shows only when the owner has set GOOGLE_CLIENT_ID (a public value, not a secret)
+        "google_client_id": _google_client_id(),
     }
 
 
