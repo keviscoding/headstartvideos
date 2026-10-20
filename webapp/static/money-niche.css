@@ -262,3 +262,27 @@ h3 { font-size: 18px; font-weight: 700; }
 .cycle { display: inline-flex; gap: 8px; margin-top: 14px; }
 .share img { width: 100%; border-radius: 14px; display: block; aspect-ratio: 1200 / 630; background: var(--raised-2); }
 .share-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+/* ---- the leaderboard of niches (Studio "Top content"-style rows that open into a video shelf) ---------------- */
+.lb { background: var(--raised); border-radius: 16px; overflow: hidden; }
+.lb-row { border-top: 1px solid var(--line); }
+.lb-row:first-child { border-top: 0; }
+.lb-head { width: 100%; display: grid; grid-template-columns: 28px 132px 1fr auto; gap: 14px; align-items: center; padding: 12px 16px; background: none; border: 0;
+  text-align: left; cursor: pointer; color: var(--text); }
+.lb-head:hover { background: var(--raised-2); }
+.lb-rank { font-size: 18px; font-weight: 700; color: var(--text-2); text-align: center; }
+.lb-thumbs { display: flex; gap: 2px; border-radius: 8px; overflow: hidden; }
+.lb-thumbs img { flex: 1; min-width: 0; height: 44px; object-fit: cover; background: var(--raised-2); display: block; }
+.lb-name b { display: block; font-size: 16px; font-weight: 500; }
+.lb-name small, .lb-right small { display: block; color: var(--text-2); font-size: 12.5px; margin-top: 2px; }
+.lb-right { text-align: right; }
+.lb-money { font-size: 17px; font-weight: 700; color: #7ee28f; white-space: nowrap; }
+.lb-body { display: none; padding: 4px 16px 16px; }
+.lb-row.open .lb-body { display: block; }
+.lb-row.open .lb-head { background: rgba(62,166,255,.05); }
+@media (max-width: 640px) {
+  .lb-head { grid-template-columns: 22px 1fr; gap: 6px 10px; }
+  .lb-thumbs { grid-column: 2; grid-row: 1; width: 132px; }
+  .lb-rank { grid-row: 1 / span 3; align-self: start; padding-top: 4px; }
+  .lb-name, .lb-right { grid-column: 2; text-align: left; }
+}

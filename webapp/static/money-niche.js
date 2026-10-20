@@ -52,7 +52,7 @@
         studio_pro: {tag: 'Run several channels', items: ['Everything in Creator', 'Videos render on <b>your own computer</b>', 'Clone <b>15</b> channel styles', '60 cloud credits / month for Classic recipes', '3 Classic cloud videos at once']},
         studio_max: {tag: 'For serious operators', items: ['Everything in Pro', 'Videos render on <b>your own computer</b>', '<b>Unlimited</b> style clones', '100 cloud credits / month for Classic recipes', 'Priority help in Discord']},
     };
-    const S = {answers: {loves: []}, q: 0, user: null, cfg: null, pulse: null, niches: [], teaser: null, full: null, id: '', step: 0,
+    const S = {answers: {loves: []}, q: 0, user: null, cfg: null, pulse: null, board: [], niches: [], teaser: null, full: null, id: '', step: 0,
         mine: false, pick: {}, check: null, checkId: '', cycle: 'monthly', door: ''};
 
     // ---- helpers --------------------------------------------------------------------------------------
@@ -190,17 +190,36 @@
         const p = S.pulse || {}, vids = p.videos || [], last = mine()[0];
         const feed = vids.length ? vids.map((v) => videoCard(v, {name: v.channel, avatar: v.avatar}, hotLine(v)))
             : S.niches.map((x) => { const b = (x.board || []).find((i) => i.still); return b ? videoCard({url: b.url, thumbnail: b.still, title: x.name, views: parseViews(b.views)}, {name: b.channel}) : ''; });
+        const lb = S.board.slice(0, 10);
+        const board = lb.length ? '<div class="sec"><div class="sec-h"><div><h2>Best niches on YouTube right now</h2><p class="small" style="margin-top:4px">From ChannelRecipe’s Niche Finder: new, small channels getting big views, sorted by what they plausibly earn.</p></div></div>' +
+            '<div class="lb">' + lb.map((t, i) => topicRow(t, i + 1, i === 0)).join('') + '</div><p class="note">Earnings are estimates from public views and typical ad rates, for channels in the Partner Program. New channels earn nothing from ads until they join it.</p></div>' : '';
         show('<div class="hero narrow" style="margin-left:0"><h1>What channel should you make?</h1>' +
             '<p class="sub" style="margin-top:0">And would it actually make money? Find the niche that fits you, or find out why your channel isn’t growing.</p>' +
             (p.week ? '<span class="pulse"><span><b>' + p.week + '</b> small channels broke out this week</span></span>' : '') + '</div>' +
             '<div class="doors"><button class="door" data-door="zero"><span class="ic">' + icon('play') + '</span><span><b>I’m starting from zero</b><small>Find my money niche · 4 taps</small></span></button>' +
             '<button class="door alt" data-door="channel"><span class="ic">' + icon('search') + '</span><span><b>I already have a channel</b><small>Find out why it’s not growing, and fix it</small></span></button></div>' +
-            '<div class="sec"><div class="chips"><span class="chip on">' + (vids.length ? 'Breaking out this week' : 'Proven niches') + '</span><span class="chip">Small channels</span><span class="chip">Big views</span><span class="chip">Faceless</span></div>' +
+            board + '<div class="sec"><div class="chips"><span class="chip on">' + (vids.length ? 'Breaking out this week' : 'Proven niches') + '</span><span class="chip">Small channels</span><span class="chip">Big views</span><span class="chip">Faceless</span></div>' +
             '<div class="grid wide" style="margin-top:12px">' + feed.join('') + '</div></div>' +
             (last ? '<div class="nav end"><button class="btn tonal" data-last>See my last result</button></div>' : ''), true);
         stage.querySelector('[data-door="zero"]').onclick = () => { S.door = 'zero'; S.q = 0; question(); };
         stage.querySelector('[data-door="channel"]').onclick = () => { S.door = 'channel'; checkStart(); };
         const l = stage.querySelector('[data-last]'); if (l) l.onclick = () => openResult(last, true);
+        bindRows();
+    }
+    // one row of the leaderboard: the niche, its money and age, and (opened) the videos behind it
+    function topicRow(t, rank, open) {
+        const thumbs = t.channels.flatMap((c) => (c.recent || []).slice(0, 1)).filter((v) => v.thumbnail).slice(0, 3);
+        const earn = t.earnings ? '<b class="lb-money">' + moneyK(t.earnings[0]) + '–' + moneyK(t.earnings[1]) + '</b><small>a month, typical channel (est.)</small>' : '<small>views only</small>';
+        return '<div class="lb-row' + (open ? ' open' : '') + '"><button class="lb-head" data-row aria-expanded="' + !!open + '"><span class="lb-rank">' + rank + '</span>' +
+            '<span class="lb-thumbs">' + thumbs.map((v) => '<img src="' + url(v.thumbnail) + '" alt="" loading="lazy" referrerpolicy="no-referrer">').join('') + '</span>' +
+            '<span class="lb-name"><b>' + esc(t.label) + '</b><small>' + t.count + ' new channels · ' + n(t.views) + ' views per video' + (t.youngest_months ? ' · youngest ' + months(t.youngest_months) + ' old' : '') + '</small></span>' +
+            '<span class="lb-right">' + earn + '</span></button>' +
+            '<div class="lb-body"><div class="shelf">' + t.channels.flatMap((c) => (c.recent || []).slice(0, 2).map((v) => videoCard(v, c, hotLine(c) + (c.earnings ? ' · est. ' + moneyK(c.earnings[0]) + '–' + moneyK(c.earnings[1]) + '/mo' : '')))).join('') + '</div></div></div>';
+    }
+    const moneyK = (x) => x >= 1000 ? '$' + (x / 1000).toFixed(x >= 10000 ? 0 : 1).replace(/\.0$/, '') + 'K' : '$' + Math.round(x);
+    function bindRows() {
+        stage.querySelectorAll('[data-row]').forEach((b) => b.onclick = () => { const row = b.parentElement, on = !row.classList.contains('open');
+            row.classList.toggle('open', on); b.setAttribute('aria-expanded', String(on)); });
     }
 
     // ---- door 1: the quiz -----------------------------------------------------------------------------
@@ -348,12 +367,12 @@
                 (top.proofs.length ? '<div class="sec"><div class="sec-h"><h3>Small channels doing it right now</h3></div>' + top.proofs.map(channelPage).join('') + '</div>'
                     : '<p class="note">The Niche Finder hasn’t caught a new small channel here this week. It hunts twice a day.</p>') + refCards(top.references);
         } else if (step === 'viral') {
-            const more = f.niches.slice(1).map((x, i) => shelf(x.name, shelfLine(x) || x.pitch, x.proofs, x.id, '#' + (i + 2) + ' fit'))
-                .concat((f.more || []).map((x) => shelf(x.name, shelfLine(x), x.proofs, x.id, x.why && x.why.length ? 'fits you' : '')))
-                .concat((f.live || []).map((c) => shelf(c.keyword.replace(/\b\w/g, (m) => m.toUpperCase()), c.count + ' small channels · ' + n(Math.round(c.views / c.count)) + ' views per video · live in the Niche Finder', c.channels, '', 'live')))
-                .filter(Boolean);
-            html = '<p class="small">More for you</p><h1 style="margin-top:4px">Viral niches right now</h1><p class="sub">Small channels getting big views this month, best fit for you first. Tap any video to watch it on YouTube.</p>' +
-                (more.join('') || '<p class="note">The Niche Finder hasn’t caught other breakout channels this week. It hunts twice a day.</p>') + '<p class="note">' + esc(f.ypp_note) + '</p>';
+            const fits = f.niches.slice(1).map((x, i) => shelf(x.name, shelfLine(x) || x.pitch, x.proofs, x.id, '#' + (i + 2) + ' fit')).filter(Boolean);
+            const rows = (f.topics || []).map((t, i) => topicRow(t, i + 1, i < 2) + (t.niche_id ? '<div style="margin:-6px 0 14px 56px"><button class="btn tonal" data-use="' + esc(t.niche_id) + '">Make ' + esc(t.label.toLowerCase()) + ' mine</button></div>' : ''));
+            html = '<p class="small">More for you</p><h1 style="margin-top:4px">Viral niches right now</h1><p class="sub">From the Niche Finder: new, small channels getting big views, the topics you’d love first, then the money. Tap a niche to see its videos; tap a video to watch it on YouTube.</p>' +
+                fits.join('') + (rows.length ? '<div class="sec"><div class="sec-h"><h2>' + rows.length + ' more niches with channels breaking out</h2></div><div class="lb">' + rows.join('') + '</div></div>' : '') +
+                (fits.length || rows.length ? '' : '<p class="note">The Niche Finder hasn’t caught other breakout channels this week. It hunts twice a day.</p>') +
+                '<p class="note">' + esc(f.estimate_note) + '</p><p class="note">' + esc(f.ypp_note) + '</p>';
         } else if (step === 'make') { html = makeIt(); wide = false; }
         else if (step === 'recipe') { html = recipeScreen(); wide = false; }
         else if (step === 'share') {
@@ -365,7 +384,7 @@
                 '<a class="btn tonal" target="_blank" rel="noopener" href="https://twitter.com/intent/tweet?text=' + encodeURIComponent('My money niche: ' + top.name + '. Find yours:') + '&url=' + encodeURIComponent(link) + '">Post on X</a></div>';
         } else if (step === 'plans') { html = plansScreen(); }
         show(html + nav(S.step === QUIZ_STEPS.length - 1), wide);
-        bindResult(() => result(), QUIZ_STEPS.length, () => taste());
+        bindResult(() => result(), QUIZ_STEPS.length, () => taste()); bindRows();
     }
 
     // ---- ChannelRecipe's part: make it yours -> recipe -> plans (shared by both doors) --------------------
@@ -577,9 +596,9 @@
     });
     (async function boot() {
         try { window.CRTelemetry?.captureAttributionFromUrl?.(); } catch (_) {}
-        const [me, cfg, pulse, niches] = await Promise.all([api('/api/auth/me').catch(() => ({})), api('/api/config').catch(() => null),
-            api('/api/money-niche/pulse').catch(() => null), api('/api/money-niche/niches').catch(() => [])]);
-        S.user = me.user || null; S.cfg = cfg; S.pulse = pulse; S.niches = niches || [];
+        const [me, cfg, pulse, niches, board] = await Promise.all([api('/api/auth/me').catch(() => ({})), api('/api/config').catch(() => null),
+            api('/api/money-niche/pulse').catch(() => null), api('/api/money-niche/niches').catch(() => []), api('/api/money-niche/leaderboard').catch(() => [])]);
+        S.user = me.user || null; S.cfg = cfg; S.pulse = pulse; S.niches = niches || []; S.board = board || [];
         const r = location.pathname.match(/^\/money-niche\/r\/([A-Za-z0-9_-]{6,24})$/);
         const c = location.pathname.match(/^\/money-niche\/c\/(cc_[A-Za-z0-9_-]{6,20})$/);
         if (r) openResult(r[1], false); else if (c) openCheck(c[1]); else home();
