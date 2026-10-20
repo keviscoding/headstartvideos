@@ -295,6 +295,147 @@ NICHES = [
                     ("Susan Parker Travel", "oj1kx4veIL4", "83K")]},
 ]
 BY_ID = {n["id"]: n for n in NICHES}
+
+# ---- what each niche looks like: clips Studio made, and the angles inside it ------------------------------
+
+# Clips in /static/moodboard (the landing page's moodboard), every one made in ChannelRecipe Studio, by style.
+CLIPS = {
+    "Deadly Places Documentary": ["nanga-parbat-climber", "nanga-parbat-title"],
+    "Clean 3D Reconstruction": ["titanic-lifeboat", "titanic-iceberg", "titanic-clock", "b59-officers"],
+    "3D Reconstruction": ["honeycomb", "empty-city"],
+    "Stick Figure Stories": ["gladiator-sold", "peasant-fire", "chimney-sweeps", "parliament"],
+    "3D Dark Stories": ["night-vision", "motel-phone", "doorbell-figure", "cooper-money"],
+    "Hand-Drawn Money": ["hand-drawn-money"],
+    "Paper Economics": ["paper-bank"],
+    "Painted History": ["seventies-kids", "seventies-hose"],
+    "Cinematic AI Story": ["luck-elevator", "lights-fail", "empty-street-dog", "empty-street-run"],
+    "Old-Timer Expert": ["bacon-skillet"],
+    "Quiet Video Essay": ["forgotten-ruins"],
+}
+CLIP_STYLE = {clip: style for style, clips in CLIPS.items() for clip in clips}
+VERTICAL = {"night-vision", "motel-phone", "doorbell-figure", "cooper-money"}
+# Studio's ready-made recipes (Create -> Browse recipes) that match a style.
+STUDIO_RECIPES = {"Stick Figure Stories": ("stick-stories", "Stick Figure Stories"),
+                  "Clean 3D Reconstruction": ("clean-3d", "Clean 3D Reconstruction"),
+                  "3D Reconstruction": ("clean-3d", "Clean 3D Reconstruction"),
+                  "Deadly Places Documentary": ("deadly-places", "Deadly Places Documentary"),
+                  "Hand-Drawn Money": ("handdrawn-money", "Hand-Drawn Money"),
+                  "Paper Economics": ("handdrawn-money", "Hand-Drawn Money")}
+
+# niche -> its mood board (clips in the niche's look, best first) and four angles inside it, each with a first title
+BOARDS = {
+    "footage_documentary": ["nanga-parbat-climber", "nanga-parbat-title", "forgotten-ruins"],
+    "3d_reconstruction": ["titanic-lifeboat", "titanic-iceberg", "b59-officers", "honeycomb", "titanic-clock", "empty-city"],
+    "finance_charts": ["hand-drawn-money", "paper-bank", "cooper-money"],
+    "true_crime": ["night-vision", "motel-phone", "doorbell-figure"],
+    "ai_presenter": ["bacon-skillet"],
+    "anime_stories": [],
+    "kinetic_essay": ["forgotten-ruins"],
+    "stick_figures": ["gladiator-sold", "peasant-fire", "chimney-sweeps", "parliament"],
+    "cartoon_history": ["peasant-fire", "parliament", "seventies-kids"],
+    "geopolitics_maps": ["nanga-parbat-title", "empty-city"],
+    "painting_history": ["seventies-kids", "seventies-hose", "forgotten-ruins"],
+    "ai_mini_movie": ["luck-elevator", "empty-street-dog", "empty-street-run", "lights-fail"],
+    "dark_psychology": ["lights-fail", "forgotten-ruins"],
+    "company_stories": ["paper-bank", "hand-drawn-money", "cooper-money"],
+    "over_60_tips": ["bacon-skillet"],
+}
+ANGLES = {
+    "footage_documentary": [("Deadly places", "The Most Dangerous Mountain Nobody Talks About"),
+                            ("Unsolved vanishings", "The Hikers Who Vanished Without a Trace"),
+                            ("Abandoned places", "Why This City Was Abandoned Overnight"),
+                            ("Strange events", "The Night an Entire Town Heard the Same Sound")],
+    "3d_reconstruction": [("Air and sea disasters", "The Last 9 Minutes of the Titanic, Rebuilt in 3D"),
+                          ("Engineering failures", "How One Bolt Brought Down a Bridge"),
+                          ("Military mysteries", "What Really Happened to the Lost B-59 Crew"),
+                          ("Nature's machines", "Inside a Beehive: How Bees Build Perfect Hexagons")],
+    "finance_charts": [("Everyday money", "Why Your Salary Is Worth Less Every Year"),
+                       ("How the rich do it", "How the Rich Actually Pay Less Tax"),
+                       ("Economics explained", "What Really Happens When a Country Prints Money"),
+                       ("Investing basics", "The Boring Investment That Beats Most Experts")],
+    "true_crime": [("Interrogations", "The Interrogation Where the Suspect Gave Himself Away"),
+                   ("Bodycam stories", "He Thought the Bodycam Was Off"),
+                   ("Cold cases", "The Cold Case Solved by a Doorbell Camera"),
+                   ("Courtroom moments", "Why the Jury Changed Its Mind in 10 Minutes")],
+    "ai_presenter": [("Workshop skills", "The Mistake Every Beginner Makes With a Table Saw"),
+                     ("Kitchen know-how", "Cook Bacon Like a 1950s Diner"),
+                     ("Home fixes", "Do This Before Winter or Regret It"),
+                     ("Trade secrets", "What 40 Years on the Job Taught Me")],
+    "anime_stories": [("Leveling up", "He Was the Weakest Hunter Until He Woke Up"),
+                      ("Reincarnation", "Reborn as the Villain, He Changed Everything"),
+                      ("Revenge arcs", "She Was Betrayed, So She Came Back Stronger"),
+                      ("What if", "What If He Remembered His Past Life")],
+    "kinetic_essay": [("Modern life", "Why Doing Nothing Feels So Exhausting"),
+                      ("Philosophy", "What Camus Knew About a Meaningless Life"),
+                      ("The mind", "Why Smart People Overthink Everything"),
+                      ("Time and meaning", "The Idea That Changed How I See Time")],
+    "stick_figures": [("Life in the past", "What It Was Like to Be a Medieval Peasant"),
+                      ("Worst jobs", "The Worst Jobs in Ancient Rome"),
+                      ("What if", "What If You Lived in the Stone Age for a Week"),
+                      ("History's fails", "The Dumbest Ways Empires Fell")],
+    "cartoon_history": [("Odd history", "The Shortest War in History"),
+                        ("Daily life", "What Ancient Romans Ate in a Day"),
+                        ("Strange rulers", "The Most Ridiculous Kings Who Ever Ruled"),
+                        ("Lost peoples", "Why the Vikings Suddenly Disappeared")],
+    "geopolitics_maps": [("Strange borders", "Why This Border Is So Strange"),
+                         ("Chokepoints", "The Tiny Strait That Controls the World's Oil"),
+                         ("Rich and poor", "How Singapore Got So Rich"),
+                         ("Empty places", "Why Nobody Lives in This Huge Part of Canada")],
+    "painting_history": [("Daily life", "A Day in the Life of a Roman Soldier"),
+                         ("Fallen empires", "The Fall of Byzantium, Told Slowly"),
+                         ("History for sleep", "History for Sleep: The Silk Road"),
+                         ("Lost worlds", "The Lost Cities of the Bronze Age")],
+    "ai_mini_movie": [("Hidden billionaire", "They Mocked the Old Janitor, Not Knowing He Owned the Company"),
+                      ("Kindness repaid", "The Poor Girl Paid for His Coffee. He Was a Billionaire."),
+                      ("Workplace karma", "She Was Fired on Her Birthday, Then the CEO Walked In"),
+                      ("Second chances", "He Gave His Last Dollar to a Stranger")],
+    "dark_psychology": [("Manipulation", "7 Signs Someone Is Quietly Manipulating You"),
+                        ("Stoic calm", "How Stoics Stayed Calm When Everything Fell Apart"),
+                        ("Respect", "The Silent Habit That Makes People Respect You"),
+                        ("People", "Marcus Aurelius on People Who Annoy You")],
+    "company_stories": [("Rise and fall", "The Rise and Fall of Blockbuster"),
+                        ("Big mistakes", "How Nokia Lost Everything in 5 Years"),
+                        ("Comebacks", "The Company That Bet It All and Won"),
+                        ("Lost brands", "What Happened to the Biggest Toy Store in America")],
+    "over_60_tips": [("Retirement money", "7 Things I Stopped Buying After I Retired"),
+                     ("Travel", "The Cruise Mistake Most Seniors Make"),
+                     ("Life lessons", "What I Wish I Knew at 60"),
+                     ("Trucking life", "40 Years of Trucking: The Truth Nobody Tells You")],
+}
+
+
+def board(niche: dict) -> list[dict]:
+    """The niche's mood board: clips made in Studio in its look, or stills from its real channels."""
+    clips = [{"clip": c, "style": CLIP_STYLE.get(c, "Made in Studio"), "vertical": c in VERTICAL}
+             for c in BOARDS.get(niche["id"], [])]
+    stills = [{"still": f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg", "channel": name, "views": views,
+               "url": f"https://www.youtube.com/watch?v={vid}"} for name, vid, views in niche["references"]]
+    return clips + stills
+
+
+def looks(niche: dict) -> list[dict]:
+    """The looks to pick from on the way to a recipe: Studio's own styles first, then 'like <real channel>'."""
+    out, seen = [], set()
+    for c in BOARDS.get(niche["id"], []):
+        style = CLIP_STYLE.get(c, "")
+        if style and style not in seen:
+            seen.add(style)
+            recipe = STUDIO_RECIPES.get(style)
+            out.append({"id": "style:" + style, "name": style, "clip": c, "vertical": c in VERTICAL,
+                        "studio": recipe[0] if recipe else "", "how": (
+                            f"Studio recipe: Create → Browse recipes → {recipe[1]}" if recipe
+                            else "Studio style library: this look, ready to reuse")})
+    for name, vid, _ in niche["references"]:
+        if len(out) >= 3:
+            break
+        out.append({"id": "clone:" + name, "name": f"Like {name}", "still": f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg",
+                    "studio": "", "clone": name, "clone_url": f"https://www.youtube.com/watch?v={vid}",
+                    "how": f"Studio style library: paste three {name} videos and Studio learns the look"})
+    return out[:3]
+
+
+def angles(niche: dict) -> list[dict]:
+    return [{"id": f"a{i}", "name": name, "title": title} for i, (name, title) in enumerate(ANGLES.get(niche["id"], []))]
 NICHES_DIR = os.path.join(os.path.dirname(__file__), "niches")
 
 
@@ -429,6 +570,7 @@ def _proof(hit: dict, rpm: tuple[float, float]) -> dict:
         "videos": int(hit.get("video_count") or 0),
         "months": max(1, int(round(float(days) / 30.4))) if days else None,
         "recent_avg_views": int(hit.get("recent_avg_views") or 0),
+        "uploads_per_month": round(float(hit.get("uploads_per_month") or 0), 1),
         "recent": [{"title": v.get("title") or "", "url": v.get("url") or "", "thumbnail": v.get("thumbnail") or "",
                     "views": int(v.get("view_count") or 0)} for v in recent],
         "earnings": monthly_earnings(hit, rpm),
@@ -582,6 +724,7 @@ def compute(answers: dict, *, proofs=None) -> dict:
             "earnings": [min(e[0] for e in earned), max(e[1] for e in earned)] if earned else None,
             "breakout_after": int(statistics.median(breakouts)) if breakouts else None,
             "recipe": recipe(niche, answers), "studio": niche.get("studio") or "",
+            "board": board(niche), "looks": looks(niche), "angles": angles(niche),
         })
     return {"answers": answers, "niches": top, "ypp_note": YPP_NOTE, "estimate_note": ESTIMATE_NOTE}
 
@@ -662,8 +805,11 @@ def teaser(rid: str, result: dict) -> dict:
         r = first["references"][0]
         proof = {"kind": "established", "name": r["name"], "url": r["url"], "views_label": r["views_label"],
                  "thumbnail": r["thumbnail"]}
+    if proof and proof["kind"] == "fresh":                   # the views chart: the same public counts, no money
+        proof["recent"] = [{"views": v["views"], "thumbnail": v["thumbnail"]} for v in first["proofs"][0]["recent"]]
     return {"id": rid, "gated": True, "niche": {"id": first["id"], "name": first["name"], "pitch": first["pitch"]},
-            "proof": proof, "more": len(result["niches"]) - 1}
+            "proof": proof, "more": len(result["niches"]) - 1,
+            "board": first.get("board") or board(BY_ID[first["id"]]), "why": first.get("why", [])}
 
 
 def public(rid: str, result: dict, user: dict | None, *, titles=None) -> dict:
@@ -787,24 +933,50 @@ def titles_for(niche: dict, kind: str, user: dict, *, now: float | None = None, 
 
 # ---- the chosen niche, carried into onboarding -------------------------------------------------------------
 
-def choose(user: dict, rid: str, niche_id: str) -> dict:
-    """Remember the niche a signed-in person picked, so the app opens on it. Only a niche from their own result."""
+def choose(user: dict, rid: str, niche_id: str, angle_id: str = "", look_id: str = "", title: str = "") -> dict:
+    """Remember the niche (and the angle, look and first title) a signed-in person picked, so the app opens on their
+    recipe. Only a niche from their own result."""
     result = load(rid)
     if not result:
         raise LookupError("That result has expired. Take the quiz again.")
     niche = next((n for n in result["niches"] if n["id"] == niche_id), None)
     if not niche:
         raise LookupError("Pick one of the three niches in your result.")
-    chosen = {"id": niche["id"], "name": niche["name"], "studio": niche.get("studio") or "",
+    angle = next((a for a in angles(BY_ID[niche_id]) if a["id"] == angle_id), None)
+    look = next((x for x in looks(BY_ID[niche_id]) if x["id"] == look_id), None)
+    title = re.sub(r"\s+", " ", str(title or "")).strip()[:120] or (angle["title"] if angle else "")
+    clone = (look or {}).get("clone") or ""
+    chosen = {"id": niche["id"], "name": niche["name"],
+              "studio": (look["studio"] if look else niche.get("studio")) or "",
               "kind": niche["recipe"]["kind"], "format": niche["recipe"]["format"], "result": rid,
-              "proof": (niche["proofs"][0]["name"] if niche["proofs"] else ""),
-              "proof_url": (niche["proofs"][0]["url"] if niche["proofs"] else ""), "at": int(time.time())}
-    initialize()
-    with db._conn() as conn:
-        conn.execute(db._q("UPDATE users SET money_niche_json=? WHERE id=?"), (json.dumps(chosen), int(user["id"])))
+              "angle": angle["name"] if angle else "", "look": look["name"] if look else "", "title": title,
+              "proof": clone or (niche["proofs"][0]["name"] if niche["proofs"] else ""),
+              "proof_url": (look or {}).get("clone_url") or (niche["proofs"][0]["url"] if niche["proofs"] else ""),
+              "at": int(time.time())}
+    store_choice(user, chosen)
     # TODO(owner decision): offer a free first hosted video here once its cost per video is known. Until then the
     # chosen niche is carried to sign-up and plans (/app#local-studio) and Studio pre-selects it.
     return chosen
+
+
+def store_choice(user: dict, chosen: dict) -> None:
+    initialize()
+    with db._conn() as conn:
+        conn.execute(db._q("UPDATE users SET money_niche_json=? WHERE id=?"), (json.dumps(chosen), int(user["id"])))
+
+
+def choice_for(niche_id: str, *, source: str, angle_id: str = "", look_id: str = "", title: str = "",
+               kind: str = "long", fmt: str = "") -> dict:
+    """The stored pick for any niche (the channel check's door, where there's no quiz result)."""
+    niche = BY_ID[niche_id]
+    angle = next((a for a in angles(niche) if a["id"] == angle_id), None)
+    look = next((x for x in looks(niche) if x["id"] == look_id), None)
+    title = re.sub(r"\s+", " ", str(title or "")).strip()[:120] or (angle["title"] if angle else "")
+    return {"id": niche_id, "name": niche["name"], "studio": (look or {}).get("studio") or niche.get("studio") or "",
+            "kind": kind, "format": fmt or FORMATS[niche["formats"][0]][0], "result": source,
+            "angle": angle["name"] if angle else "", "look": look["name"] if look else "", "title": title,
+            "proof": (look or {}).get("clone") or "", "proof_url": (look or {}).get("clone_url") or "",
+            "at": int(time.time())}
 
 
 def chosen_of(user: dict) -> dict | None:
@@ -840,3 +1012,32 @@ def breakouts(niche_id: str | None, *, days: int = 14, limit: int = 3, now: floa
         rows = conn.execute(db._q(sql), tuple(params + [limit])).fetchall()
     rpm = rpm_range(niche) if niche else (2.0, 8.0)
     return [_proof(db._niche_row_to_hit(dict(r)), rpm) for r in rows]
+
+
+_pulse: dict = {}
+
+
+def pulse(*, now: float | None = None) -> dict:
+    """The live strip on the first screen: how many small channels the Niche Finder caught breaking out this week,
+    and a few of them. Cached for 10 minutes."""
+    now = now or time.time()
+    key = (db.IS_PG, getattr(db, "DB_PATH", ""))
+    hit = _pulse.get(key)
+    if hit and now - hit[0] < 600:
+        return hit[1]
+    try:
+        with db._conn() as conn:
+            n = conn.execute(db._q("""SELECT COUNT(*) AS n FROM niche_channels WHERE active=1 AND first_seen_at>=?
+                AND subscriber_count BETWEEN 1000 AND 300000 AND recent_avg_views>=20000
+                AND COALESCE(videos_last_14d,0)>0 AND COALESCE(production_format,'')!='presenter'"""),
+                (now - 7 * 86400,)).fetchone()["n"]
+        channels = breakouts(None, days=7, limit=10, now=now)
+    except Exception as e:                                          # noqa: BLE001 - the page works without it
+        print(f"[money-niche] pulse failed: {e}")
+        n, channels = 0, []
+    out = {"week": int(n or 0), "channels": [
+        {"name": c["name"], "url": c["url"], "avatar": c["avatar"], "subscribers": c["subscribers"],
+         "months": c["months"], "recent_avg_views": c["recent_avg_views"],
+         "thumbnail": c["recent"][0]["thumbnail"] if c["recent"] else ""} for c in channels]}
+    _pulse[key] = (now, out)
+    return out

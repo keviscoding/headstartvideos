@@ -2,7 +2,11 @@
 
 - POST /api/money-niche/quiz            answers -> a result id and the taste (niche #1 and one proof channel)
 - GET  /api/money-niche/result/{id}      the taste for a visitor; the full result for anyone signed in
-- POST /api/money-niche/choose           a signed-in person's pick, stored on their account for onboarding
+- POST /api/money-niche/choose           a signed-in person's pick (niche, angle, look, first title), stored on their
+                                         account so the app opens on their recipe
+- GET  /api/money-niche/pulse            the live strip: small channels the Niche Finder caught breaking out this week
+- POST /api/channel-check                "I already have a channel": their channel as a dashboard + the biggest problem
+- GET  /api/channel-check/{id}           the taste for a visitor; every finding, plan and idea for anyone signed in
 - GET  /money-niche/card/{id}.png        the share picture (og:image); /money-niche/card.png is the generic one
 - POST /api/leads                        "email me" with consent, from the quiz or /3d-harness
 - GET  /api/admin/leads, POST /api/admin/leads/breakout-email   the leads list, sent only when an admin presses send
@@ -24,6 +28,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
+import os
+
+from webapp import channel_check
 from webapp import lifecycle_email
 from webapp import money_niche
 
@@ -176,6 +183,20 @@ class QuizRequest(BaseModel):
 class ChooseRequest(BaseModel):
     result: str = Field(max_length=40)
     niche: str = Field(max_length=60)
+    angle: str = Field("", max_length=20)
+    look: str = Field("", max_length=120)
+    title: str = Field("", max_length=200)
+
+
+class CheckRequest(BaseModel):
+    url: str = Field(max_length=300)
+
+
+class CheckChooseRequest(BaseModel):
+    niche: str = Field(max_length=60)
+    angle: str = Field("", max_length=20)
+    look: str = Field("", max_length=120)
+    title: str = Field("", max_length=200)
 
 
 class LeadRequest(BaseModel):
@@ -190,8 +211,54 @@ class BreakoutSendRequest(BaseModel):
     issue: str = Field("", max_length=20)
 
 
-def make_router(current_user, require_user, require_admin, track, disposable=frozenset()) -> APIRouter:
+def make_router(current_user, require_user, require_admin, track, disposable=frozenset(),
+                youtube_key=lambda: "") -> APIRouter:
     router = APIRouter()
+
+    @router.get("/api/money-niche/niches", include_in_schema=False)
+    def get_niches():
+        """The 15 niches with their mood boards, looks and angles (public catalogue data, no proof or money)."""
+        return JSONResponse([{"id": n["id"], "name": n["name"], "pitch": n["pitch"], "look": n["look"],
+                              "pacing": n["pacing"], "length": n["length"],
+                              "format": money_niche.FORMATS[n["formats"][0]][0], "board": money_niche.board(n),
+                              "looks": money_niche.looks(n), "angles": money_niche.angles(n)}
+                             for n in money_niche.NICHES], headers={"Cache-Control": "public, max-age=3600"})
+
+    @router.get("/api/money-niche/pulse", include_in_schema=False)
+    def get_pulse():
+        return JSONResponse(money_niche.pulse(), headers={"Cache-Control": "public, max-age=300"})
+
+    @router.post("/api/channel-check", include_in_schema=False)
+    def post_check(req: CheckRequest, request: Request):
+        if not allow("check:" + client_ip(request), 20):
+            raise HTTPException(429, "That's a lot of channels. Try again in a little while.")
+        try:
+            done = channel_check.check(req.url, api_key=youtube_key(),
+                                       daily_cap=int(os.getenv("CHANNEL_CHECK_DAILY", "2000") or 2000))
+        except channel_check.CheckError as e:
+            raise HTTPException(400, str(e)) from None
+        user = current_user(request)
+        track(user["id"] if user else "check:" + done["id"], "channel_check_completed",
+              {"niche": (done["result"].get("niche") or {}).get("id", ""), "signed_in": bool(user),
+               "cached": done["cached"], "subscribers": done["result"]["channel"]["subscribers"]})
+        return JSONResponse(channel_check.teaser(done["id"], done["result"]), headers=PRIVATE)
+
+    @router.get("/api/channel-check/{cid}", include_in_schema=False)
+    def get_check(cid: str, request: Request):
+        result = channel_check.load(cid)
+        if not result:
+            raise HTTPException(404, "That check has expired. Run it again: it takes a few seconds.")
+        return JSONResponse(channel_check.public(cid, result, current_user(request)), headers=PRIVATE)
+
+    @router.post("/api/channel-check/{cid}/choose", include_in_schema=False)
+    def post_check_choose(cid: str, req: CheckChooseRequest, user: dict = Depends(require_user)):
+        if not channel_check.load(cid) or req.niche not in money_niche.BY_ID:
+            raise HTTPException(404, "Run the channel check again, then pick your niche.")
+        chosen = money_niche.choice_for(req.niche, source=cid, angle_id=req.angle, look_id=req.look, title=req.title)
+        money_niche.store_choice(user, chosen)
+        track(user["id"], "money_niche_chosen", {"niche": chosen["id"], "from": "channel_check",
+                                                  "plan": user.get("plan") or "free"})
+        return JSONResponse({"ok": True, "niche": chosen, "next": "/app#local-studio"}, headers=PRIVATE)
 
     @router.post("/api/money-niche/quiz", include_in_schema=False)
     def post_quiz(req: QuizRequest, request: Request):
@@ -217,7 +284,7 @@ def make_router(current_user, require_user, require_admin, track, disposable=fro
     @router.post("/api/money-niche/choose", include_in_schema=False)
     def post_choose(req: ChooseRequest, user: dict = Depends(require_user)):
         try:
-            chosen = money_niche.choose(user, req.result, req.niche)
+            chosen = money_niche.choose(user, req.result, req.niche, req.angle, req.look, req.title)
         except LookupError as e:
             raise HTTPException(404, str(e)) from None
         track(user["id"], "money_niche_chosen", {"niche": chosen["id"], "plan": user.get("plan") or "free"})

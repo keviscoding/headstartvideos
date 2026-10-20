@@ -231,3 +231,43 @@ def test_the_quiz_page_and_a_shared_result_with_its_card(env):
     assert env.client.get("/money-niche/r/nope-nope", follow_redirects=False).status_code == 302
     assert "/money-niche" in env.client.get("/sitemap.xml").text
     assert "Disallow: /api/" in env.client.get("/robots.txt").text, "the card lives outside /api/ so crawlers can fetch it"
+
+
+# ---- mood boards, the drill-down to a recipe, the live pulse ----------------------------------------------
+
+def test_every_niche_has_a_board_of_real_clips_or_stills_angles_and_looks():
+    import os
+    for niche in mn.NICHES:
+        board = mn.board(niche)
+        assert board, niche["id"]
+        for item in board:
+            if "clip" in item:
+                assert os.path.exists(f"webapp/static/moodboard/{item['clip']}.mp4"), item
+            else:
+                assert item["still"].startswith("https://i.ytimg.com/vi/") and item["channel"]
+        assert len(mn.angles(niche)) == 4 and 1 <= len(mn.looks(niche)) <= 3
+
+
+def test_the_pick_carries_the_angle_look_and_first_title_into_studio(env):
+    rid = env.client.post("/api/money-niche/quiz", json=BASE).json()["id"]
+    sign_in(env)
+    res = env.client.post("/api/money-niche/choose", json={"result": rid, "niche": "stick_figures", "angle": "a1",
+                                                           "look": "clone:StickTory", "title": "  My own   title "})
+    assert res.status_code == 200
+    me = env.client.get("/api/auth/me").json()["user"]["money_niche"]
+    assert me["angle"] == "Worst jobs" and me["look"] == "Like StickTory" and me["title"] == "My own title"
+    assert me["proof"] == "StickTory" and me["proof_url"].startswith("https://www.youtube.com/watch?v=")
+    env.client.post("/api/money-niche/choose", json={"result": rid, "niche": "stick_figures", "angle": "a0",
+                                                     "look": "style:Stick Figure Stories"})
+    me = env.client.get("/api/auth/me").json()["user"]["money_niche"]
+    assert me["studio"] == "stick-stories" and me["title"] == "What It Was Like to Be a Medieval Peasant"
+
+
+def test_the_live_pulse_and_the_catalogue_are_public_and_honest(env):
+    pulse = env.client.get("/api/money-niche/pulse").json()
+    assert pulse["week"] == 2, "only small, recent, faceless channels found this week count"
+    assert {c["name"] for c in pulse["channels"]} == {"Stick Lab", "Tiny Stickman"}
+    niches = env.client.get("/api/money-niche/niches").json()
+    assert len(niches) == 15 and all(n["board"] and n["angles"] and n["looks"] for n in niches)
+    assert "proofs" not in niches[0] and "earnings" not in str(niches)
+    assert env.client.get("/money-niche").text.count("/static/money-niche.css?v=") == 1

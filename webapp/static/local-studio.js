@@ -204,8 +204,10 @@ window.CRLocalStudio = (() => {
             ? 'In Studio, choose <b>Create → Browse recipes → '+esc(ready[1])+'</b>'+(view==='member'&&returning()?' (marked below).':'.')
             : (n.proof ? 'In Studio, open the <b>Style library</b> and clone the look of <a href="'+esc(n.proof_url||'#')+'" target="_blank" rel="noopener">'+esc(n.proof)+'</a>: paste three of its videos.'
                        : 'In Studio, open the <b>Style library</b> and clone a channel from your result.');
-        return '<aside class="ls-version-note ls-niche-pick"><strong>Your money niche: '+esc(n.name)+'.</strong> '+esc(n.format||'')+
-            (n.kind==='shorts'?' · Shorts':'')+'. '+how+' <a class="ls-text-link" href="/money-niche'+(n.result?'/r/'+encodeURIComponent(n.result):'')+'">See your result</a></aside>';
+        const back = n.result && n.result.startsWith('cc_') ? '/money-niche/c/'+encodeURIComponent(n.result) : '/money-niche'+(n.result?'/r/'+encodeURIComponent(n.result):'');
+        return '<aside class="ls-version-note ls-niche-pick"><strong>Your recipe: '+esc(n.name)+(n.angle?' · '+esc(n.angle.toLowerCase()):'')+'.</strong> '+
+            (n.look?esc(n.look)+', ':'')+esc(n.format||'')+(n.kind==='shorts'?' · Shorts':'')+'. '+how+
+            (n.title?' First video: <b>“'+esc(n.title)+'”</b>.':'')+' <a class="ls-text-link" href="'+back+'">See your result</a></aside>';
     }
     function whatsNew() {
         const rows = data.changelog || []; if (!rows.length) return '';

@@ -2149,6 +2149,12 @@ async def money_niche_page():
     return web_assets.html_page(STATIC_DIR / "money-niche.html")
 
 
+@app.get("/money-niche/c/{cid}", response_class=HTMLResponse)
+async def money_niche_channel_check(cid: str):
+    # a channel check's own address (private to whoever has the link; no share card)
+    return web_assets.html_page(STATIC_DIR / "money-niche.html", cache="private, no-store")
+
+
 @app.get("/money-niche/r/{rid}", response_class=HTMLResponse)
 async def money_niche_shared(rid: str):
     from webapp.money_niche_web import share_text
@@ -2170,7 +2176,8 @@ async def money_niche_shared(rid: str):
 
 from webapp import money_niche_web as _money_niche_web
 app.include_router(_money_niche_web.make_router(_current_user, require_user, require_admin,
-                                                lambda *a, **k: track(*a, **k), frozenset(_DISPOSABLE_EMAIL_DOMAINS)))
+                                                lambda *a, **k: track(*a, **k), frozenset(_DISPOSABLE_EMAIL_DOMAINS),
+                                                youtube_key=lambda: config.YOUTUBE_API_KEY))
 
 
 # ---------------------------------------------------------------------------
