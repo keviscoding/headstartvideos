@@ -1,67 +1,64 @@
-/* Find My Money Niche: two doors on one page.
-   - Starting from zero: four questions -> a taste (niche #1 + one proof channel) -> sign in -> the full result ->
-     make it yours (angle, look, first title) -> your recipe -> plans.
-   - I have a channel: paste it -> its dashboard + the biggest problem -> sign in -> every finding, the breakout
-     channels to study, a plan, five ideas with thumbnails -> make it yours -> your recipe -> plans.
-   Clips playing everywhere are Studio's own (/static/moodboard); stills are real videos from the niche list.
+/* Find My Money Niche: two doors on one page, dressed like the places creators already live (a dark home feed,
+   channel pages, Studio-style analytics), built from public numbers and labelled as estimates.
+   - Starting from zero: four questions -> niche #1 as a channel page + analytics -> sign in -> the full result and
+     a feed of viral niches -> make it yours -> your recipe -> plans.
+   - I have a channel: paste it -> a dashboard of it + the biggest problem -> sign in -> every finding, channels to
+     study, a plan, five ideas -> make it yours -> your recipe -> plans.
+   ChannelRecipe's own look (Studio clips, the recipe card, plans) only arrives at "make it yours".
    Server: webapp/money_niche.py, webapp/channel_check.py, webapp/money_niche_web.py */
 (function () {
     'use strict';
-    const stage = document.getElementById('stage'), bars = document.getElementById('bars');
-    const wallEl = document.getElementById('wall'), sideEl = document.getElementById('side');
+    const stage = document.getElementById('stage'), bar = document.getElementById('ytbar');
     const MINE = 'cr_money_niche_results', MB = '/static/moodboard/';
-    const desktop = () => window.matchMedia('(min-width: 980px)').matches;
     const still = !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-
-    // Every clip on the landing page's moodboard, made in ChannelRecipe Studio (v = vertical Shorts).
-    const ALL = ['titanic-lifeboat', 'gladiator-sold', 'nanga-parbat-climber', 'hand-drawn-money', 'night-vision:v',
-        'titanic-iceberg', 'peasant-fire', 'seventies-kids', 'luck-elevator', 'orca-dunkleosteus:v', 'b59-officers',
-        'paper-bank', 'chimney-sweeps', 'motel-phone:v', 'forgotten-ruins', 'honeycomb', 'empty-street-run',
-        'hippo-yawn:v', 'parliament', 'seventies-hose', 'titanic-clock', 'deep-sea-jelly:v', 'lights-fail', 'bacon-skillet',
-        'nanga-parbat-title', 'doorbell-figure:v', 'empty-city', 'cooper-money:v', 'empty-street-dog', 'grape-plasma:v'];
-    const VERT = new Set(ALL.filter((c) => c.endsWith(':v')).map((c) => c.slice(0, -2)));
+    const ICON = {
+        camera: '<path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/>',
+        mic: '<path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/>',
+        robot: '<path d="M12 2a2 2 0 0 1 1 3.73V7h4a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-8a3 3 0 0 1 3-3h4V5.73A2 2 0 0 1 12 2zM9 12a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm6 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z"/>',
+        shorts: '<path d="M17.77 10.32l-1.2-.5L18 9.06a3.74 3.74 0 0 0-3.5-6.62L6 6.94a3.74 3.74 0 0 0 .23 6.74l1.2.49L6 14.93a3.75 3.75 0 0 0 3.5 6.63l8.5-4.5a3.74 3.74 0 0 0-.23-6.74zM10 14.65V9.35L15 12l-5 2.65z"/>',
+        clock: '<path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 10.41V6h-2v7.24l4.62 2.77 1-1.66L13 12.41z"/>',
+        fire: '<path d="M13.5.67s.74 2.65.74 4.8c0 2.06-1.35 3.73-3.41 3.73-2.07 0-3.63-1.67-3.63-3.73l.03-.36C5.21 7.51 4 10.62 4 14a8 8 0 0 0 16 0c0-5.39-2.59-10.2-6.5-13.33z"/>',
+        rocket: '<path d="M12 2.5s4.5 2 4.5 9.5l2.5 2.5v4l-4-2.5h-6L5 18.5v-4L7.5 12C7.5 4.5 12 2.5 12 2.5zm0 6a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM10 20h4l-2 2.5z"/>',
+        free: '<path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15.9V19h-2v-1.1A4 4 0 0 1 8 14h2a2 2 0 1 0 2-2 4 4 0 0 1-1-7.9V3h2v1.1A4 4 0 0 1 16 8h-2a2 2 0 1 0-2 2 4 4 0 0 1 1 7.9z"/>',
+        image: '<path d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zM8.5 13.5l2.5 3 3.5-4.5 4.5 6H5l3.5-4.5z"/>',
+        cube: '<path d="M12 2 3 7v10l9 5 9-5V7l-9-5zm0 2.3L18.6 8 12 11.7 5.4 8 12 4.3zM5 9.7l6 3.4v6.6l-6-3.3V9.7zm8 10v-6.6l6-3.4v6.7l-6 3.3z"/>',
+        film: '<path d="M18 3v2h-2V3H8v2H6V3H4v18h2v-2h2v2h8v-2h2v2h2V3h-2zM8 17H6v-2h2v2zm0-4H6v-2h2v2zm0-4H6V7h2v2zm10 8h-2v-2h2v2zm0-4h-2v-2h2v2zm0-4h-2V7h2v2z"/>',
+        search: '<path d="M20.87 20.17l-5.59-5.59A7.46 7.46 0 0 0 17 9.5 7.5 7.5 0 1 0 9.5 17c1.95 0 3.72-.75 5.08-1.98l5.59 5.59.7-.44zM3 9.5A6.5 6.5 0 1 1 9.5 16 6.5 6.5 0 0 1 3 9.5z"/>',
+        play: '<path d="M8 5v14l11-7z"/>',
+    };
+    const icon = (k) => '<svg viewBox="0 0 24 24" aria-hidden="true">' + ICON[k] + '</svg>';
 
     const QUESTIONS = [
-        {key: 'face', kicker: '1 of 4', title: 'Will you show your face?',
-         lede: 'Plenty of channels never do. This changes which niches fit, and who does the talking.',
-         options: [['camera', 'bacon-skillet', 'Yes, on camera', 'Presenter channels open up'],
-                   ['voice', 'nanga-parbat-climber', 'Voice only', 'Your voice over the pictures'],
-                   ['none', 'gladiator-sold', 'No, neither', 'Fully faceless, AI voice']]},
-        {key: 'hours', kicker: '2 of 4', title: 'Hours a week you can give it?',
-         lede: 'This decides Shorts or long videos, and how often you upload.',
-         options: [['under3', 'orca-dunkleosteus', 'Under 3 hours', 'Shorts, a few a week'],
-                   ['3to8', 'titanic-lifeboat', '3 to 8 hours', 'About a long video a week'],
-                   ['8to15', 'hand-drawn-money', '8 to 15 hours', 'A serious side project'],
-                   ['over15', 'seventies-kids', '15+ hours', 'Close to a part-time job']]},
-        {key: 'loves', kicker: '3 of 4', title: 'What do you love watching?',
-         lede: 'Pick up to three. You make better videos about what you’d watch anyway.', multi: true,
-         options: [['mysteries', 'nanga-parbat-climber', 'Mysteries & documentaries'], ['disasters', 'titanic-iceberg', 'How disasters happen'],
-                   ['money', 'hand-drawn-money', 'Money & business'], ['crime', 'night-vision', 'True crime & bodycam'],
-                   ['history', 'peasant-fire', 'History'], ['stories', 'luck-elevator', 'Stories & drama'],
-                   ['mind', 'forgotten-ruins', 'Psychology & big ideas'], ['world', 'nanga-parbat-title', 'Maps & world politics'],
-                   ['tips', 'bacon-skillet', 'Life tips & real skills']]},
-        {key: 'budget', kicker: '4 of 4', title: 'Monthly budget for AI tools?',
-         lede: 'For voices, pictures and animation. This decides which formats fit.',
-         options: [['free', 'seventies-hose', '$0', 'Stock, archive and paintings'],
-                   ['low', 'gladiator-sold', 'Up to $30', 'AI pictures, animated'],
-                   ['mid', 'titanic-clock', '$30 to $100', '3D scenes or an AI presenter'],
-                   ['high', 'luck-elevator', '$100+', 'Cinematic AI video']]},
+        {key: 'face', title: 'Will you show your face?', lede: 'Plenty of channels never do. This changes which niches fit, and who does the talking.',
+         options: [['camera', 'camera', 'Yes, on camera', 'Presenter channels open up'], ['voice', 'mic', 'Voice only', 'Your voice over the pictures'],
+                   ['none', 'robot', 'No, neither', 'Fully faceless, AI voice']]},
+        {key: 'hours', title: 'How many hours a week can you give it?', lede: 'This decides Shorts or long videos, and how often you upload.',
+         options: [['under3', 'shorts', 'Under 3 hours', 'Shorts, a few a week'], ['3to8', 'clock', '3 to 8 hours', 'About one long video a week'],
+                   ['8to15', 'fire', '8 to 15 hours', 'A serious side project'], ['over15', 'rocket', '15+ hours', 'Close to a part-time job']]},
+        {key: 'loves', title: 'What would you click on?', lede: 'Pick up to three. You make better videos about what you’d watch anyway.', multi: true,
+         options: [['mysteries', 'I2O7blSSzpI', 'Mysteries & documentaries', 'LEMMiNO', '42M'], ['disasters', 'wLFY_Zu_O08', 'How disasters happen', 'Fern', '15M'],
+                   ['money', 'Ha2oNXDZuSg', 'Money & business', 'Modern MBA', '2.2M'], ['crime', 'NrTaqT_PgmI', 'True crime & bodycam', 'Bodycam Verdicts', '745K'],
+                   ['history', 'd3tXkJkgbQw', 'History', 'Simple History', '1.9M'], ['stories', 't8JEQXEAKSs', 'Stories & anime', 'Tobs Manhwa', '865K'],
+                   ['mind', 'sNg5FXt_DDM', 'Psychology & big ideas', 'Academy of Ideas', '786K'], ['world', 'yIZRffLA294', 'Maps & world politics', 'Wendover Productions', '3.9M'],
+                   ['tips', 'wR1l5k8CKgg', 'Life tips & real skills', 'Frank Miller Cuts', '491K']]},
+        {key: 'budget', title: 'Monthly budget for AI tools?', lede: 'For voices, pictures and animation. This decides which formats fit.',
+         options: [['free', 'free', '$0', 'Stock footage, archive and paintings'], ['low', 'image', 'Up to $30', 'AI pictures, animated'],
+                   ['mid', 'cube', '$30 to $100', '3D scenes or an AI presenter'], ['high', 'film', '$100+', 'Cinematic AI video']]},
     ];
-    const QUIZ_STEPS = ['niche', 'more', 'make', 'recipe', 'share', 'plans'];
-    const CHECK_STEPS = ['diagnosis', 'peers', 'plan', 'ideas', 'make', 'recipe', 'plans'];
+    const QUIZ_STEPS = ['niche', 'viral', 'make', 'recipe', 'share', 'plans'];
+    const CHECK_STEPS = ['dashboard', 'peers', 'plan', 'ideas', 'make', 'recipe', 'plans'];
     const PLAN_COPY = {   // the same words as the Studio page's plan cards
         daily: {tag: 'Start making videos', items: ['Studio + every built-in style', 'Videos render on <b>your own computer</b>', 'Clone <b>3</b> channel styles', '35 cloud credits / month for Classic recipes', 'Niche Finder + niche database in Claude']},
         studio_pro: {tag: 'Run several channels', items: ['Everything in Creator', 'Videos render on <b>your own computer</b>', 'Clone <b>15</b> channel styles', '60 cloud credits / month for Classic recipes', '3 Classic cloud videos at once']},
         studio_max: {tag: 'For serious operators', items: ['Everything in Pro', 'Videos render on <b>your own computer</b>', '<b>Unlimited</b> style clones', '100 cloud credits / month for Classic recipes', 'Priority help in Discord']},
     };
-
-    const S = {answers: {loves: []}, q: 0, user: null, cfg: null, pulse: null, niches: null, teaser: null, full: null,
-        id: '', step: 0, mine: false, pick: {}, check: null, checkId: '', cycle: 'monthly', door: ''};
+    const S = {answers: {loves: []}, q: 0, user: null, cfg: null, pulse: null, niches: [], teaser: null, full: null, id: '', step: 0,
+        mine: false, pick: {}, check: null, checkId: '', cycle: 'monthly', door: ''};
 
     // ---- helpers --------------------------------------------------------------------------------------
     const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
     const url = (u) => /^https:\/\//.test(String(u || '')) ? esc(u) : '#';
-    const name = (c) => String(c || '').replace(/:v$/, '').replace(/[^a-z0-9-]/g, '');
+    const name = (c) => String(c || '').replace(/[^a-z0-9-]/g, '');
     const n = (x) => {
         x = Number(x) || 0;
         if (x >= 1e6) return (x / 1e6).toFixed(x >= 1e7 ? 0 : 1).replace(/\.0$/, '') + 'M';
@@ -69,260 +66,193 @@
         return String(Math.round(x));
     };
     const money = (x) => '$' + Number(x).toLocaleString('en-US');
+    const ago = (iso) => {
+        const t = Date.parse(iso || ''); if (!t) return '';
+        const d = (Date.now() - t) / 86400000;
+        if (d < 1) return 'today'; if (d < 2) return '1 day ago'; if (d < 7) return Math.floor(d) + ' days ago';
+        if (d < 14) return '1 week ago'; if (d < 31) return Math.floor(d / 7) + ' weeks ago';
+        if (d < 61) return '1 month ago'; if (d < 365) return Math.floor(d / 30) + ' months ago';
+        return Math.floor(d / 365) + (d < 730 ? ' year ago' : ' years ago');
+    };
+    const dur = (s) => { s = Number(s) || 0; if (!s) return ''; const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = String(s % 60).padStart(2, '0');
+        return h ? h + ':' + String(m).padStart(2, '0') + ':' + x : m + ':' + x; };
     const months = (m) => m ? m + (m === 1 ? ' month' : ' months') : '';
     const mine = () => { try { return JSON.parse(localStorage.getItem(MINE) || '[]'); } catch (_) { return []; } };
     const remember = (id) => { try { localStorage.setItem(MINE, JSON.stringify([id, ...mine().filter((x) => x !== id)].slice(0, 10))); } catch (_) {} };
-    function toast(text) {
-        const t = document.createElement('div'); t.className = 'toast'; t.textContent = text; document.body.appendChild(t);
-        setTimeout(() => t.remove(), 2400);
-    }
+    const STOP = new Set('a an the of in on to for and or but is are was were be it its this that with without how why what when who your you my i we they he she his her their from at by as into than then just about after before do does did not no never every most more one two like if live lived would could really'.split(' '));
+    const hook = (t) => String(t || '').replace(/[^A-Za-z0-9' ]/g, ' ').split(/\s+/).filter((w) => w && !STOP.has(w.toLowerCase())).slice(0, 2).join(' ').toUpperCase();
+    function toast(text) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = text; document.body.appendChild(t); setTimeout(() => t.remove(), 2600); }
     async function api(path, body) {
         const res = await fetch(path, body === undefined ? {} : {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw Object.assign(new Error(data.detail || 'Something went wrong. Try again.'), {status: res.status});
         return data;
     }
-
-    // a playing clip (a poster while reduced motion is on), or a real still that slowly drifts
-    // `cls` is a class name for the element (bg = fills its card)
-    function clip(c, cls = '') {
-        const k = name(c), at = cls ? ' class="' + cls + '"' : '';
-        if (still) return '<img src="' + MB + k + '.webp" alt=""' + at + '>';
-        return '<video muted loop playsinline autoplay preload="metadata" disablepictureinpicture poster="' + MB + k + '.webp" src="' + MB + k + '.mp4"' + at + '></video>';
-    }
-    function media(item, cls = '') {
-        if (item.clip) return clip(item.clip, cls);
-        return '<img class="kb ' + cls + '" src="' + url(item.still) + '" alt="" referrerpolicy="no-referrer" loading="lazy">';
-    }
-    // the words a thumbnail would shout: the two strongest words of the title
-    const STOP = new Set('a an the of in on to for and or but is are was were be it its this that with without how why what when who your you my i we they he she his her their from at by as into than then just about after before do does did not no never every most more one two like if live lived would could really'.split(' '));
-    const hook = (t) => String(t || '').replace(/[^A-Za-z0-9' ]/g, ' ').split(/\s+/).filter((w) => w && !STOP.has(w.toLowerCase())).slice(0, 2).join(' ').toUpperCase();
-    function boardHTML(items, max = 5) {
-        if (!items || !items.length) return '';
-        return '<div class="board">' + items.slice(0, max).map((it) =>
-            '<figure class="' + (it.vertical ? 'v' : '') + '">' + media(it) + '<figcaption>' +
-            esc(it.clip ? 'Made in Studio · ' + it.style : it.channel + ' · ' + it.views + ' views') + '</figcaption></figure>').join('') + '</div>';
-    }
-
-    // play only what's on screen (phones and laptops stay cool)
-    const io = 'IntersectionObserver' in window ? new IntersectionObserver((entries) => entries.forEach((e) => {
-        const v = e.target; if (e.isIntersecting) { v.muted = true; v.play?.().catch(() => {}); } else v.pause?.();
-    }), {rootMargin: '80px'}) : null;
-    function wire(root) {
-        root.querySelectorAll('video').forEach((v) => { v.muted = true; if (io) io.observe(v); else v.play?.().catch(() => {}); });
-        requestAnimationFrame(() => setTimeout(() => {
-            root.querySelectorAll('[data-h]').forEach((el) => { el.style.height = el.dataset.h; });
-            root.querySelectorAll('[data-count]').forEach(countUp);
-        }, 60));
-    }
-    function countUp(el) {
-        const end = Number(el.dataset.count) || 0, fmt = el.dataset.fmt || 'n', t0 = performance.now(), dur = still ? 0 : 900;
-        const draw = (v) => { el.textContent = fmt === 'money' ? money(Math.round(v)) : n(v); };
-        const step = (t) => { const k = dur ? Math.min(1, (t - t0) / dur) : 1; draw(end * (1 - Math.pow(1 - k, 3))); if (k < 1) requestAnimationFrame(step); };
-        requestAnimationFrame(step);
-    }
-
-    // ---- the wall: everything at first, then your own mood board --------------------------------------
-    let wallKey = '';
-    function wall(list) {
-        const clips = (list && list.length ? list : ALL).map(name);
-        const key = clips.join(',') + (desktop() ? 'd' : 'm');
-        if (key === wallKey) return; wallKey = key;
-        const cols = desktop() ? 4 : 3, out = Array.from({length: cols}, () => []);
-        let fill = clips.slice(); while (fill.length < cols * 4) fill = fill.concat(clips);
-        fill.forEach((c, i) => out[i % cols].push(c));
-        // phones get posters on the wall (the cards in front play); desktops get the clips
-        const tile = (c) => '<figure class="' + (VERT.has(c) ? 'v' : '') + '">' + (desktop() && !still ? clip(c) : '<img src="' + MB + c + '.webp" alt="" loading="lazy">') + '</figure>';
-        wallEl.style.opacity = '0';
-        setTimeout(() => {
-            wallEl.innerHTML = out.map((col) => '<div class="col">' + col.concat(col).map(tile).join('') + '</div>').join('');
-            wire(wallEl); wallEl.style.opacity = '';
-        }, 250);
-    }
-    function side(html) {
-        if (!desktop()) { sideEl.innerHTML = ''; return; }
-        sideEl.innerHTML = html || ''; wire(sideEl);
-    }
-    function progress(total, done) {
-        bars.innerHTML = Array.from({length: total}, (_, i) => '<div class="bar' + (i < done ? ' done' : '') + '"><span></span></div>').join('');
-        if (done < total && bars.children[done]) requestAnimationFrame(() => { const s = bars.children[done].firstChild; if (s) s.style.width = '35%'; });
-    }
-    function show(html) {
-        stage.querySelectorAll('video').forEach((v) => io?.unobserve(v));
-        stage.innerHTML = '<section class="screen">' + html + '</section>';
+    function progress(k) { bar.style.width = Math.max(0, Math.min(1, k)) * 100 + '%'; }
+    function show(html, wide) {
+        stage.innerHTML = '<section class="screen' + (wide ? '' : ' narrow') + '">' + html + '</section>';
         window.scrollTo({top: 0});
         const h = stage.querySelector('h1, h2'); if (h) { h.tabIndex = -1; h.focus({preventScroll: true}); }
-        wire(stage);
+        requestAnimationFrame(() => setTimeout(() => stage.querySelectorAll('[data-h]').forEach((el) => { el.style.height = el.dataset.h; }), 60));
+        stage.querySelectorAll('video').forEach((v) => { v.muted = true; v.play?.().catch(() => {}); });
     }
 
-    // ---- analytics pieces -----------------------------------------------------------------------------
-    function chart(videos, peer) {
-        const list = (videos || []).slice(0, 15).reverse();              // oldest left, newest right
+    // ---- what creators already know: video cards, channel pages, analytics ---------------------------------
+    function videoCard(v, ch, hot) {
+        return '<a class="yv" href="' + url(v.url) + '" target="_blank" rel="noopener"><div class="th">' +
+            (v.thumbnail ? '<img src="' + url(v.thumbnail) + '" alt="" loading="lazy" referrerpolicy="no-referrer">' : '') +
+            (dur(v.seconds) ? '<span class="dur">' + dur(v.seconds) + '</span>' : '') + '</div><div class="meta">' +
+            (ch && ch.avatar ? '<img class="av" src="' + url(ch.avatar) + '" alt="" loading="lazy" referrerpolicy="no-referrer">' : '') +
+            '<div><h4>' + esc(v.title || '') + '</h4>' + (ch && ch.name ? '<p>' + esc(ch.name) + '</p>' : '') +
+            '<p>' + n(v.views) + ' views' + (ago(v.published_at) ? ' · ' + ago(v.published_at) : '') + '</p>' +
+            (hot ? '<span class="hot">' + esc(hot) + '</span>' : '') + '</div></div></a>';
+    }
+    const hotLine = (c) => [c.months ? months(c.months) + ' old' : '', c.subscribers ? n(c.subscribers) + ' subs' : ''].filter(Boolean).join(' · ');
+    function channelPage(p) {
+        const vids = (p.recent || []).filter((v) => v.thumbnail || v.title);
+        return '<div class="ych"><div class="banner" style="background-image:url(\'' + url(vids[0]?.thumbnail || p.avatar || '') + '\')"></div>' +
+            '<div class="head">' + (p.avatar ? '<img class="av" src="' + url(p.avatar) + '" alt="" referrerpolicy="no-referrer">' : '<span></span>') +
+            '<div class="info"><h3>' + esc(p.name) + '</h3><p>' + [p.subscribers ? n(p.subscribers) + ' subscribers' : '', p.videos ? p.videos + ' videos' : ''].filter(Boolean).join(' · ') + '</p>' +
+            (p.months ? '<p><span class="chip ok">Started ' + months(p.months) + ' ago</span></p>' : '') + '</div>' +
+            '<a class="btn" href="' + url(p.url) + '" target="_blank" rel="noopener">View channel</a></div>' +
+            '<div class="tabs"><span class="on">Videos</span><span>Latest</span></div>' +
+            '<div class="grid two">' + vids.slice(0, 4).map((v) => videoCard(v, null)).join('') + '</div></div>';
+    }
+    function lineChart(values, peer) {
+        const vals = values.map((v) => Number(v) || 0); if (vals.length < 2) return '';
+        const top = Math.max(...vals, peer || 0, 1) * 1.1, W = 300, H = 100;
+        const pts = vals.map((v, i) => [i / (vals.length - 1) * W, H - v / top * H]);
+        const line = pts.map((p) => p.map((x) => x.toFixed(1)).join(',')).join(' ');
+        return '<svg class="chart" viewBox="0 0 300 100" preserveAspectRatio="none" role="img" aria-label="Views by video">' +
+            '<defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3ea6ff" stop-opacity=".35"/><stop offset="1" stop-color="#3ea6ff" stop-opacity="0"/></linearGradient></defs>' +
+            '<path class="area" d="M0,100 L' + line.replace(/ /g, ' L') + ' L300,100 Z"/><polyline class="ln" points="' + line + '"/>' +
+            (peer ? '<line class="peer" x1="0" x2="300" y1="' + (H - peer / top * H).toFixed(1) + '" y2="' + (H - peer / top * H).toFixed(1) + '"/>' : '') + '</svg>';
+    }
+    function niceAnalytics(nn, f) {   // the niche's proof channels as one Studio-style analytics card
+        const ps = nn.proofs || [], vids = ps.flatMap((p) => p.recent || []).filter((v) => v.published_at).sort((a, b) => Date.parse(a.published_at) - Date.parse(b.published_at));
+        const avg = ps.length ? Math.round(ps.reduce((s, p) => s + p.recent_avg_views, 0) / ps.length) : 0;
+        const subs = ps.length ? ps.map((p) => p.subscribers).sort((a, b) => a - b)[Math.floor(ps.length / 2)] : 0;
+        if (!ps.length) return '';
+        return '<div class="studio"><div class="top"><h4>Channel analytics · channels like these</h4><span class="src">Public numbers</span></div>' +
+            '<div class="kpis"><div class="on"><small>Views</small><b>' + n(avg) + '</b><i class="up">per recent video</i></div>' +
+            '<div><small>Subscribers</small><b>' + n(subs) + '</b><i>typical channel</i></div>' +
+            '<div><small>Revenue</small><b>' + (nn.earnings ? money(nn.earnings[0]) + '+' : '–') + '</b><i>estimated, a month</i></div></div>' +
+            lineChart(vids.map((v) => v.views)) + '<div class="chart-x"><span>' + esc(ago(vids[0]?.published_at) || '') + '</span><span>' + esc(ago(vids[vids.length - 1]?.published_at) || 'now') + '</span></div>' +
+            '<div class="legend"><span><i></i>Views on each new video, ' + ps.length + ' small channel' + (ps.length > 1 ? 's' : '') + ' in this niche</span></div></div>';
+    }
+    function realtime(p) {
+        const vids = (p.recent || []).slice().reverse(), top = Math.max(...vids.map((v) => v.views || 0), 1);
+        return '<div class="studio realtime"><div class="top"><h4>Realtime</h4><span class="live">Public numbers</span></div>' +
+            '<p class="big">' + n(p.subscribers) + '</p><p class="small">Subscribers · ' + esc(p.name) + '</p>' +
+            '<div class="mini-bars">' + vids.map((v) => '<i data-h="' + Math.max(4, Math.round((v.views || 0) / top * 100)) + '%"></i>').join('') + '</div>' +
+            '<p class="small" style="margin-top:6px"><b style="color:var(--text)">' + n(p.recent_avg_views) + '</b> views per video, latest ' + vids.length + '</p></div>';
+    }
+    function topContent(vids, title) {
+        const list = (vids || []).slice().sort((a, b) => (b.views || 0) - (a.views || 0)).slice(0, 4);
         if (!list.length) return '';
-        const top = Math.max(...list.map((v) => v.views || 0), peer || 0, 1);
-        const best = Math.max(...list.map((v) => v.views || 0));
-        return '<div class="bars-chart" role="img" aria-label="Views on each recent video">' + list.map((v) =>
-            '<a href="' + url(v.url) + '" target="_blank" rel="noopener" class="' + ((v.views === best && best > 0) ? 'top' : '') + (v.short ? ' short' : '') +
-            '" title="' + esc((v.title ? v.title + ': ' : '') + n(v.views) + ' views') + '"><i data-h="' + Math.max(3, Math.round((v.views || 0) / top * 100)) + '%"></i>' +
-            (v.views === best && best > 0 ? '<em>' + n(v.views) + '</em>' : '') + '</a>').join('') +
-            (peer ? '<div class="peer" style="bottom:' + Math.round(peer / top * 100) + '%"><span>breakout channels ' + n(peer) + '</span></div>' : '') + '</div>';
+        return '<div class="studio"><div class="top"><h4>' + esc(title || 'Top content') + '</h4><span class="src">Views</span></div><div class="toplist">' +
+            list.map((v, i) => '<a href="' + url(v.url) + '" target="_blank" rel="noopener"><em>' + (i + 1) + '</em>' +
+                (v.thumbnail ? '<img src="' + url(v.thumbnail) + '" alt="" loading="lazy" referrerpolicy="no-referrer">' : '<span></span>') +
+                '<span>' + esc(v.title) + '</span><b>' + n(v.views) + '</b></a>').join('') + '</div></div>';
     }
-    function meter(range) {
-        if (!range) return '';
-        const max = Math.max(range[1] * 1.25, 100), a = range[0] / max * 100, b = range[1] / max * 100;
-        return '<div class="meter"><i style="left:' + a + '%;width:' + Math.max(2, b - a) + '%"></i>' +
-            '<span style="left:' + a + '%">' + money(range[0]) + '</span><span style="left:' + b + '%">' + money(range[1]) + '</span>' +
-            '<small style="left:' + a + '%">low</small><small style="left:' + b + '%">high</small></div>';
+    function rangeBar(r) {
+        if (!r) return '';
+        const max = Math.max(r[1] * 1.25, 100), a = r[0] / max * 100, b = r[1] / max * 100;
+        return '<div class="range"><i style="left:' + a + '%;width:' + Math.max(2, b - a) + '%"></i><span style="left:' + a + '%">' + money(r[0]) +
+            '</span><span style="left:' + b + '%">' + money(r[1]) + '</span><small style="left:' + a + '%">low</small><small style="left:' + b + '%">high</small></div>';
     }
-    function road(count) {
-        if (!count) return '';
-        const shown = Math.min(count, 40);
-        return '<div class="road" aria-label="About ' + count + ' videos before the first breakout">' +
-            Array.from({length: shown}, (_, i) => '<i class="' + (i === shown - 1 ? 'b' : '') + '"></i>').join('') + '</div>' +
-            '<p class="note">Breakout after about <b>' + count + ' videos</b>' + (count > 40 ? ' (first 40 shown)' : '') + '.</p>';
+    function money_card(nn, f) {
+        return '<div class="studio"><div class="top"><h4>Estimated revenue · channels like these</h4><span class="src">Estimate</span></div>' +
+            (nn.earnings ? rangeBar(nn.earnings) : '<p class="small" style="margin-top:10px">Not enough recent numbers to estimate yet.</p>') +
+            '<div class="kpis" style="border-bottom:0"><div><small>RPM</small><b>$' + nn.rpm[0] + '–$' + nn.rpm[1] + '</b><i>per 1,000 views</i></div>' +
+            '<div><small>First breakout</small><b>' + (nn.breakout_after ? '~' + nn.breakout_after : '–') + '</b><i>videos in</i></div>' +
+            '<div><small>Format</small><b style="font-size:16px;white-space:normal">' + esc(nn.recipe ? nn.recipe.kind === 'shorts' ? 'Shorts' : 'Long' : 'Long') + '</b><i>&nbsp;</i></div></div>' +
+            (nn.breakout_after ? '<div class="roadmap">' + Array.from({length: Math.min(nn.breakout_after, 40)}, (_, i) => '<i class="' + (i === Math.min(nn.breakout_after, 40) - 1 ? 'b' : '') + '"></i>').join('') + '</div>' : '') +
+            (nn.shorts_rpm ? '<p class="note">Shorts pay far less: about <b>$' + nn.shorts_rpm[0] + '–$' + nn.shorts_rpm[1] + '</b> per 1,000 views.</p>' : '') +
+            '<p class="note">' + esc(f.estimate_note) + '</p><p class="note"><b>' + esc(f.ypp_note) + '</b></p></div>';
     }
-    function proofCard(p, opts = {}) {
-        const meta = [p.months ? 'Started ' + months(p.months) + ' ago' : '', p.videos ? p.videos + ' videos' : ''].filter(Boolean).join(' · ');
-        const vids = (p.recent || []).map((v) => ({...v, views: v.views}));
-        return '<div class="card proof">' +
-            '<div class="who">' + (p.avatar ? '<img src="' + url(p.avatar) + '" alt="" referrerpolicy="no-referrer">' : '') +
-            '<div style="flex:1;min-width:0"><a href="' + url(p.url) + '" target="_blank" rel="noopener">' + esc(p.name) + '</a><small>' + esc(meta) + '</small></div><span class="live">Live</span></div>' +
-            '<div class="stats">' +
-            '<div class="stat"><b data-count="' + (p.recent_avg_views || 0) + '">0</b><span>views per recent video</span></div>' +
-            '<div class="stat"><b data-count="' + (p.subscribers || 0) + '">0</b><span>subscribers</span></div>' +
-            '<div class="stat"><b>' + (p.months ? months(p.months).replace(' months', 'mo').replace(' month', 'mo') : '–') + '</b><span>old</span></div></div>' +
-            (vids.length ? chart(vids) + '<div class="thumbs">' + vids.slice(0, 3).map((v) => '<a href="' + url(v.url) + '" target="_blank" rel="noopener">' +
-                (v.thumbnail ? '<img src="' + url(v.thumbnail) + '" alt="" loading="lazy" referrerpolicy="no-referrer">' : '') + '<b>' + n(v.views) + '</b> views</a>').join('') + '</div>' : '') +
-            (opts.money && p.earnings ? '<p class="small" style="margin-top:12px">Plausibly earns, if it’s in the Partner Program (estimate)</p>' + meter(p.earnings) : '') +
-            (opts.money && p.breakout_after ? road(p.breakout_after) : '') + '</div>';
-    }
-    function refs(list) {
+    function refCards(list) {
         if (!list || !list.length) return '';
-        return '<div class="card"><span class="tag">Established channels</span><p class="note" style="margin-top:6px">Bigger and older, so not “new channel” proof, but the format clearly works.</p>' +
-            '<div class="thumbs" style="margin-top:12px">' + list.map((r) => '<a href="' + url(r.url) + '" target="_blank" rel="noopener"><img src="' + url(r.thumbnail) + '" alt="" referrerpolicy="no-referrer"><b>' +
-                esc(r.name) + '</b><br>' + esc(r.views_label) + ' views on its breakout</a>').join('') + '</div></div>';
+        return '<div class="sec"><div class="sec-h"><h3>Established channels in this niche</h3></div><p class="small" style="margin-bottom:12px">Bigger and older, so not “new channel” proof, but the format clearly works.</p>' +
+            '<div class="grid">' + list.map((r) => videoCard({url: r.url, thumbnail: r.thumbnail, title: r.name + ': its breakout video', views: parseViews(r.views_label)}, {name: r.name})).join('') + '</div></div>';
+    }
+    const parseViews = (label) => { const m = /([\d.]+)\s*([KM]?)/i.exec(label || ''); if (!m) return 0; return parseFloat(m[1]) * (m[2].toUpperCase() === 'M' ? 1e6 : m[2].toUpperCase() === 'K' ? 1e3 : 1); };
+    function skeleton(title, lines) {
+        show('<h2 id="think">' + esc(title) + '</h2><p class="sub" id="think2">' + esc(lines[0] || '') + '</p><div class="grid sec">' +
+            Array.from({length: 6}, () => '<div><div class="skel" style="aspect-ratio:16/9"></div><div style="display:flex;gap:12px;margin-top:12px"><div class="skel" style="width:36px;height:36px;border-radius:50%"></div><div style="flex:1"><div class="skel" style="height:14px"></div><div class="skel" style="height:12px;width:60%;margin-top:8px"></div></div></div></div>').join('') + '</div>', true);
+        let k = 1; const t = setInterval(() => { const el = document.getElementById('think2'); if (el && k < lines.length) el.textContent = lines[k++]; }, 650);
+        return () => clearInterval(t);
     }
 
-    // ---- home: two doors ------------------------------------------------------------------------------
+    // ---- home ---------------------------------------------------------------------------------------
     function home() {
-        S.door = ''; progress(4, 0); wall(); history.replaceState(null, '', '/money-niche');
-        const p = S.pulse, chans = (p && p.channels) || [], last = mine()[0];
-        show('<div class="kicker">Free · 60 seconds</div>' +
-            '<h1>What channel should <span class="grad">you</span> make?</h1>' +
-            '<p class="lede">And would it actually make money? Find the niche that fits you, or find out why your channel isn’t growing.</p>' +
-            (p && p.week ? '<div class="pulse"><span class="dot"></span><span class="faces">' + chans.slice(0, 5).map((c) => '<img src="' + url(c.avatar) + '" alt="" referrerpolicy="no-referrer">').join('') +
-                '</span><span><b>' + p.week + '</b> small channels broke out this week</span></div>' : '') +
-            '<div class="doors">' +
-            '<button class="door" data-door="zero">' + clip('titanic-lifeboat', 'bg') + '<span class="go">→</span><span class="in"><b>I’m starting<br>from zero</b><small>Find my money niche · 4 taps</small></span></button>' +
-            '<button class="door" data-door="channel">' + clip('hand-drawn-money', 'bg') + '<span class="go">→</span><span class="in"><b>I already have<br>a channel</b><small>Find out why it’s not growing, and fix it</small></span></button></div>' +
-            (chans.length ? '<div class="ticker" aria-label="Channels breaking out now"><div class="track">' + chans.concat(chans).map((c) =>
-                '<a class="tick" href="' + url(c.url) + '" target="_blank" rel="noopener"><img src="' + url(c.thumbnail || c.avatar) + '" alt="" referrerpolicy="no-referrer" loading="lazy"><span><b>' + esc(c.name) + '</b><small>' +
-                n(c.recent_avg_views) + ' views/video' + (c.months ? ' · ' + months(c.months) + ' old' : '') + '</small></span></a>').join('') + '</div></div>' : '') +
-            (last ? '<button class="btn ghost" style="margin-top:18px" data-last>See my last result</button>' : '') +
-            '<p class="foot"><a href="/3d-harness#niches">Browse the 15 proven niches</a></p>');
+        S.door = ''; progress(0); history.replaceState(null, '', '/money-niche');
+        const p = S.pulse || {}, vids = p.videos || [], last = mine()[0];
+        const feed = vids.length ? vids.map((v) => videoCard(v, {name: v.channel, avatar: v.avatar}, hotLine(v)))
+            : S.niches.map((x) => { const b = (x.board || []).find((i) => i.still); return b ? videoCard({url: b.url, thumbnail: b.still, title: x.name, views: parseViews(b.views)}, {name: b.channel}) : ''; });
+        show('<div class="hero narrow" style="margin-left:0"><h1>What channel should you make?</h1>' +
+            '<p class="sub" style="margin-top:0">And would it actually make money? Find the niche that fits you, or find out why your channel isn’t growing.</p>' +
+            (p.week ? '<span class="pulse"><span><b>' + p.week + '</b> small channels broke out this week</span></span>' : '') + '</div>' +
+            '<div class="doors"><button class="door" data-door="zero"><span class="ic">' + icon('play') + '</span><span><b>I’m starting from zero</b><small>Find my money niche · 4 taps</small></span></button>' +
+            '<button class="door alt" data-door="channel"><span class="ic">' + icon('search') + '</span><span><b>I already have a channel</b><small>Find out why it’s not growing, and fix it</small></span></button></div>' +
+            '<div class="sec"><div class="chips"><span class="chip on">' + (vids.length ? 'Breaking out this week' : 'Proven niches') + '</span><span class="chip">Small channels</span><span class="chip">Big views</span><span class="chip">Faceless</span></div>' +
+            '<div class="grid wide" style="margin-top:12px">' + feed.join('') + '</div></div>' +
+            (last ? '<div class="nav end"><button class="btn tonal" data-last>See my last result</button></div>' : ''), true);
         stage.querySelector('[data-door="zero"]').onclick = () => { S.door = 'zero'; S.q = 0; question(); };
         stage.querySelector('[data-door="channel"]').onclick = () => { S.door = 'channel'; checkStart(); };
         const l = stage.querySelector('[data-last]'); if (l) l.onclick = () => openResult(last, true);
-        side('<div class="card"><span class="live">Made in ChannelRecipe Studio</span><h3 style="margin-top:6px">Faceless channels, in any look</h3>' +
-            boardHTML([{clip: 'titanic-iceberg', style: 'Clean 3D Reconstruction'}, {clip: 'gladiator-sold', style: 'Stick Figure Stories'},
-                {clip: 'night-vision', style: '3D Dark Stories', vertical: true}, {clip: 'hand-drawn-money', style: 'Hand-Drawn Money'},
-                {clip: 'seventies-kids', style: 'Painted History'}], 5) + '</div>');
     }
 
     // ---- door 1: the quiz -----------------------------------------------------------------------------
-    function chosenClips() {
-        const a = S.answers, out = [];
-        QUESTIONS.forEach((q) => q.options.forEach(([v, c]) => { if (q.multi ? a.loves.includes(v) : a[q.key] === v) out.push(c); }));
-        return out;
-    }
-    function mineStrip() {
-        const c = chosenClips();
-        return '<div class="mine" aria-hidden="true">' + c.map((x) => '<figure><img src="' + MB + name(x) + '.webp" alt=""></figure>').join('') +
-            (c.length ? '<span>your mood board</span>' : '') + '</div>';
-    }
     function question() {
         const q = QUESTIONS[S.q];
-        progress(4, S.q);
+        progress(S.q / 4 * 0.45);
         const picked = (v) => q.multi ? S.answers.loves.includes(v) : S.answers[q.key] === v;
-        const cards = q.multi
-            ? '<div class="cards two">' + q.options.map(([v, c, label]) => '<button type="button" class="pick tall" data-v="' + v + '" aria-pressed="' + picked(v) + '">' +
-                clip(c, 'bg') + '<i class="tickmark" aria-hidden="true">' + (picked(v) ? '✓' : '') + '</i><span class="in"><b>' + esc(label) + '</b></span></button>').join('') + '</div>'
-            : '<div class="cards">' + q.options.map(([v, c, title, sub]) => '<button type="button" class="pick row" data-v="' + v + '" aria-pressed="' + picked(v) + '">' +
-                clip(c, 'bg') + '<span class="in"><b>' + esc(title) + '</b><small>' + esc(sub) + '</small></span></button>').join('') + '</div>';
-        show(mineStrip() + '<div class="kicker" style="margin-top:12px">Question ' + q.kicker + '</div><h2>' + esc(q.title) + '</h2><p class="lede">' + esc(q.lede) + '</p>' + cards +
-            '<div class="spacer"></div><div class="nav"><button class="btn ghost back" type="button" aria-label="Back" data-back>←</button>' +
-            '<button class="btn" type="button" data-next' + (ready(q) ? '' : ' disabled') + '>' + (S.q === 3 ? 'Show my niche' : 'Next') + '</button></div>');
-        wall(chosenClips().length ? chosenClips().concat(ALL.slice(0, 8)) : null);
-        side('<div class="card"><h3>Your mood board</h3><p class="small">Every answer adds to it. Your niche will look like this.</p>' +
-            (chosenClips().length ? boardHTML(chosenClips().map((c) => ({clip: c, style: 'your pick', vertical: VERT.has(name(c))})), 6)
-                : '<p class="note">Pick an answer to start it.</p>') + '</div>');
+        const body = q.multi
+            ? '<div class="grid two sec" style="margin-top:18px">' + q.options.map(([v, vid, label, ch, views]) =>
+                '<button type="button" class="yv pickable" data-v="' + v + '" aria-pressed="' + picked(v) + '"><div class="th"><img src="https://i.ytimg.com/vi/' + vid + '/mqdefault.jpg" alt="" loading="lazy" referrerpolicy="no-referrer">' +
+                '<i class="tick" aria-hidden="true">' + (picked(v) ? '✓' : '') + '</i></div><div class="meta"><div><h4>' + esc(label) + '</h4><p>' + esc(ch) + ' · ' + views + ' views</p></div></div></button>').join('') + '</div>'
+            : '<div class="opts">' + q.options.map(([v, ic, title, sub]) => '<button type="button" class="opt" data-v="' + v + '" aria-pressed="' + picked(v) + '">' +
+                '<span class="ic">' + icon(ic) + '</span><span><b>' + esc(title) + '</b><small>' + esc(sub) + '</small></span></button>').join('') + '</div>';
+        show('<p class="small">Question ' + (S.q + 1) + ' of 4</p><h2 style="margin-top:4px">' + esc(q.title) + '</h2><p class="sub">' + esc(q.lede) + '</p>' + body +
+            '<div class="spacer"></div><div class="nav"><button class="btn tonal back" type="button" aria-label="Back" data-back>←</button>' +
+            '<button class="btn big blue" type="button" data-next' + (ready(q) ? '' : ' disabled') + '>' + (S.q === 3 ? 'Show my niche' : 'Next') + '</button></div>');
         stage.querySelector('[data-back]').onclick = () => { if (S.q === 0) home(); else { S.q -= 1; question(); } };
         stage.querySelector('[data-next]').onclick = next;
         stage.querySelectorAll('[data-v]').forEach((b) => b.onclick = () => {
             const v = b.dataset.v;
             if (q.multi) {
                 const list = S.answers.loves;
-                if (list.includes(v)) list.splice(list.indexOf(v), 1);
-                else if (list.length < 3) list.push(v);
-                else { toast('Up to three: untick one first'); return; }
-                b.setAttribute('aria-pressed', String(list.includes(v)));
-                b.querySelector('.tickmark').textContent = list.includes(v) ? '✓' : '';
+                if (list.includes(v)) list.splice(list.indexOf(v), 1); else if (list.length < 3) list.push(v); else { toast('Up to three: untick one first'); return; }
+                b.setAttribute('aria-pressed', String(list.includes(v))); b.querySelector('.tick').textContent = list.includes(v) ? '✓' : '';
                 stage.querySelector('[data-next]').disabled = !list.length;
-                stage.querySelector('.mine').outerHTML = mineStrip();
-                side('<div class="card"><h3>Your mood board</h3><p class="small">Every answer adds to it.</p>' +
-                    boardHTML(chosenClips().map((c) => ({clip: c, style: 'your pick', vertical: VERT.has(name(c))})), 6) + '</div>');
             } else {
-                S.answers[q.key] = v;
-                stage.querySelectorAll('[data-v]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
-                setTimeout(next, 280);
+                S.answers[q.key] = v; stage.querySelectorAll('[data-v]').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); setTimeout(next, 250);
             }
         });
     }
     const ready = (q) => q.multi ? S.answers.loves.length > 0 : !!S.answers[q.key];
     function next() { if (!ready(QUESTIONS[S.q])) return; if (S.q < 3) { S.q += 1; question(); } else submit(); }
-
-    function thinking(lines, clips) {
-        show('<div class="think"><div><div class="montage">' + clips.slice(0, 6).map((c, i) => clip(c, i ? '' : 'on')).join('') +
-            '<div class="scan"></div></div><h2 id="think" style="font-size:30px">' + esc(lines[0]) + '</h2><p class="count" id="count"></p></div></div>');
-        const els = stage.querySelectorAll('.montage video, .montage img');
-        let i = 0, k = 1;
-        const timer = setInterval(() => {
-            els.forEach((e) => e.classList.remove('on')); els[(i = (i + 1) % els.length)]?.classList.add('on');
-            const h = document.getElementById('think'); if (h && k < lines.length) h.textContent = lines[k++];
-        }, 650);
-        return () => clearInterval(timer);
-    }
     async function submit() {
-        progress(4, 4);
-        const stop = thinking(['Checking 15 proven niches…', 'Matching your answers…', 'Finding small channels with big views…', 'Working out what they earn…'],
-            chosenClips().length ? chosenClips() : ALL.slice(0, 6));
+        progress(0.5);
+        const stop = skeleton('Finding your niche…', ['Checking 15 proven niches', 'Searching the Niche Finder for small channels with big views', 'Working out what they earn']);
         try {
-            const [t] = await Promise.all([api('/api/money-niche/quiz', S.answers), new Promise((r) => setTimeout(r, 2400))]);
-            S.teaser = t; S.id = t.id; S.mine = true; remember(t.id);
-            history.replaceState(null, '', '/money-niche/r/' + t.id);
-            taste();
+            const [t] = await Promise.all([api('/api/money-niche/quiz', S.answers), new Promise((r) => setTimeout(r, 1800))]);
+            S.teaser = t; S.id = t.id; S.mine = true; remember(t.id); history.replaceState(null, '', '/money-niche/r/' + t.id); taste();
         } catch (e) {
-            show('<h2>That didn’t work</h2><p class="lede">' + esc(e.message) + '</p><div class="spacer"></div><button class="btn" data-retry>Try again</button>');
+            show('<h2>That didn’t work</h2><p class="sub">' + esc(e.message) + '</p><div class="nav end"><button class="btn big blue" data-retry>Try again</button></div>');
             stage.querySelector('[data-retry]').onclick = submit;
         } finally { stop(); }
     }
 
-    // ---- the taste, then the gate ---------------------------------------------------------------------
-    function tasteProof(p) {
-        if (!p) return '<div class="card"><p class="note">The Niche Finder hasn’t caught a new small channel here this week. Your full result shows the established ones.</p></div>';
-        if (p.kind === 'established') {
-            return '<div class="card"><span class="tag">Established channel</span><div class="thumbs" style="grid-template-columns:1fr;margin-top:10px"><a href="' + url(p.url) + '" target="_blank" rel="noopener">' +
-                '<img src="' + url(p.thumbnail) + '" alt="" referrerpolicy="no-referrer"><b>' + esc(p.name) + '</b> · ' + esc(p.views_label) + ' views on its breakout video</a></div></div>';
-        }
-        return proofCard({...p, recent: p.recent || []});
-    }
-    function gateHTML(lines) {
-        return '<div class="card gate lift"><h3>Your full result is ready</h3><ul>' + lines.map((l) => '<li>' + esc(l) + '</li>').join('') + '</ul>' +
+    // ---- the taste, then the sign-in ----------------------------------------------------------------
+    function gateHTML(title, lines) {
+        return '<div class="gate"><h3>' + esc(title) + '</h3><ul>' + lines.map((l) => '<li>' + esc(l) + '</li>').join('') + '</ul>' +
             '<div class="google" id="google-btn" hidden></div><div class="or" id="google-or" hidden>or</div>' +
             '<div id="email-step"><input class="field" id="email" type="email" autocomplete="email" placeholder="you@example.com" aria-label="Your email">' +
-            '<button class="btn" style="margin-top:8px" data-send>Email me a sign-in code</button></div>' +
-            '<div id="code-step" hidden><p class="small" id="code-to"></p><input class="field code" id="code" inputmode="numeric" maxlength="6" placeholder="000000" aria-label="6-digit code">' +
-            '<div class="row"><button class="btn ghost" style="width:auto" data-other>Back</button><button class="btn" data-verify>Show me</button></div></div>' +
+            '<button class="btn big blue" style="margin-top:8px" data-send>Email me a sign-in code</button></div>' +
+            '<div id="code-step" hidden><p class="small" id="code-to"></p><input class="field code" id="code" inputmode="numeric" maxlength="6" placeholder="000000" aria-label="6-digit code" style="margin-top:8px">' +
+            '<div class="row"><button class="btn tonal" data-other>Back</button><button class="btn blue" style="flex:1" data-verify>Show me</button></div></div>' +
             '<label class="consent"><input type="checkbox" id="consent"> <span>Email me new breakout channels in my niche. About every week or two. Unsubscribe anytime.</span></label>' +
             '<p class="err" id="err" role="alert"></p><p class="note">Free. No card. Signing in saves your result; we never post anything.</p></div>';
     }
@@ -336,8 +266,7 @@
             }
             after();
         };
-        window.CRGoogle?.mount(document.getElementById('google-btn'), {
-            theme: 'filled_black', width: Math.min(360, stage.clientWidth - 40),
+        window.CRGoogle?.mount(document.getElementById('google-btn'), {theme: 'filled_black', width: Math.min(360, stage.clientWidth - 40),
             onShown: () => { document.getElementById('google-or').hidden = false; }, onSignedIn: done, onError: err});
         const email = document.getElementById('email'), code = document.getElementById('code');
         const send = async () => {
@@ -360,22 +289,24 @@
         stage.querySelector('[data-verify]').onclick = verify; code.onkeydown = (e) => { if (e.key === 'Enter') verify(); };
         stage.querySelector('[data-other]').onclick = () => { document.getElementById('email-step').hidden = false; document.getElementById('code-step').hidden = true; };
     }
-
     function taste() {
-        const t = S.teaser, signedIn = !!S.user, theirs = !S.mine && !signedIn;
-        progress(QUIZ_STEPS.length, 0);
-        const b = t.board || [];
-        wall(b.filter((x) => x.clip).map((x) => x.clip).concat(chosenClips()));
+        const t = S.teaser, signedIn = !!S.user, theirs = !S.mine && !signedIn, p = t.proof;
+        progress(0.55);
+        let proof = '';
+        if (p && p.kind === 'fresh') {
+            const ch = {...p, recent: p.recent || [], videos: p.videos};
+            proof = '<div class="studio-grid">' + realtime(ch) + topContent(ch.recent, 'Top content · ' + p.name) + '</div>' + channelPage(ch);
+        } else if (p) proof = refCards([{name: p.name, url: p.url, views_label: p.views_label, thumbnail: p.thumbnail}]);
+        const peek = (t.peek || []).length ? '<div class="sec"><div class="sec-h"><h3>' + (t.viral_count || t.peek.length) + ' more viral niches matched to you</h3></div><div class="shelf">' +
+            t.peek.map((x) => '<div class="yv"><div class="th"><img src="' + url(x.thumbnail) + '" alt="" loading="lazy" referrerpolicy="no-referrer"></div><div class="meta"><div><h4>' + esc(x.name) + '</h4><p>' + n(x.views) + ' views on a recent video</p></div></div></div>').join('') + '</div></div>' : '';
         let gate;
-        if (theirs) gate = '<div class="spacer"></div><a class="btn" href="/money-niche">Find my own money niche</a><p class="foot small">Free, 60 seconds, real channels as proof.</p>';
-        else if (signedIn) gate = '<div class="spacer"></div><div class="nav"><button class="btn" data-full>See my full result</button></div>';
-        else gate = gateHTML([(t.more || 2) + ' more niches that fit you', 'What channels like these plausibly earn', 'How many videos they needed before their first breakout',
-            'Make it yours: angle, look and first title', 'Your recipe, ready to make in ChannelRecipe']);
-        show('<div class="kicker">' + (theirs ? 'Their #1 money niche' : 'Your #1 money niche') + '</div>' +
-            '<h1 class="grad" style="font-size:clamp(36px,10vw,58px)">' + esc(t.niche.name) + '</h1><p class="lede">' + esc(t.niche.pitch) + '</p>' +
-            (t.why && t.why.length ? '<div class="chips">' + t.why.map((w) => '<span class="chip ok">✓ ' + esc(w) + '</span>').join('') + '</div>' : '') +
-            boardHTML(b, 4) + '<p class="kicker section-k">The proof</p>' + tasteProof(t.proof) + gate);
-        side('<div class="card"><h3>' + esc(t.niche.name) + '</h3><p class="small">The look of this niche</p>' + boardHTML(b.slice(1), 5) + '</div>');
+        if (theirs) gate = '<div class="nav end"><a class="btn big blue" href="/money-niche">Find my own money niche</a></div>';
+        else if (signedIn) gate = '<div class="nav"><button class="btn big blue" data-full>See my full result</button></div>';
+        else gate = gateHTML('Sign in to see your full result', [(t.viral_count || 2) + ' more viral niches, with the channels and videos behind them', 'What channels like these plausibly earn',
+            'How many videos they needed before their first breakout', 'Your recipe: format, look, pacing and your first title']);
+        show('<p class="small">' + (theirs ? 'Their #1 money niche' : 'Your #1 money niche') + '</p><h1 style="margin-top:4px">' + esc(t.niche.name) + '</h1><p class="sub">' + esc(t.niche.pitch) + '</p>' +
+            (t.why && t.why.length ? '<div class="chips" style="margin-top:12px">' + t.why.map((w) => '<span class="chip ok">✓ ' + esc(w) + '</span>').join('') + '</div>' : '') +
+            '<div class="sec"><div class="sec-h"><h3>A small channel doing it right now</h3></div>' + proof + '</div>' + peek + gate, true);
         if (signedIn) stage.querySelector('[data-full]').onclick = loadFull;
         if (!theirs && !signedIn) bindGate(loadFull);
     }
@@ -383,104 +314,91 @@
         try {
             const f = await api('/api/money-niche/result/' + encodeURIComponent(S.id));
             if (f.gated) { S.user = null; taste(); return; }
-            S.full = f; S.step = 0;
-            const top = f.niches[0];
+            S.full = f; S.step = 0; const top = f.niches[0];
             S.pick = {niche: top.id, angle: top.angles[0]?.id || '', look: top.looks[0]?.id || '', title: ''};
             result();
         } catch (e) { toast(e.message); }
     }
 
     // ---- the full result ------------------------------------------------------------------------------
-    const currentNiche = () => S.door === 'channel'
-        ? (S.niches || []).find((x) => x.id === S.pick.niche)
-        : (S.full.niches.find((x) => x.id === S.pick.niche) || S.full.niches[0]);
-    function earningsCard(nn, f) {
-        return '<div class="card lift"><div class="kicker">What channels like these plausibly earn</div>' +
-            (nn.earnings ? '<p style="margin-top:8px"><span class="big grad">' + money(nn.earnings[0]) + '–' + money(nn.earnings[1]) + '</span><span class="small"> a month, estimated</span></p>' + meter(nn.earnings)
-                : '<p class="lede">Not enough recent numbers to estimate yet.</p>') +
-            '<div class="stats two"><div class="stat"><b>$' + nn.rpm[0] + '–$' + nn.rpm[1] + '</b><span>ads pay per 1,000 views in this niche</span></div>' +
-            '<div class="stat"><b>' + (nn.breakout_after ? '~' + nn.breakout_after : '–') + '</b><span>videos before their first breakout</span></div></div>' +
-            (nn.shorts_rpm ? '<p class="note">Shorts pay far less: about <b>$' + nn.shorts_rpm[0] + '–$' + nn.shorts_rpm[1] + '</b> per 1,000 views.</p>' : '') +
-            '<p class="note">' + esc(f.estimate_note) + '</p><p class="note"><b>' + esc(f.ypp_note) + '</b></p></div>';
-    }
+    const currentNiche = () => S.door === 'channel' ? S.niches.find((x) => x.id === S.pick.niche)
+        : (S.full.niches.find((x) => x.id === S.pick.niche) || S.niches.find((x) => x.id === S.pick.niche) || S.full.niches[0]);
     function nav(last) {
-        return last ? '<div class="nav end"><button class="btn ghost back" aria-label="Back" data-back>←</button></div>'
-            : '<div class="spacer"></div><div class="nav"><button class="btn ghost back" aria-label="Back" data-back>←</button><button class="btn" data-next>Next</button></div>';
+        return last ? '<div class="nav end"><button class="btn tonal back" aria-label="Back" data-back>←</button></div>'
+            : '<div class="nav"><button class="btn tonal back" aria-label="Back" data-back>←</button><button class="btn big blue" data-next>Next</button></div>';
     }
+    function shelf(title, sub, proofs, pick, badge) {
+        const cards = proofs.flatMap((p) => (p.recent || []).slice(0, 3).map((v) => videoCard(v, p, hotLine(p))));
+        if (!cards.length) return '';
+        return '<div class="sec"><div class="sec-h"><div><h3>' + (badge ? '<span class="chip ok" style="margin-right:8px;font-size:12px;padding:3px 8px">' + esc(badge) + '</span>' : '') + esc(title) + '</h3>' +
+            '<p class="small" style="margin-top:4px">' + esc(sub) + '</p></div>' + (pick ? '<button class="btn tonal" data-use="' + esc(pick) + '">Make this mine</button>' : '') + '</div>' +
+            '<div class="shelf">' + cards.join('') + '</div></div>';
+    }
+    const shelfLine = (x) => [x.proofs.length + ' small channel' + (x.proofs.length > 1 ? 's' : ''),
+        n(Math.round(x.proofs.reduce((s, p) => s + p.recent_avg_views, 0) / x.proofs.length)) + ' views per video',
+        x.earnings ? 'est. ' + money(x.earnings[0]) + '–' + money(x.earnings[1]) + '/mo' : ''].filter(Boolean).join(' · ');
     function result() {
         const f = S.full, step = QUIZ_STEPS[S.step], top = f.niches[0];
-        progress(QUIZ_STEPS.length, S.step);
-        let html = '';
+        progress(0.6 + S.step / QUIZ_STEPS.length * 0.4);
+        let html = '', wide = true;
         if (step === 'niche') {
-            wall(top.board.filter((x) => x.clip).map((x) => x.clip).concat(chosenClips()));
-            html = '<div class="kicker">Your #1 money niche</div><h1 class="grad" style="font-size:clamp(36px,10vw,58px)">' + esc(top.name) + '</h1><p class="lede">' + esc(top.pitch) + '</p>' +
-                (top.why.length ? '<div class="chips">' + top.why.map((w) => '<span class="chip ok">✓ ' + esc(w) + '</span>').join('') + '</div>' : '') +
-                boardHTML(top.board, 5) + earningsCard(top, f) + '<p class="kicker section-k">Small channels doing it right now</p>' +
-                (top.proofs.length ? top.proofs.map((p) => proofCard(p, {money: true})).join('') : '<div class="card"><p class="note">The Niche Finder hasn’t caught a new small channel here this week. It hunts twice a day.</p></div>') + refs(top.references);
-            side('<div class="card"><span class="live">Live from the Niche Finder</span><h3 style="margin-top:6px">Why ' + esc(top.name.toLowerCase()) + '</h3>' +
-                (top.proofs[0] ? chart(top.proofs[0].recent) + '<p class="small">' + esc(top.proofs[0].name) + ': views on its latest videos</p>' : '') + boardHTML(top.board.slice(1), 4) + '</div>');
-        } else if (step === 'more') {
-            html = '<div class="kicker">Also a great fit</div><h2>Two more niches for you</h2>' + f.niches.slice(1).map((m, i) =>
-                '<div class="card"><span class="tag">#' + (i + 2) + '</span><h3 style="margin-top:8px;font-size:24px">' + esc(m.name) + '</h3><p class="small" style="margin-top:4px">' + esc(m.pitch) + '</p>' +
-                (m.why.length ? '<div class="chips">' + m.why.map((w) => '<span class="chip ok">✓ ' + esc(w) + '</span>').join('') + '</div>' : '') + boardHTML(m.board, 3) +
-                '<div class="stats two"><div class="stat"><b>' + (m.earnings ? money(m.earnings[0]) + '–' + money(m.earnings[1]) : '–') + '</b><span>a month for channels like these (estimate)</span></div>' +
-                '<div class="stat"><b>' + (m.breakout_after ? '~' + m.breakout_after : '–') + '</b><span>videos before the first breakout</span></div></div>' +
-                (m.proofs[0] ? proofCard(m.proofs[0]) : refs(m.references)) +
-                '<button class="btn ghost" style="margin-top:12px" data-use="' + esc(m.id) + '">Make this one mine</button></div>').join('') + '<p class="note">' + esc(f.ypp_note) + '</p>';
-            side('');
-        } else if (step === 'make') html = makeIt();
-        else if (step === 'recipe') html = recipeScreen();
+            html = '<p class="small">Your #1 money niche</p><h1 style="margin-top:4px">' + esc(top.name) + '</h1><p class="sub">' + esc(top.pitch) + '</p>' +
+                (top.why.length ? '<div class="chips" style="margin-top:12px">' + top.why.map((w) => '<span class="chip ok">✓ ' + esc(w) + '</span>').join('') + '</div>' : '') +
+                '<div class="studio-grid">' + niceAnalytics(top, f) + money_card(top, f) + '</div>' +
+                (top.proofs.length ? '<div class="sec"><div class="sec-h"><h3>Small channels doing it right now</h3></div>' + top.proofs.map(channelPage).join('') + '</div>'
+                    : '<p class="note">The Niche Finder hasn’t caught a new small channel here this week. It hunts twice a day.</p>') + refCards(top.references);
+        } else if (step === 'viral') {
+            const more = f.niches.slice(1).map((x, i) => shelf(x.name, shelfLine(x) || x.pitch, x.proofs, x.id, '#' + (i + 2) + ' fit'))
+                .concat((f.more || []).map((x) => shelf(x.name, shelfLine(x), x.proofs, x.id, x.why && x.why.length ? 'fits you' : '')))
+                .concat((f.live || []).map((c) => shelf(c.keyword.replace(/\b\w/g, (m) => m.toUpperCase()), c.count + ' small channels · ' + n(Math.round(c.views / c.count)) + ' views per video · live in the Niche Finder', c.channels, '', 'live')))
+                .filter(Boolean);
+            html = '<p class="small">More for you</p><h1 style="margin-top:4px">Viral niches right now</h1><p class="sub">Small channels getting big views this month, best fit for you first. Tap any video to watch it on YouTube.</p>' +
+                (more.join('') || '<p class="note">The Niche Finder hasn’t caught other breakout channels this week. It hunts twice a day.</p>') + '<p class="note">' + esc(f.ypp_note) + '</p>';
+        } else if (step === 'make') { html = makeIt(); wide = false; }
+        else if (step === 'recipe') { html = recipeScreen(); wide = false; }
         else if (step === 'share') {
-            const link = location.origin + '/money-niche/r/' + f.id;
-            html = '<div class="kicker">Share it</div><h2>Post your money niche</h2><p class="lede">Your card shows your #1 niche and its proof. Nothing personal.</p>' +
-                '<div class="card share"><img src="/money-niche/card/' + encodeURIComponent(f.id) + '.png" alt="My money niche: ' + esc(top.name) + ', on channelrecipe.com"></div>' +
-                '<div class="share-btns"><button class="btn" data-share>Share</button><button class="btn ghost" data-link>Copy link</button>' +
-                '<a class="btn ghost" href="/money-niche/card/' + encodeURIComponent(f.id) + '.png" download="my-money-niche.png">Save image</a>' +
-                '<a class="btn ghost" target="_blank" rel="noopener" href="https://twitter.com/intent/tweet?text=' + encodeURIComponent('My money niche: ' + top.name + '. Find yours:') + '&url=' + encodeURIComponent(link) + '">Post on X</a></div>';
-        } else if (step === 'plans') html = plansScreen();
-        show(html + nav(S.step === QUIZ_STEPS.length - 1));
+            const link = location.origin + '/money-niche/r/' + f.id; wide = false;
+            html = '<p class="small">Share it</p><h2 style="margin-top:4px">Post your money niche</h2><p class="sub">Your card shows your #1 niche and its proof. Nothing personal.</p>' +
+                '<div class="share sec"><img src="/money-niche/card/' + encodeURIComponent(f.id) + '.png" alt="My money niche: ' + esc(top.name) + '"></div>' +
+                '<div class="share-btns"><button class="btn blue" data-share>Share</button><button class="btn tonal" data-link>Copy link</button>' +
+                '<a class="btn tonal" href="/money-niche/card/' + encodeURIComponent(f.id) + '.png" download="my-money-niche.png">Save image</a>' +
+                '<a class="btn tonal" target="_blank" rel="noopener" href="https://twitter.com/intent/tweet?text=' + encodeURIComponent('My money niche: ' + top.name + '. Find yours:') + '&url=' + encodeURIComponent(link) + '">Post on X</a></div>';
+        } else if (step === 'plans') { html = plansScreen(); }
+        show(html + nav(S.step === QUIZ_STEPS.length - 1), wide);
         bindResult(() => result(), QUIZ_STEPS.length, () => taste());
     }
 
-    // make it yours: angle -> look -> recipe (shared by both doors)
+    // ---- ChannelRecipe's part: make it yours -> recipe -> plans (shared by both doors) --------------------
+    function clip(c, cls = '') {
+        const k = name(c), at = cls ? ' class="' + cls + '"' : '';
+        if (still) return '<img src="' + MB + k + '.webp" alt=""' + at + '>';
+        return '<video muted loop playsinline autoplay preload="metadata" disablepictureinpicture poster="' + MB + k + '.webp" src="' + MB + k + '.mp4"' + at + '></video>';
+    }
+    const media = (it) => it.clip ? clip(it.clip) : '<img src="' + url(it.still) + '" alt="" referrerpolicy="no-referrer" loading="lazy">';
     function makeIt() {
         const nn = currentNiche();
-        if (!nn) return nichePicker();
-        wall((nn.board || []).filter((x) => x.clip).map((x) => x.clip).concat(ALL.slice(0, 6)));
-        side('<div class="card"><h3>' + esc(nn.name) + '</h3>' + boardHTML(nn.board, 5) + '</div>');
-        return '<div class="kicker">Make it yours · ' + esc(nn.name) + '</div><h2>Pick your angle</h2><p class="lede">The corner of the niche you’ll own.</p>' +
-            '<div class="cards two">' + nn.angles.map((a) => '<button class="pick" data-angle="' + esc(a.id) + '" aria-pressed="' + (S.pick.angle === a.id) + '" style="padding:14px;min-height:112px">' +
-                '<span style="position:relative;z-index:1;display:block"><b>' + esc(a.name) + '</b><small>“' + esc(a.title) + '”</small></span></button>').join('') + '</div>' +
-            '<h2 style="margin-top:28px;font-size:30px">Pick your look</h2><p class="lede">What every video will look like.</p>' +
-            '<div class="cards">' + nn.looks.map((l) => '<button class="pick row" data-look="' + esc(l.id) + '" aria-pressed="' + (S.pick.look === l.id) + '" style="min-height:120px">' +
-                media(l, 'bg') + '<span class="in"><b>' + esc(l.name) + '</b><small>' + esc(l.how) + '</small></span></button>').join('') + '</div>';
-    }
-    function nichePicker() {
-        return '<div class="kicker">Make it yours</div><h2>Which niche is yours?</h2><p class="lede">We couldn’t tell from your titles. Pick the closest.</p>' +
-            '<div class="cards two">' + (S.niches || []).map((x) => '<button class="pick tall" data-niche="' + esc(x.id) + '">' + (x.board[0] ? media(x.board[0], 'bg') : '') +
-                '<span class="in"><b>' + esc(x.name) + '</b></span></button>').join('') + '</div>';
+        if (!nn) return '<p class="cr-kicker">Make it yours · ChannelRecipe</p><h2 style="margin-top:6px">Which niche is yours?</h2><p class="sub">We couldn’t tell from your titles. Pick the closest.</p>' +
+            '<div class="cards2">' + S.niches.map((x) => '<button class="pick" data-niche="' + esc(x.id) + '"><b>' + esc(x.name) + '</b><small>' + esc(x.pitch) + '</small></button>').join('') + '</div>';
+        return '<p class="cr-kicker">Make it yours · ChannelRecipe</p><h2 style="margin-top:6px">Pick your angle in ' + esc(nn.name.toLowerCase()) + '</h2><p class="sub">The corner of the niche you’ll own.</p>' +
+            '<div class="cards2">' + nn.angles.map((a) => '<button class="pick" data-angle="' + esc(a.id) + '" aria-pressed="' + (S.pick.angle === a.id) + '"><b>' + esc(a.name) + '</b><small>“' + esc(a.title) + '”</small></button>').join('') + '</div>' +
+            '<h2 class="sec" style="font-size:22px">Pick your look</h2><p class="sub">What every video will look like. Made in ChannelRecipe Studio.</p>' +
+            nn.looks.map((l) => '<button class="look" data-look="' + esc(l.id) + '" aria-pressed="' + (S.pick.look === l.id) + '">' + media(l) + '<span class="in"><b>' + esc(l.name) + '</b><small>' + esc(l.how) + '</small></span></button>').join('');
     }
     function recipeOf(nn) {
-        if (S.door !== 'channel') return nn.recipe;
+        if (S.door !== 'channel' && nn.recipe) return nn.recipe;
         return {format: nn.format, kind: 'long', length: nn.length, look: nn.look, pacing: nn.pacing, voice: 'Your voice or an AI narrator', rhythm: '1 video a week, steady'};
     }
     function recipeScreen() {
-        const nn = currentNiche(), r = recipeOf(nn);
-        const angle = nn.angles.find((a) => a.id === S.pick.angle) || nn.angles[0];
-        const look = nn.looks.find((l) => l.id === S.pick.look) || nn.looks[0];
+        const nn = currentNiche(), cat = S.niches.find((x) => x.id === nn.id) || nn, r = recipeOf(nn);
+        const angle = cat.angles.find((a) => a.id === S.pick.angle) || cat.angles[0], look = cat.looks.find((l) => l.id === S.pick.look) || cat.looks[0];
         const titles = [...new Set([angle?.title].concat(S.door === 'channel' ? (S.check.ideas || []).map((i) => i.title) : (S.full.niches[0].id === nn.id ? S.full.titles : [])).filter(Boolean))];
         if (!S.pick.title || !titles.includes(S.pick.title)) S.pick.title = titles[0] || '';
-        side('');
-        return '<div class="kicker">Your recipe</div><h2>' + esc(nn.name) + (angle ? ': ' + esc(angle.name.toLowerCase()) : '') + '</h2>' +
-            '<div class="recipe-card"><div class="hero">' + (look ? media(look) : (nn.board[0] ? media(nn.board[0]) : '')) +
-            '<div class="t"><span class="tag">' + esc(look ? look.name : 'Your look') + '</span></div></div><div class="body">' +
-            '<div class="first-title"><small>Your first video</small><b id="first-title">' + esc(S.pick.title) + '</b></div>' +
-            '<dl><div><dt>Format</dt><dd>' + esc(r.format) + (r.kind === 'shorts' ? ' · Shorts' : ' · long videos') + '</dd></div>' +
-            '<div><dt>Length</dt><dd>' + esc(r.length) + '</dd></div><div><dt>Look</dt><dd>' + esc(r.look) + '</dd></div>' +
-            '<div><dt>Pacing</dt><dd>' + esc(r.pacing) + '</dd></div><div><dt>Voice</dt><dd>' + esc(r.voice) + '</dd></div>' +
-            '<div><dt>Upload</dt><dd>' + esc(r.rhythm) + '</dd></div>' +
-            '<div><dt>In Studio</dt><dd>' + esc(look ? look.how : 'Pick a style in the Style library') + '</dd></div></dl></div></div>' +
-            (titles.length > 1 ? '<p class="kicker section-k">Pick your first title</p><ul class="titles">' + titles.slice(0, 6).map((t) =>
+        return '<p class="cr-kicker">Your recipe · ChannelRecipe</p><h2 style="margin-top:6px">' + esc(nn.name) + (angle ? ': ' + esc(angle.name.toLowerCase()) : '') + '</h2>' +
+            '<div class="recipe-card"><div class="hero-m">' + (look ? media(look) : '') + '<span>' + esc(look ? look.name : 'Your look') + '</span></div>' +
+            '<div class="first"><small>Your first video</small><b id="first-title">' + esc(S.pick.title) + '</b></div><dl>' +
+            [['Format', r.format + (r.kind === 'shorts' ? ' · Shorts' : ' · long videos')], ['Length', r.length], ['Look', r.look], ['Pacing', r.pacing], ['Voice', r.voice], ['Upload', r.rhythm],
+                ['In Studio', look ? look.how : 'Pick a style in the Style library']].map(([k, v]) => '<div><dt>' + k + '</dt><dd>' + esc(v) + '</dd></div>').join('') + '</dl></div>' +
+            (titles.length > 1 ? '<h3 class="sec">Pick your first title</h3><ul class="titles">' + titles.slice(0, 6).map((t) =>
                 '<li><button data-title="' + esc(t) + '" aria-pressed="' + (t === S.pick.title) + '"><span>' + esc(t) + '</span><i>' + (t === S.pick.title ? 'chosen' : 'use this') + '</i></button></li>').join('') + '</ul>' : '');
     }
     function plansScreen() {
@@ -488,39 +406,26 @@
         const annual = S.cycle === 'annual', paid = S.user && S.user.plan && S.user.plan !== 'free';
         // TODO(owner decision): a free first hosted video in this niche would be offered here once a hosted video's
         // cost is known. Until then: plans (no trial) and the recipe carried into Studio.
-        return '<div class="kicker">Your next step</div><h2>Make <span class="grad">' + esc(S.pick.title || nn.name) + '</span> in ChannelRecipe</h2>' +
-            '<p class="lede">Studio opens with your recipe picked: ' + esc(nn.name.toLowerCase()) + ', your look, your first title. It writes, voices, animates and edits the video on your computer.</p>' +
-            (paid ? '<div class="spacer"></div><button class="btn" data-go="">Open my recipe in Studio</button>' :
-                ((S.cfg && S.cfg.annual_plans_available) ? '<div class="cycle"><button data-cycle="monthly" aria-pressed="' + !annual + '">Monthly</button><button data-cycle="annual" aria-pressed="' + annual + '">Yearly</button></div>' : '') +
+        return '<p class="cr-kicker">Your next step · ChannelRecipe</p><h2 style="margin-top:6px">Make “' + esc(S.pick.title || nn.name) + '” in ChannelRecipe</h2>' +
+            '<p class="sub">Studio opens with your recipe picked: ' + esc(nn.name.toLowerCase()) + ', your look, your first title. It writes, voices, animates and edits the video on your computer.</p>' +
+            (paid ? '<div class="nav end"><button class="btn big cr" data-go="">Open my recipe in Studio</button></div>' :
+                ((S.cfg && S.cfg.annual_plans_available) ? '<div class="cycle"><button class="chip' + (annual ? '' : ' on') + '" data-cycle="monthly">Monthly</button><button class="chip' + (annual ? ' on' : '') + '" data-cycle="annual">Yearly</button></div>' : '') +
                 '<div class="plans">' + cat.map((t) => {
                     const copy = PLAN_COPY[t.tier] || {tag: '', items: []}, pop = t.tier === 'daily';
-                    return '<div class="plan' + (pop ? ' pop' : '') + '">' + (pop ? '<span class="tag badge">Start here</span>' : '') +
-                        '<h3>' + esc(t.label) + '</h3><p class="tagline">' + esc(copy.tag) + '</p>' +
-                        '<p class="price">$' + (annual ? t.annual_usd : t.monthly_usd) + '<small> / ' + (annual ? 'year' : 'month') + '</small></p>' +
-                        '<ul>' + copy.items.map((i) => '<li>' + i + '</li>').join('') + '</ul>' +
-                        '<button class="btn' + (pop ? '' : ' ghost') + '" data-go="' + esc(t.tier) + '">Start with ' + esc(t.label) + '</button></div>';
+                    return '<div class="plan' + (pop ? ' pop' : '') + '">' + (pop ? '<span class="badge">Start here</span>' : '') + '<h3>' + esc(t.label) + '</h3><p class="small">' + esc(copy.tag) + '</p>' +
+                        '<p class="price">$' + (annual ? t.annual_usd : t.monthly_usd) + '<small> / ' + (annual ? 'year' : 'month') + '</small></p><ul>' + copy.items.map((i) => '<li>' + i + '</li>').join('') + '</ul>' +
+                        '<button class="btn big ' + (pop ? 'cr' : 'tonal') + '" data-go="' + esc(t.tier) + '">Start with ' + esc(t.label) + '</button></div>';
                 }).join('') + '</div><p class="note">Billed today, cancel anytime from Billing. Studio also needs your own Claude account and a Kie.ai or Atlas Cloud balance for voice and pictures.</p>') +
             '<label class="consent"><input type="checkbox" id="consent-final"> <span>Email me new breakout channels in my niche. About every week or two. Unsubscribe anytime.</span></label>';
     }
     function bindResult(redraw, total, before) {
-        const back = stage.querySelector('[data-back]');
-        if (back) back.onclick = () => { if (S.step === 0) before(); else { S.step -= 1; redraw(); } };
+        const back = stage.querySelector('[data-back]'); if (back) back.onclick = () => { if (S.step === 0) before(); else { S.step -= 1; redraw(); } };
         const nx = stage.querySelector('[data-next]'); if (nx) nx.onclick = () => { S.step = Math.min(total - 1, S.step + 1); redraw(); };
-        stage.querySelectorAll('[data-use]').forEach((b) => b.onclick = () => {
-            const nn = S.full.niches.find((x) => x.id === b.dataset.use);
-            S.pick = {niche: nn.id, angle: nn.angles[0]?.id || '', look: nn.looks[0]?.id || '', title: ''}; S.step = QUIZ_STEPS.indexOf('make'); redraw();
-        });
-        stage.querySelectorAll('[data-niche]').forEach((b) => b.onclick = () => {
-            const nn = S.niches.find((x) => x.id === b.dataset.niche);
-            S.pick = {niche: nn.id, angle: nn.angles[0]?.id || '', look: nn.looks[0]?.id || '', title: ''}; redraw();
-        });
-        stage.querySelectorAll('[data-angle]').forEach((b) => b.onclick = () => {
-            S.pick.angle = b.dataset.angle; S.pick.title = '';
-            stage.querySelectorAll('[data-angle]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
-        });
-        stage.querySelectorAll('[data-look]').forEach((b) => b.onclick = () => {
-            S.pick.look = b.dataset.look; stage.querySelectorAll('[data-look]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
-        });
+        const pickNiche = (id) => { const nn = S.niches.find((x) => x.id === id); if (!nn) return; S.pick = {niche: id, angle: nn.angles[0]?.id || '', look: nn.looks[0]?.id || '', title: ''}; };
+        stage.querySelectorAll('[data-use]').forEach((b) => b.onclick = () => { pickNiche(b.dataset.use); S.step = QUIZ_STEPS.indexOf('make'); redraw(); });
+        stage.querySelectorAll('[data-niche]').forEach((b) => b.onclick = () => { pickNiche(b.dataset.niche); redraw(); });
+        stage.querySelectorAll('[data-angle]').forEach((b) => b.onclick = () => { S.pick.angle = b.dataset.angle; S.pick.title = ''; stage.querySelectorAll('[data-angle]').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); });
+        stage.querySelectorAll('[data-look]').forEach((b) => b.onclick = () => { S.pick.look = b.dataset.look; stage.querySelectorAll('[data-look]').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); });
         stage.querySelectorAll('[data-title]').forEach((b) => b.onclick = () => {
             S.pick.title = b.dataset.title; document.getElementById('first-title').textContent = S.pick.title;
             stage.querySelectorAll('[data-title]').forEach((x) => { const on = x === b; x.setAttribute('aria-pressed', String(on)); x.querySelector('i').textContent = on ? 'chosen' : 'use this'; });
@@ -528,13 +433,9 @@
         stage.querySelectorAll('[data-cycle]').forEach((b) => b.onclick = () => { S.cycle = b.dataset.cycle; redraw(); });
         const link = S.full ? location.origin + '/money-niche/r/' + S.full.id : location.href;
         const sh = stage.querySelector('[data-share]');
-        if (sh) sh.onclick = async () => {
-            const t = 'My money niche: ' + S.full.niches[0].name + '. Find yours in 60 seconds.';
-            if (navigator.share) { try { await navigator.share({title: t, text: t, url: link}); } catch (_) {} }
-            else { try { await navigator.clipboard.writeText(link); toast('Link copied'); } catch (_) { toast(link); } }
-        };
-        const ln = stage.querySelector('[data-link]');
-        if (ln) ln.onclick = async () => { try { await navigator.clipboard.writeText(link); toast('Link copied'); } catch (_) { toast(link); } };
+        if (sh) sh.onclick = async () => { const t = 'My money niche: ' + S.full.niches[0].name + '. Find yours in 60 seconds.';
+            if (navigator.share) { try { await navigator.share({title: t, text: t, url: link}); } catch (_) {} } else { try { await navigator.clipboard.writeText(link); toast('Link copied'); } catch (_) { toast(link); } } };
+        const ln = stage.querySelector('[data-link]'); if (ln) ln.onclick = async () => { try { await navigator.clipboard.writeText(link); toast('Link copied'); } catch (_) { toast(link); } };
         stage.querySelectorAll('[data-go]').forEach((b) => b.onclick = () => go(b, b.dataset.go));
     }
     async function go(button, tier) {
@@ -547,103 +448,108 @@
                 try { await api('/api/leads', {source: 'quiz', consent: true, niche: p.niche, result: S.door === 'channel' ? '' : S.full.id}); } catch (_) {}
             }
             if (!tier) { location.href = r.next || '/app#local-studio'; return; }
-            try {
-                const c = await api('/api/billing/checkout', {plan: tier + '_' + S.cycle, skip_trial: true, return_to: 'local-studio'});
-                if (c.url) { location.href = c.url; return; }
-            } catch (e) { toast(e.message); }
+            try { const c = await api('/api/billing/checkout', {plan: tier + '_' + S.cycle, skip_trial: true, return_to: 'local-studio'}); if (c.url) { location.href = c.url; return; } }
+            catch (e) { toast(e.message); }
             location.href = r.next || '/app#local-studio';
         } catch (e) { toast(e.message); button.disabled = false; button.textContent = label; }
     }
 
     // ---- door 2: "I already have a channel" -----------------------------------------------------------
-    function checkStart() {
-        progress(CHECK_STEPS.length + 1, 0); wall(['hand-drawn-money', 'night-vision:v', 'titanic-clock', 'paper-bank', 'luck-elevator', 'cooper-money:v', 'gladiator-sold', 'nanga-parbat-title']);
-        show('<div class="kicker">Channel check · free</div><h2>Why isn’t your channel <span class="grad">growing?</span></h2>' +
-            '<p class="lede">Paste your channel. We compare it with the small channels breaking out in your niche right now, then show what’s holding it back and what to make next.</p>' +
-            '<div class="card lift" style="margin-top:20px"><input class="field" id="channel" placeholder="youtube.com/@yourchannel" autocomplete="url" aria-label="Your channel link">' +
-            '<button class="btn" style="margin-top:10px" data-check>Check my channel</button><p class="err" id="err" role="alert"></p>' +
-            '<p class="note">We read your channel’s public numbers only: views, uploads, titles. No sign-in to YouTube.</p></div>' +
-            '<div class="spacer"></div><div class="nav end"><button class="btn ghost back" aria-label="Back" data-back>←</button></div>');
-        side('<div class="card"><h3>What you’ll get</h3><ul class="steps"><li>Your channel as a dashboard</li><li>The breakout channels in your niche, side by side</li><li>What’s holding you back, in plain words</li><li>A step-by-step plan</li><li>5 video ideas with thumbnail ideas</li></ul></div>');
+    function checkStart(prefill) {
+        S.door = 'channel'; progress(0.05);
+        show('<p class="small">Channel check · free</p><h1 style="margin-top:4px">Why isn’t your channel growing?</h1>' +
+            '<p class="sub">Paste your channel. We put it next to the small channels breaking out in your niche right now, show what’s holding it back, and what to make next.</p>' +
+            '<div class="channel-input"><input class="field" id="channel" placeholder="youtube.com/@yourchannel" autocomplete="url" aria-label="Your channel link" value="' + esc(prefill || '') + '">' +
+            '<button class="btn blue" style="height:48px;border-radius:12px" data-check>Check</button></div><p class="err" id="err" role="alert"></p>' +
+            '<p class="note">We read your channel’s public numbers only: views, uploads, titles. You don’t sign in to YouTube.</p>' +
+            '<div class="studio sec"><div class="top"><h4>What you’ll get</h4></div><ul class="checklist" style="padding:0;background:none"><li>Your channel as a dashboard</li><li>The breakout channels in your niche, side by side</li><li>What’s holding you back, in plain words</li><li>A step-by-step plan</li><li>5 video ideas with thumbnail ideas</li></ul></div>' +
+            '<div class="nav end"><button class="btn tonal back" aria-label="Back" data-back>←</button></div>');
         const input = document.getElementById('channel');
         const run = () => { const v = input.value.trim(); if (!v) { document.getElementById('err').textContent = 'Paste your channel link.'; return; } checkRun(v); };
         stage.querySelector('[data-check]').onclick = run; input.onkeydown = (e) => { if (e.key === 'Enter') run(); };
-        stage.querySelector('[data-back]').onclick = home; input.focus();
+        stage.querySelector('[data-back]').onclick = home; if (prefill) run(); else input.focus();
     }
     async function checkRun(v) {
-        const stop = thinking(['Reading your channel…', 'Measuring your last 15 videos…', 'Finding your niche…', 'Comparing with channels breaking out…'],
-            ['hand-drawn-money', 'titanic-clock', 'gladiator-sold', 'night-vision', 'paper-bank', 'luck-elevator']);
+        const stop = skeleton('Checking your channel…', ['Reading your last 15 videos', 'Finding your niche', 'Comparing with channels breaking out right now']);
         try {
-            const [t] = await Promise.all([api('/api/channel-check', {url: v}), new Promise((r) => setTimeout(r, 2200))]);
-            S.check = t; S.checkId = t.id; history.replaceState(null, '', '/money-niche/c/' + t.id); checkTaste();
-        } catch (e) { stop(); checkStart(); const er = document.getElementById('err'); if (er) er.textContent = e.message; return; }
-        stop();
+            const [t] = await Promise.all([api('/api/channel-check', {url: v}), new Promise((r) => setTimeout(r, 1600))]);
+            S.check = t; S.checkId = t.id; history.replaceState(null, '', '/money-niche/c/' + t.id); stop(); checkTaste();
+        } catch (e) { stop(); checkStart(); document.getElementById('err').textContent = e.message; }
     }
-    function channelHeader(t) {
-        const c = t.channel;
-        return '<div class="card"><div class="who">' + (c.avatar ? '<img src="' + url(c.avatar) + '" alt="" referrerpolicy="no-referrer">' : '') +
-            '<div style="flex:1;min-width:0"><a href="' + url(c.url) + '" target="_blank" rel="noopener">' + esc(c.name) + '</a><small>' +
-            (t.niche ? 'Niche: ' + esc(t.niche.name) : 'Niche: not clear from your titles') + '</small></div></div>' +
-            '<div class="stats"><div class="stat"><b data-count="' + (c.hidden_subscribers ? 0 : c.subscribers) + '">0</b><span>subscribers</span></div>' +
-            '<div class="stat"><b data-count="' + (t.stats.median_views || 0) + '">0</b><span>views on a usual video</span></div>' +
-            '<div class="stat"><b>' + (t.stats.last_upload_days != null ? t.stats.last_upload_days + 'd' : '–') + '</b><span>since your last upload</span></div></div>' +
-            chart(t.videos, t.stats.peer_views) + '<p class="small" style="margin-top:6px">Your last ' + t.videos.length + ' videos' +
-            (t.stats.peer_views ? ' · dashed line: what small breakout channels in your niche get' : '') + '</p></div>';
+    function dashboard(t) {
+        const c = t.channel, vids = t.videos || [], latest = vids[0];
+        const ranked = vids.slice().sort((a, b) => b.views - a.views), rank = latest ? ranked.indexOf(latest) + 1 : 0;
+        const chron = vids.slice().reverse();
+        return '<div class="ych" style="margin-top:12px"><div class="banner" style="background-image:url(\'' + url(latest?.thumbnail || c.avatar) + '\')"></div><div class="head">' +
+            (c.avatar ? '<img class="av" src="' + url(c.avatar) + '" alt="" referrerpolicy="no-referrer">' : '<span></span>') +
+            '<div class="info"><h3>' + esc(c.name) + '</h3><p>' + (c.hidden_subscribers ? 'Subscribers hidden' : n(c.subscribers) + ' subscribers') + ' · ' + c.video_count + ' videos</p>' +
+            (t.niche ? '<p><span class="chip ok">Niche: ' + esc(t.niche.name) + '</span></p>' : '') + '</div><a class="btn" href="' + url(c.url) + '" target="_blank" rel="noopener">View channel</a></div></div>' +
+            '<div class="studio-grid" style="margin-top:16px">' +
+            (latest ? '<div class="studio"><div class="top"><h4>Latest video performance</h4><span class="src">' + esc(ago(latest.published_at)) + '</span></div>' +
+                '<div style="display:grid;grid-template-columns:140px 1fr;gap:12px;margin-top:12px"><img src="' + url(latest.thumbnail) + '" alt="" style="width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:8px" referrerpolicy="no-referrer">' +
+                '<p style="font-size:14px">' + esc(latest.title) + '</p></div><div class="toplist"><a><em></em><span>Ranking by views</span><span></span><b>' + rank + ' of ' + vids.length + '</b></a>' +
+                '<a><em></em><span>Views</span><span></span><b>' + n(latest.views) + '</b></a><a><em></em><span>Your typical video</span><span></span><b>' + n(t.stats.median_views) + '</b></a></div></div>' : '') +
+            '<div class="studio"><div class="top"><h4>Channel analytics</h4><span class="src">Last ' + vids.length + ' videos · public numbers</span></div>' +
+            '<div class="kpis"><div class="on"><small>Views</small><b>' + n(t.stats.median_views) + '</b><i>typical video</i></div>' +
+            '<div><small>Breakout channels</small><b>' + (t.stats.peer_views ? n(t.stats.peer_views) : '–') + '</b><i class="up">per video in your niche</i></div>' +
+            '<div><small>Last upload</small><b>' + (t.stats.last_upload_days != null ? t.stats.last_upload_days + 'd' : '–') + '</b><i' + (t.stats.last_upload_days > 14 ? ' class="down"' : '') + '>ago</i></div></div>' +
+            lineChart(chron.map((v) => v.views), t.stats.peer_views) + '<div class="chart-x"><span>' + esc(ago(chron[0]?.published_at)) + '</span><span>' + esc(ago(chron[chron.length - 1]?.published_at)) + '</span></div>' +
+            '<div class="legend"><span><i></i>Your videos</span>' + (t.stats.peer_views ? '<span><i class="p"></i>Small channels breaking out in your niche</span>' : '') + '</div></div>' +
+            topContent(vids, 'Your top videos') + '</div>';
     }
-    function findingCard(f) {
-        return '<div class="card finding ' + esc(f.level) + '"><span class="lvl">' + ({bad: 'Holding you back', warn: 'Worth fixing', good: 'Working'}[f.level] || '') + '</span>' +
-            '<h3>' + esc(f.title) + '</h3><p>' + esc(f.detail) + '</p>' +
-            (f.video ? '<div class="thumbs" style="grid-template-columns:1fr 1fr"><a href="' + url(f.video.url) + '" target="_blank" rel="noopener"><img src="' + url(f.video.thumbnail) + '" alt="" referrerpolicy="no-referrer"><b>' + n(f.video.views) + '</b> views</a></div>' : '') + '</div>';
+    function ideaCard(f) {
+        const sym = {bad: '!', warn: '•', good: '✓'}[f.level] || '•';
+        return '<div class="idea-card ' + esc(f.level) + '"><span class="ic">' + sym + '</span><div><small>' + ({bad: 'Holding you back', warn: 'Worth fixing', good: 'Working'}[f.level] || '') + '</small>' +
+            '<h3>' + esc(f.title) + '</h3><p>' + esc(f.detail) + '</p></div></div>';
     }
     function checkTaste() {
         const t = S.check, signedIn = !!S.user;
-        progress(CHECK_STEPS.length + 1, 1);
-        wall((t.board || []).filter((x) => x.clip).map((x) => x.clip).concat(['hand-drawn-money', 'titanic-clock']));
-        show('<div class="kicker">Your channel check</div><h2>' + esc(t.channel.name) + '</h2>' + channelHeader(t) +
-            (t.headline ? '<p class="kicker section-k">The biggest thing</p>' + findingCard(t.headline) : '') +
-            (signedIn ? '<div class="spacer"></div><div class="nav"><button class="btn" data-full>See everything</button></div>'
-                : gateHTML([(t.more || 0) + ' more findings about your channel', t.peers_count ? t.peers_count + ' breakout channels in your niche to study' : 'The breakout channels to study',
+        progress(0.3);
+        show('<p class="small">Channel dashboard</p><h1 style="margin-top:4px">' + esc(t.channel.name) + '</h1>' + dashboard(t) +
+            (t.headline ? '<div class="sec"><div class="sec-h"><h3>Ideas for you</h3></div>' + ideaCard(t.headline) + '</div>' : '') +
+            (signedIn ? '<div class="nav"><button class="btn big blue" data-full>See everything</button></div>'
+                : gateHTML('Sign in to see everything', [(t.more || 0) + ' more findings about your channel', (t.peers_count ? t.peers_count + ' ' : '') + 'breakout channels in your niche to study',
                     'A step-by-step plan', '5 video ideas with thumbnail ideas', 'Your recipe, ready to make in ChannelRecipe']) +
-                    '<div class="nav end"><button class="btn ghost back" aria-label="Back" data-back>←</button></div>'));
-        side(t.board && t.board.length ? '<div class="card"><h3>' + esc(t.niche ? t.niche.name : 'Your niche') + '</h3><p class="small">What it looks like when it’s made well</p>' + boardHTML(t.board, 4) + '</div>' : '');
-        const b = stage.querySelector('[data-back]'); if (b) b.onclick = checkStart;
+                    '<div class="nav end"><button class="btn tonal back" aria-label="Back" data-back>←</button></div>'), true);
+        const b = stage.querySelector('[data-back]'); if (b) b.onclick = () => checkStart();
         if (signedIn) stage.querySelector('[data-full]').onclick = loadCheck; else bindGate(loadCheck);
     }
     async function loadCheck() {
         try {
             const f = await api('/api/channel-check/' + encodeURIComponent(S.checkId));
             if (f.gated) { S.user = null; checkTaste(); return; }
-            S.check = f; S.step = 0;
-            const nid = f.niche ? f.niche.id : '', nn = (S.niches || []).find((x) => x.id === nid);
-            S.pick = {niche: nid, angle: nn?.angles[0]?.id || '', look: nn?.looks[0]?.id || '', title: ''};
+            S.check = f; S.step = 0; const nn = S.niches.find((x) => x.id === f.niche?.id);
+            S.pick = {niche: f.niche?.id || '', angle: nn?.angles[0]?.id || '', look: nn?.looks[0]?.id || '', title: ''};
             checkResult();
         } catch (e) { toast(e.message); }
     }
     function checkResult() {
         const f = S.check, step = CHECK_STEPS[S.step];
-        progress(CHECK_STEPS.length + 1, S.step + 1);
-        let html = '';
-        if (step === 'diagnosis') {
-            html = '<div class="kicker">Your channel check</div><h2>What’s holding ' + esc(f.channel.name) + ' back</h2>' + channelHeader(f) + f.findings.map(findingCard).join('');
-            side('');
+        progress(0.35 + S.step / CHECK_STEPS.length * 0.65);
+        let html = '', wide = true;
+        if (step === 'dashboard') {
+            html = '<p class="small">Channel dashboard</p><h1 style="margin-top:4px">' + esc(f.channel.name) + '</h1>' + dashboard(f) +
+                '<div class="sec"><div class="sec-h"><h3>Ideas for you</h3></div>' + f.findings.map(ideaCard).join('') + '</div>';
         } else if (step === 'peers') {
-            html = '<div class="kicker">Study these</div><h2>Breakout channels in ' + esc(f.niche ? f.niche.name.toLowerCase() : 'your niche') + '</h2>' +
-                '<p class="lede">Small channels getting big views right now. Watch their last three videos: the idea, the title, the thumbnail, the first 30 seconds.</p>' +
-                (f.peers.length ? f.peers.map((p) => proofCard(p, {money: true})).join('') : '<div class="card"><p class="note">The Niche Finder hasn’t caught a small breakout channel in this niche this week. It hunts twice a day, so check back.</p></div>') +
+            html = '<p class="small">Study these</p><h1 style="margin-top:4px">Breakout channels in ' + esc(f.niche ? f.niche.name.toLowerCase() : 'your niche') + '</h1>' +
+                '<p class="sub">Small channels getting big views right now. Watch their last three videos: the idea, the title, the thumbnail, the first 30 seconds.</p>' +
+                (f.peers.length ? f.peers.map(channelPage).join('') : '<p class="note">The Niche Finder hasn’t caught a small breakout channel in this niche this week. It hunts twice a day.</p>') +
                 '<p class="note">' + esc(f.ypp_note) + '</p>';
         } else if (step === 'plan') {
-            html = '<div class="kicker">Your plan</div><h2>Step by step</h2><ol class="steps">' + f.plan.map((s) => '<li>' + esc(s) + '</li>').join('') + '</ol>';
+            html = '<p class="small">Your plan</p><h1 style="margin-top:4px">Step by step</h1><ul class="checklist">' + f.plan.map((s) => '<li>' + esc(s) + '</li>').join('') + '</ul>'; wide = false;
         } else if (step === 'ideas') {
-            const pool = (f.board || []).length ? f.board : [{clip: 'hand-drawn-money'}, {clip: 'titanic-clock'}, {clip: 'gladiator-sold'}];
-            html = '<div class="kicker">Make these next</div><h2>5 video ideas, with thumbnails</h2>' +
-                '<p class="lede">' + (f.ideas_source === 'model' ? 'Built on what already worked for your channel.' : 'Proven ideas for your niche.') + '</p><div class="ideas">' +
-                f.ideas.map((i, k) => '<div class="card idea" style="margin-top:0"><div class="thumb-idea">' + media(pool[k % pool.length]) + '<b>' + esc(hook(i.title)) + '</b></div>' +
-                    '<div><h3>' + esc(i.title) + '</h3><p>Thumbnail: ' + esc(i.thumbnail) + '</p></div></div>').join('') + '</div>' +
-                '<p class="note">The pictures are mock-ups in your niche’s look; Studio makes the real thumbnail with each video.</p>';
-        } else if (step === 'make') html = makeIt();
-        else if (step === 'recipe') html = recipeScreen();
+            const thumbs = (f.videos || []).filter((v) => v.thumbnail);
+            html = '<p class="small">Make these next</p><h1 style="margin-top:4px">5 video ideas, with thumbnails</h1><p class="sub">' +
+                (f.ideas_source === 'model' ? 'Built on what already worked for your channel.' : 'Proven ideas for your niche.') + '</p><div class="grid sec">' +
+                f.ideas.map((i, k) => '<div class="yv"><div class="th">' + (thumbs.length ? '<img src="' + url(thumbs[k % thumbs.length].thumbnail) + '" alt="" style="filter:saturate(1.3) contrast(1.1)" referrerpolicy="no-referrer">' : '') +
+                    '<b style="position:absolute;left:10px;right:10px;bottom:10px;font-size:22px;font-weight:900;line-height:1;text-shadow:0 2px 0 #000,0 0 14px rgba(0,0,0,.9)">' + esc(hook(i.title)) + '</b></div>' +
+                    '<div class="meta">' + (f.channel.avatar ? '<img class="av" src="' + url(f.channel.avatar) + '" alt="" referrerpolicy="no-referrer">' : '') + '<div><h4>' + esc(i.title) + '</h4><p>' + esc(f.channel.name) + ' · next video idea</p>' +
+                    '<p class="tiny" style="margin-top:4px">Thumbnail: ' + esc(i.thumbnail) + '</p></div></div></div>').join('') + '</div>' +
+                '<p class="note">Thumbnails are mock-ups on your own pictures; Studio makes the real one with each video.</p>';
+        } else if (step === 'make') { html = makeIt(); wide = false; }
+        else if (step === 'recipe') { html = recipeScreen(); wide = false; }
         else if (step === 'plans') html = plansScreen();
-        show(html + nav(S.step === CHECK_STEPS.length - 1));
+        show(html + nav(S.step === CHECK_STEPS.length - 1), wide);
         bindResult(() => checkResult(), CHECK_STEPS.length, () => checkTaste());
         if (step === 'make' && !currentNiche()) { const nx = stage.querySelector('[data-next]'); if (nx) nx.disabled = true; }
     }
@@ -655,32 +561,27 @@
             const data = await api('/api/money-niche/result/' + encodeURIComponent(id));
             if (location.pathname !== '/money-niche/r/' + id) history.replaceState(null, '', '/money-niche/r/' + id);
             if (data.gated) { S.teaser = data; taste(); }
-            else {
-                S.teaser = data.teaser; S.full = data; S.step = 0;
-                const top = data.niches[0];
-                S.pick = {niche: top.id, angle: top.angles[0]?.id || '', look: top.looks[0]?.id || '', title: ''};
-                result();
-            }
-        } catch (e) { home(); toast(e.message); }
+            else { S.teaser = data.teaser; S.full = data; S.step = 0; const top = data.niches[0]; S.pick = {niche: top.id, angle: top.angles[0]?.id || '', look: top.looks[0]?.id || '', title: ''}; result(); }
+        } catch (e) { console.error(e); home(); toast(e.message); }
     }
     async function openCheck(id) {
         S.door = 'channel'; S.checkId = id;
         try {
-            const data = await api('/api/channel-check/' + encodeURIComponent(id));
-            S.check = data;
+            const data = await api('/api/channel-check/' + encodeURIComponent(id)); S.check = data;
             if (data.gated) checkTaste();
-            else { S.step = 0; const nn = (S.niches || []).find((x) => x.id === data.niche?.id); S.pick = {niche: data.niche?.id || '', angle: nn?.angles[0]?.id || '', look: nn?.looks[0]?.id || '', title: ''}; checkResult(); }
+            else { S.step = 0; const nn = S.niches.find((x) => x.id === data.niche?.id); S.pick = {niche: data.niche?.id || '', angle: nn?.angles[0]?.id || '', look: nn?.looks[0]?.id || '', title: ''}; checkResult(); }
         } catch (e) { home(); toast(e.message); }
     }
+    document.getElementById('search').addEventListener('submit', (e) => {
+        e.preventDefault(); const v = document.getElementById('search-input').value.trim(); if (v) checkStart(v); else checkStart();
+    });
     (async function boot() {
         try { window.CRTelemetry?.captureAttributionFromUrl?.(); } catch (_) {}
         const [me, cfg, pulse, niches] = await Promise.all([api('/api/auth/me').catch(() => ({})), api('/api/config').catch(() => null),
             api('/api/money-niche/pulse').catch(() => null), api('/api/money-niche/niches').catch(() => [])]);
-        S.user = me.user || null; S.cfg = cfg; S.pulse = pulse; S.niches = niches;
+        S.user = me.user || null; S.cfg = cfg; S.pulse = pulse; S.niches = niches || [];
         const r = location.pathname.match(/^\/money-niche\/r\/([A-Za-z0-9_-]{6,24})$/);
         const c = location.pathname.match(/^\/money-niche\/c\/(cc_[A-Za-z0-9_-]{6,20})$/);
         if (r) openResult(r[1], false); else if (c) openCheck(c[1]); else home();
-        let wasDesktop = desktop();
-        window.addEventListener('resize', () => { if (desktop() !== wasDesktop) { wasDesktop = desktop(); wallKey = ''; wall(); } });
     })();
 })();

@@ -560,7 +560,7 @@ def _query_channels(niche: dict, *, strict: bool, limit: int = 12) -> list[dict]
 
 
 def _proof(hit: dict, rpm: tuple[float, float]) -> dict:
-    recent = [v for v in (hit.get("recent_videos") or []) if isinstance(v, dict)][:3]
+    recent = [v for v in (hit.get("recent_videos") or []) if isinstance(v, dict)][:4]
     days = hit.get("days_since_start")
     return {
         "name": hit.get("channel_name") or "",
@@ -572,7 +572,8 @@ def _proof(hit: dict, rpm: tuple[float, float]) -> dict:
         "recent_avg_views": int(hit.get("recent_avg_views") or 0),
         "uploads_per_month": round(float(hit.get("uploads_per_month") or 0), 1),
         "recent": [{"title": v.get("title") or "", "url": v.get("url") or "", "thumbnail": v.get("thumbnail") or "",
-                    "views": int(v.get("view_count") or 0)} for v in recent],
+                    "views": int(v.get("view_count") or 0), "seconds": int(v.get("duration_sec") or 0),
+                    "published_at": v.get("published_at") or ""} for v in recent],
         "earnings": monthly_earnings(hit, rpm),
         "breakout_after": videos_before_breakout(hit),
     }
@@ -726,7 +727,60 @@ def compute(answers: dict, *, proofs=None) -> dict:
             "recipe": recipe(niche, answers), "studio": niche.get("studio") or "",
             "board": board(niche), "looks": looks(niche), "angles": angles(niche),
         })
-    return {"answers": answers, "niches": top, "ypp_note": YPP_NOTE, "estimate_note": ESTIMATE_NOTE}
+    # every other niche with channels breaking out right now, best fit first: the "more viral niches" feed
+    more = []
+    for niche, s, why in rank(answers, proofs=proofs)[3:]:
+        found = proofs(niche)
+        if not found:
+            continue
+        earned = [p["earnings"] for p in found if p.get("earnings")]
+        more.append({"id": niche["id"], "name": niche["name"], "pitch": niche["pitch"], "why": why,
+                     "proofs": found[:2], "rpm": list(rpm_range(niche)),
+                     "earnings": [min(e[0] for e in earned), max(e[1] for e in earned)] if earned else None})
+    return {"answers": answers, "niches": top, "more": more, "live": viral_clusters(),
+            "ypp_note": YPP_NOTE, "estimate_note": ESTIMATE_NOTE}
+
+
+_cluster_cache: dict = {}
+
+
+def viral_clusters(*, now: float | None = None, limit: int = 10) -> list[dict]:
+    """Niches the Niche Finder is catching right now, straight from its catalogue: small channels with big views,
+    grouped by the search that found them. Real channels only; no money figures (no niche RPM is known for them)."""
+    bucket = int((now or time.time()) // BUCKET_S)
+    key = (db.IS_PG, getattr(db, "DB_PATH", ""), bucket)
+    if key in _cluster_cache:
+        return _cluster_cache[key]
+    try:
+        with db._conn() as conn:
+            rows = conn.execute(db._q("""SELECT * FROM niche_channels WHERE active=1
+                AND subscriber_count BETWEEN 1000 AND 300000 AND recent_avg_views>=20000
+                AND COALESCE(videos_last_14d,0)>0 AND video_count BETWEEN 3 AND 150
+                AND COALESCE(production_format,'')!='presenter' AND TRIM(COALESCE(source_keyword,''))!=''
+                ORDER BY recent_avg_views DESC LIMIT 400""")).fetchall()
+    except Exception as e:                                          # noqa: BLE001 - the result works without it
+        print(f"[money-niche] clusters failed: {e}")
+        rows = []
+    groups: dict = {}
+    for r in rows:
+        hit = db._niche_row_to_hit(dict(r))
+        k = re.sub(r"\s+", " ", hit["source_keyword"].strip().lower())
+        if db._is_junk_niche_keyword(k):
+            continue
+        groups.setdefault(k, []).append(hit)
+    clusters = []
+    for k, hits in groups.items():
+        if len(hits) < 2:
+            continue
+        clusters.append({"keyword": k, "count": len(hits),
+                         "views": int(sum(float(h.get("recent_avg_views") or 0) for h in hits)),
+                         "channels": [_proof(h, (2.0, 8.0)) | {"earnings": None} for h in hits[:3]]})
+    clusters.sort(key=lambda c: -c["views"])
+    out = clusters[:limit]
+    if len(_cluster_cache) > 20:
+        _cluster_cache.clear()
+    _cluster_cache[key] = out
+    return out
 
 
 # ---- storage, caching and what a visitor may see -----------------------------------------------------------
@@ -806,10 +860,23 @@ def teaser(rid: str, result: dict) -> dict:
         proof = {"kind": "established", "name": r["name"], "url": r["url"], "views_label": r["views_label"],
                  "thumbnail": r["thumbnail"]}
     if proof and proof["kind"] == "fresh":                   # the views chart: the same public counts, no money
-        proof["recent"] = [{"views": v["views"], "thumbnail": v["thumbnail"]} for v in first["proofs"][0]["recent"]]
+        proof["recent"] = [{k: v[k] for k in ("title", "url", "thumbnail", "views", "seconds", "published_at")}
+                           for v in first["proofs"][0]["recent"]]
+        proof["videos"] = first["proofs"][0]["videos"]
+    # a peek at the other viral niches: names and one video each (public numbers, no money)
+    peek = []
+    for n in result["niches"][1:] + result.get("more", []):
+        v = next((v for p in n["proofs"] for v in p["recent"] if v.get("thumbnail")), None)
+        if v:
+            peek.append({"name": n["name"], "thumbnail": v["thumbnail"], "views": v["views"]})
+    for c in result.get("live", []):
+        v = next((v for p in c["channels"] for v in p["recent"] if v.get("thumbnail")), None)
+        if v:
+            peek.append({"name": c["keyword"].title(), "thumbnail": v["thumbnail"], "views": v["views"]})
     return {"id": rid, "gated": True, "niche": {"id": first["id"], "name": first["name"], "pitch": first["pitch"]},
             "proof": proof, "more": len(result["niches"]) - 1,
-            "board": first.get("board") or board(BY_ID[first["id"]]), "why": first.get("why", [])}
+            "viral_count": len(result["niches"]) - 1 + len(result.get("more", [])) + len(result.get("live", [])),
+            "peek": peek[:8], "board": first.get("board") or board(BY_ID[first["id"]]), "why": first.get("why", [])}
 
 
 def public(rid: str, result: dict, user: dict | None, *, titles=None) -> dict:
@@ -939,9 +1006,11 @@ def choose(user: dict, rid: str, niche_id: str, angle_id: str = "", look_id: str
     result = load(rid)
     if not result:
         raise LookupError("That result has expired. Take the quiz again.")
-    niche = next((n for n in result["niches"] if n["id"] == niche_id), None)
+    niche = next((n for n in result["niches"] + result.get("more", []) if n["id"] == niche_id), None)
     if not niche:
-        raise LookupError("Pick one of the three niches in your result.")
+        raise LookupError("Pick one of the niches in your result.")
+    niche.setdefault("proofs", [])
+    niche.setdefault("recipe", {"kind": "long", "format": FORMATS[BY_ID[niche_id]["formats"][0]][0]})
     angle = next((a for a in angles(BY_ID[niche_id]) if a["id"] == angle_id), None)
     look = next((x for x in looks(BY_ID[niche_id]) if x["id"] == look_id), None)
     title = re.sub(r"\s+", " ", str(title or "")).strip()[:120] or (angle["title"] if angle else "")
@@ -1038,6 +1107,12 @@ def pulse(*, now: float | None = None) -> dict:
     out = {"week": int(n or 0), "channels": [
         {"name": c["name"], "url": c["url"], "avatar": c["avatar"], "subscribers": c["subscribers"],
          "months": c["months"], "recent_avg_views": c["recent_avg_views"],
-         "thumbnail": c["recent"][0]["thumbnail"] if c["recent"] else ""} for c in channels]}
+         "thumbnail": c["recent"][0]["thumbnail"] if c["recent"] else ""} for c in channels],
+        # a home-feed of their latest videos, newest channels first
+        "videos": [{"title": v["title"], "url": v["url"], "thumbnail": v["thumbnail"], "views": v["views"],
+                    "seconds": v["seconds"], "published_at": v["published_at"], "channel": c["name"],
+                    "channel_url": c["url"], "avatar": c["avatar"], "subscribers": c["subscribers"],
+                    "months": c["months"]}
+                   for c in channels for v in c["recent"][:2] if v.get("thumbnail")][:12]}
     _pulse[key] = (now, out)
     return out

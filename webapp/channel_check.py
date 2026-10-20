@@ -217,8 +217,8 @@ def diagnose(channel: dict, peers: list[dict], *, now: float | None = None) -> d
                                    "views": best["views"]}})
 
     recent, older = [v["views"] for v in videos[:5]], [v["views"] for v in videos[5:10]]
-    if len(older) >= 3 and statistics.mean(older) > 0:
-        change = statistics.mean(recent) / statistics.mean(older) - 1
+    if len(older) >= 3 and statistics.median(older) > 0:      # medians: one hit video isn't a trend
+        change = statistics.median(recent) / statistics.median(older) - 1
         if change <= -0.3:
             findings.append({"id": "trend", "level": "warn", "title": f"Views are down {abs(change):.0%} lately",
                              "detail": "Your last 5 videos got fewer views than the 5 before. Compare their topics "
@@ -329,7 +329,7 @@ def teaser(cid: str, result: dict) -> dict:
     return {"id": cid, "gated": True,
             "channel": {k: ch[k] for k in ("name", "url", "avatar", "subscribers", "total_views", "video_count",
                                            "hidden_subscribers")},
-            "videos": [{k: v[k] for k in ("title", "url", "thumbnail", "views", "short", "published_at")}
+            "videos": [{k: v[k] for k in ("title", "url", "thumbnail", "views", "short", "seconds", "published_at")}
                        for v in ch["videos"]],
             "niche": result["niche"], "headline": worst and {k: worst[k] for k in ("level", "title", "detail")},
             "more": max(0, len(result["findings"]) - 1), "peers_count": len(result["peers"]),

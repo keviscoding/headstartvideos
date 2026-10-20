@@ -271,3 +271,25 @@ def test_the_live_pulse_and_the_catalogue_are_public_and_honest(env):
     assert len(niches) == 15 and all(n["board"] and n["angles"] and n["looks"] for n in niches)
     assert "proofs" not in niches[0] and "earnings" not in str(niches)
     assert env.client.get("/money-niche").text.count("/static/money-niche.css?v=") == 1
+
+
+def test_the_full_result_has_a_feed_of_viral_niches_and_any_of_them_can_be_picked(env):
+    db.upsert_niche_channels([
+        channel("crime1", "Case Room", "bodycam", "The bodycam moment that changed the case"),
+        channel("crime2", "Verdict Files", "bodycam", "He thought the bodycam was off", views=120_000),
+        channel("cook1", "Grandma Recipes", "old recipes", "1800s bread recipe", views=90_000),
+        channel("cook2", "Old Kitchen", "old recipes", "Cooking like 1850", views=70_000)])
+    mn._proof_cache.clear(); mn._cluster_cache.clear()
+    taste = env.client.post("/api/money-niche/quiz", json=BASE).json()
+    assert taste["viral_count"] >= 3 and all("thumbnail" in x and "views" in x for x in taste["peek"])
+    assert "earnings" not in str(taste["peek"])
+    sign_in(env)
+    full = env.client.get(f"/api/money-niche/result/{taste['id']}").json()
+    live = {c["keyword"]: [ch["name"] for ch in c["channels"]] for c in full["live"]}
+    assert live["old recipes"] == ["Grandma Recipes", "Old Kitchen"], "live niches straight from the Niche Finder"
+    assert all(ch["earnings"] is None for c in full["live"] for ch in c["channels"]), "no RPM known: no money shown"
+    more_ids = [m["id"] for m in full["more"]]
+    assert "true_crime" in more_ids or any(n["id"] == "true_crime" for n in full["niches"])
+    pick = "true_crime" if "true_crime" in more_ids else more_ids[0]
+    res = env.client.post("/api/money-niche/choose", json={"result": taste["id"], "niche": pick})
+    assert res.status_code == 200 and env.client.get("/api/auth/me").json()["user"]["money_niche"]["id"] == pick
