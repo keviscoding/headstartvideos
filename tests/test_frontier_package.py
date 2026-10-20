@@ -581,5 +581,6 @@ def test_footage_watching_stops_after_three_uploads_fail_in_a_row():
 def test_the_studio_installs_yt_dlp_with_browser_impersonation_for_tiktok():
     engine = b'# YouTube footage\nyt-dlp>=2025.10.22; python_version >= "3.10"\nrequests\n'
     patched = package.patch_engine("requirements.txt", engine).decode()
-    assert 'yt-dlp[default,curl-cffi]>=2025.10.22; python_version >= "3.10"' in patched and "requests" in patched
-    assert 'rapidocr-onnxruntime>=1.2; python_version >= "3.10"' in patched
+    assert 'yt-dlp[default,curl-cffi]>=2026.8.19; python_version >= "3.10"' in patched and "requests" in patched
+    # one RapidOCR for every Python: 1.3+ caps Python below 3.13 and renamed the detector the Studio calls
+    assert 'rapidocr-onnxruntime==1.2.3; python_version >= "3.10"' in patched
