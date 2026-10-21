@@ -623,3 +623,32 @@ def test_cloud_cleans_have_a_daily_cap_a_length_limit_and_abandoned_ones_are_swe
                         "-preset", "ultrafast", str(long)], check=True, timeout=60)
         refused = clean(env, long.read_bytes(), who="trial")
         assert refused.status_code == 400 and "seconds" in refused.json()["detail"]
+
+
+def test_tiktok_search_reads_full_and_trimmed_shapes(monkeypatch):
+    """Production searches came back empty with trim=true: both the documented shape (aweme_info) and a flat one read."""
+    from webapp import studio_ranking as sr
+    full = {"success": True, "credits_charged": 1, "search_item_list": [
+        {"aweme_info": {"aweme_id": "7334621391758642478", "desc": "cat falls off couch", "share_url": "https://t/1",
+                        "author": {"unique_id": "catlady"}, "statistics": {"play_count": 2500000},
+                        "video": {"duration": 12000}}}]}
+    flat = {"success": True, "search_item_list": [
+        {"aweme_id": "7334621391758642479", "desc": "dog sees cucumber", "author": {"uniqueId": "doggo"},
+         "statistics": {"playCount": "1.2M"}, "duration": 9}]}
+    seen = {}
+
+    class R:
+        def __init__(self, body):
+            self.status_code, self._b = 200, body
+
+        def json(self):
+            return self._b
+
+    import requests
+    for body, want in ((full, ("7334621391758642478", "catlady", 2500000, 12.0)),
+                       (flat, ("7334621391758642479", "doggo", 1200000, 9.0))):
+        monkeypatch.setattr(requests, "get", lambda url, params=None, headers=None, timeout=None, _b=body:
+                            seen.setdefault("params", params) and R(_b) or R(_b))
+        videos, credits = sr._tiktok_fetch("k", "q")
+        assert [(v["id"], v["channel"], v["views"], v["dur"]) for v in videos] == [want]
+    assert "trim" not in (seen.get("params") or {})

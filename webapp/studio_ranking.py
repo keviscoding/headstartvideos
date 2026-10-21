@@ -835,22 +835,31 @@ class TikTokSearch(BaseModel):
 
 def _tiktok_fetch(key: str, query: str):
     import requests
-    r = requests.get(TIKTOK_URL, params={"query": query, "trim": "true"}, headers={"x-api-key": key}, timeout=(10, 40))
+    # The full answer (the documented shape: search_item_list[].aweme_info). With trim=true every search came back
+    # empty in production: the trimmed items are shaped differently and none parsed (2026-10-21). Both shapes read.
+    r = requests.get(TIKTOK_URL, params={"query": query}, headers={"x-api-key": key}, timeout=(10, 40))
     body = r.json() if r.status_code == 200 else {}
-    if not body.get("search_item_list") and not body.get("success"):
+    items = body.get("search_item_list") or body.get("videos") or body.get("data") or []
+    if not items and not body.get("success"):
         raise RuntimeError(f"HTTP {r.status_code}")
     videos, seen = [], set()
-    for item in body.get("search_item_list") or []:
-        a = (item or {}).get("aweme_info") or {}
-        vid = str(a.get("aweme_id") or "")
+    for item in items if isinstance(items, list) else []:
+        item = item if isinstance(item, dict) else {}
+        a = item.get("aweme_info") if isinstance(item.get("aweme_info"), dict) else item
+        vid = str(a.get("aweme_id") or a.get("id") or a.get("video_id") or "")
         if not vid.isdigit() or vid in seen:
             continue
         seen.add(vid)
-        author = str((a.get("author") or {}).get("unique_id") or "")
-        dur = float((a.get("video") or {}).get("duration") or 0)
-        videos.append({"id": vid, "url": a.get("share_url") or f"https://www.tiktok.com/@{author}/video/{vid}",
-                       "title": str(a.get("desc") or "")[:300], "channel": author,
-                       "views": int((a.get("statistics") or {}).get("play_count") or 0),
+        au = a.get("author") if isinstance(a.get("author"), dict) else {}
+        author = str(au.get("unique_id") or au.get("uniqueId") or a.get("author_unique_id") or
+                     (a.get("author") if isinstance(a.get("author"), str) else "") or "")
+        st = a.get("statistics") if isinstance(a.get("statistics"), dict) else (a.get("stats") or {})
+        vd = a.get("video") if isinstance(a.get("video"), dict) else {}
+        dur = float(vd.get("duration") or a.get("duration") or 0)
+        videos.append({"id": vid, "url": a.get("share_url") or a.get("url") or f"https://www.tiktok.com/@{author}/video/{vid}",
+                       "title": str(a.get("desc") or a.get("description") or a.get("title") or "")[:300], "channel": author,
+                       "views": _count(st.get("play_count") if st.get("play_count") is not None else
+                                       st.get("playCount") if st.get("playCount") is not None else a.get("play_count")),
                        "dur": round(dur / 1000 if dur > 1000 else dur, 1)})
     return videos, int(body.get("credits_charged") or 1)
 
