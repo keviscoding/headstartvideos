@@ -345,6 +345,21 @@ def test_a_new_request_replaces_a_lost_job_for_the_same_watch(env):
     assert poll(env, new)["status"] == "done" and len(env.calls) == 1
 
 
+def test_a_studio_whose_lost_watch_another_account_replaced_asks_again_and_shares_the_answer(env):
+    """A shared public watch: the creator's job was lost in a deploy and the trial account's identical request
+    replaced it. The creator's Studio must hear "not found" (common.watch then asks once more), never "stopped",
+    which made it drop the candidate while the replacement finished."""
+    first = watch(env, who="creator").json()["job"]
+    restart(env, first)
+    second = watch(env, who="trial").json()["job"]
+    lost = env.client.get(f"/api/studio/ranking/watch/{first}", headers={"x-test-user": "creator"})
+    assert lost.status_code == 404 and lost.json()["detail"] == "That clip watch wasn't found."
+    again = watch(env, who="creator").json()
+    assert again["job"] == second and again["credits"] == 0, "the creator's second ask joins the live replacement"
+    env.pool.drain()
+    assert poll(env, second, who="creator")["status"] == "done" and len(env.calls) == 1, "watched once, for both"
+
+
 def test_a_watch_google_billed_but_could_not_answer_is_recorded(env):
     env.answer["blocked"] = True
     job = watch(env).json()["job"]
@@ -505,6 +520,7 @@ def test_youtube_search_lists_videos_and_shorts_in_the_contracts_shape(env, monk
                          "channel_id": "UCdogs", "dur": 144.0, "views": 12345, "shorts": False}
     assert videos[1]["shorts"] and videos[1]["dur"] == 144.0, "the length text when no seconds are given"
     assert videos[2]["shorts"] and videos[2]["views"] == 3400 and videos[2]["channel"] == ""
+    assert videos[2]["dur"] is None, "an unknown length is null (the Studio reads it as a Short's), never 0 s"
     shorts = search(env, "youtube", query="funniest dogs", shorts=True).json()["videos"]
     assert asked[1][1]["type"] == "shorts" and shorts[0]["id"] == "aaaaaaaaaa1", "a Shorts search is a separate search"
 

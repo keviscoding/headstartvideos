@@ -611,13 +611,16 @@ def start(user: dict, source: str, start_s: float, end_s: float, mode: str, ques
     with db._conn() as conn:
         _lock(conn, uid, same_key)
         args = (source, a, b, mode, qsha, name)
-        # a lost job for the same watch is replaced by this one, not run twice
+        # A lost job for the same watch is replaced by this one, not run twice. It is marked lost, not stopped: the
+        # Studio that asked for it (perhaps another account's, for a shared public clip) is then told "not found" on
+        # its next poll and asks once more, which lands on this job (or its cached answer). A stopped job made that
+        # Studio drop the candidate while this one finished.
         superseded = [dict(r) for r in conn.execute(db._q("""SELECT * FROM ranking_watch_jobs WHERE source=? AND
             start_s=? AND end_s=? AND mode=? AND question_sha=? AND model=? AND status IN ('queued','running')
             AND heartbeat_at<?"""), (*args, now - LOST_S)).fetchall() if r["id"] not in held]
         for row in superseded:
             conn.execute(db._q("""UPDATE ranking_watch_jobs SET status='failed', error=?, updated_at=?,
-                cost_usd=CASE WHEN started_at>0 THEN cost_usd ELSE 0 END WHERE id=?"""), (STOPPED, now, row["id"]))
+                cost_usd=CASE WHEN started_at>0 THEN cost_usd ELSE 0 END WHERE id=?"""), (LOST_ERROR, now, row["id"]))
         # someone's upload being watched right now is theirs alone: another account couldn't poll it (404)
         same = conn.execute(db._q("""SELECT * FROM ranking_watch_jobs WHERE source=? AND start_s=? AND end_s=? AND
             mode=? AND question_sha=? AND model=? AND (status='done' OR (status IN ('queued','running')
@@ -887,6 +890,9 @@ def _length(item: dict) -> float:
 
 
 def _youtube_items(body: dict, shorts: bool) -> list:
+    """ScrapeCreators' answer in the contract's shape. A length it doesn't give is null, never 0: Shorts in a search
+    usually come without one, and the Studio reads null as "about 45 s" for a Short but drops a 0 s video, so every
+    Short of a search went missing without a word (the server had answered, so yt-dlp never ran instead)."""
     lists = [body.get("shorts"), body.get("videos")] if shorts else [body.get("videos"), body.get("shorts")]
     items = [it for group in lists for it in (group or []) if isinstance(it, dict)]
     for shelf in body.get("shelves") or []:                     # Shorts shelves inside a video search
@@ -899,9 +905,11 @@ def _youtube_items(body: dict, shorts: bool) -> list:
         seen.add(vid)
         ch = it.get("channel") if isinstance(it.get("channel"), dict) else {}
         is_short = str(it.get("type") or "").lower() == "short" or "/shorts/" in str(it.get("url") or "")
+        length = _length(it)
         out.append({"id": vid, "title": str(it.get("title") or "")[:300],
                     "channel": str(ch.get("title") or ch.get("handle") or "")[:120],
-                    "channel_id": str(ch.get("id") or "")[:64], "dur": round(_length(it), 1),
+                    "channel_id": str(ch.get("id") or "")[:64],
+                    "dur": round(length, 1) if math.isfinite(length) and length > 0 else None,
                     "views": _count(it.get("viewCountInt") if it.get("viewCountInt") is not None
                                     else it.get("viewCountText")),
                     "shorts": is_short})
@@ -910,7 +918,7 @@ def _youtube_items(body: dict, shorts: bool) -> list:
 
 def youtube_search(user: dict, query: str, shorts: bool = False) -> dict:
     """YouTube videos (or Shorts) for a search, most relevant first: [{id, title, channel, channel_id, dur, views,
-    shorts}] (dur 0 when ScrapeCreators doesn't say). The Studio falls back to yt-dlp on any error, so this only
+    shorts}] (dur null when ScrapeCreators doesn't say). The Studio falls back to yt-dlp on any error, so this only
     spares customers' computers YouTube's bot wall; it is never required."""
     def fetch(key, q):
         import requests
