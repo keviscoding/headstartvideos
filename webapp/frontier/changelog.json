@@ -1,5 +1,14 @@
 [
   {
+    "build": 68,
+    "date": "2026-10-21",
+    "title": "Pick your narrator from your ElevenLabs library",
+    "items": [
+      "New: with ElevenLabs connected, Create → Choose voice opens your ElevenLabs voices and its whole voice library. Press ▶ to hear any voice for free, then Use to keep it for that recipe, Ranking Shorts included.",
+      "Fixed: Studio no longer asks you to connect a voice account when ElevenLabs is already connected, and Setup shows ElevenLabs as your narration account."
+    ]
+  },
+  {
     "build": 67,
     "date": "2026-10-21",
     "title": "Queue 15 Ranking Shorts, clips from TikTok, and a new Clip Board",

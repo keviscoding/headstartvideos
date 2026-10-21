@@ -580,6 +580,11 @@ def create_app():
                                "model": voice.get("model") or (cr_media.PROVIDERS[voice["provider"]]["models"]["narration"] if voice else ""),
                                "connected": bool(cr_media.active("narration") and voice and
                                                  os.getenv(cr_media.PROVIDERS[voice["provider"]]["key_env"]))}
+        if not checks["narration"]["connected"] and override.get("provider") == "original" and \
+                os.getenv("ELEVENLABS_API_KEY", "").strip():
+            # Setup's ElevenLabs card: narration on the creator's own ElevenLabs key is connected (it read as not
+            # connected, and Create asked to connect a voice account that was already connected).
+            checks["narration"].update(connected=True, label="ElevenLabs", direct="elevenlabs")
         image_cfg = cr_media.profile("images") if cr_media.active("images") else {}
         plan = []
         if image_cfg.get("provider") == "kie":
@@ -1164,6 +1169,9 @@ def create_app():
         response = send_file(preview_file(current["model"], voice), conditional=True)
         response.headers["Cache-Control"] = "private, max-age=86400"
         return response
+
+    import cr_voice_library
+    cr_voice_library.install(studio, activity)                  # Choose voice with ElevenLabs connected directly
 
     @studio.app.post("/cr-hub")
     def save_hub():
