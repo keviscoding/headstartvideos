@@ -256,3 +256,18 @@ def test_the_runtime_check_never_refuses_on_a_guess(monkeypatch):
     monkeypatch.delenv("YTDLP_ARGS", raising=False)
     monkeypatch.setitem(sys.modules, "yt_dlp.utils._jsruntime", None)     # a yt-dlp without these checks
     assert REAL_JS_CHECK() == ""
+
+
+def test_a_short_to_remake_is_a_youtube_link_or_nothing():
+    """Create's "Make it like this Short": the pipeline studies the pasted Short (find.trend_scout) and reads only its
+    video id; anything that is not a YouTube link never reaches it."""
+    ok = ["https://youtube.com/shorts/DLGJM7q5k7w?is=4yEzP-cYjTD5I_WO", "youtu.be/DLGJM7q5k7w",
+          "https://www.youtube.com/watch?v=DLGJM7q5k7w&t=3"]
+    for ref in ok:
+        assert shorts.ranking_options('[[ranking=' + json.dumps({"reference": ref}) + ']]') == {"reference": ref}
+    ok += ["HTTPS://WWW.YOUTUBE.COM/shorts/DLGJM7q5k7w", "https://www.youtube.com/watch?v=DLGJM7q5k7w"]
+    for ref in ok[-2:]:
+        assert shorts.ranking_options('[[ranking=' + json.dumps({"reference": ref}) + ']]') == {"reference": ref}
+    for ref in ("https://evil.example/DLGJM7q5k7w", "DLGJM7q5k7w", 'https://youtube.com/shorts/DLGJM7q5k7w"><b>', 7,
+                "https://youtube.com/shorts/DLGJM7q5k7w]] [[ranking={}"):
+        assert shorts.ranking_options('[[ranking=' + json.dumps({"reference": ref}) + ']]') == {}, ref

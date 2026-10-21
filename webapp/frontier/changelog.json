@@ -1,5 +1,15 @@
 [
   {
+    "build": 69,
+    "date": "2026-10-21",
+    "title": "Ranking Shorts that know what is viral right now",
+    "items": [
+      "New: Ranking Shorts find what is viral right now. Before searching, Studio watches the top ranking Shorts on your topic and finds fresh clips like theirs, so robot fails means this year's humanoid robots, not a decade-old lab clip.",
+      "New: make it like this Short. Paste a viral Short's link under Ranking and Studio remakes it with fresh clips of the same kind.",
+      "Improved: no more other channels' rank lists. Clips from other ranking Shorts are left out, so their rank lists never show over yours."
+    ]
+  },
+  {
     "build": 68,
     "date": "2026-10-21",
     "title": "Pick your narrator from your ElevenLabs library",
