@@ -352,7 +352,7 @@
     if (/subtitles|whisper|timing narration/i.test(v)) return 'Timing narration and captions'; if (/voice|tts|narration/i.test(v)) return 'Creating narration';
     if (/design|scene|graphic|image|motion|kit/i.test(v)) return 'Building visual scenes'; if (/script|fact check/i.test(v)) return 'Writing and checking the story'; return 'Preparing the project';
   };
-  function statusBadge(value) {const kind = value === 'done' ? 'done' : ['running','queued'].includes(value) ? 'running' : 'stopped'; return el('span',`crw-status-badge is-${kind}`,{done:'Ready',running:'In production',queued:'Queued',cancelled:'Cancelled',error:'Needs review',failed:'Needs review'}[value] || 'Saved');}
+  function statusBadge(value) {const kind = value === 'done' ? 'done' : ['running','queued'].includes(value) ? 'running' : 'stopped'; return el('span',`crw-status-badge is-${kind}`,{done:'Ready',running:'In production',queued:'Queued',held:'On hold',cancelled:'Cancelled',error:'Needs review',failed:'Needs review'}[value] || 'Saved');}
   function combinedProjects() {
     const map = new Map(state.jobs.map(j => [j.slug,{...j,state:'done',hasVideo:true}]));
     for (const q of state.queue) map.set(q.slug,{...(map.get(q.slug) || {}),...q});
@@ -463,10 +463,39 @@
     if (icon && icon.getAttribute('href') !== href) icon.setAttribute('href', href);
   }
   document.addEventListener('visibilitychange', () => {if (!document.hidden && state.readyTitle) {state.readyTitle = ''; tabStatus();}});
+  // Shorts on hold (cr_queue): a long batch stops on what every Short would hit (clip watches used up, YouTube or
+  // Claude limits), or a Studio closed before they started. Nothing of theirs was spent; the creator decides.
+  function drawHeld(q) {
+    const held = q?.held || [];
+    for (const box of all('[data-held-notice]')) {
+      box.replaceChildren(); box.hidden = !held.length; if (!held.length) continue;
+      const n = held.length, names = held.slice(0, 3).map(h => `“${h.title}”`).join(', ') + (n > 3 ? ` and ${n - 3} more` : '');
+      box.append(el('strong', '', `${n} ${n === 1 ? 'video is' : 'videos are'} on hold`),
+        el('span', '', `${q.reason ? q.reason + ' ' : ''}Nothing was spent on ${n === 1 ? 'it' : 'them'} yet: ${names}.`));
+      const actions = el('div', 'crw-held-actions');
+      const go = el('button', 'crw-primary-button', n === 1 ? 'Carry on' : `Carry on with all ${n}`); go.type = 'button';
+      // Out of clip watches: carrying on now only helps with credits (0.02 a watch); otherwise it waits for next month.
+      const paid = q.code === 'out_of_watches' ? el('button', 'crw-secondary-button', 'Carry on using credits') : null;
+      if (paid) paid.type = 'button';
+      const drop = el('button', 'crw-secondary-button', 'Remove'); drop.type = 'button';
+      const buttons = [go, paid, drop].filter(Boolean), busy = on => buttons.forEach(b => b.disabled = on);
+      const resume = async credits => {busy(true); state.heldBusy = true;
+        try {const r = await api('/cr-queue/resume', {method: 'POST', body: {use_credits: credits}}); drawHeld(r);
+          toast(r.resumed ? `${r.resumed} queued again${credits ? ', using credits if watches run out' : ''}, made one at a time.` : 'Nothing was on hold.'); await refreshActivity();}
+        catch (e) {toast(e.message); busy(false);} finally {state.heldBusy = false;}};
+      go.addEventListener('click', () => resume(false));
+      if (paid) paid.addEventListener('click', () => resume(true));
+      drop.addEventListener('click', async () => {if (!confirm(`Remove ${n === 1 ? 'this video' : `these ${n} videos`} from the queue?`)) return; busy(true); state.heldBusy = true;
+        try {const r = await api('/cr-queue/drop', {method: 'POST'}); drawHeld(r); toast(r.removed ? 'Removed from the queue.' : 'Nothing was on hold.');}
+        catch (e) {toast(e.message); busy(false);} finally {state.heldBusy = false;}});
+      actions.append(...buttons); box.append(actions);
+    }
+  }
   async function refreshActivity(initial = false) {
     if (state.refresh) return state.refresh;
     state.refresh = (async()=>{
-      const results = await Promise.allSettled([api('/api/queue'),api('/cr-workspace/activity'), initial || state.page === 'projects' ? api('/api/jobs') : Promise.resolve(null)]);
+      const results = await Promise.allSettled([api('/api/queue'),api('/cr-workspace/activity'), initial || state.page === 'projects' ? api('/api/jobs') : Promise.resolve(null), api('/cr-queue')]);
+      if (results[3].status==='fulfilled' && !state.heldBusy) drawHeld(results[3].value);
       if (results[0].status==='fulfilled') {
         const watched = state.queue.filter(q=>['running','queued'].includes(q.state));
         state.queue = results[0].value.jobs || [];
@@ -519,10 +548,28 @@
     if(p.panels && title.includes('\n')) throw new Error('Use one title for a set of panels.');
     if(state.selected.auto_style)p.auto_style=checked('crw-adaptive'); return p;
   }
+  // A batch of Ranking Shorts: at most 15, each topic once, and an honest word on clip watches before it starts.
+  async function rankingBatchOk(p) {
+    if (!isRanking(state.selected)) return true;
+    const seen = new Set(), titles = p.title.split('\n').filter(t => {const k = t.toLowerCase().split(/\s+/).join(' '); if (seen.has(k)) return false; seen.add(k); return true;});
+    if (titles.length > 15) {error('Queue up to 15 Ranking Shorts at once. They are made one at a time.'); return false;}
+    p.title = titles.join('\n');
+    if (titles.length < 2) return true;
+    let a; try {a = await api('/cr-ranking/allowance');} catch (_) {return true;}   // the run itself checks again
+    if (a.limit == null) return true;
+    const lo = (a.per_short?.low || 30) * titles.length, hi = (a.per_short?.high || 60) * titles.length;
+    const credits = /"use_credits":true/.test(p.extra || '');
+    if (a.remaining >= hi || credits) return true;
+    const fit = Math.floor(a.remaining / (a.per_short?.high || 60));
+    return confirm(`${titles.length} Ranking Shorts use about ${lo} to ${hi} clip watches, and you have ${a.remaining} left this month (about ${fit} Short${fit === 1 ? '' : 's'}). When they run out, the Shorts still waiting go on hold with nothing spent, and you can carry on next month or carry on using credits. Queue all ${titles.length}?`);
+  }
   async function submit(event) {
     event.preventDefault(); if(state.submitting||state.busy)return;error(''); let p;
     try {p=payload();} catch(e){error(e.message);return;}
     state.submitting=true;gate();$('crw-create').textContent='Checking your video…';
+    let ok=false;
+    try {ok=await rankingBatchOk(p);} catch(_) {ok=true;}       // the run itself checks again
+    if (!ok) {state.submitting=false;$('crw-create').textContent='Create video';gate();return;}
     try {
       // /api/run performs the authoritative option, account and renderer checks
       // before creating work; a second preflight would repeat those requests.
