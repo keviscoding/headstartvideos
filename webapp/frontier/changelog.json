@@ -1,5 +1,13 @@
 [
   {
+    "build": 74,
+    "date": "2026-10-21",
+    "title": "Updates that finish on a slow connection",
+    "items": [
+      "Fixed: on a slow connection an update could stop with \"the download kept getting interrupted\". Studio now picks up where it stopped with a fresh download link, waits a moment between tries, and no longer starts the whole download again."
+    ]
+  },
+  {
     "build": 73,
     "date": "2026-10-21",
     "title": "Every 3D look cloned the right way",

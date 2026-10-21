@@ -144,23 +144,42 @@ def _status(response) -> int:
     return int(getattr(response, "status", None) or getattr(response, "code", None) or 200)
 
 
-def download(base: str, key: str, target: Path, get=http_get, attempts: int = 4, path: str = "/api/studio/download") -> None:
+def download(base: str, key: str, target: Path, get=http_get, attempts: int = 6, path: str = "/api/studio/download",
+             sleep=None) -> None:
     """Download the release, resuming after drops and checking it arrived whole.
 
     The signed storage link supports byte ranges, so an interrupted transfer
-    continues where it stopped. The finished file must match the size and the
-    SHA-256 the release was uploaded with (when storage reports them).
+    continues where it stopped. Each retry asks for a fresh link: on a slow
+    connection the first one can expire before the release arrives (storage is in
+    San Francisco; a creator in Europe saw "the update keeps getting interrupted").
+    The finished file must match the size and the SHA-256 the release was
+    uploaded with (when storage reports them).
     """
     auth = {"Authorization": "Bearer " + key}
+    sleep = sleep or time.sleep
     try:
         first = get(base + path, auth)
         location = _signed_location(first)
         size = expected_sha = None
+        newer = False
         target.unlink(missing_ok=True)
         for attempt in range(attempts):
             have = target.stat().st_size if target.exists() else 0
+            if attempt:
+                sleep(min(20, 2 * attempt))
+                if location:
+                    location, newer = _fresh_link(lambda: _signed_location(get(base + path, auth)), location)
             if location:
-                response = get(location, {"Range": "bytes=%d-" % have} if have else {})
+                try:
+                    response = get(location, {"Range": "bytes=%d-" % have} if have else {})
+                except (HTTPError, URLError, OSError, http.client.HTTPException) as error:
+                    if attempt and newer and isinstance(error, HTTPError) and error.code in (400, 403):
+                        raise UpdateStopped(NEWER_RELEASE) from None
+                    if attempt + 1 == attempts or _certificate_problem(error):
+                        raise
+                    continue                       # refused (an expired link) or dropped: a fresh link next time
+                if have and size and _status(response) == 206 and _range_total(response) not in (None, size):
+                    raise UpdateStopped(NEWER_RELEASE)
             else:
                 response, have = (first if attempt == 0 else get(base + path, auth)), 0
             if have and _status(response) != 206:
@@ -190,6 +209,32 @@ def download(base: str, key: str, target: Path, get=http_get, attempts: int = 4,
         raise UpdateStopped("The download was interrupted. Nothing was changed; check your connection and try again.") from None
 
 
+NEWER_RELEASE = ("A newer Studio was published while this one downloaded. Nothing was changed; press Update again "
+                 "to get the newest.")
+
+
+def _fresh_link(mint, old):
+    """A fresh signed link for the same release file, or the one in hand: the fresh-link request is best effort (a
+    network blip or a redeploying server never ends a download whose link still works), and a link to a different
+    file (a release published mid-update) is never mixed into this one. (link, newer_published)"""
+    try:
+        new = mint()
+    except (HTTPError, URLError, OSError, http.client.HTTPException) as error:
+        if _certificate_problem(error):
+            raise
+        return old, False
+    if not new:
+        return old, False
+    if urlsplit(new).path != urlsplit(old).path:
+        return old, True
+    return new, False
+
+
+def _range_total(response) -> int | None:
+    total = (response.headers.get("Content-Range") or "").rpartition("/")[2]
+    return int(total) if total.isdigit() else None
+
+
 def _signed_location(response):
     """The signed storage link a download redirect points to, or None."""
     if _status(response) not in (301, 302, 303, 307, 308):
@@ -213,9 +258,13 @@ class _RangeReader(io.RawIOBase):
     """
     BLOCK = 1024 * 1024
 
-    def __init__(self, url, get, size):
+    TRIES = 5
+
+    def __init__(self, url, get, size, refresh=None, sleep=None):
         super().__init__()
-        self.url, self.get, self.size = url, get, size
+        self.url, self.get, self.size, self.refresh = url, get, size, refresh
+        self.sleep = sleep or (lambda seconds: time.sleep(seconds))
+        self.newer = False
         self.pos, self.start, self.block, self.fetched = 0, -1, b"", 0
 
     def readable(self):
@@ -233,13 +282,33 @@ class _RangeReader(io.RawIOBase):
         return self.pos
 
     def _fill(self, wanted):
+        """One block of the release. A dropped or refused request (the signed link expired on a slow connection) is
+        tried again with a fresh link, so a slow update finishes instead of starting the whole download over."""
         end = min(self.size, self.pos + max(wanted, self.BLOCK)) - 1
-        response = self.get(self.url, {"Range": "bytes=%d-%d" % (self.pos, end)})
-        data = response.read() if _status(response) == 206 else b""
-        if len(data) != end - self.pos + 1:
-            raise _NoRanges()
-        self.start, self.block = self.pos, data
-        self.fetched += len(data)
+        for attempt in range(self.TRIES):
+            try:
+                response = self.get(self.url, {"Range": "bytes=%d-%d" % (self.pos, end)})
+                if _status(response) != 206:
+                    raise _NoRanges()                  # storage ignores ranges: the whole download instead
+                if _range_total(response) not in (None, self.size):
+                    raise UpdateStopped(NEWER_RELEASE)  # a different file: never mixed into this release
+                data = response.read()
+                if len(data) == end - self.pos + 1:
+                    self.start, self.block = self.pos, data
+                    self.fetched += len(data)
+                    return
+            except (HTTPError, URLError, OSError, http.client.HTTPException) as error:
+                if _certificate_problem(error):
+                    raise
+            if attempt + 1 < self.TRIES:
+                self.sleep(min(20, 2 ** attempt))
+                if self.refresh:
+                    self.url, newer = _fresh_link(self.refresh, self.url)
+                    self.newer = self.newer or newer
+        if self.newer:
+            raise UpdateStopped(NEWER_RELEASE)
+        raise UpdateStopped("The download kept getting interrupted. Nothing was changed; check your connection and "
+                            "try again.")
 
     def read(self, size=-1):
         size = self.size - self.pos if size is None or size < 0 else min(size, self.size - self.pos)
@@ -278,7 +347,8 @@ def stage_changes(home: Path, base: str, key: str, staging: Path, expected: str,
     Returns the staged files and how many bytes were downloaded. Raises _NoRanges
     when storage can't serve ranges, so the caller can use the whole download.
     """
-    first = get(base + "/api/studio/download", {"Authorization": "Bearer " + key})
+    auth = {"Authorization": "Bearer " + key}
+    first = get(base + "/api/studio/download", auth)
     location = _signed_location(first)
     if not location:
         raise _NoRanges()
@@ -286,7 +356,7 @@ def stage_changes(home: Path, base: str, key: str, staging: Path, expected: str,
     total = int((probe.headers.get("Content-Range") or "").rpartition("/")[2] or 0) if _status(probe) == 206 else 0
     if not total:
         raise _NoRanges()
-    reader = _RangeReader(location, get, total)
+    reader = _RangeReader(location, get, total, refresh=lambda: _signed_location(get(base + "/api/studio/download", auth)))
     with zipfile.ZipFile(reader) as bundle:
         try:
             release = json.loads(bundle.read(TOP + "cr-release.json"))

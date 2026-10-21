@@ -138,7 +138,7 @@ def test_remote_download_redirects_to_a_short_lived_private_link(env, monkeypatc
     assert res.headers["location"].startswith("https://bucket.example/private.zip")
     assert "no-store" in res.headers["cache-control"]
     op, params, expires = signed[0]
-    assert op == "get_object" and params["Key"] == studio.RELEASE_KEY and expires <= 900
+    assert op == "get_object" and params["Key"] == studio.RELEASE_KEY and expires <= 3600   # an hour: slow updates finish
     assert "attachment" in params["ResponseContentDisposition"]
 
 
