@@ -1,5 +1,13 @@
 [
   {
+    "build": 71,
+    "date": "2026-10-21",
+    "title": "Edit countdown, polished",
+    "items": [
+      "Fixed: Edit countdown fits a phone screen, and clips you did not touch keep their labels when you swap another."
+    ]
+  },
+  {
     "build": 70,
     "date": "2026-10-21",
     "title": "Edit a finished Ranking Short",
