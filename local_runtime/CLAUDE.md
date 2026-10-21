@@ -142,6 +142,11 @@ rank (for example "Funniest Dog Moments"), choose how many clips, and set the sw
 meme sound effects, punch-ins, captions). Studio searches YouTube, has every candidate watched for its best moment,
 picks and trims the clips, writes the narrator's lines, designs the sound and edits the Short.
 
+Before it searches, Studio studies what is going viral about the topic right now: it watches one or two of the
+most-viewed ranking Shorts on it (one clip watch each) and leads its search with the things and situations they show,
+so a topic like robot fails finds this year's humanoid robots rather than clips from a decade ago. To remake a
+particular Short, paste its YouTube link in Ranking's "Make it like this Short".
+
 To make several at once, put up to 15 topics in Create's "Create several videos" box (each topic once): they are
 made one at a time. If something would stop every one of them the same way (the month's clip watches used up, YouTube
 or Claude limits), the Shorts still waiting go on hold with nothing spent, and the Create and Projects pages offer
