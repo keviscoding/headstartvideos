@@ -19,8 +19,12 @@ RANKING = '[[short_seconds=25]] [[ranking={"ranks": 5}]]'
 
 
 def spec(title, ranking=True, **more):
+    """Shaped like Frontier's api_run makes them: mix is a tuple, meta None, features a dict (the first version's
+    JSON round-trip check rejected every real spec over the tuple, so nothing was ever saved)."""
     return {"slug": title.lower().replace(" ", "-") + "--run", "title": title, "style": "cr-shorts-ranking",
-            "steps": ["script", "video"], "minutes": 1, "extra": RANKING if ranking else "", **more}
+            "steps": ["script", "video"], "minutes": 1, "extra": RANKING if ranking else "", "mix": (),
+            "meta": None, "features": {"captions": True}, "script_text": "", "burn_subs": False,
+            "cr_video_run_id": "run_" + title.lower().replace(" ", "_"), **more}
 
 
 def fake_studio(queue=()):
@@ -57,9 +61,10 @@ def test_a_shared_stop_holds_the_ranking_shorts_still_waiting(tmp_path):
 
 
 def test_every_shared_code_holds_and_a_shorts_own_stop_does_not(tmp_path):
-    for code, holds in (("youtube_blocked", True), ("claude_usage_limit", True), ("watch_service", True),
-                        ("voice_missing", True), ("crashed", False), ("clip_missing", False),
-                        ("render_failed", False), ("stopped", False)):
+    for code, holds in (("youtube_blocked", True), ("claude_usage_limit", True), ("claude_auth", True),
+                        ("claude_missing", True), ("watch_service", True), ("voice_missing", True),
+                        ("claude_format", False), ("claude_timeout", False), ("claude_other", False),
+                        ("crashed", False), ("clip_missing", False), ("render_failed", False), ("stopped", False)):
         studio, _ = fake_studio([spec("Funniest Dogs")])
         keeper = cr_queue.Keeper(studio, tmp_path / code)
         first = spec("Funniest Cats")
@@ -160,3 +165,57 @@ def test_carry_on_using_credits_turns_credits_on_for_the_held_ranking_shorts_onl
     keeper.hold_ranking("used up", "out_of_watches")
     keeper.resume(use_credits=False)                           # plain Carry on changes nothing
     assert [s["extra"] for s in studio.QUEUE] == ["[[short_seconds=25]] keep me", RANKING]
+
+
+def test_real_specs_are_saved_and_come_back_as_the_engine_made_them(tmp_path):
+    studio, _ = fake_studio([spec("Funniest Dogs", mix=(40.0, 30.0, 30.0)), spec("Scariest Moments")])
+    studio.JOBS["funniest-dogs--run"]["threed"] = True
+    cr_queue.Keeper(studio, tmp_path).save()
+    saved = json.loads((tmp_path / "output" / ".cr-queue.json").read_text())
+    assert [s["title"] for s in saved["waiting"]] == ["Funniest Dogs", "Scariest Moments"]
+    fresh, _ = fake_studio()
+    keeper = cr_queue.Keeper(fresh, tmp_path)
+    keeper.restore()
+    assert keeper.held[0]["mix"] == (40.0, 30.0, 30.0) and keeper.held[1]["mix"] == ()
+    assert keeper.held[0]["features"] == {"captions": True}
+
+
+def test_a_cancelled_short_never_comes_back(tmp_path):
+    studio, _ = fake_studio([spec("Funniest Dogs"), spec("Scariest Moments")])
+    cr_queue.Keeper(studio, tmp_path).save()
+    gone = tmp_path / "output" / "cr-video-workers" / "run_scariest_moments"
+    gone.mkdir(parents=True)
+    (gone / "cancelled.json").write_text("{}")                 # cr_video_cancel's record of a queued cancel
+    keeper = cr_queue.Keeper(fake_studio()[0], tmp_path)
+    keeper.restore()
+    assert [s["title"] for s in keeper.held] == ["Funniest Dogs"]
+
+
+def test_the_3d_flag_survives_a_hold(tmp_path):
+    studio, _ = fake_studio([spec("A 3D video", ranking=True)])
+    studio.JOBS["a-3d-video--run"]["threed"] = True
+    keeper = cr_queue.Keeper(studio, tmp_path)
+    keeper.hold_ranking("stop", "youtube_blocked")
+    assert studio.JOBS["a-3d-video--run"]["threed"] is True
+    keeper.resume()
+    assert studio.JOBS["a-3d-video--run"]["threed"] is True and studio.JOBS["a-3d-video--run"]["state"] == "queued"
+    fresh, _ = fake_studio()
+    fresh._threed_on = lambda style, features: style == "cr-shorts-ranking"
+    keeper.hold_ranking("stop", "youtube_blocked")
+    again = cr_queue.Keeper(fresh, tmp_path)
+    again.restore()                                            # a new Studio works it out from the recipe
+    assert fresh.JOBS["a-3d-video--run"]["threed"] is True
+
+
+def test_the_engines_clear_queue_and_a_cancel_save_the_list(tmp_path):
+    studio, _ = fake_studio([spec("Funniest Dogs"), spec("Scariest Moments")])
+    keeper = cr_queue.install(studio, tmp_path)
+    keeper.save()
+
+    @studio.app.post("/api/queue/clear")
+    def api_queue_clear():                                     # as Frontier's app.py has it
+        with studio.LOCK:
+            studio.QUEUE.clear()
+        return {"cleared": 2}
+    assert studio.app.test_client().post("/api/queue/clear").status_code == 200
+    assert json.loads((tmp_path / "output" / ".cr-queue.json").read_text())["waiting"] == []

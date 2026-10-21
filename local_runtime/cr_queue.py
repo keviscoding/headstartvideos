@@ -25,8 +25,10 @@ import time
 from pathlib import Path
 
 MAX_RANKING_BATCH = 15
-# work/error.json codes (shorts/ranking/make_ranking.py) that every waiting Short would stop on too
-SHARED = ("out_of_watches", "watch_service", "claude_", "youtube_", "voice_missing", "broken")
+# work/error.json codes (shorts/ranking/make_ranking.py) that every waiting Short would stop on too. Claude's limits
+# only (claude_format, claude_timeout and claude_other belong to one topic's answer: the next topic may well work).
+SHARED = ("out_of_watches", "watch_service", "claude_usage_limit", "claude_auth", "claude_missing", "claude_model",
+          "claude_network", "youtube_", "voice_missing", "broken")
 CLOSED = "Studio closed before these started."
 
 
@@ -34,13 +36,21 @@ def is_ranking(spec) -> bool:
     return "[[ranking=" in str((spec or {}).get("extra") or "")
 
 
-def _keepable(spec) -> bool:
+def _kept(spec):
+    """The spec as the saved list keeps it (plain JSON: Frontier's `mix` tuple becomes a list), or None for one that
+    is not a plain video (an editor's timeline render) or will not serialise."""
     if not isinstance(spec, dict) or spec.get("timeline") or not spec.get("slug") or not spec.get("title"):
-        return False
+        return None
     try:
-        return json.loads(json.dumps(spec)) == spec
+        return json.loads(json.dumps(spec))
     except (TypeError, ValueError):
-        return False
+        return None
+
+
+def _revived(spec) -> dict:
+    if isinstance(spec.get("mix"), list):
+        spec["mix"] = tuple(spec["mix"])                       # as api_run made it
+    return spec
 
 
 def shared_stop(job) -> tuple:
@@ -85,6 +95,7 @@ class Keeper:
         self.reason = ""
         self.code = ""
         self.lock = threading.RLock()
+        self.home = Path(home)
 
     @property
     def _queue(self) -> list:
@@ -99,18 +110,39 @@ class Keeper:
 
     # ── saved list ──────────────────────────────────────────────────────────────────────────────────────────────────
     def save(self):
-        with self.lock, self._studio_lock():
-            waiting = [s for s in self._queue if _keepable(s)]
-            held = [s for s in self.held if _keepable(s)]
-            reason, code = self.reason, self.code
-        data = {"saved_at": time.time(), "waiting": waiting, "held": held, "reason": reason, "code": code}
+        """One save at a time, in order (self.lock is held through the write; the Studio's LOCK only while copying
+        the lists), so an older snapshot never lands after a newer one."""
+        with self.lock:
+            with self._studio_lock():
+                waiting = list(self._queue)
+                held = list(self.held)
+                reason, code = self.reason, self.code
+            data = {"saved_at": time.time(), "waiting": [k for k in map(_kept, waiting) if k],
+                    "held": [k for k in map(_kept, held) if k], "reason": reason, "code": code}
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = self.path.with_name(f".cr-queue.{os.getpid()}.{threading.get_ident()}.tmp")
+                tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
+                os.replace(tmp, self.path)
+            except OSError:
+                pass                                           # a full or read-only disk must never stop a video
+
+    def _cancelled(self, spec) -> bool:
+        """A queued video the creator cancelled (cr_video_cancel writes cancelled.json in its worker folder)."""
+        run_id = spec.get("cr_video_run_id")
+        if not isinstance(run_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", run_id):
+            return False
+        return (self.home / "output" / "cr-video-workers" / run_id / "cancelled.json").exists()
+
+    def _threed(self, spec) -> bool:
+        old = self._jobs.get(spec.get("slug")) or {}
+        if "threed" in old:
+            return bool(old["threed"])
+        on = getattr(self.studio, "_threed_on", None)
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
-            os.replace(tmp, self.path)
-        except OSError:
-            pass                                               # a full or read-only disk must never stop a video
+            return bool(on(spec.get("style") or "", spec.get("features"))) if callable(on) else False
+        except Exception:                                      # noqa: BLE001 - a progress bar's detail
+            return False
 
     def restore(self):
         """At start: what the last Studio had waiting or on hold goes on hold here (never started unasked)."""
@@ -120,8 +152,8 @@ class Keeper:
             return
         if not isinstance(data, dict):
             return
-        waiting = [s for s in data.get("waiting") or [] if _keepable(s)]
-        held = [s for s in data.get("held") or [] if _keepable(s)]
+        waiting = [_revived(s) for s in data.get("waiting") or [] if _kept(s) and not self._cancelled(s)]
+        held = [_revived(s) for s in data.get("held") or [] if _kept(s) and not self._cancelled(s)]
         with self.lock, self._studio_lock():
             known = {s["slug"] for s in self._queue} | {s["slug"] for s in self.held}
             fresh = [s for s in held + waiting if s["slug"] not in known]
@@ -152,10 +184,13 @@ class Keeper:
         except Exception:                                      # noqa: BLE001 - never in the way of a video
             pass
 
+    def _job(self, spec, state):
+        return {"lines": [], "state": state, "error": None, "done": state != "queued", "title": spec["title"],
+                "steps": spec.get("steps") or [], "minutes": spec.get("minutes") or 1, "style": spec.get("style") or "",
+                "threed": self._threed(spec)}
+
     def _mark_held(self, spec):
-        self._jobs[spec["slug"]] = {"lines": [], "state": "held", "error": None, "done": True,
-                                          "title": spec["title"], "steps": spec.get("steps") or [],
-                                          "minutes": spec.get("minutes") or 1, "style": spec.get("style") or ""}
+        self._jobs[spec["slug"]] = self._job(spec, "held")
 
     def hold_ranking(self, reason, code=""):
         with self.lock, self._studio_lock():
@@ -176,10 +211,9 @@ class Keeper:
             specs, self.held, self.reason, self.code = self.held, [], "", ""
             if use_credits:
                 specs = [with_credits(s) if is_ranking(s) else s for s in specs]
+            specs = [s for s in specs if not self._cancelled(s)]
             for spec in specs:
-                self._jobs[spec["slug"]] = {"lines": [], "state": "queued", "error": None, "done": False,
-                                                  "title": spec["title"], "steps": spec.get("steps") or [],
-                                                  "minutes": spec.get("minutes") or 1, "style": spec.get("style") or ""}
+                self._jobs[spec["slug"]] = self._job(spec, "queued")
             self._queue.extend(specs)
         self.save()
         if specs and callable(getattr(self.studio, "_ensure_dispatcher", None)):
@@ -222,6 +256,13 @@ class Keeper:
         @app.post("/cr-queue/drop")
         def cr_queue_drop():
             return no_store(jsonify(removed=self.drop(), **self.status()))
+
+        @app.after_request
+        def cr_queue_cleared(response):
+            from flask import request
+            if request.path == "/api/queue/clear" and request.method == "POST" and response.status_code < 400:
+                self.save()                                    # the engine's Clear queue: nothing waits any more
+            return response
 
 
 def install(studio, home):

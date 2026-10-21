@@ -9,6 +9,7 @@
       "New: the Clip Board is rebuilt inside Studio. Every clip is a card that plays its moment when you hover, with a Stop button for a search and a saved copy of each countdown you make.",
       "Improved: clips start and end between words. When someone talks or screams straight through, the clip lets the scream finish or fades out softly instead of cutting a word in half.",
       "Improved: Shorts that hit a limit (clip watches, YouTube, Claude) stop with a plain reason and carry on where they left off when you make them again, without paying twice.",
+      "Improved: the narrator stays quiet while someone in a clip is talking, shouting, barking or meowing, so it never talks over the joke.",
       "Improved: topics in Spanish, Portuguese, French, German, Italian and Dutch keep their own words in the title.",
       "Changed: Remove burned-in text is now off by default because it takes a little longer. Turn it on for clips with captions or watermarks."
     ]

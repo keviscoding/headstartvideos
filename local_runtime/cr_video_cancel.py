@@ -304,9 +304,13 @@ class VideoWorkers:
         @app.post("/cr-video/<slug>/cancel")
         def cancel_video(slug):
             try:
-                return jsonify(self.cancel(slug, (request.get_json(silent=True) or {}).get("run_id")))
+                result = self.cancel(slug, (request.get_json(silent=True) or {}).get("run_id"))
             except (ValueError, RuntimeError) as error:
                 return jsonify(error=str(error)), 409
+            keeper = getattr(self.studio, "_cr_queue", None)
+            if keeper is not None:
+                keeper.save()                                  # a queued video cancelled is gone from the saved list too
+            return jsonify(result)
 
         @app.after_request
         def cancellation_status(response):
