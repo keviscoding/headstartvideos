@@ -195,4 +195,5 @@ def test_shorts_pack_is_a_signed_private_link_for_a_studio_plan_only(api, monkey
     assert response.status_code == 302 and response.headers["location"].startswith("https://private-bucket.example/")
     assert response.headers["cache-control"] == "private, no-store"
     params, expires = signed[0]
-    assert params["Key"] == studio.SHORTS_PACK_KEY and params["Key"].startswith("private/") and expires <= 900
+    # minted per signed-in, entitled request; an hour so a slow connection (storage is in San Francisco) finishes
+    assert params["Key"] == studio.SHORTS_PACK_KEY and params["Key"].startswith("private/") and expires <= 3600

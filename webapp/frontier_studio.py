@@ -47,7 +47,9 @@ WORKFLOW_VERSION = "frontier-5.3-claudecode.1"
 BRANDED_WORKFLOW_VERSION = "channelrecipe-5.3-claudecode.1"
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 NATIVE_STAGE_LIMIT = 2
-DOWNLOAD_LINK_SECONDS = 600
+# A Studio update reads the release in many byte ranges with one link, and storage is in San Francisco: from Europe
+# a slow connection outlived a 10-minute link and every retry was refused ("the update keeps getting interrupted").
+DOWNLOAD_LINK_SECONDS = 3600
 # The Shorts asset pack (people, animals, motion clips, the prop and creature libraries, sound libraries, the 2D host):
 # a Studio downloads it the first time someone makes a Short (local_runtime/cr_shorts.py ensure_pack). A private
 # object; each entitled request gets a short-lived signed link. Built by shorts-clone tools/pack_shorts.py.
