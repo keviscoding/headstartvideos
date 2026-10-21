@@ -1,5 +1,19 @@
 [
   {
+    "build": 67,
+    "date": "2026-10-21",
+    "title": "Queue 15 Ranking Shorts, clips from TikTok, and a new Clip Board",
+    "items": [
+      "New: queue up to 15 Ranking Shorts at once. Put one topic per line in Create several videos and Studio makes them one after another. If your clip watches run out or YouTube or Claude asks Studio to slow down, the rest wait on hold with nothing spent, and Carry on picks them up. Closing Studio keeps them too.",
+      "New: Ranking Shorts now find clips on TikTok and YouTube Shorts as well as long videos, through your ChannelRecipe account. No extra keys.",
+      "New: the Clip Board is rebuilt inside Studio. Every clip is a card that plays its moment when you hover, with a Stop button for a search and a saved copy of each countdown you make.",
+      "Improved: clips start and end between words. When someone talks or screams straight through, the clip lets the scream finish or fades out softly instead of cutting a word in half.",
+      "Improved: Shorts that hit a limit (clip watches, YouTube, Claude) stop with a plain reason and carry on where they left off when you make them again, without paying twice.",
+      "Improved: topics in Spanish, Portuguese, French, German, Italian and Dutch keep their own words in the title.",
+      "Changed: Remove burned-in text is now off by default because it takes a little longer. Turn it on for clips with captions or watermarks."
+    ]
+  },
+  {
     "build": 66,
     "date": "2026-10-19",
     "title": "Cleaner, consistent Ranking Shorts and an easier setup",
