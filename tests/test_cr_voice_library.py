@@ -97,3 +97,25 @@ def test_ranking_shorts_use_the_voice_chosen_for_their_recipe(monkeypatch):
     assert cr_shorts.ranking_voice("cr-shorts-ranking") == "eleven:" + VOICE
     assert cr_shorts.ranking_voice("kie-one") == "" and cr_shorts.ranking_voice("odd") == ""
     assert cr_shorts.ranking_voice("none") == ""
+
+
+def test_the_narration_check_knows_elevenlabs_and_ranking_shorts(monkeypatch):
+    """The engine's own check counts only Algrow, WaveSpeed and AI33 keys: with ElevenLabs connected every Create stopped
+    on 'The voiceover needs ALGROW_API_KEY, WAVESPEED_API_KEY or AI33_API_KEY' (the owner's Ranking Short batch)."""
+    import cr_readiness
+    picks = {}
+    studio = types.SimpleNamespace(voices=types.SimpleNamespace(picks=lambda: picks))
+    ranking = {"shorts": {"pipeline": "ranking"}}
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "sk_" + "a" * 40)
+    monkeypatch.setenv("KIE_API_KEY", "")
+    assert cr_readiness.own_narration(studio, "cr-shorts-ranking", ranking, "old")[0] is True
+    ok, why = cr_readiness.own_narration(studio, "jung", {}, "old")
+    assert ok is False and "Choose voice" in why                  # long videos: pick the recipe's voice first
+    picks["jung"] = {"provider": "elevenlabs", "voice_id": VOICE}
+    assert cr_readiness.own_narration(studio, "jung", {}, "old") == (True, "")
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "")
+    assert cr_readiness.own_narration(studio, "jung", {}, "old") == (False, "old")
+    ok, why = cr_readiness.own_narration(studio, "cr-shorts-ranking", ranking, "old")
+    assert ok is False and "ElevenLabs or Kie.ai" in why
+    monkeypatch.setenv("KIE_API_KEY", "kie_" + "b" * 30)
+    assert cr_readiness.own_narration(studio, "cr-shorts-ranking", ranking, "old") == (True, "")
