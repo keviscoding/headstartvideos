@@ -1,5 +1,14 @@
 [
   {
+    "build": 75,
+    "date": "2026-10-21",
+    "title": "Style clones say exactly what your videos will be",
+    "items": [
+      "New: Studio asks how a 3D channel's 3D is made. When a channel is mostly 3D, you pick animated characters with faces, faceless figures, or objects and maps, with Studio's guess first. Your answer decides how your videos are made.",
+      "New: Studio says plainly what your videos will be. If it can't make the channel's kind of video yet, such as 3D characters that walk and act, it tells you what it would make instead and starts only when you tick that you understand."
+    ]
+  },
+  {
     "build": 74,
     "date": "2026-10-21",
     "title": "Updates that finish on a slow connection",

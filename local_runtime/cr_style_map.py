@@ -20,7 +20,20 @@ import copy
 import re
 
 SCHEMA = 1
-ROUTER = 73          # how 3D is routed (Studio 73: Gemini judges the faces); a saved plan from an older router is made again
+ROUTER = 75          # how 3D is routed (73: Gemini judges the faces; 75: the creator is asked); older saved plans are made again
+# How a channel's 3D is made is asked of the creator (Studio's guess first): the answer decides how the videos are made,
+# and a medium Studio can't make yet is said before anything is paid, never swapped in silently (an @ifologyfilms clone
+# drew stills of characters the channel animates in 3D, and was called fixed).
+MEDIUM_DESIGNED = "Animated 3D characters with faces (cartoon, game or toy-like)"
+MEDIUM_FACELESS = "Faceless 3D figures in real places (reconstructions)"
+MEDIUM_OBJECTS = "3D objects, places, maps or diagrams, without people"
+MEDIUMS = (MEDIUM_DESIGNED, MEDIUM_FACELESS, MEDIUM_OBJECTS)
+MEDIUM_GAP = ("Studio can't animate these characters in 3D yet. Your videos would be drawn pictures in their look, some "
+              "of them animated by AI: close to how the channel looks, but its characters won't walk, run and act the "
+              "way they do in its videos. 3D characters are coming in a Studio update.")
+MEDIUM_GAP_MANNEQUINS = ("With a 3D recipe, Studio's 3D engine makes faceless mannequins: the channel's characters would "
+                         "become faceless figures in your videos. The recommended recipe draws them in their own look "
+                         "instead. 3D characters are coming in a Studio update.")
 
 # The recipes a learned style can be built on, by what their machinery is for. Order matters: the first that fits wins.
 BASES = {
@@ -637,18 +650,36 @@ def drawn_3d(profile) -> float:
     return share if share >= 0.2 and not threed_rebuildable(profile)[0] else 0.0
 
 
-def route(profile, chosen: str = "") -> dict:
-    """How this channel's pictures are made: {"engine": "drawn" | "threed" | "pictures", "why", "warning"?}."""
+def medium_question(profile) -> dict:
+    """The look screen's question on a 3D channel (20%+ of its pictures), Studio's guess first; {} otherwise."""
     share = _families(profile).get("3d", 0)
-    drawn = drawn_3d({k: v for k, v in profile.items() if k != "_drawn_3d"})
+    if share < 0.2:
+        return {}
+    seen = _v(_get(profile, "pictures", "people_3d"), {}) or {}
+    guess = MEDIUM_DESIGNED if drawn_3d({k: v for k, v in profile.items() if k != "_drawn_3d"}) else \
+        MEDIUM_OBJECTS if isinstance(seen, dict) and float(seen.get("no_people") or 0) > 0.5 else MEDIUM_FACELESS
+    return {"id": "medium", "ask": f"How are this channel's 3D pictures made? ({round(share * 100)}% of its pictures "
+            "are 3D.) Studio's guess is first: change it if it's wrong, because it decides how your videos are made.",
+            "options": [guess] + [m for m in MEDIUMS if m != guess]}
+
+
+def route(profile, chosen: str = "", drawn=None, told: bool = False) -> dict:
+    """How this channel's pictures are made: {"engine": "drawn" | "threed" | "pictures", "why", "warning"?,
+    "medium_gap"?}. drawn: the share decided by the creator's answer (told) or by plan_style, else from the profile."""
+    share = _families(profile).get("3d", 0)
+    if drawn is None:
+        drawn = drawn_3d({k: v for k, v in profile.items() if k != "_drawn_3d"})
     if drawn and chosen in ("3d", "nocturne"):
         return {"engine": "threed", "why": "you chose a 3D recipe",
                 "warning": "Studio's 3D engine makes faceless mannequins, so these characters and sets won't look like "
-                           "the channel's. The recommended recipe draws every scene in their own 3D look."}
+                           "the channel's. The recommended recipe draws every scene in their own 3D look.",
+                "medium_gap": MEDIUM_GAP_MANNEQUINS}
     if drawn:
-        why = threed_rebuildable(profile)[1]
+        why = ("you said its 3D characters have faces, which Studio's 3D engine can't make yet" if told else
+               threed_rebuildable(profile)[1] or "its 3D characters are designed, which Studio's 3D engine can't make yet")
         return {"engine": "drawn", "why": f"{round(share * 100)}% of the pictures are 3D scenes, but {why}. Every scene "
-                "is drawn in their exact 3D-render look instead, and the ones that move are animated."}
+                "is drawn as a picture in their 3D-render look instead, and some are animated by AI.",
+                "medium_gap": MEDIUM_GAP}
     if share >= 0.2:
         return {"engine": "threed", "why": f"{round(share * 100)}% of the pictures are 3D scenes Studio's 3D engine "
                                           "can build"}
@@ -911,8 +942,12 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
                answers: dict = None) -> dict:
     """The mapping for one profile. `styles` is the engine's installed styles {name: style dict}."""
     original = profile
-    looked = drawn_3d(profile)                       # the route the look screen showed, before any answer
-    way = route(profile, base or "")
+    medium = str((answers or {}).get("medium") or "")
+    told = medium in MEDIUMS and _families(profile).get("3d", 0) >= 0.2
+    # the creator's answer decides how the 3D is made; without one, the route the look screen showed (never one an
+    # answer about a host or the music flips)
+    looked = (_families(profile).get("3d", 0) if medium == MEDIUM_DESIGNED else 0.0) if told else drawn_3d(profile)
+    way = route(profile, base or "", drawn=looked, told=told)
     if answers:
         profile = answer(profile, answers)
         if str(answers.get("host") or "").startswith("Yes, I'll upload"):
@@ -920,7 +955,8 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
     else:
         profile = dict(profile)
     profile["_drawn_3d"] = 0.0 if base in ("3d", "nocturne") else looked
-    profile["_drawn_why"] = threed_rebuildable(original)[1] if looked else ""
+    profile["_drawn_why"] = (("you said its 3D characters have faces, which Studio's 3D engine can't make yet" if told
+                              else threed_rebuildable(original)[1]) if looked else "")
     chosen, why = (base, "chosen by you") if base else choose_base(profile, styles)
     if chosen not in styles:
         raise ValueError(f"The {chosen} recipe isn't installed here.")
@@ -942,7 +978,8 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
             "route": way,
             "overrides": plan.overrides, "remove": plan.remove, "settings": plan.settings,
             "needs": list(dict.fromkeys(plan.needs)), "notes": plan.notes,
-            "cost": cost(plan.overrides, chosen), "questions": list(profile.get("questions") or [])}
+            "cost": cost(plan.overrides, chosen),
+            "questions": [q for q in [medium_question(original)] if q] + list(original.get("questions") or [])}
 
 
 def cost(overrides: dict, base: str) -> dict:

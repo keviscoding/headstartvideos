@@ -319,6 +319,14 @@ def _spec(home, supplied):
         if (not isinstance(answers, dict) or len(answers) > 12
                 or any(k not in questions or v not in questions[k] for k, v in answers.items())):
             raise ValueError("Answer the questions from what Studio saw.")
+        # what the videos will be is said before anything is paid: a medium Studio can't make yet (3D characters
+        # drawn as pictures) is accepted in so many words, never swapped in silently
+        import cr_style_map
+        planned = cr_style_map.plan_style(looked.get("profile") or {}, _installed_styles(home), base=base,
+                                          answers=answers)
+        gap = (planned.get("route") or {}).get("medium_gap") if visual_mode != "reference_only" else ""
+        if gap and supplied.get("accept_medium") is not True:
+            raise ValueError(gap + " Tick that you understand before starting, or wait for the update.")
     elif answers:
         raise ValueError("Look at the references before answering questions about them.")
     attempt_id = supplied.get("attempt_id", "")
@@ -337,7 +345,7 @@ def _spec(home, supplied):
         "base_style": base, "base_sha256": _file_hash(base_path), "name": requested_name,
         "label": label.strip(), "title": title.strip(), "brief": brief,
         "budget_minutes": budget, "max_calls": calls, "minutes": minutes,
-        "visual_mode": visual_mode, "attempt_id": attempt_id,
+        "visual_mode": visual_mode, "attempt_id": attempt_id, "accept_medium": supplied.get("accept_medium") is True,
         **({"look_id": look_id, "answers": dict(answers)} if look_id else {})}
 
 
@@ -515,7 +523,10 @@ def status(home, operation_id, bridge):
             result["likeness"] = {k: likeness.get(k) for k in ("state", "verdict", "reliable", "scores", "dealbreakers",
                                                                 "pictures", "why", "people", "cost_usd")}
             route = ((style.get("cr_style_clone") or {}).get("learned_v2") or {}).get("route") or {}
-            result["route"] = {k: route.get(k) for k in ("engine", "why")}
+            result["route"] = {k: route.get(k) for k in ("engine", "why", "medium_gap")}
+            if route.get("engine") == "drawn" and not route.get("medium_gap"):     # a style saved before Studio 75
+                import cr_style_map
+                result["route"]["medium_gap"] = cr_style_map.MEDIUM_GAP
     return result
 
 
