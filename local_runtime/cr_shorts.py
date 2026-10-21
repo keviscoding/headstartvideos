@@ -142,14 +142,22 @@ def ensure_pack(sink=None, engine=None, home: Path = HOME) -> None:
 def _srt(words: list, path: Path):
     """captions of 2-3 words a line from the voice's word timings"""
     def ts(t):
-        h, r = divmod(max(0.0, t), 3600)
-        m, s = divmod(r, 60)
-        return f"{int(h):02d}:{int(m):02d}:{int(s):02d},{int((s - int(s)) * 1000):03d}"
-    out, i, n = [], 0, 1
+        ms = int(round(max(0.0, float(t)) * 1000))              # whole milliseconds (10.279 had printed as 10,278)
+        h, ms = divmod(ms, 3600000)
+        m, ms = divmod(ms, 60000)
+        return f"{h:02d}:{m:02d}:{ms // 1000:02d},{ms % 1000:03d}"
+    chunks, i = [], 0
     while i < len(words):
         chunk = words[i:i + 3] if len(words) - i != 4 else words[i:i + 2]
-        out.append(f"{n}\n{ts(chunk[0][0])} --> {ts(chunk[-1][1])}\n{' '.join(w[2] for w in chunk)}\n")
-        i, n = i + len(chunk), n + 1
+        chunks.append(chunk)
+        i += len(chunk)
+    out = []
+    for n, chunk in enumerate(chunks):                          # a caption ends where the next begins: aligned words
+        start, end = float(chunk[0][0]), float(chunk[-1][1])    # can overlap by a tenth of a second, and overlapping
+        if n + 1 < len(chunks):                                 # cues flicker or stack in some players
+            end = min(end, float(chunks[n + 1][0][0]) - 0.001)
+        end = max(end, start + 0.05)
+        out.append(f"{n + 1}\n{ts(start)} --> {ts(end)}\n{' '.join(w[2] for w in chunk)}\n")
     path.write_text("\n".join(out), encoding="utf-8")
 
 
