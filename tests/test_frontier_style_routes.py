@@ -590,3 +590,72 @@ def test_continuing_a_prepared_study_checks_the_room_too(env, monkeypatch):
     monkeypatch.setattr(clone, "_room", lambda: "Your Mac has 1.0 GB of free disk space")
     response = env.post(f"/cr-style-clone/{result['operation_id']}/continue", {"acknowledge_costs": True})
     assert response.status_code == 409 and "free disk space" in response.json["error"] and not env.workers
+
+
+def test_browser_the_answer_on_how_the_3d_is_made_carries_through_continue_and_start(env, monkeypatch):
+    """Review of Studio 75: Continue put back the recipe guessed before the answer, so a creator who said the
+    characters have faces could be built on mannequins. The server's plan for the answer is what the page keeps."""
+    browser_api = pytest.importorskip("playwright.sync_api")
+    sys.path.insert(0, str(Path(__file__).parent))
+    import test_style_map as tsm
+    for name, label in (("stories", "2D Life Stories"), ("3d", "3D Reconstruction")):
+        (env.home / "styles" / f"{name}.json").write_text(json.dumps({**tsm.STYLES[name], "name": name, "label": label}))
+    catalogue = env.studio.styles.catalogue
+    env.studio.styles.catalogue = lambda: catalogue() + [{"name": "stories", "label": "2D Life Stories"},
+                                                         {"name": "3d", "label": "3D Reconstruction"}]
+    recon = tsm.profile({"3d": 0.6, "graphic": 0.4}, **{"pictures__art_style": tsm.RECONSTRUCTION})
+
+    def spawn(home, look_id):
+        path = cr_style_look.folder(home, look_id) / "look.json"
+        saved = json.loads(path.read_text())
+        saved.update(state="done", phase="done", finished_at=__import__("time").time(), sheets=[], not_watched=[],
+                     profile=recon)
+        saved.pop("mapping", None)
+        path.write_text(json.dumps(saved))
+    monkeypatch.setattr(cr_style_look, "_spawn", spawn)
+    with browser_api.sync_playwright() as playwright:
+        try:
+            browser = playwright.chromium.launch(headless=True)
+        except browser_api.Error as error:
+            pytest.skip("Local Chromium is unavailable: " + str(error).splitlines()[0])
+        try:
+            page = browser.new_page(viewport={"width": 1200, "height": 1000})
+            page.set_default_timeout(5000)
+            errors = []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+
+            def respond(route):
+                url = urlsplit(route.request.url)
+                path = url.path + (("?" + url.query) if url.query else "")
+                response = env.client.open(path, method=route.request.method, base_url=BASE,
+                                           headers=dict(route.request.headers), data=route.request.post_data)
+                route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.data)
+            page.route("**/*", respond)
+            page.goto(BASE + "/cr-style-clone")
+            page.locator("#reference-url").fill("https://www.youtube.com/@Ifverse")
+            page.locator("#preview-button").click()
+            page.locator("#candidate-list input").nth(0).check()
+            page.locator("#next-button").click()
+            page.locator("#look-result").wait_for(state="visible")
+            assert page.evaluate("look.mapping.base") == "3d", "Studio's guess: faceless figures, the 3D recipe"
+            options = page.locator("input[name='q-medium']")
+            assert options.nth(0).get_attribute("value") == cr_style_map.MEDIUM_FACELESS
+            page.locator(f"input[name='q-medium'][value='{cr_style_map.MEDIUM_DESIGNED}']").check()
+            page.wait_for_function("document.getElementById('medium-gap').hidden === false")
+            page.locator("#look-next").click()
+            assert page.locator("#base-style").input_value() == "stories", "Continue keeps the plan for the answer"
+            page.locator("#style-label").fill("My science stories")
+            page.locator("#example-title").fill("How bees build homes")
+            page.locator("#usage-approved").check()
+            page.locator("#start-button").click()
+            assert "tick that you understand" in page.locator("#notice").inner_text().lower() and not env.targets
+            page.locator("#accept-medium").check()
+            page.locator("#start-button").click()
+            page.locator("#progress-panel").wait_for(state="visible")
+            operation = page.evaluate("localStorage.getItem('cr.styleStudy')")
+            _, saved = clone._saved(env.home, operation, env.bridge)
+            assert saved["spec"]["base_style"] == "stories" and saved["spec"]["accept_medium"] is True
+            assert saved["spec"]["answers"]["medium"] == cr_style_map.MEDIUM_DESIGNED
+            assert not errors, errors
+        finally:
+            browser.close()

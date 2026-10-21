@@ -185,6 +185,28 @@ def install(studio, activity, setup_status, *, token, home=None):
         except Exception as error:
             return error_response(error)
 
+    @app.post("/cr-style-clone/look/<look_id>/plan")
+    def cr_style_look_plan(look_id):
+        """The look's plan with the creator's answers (how its 3D is made can change the recipe): no model call."""
+        try:
+            payload = data()
+            looked = cr_style_look.status(home, look_id)
+            if looked.get("state") != "done":
+                raise ValueError("Look at the references first.")
+            answers = payload.get("answers") or {}
+            options = {q["id"]: q.get("options") or [] for q in (looked.get("mapping") or {}).get("questions") or []}
+            if (not isinstance(answers, dict) or len(answers) > 12
+                    or any(k not in options or v not in options[k] for k, v in answers.items())):
+                raise ValueError("Answer the questions from what Studio saw.")
+            import cr_style_map
+            styles = cr_style_clone._installed_styles(home)
+            base = payload.get("base_style")                    # a recipe the creator picked by hand, or none
+            base = base if isinstance(base, str) and base in styles else None
+            return no_store(jsonify(mapping=cr_style_map.plan_style(looked.get("profile") or {}, styles, base=base,
+                                                                   answers=answers)))
+        except Exception as error:
+            return error_response(error)
+
     @app.get("/cr-style-clone/look/<look_id>/sheet/<video_id>")
     def cr_style_look_sheet(look_id, video_id):
         try:

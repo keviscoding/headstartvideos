@@ -704,3 +704,28 @@ def test_a_new_study_after_a_stop_keeps_the_look_studio_saw_and_the_answers(appr
     clone._write(folder / "operation.json", saved)
     retry = clone.status(approved.home, one["operation_id"], approved.bridge)["retry_spec"]
     assert retry["look_id"] == "lk_" + "a" * 24 and retry["answers"] == {"host": "No host"}
+
+
+def test_a_style_saved_on_the_drawn_route_before_studio_75_still_says_what_its_videos_are(approved, monkeypatch):
+    import cr_style_likeness as lk
+    import cr_style_map
+    one = clone.prepare(approved.home, approved.spec, approved.proof, approved.bridge)
+    folder = approved.home / "output/cr-style-clone" / one["operation_id"]
+    saved = json.loads((folder / "operation.json").read_text())
+    saved["spec"]["look_id"] = "lk_1"
+    (folder / "operation.json").write_text(json.dumps(saved))
+
+    def check(folder_, spec, style, log, *, home):
+        clone._write(Path(folder_) / lk.CHECK, {"state": "done", "style_hash": lk._hash(style), "verdict": "close",
+                                                "reliable": True, "round": 1, "extra": "", "best": "", "rounds": [],
+                                                "scores": {"overall": 6}, "cost_usd": 0.07})
+    monkeypatch.setattr(lk, "run", check)
+
+    def ready(folder_, spec, progress):
+        ready_fixture(folder_, spec, progress)
+        style = json.loads((folder_ / "ready-style.json").read_text())
+        style["cr_style_clone"]["learned_v2"] = {"route": {"engine": "drawn", "why": "old words"}}
+        clone._write(folder_ / "ready-style.json", style)
+    result = clone.run(approved.home, one["operation_id"], approved.bridge, readiness=lambda: approved.proof,
+                       execute=ready)
+    assert result["route"]["medium_gap"] == cr_style_map.MEDIUM_GAP

@@ -206,6 +206,35 @@ def test_the_study_spec_checks_the_look_and_the_answers(home, monkeypatch):
         clone._spec(home, {**{k: v for k, v in payload.items() if k != "look_id"}, "answers": {"music": "No music"}})
 
 
+def test_a_3d_channel_is_asked_how_its_3d_is_made_and_a_medium_studio_cant_make_is_accepted_in_words(home):
+    """An @ifologyfilms clone drew stills of characters the channel animates in 3D, and was called fixed. Now the look
+    screen asks how the 3D is made (Studio's guess first), the answer decides, and drawn pictures in place of 3D
+    animation start only when the creator ticks that they understand."""
+    import cr_style_map
+    _, done, _ = run_look(home)
+    path = look.folder(home, done["look_id"]) / "look.json"
+    saved = json.loads(path.read_text())
+    saved["profile"]["pictures"]["sources"]["families"] = {"3d": 0.85, "graphic": 0.15}
+    saved["profile"]["pictures"]["art_style"]["value"] = "Low-poly 3D: black sphere-headed stick figures, dot eyes."
+    saved["profile"]["pictures"]["people_3d"] = {"value": {"designed": 1.0}, "confidence": 0.7, "from": ["watched"]}
+    saved.pop("mapping", None)
+    path.write_text(json.dumps(saved))
+    shown = look.status(home, done["look_id"])["mapping"]
+    question = next(q for q in shown["questions"] if q["id"] == "medium")
+    assert question["options"][0] == cr_style_map.MEDIUM_DESIGNED, "Studio's guess first"
+    assert "can't animate these characters in 3D yet" in shown["route"]["medium_gap"]
+    payload = {"preview_id": "pv_" + "a" * 64, "reference_ids": [VIDEO], "base_style": "stories", "label": "Mine",
+               "title": "A video", "acknowledge_costs": True, "look_id": done["look_id"], "answers": {},
+               "visual_mode": "mixed"}
+    with pytest.raises(ValueError, match="Tick that you understand"):
+        clone._spec(home, payload)
+    assert clone._spec(home, {**payload, "accept_medium": True})["accept_medium"] is True
+    faceless = {**payload, "answers": {"medium": cr_style_map.MEDIUM_FACELESS}}
+    assert clone._spec(home, faceless)["look_id"] == done["look_id"], "the creator's own answer needs no gate"
+    graphics = {**payload, "visual_mode": "reference_only"}
+    assert clone._spec(home, graphics)["look_id"] == done["look_id"], "graphics only draws no pictures: no gate"
+
+
 # ── style samples and the character sheet ─────────────────────────────────────────────────────────────────
 
 def saved_v2_style(home, look_id, cast="THE CAST — Toby: stick figure in a red cap."):

@@ -434,3 +434,27 @@ def test_a_designed_mascot_that_talks_to_camera_is_still_a_designed_cast():
            "pictures__characters": axis([{"name": "Fox", "look": "3D cartoon fox mascot with big eyes who talks to "
                                           "camera", "role": "mascot", "screen_share": 0.5}])}
     assert cm.plan_style(profile({"3d": 0.8}, **fox), STYLES)["route"]["engine"] == "drawn"
+
+
+def test_the_creators_answer_on_how_the_3d_is_made_decides_the_route():
+    designed = profile({"3d": 0.85}, {"3d_render": 0.85}, **IFOLOGY)
+    plan = cm.plan_style(designed, STYLES)
+    q = next(q for q in plan["questions"] if q["id"] == "medium")
+    assert q["options"][0] == cm.MEDIUM_DESIGNED and plan["route"]["medium_gap"] == cm.MEDIUM_GAP
+    told = cm.plan_style(designed, STYLES, answers={"medium": cm.MEDIUM_FACELESS})
+    assert told["route"]["engine"] == "threed" and "medium_gap" not in told["route"] and told["base"] == "3d"
+    recon = profile({"3d": 0.6}, **{"pictures__art_style": RECONSTRUCTION})
+    assert next(q for q in cm.plan_style(recon, STYLES)["questions"] if q["id"] == "medium")["options"][0] \
+        == cm.MEDIUM_FACELESS
+    said = cm.plan_style(recon, STYLES, answers={"medium": cm.MEDIUM_DESIGNED})
+    assert said["route"]["engine"] == "drawn" and "you said" in said["route"]["why"] and said["base"] == "stories"
+    flat = profile({"generated": 0.9})
+    assert not any(q["id"] == "medium" for q in cm.plan_style(flat, STYLES)["questions"]), "only 3D channels are asked"
+
+
+def test_a_3d_recipe_picked_by_hand_for_characters_with_faces_is_said_too():
+    plan = cm.plan_style(profile({"3d": 0.85}, {"3d_render": 0.85}, **IFOLOGY), STYLES, base="3d")
+    assert plan["route"]["engine"] == "threed" and plan["route"]["medium_gap"] == cm.MEDIUM_GAP_MANNEQUINS
+    told = cm.plan_style(profile({"3d": 0.6}, **{"pictures__art_style": RECONSTRUCTION}), STYLES, base="3d",
+                         answers={"medium": cm.MEDIUM_DESIGNED})
+    assert told["route"]["medium_gap"] == cm.MEDIUM_GAP_MANNEQUINS, "the creator said faces, the recipe makes mannequins"
