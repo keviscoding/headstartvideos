@@ -336,6 +336,22 @@ def install(studio, activity, setup_status, *, token, home=None):
         except Exception as error:
             return error_response(error)
 
+    @app.get("/cr-style-clone/<operation>/likeness/<name>")
+    def cr_style_likeness_image(operation, name):
+        try:
+            local_access()
+            import re as _re
+            if not _re.fullmatch(r"r\d_\d\.jpg|character\.png", name or ""):
+                return jsonify(error="No such test picture."), 404
+            folder = cr_style_clone._operation(home, operation) / "likeness"
+            picture = folder / name
+            if not picture.is_file() or not picture.resolve().is_relative_to(folder.resolve()):
+                return jsonify(error="That test picture isn't drawn yet."), 404
+            return no_store(send_file(picture, mimetype="image/png" if name.endswith(".png") else "image/jpeg",
+                                      conditional=False))
+        except Exception as error:
+            return error_response(error)
+
     @app.get("/cr-style-clone/<operation>/board")
     def cr_style_board(operation):
         try:

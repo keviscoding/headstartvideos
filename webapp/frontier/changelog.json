@@ -1,5 +1,14 @@
 [
   {
+    "build": 72,
+    "date": "2026-10-21",
+    "title": "Style clones that look like the channel",
+    "items": [
+      "Improved: 3D channels with their own designed characters clone properly. Clones of channels with round heads, cute faces or a cartoon cast now draw every scene in that exact 3D look instead of Studio's faceless 3D mannequins. Reconstruction channels with faceless figures stay on the 3D engine.",
+      "New: every clone that draws its pictures is checked for likeness. Right after it saves, Studio draws test pictures in the new style (about $0.14), compares them with the channel's own frames, fixes what differs once, and shows you how close it came."
+    ]
+  },
+  {
     "build": 71,
     "date": "2026-10-21",
     "title": "Edit countdown, polished",

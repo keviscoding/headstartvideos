@@ -155,12 +155,17 @@ def _presenter_kind(profile) -> str:
 def choose_base(profile: dict, installed) -> tuple:
     """(recipe name, why) for this profile, from the recipes installed here."""
     fam = _families(profile)
-    generated = fam.get("generated", 0) + fam.get("generated_motion", 0)
+    generated = fam.get("generated", 0) + fam.get("generated_motion", 0) + drawn_3d(profile)
     real = fam.get("footage", 0) + fam.get("photo", 0) + fam.get("document", 0)
     picks = []
     if fam.get("3d", 0) >= 0.3:
-        picks.append(("nocturne" if fam.get("footage", 0) >= 0.15 else "3d",
-                      f"{round(fam['3d'] * 100)}% of the pictures are 3D scenes"))
+        ok, cannot = (not drawn_3d(profile), profile.get("_drawn_why") or threed_rebuildable(profile)[1])
+        if ok:
+            picks.append(("nocturne" if fam.get("footage", 0) >= 0.15 else "3d",
+                          f"{round(fam['3d'] * 100)}% of the pictures are 3D scenes"))
+        else:
+            picks.append(("stories", f"{round(fam['3d'] * 100)}% of the pictures are 3D scenes, but {cannot}; every "
+                                     "scene is drawn in their exact 3D-render look and animated"))
     if _presenter_kind(profile) == "talking":
         picks.append(("avatar-premium", "a presenter talks to camera between the pictures"))
     if fam.get("panel", 0) >= 0.5:
@@ -202,7 +207,7 @@ def _pictures(plan: Plan, profile: dict, base: str, base_style: dict):
                  why="the starting recipe's characters belong to that recipe, not to this channel", source="",
                  show="written for this channel by the art director")
     fam = _families(profile)
-    generated = fam.get("generated", 0) + fam.get("generated_motion", 0)
+    generated = fam.get("generated", 0) + fam.get("generated_motion", 0) + drawn_3d(profile)
     draws = generated >= 0.15                      # this channel's own pictures are drawn or generated, not filmed
     if art.get("value"):
         plan.notes.append({"for": "still_suffix", "art_style": art["value"], "alternatives": art.get("alternatives", []),
@@ -316,7 +321,7 @@ def _storyboard(plan: Plan, profile: dict, base: str):
     visual metaphor; a story or presenter channel shows exactly what each line says. Any other channel keeps the recipe's
     own storyboard: an engine default drew mood pictures for a money explainer, and they explained nothing."""
     fam = _families(profile)
-    generated = fam.get("generated", 0) + fam.get("generated_motion", 0)
+    generated = fam.get("generated", 0) + fam.get("generated_motion", 0) + drawn_3d(profile)
     dens = _v(_get(profile, "text", "density"), {}) or {}
     info = sum(float(dens.get(k) or 0) for k in ("data", "headline", "quote", "label"))
     proof = fam.get("graphic", 0) + fam.get("document", 0)
@@ -339,7 +344,7 @@ def _motion(plan: Plan, profile: dict, base: str, minutes_hint: float = 10.0):
     animated = kinds.get("animated", 0)
     cutout = kinds.get("cutout_move", 0)
     fam = _families(profile)
-    generated = fam.get("generated", 0) + fam.get("generated_motion", 0)
+    generated = fam.get("generated", 0) + fam.get("generated_motion", 0) + drawn_3d(profile)
     # How MUCH moves is measured (a model calls nearly every drawn shot "animated"); what kind of motion is watched.
     measured_moving = classes.get("moving")
     moving = measured_moving if measured_moving is not None else animated + cutout
@@ -513,6 +518,83 @@ def _white_3d(profile) -> bool:
     return measured or watched
 
 
+# The 3D engine (threed.py) makes faceless mannequins in real places, in three looks (white studio, studio colour,
+# documentary): it rebuilds reconstruction-style 3D. A channel whose 3D is a DESIGNED world (a recurring cast with
+# faces or a signature design, a toy-like or cartoon render) can't be made there: @ifologyfilms (round black heads
+# with cute faces, bright jackets, stick legs, bright low-poly sets) was cloned onto mannequins and a red steel frame on
+# grass. Those channels go the drawn route: every scene drawn by an image model in their exact 3D-render look (the
+# style drawing, the cast's character sheet) and animated, like every drawn clone.
+# Words that only a designed character world earns. Gemini calls reconstruction channels "low-poly" and "stylized"
+# too ("Minimalist low-poly 3D reconstruction with featureless white and blue mannequin figures"), so those words
+# prove nothing; a faceless or mannequin cast is exactly what the 3D engine builds and always keeps it.
+STYLISED_3D = re.compile(
+    r"\b((round|black|big|white)[- ]headed|round (black |white )?heads?|black heads?|big heads?|"
+    r"(cute|simple|smiling|happy|cartoon|white) faces?|(dot|big|cartoon|googly) eyes|stick[- ]legs?|stick[- ]figures?|"
+    r"chibi|kawaii|claymation|pixar|disney|dreamworks|roblox|minecraft|voxel|lego|character design|"
+    r"cartoon(ish|y)? characters?)\b", re.I)
+FACELESS = re.compile(r"\b(faceless|featureless|mannequin\w*|blank[- ]faced?|no faces?|without faces)\b", re.I)
+
+
+def _3d_words(profile) -> str:
+    art = _get(profile, "pictures", "art_style") or {}
+    parts = [str(_v(art, "") or ""), " ".join(str(x) for x in art.get("alternatives") or []) if isinstance(art, dict) else ""]
+    parts += [str(a.get("look") or "") for a in (art.get("looks") or [] if isinstance(art, dict) else [])]
+    parts += [str(x) for x in (profile.get("recognisable") or [])]
+    return " ".join(parts).lower()
+
+
+def threed_rebuildable(profile) -> tuple:
+    """(True, "") when Studio's 3D engine can make the references' 3D (white models, faceless mannequins, real
+    places); else (False, why): a designed character world (the words above) or a recurring character with a face of
+    its own (the channel's mascot or host, or anyone on screen 8%+ of the time whose look is designed)."""
+    if _white_3d(profile):
+        return True, ""
+    import cr_style_profile
+    cast = [c for c in _v(_get(profile, "pictures", "characters"), []) or [] if isinstance(c, dict) and c.get("look")]
+    words = _3d_words(profile)
+    if FACELESS.search(words):
+        return True, ""
+    faced = [c for c in cast if not FACELESS.search(str(c.get("look")))
+             and float(c.get("screen_share") or 0) >= cr_style_profile.MASCOT_SHARE
+             and (c.get("role") in ("mascot", "presenter") or STYLISED_3D.search(str(c.get("look"))))]
+    design = list(dict.fromkeys(m.group(0).lower() for m in STYLISED_3D.finditer(words)))
+    if design:
+        return False, (f"its 3D is a designed character world ({', '.join(design[:3])}) that Studio's 3D engine can't "
+                       "make: it builds faceless mannequins in real places")
+    if faced:
+        who = ", ".join(str(c.get("look"))[:60] for c in faced[:2])
+        return False, f"its 3D has a designed recurring cast ({who}) that Studio's 3D engine can't make: it has only faceless mannequins"
+    return True, ""
+
+
+def drawn_3d(profile) -> float:
+    """The share of the references' 3D that is drawn instead (the drawn route), 0 when the 3D engine can make it. Once
+    plan_style has decided (profile["_drawn_3d"]), that decision stands: the look screen's route never flips after an
+    answer, and a 3D recipe the creator chose keeps the 3D engine."""
+    if "_drawn_3d" in profile:
+        return float(profile["_drawn_3d"] or 0)
+    share = _families(profile).get("3d", 0)
+    return share if share >= 0.2 and not threed_rebuildable(profile)[0] else 0.0
+
+
+def route(profile, chosen: str = "") -> dict:
+    """How this channel's pictures are made: {"engine": "drawn" | "threed" | "pictures", "why", "warning"?}."""
+    share = _families(profile).get("3d", 0)
+    drawn = drawn_3d({k: v for k, v in profile.items() if k != "_drawn_3d"})
+    if drawn and chosen in ("3d", "nocturne"):
+        return {"engine": "threed", "why": "you chose a 3D recipe",
+                "warning": "Studio's 3D engine makes faceless mannequins, so these characters and sets won't look like "
+                           "the channel's. The recommended recipe draws every scene in their own 3D look."}
+    if drawn:
+        why = threed_rebuildable(profile)[1]
+        return {"engine": "drawn", "why": f"{round(share * 100)}% of the pictures are 3D scenes, but {why}. Every scene "
+                "is drawn in their exact 3D-render look instead, and the ones that move are animated."}
+    if share >= 0.2:
+        return {"engine": "threed", "why": f"{round(share * 100)}% of the pictures are 3D scenes Studio's 3D engine "
+                                          "can build"}
+    return {"engine": "pictures", "why": ""}
+
+
 def _features(plan: Plan, profile: dict, base: str, base_style: dict):
     fam = _families(profile)
     sources = _v(_get(profile, "pictures", "sources"), {}) or {}
@@ -520,12 +602,12 @@ def _features(plan: Plan, profile: dict, base: str, base_style: dict):
     want = {
         "youtube": fam.get("footage", 0) - sources.get("stock_footage", 0) >= 0.1,
         "stock": sources.get("stock_footage", 0) >= 0.05,
-        "ai_images": fam.get("generated", 0) + fam.get("generated_motion", 0) >= 0.1,
+        "ai_images": fam.get("generated", 0) + fam.get("generated_motion", 0) + drawn_3d(profile) >= 0.1,
         "maps": sources.get("map", 0) >= 0.02 or "map" in graphics,
         "headlines": sources.get("screenshot_web", 0) + sources.get("document", 0) >= 0.05
                      or _has_words(graphics, "headline", "article", "newspaper"),
         "motion": fam.get("graphic", 0) >= 0.1,
-        "threed": fam.get("3d", 0) >= 0.2,
+        "threed": fam.get("3d", 0) >= 0.2 and not drawn_3d(profile),   # a designed 3D world is drawn instead
         "avatar": _presenter_kind(profile) == "talking",
         "sound": True,
         "depth": plan.motion_cutout,
@@ -552,7 +634,7 @@ def _features(plan: Plan, profile: dict, base: str, base_style: dict):
     if base in ("documentary", "jung", "nocturne") and fam:
         # the middle share is every footage slot: YouTube footage and stock share them (YouTube first), so all the
         # watched footage counts there, not only the stock part of it
-        ai = round((fam.get("generated", 0) + fam.get("generated_motion", 0)) * 100)
+        ai = round((fam.get("generated", 0) + fam.get("generated_motion", 0) + drawn_3d(profile)) * 100)
         footage = round(fam.get("footage", 0) * 100)
         gfx = round(fam.get("graphic", 0) * 100)
         total = max(1, ai + footage + gfx)
@@ -768,10 +850,17 @@ def answer(profile: dict, answers: dict) -> dict:
 def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: float = 10.0,
                answers: dict = None) -> dict:
     """The mapping for one profile. `styles` is the engine's installed styles {name: style dict}."""
+    original = profile
+    looked = drawn_3d(profile)                       # the route the look screen showed, before any answer
+    way = route(profile, base or "")
     if answers:
         profile = answer(profile, answers)
         if str(answers.get("host") or "").startswith("Yes, I'll upload"):
             profile.setdefault("_wants", []).append("character_upload")
+    else:
+        profile = dict(profile)
+    profile["_drawn_3d"] = 0.0 if base in ("3d", "nocturne") else looked
+    profile["_drawn_why"] = threed_rebuildable(original)[1] if looked else ""
     chosen, why = (base, "chosen by you") if base else choose_base(profile, styles)
     if chosen not in styles:
         raise ValueError(f"The {chosen} recipe isn't installed here.")
@@ -789,7 +878,7 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
     _voice(plan, profile)
     _presenter(plan, profile, chosen, base_style)
     _cta(plan, profile, chosen)
-    return {"schema": SCHEMA, "base": chosen, "base_why": why, "base_for": BASES.get(chosen, ""),
+    return {"schema": SCHEMA, "base": chosen, "base_why": why, "base_for": BASES.get(chosen, ""), "route": way,
             "overrides": plan.overrides, "remove": plan.remove, "settings": plan.settings,
             "needs": list(dict.fromkeys(plan.needs)), "notes": plan.notes,
             "cost": cost(plan.overrides, chosen), "questions": list(profile.get("questions") or [])}

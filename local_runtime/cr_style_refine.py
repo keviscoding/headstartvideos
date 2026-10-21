@@ -111,6 +111,7 @@ def prepare(home, source_operation, proof, bridge, *, acknowledge_costs=True):
         spec["max_calls"] = min(spec["max_calls"], 8)
         files = {name: (source / name, digest) for name, digest in assets.items()}
         files.update(reference_files)
+        files.update(clone._carried(source))     # the art director's words and the paid likeness check, kept
         copied = {}
         for name, (path, digest) in files.items():
             target = folder / name

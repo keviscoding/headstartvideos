@@ -628,3 +628,42 @@ def test_a_stopped_study_says_why_and_offers_to_start_again_here(approved):
     except ValueError as error:
         clone._record_failure(folder, saved, error)
     assert "SECRET" not in json.dumps(clone.status(approved.home, one["operation_id"], approved.bridge))
+
+
+def test_the_likeness_check_runs_after_the_style_is_saved_and_the_study_keeps_owning_it(approved, monkeypatch):
+    """The paid check never holds a finished study: the style is published first, then the check's drawing and verdict
+    are written into it and the study's saved hash follows, so the style stays ready and owned."""
+    import cr_style_likeness as lk
+    one = clone.prepare(approved.home, approved.spec, approved.proof, approved.bridge)
+    folder = approved.home / "output/cr-style-clone" / one["operation_id"]
+    saved = json.loads((folder / "operation.json").read_text())
+    saved["spec"]["look_id"] = "lk_1"
+    (folder / "operation.json").write_text(json.dumps(saved))
+    seen = []
+
+    def check(folder_, spec, style, log, *, home):
+        seen.append(json.loads((approved.home / "styles" / (style["name"] + ".json")).read_text()) == style)
+        clone._write(Path(folder_) / lk.CHECK, {"state": "done", "style_hash": lk._hash(style), "verdict": "match",
+                                                "reliable": True, "round": 1, "extra": "", "best": "", "rounds": [],
+                                                "scores": {"overall": 8}, "cost_usd": 0.07})
+    monkeypatch.setattr(lk, "run", check)
+    result = clone.run(approved.home, one["operation_id"], approved.bridge, readiness=lambda: approved.proof,
+                       execute=ready_fixture)
+    assert seen == [True], "checked only once the style was saved"
+    assert result["style_ready"] and result["likeness"]["verdict"] == "match"
+    finish = next(payload for name, payload in approved.events if name == "finish")
+    style_file = approved.home / "styles" / (saved["spec"]["style_id"] + ".json")
+    assert next(a for a in finish["artifacts"] if a["name"] == "learned-style.json")["sha256"] == clone._file_hash(style_file)
+
+
+def test_a_likeness_check_that_breaks_leaves_the_saved_style_as_it_was(approved, monkeypatch):
+    import cr_style_likeness as lk
+    one = clone.prepare(approved.home, approved.spec, approved.proof, approved.bridge)
+    folder = approved.home / "output/cr-style-clone" / one["operation_id"]
+    saved = json.loads((folder / "operation.json").read_text())
+    saved["spec"]["look_id"] = "lk_1"
+    (folder / "operation.json").write_text(json.dumps(saved))
+    monkeypatch.setattr(lk, "run", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("judge offline")))
+    result = clone.run(approved.home, one["operation_id"], approved.bridge, readiness=lambda: approved.proof,
+                       execute=ready_fixture)
+    assert result["state"] == "done" and result["style_ready"] and "likeness" not in result
