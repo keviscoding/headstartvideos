@@ -144,12 +144,19 @@ picks and trims the clips, writes the narrator's lines, designs the sound and ed
 
 To choose the clips yourself, open http://127.0.0.1:7860/cr-ranking (the Clip Board): find clips for a topic, hover a
 card to watch its moment, tick 3 to 10 clips, drag them into order (the last one is #1), drop in your own clips if you
-like, and press Make this Short.
+like, and press Make this Short: it asks for the countdown's name, which becomes the Short's title. Each Make keeps
+its own copy of the countdown, so picking again on the same board never changes a Short already waiting in the queue.
+A search that is still working can be stopped with Stop; what it already watched stays saved.
 
-Finding clips uses the plan's monthly clip watches (about 30 a Short). If they run out, the Short stops and says so;
-the customer can turn on "Use credits if my clip watches run out" (0.02 credits a watch) or wait for next month. Never
-turn that on for them. The narrator speaks with ElevenLabs v3 when an ElevenLabs key is set in setup (otherwise Gemini
-through Kie). Footage belongs to the people who filmed it; the channel owner decides how they use it.
+Finding clips uses the plan's monthly clip watches: about 30 to 60 a Short, and 26 to 72 for a Clip Board search. If
+they run out, the Short stops and says so; the customer can turn on "Use credits if my clip watches run out" (0.02
+credits a watch) or wait for next month. Never turn that on for them. When a Short stops, the Studio shows the reason
+in plain words (YouTube limiting downloads, clip watching busy for the day, Claude's usage limit); the work done so
+far is saved and making it again carries on without paying twice. Do not delete its short/ folder; what the pipeline
+printed before a stop (its last 2,000 lines) is in short/stopped.log. Clips come from YouTube through yt-dlp, which
+needs Node.js 22 or newer (or Deno); without it Studio says so before it searches or watches anything. The narrator
+speaks with ElevenLabs v3 when an ElevenLabs key is set in setup (otherwise Gemini through Kie). Footage belongs to
+the people who filmed it; the channel owner decides how they use it.
 
 ## Fast mode (ManimGX)
 

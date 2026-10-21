@@ -225,8 +225,21 @@ def _parse(text: str) -> dict:
     return value
 
 
-def upload_file(data: bytes, mime: str, *, post=None, get=None) -> str:
-    """A video on Gemini's file service (kept there for two days), ready to watch: its URI."""
+class WatchFailed(ValueError):
+    """Gemini answered, and billed the whole video's tokens, but the answer can't be used (blocked, cut off, not a JSON
+    object). The tokens ride along so the spend ledger records what Google charged: a failed watch recorded at $0
+    let the daily spend cap undercount exactly when answers went wrong."""
+
+    def __init__(self, message: str, tokens_in: int = 0, tokens_out: int = 0):
+        super().__init__(message)
+        self.tokens_in, self.tokens_out = int(tokens_in or 0), int(tokens_out or 0)
+
+
+def upload(data: bytes, mime: str, *, post=None, get=None, delete=None) -> dict:
+    """A video on Gemini's file service, ready to watch: {"uri", "name"}. The caller deletes it with delete_file(name)
+    once watched: Google keeps an upload for two days against a per-project storage quota, so every clip left there
+    brought the day when every upload watch fails for every customer closer. A file that never became readable is
+    deleted here."""
     post, get = post or requests.post, get or requests.get
     head = {"x-goog-api-key": _key()}
     res = post(UPLOAD_BASE, headers={**head, "X-Goog-Upload-Protocol": "resumable", "X-Goog-Upload-Command": "start",
@@ -242,14 +255,36 @@ def upload_file(data: bytes, mime: str, *, post=None, get=None) -> str:
     if res.status_code != 200:
         raise RuntimeError(f"Gemini upload HTTP {res.status_code}")
     file = res.json().get("file") or {}
-    for _ in range(100):
-        if file.get("state") == "ACTIVE" and file.get("uri"):
-            return file["uri"]
-        if file.get("state") == "FAILED" or not file.get("name"):
-            raise RuntimeError("Gemini could not read this video")
-        _sleep(3)
-        file = get(f"{GEMINI_BASE}/{file['name']}", headers=head, timeout=(15, 60)).json()
-    raise RuntimeError("Gemini took too long to read this video")
+    name = str(file.get("name") or "")
+    try:
+        for _ in range(100):
+            if file.get("state") == "ACTIVE" and file.get("uri"):
+                return {"uri": file["uri"], "name": name}
+            if file.get("state") == "FAILED" or not file.get("name"):
+                raise RuntimeError("Gemini could not read this video")
+            _sleep(3)
+            file = get(f"{GEMINI_BASE}/{file['name']}", headers=head, timeout=(15, 60)).json()
+        raise RuntimeError("Gemini took too long to read this video")
+    except Exception:
+        delete_file(name, delete=delete)
+        raise
+
+
+def upload_file(data: bytes, mime: str, *, post=None, get=None) -> str:
+    """A video on Gemini's file service (kept there for two days), ready to watch: its URI."""
+    return upload(data, mime, post=post, get=get)["uri"]
+
+
+def delete_file(name: str, *, delete=None) -> bool:
+    """An upload removed from Gemini's file service ("files/abc123"). Never raises: a leftover file expires in two
+    days anyway, and a watch must not fail because its clean-up did."""
+    if not name or not str(name).startswith("files/"):
+        return False
+    try:
+        res = (delete or requests.delete)(f"{GEMINI_BASE}/{name}", headers={"x-goog-api-key": _key()}, timeout=(5, 20))
+        return getattr(res, "status_code", 0) in (200, 204, 404)
+    except Exception:                                          # noqa: BLE001 - clean-up only
+        return False
 
 
 def watch_once(video_id: str, start: int, end: int, *, post=None, file_uri: str = "",
@@ -290,7 +325,10 @@ def watch_once(video_id: str, start: int, end: int, *, post=None, file_uri: str 
     text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
     tokens_in = int(usage.get("promptTokenCount") or 0)
     tokens_out = int(usage.get("candidatesTokenCount") or 0) + int(usage.get("thoughtsTokenCount") or 0)
-    return _parse(text), tokens_in, tokens_out
+    try:
+        return _parse(text), tokens_in, tokens_out
+    except ValueError as exc:                   # billed already (a blocked, cut-off or non-object answer)
+        raise WatchFailed(str(exc), tokens_in, tokens_out) from None
 
 
 _QUESTIONS: dict[str, str] = {}

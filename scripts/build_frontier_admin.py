@@ -232,12 +232,16 @@ LOOK_STUDIO_COLOR = ' "studio_color": {"director": "THE LOOK (this film\'s prese
 
 ENGINE_PATCHES = {
     # TikTok (Ranking Shorts' pasted links) answers yt-dlp only through browser impersonation: its curl-cffi extra.
+    # The floor moves with each release: requirements.txt changing is what makes an in-place update reinstall, and
+    # nothing else ever upgrades a customer's yt-dlp (YouTube changes its player every few weeks).
     # Ranking Shorts take burned-in captions and watermarks off clips on this computer: RapidOCR finds the text
-    # (LaMa, which paints it out, is a model file fetched on first use).
+    # (LaMa, which paints it out, is a model file fetched on first use). Pinned: 1.3+ caps Python below 3.13 and renamed
+    # the detector (text_detector -> text_det), so Python 3.12 customers got another API than 3.13 ones; 1.2.3 is
+    # pure Python and installs on 3.10-3.14 (checked on PyPI, 2026-10-21).
     "requirements.txt": [
         ('yt-dlp>=2025.10.22; python_version >= "3.10"',
-         'yt-dlp[default,curl-cffi]>=2025.10.22; python_version >= "3.10"\n'
-         'rapidocr-onnxruntime>=1.2; python_version >= "3.10"   # Ranking Shorts: finds burned-in text to remove'),
+         'yt-dlp[default,curl-cffi]>=2026.8.19; python_version >= "3.10"\n'
+         'rapidocr-onnxruntime==1.2.3; python_version >= "3.10"   # Ranking Shorts: finds burned-in text to remove'),
     ],
     "reflearn.py": [
         ('need_lv, need_gb = _envf("REFLEARN_MIN_MEM_LEVEL", 40), _envf("REFLEARN_MIN_DISK_GB", 20)',

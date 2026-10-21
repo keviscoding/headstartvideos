@@ -3,9 +3,15 @@ countdown, then make the Short from exactly those clips.
 
 The finding runs in the Ranking Shorts pipeline's own worker (shorts/ranking/board.py), one process per board, its
 progress in the board's progress.log. Boards live in output/ranking-boards/<id>/: board.json (every moment found,
-best first), choice.json (the creator's countdown), uploads/ (their own clips). Making the Short goes through the
-normal /api/run with the board's id in the recipe's [[ranking=...]] marker, so it queues, shows and recovers like
-any other video.
+best first), choice-<stamp>.json (each countdown the creator made a Short from; choice.json is the latest),
+uploads/ (their own clips), worker.json (the worker running now). Making the Short goes through the normal /api/run
+with the board's id and its choice file in the recipe's [[ranking=...]] marker, so it queues, shows and recovers like
+any other video, and a later pick on the same board never changes a Short already queued.
+
+A worker is watched by a small guard (this file, run as a script): it lives in its own process group, so Stop ends
+the worker with everything it started (yt-dlp, ffmpeg), and it ends that group the moment the Studio that started it
+is gone, so a crashed or closed Studio never leaves a search spending clip watches unseen. Workers run below normal
+priority, with UTF-8 text on every platform.
 """
 from __future__ import annotations
 
@@ -13,17 +19,21 @@ import json
 import os
 import re
 import secrets
+import signal
 import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 HOME = Path(__file__).resolve().parent
 BOARD_ID = re.compile(r"[a-z0-9-]{1,80}")
 CLIP_NAME = re.compile(r"[A-Za-z0-9_.-]{1,120}")
 VIDEO_TYPES = {".mp4", ".mov", ".webm", ".m4v"}
 MAX_CLIP_BYTES = 400 * 1024 * 1024
+MAX_CLIPS = 20
+LINKISH = re.compile(r"\s*(https?://|www\.)", re.I)
 
 
 def boards_root(home: Path) -> Path:
@@ -42,6 +52,18 @@ def board_dir(home: Path, board_id: str) -> Path:
     if not path.is_dir():
         raise ValueError("That Clip Board could not be found.")
     return path
+
+
+def clean_link(url: str) -> str:
+    """A YouTube link as the one video it shows: a link copied inside a playlist or a Mix carries list=, and yt-dlp
+    then fetches the whole playlist (the card gets another video's title, and every entry is one more request toward
+    YouTube's bot check). Other links pass as they are."""
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if not (host == "youtu.be" or host.endswith("youtube.com")) or parts.path.rstrip("/") == "/playlist":
+        return url
+    keep = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=False) if k in ("v", "t")]
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(keep), ""))
 
 
 def summary(path: Path, running: bool) -> dict:
@@ -69,8 +91,160 @@ def summary(path: Path, running: bool) -> dict:
             "stopped": stopped[-1].split(" stopped ", 1)[1] if stopped and not running else ""}
 
 
+# ── the worker's process: its own group, low priority, ended with the Studio ───────────────────────────────────────
+def _alive(pid: int) -> bool:
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
+        return False
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel.WaitForSingleObject.restype = wintypes.DWORD
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = kernel.OpenProcess(0x00100000, False, pid)     # SYNCHRONIZE
+        if not handle:
+            return False
+        try:
+            return kernel.WaitForSingleObject(handle, 0) == 258  # WAIT_TIMEOUT: still running
+        finally:
+            kernel.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _ended(pid: int) -> bool:
+    """POSIX: has this process ended? A child of ours is reaped here (a zombie would still answer kill 0)."""
+    try:
+        done, _ = os.waitpid(pid, os.WNOHANG)
+        return done == pid
+    except ChildProcessError:
+        return not _alive(pid)
+
+
+def _gone(pid: int) -> bool:
+    """Has a worker's guard ended? On Windows an ended process is never "alive"; on Mac and Linux a guard this Studio
+    started and nobody waited for is a zombie, which kill 0 still finds, so it is reaped instead."""
+    return not _alive(pid) if os.name == "nt" else _ended(pid)
+
+
+def stop_tree(pid: int, wait=None) -> None:
+    """End a worker's guard and everything in its process group (the guard leads its own group). `wait` says whether
+    the guard has ended (Popen.poll); without one, it is checked by its pid."""
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=15, check=False)
+    else:
+        ended = wait or (lambda: _ended(pid))
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(pid, sig)
+            except (ProcessLookupError, PermissionError):
+                break
+            if sig == signal.SIGTERM:
+                for _ in range(30):                             # give yt-dlp and ffmpeg 3 s to clean up
+                    if ended():
+                        break
+                    time.sleep(0.1)
+        ended()
+    if wait is not None:
+        wait()
+
+
+def guard(argv: list) -> int:
+    """`python cr_ranking_routes.py --guard STUDIO_PID -- COMMAND...`: run COMMAND, and end it (and what it started)
+    as soon as the Studio with STUDIO_PID is gone."""
+    parent, command = int(argv[0]), argv[argv.index("--") + 1:]
+    proc = subprocess.Popen(command)
+    try:
+        while proc.poll() is None:
+            if not _alive(parent) or (os.name != "nt" and os.getppid() != parent):
+                print(time.strftime("%H:%M:%S") + " stopped The Studio closed, so this search stopped with it. "
+                      "Watches already made are saved and won't be charged again.", flush=True)
+                if os.name == "nt":
+                    subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, timeout=15)
+                else:
+                    os.killpg(os.getpgrp(), signal.SIGKILL)      # the whole group, this guard included
+                return 1
+            time.sleep(1)
+        return proc.returncode
+    except KeyboardInterrupt:
+        return 130
+
+
+def worker_record(path: Path) -> dict:
+    try:
+        got = json.loads((path / "worker.json").read_text(encoding="utf-8"))
+        return got if isinstance(got, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+STALE_WORKER_S = 12 * 3600          # no board worker runs this long: an older record's pids may belong to anything now
+_records = threading.Lock()          # worker.json is written by a start and removed by whoever finds its worker ended
+
+
+def write_record(path: Path, pid: int, args: list):
+    with _records:
+        (path / "worker.json").write_text(json.dumps({"pid": pid, "studio": os.getpid(), "started": time.time(),
+                                                      "args": args[:1]}), encoding="utf-8")
+
+
+def forget_record(path: Path, pid=None):
+    """Remove the board's worker.json (only while it still names `pid`, when given: never a newer worker's)."""
+    with _records:
+        if pid is None or worker_record(path).get("pid") == pid:
+            try:
+                (path / "worker.json").unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def recorded_worker(path: Path):
+    """The guard pid in this board's worker.json while that worker still runs, else None, and the record of an ended
+    worker is removed (a later look must never ask about a pid the system has handed to another program).
+    Started by this Studio process: a Mac or Linux in-place update keeps the pid (os.execv) and the worker runs on
+    as our child; when it ends nobody waits for it, so it is reaped here (kill 0 found the zombie, and the board read
+    "working" until the creator pressed Stop). Started by another Studio process still open: Windows' in-place update
+    runs the new Studio as a child of the old one under a new pid, and the old one's worker keeps going."""
+    rec = worker_record(path)
+    pid, studio = rec.get("pid"), rec.get("studio")
+    if not all(isinstance(x, int) and not isinstance(x, bool) and x > 1 for x in (pid, studio)):
+        return None
+    try:
+        recent = time.time() - float(rec.get("started") or 0) < STALE_WORKER_S
+    except (TypeError, ValueError):
+        recent = False
+    if studio == os.getpid():
+        running = not _gone(pid)
+    else:
+        running = recent and _alive(studio) and _alive(pid)
+    if running:
+        return pid
+    forget_record(path, pid)
+    return None
+
+
+def busy(home=None) -> bool:
+    """Is any Clip Board worker still working? The in-app update restart waits for them (see install): on a Mac the
+    restart replaces the Studio's program under the same pid, on Windows it runs a new Studio beside the old one."""
+    root = boards_root(Path(home or HOME))
+    for path in root.iterdir() if root.is_dir() else []:
+        if BOARD_ID.fullmatch(path.name) and recorded_worker(path) is not None:
+            return True
+    return False
+
+
 def install(studio, *, token, home=None):
     from flask import Response, jsonify, request, send_file
+    import atexit
+    import cr_shorts
     home = Path(home or HOME).resolve()
     app = studio.app
     workers: dict[str, subprocess.Popen] = {}
@@ -105,23 +279,76 @@ def install(studio, *, token, home=None):
             raise RuntimeError("The Ranking Shorts pipeline is not installed in this Studio. Update the Studio.")
         return script
 
+    def live_pid(path: Path):
+        """The guard pid of the worker running on this board: one this Studio process started (kept in memory), or
+        one recorded in worker.json before an in-place update restarted the Studio (see recorded_worker)."""
+        proc = workers.get(path.name)
+        if proc is not None:
+            if proc.poll() is None:
+                return proc.pid
+            workers.pop(path.name, None)
+            forget_record(path, proc.pid)
+            return None
+        return recorded_worker(path)
+
     def running(board_id: str) -> bool:
         with lock:
-            proc = workers.get(board_id)
-            return bool(proc and proc.poll() is None)
+            try:
+                return live_pid(boards_root(home) / board_id) is not None
+            except OSError:
+                return False
 
     def start(path: Path, args: list, use_credits: bool = False):
         with lock:
-            proc = workers.get(path.name)
-            if proc and proc.poll() is None:
-                raise RuntimeError("This board is still working. Wait for it to finish.")
+            if live_pid(path) is not None:
+                raise RuntimeError("This board is still working. Wait for it to finish, or stop it.")
+            script = pipeline()
             out = open(path / "progress.log", "a", encoding="utf-8")
-            env = {**os.environ, "CR_STUDIO": str(home), "PYTHONUNBUFFERED": "1",
-                   "CR_RANKING": json.dumps({"use_credits": bool(use_credits)})}
-            workers[path.name] = subprocess.Popen([sys.executable, str(pipeline()), str(home), str(path), *args],
-                                                  cwd=str(pipeline().parent), env=env, stdout=out,
-                                                  stderr=subprocess.STDOUT)
-            out.close()
+            env = cr_shorts.child_env(CR_STUDIO=home, CR_RANKING=json.dumps({"use_credits": bool(use_credits)}))
+            options = cr_shorts.low_priority()
+            if os.name == "nt":
+                options["creationflags"] = options.get("creationflags", 0) | subprocess.CREATE_NEW_PROCESS_GROUP
+            else:
+                options["start_new_session"] = True              # Stop ends the whole group, ffmpeg and yt-dlp too
+            command = [sys.executable, str(Path(__file__).resolve()), "--guard", str(os.getpid()), "--",
+                       sys.executable, str(script), str(home), str(path), *args]
+            try:
+                proc = subprocess.Popen(command, cwd=str(script.parent), env=env, stdout=out, stderr=subprocess.STDOUT,
+                                        stdin=subprocess.DEVNULL, **options)
+            finally:
+                out.close()
+            # No nice here: board.py lowers itself (find.lower_priority), and nice adds up (10 + 10 ran it at 19).
+            workers[path.name] = proc
+            try:
+                write_record(path, proc.pid, args)
+            except OSError:
+                pass
+
+    def stop_all():
+        """The Studio is closing: no board keeps searching (and spending watches) without it."""
+        with lock:
+            for proc in list(workers.values()):
+                if proc.poll() is None:
+                    try:
+                        stop_tree(proc.pid, wait=lambda p=proc: p.poll() is not None)
+                    except Exception:                           # noqa: BLE001 - the guard ends it on its own too
+                        pass
+    atexit.register(stop_all)
+
+    @app.before_request
+    def update_waits_for_the_boards():
+        """The in-app update's restart (POST /cr-update/restart) waits until no board is working. On a Mac it replaces
+        the Studio's program in place, so a search would run on with no page able to see it; on Windows it starts the
+        new Studio beside the old one, whose search kept spending watches while a second could start on the same
+        board. (Studio's own busy check gates making videos too, so a search must not count there.)"""
+        if request.method != "POST" or request.path != "/cr-update/restart":
+            return None
+        with lock:
+            working = any(proc.poll() is None for proc in workers.values())
+        if working or busy(home):
+            return jsonify(error="A Clip Board search is still working. Let it finish or press Stop on the Clip "
+                                 "Board, then restart to update. What it already watched is saved."), 409
+        return None
 
     @app.get("/cr-ranking")
     def cr_ranking_page():
@@ -163,10 +390,18 @@ def install(studio, *, token, home=None):
             topic = re.sub(r"\s+", " ", str(body.get("topic") or "")).strip()[:120]
             if len(topic) < 3:
                 raise ValueError("Say what you want to rank, for example Funniest Dog Moments.")
+            if LINKISH.match(topic):
+                raise ValueError("That looks like a link. Type what to rank here, for example Funniest Dog Moments; "
+                                 "to use clips you have links to, choose Paste links.")
+            find = body.get("find", True)
+            if find:                                            # its clips come from YouTube: say so before 26-72 watches
+                missing = cr_shorts.js_runtime_missing("find clips again")
+                if missing:
+                    raise RuntimeError(missing)
             path = boards_root(home) / new_board_id(topic)
             path.mkdir(parents=True)
             (path / "topic.txt").write_text(topic, encoding="utf-8")
-            if body.get("find", True):
+            if find:
                 start(path, ["find", topic], body.get("use_credits") is True)
             return no_store(jsonify(summary(path, running(path.name))))
         except Exception as error:                                  # noqa: BLE001
@@ -180,18 +415,41 @@ def install(studio, *, token, home=None):
         except Exception as error:                                  # noqa: BLE001
             return failed(error)
 
+    @app.post("/cr-ranking/boards/<board_id>/stop")
+    def cr_ranking_stop(board_id):
+        """Stop this board's search or clip watching now: what it already watched stays saved (never paid twice)."""
+        try:
+            local_access(True)
+            path = board_dir(home, board_id)
+            with lock:
+                pid = live_pid(path)
+                proc = workers.get(board_id)
+            if pid is not None:
+                stop_tree(pid, wait=(lambda: proc.poll() is not None) if proc is not None else None)
+                with open(path / "progress.log", "a", encoding="utf-8") as log:
+                    log.write(time.strftime("%H:%M:%S") + " stopped You stopped this board. Watches already made are "
+                              "saved and won't be charged again.\n")
+            forget_record(path)
+            return no_store(jsonify(summary(path, running(board_id))))
+        except Exception as error:                                  # noqa: BLE001
+            return failed(error)
+
     @app.post("/cr-ranking/boards/<board_id>/clips")
     def cr_ranking_add_clips(board_id):
         try:
             local_access(True)
             path = board_dir(home, board_id)
+            if running(board_id):                               # before saving: no orphan uploads on a refusal
+                raise RuntimeError("This board is still working. Wait for it to finish, or stop it.")
+            if (request.content_length or 0) > MAX_CLIPS * MAX_CLIP_BYTES + 1024 * 1024:
+                raise ValueError(f"Add up to {MAX_CLIPS} clips at a time, each under 400 MB.")
             files = request.files.getlist("clips")
             if not files:
                 raise ValueError("Choose one or more video clips.")
             uploads = path / "uploads"
             uploads.mkdir(exist_ok=True)
             saved = []
-            for f in files[:20]:
+            for f in files[:MAX_CLIPS]:
                 ext = Path(f.filename or "").suffix.lower()
                 if ext not in VIDEO_TYPES:
                     raise ValueError("Add MP4, MOV, WebM or M4V clips.")
@@ -215,10 +473,10 @@ def install(studio, *, token, home=None):
             path = board_dir(home, board_id)
             body = request.get_json(silent=True) or {}
             urls = [u.strip() for u in body.get("links") or [] if isinstance(u, str)]
-            urls = [u for u in urls if re.fullmatch(r"https?://[^\s\"'<>]{4,600}", u)][:20]
+            urls = [clean_link(u) for u in urls if re.fullmatch(r"https?://[^\s\"'<>]{4,600}", u)][:MAX_CLIPS]
             if not urls:
                 raise ValueError("Paste one or more links to clips (one a line).")
-            start(path, ["links", *urls], body.get("use_credits") is True)
+            start(path, ["links", *dict.fromkeys(urls)], body.get("use_credits") is True)
             return no_store(jsonify(summary(path, running(board_id))))
         except Exception as error:                                  # noqa: BLE001
             return failed(error)
@@ -238,18 +496,36 @@ def install(studio, *, token, home=None):
 
     @app.post("/cr-ranking/boards/<board_id>/choice")
     def cr_ranking_choice(board_id):
-        """The countdown in play order (the last is #1): saved for make_ranking.py."""
+        """The countdown in play order (the last is #1), saved as its own file for the Short about to be queued: a
+        Short waiting behind another video reads exactly this countdown when it starts, whatever the creator picks on
+        the board meanwhile. Its name goes into the Short's options ("choice"); choice.json keeps the latest."""
         try:
             local_access(True)
             path = board_dir(home, board_id)
-            ids = (request.get_json(silent=True) or {}).get("picks")
+            body = request.get_json(silent=True) or {}
+            ids = body.get("picks")
             if not isinstance(ids, list) or not 3 <= len(ids) <= 10 or len(set(map(str, ids))) != len(ids):
                 raise ValueError("Pick between 3 and 10 different clips.")
-            moments = {str(m.get("id")): m for m in json.loads((path / "board.json").read_text(encoding="utf-8"))}
+            try:
+                board = json.loads((path / "board.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                board = []
+            moments = {str(m.get("id")): m for m in board if isinstance(m, dict)}
             picks = [moments[str(i)] for i in ids if str(i) in moments]
             if len(picks) != len(ids):
                 raise ValueError("Some of those clips are no longer on this board. Refresh and pick again.")
-            (path / "choice.json").write_text(json.dumps({"picks": picks}, indent=1, ensure_ascii=False), encoding="utf-8")
-            return no_store(jsonify(ok=True, board=board_id, topic=(path / "topic.txt").read_text(encoding="utf-8").strip()))
+            topic = re.sub(r"\s+", " ", str(body.get("topic") or "")).strip()[:120]
+            if len(topic) >= 3 and not LINKISH.match(topic):     # the creator named the countdown: the Short's title
+                (path / "topic.txt").write_text(topic, encoding="utf-8")
+            data = json.dumps({"picks": picks}, indent=1, ensure_ascii=False)
+            name = f"choice-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}.json"
+            (path / name).write_text(data, encoding="utf-8")
+            (path / "choice.json").write_text(data, encoding="utf-8")
+            return no_store(jsonify(ok=True, board=board_id, choice=name,
+                                    topic=(path / "topic.txt").read_text(encoding="utf-8").strip()))
         except Exception as error:                                  # noqa: BLE001
             return failed(error)
+
+
+if __name__ == "__main__" and len(sys.argv) > 2 and sys.argv[1] == "--guard":
+    raise SystemExit(guard(sys.argv[2:]))

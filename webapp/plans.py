@@ -23,7 +23,8 @@ import config
 
 ANNUAL_MONTHS = 12
 TRIAL_STYLE_CLONES = 1
-# Clip watches a trialing Studio may use for the Ranking Shorts recipe (about two Shorts).
+# Clip watches a trialing Studio may use for the Ranking Shorts recipe (one or two Shorts: a Short uses about
+# 30 to 60, 26-52 candidates scouted plus 5-9 close looks).
 TRIAL_RANKING_WATCHES = 60
 
 
@@ -37,7 +38,7 @@ class Tier:
     studio: bool
     # Completed or running style studies a customer may keep. None = unlimited.
     style_clones: int | None
-    # Gemini clip watches a month for the Ranking Shorts recipe (a Short watches about 30 candidates and picks).
+    # Gemini clip watches a month for the Ranking Shorts recipe (a Short uses about 30 to 60: candidates and picks).
     ranking_watches: int
     # Offered to new customers on the pricing page.
     public: bool
