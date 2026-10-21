@@ -51,6 +51,21 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
                                                      if allowed else "This recipe sets its own pictures."), 400))
     else:
         ppm = None
+    if "[[ranking=" in str(payload.get("extra") or ""):
+        # A batch of Ranking Shorts: each topic once (the same topic twice made the same Short twice), at most
+        # cr_queue.MAX_RANKING_BATCH, made one at a time.
+        import cr_queue
+        from flask import jsonify
+        seen, titles = set(), []
+        for t in str(payload.get("title") or "").splitlines():
+            key = " ".join(t.lower().split())
+            if key and key not in seen:
+                seen.add(key)
+                titles.append(t.strip())
+        if len(titles) > cr_queue.MAX_RANKING_BATCH:
+            return studio.app.make_response((jsonify(error=f"Queue up to {cr_queue.MAX_RANKING_BATCH} Ranking Shorts "
+                                                           "at once. They are made one at a time."), 400))
+        payload = {**payload, "title": "\n".join(titles)}
     panels = payload.get("panels") or ""
     if panels:
         # your own comic panels (cr_panels): one set is one video
@@ -113,6 +128,9 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
     with studio.LOCK:
         studio.JOBS.update(published_jobs)
         studio.QUEUE.extend(staged)
+    keeper = getattr(studio, "_cr_queue", None)
+    if keeper is not None:
+        keeper.save()                                          # a Studio closed mid-batch still knows what waited
     response.set_data(json.dumps({**response.get_json(), "queued":queued}))
     studio._ensure_dispatcher()
     return response

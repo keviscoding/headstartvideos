@@ -449,6 +449,8 @@ def create_app():
     import cr_video_cancel
     video_workers = studio._cr_video_workers = cr_video_cancel.VideoWorkers(studio, HOME)
     video_workers.install_routes()
+    import cr_queue
+    queue_keeper = cr_queue.install(studio, HOME)               # long batches: saved, and held on a shared stop
     token = secrets.token_urlsafe(24)
     # The project launcher reads this private, local-only control token. It is
     # never sent to CR or included in copied launch commands.
@@ -1411,9 +1413,15 @@ def create_app():
     def run_spec(spec):
         activity.wait_for_editor()
         import cr_attempts
+        queue_keeper.started(spec)
         try:
             with cr_attempts.bind(studio.mv, spec):
-                return run_owned_spec(spec)
+                try:
+                    return run_owned_spec(spec)
+                finally:
+                    # Inside the attempt's binding, so job_dir names this attempt's folder (its short/error.json).
+                    queue_keeper.finished(spec, lambda: studio.mv.job_dir(str(spec.get("title") or "Your video"),
+                                                                          str(spec.get("style") or "jung")))
         except Exception as error:
             with studio.LOCK:
                 studio.JOBS.setdefault(spec["slug"], {}).update(state="error", error=str(error), done=True)

@@ -142,6 +142,12 @@ rank (for example "Funniest Dog Moments"), choose how many clips, and set the sw
 meme sound effects, punch-ins, captions). Studio searches YouTube, has every candidate watched for its best moment,
 picks and trims the clips, writes the narrator's lines, designs the sound and edits the Short.
 
+To make several at once, put up to 15 topics in Create's "Create several videos" box (each topic once): they are
+made one at a time. If something would stop every one of them the same way (the month's clip watches used up, YouTube
+or Claude limits), the Shorts still waiting go on hold with nothing spent, and the Create and Projects pages offer
+Carry on or Remove. A Studio closed in the middle of a batch keeps the waiting Shorts on hold too; it never starts them
+again on its own.
+
 To choose the clips yourself, open http://127.0.0.1:7860/cr-ranking (the Clip Board): find clips for a topic, hover a
 card to watch its moment, tick 3 to 10 clips, drag them into order (the last one is #1), drop in your own clips if you
 like, and press Make this Short: it asks for the countdown's name, which becomes the Short's title. Each Make keeps
