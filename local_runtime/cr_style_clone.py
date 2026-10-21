@@ -39,6 +39,7 @@ PHASES = {
     "validate": (78, "Rendering and reviewing the learned graphics against the reference."),
     "art": (88, "Writing the picture style, cast and voice from what Studio saw."),
     "publish": (94, "Saving your validated style in the studio's preset library."),
+    "likeness": (97, "Drawing test pictures in your new style and comparing them with your references."),
     "complete": (100, "Your learned style is saved and ready to use."),
 }
 
@@ -443,6 +444,13 @@ def status(home, operation_id, bridge):
         learned = _read(folder / "study-result.json")
         result["reference_used"] = learned.get("reference_used", "")
         result["captions_available"] = _read(folder / "reflearn/reference-evidence.json").get("captions_available") is True
+        style = _read(Path(home) / "styles" / (saved["spec"]["style_id"] + ".json"))
+        likeness = (style.get("cr_style_clone") or {}).get("likeness") or {}
+        if likeness:
+            result["likeness"] = {k: likeness.get(k) for k in ("state", "verdict", "reliable", "scores", "dealbreakers",
+                                                                "pictures", "why", "people", "cost_usd")}
+            route = ((style.get("cr_style_clone") or {}).get("learned_v2") or {}).get("route") or {}
+            result["route"] = {k: route.get(k) for k in ("engine", "why")}
     return result
 
 
@@ -666,8 +674,21 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
         progress("art")
         _art_director(folder, spec, looked, lambda prompt, images: learner._see(engine, clock, "art", prompt, images),
                       log)
-    return finish_original(engine, folder, spec, design, record, progress,
+    style = finish_original(engine, folder, spec, design, record, progress,
         learner=learner, designer=designer, log=log, report=clock.report())
+    if spec.get("look_id") and spec.get("likeness", True):
+        # Pictures drawn the way its videos will draw them, judged against the references before it is saved (the
+        # ifology clone saved mannequins without a word). Never stops the study; recovery re-applies it for free.
+        progress("likeness")
+        import cr_style_likeness
+        home = _studio_home(folder)
+        try:
+            cr_style_likeness.run(folder, spec, style, log, home=home)
+        except Exception as error:                             # noqa: BLE001 - the style is saved as it was
+            log(f"  likeness check stopped: {str(error)[:160]}")
+        style = cr_style_likeness.apply_saved(folder, style, home)
+        _write(folder / "ready-style.json", style)
+    return style
 
 
 def _portable(value, home):
@@ -765,6 +786,7 @@ def _apply_learned(folder, spec, style, log):
     cr_style_prompts.with_original_sound(learned)      # real clips are found only where the script marks them
     learned.setdefault("cr_style_clone", {}).update(
         learned_v2={"look_id": spec["look_id"], "base": mapping["base"], "base_why": mapping["base_why"],
+                    "route": mapping.get("route") or {},
                     "needs": mapping["needs"], "cost": mapping["cost"], "art_director": bool(art.get("overrides")),
                     "settings": [{k: r.get(k) for k in ("area", "label", "value", "why")} for r in mapping["settings"]
                                  if r.get("path") != "features.offered"]})
@@ -825,6 +847,8 @@ def finish_original(engine, folder, spec, design, record, progress, *, learner=N
         import cr_style_delivery
         cr_style_delivery.configure_style(style)
     style = _portable(style, _studio_home(folder))
+    import cr_style_likeness                                    # a check already paid for, applied again (no model)
+    style = cr_style_likeness.apply_saved(folder, style, _studio_home(folder))
     _write(folder / "ready-style.json", style)
     _write(folder / "study-result.json", {"references": [r["id"] for r in spec["references"]],
         "kit": record["kit"], "reference_used": (record.get("reference") or {}).get("id", ""),

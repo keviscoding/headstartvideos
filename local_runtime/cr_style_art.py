@@ -24,7 +24,7 @@ copying its footage, its characters' names, its words or its identity.
 THE CREATOR'S VIDEO: [TITLE]
 THE CREATOR'S BRIEF: [BRIEF]
 THE RECIPE IT IS BUILT ON: [BASE]
-
+[ROUTE]
 WHAT STUDIO MEASURED AND WATCHED (JSON):
 [PROFILE]
 
@@ -70,6 +70,18 @@ Return ONE JSON object:
  "body_notes": "one or two sentences: how the edit runs after the hook"
 }
 Write in English. Never name the reference channel, its creator, any artist or any studio; describe instead."""
+
+# A designed 3D world (cr_style_map.route "drawn"): Studio's 3D engine makes faceless mannequins, so these pictures are
+# drawn by an image model in the references' 3D-render look. The words carry the look: @ifologyfilms' art director
+# wrote "low-poly, round black heads" correctly, and it never reached the 3D engine that made the video.
+ROUTE_DRAWN = """HOW THESE PICTURES ARE MADE: the references are 3D renders, but Studio's 3D engine can't build their characters
+and sets, so EVERY picture of a new video is drawn by an image model from your still_suffix and a style drawing,
+then animated. So: still_suffix opens with the medium exactly as it looks (for example "stylised 3D render" with
+its shading, materials, edges, light and shadows), and "people" gives the channel's character DESIGN LANGUAGE
+precisely: head shape and colour, face (eyes, mouth, how simple), body and limbs, clothing colours and cut. Every new
+character of every story must be drawn that same way. That design language is the channel's style: write it out in
+full (only never a name, a logo or one character's signature item).
+"""
 
 CANDID = ("The pictures are photographs: write them as everyday phone-camera frames (deep focus, natural mixed light, "
           "unstaged framing, mild noise), never glossy, studio-lit or cinematic. Where the profile calls the light "
@@ -117,6 +129,7 @@ def prompt(profile: dict, mapping: dict, *, title: str, brief: str, base: str, e
     polish_line = CANDID if rule.startswith("candid") or polish == "candid" else LO_FI if polish == "lo-fi" else ""
     return (ART_PROMPT.replace("[TITLE]", title.strip()[:280]).replace("[BRIEF]", (brief or "none").strip()[:1500])
             .replace("[BASE]", base).replace("[POLISH]", polish_line)
+            .replace("[ROUTE]", ROUTE_DRAWN if (mapping.get("route") or {}).get("engine") == "drawn" else "")
             .replace("[PROFILE]", json.dumps(_compact(profile, mapping), ensure_ascii=False)[:9000])
             .replace("[EXCERPT]", (excerpt or "no captions available").strip()[:1500]))
 

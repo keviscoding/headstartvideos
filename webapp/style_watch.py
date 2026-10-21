@@ -334,6 +334,137 @@ def watch_once(video_id: str, start: int, end: int, *, post=None, file_uri: str 
 _QUESTIONS: dict[str, str] = {}
 
 
+# ── likeness: new pictures judged against a channel's own frames (Studio's style clone, before it saves) ──────────
+COMPARE_VERSION = 1
+MAX_COMPARE_IMAGES = 7                           # reference frames, and candidates (a hidden control among them)
+MAX_COMPARE_BYTES = 1_500_000                    # one 960 px JPEG
+COMPARE_WAITS_S = (5, 20)                        # the call is synchronous: Studio waits on it, the gateway cuts at ~100 s
+COMPARE_PROMPT = """You judge whether NEW pictures match a YouTube channel's visual style. The REFERENCE images are real
+frames from the channel. The CANDIDATE images were made by a studio to look like that channel: they show NEW scenes
+and subjects on purpose, so a different subject, setting or story is never a fault. Judge only the STYLE.
+[CONTEXT]
+Score how well the candidates, taken together, match the references, each 0 to 10 (10 = indistinguishable):
+- medium: the same kind of picture (3D render, 2D drawing, photograph, collage...) with the same finish: shading,
+  materials, edges, texture, level of detail.
+- characters: people drawn with the same DESIGN (head shape and colour, face, eyes and mouth, body, limbs,
+  proportions, clothing style and colours). If neither the references nor the candidates show people, 10.
+- sets: places and props built the same way (shapes, simplicity, detail, scale).
+- palette: the colours, their saturation and brightness.
+- light: lighting, shadows, contrast, time of day feel.
+- camera: framing, lens and composition habits.
+Then "overall" 0 to 10: would a regular viewer believe these candidates are frames from this channel?
+Also score EACH candidate's overall the same way, in order.
+List "dealbreakers": the big mismatches a viewer would notice at once (for example "the people are realistic humans
+but the channel's characters have round solid black heads with simple white faces"), at most 4, empty when none.
+List "fixes": concrete changes to the picture prompt that would close the gap (name what to add, change or drop),
+at most 5. Never name the channel, its creator or a studio.
+Return ONLY JSON: {"medium": 0, "characters": 0, "sets": 0, "palette": 0, "light": 0, "camera": 0, "overall": 0,
+ "candidates": [{"overall": 0, "why": "a few words"}], "dealbreakers": [], "fixes": []}"""
+
+
+def _image_mime(data: bytes) -> str:
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return ""
+
+
+def compare_once(references: list, candidates: list, context: str = "", *, post=None) -> tuple:
+    """One Gemini judgement of candidate pictures against reference frames: (verdict, input tokens, output tokens)."""
+    post = post or requests.post
+    parts = []
+    for label, group in (("REFERENCE", references), ("CANDIDATE", candidates)):
+        for i, data in enumerate(group, 1):
+            parts += [{"text": f"{label} {i}:"},
+                      {"inlineData": {"mimeType": _image_mime(data), "data": base64.b64encode(data).decode()}}]
+    parts.append({"text": COMPARE_PROMPT.replace("[CONTEXT]", (context or "").strip()[:600])})
+    body = {"contents": [{"parts": parts}],
+            "generationConfig": {"responseMimeType": "application/json", "thinkingConfig": {"thinkingLevel": "low"}}}
+    for wait in COMPARE_WAITS_S + (None,):
+        res = post(f"{GEMINI_BASE}/models/{model()}:generateContent", headers={"x-goog-api-key": _key()},
+                   json=body, timeout=(15, 90))
+        if res.status_code not in (429, 500, 503) or wait is None:
+            break
+        _sleep(wait)
+    if res.status_code != 200:
+        raise RuntimeError(f"Gemini HTTP {res.status_code}")
+    data = res.json()
+    usage = data.get("usageMetadata") or {}
+    parts = (((data.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
+    text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
+    tokens_in = int(usage.get("promptTokenCount") or 0)
+    tokens_out = int(usage.get("candidatesTokenCount") or 0) + int(usage.get("thoughtsTokenCount") or 0)
+    return _parse(text), tokens_in, tokens_out
+
+
+def _score(value) -> float:
+    try:
+        return max(0.0, min(10.0, float(value)))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def compare(user: dict, references: list, candidates: list, context: str = "", *, post=None) -> dict:
+    """Studio's likeness check: decoded and checked here, counted with the style watches (the same daily allowance
+    and the same global daily spend cap), answered at once."""
+    if not _key():
+        raise HTTPException(503, "Style checking isn't available right now.")
+    refs, cands = [], []
+    for group, out in ((references, refs), (candidates, cands)):
+        if not isinstance(group, list) or not 1 <= len(group) <= MAX_COMPARE_IMAGES:
+            raise HTTPException(400, f"Send 1 to {MAX_COMPARE_IMAGES} pictures of each kind.")
+        for item in group:
+            try:
+                data = base64.b64decode(str(item), validate=True)
+            except ValueError:
+                raise HTTPException(400, "A picture could not be read.") from None
+            if not data or len(data) > MAX_COMPARE_BYTES or not _image_mime(data):
+                raise HTTPException(400, "Send JPEG, PNG or WebP pictures under 1.5 MB.")
+            out.append(data)
+    initialize()
+    now = time.time()
+    digest = hashlib.sha256(b"".join(refs + cands) + (context or "").encode()).hexdigest()[:24]
+    with db._conn() as conn:
+        limit = _daily_limit(user)
+        if limit is not None:
+            used = conn.execute(db._q("""SELECT COUNT(*) AS n FROM style_watch_jobs WHERE user_id=? AND cached=0
+                AND created_at>?"""), (user["id"], now - 86400)).fetchone()["n"]
+            if used >= limit:
+                raise HTTPException(402, "You've used today's style checks. Try again tomorrow.")
+        if _spent_today(conn) >= _env_float("STYLE_WATCH_DAILY_USD", 15.0):
+            raise HTTPException(503, "Style checking is busy today. Try again later.")
+        job = "sc_" + secrets.token_hex(10)
+        conn.execute(db._q("""INSERT INTO style_watch_jobs (id,user_id,video_id,start_s,end_s,prompt_version,model,
+            status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'running',?,?)"""),
+            (job, user["id"], "cmp_" + digest, 0, 0, 1000 + COMPARE_VERSION, model(), now, now))
+    try:
+        verdict, tin, tout = compare_once(refs, cands, context, post=post)
+    except Exception as exc:                                  # noqa: BLE001 - said to Studio, which goes on without it
+        with db._conn() as conn:
+            conn.execute(db._q("UPDATE style_watch_jobs SET status='failed', error=?, updated_at=? WHERE id=?"),
+                         (str(exc)[:300], time.time(), job))
+        raise HTTPException(503, "Style checking couldn't answer right now. Try again in a little while.") from None
+    spent = cost(tin, tout)
+    out = {k: _score(verdict.get(k)) for k in ("medium", "characters", "sets", "palette", "light", "camera", "overall")}
+    out["candidates"] = [{"overall": _score((c or {}).get("overall")), "why": str((c or {}).get("why") or "")[:160]}
+                         for c in (verdict.get("candidates") or [])[:len(cands)] if isinstance(c, dict)]
+    out["dealbreakers"] = [str(x)[:240] for x in verdict.get("dealbreakers") or [] if str(x).strip()][:4]
+    out["fixes"] = [str(x)[:240] for x in verdict.get("fixes") or [] if str(x).strip()][:5]
+    with db._conn() as conn:
+        conn.execute(db._q("""UPDATE style_watch_jobs SET status='done', result_json=?, tokens_in=?, tokens_out=?,
+            cost_usd=?, updated_at=? WHERE id=?"""), (json.dumps(out), tin, tout, spent, time.time(), job))
+    return {**out, "version": COMPARE_VERSION, "cost_usd": round(spent, 4)}
+
+
+class CompareRequest(BaseModel):
+    references: list = Field(default_factory=list)
+    candidates: list = Field(default_factory=list)
+    context: str = Field("", max_length=600)
+
+
 def _run(job_id: str, data: bytes = b"", mime: str = "video/mp4"):
     row = _row(job_id)
     question = _QUESTIONS.pop(job_id, "")
@@ -487,5 +618,9 @@ def make_router(access) -> APIRouter:
     @router.get("/watch/{job_id}")
     def get_watch(job_id: str, user=Depends(access)):
         return get(user, job_id)
+
+    @router.post("/compare")
+    def post_compare(req: CompareRequest, user=Depends(access)):
+        return compare(user, req.references, req.candidates, req.context)
 
     return router

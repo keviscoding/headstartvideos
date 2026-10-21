@@ -136,14 +136,53 @@ def test_real_footage_channels_build_on_the_documentary_with_their_own_clips():
     assert "auto_own" in {r["path"].split(".")[-1] for r in plan["remove"]}
 
 
+RECONSTRUCTION = axis("Realistic 3D reconstructions of real events with faceless mannequins and film light.")
+
+
 def test_3d_and_measured_music_levels():
     p = profile({"3d": 0.6, "graphic": 0.4}, **{"sound__music": axis("story score", level="score",
                                                                          bed_in_pauses_db=-16, moods=["tense"],
-                                                                         genres=[])})
+                                                                         genres=[]),
+                                                 "pictures__art_style": RECONSTRUCTION})
     plan = cm.plan_style(p, STYLES)
-    assert plan["base"] == "3d"
+    assert plan["base"] == "3d" and plan["route"]["engine"] == "threed"
     assert plan["overrides"]["look"]["sound"]["music_rel_db"] == -12.0
-    assert cm.plan_style(profile({"3d": 0.5, "footage": 0.3}), STYLES)["base"] == "nocturne"
+    assert cm.plan_style(profile({"3d": 0.5, "footage": 0.3}, **{"pictures__art_style": RECONSTRUCTION}),
+                         STYLES)["base"] == "nocturne"
+
+
+IFOLOGY = {"pictures__art_style": axis("Bright low-poly 3D render: characters with round solid black heads and simple "
+                                       "white cute faces, bright jackets, thin black stick legs, bright simple sets."),
+           "pictures__characters": axis([{"name": "Runner", "look": "round black head, simple white face, yellow "
+                                          "jacket, black stick legs", "role": "mascot", "screen_share": 0.4}]),
+           "motion__classes": axis({"still": 0.2, "camera": 0.2, "moving": 0.6})}
+
+
+def test_a_designed_3d_world_is_drawn_in_its_own_look_not_put_on_mannequins():
+    """@ifologyfilms (round black heads, cute faces, bright jackets, stick legs, low-poly sets) was cloned onto the 3D
+    engine's faceless mannequins. A 3D world the engine can't build goes the drawn route: the picture recipe, the
+    style drawing and the 2.1 model, its cast's character sheet, moving pictures, and the 3D engine off."""
+    plan = cm.plan_style(profile({"3d": 0.85, "graphic": 0.15}, {"3d_render": 0.85}, **IFOLOGY), STYLES)
+    assert plan["base"] == "stories" and "drawn in their exact 3D-render look" in plan["base_why"]
+    assert plan["route"]["engine"] == "drawn" and "mannequins" in plan["route"]["why"]
+    on = plan["overrides"]["features"]["on"]
+    assert "threed" not in on and "ai_images" in on
+    assert {"style_image", "character_image"} <= set(plan["needs"])
+    assert cm.apply(STYLES["stories"], plan)["look"]["image_model"] == "nano-banana-2-1"
+    assert plan["overrides"]["pacing"]["clips_per_min"] > 0, "its characters move: animated pictures"
+
+
+def test_a_3d_recipe_picked_for_a_designed_world_is_warned_about():
+    plan = cm.plan_style(profile({"3d": 0.85}, {"3d_render": 0.85}, **IFOLOGY), STYLES, base="3d")
+    assert plan["base"] == "3d" and "faceless mannequins" in plan["route"]["warning"]
+
+
+def test_what_the_3d_engine_can_build():
+    assert cm.threed_rebuildable(profile({"3d": 0.6}, **{"pictures__art_style": RECONSTRUCTION}))[0]
+    assert not cm.threed_rebuildable(profile({"3d": 0.6}, **IFOLOGY))[0]
+    cast_only = profile({"3d": 0.6}, **{"pictures__art_style": axis("3D scenes."),
+                                         "pictures__characters": IFOLOGY["pictures__characters"]})
+    assert not cm.threed_rebuildable(cast_only)[0], "a recurring designed character is enough"
 
 
 def test_hand_lettering_and_subtitles_follow_the_references():
