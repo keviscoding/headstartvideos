@@ -425,12 +425,13 @@ def image(prompt, dest, label="image", ref_urls=None, model=None, **kwargs):
     cfg = profile("images")
     provider = cfg["provider"]
     refs = list(ref_urls or [])
+    wait = {"timeout_s": kwargs["timeout_s"]} if kwargs.get("timeout_s") else {}   # a caller's own limit on waiting
     if provider != "kie":
         inputs = {"prompt": prompt[:5000], "aspect_ratio": "16:9", "output_format": "png"}
         model = PROVIDERS[provider]["models"]["image_edit" if refs else "images"]
         if refs:
             inputs["images"] = refs[:8]
-        return run("images", inputs, dest, model=model)
+        return run("images", inputs, dest, model=model, **wait)
     last = None
     plan = image_plan(cfg, prefer=model or _style_model["id"])
     for index, model_id in enumerate(plan):
@@ -439,7 +440,7 @@ def image(prompt, dest, label="image", ref_urls=None, model=None, **kwargs):
         try:
             # Each model/prompt/wallet has its own durable receipt. Resuming
             # skips confirmed failures and reuses the successful fallback.
-            return run("images", inputs, dest, model=model)
+            return run("images", inputs, dest, model=model, **wait)
         except TaskFailed as error:
             if not error.fallback_allowed:
                 raise

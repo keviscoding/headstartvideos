@@ -177,12 +177,47 @@ def test_a_3d_recipe_picked_for_a_designed_world_is_warned_about():
     assert plan["base"] == "3d" and "faceless mannequins" in plan["route"]["warning"]
 
 
+def test_a_3d_recipe_picked_for_a_designed_world_keeps_the_3d_engine():
+    plan = cm.plan_style(profile({"3d": 0.85}, {"3d_render": 0.85}, **IFOLOGY), STYLES, base="3d")
+    assert "threed" in plan["overrides"]["features"]["on"], "the creator's own choice is never switched off"
+
+
 def test_what_the_3d_engine_can_build():
     assert cm.threed_rebuildable(profile({"3d": 0.6}, **{"pictures__art_style": RECONSTRUCTION}))[0]
     assert not cm.threed_rebuildable(profile({"3d": 0.6}, **IFOLOGY))[0]
     cast_only = profile({"3d": 0.6}, **{"pictures__art_style": axis("3D scenes."),
                                          "pictures__characters": IFOLOGY["pictures__characters"]})
     assert not cm.threed_rebuildable(cast_only)[0], "a recurring designed character is enough"
+
+
+# Two real looks saved by Studio: reconstruction channels Gemini calls "low-poly" and "stylized", and whose story
+# characters are faceless. Both are exactly what the 3D engine builds.
+LOW_POLY = {"pictures__art_style": axis("Minimalist low-poly 3D reconstruction with featureless white and blue "
+                                        "mannequin figures", alternatives=["stylized toy-like scale model"])}
+MANNEQUIN_LEAD = {"pictures__art_style": axis("Stylized smooth 3D renders with faceless mannequin-like human figures"),
+                  "pictures__characters": axis([{"name": "Jonathan", "role": "character", "screen_share": 0.288,
+                                                 "look": "Featureless chrome/blank mannequin face, grey suit"}])}
+
+
+def test_reconstruction_channels_stay_on_the_3d_engine():
+    for over, families, base in ((LOW_POLY, {"3d": 0.6, "graphic": 0.4}, "3d"),
+                                 (MANNEQUIN_LEAD, {"3d": 0.36, "footage": 0.23, "graphic": 0.2}, "nocturne")):
+        plan = cm.plan_style(profile(families, **over), STYLES)
+        assert plan["route"]["engine"] == "threed" and plan["base"] == base, over
+        assert "threed" in plan["overrides"]["features"]["on"]
+    host = profile({"3d": 0.5, "footage": 0.2}, **{"pictures__art_style": RECONSTRUCTION, "pictures__characters": axis(
+        [{"name": "Host", "role": "presenter", "screen_share": 0.2, "look": "real man filmed talking to camera"}])})
+    assert cm.plan_style(host, STYLES)["route"]["engine"] == "threed", "a filmed host is not a designed cast"
+
+
+def test_the_route_shown_on_the_look_screen_never_flips_after_an_answer():
+    cast_only = profile({"3d": 0.6}, **{"pictures__art_style": axis("3D scenes with soft light."),
+                                         "pictures__characters": IFOLOGY["pictures__characters"]})
+    assert cm.plan_style(cast_only, STYLES)["route"]["engine"] == "drawn"
+    plan = cm.plan_style(cast_only, STYLES, answers={"host": "No host"})
+    assert plan["route"]["engine"] == "drawn" and plan["base"] == "stories" and "style_image" in plan["needs"]
+    assert "threed" not in plan["overrides"]["features"]["on"]
+    assert cm.apply(STYLES[plan["base"]], plan)["look"]["image_model"] == "nano-banana-2-1"
 
 
 def test_hand_lettering_and_subtitles_follow_the_references():

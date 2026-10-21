@@ -39,7 +39,6 @@ PHASES = {
     "validate": (78, "Rendering and reviewing the learned graphics against the reference."),
     "art": (88, "Writing the picture style, cast and voice from what Studio saw."),
     "publish": (94, "Saving your validated style in the studio's preset library."),
-    "likeness": (97, "Drawing test pictures in your new style and comparing them with your references."),
     "complete": (100, "Your learned style is saved and ready to use."),
 }
 
@@ -446,6 +445,12 @@ def status(home, operation_id, bridge):
         result["captions_available"] = _read(folder / "reflearn/reference-evidence.json").get("captions_available") is True
         style = _read(Path(home) / "styles" / (saved["spec"]["style_id"] + ".json"))
         likeness = (style.get("cr_style_clone") or {}).get("likeness") or {}
+        import cr_style_likeness
+        check = _read(folder / cr_style_likeness.CHECK)
+        if not likeness and check.get("state") == "running" and \
+                time.time() - float(check.get("started_at") or 0) < cr_style_likeness.LIMIT_S + 300:
+            result["likeness_running"] = True
+            result["message"] = "Your style is saved. Now drawing test pictures in it and comparing them with your references."
         if likeness:
             result["likeness"] = {k: likeness.get(k) for k in ("state", "verdict", "reliable", "scores", "dealbreakers",
                                                                 "pictures", "why", "people", "cost_usd")}
@@ -674,21 +679,8 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
         progress("art")
         _art_director(folder, spec, looked, lambda prompt, images: learner._see(engine, clock, "art", prompt, images),
                       log)
-    style = finish_original(engine, folder, spec, design, record, progress,
+    return finish_original(engine, folder, spec, design, record, progress,
         learner=learner, designer=designer, log=log, report=clock.report())
-    if spec.get("look_id") and spec.get("likeness", True):
-        # Pictures drawn the way its videos will draw them, judged against the references before it is saved (the
-        # ifology clone saved mannequins without a word). Never stops the study; recovery re-applies it for free.
-        progress("likeness")
-        import cr_style_likeness
-        home = _studio_home(folder)
-        try:
-            cr_style_likeness.run(folder, spec, style, log, home=home)
-        except Exception as error:                             # noqa: BLE001 - the style is saved as it was
-            log(f"  likeness check stopped: {str(error)[:160]}")
-        style = cr_style_likeness.apply_saved(folder, style, home)
-        _write(folder / "ready-style.json", style)
-    return style
 
 
 def _portable(value, home):
@@ -746,7 +738,9 @@ def _art_director(folder, spec, looked, see, log):
         return saved.get("art") or {}
     home = _studio_home(folder)
     profile = cr_style_map.answer(looked["profile"], spec.get("answers") or {})
-    mapping = cr_style_map.plan_style(profile, _installed_styles(home), base=spec["base_style"])
+    # planned from the measured profile with the answers, as the learned style is: a removed mascot never changes route
+    mapping = cr_style_map.plan_style(looked["profile"], _installed_styles(home), base=spec["base_style"],
+                                      answers=spec.get("answers") or {})
     excerpt = " ".join(looked["excerpts"].get(r["id"], "") for r in spec["references"])[:1500]
     banned = looked["channels"] + [r.get("channel", "") for r in spec["references"]]
     try:
@@ -997,7 +991,7 @@ def recover_metadata(home, operation_id, bridge, *, readiness, engine=None, lear
         new_id = "op_" + secrets.token_hex(12)
         folder = _operation(home, new_id)
         folder.mkdir(parents=True, mode=0o700)
-        for name in [*assets, "reflearn/reference-evidence.json"]:
+        for name in [*assets, "reflearn/reference-evidence.json", *_carried(source)]:
             path = source / name
             if path.is_file():
                 target = folder / name
@@ -1123,6 +1117,46 @@ def _publish(home, folder, saved):
     _write(folder / "operation.json", saved)
 
 
+def _carried(source) -> dict:
+    """Saved work a new copy of a study keeps without paying again: the art director's words and the likeness check
+    (its verdict, test pictures and character sheet), {name: (path, sha256)}."""
+    source = Path(source)
+    paths = [source / "art-checkpoint.json", source / "likeness.json",
+             *sorted((source / "likeness").glob("*.jpg")), *sorted((source / "likeness").glob("*.png"))]
+    return {path.relative_to(source).as_posix(): (path, _file_hash(path)) for path in paths if path.is_file()}
+
+
+def _likeness(home, folder, saved, log=print):
+    """After the style is saved: test pictures drawn the way its videos will draw them, judged against the references
+    (the ifology clone saved mannequins without a word). The saved style is updated with the verdict, the best picture
+    as its drawing and the judge's fixes, and the study keeps owning it (style_sha256). Never undoes or stops a study."""
+    spec = saved["spec"]
+    if not spec.get("look_id") or spec.get("likeness") is False or saved.get("refinement_only") \
+            or saved.get("metadata_only"):
+        return
+    import cr_style_likeness
+    target = Path(home) / "styles" / (spec["style_id"] + ".json")
+    try:
+        style = _read(target)
+        if not _published(home, saved) or (style.get("cr_style_clone") or {}).get("likeness"):
+            return
+        cr_style_likeness.run(folder, spec, style, log, home=home)
+        style = cr_style_likeness.apply_saved(folder, style, home)
+        if not (style.get("cr_style_clone") or {}).get("likeness") or not _published(home, saved):
+            return
+        _write(target, style)
+        _write(folder / "ready-style.json", style)
+        saved["style_sha256"] = _file_hash(target)
+        if saved.get("finish_receipt"):
+            saved["finish_receipt"]["artifacts"][0]["sha256"] = saved["style_sha256"]
+        _write(folder / "operation.json", saved)
+    except Exception as error:                                 # noqa: BLE001 - the saved style stands as it was
+        log(f"  likeness check stopped: {str(error)[:160]}")
+        check = _read(folder / cr_style_likeness.CHECK)
+        if check.get("state") == "running":
+            _write(folder / cr_style_likeness.CHECK, {**check, "state": "failed", "why": str(error)[:160]})
+
+
 def run(home, operation_id, bridge, *, readiness, execute=None):
     """Execute once. Already completed studies only synchronize saved receipts."""
     folder, saved = _saved(home, operation_id, bridge)
@@ -1184,6 +1218,7 @@ def run(home, operation_id, bridge, *, readiness, execute=None):
         # From here on recovery only publishes the already validated style or
         # records completion. It cannot repeat a creative call.
         _publish(home, folder, saved)
+        _likeness(home, folder, saved)
         try:
             _sync(folder, saved, bridge)
         except Exception:

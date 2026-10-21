@@ -15,9 +15,12 @@ A held-out reference frame goes in with the candidates as a hidden control: when
 score well, the judge didn't understand the references, and the verdict says it can't be trusted.
 
 Only styles that draw their pictures are checked (an image model and picture words); a style that films or builds its
-pictures is skipped with its reason. Nothing here stops a study: a missing account or an unanswered check is noted and
-the style is saved as before. run() pays (pictures, the check); apply_saved() only reads what run() saved, so a study's
-recovery applies it again without paying twice.
+pictures, or whose videos are graphics only, is skipped with its reason. It runs after the style is saved, within a few
+minutes, and nothing here undoes or stops a study: a missing account, a busy judge or a picture that never comes back
+is noted, the rounds already paid for are kept, and the style stays as it was saved. Every number that decides the
+verdict is the drawn pictures' own: the hidden control is only the judge's test. run() pays (pictures, the check);
+apply_saved() only reads what run() saved, for the same picture words, so a recovery or an improved copy of the study
+applies it again without paying twice.
 """
 from __future__ import annotations
 
@@ -35,6 +38,9 @@ CHARACTERS_PASS = 6.0            # and its people are drawn the same way, when i
 CONTROL_MIN = 6.0                # the channel's own held-out frame scores at least this, or the judge is not trusted
 ROUNDS = 2                       # the first drawing, and one with the judge's fixes
 PICTURE_USD = 0.02               # a Kie picture (4 credits)
+LIMIT_S = 480                    # the whole check, so a queued image account never holds the saved style for long
+PICTURE_WAIT_S = 180             # one picture; a slower one is saved by its task ID and the check moves on
+AREAS = ("medium", "characters", "sets", "palette", "light", "camera", "overall")
 SUBJECTS = [
     "Two characters of this channel talking in a bright, simple room, both whole and fully in frame. No text.",
     "One character of this channel running across a wide outdoor scene, whole body in frame, seen from the side. "
@@ -102,6 +108,8 @@ def _hash(style) -> str:
 
 def wanted(style) -> str:
     """"" when this style draws its pictures and can be checked, else why it is skipped."""
+    if (style.get("cr_style_clone") or {}).get("visual_mode") == "reference_only":
+        return "this style's videos are all motion graphics, with no drawn pictures"
     look = style.get("look") or {}
     if not str(look.get("still_suffix") or "").strip():
         return "this style has no picture words to draw with"
@@ -116,11 +124,37 @@ def _verdict(overall, characters, people) -> str:
     return "close" if overall >= 5 else "far"
 
 
+def _wants_upload(spec) -> bool:
+    """The creator answered that they will upload their own host or mascot: no drawn sheet takes their place."""
+    return str((spec.get("answers") or {}).get("host") or "").startswith("Yes, I'll upload")
+
+
+def _mean(values):
+    values = [float(v) for v in values if isinstance(v, (int, float))]
+    return sum(values) / len(values) if values else None
+
+
+def _row(r, extra, pictures, got) -> dict:
+    """One round's scores, from the drawn pictures alone: the judge scores each candidate in every area, and the
+    hidden control (after the pictures) is only the test of the judge."""
+    scores = [c if isinstance(c, dict) else {} for c in got.get("candidates") or []]
+    mine = scores[:len(pictures)] + [{}] * (len(pictures) - len(scores[:len(pictures)]))
+    held = scores[len(pictures)] if len(scores) > len(pictures) else None
+    row = {"round": r + 1, "extra": extra, "pictures": [p.name for p in pictures],
+           "picture_scores": [float(c.get("overall") or 0) for c in mine],
+           "control": float(held.get("overall") or 0) if held is not None else None,
+           "dealbreakers": got.get("dealbreakers") or [], "fixes": got.get("fixes") or []}
+    for area in AREAS:
+        own = _mean([c.get(area) for c in mine])
+        row[area] = round(own if own is not None else float(got.get(area) or 0), 2)
+    return row
+
+
 def run(folder, spec, style, log, *, home, generate=None, upload=None, call=None) -> dict:
     """Draw, judge, and once more with the judge's fixes when below the bar. Saved in <operation>/likeness.json."""
     folder = Path(folder)
     saved = _read(folder / CHECK)
-    if saved.get("style_hash") == _hash(style) and saved.get("state") in ("done", "skipped"):
+    if saved.get("style_hash") == _hash(style) and saved.get("state") in ("done", "skipped", "failed"):
         return saved
     why = wanted(style)
     if why:
@@ -139,6 +173,8 @@ def run(folder, spec, style, log, *, home, generate=None, upload=None, call=None
     if call is None:
         import cr_bridge
         call = cr_bridge.call
+    _write(folder / CHECK, {"state": "running", "started_at": time.time(), "style_hash": _hash(style)})
+    deadline = time.monotonic() + LIMIT_S
     look = style.get("look") or {}
     draw_from = shots[0]                                      # drawn from; never judged against itself
     control = shots[-1] if len(shots) >= 5 else None          # the channel's own frame, hidden among the candidates
@@ -146,40 +182,44 @@ def run(folder, spec, style, log, *, home, generate=None, upload=None, call=None
     people = _people(style)
     context = ("The candidates were drawn by an image model to match the references' look"
                + (", including how their characters are designed." if people else "."))
-    ref_url = put(draw_from)
-    suffix, extra, rounds, spent = str(look.get("still_suffix") or ""), "", [], 0.0
+    suffix, extra, rounds, spent, stopped = str(look.get("still_suffix") or ""), "", [], 0.0, ""
     out_dir = folder / "likeness"
     out_dir.mkdir(parents=True, exist_ok=True)
-    for r in range(ROUNDS):
-        pictures = []
-        for k, subject in enumerate(SUBJECTS):
-            dest = out_dir / f"r{r}_{k}.jpg"
-            gen(NOTE + subject + " " + suffix + extra, dest, f"likeness picture {r + 1}.{k + 1}", ref_urls=[ref_url],
-                model=look["image_model"])
-            spent += PICTURE_USD
-            if dest.is_file():
-                pictures.append(dest)
-        if not pictures:
-            break
-        got = call("style/compare", {"references": [_b64(p) for p in judged],
-                                     "candidates": [_b64(p) for p in pictures] + ([_b64(control)] if control else []),
-                                     "context": context})
-        spent += float(got.get("cost_usd") or 0)
-        scores = got.get("candidates") or []
-        mine = [float((scores[i] or {}).get("overall") or 0) if i < len(scores) else 0.0 for i in range(len(pictures))]
-        held = float((scores[len(pictures)] or {}).get("overall") or 0) if control and len(scores) > len(pictures) else None
-        row = {"round": r + 1, "extra": extra, "pictures": [p.name for p in pictures], "picture_scores": mine,
-               "control": held, **{k: float(got.get(k) or 0) for k in ("medium", "characters", "sets", "palette",
-                                                                         "light", "camera", "overall")},
-               "dealbreakers": got.get("dealbreakers") or [], "fixes": got.get("fixes") or []}
-        rounds.append(row)
-        log(f"  likeness round {r + 1}: {row['overall']:.0f}/10 overall, characters {row['characters']:.0f}/10"
-            + (f" (the channel's own frame: {held:.0f}/10)" if held is not None else ""))
-        if _verdict(row["overall"], row["characters"], people) == "match" or not row["fixes"]:
-            break
-        extra = " Must: " + "; ".join(str(f).rstrip(".") for f in row["fixes"][:5]) + "."
+    try:
+        ref_url = put(draw_from)
+        for r in range(ROUNDS):
+            pictures = []
+            for k, subject in enumerate(SUBJECTS):
+                if time.monotonic() > deadline:
+                    raise TimeoutError("the image account took too long")
+                dest = out_dir / f"r{r}_{k}.jpg"
+                spent += PICTURE_USD
+                gen(NOTE + subject + " " + suffix + extra, dest, f"likeness picture {r + 1}.{k + 1}",
+                    ref_urls=[ref_url], model=look["image_model"], timeout_s=PICTURE_WAIT_S)
+                if dest.is_file():
+                    pictures.append(dest)
+            if not pictures:
+                break
+            got = call("style/compare", {"references": [_b64(p) for p in judged],
+                                         "candidates": [_b64(p) for p in pictures] + ([_b64(control)] if control else []),
+                                         "context": context})
+            spent += float(got.get("cost_usd") or 0)
+            row = _row(r, extra, pictures, got)
+            rounds.append(row)
+            log(f"  likeness round {r + 1}: {row['overall']:.0f}/10 overall, characters {row['characters']:.0f}/10"
+                + (f" (the channel's own frame: {row['control']:.0f}/10)" if row["control"] is not None else ""))
+            if _verdict(row["overall"], row["characters"], people) == "match" or not row["fixes"]:
+                break
+            extra = " Must: " + "; ".join(str(f).rstrip(".") for f in row["fixes"][:5]) + "."
+    except BaseException as error:                            # noqa: BLE001 - paid rounds are kept; the style stands
+        if isinstance(error, (KeyboardInterrupt, SystemExit)):
+            raise
+        stopped = str(error)[:160] or type(error).__name__
+        log(f"  likeness check stopped: {stopped}")
     if not rounds:
-        result = {"state": "skipped", "why": "the test pictures could not be drawn", "style_hash": _hash(style)}
+        result = {"state": "failed" if stopped else "skipped", "style_hash": _hash(style), "cost_usd": round(spent, 3),
+                  "why": (f"the check could not finish ({stopped})" if stopped
+                          else "the test pictures could not be drawn")}
         _write(folder / CHECK, result)
         return result
     best = max(rounds, key=lambda x: x["overall"])
@@ -189,17 +229,19 @@ def run(folder, spec, style, log, *, home, generate=None, upload=None, call=None
     result = {"state": "done", "style_hash": _hash(style), "checked_at": time.time(), "people": people,
               "verdict": _verdict(best["overall"], best["characters"], people), "reliable": reliable,
               "round": best["round"], "extra": best["extra"], "best": best["pictures"][pick],
-              "scores": {k: best[k] for k in ("medium", "characters", "sets", "palette", "light", "camera", "overall")},
-              "dealbreakers": best["dealbreakers"], "rounds": rounds, "cost_usd": round(spent, 3)}
+              "scores": {k: best[k] for k in AREAS}, "dealbreakers": best["dealbreakers"], "rounds": rounds,
+              "cost_usd": round(spent, 3)}
+    if stopped:
+        result["stopped"] = stopped
     cast = str(look.get("character") or "").strip()
-    if cast and not look.get("character_image"):              # the recurring cast drawn in the best picture's look
+    if cast and not _wants_upload(spec) and not look.get("character_image") and time.monotonic() < deadline:
         first = re.split(r"\n|(?<=\.)\s+(?=[A-Z][\w' -]{1,40}(?: \([^)]*\))?:)",
                          re.sub(r"^THE CAST\s*[—-]\s*", "", cast))[0].strip() or cast
         sheet = out_dir / "character.png"
-        try:
-            gen(NOTE + SHEET + first[:1500], sheet, "character sheet", ref_urls=[put(out_dir / result["best"])],
-                model=look["image_model"])
+        try:                                                  # the recurring cast drawn in the best picture's look
             result["cost_usd"] = round(result["cost_usd"] + PICTURE_USD, 3)
+            gen(NOTE + SHEET + first[:1500], sheet, "character sheet", ref_urls=[put(out_dir / result["best"])],
+                model=look["image_model"], timeout_s=PICTURE_WAIT_S)
             if sheet.is_file():
                 result["character"] = sheet.name
         except Exception as e:                                # noqa: BLE001 - the style keeps its words for the cast
@@ -212,9 +254,11 @@ def apply_saved(folder, style, home) -> dict:
     """The saved check on the style, with no model call: the best picture as its drawing, the judge's fixes in its
     picture words (when they won), the character sheet, and the verdict for the creator."""
     result = _read(Path(folder) / CHECK)
+    if not result or result.get("style_hash") != _hash(style):
+        return style                                          # no check, or one made for other picture words
     clone = style.setdefault("cr_style_clone", {})
-    if result.get("state") == "skipped":
-        clone["likeness"] = {"state": "skipped", "why": result.get("why", "")}
+    if result.get("state") in ("skipped", "failed"):
+        clone["likeness"] = {"state": result["state"], "why": result.get("why", ""), "cost_usd": result.get("cost_usd")}
         return style
     if result.get("state") != "done":
         return style

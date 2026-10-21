@@ -31,8 +31,10 @@ def setup(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "cr_style_look", types.SimpleNamespace(folder=lambda h, lid: frames.parent))
     calls = {"draw": [], "judge": []}
 
-    def generate(prompt, dest, label, ref_urls=None, model=None):
+    def generate(prompt, dest, label, ref_urls=None, model=None, timeout_s=None):
         calls["draw"].append((prompt, dest.name, model))
+        if calls.get("fail_at") == len(calls["draw"]):
+            raise RuntimeError("The media task is still pending.")
         jpeg(Path(dest))
 
     def judge(path, payload):
@@ -41,17 +43,20 @@ def setup(tmp_path, monkeypatch):
     style = {"name": "cr_clone_ifology", "look": {"still_suffix": " Low-poly 3D render, round black heads.",
                                                    "image_model": "nano-banana-2-1",
                                                    "character": "THE CAST — Runner: round black head, yellow jacket."}}
-    run = lambda answers, st=style: (calls.__setitem__("answers", list(answers)) or
-                                     lk.run(folder, {"look_id": "lk_1"}, st, lambda m: None, home=home,
-                                            generate=generate, upload=lambda p: "https://x/" + p.name, call=judge))
+    run = lambda answers, st=style, spec=None: (calls.__setitem__("answers", list(answers)) or
+                                                lk.run(folder, spec or {"look_id": "lk_1"}, st, lambda m: None,
+                                                       home=home, generate=generate,
+                                                       upload=lambda p: "https://x/" + p.name, call=judge))
     return home, folder, style, calls, run
 
 
-def verdict(overall, characters=8, control=9, fixes=()):
-    return {"overall": overall, "characters": characters, "medium": overall, "sets": overall, "palette": overall,
-            "light": overall, "camera": overall, "dealbreakers": [] if overall >= 7 else ["the heads are skin-coloured"],
-            "fixes": list(fixes), "cost_usd": 0.004,
-            "candidates": [{"overall": overall - 1}, {"overall": overall + 0.5}, {"overall": overall}, {"overall": control}]}
+def verdict(overall, characters=8, control=9, fixes=(), together=None):
+    """The judge's answer: `together` is its score for all candidates at once (the hidden control among them)."""
+    drawn = [{"overall": overall + d, "characters": characters} for d in (-0.5, 0.5, 0)]
+    return {"overall": together or overall, "characters": characters, "medium": overall, "sets": overall,
+            "palette": overall, "light": overall, "camera": overall,
+            "dealbreakers": [] if overall >= 7 else ["the heads are skin-coloured"], "fixes": list(fixes),
+            "cost_usd": 0.004, "candidates": drawn + [{"overall": control, "characters": 10}]}
 
 
 def test_a_matching_style_is_checked_once_and_keeps_its_best_picture(setup):
@@ -101,6 +106,50 @@ def test_a_style_that_does_not_draw_its_pictures_is_skipped(setup):
     filmed = {"name": "cr_clone_doc", "look": {"still_suffix": " Documentary footage."}}
     assert run([], filmed)["state"] == "skipped" and calls["draw"] == []
     assert lk.apply_saved(folder, filmed, home)["cr_style_clone"]["likeness"]["state"] == "skipped"
+    graphics = {**json.loads(json.dumps(style)), "cr_style_clone": {"visual_mode": "reference_only"}}
+    assert "motion graphics" in run([], graphics)["why"] and calls["draw"] == []
+
+
+def test_the_verdict_is_the_drawn_pictures_own_never_the_hidden_controls(setup):
+    """The judge's score for all candidates together includes the channel's own frame (a 9): three 6s next to it read
+    as a 7.5 'match'. The drawn pictures' own scores decide, so the fixes get their round."""
+    home, folder, style, calls, run = setup
+    result = run([verdict(6, together=7.5, fixes=["solid black heads"]), verdict(7.5)])
+    assert len(calls["judge"]) == 2 and result["round"] == 2
+    assert result["rounds"][0]["overall"] == 6 and result["rounds"][0]["control"] == 9
+
+
+def test_a_creator_uploading_their_own_host_gets_no_drawn_sheet(setup):
+    home, folder, style, calls, run = setup
+    result = run([verdict(8)], spec={"look_id": "lk_1", "answers": {"host": "Yes, I'll upload mine"}})
+    assert len(calls["draw"]) == 3 and "character" not in result
+
+
+def test_a_stop_in_the_second_round_keeps_the_first_and_says_so(setup):
+    home, folder, style, calls, run = setup
+    calls["fail_at"] = 5                                                       # round 2's second picture
+    result = run([verdict(5, fixes=["solid black heads"])])
+    assert result["state"] == "done" and result["round"] == 1 and "pending" in result["stopped"]
+    assert lk.apply_saved(folder, json.loads(json.dumps(style)), home)["cr_style_clone"]["likeness"]["verdict"] == "close"
+
+
+def test_a_check_that_never_got_a_verdict_is_saved_as_stopped_with_its_cost(setup):
+    home, folder, style, calls, run = setup
+    calls["fail_at"] = 2
+    result = run([])
+    assert result["state"] == "failed" and result["cost_usd"] == 0.04 and len(calls["judge"]) == 0
+    shown = lk.apply_saved(folder, json.loads(json.dumps(style)), home)["cr_style_clone"]["likeness"]
+    assert shown["state"] == "failed" and "could not finish" in shown["why"]
+    assert run([]) == result, "a stopped check is never paid for again on its own"
+
+
+def test_a_check_made_for_other_picture_words_is_never_grafted_on(setup):
+    home, folder, style, calls, run = setup
+    run([verdict(8)])
+    other = json.loads(json.dumps(style))
+    other["look"]["still_suffix"] = " Watercolour stick figures."
+    applied = lk.apply_saved(folder, other, home)
+    assert "likeness" not in applied.get("cr_style_clone", {}) and "style_image" not in applied["look"]
 
 
 # ── the judge on the server ────────────────────────────────────────────────────────────────────────────────────────
@@ -126,7 +175,8 @@ def test_the_server_judge_checks_its_input_and_answers_scores(monkeypatch, tmp_p
             return {"usageMetadata": {"promptTokenCount": 9000, "candidatesTokenCount": 300},
                     "candidates": [{"content": {"parts": [{"text": json.dumps(
                         {"medium": 9, "characters": 3, "sets": 8, "palette": 8, "light": 7, "camera": 7, "overall": 5,
-                         "candidates": [{"overall": 5, "why": "heads"}], "dealbreakers": ["skin-coloured heads"],
+                         "candidates": [{"overall": 5, "characters": 12, "why": "heads"}],
+                         "dealbreakers": ["skin-coloured heads"],
                          "fixes": ["solid black heads"]})}]}}]}
 
     def post(url, headers=None, json=None, timeout=None):
@@ -135,6 +185,7 @@ def test_the_server_judge_checks_its_input_and_answers_scores(monkeypatch, tmp_p
     user = {"id": 1, "email": "a@b.c", "plan": "studio_pro"}
     got = sw.compare(user, [b64jpeg(), b64jpeg()], [b64jpeg()], "drawn 3D", post=post)
     assert got["overall"] == 5 and got["characters"] == 3 and got["fixes"] == ["solid black heads"]
+    assert got["candidates"] == [{"characters": 10.0, "overall": 5.0, "why": "heads"}]   # every area, clamped
     assert got["cost_usd"] > 0 and [p.get("text") for p in seen["parts"] if "text" in p][:3] == [
         "REFERENCE 1:", "REFERENCE 2:", "CANDIDATE 1:"]
     for bad in ([], ["not base64!"], [base64.b64encode(b"GIF89a....").decode()]):

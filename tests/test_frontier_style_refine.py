@@ -73,6 +73,19 @@ def test_preparation_copies_saved_evidence_and_owns_a_unique_kit_identity_withou
         assert all(path.stat().st_mode & 0o777 == 0o600 for path in child.rglob("*") if path.is_file())
 
 
+def test_an_improved_copy_keeps_the_art_directors_words_and_the_paid_likeness_check(published):
+    a = published.approved
+    clone._write(published.source / "art-checkpoint.json", {"schema": 1, "art": {"overrides": {"label": "x"}}})
+    clone._write(published.source / "likeness.json", {"state": "done", "verdict": "match"})
+    (published.source / "likeness").mkdir()
+    (published.source / "likeness/r0_1.jpg").write_bytes(b"best test picture")
+    child = clone._operation(a.home, prepare(published)["operation_id"])
+    assert clone._read(child / "likeness.json")["verdict"] == "match"
+    assert (child / "likeness/r0_1.jpg").read_bytes() == b"best test picture"
+    assert clone._read(child / "art-checkpoint.json")["art"]["overrides"] == {"label": "x"}
+    assert "likeness/r0_1.jpg" in clone._read(child / "refinement-source.json")["files"]
+
+
 def test_lost_prepare_response_returns_same_child_without_repeating_preparation(published):
     a = published.approved
     first = prepare(published)

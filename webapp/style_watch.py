@@ -335,7 +335,7 @@ _QUESTIONS: dict[str, str] = {}
 
 
 # ── likeness: new pictures judged against a channel's own frames (Studio's style clone, before it saves) ──────────
-COMPARE_VERSION = 1
+COMPARE_VERSION = 2
 MAX_COMPARE_IMAGES = 7                           # reference frames, and candidates (a hidden control among them)
 MAX_COMPARE_BYTES = 1_500_000                    # one 960 px JPEG
 COMPARE_WAITS_S = (5, 20)                        # the call is synchronous: Studio waits on it, the gateway cuts at ~100 s
@@ -353,13 +353,14 @@ Score how well the candidates, taken together, match the references, each 0 to 1
 - light: lighting, shadows, contrast, time of day feel.
 - camera: framing, lens and composition habits.
 Then "overall" 0 to 10: would a regular viewer believe these candidates are frames from this channel?
-Also score EACH candidate's overall the same way, in order.
+Also score EACH candidate on its own, in order, in every one of those areas and overall.
 List "dealbreakers": the big mismatches a viewer would notice at once (for example "the people are realistic humans
 but the channel's characters have round solid black heads with simple white faces"), at most 4, empty when none.
 List "fixes": concrete changes to the picture prompt that would close the gap (name what to add, change or drop),
 at most 5. Never name the channel, its creator or a studio.
 Return ONLY JSON: {"medium": 0, "characters": 0, "sets": 0, "palette": 0, "light": 0, "camera": 0, "overall": 0,
- "candidates": [{"overall": 0, "why": "a few words"}], "dealbreakers": [], "fixes": []}"""
+ "candidates": [{"medium": 0, "characters": 0, "sets": 0, "palette": 0, "light": 0, "camera": 0, "overall": 0,
+ "why": "a few words"}], "dealbreakers": [], "fixes": []}"""
 
 
 def _image_mime(data: bytes) -> str:
@@ -397,7 +398,10 @@ def compare_once(references: list, candidates: list, context: str = "", *, post=
     text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
     tokens_in = int(usage.get("promptTokenCount") or 0)
     tokens_out = int(usage.get("candidatesTokenCount") or 0) + int(usage.get("thoughtsTokenCount") or 0)
-    return _parse(text), tokens_in, tokens_out
+    try:
+        return _parse(text), tokens_in, tokens_out
+    except ValueError as exc:                                 # billed all the same: the spend ledger records it
+        raise WatchFailed(str(exc), tokens_in, tokens_out) from None
 
 
 def _score(value) -> float:
@@ -443,13 +447,17 @@ def compare(user: dict, references: list, candidates: list, context: str = "", *
     try:
         verdict, tin, tout = compare_once(refs, cands, context, post=post)
     except Exception as exc:                                  # noqa: BLE001 - said to Studio, which goes on without it
+        tin, tout = getattr(exc, "tokens_in", 0), getattr(exc, "tokens_out", 0)
         with db._conn() as conn:
-            conn.execute(db._q("UPDATE style_watch_jobs SET status='failed', error=?, updated_at=? WHERE id=?"),
-                         (str(exc)[:300], time.time(), job))
+            conn.execute(db._q("""UPDATE style_watch_jobs SET status='failed', error=?, tokens_in=?, tokens_out=?,
+                cost_usd=?, updated_at=? WHERE id=?"""), (str(exc)[:300], tin, tout, cost(tin, tout), time.time(), job))
         raise HTTPException(503, "Style checking couldn't answer right now. Try again in a little while.") from None
     spent = cost(tin, tout)
-    out = {k: _score(verdict.get(k)) for k in ("medium", "characters", "sets", "palette", "light", "camera", "overall")}
-    out["candidates"] = [{"overall": _score((c or {}).get("overall")), "why": str((c or {}).get("why") or "")[:160]}
+    areas = ("medium", "characters", "sets", "palette", "light", "camera", "overall")
+    out = {k: _score(verdict.get(k)) for k in areas}
+    # each candidate in every area, so Studio decides on its own drawn pictures and never on the hidden control
+    out["candidates"] = [{**{k: _score(c.get(k)) for k in areas if c.get(k) is not None},
+                          "overall": _score(c.get("overall")), "why": str(c.get("why") or "")[:160]}
                          for c in (verdict.get("candidates") or [])[:len(cands)] if isinstance(c, dict)]
     out["dealbreakers"] = [str(x)[:240] for x in verdict.get("dealbreakers") or [] if str(x).strip()][:4]
     out["fixes"] = [str(x)[:240] for x in verdict.get("fixes") or [] if str(x).strip()][:5]
