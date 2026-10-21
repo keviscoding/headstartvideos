@@ -181,7 +181,7 @@ async function refresh(){try{
  const hub=data.media_hub||{};$('hub-status').textContent=hub.connected?(accounts?.[hub.provider]?.label||hub.provider)+' connected for '+(hub.tasks||[]).join(', ')+'. Your brain selection changes only if you explicitly choose it below.':'Choose a media account below, or keep individual providers.';
  if(hub.connected&&!$('hub-key').value){$('hub-provider').value=hub.provider;$('hub-tasks').querySelectorAll('input').forEach(el=>el.checked=(hub.tasks||[]).includes(el.value));$('hub-voice').value=hub.voice||'';}updateHub();
  const voice=data.narration||{};$('voice-provider').value=voice.selection||'inherit';$('voice-id').value=voice.selection&&voice.selection!=='inherit'?voice.voice||'':'';updateVoice(voice.model);
- const model=accounts?.[voice.provider]?.narration_models?.find(m=>m.id===voice.model),voiceLabel=accounts?.[voice.provider]?.label||voice.provider;
+ const model=accounts?.[voice.provider]?.narration_models?.find(m=>m.id===voice.model),voiceLabel=accounts?.[voice.provider]?.label||voice.label||voice.provider;
  renderNarr(data);
  $('voice-status').textContent=voice.connected?'Narration: '+voiceLabel+(model?' · '+model.label:'')+'. Generation uses this account’s balance.':voice.provider&&voice.provider!=='original'?'Narration is set to '+voiceLabel+'. Reconnect its key before generating.':'Narration uses individual studio voice settings unless selected in the model account above.';
  const images=data.images||{};$('image-provider').value=images.selection||'inherit';updateImages(images.model,images.fallbacks);

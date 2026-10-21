@@ -80,6 +80,18 @@ def ranking_options(extra: str) -> dict:
     return out
 
 
+def ranking_voice(style: str) -> str:
+    """The narrator voice the creator chose for this recipe in Create → Choose voice with ElevenLabs connected
+    (cr_voice_library: the engine's voice pick), as the pipeline's voice option ("eleven:<voice id>"); "" for none."""
+    try:
+        import voices                                            # the engine's voice picks (voice_picks.json)
+        pick = voices.picks().get(style) or {}
+    except Exception:                                            # noqa: BLE001 - no pick: the recipe's own narrator
+        return ""
+    vid = str(pick.get("voice_id") or "")
+    return "eleven:" + vid if pick.get("provider") == "elevenlabs" and re.fullmatch(r"[A-Za-z0-9]{16,32}", vid) else ""
+
+
 def seconds_of(info: dict, features, extra: str = "") -> int:
     want = split_extra(extra)[0]
     if want is None and isinstance(features, dict):
@@ -337,6 +349,10 @@ def run_short(engine, title: str, style: str, info: dict, *, features=None, sink
                            "clips you have links to, paste them on the Clip Board.")
     seconds = seconds_of(info, features, extra)
     ranking = ranking_options(extra)
+    if pipe == "ranking" and not ranking.get("voice"):
+        picked = ranking_voice(style)
+        if picked:
+            ranking["voice"] = picked                            # the voice chosen for this recipe in Choose voice
     extra = split_extra(extra)[1]
     if pipe == "ranking" and needs_youtube(ranking):
         missing = js_runtime_missing()

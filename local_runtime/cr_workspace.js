@@ -677,10 +677,57 @@
     }
     if (!ordered.length) list.append(el('p', 'crw-voices-note', 'No voices match that search.'));
   }
+  // ElevenLabs connected directly (cr_voice_library): the creator's own voices and ElevenLabs' shared library, each
+  // with its own free sample, kept per recipe. The media-hub picker above is unchanged.
+  const library = {source: 'mine', rows: [], timer: null};
+  async function loadLibrary() {
+    const q = $('crw-voices-search').value.trim(), source = library.source;
+    text('crw-voices-status', 'Loading voices…');
+    try {const r = await api(`/cr-voices/library?source=${source}&search=${encodeURIComponent(q)}`);
+      if (source !== library.source) return;                   // a newer tab or search answered first
+      library.rows = r.voices || []; text('crw-voices-status', r.note || '');}
+    catch (e) {library.rows = []; text('crw-voices-status', e.message);}
+    renderLibrary();
+  }
+  function renderLibrary() {
+    const list = $('crw-voices-list'), data = voices.data, audio = $('crw-voices-audio');
+    list.replaceChildren();
+    for (const v of library.rows) {
+      const current = v.id === data.voice_id;
+      const row = el('div', 'crw-voice-row' + (current ? ' is-current' : '')); row.setAttribute('role', 'listitem');
+      const play = el('button', 'crw-secondary-button crw-voice-play', '▶'); play.type = 'button'; play.setAttribute('aria-label', 'Preview ' + v.name); play.disabled = !v.preview;
+      play.addEventListener('click', () => {if (voices.playing === v.id && !audio.paused) {audio.pause(); return;}
+        voices.playing = v.id; audio.src = v.preview; audio.play().catch(() => text('crw-voices-status', 'Press ▶ again to play.'));});
+      const copy = el('div'); copy.append(el('strong', '', v.name), el('span', '', [v.gender, v.accent, v.age, v.description].filter(Boolean).join(' · ') || 'ElevenLabs voice'));
+      row.append(play, copy);
+      if (current) row.append(el('span', 'crw-voice-badge', 'Selected'));
+      else {const use = el('button', 'crw-primary-button', 'Use'); use.type = 'button'; use.addEventListener('click', () => chooseLibraryVoice(v, use)); row.append(use);}
+      list.append(row);
+    }
+    if (!library.rows.length) list.append(el('p', 'crw-voices-note', library.source === 'mine'
+      ? 'No voices on your ElevenLabs account match. Try the Voice library.' : 'No voices match that search.'));
+  }
+  async function chooseLibraryVoice(v, button) {
+    button.disabled = true;
+    try {
+      const result = await api('/cr-voices/select', {method: 'POST', body: {voice_id: v.id, name: v.name, gender: v.gender, style: voices.data.style}});
+      voices.data.voice = v.name; voices.data.voice_id = v.id; if (state.setup?.narration) state.setup.narration.voice = v.name;
+      text('crw-narration-name', v.name); text('crw-voices-status', result.message); renderLibrary(); summary();
+    } catch (e) {text('crw-voices-status', e.message); button.disabled = false;}
+  }
+  for (const b of all('[data-voice-source]')) b.addEventListener('click', () => {library.source = b.dataset.voiceSource; chooseGroup('[data-voice-source]', 'voiceSource', library.source); loadLibrary();});
   async function openVoices() {
     text('crw-voices-status', ''); $('crw-voices-search').value = '';
-    try {voices.data = await api('/cr-voices');} catch (e) {error(e.message); return;}
+    try {voices.data = await api('/cr-voices?style=' + encodeURIComponent(state.selected?.name || ''));} catch (e) {error(e.message); return;}
     if (!voices.data.connected) {error('Connect a voice account in Setup & accounts first.'); return;}
+    $('crw-voices-sources').hidden = !voices.data.library;
+    if (voices.data.library) {
+      if (!voices.data.style) {error('Choose a recipe first, then its voice.'); return;}
+      text('crw-voices-sub', `ElevenLabs · for ${state.selected?.label || state.selected?.name || 'this recipe'}`);
+      text('crw-voices-note', 'Press ▶ to hear a voice (free). Your choice is kept for this recipe.');
+      library.source = 'mine'; chooseGroup('[data-voice-source]', 'voiceSource', 'mine');
+      $('crw-voices').showModal(); $('crw-voices-search').focus(); await loadLibrary(); return;
+    }
     if (!voices.data.voices.length) {location.href = '/cr-setup'; return;}
     voices.previews = new Set(voices.data.previews || []);
     text('crw-voices-sub', `${voices.data.model_label} on ${voices.data.provider_label} · ${voices.data.voices.length} voices`);
@@ -709,7 +756,7 @@
     } catch (e) {text('crw-voices-status', e.message); button.disabled = false;}
   }
   $('crw-voice-open').addEventListener('click', openVoices);
-  $('crw-voices-search').addEventListener('input', renderVoices);
+  $('crw-voices-search').addEventListener('input', () => {if (voices.data?.library) {clearTimeout(library.timer); library.timer = setTimeout(loadLibrary, 350);} else renderVoices();});
   $('crw-voices-close').addEventListener('click', () => $('crw-voices').close());
   $('crw-voices').addEventListener('close', () => $('crw-voices-audio').pause());
 

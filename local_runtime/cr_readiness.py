@@ -81,6 +81,30 @@ def _check_hub(provider, key):
     _accounts[identity] = time.monotonic()+300
 
 
+def own_narration(studio, style, info, why):
+    """(ok, why) for narration the engine's own check does not know. That check counts only Algrow, WaveSpeed and AI33
+    keys, so with ElevenLabs connected on Setup (narration on the creator's own key) every Create stopped on "The
+    voiceover needs ALGROW_API_KEY, WAVESPEED_API_KEY or AI33_API_KEY" (the owner, 2026-10-21). A Ranking Short
+    narrates itself (shorts/ranking/voice.py: ElevenLabs on the creator's key, else ElevenLabs or Gemini through
+    Kie.ai, checked again before anything is paid); any other recipe narrates with ElevenLabs once a voice is chosen
+    for it (Create, Choose voice: the engine's voice pick)."""
+    eleven = bool(os.getenv("ELEVENLABS_API_KEY", "").strip())
+    if ((info or {}).get("shorts") or {}).get("pipeline") == "ranking":
+        if eleven or os.getenv("KIE_API_KEY", "").strip():
+            return True, ""
+        return False, "Connect ElevenLabs or Kie.ai in Setup & accounts for the narrator."
+    if eleven:
+        try:
+            pick = (studio.voices.picks() or {}).get(style) or {}
+        except Exception:                                      # noqa: BLE001 - no pick readable: ask for one
+            pick = {}
+        if pick.get("provider") == "elevenlabs" and pick.get("voice_id"):
+            return True, ""
+        return False, ("Choose this recipe's voice in Create, under Narration, Choose voice: your ElevenLabs voices "
+                       "are there.")
+    return False, why
+
+
 def preset(studio, checks, spec):
     ready = basic(checks)
     results = list(ready["checks"])
@@ -128,7 +152,10 @@ def preset(studio, checks, spec):
     steps = spec.get("steps") or ["script","voiceover","pexels","images","video","thumbnail"]
     if not spec.get("byo_audio") and any(s in steps for s in ("voiceover","video")):
         voice = caps.get("base",{}).get("voice",{})
-        results.append(item("voice", "Narration account", voice.get("ok"), voice.get("why") or "Connect narration in step 4."))
+        ok, why = voice.get("ok"), voice.get("why") or "Connect narration in step 4."
+        if not ok:
+            ok, why = own_narration(studio, style, info, why)
+        results.append(item("voice", "Narration account", ok, why))
     for feature, active in wanted.items():
         if active and "video" in steps or active and feature == "ai_images" and any(s in steps for s in ("images","thumbnail")):
             cap = caps.get("features",{}).get(feature,{"ok":True})

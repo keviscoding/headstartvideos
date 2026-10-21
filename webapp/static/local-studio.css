@@ -314,6 +314,8 @@
 .ls-shipped-tile p{font-size:13px;line-height:1.5;color:var(--app-ink-2);margin:0;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
 .ls-shipped-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px 18px;margin-top:18px}
 .ls-shipped-actions small{color:var(--app-ink-2);font-size:12px;flex-basis:100%}
+.ls-shipped-actions .btn-primary{display:inline-flex;align-items:center;gap:8px}
+.ls-shipped-actions svg{width:16px;height:16px;flex:none}
 @media (max-width:980px){.ls-shipped-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:560px){.ls-shipped{padding:20px 16px}.ls-shipped-grid{grid-template-columns:1fr}.ls-shipped-head{align-items:flex-start}}
 @media (prefers-reduced-motion:reduce){.ls-shipped::before,.ls-shipped-pulse{animation:none}.ls-shipped-tile{animation:none;opacity:1;transform:none}}

@@ -1,5 +1,14 @@
 [
   {
+    "build": 68,
+    "date": "2026-10-21",
+    "title": "Pick your narrator from your ElevenLabs library",
+    "items": [
+      "New: pick your narrator from your ElevenLabs library. With ElevenLabs connected, Create → Choose voice opens your own voices and ElevenLabs' whole library. Press ▶ to hear any voice for free, then Use to keep it for that recipe, Ranking Shorts included.",
+      "Fixed: with ElevenLabs connected, Create no longer stops on a missing voiceover key or asks you to connect a voice account. Ranking Shorts use ElevenLabs straight away; other recipes use the voice you choose for them."
+    ]
+  },
+  {
     "build": 67,
     "date": "2026-10-21",
     "title": "Queue 15 Ranking Shorts, clips from TikTok, and a new Clip Board",
