@@ -667,3 +667,40 @@ def test_a_likeness_check_that_breaks_leaves_the_saved_style_as_it_was(approved,
     result = clone.run(approved.home, one["operation_id"], approved.bridge, readiness=lambda: approved.proof,
                        execute=ready_fixture)
     assert result["state"] == "done" and result["style_ready"] and "likeness" not in result
+
+
+def test_a_study_never_starts_on_a_mac_without_room_to_check_its_graphics(approved, monkeypatch):
+    """The ifology check study stopped after 13 minutes of Claude work: the Mac had 2.3 GB of free disk, so the
+    graphics were checked in a simulated browser and the study could not save. Now that is said before anything runs."""
+    low = clone.room_to_check(platform="darwin", free_gb=2.3, memory_level=60)
+    assert "2.3 GB of free disk space" in low and "3.5 GB" in low and "Nothing has been used yet" in low
+    assert "short of memory" in clone.room_to_check(platform="darwin", free_gb=40, memory_level=10)
+    assert clone.room_to_check(platform="darwin", free_gb=40, memory_level=60) == ""
+    assert clone.room_to_check(platform="win32", free_gb=0.1, memory_level=1) == ""
+    monkeypatch.setattr(clone, "_room", lambda: low)
+    with pytest.raises(RuntimeError, match="free disk space"):
+        clone.prepare(approved.home, approved.spec, approved.proof, approved.bridge)
+    assert not any(name == "begin" for name, _ in approved.events)
+
+
+def test_a_graphics_check_without_a_real_browser_says_why(tmp_path):
+    (tmp_path / "study.log").write_text("  learn: validate \u2014 DOM mock (Mac gate: memory level 49 (needs 20), 3 GB "
+                                        "free (needs 3)): 9/9 types ok\n")
+    assert "less than the 3 GB of free disk space" in clone._no_browser_why(tmp_path)
+    (tmp_path / "study.log").write_text("  learn: validate \u2014 DOM mock (Mac gate: memory level 9 (needs 20), 50 GB "
+                                        "free (needs 3)): 9/9 types ok\n")
+    assert "short of memory" in clone._no_browser_why(tmp_path)
+    (tmp_path / "study.log").write_text("  learn: validate \u2014 Chromium: 9/9 types ok\n")
+    assert clone._no_browser_why(tmp_path) == ""
+
+
+def test_a_new_study_after_a_stop_keeps_the_look_studio_saw_and_the_answers(approved):
+    """Retrying the stopped ifology study offered the plain recipe: the look (and its drawn route) was left behind."""
+    one = clone.prepare(approved.home, approved.spec, approved.proof, approved.bridge)
+    folder = approved.home / "output/cr-style-clone" / one["operation_id"]
+    saved = clone._read(folder / "operation.json")
+    saved["spec"].update(look_id="lk_" + "a" * 24, answers={"host": "No host"})
+    saved.update(state="failed", phase="validate", project_id=PROJECT)
+    clone._write(folder / "operation.json", saved)
+    retry = clone.status(approved.home, one["operation_id"], approved.bridge)["retry_spec"]
+    assert retry["look_id"] == "lk_" + "a" * 24 and retry["answers"] == {"host": "No host"}

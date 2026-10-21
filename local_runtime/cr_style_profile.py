@@ -163,6 +163,16 @@ def watched_summary(watch: dict) -> dict:
         if s.get("polish"):
             pol[str(s["polish"]).lower()] += ln
     total = sum(max(0.2, _num(s.get("len_s"), 1.0)) for s in shots) or 1.0
+    # how the 3D pictures' people are built, as Gemini saw them in each window, weighted by that window's seconds of
+    # 3D (a window with one 3D close-up says little about the channel's cast)
+    people_3d = defaultdict(float)
+    for lg in logs:
+        verdict = lg.get("people_3d")
+        if verdict in ("faceless", "designed", "no_people"):
+            seconds = sum(max(0.2, _num(sh.get("len_s"), 1.0)) for sh in lg.get("shots") or []
+                          if isinstance(sh, dict)
+                          and SOURCE_FAMILY.get(str(sh.get("source") or "").lower()) == "3d")
+            people_3d[verdict] += seconds or 1.0
     recurring = []
     for lg in logs:
         for r in lg.get("recurring") or []:
@@ -206,6 +216,7 @@ def watched_summary(watch: dict) -> dict:
         "art_style": _dedupe([lg.get("art_style") for lg in logs], 3),
         "lettering": _majority([lg.get("lettering") for lg in logs]),
         "recurring": _merge_people(recurring),
+        "people_3d": _shares(people_3d), "people_3d_s": {k: round(v, 1) for k, v in people_3d.items()},
         "presenter": {"on_camera": _mean([_num(p.get("on_camera_share")) for p in presenter]),
                       "in_pictures": _mean([_num(p.get("pictures_share")) for p in presenter]),
                       "opening": opening_p, "middle": later_p}
@@ -307,6 +318,14 @@ def _mean(values):
     return round(sum(values) / len(values), 3) if values else None
 
 
+def _pooled(rows: list) -> dict:
+    out = defaultdict(float)
+    for row in rows:
+        for k, v in (row or {}).items():
+            out[k] += _num(v)
+    return dict(out)
+
+
 def _mean_shares(rows: list) -> dict:
     rows = [r for r in rows if r]
     if not rows:
@@ -352,6 +371,9 @@ def build(references: list) -> dict:
                         ["watched"] if has_w else [], shots=_mean_shares([s.get("polish_shots") for s in seen]),
                         notes=_dedupe([n for s in seen for n in s.get("polish_notes") or []], 2),
                         note="cinematic, clean (advert-like), candid (everyday phone camera) or lo-fi"),
+        # pooled by seconds of 3D across the references, so a reference with a sliver of 3D weighs that little
+        "people_3d": _axis(_shares(_pooled([s.get("people_3d_s") for s in seen])),
+                           0.7 if any(s.get("people_3d_s") for s in seen) else 0, ["watched"]),
         "characters": _axis([p for s in seen for p in s.get("recurring") or []][:6],
                             0.7 if any(s.get("recurring") for s in seen) else 0.4 if has_w else 0,
                             ["watched"] if has_w else []),

@@ -1,4 +1,5 @@
 """From a Style Profile to Studio settings: the right base, the learned channel's own look, and no inherited cast."""
+import json
 import sys
 from pathlib import Path
 
@@ -194,7 +195,9 @@ def test_what_the_3d_engine_can_build():
 # characters are faceless. Both are exactly what the 3D engine builds.
 LOW_POLY = {"pictures__art_style": axis("Minimalist low-poly 3D reconstruction with featureless white and blue "
                                         "mannequin figures", alternatives=["stylized toy-like scale model"])}
-MANNEQUIN_LEAD = {"pictures__art_style": axis("Stylized smooth 3D renders with faceless mannequin-like human figures"),
+MANNEQUIN_LEAD = {"pictures__art_style": axis("Stylized smooth 3D renders with faceless mannequin-like human figures",
+                                             alternatives=["Photorealistic 3D character and environment CGI with moody "
+                                                           "lighting, contrasted with flat 2000s desktop OS windows"]),
                   "pictures__characters": axis([{"name": "Jonathan", "role": "character", "screen_share": 0.288,
                                                  "look": "Featureless chrome/blank mannequin face, grey suit"}])}
 
@@ -358,3 +361,76 @@ def test_an_explainer_acts_its_ideas_out_and_a_story_shows_each_line():
     documentary = profile({"footage": 0.8, "graphic": 0.2}, **{"text__density": axis({"none": 0.9, "label": 0.1})})
     assert "storyboard" not in (cm.plan_style(documentary, STYLES)["overrides"].get("look") or {}), \
         "a channel whose pictures set a mood keeps its recipe's storyboard"
+
+
+ROUTE_CASES = json.loads((Path(__file__).parent / "fixtures" / "route_3d_cases.json").read_text())["cases"]
+
+
+def _case_profile(case):
+    looks = [{"look": x, "share": 0.3} for x in case.get("shot_looks") or []]
+    p = profile({"3d": 0.8, "graphic": 0.2}, {"3d_render": 0.8}, **{
+        "pictures__art_style": axis(case["art_style"], alternatives=case.get("alternatives") or [], looks=looks),
+        "pictures__characters": axis(case.get("characters") or [])})
+    p["recognisable"] = case.get("recognisable") or []
+    return p
+
+
+@pytest.mark.parametrize("case", ROUTE_CASES, ids=lambda c: c["family"] + ":" + c["art_style"][:40])
+def test_looks_saved_before_gemini_judged_the_3d_people_are_routed_by_their_words(case):
+    """Studio 72's keywords sent 24 of the first 56 to the wrong engine (7 of 12 ifology wordings onto mannequins).
+    The rest were written later to break the words; the few still missed go the drawn route, never onto mannequins."""
+    if case.get("known_miss"):
+        pytest.xfail(case["known_miss"])
+    engine = cm.plan_style(_case_profile(case), STYLES)["route"]["engine"]
+    assert engine == case["expected"], case["why"]
+
+
+def test_geminis_own_verdict_on_the_3d_people_decides_over_the_words():
+    faceless_words = {"pictures__art_style": axis("Low-poly cel-shaded 3D with black round featureless heads."),
+                      "pictures__people_3d": axis({"designed": 0.8, "no_people": 0.2})}
+    assert cm.plan_style(profile({"3d": 0.85}, **faceless_words), STYLES)["route"]["engine"] == "drawn"
+    seen_faceless = {**IFOLOGY, "pictures__people_3d": axis({"faceless": 0.9, "designed": 0.1})}
+    assert cm.plan_style(profile({"3d": 0.85}, **seen_faceless), STYLES)["route"]["engine"] == "threed"
+
+
+def test_small_white_eyes_are_not_an_all_white_world():
+    tiny = profile({"3d": 0.8}, **{"pictures__art_style": axis("Low-poly 3D: figures with black ball heads and small "
+                                                               "white eyes, bright jackets.")})
+    assert not cm._white_3d(tiny) and cm.plan_style(tiny, STYLES)["route"]["engine"] == "drawn"
+    assert cm._white_3d(profile({"3d": 0.8}, **{"pictures__art_style": axis("All-white matte 3D world.")}))
+
+
+def test_the_real_ifology_look_is_drawn_whichever_way_gemini_words_its_heads():
+    """Gemini's own words for @ifologyfilms on 2026-10-21, including one character it called "featureless"."""
+    real = {"pictures__art_style": axis("Minimalist low-poly 3D cel-shaded animation featuring black-headed stick "
+                                        "figures with simple dot eyes and flat-colored jackets, interspersed with sleek "
+                                        "2D neon vector science diagrams."),
+            "pictures__characters": axis([
+                {"name": "Protagonist", "look": "Black sphere head, minimalist dot eyes/mouth, yellow zip jacket, black "
+                 "stick limbs", "role": "character", "screen_share": 0.436},
+                {"name": "Protagonist", "look": "black round featureless head with expressive white eye slits, gray "
+                 "hoodie, black pants", "role": "character", "screen_share": 0.665}])}
+    plan = cm.plan_style(profile({"3d": 0.868, "graphic": 0.111}, **real), STYLES)
+    assert plan["base"] == "stories" and plan["route"]["engine"] == "drawn"
+    only_featureless = {**real, "pictures__art_style": axis("Low-poly cel-shaded 3D animation."),
+                        "pictures__characters": axis([real["pictures__characters"]["value"][1]])}
+    assert cm.plan_style(profile({"3d": 0.868}, **only_featureless), STYLES)["route"]["engine"] == "drawn", \
+        "eye slits are a face, even on a head Gemini calls featureless"
+
+
+@pytest.mark.parametrize("words", [
+    "Low-poly 3D reconstructions with grey mannequins with featureless white faces.",
+    "Faceless 3D mannequins in real places, with simple features such as a nose ridge.",
+    "Grey mannequin figures with blank expressions in a realistic 3D town.",
+    "Faceless grey 3D figures in real places; iris wipe transitions between scenes.",
+])
+def test_words_about_a_blank_face_are_not_a_designed_cast(words):
+    assert cm.plan_style(profile({"3d": 0.6}, **{"pictures__art_style": axis(words)}), STYLES)["route"]["engine"] \
+        == "threed"
+
+
+def test_a_designed_mascot_that_talks_to_camera_is_still_a_designed_cast():
+    fox = {"pictures__art_style": axis("Bright stylized 3D animation in a cosy room."),
+           "pictures__characters": axis([{"name": "Fox", "look": "3D cartoon fox mascot with big eyes who talks to "
+                                          "camera", "role": "mascot", "screen_share": 0.5}])}
+    assert cm.plan_style(profile({"3d": 0.8}, **fox), STYLES)["route"]["engine"] == "drawn"

@@ -1,5 +1,15 @@
 [
   {
+    "build": 73,
+    "date": "2026-10-21",
+    "title": "Every 3D look cloned the right way",
+    "items": [
+      "Improved: when Studio watches a 3D channel, it now checks whether its characters are faceless figures or a designed cast with faces of their own, and picks how to make them from what it saw. Channels with dot-eyed, sphere-headed, avatar, clay or cartoon characters are drawn in their own look; faceless reconstruction channels keep Studio's 3D engine.",
+      "Fixed: a look that mentioned \"small white\" anything was treated as an all-white 3D world.",
+      "Improved: Studio checks your Mac has enough free disk space and memory before a style study starts, instead of stopping after the study's Claude work. Starting again after a stop keeps the look Studio saw and your answers."
+    ]
+  },
+  {
     "build": 72,
     "date": "2026-10-21",
     "title": "Style clones that look like the channel",

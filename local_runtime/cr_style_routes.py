@@ -106,6 +106,9 @@ def install(studio, activity, setup_status, *, token, home=None):
             raise RuntimeError("Use Save completed style to finish this saved metadata operation. No new study is required.")
         if saved["state"] != "prepared":
             return safe_status(operation)
+        room = cr_style_clone._room()          # every way a study starts (start, continue, refine): room to check
+        if room:
+            raise RuntimeError(room)
         reservation = activity.reserve()
         location = launch_path(operation)
         def work():

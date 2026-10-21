@@ -1,0 +1,3069 @@
+{
+ "about": "Gemini-style descriptions of 3D channels (written to stress the router), each with the engine it needs: threed (Studio's 3D engine: faceless mannequins, places) or drawn (a designed cast).",
+ "cases": [
+  {
+   "family": "ifology",
+   "expected": "drawn",
+   "art_style": "Bright low-poly 3D with flat pastel shading and soft contact shadows; characters are simple toy-like figures with an oversized solid black sphere for a head, tiny white dot eyes and a line mouth, colored jackets and thin black legs, placed in clean simplified sets.",
+   "alternatives": [
+    "low-poly 3D cartoon",
+    "simple 3D explainer render"
+   ],
+   "shot_looks": [
+    "low-poly 3D, flat pastel",
+    "low-poly 3D, bright saturated, soft shadows",
+    "simple 3D render, wide shot, clean lighting"
+   ],
+   "characters": [
+    {
+     "name": "Protagonist",
+     "look": "black sphere head with white dot eyes and small white line mouth, red jacket, thin black legs",
+     "role": "character",
+     "screen_share": 0.55
+    },
+    {
+     "name": "Scientist",
+     "look": "same black sphere head, white lab coat, white outline glasses drawn on the head",
+     "role": "character",
+     "screen_share": 0.15
+    }
+   ],
+   "recognisable": [
+    "\"What if you could...\" title premise",
+    "black sphere-headed figures",
+    "bright low-poly worlds"
+   ],
+   "why": "Designed cartoon figures with faces on a stylised sphere head; the 3D engine's plain white mannequins would lose the signature look."
+  },
+  {
+   "family": "ifology",
+   "expected": "drawn",
+   "art_style": "Clean stylised 3D animation with a low polygon count and vivid flat colours. People appear as silhouette-like figures: a glossy jet-black head showing only two small white eyes and a tiny mouth, a brightly coloured coat, and spindly dark legs. Backgrounds are simplified cities, labs and landscapes under even daylight.",
+   "alternatives": [
+    "silhouette characters in 3D",
+    "minimal 3D motion graphics"
+   ],
+   "shot_looks": [
+    "stylised 3D, vivid flat colour, silhouette characters",
+    "3D render, even daylight, simplified city street"
+   ],
+   "characters": [
+    {
+     "name": "The Guy",
+     "look": "silhouette figure, glossy black head, white pinprick eyes, yellow puffer jacket, spindly black legs",
+     "role": "character",
+     "screen_share": 0.5
+    }
+   ],
+   "recognisable": [
+    "dark silhouette people in colourful coats",
+    "hypothetical 'what if' scenarios",
+    "bright simplified 3D sets",
+    "fast cuts with big captions"
+   ],
+   "why": "'Silhouette' here means a designed black-headed character with eyes and a mouth, not a faceless reconstruction mannequin."
+  },
+  {
+   "family": "ifology",
+   "expected": "drawn",
+   "art_style": "Smooth matte 3D render with low-poly props and terrain, a saturated primary palette and soft global illumination. Each character has a large pitch-black orb for a head carrying a white emoticon face (two dots and a curved stroke), a chunky coloured jacket and wire-thin black legs.",
+   "alternatives": [
+    "emoji-faced 3D characters",
+    "toy-like 3D animation"
+   ],
+   "shot_looks": [
+    "matte 3D render, low-poly, saturated primaries",
+    "3D close-up, soft GI, emoticon face changes expression"
+   ],
+   "characters": [
+    {
+     "name": "You",
+     "look": "pitch-black orb head with white emoticon face, teal jacket, wire-thin black legs",
+     "role": "character",
+     "screen_share": 0.65
+    },
+    {
+     "name": "Crowd",
+     "look": "same orb-headed figures in assorted jacket colours",
+     "role": "character",
+     "screen_share": 0.2
+    }
+   ],
+   "recognisable": [
+    "emoticon faces on black orb heads",
+    "second-person 'you' scenarios",
+    "toy-bright low-poly scenery"
+   ],
+   "why": "Emoticon faces on stylised orb heads are a designed avatar that the mannequin engine cannot build."
+  },
+  {
+   "family": "ifology",
+   "expected": "drawn",
+   "art_style": "3D stickman animation: figures with thick black ball heads, small white eyes and a mouth, colored zip-up jackets over stick bodies and skinny black legs, rendered in a bright low-poly world with simple ambient lighting and minimal textures.",
+   "alternatives": [
+    "3D stick figure animation",
+    "stickman explainer"
+   ],
+   "shot_looks": [
+    "3D stick figure, low-poly, bright ambient light",
+    "stick figure 3D, wide establishing shot, minimal textures"
+   ],
+   "characters": [
+    {
+     "name": "Stickman",
+     "look": "3D stick figure, black ball head with white dot eyes and mouth, green zip jacket, skinny black legs",
+     "role": "character",
+     "screen_share": 0.7
+    }
+   ],
+   "recognisable": [
+    "3D stickmen in jackets",
+    "\"What would happen if...\" story hooks",
+    "minimal low-poly environments"
+   ],
+   "why": "Stick-figure 3D with black ball heads and drawn features is a designed cast, so it belongs on the drawn route."
+  },
+  {
+   "family": "ifology",
+   "expected": "drawn",
+   "art_style": "Low-poly 3D with a bright, slightly desaturated pastel palette and flat shading. From a distance the figures look almost faceless, just a dark spherical head on a coloured torso with thin dark legs, but close-ups reveal tiny white eyes and a small mouth. Scenes are simplified real-world places such as streets, apartments and deserts.",
+   "alternatives": [
+    "faceless-looking low-poly figures",
+    "simplified 3D people"
+   ],
+   "shot_looks": [
+    "low-poly 3D, pastel flat shading, wide shot, figures read as dark heads",
+    "low-poly 3D close-up, tiny white eyes visible on black head"
+   ],
+   "characters": [
+    {
+     "name": "Main character",
+     "look": "near-featureless dark sphere head (tiny white eyes and small mouth in close-ups), mustard jacket, thin dark legs",
+     "role": "character",
+     "screen_share": 0.5
+    }
+   ],
+   "recognisable": [
+    "faceless-looking dark-headed people",
+    "simple low-poly real-world places",
+    "\"Could you survive...\" scenarios"
+   ],
+   "why": "The heads only look faceless from far away; they are designed black spheres with eyes, which a plain white mannequin would not match."
+  },
+  {
+   "family": "ifology",
+   "expected": "drawn",
+   "art_style": "Minimalist 3D render with low-polygon models and clean bright lighting with soft shadows. The people are anonymous, generic figures with no hair or skin: a blank matt-black ball for a head marked only by two white dots and a short white line, plain coloured jackets and slim black legs, acting out reconstruction-style scenes in everyday places.",
+   "alternatives": [
+    "generic 3D figures",
+    "anonymous minimalist characters"
+   ],
+   "shot_looks": [
+    "minimalist 3D, low-poly, bright soft shadows",
+    "3D overhead shot, generic figures, everyday room"
+   ],
+   "characters": [
+    {
+     "name": "Person",
+     "look": "generic figure, matt-black ball head with two white dots and a short white line, blue jacket, slim black legs",
+     "role": "character",
+     "screen_share": 0.45
+    },
+    {
+     "name": "Doctor",
+     "look": "same black ball head, white coat, stethoscope",
+     "role": "character",
+     "screen_share": 0.1
+    }
+   ],
+   "recognisable": [
+    "anonymous black-headed people",
+    "everyday situations pushed to extremes",
+    "clean low-poly rooms"
+   ],
+   "why": "Despite the 'anonymous' and 'reconstruction-style' wording, the black ball heads with dot faces are a designed character look, not a grey mannequin."
+  },
+  {
+   "family": "ifology",
+   "expected": "drawn",
+   "art_style": "Cheerful low-poly 3D animation with a bright, sunny grade and matt, untextured surfaces in saturated colours. The cast are little figures with large jet-black spherical heads, two tiny white eyes and a small white mouth, colourful jackets or jumpers and very thin black legs, set against simplified countryside, city and space backdrops with gentle soft shadows.",
+   "alternatives": [
+    "colourful low-poly 3D cartoon",
+    "simplified 3D explainer style"
+   ],
+   "shot_looks": [
+    "low-poly 3D, matt saturated colour, soft shadows",
+    "low-poly 3D space scene, stylised planet, dark sky",
+    "3D medium shot, bright sunny grade"
+   ],
+   "characters": [
+    {
+     "name": "Hero",
+     "look": "little figure, large jet-black spherical head, tiny white eyes and mouth, red jumper, very thin black legs",
+     "role": "character",
+     "screen_share": 0.55
+    }
+   ],
+   "recognisable": [
+    "little black-headed figures in bright jumpers",
+    "'What if you could...' premises",
+    "sunny low-poly worlds",
+    "punchy narrator with quick cuts"
+   ],
+   "why": "A stylised cartoon cast with faces on oversized black heads needs the image model to keep the channel's exact look."
+  },
+  {
+   "family": "ifology",
+   "expected": "drawn",
+   "art_style": "Real-time style 3D render with a Blender Eevee look: flat-shaded low-poly meshes, unlit-looking black emissive sphere heads with white decal eyes and mouth, solid diffuse materials on the jackets, black cylinder legs, bright HDRI sky lighting, mild ambient occlusion and a wide-angle virtual camera.",
+   "alternatives": [
+    "Eevee low-poly render",
+    "game-engine 3D animation"
+   ],
+   "shot_looks": [
+    "Eevee-like real-time render, flat-shaded low-poly, HDRI daylight",
+    "wide-angle 3D camera, ambient occlusion, solid diffuse materials"
+   ],
+   "characters": [
+    {
+     "name": "Character A",
+     "look": "black emissive sphere head, white decal eyes and mouth, purple jacket, black cylinder legs",
+     "role": "character",
+     "screen_share": 0.5
+    },
+    {
+     "name": "Character B",
+     "look": "black sphere head, white decal face, orange jacket, black cylinder legs",
+     "role": "character",
+     "screen_share": 0.2
+    }
+   ],
+   "recognisable": [
+    "sphere-headed characters with decal faces",
+    "flat-shaded low-poly sets",
+    "hypothetical 'what if' narration"
+   ],
+   "why": "Technical render words aside, the decal-faced black sphere heads are a designed avatar, not a faceless white or grey figure."
+  },
+  {
+   "family": "ifology",
+   "expected": "drawn",
+   "art_style": "Stylised 3D that looks like a mobile game: chunky low-poly props, candy-bright colours and soft shading. Characters have heads like shiny black bowling balls with little white eyes and a smile, puffy coloured jackets and pencil-thin black legs.",
+   "alternatives": [
+    "mobile game cutscene look",
+    "chibi 3D characters"
+   ],
+   "shot_looks": [
+    "game-like 3D, candy colours, low-poly",
+    "3D close-up, shiny black head with white eyes and smile"
+   ],
+   "characters": [
+    {
+     "name": "Player",
+     "look": "bowling-ball-black head, little white eyes and smile, puffy pink jacket, pencil-thin black legs",
+     "role": "character",
+     "screen_share": 0.6
+    }
+   ],
+   "recognisable": [
+    "bowling-ball heads",
+    "bright game-cutscene sets",
+    "\"What would happen if...\" titles"
+   ],
+   "why": "A game-avatar cast with smiling black bowling-ball heads belongs on the drawn route."
+  },
+  {
+   "family": "ifology",
+   "expected": "drawn",
+   "art_style": "Simple 3D cartoon with low-poly geometry and flat bright colour. Characters use a minimal face design: a big black head with two white dot eyes and a dash mouth, no nose, ears or hair; each body is a coloured jacket on thin black legs. Clean daylight, light soft shadows and simplified props.",
+   "alternatives": [
+    "minimal-face 3D cartoon",
+    "flat-colour low-poly animation"
+   ],
+   "shot_looks": [
+    "simple 3D cartoon, low-poly, flat bright colour",
+    "3D two-shot, clean daylight, minimal faces"
+   ],
+   "characters": [
+    {
+     "name": "Channel mascot",
+     "look": "big black head, white dot eyes, dash mouth, no hair, yellow jacket, thin black legs",
+     "role": "mascot",
+     "screen_share": 0.5
+    },
+    {
+     "name": "Girlfriend",
+     "look": "same black head with white dot eyes plus white eyelash marks, pink jacket, thin black legs",
+     "role": "character",
+     "screen_share": 0.15
+    }
+   ],
+   "recognisable": [
+    "minimal dot-eyed black heads",
+    "the same yellow-jacket hero in every video",
+    "\"What if you could...\" hooks"
+   ],
+   "why": "A recurring mascot with a designed minimal face is a cartoon character, not a reconstruction mannequin."
+  },
+  {
+   "family": "ifology",
+   "expected": "drawn",
+   "art_style": "Low-poly 3D. Bright colours. Ink-black head spheres with small white features on simple jacketed bodies.",
+   "alternatives": [],
+   "shot_looks": [
+    "low-poly 3D, bright"
+   ],
+   "characters": [],
+   "recognisable": [
+    "black-headed little people",
+    "low-poly 3D",
+    "what-if scenarios"
+   ],
+   "why": "Even with no named characters, the terse art_style describes designed head spheres with faces, so it should go drawn."
+  },
+  {
+   "family": "ifology",
+   "expected": "drawn",
+   "art_style": "Polished low-poly 3D in a diorama look, with near tilt-shift framing, bright cheerful lighting and smooth sky gradients. The people look like small doll-like puppets: an oversized black marble for a head with simple white eyes and a mouth that often change expression, a boxy coloured jacket and two skinny black legs without feet detail. Crowds read as rows of dark dots.",
+   "alternatives": [
+    "diorama-style 3D",
+    "puppet-like 3D figures"
+   ],
+   "shot_looks": [
+    "low-poly 3D diorama, tilt-shift framing, bright light",
+    "3D crowd shot, rows of black heads",
+    "low-poly 3D, sky gradient, medium shot"
+   ],
+   "characters": [
+    {
+     "name": "Main puppet",
+     "look": "doll-like figure, oversized black marble head, white eyes and mouth that change expression, boxy teal jacket, skinny black legs",
+     "role": "character",
+     "screen_share": 0.5
+    },
+    {
+     "name": "Villain",
+     "look": "same black marble head with angled white brows, black suit, skinny black legs",
+     "role": "character",
+     "screen_share": 0.15
+    }
+   ],
+   "recognisable": [
+    "puppets with black marble heads",
+    "toy diorama worlds",
+    "crowds as rows of dark dots",
+    "\"What if...\" narration"
+   ],
+   "why": "Expressive puppet figures with designed marble heads need the image model, not plain mannequins."
+  },
+  {
+   "family": "game-avatars",
+   "expected": "drawn",
+   "art_style": "Polished Blender-Cycles-style CGI Shorts: chunky studded-toy avatars with cylinder heads, printed decal smiles and rigid block limbs, posed in softly bounced daylight interiors with gentle depth of field and saturated plastic albedo.",
+   "alternatives": [
+    "Roblox-inspired 3D animation, smooth lighting, toy-like characters",
+    "High-quality fan animation of a block-avatar sandbox game"
+   ],
+   "shot_looks": [
+    "3D CGI, glossy plastic shading, warm HDRI fill, shallow DOF",
+    "wide 3D render, subtle ambient occlusion, pastel suburban kitchen",
+    "extreme close-up on decal face, creamy bokeh, slight motion blur"
+   ],
+   "characters": [
+    {
+     "name": "Noob",
+     "look": "yellow cylinder head and arms, blue boxy torso, green legs, classic smiley decal with two oval eyes",
+     "role": "character",
+     "screen_share": 0.7
+    },
+    {
+     "name": "Bacon Hair",
+     "look": "boxy avatar with a stringy brown 'bacon' hair mesh, black tee, grey trousers, wide-eyed decal",
+     "role": "character",
+     "screen_share": 0.45
+    }
+   ],
+   "recognisable": [
+    "block-avatar gags capped with an 'oof' sound",
+    "decal faces that swap expression mid-shot",
+    "cinematic lighting on toy-like figures",
+    "sudden punch-in zooms on the punchline"
+   ],
+   "why": "The cast are designed game avatars (cylinder heads, decal expressions), the @gneef look, which faceless mannequins can't match."
+  },
+  {
+   "family": "game-avatars",
+   "expected": "drawn",
+   "art_style": "Stylized voxel CG: cube-headed humanoids wearing crisp pixelated 16x16 skins (nearest-neighbor, no smoothing), blocky biome terrain lit by shader-pack sunlight with volumetric god rays and mirror-like water.",
+   "alternatives": [
+    "Minecraft animation with RTX-style shaders"
+   ],
+   "shot_looks": [
+    "voxel 3D, ray-traced shader look, warm sunset bloom",
+    "inside an oak-plank cabin, torchlight flicker, pixel textures",
+    "low-angle hero shot of square-limbed figure, hard shadows"
+   ],
+   "characters": [
+    {
+     "name": "Steve",
+     "look": "square head, cyan shirt, indigo pants, brown pixel hair and goatee, eyes as two-pixel white-and-blue squares",
+     "role": "character",
+     "screen_share": 0.6
+    },
+    {
+     "name": "Villager",
+     "look": "bald cuboid head with a long protruding nose, single unibrow, green eyes, brown robe with folded arms",
+     "role": "character",
+     "screen_share": 0.3
+    },
+    {
+     "name": "Creeper",
+     "look": "mottled green pixel body on four stubby legs, frowning black pixel face",
+     "role": "character",
+     "screen_share": 0.15
+    }
+   ],
+   "recognisable": [
+    "pixel-skinned cube cast",
+    "golden-hour shader lighting",
+    "creeper hiss right before every twist",
+    "mining and crafting sound effects"
+   ],
+   "why": "The characters are designed pixel-texture game figures with fixed faces, so the image model has to keep the voxel look."
+  },
+  {
+   "family": "game-avatars",
+   "expected": "drawn",
+   "art_style": "Bright stylised battle-royale CG: heroic chunky proportions, oversized gloves and boots, smooth hand-painted textures with soft cel-banded shading, punchy rim light and Unreal-style bloom over toy-coloured islands.",
+   "alternatives": [
+    "Fortnite-like 3D animation",
+    "cartoony third-person shooter game render"
+   ],
+   "shot_looks": [
+    "game-engine render, saturated teal/orange grade, lens flare",
+    "close-up on exaggerated rubbery expression, squash-and-stretch pose",
+    "drone-style wide of floating island, purple storm wall"
+   ],
+   "characters": [
+    {
+     "name": "Banana Guy",
+     "look": "tall full-body banana costume with peeled top, dot eyes, huge open-mouthed grin, black gloves",
+     "role": "mascot",
+     "screen_share": 0.5
+    },
+    {
+     "name": "Jonesy",
+     "look": "square-jawed soldier, brown buzzcut, stubble, olive tactical vest, cocky smirk",
+     "role": "character",
+     "screen_share": 0.4
+    }
+   ],
+   "recognisable": [
+    "victory-dance emote endings",
+    "llama pinata loot drops",
+    "purple storm closing in",
+    "goofy banana mascot reactions"
+   ],
+   "why": "The cast are designed cartoon skins with expressive faces, and mannequin figures would lose their whole identity."
+  },
+  {
+   "family": "game-avatars",
+   "expected": "drawn",
+   "art_style": "Toon-shaded anime doll models (MMD/VRoid feel) with outsized glossy eyes, flat two-tone skin, thin inverted-hull ink outlines, pastel gradient skies and bedroom or classroom sets.",
+   "alternatives": [
+    "Gacha Club characters remade as 3D anime models",
+    "cel-shaded 3D anime avatars"
+   ],
+   "shot_looks": [
+    "3D anime cel shading, outlined, pink-lilac palette",
+    "medium shot with sparkle particles and speed lines",
+    "chibi-proportion reaction shot with sweat-drop sticker overlay"
+   ],
+   "characters": [
+    {
+     "name": "Luna",
+     "look": "lavender twin tails with star clips, huge heterochromatic eyes (gold/blue), oversized cat-ear hoodie",
+     "role": "character",
+     "screen_share": 0.65
+    },
+    {
+     "name": "Kai",
+     "look": "spiky black hair with a red streak, half-lidded crimson eyes, choker, open jacket",
+     "role": "character",
+     "screen_share": 0.35
+    }
+   ],
+   "recognisable": [
+    "giant sparkling anime eyes",
+    "melodramatic gacha romance plots",
+    "text-to-speech voices",
+    "pastel bedroom and school sets"
+   ],
+   "why": "These are stylised anime avatars with specific hair and eye designs, which only an image model can hold."
+  },
+  {
+   "family": "game-avatars",
+   "expected": "drawn",
+   "art_style": "Straight in-game capture of a sandbox roleplay town: blocky avatars with layered clothing and animated dynamic heads, default engine lighting with flat soft shadows, simple bevelled houses and smooth plastic terrain, no post-processing at all.",
+   "alternatives": [
+    "Roblox Brookhaven roleplay gameplay",
+    "plain game footage, neutral lighting"
+   ],
+   "shot_looks": [
+    "game capture, flat neutral light, low detail",
+    "third-person over-the-shoulder on a suburban street, chat bubbles overhead",
+    "plain house interior, grey floor, bright default skybox"
+   ],
+   "characters": [
+    {
+     "name": "Mia",
+     "look": "slim layered avatar, long blonde hair accessory, pink crop top, animated head with lashes and blush that blinks",
+     "role": "character",
+     "screen_share": 0.55
+    },
+    {
+     "name": "Dad",
+     "look": "classic blocky body, grey hoodie, sunglasses decal face, slightly taller rig",
+     "role": "character",
+     "screen_share": 0.3
+    }
+   ],
+   "recognisable": [
+    "overhead chat bubbles carry the dialogue",
+    "roleplay family drama",
+    "TTS narration",
+    "sad piano at the twist"
+   ],
+   "why": "Even under plain default lighting the avatars are designed game characters with faces, and the drawn route keeps the in-game look."
+  },
+  {
+   "family": "game-avatars",
+   "expected": "drawn",
+   "art_style": "Dim, foggy 3D renders of plain grey faceless figures assembled from rectangular blocks, a short cylinder for a head and no features whatsoever, drifting through liminal tiled corridors; soft volumetric haze, cold fluorescent light, VHS grain over everything.",
+   "alternatives": [
+    "Roblox horror animation with a default faceless avatar",
+    "liminal backrooms CGI"
+   ],
+   "shot_looks": [
+    "3D render, desaturated grey-teal, thick fog, VHS noise",
+    "first-person corridor walk under flickering tube lights",
+    "block figure silhouetted at the end of a hallway, chromatic aberration"
+   ],
+   "characters": [
+    {
+     "name": "Guest",
+     "look": "untextured light-grey blocky avatar, cylinder head with no decal, stiff rectangular arms and legs, stands unnaturally still",
+     "role": "character",
+     "screen_share": 0.5
+    },
+    {
+     "name": "The Smiler",
+     "look": "tall black block figure whose only feature is a too-wide white grin decal",
+     "role": "character",
+     "screen_share": 0.2
+    }
+   ],
+   "recognisable": [
+    "faceless grey block figures",
+    "liminal pool-room and hallway sets",
+    "VHS timestamp overlay",
+    "low drone cut by sudden silence"
+   ],
+   "why": "Here 'faceless' and 'plain grey' describe a blocky game-avatar design in invented game spaces, not a realistic mannequin in a real place, and the block proportions and grin decal need the drawn route."
+  },
+  {
+   "family": "game-avatars",
+   "expected": "drawn",
+   "art_style": "Smooth 3D cartoon renders of bean-shaped space crew with one wide reflective visor, a backpack hump and stubby legs, glossy single-color bodies under a soft studio key light, clean sci-fi spaceship rooms.",
+   "alternatives": [
+    "Among Us 3D animation",
+    "crewmate meme animation"
+   ],
+   "shot_looks": [
+    "3D cartoon, glossy specular, clean cyan-gray ship interior",
+    "top-down vent shot bathed in red emergency light",
+    "close-up of visor reflection, comedic freeze-frame"
+   ],
+   "characters": [
+    {
+     "name": "Red",
+     "look": "red capsule body, pale-blue visor with white highlight, no eyes or mouth, small backpack",
+     "role": "character",
+     "screen_share": 0.6
+    },
+    {
+     "name": "Mini Crewmate",
+     "look": "tiny lime crewmate pet trailing the others, same visor design",
+     "role": "character",
+     "screen_share": 0.15
+    }
+   ],
+   "recognisable": [
+    "'sus' impostor reveal",
+    "emergency meeting alarm",
+    "ejected-into-space text card",
+    "visor-only characters with no face"
+   ],
+   "why": "The characters have no features but are iconic designed game figures, and the bean silhouette and visor are the brand."
+  },
+  {
+   "family": "game-avatars",
+   "expected": "drawn",
+   "art_style": "Photoreal CG brickfilm: interlocking-brick sets and minifigure-style people with C-clip hands, studded cylindrical heads and printed expressions, slightly scuffed ABS plastic showing fingerprints, macro-lens shallow focus and warm practical lamps.",
+   "alternatives": [
+    "LEGO-style animation rendered in Blender",
+    "brickfilm with a 12fps stop-motion feel"
+   ],
+   "shot_looks": [
+    "macro 3D render, razor-thin DOF, plastic micro-scratches",
+    "wide of a brick-built city, tilt-shift miniature look",
+    "choppy on-twos animation, printed mouth swaps"
+   ],
+   "characters": [
+    {
+     "name": "Officer",
+     "look": "yellow minifig head with stud, printed moustache and frown, blue police torso print, peaked cap",
+     "role": "character",
+     "screen_share": 0.4
+    },
+    {
+     "name": "Bandit",
+     "look": "minifig in a black beanie, stubble print, striped prison shirt, smirk",
+     "role": "character",
+     "screen_share": 0.4
+    }
+   ],
+   "recognisable": [
+    "printed-face swaps for expressions",
+    "macro depth of field on plastic",
+    "stop-motion stepping",
+    "brick-built chase sets"
+   ],
+   "why": "Toy figures with printed faces and stud heads are a product design, and the drawn route must keep the brick-toy look."
+  },
+  {
+   "family": "game-avatars",
+   "expected": "drawn",
+   "art_style": "Low-poly VR-game look: chunky untextured ape avatars with long dangling arms, mostly featureless apart from two tiny dot eyes, flat-shaded forest of blocky trees, vertex colour lighting, no shadows or post effects.",
+   "alternatives": [
+    "Gorilla Tag animation",
+    "flat-shaded low-poly monkey game"
+   ],
+   "shot_looks": [
+    "low-poly 3D, flat colour fills, no textures, forest green",
+    "fish-eye first-person hands swinging",
+    "neon cosmetics on a plain brown body, bright sky"
+   ],
+   "characters": [
+    {
+     "name": "Monke",
+     "look": "chunky low-poly gorilla, flat brown or bright single-colour fill, long arms, tiny dot eyes and slit mouth, often a banana hat",
+     "role": "character",
+     "screen_share": 0.7
+    },
+    {
+     "name": "Lava Monke",
+     "look": "same rig glowing orange-red with ember particles",
+     "role": "character",
+     "screen_share": 0.25
+    }
+   ],
+   "recognisable": [
+    "arm-swinging locomotion",
+    "lava-monkey tag chases",
+    "cosmetic hats on plain apes",
+    "squeaky pitched-up voices"
+   ],
+   "why": "These are simplified but designed cartoon ape avatars in a game world, not a reconstruction of a real place."
+  },
+  {
+   "family": "game-avatars",
+   "expected": "drawn",
+   "art_style": "Candy-colored 3D party-game render: plump jellybean racers with stubby limbs and a small face peeking through a visor slot, dressed in costume skins; glossy toy shading, rounded obstacle courses, pastel sky, springy squash-and-stretch motion.",
+   "alternatives": [
+    "Fall Guys / Stumble Guys style animation"
+   ],
+   "shot_looks": [
+    "3D toy render, high-key pastel light, rubbery materials",
+    "wide of a spinning obstacle with dozens of beans tumbling",
+    "slow-mo fail shot with confetti burst"
+   ],
+   "characters": [
+    {
+     "name": "Pink Bean",
+     "look": "pink rounded bean body, white eye slot with two big black dot pupils, sometimes in a hot-dog costume",
+     "role": "character",
+     "screen_share": 0.55
+    },
+    {
+     "name": "Gold Bean",
+     "look": "metallic gold bean wearing a crown, smug half-lidded eyes",
+     "role": "character",
+     "screen_share": 0.2
+    }
+   ],
+   "recognisable": [
+    "jellybean racers tumbling",
+    "crown-grab finish",
+    "pastel obstacle courses",
+    "wobbly fail animations"
+   ],
+   "why": "These are designed toy avatars with eye slots and costumes, and a mannequin engine cannot make bean silhouettes."
+  },
+  {
+   "family": "cartoon-3d",
+   "expected": "drawn",
+   "art_style": "Feature-animation-grade CGI: stylised people with enlarged heads and slight torsos, glistening oversized irises, soft subsurface-scattered skin and apple-red cheeks; cosy interiors lit by warm volumetric window light, GI bounce and creamy shallow-focus bokeh.",
+   "alternatives": [
+    "family-film stylised 3D",
+    "animated-feature CG with exaggerated proportions"
+   ],
+   "shot_looks": [
+    "stylised CG, golden-hour rim light, shallow depth of field",
+    "glossy 3D render, wet glistening eyes in tight close-up, soft GI fill",
+    "warm interior render, dust motes in light shafts, gentle dolly"
+   ],
+   "characters": [
+    {
+     "name": "Grandma Rosie",
+     "look": "plump elderly woman, silver bun, round spectacles, rosy cheeks, huge watery blue eyes, chunky knitted cardigan",
+     "role": "character",
+     "screen_share": 0.55
+    },
+    {
+     "name": "Leo",
+     "look": "small boy with a mop of chestnut hair, gap-toothed grin, button nose, yellow raincoat",
+     "role": "character",
+     "screen_share": 0.35
+    }
+   ],
+   "recognisable": [
+    "tearjerker grandparent-and-grandchild stories",
+    "big-eyed stylised CG people",
+    "golden window light in every interior",
+    "slow piano under a soft female narrator"
+   ],
+   "why": "Designed stylised humans with expressive eyes and features; the mannequin engine cannot play them."
+  },
+  {
+   "family": "cartoon-3d",
+   "expected": "drawn",
+   "art_style": "Handmade stop-frame look: plasticine figures with visible thumbprint smudges and sculpting-tool marks, slightly stuttering on-twos movement, miniature cardboard-and-felt sets under warm practical lamps, macro shallow focus.",
+   "alternatives": [
+    "plasticine stop-motion",
+    "putty animation on tabletop sets"
+   ],
+   "shot_looks": [
+    "stop-motion plasticine, fingerprint texture, warm tungsten key",
+    "macro miniature set, shallow focus, faint frame jitter",
+    "replacement-mouth close-up, soft contact shadow"
+   ],
+   "characters": [
+    {
+     "name": "Gus",
+     "look": "lumpy mustard-yellow putty bloke, bulbous nose, wide flat mouth with swappable mouth shapes, googly white eyes with pinprick pupils, brown knitted jumper",
+     "role": "character",
+     "screen_share": 0.6
+    },
+    {
+     "name": "the Landlady",
+     "look": "tall lilac-grey clay woman, towering beehive, pursed lips, tiny bead eyes",
+     "role": "character",
+     "screen_share": 0.25
+    }
+   ],
+   "recognisable": [
+    "fingerprinted plasticine characters",
+    "choppy stop-frame motion",
+    "swap-mouth lip sync",
+    "cardboard miniature flats"
+   ],
+   "why": "Sculpted clay characters with designed features and a tactile handmade texture that only the image route can reproduce."
+  },
+  {
+   "family": "cartoon-3d",
+   "expected": "drawn",
+   "art_style": "Clean stylised 3D with a satin vinyl-toy finish: rounded pill-shaped forms, toon-ramp shading with soft ambient occlusion, pastel seamless cyclorama behind the host, flat even three-point studio light.",
+   "alternatives": [
+    "designer-toy 3D explainer",
+    "soft clay-render look with pastel accents"
+   ],
+   "shot_looks": [
+    "vinyl-figure CG, pastel cyc, even studio lighting",
+    "toon-ramp 3D, simplified props floating on white",
+    "stylised render, quick push-in on the host with squash-and-stretch"
+   ],
+   "characters": [
+    {
+     "name": "Pip",
+     "look": "small capsule-shaped tangerine body with stubby nub arms, two tall oval eyes, no nose, thin curved mouth line, lab-goggle headband",
+     "role": "mascot",
+     "screen_share": 0.7
+    }
+   ],
+   "recognisable": [
+    "orange capsule host in nearly every shot",
+    "pastel infinity-cove backdrops",
+    "props pop in with squash-and-stretch",
+    "a question card opens each video"
+   ],
+   "why": "A single designed host with eyes and expressions must be redrawn consistently; 'clay-render' here is a jargon trap, not plain grey models."
+  },
+  {
+   "family": "cartoon-3d",
+   "expected": "drawn",
+   "art_style": "Bright high-key preschool CG. Smooth untextured surfaces, primary colours, toddler figures with outsized heads and tiny limbs, simple suburban sets, flat ambient light with barely any shadow.",
+   "alternatives": [
+    "preschool sing-along animation"
+   ],
+   "shot_looks": [
+    "high-key 3D, flat ambient fill, saturated primaries",
+    "smooth CG, slow dolly, no surface detail"
+   ],
+   "characters": [
+    {
+     "name": "Bo",
+     "look": "toddler with an oversized round head, single upturned curl on top, big brown eyes, chubby cheeks, red striped T-shirt and blue dungarees",
+     "role": "character",
+     "screen_share": 0.65
+    },
+    {
+     "name": "Mum",
+     "look": "slender adult, long auburn ponytail, almond eyes, gentle smile, green cardigan",
+     "role": "character",
+     "screen_share": 0.2
+    },
+    {
+     "name": "Duck-Duck",
+     "look": "lemon-yellow rubber-duck plush with orange bill and dot eyes",
+     "role": "character",
+     "screen_share": 0.1
+    }
+   ],
+   "recognisable": [
+    "sing-along nursery rhymes",
+    "big-headed toddler lead",
+    "saturated primary palette",
+    "bouncing lyric captions along the bottom",
+    "the same back-garden set every episode"
+   ],
+   "why": "Designed toddler cast with features and a toy-like look; Studio's 3D figures would be blank mannequins."
+  },
+  {
+   "family": "cartoon-3d",
+   "expected": "drawn",
+   "art_style": "Hyper-real CGI with groomed fur simulation: upright anthropomorphic cats in human clothing, with human-like hands and expressive brows, placed in realistic apartments, hospital wards and rainy streets; cinematic teal-orange grade, anamorphic flares, shallow focus.",
+   "alternatives": [
+    "photoreal AI animal drama",
+    "live-action-style CG with animal leads"
+   ],
+   "shot_looks": [
+    "photoreal CG fur, cinematic grade, letterboxed",
+    "AI video, handheld drift, realistic hospital interior",
+    "tight close-up, wet glossy eyes with catchlights, soft rim light"
+   ],
+   "characters": [
+    {
+     "name": "Mama Cat",
+     "look": "ginger tabby standing on hind legs, pink apron, green eyes that well up, whiskers droop when sad",
+     "role": "character",
+     "screen_share": 0.45
+    },
+    {
+     "name": "Kitten",
+     "look": "tiny white-and-grey kitten in a blue onesie, oversized ears",
+     "role": "character",
+     "screen_share": 0.35
+    },
+    {
+     "name": "Boss Cat",
+     "look": "sleek black tom in a pinstripe suit, yellow slit pupils, gold chain",
+     "role": "character",
+     "screen_share": 0.15
+    }
+   ],
+   "recognisable": [
+    "humanised cats in tear-jerker plots",
+    "photoreal fur on bipedal animals",
+    "real-looking locations with animal actors",
+    "melancholy viral audio under captions"
+   ],
+   "why": "Despite photoreal sets, the leads are designed animal characters with emotive features, which mannequins cannot stand in for."
+  },
+  {
+   "family": "cartoon-3d",
+   "expected": "drawn",
+   "art_style": "Toy-brick animation with a macro-photography feel: minifigure-scale people with yellow cylindrical heads, printed eyebrows, stubble and smirks, claw hands, glossy ABS plastic with fine scuffs, studded baseplate battlefields, tilt-shift focus falloff.",
+   "alternatives": [
+    "brickfilm",
+    "interlocking-brick toy render"
+   ],
+   "shot_looks": [
+    "macro toy photography, glossy plastic, shallow focus",
+    "brick-built terrain, smoke puffs made of studs, low-angle wide",
+    "stop-motion cadence, printed expressions swapped between frames"
+   ],
+   "characters": [
+    {
+     "name": "Sergeant Miller",
+     "look": "minifig with an olive helmet, printed stubble and gritted-teeth grin, khaki torso print with webbing",
+     "role": "character",
+     "screen_share": 0.4
+    },
+    {
+     "name": "the Officer",
+     "look": "minifig in grey peaked cap, printed monocle and frown, long-coat torso piece",
+     "role": "character",
+     "screen_share": 0.2
+    }
+   ],
+   "recognisable": [
+    "historic battles rebuilt from toy bricks",
+    "printed-on minifigure expressions",
+    "macro depth of field on plastic",
+    "brick-built explosions"
+   ],
+   "why": "A history topic, but the people are toy minifigures with printed features; white mannequins would lose the whole look."
+  },
+  {
+   "family": "cartoon-3d",
+   "expected": "drawn",
+   "art_style": "Miniature-diorama 3D: collectible-figurine people at roughly 1:3 head-to-body, painted-on dot eyes and brows, matte resin finish, toy-scale terrain under soft museum-case top light, strong tilt-shift blur.",
+   "alternatives": [
+    "bobblehead history diorama"
+   ],
+   "shot_looks": [
+    "tilt-shift miniature, matte resin figurines, soft top light",
+    "toy-scale sand-table map, slow orbit",
+    "diorama close-up, painted features, shallow focus"
+   ],
+   "characters": [],
+   "recognisable": [
+    "history told with bobblehead figurines",
+    "tilt-shift tabletop battlefields",
+    "matte painted-resin finish",
+    "sand-table maps of Europe"
+   ],
+   "why": "There are no recurring characters and the topic is history, but every person is a stylised figurine with painted features, not a faceless reconstruction mannequin."
+  },
+  {
+   "family": "cartoon-3d",
+   "expected": "drawn",
+   "art_style": "Sleek product-render 3D, Octane-style polish: a matte-white humanoid with smooth panelled limbs and a black glass visor head that shows cyan pixel emoticons, standing in minimal grey studio spaces with soft-box reflections, HDRI lighting and floating holographic UI callouts.",
+   "alternatives": [
+    "clean tech-commercial CG",
+    "white-studio robot presenter"
+   ],
+   "shot_looks": [
+    "product-style render, grey seamless, soft-box reflections",
+    "turntable gadget shot, crisp PBR materials",
+    "medium shot of host, visor emote swap, subtle camera orbit"
+   ],
+   "characters": [
+    {
+     "name": "BYTE",
+     "look": "white panelled humanoid robot, rounded helmet with a glossy black visor showing two cyan pixel eyes that switch to ^_^ or >_<, orange stripe across the chest",
+     "role": "presenter",
+     "screen_share": 0.6
+    }
+   ],
+   "recognisable": [
+    "robot host with emoticon visor",
+    "grey seamless studio",
+    "gadget turntables",
+    "hologram UI labels"
+   ],
+   "why": "It looks like a white figure on grey, but the visor emotes and branded design are the character, and a plain engine model would drop them."
+  },
+  {
+   "family": "cartoon-3d",
+   "expected": "drawn",
+   "art_style": "Glossy generated CG: anthropomorphic fruit and veg with human limbs, lips and lashes, waxy specular skin beaded with dewdrops, staged in soap-opera kitchens, villas and courtrooms; punchy saturation, crash zooms and dramatic rim light.",
+   "alternatives": [
+    "produce soap-opera AI video"
+   ],
+   "shot_looks": [
+    "AI video, glossy CG, high saturation, crash zoom",
+    "dewdrop macro textures, hard rim light",
+    "villa set wide, reality-TV framing"
+   ],
+   "characters": [
+    {
+     "name": "Strawberry Girl",
+     "look": "plump red strawberry body with seed freckles, long lashes, glossy pink lips, leafy green crown worn like a fringe, slender human legs in heels",
+     "role": "character",
+     "screen_share": 0.4
+    },
+    {
+     "name": "Banana Guy",
+     "look": "tall curved banana, smug grin, thick brows, brown speckles, gym shorts",
+     "role": "character",
+     "screen_share": 0.35
+    },
+    {
+     "name": "Judge Pineapple",
+     "look": "spiky-crowned pineapple in black robes, half-moon glasses",
+     "role": "character",
+     "screen_share": 0.1
+    }
+   ],
+   "recognisable": [
+    "fruit soap opera with cheating plots",
+    "waxy dew-covered fruit skin",
+    "melodramatic zooms on every gasp",
+    "reality-dating-show captions"
+   ],
+   "why": "Every lead is a designed anthropomorphic character with features, so there is nothing for the mannequin engine to build."
+  },
+  {
+   "family": "cartoon-3d",
+   "expected": "drawn",
+   "art_style": "Tactile handcrafted miniature: needle-felted wool creatures with fuzzy halo fibres catching the rim light, glass-bead eyes and stitched mouths, moss-and-twig woodland dioramas, candlelit amber palette, macro depth of field with a slow drifting camera.",
+   "alternatives": [
+    "wool stop-motion",
+    "felt-craft miniature animation"
+   ],
+   "shot_looks": [
+    "needle-felt texture, macro lens, warm candle key",
+    "handmade diorama, fairy-light bokeh",
+    "slow drift, soft frame-to-frame fibre shimmer"
+   ],
+   "characters": [
+    {
+     "name": "Hazel",
+     "look": "rust-brown felted hedgehog, cream belly, black bead eyes, tiny stitched smile, sage-green scarf",
+     "role": "character",
+     "screen_share": 0.5
+    },
+    {
+     "name": "Mr Bramble",
+     "look": "oatmeal-grey felt badger with a white stripe, round wire spectacles, tweed waistcoat",
+     "role": "character",
+     "screen_share": 0.3
+    }
+   ],
+   "recognisable": [
+    "felted woodland animals",
+    "candlelit moss dioramas",
+    "whispery bedtime narration",
+    "slow macro drifts, no fast cuts"
+   ],
+   "why": "Designed felt animals with bead eyes and stitched expressions; only the drawn route keeps the craft texture and the cast."
+  },
+  {
+   "family": "reconstruction",
+   "expected": "threed",
+   "art_style": "Realistic CGI with soft global illumination and shallow depth of field; every person is a smooth, untextured pale-grey mannequin with a bald egg-shaped head and no eyes, nose or mouth, placed in detailed photoreal interiors and streets. Tight, slightly low camera angles, slow push-ins, warm practical lights against cool shadows.",
+   "alternatives": [
+    "Photoreal 3D environments populated by blank, featureless grey humanoids; occasional x-ray cutaway into the body showing red muscle and white bone."
+   ],
+   "shot_looks": [
+    "photoreal 3D render, matte grey featureless figure, soft bounce light, shallow DOF",
+    "x-ray style cutaway, translucent skin over glossy red tissue, dark vignette",
+    "close-up macro CGI, wet specular highlights, slow dolly-in"
+   ],
+   "characters": [
+    {
+     "name": "The Figure",
+     "look": "smooth light-grey mannequin, no facial features at all, bald ovoid head, simple jointed limbs, sometimes wearing plain clothes",
+     "role": "character",
+     "screen_share": 0.75
+    }
+   ],
+   "recognisable": [
+    "blank-faced grey dummies in real-looking rooms",
+    "grisly x-ray cutaways inside the body",
+    "narrator opens with 'what happens if'",
+    "slow push-in on the moment of injury"
+   ],
+   "why": "Classic Zack D. Films reconstruction: faceless grey mannequins in realistic places, exactly what the own 3D engine builds."
+  },
+  {
+   "family": "reconstruction",
+   "expected": "threed",
+   "art_style": "Semi-realistic 3D medical visualisation: an ivory, hairless anatomical body model with translucent skin revealing glowing organs, subsurface scattering, clinical blue-teal backlight and black background; occasional photoreal hospital set with the same eyeless model on a bed.",
+   "alternatives": [],
+   "shot_looks": [
+    "translucent 3D anatomy, emissive organ highlight, cyan rim light",
+    "clean CG hospital interior, neutral white body model lying on gurney, cool fluorescent light"
+   ],
+   "characters": [
+    {
+     "name": "Patient model",
+     "look": "ivory-white, hairless, smooth-skulled human form with no eyes or mouth, semi-transparent torso",
+     "role": "character",
+     "screen_share": 0.6
+    }
+   ],
+   "recognisable": [
+    "see-through torso with one organ glowing red",
+    "teal HUD callout labels",
+    "heartbeat monitor beep under the voice"
+   ],
+   "why": "Anonymous white anatomical figure in clinical 3D settings is a reconstruction/medical look, not a designed character."
+  },
+  {
+   "family": "reconstruction",
+   "expected": "threed",
+   "art_style": "Stylised 3D animation with a game-engine (Unreal-like) look: realistic aircraft and cabin interiors, moody red emergency lighting, volumetric smoke; passengers and crew are generic low-detail people whose faces stay indistinct, blurred or turned away.",
+   "alternatives": [
+    "Cinematic CG disaster recreation, desaturated with orange fire glow, handheld-style virtual camera shake."
+   ],
+   "shot_looks": [
+    "game-engine CGI cabin, red strobe light, volumetric haze, camera shake",
+    "exterior wide of airliner in storm, photoreal clouds, lightning flashes",
+    "cutaway fuselage cross-section, cool blue technical lighting"
+   ],
+   "characters": [
+    {
+     "name": "Passengers",
+     "look": "generic realistic-proportion people in muted everyday clothing, faces low-detail and anonymous, never shown in close-up",
+     "role": "character",
+     "screen_share": 0.25
+    }
+   ],
+   "recognisable": [
+    "cutaway of the fuselage at the moment of failure",
+    "red emergency-light flicker",
+    "timestamp lower thirds counting down",
+    "cockpit voice recorder quotes as captions"
+   ],
+   "why": "Air-disaster reconstruction with anonymous, low-detail people: 'stylised' and 'game-engine' describe rendering, not a designed cast."
+  },
+  {
+   "family": "reconstruction",
+   "expected": "threed",
+   "art_style": "Low-poly 3D with flat-shaded facets and a warm dusk palette; soldiers are simplified, untextured clay-coloured figures with helmets and blank heads, arranged on a faceted battlefield terrain like a tabletop diorama, viewed from high isometric and sweeping crane angles.",
+   "alternatives": [
+    "Faceted low-polygon war reconstruction, muted ochre and olive tones, soft ambient occlusion, no facial detail on any figure."
+   ],
+   "shot_looks": [
+    "low-poly flat-shaded terrain, unit blocks advancing, isometric camera",
+    "close on faceted soldiers, featureless heads, hard sunset key light",
+    "overhead map with low-poly hills and arrows"
+   ],
+   "characters": [
+    {
+     "name": "Soldiers",
+     "look": "chunky low-poly human figures in ochre or blue uniforms, helmets, no faces, identical repeated models",
+     "role": "character",
+     "screen_share": 0.45
+    }
+   ],
+   "recognisable": [
+    "tabletop-diorama battlefield",
+    "faceless low-poly troops in formations",
+    "animated arrows sweeping across terrain",
+    "drum-heavy orchestral score"
+   ],
+   "why": "Low-poly is a rendering choice here; troops are identical faceless figures in a history reconstruction."
+  },
+  {
+   "family": "reconstruction",
+   "expected": "threed",
+   "art_style": "Photoreal 3D terrain rendered from satellite elevation data, slow aerial fly-throughs with atmospheric haze, extruded country borders glowing white and rivers traced in bright cyan; no people.",
+   "alternatives": [],
+   "shot_looks": [
+    "satellite-textured 3D relief, golden-hour sun, tilt-shift haze",
+    "dark globe with glowing extruded borders, emissive lines",
+    "close aerial over mountains, labels pinned to peaks"
+   ],
+   "characters": [],
+   "recognisable": [
+    "camera swoops over a relief map",
+    "glowing raised borders",
+    "rivers lit up in electric blue",
+    "map labels popping in on the terrain"
+   ],
+   "why": "Character-free 3D geography/terrain explainer; nothing designed to draw."
+  },
+  {
+   "family": "reconstruction",
+   "expected": "threed",
+   "art_style": "Hyperreal CGI space renders: planets with atmospheric scattering and rim light against a deep starfield, objects lined up for scale comparison on a black void, subtle anamorphic lens flares.",
+   "alternatives": [
+    "Clean astronomical 3D with a single hard sun light and pitch-black shadows."
+   ],
+   "shot_looks": [
+    "photoreal planet, thin blue atmosphere glow, starfield",
+    "scale lineup of moons and stars on black, slow lateral track",
+    "glossy CG spacecraft, harsh sunlight, deep shadow"
+   ],
+   "characters": [],
+   "recognisable": [
+    "objects lined up by size against black",
+    "slow orbit around a planet",
+    "huge-number counters on screen",
+    "ambient synth drone"
+   ],
+   "why": "Space explainer with no characters at all; pure 3D render."
+  },
+  {
+   "family": "reconstruction",
+   "expected": "threed",
+   "art_style": "Clean, slightly cartoonish 3D cutaway models with simplified textures, bright even studio lighting and soft toon-like shadows; machines and buildings explode into floating parts with leader-line labels on a light grey backdrop. A tiny white human silhouette sometimes stands in for scale.",
+   "alternatives": [
+    "Toy-like engineering renders, smooth plastic materials, saturated primary-colour parts on neutral background."
+   ],
+   "shot_looks": [
+    "stylised 3D exploded view, plastic shading, white seamless background",
+    "rotating cutaway of engine, soft cartoony light, callout labels",
+    "wide of building section, tiny featureless scale figure"
+   ],
+   "characters": [
+    {
+     "name": "Scale figure",
+     "look": "small plain white human silhouette, no features, standing still for size reference",
+     "role": "character",
+     "screen_share": 0.05
+    }
+   ],
+   "recognisable": [
+    "exploded-view parts drifting apart",
+    "labels with thin leader lines",
+    "360 turntable of the cutaway",
+    "tiny white person for scale"
+   ],
+   "why": "Engineering cutaway explainer; 'cartoonish' and 'toy-like' describe materials, and the only figure is a featureless scale person."
+  },
+  {
+   "family": "reconstruction",
+   "expected": "threed",
+   "art_style": "Blocky, greybox-style 3D: buildings, cars and props are plain untextured boxes and primitives in a neutral studio light, with a hinged crash-test dummy as the subject; impacts shown in slow motion with debris and force arrows.",
+   "alternatives": [
+    "Simplified primitive-shape 3D world, matte grey materials, high-speed slow-mo physics."
+   ],
+   "shot_looks": [
+    "greybox 3D street, matte primitives, flat overcast lighting",
+    "slow-motion impact, dummy limbs flailing, particle debris",
+    "side-on diagram view with red force arrows"
+   ],
+   "characters": [
+    {
+     "name": "Dummy",
+     "look": "crash-test dummy with yellow-and-black target decals on the head, hinged joints, no eyes or mouth",
+     "role": "mascot",
+     "screen_share": 0.55
+    }
+   ],
+   "recognisable": [
+    "crash-test dummy hit by extreme forces",
+    "grey blockout world",
+    "slow-mo impact replay",
+    "g-force counter in the corner"
+   ],
+   "why": "Labelled a 'mascot', but the dummy is a faceless mannequin and the world is a grey blockout: a 'what happens if' physics reconstruction."
+  },
+  {
+   "family": "reconstruction",
+   "expected": "threed",
+   "art_style": "Miniature diorama 3D with tilt-shift blur and a dollhouse feel: toy-like matte figurines with no faces, distinguished only by clothing colour, in muted pastel cutaway rooms and streets; evidence markers and a red dotted route overlaid.",
+   "alternatives": [
+    "Tilt-shift true-crime dollhouse, soft overhead light, figures like game pawns."
+   ],
+   "shot_looks": [
+    "tilt-shift CG diorama, cutaway apartment, soft top light",
+    "overhead miniature street, red dotted path, yellow evidence tents",
+    "close on putty-grey figurine, shallow depth of field"
+   ],
+   "characters": [
+    {
+     "name": "Victim",
+     "look": "featureless putty-grey figurine in a red hoodie, smooth blank head",
+     "role": "character",
+     "screen_share": 0.3
+    },
+    {
+     "name": "Suspect",
+     "look": "same blank grey figure in a dark jacket and cap, no facial detail",
+     "role": "character",
+     "screen_share": 0.3
+    }
+   ],
+   "recognisable": [
+    "dollhouse cutaway of the crime scene",
+    "red dotted route of the suspect",
+    "numbered yellow evidence markers",
+    "timestamps on every scene"
+   ],
+   "why": "Despite 'toy-like figurines', these are faceless pawns in a crime reconstruction; identity comes only from clothing colour."
+  },
+  {
+   "family": "reconstruction",
+   "expected": "threed",
+   "art_style": "Monochrome clay render: every object, wall and person in unpainted terracotta-white material with heavy ambient occlusion and a warm low sun; workers are smooth clay human forms without facial features, and the camera orbits while the structure assembles in time-lapse.",
+   "alternatives": [],
+   "shot_looks": [
+    "clay-material 3D, soft AO, raking sun",
+    "time-lapse assembly of stone blocks, aerial orbit",
+    "close on clay workers hauling ramp, featureless heads"
+   ],
+   "characters": [
+    {
+     "name": "Workers",
+     "look": "unpainted clay-coloured human models, smooth blank heads, simple tunic shapes, repeated crowd copies",
+     "role": "character",
+     "screen_share": 0.35
+    }
+   ],
+   "recognisable": [
+    "everything in one clay colour",
+    "monument building itself in time-lapse",
+    "slow aerial orbit",
+    "ancient-sounding drone and percussion"
+   ],
+   "why": "Ancient-construction history reconstruction with anonymous clay figures; style is a material treatment, not a cast."
+  },
+  {
+   "family": "reconstruction",
+   "expected": "threed",
+   "art_style": "Simplified 3D with flat, saturated colours, gentle toon-ish outlines on the terrain and a cartoony bright sky, with fluid and smoke simulations for tsunamis and eruptions; townsfolk are tiny grey capsule-shaped people without features, only seen from a distance.",
+   "alternatives": [
+    "Stylized disaster sim, soft cel-shaded look, wide establishing shots of coastal town."
+   ],
+   "shot_looks": [
+    "cel-shaded coastal town, stylised water sim, high wide angle",
+    "volcano cross-section with glowing magma, flat colour",
+    "crowd of small capsule people fleeing, long shot"
+   ],
+   "characters": [
+    {
+     "name": "Townsfolk",
+     "look": "tiny pill-shaped grey people with no faces or limbs detail, background crowd",
+     "role": "character",
+     "screen_share": 0.1
+    }
+   ],
+   "recognisable": [
+    "wave rolling over a toy-scale town",
+    "cross-section of the volcano",
+    "distance and time counters",
+    "rumbling bass SFX"
+   ],
+   "why": "Disaster simulation where the only humans are a distant faceless crowd; cel-shading is a render treatment."
+  },
+  {
+   "family": "reconstruction",
+   "expected": "threed",
+   "art_style": "Matter-of-fact forensic accident reconstruction: CAD-like grey-shaded aircraft, runway and terrain, flat even lighting, generic neutral-grey human avatars with no facial detail in the cockpit, plus flight-data overlays.",
+   "alternatives": [
+    "Investigation-board style 3D animation, desaturated, technical diagrams layered over the render."
+   ],
+   "shot_looks": [
+    "CAD-grey 3D aircraft on approach, flat lighting, data overlay",
+    "cockpit interior, two grey avatars without faces, instrument glow",
+    "top-down runway diagram with flight path line"
+   ],
+   "characters": [
+    {
+     "name": "Pilots",
+     "look": "neutral-grey human avatars in headsets, smooth heads with no features",
+     "role": "character",
+     "screen_share": 0.2
+    }
+   ],
+   "recognisable": [
+    "flight data recorder graphs on screen",
+    "CAD-grey aircraft",
+    "radio transcript as subtitles",
+    "calm, clinical narration"
+   ],
+   "why": "Official-style accident reconstruction; 'avatars' here are faceless grey stand-ins, the opposite of designed characters."
+  },
+  {
+   "family": "traps",
+   "expected": "drawn",
+   "art_style": "Soft-lit 3D render with a Blender/Cycles feel: small toy-like people whose heads are smooth, glossy charcoal spheres. In wide shots the heads read as featureless, but close-ups show two tiny white oval eyes and a short curved mouth line. Bodies are simple, in solid-colour tees and trousers, on clean minimalist pastel stages with gentle ambient occlusion.",
+   "alternatives": [
+    "Minimal 3D diorama look: sphere-headed figures in plain clothes with almost no facial detail apart from pinprick eyes, uncluttered sets in muted mint and peach, soft contact shadows, slight tilt-shift."
+   ],
+   "shot_looks": [
+    "3D render, soft GI, pastel backdrop, wide shot of a lone dark-domed figure",
+    "close-up 3D render, glossy jet head with small white eyes widening, shallow depth of field",
+    "isometric 3D diorama, miniature city block, matte clay materials"
+   ],
+   "characters": [
+    {
+     "name": "The Guy",
+     "look": "short figure with a shiny ink-black ball head, two little white eye dots and a thin mouth stroke, white T-shirt, blue jeans",
+     "role": "character",
+     "screen_share": 0.7
+    }
+   ],
+   "recognisable": [
+    "ink-dark sphere-headed little people",
+    "eyes only noticeable in close-up",
+    "clean pastel miniature sets",
+    "'What if...' premise title cards"
+   ],
+   "why": "The cast is designed and has real eyes and mouths, even if tiny. The mannequin engine would lose the dark-dome heads and the eye reactions."
+  },
+  {
+   "family": "traps",
+   "expected": "threed",
+   "art_style": "Cinematic, near-photoreal CGI re-enactments with stylised, cartoon-ish characters: smooth matte-grey humanoids with completely blank heads (no eyes, nose or mouth) and simply modelled clothing. They are placed in realistic interiors and streets with dramatic rim lighting, shallow DOF and slow push-ins.",
+   "alternatives": [
+    "Realistic 3D environments with pale clay-like figures without facial features acting out a freak accident; macro shots on the body part involved."
+   ],
+   "shot_looks": [
+    "photoreal 3D render, hospital corridor, grey blank-headed figure on a gurney, cool blue grade",
+    "macro 3D close-up, x-ray cutaway of a hand, glowing bones",
+    "slow-motion 3D, figure slipping on wet tiles, motion blur"
+   ],
+   "characters": [
+    {
+     "name": "The man",
+     "look": "generic grey figure with a smooth egg-shaped head and no features, khaki shorts, white socks",
+     "role": "character",
+     "screen_share": 0.6
+    }
+   ],
+   "recognisable": [
+    "faceless grey people in hyperreal rooms",
+    "slow dolly into the injury",
+    "x-ray body cutaways",
+    "deep male narrator saying 'this man...'"
+   ],
+   "why": "Even though the model wrote 'cartoon-ish characters', the heads have no eyes or mouth at all. This is a classic plain-mannequin reconstruction in real places."
+  },
+  {
+   "family": "traps",
+   "expected": "threed",
+   "art_style": "Two strands. (1) Photoreal Unreal Engine-style disaster reconstructions of mines, refineries and ships, populated by plain white, featureless dummy figures in hard hats and overalls, with heavy volumetric smoke and orange emergency lighting. (2) A real host filmed to camera in a dark studio with a neon strip behind him.",
+   "alternatives": [
+    "Live-action talking-head host in shallow focus between ray-traced 3D reconstructions of an industrial accident with blank white mannequins."
+   ],
+   "shot_looks": [
+    "live action, presenter mid-shot, dark set, teal neon edge light",
+    "3D render, refinery at night, white faceless worker figures, volumetric fog",
+    "3D cutaway diagram of pipeline pressure with labels"
+   ],
+   "characters": [
+    {
+     "name": "Host",
+     "look": "real man in his early 30s, trimmed beard, black crewneck, filmed on camera",
+     "role": "presenter",
+     "screen_share": 0.3
+    },
+    {
+     "name": "Workers",
+     "look": "identical white mannequin bodies, blank heads, hi-vis vests and helmets",
+     "role": "character",
+     "screen_share": 0.4
+    }
+   ],
+   "recognisable": [
+    "bearded host in the dark studio",
+    "white dummy workers caught in disasters",
+    "smoky orange-lit reconstructions",
+    "countdown timeline overlay"
+   ],
+   "why": "The only face belongs to a live presenter, who is filmed footage and not something to draw. Every 3D person is an eyeless dummy in a real industrial place."
+  },
+  {
+   "family": "traps",
+   "expected": "threed",
+   "art_style": "Grey-clay 3D reconstructions of historical sieges and shipwrecks: unpainted, uniformly grey human figurines with smooth blank faces and period costume modelled in the same matte material. They are rendered in realistic terrain and weathered stone architecture under golden-hour light, with occasional sepia map overlays.",
+   "alternatives": [
+    "Monochrome clay-render figures with no features and no colour in photographic landscapes, dusty atmosphere, drone-style aerial moves."
+   ],
+   "shot_looks": [
+    "3D render, grey statue-like soldiers on a castle wall, warm low sun, haze",
+    "aerial 3D, galleon in a storm, photoreal water simulation",
+    "flat 2D end card, cartoon owl logo winking beside the subscribe button"
+   ],
+   "characters": [
+    {
+     "name": "Professor Hoot",
+     "look": "flat 2D vector owl with big round spectacles and a mortarboard; the channel logo",
+     "role": "mascot",
+     "screen_share": 0.03
+    }
+   ],
+   "recognisable": [
+    "all-grey clay soldiers",
+    "photoreal battlefields",
+    "owl logo sting at the end",
+    "slow aerial reveal of the battle"
+   ],
+   "why": "The story footage is eyeless grey figures in real places. The cartoon owl is a 2D logo on an end card for about 3% of the video and can be laid over as a graphic."
+  },
+  {
+   "family": "traps",
+   "expected": "drawn",
+   "art_style": "High-end product-visualization CGI of megastructures and machines (dams, tunnel boring machines, rocket engines) with PBR metals, cutaway sections and studio HDRI lighting. A small recurring mascot hovers in to point things out.",
+   "alternatives": [
+    "Photoreal engineering renders, exploded views and x-ray cutaways on clean white void backgrounds, hosted by a little floating robot guide."
+   ],
+   "shot_looks": [
+    "3D render, tunnel boring machine cutaway, exploded parts, cool studio light",
+    "3D render, round white drone-robot with a visor screen showing two blinking pixel eyes, pointing at a gear",
+    "3D aerial, dam spillway, photoreal water"
+   ],
+   "characters": [
+    {
+     "name": "Gizmo",
+     "look": "palm-sized white robot sphere with an orange antenna; its black visor face shows two rounded LED eyes that blink and squint; stubby little arms",
+     "role": "mascot",
+     "screen_share": 0.2
+    }
+   ],
+   "recognisable": [
+    "Gizmo the floating robot guide",
+    "x-ray engineering cutaways",
+    "exploded-view assemblies",
+    "clean white void"
+   ],
+   "why": "The machines alone carry no characters, but the channel's identity is a designed mascot with an expressive screen face, on screen about 20% of the time. The mannequin engine cannot build it."
+  },
+  {
+   "family": "traps",
+   "expected": "drawn",
+   "art_style": "Photorealistic CG humans: digital doubles with detailed skin pores, subsurface scattering, moist realistic eyes and subtle facial performance, framed like a medical drama. They alternate with translucent anatomical overlays showing organs and blood vessels in red-blue holographic shading.",
+   "alternatives": [
+    "Hyperreal 3D renders of people with MetaHuman-grade faces and natural hair grooms in apartments and offices, cut with glowing x-ray anatomy inserts."
+   ],
+   "shot_looks": [
+    "photoreal CGI close-up, woman's face flushed and sweating, cinematic shallow focus",
+    "3D anatomy, semi-transparent torso, glowing liver highlighted",
+    "CGI medium shot, man yawning at a desk, warm practical light"
+   ],
+   "characters": [
+    {
+     "name": "Subject",
+     "look": "realistic CGI man in his late 20s, stubble, gray hoodie, lifelike face and eyes",
+     "role": "character",
+     "screen_share": 0.5
+    }
+   ],
+   "recognisable": [
+    "lifelike digital humans reacting",
+    "see-through glowing organs",
+    "day-by-day counter ('Day 3')",
+    "calm clinical narrator"
+   ],
+   "why": "The characters are realistic CGI people with real faces and expressions. The 3D engine only makes faceless dummies, so an image model has to draw them."
+  },
+  {
+   "family": "traps",
+   "expected": "drawn",
+   "art_style": "Simulator-grade aircraft reconstructions (ray-traced airliners, accurate liveries, storm clouds, runway lights) intercut with cockpit scenes of realistically modeled pilots whose faces show strain, sweat and eye movement. Cold desaturated grade, documentary-style handheld camera.",
+   "alternatives": [
+    "Realistic 3D air-crash recreation: photoreal crew members with detailed faces on the flight deck, exterior shots of the jet in turbulence."
+   ],
+   "shot_looks": [
+    "3D render, airliner exterior in lightning, motion blur",
+    "photoreal CGI cockpit, captain's face lit by red warning lights, eyes darting",
+    "3D instrument panel close-up, alarms flashing"
+   ],
+   "characters": [
+    {
+     "name": "Captain",
+     "look": "realistic CGI pilot in his 50s, gray mustache, white shirt with four-bar epaulettes, highly detailed face",
+     "role": "character",
+     "screen_share": 0.3
+    },
+    {
+     "name": "First Officer",
+     "look": "realistic CGI woman pilot in her 30s, hair tied back, headset",
+     "role": "character",
+     "screen_share": 0.2
+    }
+   ],
+   "recognisable": [
+    "photoreal crew faces under red alarm light",
+    "accurate airline liveries",
+    "cockpit voice recorder transcript captions",
+    "slow-motion impact"
+   ],
+   "why": "This is the reconstruction genre, but the people are realistic CGI with faces on screen about half the time. Mannequins would break the look."
+  },
+  {
+   "family": "traps",
+   "expected": "threed",
+   "art_style": "Clean ray-traced 3D of survival scenarios in believable real-world locations (frozen lakes, lift shafts, Underground platforms). People are minimalist porcelain-white figures with a faint sculpted nose bridge and brow ridge but no eyes and no mouth, in simply modelled coats and boots. Crisp daylight or harsh fluorescent light, gentle camera drifts.",
+   "alternatives": [
+    "Semi-realistic CGI sets with eyeless, mouthless white dummies; shallow DoF, cold colour grade."
+   ],
+   "shot_looks": [
+    "3D render, frozen lake, white featureless figure breaking through the ice, overcast light",
+    "3D render, lift interior, two blank dummies pressing buttons, fluorescent flicker",
+    "3D underwater close-up, bubbles rising past the figure's smooth head"
+   ],
+   "characters": [
+    {
+     "name": "Person",
+     "look": "glossy white mannequin with a smooth head showing only a moulded nose ridge, no eyes or mouth, navy parka",
+     "role": "character",
+     "screen_share": 0.65
+    }
+   ],
+   "recognisable": [
+    "white shop-dummy people",
+    "'What would you do?' survival set-ups",
+    "harsh fluorescent interiors",
+    "split-second slow-motion moments"
+   ],
+   "why": "A moulded nose ridge still makes it a mannequin: no eyes or mouth, plain white, real places."
+  },
+  {
+   "family": "traps",
+   "expected": "drawn",
+   "art_style": "Roblox-style blocky avatars captured in-engine with soft shadows: rectangular torsos and limbs, yellow block heads that look nearly blank from afar but carry simple decal faces (dot eyes, a smile or a frown) in medium shots. Bright saturated obby and town maps under a flat skybox.",
+   "alternatives": [
+    "Game-engine capture of featureless-looking blocky toy avatars with minimal printed faces, plastic sheen, candy-colored maps."
+   ],
+   "shot_looks": [
+    "in-game 3D, blocky noob avatar in yellow with a decal smile on a bright obby",
+    "3D game capture, square-headed bully avatar with angry decal brows on a school map",
+    "zoomed camera, avatar head close-up showing simple painted eyes"
+   ],
+   "characters": [
+    {
+     "name": "Noob",
+     "look": "yellow block head with a plain decal face (two dots and a small smile), blue torso, green legs",
+     "role": "character",
+     "screen_share": 0.6
+    },
+    {
+     "name": "Bully",
+     "look": "block avatar with black hair, red hoodie, angry decal eyebrows",
+     "role": "character",
+     "screen_share": 0.25
+    }
+   ],
+   "recognisable": [
+    "blocky yellow-headed noob",
+    "decal faces swapping with each emotion",
+    "comic-style story subtitles",
+    "obby maps"
+   ],
+   "why": "These are designed game avatars with decal faces. Even though they look blank in wide shots, the mannequin engine cannot match a game-avatar cast."
+  },
+  {
+   "family": "traps",
+   "expected": "drawn",
+   "art_style": "Designer-toy 3D: stubby capsule-bodied figures with oversized heads, smooth and minimal, with no nose and no mouth, just two small bead eyes set low. Glossy vinyl material, soft studio key light, pastel cyclorama backdrops and miniature historical props (tiny tents, cannons, scrolls).",
+   "alternatives": [
+    "Minimalist toy figurines in a tabletop history diorama: almost blank faces, bead eyes, plastic gloss, tilt-shift blur."
+   ],
+   "shot_looks": [
+    "3D render, row of chibi Roman legionaries with bead eyes, pastel backdrop",
+    "tabletop diorama 3D, tiny general pointing at a map, soft shadows",
+    "macro 3D, a figure's head turning, gloss highlight sliding across"
+   ],
+   "characters": [
+    {
+     "name": "Little Legionary",
+     "look": "big-headed vinyl toy figure with a red helmet plume, two black bead eyes, no mouth, cream skin",
+     "role": "character",
+     "screen_share": 0.55
+    }
+   ],
+   "recognisable": [
+    "mouthless vinyl history toys",
+    "bead eyes",
+    "pastel tabletop sets",
+    "kinetic date stamps"
+   ],
+   "why": "They have no mouths but they do have eyes. This is a designed toy cast, not a plain mannequin."
+  },
+  {
+   "family": "traps",
+   "expected": "threed",
+   "art_style": "Muted, moody true-crime recreations in realistic suburban houses, parking lots and motel rooms. Figures are expressionless stylized gray models with sculpted hair and clothing but smooth, unmarked faces. Low-key tungsten and police-light color, film grain, slow handheld drift.",
+   "alternatives": [
+    "Dark realistic 3D crime-scene recreations with monochrome doll-like people (no facial features), evidence markers, flashing red and blue."
+   ],
+   "shot_looks": [
+    "3D render, motel room, gray figure with a modeled ponytail standing by the door, tungsten lamp",
+    "3D render, night parking lot, two blank-faced figures, police lights",
+    "3D overhead view, evidence markers on carpet"
+   ],
+   "characters": [
+    {
+     "name": "Victim",
+     "look": "slender gray figure with a sculpted ponytail and a cardigan; face smooth and blank",
+     "role": "character",
+     "screen_share": 0.35
+    },
+    {
+     "name": "Suspect",
+     "look": "tall gray figure with a modeled buzz cut and a denim jacket; no features on the face",
+     "role": "character",
+     "screen_share": 0.3
+    }
+   ],
+   "recognisable": [
+    "gray expressionless doll people",
+    "yellow evidence markers",
+    "red-blue police light wash",
+    "911 call audio with captions"
+   ],
+   "why": "The model wrote 'expressionless' and 'stylized', but the faces are smooth and blank. Modeled hair and clothes are fine on mannequins in real places."
+  },
+  {
+   "family": "traps",
+   "expected": "drawn",
+   "art_style": "Minimalist 3D stickmen: matte-white sphere heads on thin capsule limbs, mostly featureless. Emotion is carried by two floating black eyebrows and a small 'o' mouth that pops on for surprise. Bold flat-colour props in a seamless off-white void with a hard drop shadow.",
+   "alternatives": [
+    "3D stick-figure animation: white ball-headed stickmen with expressive brows, simple coloured objects, infinite white studio."
+   ],
+   "shot_looks": [
+    "3D render, white stickman scratching his head with raised brows in an empty white void",
+    "3D render, two stickmen arguing with angry slanted brows, red alarm prop",
+    "3D close-up, ball head with an 'o' mouth, comic shake"
+   ],
+   "characters": [
+    {
+     "name": "Stick",
+     "look": "glossy white sphere head, floating black eyebrows, an occasional small round mouth, noodle-thin white limbs",
+     "role": "character",
+     "screen_share": 0.8
+    }
+   ],
+   "recognisable": [
+    "white 3D stickmen with eyebrows",
+    "infinite white studio",
+    "one bright prop per scene",
+    "comic shake on surprise"
+   ],
+   "why": "The plain white looks like a mannequin, but this is a designed stick-figure character in a void whose eyebrows and mouth do the acting. It is not a reconstruction in a real place."
+  },
+  {
+   "family": "heldout-designed",
+   "expected": "drawn",
+   "art_style": "Low-budget 3D CGI animation with glossy, plasticky materials and flat ambient lighting; chunky rigged villagers in kurtas, saris and dhotis with oversized heads, rubbery facial animation and exaggerated expressions, set in over-saturated Indian village sets with mud huts, a banyan tree and a bright cyan sky.",
+   "alternatives": [
+    "Bright toy-like 3D village animation typical of Hindi kahaniyan channels, simple rigs, stiff walk cycles"
+   ],
+   "shot_looks": [
+    "3D render, glossy village courtyard, wide locked-off camera",
+    "3D render, medium two-shot of a fat moneylender scowling at a thin farmer",
+    "3D render, close-up of gold coins spilling from a clay pot, soft bloom"
+   ],
+   "characters": [],
+   "recognisable": [
+    "Hindi storyteller voice with dramatic pauses and villain laughs",
+    "greedy rich man versus honest poor family plots",
+    "bright cyan sky over the same village set",
+    "yellow Devanagari title cards",
+    "moral of the story read out at the end"
+   ],
+   "why": "The cast changes every episode so Gemini listed no recurring characters, but the art_style still describes rigged cartoon villagers with facial animation and expressions, which are designed faces, not blank mannequins."
+  },
+  {
+   "family": "heldout-designed",
+   "expected": "drawn",
+   "art_style": "Soft, clean 3D animation in the manner of a feature-film kids' series: smooth subsurface skin, rounded child characters with large glossy pupils and small button noses, the boy in a white peci and the girl in a pastel hijab, cosy Indonesian home interiors with warm window light and shallow depth of field.",
+   "alternatives": [],
+   "shot_looks": [
+    "3D render, warm living room, two children talking on a sofa",
+    "3D render, close-up of the girl smiling, soft bokeh",
+    "3D render, kampung street at dusk with string lights"
+   ],
+   "characters": [
+    {
+     "name": "Adit",
+     "look": "small boy, round head, white peci, light green koko shirt, big brown eyes, gap-tooth grin",
+     "role": "character",
+     "screen_share": 0.55
+    },
+    {
+     "name": "Laila",
+     "look": "younger sister, pastel pink hijab framing a round face, rosy cheeks, large dark eyes",
+     "role": "character",
+     "screen_share": 0.4
+    },
+    {
+     "name": "Umma",
+     "look": "mother in a long beige hijab, gentle smile, mostly seen in medium shots",
+     "role": "character",
+     "screen_share": 0.15
+    }
+   ],
+   "recognisable": [
+    "Bahasa Indonesia dialogue between two siblings",
+    "a short Islamic lesson with a hadith shown on screen",
+    "nasheed-style jingle at intro and outro",
+    "warm golden interior lighting"
+   ],
+   "why": "Stylised child characters with large pupils, noses and smiles, plus hijab and peci designs; a featureless figure engine cannot carry this cast."
+  },
+  {
+   "family": "heldout-designed",
+   "expected": "drawn",
+   "art_style": "Colourful 3D cartoon render with a vinyl-toy feel: bubbly chibi characters with huge heads and tiny bodies, shiny plastic materials, simple Brazilian suburban streets, a school yard and classrooms, bright even daylight and mostly locked-off medium shots.",
+   "alternatives": [
+    "Chibi toy-style 3D kids' animation, glossy and pastel"
+   ],
+   "shot_looks": [
+    "3D cartoon render, glossy classroom with chibi kids at desks",
+    "3D cartoon render, medium close shot of the boy crying with oversized tear drops"
+   ],
+   "characters": [
+    {
+     "name": "Joãozinho",
+     "look": "chibi boy, spiky brown hair, two black bead eyes, D-shaped open mouth when talking, yellow t-shirt and blue shorts",
+     "role": "character",
+     "screen_share": 0.5
+    },
+    {
+     "name": "Professora Bia",
+     "look": "teacher with a curly bun, round glasses, red cardigan, kind smile",
+     "role": "character",
+     "screen_share": 0.2
+    }
+   ],
+   "recognisable": [
+    "Portuguese narration opening with 'Era uma vez'",
+    "kids learning not to lie, steal or be rude",
+    "bouncy ukulele background music",
+    "pop-in cartoon sound effects",
+    "'Moral da história' card at the end"
+   ],
+   "why": "The art_style only says chibi toy figures, but the recurring characters have bead eyes, mouths and hair; even dot eyes make them designed."
+  },
+  {
+   "family": "heldout-designed",
+   "expected": "drawn",
+   "art_style": "Moody 3D animation rendered in a game engine: dark blue night grade, volumetric fog over a village graveyard and bamboo groves, stylised Indonesian villagers with exaggerated frightened expressions, and folklore ghosts such as a shroud-wrapped pocong with a sunken grey face and a long-haired kuntilanak in a white dress.",
+   "alternatives": [
+    "Indonesian ghost-story 3D animation, night village, cartoon villagers and folklore spirits"
+   ],
+   "shot_looks": [
+    "3D render, foggy graveyard at night, a shrouded ghost hopping between headstones",
+    "3D render, close-up of a boy with wide terrified eyes holding a torch",
+    "3D render, empty wooden night-watch hut under a single bulb"
+   ],
+   "characters": [
+    {
+     "name": "Pocong",
+     "look": "body bound in a white burial shroud knotted at the top, pale grey face with dark-rimmed eyes peeking out, hops upright",
+     "role": "character",
+     "screen_share": 0.3
+    },
+    {
+     "name": "Ucup",
+     "look": "skinny village boy in a sarong and peci, oversized round eyes, comic scared reactions",
+     "role": "character",
+     "screen_share": 0.35
+    }
+   ],
+   "recognisable": [
+    "night-only village settings drowned in blue fog",
+    "jump-scare stingers on a loud hit",
+    "whispery Bahasa Indonesia narration",
+    "comic relief between scares"
+   ],
+   "why": "Both the folklore ghost and the villagers have faces and expressions; a shrouded body might sound featureless, but the pocong's face is visible and designed."
+  },
+  {
+   "family": "heldout-designed",
+   "expected": "drawn",
+   "art_style": "Dark, desaturated 3D horror animation with a stop-motion-like stiffness: spindly, elongated characters with porcelain skin, including a mannequin-like stalker whose smooth head has two hollow black eye holes and a thin stitched smile, lit by a single flickering bulb with a heavy vignette and film grain.",
+   "alternatives": [
+    "Creepy porcelain-doll 3D horror with stop-motion timing"
+   ],
+   "shot_looks": [
+    "3D render, long empty hallway, single bulb, heavy grain",
+    "3D render, extreme close-up of the porcelain stalker's stitched mouth",
+    "3D render, girl in a yellow raincoat glancing over her shoulder"
+   ],
+   "characters": [
+    {
+     "name": "The Doll Man",
+     "look": "tall jointed mannequin body, cracked porcelain head, two hollow black eye holes, lips stitched into a smile",
+     "role": "character",
+     "screen_share": 0.35
+    },
+    {
+     "name": "Girl in raincoat",
+     "look": "thin child, yellow raincoat, huge glassy eyes, button nose, lank black hair",
+     "role": "character",
+     "screen_share": 0.45
+    }
+   ],
+   "recognisable": [
+    "low synth drone and creaking foley, almost no melody",
+    "single-bulb lighting and a heavy vignette",
+    "slow push-ins that end on a hard cut to black",
+    "whispered first-person narration"
+   ],
+   "why": "The word mannequin appears, but the stalker has eye holes and a stitched mouth and the girl has huge eyes; these are designed horror characters, not plain dummies."
+  },
+  {
+   "family": "heldout-designed",
+   "expected": "drawn",
+   "art_style": "Blender-rendered 3D horror shorts in a misty pine forest: a very tall, thin faceless figure in a black suit with a blank white head stalks cartoonish teenage campers who have big rounded heads, expressive eyebrows and lip-synced screams, under cold teal moonlight and thick fog.",
+   "alternatives": [
+    "Slender-style forest horror in 3D with stylised teen campers"
+   ],
+   "shot_looks": [
+    "3D render, foggy forest, tall blank-headed figure between the trees, distant",
+    "3D render, medium shot of two campers screaming by a tent, flashlight beam",
+    "3D render, dark trail with a VHS static overlay"
+   ],
+   "characters": [
+    {
+     "name": "The Tall Man",
+     "look": "impossibly tall and thin, black suit and tie, smooth white head with no eyes, nose or mouth",
+     "role": "character",
+     "screen_share": 0.25
+    },
+    {
+     "name": "Jake",
+     "look": "lanky teen camper, oversized round head, messy orange hair, big cartoon eyes, red hoodie",
+     "role": "character",
+     "screen_share": 0.4
+    },
+    {
+     "name": "Mia",
+     "look": "camper with a dark ponytail, freckles, wide eyes, green jacket",
+     "role": "character",
+     "screen_share": 0.3
+    }
+   ],
+   "recognisable": [
+    "static and VHS glitches between scenes",
+    "the tall figure standing a little closer after every cut",
+    "teen campers yelling scripted dialogue",
+    "teal moonlight and thick fog"
+   ],
+   "why": "Mixed cast: the villain really is faceless, but the campers, who are on screen more, have eyes, hair, eyebrows and lip-sync. Because some figures are designed, the drawn route is needed."
+  },
+  {
+   "family": "heldout-designed",
+   "expected": "drawn",
+   "art_style": "Realistic cinematic CGI with an Unreal Engine look: bearded biblical men in rough linen robes and head cloths with detailed skin pores and weathered faces, desert landscapes and stone cities under golden-hour sun, volumetric god rays, slow crane and dolly moves, warm teal-and-orange grade.",
+   "alternatives": [
+    "Epic photoreal 3D Bible-story renders, golden light, robed crowds"
+   ],
+   "shot_looks": [
+    "3D render, white-bearded elder raising a staff over a crowd, god rays",
+    "3D render, aerial of a walled desert city at sunset",
+    "3D render, close-up of weathered hands unrolling a scroll"
+   ],
+   "characters": [
+    {
+     "name": "Prophet",
+     "look": "elderly man, long white beard, deep-set eyes, furrowed brow, brown wool robe and wooden staff",
+     "role": "character",
+     "screen_share": 0.45
+    },
+    {
+     "name": "Israelite crowd",
+     "look": "crowds of robed men and women, digital doubles, faces readable in mid shots",
+     "role": "character",
+     "screen_share": 0.2
+    }
+   ],
+   "recognisable": [
+    "deep male narrator in scripture-like cadence",
+    "choir and orchestral swells",
+    "god rays breaking through clouds",
+    "slow aerial establishing shots of ancient cities"
+   ],
+   "why": "Realistic CGI people with detailed faces, beards and eyes count as designed under the rule; the faceless engine would strip exactly what makes this channel."
+  },
+  {
+   "family": "heldout-designed",
+   "expected": "drawn",
+   "art_style": "Toon-shaded 3D explainer look with bold dark outlines and flat colour fills; historical figures are bobblehead caricatures with huge heads, big noses, painted-on eyebrows and simple dot eyes on tiny bodies, posed on miniature diorama sets with tilt-shift focus.",
+   "alternatives": [
+    "Cel-shaded tabletop-diorama history animation with caricature leaders"
+   ],
+   "shot_looks": [
+    "toon-shaded 3D, bobblehead emperor on a tiny throne, diorama",
+    "toon-shaded 3D, miniature legion marching across a tabletop map",
+    "motion graphic, timeline with year labels sliding in"
+   ],
+   "characters": [
+    {
+     "name": "Napoleon",
+     "look": "bobblehead, black bicorne hat, permanent scowl, dot eyes, hand tucked into his coat",
+     "role": "character",
+     "screen_share": 0.3
+    },
+    {
+     "name": "Caesar",
+     "look": "bald bobblehead with a laurel wreath, smug squint, big nose, red cloak",
+     "role": "character",
+     "screen_share": 0.25
+    }
+   ],
+   "recognisable": [
+    "tilt-shift miniature diorama look",
+    "bobblehead world leaders",
+    "sarcastic narrator jokes",
+    "map moves with sweeping arrows"
+   ],
+   "why": "Caricature people with dot eyes, noses, eyebrows and iconic hats are designed figures, even though the outlines and flat fills feel diagrammatic."
+  },
+  {
+   "family": "heldout-designed",
+   "expected": "drawn",
+   "art_style": "Mostly 3D terrain maps with animated army arrows and unit blocks seen from a high orbiting camera; closer cuts show small plastic toy-soldier figures in helmets with painted-on moustaches and dot eyes, standing on grassy hex tiles under soft overcast light.",
+   "alternatives": [
+    "3D war-map documentary with toy-soldier inserts"
+   ],
+   "shot_looks": [
+    "3D terrain map, orbiting camera, red and blue army arrows",
+    "3D render, close-up of green plastic toy soldiers with painted faces in a trench",
+    "3D render, toy cannon firing a puff of cotton-wool smoke"
+   ],
+   "characters": [
+    {
+     "name": "Toy soldiers",
+     "look": "army-man style plastic figures in olive or grey, helmets, painted moustaches and dot eyes, moulded bases",
+     "role": "character",
+     "screen_share": 0.2
+    }
+   ],
+   "recognisable": [
+    "3D terrain maps with army arrows",
+    "plastic toy-soldier close-ups",
+    "drum-heavy orchestral music",
+    "date and casualty counters"
+   ],
+   "why": "The channel is mostly maps, but every time people appear they are toy figures with painted faces and helmets; mixed channels are labelled by what their figures are, and these are designed."
+  },
+  {
+   "family": "heldout-designed",
+   "expected": "drawn",
+   "art_style": "Feature-film-quality 3D animation with photoreal fur and feathers but cartoon proportions: animals have oversized glossy eyes, mobile eyebrows and fully lip-synced mouths as they talk to camera, set in lush rainforest and savanna environments with soft natural daylight and shallow depth of field.",
+   "alternatives": [],
+   "shot_looks": [
+    "3D render, sloth hanging from a branch talking straight to camera",
+    "3D render, close-up of a chameleon rolling one eye",
+    "3D render, wide misty rainforest canopy, drone-like glide"
+   ],
+   "characters": [
+    {
+     "name": "Professor Sloth",
+     "look": "three-toed sloth, round wire glasses, shaggy brown fur, sleepy half-lidded eyes, slow lip-synced speech",
+     "role": "presenter",
+     "screen_share": 0.5
+    },
+    {
+     "name": "Chameleon sidekick",
+     "look": "bright green, independently swivelling eyes, sarcastic grin, curled tail",
+     "role": "character",
+     "screen_share": 0.2
+    }
+   ],
+   "recognisable": [
+    "animals explaining their own biology in the first person",
+    "comic banter between the host and a sidekick",
+    "fun-fact cards with paw-print icons",
+    "lush, saturated rainforest settings"
+   ],
+   "why": "Talking animals with expressive eyes, eyebrows and lip-sync are creatures with faces, which the rule sends to the drawn route."
+  },
+  {
+   "family": "heldout-designed",
+   "expected": "drawn",
+   "art_style": "Source Filmmaker or Garry's Mod style 3D machinima: realistic grimacing human heads singing out of white porcelain toilets, fighting men in suits whose heads are CCTV cameras and loudspeakers, dim bathroom and city-street maps, harsh game-engine lighting and a shaky handheld camera.",
+   "alternatives": [
+    "Meme 3D machinima, singing toilet heads versus object-headed agents"
+   ],
+   "shot_looks": [
+    "3D machinima, singing head in a toilet, mouth wide open, bathroom",
+    "3D machinima, camera-headed agent in a suit taking aim",
+    "3D machinima, explosion on a city street, shaky cam"
+   ],
+   "characters": [
+    {
+     "name": "Toilet head",
+     "look": "photo-textured human head with raised eyebrows and a gaping mouth, sticking out of a white toilet bowl, bobbing as it sings",
+     "role": "character",
+     "screen_share": 0.45
+    },
+    {
+     "name": "Cameraman",
+     "look": "man in a black suit with a security camera for a head, one round lens",
+     "role": "character",
+     "screen_share": 0.35
+    },
+    {
+     "name": "Speakerman",
+     "look": "black suit with a boxy loudspeaker head",
+     "role": "character",
+     "screen_share": 0.15
+    }
+   ],
+   "recognisable": [
+    "looping earworm song sung by the toilets",
+    "no dialogue, only music and sound effects",
+    "camera-headed and speaker-headed agents",
+    "episode numbers in the corner"
+   ],
+   "why": "Singing human faces in toilets, plus agents with camera and speaker heads, which are distinctive object heads; nothing here is a plain faceless figure."
+  },
+  {
+   "family": "heldout-designed",
+   "expected": "drawn",
+   "art_style": "Glossy Blender meme animation in an abandoned pastel kindergarten: toy-like mascot monsters with huge googly eyes, wide toothy grins and rubbery limbs chase a small player character, lit with sickly fluorescent light and neon accents, with abrupt crash zooms onto their faces.",
+   "alternatives": [
+    "Mascot-horror 3D meme shorts in a creepy daycare"
+   ],
+   "shot_looks": [
+    "3D render, tall green mascot with a stretched neck peering round a door",
+    "3D render, red bulbous mascot in a tiny crown grinning",
+    "3D render, empty pastel corridor with flickering lights"
+   ],
+   "characters": [
+    {
+     "name": "Big Green",
+     "look": "tall green mascot, round belly, huge white googly eyes with pinprick pupils, wide flat smile full of teeth, stretchy arms",
+     "role": "mascot",
+     "screen_share": 0.4
+    },
+    {
+     "name": "Red Queen",
+     "look": "bulbous red blob with a gold crown, beady black eyes, long pink tongue",
+     "role": "mascot",
+     "screen_share": 0.25
+    },
+    {
+     "name": "Player",
+     "look": "small kid in an orange shirt, cartoon proportions, mostly seen from behind",
+     "role": "character",
+     "screen_share": 0.15
+    }
+   ],
+   "recognisable": [
+    "a kids' TV jingle remixed into horror",
+    "daycare mascots that turn monstrous",
+    "crash zoom onto a grinning mascot face with a bass hit",
+    "cheap jump scares and meme sound effects"
+   ],
+   "why": "Mascot creatures with googly eyes, teeth and tongues are designed cartoon characters; the whole channel is about their faces."
+  },
+  {
+   "family": "heldout-designed",
+   "expected": "drawn",
+   "art_style": "Clean, bright 3D product-style renders on soft gradient backgrounds: a small white rounded robot with a glossy black visor screen showing two glowing cyan ovals that blink and curve into happy arcs, floating beside stylised icons, charts and laptop props, under soft studio light with gentle depth of field.",
+   "alternatives": [
+    "Friendly robot mascot tech explainer, pastel 3D icons"
+   ],
+   "shot_looks": [
+    "3D render, robot mascot waving beside a floating chat bubble",
+    "3D render, isometric pastel-blue server room",
+    "motion graphic, bar chart with typed labels"
+   ],
+   "characters": [
+    {
+     "name": "Bit",
+     "look": "palm-sized white robot, capsule body, round head with a black visor display, two cyan oval lights that blink and smile, a small hover ring underneath",
+     "role": "mascot",
+     "screen_share": 0.6
+    }
+   ],
+   "recognisable": [
+    "friendly robot host explaining AI terms",
+    "pastel gradient backdrops",
+    "typed captions in a rounded sans",
+    "soft synth-pop music bed"
+   ],
+   "why": "The word eyes never appears, but the visor head with blinking cyan ovals that curve into smiles is an emoticon face on a distinctive head, which makes it a designed mascot."
+  },
+  {
+   "family": "heldout-designed",
+   "expected": "drawn",
+   "art_style": "Cel-shaded anime 3D avatar (a VRM-style model) talking to camera from the waist up in a cosy pastel streaming room, with large sparkly irises, a small mouth that opens with the voice, pink twin tails and cat-ear headphones, framed by pop-up stream overlays and chat bubbles.",
+   "alternatives": [
+    "VTuber-style 3D anime presenter reacting to clips"
+   ],
+   "shot_looks": [
+    "3D avatar, waist-up anime girl talking to camera, cosy room",
+    "game clip in a picture-in-picture frame with the avatar in the corner",
+    "3D avatar, reaction close-up with blush stickers"
+   ],
+   "characters": [
+    {
+     "name": "Nyara",
+     "look": "anime VRM girl, pink twin tails, cat-ear headphones, large violet eyes with star highlights, oversized hoodie, mouth flaps synced to the voice",
+     "role": "presenter",
+     "screen_share": 0.7
+    }
+   ],
+   "recognisable": [
+    "anime avatar host reacting to clips",
+    "kawaii sound effects on every reaction",
+    "chat-bubble and stream overlays",
+    "pastel bedroom backdrop"
+   ],
+   "why": "An anime-styled avatar presenter with large eyes, hair and lip-flap is a designed 3D person; the faceless engine would lose the host entirely."
+  },
+  {
+   "family": "heldout-faceless",
+   "expected": "threed",
+   "art_style": "Stylized 3D CGI animation with a clean, slightly cartoonish look: smooth matte grey humanoid figures with no facial features in simple, softly lit sets, rendered Blender-style with soft global illumination, cute-looking warm key light and shallow depth of field. Frequent extreme macro close-ups and quick push-ins on the key moment.",
+   "alternatives": [
+    "Simple, clean 3D renders that look like a Blender animation; featureless grey mannequin people with rounded, slightly chunky proportions in brightly lit minimal rooms, warm light and soft contact shadows.",
+    "Smooth, toy-like 3D animation of a plain grey man with a blank head, saturated coloured props against the neutral grey figure, x-ray cutaways showing white bones under translucent skin."
+   ],
+   "shot_looks": [
+    "3D render, smooth matte grey figure, soft studio lighting, shallow depth of field",
+    "3D CGI macro close-up, glossy saturated props, soft bloom, cute-looking warm light",
+    "x-ray style 3D cutaway, translucent grey skin over white bones, dark background"
+   ],
+   "characters": [
+    {
+     "name": "Grey man",
+     "look": "Smooth mid-grey humanoid mannequin with a plain rounded head and no eyes, nose, mouth, ears or hair; average adult build; sometimes wears a single coloured T-shirt",
+     "role": "character",
+     "screen_share": 0.75
+    }
+   ],
+   "recognisable": [
+    "Faceless grey mannequin people in every scene",
+    "Extreme macro close-ups with a fast push-in right on the gross or surprising moment",
+    "Clean, softly lit 3D sets that look like a default Blender scene",
+    "Bold white word-by-word captions in the middle of the frame",
+    "Fast, punchy male voiceover opening with 'this is what happens if'"
+   ],
+   "why": "The only 3D figure is a plain grey faceless mannequin; 'cartoonish', 'cute-looking' and 'Blender-style' describe the rendering, not a designed character."
+  },
+  {
+   "family": "heldout-faceless",
+   "expected": "threed",
+   "art_style": "3D animated shorts with polished, almost Pixar-like lighting but very minimal character design: the people are uniform light-grey dummies with blank, featureless heads wearing simple coloured clothes, set in tidy suburban kitchens and streets with low-texture surfaces, warm rim light and slow-motion beats.",
+   "alternatives": [
+    "Game-like low-poly 3D environments with soft cinematic lighting; the recurring figure is a smooth grey dummy in an orange hoodie, shown in slow motion just before an accident."
+   ],
+   "shot_looks": [
+    "stylized 3D CGI, warm rim light, slow motion, shallow focus",
+    "game-like 3D environment, clean low-texture surfaces, high overhead camera",
+    "3D render with motion blur and a glowing red outline around the hazard"
+   ],
+   "characters": [
+    {
+     "name": "Hoodie dummy",
+     "look": "Light-grey featureless humanoid, smooth blank head with no face at all, orange hoodie, blue jeans and white sneakers; identical outfit in every video",
+     "role": "mascot",
+     "screen_share": 0.6
+    },
+    {
+     "name": "Bystanders",
+     "look": "Same grey blank-headed dummies in plain beige and navy clothes, used for crowds and family members",
+     "role": "character",
+     "screen_share": 0.2
+    }
+   ],
+   "recognisable": [
+    "The same faceless grey dummy in an orange hoodie walks into a dangerous everyday situation",
+    "Slow-motion freeze right before the accident, then a red outline on the danger",
+    "Soft cinematic 3D lighting on very plain untextured sets",
+    "White rounded hook text with a black stroke at the top of the frame"
+   ],
+   "why": "The mascot is just a clothed faceless dummy; 'Pixar-like' refers to lighting and 'character design' is explicitly minimal and featureless."
+  },
+  {
+   "family": "heldout-faceless",
+   "expected": "threed",
+   "art_style": "Clean medical 3D visualization: a translucent, glowing blue human body with no facial features standing against a dark navy gradient, internal organs rendered in saturated reds and pinks with subsurface scattering, slow orbiting cameras and macro fly-throughs inside blood vessels.",
+   "alternatives": [
+    "Glossy CGI anatomy renders with an X-ray-hologram body silhouette, one highlighted organ, cool cyan rim light and floating particles on black.",
+    "Stylized, slightly cartoonish organ models in bright clean colours on a dark backdrop, with a see-through featureless human outline for context."
+   ],
+   "shot_looks": [
+    "3D medical render, translucent cyan hologram figure, highlighted organ in red, dark background",
+    "macro 3D fly-through, glossy red blood cells, depth of field, volumetric haze",
+    "clean 3D anatomical heart model on black, studio key light, slow turntable"
+   ],
+   "characters": [
+    {
+     "name": "Hologram body",
+     "look": "Semi-transparent cyan human figure in a neutral A-pose, smooth featureless head with no eyes, nose or mouth, only the skeleton or a single organ shown in solid colour",
+     "role": "character",
+     "screen_share": 0.45
+    }
+   ],
+   "recognisable": [
+    "See-through blue body with one glowing organ",
+    "Camera dives from the whole body into the organ and then into the cells",
+    "Thin white sans-serif labels with leader lines",
+    "Calm, clinical female narrator over ambient synth pads"
+   ],
+   "why": "The only figure is a faceless see-through body; hearts, vessels and cells are anatomical objects the engine can build."
+  },
+  {
+   "family": "heldout-faceless",
+   "expected": "threed",
+   "art_style": "Real doctor filmed on camera in a bright white clinic intercut with clean 3D anatomical animation: an isolated eyeball model sliced in half to show the lens, iris and retina, and a plain grey faceless patient figure for symptom shots, all on white studio backgrounds with soft shadows and textbook colours.",
+   "alternatives": [
+    "Bright, evenly lit medical CGI of the eye in cross-section with the clouded lens highlighted in yellow, matching the white walls of the presenter's clinic."
+   ],
+   "shot_looks": [
+    "live-action presenter, bright clinic, shallow focus, clean grade",
+    "3D anatomical render, cross-sectioned eyeball, glossy wet surfaces, white background",
+    "simple 3D grey faceless figure shading its brow with one hand, soft studio light"
+   ],
+   "characters": [
+    {
+     "name": "Dr. host",
+     "look": "Real man in his late thirties, short dark hair, navy scrubs, filmed waist-up talking to camera in a white clinic",
+     "role": "presenter",
+     "screen_share": 0.4
+    },
+    {
+     "name": "Grey patient",
+     "look": "Plain grey 3D mannequin with no eyes, nose or mouth, sometimes in a white T-shirt, used to act out symptoms",
+     "role": "character",
+     "screen_share": 0.15
+    }
+   ],
+   "recognisable": [
+    "Doctor talks to camera, then cuts to a 3D cutaway of the eye",
+    "Eyeball cross-sections with the problem area glowing yellow",
+    "White-background 3D renders that match the clinic's white walls",
+    "Name lower-third and a small flat 2D channel logo bug bottom-right"
+   ],
+   "why": "The presenter is live action, the 3D patient is a faceless mannequin, and the eyeball is an isolated anatomical object, not a figure with eyes."
+  },
+  {
+   "family": "heldout-faceless",
+   "expected": "threed",
+   "art_style": "Realistic but slightly gamey 3D crash reconstruction in a flight-simulator style: a detailed airliner model in correct livery over low-detail terrain and a grey overcast cloud deck, dim cockpit interiors with glowing instruments, and the two pilots shown from behind as plain grey featureless mannequins; muted, desaturated grade.",
+   "alternatives": [
+    "Flight-sim looking CGI with stormy dramatic lighting; the aircraft is cleanly modelled while the mountains and airport are low-poly with simple textures."
+   ],
+   "shot_looks": [
+    "3D CGI, flight-simulator chase cam, airliner against grey clouds, slight motion blur",
+    "3D cockpit interior, amber instrument glow, faceless grey pilot figures seen from behind",
+    "top-down 3D terrain map with red flight-path line and altitude readout"
+   ],
+   "characters": [
+    {
+     "name": "Pilots",
+     "look": "Two identical plain grey humanoid dummies in white shirts with epaulettes, no hair or facial features, mostly seen from behind or in silhouette",
+     "role": "character",
+     "screen_share": 0.2
+    }
+   ],
+   "recognisable": [
+    "Cockpit voice recorder transcript typed on screen while the 3D plane flies",
+    "Flight-sim chase-cam shots of the airliner descending toward the face of the mountain",
+    "Altitude and airspeed counters overlaid on every flight shot",
+    "Low, serious male narrator over an ominous synth drone",
+    "Cut to black and silence at the moment of impact"
+   ],
+   "why": "The pilots are faceless dummies and everything else is aircraft, terrain and instruments; 'face of the mountain' is terrain."
+  },
+  {
+   "family": "heldout-faceless",
+   "expected": "threed",
+   "art_style": "Semi-realistic 3D simulation of an ocean liner sinking at night, warm deck and porthole lights against black water and a starry sky, the stern rising and the hull breaking in two, with clean cutaway cross-sections showing compartments flooding in translucent blue; tiny passengers on deck are simple white featureless figures.",
+   "alternatives": [
+    "Cinematic night-time CGI of the ship from a low water-level camera, cold blue moonlight and orange interior glow, intercut with the host filmed beside a large physical scale model in his workshop."
+   ],
+   "shot_looks": [
+    "3D render, night ocean, warm porthole lights, cold blue moonlight, cinematic",
+    "3D cross-section diagram, flooded compartments in translucent blue, clean white labels",
+    "live-action presenter in a workshop, warm practical lights, candid"
+   ],
+   "characters": [
+    {
+     "name": "Host",
+     "look": "Real middle-aged man with glasses and a grey beard, plaid shirt, filmed in his workshop in front of a large ship model",
+     "role": "presenter",
+     "screen_share": 0.25
+    },
+    {
+     "name": "Passengers",
+     "look": "Tiny white untextured human figures with no faces or detail, standing on the tilted deck or sitting in lifeboats",
+     "role": "character",
+     "screen_share": 0.1
+    }
+   ],
+   "recognisable": [
+    "Real-time sinking simulation with a clock in the corner",
+    "Cutaway of the hull filling compartment by compartment",
+    "Host explaining things next to his physical scale model",
+    "Haunting ambient piano with creaking-metal foley"
+   ],
+   "why": "The host is filmed live; the 3D passengers are featureless white figures and the ship and sea are objects and places."
+  },
+  {
+   "family": "heldout-faceless",
+   "expected": "threed",
+   "art_style": "Photoreal-leaning but clean 3D reconstruction of an ancient Roman city at golden hour, marble temples, terracotta roofs and dusty streets shown in slow drone-like flyovers through light haze; the sparse crowds are low-detail mannequin figures in plain tunics with no facial detail, giving it an architectural-visualisation or city-builder-game look.",
+   "alternatives": [
+    "Game-engine style flyover of a rebuilt ancient city with soft atmospheric haze and sharp architectural detail, starting from real drone footage of today's ruins that dissolves into the reconstruction."
+   ],
+   "shot_looks": [
+    "3D architectural visualization, golden hour, aerial orbit, atmospheric haze",
+    "real drone footage of ruins morphing into a clean 3D reconstruction",
+    "street-level 3D render, beige featureless crowd figures in tunics, soft shadows"
+   ],
+   "characters": [
+    {
+     "name": "Citizens",
+     "look": "Generic stand-in figures in off-white and brown tunics, smooth heads with no eyes, mouth or hair, standing in small groups around the forum",
+     "role": "character",
+     "screen_share": 0.2
+    }
+   ],
+   "recognisable": [
+    "Today's ruins morphing into the full rebuilt city",
+    "Slow aerial orbits around temples at golden hour",
+    "Small flat 2D laurel-wreath logo in the top-left corner",
+    "Calm documentary narrator with orchestral swells"
+   ],
+   "why": "The citizens are faceless stand-ins, the city is a place, and the 2D laurel logo isn't a 3D figure; 'city-builder game' describes the render."
+  },
+  {
+   "family": "heldout-faceless",
+   "expected": "threed",
+   "art_style": "Clean, low-poly-ish 3D animation of ancient construction: sandstone blocks hauled up mud-brick ramps on wooden sledges by teams of simple grey worker figures with plain featureless heads, flat sandy desert, bright midday sun and hard shadows, with a slightly toy-like scale-model feel from high tilt-shift angles.",
+   "alternatives": [
+    "Simple untextured 3D build sequence of a pyramid layer by layer, isometric camera, warm flat colours, crowds of identical faceless labourers pulling ropes."
+   ],
+   "shot_looks": [
+    "low-poly 3D, flat sand colours, hard sunlight, high isometric angle",
+    "3D cutaway of the pyramid interior showing chambers and shafts, clean lines",
+    "3D close-up of copper chisels on a stone block, simple textures"
+   ],
+   "characters": [
+    {
+     "name": "Workers",
+     "look": "Identical mid-grey humanoid figures in white kilts, no face, hair or fingers, moving in teams that pull ropes and push sledges",
+     "role": "character",
+     "screen_share": 0.35
+    }
+   ],
+   "recognisable": [
+    "Step-by-step build-up of the monument from the bottom course",
+    "Toy-like tilt-shift high angles of tiny workers dragging blocks",
+    "On-screen counters for blocks placed and years elapsed",
+    "Steady male narrator over wind and a low ambient drone"
+   ],
+   "why": "The workers are featureless grey figures; 'block' means stone blocks, and 'toy-like' describes the tilt-shift scale, not toy characters."
+  },
+  {
+   "family": "heldout-faceless",
+   "expected": "threed",
+   "art_style": "Space-simulation 3D renders in the vein of Universe Sandbox: realistic textured planets and moons on a black starfield, a single bright sun with hard terminator shadows, glowing orbit lines and molten debris particles during collisions, with video-game-like HUD readouts on screen.",
+   "alternatives": [
+    "Game-like planetary sim with glossy atmospheres, bloom on the sun, and numeric overlays for distance and time."
+   ],
+   "shot_looks": [
+    "3D space render, realistic planet textures, hard sunlight, black starfield",
+    "particle-sim collision, glowing molten debris, heavy bloom",
+    "game-like UI overlay, thin orbit lines, numeric readouts"
+   ],
+   "characters": [],
+   "recognisable": [
+    "The Moon's familiar near-side face slowly filling the sky as it drifts closer",
+    "Planet-collision simulations with molten debris",
+    "Time-skip counter like 'Year 1 ... Year 1,000,000'",
+    "Deep synth score with sub-bass hits on impacts",
+    "Soft-spoken male narrator"
+   ],
+   "why": "No people or creatures at all; 'face' refers to the Moon's surface and the HUD is just graphics."
+  },
+  {
+   "family": "heldout-faceless",
+   "expected": "threed",
+   "art_style": "Stylized but realistic-leaning 3D disaster simulation of a dam bursting and a flood wave rolling through a valley town, Houdini-style muddy water and debris, miniature toy-like houses and cars, and tiny grey featureless people for scale, under flat overcast daylight with dramatic low angles.",
+   "alternatives": [
+    "Tilt-shift miniature look of a small town before the water hits, then cinematic fluid-sim close-ups of brown water tearing through streets."
+   ],
+   "shot_looks": [
+    "3D fluid simulation, muddy brown water, floating debris, overcast, cinematic",
+    "tilt-shift miniature town, toy-like cars and houses, soft daylight",
+    "3D side cross-section of the dam with blue water-pressure arrows"
+   ],
+   "characters": [
+    {
+     "name": "Townspeople",
+     "look": "Tiny plain grey humanoid figures with no faces or clothing detail, used only to show scale and running away from the water",
+     "role": "character",
+     "screen_share": 0.08
+    }
+   ],
+   "recognisable": [
+    "The wall of water bursting out of the mouth of the valley",
+    "Miniature, toy-like town shown calm before the destruction",
+    "Side-on cross-section of the dam with pressure arrows",
+    "Countdown timer and wave-height counter",
+    "Rumbling sub-bass and crashing water foley"
+   ],
+   "why": "The only people are tiny faceless grey scale figures; 'mouth of the valley' is geography and 'toy-like' describes the miniature look."
+  },
+  {
+   "family": "heldout-faceless",
+   "expected": "threed",
+   "art_style": "Polished, product-style 3D animation of machinery: a car engine in transparent-glass and cutaway views with pistons, crankshaft and valves in brushed metal plus colour-coded highlights (blue fuel, orange combustion), on a seamless light-grey studio background with slow rotations, a Blender or KeyShot render look.",
+   "alternatives": [
+    "Clean CGI cutaways of mechanical devices with semi-transparent housings, colour-coded flows, soft studio lighting and slow camera orbits."
+   ],
+   "shot_looks": [
+    "3D product render, cutaway engine, brushed metal, light-grey seamless background",
+    "x-ray transparent casing, glowing orange combustion, slow motion",
+    "exploded-view 3D, parts separating along one axis, clean callout labels"
+   ],
+   "characters": [],
+   "recognisable": [
+    "Machines peeled open layer by layer to show what happens inside",
+    "Colour-coded flows: blue fuel, orange fire, grey exhaust",
+    "Slow-motion four-stroke cycle with labels",
+    "Friendly, neutral male narrator over soft electronic music"
+   ],
+   "why": "Only machines and parts; no people or creatures appear in the 3D pictures."
+  },
+  {
+   "family": "heldout-faceless",
+   "expected": "threed",
+   "art_style": "Bright, clean 3D renders of everyday objects opened up (a pin-tumbler lock, a vending machine, a toilet cistern) in soft pastel colours with rounded bevels and cute-looking, evenly lit studio light, almost toy-like, with a smooth grey featureless hand operating them. The channel's flat 2D logo, a cartoon padlock with two dot eyes and a smile, pops up in the corner and on the end card.",
+   "alternatives": [
+    "Pastel, toy-like 3D cutaways with glossy plastic materials and soft shadows on a pale mint background; mechanisms move in slow motion while a plain grey hand turns the key."
+   ],
+   "shot_looks": [
+    "3D render, pastel plastic materials, soft even studio light, rounded bevels",
+    "transparent 3D cutaway of the lock cylinder, pins highlighted in yellow",
+    "flat 2D logo animation on a solid yellow end card"
+   ],
+   "characters": [
+    {
+     "name": "Grey hand",
+     "look": "Smooth matte grey disembodied hand with no nails or skin detail, enters frame from the side",
+     "role": "character",
+     "screen_share": 0.15
+    },
+    {
+     "name": "Padlock logo",
+     "look": "Flat 2D cartoon padlock icon with two black dot eyes and a small curved smile, thick black outline, yellow fill; only a corner bug and end card, never inside the 3D scenes",
+     "role": "mascot",
+     "screen_share": 0.05
+    }
+   ],
+   "recognisable": [
+    "Everyday objects sliced open in pastel 3D",
+    "Grey featureless hand working the mechanism",
+    "Pins and gears highlighted in yellow while the camera orbits",
+    "Cartoon padlock logo winking on the end card"
+   ],
+   "why": "Mixed channel: the only face is on a flat 2D logo that never enters the 3D scenes; the 3D pictures are objects plus a faceless grey hand."
+  },
+  {
+   "family": "heldout-faceless",
+   "expected": "threed",
+   "art_style": "3D tabletop-style battle map: a sculpted relief terrain with rivers, forests and small towns in muted greens and browns, viewed from high oblique angles, with armies shown as tiny plain soldier tokens in solid red or blue standing in block formations and animated arrows sweeping across the ground; it looks like a strategy board game or a Total War minimap.",
+   "alternatives": [
+    "Game-like 3D relief map with soft daylight and drifting cloud shadows, coloured unit tokens sliding into position, interleaved with slow zooms on archival oil paintings."
+   ],
+   "shot_looks": [
+    "3D relief terrain map, muted earth tones, high oblique camera, soft daylight",
+    "faceless red and blue token soldiers advancing in formation, strategy-game look, bold arrows",
+    "archival oil painting with slow zoom"
+   ],
+   "characters": [
+    {
+     "name": "Token soldiers",
+     "look": "Tiny featureless soldier figures with no faces, arms or weapons, solid red or blue by side, grouped into rectangular blocks to represent units; cavalry marked only by a small pennant",
+     "role": "character",
+     "screen_share": 0.5
+    }
+   ],
+   "recognisable": [
+    "Red versus blue token armies sliding across a 3D relief map",
+    "Sweeping animated arrows for flanks and retreats",
+    "Unit strength counters and date stamps",
+    "Archival portraits of the commanders between map shots",
+    "Gravelly male narrator over war drums"
+   ],
+   "why": "The 3D soldiers are faceless tokens and the rest is terrain; the faces belong only to archival paintings, which aren't 3D."
+  },
+  {
+   "family": "heldout-faceless",
+   "expected": "threed",
+   "art_style": "Muted, forensic 3D crime-scene reconstruction: a sparsely furnished apartment and a parking lot at night in desaturated greys and cold blue light, numbered yellow evidence markers and dotted path lines, with neutral white mannequin figures standing in for the victim and suspect; intercut with real police photos, bodycam clips and news footage.",
+   "alternatives": [
+    "Cold, clinical 3D recreation of the timeline with top-down floor plans, timestamps and blank white dummies placed where witnesses said they stood."
+   ],
+   "shot_looks": [
+    "3D forensic reconstruction, desaturated, cold top light, yellow evidence markers",
+    "top-down 3D floor plan with dotted movement paths and timestamps",
+    "real bodycam footage, lo-fi, faces blurred"
+   ],
+   "characters": [
+    {
+     "name": "Victim figure",
+     "look": "Plain white featureless mannequin, no face or hair, wearing a red jacket to tell it apart",
+     "role": "character",
+     "screen_share": 0.2
+    },
+    {
+     "name": "Suspect figure",
+     "look": "Identical blank white mannequin in a dark grey hoodie with the hood up, no face",
+     "role": "character",
+     "screen_share": 0.2
+    }
+   ],
+   "recognisable": [
+    "Faceless white dummies re-enacting the night step by step",
+    "Top-down floor plan with timestamps and dotted paths",
+    "Real 911 audio playing over the 3D recreation",
+    "Real bodycam inserts with blurred faces",
+    "Calm female true-crime narrator"
+   ],
+   "why": "Every 3D figure is a blank white mannequin; the real faces only appear in live bodycam and photo inserts, not in the 3D pictures."
+  },
+  {
+   "family": "adversarial",
+   "expected": "threed",
+   "art_style": "Clean, photoreal CGI product-visualisation of car engineering: brushed-metal and cast-aluminium PBR materials on a dark gradient backdrop, soft studio HDRI lighting, slow orbiting camera, exploded views and X-ray cutaways with glowing oil and coolant paths; crash tests use yellow-and-black anthropomorphic test dummies.",
+   "alternatives": [
+    "flat 2D line diagrams with arrows labelling parts"
+   ],
+   "shot_looks": [
+    "exploded view of the cylinder head lifting off the engine block, valves and camshaft separating on a dark gradient",
+    "macro close-up of gear teeth grinding against each other in a translucent gearbox, metal shavings as particles",
+    "slow-motion offset crash: car body crumpling with a blue-to-red stress colour map, test dummy lurching into the airbag"
+   ],
+   "characters": [
+    {
+     "name": "test dummy",
+     "look": "Hybrid III style crash-test dummy, yellow and black, target decals on the head, no face",
+     "role": "character",
+     "screen_share": 0.12
+    }
+   ],
+   "recognisable": [
+    "slow orbit around a floating engine on a dark gradient",
+    "exploded views where every part lifts away and snaps back",
+    "amber glow tracing oil and fuel paths",
+    "thin white leader-line labels"
+   ],
+   "why": "There are no designed figures, only machines and crash-test dummies. The router still fires on three words. 'cylinder head' is an engine part, but it matches the cylinder-shaped-head pattern. 'grinding' matches grin\\w*, which also catches grind and grinder. 'anthropomorphic' is the official name of a crash-test dummy (Anthropomorphic Test Device). Verified against the real router: it returns drawn."
+  },
+  {
+   "family": "adversarial",
+   "expected": "threed",
+   "art_style": "Semi-realistic 3D of megaprojects (tunnels, bridges, dams) in a clean architectural-visualisation style: cutaway ground layers, soft daylight, an isometric camera, and structures that assemble piece by piece like LEGO bricks. No people appear.",
+   "alternatives": [],
+   "shot_looks": [
+    "cutaway of a tunnel boring machine grinding through layered rock, debris carried back on a conveyor",
+    "camera flies out of the tunnel mouth into bright daylight over a motorway",
+    "circular iris-wipe transition from the cross-section to a satellite-style map"
+   ],
+   "characters": [],
+   "recognisable": [
+    "ground sliced open to show rock layers",
+    "bridges and stations snapping together block by block, LEGO-like",
+    "orange highlight tracing the route",
+    "big white numbers counting cost and length"
+   ],
+   "why": "These are places and machines with no people, which is exactly what the 3D engine builds. The router reads 'tunnel mouth' as a mouth, because NOT_A_FACE only covers 'mouth of' and river and cave mouths. It also matches 'grinding' through grin\\w*, 'iris' from an iris-wipe transition, and 'LEGO', which here only compares the buildings to bricks. Verified: it returns drawn."
+  },
+  {
+   "family": "adversarial",
+   "expected": "threed",
+   "art_style": "Muted, overcast 3D reconstructions of a 1960s Welsh mining village: the colliery spoil tip on the hillside, terraced streets and a small primary school, rendered in a realistic but softly textured game-engine style. Every person is a plain light-grey faceless mannequin, told apart only by flat-coloured clothes.",
+   "alternatives": [
+    "archival black-and-white photographs with slow pans"
+   ],
+   "shot_looks": [
+    "wide aerial of the valley with the spoil tip above the village under low cloud, desaturated grade",
+    "classroom interior: rows of wooden desks with small grey mannequin pupils in navy jumpers facing the blackboard",
+    "slow push along a terraced street in drizzle, a few grey figures sheltering in doorways"
+   ],
+   "characters": [
+    {
+     "name": "the pupils",
+     "look": "small light-grey mannequin children, smooth blank heads, navy school jumpers and grey shorts",
+     "role": "character",
+     "screen_share": 0.3
+    }
+   ],
+   "recognisable": [
+    "grey faceless mannequins standing in for every person",
+    "slow drone-like push-ins over realistic terrain",
+    "dates and times typed out in a white typewriter font",
+    "quiet piano under a calm British narrator"
+   ],
+   "why": "These are faceless grey mannequins in real places. 'pupils' means schoolchildren here, but FEATURES reads it as the pupils of eyes. Nothing negates it, so the router calls this a designed cast. Verified: it returns drawn."
+  },
+  {
+   "family": "adversarial",
+   "expected": "threed",
+   "art_style": "Bright, clean ray-traced 3D 'could you survive' scenarios in believable real places (a frozen lake, a lift shaft, a flooded underpass) with natural daylight and soft contact shadows. The person is a matte off-white shop-window mannequin with a plain round head and no face, posed stiffly mid-action.",
+   "alternatives": [],
+   "shot_looks": [
+    "matte off-white mannequin in a grey hoodie standing on cracking lake ice, low winter sun",
+    "top-down view down a lift shaft, the mannequin gripping the cable, red arrow pointing at the brake"
+   ],
+   "characters": [
+    {
+     "name": "you",
+     "look": "matte off-white mannequin, white round head with no eyes, nose or mouth, grey hoodie and jeans",
+     "role": "character",
+     "screen_share": 0.6
+    }
+   ],
+   "recognisable": [
+    "a single mannequin 'you' in every scenario",
+    "red arrows and circles marking the danger",
+    "a seconds-survived timer in the corner",
+    "freeze-frame on the moment of decision"
+   ],
+   "why": "This is a standard shop-window mannequin. DESIGNED_3D lists 'round head' as a designed head, so the ordinary phrase 'plain round head' sends the channel to the drawn route. The router does catch the negation in 'no eyes, nose or mouth', but it never checks DESIGNED_3D matches for negation. Verified: it returns drawn, and the only match is 'round head'."
+  },
+  {
+   "family": "adversarial",
+   "expected": "threed",
+   "art_style": "Stylised low-poly 3D reconstructions of historical battles and shipwrecks with soft, warm global illumination and a slight tilt-shift blur. The figures are simple grey humanoids that lack eyes, mouths and hair; emotion is carried by posture rather than facial expressions.",
+   "alternatives": [
+    "parchment-style 2D maps with animated arrows"
+   ],
+   "shot_looks": [
+    "low-poly grey soldiers advancing across a green hillside, tilt-shift blur at the frame edges",
+    "a grey crew bracing on a tilting deck as waves break over the bow"
+   ],
+   "characters": [
+    {
+     "name": "soldiers",
+     "look": "grey low-poly humanoids, helmets and rifles, heads devoid of any features",
+     "role": "character",
+     "screen_share": 0.45
+    }
+   ],
+   "recognisable": [
+    "miniature tilt-shift battlefields",
+    "anonymous grey figures in every army",
+    "parchment maps between scenes",
+    "slow push-in on a single figure before the narration turns"
+   ],
+   "why": "The figures are featureless and grey. NEGATION only knows no, without, lacking, never, zero, missing, absent and nor. So 'lack eyes, mouths' and 'rather than facial expressions' are read as features the figures have, and the cast look's 'devoid of any features' is not understood as a negation either. Verified: it returns drawn, matching eyes, mouths and facial expressions."
+  },
+  {
+   "family": "adversarial",
+   "expected": "threed",
+   "art_style": "Dark, rainy true-crime recreations in realistic 3D: parking garages, motel corridors and suburban kitchens lit by sodium lamps and TV glow. Every person is a smooth charcoal-grey figure with no hair, ears, nose, mouth or eyes, distinguished only by clothing and height, animated stiffly and a little puppet-like at a choppy, almost stop-motion frame rate.",
+   "alternatives": [
+    "police body-camera footage with blurred faces"
+   ],
+   "shot_looks": [
+    "sodium-lit parking garage, a charcoal-grey figure walking between cars, wet reflections",
+    "motel corridor from a high CCTV-style angle, two grey figures at a door"
+   ],
+   "characters": [
+    {
+     "name": "the suspect",
+     "look": "tall charcoal-grey featureless figure in a dark hoodie",
+     "role": "character",
+     "screen_share": 0.3
+    },
+    {
+     "name": "the victim",
+     "look": "shorter charcoal-grey figure in a red coat, blank head",
+     "role": "character",
+     "screen_share": 0.25
+    }
+   ],
+   "recognisable": [
+    "blank charcoal figures in real-looking places",
+    "CCTV-style high angles with a timestamp",
+    "rain and sodium-orange light",
+    "slow zoom on a door before a cut to black"
+   ],
+   "why": "The figures are featureless. The negation window is only three words long. In 'no hair, ears, nose, mouth or eyes', the word 'eyes' comes five words after 'no', so it counts as a feature. 'puppet-like' and 'stop-motion' describe the stiff, low-frame-rate animation, but they match DESIGNED_3D outright. Verified: it returns drawn.",
+   "known_miss": "a faceless channel whose other footage or 2D graphics mention faces: drawn, the safer mistake"
+  },
+  {
+   "family": "adversarial",
+   "expected": "threed",
+   "art_style": "Photoreal Unreal-style walkthroughs of historic ocean liners: plush first-class lounges, carved oak panelling, crystal chandeliers and the hull at night on a black, glassy sea. Instead of photoreal people, passengers appear as translucent white mannequins with blank heads, like ghosts.",
+   "alternatives": [
+    "sepia archival photographs set side by side with the matching render"
+   ],
+   "shot_looks": [
+    "slow dolly down the grand staircase under the glass dome, warm practical lights",
+    "night exterior: the liner low in the water, lights still on, a few ghostly white figures at the rail"
+   ],
+   "characters": [
+    {
+     "name": "passengers",
+     "look": "translucent white featureless mannequins in period evening dress",
+     "role": "character",
+     "screen_share": 0.15
+    }
+   ],
+   "recognisable": [
+    "slow walkthroughs of restored interiors",
+    "split screen of render and original photograph",
+    "a sinking clock in the corner",
+    "faint ghost-white passengers"
+   ],
+   "why": "The channel shows interiors and faceless ghost mannequins. 'plush' describes velvet furniture, but it matches plush\\w*. 'Instead of photoreal people' matches the photoreal-people pattern, because DESIGNED_3D never checks negation. Verified: it returns drawn."
+  },
+  {
+   "family": "adversarial",
+   "expected": "threed",
+   "art_style": "Grey-box 3D reconstructions of structural failures (flat-shaded untextured buildings and walkways, faceless white mannequins, orange hazard highlights), cut with a webcam facecam of the narrator in the lower corner.",
+   "alternatives": [
+    "webcam facecam of the narrator reacting with exaggerated expressions, ring-light lit bedroom"
+   ],
+   "shot_looks": [
+    "grey-box hotel atrium, a suspended walkway giving way, white mannequins falling, orange stress highlights",
+    "lower-corner facecam: the narrator wide-eyed, then grinning at the camera"
+   ],
+   "characters": [
+    {
+     "name": "narrator",
+     "look": "real man in his 20s on webcam, headset, black t-shirt",
+     "role": "presenter",
+     "screen_share": 0.25
+    }
+   ],
+   "recognisable": [
+    "facecam reactions in the corner",
+    "grey-box 3D with orange hazard highlights",
+    "skull and crying-laughing emoji faces stamped on the failure moment",
+    "bass-hit zoom punch on the collapse"
+   ],
+   "why": "The 3D figures are faceless white mannequins. The faces belong to the filmed narrator and to 2D emoji stickers. FILMED drops the narrator from the cast. But the same kind of words in the alternatives, shot looks and recognisable list ('expressions', 'grinning', 'emoji faces') are still read as features of the 3D cast. Verified: it returns drawn.",
+   "known_miss": "a faceless channel whose other footage or 2D graphics mention faces: drawn, the safer mistake"
+  },
+  {
+   "family": "adversarial",
+   "expected": "threed",
+   "art_style": "Realistic 3D renders of real industrial places (mines, dams, submarine interiors) populated by plain grey faceless mannequin crews, alternating with flat 2D explainer panels.",
+   "alternatives": [
+    "flat 2D whiteboard explainers with hand-drawn stick figures and arrows"
+   ],
+   "shot_looks": [
+    "realistic mine gallery lit by helmet lamps, grey mannequin miners at the face",
+    "whiteboard panel: stick figures pushing a cart, arrows showing airflow"
+   ],
+   "characters": [
+    {
+     "name": "Professor Hoot",
+     "look": "flat 2D vector owl, big round eyes behind spectacles, mortarboard and bow tie",
+     "role": "mascot",
+     "screen_share": 0.1
+    },
+    {
+     "name": "crew",
+     "look": "plain grey faceless mannequins in overalls and hard hats",
+     "role": "character",
+     "screen_share": 0.4
+    }
+   ],
+   "recognisable": [
+    "the 2D owl mascot popping into the corner with a fun fact",
+    "grey faceless crews in realistic industrial sets",
+    "whiteboard stick-figure diagrams between 3D scenes",
+    "bold yellow labels"
+   ],
+   "why": "This is a mixed channel. The 3D people are faceless mannequins, while the owl and the stick figures are 2D graphics. The router reads the 2D mascot's 'eyes', the word 'mascot' and 'stick figures' as if they described the 3D cast. Verified: it returns drawn.",
+   "known_miss": "a faceless channel whose other footage or 2D graphics mention faces: drawn, the safer mistake"
+  },
+  {
+   "family": "adversarial",
+   "expected": "drawn",
+   "art_style": "Cinematic Unreal Engine 5 re-enactments of ancient Rome with MetaHuman-quality digital humans: weathered, stubbled faces with sweat and dirt, period armour and togas, torch-lit interiors and dusty golden-hour battlefields with heavy depth of field.",
+   "alternatives": [
+    "slow pans across antique maps"
+   ],
+   "shot_looks": [
+    "close-up of a grizzled centurion's face lit by torchlight, shallow focus",
+    "low-angle legion march through dust at golden hour, banners and shields"
+   ],
+   "characters": [
+    {
+     "name": "Caesar",
+     "look": "photorealistic CGI man in his 50s, receding grey hair, hollow cheeks, laurel wreath, purple-bordered toga",
+     "role": "character",
+     "screen_share": 0.3
+    },
+    {
+     "name": "legionaries",
+     "look": "realistic 3D soldiers, scarred and stubbled, red cloaks, iron helmets",
+     "role": "character",
+     "screen_share": 0.4
+    }
+   ],
+   "recognisable": [
+    "firelit close-ups on weathered CGI faces",
+    "game-cinematic slow motion in battle",
+    "heavy depth of field and dust in the light",
+    "deep male narrator over choir"
+   ],
+   "why": "These are realistic CGI people with faces, which only the drawn route can make. The router knows 'realistic CGI people' and 'digital doubles', but not 'digital humans', 'MetaHuman' or 'realistic 3D soldiers'. FILMED also drops the Caesar look because 'photorealistic' contains 'photo', so his 'cheeks' are never read. 'faces' on its own is not a FEATURES word. Verified: it returns threed."
+  },
+  {
+   "family": "adversarial",
+   "expected": "drawn",
+   "art_style": "Glossy 3D renders in the style of Funko Pop vinyl collectibles: oversized boxy heads on tiny stubby bodies, the signature face of two small black dots and no mouth, set in miniature dioramas under soft studio lighting.",
+   "alternatives": [],
+   "shot_looks": [
+    "vinyl-figure versions of a tech CEO and a rapper facing off on a tabletop diorama stage",
+    "macro shot with shallow focus on a figure holding an oversized trophy"
+   ],
+   "characters": [
+    {
+     "name": "collectible figures",
+     "look": "vinyl figure with an oversized boxy head, two small black dots, painted hair and outfit of the person it parodies",
+     "role": "character",
+     "screen_share": 0.6
+    }
+   ],
+   "recognisable": [
+    "Funko Pop-style figure of whoever the video is about",
+    "tabletop diorama sets",
+    "glossy vinyl sheen",
+    "the figure's box shown at the end"
+   ],
+   "why": "Toy figures with dot eyes are a designed cast. None of 'Funko', 'vinyl figure', 'boxy head', 'two small black dots' or 'collectibles' is in the router's vocabulary. It knows 'dot eyes' and 'eye dots', not 'black dots'. The cast's role is character, so the mascot fallback never runs. Verified: it returns threed."
+  },
+  {
+   "family": "adversarial",
+   "expected": "drawn",
+   "art_style": "Exaggerated 3D caricature animation of famous footballers: huge heads on small bodies, instantly recognisable hairstyles, beards and tattoos, glossy game-like shading, in a stadium packed with a low-detail crowd.",
+   "alternatives": [
+    "real match clips with a red circle on the player"
+   ],
+   "shot_looks": [
+    "caricature striker celebrating by the corner flag, slow-motion confetti",
+    "two oversized-head caricature players arguing nose to nose, the referee between them"
+   ],
+   "characters": [
+    {
+     "name": "the No. 7 striker",
+     "look": "bobblehead-proportioned 3D caricature, sculpted quiff, chiselled jaw, dazzling white teeth, red and white kit",
+     "role": "character",
+     "screen_share": 0.35
+    },
+    {
+     "name": "the Argentine No. 10",
+     "look": "short 3D caricature with a huge head, full beard, sleeve tattoos, sky-blue stripes",
+     "role": "character",
+     "screen_share": 0.3
+    }
+   ],
+   "recognisable": [
+    "huge-headed caricatures of real players",
+    "game-like stadium renders",
+    "real match clip followed by the caricature re-enactment",
+    "punchy hip-hop beat"
+   ],
+   "why": "3D caricatures of real players, with faces, hair and beards, are a designed cast. 'caricature', 'bobblehead', 'huge head', 'oversized-head', 'teeth' and 'beard' are all missing from the router's lists, and the cast's role is character. If Gemini writes 'big-head' instead, the router does catch it. Verified with this wording: it returns threed."
+  },
+  {
+   "family": "adversarial",
+   "expected": "drawn",
+   "art_style": "Cel-shaded anime-style 3D presenter (a VTuber model) in front of a pastel bedroom backdrop, with gameplay clips and 2D meme graphics between segments.",
+   "alternatives": [
+    "raw gameplay capture with a chat overlay"
+   ],
+   "shot_looks": [
+    "the cel-shaded host centred, swaying and gesturing, pastel bedroom behind",
+    "gameplay clip with the host cut out small in the bottom right"
+   ],
+   "characters": [
+    {
+     "name": "Miko",
+     "look": "cel-shaded 3D anime girl talking to camera: long pink hair, fox ears, oversized hoodie, big sparkly anime eyes",
+     "role": "presenter",
+     "screen_share": 0.6
+    }
+   ],
+   "recognisable": [
+    "the pink-haired fox-eared VTuber host",
+    "cel-shaded anime look with thin outlines",
+    "game clips between rants",
+    "meme sound effects"
+   ],
+   "why": "An anime avatar with eyes is a designed cast. FILMED drops the host because her look says 'talking to camera', which describes how she delivers, not live action. So neither her 'eyes' nor the presenter fallback is ever checked, and 'anime' and 'VTuber' are not designed-cast words. Verified: it returns threed."
+  },
+  {
+   "family": "adversarial",
+   "expected": "drawn",
+   "art_style": "Natural-history-style photoreal CGI of prehistoric animals: feathered raptors, armoured ankylosaurs and a scarred Tyrannosaurus with wet, scaly skin, moving through misty Cretaceous forests and river plains under soft overcast light.",
+   "alternatives": [
+    "fossil photographs on a museum-black background"
+   ],
+   "shot_looks": [
+    "low tracking shot beside a Tyrannosaurus as it stalks through ferns, mist and shafts of light",
+    "pack of feathered raptors crossing a shallow river, water spray, long lens"
+   ],
+   "characters": [
+    {
+     "name": "the old Tyrannosaurus",
+     "look": "huge adult T. rex, dark olive scales, healed scar across the snout, broken tooth, heavy brow ridge",
+     "role": "character",
+     "screen_share": 0.35
+    },
+    {
+     "name": "raptor pack",
+     "look": "turkey-sized feathered raptors, rusty-brown plumage, pale bellies",
+     "role": "character",
+     "screen_share": 0.2
+    }
+   ],
+   "recognisable": [
+    "documentary-style tracking shots of dinosaurs",
+    "misty prehistoric forests",
+    "the same scarred T. rex in every episode",
+    "calm British wildlife narration"
+   ],
+   "why": "Realistic animals have faces, so the 3D engine can't make them. None of these words is in DESIGNED_3D or FEATURES: 'snout', 'tooth', 'brow ridge' and 'scales' are all missing. The cast's role is character, so the mascot fallback is skipped. Verified: it returns threed."
+  },
+  {
+   "family": "adversarial",
+   "expected": "drawn",
+   "art_style": "Clean, bright product-style 3D on an all-white seamless backdrop with soft shadows, glossy plastics and pastel accent colours, explaining tech topics with a small hovering robot guide.",
+   "alternatives": [],
+   "shot_looks": [
+    "the robot hovering beside an exploded smartphone on the white sweep",
+    "close-up of the robot's screen face showing a pixel question mark"
+   ],
+   "characters": [
+    {
+     "name": "Bit",
+     "look": "small rounded white robot with a single glowing blue eye on a black screen, stubby arms, hovers on a little thruster",
+     "role": "mascot",
+     "screen_share": 0.5
+    }
+   ],
+   "recognisable": [
+    "Bit the one-eyed robot guide",
+    "all-white studio sweep",
+    "pastel accent colours",
+    "pop sound on every new object"
+   ],
+   "why": "A mascot robot with an eye is designed. FEATURES has 'eyes' but not the singular 'eye'. The 'all-white' backdrop also makes _white_3d return True before the mascot fallback is reached, and that fallback would have caught a mascot with 0.5 screen share. Verified: it returns threed."
+  },
+  {
+   "family": "adversarial",
+   "expected": "drawn",
+   "art_style": "Warm, soft-lit stylised 3D storybook look with rounded forms, fuzzy fur shading and pastel forests, used to explain psychology ideas through a recurring fox guide.",
+   "alternatives": [
+    "simple 2D text cards on cream paper"
+   ],
+   "shot_looks": [
+    "the fox sitting on a mossy log in a pastel forest, shallow depth of field",
+    "the fox walking along a glowing path that splits in two"
+   ],
+   "characters": [
+    {
+     "name": "Fennel",
+     "look": "small orange 3D fox in a green knitted scarf, fluffy white-tipped tail, oversized ears, rosy blush",
+     "role": "mascot",
+     "screen_share": 0.55
+    }
+   ],
+   "recognisable": [
+    "faceless-channel format: no host, only Fennel and a soft voiceover",
+    "pastel storybook forests",
+    "fuzzy fur and soft light",
+    "gentle piano"
+   ],
+   "why": "A furry fox mascot with a face is a designed character. Its look contains none of the router's words. 'faceless' here is YouTube slang for a channel with no host on camera, but it matches FACELESS, which returns rebuildable before the mascot fallback runs. Verified: it returns threed."
+  }
+ ]
+}

@@ -40,7 +40,7 @@ from webapp import database as db
 from webapp import plans
 from webapp.frontier_studio import is_admin
 
-PROMPT_VERSION = 3
+PROMPT_VERSION = 4
 MAX_WINDOW_S = 200
 BUSY_WAITS_S = (15, 45, 90)                     # retries when Gemini is busy (the job has time; Studio is polling)
 STALE_S = 900
@@ -104,6 +104,7 @@ Return ONE JSON object with exactly these keys:
  "text_style": "how on-screen words look and move, or empty",
  "graphics": ["recurring graphic devices: maps, charts, highlighted documents, logos, timelines, counters ..."],
  "recurring": [{"name": "...", "look": "how to draw them consistently", "role": "mascot | presenter | character"}],
+ "people_3d": "faceless | designed | no_people | none",
  "presenter": {"on_camera_share": 0.0, "pictures_share": 0.0},
  "cta": [{"t": "m:ss", "kind": "sponsor | own product | ebook or pdf | course | qr code | link | subscribe",
           "what": "what is promoted and how it is shown (cover, QR code, link, price, the host holding it)"}],
@@ -119,7 +120,13 @@ pictures. "cta" lists every spoken or shown promotion. "music.share" is the frac
 however quiet; "music.beat" is whether it has drums or a pulse (lofi hip-hop has a soft beat, ambient pads and drones
 have none). "lettering" is how the words on screen LOOK, whether drawn by hand or set in a font that imitates it:
 hand-drawn = handwriting, marker, chalk or brush letters; comic = bold comic-book display letters (outlined, bouncy,
-uneven) and speech bubbles; typeset = an ordinary clean font set straight; mixed = both kinds often. Use the
+uneven) and speech bubbles; typeset = an ordinary clean font set straight; mixed = both kinds often. "people_3d" is
+how the people and creatures in the 3D-rendered pictures are built, judged by their FACES: faceless = every human
+figure's face is blank, with no eyes, mouth or face markings, even when it has hair, glasses, a hat, a helmet or
+clothes (mannequins, dummies, smooth grey or white figures); designed = most figures have a face of any kind (eyes
+or a mouth, even tiny dots, slits, a decal or an emoticon, or a realistic CGI face), or are not human mannequins at all:
+a ball, block or toy-shaped head, a game, toy or cartoon avatar, clay, felt or puppet figures, animals, creatures or
+objects with faces; no_people = 3D pictures with no people or creatures; none = no 3D pictures. Use the
 vocabularies exactly. If something is absent, use an empty list, "none", false, 0 or an empty string; never invent."""
 
 

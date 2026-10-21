@@ -95,13 +95,28 @@ def start(home, preview_id, reference_ids, *, spawn=None) -> dict:
     look_id = "lk_" + hashlib.sha256(json.dumps(sorted(r["id"] for r in refs)).encode()).hexdigest()[:24]
     path = folder(home, look_id)
     saved = _read(path / "look.json")
-    fresh = saved.get("state") == "done" and time.time() - saved.get("finished_at", 0) < 30 * 86400
+    fresh = saved.get("state") == "done" and time.time() - saved.get("finished_at", 0) < 30 * 86400 \
+        and not _unjudged_3d(saved.get("profile") or {})
     running = saved.get("state") == "running" and time.time() - saved.get("updated_at", 0) < 900
     if not (fresh or running):
         _write(path / "look.json", {"schema": SCHEMA, "look_id": look_id, "state": "running", "phase": "queued",
                                     "references": refs, "started_at": time.time(), "updated_at": time.time()})
         (spawn or _spawn)(home, look_id)
     return status(home, look_id)
+
+
+def _unjudged_3d(profile: dict) -> bool:
+    """A 3D look saved before Gemini judged its people's faces (Studio 72 and older): watched again, so a designed cast
+    (@ifologyfilms' dot-eyed sphere heads) never goes back onto faceless mannequins from an old reading of its words."""
+    pictures = profile.get("pictures") or {}
+    families = ((pictures.get("sources") or {}).get("families") or {})
+    judged = ((pictures.get("people_3d") or {}).get("value") or {})
+    return float(families.get("3d") or 0) >= 0.2 and not judged
+
+
+def _styles(home) -> dict:
+    return {Path(p).stem: _read(p) for p in glob.glob(str(Path(home) / "styles" / "*.json"))
+            if not Path(p).stem.startswith(("_", "cr_clone_"))}
 
 
 def _spawn(home, look_id):
@@ -125,7 +140,14 @@ def status(home, look_id) -> dict:
            "references": [{"id": r["id"], "title": r.get("title", ""), "channel": r.get("channel", "")}
                           for r in saved.get("references", [])]}
     if saved.get("state") == "done":
-        out.update(profile=saved.get("profile"), mapping=saved.get("mapping"), sheets=saved.get("sheets", []),
+        mapping = saved.get("mapping") or {}
+        import cr_style_map
+        if mapping.get("router") != cr_style_map.ROUTER:
+            try:                               # planned again by this Studio, as the study will plan it
+                mapping = cr_style_map.plan_style(saved.get("profile") or {}, _styles(home))
+            except Exception:                  # noqa: BLE001 - a recipe since removed: the saved plan is shown
+                pass
+        out.update(profile=saved.get("profile"), mapping=mapping, sheets=saved.get("sheets", []),
                    not_watched=saved.get("not_watched", []), not_measured=saved.get("not_measured", []))
     return out
 
@@ -268,9 +290,7 @@ def run(home, look_id, *, call=None, download=_download, transcript=_transcript,
             ref["watch"] = watched.get(ref["id"]) or {"windows": [], "missing": ["not watched"]}
         progress("profile")
         profile = cr_style_profile.build(built)
-        styles = {Path(p).stem: _read(p) for p in glob.glob(str(Path(home) / "styles" / "*.json"))
-                  if not Path(p).stem.startswith(("_", "cr_clone_"))}
-        mapping = cr_style_map.plan_style(profile, styles)
+        mapping = cr_style_map.plan_style(profile, _styles(home))
         _write(path / "references.json", {"references": built})
         saved.update(state="done", phase="done", profile=profile, mapping=mapping, finished_at=now(),
                      sheets=[{"id": r["id"], "file": Path(r["sheet"]).name} for r in built if r.get("sheet")],

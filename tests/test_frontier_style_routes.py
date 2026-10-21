@@ -12,6 +12,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "local_runtime"))
 import cr_claude
+import cr_style_map
 import cr_readiness
 import cr_studio
 import cr_style_clone as clone
@@ -97,7 +98,8 @@ def env(tmp_path, monkeypatch):
         saved = json.loads(path.read_text())
         saved.update(state="done", phase="done", finished_at=__import__("time").time(), sheets=[], not_watched=[],
                      profile={"recognisable": ["Painted stick figures on watercolour backgrounds"]},
-                     mapping={"base": "documentary", "base_why": "most pictures are real footage",
+                     mapping={"router": cr_style_map.ROUTER, "base": "documentary",
+                              "base_why": "most pictures are real footage",
                               "base_for": "real footage, documents, maps and graphics", "needs": [],
                               "settings": [{"area": "Pace", "label": "Footage cut length", "value": "3 s",
                                             "why": "the references cut every 3 s", "path": "pacing.cut_s"}],
@@ -581,3 +583,10 @@ def test_browser_saved_style_refinement_requires_fresh_consent_and_never_autosta
             assert not env.targets and len(env.workers) == 2 and not errors
         finally:
             browser.close()
+
+
+def test_continuing_a_prepared_study_checks_the_room_too(env, monkeypatch):
+    result = clone.prepare(env.home, env.approved(), cr_readiness.proof(env.checks, purpose="creative"), env.bridge)
+    monkeypatch.setattr(clone, "_room", lambda: "Your Mac has 1.0 GB of free disk space")
+    response = env.post(f"/cr-style-clone/{result['operation_id']}/continue", {"acknowledge_costs": True})
+    assert response.status_code == 409 and "free disk space" in response.json["error"] and not env.workers
