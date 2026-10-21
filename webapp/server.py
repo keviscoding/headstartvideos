@@ -566,6 +566,8 @@ from webapp import style_watch as _style_watch
 from webapp.frontier_studio import make_router as _frontier_router, studio_access as _studio_access
 app.include_router(_studio_connect.make_router(_current_user))
 app.include_router(_style_watch.make_router(_studio_access(_current_user)))
+from webapp import cloud_wallet as _cloud_wallet
+app.include_router(_cloud_wallet.make_router(_studio_access(_current_user)))
 from webapp import studio_ranking as _studio_ranking
 app.include_router(_studio_ranking.make_router(_studio_access(_current_user)))
 app.include_router(_frontier_router(_current_user))
@@ -1325,7 +1327,14 @@ async def stripe_webhook(request: Request):
             currency = obj.get("currency") or "usd"
             session_id = obj.get("id") or ""
             topup = meta.get("topup_credits")
-            if topup:
+            if meta.get("cloud_topup_cents"):
+                # a Studio Cloud balance top-up: credited once per session, in cents (webapp/cloud_wallet.py)
+                _cloud_wallet.on_checkout_completed(obj)
+                print(f"[stripe] User {user_id} topped up the Studio Cloud balance")
+                _money_track(user_id, "checkout_completed", amount_cents=amount_total, currency=currency,
+                             source="checkout.session.completed", mode="payment", kind="cloud_topup",
+                             checkout_session_id=session_id)
+            elif topup:
                 add_credits(int(user_id), int(topup))
                 print(f"[stripe] User {user_id} topped up {topup} credits")
                 _money_track(
