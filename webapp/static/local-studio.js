@@ -209,6 +209,38 @@ window.CRLocalStudio = (() => {
             (n.look?esc(n.look)+', ':'')+esc(n.format||'')+(n.kind==='shorts'?' · Shorts':'')+'. '+how+
             (n.title?' First video: <b>“'+esc(n.title)+'”</b>.':'')+' <a class="ls-text-link" href="'+back+'">See your result</a></aside>';
     }
+    // Just shipped: the newest Studio release, front and centre for a returning customer for three weeks after it
+    // ships (the owner: "every release visible and exciting", not a list at the bottom). Each change is a tile: its
+    // first sentence as the headline. Hidden per release once the customer says Got it.
+    const SHIPPED_DAYS = 21;
+    const shippedKey = build => 'cr-shipped-seen-'+build;
+    function shippedSeen(build) { try { return localStorage.getItem(shippedKey(build)) === '1'; } catch (_) { return false; } }
+    function shipped() {
+        const latest = (data.changelog || [])[0];
+        if (!latest || !returning() || shippedSeen(latest.build)) return '';
+        const when = Date.parse(latest.date || '');
+        if (!isFinite(when) || Date.now() - when > SHIPPED_DAYS * 864e5) return '';
+        const tiles = (latest.items || []).map(text => {
+            const m = /^(New|Improved|Fixed):\s*(.*)$/.exec(text || '');
+            if (!m) return null;
+            const cut = m[2].search(/[.!?](\s|$)/);
+            const head = cut > 0 ? m[2].slice(0, cut) : m[2];
+            const rest = cut > 0 ? m[2].slice(cut + 1).trim() : '';
+            return {tag: m[1], head: head.charAt(0).toUpperCase() + head.slice(1), rest};
+        }).filter(Boolean).sort((a, b) => (a.tag === 'New' ? 0 : 1) - (b.tag === 'New' ? 0 : 1)).slice(0, 4);
+        if (!tiles.length) return '';
+        const date = new Date(when).toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
+        return '<section class="ls-shipped" id="ls-shipped" aria-labelledby="ls-shipped-title">'+
+            '<div class="ls-shipped-head"><span class="ls-shipped-chip"><i class="ls-shipped-pulse" aria-hidden="true"></i>Just shipped · Studio '+esc(latest.build)+' · '+esc(date)+'</span>'+
+            '<button class="ls-shipped-close" type="button" data-ls-shipped-seen="'+esc(latest.build)+'">Got it</button></div>'+
+            '<h2 id="ls-shipped-title">'+esc(latest.title || 'What’s new in Studio')+'</h2>'+
+            '<div class="ls-shipped-grid">'+tiles.map((t, i) => '<article class="ls-shipped-tile" style="--i:'+i+'">'+
+                '<span class="ls-tag ls-tag-'+t.tag.toLowerCase()+'">'+t.tag+'</span><h3>'+esc(t.head)+'</h3>'+
+                (t.rest ? '<p>'+esc(t.rest)+'</p>' : '')+'</article>').join('')+'</div>'+
+            '<div class="ls-shipped-actions"><a class="btn-primary" href="'+STUDIO_URL+'" target="_blank" rel="noopener" data-ls-open-studio data-ls-shipped-update>Update in Studio '+icon('external')+'</a>'+
+            '<a class="ls-text-link" href="#ls-whats-new">Every change in Studio '+esc(latest.build)+'</a>'+
+            '<small>Studio offers the update itself in one click, and keeps your projects and settings.</small></div></section>';
+    }
     function whatsNew() {
         const rows = data.changelog || []; if (!rows.length) return '';
         const [latest, ...older] = rows;
@@ -453,13 +485,20 @@ window.CRLocalStudio = (() => {
         const starterNote = view==='upgrade' && u && typeof planTier==='function' && planTier(u.plan)==='starter'
             ? '<aside class="ls-version-note"><strong>Your Starter plan includes Classic recipes (v1).</strong> Studio is included from Creator. Switch any time and keep your account.</aside>' : '';
         const body = view === 'member' ? memberBody() : versionNote()+starterNote+features()+planCards()+discordCard(true)+faq();
-        root().innerHTML = '<div class="ls-wrap">'+hero()+'<div id="ls-notice" role="status" hidden></div>'+nicheNote()+body+
+        root().innerHTML = '<div class="ls-wrap">'+hero()+(view === 'member' ? shipped() : '')+'<div id="ls-notice" role="status" hidden></div>'+nicheNote()+body+
             '<footer class="ls-footer"><span>ChannelRecipe '+(data?.version?esc(studioName(data.version)):'Studio')+'</span><a href="'+DISCORD_URL+'" target="_blank" rel="noopener" data-community="discord">Help in Discord ↗</a></footer></div>';
         bind();
         if (view === 'member') { history(); if (returning()) freshNiches(); }
     }
     function bind() {
         const r = root();
+        r.querySelectorAll('[data-ls-shipped-seen]').forEach(el=>el.addEventListener('click',()=>{
+            try { localStorage.setItem(shippedKey(el.dataset.lsShippedSeen), '1'); } catch (_) {}
+            track('studio_shipped_dismiss', {build: el.dataset.lsShippedSeen});
+            const card = document.getElementById('ls-shipped'); if (card) card.remove();
+        }));
+        r.querySelector('[data-ls-shipped-update]')?.addEventListener('click',()=>track('studio_shipped_update', {build: (data.changelog||[])[0]?.build}));
+        if (r.querySelector('#ls-shipped')) track('studio_shipped_view', {build: (data.changelog||[])[0]?.build});
         r.querySelectorAll('[data-ls-plans]').forEach(el=>el.addEventListener('click',()=>{
             if (view === 'member') { if (typeof showPricingModal === 'function') showPricingModal({reason:'studio'}); return; }
             document.getElementById('ls-plans')?.scrollIntoView({behavior:'smooth',block:'start'});
