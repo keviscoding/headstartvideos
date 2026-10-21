@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Edit countdown · ChannelRecipe Studio</title>
+<style>
+:root{--bg:#0d1020;--surface:#171b2e;--surface-2:#1f2440;--line:#2c3354;--ink:#eef0fb;--ink-2:#a9aecb;--violet:#7c5cff;--violet-ink:#cfc3ff;--gold:#f3c27f;--green:#14b87a;--red:#ff7a8a;--radius:14px}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+a{color:var(--violet-ink)}
+.wrap{max-width:980px;margin:0 auto;padding:18px 16px 120px}
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
+.top a{text-decoration:none;font-weight:600}
+h1{font-size:clamp(20px,3vw,28px);line-height:1.2;margin:4px 0 2px}
+.sub{color:var(--ink-2);margin:0 0 16px;font-size:14px}
+.grid{display:grid;grid-template-columns:minmax(220px,320px) 1fr;gap:20px;align-items:start}
+.player{position:sticky;top:12px;background:#000;border-radius:var(--radius);overflow:hidden;border:1px solid var(--line)}
+.player video{display:block;width:100%;aspect-ratio:9/16;background:#000}
+.slots{display:flex;flex-direction:column;gap:12px}
+.slot{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px 14px 12px}
+.slot.changed{border-color:var(--violet)}
+.slot.swap{border-color:var(--gold)}
+.slot-head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.rank{flex:none;display:grid;place-items:center;width:34px;height:34px;border-radius:99px;background:var(--surface-2);font-weight:800}
+.slot[data-slot="1"] .rank{background:var(--gold);color:#241a06}
+.slot-title{min-width:0;flex:1}
+.slot-title strong{display:block;font-size:15px}
+.slot-title small{display:block;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px}
+.btn{appearance:none;border:1px solid var(--line);background:var(--surface-2);color:var(--ink);border-radius:9px;padding:7px 11px;font:600 13px inherit;cursor:pointer}
+.btn:hover:not(:disabled){border-color:#8a79bb}
+.btn:disabled{opacity:.5;cursor:default}
+.btn.primary{background:var(--violet);border-color:var(--violet);color:#fff;padding:11px 18px;font-size:15px}
+label.field{display:block;font-size:12px;color:var(--ink-2);margin:6px 0 4px}
+textarea{width:100%;resize:vertical;min-height:44px;background:#0f1326;color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:9px 10px;font:15px/1.4 inherit}
+textarea:focus{outline:2px solid var(--violet);outline-offset:1px}
+.alts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chip{border:1px solid var(--line);background:transparent;color:var(--violet-ink);border-radius:99px;padding:4px 10px;font:600 12px inherit;cursor:pointer}
+.chip:hover{border-color:var(--violet)}
+.row{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin-top:10px}
+.swap-toggle{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2);cursor:pointer}
+.swap-toggle input{width:18px;height:18px;accent-color:var(--gold)}
+.note{font-size:12px;color:var(--ink-2)}
+.bar{position:fixed;left:0;right:0;bottom:0;background:rgba(13,16,32,.96);border-top:1px solid var(--line);backdrop-filter:blur(6px)}
+.bar-inner{max-width:980px;margin:0 auto;padding:12px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.status{flex:1;min-width:200px;font-size:13px;color:var(--ink-2)}
+.status.err{color:var(--red)}
+.status.busy::before{content:"";display:inline-block;width:9px;height:9px;border-radius:99px;background:var(--green);margin-right:8px;animation:pulse 1.4s infinite}
+@keyframes pulse{50%{opacity:.25}}
+.empty{color:var(--ink-2);padding:40px 0;text-align:center}
+@media (max-width:720px){.grid{grid-template-columns:1fr}.player{position:relative;top:0;max-width:300px;margin:0 auto}}
+@media (prefers-reduced-motion:reduce){.status.busy::before{animation:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top"><a href="/#projects">← Projects</a><span class="note">Edit countdown</span></div>
+  <h1 id="title">Loading…</h1>
+  <p class="sub">Change any narrator line, or swap a clip for the next best one Studio already found. Then remake the Short: only what you changed is redone.</p>
+  <div class="grid">
+    <div class="player"><video id="video" controls playsinline preload="metadata"></video></div>
+    <div id="slots" class="slots"><p class="empty">Loading the countdown…</p></div>
+  </div>
+</div>
+<div class="bar"><div class="bar-inner">
+  <div id="status" class="status" role="status">Pick what to change.</div>
+  <button id="remake" class="btn primary" type="button" disabled>Remake with changes</button>
+</div></div>
+<script>
+const TOKEN = __LOCAL_TOKEN_JSON__;
+const slug = new URLSearchParams(location.search).get('job') || '';
+const $ = id => document.getElementById(id);
+const el = (tag, cls, text) => {const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n;};
+let data = null, stopAt = null, timer = null;
+const changes = {lines: {}, swap: new Set()};
+
+async function api(path, options = {}) {
+  const headers = {'X-CR-Local-Token': TOKEN};
+  if (options.body) headers['Content-Type'] = 'application/json';
+  const r = await fetch(path, {...options, headers, cache: 'no-store', body: options.body ? JSON.stringify(options.body) : undefined});
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || 'That did not work. Check that Studio is still open.');
+  return d;
+}
+function status(text, kind = '') {const s = $('status'); s.textContent = text; s.className = 'status' + (kind ? ' ' + kind : '');}
+function dirty() {return Object.keys(changes.lines).length + changes.swap.size;}
+function refreshButton() {
+  const n = dirty(); $('remake').disabled = !n || data?.running;
+  if (!data?.running) status(n ? `${n} change${n === 1 ? '' : 's'} ready.` : 'Pick what to change.');
+}
+function play(span) {
+  if (!span) return; const v = $('video');
+  v.currentTime = span[0]; stopAt = span[1]; v.play().catch(() => {});
+}
+$('video').addEventListener('timeupdate', () => {const v = $('video'); if (stopAt != null && v.currentTime >= stopAt) {v.pause(); stopAt = null;}});
+
+function render() {
+  $('title').textContent = data.title || 'Your Ranking Short';
+  document.title = (data.title || 'Edit countdown') + ' · ChannelRecipe Studio';
+  const list = $('slots'); list.replaceChildren();
+  for (const s of data.slots) {
+    const card = el('section', 'slot'); card.dataset.slot = s.slot;
+    const head = el('div', 'slot-head'), copy = el('div', 'slot-title');
+    copy.append(el('strong', '', s.label || `#${s.slot}`), el('small', '', s.what || s.source || ''));
+    const watch = el('button', 'btn', '▶ Watch'); watch.type = 'button'; watch.disabled = !s.span; watch.addEventListener('click', () => play(s.span));
+    head.append(el('span', 'rank', String(s.slot)), copy, watch);
+    const lab = el('label', 'field', 'Narrator line'); const id = 'line-' + s.slot; lab.htmlFor = id;
+    const box = el('textarea'); box.id = id; box.rows = 1; box.maxLength = 200; box.value = s.line; box.placeholder = 'No line: the clip plays on its own';
+    const mark = () => {
+      const v = box.value.trim();
+      if (v === (s.line || '').trim()) delete changes.lines[s.slot]; else changes.lines[s.slot] = v;
+      card.classList.toggle('changed', s.slot in changes.lines); refreshButton();
+    };
+    box.addEventListener('input', mark);
+    const alts = el('div', 'alts');
+    for (const a of s.alts) {const c = el('button', 'chip', a); c.type = 'button'; c.title = 'Use this line'; c.addEventListener('click', () => {box.value = a; mark();}); alts.append(c);}
+    const none = el('button', 'chip', 'No line'); none.type = 'button'; none.addEventListener('click', () => {box.value = ''; mark();}); alts.append(none);
+    const row = el('div', 'row');
+    const tog = el('label', 'swap-toggle'); const cb = el('input'); cb.type = 'checkbox';
+    cb.addEventListener('change', () => {cb.checked ? changes.swap.add(s.slot) : changes.swap.delete(s.slot); card.classList.toggle('swap', cb.checked); refreshButton();});
+    tog.append(cb, el('span', '', 'Swap this clip for another'));
+    row.append(tog, el('span', 'note', s.line ? '' : 'A line on a clip full of talking may not fit.'));
+    card.append(head, lab, box, alts, row);
+    list.append(card);
+  }
+  refreshButton();
+}
+
+async function load(first = false) {
+  try {
+    const d = await api('/cr-ranking/edit/' + encodeURIComponent(slug));
+    const was = data?.running; data = d;
+    if (first || (was && !d.running)) {
+      $('video').src = '/cr-ranking/edit/' + encodeURIComponent(slug) + '/video?t=' + Date.now();
+      changes.lines = {}; changes.swap.clear(); render();
+    }
+    if (d.running) {status((d.lines || []).slice(-1)[0] || 'Remaking the Short…', 'busy'); $('remake').disabled = true;}
+    else if (was) status(d.error ? 'It stopped: ' + d.error : 'Done. The new version is playing, and replaces the one in your output folder.', d.error ? 'err' : '');
+    else if (d.error && first) status('The last remake stopped: ' + d.error, 'err');
+    clearTimeout(timer); if (d.running) timer = setTimeout(load, 2500);
+  } catch (e) {
+    if (first) $('slots').replaceChildren(el('p', 'empty', e.message));
+    status(e.message, 'err');
+  }
+}
+$('remake').addEventListener('click', async () => {
+  $('remake').disabled = true;
+  try {
+    const r = await api('/cr-ranking/edit/' + encodeURIComponent(slug), {method: 'POST', body: {lines: changes.lines, swap: [...changes.swap]}});
+    status(r.message || 'Remaking the Short…', 'busy'); data.running = true; setTimeout(load, 1500);
+  } catch (e) {status(e.message, 'err'); refreshButton();}
+});
+if (!slug) {$('slots').replaceChildren(el('p', 'empty', 'Open a Ranking Short from Projects to edit it.')); status('');}
+else load(true);
+</script>
+</body>
+</html>

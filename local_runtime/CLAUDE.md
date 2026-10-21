@@ -153,6 +153,10 @@ or Claude limits), the Shorts still waiting go on hold with nothing spent, and t
 Carry on or Remove. A Studio closed in the middle of a batch keeps the waiting Shorts on hold too; it never starts them
 again on its own.
 
+A finished Ranking Short can be edited: open it from Projects and press Edit countdown. Change any narrator line
+(or pick one of the writer's other takes), swap any clip for the next best one the search already found (one clip
+watch), then Remake with changes: only what changed is redone, in the same project.
+
 To choose the clips yourself, open http://127.0.0.1:7860/cr-ranking (the Clip Board): find clips for a topic, hover a
 card to watch its moment, tick 3 to 10 clips, drag them into order (the last one is #1), drop in your own clips if you
 like, and press Make this Short: it asks for the countdown's name, which becomes the Short's title. Each Make keeps

@@ -1,5 +1,13 @@
 [
   {
+    "build": 70,
+    "date": "2026-10-21",
+    "title": "Edit a finished Ranking Short",
+    "items": [
+      "New: edit a finished Ranking Short. Open it from Projects and press Edit countdown: change any narrator line (or pick one of the other takes), swap any clip for the next best one Studio found, and remake it. Only what you changed is redone."
+    ]
+  },
+  {
     "build": 69,
     "date": "2026-10-21",
     "title": "Ranking Shorts that know what is viral right now",
