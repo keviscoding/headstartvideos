@@ -1,5 +1,6 @@
 """The Clip Board: boards stay inside output/ranking-boards, workers run the pipeline's own board.py, the countdown
 the creator sets is what make_ranking.py gets, and only the local page with its token may change anything."""
+import importlib
 import io
 import re
 import json
@@ -33,10 +34,14 @@ def board(tmp_path, monkeypatch):
         "  {'id': 'm1', 'vid': 'bbbbbbbbbbb', 'score': 7, 'label': 'Pop!', 'type': 'fail', 'cut': [3, 6], 'payoff': 5, 'end': 6, 'start': 2},\n"
         "  {'id': 'm2', 'vid': 'ccccccccccc', 'score': 6, 'label': 'Why', 'type': 'cute', 'cut': [0, 3], 'payoff': 1, 'end': 3, 'start': 0}]))\n"
         "print('12:00:00 done: 3 moments on the board', flush=True)\n")
+    # this computer has a JavaScript runtime for yt-dlp unless a test says otherwise (CI's Node may be too old); the
+    # cr_shorts the routes import now (another test file puts its own copy in sys.modules)
+    shorts = importlib.import_module("cr_shorts")
+    monkeypatch.setattr(shorts, "js_runtime_missing", lambda then="make the Short again": "")
     app = Flask("clip-board")
     app.config["SERVER_NAME"] = "127.0.0.1:7860"           # the Studio answers on localhost only
     routes.install(SimpleNamespace(app=app), token=TOKEN, home=tmp_path)
-    return SimpleNamespace(client=app.test_client(), home=tmp_path)
+    return SimpleNamespace(client=app.test_client(), home=tmp_path, app=app, shorts=shorts)
 
 
 def wait(board, board_id):
@@ -131,6 +136,7 @@ import pytest as _pytest
 
 SLOW_WORKER = (
     "import json, os, sys, time, pathlib\n"
+    "hasattr(os, 'nice') and os.nice(10)\n"                 # what board.py does first (find.lower_priority)
     "board = pathlib.Path(sys.argv[2])\n"
     "(board / 'env.json').write_text(json.dumps({k: os.environ.get(k) for k in ('PYTHONUTF8', 'PYTHONIOENCODING')}"
     " | {'nice': os.getpriority(os.PRIO_PROCESS, 0) if hasattr(os, 'getpriority') else None}))\n"
@@ -205,7 +211,8 @@ def test_workers_run_in_utf8_below_normal_priority(board):
     board.client.post(f"/cr-ranking/boards/{started['id']}/stop", headers=HEAD)
     assert env["PYTHONUTF8"] == "1" and env["PYTHONIOENCODING"] == "utf-8:replace"
     if os.name != "nt":
-        assert env["nice"] >= 10
+        base = os.getpriority(os.PRIO_PROCESS, 0)
+        assert env["nice"] >= 10 and (base + 10 >= 19 or env["nice"] == base + 10), "nice 10 once, never 10 + 10"
 
 
 @_pytest.mark.skipif(os.name == "nt", reason="POSIX process groups")
@@ -240,3 +247,95 @@ def test_pasted_youtube_links_lose_their_playlist(board):
 def test_a_link_typed_as_the_topic_is_refused_with_the_way_to_use_it(board):
     r = board.client.post("/cr-ranking/boards", json={"topic": "https://www.youtube.com/watch?v=dN_RMA8LVi0"}, headers=HEAD)
     assert r.status_code == 400 and "Paste links" in r.get_json()["error"]
+
+
+# ── review round 2 (2026-10-21): updates wait for boards, zombies read finished, no paid find without a JS runtime ──
+def test_a_find_without_a_javascript_runtime_is_refused_before_any_watch(board, monkeypatch):
+    monkeypatch.setattr(board.shorts, "js_runtime_missing", lambda then="make the Short again":
+                        f"Install Node.js 22 or newer from nodejs.org, restart the Studio and {then}.")
+    r = board.client.post("/cr-ranking/boards", json={"topic": "Funniest Dog Moments"}, headers=HEAD)
+    assert r.status_code == 409 and "find clips again" in r.get_json()["error"]
+    assert not (board.home / "output" / "ranking-boards").exists(), "no board, no worker, no watch"
+    own = board.client.post("/cr-ranking/boards", json={"topic": "My clips", "find": False}, headers=HEAD)
+    assert own.status_code == 200, "a board for the creator's own clips needs no YouTube"
+
+
+def test_the_update_restart_waits_for_a_working_board(board):
+    restarts = []
+    board.app.add_url_rule("/cr-update/restart", "restart", lambda: restarts.append(1) or {"state": "restarting"},
+                           methods=["POST"])
+    (board.home / "shorts" / "ranking" / "board.py").write_text(SLOW_WORKER)
+    started = board.client.post("/cr-ranking/boards", json={"topic": "Funniest Dog Moments"}, headers=HEAD).get_json()
+    _wait_for(board.home / "output" / "ranking-boards" / started["id"] / "pids.json")
+    held = board.client.post("/cr-update/restart", headers=HEAD)
+    assert held.status_code == 409 and "Clip Board search is still working" in held.get_json()["error"]
+    assert not restarts, "the Studio never restarts under a running search"
+    board.client.post(f"/cr-ranking/boards/{started['id']}/stop", headers=HEAD)
+    assert board.client.post("/cr-update/restart", headers=HEAD).status_code == 200 and restarts == [1]
+
+
+def test_a_finished_worker_leaves_no_record_behind(board):
+    started = board.client.post("/cr-ranking/boards", json={"topic": "Funniest Dog Moments"}, headers=HEAD).get_json()
+    wait(board, started["id"])
+    assert not (board.home / "output" / "ranking-boards" / started["id"] / "worker.json").exists()
+    assert not routes.busy(board.home)
+
+
+@_pytest.mark.skipif(os.name == "nt", reason="the Mac and Linux update restarts with os.execv")
+def test_after_an_in_place_update_a_finished_worker_reads_finished(tmp_path):
+    """The Mac update replaces the Studio's program under the same pid (os.execv): the worker started before it runs on
+    as its child, and when it ends nobody waits for it. kill 0 still found that zombie, so the board read "working"
+    until the creator pressed Stop (and busy() would have held every later update)."""
+    path = tmp_path / "output" / "ranking-boards" / "dogs-1a2b3c"
+    path.mkdir(parents=True)
+    out, here = tmp_path / "after.json", str(Path(routes.__file__).resolve().parent)
+    script = str(Path(routes.__file__).resolve())
+    after = ("import json, os, sys, time, pathlib\n"
+             f"sys.path.insert(0, {here!r})\n"
+             "import cr_ranking_routes as r\n"
+             f"board, home = pathlib.Path({str(path)!r}), pathlib.Path({str(tmp_path)!r})\n"
+             "rec = r.worker_record(board)\n"
+             "seen = {'same_pid': rec['studio'] == os.getpid(), 'working': r.recorded_worker(board) == rec['pid'],\n"
+             "        'busy': r.busy(home)}\n"
+             "for _ in range(300):\n"
+             "    if r.recorded_worker(board) is None:\n"
+             "        break\n"
+             "    time.sleep(0.05)\n"
+             "seen.update(finished=r.recorded_worker(board) is None, busy_after=r.busy(home),\n"
+             "            record_left=(board / 'worker.json').exists(), reaped=not r._alive(rec['pid']))\n"
+             f"pathlib.Path({str(out)!r}).write_text(json.dumps(seen))\n")
+    before = ("import os, sys, subprocess, pathlib\n"
+              f"sys.path.insert(0, {here!r})\n"
+              "import cr_ranking_routes as r\n"
+              f"p = subprocess.Popen([sys.executable, {script!r}, '--guard', str(os.getpid()), '--', sys.executable, '-c',"
+              " 'import time; time.sleep(1.5)'], start_new_session=True)\n"
+              f"r.write_record(pathlib.Path({str(path)!r}), p.pid, ['find'])\n"
+              f"os.execv(sys.executable, [sys.executable, '-c', {after!r}])\n")
+    subprocess.run([sys.executable, "-c", before], timeout=60, check=True)
+    assert json.loads(out.read_text()) == {"same_pid": True, "working": True, "busy": True, "finished": True,
+                                           "busy_after": False, "record_left": False, "reaped": True}
+
+
+def test_a_worker_another_studio_process_started_counts_while_that_studio_is_open(tmp_path):
+    """Windows' update runs the new Studio beside the old one under a new pid; the old one's worker keeps going, so the
+    board still reads working (no second worker on it) until that Studio is gone."""
+    path = tmp_path / "output" / "ranking-boards" / "dogs-1a2b3c"
+    path.mkdir(parents=True)
+    studio = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    guard = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    record = lambda age=0: (path / "worker.json").write_text(json.dumps(
+        {"pid": guard.pid, "studio": studio.pid, "started": time.time() - age}))
+    try:
+        record()
+        assert routes.recorded_worker(path) == guard.pid and routes.busy(tmp_path)
+        record(age=routes.STALE_WORKER_S + 60)
+        assert routes.recorded_worker(path) is None, "a record that old names pids the system may have reused"
+        assert not (path / "worker.json").exists()
+        record()
+        studio.kill()
+        studio.wait()
+        assert routes.recorded_worker(path) is None and not routes.busy(tmp_path), "its Studio is gone: so is it"
+    finally:
+        for proc in (studio, guard):
+            proc.kill()
+            proc.wait()

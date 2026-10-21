@@ -129,6 +129,12 @@ def _ended(pid: int) -> bool:
         return not _alive(pid)
 
 
+def _gone(pid: int) -> bool:
+    """Has a worker's guard ended? On Windows an ended process is never "alive"; on Mac and Linux a guard this Studio
+    started and nobody waited for is a zombie, which kill 0 still finds, so it is reaped instead."""
+    return not _alive(pid) if os.name == "nt" else _ended(pid)
+
+
 def stop_tree(pid: int, wait=None) -> None:
     """End a worker's guard and everything in its process group (the guard leads its own group). `wait` says whether
     the guard has ended (Popen.poll); without one, it is checked by its pid."""
@@ -180,12 +186,57 @@ def worker_record(path: Path) -> dict:
         return {}
 
 
+STALE_WORKER_S = 12 * 3600          # no board worker runs this long: an older record's pids may belong to anything now
+_records = threading.Lock()          # worker.json is written by a start and removed by whoever finds its worker ended
+
+
+def write_record(path: Path, pid: int, args: list):
+    with _records:
+        (path / "worker.json").write_text(json.dumps({"pid": pid, "studio": os.getpid(), "started": time.time(),
+                                                      "args": args[:1]}), encoding="utf-8")
+
+
+def forget_record(path: Path, pid=None):
+    """Remove the board's worker.json (only while it still names `pid`, when given: never a newer worker's)."""
+    with _records:
+        if pid is None or worker_record(path).get("pid") == pid:
+            try:
+                (path / "worker.json").unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def recorded_worker(path: Path):
+    """The guard pid in this board's worker.json while that worker still runs, else None, and the record of an ended
+    worker is removed (a later look must never ask about a pid the system has handed to another program).
+    Started by this Studio process: a Mac or Linux in-place update keeps the pid (os.execv) and the worker runs on
+    as our child; when it ends nobody waits for it, so it is reaped here (kill 0 found the zombie, and the board read
+    "working" until the creator pressed Stop). Started by another Studio process still open: Windows' in-place update
+    runs the new Studio as a child of the old one under a new pid, and the old one's worker keeps going."""
+    rec = worker_record(path)
+    pid, studio = rec.get("pid"), rec.get("studio")
+    if not all(isinstance(x, int) and not isinstance(x, bool) and x > 1 for x in (pid, studio)):
+        return None
+    try:
+        recent = time.time() - float(rec.get("started") or 0) < STALE_WORKER_S
+    except (TypeError, ValueError):
+        recent = False
+    if studio == os.getpid():
+        running = not _gone(pid)
+    else:
+        running = recent and _alive(studio) and _alive(pid)
+    if running:
+        return pid
+    forget_record(path, pid)
+    return None
+
+
 def busy(home=None) -> bool:
-    """Is any Clip Board worker of this Studio working? (For an in-place restart: it would orphan the search.)"""
+    """Is any Clip Board worker still working? The in-app update restart waits for them (see install): on a Mac the
+    restart replaces the Studio's program under the same pid, on Windows it runs a new Studio beside the old one."""
     root = boards_root(Path(home or HOME))
     for path in root.iterdir() if root.is_dir() else []:
-        rec = worker_record(path)
-        if rec.get("studio") == os.getpid() and _alive(rec.get("pid")):
+        if BOARD_ID.fullmatch(path.name) and recorded_worker(path) is not None:
             return True
     return False
 
@@ -230,14 +281,15 @@ def install(studio, *, token, home=None):
 
     def live_pid(path: Path):
         """The guard pid of the worker running on this board: one this Studio process started (kept in memory), or
-        one it started before an in-place restart (worker.json; the Studio keeps its pid across that restart)."""
+        one recorded in worker.json before an in-place update restarted the Studio (see recorded_worker)."""
         proc = workers.get(path.name)
         if proc is not None:
-            return proc.pid if proc.poll() is None else None
-        rec = worker_record(path)
-        if rec.get("studio") == os.getpid() and _alive(rec.get("pid")):
-            return rec["pid"]
-        return None
+            if proc.poll() is None:
+                return proc.pid
+            workers.pop(path.name, None)
+            forget_record(path, proc.pid)
+            return None
+        return recorded_worker(path)
 
     def running(board_id: str) -> bool:
         with lock:
@@ -265,11 +317,10 @@ def install(studio, *, token, home=None):
                                         stdin=subprocess.DEVNULL, **options)
             finally:
                 out.close()
-            cr_shorts.lower_priority(proc)
+            # No nice here: board.py lowers itself (find.lower_priority), and nice adds up (10 + 10 ran it at 19).
             workers[path.name] = proc
             try:
-                (path / "worker.json").write_text(json.dumps({"pid": proc.pid, "studio": os.getpid(),
-                                                              "started": time.time(), "args": args[:1]}), encoding="utf-8")
+                write_record(path, proc.pid, args)
             except OSError:
                 pass
 
@@ -283,6 +334,21 @@ def install(studio, *, token, home=None):
                     except Exception:                           # noqa: BLE001 - the guard ends it on its own too
                         pass
     atexit.register(stop_all)
+
+    @app.before_request
+    def update_waits_for_the_boards():
+        """The in-app update's restart (POST /cr-update/restart) waits until no board is working. On a Mac it replaces
+        the Studio's program in place, so a search would run on with no page able to see it; on Windows it starts the
+        new Studio beside the old one, whose search kept spending watches while a second could start on the same
+        board. (Studio's own busy check gates making videos too, so a search must not count there.)"""
+        if request.method != "POST" or request.path != "/cr-update/restart":
+            return None
+        with lock:
+            working = any(proc.poll() is None for proc in workers.values())
+        if working or busy(home):
+            return jsonify(error="A Clip Board search is still working. Let it finish or press Stop on the Clip "
+                                 "Board, then restart to update. What it already watched is saved."), 409
+        return None
 
     @app.get("/cr-ranking")
     def cr_ranking_page():
@@ -327,10 +393,15 @@ def install(studio, *, token, home=None):
             if LINKISH.match(topic):
                 raise ValueError("That looks like a link. Type what to rank here, for example Funniest Dog Moments; "
                                  "to use clips you have links to, choose Paste links.")
+            find = body.get("find", True)
+            if find:                                            # its clips come from YouTube: say so before 26-72 watches
+                missing = cr_shorts.js_runtime_missing("find clips again")
+                if missing:
+                    raise RuntimeError(missing)
             path = boards_root(home) / new_board_id(topic)
             path.mkdir(parents=True)
             (path / "topic.txt").write_text(topic, encoding="utf-8")
-            if body.get("find", True):
+            if find:
                 start(path, ["find", topic], body.get("use_credits") is True)
             return no_store(jsonify(summary(path, running(path.name))))
         except Exception as error:                                  # noqa: BLE001
@@ -358,7 +429,7 @@ def install(studio, *, token, home=None):
                 with open(path / "progress.log", "a", encoding="utf-8") as log:
                     log.write(time.strftime("%H:%M:%S") + " stopped You stopped this board. Watches already made are "
                               "saved and won't be charged again.\n")
-            (path / "worker.json").unlink(missing_ok=True)
+            forget_record(path)
             return no_store(jsonify(summary(path, running(board_id))))
         except Exception as error:                                  # noqa: BLE001
             return failed(error)

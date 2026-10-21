@@ -151,6 +151,10 @@ body>a[href="/cr-setup"]:first-child{display:none!important}
 .cb-opts input[type=text]:focus,.cb-opts select:focus{outline:0;border-color:var(--crw-violet)}
 .cb-opts-foot{display:flex;justify-content:flex-end;padding:16px 28px 22px;border-top:1px solid var(--crw-line)}
 .cb-opts-foot .crw-primary-button{width:auto;margin:0;padding:0 20px;min-height:40px;font-size:13px}
+/* Name dialog: the countdown's title is asked for where Make is, never in the search box (Enter there starts a paid find) */
+.cb-name .cb-opts-body{padding:22px 28px 22px}
+.cb-name input[type=text]{width:100%;height:46px;padding:0 14px;font-size:15px;border-radius:11px}
+.cb-name .cb-sub{font-size:13px}
 
 /* Drop overlay */
 .cb-drop{position:fixed;inset:0;z-index:30;display:none;place-items:center;background:rgba(10,12,22,.86)}
@@ -261,11 +265,19 @@ body>a[href="/cr-setup"]:first-child{display:none!important}
   </div>
   <div class="cb-opts-foot"><button class="crw-primary-button" type="button" data-close>Done</button></div>
 </dialog>
+<dialog id="name" class="cb-opts cb-name" aria-labelledby="name-title">
+  <form id="name-form" method="dialog">
+    <div class="crw-dialog-top"><div><h2 id="name-title">Name this countdown</h2></div><button type="button" class="crw-icon-button" data-close aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+    <div class="cb-opts-body"><label class="crw-field-label" for="name-input">What does it rank?</label><input id="name-input" type="text" maxlength="120" placeholder="Funniest dog moments" autocomplete="off"><p class="cb-sub">It becomes the Short's title.</p></div>
+    <div class="cb-opts-foot"><button class="crw-primary-button" type="submit">Make this Short</button></div>
+  </form>
+</dialog>
 <div class="cb-drop" id="dropzone" aria-hidden="true"><div><strong>Drop your clips</strong><small>Studio watches them for their best moment too.</small></div></div>
 
 <script>
 const localToken=__LOCAL_TOKEN_JSON__;const $=id=>document.getElementById(id);
-let board=null,picks=[],moments=[],timer=null,dragFiles=0,sortBy='best';
+let board=null,boardTopic='',picks=[],moments=[],timer=null,dragFiles=0,sortBy='best';
+const nameless=t=>{t=String(t||'').trim();return t.length<3||/^my clips$/i.test(t)||/^(https?:\/\/|www\.)/i.test(t);};
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const remember=id=>{try{localStorage.setItem('cr-ranking-board',id);}catch(e){}};
 async function api(path,body,form){const o={headers:{'X-CR-Local-Token':localToken}};if(form){o.method='POST';o.body=form;}else if(body!==undefined){o.method='POST';o.headers['Content-Type']='application/json';o.body=JSON.stringify(body);}
@@ -296,7 +308,7 @@ function progress(s){$('working').hidden=!s.running;if(!s.running)return;
   $('work-bar').style.width=(stage==='plan'?4:stage==='search'?10:m?10+88*m[1]/m[2]:12)+'%';
   for(const li of $('stages').children){const i=STAGES.indexOf(li.dataset.stage);li.classList.toggle('is-done',i<k);li.classList.toggle('is-now',i===k);}}
 async function refresh(){if(!board)return;let s;try{s=await api('/cr-ranking/boards/'+board);}catch(e){notice(e.message);return;}
-  if(s.topic)$('topic').value=s.topic;progress(s);if(s.stopped)notice(s.stopped);
+  boardTopic=s.topic||'';if(!nameless(s.topic))$('topic').value=s.topic;progress(s);if(s.stopped)notice(s.stopped);
   const has=s.moments.length||s.running;$('board').hidden=!has;$('ways').hidden=!!has;$('tray').hidden=!has;
   $('board-title').textContent=s.topic||'Your clips';
   $('board-sub').innerHTML=s.moments.length?`<span class="mono">${s.moments.length}</span> moments${s.running?' so far':''}. Tap the ones you want; the last one you add is #1.`:'Moments appear here as Studio watches each video.';
@@ -347,8 +359,9 @@ $('slots').addEventListener('keydown',e=>{const s=e.target.closest('.cb-slot:not
   if(e.key==='ArrowLeft'){e.preventDefault();move(i,i-1);}else if(e.key==='ArrowRight'){e.preventDefault();move(i,i+1);}else if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();picks.splice(i,1);sync();slots();}});
 $('slots').addEventListener('click',e=>{const id=e.target.closest('[data-drop]')?.dataset.drop;if(!id)return;picks=picks.filter(p=>p.id!==id);sync();slots();});
 
-$('find').addEventListener('submit',async e=>{e.preventDefault();notice('');$('find-button').disabled=true;picks=[];moments=[];$('grid').innerHTML='';
-  try{const s=await api('/cr-ranking/boards',{topic:$('topic').value,use_credits:$('o-credits').checked});board=s.id;remember(board);await refresh();recent();$('working').scrollIntoView({behavior:'smooth',block:'center'});}catch(err){notice(err.message);}finally{$('find-button').disabled=false;}});
+$('find').addEventListener('submit',async e=>{e.preventDefault();notice('');$('find-button').disabled=true;
+  // the countdown on screen is cleared only once the new search has started (a refused one keeps it)
+  try{const s=await api('/cr-ranking/boards',{topic:$('topic').value,use_credits:$('o-credits').checked});picks=[];moments=[];$('grid').innerHTML='';board=s.id;remember(board);await refresh();recent();$('working').scrollIntoView({behavior:'smooth',block:'center'});}catch(err){notice(err.message);}finally{$('find-button').disabled=false;}});
 async function ensureBoard(){if(!board){const s=await api('/cr-ranking/boards',{topic:$('topic').value||'My clips',find:false});board=s.id;remember(board);}}
 async function upload(files){files=files.filter(f=>/\.(mp4|mov|webm|m4v)$/i.test(f.name));if(!files.length){notice('Add MP4, MOV, WebM or M4V clips.');return;}notice('');
   try{await ensureBoard();const f=new FormData();for(const x of files)f.append('clips',x);if($('o-credits').checked)f.append('use_credits','1');await api('/cr-ranking/boards/'+board+'/clips',undefined,f);await refresh();recent();}catch(err){notice(err.message);}}
@@ -366,14 +379,22 @@ $('stop').addEventListener('click',async()=>{if(!board)return;$('stop').disabled
   try{await api('/cr-ranking/boards/'+board+'/stop',{});clearTimeout(timer);await refresh();recent();}catch(err){notice(err.message);}finally{$('stop').disabled=false;}});
 $('open-opts').addEventListener('click',()=>$('opts').showModal());
 $('opts').addEventListener('click',e=>{if(e.target.closest('[data-close]')||e.target===$('opts'))$('opts').close();});
-$('make').addEventListener('click',async()=>{notice('');const topic=$('topic').value.trim();
-  if(topic.length<3||/^my clips$/i.test(topic)){notice('Name this countdown first: type what it ranks in the box at the top, for example Funniest Dog Moments. It becomes the Short\'s title.');$('topic').focus();return;}
+// The countdown is named in its own dialog at Make (the board's topic filled in, a board of uploads or links left
+// blank), never in the search box above: Enter there starts a new, paid search and clears this countdown.
+$('make').addEventListener('click',()=>{notice('');$('name-input').value=nameless(boardTopic)?'':boardTopic;
+  $('name-input').setCustomValidity('');$('name').showModal();$('name-input').focus();$('name-input').select();});
+$('name-input').addEventListener('input',()=>$('name-input').setCustomValidity(''));
+$('name').addEventListener('click',e=>{if(e.target.closest('[data-close]')||e.target===$('name'))$('name').close();});
+$('name-form').addEventListener('submit',e=>{e.preventDefault();const t=$('name-input').value.replace(/\s+/g,' ').trim();
+  if(nameless(t)){$('name-input').setCustomValidity('Type what this countdown ranks, for example Funniest Dog Moments.');$('name-input').reportValidity();return;}
+  $('name').close();make(t);});
+async function make(topic){notice('');
   $('make').disabled=true;$('make').textContent='Starting…';
   try{const c=await api('/cr-ranking/boards/'+board+'/choice',{picks:picks.map(p=>p.id),topic});
     const handle=$('o-handle').value.trim().replace(/[^@\w.]/g,'').slice(0,40);
     const ranking={ranks:picks.length,board,choice:c.choice,commentary:$('o-commentary').checked,booms:$('o-booms').checked,sfx:$('o-sfx').value,punch_ins:$('o-punch').checked,clean:$('o-clean').checked,captions:$('o-captions').checked,use_credits:$('o-credits').checked,...(handle?{handle}:{})};
     await api('/api/run',{title:c.topic,style:'cr-shorts-ranking',minutes:1,steps:['script','voiceover','images','pexels','video'],burn_subs:false,extra:`[[short_seconds=25]] [[ranking=${JSON.stringify(ranking)}]]`});
     location.href='/#projects';}
-  catch(err){notice((err.data?.blockers||[]).join(' ')||err.message);slots();}});
+  catch(err){notice((err.data?.blockers||[]).join(' ')||err.message);slots();}}
 allowance();recent();slots();let last=null;try{last=localStorage.getItem('cr-ranking-board');}catch(e){}if(last)openBoard(last).catch(()=>{});
 </script></body></html>
