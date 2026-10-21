@@ -220,7 +220,10 @@ window.CRLocalStudio = (() => {
         if (!latest || !returning() || shippedSeen(latest.build)) return '';
         const when = Date.parse(latest.date || '');
         if (!isFinite(when) || Date.now() - when > SHIPPED_DAYS * 864e5) return '';
-        const tiles = (latest.items || []).map(text => {
+        // Every release of the last three weeks, newest first: a small fix release must not hide the big one before it.
+        const recent = (data.changelog || []).filter(r => { const t = Date.parse(r.date || ''); return isFinite(t) && Date.now() - t <= SHIPPED_DAYS * 864e5; });
+        const big = recent.reduce((a, r) => (r.items || []).length > (a.items || []).length ? r : a, latest);
+        const tiles = recent.flatMap(r => r.items || []).map(text => {
             const m = /^(New|Improved|Fixed):\s*(.*)$/.exec(text || '');
             if (!m) return null;
             const cut = m[2].search(/[.!?](\s|$)/);
@@ -233,7 +236,7 @@ window.CRLocalStudio = (() => {
         return '<section class="ls-shipped" id="ls-shipped" aria-labelledby="ls-shipped-title">'+
             '<div class="ls-shipped-head"><span class="ls-shipped-chip"><i class="ls-shipped-pulse" aria-hidden="true"></i>Just shipped · Studio '+esc(latest.build)+' · '+esc(date)+'</span>'+
             '<button class="ls-shipped-close" type="button" data-ls-shipped-seen="'+esc(latest.build)+'">Got it</button></div>'+
-            '<h2 id="ls-shipped-title">'+esc(latest.title || 'What’s new in Studio')+'</h2>'+
+            '<h2 id="ls-shipped-title">'+esc(big.title || latest.title || 'What’s new in Studio')+'</h2>'+
             '<div class="ls-shipped-grid">'+tiles.map((t, i) => '<article class="ls-shipped-tile" style="--i:'+i+'">'+
                 '<span class="ls-tag ls-tag-'+t.tag.toLowerCase()+'">'+t.tag+'</span><h3>'+esc(t.head)+'</h3>'+
                 (t.rest ? '<p>'+esc(t.rest)+'</p>' : '')+'</article>').join('')+'</div>'+

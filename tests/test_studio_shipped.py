@@ -38,6 +38,11 @@ RELEASE = {"build": 67, "date": "2026-10-21", "title": "Queue 15 Ranking Shorts"
 SHIPPED_MS = 1792540800000                                     # 2026-10-21T00:00Z
 
 
+def Date_ms(day):
+    from datetime import datetime, timezone
+    return int(datetime.fromisoformat(day).replace(tzinfo=timezone.utc).timestamp() * 1000)
+
+
 def test_a_returning_customer_sees_the_newest_release_on_top():
     html = shipped([RELEASE], now_ms=SHIPPED_MS + 2 * DAY)
     assert 'id="ls-shipped"' in html and "Just shipped · Studio 67" in html
@@ -61,9 +66,21 @@ def test_text_is_escaped():
     assert "<img" not in html and "<b>bold" not in html and "&lt;b&gt;" in html
 
 
+def test_a_small_release_after_a_big_one_keeps_the_big_ones_news():
+    fix = {"build": 68, "date": "2026-10-21", "title": "Voice picker", "items": ["New: pick a voice. More.",
+                                                                                 "Fixed: a nag. Gone."]}
+    old = {**RELEASE, "build": 60, "date": "2026-09-01", "title": "Old", "items": ["New: an old thing. X."]}
+    html = shipped([fix, RELEASE, old], now_ms=SHIPPED_MS + DAY)
+    heads = [h.split("</h3>")[0] for h in html.split("<h3>")[1:]]
+    assert heads == ["Pick a voice", "Queue up to 15 Shorts", "Clips from TikTok", "A fifth thing"]
+    assert "Queue 15 Ranking Shorts" in html and "Studio 68" in html and 'data-ls-shipped-seen="68"' in html
+    assert "An old thing" not in html
+
+
 def test_the_real_changelog_reads_well_as_tiles():
-    newest = json.loads((ROOT / "webapp" / "frontier" / "changelog.json").read_text(encoding="utf-8"))[0]
-    html = shipped([newest], now_ms=SHIPPED_MS)
+    rows = json.loads((ROOT / "webapp" / "frontier" / "changelog.json").read_text(encoding="utf-8"))
+    newest = rows[0]
+    html = shipped(rows, now_ms=Date_ms(newest["date"]))
     heads = [h.split("</h3>")[0] for h in html.split("<h3>")[1:]]
     assert 1 <= len(heads) <= 4 and all(len(h) <= 70 for h in heads), heads
     assert "—" not in json.dumps(newest, ensure_ascii=False)
