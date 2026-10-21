@@ -438,6 +438,8 @@ def _init_db():
                 _ensure_column(cur, "cook_jobs", "worker_id", "TEXT DEFAULT ''")
                 _ensure_column(cur, "cook_jobs", "heartbeat_at", "DOUBLE PRECISION DEFAULT 0")
                 _ensure_column(cur, "niche_channels", "recent_videos_json", "TEXT DEFAULT '[]'")
+                # every Studio request (each clip-watch poll too) finds its account by this key
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_users_mcp_api_key ON users (mcp_api_key)")
                 _ensure_column(cur, "niche_channels", "est_recent_monthly_revenue_usd", "DOUBLE PRECISION DEFAULT 0")
                 _ensure_column(cur, "niche_channels", "est_recent_monthly_revenue_low_usd", "DOUBLE PRECISION DEFAULT 0")
                 _ensure_column(cur, "niche_channels", "est_recent_monthly_revenue_high_usd", "DOUBLE PRECISION DEFAULT 0")
@@ -477,6 +479,8 @@ def _init_db():
             _ensure_column(cur, "cook_jobs", "worker_id", "TEXT DEFAULT ''")
             _ensure_column(cur, "cook_jobs", "heartbeat_at", "REAL DEFAULT 0")
             _ensure_column(cur, "niche_channels", "recent_videos_json", "TEXT DEFAULT '[]'")
+            # every Studio request (each clip-watch poll too) finds its account by this key
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_users_mcp_api_key ON users (mcp_api_key)")
             _ensure_column(cur, "niche_channels", "est_recent_monthly_revenue_usd", "REAL DEFAULT 0")
             _ensure_column(cur, "niche_channels", "est_recent_monthly_revenue_low_usd", "REAL DEFAULT 0")
             _ensure_column(cur, "niche_channels", "est_recent_monthly_revenue_high_usd", "REAL DEFAULT 0")

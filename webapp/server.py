@@ -338,6 +338,11 @@ async def _startup_tasks():
     except Exception as e:
         print(f"[db] cleanup_expired failed: {e}")
 
+    try:                                   # Ranking clip watches a deploy stranded are picked up before anyone polls
+        _studio_ranking.start_supervisor()
+    except Exception as e:
+        print(f"[ranking-watch] supervisor did not start: {e}")
+
     async def _periodic_cleanup():
         while True:
             await asyncio.sleep(3600)
