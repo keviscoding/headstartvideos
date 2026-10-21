@@ -474,21 +474,28 @@
         el('span', '', `${q.reason ? q.reason + ' ' : ''}Nothing was spent on ${n === 1 ? 'it' : 'them'} yet: ${names}.`));
       const actions = el('div', 'crw-held-actions');
       const go = el('button', 'crw-primary-button', n === 1 ? 'Carry on' : `Carry on with all ${n}`); go.type = 'button';
+      // Out of clip watches: carrying on now only helps with credits (0.02 a watch); otherwise it waits for next month.
+      const paid = q.code === 'out_of_watches' ? el('button', 'crw-secondary-button', 'Carry on using credits') : null;
+      if (paid) paid.type = 'button';
       const drop = el('button', 'crw-secondary-button', 'Remove'); drop.type = 'button';
-      go.addEventListener('click', async () => {go.disabled = drop.disabled = true;
-        try {const r = await api('/cr-queue/resume', {method: 'POST'}); drawHeld(r); toast(`${r.resumed} queued again, made one at a time.`); await refreshActivity();}
-        catch (e) {toast(e.message); go.disabled = drop.disabled = false;}});
-      drop.addEventListener('click', async () => {if (!confirm(`Remove ${n === 1 ? 'this video' : `these ${n} videos`} from the queue?`)) return; go.disabled = drop.disabled = true;
-        try {const r = await api('/cr-queue/drop', {method: 'POST'}); drawHeld(r); toast('Removed from the queue.');}
-        catch (e) {toast(e.message); go.disabled = drop.disabled = false;}});
-      actions.append(go, drop); box.append(actions);
+      const buttons = [go, paid, drop].filter(Boolean), busy = on => buttons.forEach(b => b.disabled = on);
+      const resume = async credits => {busy(true); state.heldBusy = true;
+        try {const r = await api('/cr-queue/resume', {method: 'POST', body: {use_credits: credits}}); drawHeld(r);
+          toast(r.resumed ? `${r.resumed} queued again${credits ? ', using credits if watches run out' : ''}, made one at a time.` : 'Nothing was on hold.'); await refreshActivity();}
+        catch (e) {toast(e.message); busy(false);} finally {state.heldBusy = false;}};
+      go.addEventListener('click', () => resume(false));
+      if (paid) paid.addEventListener('click', () => resume(true));
+      drop.addEventListener('click', async () => {if (!confirm(`Remove ${n === 1 ? 'this video' : `these ${n} videos`} from the queue?`)) return; busy(true); state.heldBusy = true;
+        try {const r = await api('/cr-queue/drop', {method: 'POST'}); drawHeld(r); toast(r.removed ? 'Removed from the queue.' : 'Nothing was on hold.');}
+        catch (e) {toast(e.message); busy(false);} finally {state.heldBusy = false;}});
+      actions.append(...buttons); box.append(actions);
     }
   }
   async function refreshActivity(initial = false) {
     if (state.refresh) return state.refresh;
     state.refresh = (async()=>{
       const results = await Promise.allSettled([api('/api/queue'),api('/cr-workspace/activity'), initial || state.page === 'projects' ? api('/api/jobs') : Promise.resolve(null), api('/cr-queue')]);
-      if (results[3].status==='fulfilled') drawHeld(results[3].value);
+      if (results[3].status==='fulfilled' && !state.heldBusy) drawHeld(results[3].value);
       if (results[0].status==='fulfilled') {
         const watched = state.queue.filter(q=>['running','queued'].includes(q.state));
         state.queue = results[0].value.jobs || [];
@@ -554,13 +561,15 @@
     const credits = /"use_credits":true/.test(p.extra || '');
     if (a.remaining >= hi || credits) return true;
     const fit = Math.floor(a.remaining / (a.per_short?.high || 60));
-    return confirm(`${titles.length} Ranking Shorts use about ${lo} to ${hi} clip watches, and you have ${a.remaining} left this month (about ${fit} Short${fit === 1 ? '' : 's'}). When they run out, the Shorts still waiting go on hold with nothing spent, and you can carry on later or turn on “Use credits if my clip watches run out”. Queue all ${titles.length}?`);
+    return confirm(`${titles.length} Ranking Shorts use about ${lo} to ${hi} clip watches, and you have ${a.remaining} left this month (about ${fit} Short${fit === 1 ? '' : 's'}). When they run out, the Shorts still waiting go on hold with nothing spent, and you can carry on next month or carry on using credits. Queue all ${titles.length}?`);
   }
   async function submit(event) {
     event.preventDefault(); if(state.submitting||state.busy)return;error(''); let p;
     try {p=payload();} catch(e){error(e.message);return;}
-    if (!(await rankingBatchOk(p))) return;
     state.submitting=true;gate();$('crw-create').textContent='Checking your video…';
+    let ok=false;
+    try {ok=await rankingBatchOk(p);} catch(_) {ok=true;}       // the run itself checks again
+    if (!ok) {state.submitting=false;$('crw-create').textContent='Create video';gate();return;}
     try {
       // /api/run performs the authoritative option, account and renderer checks
       // before creating work; a second preflight would repeat those requests.

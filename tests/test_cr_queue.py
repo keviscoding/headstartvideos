@@ -50,7 +50,7 @@ def test_a_shared_stop_holds_the_ranking_shorts_still_waiting(tmp_path):
     assert [s["title"] for s in studio.QUEUE] == ["Long video"]          # other recipes carry on
     assert [s["title"] for s in keeper.held] == ["Funniest Dogs", "Scariest Moments"]
     assert all(studio.JOBS[s["slug"]]["state"] == "held" for s in keeper.held)
-    assert "used up" in keeper.status()["reason"]
+    assert "used up" in keeper.status()["reason"] and keeper.status()["code"] == "out_of_watches"
     saved = json.loads((tmp_path / "output" / ".cr-queue.json").read_text())
     assert [s["title"] for s in saved["held"]] == ["Funniest Dogs", "Scariest Moments"]
     assert [s["title"] for s in saved["waiting"]] == ["Long video"]
@@ -105,7 +105,7 @@ def test_remove_drops_the_held_shorts(tmp_path):
     keeper = cr_queue.Keeper(studio, tmp_path)
     keeper.hold_ranking("Claude's usage limit is reached until 4 am.")
     assert keeper.drop() == 1
-    assert keeper.status() == {"held": [], "reason": "", "waiting": 0, "max_ranking_batch": 15}
+    assert keeper.status() == {"held": [], "reason": "", "code": "", "waiting": 0, "max_ranking_batch": 15}
     assert studio.JOBS == {}
     restored = cr_queue.Keeper(fake_studio()[0], tmp_path)
     restored.restore()
@@ -137,3 +137,26 @@ def test_a_ranking_batch_is_at_most_15_topics_each_once():
     assert [s["title"] for s in studio.QUEUE] == ["Funniest Dogs", "Scariest Moments"]
     other = client.post("/api/run", json={"title": "\n".join(titles), "steps": ["video"]})
     assert other.status_code == 200                            # other recipes keep their own batch limit
+
+
+def test_carry_on_using_credits_turns_credits_on_for_the_held_ranking_shorts_only(tmp_path):
+    """Out of clip watches, Carry on alone would stop again at once: the notice offers Carry on using credits, which
+    sets use_credits in each held Ranking Short's own options (and nothing else), as the creator chose there."""
+    studio, _ = fake_studio([spec("Funniest Dogs")])
+    keeper = cr_queue.install(studio, tmp_path / "a")
+    keeper.hold_ranking("Your clip watches for this month are used up.", "out_of_watches")
+    again = cr_queue.Keeper(fake_studio()[0], tmp_path / "a")
+    again.restore()                                            # the reason's code survives a restart
+    assert again.status()["code"] == "out_of_watches"
+    got = studio.app.test_client().post("/cr-queue/resume", json={"use_credits": True}).get_json()
+    assert got["resumed"] == 1 and got["code"] == ""
+    resumed = studio.QUEUE[0]
+    assert resumed["extra"].startswith("[[short_seconds=25]] [[ranking=")
+    assert json.loads(resumed["extra"].split("[[ranking=")[1].rsplit("]]", 1)[0]) == {"ranks": 5, "use_credits": True}
+
+    other = spec("Long video", ranking=False, extra="[[short_seconds=25]] keep me")
+    studio, _ = fake_studio([spec("Funniest Cats"), other])
+    keeper = cr_queue.install(studio, tmp_path / "b")
+    keeper.hold_ranking("used up", "out_of_watches")
+    keeper.resume(use_credits=False)                           # plain Carry on changes nothing
+    assert [s["extra"] for s in studio.QUEUE] == ["[[short_seconds=25]] keep me", RANKING]
