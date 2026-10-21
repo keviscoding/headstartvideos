@@ -430,6 +430,9 @@
       for(const player of all('.crw-video-preview'))player.pause();state.currentOutput = job; text('crw-output-title',job.title || 'Your video'); text('crw-output-message','');
       $('crw-output-video').poster=`/cr-workspace/preview/project/${encoded(job.slug)}.jpg`;$('crw-output-video').src = `/f/video/${encoded(job.slug)}`; $('crw-output-download').href = `/f/video/${encoded(job.slug)}`;
       $('crw-output-editor').href = `/editor/${encoded(job.slug)}`; $('crw-output-editor').hidden = job.editable === false;
+      text('crw-output-editor-label', 'Open timeline');
+      // A Ranking Short: its own editor (change a line, swap a clip, remake), the owner's "mini timeline for this format"
+      try {const rk = await api(`/cr-ranking/edit/${encoded(job.slug)}`); if (rk && rk.slots) {$('crw-output-editor').href = `/cr-ranking-edit?job=${encoded(job.slug)}`; text('crw-output-editor-label', 'Edit countdown'); $('crw-output-editor').hidden = false;}} catch (_) {}
       const exports = [['audio','Narration','audio'],['script','Script','script'],['srt','Subtitles','srt'],['desc','Description','desc']];
       $('crw-output-exports').replaceChildren(); for (const [key,label,kind] of exports) if (data[key]) {const a=el('a','crw-export-link',label);a.href=`/f/${kind}/${encoded(job.slug)}`;a.download='';$('crw-output-exports').append(a);}
       for (const name of data.thumbs || data.thumbnails || []) {const filename=typeof name==='string'?name:name.name; if (!filename) continue;const a=el('a','crw-export-link','Thumbnail');a.href=`/f/thumb/${encoded(job.slug)}/${encoded(filename)}`;a.download='';$('crw-output-exports').append(a);}
