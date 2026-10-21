@@ -152,6 +152,9 @@
   const SHORT_ONLY_HIDDEN = ['crw-fast-section','crw-palette-section','crw-avatar-section','crw-character-section','crw-offer-section','crw-cta-section','crw-pictures-section'];
   function shortsMode() {
     const s = isShort(state.selected), rk = isRanking(state.selected);
+    // The owner couldn't find "Create several videos" for a batch of ranking ideas: for Ranking Shorts it says what it is.
+    text('crw-batch-label', rk ? 'Queue more topics (up to 15, one per line)' : 'Create several videos');
+    $('crw-batch-titles').placeholder = rk ? 'Ranking the Funniest Dog Moments\nRanking the Best Bunny Moments' : 'One additional title per line';
     hide('crw-short-duration', !s || rk); hide('crw-long-duration', s); hide('crw-ranking-ranks', !rk); hide('crw-ranking-section', !rk);
     text('crw-canvas-label', s ? '9:16 vertical' : '16:9 landscape'); text('crw-summary-canvas', s ? '9:16 vertical' : '16:9 landscape');
     if (s) for (const id of SHORT_ONLY_HIDDEN) hide(id, true);
@@ -541,10 +544,13 @@
       pictures_per_min:state.selected.pictures&&Number($('crw-pictures').value)!==state.selected.pictures.default?Number($('crw-pictures').value):null,
       threed_look:threedLook(features)};
     if(short&&isRanking(state.selected)){const handle=$('crw-rank-handle').value.trim().replace(/[^@\w.]/g,'').slice(0,40);
-      const reference=$('crw-rank-reference').value.trim();
-      if(reference&&!/^(https?:\/\/)?(www\.|m\.)?(youtube\.com\/(shorts\/|watch\?v=)|youtu\.be\/)[A-Za-z0-9_-]{11}/.test(reference))throw new Error('Paste a YouTube Short’s link to remake, or leave it empty.');
+      // A Short to remake: any YouTube link form (Shorts, watch, youtu.be, m., any case), sent as one plain link, for one topic
+      const pasted=$('crw-rank-reference').value.trim(), refId=(/(?:youtu\.be\/|youtube\.com\/(?:shorts\/|watch\?(?:[^#]*&)?v=|live\/|embed\/))([A-Za-z0-9_-]{11})/i.exec(pasted)||[])[1]||'';
+      if(pasted&&!refId)throw new Error('Paste a YouTube Short’s link to remake, or leave it empty.');
+      if(refId&&title.includes('\n'))throw new Error('A Short to remake goes with one topic. Clear its link, or make that topic on its own.');
+      const reference=refId?'https://www.youtube.com/watch?v='+refId:'';
       const ranking={ranks:number('crw-ranks',5,3,10),commentary:checked('crw-rank-commentary'),booms:checked('crw-rank-booms'),sfx:$('crw-rank-sfx').value,
-        punch_ins:checked('crw-rank-punch'),clean:checked('crw-rank-clean'),captions:checked('crw-rank-captions'),use_credits:checked('crw-rank-credits'),...(handle?{handle}:{}),...(reference?{reference:reference.slice(0,300)}:{})};
+        punch_ins:checked('crw-rank-punch'),clean:checked('crw-rank-clean'),captions:checked('crw-rank-captions'),use_credits:checked('crw-rank-credits'),...(handle?{handle}:{}),...(reference?{reference}:{})};
       p.extra=`[[ranking=${JSON.stringify(ranking)}]] `+(p.extra||'');}
     if(short){p.minutes=1;p.extra=`[[short_seconds=${number('crw-seconds',25,15,60)}]] `+(p.extra||'');p.avatar_id='';p.cta=null;p.offer='';p.character='';p.character_image='';p.threed_look='';}
     if(p.panels && title.includes('\n')) throw new Error('Use one title for a set of panels.');
@@ -575,7 +581,7 @@
     try {
       // /api/run performs the authoritative option, account and renderer checks
       // before creating work; a second preflight would repeat those requests.
-      const result=await api('/api/run',{method:'POST',body:p});save();showPage('projects');
+      const result=await api('/api/run',{method:'POST',body:p});$('crw-rank-reference').value='';save();showPage('projects');   // a Short to remake goes with that video only
       toast('Your new video project has started.');await refreshActivity(true);
       const first=(result.queued||[])[0];if(first)await openProgress(typeof first==='string'?{slug:first,title:p.title.split('\n')[0]}:first);
     } catch(e){error((e.details?.blockers||[]).join(' ')||e.message);showPage('create');}finally{state.submitting=false;$('crw-create').textContent='Create video';gate();}

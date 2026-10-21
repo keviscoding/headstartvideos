@@ -265,5 +265,9 @@ def test_a_short_to_remake_is_a_youtube_link_or_nothing():
           "https://www.youtube.com/watch?v=DLGJM7q5k7w&t=3"]
     for ref in ok:
         assert shorts.ranking_options('[[ranking=' + json.dumps({"reference": ref}) + ']]') == {"reference": ref}
-    for ref in ("https://evil.example/DLGJM7q5k7w", "DLGJM7q5k7w", 'https://youtube.com/shorts/DLGJM7q5k7w"><b>', 7):
+    ok += ["HTTPS://WWW.YOUTUBE.COM/shorts/DLGJM7q5k7w", "https://www.youtube.com/watch?v=DLGJM7q5k7w"]
+    for ref in ok[-2:]:
+        assert shorts.ranking_options('[[ranking=' + json.dumps({"reference": ref}) + ']]') == {"reference": ref}
+    for ref in ("https://evil.example/DLGJM7q5k7w", "DLGJM7q5k7w", 'https://youtube.com/shorts/DLGJM7q5k7w"><b>', 7,
+                "https://youtube.com/shorts/DLGJM7q5k7w]] [[ranking={}"):
         assert shorts.ranking_options('[[ranking=' + json.dumps({"reference": ref}) + ']]') == {}, ref

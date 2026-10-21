@@ -49,8 +49,8 @@ RANKING_KEYS = {"ranks": int, "commentary": bool, "booms": bool, "sfx": str, "ca
 # Names that become paths in make_ranking (output/ranking-boards/<board>/<choice>): nothing else gets through.
 RANKING_NAMES = {"board": re.compile(r"[a-z0-9-]{1,80}"), "choice": re.compile(r"choice-[A-Za-z0-9-]{1,80}\.json"),
                  # a viral Short to remake: a YouTube link the pipeline only reads the video id from (find.reference_id)
-                 "reference": re.compile(r"(https?://)?(www\.|m\.)?(youtube\.com/(shorts/|watch\?v=)|youtu\.be/)"
-                                         r"[A-Za-z0-9_-]{11}[^\s<>\"']{0,200}")}
+                 "reference": re.compile(r"(?i:(https?://)?(www\.|m\.)?(youtube\.com/(shorts/|watch\?v=)|youtu\.be/))"
+                                         r"[A-Za-z0-9_-]{11}[^\s<>\"'\]\[]{0,200}")}
 
 
 def split_extra(extra: str):
