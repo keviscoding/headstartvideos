@@ -15,13 +15,18 @@ import re
 import shutil
 import subprocess
 import sys
+from collections import deque
 from pathlib import Path
 
 HOME = Path(__file__).resolve().parent
 PIPELINES = {"zack3d": ("zack", "make_zack.py"), "photo2d": ("hoodie", "make_short.py"),
              "ranking": ("ranking", "make_ranking.py")}
 PACKLESS = {"ranking"}                                       # pipelines that need no Shorts asset pack
+# Pipelines that lower their own priority as they start (make_ranking and board.py call find.lower_priority). nice is
+# relative on Mac and Linux: our nice 10 under their own os.nice(10) ran the Short at 19, the very lowest.
+SELF_LOWERING = {"ranking"}
 SECONDS = (15, 60)
+KEEP_LINES = 2000                                            # of a run's output, for short/stopped.log
 
 
 def shorts_root(home: Path = HOME) -> Path:
@@ -199,14 +204,16 @@ def child_env(**extra) -> dict:
 def low_priority() -> dict:
     """Popen arguments for a pipeline process: below normal priority on Windows (it paints, encodes and transcribes on
     every core for minutes; the Studio and the creator's computer stay responsive). Its ffmpeg and Claude children
-    inherit it. POSIX gets nice() through lower_priority() once the process exists."""
+    inherit it, and a priority class is absolute, so a pipeline that lowers itself too stays below normal. POSIX gets
+    nice() through lower_priority() once the process exists."""
     if os.name == "nt":
         return {"creationflags": getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0x4000)}
     return {}
 
 
 def lower_priority(proc) -> None:
-    """nice 10 for a pipeline process on Mac and Linux, set before it has started any work of its own."""
+    """nice 10 for a pipeline process on Mac and Linux that does not lower itself (never one in SELF_LOWERING, nor a
+    Clip Board worker: nice adds up), set before it has started any work of its own."""
     if os.name == "nt" or not hasattr(os, "setpriority"):
         return
     try:
@@ -215,16 +222,74 @@ def lower_priority(proc) -> None:
         pass
 
 
+_JS = {"ok": False}
+
+
+def js_runtime_missing(then: str = "make the Short again") -> str:
+    """'' when yt-dlp can solve YouTube's JavaScript challenge on this computer, else what to tell the creator. Every
+    YouTube download needs a JavaScript runtime (Deno, Node.js 22 or newer, Bun); without one a Short found out only
+    at the pick downloads, after it had paid for its scouting and close looks. yt-dlp's own checks decide, so its
+    minimum versions move with it; when they can't be asked, or the creator set the runtimes themselves (YTDLP_ARGS),
+    nothing is refused and yt-dlp says what is wrong as before."""
+    if _JS["ok"] or "js-runtimes" in os.environ.get("YTDLP_ARGS", ""):
+        return ""
+    try:
+        from yt_dlp.utils import _jsruntime as jsr
+        kinds = [jsr.DenoJsRuntime, jsr.NodeJsRuntime, jsr.BunJsRuntime, jsr.QuickJsRuntime]
+        need = int(jsr.NodeJsRuntime.MIN_SUPPORTED_VERSION[0])
+        seen = {}
+        for kind in kinds:
+            info = kind().info                                   # runs `<runtime> --version`; None when absent
+            if info is not None and info.supported:
+                _JS["ok"] = True                                 # a runtime never goes away while the Studio runs
+                return ""
+            if info is not None:
+                seen[info.name] = info.version
+    except Exception:                                            # noqa: BLE001 - can't tell: never refuse on a guess
+        return ""
+    if "node" in seen:
+        return (f"The YouTube downloader needs Node.js {need} or newer, and this computer has Node.js {seen['node']}. "
+                f"Update Node.js from nodejs.org, restart the Studio and {then}. Nothing was watched or charged.")
+    return (f"The YouTube downloader needs a JavaScript runtime that this computer doesn't have. Install Node.js {need} "
+            f"or newer from nodejs.org, restart the Studio and {then}. Nothing was watched or charged.")
+
+
+def needs_youtube(ranking: dict, home: Path = HOME) -> bool:
+    """Will this Ranking Short download clips from YouTube? A topic Short does. A Clip Board countdown does when a pick
+    is a YouTube moment; the creator's own clips and the links the board downloaded are files already."""
+    board = ranking.get("board")
+    if not board:
+        return True
+    try:
+        snapshot = home / "output" / "ranking-boards" / board / (ranking.get("choice") or "choice.json")
+        picks = json.loads(snapshot.read_text(encoding="utf-8")).get("picks") or []
+    except (OSError, ValueError, AttributeError):
+        return False                                             # make_ranking says what is wrong with the countdown
+    return any(isinstance(p, dict) and not p.get("file") for p in picks)
+
+
 TIMESTAMP = re.compile(r"^\d\d:\d\d:\d\d ")
 
 
-def stop_message(work: Path, tail: list) -> str:
+def _crashed(lines: list) -> bool:
+    """Did Python end the pipeline with an exception nobody handled? Its traceback then comes after the last progress
+    line. (Only the last 40 lines were checked before, so a deep traceback's header fell outside them and its
+    exception line read as the pipeline's own message.)"""
+    head = step = -1
+    for i, line in enumerate(lines):
+        if "Traceback (most recent call last)" in line:
+            head = i
+        elif TIMESTAMP.match(line) or line.startswith("done:"):     # never a traceback's quoted source line
+            step = i
+    return head > step
+
+
+def stop_message(work: Path, output: list) -> str:
     """Why a Short stopped, in the creator's words. The ranking pipeline writes work/error.json on every stop it
     understands ({code, message, action, saved}); anything else is the last line Python printed, never a traceback.
-    The whole output tail goes to short/stopped.log for support."""
-    text = "".join(tail)
+    What the pipeline printed (its last KEEP_LINES lines) goes to short/stopped.log for support."""
     try:
-        (work / "stopped.log").write_text(text, encoding="utf-8")
+        (work / "stopped.log").write_text("".join(output), encoding="utf-8")
     except OSError:
         pass
     try:
@@ -234,10 +299,10 @@ def stop_message(work: Path, tail: list) -> str:
     if isinstance(got, dict) and str(got.get("message") or "").strip():
         message, action = str(got["message"]).strip(), str(got.get("action") or "").strip()
         return message if not action or action in message else f"{message} {action}"
-    lines = [l.strip() for l in tail if l.strip()]
+    lines = [l.strip() for l in output if l.strip()]
     last = lines[-1] if lines else ""
     progress = bool(TIMESTAMP.match(last)) or "done:" in last
-    if last and not progress and "Traceback (most recent call last)" not in text:
+    if last and not progress and not _crashed(output):
         return last                                              # the pipeline's own message (SystemExit)
     last = TIMESTAMP.sub("", last)                               # an exception's last line, or the step it was on
     return ("The Short stopped unexpectedly" + (f" ({last[:300]})" if last else "") + ". Your progress is saved: make "
@@ -265,6 +330,10 @@ def run_short(engine, title: str, style: str, info: dict, *, features=None, sink
     seconds = seconds_of(info, features, extra)
     ranking = ranking_options(extra)
     extra = split_extra(extra)[1]
+    if pipe == "ranking" and needs_youtube(ranking):
+        missing = js_runtime_missing()
+        if missing:                                              # before anything is searched, watched or paid for
+            raise RuntimeError(missing)
     job = Path(engine.job_dir(title, style))
     job.mkdir(parents=True, exist_ok=True)
     if hasattr(engine, "_unpublish"):
@@ -290,14 +359,15 @@ def run_short(engine, title: str, style: str, info: dict, *, features=None, sink
                                                                         else f"about {seconds} seconds"))
         proc = subprocess.Popen(args, cwd=str(root / folder), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, encoding="utf-8", errors="replace", **low_priority())
-        lower_priority(proc)
-        tail = []
+        if pipe not in SELF_LOWERING:
+            lower_priority(proc)
+        output = deque(maxlen=KEEP_LINES)                         # bounded: a run prints a few hundred lines
         for line in proc.stdout:
-            tail = (tail + [line])[-40:]
+            output.append(line if len(line) <= 4000 else line[:4000] + "...\n")
             if TIMESTAMP.match(line) or "done:" in line:          # the pipeline's own progress lines
                 _say(sink, engine, line[9:] if TIMESTAMP.match(line) else line)
         if proc.wait() != 0 or not (work / "short.mp4").is_file():
-            raise RuntimeError(stop_message(work, tail))
+            raise RuntimeError(stop_message(work, list(output)))
         shutil.copyfile(work / "short.mp4", job / "video.mp4")
         plan = json.loads((work / "plan.json").read_text(encoding="utf-8")) if (work / "plan.json").is_file() else {}
         narration = plan.get("narration") or " ".join(l.get("text", "") for l in plan.get("lines") or [])
