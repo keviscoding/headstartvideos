@@ -379,3 +379,92 @@ def test_finding_studios_youtube_helper_never_imports_it(monkeypatch):
         monkeypatch.delitem(sys.modules, name)
     assert clone._ytdlp_command()[1:] == ["-m", "yt_dlp"]
     assert "yt_dlp" not in sys.modules
+
+
+class ExpiringServer(Server):
+    """Storage whose signed links stop working after a few requests, as a 10-minute link did on a slow connection
+    from Europe (storage is in San Francisco): only a fresh link from ChannelRecipe gets the rest."""
+
+    def __init__(self, *args, uses=3, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.uses, self.minted, self.used = uses, 0, {}
+
+    def get(self, url, headers):
+        if url.endswith("/api/studio/download"):
+            self.requests.append((url, dict(headers)))
+            self.minted += 1
+            return HTTPError(url, 302, "Found", {"Location": "https://storage.example/release.zip?sig=%d" % self.minted},
+                             None)
+        if url.startswith("https://storage.example/"):
+            self.used[url] = self.used.get(url, 0) + 1
+            if self.used[url] > self.uses:
+                raise HTTPError(url, 403, "Request has expired", {}, None)
+        return super().get(url, headers)
+
+
+def test_a_slow_update_whose_link_expires_carries_on_with_a_fresh_link(studio, monkeypatch):
+    monkeypatch.setattr(cr_update.time, "sleep", lambda s: None)
+    files = {"cr_studio.py": bytes(range(256)) * 9000, "requirements.txt": b"flask\n",
+             "styles/history.json": b'{"look": "shipped"}'}
+    zip_bytes, _ = release("5.3-admin.45", files)
+    monkeypatch.setattr(cr_update._RangeReader, "BLOCK", 64 * 1024)          # many ranges, as a real update reads
+    server = ExpiringServer("5.3-admin.45", zip_bytes, ranges=True, uses=4)
+    assert "from version 44 to 45" in run(studio, server)
+    assert (studio / "cr_studio.py").read_bytes() == files["cr_studio.py"]
+    assert server.minted > 1 and server.downloads == 0, "fresh links, never the whole download again"
+
+
+def test_a_dropped_whole_download_resumes_with_a_fresh_link_when_the_old_one_expired(studio, monkeypatch):
+    monkeypatch.setattr(cr_update.time, "sleep", lambda s: None)
+    zip_bytes, _ = release("5.3-admin.45", {"cr_studio.py": b"new studio" * 5000, "requirements.txt": b"flask\n"})
+    server = ExpiringServer("5.3-admin.45", zip_bytes, drop_first_after=len(zip_bytes) // 3, uses=1)
+    assert "from version 44 to 45" in run(studio, server)
+    assert (studio / "cr_studio.py").read_bytes() == b"new studio" * 5000
+    resumed = [url for url, h in server.requests if h.get("Range", "").endswith("-") and h["Range"] != "bytes=0-"]
+    assert resumed and all(not url.endswith("sig=1") for url in resumed), "the resume used a fresh link"
+
+
+class FlakyMintServer(ExpiringServer):
+    """ChannelRecipe answers the fresh-link request with a 502 once (a redeploy) while storage is fine."""
+
+    def __init__(self, *args, fail_mint=2, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fail_mint = fail_mint
+
+    def get(self, url, headers):
+        if url.endswith("/api/studio/download") and self.minted + 1 == self.fail_mint:
+            self.minted += 1
+            raise HTTPError(url, 502, "Bad Gateway", {}, None)
+        return super().get(url, headers)
+
+
+def test_a_failed_fresh_link_request_never_ends_a_download_whose_link_still_works(studio, monkeypatch):
+    monkeypatch.setattr(cr_update.time, "sleep", lambda s: None)
+    zip_bytes, _ = release("5.3-admin.45", {"cr_studio.py": b"new studio" * 5000, "requirements.txt": b"flask\n"})
+    server = FlakyMintServer("5.3-admin.45", zip_bytes, drop_first_after=len(zip_bytes) // 3, uses=99, fail_mint=3)
+    assert "from version 44 to 45" in run(studio, server)
+    assert (studio / "cr_studio.py").read_bytes() == b"new studio" * 5000
+
+
+class NewerReleaseServer(ExpiringServer):
+    """A newer Studio is published mid-update: fresh links now name another file."""
+
+    def get(self, url, headers):
+        if url.endswith("/api/studio/download") and self.minted >= 1:
+            self.requests.append((url, dict(headers)))
+            self.minted += 1
+            return HTTPError(url, 302, "Found", {"Location": "https://storage.example/release-46.zip?sig=%d" % self.minted},
+                             None)
+        return super().get(url, headers)
+
+
+def test_a_release_published_mid_update_says_so_and_mixes_nothing(studio, monkeypatch):
+    monkeypatch.setattr(cr_update.time, "sleep", lambda s: None)
+    files = {"cr_studio.py": bytes(range(256)) * 9000, "requirements.txt": b"flask\n"}
+    zip_bytes, _ = release("5.3-admin.45", files)
+    monkeypatch.setattr(cr_update._RangeReader, "BLOCK", 64 * 1024)
+    server = NewerReleaseServer("5.3-admin.45", zip_bytes, ranges=True, uses=4)
+    with pytest.raises(cr_update.UpdateStopped, match="newer Studio was published"):
+        run(studio, server)
+    assert (studio / "cr_studio.py").read_bytes() == b"old studio"
+    assert not any("release-46" in url for url, _ in server.requests if url.startswith("https://storage.example/"))
