@@ -341,8 +341,64 @@ def _spec(home, supplied):
         **({"look_id": look_id, "answers": dict(answers)} if look_id else {})}
 
 
+# The reference learner checks a new graphics kit in a real browser only when the Mac has room: a memory level of 20+
+# and 3 GB free on the startup disk (reflearn.gate). Without room it falls back to a simulated browser and the study
+# stops unsaved after its Claude work, so the room is checked before any of it, with a margin for the downloads.
+CHECK_DISK_GB = 3.0
+CHECK_MARGIN_GB = 0.5
+CHECK_MEMORY_LEVEL = 20
+
+
+def room_to_check(platform=None, free_gb=None, memory_level=None) -> str:
+    """"" when this computer can check graphics in a real browser now, else what to do about it, in plain words."""
+    if (platform or sys.platform) != "darwin":
+        return ""
+    need = float(os.environ.get("REFLEARN_MIN_DISK_GB") or CHECK_DISK_GB) + CHECK_MARGIN_GB
+    free = shutil.disk_usage("/").free / 1e9 if free_gb is None else free_gb
+    if free < need:
+        return (f"Your Mac has {free:.1f} GB of free disk space, and a style study needs at least {need:g} GB to check "
+                "your new graphics in a real browser. Free up some space (empty the Bin, delete old downloads or "
+                "videos you no longer need), then start the study again. Nothing has been used yet.")
+    if memory_level is None:
+        try:
+            memory_level = int(subprocess.run(["sysctl", "-n", "kern.memorystatus_level"], capture_output=True,
+                                              text=True, timeout=10).stdout.strip() or 100)
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            memory_level = 100
+    if memory_level < float(os.environ.get("REFLEARN_MIN_MEM_LEVEL") or CHECK_MEMORY_LEVEL):
+        return ("Your Mac is short of memory right now, and a style study needs some free to check your new graphics "
+                "in a real browser. Close other apps (browsers with many tabs, editors, games), then start the study "
+                "again. Nothing has been used yet.")
+    return ""
+
+
+_room = room_to_check                       # the check prepare() runs (tests stand in for this computer's disk)
+
+
+def _no_browser_why(folder) -> str:
+    """Why the graphics check had no real browser, from the study's own log, in plain words; "" when unknown."""
+    try:
+        text = (Path(folder) / "study.log").read_text(encoding="utf-8")[-20000:]
+    except OSError:
+        return ""
+    gate = re.findall(r"DOM mock \(Mac gate: memory level (\d+) \(needs ([\d.]+)\), (\d+) GB free \(needs ([\d.]+)\)\)",
+                      text)
+    if gate:
+        level, need_level, free, need_free = gate[-1]
+        if float(free) < float(need_free) or int(level) >= float(need_level):
+            return (f"your Mac had less than the {float(need_free):g} GB of free disk space the check needs. Free up "
+                    "some space, then start the study again")
+        return "your Mac was short of memory at that moment. Close other apps, then start the study again"
+    if re.search(r"DOM mock \(the render lock is held", text):
+        return "another video was using the graphics browser at that moment. Start the study again when it has finished"
+    return ""
+
+
 def prepare(home, supplied, proof, bridge):
     """Save an immutable, account-owned operation; no model work starts here."""
+    room = _room()
+    if room:
+        raise RuntimeError(room)
     spec, proof = _spec(home, supplied), _proof(bridge, proof)
     owner = _owner(bridge)
     identity = _hash({"spec": spec, "owner": owner,
@@ -433,6 +489,10 @@ def status(home, operation_id, bridge):
             "preview_id", "reference_url", "references", "base_style", "name", "label", "title", "brief",
             "budget_minutes", "max_calls", "minutes") if key in saved["spec"]}
         result["retry_spec"]["visual_mode"] = saved["spec"].get("visual_mode", "reference_only")
+        # the look Studio saw and the creator's answers: a new study made without them would be the plain recipe
+        for key in ("look_id", "answers"):
+            if saved["spec"].get(key):
+                result["retry_spec"][key] = copy.deepcopy(saved["spec"][key])
     result["metadata_only"] = saved.get("metadata_only") is True
     result["recovery_of"] = saved.get("recovery_of")
     result["refinement_only"] = saved.get("refinement_only") is True
@@ -669,6 +729,10 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
     record = learned(engine, spec["title"], folder, genome, genome.get("analysis") or {},
                      clock, work, spec["base_style"], spec["minutes"])
     if not record or not record.get("kit") or record.get("browser") is not True:
+        why = _no_browser_why(folder) if record and record.get("kit") else ""
+        if why:
+            raise StudyStopped(f"Your new graphics couldn't be checked in a real browser: {why}. Your references "
+                               "are saved; no plain preset was substituted.")
         raise StudyStopped("The original learner did not produce a graphics kit that passed real browser validation. Your study is saved; no plain preset was substituted.")
     score = (record.get("critique") or {}).get("score")
     if spec.get("visual_mode") == "reference_only" and (isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(score)):

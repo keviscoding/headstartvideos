@@ -271,3 +271,12 @@ def test_an_admin_can_ask_their_own_research_question(env, monkeypatch):
     assert isinstance(row["prompt_version"], int) and row["prompt_version"] > 10_000, "the column is an integer in Postgres"
     customer = env.client.post("/api/studio/style/watch-upload", json=body, headers={"x-test-user": "max"})
     assert customer.status_code == 403
+
+
+def test_the_3d_people_are_judged_by_their_faces_not_their_hair_or_helmets():
+    """The 3D engine builds faceless mannequins with hair, hats and helmets (a reconstruction channel's cast); a face
+    of any kind, even two dots, is a designed cast it can't build."""
+    from webapp import style_watch as sw
+    text = sw.prompt(0, 180)
+    assert '"people_3d": "faceless | designed | no_people | none"' in text
+    assert "even when it has hair, glasses, a hat, a helmet" in text and "even tiny dots" in text

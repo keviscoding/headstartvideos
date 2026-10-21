@@ -71,6 +71,9 @@ def prepare(home, source_operation, proof, bridge, *, acknowledge_costs=True):
     """Prepare one immutable refinement; actual creative work starts separately."""
     if acknowledge_costs is not True:
         raise ValueError("Approve this refinement and your own Claude account usage before starting.")
+    room = clone._room()                       # the repaired graphics are checked in a real browser too
+    if room:
+        raise RuntimeError(room)
     source, original = clone._saved(home, source_operation, bridge)
     proof = clone._proof(bridge, proof)
     owner = clone._owner(bridge)
@@ -199,6 +202,10 @@ def run_original(engine, folder, saved, progress, *, learner=None, designer=None
         checked = learner.validate(engine, kit, media, clock, work, str(sheets[0]))
     kept = checked.get("kept") or []
     if checked.get("browser") is not True or checked.get("bad") == ["*"] or len(kept) < 3:
+        why = clone._no_browser_why(folder) if checked.get("browser") is not True else ""
+        if why:
+            raise clone.StudyStopped(f"The improved graphics couldn't be checked in a real browser: {why}. Its source "
+                                     "style is still saved; no default graphics were substituted.")
         raise clone.StudyStopped("The refinement did not pass the original browser validation. Its source style is still saved; no default graphics were substituted.")
     clock.end()
     report = clock.report()

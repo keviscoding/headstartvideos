@@ -20,6 +20,7 @@ import copy
 import re
 
 SCHEMA = 1
+ROUTER = 73          # how 3D is routed (Studio 73: Gemini judges the faces); a saved plan from an older router is made again
 
 # The recipes a learned style can be built on, by what their machinery is for. Order matters: the first that fits wins.
 BASES = {
@@ -514,7 +515,7 @@ def _white_3d(profile) -> bool:
     words = " ".join([str(_v(_get(profile, "pictures", "art_style"), "") or "")]
                      + [str(x) for x in (profile.get("recognisable") or [])]).lower()
     measured = luma is not None and sat is not None and float(luma) >= 150 and float(sat) <= 0.12
-    watched = bool(re.search(r"all[- ]white|white matte|matte[- ]white|monochrom\w* (matte[- ])?white", words))
+    watched = bool(re.search(r"\b(all[- ]white|white matte|matte[- ]white|monochrom\w* (matte[- ])?white)\b", words))
     return measured or watched
 
 
@@ -524,46 +525,105 @@ def _white_3d(profile) -> bool:
 # with cute faces, bright jackets, stick legs, bright low-poly sets) was cloned onto mannequins and a red steel frame on
 # grass. Those channels go the drawn route: every scene drawn by an image model in their exact 3D-render look (the
 # style drawing, the cast's character sheet) and animated, like every drawn clone.
-# Words that only a designed character world earns. Gemini calls reconstruction channels "low-poly" and "stylized"
-# too ("Minimalist low-poly 3D reconstruction with featureless white and blue mannequin figures"), so those words
-# prove nothing; a faceless or mannequin cast is exactly what the 3D engine builds and always keeps it.
-STYLISED_3D = re.compile(
-    r"\b((round|black|big|white)[- ]headed|round (black |white )?heads?|black heads?|big heads?|"
-    r"(cute|simple|smiling|happy|cartoon|white) faces?|(dot|big|cartoon|googly) eyes|stick[- ]legs?|stick[- ]figures?|"
-    r"chibi|kawaii|claymation|pixar|disney|dreamworks|roblox|minecraft|voxel|lego|character design|"
-    r"cartoon(ish|y)? characters?)\b", re.I)
-FACELESS = re.compile(r"\b(faceless|featureless|mannequin\w*|blank[- ]faced?|no faces?|without faces)\b", re.I)
+# Studio's 3D engine builds faceless, featureless human figures (mannequins, dummies) in real places. Anything with
+# a face of any kind (even two white dots), a distinctive head, a game or toy avatar, a craft material or a realistic
+# CGI person is a designed cast it can't make, and goes the drawn route. Gemini says which it saw (people_3d, Studio
+# 73+); a look saved before that is read from its words, where generic words ("stylized", "low-poly", "toy-like")
+# prove nothing: reconstruction channels get them too.
+DESIGNED_3D = re.compile(
+    r"\b((sphere|spherical|orb|ball|round|black|white|big|oversized|huge|giant|block|blocky|boxy|cube|bean|capsule|"
+    r"jelly ?bean)[- ](shaped |like )?heads?|heads? (spheres?|orbs?|balls?)|(round|black|big|ball|bobble)[- ]?headed|"
+    r"bobble ?heads?|stick ?(figures?|m[ae]n|people|legs?|bod(y|ies))|stickm[ae]n|roblox|minecraft|fortnite|"
+    r"lego (figures?|minifigs?|people|characters?|animation|style)|minifig\w*|among us|crewmates?|gorilla tag|"
+    r"fall guys|gacha|voxel (characters?|people|figures?|avatars?)|chibi|kawaii|funko|vinyl (toys?|figures?|"
+    r"collectibles?)|caricatures?|vtubers?|anime|metahumans?|digital (humans?|doubles?)|"
+    r"(pixar|disney|dreamworks)(?![- ]?(like|style|quality|grade)?[- ]?(lighting|light|lit|render\w*|polish|quality|"
+    r"finish))|(game|gaming|blocky|block|player|cartoon|roblox|anime) avatars?|claymation|plasticine|"
+    r"clay (animation|characters?|puppets?)|stop[- ](motion|frame) (characters?|figures?|puppets?|animation|look|"
+    r"style)|felted|needle[- ]felt\w*|"
+    r"felt (creatures?|animals?|puppets?)|puppets?(?![- ]like)|plush (toys?|animals?|characters?|figures?)|plushies|"
+    r"anthropomorphic|talking (animals?|objects?|food|fruit)|cartoon(ish|y)? (characters?|people|figures?|cast|"
+    r"animals?|creatures?|villagers?|kids|children)|(?<!minimal )(?<!simple )character design|mascots?|"
+    r"photoreal\w* (cg |cgi |3d )?(faces?|animals?|creatures?|dinosaurs?)|realistic (cg |cgi |3d )faces?|"
+    r"lifelike faces?|skin pores|subsurface[- ]scatter\w* skin|"
+    r"(weathered|stubbled|wrinkled|detailed|expressive) faces?|dinosaurs?|t\.? ?rex|tyrannosaurus|velociraptors?|"
+    r"feathered raptors?|(3d|cg|cgi|animated|cartoon|stylised|stylized) (animals?|creatures?|monsters?)|"
+    r"(small|little|cute|fluffy|cartoon|3d|stylised|stylized)( [\w-]+){0,2} (fox|foxes|bears?|cats?|dogs?|bunn(y|ies)|"
+    r"rabbits?|owls?|mouse|mice|pigs?|ducks?|frogs?|monkeys?|penguins?|pandas?)|"
+    r"(glowing|single|one|big|giant|cyclops|screen|led|pixel)( [\w-]+)? eyes?)\b",
+    re.I)
+FEATURES = re.compile(r"\b(eyes|eye[- ]dots?|dot eyes|eye (slits|holes)|iris(es)?|mouths?|smil\w*|grin(s|ning|ned)?|"
+                      r"eyebrows?|brows|lashes|lips|freckles|cheeks|emoticons?|emotes?|(facial )?expressions?|"
+                      r"(small|tiny|simple|white|cute|dot|drawn|printed|painted) (facial )?features|"
+                      r"(cute|simple|smiling|happy|cartoon|white|emoji|decal|dot) faces?|face decals?)\b", re.I)
+NOT_A_FACE = re.compile(r"bird'?s[- ]eye|eye[- ]?(level|line|catching)|naked eye|eye of the storm|iris[- ](wipe|in|out)s?|"
+                        r"(tunnel|mine|shaft|harbou?r|river|cave|portal|pipe) mouths?|mouths? of|hair[- ]?(line|thin)",
+                        re.I)
+NEGATION = re.compile(r"\b(no|without|lacking|never|zero|missing|absent|nor)\b(\W+[\w'-]+){0,3}\W*$", re.I)
+FACELESS = re.compile(r"\b(faceless|featureless|mannequin\w*|blank[- ]faced?|no faces?|without faces|dumm(y|ies)|"
+                      r"crash[- ]test)\b", re.I)
+FILMED = re.compile(r"\b(real (m[ae]n|wom[ae]n|people|persons?|doctors?|hosts?|presenters?|humans?)|filmed|"
+                    r"live[- ]action|footage|photos?|photograph\w*|interview\w*|webcam)\b", re.I)
+# in a phrase about faceless or blank figures, only a face itself counts ("featureless head with white eye slits"):
+# not "featureless white faces", "blank expressions" or "simple features"
+FACE_PARTS = re.compile(r"\b(eyes|eye[- ]?(dots?|slits?|holes)|dot eyes|mouths?|smil\w*|grin(s|ning|ned)?|eyebrows?|"
+                        r"brows|lashes|lips|emoticons?|emotes?|face decals?)\b", re.I)
+# a phrase about missing features, filmed people, 2D graphics or anatomy says nothing about a designed 3D cast,
+# whatever else it mentions ("white round head with no eyes", "a 2D owl logo with big eyes"); in a phrase about faceless
+# or blank figures only a face itself counts ("featureless head with expressive white eye slits"), not a head shape
+NOT_THE_CAST = re.compile(FILMED.pattern + r"|\b(devoid|no (eyes?|face|mouth|nose|"
+                          r"features|facial)|without (a |any )?(face|eyes|features|facial)|lack\w*|instead of|"
+                          r"rather than|2d|vector|icons?|logos?|"
+                          r"diagrams?|infographics?|clip ?art|overlays?|stickers?|eyeballs?|anatom\w*|organs?|"
+                          r"cross[- ]sections?|x[- ]rays?|skeletons?|skulls?)\b", re.I)
 
 
 def _3d_words(profile) -> str:
     art = _get(profile, "pictures", "art_style") or {}
-    parts = [str(_v(art, "") or ""), " ".join(str(x) for x in art.get("alternatives") or []) if isinstance(art, dict) else ""]
+    parts = [str(_v(art, "") or "")] + [str(x) for x in (art.get("alternatives") or [] if isinstance(art, dict) else [])]
     parts += [str(a.get("look") or "") for a in (art.get("looks") or [] if isinstance(art, dict) else [])]
     parts += [str(x) for x in (profile.get("recognisable") or [])]
-    return " ".join(parts).lower()
+    return ". ".join(parts).lower()
+
+
+def _designed(words: str) -> list:
+    """The designed-cast evidence in these words, phrase by phrase: design terms and facial features that aren't
+    negated, in phrases that are about the 3D cast at all."""
+    found = []
+    for phrase in re.split(r"[.;:()\n]|\s[-–—]\s", NOT_A_FACE.sub(" ", words)):
+        if not phrase.strip() or NOT_THE_CAST.search(phrase):
+            continue
+        faceless = FACELESS.search(phrase) or re.search(r"\bblank\b", phrase)
+        if not faceless:
+            found += [m.group(0) for m in DESIGNED_3D.finditer(phrase)]
+        found += [m.group(0) for m in (FACE_PARTS if faceless else FEATURES).finditer(phrase)
+                  if not NEGATION.search(phrase[:m.start()])]
+    return list(dict.fromkeys(f.lower() for f in found))
 
 
 def threed_rebuildable(profile) -> tuple:
-    """(True, "") when Studio's 3D engine can make the references' 3D (white models, faceless mannequins, real
-    places); else (False, why): a designed character world (the words above) or a recurring character with a face of
-    its own (the channel's mascot or host, or anyone on screen 8%+ of the time whose look is designed)."""
-    if _white_3d(profile):
-        return True, ""
+    """(True, "") when Studio's 3D engine can make the references' 3D (white models, faceless mannequins, places
+    without people); else (False, why): its people are designed, as Gemini saw them, or by the words."""
     import cr_style_profile
-    cast = [c for c in _v(_get(profile, "pictures", "characters"), []) or [] if isinstance(c, dict) and c.get("look")]
-    words = _3d_words(profile)
-    if FACELESS.search(words):
+    cannot = "Studio's 3D engine can't make: it builds only faceless mannequins in real places"
+    art = str(_v(_get(profile, "pictures", "art_style"), "") or "")
+    seen = _v(_get(profile, "pictures", "people_3d"), {}) or {}
+    if isinstance(seen, dict) and seen:
+        if float(seen.get("designed") or 0) >= 0.25:
+            return False, f"its 3D characters are designed ({art[:90].rstrip(' ,.') or 'with faces of their own'}), which {cannot}"
         return True, ""
-    faced = [c for c in cast if not FACELESS.search(str(c.get("look")))
-             and float(c.get("screen_share") or 0) >= cr_style_profile.MASCOT_SHARE
-             and (c.get("role") in ("mascot", "presenter") or STYLISED_3D.search(str(c.get("look"))))]
-    design = list(dict.fromkeys(m.group(0).lower() for m in STYLISED_3D.finditer(words)))
+    cast = [c for c in _v(_get(profile, "pictures", "characters"), []) or [] if isinstance(c, dict) and c.get("look")
+            and not FILMED.search(str(c.get("look")))]
+    design = _designed(". ".join([_3d_words(profile)] + [str(c.get("look")).lower() for c in cast]))
     if design:
-        return False, (f"its 3D is a designed character world ({', '.join(design[:3])}) that Studio's 3D engine can't "
-                       "make: it builds faceless mannequins in real places")
+        return False, f"its 3D is a designed cast ({', '.join(design[:3])}), which {cannot}"
+    if _white_3d(profile) or FACELESS.search(_3d_words(profile)):
+        return True, ""
+    faced = [c for c in cast if c.get("role") in ("mascot", "presenter") and not FACELESS.search(str(c.get("look")))
+             and float(c.get("screen_share") or 0) >= cr_style_profile.MASCOT_SHARE]
     if faced:
         who = ", ".join(str(c.get("look"))[:60] for c in faced[:2])
-        return False, f"its 3D has a designed recurring cast ({who}) that Studio's 3D engine can't make: it has only faceless mannequins"
+        return False, f"its 3D has a designed recurring cast ({who}), which {cannot}"
     return True, ""
 
 
@@ -878,7 +938,8 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
     _voice(plan, profile)
     _presenter(plan, profile, chosen, base_style)
     _cta(plan, profile, chosen)
-    return {"schema": SCHEMA, "base": chosen, "base_why": why, "base_for": BASES.get(chosen, ""), "route": way,
+    return {"schema": SCHEMA, "router": ROUTER, "base": chosen, "base_why": why, "base_for": BASES.get(chosen, ""),
+            "route": way,
             "overrides": plan.overrides, "remove": plan.remove, "settings": plan.settings,
             "needs": list(dict.fromkeys(plan.needs)), "notes": plan.notes,
             "cost": cost(plan.overrides, chosen), "questions": list(profile.get("questions") or [])}

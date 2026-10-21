@@ -444,3 +444,24 @@ def test_a_learned_style_draws_with_the_storyboard_its_channel_needs():
     assert "show the" in literal and "real moment" in literal and "EXPLAIN" not in literal
     assert engine._scene_prompts("essay")[0] == "ENGINE ATMOSPHERE", "a channel that never asked keeps the engine's"
     assert engine._scene_prompts("builtin")[0] == "A recipe's own storyboard prompt."
+
+
+def test_a_3d_look_saved_before_gemini_judged_its_faces_is_watched_again_and_every_look_is_replanned(home):
+    """A customer's ifology look saved on Studio 72 or older kept its old plan for 30 days: mannequins again."""
+    _, done, _ = run_look(home)
+    path = look.folder(home, done["look_id"]) / "look.json"
+    saved = json.loads(path.read_text())
+    saved["mapping"] = {"base": "3d", "route": {"engine": "threed"}}                   # an older Studio's plan (no router)
+    path.write_text(json.dumps(saved))
+    assert look.status(home, done["look_id"])["mapping"]["base"] == "stories", "planned by this Studio"
+    saved["profile"]["pictures"]["sources"]["families"] = {"3d": 0.8, "graphic": 0.2}
+    saved["profile"]["pictures"]["people_3d"] = {"value": {}, "confidence": 0, "from": []}
+    path.write_text(json.dumps(saved))
+    spawned = []
+    look.start(home, "pv_" + "a" * 64, [VIDEO], spawn=lambda h, i: spawned.append(i))
+    assert spawned == [done["look_id"]], "watched again, so Gemini judges the faces"
+    saved["profile"]["pictures"]["people_3d"] = {"value": {"designed": 1.0}, "confidence": 0.7, "from": ["watched"]}
+    saved.update(state="done")
+    path.write_text(json.dumps(saved))
+    look.start(home, "pv_" + "a" * 64, [VIDEO], spawn=lambda h, i: spawned.append(i))
+    assert len(spawned) == 1, "a judged look is reused"

@@ -232,3 +232,26 @@ def test_a_lead_character_is_offered_as_a_mascot_only_in_drawn_pictures():
     logo = {"name": "QQ Penguin", "look": "penguin logo", "role": "mascot", "screen_share": 0.04}
     assert not [q for q in sp.questions({"pictures": {"characters": {"value": [logo]}}}) if q["id"] == "host"], \
         "a brand's logo character is not the channel's mascot"
+
+
+def test_how_the_3d_people_are_built_is_counted_from_every_window():
+    """Gemini says whether the 3D pictures' people are faceless mannequins or a designed cast; the router trusts it
+    over the wording of the art style (an ifology look once read "black round featureless head with white eye slits")."""
+    designed = {**STICK_LOG, "people_3d": "designed"}
+    seen = sp.watched_summary({"windows": [{"span": [0, 180], "log": designed}, {"span": [300, 480], "log": designed},
+                                           {"span": [600, 780], "log": {**STICK_LOG, "people_3d": "none"}}]})
+    assert seen["people_3d"] == {"designed": 1.0}, "a window without 3D says nothing"
+    profile = sp.build([stick_reference(watch={"windows": [{"span": [0, 180], "log": designed}], "missing": []})])
+    assert profile["pictures"]["people_3d"]["value"] == {"designed": 1.0}
+    assert sp.build([stick_reference()])["pictures"]["people_3d"]["value"] == {}, "an older watch has no verdict"
+
+
+def test_a_reference_with_a_sliver_of_3d_weighs_that_little():
+    def window(verdict, seconds):
+        return {**STICK_LOG, "people_3d": verdict,
+                "shots": [shot("0:00", seconds, "3d_render", "animated"), shot("0:30", 60, "map", "pan")]}
+    one = stick_reference(watch={"windows": [{"span": [0, 180], "log": window("designed", 5)}], "missing": []})
+    two = stick_reference(id="bbbbbbbbbbb", watch={"windows": [{"span": [0, 180], "log": window("faceless", 100)}],
+                                                   "missing": []})
+    shares = sp.build([one, two])["pictures"]["people_3d"]["value"]
+    assert shares["faceless"] > 0.9 and shares["designed"] < 0.1, "a close-up in one reference doesn't flip the cast"
