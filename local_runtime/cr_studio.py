@@ -14,6 +14,7 @@ from functools import wraps
 from types import FunctionType, SimpleNamespace
 
 import cr_bridge
+import cr_cloud
 import cr_capabilities
 import cr_media
 import cr_render
@@ -299,6 +300,8 @@ def deferred_editor_request(studio, path):
 
 def creative_request(path):
     """Routes that may start creative work; saved output remains accessible."""
+    if path == "/api/farm/kill" or path.startswith(("/api/farm/fetch/", "/api/farm/forget/")):
+        return False                        # stopping, collecting or deleting a farm video starts nothing
     return (path.startswith(("/api/style", "/api/offer", "/api/auto", "/api/learn", "/api/farm"))
             or path in {"/api/products/ideas", "/api/products/build"}
             or path.startswith("/api/tl/") and path.rsplit("/", 1)[-1] in {"chat", "op", "render"})
@@ -514,7 +517,7 @@ def create_app():
             if activity.busy():
                 return jsonify(error="Finish the current video before starting more creative work."),409
             if cr_bridge.load_settings().get("brain_mode") == "claudecode":
-                if request.path.startswith("/api/farm/"):
+                if request.path.startswith("/api/farm/") and not cr_cloud.active(HOME):
                     return jsonify(error="The selected Claude Code workflow renders on this computer. A remote farm does not have this Claude login."),409
                 current=cr_bridge._project
                 if current and cr_bridge.project_progress(current["id"])["project"]["status"] in {"done","failed"}:
@@ -1293,6 +1296,17 @@ def create_app():
   const why=document.getElementById('farmWhy');if(why)why.textContent=farmRequested?'Cloud render is selected, but your Claude Code login runs on this computer. Uncheck this option to continue locally.':'Cloud render is unavailable with your local Claude Code account. Your computer renders the video; no farm accounts are required.';
   go.textContent='Create video';drawGate();
  }
+ function cloudFarm(cloud){
+  if(!farm)return;
+  farm.classList.remove('hidden');
+  const box=document.getElementById('cr-cloud-note')||document.createElement('p');
+  box.id='cr-cloud-note';box.style.cssText='font:13px system-ui;line-height:1.6;color:#9aa3b5;margin:6px 0 10px';
+  const m=(cloud.machines||{}).cpu||{};
+  box.textContent='Studio Cloud: the script, voice and pictures are made here with your Claude Code, then a ChannelRecipe machine renders the video (about $'+(m.price_per_hr||1.2).toFixed(2)+' an hour of machine time; a 10-minute video is usually under $1). Each render reserves its most before it starts and you pay only what it used. Balance: $'+(cloud.balance_usd||0).toFixed(2)+'. Keep Studio open while it renders: the machine asks your Claude Code its questions. ';
+  const top=document.createElement('a');top.href=cloud.topup_url||'https://channelrecipe.com/app#billing';top.target='_blank';top.rel='noopener';top.textContent='Top up';
+  box.append(top);
+  if(!box.isConnected)farm.prepend(box);
+ }
  function connectNativeFarm(){
   if(!farm||!farmToggle)return;
   nativeFarm=true;farmRequested=farmToggle.checked;
@@ -1306,7 +1320,10 @@ def create_app():
  fetch('/cr-status').then(response=>response.json()).then(data=>{
   ready=data.readiness?.ready===true;settled=true;
   message=ready?(data.brain_mode==='claudecode'&&data.claude_code?.allowance?.reported_limit?data.claude_code.allowance.message:'Your setup is connected. The selected preset and options will be checked before generation.'):'Finish Setup & accounts before generating a video.';
-  if(data.brain_mode==='claudecode')connectNativeFarm();drawGate();
+  if(data.brain_mode==='claudecode'){
+   fetch('/cr-cloud').then(r=>r.json()).then(cloud=>{if(cloud.available)cloudFarm(cloud);else connectNativeFarm();}).catch(connectNativeFarm);
+  }
+  drawGate();
  }).catch(()=>{settled=true;message='Reconnect ChannelRecipe in Setup & accounts before generating.';drawGate();});
  go.addEventListener('click',event=>{if(!ready||(nativeFarm&&farmRequested)){event.preventDefault();event.stopImmediatePropagation();drawGate();if(!ready)location.href='/cr-setup';}},true);
  drawGate();
@@ -1449,6 +1466,11 @@ def create_app():
     cr_workspace.install(studio, activity, token=token, home=HOME)
     import cr_style_options
     cr_style_options.install(studio)
+    cr_cloud.install(HOME)                                       # the farm on ChannelRecipe's machines, when the account has it
+
+    @studio.app.get("/cr-cloud")
+    def cloud_status():
+        return jsonify(cr_cloud.status(force=request.args.get("fresh") == "1", home=HOME))
     return studio
 
 

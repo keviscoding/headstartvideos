@@ -1,0 +1,13 @@
+# What a Studio Cloud machine has installed before a job's code arrives (the same list Studio installs at home).
+# A release that needs something new still works: the machine installs the release's own requirements.txt on top.
+requests>=2.31
+python-dotenv>=1.0
+flask>=3.0
+playwright>=1.40
+faster-whisper>=1.0
+Pillow>=10.0
+numpy>=1.24
+opencv-python-headless>=4.8
+yt-dlp[default,curl-cffi]>=2026.8.19
+rapidocr-onnxruntime==1.2.3
+pypdf>=4.0
