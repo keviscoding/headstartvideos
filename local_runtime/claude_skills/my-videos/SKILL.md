@@ -6,7 +6,7 @@ argument-hint: "[video title]"
 
 # My videos
 
-Use the `studio` tools (mcp__studio__*). Free: nothing here spends money.
+Use ChannelRecipe Studio's tools (the `studio` server: `mcp__studio__…` in a Studio folder, `mcp__plugin_channelrecipe_studio__…` from the ChannelRecipe plugin). Free: nothing here spends money.
 
 1. `progress()` shows what is being made right now (this computer, Studio Cloud and style studies), with percent and
    the last step. Say it in one or two lines a video.

@@ -7,7 +7,7 @@ argument-hint: "[topic or titles]"
 
 # A batch of videos on Studio Cloud
 
-Use the `studio` tools (mcp__studio__*). Studio Cloud renders several videos side by side on ChannelRecipe's
+Use ChannelRecipe Studio's tools (the `studio` server: `mcp__studio__…` in a Studio folder, `mcp__plugin_channelrecipe_studio__…` from the ChannelRecipe plugin). Studio Cloud renders several videos side by side on ChannelRecipe's
 machines, so the creator's computer stays free. Studio still writes the scripts and makes the voice and pictures
 here with their Claude Code, so Studio must stay open.
 

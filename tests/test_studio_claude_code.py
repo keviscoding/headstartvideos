@@ -66,6 +66,13 @@ class FakeStudio:
         return [body for method, p, body in self.calls if p == path and method == "POST"]
 
 
+@pytest.fixture(autouse=True)
+def pointer(monkeypatch, tmp_path):
+    """configure() also tells the plugin where Studio is; never the real ~/.channelrecipe in tests."""
+    monkeypatch.setattr(ccc, "POINTER", tmp_path / "pointer" / "studio-home.json")
+    return ccc.POINTER
+
+
 @pytest.fixture
 def studio(monkeypatch, tmp_path):
     fake = FakeStudio()
@@ -401,3 +408,37 @@ def test_mac_notification_quotes_its_text(monkeypatch):
     assert runs[0][:2] == ["osascript", "-e"] and '"He said \\"go\\""' in runs[0][2]
     monkeypatch.setenv("CR_NOTIFY", "0")
     assert ccc.notify("x", "y", run=lambda *a, **k: runs.append(a)) is False and len(runs) == 1
+
+
+def test_configure_tells_the_plugin_where_studio_is(tmp_path, pointer):
+    ccc.configure(tmp_path / "studio")
+    assert json.loads(pointer.read_text()) == {"home": str((tmp_path / "studio").resolve()), "port": 7860}
+
+
+def test_the_panels_get_cards_with_small_pictures(tmp_path):
+    flask = pytest.importorskip("flask")
+    image = pytest.importorskip("PIL.Image")
+    import io
+    buffer = io.BytesIO()
+    image.new("RGB", (640, 360), (200, 40, 40)).save(buffer, "JPEG")
+    app = flask.Flask("t")
+    rows = [dict(CATALOG["channels"][0], preview_url="/cr-workspace/preview/recipe/documentary.jpg?v=abc123"),
+            dict(CATALOG["channels"][1], preview_url=None, art_url="/cr-workspace/art/custom.svg")]
+
+    @app.get("/cr-workspace/catalog")
+    def catalog():
+        return flask.jsonify({"channels": rows, "prices": CATALOG["prices"]})
+
+    @app.get("/cr-workspace/preview/recipe/<name>.jpg")
+    def preview(name):
+        return flask.Response(buffer.getvalue(), mimetype="image/jpeg")
+    (tmp_path / "workspace_art").mkdir()
+    (tmp_path / "workspace_art" / "custom.svg").write_text("<svg/>")
+    ccc.install(SimpleNamespace(app=app), "tok", tmp_path)
+    data = app.test_client().get("/cr-claude-code/styles", base_url="http://127.0.0.1:7860").get_json()
+    first, second = data["styles"]
+    assert first["id"] == "documentary" and first["cloud_note"] == "" and first["features"]["on"] == ["youtube"]
+    assert first["png"].endswith("documentary-abc123-s.png") and Path(first["png"]).read_bytes()[:4] == b"\x89PNG"
+    assert image.open(first["jpg"]).size == (320, 180)
+    assert second["png"] == "" and second["art"].endswith("custom.svg") and second["cloud_note"]
+    assert data["prices"]["voice"]["per_min"] == 0.02

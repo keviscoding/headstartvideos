@@ -7,7 +7,7 @@ argument-hint: "[YouTube channel or video link]"
 
 # Clone a style from YouTube
 
-Use the `studio` tools (mcp__studio__*). Studio learns the visual language (pictures, motion, edit, captions,
+Use ChannelRecipe Studio's tools (the `studio` server: `mcp__studio__…` in a Studio folder, `mcp__plugin_channelrecipe_studio__…` from the ChannelRecipe plugin). Studio learns the visual language (pictures, motion, edit, captions,
 sound), never the channel's scripts or footage. Speak plainly and never read .env, .mcp.json or .cr-* files.
 
 Link: $ARGUMENTS

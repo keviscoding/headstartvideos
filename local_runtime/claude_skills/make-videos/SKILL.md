@@ -7,7 +7,7 @@ argument-hint: "[titles or video idea]"
 
 # Make videos with ChannelRecipe Studio
 
-The creator wants videos. Use the `studio` tools (mcp__studio__*): they drive the creator's own Studio, with the
+The creator wants videos. Use ChannelRecipe Studio's tools (the `studio` server: `mcp__studio__…` in a Studio folder, `mcp__plugin_channelrecipe_studio__…` from the ChannelRecipe plugin): they drive the creator's own Studio, with the
 same checks as its page. Speak plainly, one step at a time, and never read .env, .mcp.json or .cr-* files.
 
 What they asked for: $ARGUMENTS

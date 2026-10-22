@@ -28,6 +28,8 @@ FREE_TOOLS = ("setup_check", "list_styles", "get_style_pick", "quote", "progress
 PAID_TOOLS = ("make_videos", "clone_style")
 NEVER_READ = ("Read(./.env)", "Read(./.mcp.json)", "Read(./.cr-connection.json)", "Read(./.cr-runtime.json)")
 PICK_SECONDS = 2 * 3600
+PORT = 7860
+POINTER = Path.home() / ".channelrecipe" / "studio-home.json"     # how the ChannelRecipe plugin finds this Studio
 _PICK = re.compile(r"pk_[a-f0-9]{24}\Z")
 _STYLE = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,139}\Z")
 
@@ -98,6 +100,11 @@ def configure(home=None) -> dict:
         if json.dumps(settings, sort_keys=True) != before:
             _save(settings_file, settings)
             changed.append(".claude/settings.json")
+    try:
+        if _load(POINTER) != {"home": str(home), "port": PORT}:
+            _save(POINTER, {"home": str(home), "port": PORT})
+    except OSError:
+        pass
     return {"changed": changed}
 
 
@@ -371,6 +378,22 @@ def install(studio, token: str, home=None) -> dict:
         except Exception as error:                                 # noqa: BLE001
             return failure(error)
 
+    @app.get("/cr-claude-code/styles")
+    def cr_claude_code_styles():
+        """The styles as the Claude Code panes draw them: one card each, with small PNG and JPEG pictures on disk."""
+        try:
+            local_access()
+            client = app.test_client()
+            data = client.get("/cr-workspace/catalog", base_url="http://127.0.0.1:7860").get_json(silent=True) or {}
+            rows = [r for r in data.get("channels") or [] if isinstance(r, dict) and _STYLE.fullmatch(str(r.get("name")))]
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(4) as pool:
+                pictures = list(pool.map(lambda r: small_pictures(app, home, r), rows))
+            return protect(jsonify(styles=[{**card(r), **p} for r, p in zip(rows, pictures)],
+                                   prices=data.get("prices") or {}))
+        except Exception as error:                                 # noqa: BLE001
+            return failure(error)
+
     @app.get("/cr-claude-code/quote")
     def cr_claude_code_quote():
         """What Studio Cloud would charge for a video of these minutes in this style (the server's own quote)."""
@@ -399,6 +422,78 @@ def install(studio, token: str, home=None) -> dict:
 
     studio._cr_watcher = Watcher(studio, home)                   # started by cr_studio.main, never in tests
     return {"gallery": "/cr-gallery", "watcher": studio._cr_watcher}
+
+
+def one_line(text, limit=160) -> str:
+    text = " ".join(str(text or "").split())
+    first = re.split(r"(?<=[.!?])\s", text, maxsplit=1)[0]
+    return first if len(first) <= limit else first[:limit - 1].rstrip() + "…"
+
+
+def cloud_note(row: dict) -> str:
+    """Why a recipe renders on this computer only ('' when Studio Cloud can render it); cr_cloud.blocked agrees."""
+    name = str(row.get("name") or "")
+    if name.startswith(("cr-", "cr_")):
+        return "Renders on this computer for now."
+    if name == "folio":
+        return "FOLIO renders on this computer: every shot is drawn by your Claude Code."
+    if row.get("panels"):
+        return "Reads your own panels, chosen on the Studio page."
+    return ""
+
+
+def card(row: dict) -> dict:
+    features = row.get("features") if isinstance(row.get("features"), dict) else {}
+    return {"id": row["name"], "name": str(row.get("label") or row["name"]),
+            "description": one_line(row.get("tagline") or row.get("description")),
+            "family": str(row.get("family") or ""), "kind": "short" if row.get("short_seconds") else "video",
+            "mine": bool(row.get("custom")), "cloud_note": cloud_note(row), "cost": one_line(row.get("cost"), 200),
+            "short_seconds": row.get("short_seconds"),
+            "features": {"offered": list(features.get("offered") or []),
+                         "on": list(features.get("on") if isinstance(features.get("on"), list)
+                                    else features.get("offered") or [])},
+            "preview_label": str(row.get("preview_label") or "")}
+
+
+def small_pictures(app, home: Path, row: dict) -> dict:
+    """A style's picture as a small PNG (terminal panes) and JPEG (desktop panes), made once per preview version
+    under .cr-claude-code/thumbs; its recipe artwork (SVG) when it has no preview."""
+    url = row.get("preview_url")
+    out = {"png": "", "jpg": "", "art": ""}
+    art = row.get("art_url")
+    if isinstance(art, str) and art.startswith("/cr-workspace/art/"):
+        path = home / "workspace_art" / art.rsplit("/", 1)[-1]
+        out["art"] = str(path) if path.is_file() else ""
+    if not (isinstance(url, str) and url.startswith("/cr-workspace/preview/recipe/")):
+        return out
+    version = re.sub(r"[^a-f0-9]", "", url.partition("?v=")[2])[:16] or "latest"
+    folder = home / ".cr-claude-code" / "thumbs"
+    png, jpg = folder / f"{row['name']}-{version}-s.png", folder / f"{row['name']}-{version}-s.jpg"
+    if not (png.is_file() and jpg.is_file()):
+        try:
+            data = b""
+            for _ in range(4):
+                answer = app.test_client().get(url, base_url="http://127.0.0.1:7860")
+                if answer.status_code == 503:
+                    time.sleep(1)
+                    continue
+                data = answer.get_data() if answer.status_code == 200 else b""
+                break
+            if data[:2] != b"\xff\xd8":
+                return out
+            import io
+            from PIL import Image
+            picture = Image.open(io.BytesIO(data)).convert("RGB")
+            picture.thumbnail((320, 180))
+            folder.mkdir(parents=True, exist_ok=True)
+            for old in folder.glob(row["name"] + "-*-s.*"):
+                old.unlink(missing_ok=True)
+            picture.save(png, "PNG", optimize=True)
+            picture.save(jpg, "JPEG", quality=72, optimize=True)
+        except Exception:                                          # noqa: BLE001 - a card without a picture still shows
+            return out
+    out.update(png=str(png), jpg=str(jpg))
+    return out
 
 
 def catalog_rows(studio) -> list:
