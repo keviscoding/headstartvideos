@@ -280,10 +280,26 @@ class CloudPods:
     def terminate(self, pod_id: str, tries: int = 3) -> bool:
         for _ in range(max(1, tries)):
             try:
-                return self._call("DELETE", f"/jobs/{pod_id}").get("status") != "running"
+                job = self._call("DELETE", f"/jobs/{pod_id}")
             except (RuntimeError, requests.RequestException):
                 time.sleep(2)
+                continue
+            if job.get("status") in ("cancelled", "failed") and job.get("slug"):
+                self._final_status(job)
+            return job.get("status") != "running"
         return False
+
+    def _final_status(self, job: dict) -> None:
+        """A machine that was stopped never writes its last status, and the farm's loop waits for one (up to its
+        four-hour watchdog, holding the Studio busy). Write it, as the machine would have."""
+        try:
+            studio_bucket(self.home).put_bytes(
+                f"status/{job['slug']}.json",
+                json.dumps({"slug": job["slug"], "title": job.get("title") or "", "state": "failed",
+                            "error": job.get("error") or "stopped", "updated": time.time()}).encode(),
+                "application/json")
+        except Exception:                                   # noqa: BLE001 - the farm's own timeout still ends it
+            pass
 
     def gpus(self) -> list:
         return []

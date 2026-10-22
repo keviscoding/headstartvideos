@@ -470,3 +470,18 @@ def test_3d_goes_to_the_gpu_machine_and_the_farm_no_longer_refuses_it(studio, mo
     monkeypatch.setattr(studio.cloud, "active", lambda home=None: False)
     app.test_client().post("/api/farm/queue", json={})
     assert asked[-1] is True, "without Studio Cloud (a RunPod farm) the engine still refuses 3D"
+
+
+
+def test_stopping_a_machine_ends_the_farms_wait(studio, monkeypatch):
+    store = {}
+    monkeypatch.setattr(studio.cloud.requests, "Session", lambda: Http(store))
+
+    class Api:
+        def request(self, method, url, json=None, headers=None, timeout=None):
+            return SimpleNamespace(status_code=200, json=lambda: {"id": "cj_1", "slug": "a", "title": "A",
+                                                                   "status": "cancelled"})
+    pods = studio.cloud.CloudPods(home=studio.home, session=Api())
+    assert pods.terminate("cj_1")
+    status = json.loads(store["status/a.json"])
+    assert status["state"] == "failed", "the farm's loop sees the end and the Studio is free again"
