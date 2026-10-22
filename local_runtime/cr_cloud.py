@@ -392,6 +392,101 @@ def install(home: Path = HOME) -> bool:
     return True
 
 
+# ── the workspace's "Studio Cloud" choice ─────────────────────────────────────────────────────────────────────
+
+TASK = {"state": "idle", "message": "", "title": "", "error": "", "at": 0.0}
+FARM_FIELDS = ("title", "style", "minutes", "script", "extra", "burn_subs", "force", "thumb_count", "features",
+               "character", "avatar_id", "avatar_s", "avatar_count", "auto_style")
+
+
+def blocked(p: dict) -> str:
+    """Why this video can't render on Studio Cloud yet ('' when it can). The engine's farm checks again."""
+    style, features = str(p.get("style") or ""), p.get("features") or {}
+    if style.startswith(("cr-", "cr_")):
+        return "This recipe renders on this computer for now."
+    if style == "folio" or features.get("threed"):
+        return "3D scenes and FOLIO render on this computer for now."
+    if p.get("byo_audio"):
+        return "Your own recording renders on this computer."
+    if (p.get("render_backend") or "original") != "original":
+        return "Fast mode renders on this computer."
+    return ""
+
+
+def farm_payload(p: dict) -> dict:
+    out = {k: p[k] for k in FARM_FIELDS if k in p}
+    out["thumb"] = "thumbnail" in (p.get("steps") or [])
+    return out
+
+
+def start(client, token: str, p: dict) -> None:
+    """Prepare the video here (the farm's queue: script, voice, stills, plan) and then start its machine, in the
+    background, through the studio's own routes so every check and receipt applies."""
+    headers = {"X-CR-Local-Token": token}
+    base = {"base_url": "http://127.0.0.1:7860", "headers": headers}
+    title = str(p.get("title") or "").split("\n")[0][:120]
+    TASK.update(state="preparing", title=title, error="", at=time.time(),
+                message="Writing the script and making the voice and pictures here with your Claude Code…")
+    try:
+        r = client.post("/api/farm/queue", json=farm_payload(p), **base)
+        data = r.get_json(silent=True) or {}
+        if r.status_code >= 400 or not data.get("queued"):
+            raise RuntimeError(data.get("error") or "; ".join(data.get("problems") or []) or "It couldn't be prepared.")
+        TASK.update(state="starting", message="Prepared here. Starting a ChannelRecipe machine…")
+        r = client.post("/api/farm/run", json={}, **base)
+        data = r.get_json(silent=True) or {}
+        if r.status_code >= 400:
+            raise RuntimeError(data.get("error") or "The cloud machine couldn't start.")
+        TASK.update(state="rendering", message="Rendering on a ChannelRecipe machine. Keep Studio open: it answers the "
+                                               "machine's Claude questions with your Claude Code.")
+    except BaseException as e:                              # noqa: BLE001 - the engine exits on a failed Claude step
+        why = str(e) if not isinstance(e, SystemExit) else f"a step stopped ({e})" if str(e) else "a step stopped"
+        TASK.update(state="failed", error=f"Preparing it here stopped: {why}"[:400], message="")
+
+
+def install_routes(studio, token: str, home: Path = HOME) -> None:
+    from flask import jsonify, request
+
+    app = studio.app
+
+    @app.post("/cr-cloud/start")
+    def cr_cloud_start():
+        if request.headers.get("X-CR-Local-Token") != token:
+            return jsonify(error="Refresh your studio page and try again."), 403
+        if not active(home):
+            return jsonify(error=status(home=home).get("why") or "Studio Cloud isn't available."), 409
+        if TASK["state"] in ("preparing", "starting"):
+            return jsonify(error="A cloud video is still being prepared. Start the next one when it's on its way."), 409
+        p = request.get_json(silent=True) or {}
+        why = blocked(p)
+        if why:
+            return jsonify(error=why), 400
+        if "\n" in str(p.get("title") or ""):
+            return jsonify(error="Send one title at a time to Studio Cloud."), 400
+        threading.Thread(target=start, args=(app.test_client(), token, p), daemon=True, name="cr-cloud-start").start()
+        return jsonify(started=True), 202
+
+    @app.get("/cr-cloud/progress")
+    def cr_cloud_progress():
+        out = {**TASK, "balance_usd": status(home=home).get("balance_usd"), "lines": [], "farm": "", "videos": []}
+        client = app.test_client()
+        try:
+            farm = client.get("/api/farm", base_url="http://127.0.0.1:7860").get_json(silent=True) or {}
+            out["lines"], out["farm"] = (farm.get("lines") or [])[-30:], farm.get("state") or ""
+            if TASK["state"] == "rendering" and farm.get("state") in ("done", "failed", "idle"):
+                TASK.update(state="done" if farm.get("state") == "done" else "failed",
+                            message="" if farm.get("state") == "done" else "The cloud render stopped. See the log.")
+            lib = client.get("/api/farm/library", base_url="http://127.0.0.1:7860").get_json(silent=True) or {}
+            for row in lib.get("videos") or []:
+                files = [f.get("name") for f in row.get("files") or []]
+                video = next((n for n in files if str(n).lower().endswith((".mp4", ".mov"))), "")
+                out["videos"].append({"slug": row.get("slug"), "title": row.get("title") or row.get("slug"),
+                                      "video": video, "bytes": row.get("bytes")})
+        except Exception:                                   # noqa: BLE001 - progress is best-effort
+            pass
+        return jsonify(out)
+
+
 # ── the machine's side ────────────────────────────────────────────────────────────────────────────────────────
 
 def pod() -> int:

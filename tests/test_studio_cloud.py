@@ -202,3 +202,49 @@ def test_a_network_failure_is_a_storage_error_the_farm_survives(studio):
     from farm.s3 import S3Error
     with pytest.raises(S3Error):
         b.put_bytes("status/a.json", b"{}", "application/json")
+
+
+def test_only_what_the_cloud_can_make_goes_there(studio):
+    b = studio.cloud.blocked
+    assert b({"style": "documentary", "features": {"youtube": True}}) == ""
+    assert "this computer" in b({"style": "cr-shorts-ranking"}) and "this computer" in b({"style": "cr_clone_abc"})
+    assert "3D" in b({"style": "documentary", "features": {"threed": True}}) and "3D" in b({"style": "folio"})
+    assert "recording" in b({"style": "documentary", "byo_audio": "uploads/me.wav"})
+    assert "Fast mode" in b({"style": "documentary", "render_backend": "manimgx"})
+    p = studio.cloud.farm_payload({"title": "T", "style": "documentary", "minutes": 8, "steps": ["video", "thumbnail"],
+                                   "byo_audio": "", "desc": True, "features": {"youtube": True}})
+    assert p == {"title": "T", "style": "documentary", "minutes": 8, "features": {"youtube": True}, "thumb": True}
+
+
+def test_starting_prepares_here_then_starts_the_machine_through_the_studios_routes(studio):
+    calls = []
+
+    class Client:
+        def __init__(self, replies):
+            self.replies = replies
+
+        def post(self, path, json=None, base_url=None, headers=None):
+            calls.append((path, json, base_url, headers))
+            status, body = self.replies[path]
+            return SimpleNamespace(status_code=status, get_json=lambda silent=True: body)
+
+    ok = Client({"/api/farm/queue": (200, {"queued": [{"slug": "t"}]}), "/api/farm/run": (200, {"started": 1})})
+    studio.cloud.start(ok, "tok", {"title": "T", "style": "documentary", "steps": []})
+    assert [c[0] for c in calls] == ["/api/farm/queue", "/api/farm/run"]
+    assert calls[0][2] == "http://127.0.0.1:7860" and calls[0][3] == {"X-CR-Local-Token": "tok"}, \
+        "through the studio's own guard, as the creator's page would"
+    assert studio.cloud.TASK["state"] == "rendering"
+
+    calls.clear()
+    bad = Client({"/api/farm/queue": (400, {"error": "3D videos render on this computer"})})
+    studio.cloud.start(bad, "tok", {"title": "T", "style": "documentary"})
+    assert [c[0] for c in calls] == ["/api/farm/queue"], "nothing is started when preparing fails"
+    assert studio.cloud.TASK["state"] == "failed" and "3D videos" in studio.cloud.TASK["error"]
+
+
+def test_a_step_that_exits_is_reported_not_left_preparing(studio):
+    class Client:
+        def post(self, *a, **kw):
+            raise SystemExit("Claude API error: timeout")
+    studio.cloud.start(Client(), "tok", {"title": "T", "style": "documentary"})
+    assert studio.cloud.TASK["state"] == "failed" and "timeout" in studio.cloud.TASK["error"]
