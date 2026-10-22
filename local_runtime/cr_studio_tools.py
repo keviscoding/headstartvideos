@@ -664,11 +664,33 @@ def tool_cloud_balance(args):
             "note": "Each cloud video reserves its most before it starts and pays only for what it used."}
 
 
+def pick_references(eligible: list, count: int = 3) -> list:
+    """The most-viewed eligible videos; from a combined preview, taken in turn from each channel."""
+    ranked = sorted(eligible, key=lambda c: -int(c.get("views") or 0))
+    sources = sorted({c.get("source", 0) for c in ranked})
+    queues = [[c for c in ranked if c.get("source", 0) == s] for s in sources]
+    chosen = []
+    while len(chosen) < count and any(queues):
+        for queue in queues:
+            if queue and len(chosen) < count:
+                chosen.append(queue.pop(0)["id"])
+    return chosen
+
+
 def tool_clone_style_look(args):
+    urls = [str(u).strip() for u in (args.get("youtube_urls") or []) if str(u).strip()]
     url = str(args.get("youtube_url") or "").strip()
-    if not url:
-        raise Refused("Give a YouTube channel or video link.")
-    preview = call("POST", "/cr-style-clone/preview", {"url": url}, timeout=150)
+    if url and url not in urls:
+        urls.insert(0, url)
+    if not urls:
+        raise Refused("Give a YouTube channel or video link (or two or three to combine).")
+    if len(urls) > 3:
+        raise Refused("Combine at most three channels or videos.")
+    if len(urls) > 1:
+        preview = call("POST", "/cr-claude-code/combine-preview", {"urls": urls}, timeout=400)
+    else:
+        preview = call("POST", "/cr-style-clone/preview", {"url": urls[0]}, timeout=150)
+    url = urls[0]
     eligible = [c for c in preview.get("candidates") or [] if c.get("eligible")]
     wanted = [str(x) for x in args.get("reference_ids") or []]
     if wanted:
@@ -677,7 +699,7 @@ def tool_clone_style_look(args):
             raise Refused("Choose reference_ids from the eligible videos: " +
                           ", ".join(f"{c['id']} ({c['title'][:60]})" for c in eligible[:12]))
     else:
-        chosen = [c["id"] for c in sorted(eligible, key=lambda c: -int(c.get("views") or 0))[:3]]
+        chosen = pick_references(eligible)
     if not chosen:
         raise Refused("None of these videos can be studied (they must be between one minute and 24 hours long).")
     look = call("POST", "/cr-style-clone/look", {"preview_id": preview["preview_id"], "reference_ids": chosen},
@@ -686,7 +708,8 @@ def tool_clone_style_look(args):
     looks[look["look_id"]] = {"preview_id": preview["preview_id"], "reference_ids": chosen, "url": url, "at": time.time()}
     _write(STATE / "looks.json", dict(sorted(looks.items(), key=lambda kv: -kv[1]["at"])[:40]))
     return {"look_id": look["look_id"], "state": look.get("state"), "message": look.get("message"),
-            "studying": [{"id": c["id"], "title": c["title"], "views": c.get("views"),
+            "combining": preview.get("reference_urls") or [],
+            "studying": [{"id": c["id"], "title": c["title"], "channel": c.get("channel"), "views": c.get("views"),
                           "minutes": round((c.get("duration_seconds") or 0) / 60)} for c in eligible if c["id"] in chosen],
             "other_videos": [{"id": c["id"], "title": c["title"]} for c in eligible if c["id"] not in chosen][:9],
             "next": ("Studio already looked at these: progress(id=look_id) has its questions for the creator."
@@ -729,6 +752,61 @@ def tool_clone_style(args):
             "message": status.get("message"), "page": link("/cr-style-clone?operation=" + str(status.get("operation_id"))),
             "next": "The study runs on your Claude Code for about 15 to 30 minutes. Check with progress(id) now and "
                     "then; Studio shows a notification when the style is ready."}
+
+
+def tool_product_ideas(args):
+    about = str(args.get("about") or "").strip()
+    channel = str(args.get("channel") or "").strip()
+    if not about and not channel:
+        raise Refused("Say what the channel or niche is about (a few lines), or give its YouTube link.")
+    pack = call("POST", "/api/offers/pack", {"instructions": about[:3000], "channel": channel[:300],
+                                              "language": str(args.get("language") or "English")[:40]},
+                timeout=400).get("pack") or {}
+    if not pack.get("ideas"):
+        raise Refused("Studio couldn't come up with product ideas this time. Nothing was spent; try again.")
+    _write(STATE / "last-pack.json", {"pack": pack, "about": about, "channel": channel, "at": time.time()})
+    ideas = [{"number": n, **{k: i.get(k) for k in ("title", "promise", "kind", "format", "who", "size", "price_usd",
+                                                     "why", "chapters", "risk") if i.get(k) is not None}}
+             for n, i in enumerate(pack.get("ideas") or [], 1)]
+    return {"ideas": ideas, "channel_names": pack.get("names") or [], "free_domains": pack.get("domains") or [],
+            "pricing": pack.get("pricing") or {}, "funnel": pack.get("funnel") or {}, "launch": pack.get("launch") or [],
+            "next": "Show the creator these. To build one: build_product(idea_number=…, domain=…, channel_name=…). "
+                    "A domain is bought separately (about $11 a year on Vercel), never by Studio."}
+
+
+def tool_build_product(args):
+    saved = _read(STATE / "last-pack.json")
+    pack = saved.get("pack") or {}
+    ideas = pack.get("ideas") or []
+    if not ideas:
+        raise Refused("Get product ideas first with product_ideas.")
+    number = int(args.get("idea_number") or 0)
+    if not 1 <= number <= len(ideas):
+        raise Refused(f"Choose idea_number 1 to {len(ideas)} from the last product_ideas.")
+    idea = ideas[number - 1]
+    body = {"idea": idea, "niche": saved.get("about") or "", "channel": saved.get("channel") or "",
+            "channel_name": str(args.get("channel_name") or "")[:80],
+            "domain": str(args.get("domain") or "")[:60], "pack_file": str(pack.get("file") or "")}
+    result = call("POST", "/api/products/build", body, timeout=120)
+    return {"started": True, "id": result.get("slug"), "title": idea.get("title"),
+            "cost": "About $0.30 of pictures on your image account (about 62 drawings) and about 20 Claude Code calls "
+                    "on your plan.",
+            "next": "It takes about an hour, one product at a time. Check with products(id) now and then: the book "
+                    "PDF, landing page, Stripe checkout and launch guide land in output/offers/<id>/."}
+
+
+def tool_products(args):
+    slug = str(args.get("id") or "").strip()
+    if slug:
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,60}", slug):
+            raise Refused("Use a product id from products().")
+        d = call("GET", "/api/products/build/" + slug, timeout=20)
+        state = "building" if d.get("running") else "done" if d.get("code") == 0 else "stopped" if d.get("code") else "unknown"
+        return {"id": slug, "state": state, "last_lines": d.get("lines") or []}
+    rows = call("GET", "/api/products", timeout=30).get("products") or []
+    keep = ("slug", "title", "kind", "status", "price", "domain", "folder", "lessons")
+    return {"products": [{k: r.get(k) for k in keep if k in r} for r in rows[:20]],
+            "next": "Your videos can sell a finished product: pick it under Your product on the Studio page."}
 
 
 # ── MCP plumbing ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -792,12 +870,33 @@ TOOLS = {
                                 "open_browser": {"type": "boolean"}}), {"readOnlyHint": True}),
     "cloud_balance": (tool_cloud_balance, "The Studio Cloud balance, top-up link and machine prices. Free.",
                       _schema(), _FREE),
-    "clone_style_look": (tool_clone_style_look, "Step 1 of cloning a style from a YouTube channel or video: Studio "
-                         "lists its videos and looks at up to 3 (the most viewed, or reference_ids). Free (no "
-                         "Claude). Then progress(look_id) until done: it brings questions for the creator.",
+    "clone_style_look": (tool_clone_style_look, "Step 1 of cloning a style from a YouTube channel or video, or of "
+                         "COMBINING two or three channels into one style (youtube_urls): Studio lists their videos and "
+                         "looks at up to 3 (the most viewed, taken in turn from each channel, or reference_ids). Free "
+                         "(no Claude). Then progress(look_id) until done: it brings questions for the creator.",
                          _schema({"youtube_url": {"type": "string"},
-                                  "reference_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 3}},
-                                 ["youtube_url"]), {"readOnlyHint": False, "destructiveHint": False}),
+                                  "youtube_urls": {"type": "array", "items": {"type": "string"}, "maxItems": 3,
+                                                   "description": "Two or three channels to combine into one style."},
+                                  "reference_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 3}}),
+                         {"readOnlyHint": False, "destructiveHint": False}),
+    "product_ideas": (tool_product_ideas, "Digital product ideas for a niche or channel, before you even make a video: "
+                      "ideas held against what 140+ channels sell, channel names, free .com domains, pricing, the "
+                      "funnel and the launch order. One Claude Code call on the creator's plan (1-2 minutes); no "
+                      "money spent.",
+                      _schema({"about": {"type": "string", "description": "A few lines: the niche, the audience, "
+                                                                          "the channel idea."},
+                               "channel": {"type": "string", "description": "The channel's YouTube link, if any."},
+                               "language": {"type": "string"}}),
+                      {"readOnlyHint": False, "destructiveHint": False}),
+    "build_product": (tool_build_product, "Build one of the last product_ideas into a finished product (about an "
+                      "hour): an illustrated, fact-checked book PDF, a landing page with Stripe checkout and a launch "
+                      "guide. Spends about $0.30 of pictures and ~20 Claude Code calls: tell the creator first.",
+                      _schema({"idea_number": {"type": "integer", "minimum": 1},
+                               "domain": {"type": "string", "description": "A domain the creator bought, if any."},
+                               "channel_name": {"type": "string"}}, ["idea_number"]),
+                      {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}),
+    "products": (tool_products, "The creator's digital products (books, cookbooks) and how a build is going "
+                 "(id=…). Free.", _schema({"id": {"type": "string"}}), _FREE),
     "clone_style": (tool_clone_style, "Step 2: study the looked-at references and build a new reusable style. Uses "
                     "the creator's Claude Code for 15-30 minutes and one of their plan's style clones. Needs look_id, a "
                     "style_name, an example_title and the creator's answers to the look's questions.",

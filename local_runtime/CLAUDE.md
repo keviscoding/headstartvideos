@@ -75,8 +75,9 @@ settings. Update in place instead:
 ## Studio's own tools in Claude Code (start here)
 
 When the customer wants to make videos, pick or clone a style, render on Studio Cloud or watch their videos, use
-the `studio` tools (mcp__studio__*) and the skills /make-videos, /clone-style, /cloud-batch and /my-videos. They drive
-the running Studio through its own checks, so nothing needs the Studio web page.
+the `studio` tools (mcp__studio__*) and the skills /make-videos, /clone-style, /cloud-batch, /my-videos,
+/niche-strategy (cross-niche arbitrage from the live niche database) and /digital-product. They drive the running
+Studio through its own checks, so nothing needs the Studio web page.
 
 - Start with `setup_check`. If Studio isn't running, ask them to open its launcher (step 4 above).
 - Styles: `list_styles` gives each style's id, description, thumbnail file and a `gallery_url` picker. Show the

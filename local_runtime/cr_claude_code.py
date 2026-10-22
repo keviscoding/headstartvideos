@@ -24,8 +24,10 @@ from pathlib import Path
 HOME = Path(__file__).resolve().parent
 SERVER = "studio"
 FREE_TOOLS = ("setup_check", "list_styles", "get_style_pick", "quote", "progress", "list_videos", "open_in_studio",
-              "cloud_balance", "clone_style_look")
-PAID_TOOLS = ("make_videos", "clone_style")
+              "cloud_balance", "clone_style_look", "product_ideas", "products")
+PAID_TOOLS = ("make_videos", "clone_style", "build_product")
+# ChannelRecipe's hosted niche database (the account's `channelrecipe` server beside `studio`): reading it is free
+NICHE_TOOLS = ("list_niches", "list_niche_subjects", "list_niche_channels")
 NEVER_READ = ("Read(./.env)", "Read(./.mcp.json)", "Read(./.cr-connection.json)", "Read(./.cr-runtime.json)")
 PICK_SECONDS = 2 * 3600
 PORT = 7860
@@ -92,8 +94,8 @@ def configure(home=None) -> dict:
         permissions = settings.get("permissions") if isinstance(settings.get("permissions"), dict) else {}
         paid = [f"mcp__{SERVER}__{n}" for n in PAID_TOOLS]
         # a paid tool is always asked, even when someone allowed the whole server
-        permissions["allow"] = [x for x in _add(permissions.get("allow"), [f"mcp__{SERVER}__{n}" for n in FREE_TOOLS])
-                                if x not in paid]
+        free = [f"mcp__{SERVER}__{n}" for n in FREE_TOOLS] + [f"mcp__channelrecipe__{n}" for n in NICHE_TOOLS]
+        permissions["allow"] = [x for x in _add(permissions.get("allow"), free) if x not in paid]
         permissions["ask"] = _add(permissions.get("ask"), paid)
         permissions["deny"] = _add(permissions.get("deny"), NEVER_READ)
         settings["permissions"] = permissions
@@ -394,6 +396,19 @@ def install(studio, token: str, home=None) -> dict:
         except Exception as error:                                 # noqa: BLE001
             return failure(error)
 
+    @app.post("/cr-claude-code/combine-preview")
+    def cr_claude_code_combine_preview():
+        """Two or three YouTube channels (or videos) listed as one preview, so one style can be learned from both."""
+        try:
+            local_access()                                         # the local token is checked for every POST
+            body = request.get_json(silent=True) or {}
+            urls = [str(u).strip() for u in body.get("urls") or [] if str(u).strip()]
+            return protect(jsonify(combine_preview(home, urls)))
+        except (RuntimeError, ValueError) as error:                 # YouTube couldn't list one, or a bad link
+            return protect(jsonify(error=str(error))), 409 if isinstance(error, RuntimeError) else 400
+        except Exception as error:                                 # noqa: BLE001
+            return failure(error)
+
     @app.get("/cr-claude-code/quote")
     def cr_claude_code_quote():
         """What Studio Cloud would charge for a video of these minutes in this style (the server's own quote)."""
@@ -508,6 +523,29 @@ def small_pictures(app, home: Path, row: dict) -> dict:
             return out
     out.update(png=str(png), jpg=str(jpg))
     return out
+
+
+def combine_preview(home: Path, urls: list, *, preview=None) -> dict:
+    """One saved preview holding the videos of two or three YouTube channels or videos, so the existing look and
+    study take references from all of them (each candidate keeps its channel). Lists only: no model is asked."""
+    import cr_style_clone
+    if not 2 <= len(urls) <= 3 or len(set(urls)) != len(urls):
+        raise ValueError("Give two or three different YouTube channels or videos to combine.")
+    preview = preview or cr_style_clone.preview
+    sources, candidates, seen = [], [], set()
+    for number, url in enumerate(urls):
+        got = preview(home, url)
+        sources.append(got["reference_url"])
+        for row in got.get("candidates") or []:
+            if row["id"] not in seen:
+                seen.add(row["id"])
+                candidates.append({**row, "source": number})
+    result = {"reference_url": sources[0], "reference_urls": sources, "candidates": candidates,
+              "no_model_requests": True, "combined": True}
+    identifier = "pv_" + cr_style_clone._hash(result)
+    cr_style_clone._write(cr_style_clone._folder(home) / ".previews" / (identifier + ".json"),
+                          {**result, "created_at": time.time()})
+    return {**result, "preview_id": identifier}
 
 
 def catalog_rows(studio) -> list:

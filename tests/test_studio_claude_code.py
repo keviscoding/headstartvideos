@@ -65,6 +65,25 @@ class FakeStudio:
             return {"ok": True}
         if path == "/cr-gallery/picks":
             return {"pick_id": "pk_" + "a" * 24}
+        if path == "/cr-claude-code/combine-preview":
+            return {"preview_id": "pv_" + "c" * 64, "reference_urls": body["urls"], "candidates": [
+                {"id": "a1aaaaaaaaa", "title": "A big", "views": 900, "eligible": True, "source": 0, "channel": "A"},
+                {"id": "a2aaaaaaaaa", "title": "A small", "views": 800, "eligible": True, "source": 0, "channel": "A"},
+                {"id": "b1bbbbbbbbb", "title": "B big", "views": 50, "eligible": True, "source": 1, "channel": "B"},
+                {"id": "b2bbbbbbbbb", "title": "B short", "views": 9000, "eligible": False, "source": 1}]}
+        if path == "/cr-style-clone/look":
+            return {"look_id": "lk_" + "d" * 24, "state": "running", "message": "Looking"}
+        if path == "/api/offers/pack":
+            return {"pack": {"ideas": [{"title": "Pantry Book", "promise": "Cook from the cupboard", "kind": "cookbook"},
+                                       {"title": "Money Basics", "promise": "Fix your money", "kind": "lesson-book"}],
+                             "names": [{"name": "Cupboard Chef"}], "domains": ["cupboardchef.com"],
+                             "pricing": {"launch_usd": 29}, "launch": ["Buy the domain"], "file": "/x/pack.json"}}
+        if path == "/api/products/build":
+            return {"slug": "pantry-book"}
+        if path == "/api/products/build/pantry-book":
+            return {"slug": "pantry-book", "running": True, "code": None, "lines": ["write: 12/60"]}
+        if path == "/api/products":
+            return {"products": [{"slug": "pantry-book", "title": "Pantry Book", "secret": "no"}]}
         raise AssertionError("unexpected route " + path)
 
     def posted(self, path):
@@ -317,13 +336,14 @@ def test_the_release_ships_the_skills():
     sys.path.insert(0, str(ROOT / "scripts"))
     import build_frontier_admin as builder
     shipped = {relative for _, relative in builder.runtime_resources(ROOT)}
-    for name in ("make-videos", "clone-style", "cloud-batch", "my-videos"):
+    for name in ("make-videos", "clone-style", "cloud-batch", "my-videos", "niche-strategy", "digital-product"):
         assert f".claude/skills/{name}/SKILL.md" in shipped
     assert {"cr_studio_tools.py", "cr_claude_code.py", "cr_gallery.html"} <= shipped
 
 
 def test_paid_skills_are_only_started_by_the_creator():
-    for name, paid in (("make-videos", True), ("clone-style", True), ("cloud-batch", True), ("my-videos", False)):
+    for name, paid in (("make-videos", True), ("clone-style", True), ("cloud-batch", True), ("my-videos", False),
+                       ("niche-strategy", False), ("digital-product", True)):
         text = (ROOT / "local_runtime" / "claude_skills" / name / "SKILL.md").read_text()
         head = text.split("---", 2)[1]
         assert f"name: {name}" in head and "description:" in head
@@ -472,3 +492,53 @@ def test_an_older_studio_without_cloud_notes_keeps_cloud_off(studio, monkeypatch
         return real(method, path, body, **kw)
     monkeypatch.setattr(tools, "call", older)
     assert all(s["renders_on"] == ["this_computer"] for s in ok("list_styles", {})["styles"])
+
+
+def test_combining_two_channels_takes_references_in_turn(studio):
+    out = ok("clone_style_look", {"youtube_urls": ["https://youtube.com/@a", "https://youtube.com/@b"]})
+    assert studio.posted("/cr-claude-code/combine-preview")[0] == {"urls": ["https://youtube.com/@a",
+                                                                       "https://youtube.com/@b"]}
+    assert studio.posted("/cr-style-clone/look")[0]["reference_ids"] == ["a1aaaaaaaaa", "b1bbbbbbbbb", "a2aaaaaaaaa"]
+    assert out["combining"] == ["https://youtube.com/@a", "https://youtube.com/@b"]
+    assert {s["channel"] for s in out["studying"]} == {"A", "B"}
+    saved = json.loads((tools.STATE / "looks.json").read_text())["lk_" + "d" * 24]
+    assert saved["preview_id"] == "pv_" + "c" * 64
+
+
+def test_combine_preview_merges_channels_into_one_saved_preview(tmp_path, monkeypatch):
+    import cr_style_clone
+    monkeypatch.setattr(cr_style_clone, "_folder", lambda home: tmp_path / "studies")
+    lists = {"https://youtube.com/@a": [{"id": "a1aaaaaaaaa", "eligible": True}, {"id": "same0000000", "eligible": True}],
+             "https://youtube.com/@b": [{"id": "b1bbbbbbbbb", "eligible": True}, {"id": "same0000000", "eligible": True}]}
+    fake = lambda home, url: {"reference_url": url, "candidates": lists[url]}             # noqa: E731
+    out = ccc.combine_preview(tmp_path, list(lists), preview=fake)
+    assert [(c["id"], c["source"]) for c in out["candidates"]] == [("a1aaaaaaaaa", 0), ("same0000000", 0),
+                                                                  ("b1bbbbbbbbb", 1)]
+    saved = json.loads((tmp_path / "studies" / ".previews" / (out["preview_id"] + ".json")).read_text())
+    assert saved["reference_url"] == "https://youtube.com/@a" and saved["combined"] is True and saved["created_at"]
+    import re
+    assert re.fullmatch(r"pv_[a-f0-9]{64}", out["preview_id"])                # the study's own preview check
+    with pytest.raises(ValueError):
+        ccc.combine_preview(tmp_path, ["https://youtube.com/@a"], preview=fake)
+
+
+def test_product_ideas_then_build_by_number(studio):
+    out = ok("product_ideas", {"about": "cheap cooking for students"})
+    assert [i["title"] for i in out["ideas"]] == ["Pantry Book", "Money Basics"] and out["free_domains"]
+    assert studio.posted("/api/offers/pack")[0]["instructions"] == "cheap cooking for students"
+    assert tools.run_tool("build_product", {"idea_number": 3})["isError"]
+    built = ok("build_product", {"idea_number": 1, "domain": "cupboardchef.com"})
+    body = studio.posted("/api/products/build")[0]
+    assert body["idea"]["title"] == "Pantry Book" and body["domain"] == "cupboardchef.com"
+    assert body["niche"] == "cheap cooking for students" and body["pack_file"] == "/x/pack.json"
+    assert built["id"] == "pantry-book" and "$0.30" in built["cost"]
+    assert ok("products", {"id": "pantry-book"})["state"] == "building"
+    assert ok("products", {})["products"] == [{"slug": "pantry-book", "title": "Pantry Book"}]
+
+
+def test_niche_database_reads_are_allowed_and_building_a_product_is_asked(tmp_path):
+    ccc.configure(tmp_path)
+    permissions = json.loads((tmp_path / ".claude" / "settings.json").read_text())["permissions"]
+    assert "mcp__channelrecipe__list_niche_channels" in permissions["allow"]
+    assert "mcp__studio__product_ideas" in permissions["allow"]
+    assert "mcp__studio__build_product" in permissions["ask"]
