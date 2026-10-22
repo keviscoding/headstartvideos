@@ -38,7 +38,7 @@
 <body>
 <main>
   <h1>Sales attribution</h1>
-  <p class="sub">Which videos and links bring signups and revenue. Headline credit goes to the last touch; switch to first touch to compare.</p>
+  <p class="sub">Which videos and links bring signups and revenue. Headline credit goes to the last touch; switch to first touch to compare. Renewals and refunds keep the credit of the first payment. Net = subscriptions + top-ups − refunds.</p>
   <div class="bar">
     <label>From <input type="date" id="from"></label>
     <label>To <input type="date" id="to"></label>
@@ -55,7 +55,8 @@
     <thead><tr>
       <th data-k="key">Source</th><th data-k="clicks">Clicks</th><th data-k="signups">Signups</th>
       <th data-k="paying">Paying</th><th data-k="signup_to_paid_pct">Signup→paid</th>
-      <th data-k="first_payment_cents">First-payment $</th><th data-k="revenue_cents" class="sorted">Total $</th>
+      <th data-k="first_payment_cents">First-payment $</th><th data-k="revenue_cents" class="sorted">Subscription $</th>
+      <th data-k="topup_cents">Top-ups $</th>
       <th data-k="refund_cents">Refunds</th><th data-k="revenue_per_click_cents">$ / click</th>
     </tr></thead>
     <tbody></tbody>
@@ -84,7 +85,8 @@
     var box = $('tiles'); box.textContent = '';
     [['Clicks', (t.clicks || 0).toLocaleString()], ['Signups', (t.signups || 0).toLocaleString()],
      ['Paying customers', (t.paying || 0).toLocaleString()], ['Signup → paid', pct(t.signup_to_paid_pct)],
-     ['First-payment revenue', money(t.first_payment_cents)], ['Total revenue', money(t.revenue_cents)],
+     ['First-payment revenue', money(t.first_payment_cents)], ['Subscription revenue', money(t.revenue_cents)],
+     ['Top-ups', money(t.topup_cents)],
      ['Refunds', money(t.refund_cents)], ['Net revenue', money(t.net_revenue_cents)]].forEach(function (p) {
       var d = el('div', null, 'tile'); d.appendChild(el('div', p[0], 'k')); d.appendChild(el('div', p[1], 'v')); box.appendChild(d);
     });
@@ -119,6 +121,7 @@
       tr.appendChild(el('td', pct(r.signup_to_paid_pct)));
       tr.appendChild(el('td', money(r.first_payment_cents)));
       tr.appendChild(el('td', money(r.revenue_cents)));
+      tr.appendChild(el('td', money(r.topup_cents)));
       tr.appendChild(el('td', r.refund_cents ? '−' + money(r.refund_cents) : '–', r.refund_cents ? 'neg' : ''));
       tr.appendChild(el('td', r.revenue_per_click_cents == null ? '–' : money(r.revenue_per_click_cents)));
       body.appendChild(tr);

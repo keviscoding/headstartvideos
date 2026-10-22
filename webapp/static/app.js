@@ -3661,6 +3661,24 @@ document.addEventListener('click', async (e) => {
     }
 });
 
+// Admins: a link from the analytics dashboard to the sales-attribution report (/admin/sales).
+function _addSalesByVideoLink(workspace) {
+    try {
+        const existing = document.getElementById('analytics-sales-link');
+        if (!isAdminUser()) { existing?.remove(); return; }
+        if (existing || !workspace) return;
+        const a = document.createElement('a');
+        a.id = 'analytics-sales-link';
+        a.href = '/admin/sales';
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.className = 'cr-surface';
+        a.style.cssText = 'display:inline-block;padding:10px 14px;font-weight:600;text-decoration:none;';
+        a.textContent = 'Sales by video →';
+        workspace.prepend(a);
+    } catch (_) {}
+}
+
 async function loadAnalyticsDashboard() {
     const gate = document.getElementById('analytics-gate');
     const workspace = document.getElementById('analytics-workspace');
@@ -3672,6 +3690,7 @@ async function loadAnalyticsDashboard() {
     }
     gate?.classList.add('hidden');
     workspace?.classList.remove('hidden');
+    _addSalesByVideoLink(workspace);
     const days = parseInt(document.getElementById('analytics-days')?.value || '30', 10) || 30;
     if (status) status.textContent = 'Loading…';
     try {
@@ -6665,7 +6684,7 @@ async function authVerifyCode() {
             body: JSON.stringify({
                 email,
                 code,
-                attribution: _attrProps(),
+                attribution: _attrPayload() || _attrProps(),
             }),
         });
         const data = await res.json();

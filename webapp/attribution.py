@@ -5,7 +5,8 @@ three nullable columns on users (first_touch_json, last_touch_json, first_touch_
 ``safe_*`` wrappers, and every one of them catches its own errors and logs them: when tracking breaks, sign-in,
 checkout and the Stripe webhook carry on exactly as before.
 
-Switch it off without a revert: CR_ATTRIBUTION_ENABLED=0 (default on).
+OFF by default. Turn it on with CR_ATTRIBUTION_ENABLED=1; while it is off nothing is written and no table, column or
+seed row is created (short links still redirect from SEED_CODES without touching the database).
 
 Credit model: the headline number goes to the LAST touch, with the FIRST touch shown alongside.
 - /v/{video_id}  YouTube description links -> /?utm_source=youtube&utm_medium=organic_video&utm_campaign=cr_sales
@@ -44,25 +45,27 @@ STRIPE_MAX_KEYS = 50
 STRIPE_MAX_KEY_LEN = 40
 STRIPE_MAX_VALUE_LEN = 500
 
-# (code, utm_source, utm_medium, utm_campaign, utm_content, label). utm_term is always the code itself, so every
+# (code, utm_source, utm_medium, utm_content, label). Every code uses utm_campaign=cr_sales and utm_term=<code>, so each
 # short link stays distinguishable in reports even when two share a source and medium.
 SEED_CODES = (
-    ("kevis-about", "youtube", "social", "cr_sales", "channel_description", "Kevis YouTube About"),
-    ("jesse-about", "youtube", "social", "cr_sales", "channel_description", "Jesse YouTube About"),
-    ("ig-kevis", "instagram", "social", "cr_sales", "bio", "Instagram: Kevis"),
-    ("ig-jesse", "instagram", "social", "cr_sales", "bio", "Instagram: Jesse"),
-    ("ig-jesse2", "instagram", "social", "cr_sales", "bio", "Instagram: Jesse (2nd)"),
-    ("ig-abby", "instagram", "social", "cr_sales", "bio", "Instagram: Abby"),
-    ("tt-glintverse", "tiktok", "social", "cr_sales", "bio", "TikTok: Glintverse"),
-    ("fb-jesse", "facebook", "social", "cr_sales", "bio", "Facebook: Jesse"),
-    ("x-kevis", "x", "social", "cr_sales", "bio", "X: Kevis"),
-    ("email", "email", "email", "cr_sales", "newsletter", "Email"),
-    ("discord", "discord", "community", "cr_sales", "discord", "Discord"),
+    ("kevis-about", "youtube", "social", "channel_description", "YouTube About: Kevis"),
+    ("jesse-about", "youtube", "social", "channel_description", "YouTube About: Jesse"),
+    ("ig-kevis", "instagram", "social", "kevis.marr", "Instagram: kevis.marr"),
+    ("ig-jesse", "instagram", "social", "jesse.yt23", "Instagram: jesse.yt23"),
+    ("ig-jesse2", "instagram", "social", "jesse.toet", "Instagram: jesse.toet"),
+    ("ig-abby", "instagram", "social", "abby.d_abby", "Instagram: abby.d_abby (Kevis)"),
+    ("tt-glintverse", "tiktok", "social", "glintverse", "TikTok: glintverse"),
+    ("fb-jesse", "facebook", "social", "jesse_fb_autopost", "Facebook: jesse_fb_autopost"),
+    ("x-kevis", "x", "social", "kevisunfiltered", "X: kevisunfiltered"),
+    ("email", "email", "email", "newsletter", "Email newsletter"),
+    ("discord", "discord", "community", "cr_discord", "Discord"),
 )
+SEED_CAMPAIGN = "cr_sales"
+
 
 
 def enabled() -> bool:
-    return os.getenv("CR_ATTRIBUTION_ENABLED", "1").strip().lower() not in ("0", "false", "off", "no", "")
+    return os.getenv("CR_ATTRIBUTION_ENABLED", "0").strip().lower() in ("1", "true", "on", "yes")
 
 
 def _log(msg: str) -> None:
@@ -90,6 +93,8 @@ def _users_columns(conn) -> set[str]:
 
 
 def initialize() -> bool:
+    if not enabled():
+        return False                    # flag off: never create tables, columns or seed rows
     key = _db_key()
     if key in _ready:
         return True
@@ -113,6 +118,7 @@ def initialize() -> bool:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_link_clicks_ts ON link_clicks (ts)")
                 conn.execute(f"""CREATE TABLE IF NOT EXISTS sales (
                     stripe_event_id TEXT PRIMARY KEY, user_id BIGINT, invoice_id TEXT, sub_id TEXT, charge_id TEXT,
+                    payment_intent TEXT,
                     kind TEXT NOT NULL, amount_cents INTEGER NOT NULL DEFAULT 0, currency TEXT, plan_key TEXT,
                     ft_src TEXT, ft_med TEXT, ft_vid TEXT, ft_term TEXT, ft_key TEXT,
                     lt_src TEXT, lt_med TEXT, lt_vid TEXT, lt_term TEXT, lt_key TEXT,
@@ -120,6 +126,10 @@ def initialize() -> bool:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_sales_ts ON sales (ts)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_sales_invoice ON sales (invoice_id)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_sales_user ON sales (user_id, kind)")
+                db._ensure_column(conn.cursor(), "sales", "payment_intent", "TEXT")   # tables from the first draft
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_sales_sub ON sales (sub_id, kind)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_sales_charge ON sales (charge_id)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_sales_pi ON sales (payment_intent)")
                 conn.execute(f"""CREATE TABLE IF NOT EXISTS video_meta (
                     vid TEXT PRIMARY KEY, title TEXT, fetched_at {real} NOT NULL DEFAULT 0)""")
                 have = _users_columns(conn)
@@ -128,11 +138,15 @@ def initialize() -> bool:
                                      ("first_touch_at", real)):
                     if col not in have:
                         db._ensure_column(cur, "users", col, col_def)          # nullable, no default: instant
-                for code, src, med, camp, content, label in SEED_CODES:
+                for code, src, med, content, label in SEED_CODES:
+                    # seeded fields follow the code; `active` is left as an admin set it
                     conn.execute(db._q("""INSERT INTO link_codes
                         (code, utm_source, utm_medium, utm_campaign, utm_content, utm_term, label, active)
-                        VALUES (?,?,?,?,?,?,?,1) ON CONFLICT (code) DO NOTHING"""),
-                                 (code, src, med, camp, content, code, label))
+                        VALUES (?,?,?,?,?,?,?,1) ON CONFLICT (code) DO UPDATE SET
+                        utm_source = excluded.utm_source, utm_medium = excluded.utm_medium,
+                        utm_campaign = excluded.utm_campaign, utm_content = excluded.utm_content,
+                        utm_term = excluded.utm_term, label = excluded.label"""),
+                                 (code, src, med, SEED_CAMPAIGN, content, code, label))
             _ready.add(key)
             return True
         except Exception as e:  # noqa: BLE001
@@ -189,6 +203,8 @@ _codes_cache: dict = {}
 
 
 def _known_codes() -> set[str]:
+    if not enabled():
+        return {c[0] for c in SEED_CODES}
     hit = _codes_cache.get("codes")
     if hit and time.time() - hit[0] < 300:
         return hit[1]
@@ -203,8 +219,11 @@ def _known_codes() -> set[str]:
 
 
 def touch_vid(t: dict) -> str:
-    content = (t or {}).get("utm_content") or ""
-    if (t or {}).get("utm_source") == "youtube" and VIDEO_ID_RE.match(content):
+    """A video id only for touches made by a /v link (youtube + organic_video): an 11-character utm_content from
+    anywhere else (a short-link handle, a campaign name) is never mistaken for a video."""
+    t = t or {}
+    content = t.get("utm_content") or ""
+    if t.get("utm_source") == "youtube" and t.get("utm_medium") == "organic_video" and VIDEO_ID_RE.match(content):
         return content
     return ""
 
@@ -314,6 +333,9 @@ def merge_metadata(existing: dict | None, extra: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Sales
 # ---------------------------------------------------------------------------
+_TOUCH_COLS = ("ft_src", "ft_med", "ft_vid", "ft_term", "ft_key", "lt_src", "lt_med", "lt_vid", "lt_term", "lt_key")
+
+
 def _sale_exists(conn, *, invoice_id: str = "", kinds: tuple = ()) -> bool:
     if not invoice_id:
         return False
@@ -325,27 +347,83 @@ def _sale_exists(conn, *, invoice_id: str = "", kinds: tuple = ()) -> bool:
     return conn.execute(db._q(q), tuple(args)).fetchone() is not None
 
 
+def _touch_cols(first: dict | None, last: dict | None) -> dict:
+    b1, b2 = _brief(first or {}), _brief(last or {})
+    return {"ft_src": b1["src"], "ft_med": b1["med"], "ft_vid": b1["vid"], "ft_term": b1["term"], "ft_key": b1["key"],
+            "lt_src": b2["src"], "lt_med": b2["med"], "lt_vid": b2["vid"], "lt_term": b2["term"], "lt_key": b2["key"]}
+
+
 def insert_sale(*, event_id: str, user_id: int | None, kind: str, amount_cents: int, currency: str = "usd",
-                invoice_id: str = "", sub_id: str = "", charge_id: str = "", plan_key: str = "",
-                ts: float | None = None, first: dict | None = None, last: dict | None = None) -> bool:
-    """Idempotent: a Stripe event (or an invoice already recorded) is written once. Returns True when a row was
-    added."""
+                invoice_id: str = "", sub_id: str = "", charge_id: str = "", payment_intent: str = "",
+                plan_key: str = "", ts: float | None = None, first: dict | None = None, last: dict | None = None,
+                credit: dict | None = None) -> bool:
+    """Idempotent: a Stripe event (or an invoice already recorded) is written once. ``credit`` is a set of ft_*/lt_*
+    columns copied from an earlier sale (renewals and refunds keep the credit of the purchase they belong to).
+    Returns True when a row was added."""
     if kind not in SALE_KINDS or not event_id:
         return False
-    if first is None and last is None and user_id:
-        first, last = get_touches(int(user_id))
-    b1, b2 = _brief(first or {}), _brief(last or {})
+    if credit is None:
+        if first is None and last is None and user_id:
+            first, last = get_touches(int(user_id))
+        credit = _touch_cols(first, last)
+    cols = {c: (credit.get(c) or "") for c in _TOUCH_COLS}
+    if not cols["ft_key"]:
+        cols["ft_key"] = "unknown"
+    if not cols["lt_key"]:
+        cols["lt_key"] = "unknown"
     with db._conn() as conn:
         if kind != "refund" and _sale_exists(conn, invoice_id=invoice_id, kinds=("first_payment", "renewal")):
             return False
-        cur = conn.execute(db._q("""INSERT INTO sales (stripe_event_id, user_id, invoice_id, sub_id, charge_id, kind,
-            amount_cents, currency, plan_key, ft_src, ft_med, ft_vid, ft_term, ft_key,
-            lt_src, lt_med, lt_vid, lt_term, lt_key, ts)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (stripe_event_id) DO NOTHING"""),
-            (event_id, int(user_id) if user_id else None, invoice_id, sub_id, charge_id, kind, int(amount_cents),
-             (currency or "usd").lower(), plan_key, b1["src"], b1["med"], b1["vid"], b1["term"], b1["key"],
-             b2["src"], b2["med"], b2["vid"], b2["term"], b2["key"], float(ts or time.time())))
+        row = {"stripe_event_id": event_id, "user_id": int(user_id) if user_id else None, "invoice_id": invoice_id,
+               "sub_id": sub_id, "charge_id": charge_id, "payment_intent": payment_intent, "kind": kind,
+               "amount_cents": int(amount_cents), "currency": (currency or "usd").lower(), "plan_key": plan_key,
+               **cols, "ts": float(ts or time.time())}
+        names = ", ".join(row)
+        marks = ",".join("?" for _ in row)
+        cur = conn.execute(db._q(f"INSERT INTO sales ({names}) VALUES ({marks}) ON CONFLICT (stripe_event_id) DO NOTHING"),
+                           tuple(row.values()))
         return bool(getattr(cur, "rowcount", 0) and cur.rowcount > 0)
+
+
+def _fill_payment_ids(invoice_id: str, charge_id: str, payment_intent: str) -> None:
+    """Adds the charge / payment intent to a payment row that was written without them (the checkout session of a
+    subscription carries neither; its first invoice does)."""
+    if not invoice_id or not (charge_id or payment_intent):
+        return
+    with db._conn() as conn:
+        conn.execute(db._q("""UPDATE sales SET charge_id = CASE WHEN COALESCE(charge_id,'') = '' THEN ? ELSE charge_id END,
+            payment_intent = CASE WHEN COALESCE(payment_intent,'') = '' THEN ? ELSE payment_intent END
+            WHERE invoice_id = ? AND kind IN ('first_payment','renewal','topup')"""),
+                     (charge_id, payment_intent, invoice_id))
+
+
+def _row_credit(row: dict | None) -> dict | None:
+    return {c: row.get(c) or "" for c in _TOUCH_COLS} if row else None
+
+
+def _first_payment_row(sub_id: str, user_id: int | None) -> dict | None:
+    """The earliest first_payment for this subscription, else for this user."""
+    with db._conn() as conn:
+        for col, val in (("sub_id", sub_id), ("user_id", user_id)):
+            if not val:
+                continue
+            r = conn.execute(db._q(f"SELECT * FROM sales WHERE kind = 'first_payment' AND {col} = ? "
+                                   "ORDER BY ts ASC LIMIT 1"), (val,)).fetchone()
+            if r:
+                return dict(r)
+    return None
+
+
+def _payment_row_for_refund(charge_id: str, payment_intent: str, invoice_id: str) -> dict | None:
+    with db._conn() as conn:
+        for col, val in (("charge_id", charge_id), ("payment_intent", payment_intent), ("invoice_id", invoice_id)):
+            if not val:
+                continue
+            r = conn.execute(db._q(f"SELECT * FROM sales WHERE kind IN ('first_payment','renewal','topup') "
+                                   f"AND {col} = ? ORDER BY ts ASC LIMIT 1"), (val,)).fetchone()
+            if r:
+                return dict(r)
+    return None
 
 
 def _has_paid_before(user_id: int, sub_id: str) -> bool:
@@ -365,6 +443,24 @@ def _refunded_so_far(charge_id: str) -> int:
     return int(dict(row)["n"] or 0) if row else 0
 
 
+def _sid(v: Any) -> str:
+    """A Stripe id from either an expanded object or a bare id."""
+    if isinstance(v, dict):
+        return str(v.get("id") or "")
+    return str(v or "")
+
+
+def invoice_payment_ids(inv: dict) -> tuple[str, str]:
+    """(charge id, payment intent id) of a paid invoice, on both the classic and the Basil (2025-03-31+) shapes:
+    Basil moved them from invoice.charge / invoice.payment_intent to invoice.payments[].payment."""
+    charge, pi = _sid(inv.get("charge")), _sid(inv.get("payment_intent"))
+    for p in ((inv.get("payments") or {}).get("data") or []):
+        pay = (p or {}).get("payment") or {}
+        charge = charge or _sid(pay.get("charge"))
+        pi = pi or _sid(pay.get("payment_intent"))
+    return charge, pi
+
+
 def record_from_event(evt_type: str, event: dict, obj: dict, *, find_user: Callable[[str, str], dict | None],
                       is_cr_invoice: Callable[[dict], bool], sub_of: Callable[[dict], str] | None = None) -> str:
     """Writes the sales row a Stripe event implies (only ever to `sales`). Returns what it did, for logs/tests."""
@@ -380,52 +476,67 @@ def record_from_event(evt_type: str, event: dict, obj: dict, *, find_user: Calla
         if not topup and obj.get("mode") not in (None, "subscription"):
             return "skip:mode"
         kind = "topup" if topup else "first_payment"
-        inv = obj.get("invoice")
-        inv = inv.get("id") if isinstance(inv, dict) else (inv or "")
-        sub = obj.get("subscription")
-        sub = sub.get("id") if isinstance(sub, dict) else (sub or "")
         ok = insert_sale(event_id=event_id, user_id=int(uid), kind=kind, amount_cents=amount,
-                         currency=obj.get("currency") or "usd", invoice_id=str(inv), sub_id=str(sub),
+                         currency=obj.get("currency") or "usd", invoice_id=_sid(obj.get("invoice")),
+                         sub_id=_sid(obj.get("subscription")), payment_intent=_sid(obj.get("payment_intent")),
                          plan_key=str(meta.get("plan") or ""), ts=ts)
         return f"{kind}:{'added' if ok else 'dup'}"
     if evt_type == "invoice.paid":
         amount = int(obj.get("amount_paid") or 0)
         reason = obj.get("billing_reason") or ""
+        invoice_id = str(obj.get("id") or "")
+        charge_id, pi = invoice_payment_ids(obj)
         if amount <= 0:
             return "skip:zero"
-        if reason == "subscription_create":
-            return "skip:covered-by-checkout"          # the checkout.session.completed row is the first payment
-        if reason not in ("subscription_cycle", "subscription_update"):
+        if reason not in ("subscription_create", "subscription_cycle", "subscription_update"):
             return f"skip:reason:{reason}"
         if not is_cr_invoice(obj):
             return "skip:not-cr"
         sub_id = sub_of(obj) if sub_of else ""
-        customer = obj.get("customer")
-        customer = customer.get("id") if isinstance(customer, dict) else (customer or "")
-        row = find_user(sub_id, str(customer))
+        row = find_user(sub_id, _sid(obj.get("customer")))
         if not row:
             return "skip:no-user"
-        kind = "renewal" if _has_paid_before(row["id"], sub_id) else "first_payment"   # trial conversions are firsts
+        if reason == "subscription_create":
+            # normally the checkout row already holds this money: only add its charge / payment intent. If this
+            # event won the race, it records the first payment and the checkout event later finds the invoice taken.
+            with db._conn() as conn:
+                exists = _sale_exists(conn, invoice_id=invoice_id, kinds=("first_payment", "renewal"))
+            if exists:
+                _fill_payment_ids(invoice_id, charge_id, pi)
+                return "first_payment:ids-added"
+            ok = insert_sale(event_id=event_id, user_id=row["id"], kind="first_payment", amount_cents=amount,
+                             currency=obj.get("currency") or "usd", invoice_id=invoice_id, sub_id=sub_id,
+                             charge_id=charge_id, payment_intent=pi, plan_key=str(row.get("plan") or ""), ts=ts)
+            return f"first_payment:{'added' if ok else 'dup'}"
+        first_row = _first_payment_row(sub_id, row["id"])
+        kind = "renewal" if (first_row or _has_paid_before(row["id"], sub_id)) else "first_payment"  # trial conv.
         ok = insert_sale(event_id=event_id, user_id=row["id"], kind=kind, amount_cents=amount,
-                         currency=obj.get("currency") or "usd", invoice_id=str(obj.get("id") or ""), sub_id=sub_id,
-                         plan_key=str(row.get("plan") or ""), ts=ts)
+                         currency=obj.get("currency") or "usd", invoice_id=invoice_id, sub_id=sub_id,
+                         charge_id=charge_id, payment_intent=pi, plan_key=str(row.get("plan") or ""), ts=ts,
+                         credit=_row_credit(first_row) if kind == "renewal" else None)
         return f"{kind}:{'added' if ok else 'dup'}"
     if evt_type == "charge.refunded":
-        customer = obj.get("customer")
-        customer = customer.get("id") if isinstance(customer, dict) else (customer or "")
-        row = find_user("", str(customer)) if customer else None
-        if not row:
-            return "skip:no-user"
         charge_id = str(obj.get("id") or "")
+        pi = _sid(obj.get("payment_intent"))
+        invoice_id = _sid(obj.get("invoice"))           # gone on Basil; charge / payment intent do the linking
+        paid = _payment_row_for_refund(charge_id, pi, invoice_id)
+        user_id = paid.get("user_id") if paid else None
+        if not user_id:
+            customer = _sid(obj.get("customer"))
+            row = find_user("", customer) if customer else None
+            if not row:
+                return "skip:no-user"
+            user_id = row["id"]
         total = int(obj.get("amount_refunded") or 0)
         amount = max(0, total - _refunded_so_far(charge_id))
         if amount <= 0:
             return "skip:zero"
-        inv = obj.get("invoice")
-        inv = inv.get("id") if isinstance(inv, dict) else (inv or "")
-        ok = insert_sale(event_id=event_id, user_id=row["id"], kind="refund", amount_cents=amount,
-                         currency=obj.get("currency") or "usd", invoice_id=str(inv), charge_id=charge_id,
-                         plan_key=str(row.get("plan") or ""), ts=ts)
+        # the payment refunded already carries the right credit (a renewal row holds its first payment's)
+        origin = paid or _first_payment_row("", int(user_id))
+        ok = insert_sale(event_id=event_id, user_id=int(user_id), kind="refund", amount_cents=amount,
+                         currency=obj.get("currency") or "usd", invoice_id=invoice_id or (paid or {}).get("invoice_id")
+                         or "", sub_id=(paid or {}).get("sub_id") or "", charge_id=charge_id, payment_intent=pi,
+                         plan_key=str((paid or {}).get("plan_key") or ""), ts=ts, credit=_row_credit(origin))
         return f"refund:{'added' if ok else 'dup'}"
     return "skip:event"
 
@@ -544,10 +655,22 @@ def video_target(vid: str) -> str:
                              "utm_content": vid, "utm_term": "description"})
 
 
+def _seed_target(code: str) -> str:
+    for c, src, med, content, _label in SEED_CODES:
+        if c == code:
+            return "/?" + urlencode({"utm_source": src, "utm_medium": med, "utm_campaign": SEED_CAMPAIGN,
+                                     "utm_content": content, "utm_term": c})
+    return "/"
+
+
 def code_target(code: str) -> str:
-    """'/' for an unknown or inactive code."""
-    if not CODE_RE.match(code or "") or not initialize():
+    """'/' for an unknown or inactive code. With the flag off the seeded links still work, without the database."""
+    if not CODE_RE.match(code or ""):
         return "/"
+    if not enabled():
+        return _seed_target(code)
+    if not initialize():
+        return _seed_target(code)
     with db._conn() as conn:
         row = conn.execute(db._q("SELECT * FROM link_codes WHERE code = ? AND active = 1"), (code,)).fetchone()
     if not row:
@@ -578,7 +701,8 @@ def window(frm: str | None, to: str | None) -> tuple[float, float]:
 
 def _blank(key: str) -> dict:
     return {"key": key, "kind": key.split(":", 1)[0] if ":" in key else key, "label": "", "title": "",
-            "clicks": 0, "signups": 0, "paying": 0, "first_payment_cents": 0, "revenue_cents": 0, "refund_cents": 0}
+            "clicks": 0, "signups": 0, "paying": 0, "first_payment_cents": 0, "revenue_cents": 0, "topup_cents": 0,
+            "refund_cents": 0}
 
 
 def report(frm: str | None = None, to: str | None = None, model: str = "last",
@@ -611,6 +735,9 @@ def report(frm: str | None = None, to: str | None = None, model: str = "last",
             if r["kind"] == "refund":
                 target["refund_cents"] += amt
                 continue
+            if r["kind"] == "topup":                  # credit packs, kept apart from subscription revenue
+                target["topup_cents"] += amt
+                continue
             target["revenue_cents"] += amt
             if r["kind"] == "first_payment":
                 target["first_payment_cents"] += amt
@@ -630,14 +757,16 @@ def report(frm: str | None = None, to: str | None = None, model: str = "last",
             r["title"] = names.get(r["key"][4:], "")
         elif r["kind"] == "code":
             r["label"] = labels.get(r["key"][5:], "")
-        r["net_revenue_cents"] = r["revenue_cents"] - r["refund_cents"]
+        r["net_revenue_cents"] = r["revenue_cents"] + r["topup_cents"] - r["refund_cents"]
         r["signup_to_paid_pct"] = round(100.0 * r["paying"] / r["signups"], 1) if r["signups"] else None
-        r["revenue_per_click_cents"] = round(r["revenue_cents"] / r["clicks"], 1) if r["clicks"] else None
+        r["revenue_per_click_cents"] = (round((r["revenue_cents"] + r["topup_cents"]) / r["clicks"], 1)
+                                        if r["clicks"] else None)
     out = sorted(rows.values(), key=lambda r: (-r["revenue_cents"], -r["signups"], -r["clicks"], r["key"]))
     totals = {k: sum(r[k] for r in out) for k in ("clicks", "signups", "paying", "first_payment_cents",
-                                                  "revenue_cents", "refund_cents", "net_revenue_cents")}
+                                                  "revenue_cents", "topup_cents", "refund_cents",
+                                                  "net_revenue_cents")}
     totals["signup_to_paid_pct"] = round(100.0 * totals["paying"] / totals["signups"], 1) if totals["signups"] else None
-    totals["revenue_per_click_cents"] = (round(totals["revenue_cents"] / totals["clicks"], 1)
+    totals["revenue_per_click_cents"] = (round((totals["revenue_cents"] + totals["topup_cents"]) / totals["clicks"], 1)
                                          if totals["clicks"] else None)
     return {"model": model, "from": datetime.fromtimestamp(start, timezone.utc).date().isoformat(),
             "to": (datetime.fromtimestamp(end, timezone.utc) - timedelta(days=1)).date().isoformat(),
@@ -645,7 +774,8 @@ def report(frm: str | None = None, to: str | None = None, model: str = "last",
 
 
 CSV_COLUMNS = ("key", "kind", "label", "title", "clicks", "signups", "paying", "first_payment_cents",
-               "revenue_cents", "refund_cents", "net_revenue_cents", "signup_to_paid_pct", "revenue_per_click_cents")
+               "revenue_cents", "topup_cents", "refund_cents", "net_revenue_cents", "signup_to_paid_pct",
+               "revenue_per_click_cents")
 
 
 def to_csv(rep: dict) -> str:
@@ -724,6 +854,9 @@ def make_router(require_admin: Callable, static_dir) -> APIRouter:
     async def sales_attribution(request: Request, model: str = "last", format: str = "json",
                                 admin: dict = Depends(require_admin)):
         import asyncio
+        if not enabled():
+            return Response('{"detail":"Sales attribution is off (CR_ATTRIBUTION_ENABLED=1 turns it on)"}',
+                            status_code=503, media_type="application/json")
         if not initialize():
             return Response('{"detail":"Attribution storage unavailable"}', status_code=503,
                             media_type="application/json")

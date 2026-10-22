@@ -205,7 +205,9 @@ def identify_user(user_id: str | int, props: dict) -> None:
     if not _posthog:
         return
     try:
-        _posthog.identify(distinct_id=str(user_id), properties=props)
+        # posthog>=6 dropped Client.identify (requirements allow any >=3.5); set() is the same $set on every version.
+        send = getattr(_posthog, "identify", None) or _posthog.set
+        send(distinct_id=str(user_id), properties=props)
     except Exception as e:
         print(f"[telemetry] identify failed: {e}")
 
@@ -676,7 +678,8 @@ def _sign_in(email: str, request: Request, attribution: dict | None, *, method: 
             if k in allow and v is not None and str(v).strip():
                 attr[k] = str(v).strip()[:200]
     _attribution.safe_sign_in(user["id"], attribution, _posthog)   # never raises; off with CR_ATTRIBUTION_ENABLED=0
-    person = {"email": email, "plan": user["plan"], **attr}
+    # initial_* go only through $set_once (attribution.safe_sign_in): a plain $set here would overwrite them
+    person = {"email": email, "plan": user["plan"], **{k: v for k, v in attr.items() if not k.startswith("initial_")}}
     if _posthog:
         try:
             identify_user(user["id"], person)

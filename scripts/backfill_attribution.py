@@ -184,10 +184,14 @@ def backfill(since: datetime, apply: bool, limit: int | None = None) -> dict:
         by_key[key]["cents"] += int(inv.get("amount_paid") or 0)
         stats["would_write"] += 1
         if apply:
+            charge_id, pi = attr.invoice_payment_ids(inv)
+            # a renewal keeps the credit of its subscription's first payment, as the live webhook does
+            origin = attr._first_payment_row(sub, user["id"]) if kind == "renewal" else None
             ok = attr.insert_sale(event_id=f"backfill:{inv['id']}", user_id=user["id"], kind=kind,
                                   amount_cents=int(inv.get("amount_paid") or 0), currency=inv.get("currency") or "usd",
-                                  invoice_id=str(inv["id"]), sub_id=sub, plan_key=str(user.get("plan") or ""),
-                                  ts=float(inv.get("created") or time.time()), first=first, last=last)
+                                  invoice_id=str(inv["id"]), sub_id=sub, charge_id=charge_id, payment_intent=pi,
+                                  plan_key=str(user.get("plan") or ""), ts=float(inv.get("created") or time.time()),
+                                  first=first, last=last, credit=attr._row_credit(origin))
             stats["written"] += int(bool(ok))
     stats["by_last_touch"] = dict(sorted(by_key.items(), key=lambda kv: -kv[1]["cents"]))
     return stats
@@ -205,7 +209,8 @@ def main(argv: list[str] | None = None) -> int:
     since = datetime.strptime(args.since, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     print(f"[backfill] mode={'APPLY' if apply else 'dry-run'} since={since.date()} db={db.backend_name()}")
     if apply and not attr.initialize():
-        print("[backfill] could not create the attribution tables; nothing written")
+        print("[backfill] attribution is off or its tables could not be created; nothing written "
+              "(set CR_ATTRIBUTION_ENABLED=1 to apply)")
         return 1
     if args.posthog_csv:
         print("[backfill] posthog import:", json.dumps(import_posthog(args.posthog_csv, apply)))

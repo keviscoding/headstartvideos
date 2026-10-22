@@ -42,6 +42,14 @@
 
   var CLICK_KEYS = ['gclid', 'fbclid', 'msclkid', 'ttclid'];
 
+  // A UTM or an ad click id: a deliberate, tagged visit (a bare outside referrer is weaker than this).
+  function _isTagged(t) {
+    if (!t || typeof t !== 'object') return false;
+    return Object.keys(t).some(function (k) {
+      return (k.indexOf('utm_') === 0 || CLICK_KEYS.indexOf(k) >= 0) && t[k];
+    });
+  }
+
   // A stored touch that names a source (older builds also saved bare landing pages, which name nobody).
   function _isTouch(t) {
     if (!t || typeof t !== 'object') return false;
@@ -70,7 +78,9 @@
         try { hit.landing_path = (global.location.pathname || '/').slice(0, 200); } catch (_) {}
         hit.captured_at = Date.now();
         hit.v = 2;
-        store.last = hit;                                  // replace, never merge: last touch is this visit only
+        // replace, never merge: last touch is this visit only. A referrer-only visit (say, a Google search later
+        // on) never replaces a tagged last touch such as a /v or /r link.
+        if (_isTagged(hit) || !_isTagged(store.last)) store.last = hit;
         if (!_isTouch(store.first)) {
           store.first = Object.assign({}, hit);            // first touch is written once
         }
@@ -81,11 +91,12 @@
     return store;
   }
 
-  /** {v:2, first, last} for the sales-attribution hooks (sign-in, checkout). Never throws. */
+  /** {v:2, first, last} for the sales-attribution hooks (sign-in, checkout), plus the flat attributionProps() keys
+   * so the server's existing sign-in analytics read exactly what they read before. Never throws. */
   function attributionPayload() {
     try {
       var store = getAttribution();
-      return { v: 2, first: store.first || {}, last: store.last || {} };
+      return Object.assign({}, attributionProps(), { v: 2, first: store.first || {}, last: store.last || {} });
     } catch (_) {
       return null;
     }

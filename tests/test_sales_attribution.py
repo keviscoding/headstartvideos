@@ -28,7 +28,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "attr.db")
     db._init_db()
     attr._reset_for_tests()
-    monkeypatch.delenv("CR_ATTRIBUTION_ENABLED", raising=False)
+    monkeypatch.setenv("CR_ATTRIBUTION_ENABLED", "1")          # off by default; these tests exercise it on
     from webapp import server
     import stripe
 
@@ -73,6 +73,17 @@ def _sales():
 
 def _user(uid):
     return db.get_user_by_id(uid)
+
+
+def _attr_tables() -> set:
+    with db._conn() as conn:
+        names = {dict(r)["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    return names & {"link_codes", "link_clicks", "sales", "video_meta"}
+
+
+def _user_cols() -> set:
+    with db._conn() as conn:
+        return {dict(r)["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
 
 
 YT_TOUCH = {"utm_source": "youtube", "utm_medium": "organic_video", "utm_campaign": "cr_sales",
@@ -143,7 +154,8 @@ def test_first_touch_is_written_once_and_last_touch_is_replaced(env):
 def test_flat_attribution_props_from_existing_sign_in_pages_are_understood(env):
     attr.initialize()
     uid = db.create_user("flat@example.com")["id"]
-    attr.record_touches(uid, {"utm_source": "x", "initial_utm_source": "youtube", "initial_utm_content": VID})
+    attr.record_touches(uid, {"utm_source": "x", "initial_utm_source": "youtube", "initial_utm_medium": "organic_video",
+                             "initial_utm_content": VID})
     first, last = attr.get_touches(uid)
     assert attr.touch_vid(first) == VID and last["utm_source"] == "x"
 
@@ -295,7 +307,7 @@ def test_admin_report_last_and_first_and_csv_matches_json(env, monkeypatch):
     assert row["revenue_per_click_cents"] == 2450.0 and last["totals"]["revenue_cents"] == 4900
     first = env.client.get("/api/admin/sales/attribution?model=first").json()
     frow = next(r for r in first["rows"] if r["key"] == "code:ig-kevis")
-    assert frow["revenue_cents"] == 4900 and frow["label"] == "Instagram: Kevis"
+    assert frow["revenue_cents"] == 4900 and frow["label"] == "Instagram: kevis.marr"
     csv_res = env.client.get("/api/admin/sales/attribution?model=last&format=csv")
     assert csv_res.headers["content-type"].startswith("text/csv")
     import csv as _csv
@@ -347,6 +359,9 @@ def test_sign_in_checkout_and_webhooks_still_work_when_attribution_breaks(env, m
                                                         "attribution": {"last": YT_TOUCH}})
     assert co.status_code == 200 and co.json()["url"]
     sent = env.created[-1]
+    if mode == "flag_off":
+        assert _attr_tables() == set() and not (_user_cols() & {"first_touch_json", "last_touch_json",
+                                                                "first_touch_at"}), "nothing created while off"
     assert sent["metadata"] == {"user_id": str(uid), "plan": "daily_monthly", "skip_trial": "1"}
     assert sent["line_items"] == [{"price": PRICE, "quantity": 1}] and sent["mode"] == "subscription"
     assert "subscription_data" not in sent
@@ -395,6 +410,9 @@ visit('');                                    out.b = JSON.parse(localStorage.ge
 visit('?utm_source=instagram');               out.c = JSON.parse(localStorage.getItem('cr_attr_v1'));
 visit('', 'https://www.channelrecipe.com/x');  out.d = JSON.parse(localStorage.getItem('cr_attr_v1'));
 visit('?fbclid=abc');                          out.e = JSON.parse(localStorage.getItem('cr_attr_v1'));
+visit('', 'https://www.google.com/');          out.f = JSON.parse(localStorage.getItem('cr_attr_v1'));
+store['cr_attr_v1'] = JSON.stringify({first: {ref: 'news.ycombinator.com'}, last: {ref: 'news.ycombinator.com'}});
+visit('', 'https://www.google.com/');          out.g = JSON.parse(localStorage.getItem('cr_attr_v1'));
 out.payload = T.attributionPayload();
 console.log(JSON.stringify(out));
 """
@@ -415,4 +433,138 @@ def test_client_counts_only_real_touches_replaces_last_and_sets_first_once(tmp_p
     assert out["c"]["first"]["utm_source"] == "youtube", "first is set once"
     assert out["d"] == out["c"], "our own domain is not an external referrer"
     assert out["e"]["last"] == {**out["e"]["last"], "fbclid": "abc"} and "utm_source" not in out["e"]["last"]
-    assert out["payload"]["v"] == 2 and out["payload"]["first"]["utm_source"] == "youtube"
+    assert out["f"] == out["e"], "a referrer-only visit never replaces a tagged last touch"
+    assert out["g"]["last"]["ref"] == "www.google.com" and out["g"]["first"]["ref"] == "news.ycombinator.com",         "but it does replace an untagged one"
+    p = out["payload"]
+    assert p["first"]["ref"] == "news.ycombinator.com" and p["v"] == 2 and p["initial_ref"] == "news.ycombinator.com"
+
+
+# --- review fixes (PR #166) ----------------------------------------------------------------------------------------
+def test_flag_is_off_by_default_and_creates_nothing(env, monkeypatch):
+    monkeypatch.delenv("CR_ATTRIBUTION_ENABLED", raising=False)
+    attr._reset_for_tests()
+    assert attr.enabled() is False and attr.initialize() is False
+    res = env.client.get("/r/discord", follow_redirects=False)
+    q = {k: v[0] for k, v in parse_qs(urlparse(res.headers["location"]).query).items()}
+    assert q == {"utm_source": "discord", "utm_medium": "community", "utm_campaign": "cr_sales",
+                 "utm_content": "cr_discord", "utm_term": "discord"}, "seeded links work with the flag off"
+    assert env.client.get("/r/nope", follow_redirects=False).headers["location"] == "/"
+    assert env.client.get(f"/v/{VID}", follow_redirects=False).status_code == 302
+    _login(env, ADMIN)
+    assert env.client.get("/api/admin/sales/attribution").status_code == 503
+    code = db.create_verify_code("off@example.com")
+    assert env.client.post("/api/auth/verify", json={"email": "off@example.com", "code": code,
+                                                     "attribution": {"utm_source": "youtube"}}).status_code == 200
+    assert _attr_tables() == set(), "no attribution table is created while the flag is off"
+    assert not (_user_cols() & {"first_touch_json", "last_touch_json", "first_touch_at"})
+
+
+def test_a_later_discord_click_does_not_steal_renewal_or_refund_credit(env):
+    user = _paying_user(env)                                         # came from the video
+    _hook(env, _checkout_event(user["id"]))
+    env.client.get("/r/discord", follow_redirects=False)
+    attr.record_touches(user["id"], {"last": {"utm_source": "discord", "utm_medium": "community",
+                                              "utm_campaign": "cr_sales", "utm_content": "cr_discord",
+                                              "utm_term": "discord"}})  # they later signed in from the Discord link
+    assert attr.touch_key(attr.get_touches(user["id"])[1]) == "code:discord"
+    _hook(env, _invoice_event("evt_r1", "in_2"))
+    _hook(env, {"id": "evt_ref", "type": "charge.refunded", "created": 1762700000, "data": {"object": {
+        "id": "ch_unknown", "customer": "cus_test", "amount_refunded": 4900, "currency": "usd"}}})
+    rows = _sales()
+    assert [r["kind"] for r in rows] == ["first_payment", "renewal", "refund"]
+    for r in rows:
+        assert r["lt_key"] == f"vid:{VID}" and r["ft_vid"] == VID, r
+
+
+def test_refunds_link_by_charge_or_payment_intent_on_basil_payloads(env):
+    user = _paying_user(env)
+    _hook(env, _checkout_event(user["id"]))                          # the checkout session carries no charge id
+    create = _invoice_event("evt_create", "in_1", reason="subscription_create")
+    create["data"]["object"]["payments"] = {"data": [{"payment": {"type": "payment_intent",
+                                                                  "payment_intent": "pi_1", "charge": "ch_1"}}]}
+    _hook(env, create)
+    first = _sales()[0]
+    assert (first["charge_id"], first["payment_intent"], first["invoice_id"]) == ("ch_1", "pi_1", "in_1")
+    renewal = _invoice_event("evt_r", "in_2")
+    renewal["data"]["object"]["payments"] = {"data": [{"payment": {"payment_intent": "pi_2"}}]}
+    _hook(env, renewal)
+    db.update_user(user["id"], stripe_customer_id="cus_changed")      # only the payment ids can link it now
+    _hook(env, {"id": "evt_ref", "type": "charge.refunded", "data": {"object": {   # Basil: no charge.invoice
+        "id": "ch_2", "payment_intent": "pi_2", "customer": "cus_test", "amount_refunded": 900}}})
+    refund = _sales()[-1]
+    assert refund["kind"] == "refund" and refund["user_id"] == user["id"] and refund["invoice_id"] == "in_2"
+    assert refund["payment_intent"] == "pi_2" and refund["lt_key"] == f"vid:{VID}"
+
+
+def test_invoice_first_then_checkout_records_the_payment_once(env):
+    user = _paying_user(env)
+    create = _invoice_event("evt_create", "in_1", reason="subscription_create")
+    create["data"]["object"]["charge"] = "ch_1"
+    _hook(env, create)
+    _hook(env, _checkout_event(user["id"]))
+    rows = _sales()
+    assert len(rows) == 1 and rows[0]["kind"] == "first_payment" and rows[0]["charge_id"] == "ch_1"
+
+
+def test_topups_are_reported_apart_from_subscription_revenue(env):
+    user = _paying_user(env)
+    _hook(env, {**_checkout_event(user["id"]), "created": __import__("time").time()})
+    top = {"id": "evt_top", "type": "checkout.session.completed", "created": __import__("time").time(),
+           "data": {"object": {"id": "cs_t", "mode": "payment", "amount_total": 1500, "currency": "usd",
+                               "payment_intent": "pi_t", "metadata": {"user_id": str(user["id"]), "topup_credits": "5"}}}}
+    db.update_user(user["id"], plan="daily")
+    _hook(env, top)
+    assert _sales()[-1]["payment_intent"] == "pi_t"
+    rep = attr.report(model="last")
+    row = next(r for r in rep["rows"] if r["key"] == f"vid:{VID}")
+    assert row["revenue_cents"] == 4900 and row["topup_cents"] == 1500 and row["net_revenue_cents"] == 6400
+    assert "topup_cents" in attr.CSV_COLUMNS
+
+
+def test_seeds_update_their_fields_but_keep_active(env):
+    attr.initialize()
+    with db._conn() as conn:
+        conn.execute("UPDATE link_codes SET active = 0, utm_content = 'stale', label = 'old' WHERE code = 'ig-abby'")
+    attr._reset_for_tests()
+    assert attr.initialize()
+    with db._conn() as conn:
+        rows = {dict(r)["code"]: dict(r) for r in conn.execute("SELECT * FROM link_codes").fetchall()}
+    abby = rows["ig-abby"]
+    assert abby["active"] == 0 and abby["utm_content"] == "abby.d_abby"
+    assert abby["label"] == "Instagram: abby.d_abby (Kevis)"
+    assert all(r["utm_campaign"] == "cr_sales" and r["utm_term"] == c for c, r in rows.items())
+    assert (rows["fb-jesse"]["utm_source"], rows["fb-jesse"]["utm_content"]) == ("facebook", "jesse_fb_autopost")
+    assert rows["x-kevis"]["utm_content"] == "kevisunfiltered" and rows["tt-glintverse"]["utm_content"] == "glintverse"
+
+
+def test_an_eleven_character_content_that_is_not_from_a_video_link_is_not_a_video():
+    assert attr.touch_vid({"utm_source": "youtube", "utm_medium": "social", "utm_content": "abby.d_abby"}) == ""
+    assert attr.touch_vid({"utm_source": "instagram", "utm_medium": "social", "utm_content": "dQw4w9WgXcQ"}) == ""
+    assert attr.touch_vid(YT_TOUCH) == VID
+
+
+def test_sign_in_identify_has_no_initial_props_and_works_without_client_identify(env, monkeypatch):
+    calls = {"set": [], "set_once": []}
+
+    class PH7:                                                   # posthog>=6: no identify(), only set / set_once
+        def set(self, **kw): calls["set"].append(kw)
+        def set_once(self, **kw): calls["set_once"].append(kw)
+        def capture(self, *a, **kw): pass
+    monkeypatch.setattr(env.server, "_posthog", PH7())
+    code = db.create_verify_code("ph@example.com")
+    res = env.client.post("/api/auth/verify", json={"email": "ph@example.com", "code": code, "attribution": {
+        "utm_source": "x", **{f"initial_{k}": v for k, v in YT_TOUCH.items()}}})
+    assert res.status_code == 200
+    person = calls["set"][0]["properties"]
+    assert person["email"] == "ph@example.com" and person["utm_source"] == "x"
+    assert not any(k.startswith("initial_") for k in person), "initial_* only ever go through $set_once"
+    assert calls["set_once"][0]["properties"]["initial_utm_content"] == VID
+
+
+def test_payload_shape_from_the_new_sign_in_callers_keeps_signup_analytics(env):
+    code = db.create_verify_code("payload@example.com")
+    body = {"utm_source": "youtube", "initial_utm_source": "youtube", "v": 2, "first": YT_TOUCH, "last": YT_TOUCH}
+    res = env.client.post("/api/auth/verify", json={"email": "payload@example.com", "code": code, "attribution": body})
+    assert res.status_code == 200
+    assert env.events[-1][1] == "signup_completed" and env.events[-1][2]["utm_source"] == "youtube"
+    assert attr.touch_vid(attr.get_touches(res.json()["user"]["id"])[0]) == VID
