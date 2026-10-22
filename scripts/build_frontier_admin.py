@@ -42,6 +42,14 @@ def runtime_resources(root: Path):
         if hand.is_symlink() or not hand.is_file() or hand.stat().st_size > 2 * 1024 * 1024:
             raise ValueError("The drawing hand must be a small ordinary picture.")
         yield hand, "drawon_art/hand.png"
+    skills = runtime / "claude_skills"                   # Claude Code skills for this folder (/make-videos and co)
+    if skills.exists():
+        if skills.is_symlink() or not skills.is_dir():
+            raise ValueError("Claude Code skills must be an owned directory.")
+        for path in sorted(skills.glob("*/SKILL.md")):
+            if path.is_symlink() or path.parent.is_symlink() or not path.is_file():
+                raise ValueError("Claude Code skills must be ordinary owned files.")
+            yield path, ".claude/skills/" + path.parent.name + "/SKILL.md"
     art = runtime / "workspace_art"
     if art.exists():
         if art.is_symlink() or not art.is_dir():

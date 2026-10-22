@@ -1468,6 +1468,8 @@ def create_app():
     cr_style_options.install(studio)
     cr_cloud.install(HOME)                                       # the farm on ChannelRecipe's machines, when the account has it
     cr_cloud.install_routes(studio, token, HOME)                 # the workspace's "Studio Cloud" choice
+    import cr_claude_code
+    cr_claude_code.install(studio, token, HOME)                  # Claude Code's style gallery and the studio tools' routes
 
     @studio.app.get("/cr-cloud")
     def cloud_status():
@@ -1626,6 +1628,12 @@ def main():
         pass
     studio = create_app()
     studio.OUT.mkdir(exist_ok=True)
+    try:
+        import cr_claude_code
+        cr_claude_code.configure(HOME)                           # Claude Code in this folder: the studio tools
+        studio._cr_watcher.start()                               # a desktop notification when a video is done
+    except Exception:
+        pass
     studio._ensure_dispatcher()
     studio.timeline.start_worker(busy=studio._cr_activity.rendering,
                                 on_idle=lambda job: studio._enqueue_tl_render(Path(job), Path(job).name))
