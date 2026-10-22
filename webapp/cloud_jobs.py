@@ -42,6 +42,7 @@ from webapp import database as db
 
 # What a customer pays per machine-minute, in cents. Modal's list prices (2026-10-22): the CPU machine
 # (8 physical cores, 32 GiB) costs about $0.63/h and the GPU machine (L4 + 4 cores, 16 GiB) about $1.12/h.
+# The GPU machine (L4 + 8 cores, 32 GiB) costs about $1.43/h.
 # Measured 2026-10-22: a 1-minute Documentary took 17.3 machine-minutes end to end (the engine's README measured a
 # 10-minute one at 27 minutes on a similar machine), so most of a short video's time is fixed work.
 MACHINES = {

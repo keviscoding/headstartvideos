@@ -580,7 +580,7 @@
   function cloudBlock() {
     const r=state.selected||{}, f=featureValues();
     if(/^cr[-_]/.test(r.name||''))return 'This recipe renders on this computer for now.';
-    if(r.name==='folio'||f.threed)return '3D scenes and FOLIO render on this computer for now.';
+    if(r.name==='folio')return 'FOLIO renders on this computer: every shot is drawn by your Claude Code.';
     if(state.narration==='own')return 'Your own recording renders on this computer.';
     return '';
   }
@@ -588,7 +588,8 @@
     const info=state.cloudInfo, box=$('crw-cloud-choice'); if(!box)return;
     box.hidden=!info?.available; if(!info?.available){state.renderOn='local';return;}
     if(!state.selected)return;
-    const why=cloudBlock(), rate=(info.machines?.cpu?.price_per_hr||1.2).toFixed(2), balance=(info.balance_usd||0).toFixed(2);
+    const gpu=!!featureValues().threed, m=(gpu?info.machines?.gpu:info.machines?.cpu)||{};
+    const why=cloudBlock(), rate=(m.price_per_hr||(gpu?2.4:1.2)).toFixed(2), balance=(info.balance_usd||0).toFixed(2);
     box.querySelector('[data-render-on="cloud"]').disabled=!!why; if(why)state.renderOn='local';
     chooseGroup('[data-render-on]','renderOn',state.renderOn||'local');
     // When the cloud is the better choice, say so: this computer is already making a video, or a long one would tie it up.
@@ -598,7 +599,7 @@
       : '';
     box.classList.toggle('is-suggested', !!suggest);
     text('crw-cloud-note', why || (state.renderOn==='cloud'
-      ? `The script, voice and pictures are made here with your Claude Code, and YouTube clips come down on your own connection; a ChannelRecipe machine does the heavy rendering at $${rate} an hour (a 10-minute video is usually under $1). It reserves its most before it starts; you pay only what it used. Balance: $${balance}. Keep Studio open while it renders.`
+      ? `The script, voice and pictures are made here with your Claude Code, and YouTube clips come down on your own connection; a ChannelRecipe machine${gpu?' with a graphics card renders the 3D scenes and':''} does the heavy rendering at $${rate} an hour${gpu?'':' (a 10-minute video is usually under $1)'}. It reserves its most before it starts; you pay only what it used. Balance: $${balance}. Keep Studio open while it renders.`
       : `${suggest}Or render on a ChannelRecipe machine at about $${rate} an hour and keep your computer free. Balance: $${balance}.`));
   }
   async function refreshCloud() {

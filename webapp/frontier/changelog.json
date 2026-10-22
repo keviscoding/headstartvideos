@@ -1,5 +1,13 @@
 [
   {
+    "build": 81,
+    "date": "2026-10-22",
+    "title": "Studio Cloud renders 3D videos on a graphics card",
+    "items": [
+      "In testing with the ChannelRecipe team: 3D videos can now render on Studio Cloud. Their 3D scenes render on a cloud machine with an NVIDIA graphics card, the rest of the video the same way as any cloud render."
+    ]
+  },
+  {
     "build": 80,
     "date": "2026-10-22",
     "title": "Studio Cloud renders the way your Studio does",

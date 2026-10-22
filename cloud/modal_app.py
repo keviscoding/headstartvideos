@@ -123,6 +123,18 @@ def _fetch_code(url: str, release: Path | None = None) -> None:
     raise RuntimeError(f"could not fetch the Studio code: {type(last).__name__}")
 
 
+def _gpu_chromium() -> str:
+    """Chromium as the 3D engine should launch it here: on the NVIDIA L4 through ANGLE's Vulkan backend (measured
+    2026-10-21: real WebGL, about 10x faster than the CPU renderer). The engine passes its own flags on top."""
+    found = sorted(Path("/opt/pw").glob("chromium-*/chrome-linux*/chrome"))
+    if not found:
+        return ""
+    wrapper = Path("/tmp/cr-chromium-gpu")
+    wrapper.write_text(f"#!/bin/sh\nexec {found[-1]} {GPU_CHROMIUM} \"$@\"\n")
+    wrapper.chmod(0o755)
+    return str(wrapper)
+
+
 def _run(job_id: str, env: dict, max_seconds: int, gpu: bool) -> dict:
     t0 = time.time()
     try:
@@ -143,6 +155,9 @@ def _run(job_id: str, env: dict, max_seconds: int, gpu: bool) -> dict:
     if gpu:
         run_env.setdefault("F3D_CHROMIUM_ARGS", GPU_CHROMIUM)
         run_env.setdefault("NVIDIA_DRIVER_CAPABILITIES", "all")
+        chromium = _gpu_chromium()
+        if chromium:
+            run_env["F3D_CHROMIUM"] = chromium      # the 3D engine's render.py launches this Chromium
     left = max(60, int(max_seconds - (time.time() - t0)))
     _say(f"job {job_id}: rendering, limit {left // 60} min")
     try:
@@ -161,7 +176,7 @@ def render_cpu(job_id: str, env: dict, max_seconds: int) -> dict:
     return _run(job_id, env, max_seconds, gpu=False)
 
 
-@app.function(gpu="L4", cpu=4, memory=16384, timeout=FOUR_HOURS, max_containers=10, volumes={"/releases": releases})
+@app.function(gpu="L4", cpu=8, memory=32768, timeout=FOUR_HOURS, max_containers=10, volumes={"/releases": releases})
 def render_gpu(job_id: str, env: dict, max_seconds: int) -> dict:
     return _run(job_id, env, max_seconds, gpu=True)
 
