@@ -347,7 +347,7 @@ def test_video(spec) -> dict:
     room = "designed_room" if "designed_room" in s["sets"] else s["sets"][0]
     out = "designed_track" if "designed_track" in s["sets"] else "designed_park"
     return {"cast": defs, "scenes": [
-        {"id": "talk", "dur": 3, "look": dict(look, time="noon"), "world": {"biome": room, "furnish": "living"},
+        {"id": "talk", "dur": 3, "look": dict(look, time="morning"), "world": {"biome": room, "furnish": "living"},
          "cast": [{"ref": "a", "at": [-0.6, 0.2], "heading": 120, "action": "speak", "face": "smile"},
                   {"ref": "b", "at": [0.7, -0.3], "heading": 290, "action": "watch", "face": "happy"}],
          "camera": keys([0.4, 1.45, 2.8], [0.1, 1.45, 2.7], [0.0, 1.15, -0.1])},
@@ -355,6 +355,6 @@ def test_video(spec) -> dict:
          "cast": [{"ref": "a", "at": [-6, 0], "heading": 90, "action": "run", "face": "determined", "path": [[-6, 0], [30, 0]]}],
          "camera": {"move": "follow", "target": "ref:a", "side": "left", "speed": "medium"}},
         {"id": "react", "dur": 3, "look": look, "world": {"biome": "designed_park"},
-         "cast": [{"ref": "a", "at": [0, 0], "heading": 175, "action": "watch", "face": "shocked"}],
-         "camera": keys([0.35, 1.32, 1.7], [0.15, 1.32, 1.55], [0, 1.3, 0])},
+         "cast": [{"ref": "a", "at": [0, 0], "heading": 175, "action": "watch", "face": "surprised"}],
+         "camera": keys([0.55, 1.3, 2.4], [0.2, 1.3, 2.1], [0, 1.2, 0])},
     ]}
