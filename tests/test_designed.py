@@ -1,4 +1,4 @@
-"""Designed 3D (local_runtime/cr_designed.py, Studio 78): a channel whose designed cast the 3D engine builds itself.
+"""Designed 3D (local_runtime/cr_designed.py, Studio 79): a channel whose designed cast the 3D engine builds itself.
 @ifologyfilms was cloned onto faceless mannequins, then drawn as pictures; now its ball-headed cast is rebuilt in 3D
 from a cast spec. Pure data: no model, no network, no renderer."""
 import json

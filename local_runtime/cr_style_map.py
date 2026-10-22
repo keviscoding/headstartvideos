@@ -20,7 +20,7 @@ import copy
 import re
 
 SCHEMA = 1
-ROUTER = 78          # how 3D is routed (73: Gemini judges the faces; 75: the creator is asked; 78: a designed cast is built in 3D); older saved plans are made again
+ROUTER = 79          # how 3D is routed (73: Gemini judges the faces; 75: the creator is asked; 79: a designed cast is built in 3D); older saved plans are made again
 # How a channel's 3D is made is asked of the creator (Studio's guess first): the answer decides how the videos are made,
 # and a medium Studio can't make yet is said before anything is paid, never swapped in silently (an @ifologyfilms clone
 # drew stills of characters the channel animates in 3D, and was called fixed).
@@ -646,7 +646,7 @@ def threed_rebuildable(profile) -> tuple:
 
 
 def designed_3d(profile) -> float:
-    """The share of the references' 3D whose designed cast Studio's 3D engine builds itself (Studio 78: the
+    """The share of the references' 3D whose designed cast Studio's 3D engine builds itself (Studio 79: the
     designed-cast kit, ball heads on stick limbs), 0 otherwise. Once plan_style has decided (profile["_designed_3d"]),
     that decision stands."""
     if "_designed_3d" in profile:

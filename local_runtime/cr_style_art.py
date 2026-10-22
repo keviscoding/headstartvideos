@@ -83,7 +83,7 @@ character of every story must be drawn that same way. That design language is th
 full (only never a name, a logo or one character's signature item).
 """
 
-# A designed cast Studio's 3D engine builds itself (cr_style_map.route "designed", Studio 78): the art director's eyes
+# A designed cast Studio's 3D engine builds itself (cr_style_map.route "designed", Studio 79): the art director's eyes
 # measure the channel's characters into the cast spec the engine builds from (cr_designed), in the same call.
 ROUTE_DESIGNED = """HOW THESE PICTURES ARE MADE: the references are 3D renders of a DESIGNED cast, and Studio's own 3D engine rebuilds
 that cast and its kind of sets in real 3D, then animates it (characters walk, run and act; faces change expression). The

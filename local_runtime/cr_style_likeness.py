@@ -14,7 +14,7 @@ verdict is saved with the style and shown to the creator, plainly, whatever it i
 A held-out reference frame goes in with the candidates as a hidden control: when the channel's own frame doesn't
 score well, the judge didn't understand the references, and the verdict says it can't be trusted.
 
-Only styles that draw their pictures are checked (an image model and picture words), and since Studio 78 styles whose
+Only styles that draw their pictures are checked (an image model and picture words), and since Studio 79 styles whose
 designed cast the 3D engine builds (look.threed.preset "designed"): their three test shots are RENDERED by the engine
 from the style's cast spec (no picture is paid for; one round, since the judge's prompt fixes can't change code). A
 style that films its pictures, or whose videos are graphics only, is skipped with its reason. It runs after the style is saved, within a few

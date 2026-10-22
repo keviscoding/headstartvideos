@@ -105,7 +105,7 @@ def test_a_studio_colour_recipe_paints_in_its_own_palette_unless_the_creator_cho
 
 
 def test_a_designed_video_carries_the_channels_cast_into_every_scene(tmp_path, monkeypatch):
-    """Studio 78: a recipe in the designed look (look.threed.designed) stamps every video.json the engine renders, and
+    """Studio 79: a recipe in the designed look (look.threed.designed) stamps every video.json the engine renders, and
     the director's creative direction names the channel's cast; any other look is untouched."""
     mod = types.ModuleType("threed")
     mod.SB = types.SimpleNamespace(PRESETS=["documentary", "designed"], look_id=lambda p: p if p in ("designed",) else "")

@@ -588,7 +588,7 @@ def test_the_studio_installs_yt_dlp_with_browser_impersonation_for_tiktok():
 
 
 def test_the_designed_cast_kit_reaches_the_engine_and_the_director():
-    """Studio 78: the designed-cast kit (threed/engine/lib/designed) is loaded with the engine's libraries, its look
+    """Studio 79: the designed-cast kit (threed/engine/lib/designed) is loaded with the engine's libraries, its look
     preset joins the presets, a scene may carry the channel's archetype, and the director knows the look."""
     registry = package.patch_engine("threed/engine/core/registry.js",
                                     b"const LIBS = [['nature', '../lib/nature/index.js'], ['v3', '../lib/v3/index.js']];\n").decode()

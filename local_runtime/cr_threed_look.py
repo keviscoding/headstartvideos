@@ -2,7 +2,7 @@
 (the clean studio models painted in the creator's palette) or colour film.
 
 A recipe's 3D look is its look.threed.preset (white_studio for the clean 3D reconstruction channels; designed for a
-channel whose designed cast the engine builds itself, from the cast spec look.threed.designed: Studio 78). In Create the
+channel whose designed cast the engine builds itself, from the cast spec look.threed.designed: Studio 79). In Create the
 creator may choose another for one video (run_spec cr_threed_look); a colour palette always comes with the colour look,
 so its colours show. The engine reads a video's 3D settings without knowing the job, so the job is remembered while
 its 3D is made and the choice applied whenever the settings are read.

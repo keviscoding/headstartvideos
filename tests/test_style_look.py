@@ -221,7 +221,7 @@ def test_a_3d_channel_is_asked_how_its_3d_is_made_and_a_medium_studio_cant_make_
     path.write_text(json.dumps(saved))
     built = look.status(home, done["look_id"])["mapping"]
     assert built["route"]["engine"] == "designed" and "medium_gap" not in built["route"], \
-        "Studio 78 builds ball-headed casts in 3D: nothing to accept"
+        "Studio 79 builds ball-headed casts in 3D: nothing to accept"
     payload = {"preview_id": "pv_" + "a" * 64, "reference_ids": [VIDEO], "base_style": "stories", "label": "Mine",
                "title": "A video", "acknowledge_costs": True, "look_id": done["look_id"], "answers": {},
                "visual_mode": "mixed"}
@@ -506,7 +506,7 @@ def test_a_3d_look_saved_before_gemini_judged_its_faces_is_watched_again_and_eve
 
 
 def test_the_art_director_measures_a_designed_cast_into_the_3d_engines_cast_spec():
-    """Studio 78: on the designed route the art director's same call returns the cast spec the engine builds the
+    """Studio 79: on the designed route the art director's same call returns the cast spec the engine builds the
     channel's people from (checked value by value), and it lands in look.threed.designed."""
     mapping = {"settings": [], "route": {"engine": "designed", "why": "ball heads"}}
     text = art.prompt({"recognisable": []}, mapping, title="What if", brief="", base="3d", excerpt="")
