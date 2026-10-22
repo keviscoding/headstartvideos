@@ -71,3 +71,5 @@ button.crw-inline-link{background:none;border:0;padding:0;color:var(--crw-violet
 .crw-held-notice{border-color:#8A6A2E;background:#2B2417;color:#EBDDBE}
 .crw-held-notice strong{color:#FFF1D2}
 .crw-held-notice .crw-held-actions{display:flex;gap:8px;flex-wrap:wrap;width:100%;margin-top:6px}
+.crw-cloud-choice{margin-top:16px}.crw-cloud-choice .crw-segmented{margin-top:7px}.crw-cloud-choice .crw-segmented button[disabled]{opacity:.45;cursor:not-allowed}.crw-cloud-panel{margin-bottom:18px}.crw-cloud-videos{display:grid;gap:8px;margin-top:10px}.crw-cloud-video{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--crw-line);border-radius:8px}.crw-cloud-video strong{flex:1;min-width:160px;font-size:14px}.crw-cloud-video .crw-secondary-button{font-size:12px;min-height:34px;padding:7px 11px}
+.crw-cloud-choice.is-suggested [data-render-on=cloud]{box-shadow:0 0 0 1px #A594FF inset;color:var(--crw-ink)}

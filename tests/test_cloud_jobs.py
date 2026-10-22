@@ -75,8 +75,8 @@ def _env(**extra):
 
 def test_a_quote_says_what_it_usually_costs_and_the_most_it_can(cloud):
     q = cj.quote(10, "cpu")
-    assert q["expected_minutes"] == 36 and q["expected_cents"] == 72
-    assert q["max_minutes"] == 82 and q["max_cents"] == 164, "the reservation covers twice the usual time"
+    assert q["expected_minutes"] == 37 and q["expected_cents"] == 74
+    assert q["max_minutes"] == 84 and q["max_cents"] == 168, "the reservation covers twice the usual time"
     assert cj.quote(500, "cpu")["max_minutes"] == cj.MAX_MINUTES
     with pytest.raises(HTTPException):
         cj.quote(10, "tpu")
@@ -86,14 +86,14 @@ def test_nothing_starts_when_the_balance_cannot_cover_the_most_it_can_cost(cloud
     cw.credit_topup(7, 100, ref="cs_1")
     with pytest.raises(HTTPException) as e:
         cj.start_job(USER, "cpu", 10, _env())
-    assert e.value.status_code == 402 and "$1.64" in e.value.detail and "Nothing was charged" in e.value.detail
+    assert e.value.status_code == 402 and "$1.68" in e.value.detail and "Nothing was charged" in e.value.detail
     assert cw.balance_cents(7) == 100 and not [c for c in cloud.calls if c[0] == "/spawn"]
 
 
 def test_a_job_reserves_starts_and_settles_only_the_time_it_ran(cloud, monkeypatch):
     cw.credit_topup(7, 1000, ref="cs_1")
     job = cj.start_job(USER, "cpu", 10, _env(), "a", "A video")
-    assert job["status"] == "running" and cw.balance_cents(7) == 1000 - 164
+    assert job["status"] == "running" and cw.balance_cents(7) == 1000 - 168
     spawn = next(body for path, body in cloud.calls if path == "/spawn")
     env = spawn["env"]
     assert env["WAVESPEED_API_KEY"] == "ws-key", "the creator's render keys go to the machine"
@@ -101,8 +101,8 @@ def test_a_job_reserves_starts_and_settles_only_the_time_it_ran(cloud, monkeypat
         assert gone not in env
     assert env["CLAUDE_RELAY"] == "openlux" and env["OPENLUX_API_KEY"].startswith("crj_"), \
         "Claude goes to the relay, with the job's own token instead of the creator's OpenLux key"
-    assert env["OPENLUX_API_KEY"] == env["FARM_JOB_TOKEN"] and env["FARM_MAX_MINUTES"] == "82"
-    assert spawn["max_seconds"] == 82 * 60
+    assert env["OPENLUX_API_KEY"] == env["FARM_JOB_TOKEN"] and env["FARM_MAX_MINUTES"] == "84"
+    assert spawn["max_seconds"] == 84 * 60
 
     row = cj._job(job["id"])
     monkeypatch.setattr(cj.time, "time", lambda: row["started_at"] + 1800)
@@ -222,3 +222,58 @@ def test_only_the_team_can_add_balance(cloud, monkeypatch):
     assert client.post("/api/studio/cloud/admin/credit", json={"email": "flor@example.test", "usd": 500}).status_code == 400
     monkeypatch.setattr(frontier_studio, "is_admin", lambda user: False)
     assert client.post("/api/studio/cloud/admin/credit", json={"email": "flor@example.test", "usd": 5}).status_code == 403
+
+
+
+def test_a_machine_stopped_right_after_finishing_is_done_not_cancelled(cloud, monkeypatch):
+    monkeypatch.setenv("CR_CLOUD_SWEEP", "0")
+    cw.credit_topup(7, 1000, ref="cs_1")
+    job = cj.start_job(USER, "cpu", 1, _env())
+    cloud.state = {"state": "done", "result": {"ok": True, "seconds": 1038}}
+    row = cj._job(job["id"])
+    monkeypatch.setattr(cj.time, "time", lambda: row["started_at"] + 1080)
+    r = _app().delete(f"/api/studio/cloud/jobs/{job['id']}")
+    assert r.json()["status"] == "done" and r.json()["charged_usd"] == 0.35
+    assert ("/cancel", {"call_id": "fc-1"}) not in cloud.calls, "nothing left to stop"
+
+
+def test_a_studio_that_sends_only_its_own_files_gets_its_release_to_start_from(cloud, monkeypatch):
+    from webapp import frontier_studio
+    monkeypatch.setattr(frontier_studio, "APPROVED_RELEASES", ("5.3-admin.77", "5.3-admin.78"))
+    cw.credit_topup(7, 1000, ref="cs_1")
+    overlay = "https://media.sfo3.digitaloceanspaces.com/studio-cloud/u7/code/overlay-5.3-admin.78-abc.zip?sig=1"
+    cj.start_job(USER, "cpu", 1, _env(FARM_CODE_URL=overlay, CR_STUDIO_VERSION="5.3-admin.78", CR_CODE_KIND="overlay"))
+    env = [b for p, b in cloud.calls if p == "/spawn"][-1]["env"]
+    assert "private/frontier/channelrecipe-5.3-admin.78.zip" in env["FARM_RELEASE_URL"]
+    with pytest.raises(HTTPException) as e:
+        cj.start_job(USER, "cpu", 1, _env(FARM_CODE_URL=overlay, CR_STUDIO_VERSION="5.3-admin.999", CR_CODE_KIND="overlay"))
+    assert e.value.status_code == 400 and "Update Studio" in e.value.detail
+    cj.start_job(USER, "cpu", 1, _env(FARM_RELEASE_URL="https://evil.example/x.zip"))
+    assert "FARM_RELEASE_URL" not in [b for p, b in cloud.calls if p == "/spawn"][-1]["env"], \
+        "a release link only ever comes from the server"
+
+
+def test_a_machines_youtube_download_goes_to_the_creators_studio(cloud, monkeypatch):
+    monkeypatch.setenv("CR_CLOUD_SWEEP", "0")
+    cw.credit_topup(7, 1000, ref="cs_1")
+    cj.start_job(USER, "cpu", 1, _env())
+    token = [b for p, b in cloud.calls if p == "/spawn"][-1]["env"]["FARM_JOB_TOKEN"]
+    import threading
+    import time as _time
+
+    def studio():
+        for _ in range(50):
+            q = cj.relay_next(7)
+            if q:
+                assert q["request"]["kind"] == "ytdlp" and q["request"]["argv"] == ["-j", "ytsearch2:eagle"]
+                cj.relay_answer(7, q["id"], json.dumps({"rc": 0, "stdout": "{}", "stderr": "", "files": []}))
+                return
+            _time.sleep(0.1)
+    t = threading.Thread(target=studio)
+    t.start()
+    r = _app().post("/api/studio/cloud/relay/ytdlp", headers={"x-api-key": token},
+                    json={"argv": ["-j", "ytsearch2:eagle"], "inputs": [], "prefix": "relay/0123456789abcdef"})
+    t.join()
+    assert r.status_code == 200 and r.json() == {"rc": 0, "stdout": "{}", "stderr": "", "files": []}
+    assert _app().post("/api/studio/cloud/relay/ytdlp", headers={"x-api-key": token},
+                       json={"argv": ["-j"], "prefix": "../u8"}).status_code == 400

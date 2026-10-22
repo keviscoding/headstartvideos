@@ -1,5 +1,15 @@
 [
   {
+    "build": 78,
+    "date": "2026-10-22",
+    "title": "Studio Cloud: choose where each video renders",
+    "items": [
+      "New, in testing with the ChannelRecipe team: under Create, choose This computer or Studio Cloud. With Studio Cloud the script, voice and pictures are still made here with your Claude Code, then a ChannelRecipe machine renders the video, paid from your Studio Cloud balance. Projects shows your cloud renders with Download and Save to Projects.",
+      "Studio Cloud starts from the official Studio release and uploads only your own files (your styles and edits), a few MB instead of the whole Studio.",
+      "YouTube footage for a cloud render is downloaded on your own connection, the same way as at home, and only the clips it needs travel to the cloud machine."
+    ]
+  },
+  {
     "build": 77,
     "date": "2026-10-22",
     "title": "Groundwork for rendering in the cloud",

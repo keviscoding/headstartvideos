@@ -279,6 +279,7 @@
     text('crw-readiness', message);
     const status = $('crw-connection'); status.querySelector('span:last-of-type').textContent = ready ? 'Accounts connected' : 'Accounts need attention';
     status.querySelector('.crw-status-dot').className = `crw-status-dot ${ready ? 'is-ready' : 'is-warning'}`;
+    cloudChoice();
   }
   function showPage(name, persist = true) {
     state.page = ['create','projects','styles'].includes(name) ? name : 'create';
@@ -287,7 +288,7 @@
     for (const button of all('.crw-nav [data-nav]')) {const active = button.dataset.nav === state.page; button.classList.toggle('is-active', active); active ? button.setAttribute('aria-current','page') : button.removeAttribute('aria-current');}
     text('crw-page-name', {create:'Create video',projects:'Your projects',styles:'Style library'}[state.page]);
     if (persist) history.replaceState(null,'',`${location.pathname}${location.search}#${state.page}`);
-    if (state.page === 'projects') renderProjects(); if (state.page === 'styles') renderStyles();
+    if (state.page === 'projects') {renderProjects(); cloudPanel();} if (state.page === 'styles') renderStyles();
     $('crw-main').focus({preventScroll:true});
   }
   function inspect(recipe, reveal = false) {
@@ -574,9 +575,65 @@
     const fit = Math.floor(a.remaining / (a.per_short?.high || 60));
     return confirm(`${titles.length} Ranking Shorts use about ${lo} to ${hi} clip watches, and you have ${a.remaining} left this month (about ${fit} Short${fit === 1 ? '' : 's'}). When they run out, the Shorts still waiting go on hold with nothing spent, and you can carry on next month or carry on using credits. Queue all ${titles.length}?`);
   }
+  // Studio Cloud: the engine's own recipes can render on a ChannelRecipe machine instead of this computer, paid from
+  // the account's cloud balance (ChannelRecipe's add-on recipes, 3D, FOLIO and your own recording stay here for now).
+  function cloudBlock() {
+    const r=state.selected||{}, f=featureValues();
+    if(/^cr[-_]/.test(r.name||''))return 'This recipe renders on this computer for now.';
+    if(r.name==='folio'||f.threed)return '3D scenes and FOLIO render on this computer for now.';
+    if(state.narration==='own')return 'Your own recording renders on this computer.';
+    return '';
+  }
+  function cloudChoice() {
+    const info=state.cloudInfo, box=$('crw-cloud-choice'); if(!box)return;
+    box.hidden=!info?.available; if(!info?.available){state.renderOn='local';return;}
+    if(!state.selected)return;
+    const why=cloudBlock(), rate=(info.machines?.cpu?.price_per_hr||1.2).toFixed(2), balance=(info.balance_usd||0).toFixed(2);
+    box.querySelector('[data-render-on="cloud"]').disabled=!!why; if(why)state.renderOn='local';
+    chooseGroup('[data-render-on]','renderOn',state.renderOn||'local');
+    // When the cloud is the better choice, say so: this computer is already making a video, or a long one would tie it up.
+    const minutes=number('crw-minutes',10,1,60), suggest=!why&&state.renderOn!=='cloud'
+      ? (state.busy?'Your computer is making another video. Studio Cloud can make this one at the same time. '
+        :minutes>=15?`A ${minutes}-minute video keeps this computer busy for a long time. Studio Cloud renders it while you keep working. `:'')
+      : '';
+    box.classList.toggle('is-suggested', !!suggest);
+    text('crw-cloud-note', why || (state.renderOn==='cloud'
+      ? `The script, voice and pictures are made here with your Claude Code, and YouTube clips come down on your own connection; a ChannelRecipe machine does the heavy rendering at $${rate} an hour (a 10-minute video is usually under $1). It reserves its most before it starts; you pay only what it used. Balance: $${balance}. Keep Studio open while it renders.`
+      : `${suggest}Or render on a ChannelRecipe machine at about $${rate} an hour and keep your computer free. Balance: $${balance}.`));
+  }
+  async function refreshCloud() {
+    try {state.cloudInfo=await api('/cr-cloud');} catch(_) {state.cloudInfo=null;}
+    cloudChoice(); if(state.page==='projects')cloudPanel();
+  }
+  async function cloudPanel() {
+    if(!state.cloudInfo?.available){hide('crw-cloud-panel',true);return;}
+    let d; try {d=await api('/cr-cloud/progress');} catch(_) {return;}
+    const working=['preparing','starting','rendering'].includes(d.state)||d.farm==='running';
+    hide('crw-cloud-panel', !(working||d.state==='failed'||(d.videos||[]).length));
+    text('crw-cloud-balance', d.balance_usd==null?'':`Balance $${Number(d.balance_usd).toFixed(2)}`);
+    text('crw-cloud-status', d.error?`${d.title?d.title+': ':''}${d.error}`:d.message?`${d.title?d.title+': ':''}${d.message}`:(d.videos||[]).length?'Finished cloud renders stay here until you delete them.':'');
+    text('crw-cloud-log', (d.lines||[]).join('\n'));
+    const list=$('crw-cloud-videos'); list.replaceChildren();
+    for(const v of d.videos||[]){
+      const row=el('div','crw-cloud-video'); row.append(el('strong','',v.title||v.slug));
+      if(v.video){const a=el('a','crw-primary-button','Download');a.href=`/api/farm/file/${encoded(v.slug)}/${encoded(v.video)}`;a.target='_blank';a.rel='noopener';row.append(a);}
+      const keep=el('button','crw-secondary-button','Save to Projects');keep.type='button';
+      keep.addEventListener('click',async()=>{keep.disabled=true;try{await api(`/api/farm/fetch/${encoded(v.slug)}`,{method:'POST'});toast('Saved on this computer with your other projects.');await refreshActivity(true);}catch(e){toast(e.message);}finally{keep.disabled=false;}});
+      const drop=el('button','crw-text-button','Delete from the cloud');drop.type='button';
+      drop.addEventListener('click',async()=>{if(!confirm('Delete this video from Studio Cloud? A copy saved to Projects stays.'))return;drop.disabled=true;try{await api(`/api/farm/forget/${encoded(v.slug)}`,{method:'POST'});cloudPanel();}catch(e){toast(e.message);drop.disabled=false;}});
+      row.append(keep,drop); list.append(row);
+    }
+    clearTimeout(cloudPanel.timer); if(working&&state.page==='projects')cloudPanel.timer=setTimeout(cloudPanel,10000);
+  }
   async function submit(event) {
     event.preventDefault(); if(state.submitting||state.busy)return;error(''); let p;
     try {p=payload();} catch(e){error(e.message);return;}
+    if(state.renderOn==='cloud'&&state.cloudInfo?.available&&!cloudBlock()){
+      state.submitting=true;gate();$('crw-create').textContent='Starting in the cloud…';
+      try {await api('/cr-cloud/start',{method:'POST',body:p});save();showPage('projects');toast('Studio is preparing your video here. A ChannelRecipe machine renders it next.');await cloudPanel();}
+      catch(e){error(e.message);} finally{state.submitting=false;$('crw-create').textContent='Create video';gate();}
+      return;
+    }
     state.submitting=true;gate();$('crw-create').textContent='Checking your video…';
     let ok=false;
     try {ok=await rankingBatchOk(p);} catch(_) {ok=true;}       // the run itself checks again
@@ -615,7 +672,7 @@
       const narration=setup.narration||{};text('crw-narration-name',narration.voice||'Your configured narrator');text('crw-narration-account',[narration.label||providerName(narration.provider),narration.model_label||friendlyModel(narration.model)].filter(Boolean).join(' · ')||'Uses the voice account selected in Accounts.');
       const initial=findRecipe(boot.preset?.style||draft.recipe)||findRecipe('documentary')||rows()[0]; if(!initial)throw new Error('No visual recipes are installed. Update this studio from your ChannelRecipe account.');
       if(boot.preset?.features)state.featureDrafts[initial.name]=boot.preset.features;
-      selectRecipe(initial,false);chooseGroup('[data-minutes]','minutes',$('crw-minutes').value);updateOptional();await refreshActivity(true);showPage(location.hash.slice(1)||'create',false);schedule();checkForUpdate();autoVerify();
+      selectRecipe(initial,false);chooseGroup('[data-minutes]','minutes',$('crw-minutes').value);updateOptional();await refreshActivity(true);showPage(location.hash.slice(1)||'create',false);schedule();checkForUpdate();autoVerify();refreshCloud();
     }catch(e){error(e.message);text('crw-readiness','The workspace could not finish loading. Keep the launcher open and refresh this page.');}
     finally{gate();}
   }
@@ -631,10 +688,11 @@
   for(const b of all('[data-project-filter]'))b.addEventListener('click',()=>{state.projectFilter=b.dataset.projectFilter;chooseGroup('[data-project-filter]','projectFilter',state.projectFilter);renderProjects();});
   for(const b of all('[data-family]'))b.addEventListener('click',()=>{state.family=b.dataset.family;chooseGroup('[data-family]','family',state.family);gallery();});
   $('crw-form').addEventListener('submit',submit);
+  for(const b of all('[data-render-on]'))b.addEventListener('click',()=>{if(b.disabled)return;state.renderOn=b.dataset.renderOn;cloudChoice();});
   $('crw-fast-install').addEventListener('click',async()=>{$('crw-fast-install').disabled=true;try{await api('/cr-renderer',{method:'POST',body:{action:'install'}});}catch(e){text('crw-fast-setup-status',e.message);}refreshFast();});
   refreshFast();
-  $('crw-form').addEventListener('input',()=>{updateOptional();summary();save();});
-  $('crw-form').addEventListener('change',()=>{updateOptional();summary();save();});
+  $('crw-form').addEventListener('input',()=>{updateOptional();summary();save();cloudChoice();});
+  $('crw-form').addEventListener('change',()=>{updateOptional();summary();save();cloudChoice();});
   $('crw-recipe-open').addEventListener('click',openGallery);$('crw-styles-browse').addEventListener('click',openGallery);
   $('crw-gallery-search').addEventListener('input',gallery);$('crw-gallery-close').addEventListener('click',()=>{$('crw-gallery').close();$('crw-recipe-open').focus();});
   $('crw-detail-use').addEventListener('click',()=>{if(state.inspected){selectRecipe(state.inspected);$('crw-gallery').close();showPage('create');$('crw-recipe-open').focus();}});

@@ -47,7 +47,8 @@ def workspace(browser):
     env = SimpleNamespace(mode="ready", creates=[], posts=[], errors=[], preview_gets=[], preview_cached=set(),
                           local_version="synthetic-studio", account=None, update_state={"state": "idle"}, voice="Kore",
                           preview_active=0, preview_max_active=0, preview_busy=0, preview_delay=0,
-                          finished_jobs=[{"slug": "finished-film", "title": "A finished film", "style": "documentary", "editable": True}])
+                          finished_jobs=[{"slug": "finished-film", "title": "A finished film", "style": "documentary", "editable": True}],
+                          cloud=None, cloud_starts=[])
     preview_lock = threading.Lock()
     image = io.BytesIO()
     Image.new("RGB", (160, 90), "#415573").save(image, "JPEG")
@@ -193,6 +194,21 @@ def workspace(browser):
         slug = "fresh-" + str(len(env.creates) + 1)
         env.creates.append({"slug": slug, "body": request.json})
         return jsonify(queued=[{"slug": slug, "title": request.json["title"]}])
+
+    @app.get("/cr-cloud")
+    def cloud():
+        return jsonify(env.cloud or {"available": False})
+
+    @app.post("/cr-cloud/start")
+    def cloud_start():
+        env.cloud_starts.append(request.json)
+        return jsonify(started=True), 202
+
+    @app.get("/cr-cloud/progress")
+    def cloud_progress():
+        return jsonify(state="preparing", title="Cloud film", message="Writing the script…", error="", balance_usd=9.5,
+                       lines=["queued"], farm="", videos=[{"slug": "done-film", "title": "Done film",
+                                                           "video": "Done film.mp4"}])
 
     @app.post("/cr-video/<slug>/cancel")
     def cancel(slug):
@@ -453,3 +469,34 @@ def test_the_tab_is_plain_when_nothing_is_running(workspace):
     workspace.open()
     assert workspace.page.title() == "ChannelRecipe · Studio"
     assert workspace.page.get_attribute("#crw-favicon", "href") == "/cr-workspace/icon.svg"
+
+
+def test_studio_cloud_renders_on_a_channelrecipe_machine_when_chosen(workspace):
+    env, page = workspace, workspace.page
+    env.open()
+    assert page.locator("#crw-cloud-choice").is_hidden(), "no Studio Cloud on the account: no choice to make"
+    env.cloud = {"available": True, "balance_usd": 10, "machines": {"cpu": {"price_per_hr": 1.2}}}
+    env.open()
+    page.wait_for_selector("#crw-cloud-choice:not([hidden])")
+    page.locator("[data-render-on=cloud]").click()
+    note = page.locator("#crw-cloud-note").inner_text()
+    assert "$1.20 an hour" in note and "Balance: $10.00" in note and "you pay only what it used" in note
+    page.locator("#crw-title").fill("Cloud film")
+    page.locator("#crw-create").click()
+    page.wait_for_function("window.CR_WORKSPACE_CLIENT.state.page==='projects'")
+    assert len(env.cloud_starts) == 1 and env.cloud_starts[0]["style"] == "documentary"
+    assert env.cloud_starts[0]["title"] == "Cloud film" and not env.creates, "it never also renders here"
+    page.wait_for_selector("#crw-cloud-panel:not([hidden])")
+    assert "Writing the script" in page.locator("#crw-cloud-status").inner_text()
+    assert page.locator("#crw-cloud-videos a").get_attribute("href") == "/api/farm/file/done-film/Done%20film.mp4"
+
+    page.locator(".crw-nav [data-nav=create]").click()
+    page.locator("[data-render-on=local]").click()
+    page.locator("[data-minutes='20']").click() if page.locator("[data-minutes='20']").count() else page.fill("#crw-minutes", "20")
+    page.evaluate("document.getElementById('crw-minutes').dispatchEvent(new Event('input',{bubbles:true}))")
+    assert "keeps this computer busy" in page.locator("#crw-cloud-note").inner_text(), "a long video: the cloud is suggested"
+
+    env.open("?cr-preset=3d")
+    page.wait_for_selector("#crw-cloud-choice:not([hidden])")
+    assert page.locator("[data-render-on=cloud]").is_disabled()
+    assert "3D scenes" in page.locator("#crw-cloud-note").inner_text()

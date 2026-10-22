@@ -1467,6 +1467,7 @@ def create_app():
     import cr_style_options
     cr_style_options.install(studio)
     cr_cloud.install(HOME)                                       # the farm on ChannelRecipe's machines, when the account has it
+    cr_cloud.install_routes(studio, token, HOME)                 # the workspace's "Studio Cloud" choice
 
     @studio.app.get("/cr-cloud")
     def cloud_status():
