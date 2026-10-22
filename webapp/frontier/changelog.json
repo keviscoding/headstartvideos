@@ -1,12 +1,20 @@
 [
   {
+    "build": 85,
+    "date": "2026-10-22",
+    "title": "Studio Cloud renders your cloned styles too",
+    "items": [
+      "In testing with the ChannelRecipe team: your cloned styles and ChannelRecipe's own recipes can now render on Studio Cloud, and come out the way they do here. Shorts and recaps made from your own panels still render on this computer."
+    ]
+  },
+  {
     "build": 84,
     "date": "2026-10-22",
     "title": "Make videos from Claude Code",
     "items": [
       "New: Claude Code in your Studio folder can now make your videos. Type /make-videos (or just ask): Claude shows a gallery of your styles to pick from, tells you what it costs on this computer or on Studio Cloud, and starts once you agree.",
-      "New: /clone-style clones a style from a YouTube channel, /cloud-batch makes up to 5 videos at once on Studio Cloud, and /my-videos shows what is being made and plays your finished videos.",
-      "New: a desktop notification when a video, a cloud render or a style study is done.",
+      "New: /clone-style clones a style from a YouTube channel. /cloud-batch makes up to 5 videos at once on Studio Cloud, and /my-videos shows what is being made and plays your finished videos.",
+      "New: a desktop notification when something is done. It covers videos, cloud renders and style studies.",
       "Claude Code always asks you before anything that spends money, and never reads your keys."
     ]
   },

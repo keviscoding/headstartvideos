@@ -579,7 +579,8 @@
   // the account's cloud balance (ChannelRecipe's add-on recipes, 3D, FOLIO and your own recording stay here for now).
   function cloudBlock() {
     const r=state.selected||{}, f=featureValues();
-    if(/^cr[-_]/.test(r.name||''))return 'This recipe renders on this computer for now.';
+    if(/^cr-shorts/.test(r.name||''))return 'Shorts render on this computer for now.';
+    if(r.name==='cr-manga-recaps'||r.panels)return 'Recaps made from your own panels render on this computer.';
     if(r.name==='folio')return 'FOLIO renders on this computer: every shot is drawn by your Claude Code.';
     if(state.narration==='own')return 'Your own recording renders on this computer.';
     return '';
