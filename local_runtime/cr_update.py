@@ -157,27 +157,41 @@ def download(base: str, key: str, target: Path, get=http_get, attempts: int = 6,
     """
     auth = {"Authorization": "Bearer " + key}
     sleep = sleep or time.sleep
+    site = base + path + "/file"                 # the same file streamed through ChannelRecipe itself
     try:
         first = get(base + path, auth)
         location = _signed_location(first)
         size = expected_sha = None
-        newer = False
+        newer = via_site = False
         target.unlink(missing_ok=True)
         for attempt in range(attempts):
             have = target.stat().st_size if target.exists() else 0
             if attempt:
                 sleep(min(20, 2 * attempt))
-                if location:
+                if location and not via_site:
                     location, newer = _fresh_link(lambda: _signed_location(get(base + path, auth)), location)
-            if location:
+            response = None
+            if location and not via_site:
                 try:
                     response = get(location, {"Range": "bytes=%d-" % have} if have else {})
                 except (HTTPError, URLError, OSError, http.client.HTTPException) as error:
-                    if attempt and newer and isinstance(error, HTTPError) and error.code in (400, 403):
-                        raise UpdateStopped(NEWER_RELEASE) from None
-                    if attempt + 1 == attempts or _certificate_problem(error):
+                    if _host_unreachable(error):
+                        via_site = True              # storage can't be reached from here: through ChannelRecipe
+                    else:
+                        if attempt and newer and isinstance(error, HTTPError) and error.code in (400, 403):
+                            raise UpdateStopped(NEWER_RELEASE) from None
+                        if attempt + 1 == attempts or _certificate_problem(error):
+                            raise
+                        continue                     # refused (an expired link) or dropped: a fresh link next time
+            if via_site:
+                try:
+                    response = get(site, {**auth, "Range": "bytes=%d-" % have} if have else auth)
+                except (HTTPError, URLError, OSError, http.client.HTTPException) as error:
+                    if (attempt + 1 == attempts or _certificate_problem(error)
+                            or isinstance(error, HTTPError) and error.code in (401, 402, 403, 404)):
                         raise
-                    continue                       # refused (an expired link) or dropped: a fresh link next time
+                    continue
+            if response is not None:
                 if have and size and _status(response) == 206 and _range_total(response) not in (None, size):
                     raise UpdateStopped(NEWER_RELEASE)
             else:
@@ -207,6 +221,15 @@ def download(base: str, key: str, target: Path, get=http_get, attempts: int = 6,
         if _certificate_problem(error):
             raise UpdateStopped(CERTIFICATE_HELP) from None
         raise UpdateStopped("The download was interrupted. Nothing was changed; check your connection and try again.") from None
+
+
+def _host_unreachable(error) -> bool:
+    """This computer can't reach the storage host at all (its internet provider can't look the name up, or refuses
+    the connection), as a creator's browser showed: DNS_PROBE_FINISHED_NXDOMAIN for the signed link's host."""
+    if isinstance(error, HTTPError):
+        return False
+    reason = getattr(error, "reason", error)
+    return isinstance(reason, (socket.gaierror, ConnectionRefusedError))
 
 
 NEWER_RELEASE = ("A newer Studio was published while this one downloaded. Nothing was changed; press Update again "
@@ -260,9 +283,9 @@ class _RangeReader(io.RawIOBase):
 
     TRIES = 5
 
-    def __init__(self, url, get, size, refresh=None, sleep=None):
+    def __init__(self, url, get, size, refresh=None, sleep=None, headers=None):
         super().__init__()
-        self.url, self.get, self.size, self.refresh = url, get, size, refresh
+        self.url, self.get, self.size, self.refresh, self.headers = url, get, size, refresh, dict(headers or {})
         self.sleep = sleep or (lambda seconds: time.sleep(seconds))
         self.newer = False
         self.pos, self.start, self.block, self.fetched = 0, -1, b"", 0
@@ -287,7 +310,7 @@ class _RangeReader(io.RawIOBase):
         end = min(self.size, self.pos + max(wanted, self.BLOCK)) - 1
         for attempt in range(self.TRIES):
             try:
-                response = self.get(self.url, {"Range": "bytes=%d-%d" % (self.pos, end)})
+                response = self.get(self.url, {**self.headers, "Range": "bytes=%d-%d" % (self.pos, end)})
                 if _status(response) != 206:
                     raise _NoRanges()                  # storage ignores ranges: the whole download instead
                 if _range_total(response) not in (None, self.size):
@@ -352,11 +375,19 @@ def stage_changes(home: Path, base: str, key: str, staging: Path, expected: str,
     location = _signed_location(first)
     if not location:
         raise _NoRanges()
-    probe = get(location, {"Range": "bytes=0-0"})
+    via = {}
+    try:
+        probe = get(location, {"Range": "bytes=0-0"})
+    except (URLError, OSError) as error:
+        if not _host_unreachable(error):
+            raise
+        location, via = base + "/api/studio/download/file", auth      # storage can't be reached: through ChannelRecipe
+        probe = get(location, {**via, "Range": "bytes=0-0"})
     total = int((probe.headers.get("Content-Range") or "").rpartition("/")[2] or 0) if _status(probe) == 206 else 0
     if not total:
         raise _NoRanges()
-    reader = _RangeReader(location, get, total, refresh=lambda: _signed_location(get(base + "/api/studio/download", auth)))
+    reader = _RangeReader(location, get, total, headers=via,
+                          refresh=None if via else lambda: _signed_location(get(base + "/api/studio/download", auth)))
     with zipfile.ZipFile(reader) as bundle:
         try:
             release = json.loads(bundle.read(TOP + "cr-release.json"))

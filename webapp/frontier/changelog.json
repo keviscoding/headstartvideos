@@ -1,5 +1,13 @@
 [
   {
+    "build": 76,
+    "date": "2026-10-22",
+    "title": "Downloads that work on every connection",
+    "items": [
+      "Fixed: Studio downloads on connections that can't reach our file storage. Some internet providers couldn't find our storage address, so the download page showed \"This site can't be reached\". The download now comes through channelrecipe.com, and updates and the Shorts pack switch to it automatically when needed."
+    ]
+  },
+  {
     "build": 75,
     "date": "2026-10-21",
     "title": "Style clones say exactly what your videos will be",

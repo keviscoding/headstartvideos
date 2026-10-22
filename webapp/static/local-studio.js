@@ -281,7 +281,7 @@ window.CRLocalStudio = (() => {
         return '<section class="ls-setup">'+setupVideo()+
             '<div class="ls-step"><span class="ls-step-n">1</span><div class="ls-step-body"><h3>Download Studio</h3>'+
                 '<div class="ls-platform" role="group" aria-label="Your computer"><button data-ls-platform="mac" class="'+(platform==='mac'?'selected':'')+'">Mac</button><button data-ls-platform="windows" class="'+(platform==='windows'?'selected':'')+'">Windows</button></div>'+
-                '<a class="btn-primary ls-download-btn '+(ready?'':'ls-disabled')+'" '+(ready?'href="/api/studio/download" data-ls-download':'aria-disabled="true"')+'>'+icon('download')+(ready?'Download ChannelRecipe Studio':'Preparing the download…')+'</a>'+
+                '<a class="btn-primary ls-download-btn '+(ready?'':'ls-disabled')+'" '+(ready?'href="/api/studio/download/file" data-ls-download':'aria-disabled="true"')+'>'+icon('download')+(ready?'Download ChannelRecipe Studio':'Preparing the download…')+'</a>'+
                 '<p class="ls-step-note">About 250 MB. When it finishes, <b>extract the whole ZIP</b>'+(platform==='windows'?' (right-click → Extract All)':'')+' into a folder you’ll keep, like Documents.</p></div></div>'+
             '<div class="ls-step"><span class="ls-step-n">2</span><div class="ls-step-body"><h3>Install it</h3>'+
                 '<div class="ls-install-options">'+
