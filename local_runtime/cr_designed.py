@@ -227,7 +227,7 @@ def clean(spec) -> dict:
         "limbs": {"color": _hex(limbs.get("color"), "#0E0E10"), "thickness": _num(limbs.get("thickness"), 0.6, 2.0, 1.0),
                   "hand_color": _hex(limbs.get("hand_color"), _hex(limbs.get("color"), "#101013"))},
         "shoes": {"color": _hex(shoes.get("color"), "#F2F0EA")},
-        "toon": {"outline": _num(toon.get("outline"), 0.0, 0.012, 0.0055), "outline_color": _hex(toon.get("outline_color"), "#141416"),
+        "toon": {"outline": _num(toon.get("outline"), 0.0, 0.014, 0.009), "outline_color": _hex(toon.get("outline_color"), "#141416"),
                  "rim": _hex(toon.get("rim"), _hex(head.get("rim"), "#F7E7C2")), "rim_k": _num(toon.get("rim_k"), 0.0, 1.6, 1.0)},
         "palette": [c for c in (_hex(x) for x in (s.get("palette") or [])[:10] if isinstance(x, str)) if c] or
                    ["#E8B320", "#D2382D", "#3E8C4A", "#2F5BA8", "#EE7A28", "#7A4FB0", "#1FA5A0", "#F2F0EA"],
@@ -343,7 +343,8 @@ def test_video(spec) -> dict:
     b = designed_block(cast[1]) if len(cast) > 1 else {"top": "jacket", "color": next((c for c in s["palette"] if c != a["color"]), "#D2382D")}
     defs = [{"id": "a", "name": "A", "designed": a}, {"id": "b", "name": "B", "designed": b}]
     look = {"time": "afternoon", "sky": "clear", "preset": PRESET, "designed": archetype(s)}
-    keys = lambda p0, p1, l: {"move": "keys", "limits": "eye", "keys": [{"t": 0, "pos": p0, "look": l}, {"t": 3, "pos": p1, "look": l}]}
+    keys = lambda p0, p1, l: {"move": "keys", "limits": "eye", "dof": 1.2,
+                              "keys": [{"t": 0, "pos": p0, "look": l}, {"t": 3, "pos": p1, "look": l}]}
     room = "designed_room" if "designed_room" in s["sets"] else s["sets"][0]
     out = "designed_track" if "designed_track" in s["sets"] else "designed_park"
     return {"cast": defs, "scenes": [

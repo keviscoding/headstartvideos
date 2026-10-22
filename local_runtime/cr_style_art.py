@@ -99,8 +99,8 @@ keys below, return "cast_3d", measured from the frames:
             each eye a tenth of it across; bigger faces higher)},
    "limbs": {"color": "#hex", "thickness": 0.6-2.0 (1 = thin sticks), "hand_color": "#hex"},
    "shoes": {"color": "#hex"},
-   "toon": {"outline": 0-0.012 (outline width in metres on a 1.6 m character: 0.0055 = a thin crisp line about as wide as a
-            finger seen from a few metres; 0 = none), "outline_color": "#hex",
+   "toon": {"outline": 0-0.014 (outline width in metres on a 1.6 m character: 0.009 = the usual crisp dark line round the
+            clothes, 2-3 pixels wide on a full-body shot; 0 = none), "outline_color": "#hex",
             "rim": "#hex", "rim_k": 0-1.6 (how strong the rim light on clothes and limbs is)},
    "palette": ["#hex", ...] the clothing colours of the channel's people, most used first (up to 10),
    "details": the garment details the channel's clothes show, from collar|hood|zip|buttons|patch|pocket|hem|zigzag (a patterned hem
