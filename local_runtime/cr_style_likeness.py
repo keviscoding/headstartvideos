@@ -87,6 +87,17 @@ def _b64(path) -> str:
     return base64.b64encode(_jpeg(path)).decode()
 
 
+def flat_graphic(path) -> bool:
+    """A 2D graphic on a flat background (an infographic on navy, a title card): at least 80 % of the frame within one
+    colour bin of its dominant colour. The 3D scenes of the references measured 20-58 %, their diagrams 89-92 %."""
+    from collections import Counter
+    from PIL import Image
+    raw = Image.open(path).convert("RGB").resize((96, 54)).tobytes()
+    px = [(raw[i] // 24, raw[i + 1] // 24, raw[i + 2] // 24) for i in range(0, len(raw), 3)]
+    mode = Counter(px).most_common(1)[0][0]
+    return sum(1 for p in px if all(abs(p[i] - mode[i]) <= 1 for i in range(3))) / len(px) >= 0.8
+
+
 def frames(home, look_id) -> list:
     """The look's reference frames, spread across its references (4 per video, in order)."""
     import cr_style_look
@@ -202,6 +213,11 @@ def run(folder, spec, style, log, *, home, generate=None, upload=None, call=None
         log(f"  likeness check skipped: {why}")
         return result
     shots = frames(home, spec.get("look_id"))
+    if _designed(style) is not None:
+        # rendered 3D shots are judged against the channel's 3D scenes, not its 2D graphics between them (with half
+        # the references navy diagrams the judge scored every 3D frame 6, the channel's own too)
+        scenes = [p for p in shots if not flat_graphic(p)]
+        shots = scenes if len(scenes) >= 4 else shots
     if len(shots) < 3:
         result = {"state": "skipped", "why": "too few reference frames to compare with", "style_hash": _hash(style)}
         _write(folder / CHECK, result)
@@ -222,7 +238,7 @@ def run(folder, spec, style, log, *, home, generate=None, upload=None, call=None
     judged = [s for s in shots[1:] if s != control][:6]
     people = _people(style) or designed
     context = ("The candidates were rendered by a 3D engine in the references' design, including how their characters "
-               "are built." if designed else "The candidates were drawn by an image model to match the references' look"
+               "are built. Judge them as 3D scenes of this channel." if designed else "The candidates were drawn by an image model to match the references' look"
                + (", including how their characters are designed." if people else "."))
     suffix, extra, rounds, spent, stopped = str(look.get("still_suffix") or ""), "", [], 0.0, ""
     out_dir = folder / "likeness"

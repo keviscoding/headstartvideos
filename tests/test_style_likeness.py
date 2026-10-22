@@ -238,3 +238,14 @@ def test_the_designed_shots_come_from_this_studios_own_renderer(tmp_path):
     assert cmd[1].endswith("threed/render.py") and "--preview" in cmd and cwd == str(home / "threed") and timeout == 90
     with pytest.raises(RuntimeError, match="designed-cast kit"):
         lk.render_designed(tmp_path / "old", style, out, run=fake)
+
+
+def test_a_rendered_style_is_judged_against_the_channels_3d_scenes_not_its_flat_graphics(tmp_path):
+    navy = jpeg(tmp_path / "navy.jpg", (14, 22, 52))
+    scene = tmp_path / "scene.jpg"
+    img = Image.new("RGB", (320, 180), (90, 150, 220))
+    for x in range(320):
+        for y in range(90, 180):
+            img.putpixel((x, y), (60 + x % 120, 160, 40 + y % 60))
+    img.save(scene)
+    assert lk.flat_graphic(navy) and not lk.flat_graphic(scene)

@@ -67,7 +67,7 @@ Return ONE JSON object:
    between its specific shots, in its subject area and mood (for a money channel: 'counting cash close up', 'bank
    building exterior'); never names, never the reference video's own story"],
  "hook_notes": "one or two sentences: how the first 30 seconds run",
- "body_notes": "one or two sentences: how the edit runs after the hook"
+ "body_notes": "one or two sentences: how the edit runs after the hook"[CAST_3D]
 }
 Write in English. Never name the reference channel, its creator, any artist or any studio; describe instead."""
 
@@ -93,11 +93,14 @@ keys below, return "cast_3d", measured from the frames:
    "head": {"size": head height as a fraction of the whole character's height (0.18-0.34), "color": "#hex",
             "rim": "#hex of the light catching the head's lit edge", "rim_width": 0-0.15 (the rim's width as a fraction
             of the head radius; 0 = none)},
-   "face": {"set": "ring" (eyes drawn as rings with a pupil) | "dot" (filled dots) | "bean" (tall ovals), "color": "#hex of
-            the face marks", "size": 0.7-1.4},
+   "face": {"set": "ring" (eyes drawn as rings with a pupil inside: in wide shots they read as dots, so judge them in the
+            closest shots) | "dot" (plain filled dots, even close up) | "bean" (tall filled ovals), "color": "#hex of
+            the face marks", "size": 0.7-1.4 (1.0 = the two eyes' centres about a fifth of the head's width apart and
+            each eye a tenth of it across; bigger faces higher)},
    "limbs": {"color": "#hex", "thickness": 0.6-2.0 (1 = thin sticks), "hand_color": "#hex"},
    "shoes": {"color": "#hex"},
-   "toon": {"outline": 0-0.012 (outline width in metres on a 1.6 m character; 0 = none), "outline_color": "#hex",
+   "toon": {"outline": 0-0.012 (outline width in metres on a 1.6 m character: 0.0055 = a thin crisp line about as wide as a
+            finger seen from a few metres; 0 = none), "outline_color": "#hex",
             "rim": "#hex", "rim_k": 0-1.6 (how strong the rim light on clothes and limbs is)},
    "palette": ["#hex", ...] the clothing colours of the channel's people, most used first (up to 10),
    "details": the garment details the channel's clothes show, from collar|hood|zip|buttons|patch|pocket|hem|zigzag (a patterned hem
@@ -109,6 +112,11 @@ keys below, return "cast_3d", measured from the frames:
    "sets": the kinds of places the channel films in, from designed_room|designed_street|designed_city|designed_track|designed_park}
 Use the exact colours you see. still_suffix and people are still written (they describe the look in words).
 """
+# the designed route's key inside the answer's own template (an instruction outside it was skipped: the answer followed
+# the template)
+CAST_3D_KEY = (',\n "cast_3d": {"plan": "orb", "head": {...}, "face": {...}, "limbs": {...}, "shoes": {...}, "toon": {...}, '
+               '"palette": [...], "details": [...], "cast": [...], "sets": [...]}   // REQUIRED: the 3D cast spec described '
+               'under HOW THESE PICTURES ARE MADE')
 
 CANDID = ("The pictures are photographs: write them as everyday phone-camera frames (deep focus, natural mixed light, "
           "unstaged framing, mild noise), never glossy, studio-lit or cinematic. Where the profile calls the light "
@@ -157,6 +165,7 @@ def prompt(profile: dict, mapping: dict, *, title: str, brief: str, base: str, e
     return (ART_PROMPT.replace("[TITLE]", title.strip()[:280]).replace("[BRIEF]", (brief or "none").strip()[:1500])
             .replace("[BASE]", base).replace("[POLISH]", polish_line)
             .replace("[ROUTE]", {"drawn": ROUTE_DRAWN, "designed": ROUTE_DESIGNED}.get((mapping.get("route") or {}).get("engine"), ""))
+            .replace("[CAST_3D]", CAST_3D_KEY if (mapping.get("route") or {}).get("engine") == "designed" else "")
             .replace("[PROFILE]", json.dumps(_compact(profile, mapping), ensure_ascii=False)[:9000])
             .replace("[EXCERPT]", (excerpt or "no captions available").strip()[:1500]))
 
