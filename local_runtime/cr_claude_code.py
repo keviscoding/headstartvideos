@@ -409,6 +409,12 @@ def install(studio, token: str, home=None) -> dict:
             info = cr_cloud.status(home=home)
             if not info.get("available"):
                 return protect(jsonify(available=False, why=info.get("why") or "Studio Cloud isn't available."))
+            rows = {r.get("name"): r for r in catalog_rows(studio)}
+            if style not in rows:
+                raise ValueError("That style isn't installed.")
+            why = cloud_note({**rows[style], "features": {"on": [k for k, v in features.items() if v]}})
+            if why:
+                return protect(jsonify(available=False, why=why, blocked=True))
             machine = "gpu" if cr_cloud.wants_gpu({"style": style, "features": features}) else "cpu"
             base, key = cr_cloud._connection(home)
             r = requests.post(base + "/api/studio/cloud/quote", json={"minutes": minutes, "machine": machine},
@@ -431,15 +437,20 @@ def one_line(text, limit=160) -> str:
 
 
 def cloud_note(row: dict) -> str:
-    """Why a recipe renders on this computer only ('' when Studio Cloud can render it); cr_cloud.blocked agrees."""
+    """Why a recipe renders on this computer only ('' when Studio Cloud can render it). Studio Cloud's own rule
+    (cr_cloud.blocked) decides, so the gallery, the tools and the panels follow it whenever it changes."""
     name = str(row.get("name") or "")
-    if name.startswith(("cr-", "cr_")):
-        return "Renders on this computer for now."
-    if name == "folio":
-        return "FOLIO renders on this computer: every shot is drawn by your Claude Code."
-    if row.get("panels"):
-        return "Reads your own panels, chosen on the Studio page."
-    return ""
+    features = row.get("features") if isinstance(row.get("features"), dict) else {}
+    on = features.get("on") if isinstance(features.get("on"), list) else features.get("offered") or []
+    try:
+        import cr_cloud
+        why = cr_cloud.blocked({"style": name, "features": {key: True for key in on},
+                                "panels": "panels" if row.get("panels") else ""})
+    except Exception:                                          # noqa: BLE001 - when in doubt, this computer
+        why = "Renders on this computer for now."
+    if not why and row.get("panels"):
+        why = "Reads your own panels, chosen on the Studio page."
+    return why
 
 
 def card(row: dict) -> dict:
@@ -452,7 +463,10 @@ def card(row: dict) -> dict:
             "features": {"offered": list(features.get("offered") or []),
                          "on": list(features.get("on") if isinstance(features.get("on"), list)
                                     else features.get("offered") or [])},
-            "preview_label": str(row.get("preview_label") or "")}
+            "preview_label": str(row.get("preview_label") or ""),
+            "preview_url": row.get("preview_url") if isinstance(row.get("preview_url"), str) else "",
+            "preview_video_url": row.get("preview_video_url") if isinstance(row.get("preview_video_url"), str) else "",
+            "art_url": row.get("art_url") if isinstance(row.get("art_url"), str) else ""}
 
 
 def small_pictures(app, home: Path, row: dict) -> dict:

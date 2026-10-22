@@ -133,19 +133,29 @@ def _write(path: Path, value: dict) -> None:
 # ── the catalogue ─────────────────────────────────────────────────────────────────────────────────────────────
 
 def catalog() -> dict:
-    return call("GET", "/cr-workspace/catalog", timeout=90)
+    """The recipe catalogue, each row with Studio Cloud's own answer for it (`cloud_note`, '' when it can render
+    there) and its small pictures, from /cr-claude-code/styles."""
+    data = call("GET", "/cr-workspace/catalog", timeout=90)
+    try:
+        cards = {c.get("id"): c for c in call("GET", "/cr-claude-code/styles", timeout=120).get("styles") or []}
+    except Refused:
+        cards = {}
+    for row in data.get("channels") or []:
+        card = cards.get(row.get("name"))
+        if card is not None:
+            row["cloud_note"] = str(card.get("cloud_note") or "")
+            row["small_picture"] = str(card.get("jpg") or "")
+    return data
 
 
 def cloud_block(row: dict) -> str:
-    """Why this recipe can't render on Studio Cloud yet ('' when it can). Studio checks again."""
-    name = str(row.get("name") or "")
-    if name.startswith(("cr-", "cr_")):
-        return "This recipe " + LOCAL_ONLY + "."
-    if name == "folio":
-        return "FOLIO renders on this computer: every shot is drawn by your Claude Code."
+    """Why this recipe can't render on Studio Cloud yet ('' when it can): Studio Cloud's own rule, as the catalogue
+    row carries it. Studio checks again when the video starts."""
+    if "cloud_note" in row:
+        return row["cloud_note"]
     if row.get("panels"):
         return "This recipe reads your own panels, which you choose on the Studio page."
-    return ""
+    return "This recipe " + LOCAL_ONLY + "."                       # an older Studio: this computer, to be safe
 
 
 def kind(row: dict) -> str:
@@ -177,6 +187,9 @@ def find_style(rows: list, wanted: str) -> dict:
 def thumbnail(row: dict) -> str:
     """A local picture of the style: its preview frame (a style reference, the creator's own video or a clone's
     reference), cached under .cr-claude-code/thumbs; else its recipe artwork. '' when neither exists."""
+    small = row.get("small_picture")
+    if isinstance(small, str) and small and Path(small).is_file():
+        return small                                               # Studio already made it (/cr-claude-code/styles)
     url = row.get("preview_url")
     if isinstance(url, str) and url.startswith("/cr-workspace/preview/recipe/"):
         version = re.sub(r"[^a-f0-9]", "", urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).get("v", [""])[0])
@@ -260,7 +273,8 @@ def quote_for(cat: dict, row: dict, *, titles: int, minutes: int, where: str, fe
         cloud = call("GET", "/cr-claude-code/quote?" + urllib.parse.urlencode(
             {"minutes": minutes, "style": row["name"], "features": json.dumps(features)}), timeout=40)
         if not cloud.get("available"):
-            raise Refused(cloud.get("why") or "Studio Cloud isn't available on this account.")
+            hint = " Choose where='this_computer'." if cloud.get("blocked") else ""
+            raise Refused((cloud.get("why") or "Studio Cloud isn't available on this account.") + hint)
         expected, most = cloud["expected_cents"] / 100, cloud["max_cents"] / 100
         out["cloud"] = {"machine": cloud.get("label"), "expected_minutes": cloud.get("expected_minutes"),
                         "expected_usd_each": round(expected, 2), "reserved_usd_each": round(most, 2),

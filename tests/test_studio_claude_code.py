@@ -40,13 +40,18 @@ class FakeStudio:
     def __init__(self):
         self.calls = []
         self.run_answers = []
+        self.notes = {"cr-shorts-3d": "Shorts render on this computer.", "cr-manga-recaps": "Reads your own panels.",
+                      "cr-shorts-ranking": "Shorts render on this computer.", "cr_clone_abc": ""}
         self.cloud_quote = {"available": True, "balance_usd": 7.71, "topup_url": "https://channelrecipe.com/app#billing",
                             "label": "Cloud machine", "expected_minutes": 15, "expected_cents": 29, "max_cents": 78}
 
     def __call__(self, method, path, body=None, **kw):
         self.calls.append((method, path, body))
         if path == "/cr-workspace/catalog":
-            return CATALOG
+            return json.loads(json.dumps(CATALOG))
+        if path == "/cr-claude-code/styles":                      # Studio Cloud's own answer per style
+            return {"styles": [{"id": r["name"], "cloud_note": self.notes.get(r["name"], ""), "jpg": ""}
+                               for r in CATALOG["channels"]]}
         if path.startswith("/cr-claude-code/quote"):
             return dict(self.cloud_quote)
         if path == "/api/run":
@@ -133,7 +138,7 @@ def test_cloud_quote_and_start(studio):
 
 def test_cloud_refuses_local_only_recipes_and_a_short_balance(studio):
     result = tools.run_tool("quote", {"style": "cr-shorts-3d", "where": "studio_cloud"})
-    assert result["isError"] and "this computer" in result["structuredContent"]["error"]
+    assert result["isError"] and "Shorts render on this computer" in result["structuredContent"]["error"]
     studio.cloud_quote["balance_usd"] = 1.0
     q = ok("quote", {"style": "documentary", "minutes": 1, "titles": 2, "where": "studio_cloud"})
     assert q["short_by_usd"] == 0.56 and "top up" in q["summary"]
@@ -185,12 +190,15 @@ def test_other_blockers_are_read_out_not_worked_around(studio):
 
 def test_list_styles_gives_cards_and_a_picker(studio):
     out = ok("list_styles", {"kind": "cloud"})
-    assert [s["id"] for s in out["styles"]] == ["documentary"]
+    assert [s["id"] for s in out["styles"]] == ["documentary", "cr_clone_abc"]      # as Studio Cloud says
     assert out["gallery_url"] == "http://localhost:7860/cr-gallery?pick=pk_" + "a" * 24
     card = out["styles"][0]
     assert card["description"] == "Real footage and maps." and card["renders_on"] == ["this_computer", "studio_cloud"]
     mine = ok("list_styles", {"kind": "mine"})["styles"]
-    assert [s["id"] for s in mine] == ["cr_clone_abc"] and mine[0]["renders_on"] == ["this_computer"]
+    assert [s["id"] for s in mine] == ["cr_clone_abc"] and mine[0]["renders_on"] == ["this_computer", "studio_cloud"]
+    studio.notes["cr_clone_abc"] = "This recipe renders on this computer for now."
+    mine = ok("list_styles", {"kind": "mine"})["styles"]
+    assert mine[0]["renders_on"] == ["this_computer"] and mine[0]["cloud_note"].startswith("This recipe")
 
 
 # ── talking to Studio ─────────────────────────────────────────────────────────────────────────────────────────
@@ -442,3 +450,25 @@ def test_the_panels_get_cards_with_small_pictures(tmp_path):
     assert image.open(first["jpg"]).size == (320, 180)
     assert second["png"] == "" and second["art"].endswith("custom.svg") and second["cloud_note"]
     assert data["prices"]["voice"]["per_min"] == 0.02
+
+
+def test_cloud_notes_come_from_studio_clouds_own_rule(monkeypatch):
+    import cr_cloud
+    monkeypatch.setattr(cr_cloud, "blocked", lambda p: "" if p["style"].startswith("cr_clone") else
+                        ("Shorts render on this computer." if p["style"].startswith("cr-shorts") else ""))
+    assert ccc.cloud_note({"name": "cr_clone_abc"}) == ""
+    assert ccc.cloud_note({"name": "cr-shorts-3d"}) == "Shorts render on this computer."
+    assert ccc.cloud_note({"name": "cr-manga-recaps", "panels": True}).startswith("Reads your own panels")
+    monkeypatch.setattr(cr_cloud, "blocked", lambda p: 1 / 0)
+    assert ccc.cloud_note({"name": "documentary"}) == "Renders on this computer for now."      # in doubt: here
+
+
+def test_an_older_studio_without_cloud_notes_keeps_cloud_off(studio, monkeypatch):
+    real = studio.__call__
+
+    def older(method, path, body=None, **kw):
+        if path == "/cr-claude-code/styles":
+            raise tools.Refused("not found", 404)
+        return real(method, path, body, **kw)
+    monkeypatch.setattr(tools, "call", older)
+    assert all(s["renders_on"] == ["this_computer"] for s in ok("list_styles", {})["styles"])
