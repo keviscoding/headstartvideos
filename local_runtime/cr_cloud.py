@@ -193,6 +193,30 @@ def studio_bucket(home: Path = HOME) -> BrokerBucket:
     return BrokerBucket(base + "/api/studio/cloud", "Bearer " + key)
 
 
+_SECRET_NAME = re.compile(r"key|token|secret|password|proof", re.I)
+
+
+def studio_settings(home: Path = HOME) -> dict:
+    """This Studio's provider choices (voice, pictures, motion, media hub), for the machine to make the video the way
+    this Studio would. Never the account key or anything named like a secret: the machine's keys come only from the
+    creator's render settings."""
+    try:
+        cfg = json.loads((home / ".cr-connection.json").read_text())
+    except (OSError, ValueError):
+        return {}
+
+    def clean(value):
+        if isinstance(value, dict):
+            return {k: clean(v) for k, v in value.items() if not _SECRET_NAME.search(str(k))}
+        if isinstance(value, list):
+            return [clean(v) for v in value]
+        return value
+    keep = ("media_hub", "images", "narration", "motion", "costs_accepted", "brain_mode", "general_model", "visual_model")
+    out = {k: clean(cfg[k]) for k in keep if k in cfg}
+    text = json.dumps(out)
+    return out if len(text) < 15000 and "cr_mcp_" not in text and "sk-" not in text else {}
+
+
 class CloudPods:
     """RunPod's API (farm/runpod.py) as far as the farm uses it, answered by channelrecipe.com."""
 
@@ -224,6 +248,9 @@ class CloudPods:
         version = release_version(self.home)
         if version and "/code/overlay-" in env.get("FARM_CODE_URL", ""):
             env = {**env, "CR_STUDIO_VERSION": version, "CR_CODE_KIND": "overlay"}
+        settings = studio_settings(self.home)
+        if settings:
+            env = {**env, "CR_STUDIO_SETTINGS": json.dumps(settings)}
         job = self._call("POST", "/jobs", {"machine": "cpu", "minutes": float(spec.get("minutes") or 10),
                                            "slug": env.get("FARM_SLUG", ""), "title": env.get("FARM_TITLE", ""),
                                            "env": env})
@@ -480,6 +507,7 @@ def install(home: Path = HOME) -> bool:
 # ── the workspace's "Studio Cloud" choice ─────────────────────────────────────────────────────────────────────
 
 TASK = {"state": "idle", "message": "", "title": "", "error": "", "at": 0.0}
+MAX_TITLES = 5                  # prepared here one after another, then rendered side by side (the farm's max_pods is 3)
 FARM_FIELDS = ("title", "style", "minutes", "script", "extra", "burn_subs", "force", "thumb_count", "features",
                "character", "avatar_id", "avatar_s", "avatar_count", "auto_style")
 
@@ -504,22 +532,37 @@ def farm_payload(p: dict) -> dict:
     return out
 
 
+BUSY = "Finish the current studio request"
+
+
+def _post(client, path: str, body: dict, base: dict, tries: int = 20):
+    """One of the studio's own routes. Its work lock is also taken for a moment by the page's own refreshes, so a
+    "busy" answer is waited out for up to a minute instead of failing the video."""
+    for attempt in range(tries):
+        r = client.post(path, json=body, **base)
+        data = r.get_json(silent=True) or {}
+        if r.status_code == 409 and BUSY in str(data.get("error") or "") and attempt < tries - 1:
+            time.sleep(3)
+            continue
+        return r, data
+    return r, data
+
+
 def start(client, token: str, p: dict) -> None:
     """Prepare the video here (the farm's queue: script, voice, stills, plan) and then start its machine, in the
     background, through the studio's own routes so every check and receipt applies."""
     headers = {"X-CR-Local-Token": token}
     base = {"base_url": "http://127.0.0.1:7860", "headers": headers}
-    title = str(p.get("title") or "").split("\n")[0][:120]
+    titles = [x.strip() for x in str(p.get("title") or "").split("\n") if x.strip()]
+    title = (titles[0][:120] if titles else "") + (f" and {len(titles) - 1} more" if len(titles) > 1 else "")
     TASK.update(state="preparing", title=title, error="", at=time.time(),
                 message="Writing the script and making the voice and pictures here with your Claude Code…")
     try:
-        r = client.post("/api/farm/queue", json=farm_payload(p), **base)
-        data = r.get_json(silent=True) or {}
+        r, data = _post(client, "/api/farm/queue", farm_payload(p), base)
         if r.status_code >= 400 or not data.get("queued"):
             raise RuntimeError(data.get("error") or "; ".join(data.get("problems") or []) or "It couldn't be prepared.")
         TASK.update(state="starting", message="Prepared here. Starting a ChannelRecipe machine…")
-        r = client.post("/api/farm/run", json={}, **base)
-        data = r.get_json(silent=True) or {}
+        r, data = _post(client, "/api/farm/run", {}, base)
         if r.status_code >= 400:
             raise RuntimeError(data.get("error") or "The cloud machine couldn't start.")
         TASK.update(state="rendering", message="Rendering on a ChannelRecipe machine. Keep Studio open: it answers the "
@@ -547,8 +590,9 @@ def install_routes(studio, token: str, home: Path = HOME) -> None:
         why = blocked(p)
         if why:
             return jsonify(error=why), 400
-        if "\n" in str(p.get("title") or ""):
-            return jsonify(error="Send one title at a time to Studio Cloud."), 400
+        titles = [x for x in str(p.get("title") or "").split("\n") if x.strip()]
+        if len(titles) > MAX_TITLES:
+            return jsonify(error=f"Studio Cloud takes up to {MAX_TITLES} titles at once; they render side by side."), 400
         threading.Thread(target=start, args=(app.test_client(), token, p), daemon=True, name="cr-cloud-start").start()
         return jsonify(started=True), 202
 
@@ -566,7 +610,8 @@ def install_routes(studio, token: str, home: Path = HOME) -> None:
             for row in lib.get("videos") or []:
                 files = [f.get("name") for f in row.get("files") or []]
                 video = next((n for n in files if str(n).lower().endswith((".mp4", ".mov"))), "")
-                out["videos"].append({"slug": row.get("slug"), "title": row.get("title") or row.get("slug"),
+                slug = str(row.get("slug") or "")
+                out["videos"].append({"slug": slug, "title": row.get("title") or slug.replace("-", " ").capitalize(),
                                       "video": video, "bytes": row.get("bytes")})
         except Exception:                                   # noqa: BLE001 - progress is best-effort
             pass
@@ -580,8 +625,6 @@ def _relay_claude() -> None:
     OpenLux settings would also make the engine pick OpenLux as its video watcher, which the relay is not."""
     url, key = os.environ.pop("OPENLUX_BASE_URL", ""), os.environ.pop("OPENLUX_API_KEY", "")
     os.environ.pop("CLAUDE_RELAY", None)
-    if not (url and key):
-        return
     import importlib.abc
     import importlib.util
 
@@ -597,10 +640,11 @@ def _relay_claude() -> None:
 
             def exec_module(module):
                 run(module)
+                _studio_adjustments(module)
                 original = module._claude_endpoint
 
                 def endpoint(provider):
-                    if provider in ("anthropic", "openlux"):
+                    if url and key and provider in ("anthropic", "openlux"):
                         return (url.rstrip("/") + "/v1/messages",
                                 {"x-api-key": key, "anthropic-version": "2023-06-01",
                                  "content-type": "application/json"})
@@ -609,6 +653,31 @@ def _relay_claude() -> None:
             spec.loader.exec_module = exec_module
             return spec
     sys.meta_path.insert(0, Hook())
+
+
+ENGINE_ADJUSTMENTS = ("cr_media", "cr_render", "cr_style_delivery", "cr_shorts")
+
+
+def _studio_adjustments(engine) -> None:
+    """What Studio does to the engine when it starts (cr_studio.py), on the machine too: Kie's current video
+    watcher, the media hub's picture and voice routing, the sound library, the render contracts. Claude is the one
+    exception: it is relayed, never the Studio's own Claude Code."""
+    for name in ENGINE_ADJUSTMENTS:
+        try:
+            __import__(name).install(engine)
+        except Exception as e:                              # noqa: BLE001 - the plain engine still renders
+            print(f"=== studio cloud: {name} not applied ({type(e).__name__}: {str(e)[:120]}) ===", flush=True)
+
+
+def _write_settings() -> None:
+    """The Studio's provider choices, where its adjustments read them (no account key is ever in them)."""
+    raw = os.environ.pop("CR_STUDIO_SETTINGS", "")
+    try:
+        settings = json.loads(raw) if raw else {}
+    except ValueError:
+        settings = {}
+    if isinstance(settings, dict) and settings and not (HOME / ".cr-connection.json").exists():
+        (HOME / ".cr-connection.json").write_text(json.dumps(settings))
 
 
 def _relay_youtube() -> None:
@@ -628,6 +697,7 @@ def pod() -> int:
     if not broker or not token:
         print("FARM_BROKER_URL / FARM_JOB_TOKEN are not set: this is not a Studio Cloud machine", file=sys.stderr)
         return 2
+    _write_settings()
     _relay_claude()
     _relay_youtube()
     import farm.config as fc

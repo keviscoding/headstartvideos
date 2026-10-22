@@ -375,3 +375,68 @@ def test_only_this_studios_own_files_are_uploaded(studio):
     key = studio.cloud.overlay_bundle(b, home, lambda rel: rel.startswith("farm/"), sink=lambda line: None)
     assert key.startswith("code/overlay-5.3-admin.78-") and key in store
     assert studio.cloud.overlay_bundle(b, home, lambda rel: rel.startswith("farm/"), sink=lambda line: None) == key
+
+
+
+def test_studio_cloud_takes_a_few_titles_and_names_videos_readably(studio, monkeypatch):
+    from flask import Flask
+    app = Flask(__name__)
+    started = []
+    monkeypatch.setattr(studio.cloud.threading, "Thread",
+                        lambda target=None, args=(), **kw: SimpleNamespace(start=lambda: started.append(args)))
+    monkeypatch.setattr(studio.cloud, "active", lambda home=None: True)
+    monkeypatch.setitem(studio.cloud.TASK, "state", "idle")
+    studio.cloud.install_routes(SimpleNamespace(app=app), "tok", studio.home)
+    c = app.test_client()
+    ok = c.post("/cr-cloud/start", json={"title": "One\nTwo\nThree", "style": "documentary"},
+                headers={"X-CR-Local-Token": "tok"})
+    assert ok.status_code == 202 and len(started) == 1
+    too_many = c.post("/cr-cloud/start", json={"title": "\n".join(str(i) for i in range(6)), "style": "documentary"},
+                      headers={"X-CR-Local-Token": "tok"})
+    assert too_many.status_code == 400 and "up to 5" in too_many.get_json()["error"]
+    assert c.post("/cr-cloud/start", json={"title": "x"}, headers={"X-CR-Local-Token": "nope"}).status_code == 403
+
+
+
+def test_a_moment_of_busy_studio_is_waited_out(studio, monkeypatch):
+    monkeypatch.setattr(studio.cloud.time, "sleep", lambda s: None)
+    replies = [(409, {"error": "Finish the current studio request before starting more work or changing accounts."}),
+               (200, {"started": 1})]
+    calls = []
+
+    class Client:
+        def post(self, path, json=None, base_url=None, headers=None):
+            calls.append(path)
+            status, body = (200, {"queued": [{"slug": "t"}]}) if path == "/api/farm/queue" else replies.pop(0)
+            return SimpleNamespace(status_code=status, get_json=lambda silent=True: body)
+    studio.cloud.start(Client(), "tok", {"title": "T", "style": "documentary"})
+    assert calls == ["/api/farm/queue", "/api/farm/run", "/api/farm/run"]
+    assert studio.cloud.TASK["state"] == "rendering"
+
+
+def test_the_machine_gets_provider_choices_never_the_account_key(studio):
+    (studio.home / ".cr-connection.json").write_text(json.dumps({
+        "key": "cr_mcp_secret", "url": "https://cr.test", "costs_accepted": True, "brain_mode": "claudecode",
+        "media_hub": {"provider": "kie", "tasks": ["images", "motion"], "api_key": "kie-secret"},
+        "narration": {"provider": "original", "voice": "Kore"}, "images": {"provider": "kie", "token": "t"}}))
+    s = studio.cloud.studio_settings(studio.home)
+    assert s == {"media_hub": {"provider": "kie", "tasks": ["images", "motion"]}, "images": {"provider": "kie"},
+                 "narration": {"provider": "original", "voice": "Kore"}, "costs_accepted": True,
+                 "brain_mode": "claudecode"}
+    assert "secret" not in json.dumps(s)
+
+
+def test_the_machine_makes_the_engine_adjustments_the_studio_makes(studio, monkeypatch, tmp_path):
+    (tmp_path / "make_video.py").write_text("def _claude_endpoint(provider):\n    return None\n")
+    applied = []
+    for name in studio.cloud.ENGINE_ADJUSTMENTS:
+        monkeypatch.setitem(sys.modules, name, SimpleNamespace(install=lambda engine, n=name: applied.append(n)))
+    monkeypatch.setitem(sys.modules, "cr_shorts", SimpleNamespace(install=lambda engine: 1 / 0))
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "make_video", raising=False)
+    for k in ("OPENLUX_BASE_URL", "OPENLUX_API_KEY", "CLAUDE_RELAY"):
+        monkeypatch.delenv(k, raising=False)
+    studio.cloud._relay_claude()
+    import make_video
+    assert applied == ["cr_media", "cr_render", "cr_style_delivery"], "one failing adjustment doesn't stop the rest"
+    assert make_video._claude_endpoint("anthropic") is None, "no relay given: the engine's own endpoint"
