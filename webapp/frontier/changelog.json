@@ -1,5 +1,13 @@
 [
   {
+    "build": 82,
+    "date": "2026-10-22",
+    "title": "Stopping a cloud render frees Studio straight away",
+    "items": [
+      "Fixed: after you stopped a Studio Cloud render, Studio could stay busy for hours waiting for the stopped machine to report back, so no new video or update could start. It now frees up as soon as the machine stops."
+    ]
+  },
+  {
     "build": 81,
     "date": "2026-10-22",
     "title": "Studio Cloud renders 3D videos on a graphics card",
