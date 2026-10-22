@@ -217,6 +217,8 @@ def test_only_the_team_can_add_balance(cloud, monkeypatch):
     assert r.status_code == 200 and r.json() == {"balance_usd": 5.0}
     assert cw.ledger(9)[0]["kind"] == "grant" and "by team@channelrecipe.test" in cw.ledger(9)[0]["note"]
     assert client.post("/api/studio/cloud/admin/credit", json={"email": "x@y.z", "usd": 5}).status_code == 404
+    assert client.post("/api/studio/cloud/admin/credit", json={"usd": 2}).json() == {"balance_usd": 2.0}, \
+        "no email: the team member's own account"
     assert client.post("/api/studio/cloud/admin/credit", json={"email": "flor@example.test", "usd": 500}).status_code == 400
     monkeypatch.setattr(frontier_studio, "is_admin", lambda user: False)
     assert client.post("/api/studio/cloud/admin/credit", json={"email": "flor@example.test", "usd": 5}).status_code == 403

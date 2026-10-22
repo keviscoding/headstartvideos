@@ -545,7 +545,7 @@ class StorageRequest(BaseModel):
 
 
 class Grant(BaseModel):
-    email: str
+    email: str = ""                  # empty: the team member's own account (testing)
     usd: float
     note: str = ""
 
@@ -622,7 +622,7 @@ def make_router(access) -> APIRouter:
         from webapp.frontier_studio import is_admin
         if not is_admin(user):
             raise HTTPException(403, "Only ChannelRecipe's team can add balance.")
-        target = db.get_user_by_email(req.email.strip().lower())
+        target = db.get_user_by_email(req.email.strip().lower()) if req.email.strip() else user
         if not target:
             raise HTTPException(404, "No account with that email.")
         cents = round(float(req.usd) * 100)
