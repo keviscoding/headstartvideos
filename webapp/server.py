@@ -557,6 +557,11 @@ def require_admin(request: Request) -> dict:
 from webapp import showcase as _showcase
 app.include_router(_showcase.make_router(require_admin))
 
+# Sales attribution (webapp/attribution.py): /v/{video_id}, /r/{code}, the admin report. Self-contained; every hook
+# into sign-in, checkout and the Stripe webhook is a never-raising call, off with CR_ATTRIBUTION_ENABLED=0.
+from webapp import attribution as _attribution
+app.include_router(_attribution.make_router(require_admin, STATIC_DIR))
+
 
 # ChannelRecipe Studio for subscribers. The router checks both web sessions
 # and runner Bearer keys on every request. One-click connect comes first so its
@@ -670,6 +675,7 @@ def _sign_in(email: str, request: Request, attribution: dict | None, *, method: 
         for k, v in attribution.items():
             if k in allow and v is not None and str(v).strip():
                 attr[k] = str(v).strip()[:200]
+    _attribution.safe_sign_in(user["id"], attribution, _posthog)   # never raises; off with CR_ATTRIBUTION_ENABLED=0
     person = {"email": email, "plan": user["plan"], **attr}
     if _posthog:
         try:
@@ -838,6 +844,8 @@ class CheckoutRequest(BaseModel):
     # Where the app reopens after Stripe: Studio by default, or the Classic
     # recipe flow when the paywall interrupted a v1 cook.
     return_to: Literal["local-studio", "pipeline"] = "local-studio"
+    # Optional sales attribution from cr-telemetry.js (any shape is accepted, so it can never fail a checkout).
+    attribution: Any = None
 
 class TopupRequest(BaseModel):
     credits: int = 5
@@ -906,6 +914,7 @@ def _money_track(
         props["revenue"] = round(int(amount_cents) / 100.0, 2)
         props["currency"] = (currency or "usd").lower()
     props.update({k: v for k, v in extra.items() if v is not None})
+    _attribution.safe_money_props(user_id, props)   # adds ft_vid/lt_vid only; never raises
     track(user_id, event, props)
 
 
@@ -1240,6 +1249,8 @@ async def create_checkout(req: CheckoutRequest, request: Request):
     else:
         session_kwargs["metadata"]["skip_trial"] = "1"
         session_kwargs["success_url"] = f"{base_url}/app?welcome=1#{req.return_to}"
+    # Adds ft_*/lt_* metadata keys only (never price, items, mode or URLs); never raises.
+    _attribution.safe_checkout(user, req.attribution, session_kwargs, customer_id=customer_id)
 
     try:
         session = stripe.checkout.Session.create(**session_kwargs)
@@ -1652,7 +1663,24 @@ async def stripe_webhook(request: Request):
                         "credits_granted": delta,
                     })
 
+    _attr_record_sale(evt_type, event_dict, obj)   # writes only to the sales table; never raises
     return {"ok": True}
+
+
+def _attr_record_sale(evt_type: str, event_dict: dict, obj: dict) -> None:
+    """Sales attribution for first payments, renewals, top-ups and refunds (charge.refunded has no other handler).
+    Read-only lookups here, so it cannot change what the webhook did for billing."""
+    def find_user(sub_id: str, customer_id: str):
+        return (get_user_by_sub_id(sub_id) if sub_id else None) or get_user_by_customer_id(customer_id)
+
+    def is_cr_invoice(invoice: dict) -> bool:
+        price, ids = _billed_price_from_invoice(invoice), _channelrecipe_price_ids()
+        return not (price and ids and price not in ids)
+    try:
+        _attribution.safe_record_sale(evt_type, event_dict, obj, find_user=find_user, is_cr_invoice=is_cr_invoice,
+                                      sub_of=_invoice_subscription_id)
+    except Exception as e:  # noqa: BLE001
+        print(f"[attribution] webhook hook failed: {e}")
 
 
 @app.get("/api/billing/status")

@@ -40,31 +40,55 @@
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(store)); } catch (_) {}
   }
 
-  function captureAttributionFromUrl() {
-    var qs = _qs();
-    var hit = {};
-    ATTR_KEYS.forEach(function (k) {
-      if (k === 'ref') return;
-      var v = (qs.get(k) || '').trim();
-      if (v) hit[k] = v.slice(0, 200);
-    });
-    var refHost = _referrerHost();
-    if (refHost && !/channelrecipe\.com$/i.test(refHost) && !/localhost/i.test(refHost)) {
-      hit.ref = refHost.slice(0, 200);
-    }
-    try {
-      hit.landing_path = (global.location.pathname || '/').slice(0, 200);
-    } catch (_) {}
+  var CLICK_KEYS = ['gclid', 'fbclid', 'msclkid', 'ttclid'];
 
+  // A stored touch that names a source (older builds also saved bare landing pages, which name nobody).
+  function _isTouch(t) {
+    if (!t || typeof t !== 'object') return false;
+    return Object.keys(t).some(function (k) {
+      return (k.indexOf('utm_') === 0 || k === 'ref' || CLICK_KEYS.indexOf(k) >= 0) && t[k];
+    });
+  }
+
+  function captureAttributionFromUrl() {
     var store = _readStore();
-    if (Object.keys(hit).length) {
-      store.last = Object.assign({}, store.last, hit, { captured_at: Date.now() });
-      if (!store.first || !Object.keys(store.first).length) {
-        store.first = Object.assign({}, hit, { captured_at: Date.now() });
+    try {
+      var qs = _qs();
+      var hit = {};
+      ATTR_KEYS.forEach(function (k) {
+        if (k === 'ref') return;
+        var v = (qs.get(k) || '').trim();
+        if (v) hit[k] = v.slice(0, 200);
+      });
+      var refHost = _referrerHost();
+      if (refHost && !/channelrecipe\.com$/i.test(refHost) && !/localhost/i.test(refHost)) {
+        hit.ref = refHost.slice(0, 200);
       }
-      _writeStore(store);
-    }
+      // A visit only counts as a touch when it carries a UTM, an ad click id or an outside referrer. A plain
+      // page view (internal navigation, a bookmark) never overwrites who sent them.
+      if (_isTouch(hit)) {
+        try { hit.landing_path = (global.location.pathname || '/').slice(0, 200); } catch (_) {}
+        hit.captured_at = Date.now();
+        hit.v = 2;
+        store.last = hit;                                  // replace, never merge: last touch is this visit only
+        if (!_isTouch(store.first)) {
+          store.first = Object.assign({}, hit);            // first touch is written once
+        }
+        store.v = 2;
+        _writeStore(store);
+      }
+    } catch (_) {}
     return store;
+  }
+
+  /** {v:2, first, last} for the sales-attribution hooks (sign-in, checkout). Never throws. */
+  function attributionPayload() {
+    try {
+      var store = getAttribution();
+      return { v: 2, first: store.first || {}, last: store.last || {} };
+    } catch (_) {
+      return null;
+    }
   }
 
   function getAttribution() {
@@ -146,6 +170,7 @@
     ATTR_KEYS: ATTR_KEYS,
     captureAttributionFromUrl: captureAttributionFromUrl,
     getAttribution: getAttribution,
+    attributionPayload: attributionPayload,
     attributionProps: attributionProps,
     applyPostHogAttribution: applyPostHogAttribution,
     initPostHog: initPostHog,

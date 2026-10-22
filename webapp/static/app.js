@@ -138,6 +138,17 @@ function analyticsDeclined() {
     return localStorage.getItem('cr_cookie_consent') === 'declined';
 }
 
+// Sales attribution for checkout: optional, and a failure here never blocks paying.
+function _attrPayload() {
+    try {
+        return (window.CRTelemetry && window.CRTelemetry.attributionPayload)
+            ? window.CRTelemetry.attributionPayload()
+            : null;
+    } catch (_) {
+        return null;
+    }
+}
+
 function _attrProps() {
     try {
         return (window.CRTelemetry && window.CRTelemetry.attributionProps)
@@ -1808,6 +1819,7 @@ async function _doCheckout(plan = 'daily_monthly') {
                 plan,
                 skip_trial: !!_checkoutSkipTrial,
                 return_to: state.page === 'pipeline' ? 'pipeline' : 'local-studio',
+                attribution: _attrPayload(),
             }),
         });
         let data;

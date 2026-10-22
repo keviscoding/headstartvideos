@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Sales attribution · ChannelRecipe admin</title>
+<style>
+  :root { --bg:#0e0f12; --card:#17191e; --line:#2a2d35; --text:#e9eaee; --muted:#9aa0ab; --accent:#ffb347; --bad:#ff6b6b; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width:1200px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .sub { color:var(--muted); margin:0 0 20px; }
+  .bar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:18px; }
+  .bar label { color:var(--muted); font-size:12px; display:flex; flex-direction:column; gap:4px; }
+  input[type=date], button, a.btn { background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:7px 10px; font:inherit; }
+  button, a.btn { cursor:pointer; text-decoration:none; }
+  .toggle { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .toggle button { border:0; border-radius:0; }
+  .toggle button.on { background:var(--accent); color:#111; font-weight:600; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin-bottom:18px; }
+  .tile { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; }
+  .tile .k { color:var(--muted); font-size:12px; }
+  .tile .v { font-size:22px; font-weight:650; margin-top:4px; }
+  table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  th, td { padding:8px 10px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap; }
+  th:first-child, td:first-child { text-align:left; white-space:normal; }
+  th { color:var(--muted); font-weight:600; font-size:12px; cursor:pointer; user-select:none; position:sticky; top:0; background:var(--card); }
+  th.sorted::after { content:" ▾"; } th.sorted.asc::after { content:" ▴"; }
+  td .key { color:var(--muted); font-size:12px; }
+  td a { color:var(--accent); }
+  .neg { color:var(--bad); }
+  #msg { color:var(--muted); margin:12px 0; }
+  .wrap { overflow-x:auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Sales attribution</h1>
+  <p class="sub">Which videos and links bring signups and revenue. Headline credit goes to the last touch; switch to first touch to compare.</p>
+  <div class="bar">
+    <label>From <input type="date" id="from"></label>
+    <label>To <input type="date" id="to"></label>
+    <span class="toggle" role="group" aria-label="Credit model">
+      <button type="button" data-model="last" class="on">Last touch</button>
+      <button type="button" data-model="first">First touch</button>
+    </span>
+    <button type="button" id="go">Refresh</button>
+    <a class="btn" id="csv" href="#">Download CSV</a>
+  </div>
+  <div class="tiles" id="tiles"></div>
+  <div id="msg">Loading…</div>
+  <div class="wrap"><table id="table" hidden>
+    <thead><tr>
+      <th data-k="key">Source</th><th data-k="clicks">Clicks</th><th data-k="signups">Signups</th>
+      <th data-k="paying">Paying</th><th data-k="signup_to_paid_pct">Signup→paid</th>
+      <th data-k="first_payment_cents">First-payment $</th><th data-k="revenue_cents" class="sorted">Total $</th>
+      <th data-k="refund_cents">Refunds</th><th data-k="revenue_per_click_cents">$ / click</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table></div>
+</main>
+<script>
+(function () {
+  'use strict';
+  var state = { model: 'last', rows: [], sort: 'revenue_cents', asc: false };
+  var $ = function (id) { return document.getElementById(id); };
+  function iso(d) { return d.toISOString().slice(0, 10); }
+  var today = new Date();
+  $('to').value = iso(today);
+  $('from').value = iso(new Date(today.getTime() - 30 * 86400000));
+
+  function money(c) { return c == null ? '–' : '$' + (c / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function pct(p) { return p == null ? '–' : p.toFixed(1) + '%'; }
+  function query(fmt) {
+    var q = new URLSearchParams({ from: $('from').value, to: $('to').value, model: state.model });
+    if (fmt) q.set('format', fmt);
+    return '/api/admin/sales/attribution?' + q.toString();
+  }
+  function el(tag, text, cls) { var e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; }
+
+  function tiles(t) {
+    var box = $('tiles'); box.textContent = '';
+    [['Clicks', (t.clicks || 0).toLocaleString()], ['Signups', (t.signups || 0).toLocaleString()],
+     ['Paying customers', (t.paying || 0).toLocaleString()], ['Signup → paid', pct(t.signup_to_paid_pct)],
+     ['First-payment revenue', money(t.first_payment_cents)], ['Total revenue', money(t.revenue_cents)],
+     ['Refunds', money(t.refund_cents)], ['Net revenue', money(t.net_revenue_cents)]].forEach(function (p) {
+      var d = el('div', null, 'tile'); d.appendChild(el('div', p[0], 'k')); d.appendChild(el('div', p[1], 'v')); box.appendChild(d);
+    });
+  }
+
+  function sourceCell(r) {
+    var td = document.createElement('td');
+    var name = r.title || r.label || r.key;
+    if (r.kind === 'vid') {
+      var a = el('a', name); a.href = 'https://www.youtube.com/watch?v=' + encodeURIComponent(r.key.slice(4));
+      a.target = '_blank'; a.rel = 'noopener noreferrer'; td.appendChild(a);
+    } else { td.appendChild(el('span', name)); }
+    if (name !== r.key) { td.appendChild(document.createElement('br')); td.appendChild(el('span', r.key, 'key')); }
+    return td;
+  }
+
+  function render() {
+    var rows = state.rows.slice(), k = state.sort, dir = state.asc ? 1 : -1;
+    rows.sort(function (a, b) {
+      var x = a[k], y = b[k];
+      if (k === 'key') { x = (a.title || a.label || a.key).toLowerCase(); y = (b.title || b.label || b.key).toLowerCase(); }
+      if (x == null) x = -Infinity; if (y == null) y = -Infinity;
+      return x < y ? -dir : x > y ? dir : 0;
+    });
+    var body = document.querySelector('#table tbody'); body.textContent = '';
+    rows.forEach(function (r) {
+      var tr = document.createElement('tr');
+      tr.appendChild(sourceCell(r));
+      tr.appendChild(el('td', (r.clicks || 0).toLocaleString()));
+      tr.appendChild(el('td', (r.signups || 0).toLocaleString()));
+      tr.appendChild(el('td', (r.paying || 0).toLocaleString()));
+      tr.appendChild(el('td', pct(r.signup_to_paid_pct)));
+      tr.appendChild(el('td', money(r.first_payment_cents)));
+      tr.appendChild(el('td', money(r.revenue_cents)));
+      tr.appendChild(el('td', r.refund_cents ? '−' + money(r.refund_cents) : '–', r.refund_cents ? 'neg' : ''));
+      tr.appendChild(el('td', r.revenue_per_click_cents == null ? '–' : money(r.revenue_per_click_cents)));
+      body.appendChild(tr);
+    });
+    document.querySelectorAll('th').forEach(function (th) {
+      th.classList.toggle('sorted', th.dataset.k === state.sort);
+      th.classList.toggle('asc', th.dataset.k === state.sort && state.asc);
+    });
+    $('table').hidden = !rows.length;
+  }
+
+  function load() {
+    $('msg').textContent = 'Loading…';
+    $('csv').href = query('csv');
+    fetch(query(), { credentials: 'same-origin' }).then(function (r) {
+      if (r.status === 401 || r.status === 403) throw new Error('Admins only. Sign in to ChannelRecipe with an admin account.');
+      if (!r.ok) throw new Error('Could not load the report (' + r.status + ').');
+      return r.json();
+    }).then(function (data) {
+      state.rows = data.rows || [];
+      tiles(data.totals || {});
+      $('msg').textContent = state.rows.length ? (data.from + ' to ' + data.to + ' · credit: ' + data.model + ' touch')
+        : 'No clicks, signups or sales in this range yet.';
+      render();
+    }).catch(function (e) { $('msg').textContent = e.message; $('table').hidden = true; });
+  }
+
+  document.querySelectorAll('[data-model]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      state.model = b.dataset.model;
+      document.querySelectorAll('[data-model]').forEach(function (x) { x.classList.toggle('on', x === b); });
+      load();
+    });
+  });
+  document.querySelectorAll('th').forEach(function (th) {
+    th.addEventListener('click', function () {
+      if (state.sort === th.dataset.k) state.asc = !state.asc; else { state.sort = th.dataset.k; state.asc = th.dataset.k === 'key'; }
+      render();
+    });
+  });
+  $('go').addEventListener('click', load);
+  load();
+})();
+</script>
+</body>
+</html>
