@@ -1,5 +1,13 @@
 [
   {
+    "build": 83,
+    "date": "2026-10-22",
+    "title": "Footage searches no longer stall on a stuck video",
+    "items": [
+      "Fixed: when Kie's video watcher stopped answering, Studio waited up to 15 minutes a try (three tries) on a single video, so a footage search could stall for most of an hour. It now moves on after five minutes; a working watch takes well under a minute."
+    ]
+  },
+  {
     "build": 82,
     "date": "2026-10-22",
     "title": "Stopping a cloud render frees Studio straight away",
