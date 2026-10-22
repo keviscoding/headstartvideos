@@ -44,7 +44,8 @@ def test_only_exact_original_watch_post_changes_route_and_never_request_objects(
     assert module.requests.post(watch.LEGACY_ENDPOINT, headers=headers, json=body, timeout=900) is result
     args, options = calls[0]
     assert args == (watch.WATCH_ENDPOINT,)
-    assert options["json"] is body and options["headers"] is headers and options["timeout"] == 900
+    assert options["json"] is body and options["headers"] is headers
+    assert options["timeout"] == (15, watch.WATCH_TIMEOUT_S), "a stuck watch fails over in minutes, not 45"
     assert not hasattr(original, "_cr_kie_watch_route")
     assert module.requests.RequestException is ValueError
     assert module.requests.get("https://archive.example.test", timeout=45) == (("https://archive.example.test",), {"timeout": 45})
@@ -164,7 +165,7 @@ def test_actual_original_upload_window_prompt_and_parser_are_preserved(actual_wa
     # Installed studios since admin43 carry the ChannelRecipe brand in every identifier.
     assert upload[1]["data"] == {"uploadPath": "channelrecipe", "fileName": "already-cut-source.mp4"}
     assert request[0] == watch.WATCH_ENDPOINT
-    assert request[1]["timeout"] == 900
+    assert request[1]["timeout"] == (15, watch.WATCH_TIMEOUT_S)
     content = request[1]["json"]["messages"][0]["content"]
     assert content == [{"type": "image_url", "image_url": {"url": "https://files.example.test/watch.mp4"}},
                        {"type": "text", "text": prompt}]
@@ -367,3 +368,11 @@ def test_full_original_module_install_is_scoped_and_idempotent(tmp_path, monkeyp
     assert global_requests.post is old_post and subprocess.run is old_run
     assert not (tmp_path / ".cr-logs").exists()
     assert hashlib.sha256(source.read_bytes()).hexdigest() == digest
+
+
+
+def test_a_watch_never_waits_longer_than_five_minutes_a_try():
+    assert watch._watch_timeout(900) == (15, 300)
+    assert watch._watch_timeout(60) == (15, 60), "a shorter wait the engine asked for stands"
+    assert watch._watch_timeout((10, 1200)) == (10, 300)
+    assert watch._watch_timeout(None) == (15, 300)
