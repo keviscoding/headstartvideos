@@ -100,7 +100,8 @@ keys below, return "cast_3d", measured from the frames:
    "toon": {"outline": 0-0.012 (outline width in metres on a 1.6 m character; 0 = none), "outline_color": "#hex",
             "rim": "#hex", "rim_k": 0-1.6 (how strong the rim light on clothes and limbs is)},
    "palette": ["#hex", ...] the clothing colours of the channel's people, most used first (up to 10),
-   "details": the garment details the channel's clothes show, from collar|hood|zip|buttons|patch|pocket|hem|cuffs|stripes|tie,
+   "details": the garment details the channel's clothes show, from collar|hood|zip|buttons|patch|pocket|hem|zigzag (a patterned hem
+               band)|cuffs|stripes|tie,
    "cast": [{"name": "a NEW name", "role": "lead" (the channel's main character, in most videos) | "character",
              "top": jacket|hoodie|track|tshirt|sweater|labcoat|suit|dress|chef|coverall, "color": "#hex", "trim": "#hex",
              "hat": {"kind": cap|beret|beanie|hardhat|chef|crown|band, "color": "#hex"} or null, "glasses": true|false}]

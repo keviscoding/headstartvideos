@@ -25,7 +25,7 @@ SETS = ("designed_park", "designed_track", "designed_street", "designed_room", "
 TOPS = ("jacket", "hoodie", "track", "tshirt", "sweater", "labcoat", "suit", "dress", "chef", "coverall")
 HATS = ("cap", "beret", "beanie", "hardhat", "chef", "crown", "band", "none")
 FACE_SETS = ("ring", "dot", "bean")
-DETAILS = ("collar", "hood", "zip", "buttons", "patch", "pocket", "hem", "cuffs", "stripes", "tie")
+DETAILS = ("collar", "hood", "zip", "buttons", "patch", "pocket", "hem", "zigzag", "cuffs", "stripes", "tie")
 EXPRESSIONS = ("neutral", "happy", "smile", "laugh", "excited", "surprised", "shocked", "scared", "worried", "sad",
                "angry", "determined", "thinking", "confused", "sleepy", "tired", "wink", "smug", "disgusted", "pain",
                "dizzy", "love", "calm")
