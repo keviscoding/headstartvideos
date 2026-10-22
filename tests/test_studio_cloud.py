@@ -210,7 +210,9 @@ def test_a_network_failure_is_a_storage_error_the_farm_survives(studio):
 def test_only_what_the_cloud_can_make_goes_there(studio):
     b = studio.cloud.blocked
     assert b({"style": "documentary", "features": {"youtube": True}}) == ""
-    assert "this computer" in b({"style": "cr-shorts-ranking"}) and "this computer" in b({"style": "cr_clone_abc"})
+    assert "Shorts" in b({"style": "cr-shorts-ranking"}) and "Shorts" in b({"style": "cr-shorts-3d"})
+    assert b({"style": "cr_clone_abc"}) == "" and b({"style": "cr-stick-stories"}) == "", "clones and our recipes go"
+    assert "panels" in b({"style": "cr-manga-recaps"}) and "panels" in b({"style": "documentary", "panels": "set1"})
     assert b({"style": "3d", "features": {"threed": True}}) == "", "3D renders on the GPU machine"
     assert "FOLIO" in b({"style": "folio"})
     assert "recording" in b({"style": "documentary", "byo_audio": "uploads/me.wav"})

@@ -544,8 +544,13 @@ FARM_FIELDS = ("title", "style", "minutes", "script", "extra", "burn_subs", "for
 def blocked(p: dict) -> str:
     """Why this video can't render on Studio Cloud yet ('' when it can). The engine's farm checks again."""
     style, features = str(p.get("style") or ""), p.get("features") or {}
-    if style.startswith(("cr-", "cr_")):
-        return "This recipe renders on this computer for now."
+    # Cloned styles and ChannelRecipe's recipes render on the machine (tested 2026-10-22: a drawn clone and Stick
+    # Figure Stories came out as they do here). Shorts need the Shorts pack and their own pipeline; Manga Recaps and
+    # panels use files uploaded on this computer.
+    if style.startswith("cr-shorts"):
+        return "Shorts render on this computer for now."
+    if style == "cr-manga-recaps" or p.get("panels"):
+        return "Recaps made from your own panels render on this computer."
     if style == "folio":
         return "FOLIO renders on this computer: every shot is drawn by your Claude Code."
     if p.get("byo_audio"):
