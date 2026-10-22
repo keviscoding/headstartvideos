@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 from scripts import studio_branding
-VERSION = "5.3-admin.83"
+VERSION = "5.3-admin.84"
 PRIVATE_WORKFLOWS = {
     "cr-style-delivery-prompt.txt": ROOT / "data/frontier/reference2d-compiler.txt",
     "cr-style-study-brief.txt": ROOT / "data/frontier/reference2d-study.txt",
@@ -42,6 +42,14 @@ def runtime_resources(root: Path):
         if hand.is_symlink() or not hand.is_file() or hand.stat().st_size > 2 * 1024 * 1024:
             raise ValueError("The drawing hand must be a small ordinary picture.")
         yield hand, "drawon_art/hand.png"
+    skills = runtime / "claude_skills"                   # Claude Code skills for this folder (/make-videos and co)
+    if skills.exists():
+        if skills.is_symlink() or not skills.is_dir():
+            raise ValueError("Claude Code skills must be an owned directory.")
+        for path in sorted(skills.glob("*/SKILL.md")):
+            if path.is_symlink() or path.parent.is_symlink() or not path.is_file():
+                raise ValueError("Claude Code skills must be ordinary owned files.")
+            yield path, ".claude/skills/" + path.parent.name + "/SKILL.md"
     art = runtime / "workspace_art"
     if art.exists():
         if art.is_symlink() or not art.is_dir():

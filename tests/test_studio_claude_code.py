@@ -1,0 +1,444 @@
+"""ChannelRecipe Studio inside Claude Code: the studio tool server, the folder settings, the gallery and notifications."""
+import io
+import json
+import sys
+import time
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "local_runtime"))
+import cr_claude_code as ccc  # noqa: E402
+import cr_studio_tools as tools  # noqa: E402
+
+
+# ── a fake Studio behind tools.call ───────────────────────────────────────────────────────────────────────────
+
+CATALOG = {
+    "prices": {"features": {"ai_images": {"per_min": 0.05}, "youtube": {"per_min": 0.03}, "depth": {"per_min": 0.004}},
+               "voice": {"per_min": 0.02}},
+    "channels": [
+        {"name": "documentary", "label": "Editorial Documentary", "tagline": "Real footage and maps. More words.",
+         "family": "Documentary", "cost": "about $0.08 a minute", "custom": False,
+         "features": {"offered": ["youtube", "ai_images", "depth"], "on": ["youtube"]},
+         "preview_url": None, "art_url": "/cr-workspace/art/documentary.svg"},
+        {"name": "cr-shorts-3d", "label": "3D Explainer Shorts", "tagline": "Weird facts.", "short_seconds": 25,
+         "features": {"offered": [], "on": []}},
+        {"name": "cr-shorts-ranking", "label": "Ranking Shorts", "tagline": "Clips to #1.", "short_seconds": 25,
+         "ranking": True, "features": {"offered": [], "on": []}},
+        {"name": "cr-manga-recaps", "label": "Manga Recaps", "tagline": "Panels.", "panels": True,
+         "features": {"offered": [], "on": []}},
+        {"name": "cr_clone_abc", "label": "My Style", "tagline": "Mine.", "custom": True,
+         "features": {"offered": ["ai_images"], "on": ["ai_images"]}},
+    ],
+}
+
+
+class FakeStudio:
+    def __init__(self):
+        self.calls = []
+        self.run_answers = []
+        self.cloud_quote = {"available": True, "balance_usd": 7.71, "topup_url": "https://channelrecipe.com/app#billing",
+                            "label": "Cloud machine", "expected_minutes": 15, "expected_cents": 29, "max_cents": 78}
+
+    def __call__(self, method, path, body=None, **kw):
+        self.calls.append((method, path, body))
+        if path == "/cr-workspace/catalog":
+            return CATALOG
+        if path.startswith("/cr-claude-code/quote"):
+            return dict(self.cloud_quote)
+        if path == "/api/run":
+            answer = self.run_answers.pop(0) if self.run_answers else {"queued": [{"slug": "my-video", "title": "T"}]}
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+        if path == "/cr-cloud/start":
+            return {"started": True}
+        if path == "/cr-claude/setup":
+            return {"ok": True}
+        if path == "/cr-gallery/picks":
+            return {"pick_id": "pk_" + "a" * 24}
+        raise AssertionError("unexpected route " + path)
+
+    def posted(self, path):
+        return [body for method, p, body in self.calls if p == path and method == "POST"]
+
+
+@pytest.fixture(autouse=True)
+def pointer(monkeypatch, tmp_path):
+    """configure() also tells the plugin where Studio is; never the real ~/.channelrecipe in tests."""
+    monkeypatch.setattr(ccc, "POINTER", tmp_path / "pointer" / "studio-home.json")
+    return ccc.POINTER
+
+
+@pytest.fixture
+def studio(monkeypatch, tmp_path):
+    fake = FakeStudio()
+    monkeypatch.setattr(tools, "call", fake)
+    monkeypatch.setattr(tools, "STATE", tmp_path / "state")
+    monkeypatch.setattr(tools, "thumbnail", lambda row: "")
+    return fake
+
+
+def ok(name, args):
+    result = tools.run_tool(name, args)
+    assert result["isError"] is False, result
+    return result["structuredContent"]
+
+
+# ── money is shown before it is spent ─────────────────────────────────────────────────────────────────────────
+
+def test_make_videos_starts_nothing_without_the_quote(studio):
+    out = ok("make_videos", {"titles": ["Why Rome fell"], "style": "documentary", "minutes": 10, "where": "this_computer"})
+    assert out["started"] is False and out["quote"]["quote_id"].startswith("q_")
+    assert "Nothing started" in out["next"] and not studio.posted("/api/run")
+
+
+def test_make_videos_with_a_fresh_quote_starts_like_the_create_page(studio):
+    q = ok("quote", {"style": "documentary", "minutes": 10, "titles": 2})
+    out = ok("make_videos", {"titles": ["One", "Two"], "style": "documentary", "minutes": 10,
+                             "where": "this_computer", "quote_id": q["quote_id"]})
+    assert out["started"] is True and out["videos"] == [{"id": "video:my-video", "title": "T"}]
+    body = studio.posted("/api/run")[0]
+    assert body["title"] == "One\nTwo" and body["style"] == "documentary" and body["minutes"] == 10
+    assert body["features"] == {"youtube": True, "ai_images": False, "depth": False}
+    assert body["steps"] == ["script", "voiceover", "images", "pexels", "video", "thumbnail"]
+    assert body["burn_subs"] is True and body["desc"] is True and body["force"] is False
+
+
+def test_a_quote_for_other_choices_or_an_old_one_starts_nothing(studio, monkeypatch):
+    q = ok("quote", {"style": "documentary", "minutes": 10})
+    out = ok("make_videos", {"titles": ["One"], "style": "documentary", "minutes": 12, "where": "this_computer",
+                             "quote_id": q["quote_id"]})
+    assert out["started"] is False
+    quotes = json.loads((tools.STATE / "quotes.json").read_text())
+    quotes[q["quote_id"]] = time.time() - tools.QUOTE_SECONDS - 5
+    (tools.STATE / "quotes.json").write_text(json.dumps(quotes))
+    out = ok("make_videos", {"titles": ["One"], "style": "documentary", "minutes": 10, "where": "this_computer",
+                             "quote_id": q["quote_id"]})
+    assert out["started"] is False and not studio.posted("/api/run")
+
+
+def test_cloud_quote_and_start(studio):
+    q = ok("quote", {"style": "documentary", "minutes": 1, "titles": 1, "where": "studio_cloud"})
+    assert q["cloud"]["expected_usd_each"] == 0.29 and q["cloud"]["reserved_usd_each"] == 0.78
+    assert "Studio Cloud" in q["summary"] and "$7.71" in q["summary"]
+    out = ok("make_videos", {"titles": ["Pyramids"], "style": "documentary", "minutes": 1, "where": "studio_cloud",
+                             "quote_id": q["quote_id"]})
+    assert out["started"] is True and out["progress_id"] == "cloud"
+    assert studio.posted("/cr-cloud/start")[0]["title"] == "Pyramids" and not studio.posted("/api/run")
+
+
+def test_cloud_refuses_local_only_recipes_and_a_short_balance(studio):
+    result = tools.run_tool("quote", {"style": "cr-shorts-3d", "where": "studio_cloud"})
+    assert result["isError"] and "this computer" in result["structuredContent"]["error"]
+    studio.cloud_quote["balance_usd"] = 1.0
+    q = ok("quote", {"style": "documentary", "minutes": 1, "titles": 2, "where": "studio_cloud"})
+    assert q["short_by_usd"] == 0.56 and "top up" in q["summary"]
+    result = tools.run_tool("make_videos", {"titles": ["A", "B"], "style": "documentary", "minutes": 1,
+                                            "where": "studio_cloud", "quote_id": q["quote_id"]})
+    assert result["isError"] and "Top up" in result["structuredContent"]["error"]
+    assert not studio.posted("/cr-cloud/start")
+
+
+def test_titles_and_recipes_that_need_the_page(studio):
+    assert tools.run_tool("make_videos", {"titles": list("ABCDEF"), "style": "documentary",
+                                          "where": "this_computer"})["isError"]
+    q = ok("quote", {"style": "cr-manga-recaps"})
+    result = tools.run_tool("make_videos", {"titles": ["Recap"], "style": "cr-manga-recaps", "where": "this_computer",
+                                            "quote_id": q["quote_id"]})
+    assert result["isError"] and "panels" in result["structuredContent"]["error"]
+
+
+def test_shorts_and_ranking_options(studio):
+    q = ok("quote", {"style": "cr-shorts-ranking"})
+    ok("make_videos", {"titles": ["Funniest dog moments"], "style": "cr-shorts-ranking", "where": "this_computer",
+                       "quote_id": q["quote_id"], "options": {"short_seconds": 40, "ranking": {"ranks": 7,
+                                                                                            "meme_sounds": "light"}}})
+    body = studio.posted("/api/run")[0]
+    assert body["minutes"] == 1 and body["extra"].startswith("[[short_seconds=40]] [[ranking=")
+    ranking = json.loads(body["extra"].split("[[ranking=", 1)[1].split("]]", 1)[0])
+    assert ranking["ranks"] == 7 and ranking["sfx"] == "light" and ranking["use_credits"] is False
+
+
+def test_the_daily_model_check_is_run_once_when_it_is_the_only_blocker(studio):
+    studio.run_answers = [tools.Refused("Complete this video's setup before starting.", 409,
+                                        {"blockers": ["Verify both Claude models in setup."]}),
+                          {"queued": [{"slug": "v", "title": "T"}]}]
+    q = ok("quote", {"style": "documentary"})
+    out = ok("make_videos", {"titles": ["T"], "style": "documentary", "where": "this_computer",
+                             "quote_id": q["quote_id"]})
+    assert out["started"] and studio.posted("/cr-claude/setup") == [{"action": "verify"}]
+
+
+def test_other_blockers_are_read_out_not_worked_around(studio):
+    studio.run_answers = [tools.Refused("Complete this video's setup before starting.", 409,
+                                        {"blockers": ["Connect a Kie.ai key."]})]
+    q = ok("quote", {"style": "documentary"})
+    result = tools.run_tool("make_videos", {"titles": ["T"], "style": "documentary", "where": "this_computer",
+                                            "quote_id": q["quote_id"]})
+    assert result["isError"] and "Kie.ai" in result["structuredContent"]["error"]
+    assert not studio.posted("/cr-claude/setup")
+
+
+def test_list_styles_gives_cards_and_a_picker(studio):
+    out = ok("list_styles", {"kind": "cloud"})
+    assert [s["id"] for s in out["styles"]] == ["documentary"]
+    assert out["gallery_url"] == "http://localhost:7860/cr-gallery?pick=pk_" + "a" * 24
+    card = out["styles"][0]
+    assert card["description"] == "Real footage and maps." and card["renders_on"] == ["this_computer", "studio_cloud"]
+    mine = ok("list_styles", {"kind": "mine"})["styles"]
+    assert [s["id"] for s in mine] == ["cr_clone_abc"] and mine[0]["renders_on"] == ["this_computer"]
+
+
+# ── talking to Studio ─────────────────────────────────────────────────────────────────────────────────────────
+
+class Answer:
+    def __init__(self, status, body):
+        self.status, self.body = status, json.dumps(body).encode()
+
+    def read(self, n=None):
+        return self.body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def test_call_waits_out_a_busy_studio_and_sends_the_local_token(monkeypatch, tmp_path):
+    (tmp_path / ".cr-runtime.json").write_text(json.dumps({"token": "tok"}))
+    monkeypatch.setattr(tools, "HOME", tmp_path)
+    monkeypatch.setattr(tools.time, "sleep", lambda s: None)
+    seen, answers = [], [409, 409, 200]
+
+    def urlopen(request, timeout=None):
+        seen.append(request.get_header("X-cr-local-token"))
+        status = answers.pop(0)
+        if status == 409:
+            raise tools.urllib.error.HTTPError(request.full_url, 409, "busy", {}, io.BytesIO(
+                json.dumps({"error": "Finish the current studio request before starting more work."}).encode()))
+        return Answer(200, {"queued": []})
+    monkeypatch.setattr(tools.urllib.request, "urlopen", urlopen)
+    assert tools.call("POST", "/api/run", {}) == {"queued": []}
+    assert seen == ["tok", "tok", "tok"]
+
+
+def test_a_closed_studio_says_to_open_the_launcher(monkeypatch):
+    def urlopen(request, timeout=None):
+        raise tools.urllib.error.URLError(ConnectionRefusedError(61, "Connection refused"))
+    monkeypatch.setattr(tools.urllib.request, "urlopen", urlopen)
+    out = ok("setup_check", {})
+    assert out["running"] is False and "launcher" in out["message"]
+    result = tools.run_tool("list_videos", {})
+    assert result["isError"] and "launcher" in result["structuredContent"]["error"]
+
+
+def test_mcp_handshake_and_tool_list():
+    lines = [json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                         "params": {"protocolVersion": "2025-03-26", "capabilities": {}}}),
+             json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+             json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+             json.dumps({"jsonrpc": "2.0", "id": 3, "method": "nope"})]
+    out = io.StringIO()
+    tools.serve(io.StringIO("\n".join(lines) + "\n"), out)
+    replies = [json.loads(x) for x in out.getvalue().splitlines()]
+    assert [r["id"] for r in replies] == [1, 2, 3]
+    assert replies[0]["result"]["protocolVersion"] == "2025-03-26"
+    names = {t["name"] for t in replies[1]["result"]["tools"]}
+    assert set(ccc.FREE_TOOLS) | set(ccc.PAID_TOOLS) == names
+    assert all(t["inputSchema"]["type"] == "object" for t in replies[1]["result"]["tools"])
+    assert replies[2]["error"]["code"] == -32601
+
+
+# ── the folder's Claude Code settings ─────────────────────────────────────────────────────────────────────────
+
+def test_configure_adds_the_studio_server_beside_the_account_entry(tmp_path):
+    (tmp_path / ".venv" / "bin").mkdir(parents=True)
+    (tmp_path / ".venv" / "bin" / "python").write_text("")
+    account = {"type": "http", "url": "https://channelrecipe.com/mcp", "headers": {"Authorization": "Bearer cr_mcp_x"}}
+    (tmp_path / ".mcp.json").write_text(json.dumps({"mcpServers": {"channelrecipe": account}}))
+    assert ccc.configure(tmp_path)["changed"] == [".mcp.json", ".claude/settings.json"]
+    servers = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]
+    assert servers["channelrecipe"] == account
+    assert servers["studio"]["command"] == str(tmp_path / ".venv" / "bin" / "python")
+    assert servers["studio"]["args"] == [str(tmp_path / "cr_studio_tools.py")]
+    assert (tmp_path / ".mcp.json").stat().st_mode & 0o777 == 0o600
+    settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    assert settings["enabledMcpjsonServers"] == ["channelrecipe", "studio"]
+    assert "mcp__studio__make_videos" in settings["permissions"]["ask"]
+    assert "mcp__studio__list_styles" in settings["permissions"]["allow"]
+    assert "Read(./.env)" in settings["permissions"]["deny"]
+    assert ccc.configure(tmp_path)["changed"] == []                       # idempotent
+
+
+def test_configure_keeps_the_creators_settings_and_never_allows_paid_tools(tmp_path):
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text(json.dumps({
+        "model": "opus", "enabledMcpjsonServers": ["mine"],
+        "permissions": {"allow": ["Bash(ls:*)", "mcp__studio__make_videos"], "ask": ["Bash(rm:*)"]}}))
+    ccc.configure(tmp_path)
+    settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    assert settings["model"] == "opus" and settings["enabledMcpjsonServers"] == ["mine", "channelrecipe", "studio"]
+    assert "Bash(ls:*)" in settings["permissions"]["allow"]
+    assert "mcp__studio__make_videos" not in settings["permissions"]["allow"]
+    assert settings["permissions"]["ask"][:1] == ["Bash(rm:*)"]
+
+
+def test_configure_leaves_unreadable_files_alone(tmp_path):
+    (tmp_path / ".mcp.json").write_text("{not json")
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text("[]")
+    assert ccc.configure(tmp_path)["changed"] == []
+    assert (tmp_path / ".mcp.json").read_text() == "{not json"
+
+
+def test_the_updater_configures_with_the_new_release_code(tmp_path):
+    import cr_update
+    (tmp_path / "cr_claude_code.py").write_text(
+        "from pathlib import Path\ndef configure(home):\n    (Path(home) / 'configured').write_text('yes')\n")
+    cr_update.configure_claude_code(tmp_path)
+    assert (tmp_path / "configured").read_text() == "yes"
+    cr_update.configure_claude_code(tmp_path / "missing")                   # never raises
+
+
+def test_the_release_ships_the_skills():
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import build_frontier_admin as builder
+    shipped = {relative for _, relative in builder.runtime_resources(ROOT)}
+    for name in ("make-videos", "clone-style", "cloud-batch", "my-videos"):
+        assert f".claude/skills/{name}/SKILL.md" in shipped
+    assert {"cr_studio_tools.py", "cr_claude_code.py", "cr_gallery.html"} <= shipped
+
+
+def test_paid_skills_are_only_started_by_the_creator():
+    for name, paid in (("make-videos", True), ("clone-style", True), ("cloud-batch", True), ("my-videos", False)):
+        text = (ROOT / "local_runtime" / "claude_skills" / name / "SKILL.md").read_text()
+        head = text.split("---", 2)[1]
+        assert f"name: {name}" in head and "description:" in head
+        assert ("disable-model-invocation: true" in head) is paid
+
+
+# ── the gallery's picks ───────────────────────────────────────────────────────────────────────────────────────
+
+def test_a_pick_is_chosen_on_the_page_and_final_once_claude_reads_it():
+    picks = ccc.Picks()
+    pick = picks.open()
+    assert picks.get(pick)["state"] == "waiting"
+    picks.choose(pick, {"action": "use", "style": "documentary"})
+    picks.choose(pick, {"action": "use", "style": "atlas"})                # changed before Claude read it
+    assert picks.get(pick)["style"] == "atlas" and not picks.get(pick).get("read")
+    assert picks.get(pick, claim=True)["style"] == "atlas"
+    with pytest.raises(PermissionError):
+        picks.choose(pick, {"action": "use", "style": "jung"})
+    picks.rows[pick]["at"] -= ccc.PICK_SECONDS + 1
+    assert picks.get(pick)["state"] == "expired"
+
+
+def test_gallery_routes(tmp_path):
+    flask = pytest.importorskip("flask")
+    app = flask.Flask("t")
+
+    @app.get("/cr-workspace/catalog")
+    def catalog():
+        return flask.jsonify(CATALOG)
+    studio = SimpleNamespace(app=app)
+    (tmp_path / "cr_gallery.html").write_text((ROOT / "local_runtime" / "cr_gallery.html").read_text())
+    ccc.install(studio, "tok", tmp_path)
+    client = app.test_client()
+    base = {"base_url": "http://127.0.0.1:7860"}
+    page = client.get("/cr-gallery?pick=pk_" + "b" * 24, **base)
+    assert page.status_code == 200 and b'"tok"' in page.data and b'"pk_' + b"b" * 24 + b'"' in page.data
+    assert page.headers["X-CR-Workspace"] == "1"
+    assert client.get("/cr-gallery", base_url="http://evil.example").status_code == 403
+    pick = client.post("/cr-gallery/picks", **base).get_json()["pick_id"]
+    assert client.post(f"/cr-gallery/picks/{pick}", json={"style": "nope"}, **base).status_code == 400
+    chosen = client.post(f"/cr-gallery/picks/{pick}", json={"style": "documentary"}, **base).get_json()
+    assert chosen["name"] == "Editorial Documentary" and chosen["state"] == "chosen"
+    assert client.get(f"/cr-gallery/picks/{pick}?claim=1", **base).get_json()["read"] is True
+    assert client.post(f"/cr-gallery/picks/{pick}", json={"action": "clone"}, **base).status_code == 403
+
+
+# ── notifications ─────────────────────────────────────────────────────────────────────────────────────────────
+
+def test_watcher_says_when_videos_and_cloud_renders_finish(tmp_path):
+    said = []
+    studio = SimpleNamespace(JOBS={"a": {"state": "queued", "title": "Rome"}, "old": {"state": "done", "title": "Old"}},
+                             FARM={"state": "running"}, app=None)
+    cloud = SimpleNamespace(TASK={"state": "rendering", "title": "Pyramids"})
+    watcher = ccc.Watcher(studio, tmp_path, notify_fn=lambda t, m: said.append((t, m)), cloud=cloud)
+    watcher.tick()
+    assert said == []                                                     # what was already finished stays quiet
+    studio.JOBS["a"]["state"] = "running"
+    watcher.tick()
+    studio.JOBS["a"]["state"] = "done"
+    cloud.TASK["state"] = "done"
+    watcher.tick()
+    watcher.tick()
+    assert said == [("Your video is ready", "Rome"), ("Your cloud video is ready", "Pyramids")]
+    studio.JOBS["b"] = {"state": "running", "title": "Nile"}
+    watcher.tick()
+    studio.JOBS["b"].update(state="error", error="Claude's usage limit")
+    watcher.tick()
+    assert said[-1] == ("Your video stopped", "Nile: Claude's usage limit")
+
+
+def test_watcher_says_when_a_style_study_is_ready(tmp_path):
+    said = []
+    folder = tmp_path / "output" / "cr-style-clone" / ("op_" + "c" * 24)
+    folder.mkdir(parents=True)
+    record = folder / "operation.json"
+    record.write_text(json.dumps({"state": "running", "spec": {"label": "My History Style"}}))
+    watcher = ccc.Watcher(SimpleNamespace(JOBS={}), tmp_path, notify_fn=lambda t, m: said.append((t, m)),
+                          cloud=SimpleNamespace(TASK={"state": "idle"}))
+    watcher.tick()
+    record.write_text(json.dumps({"state": "complete", "spec": {"label": "My History Style"}}))
+    watcher.tick()
+    assert said == [("Your new style is ready", "My History Style")]
+
+
+def test_mac_notification_quotes_its_text(monkeypatch):
+    runs = []
+    monkeypatch.setattr(ccc.sys, "platform", "darwin")
+    monkeypatch.delenv("CR_NOTIFY", raising=False)
+    assert ccc.notify('Your video is ready', 'He said "go"', run=lambda args, **kw: runs.append(args))
+    assert runs[0][:2] == ["osascript", "-e"] and '"He said \\"go\\""' in runs[0][2]
+    monkeypatch.setenv("CR_NOTIFY", "0")
+    assert ccc.notify("x", "y", run=lambda *a, **k: runs.append(a)) is False and len(runs) == 1
+
+
+def test_configure_tells_the_plugin_where_studio_is(tmp_path, pointer):
+    ccc.configure(tmp_path / "studio")
+    assert json.loads(pointer.read_text()) == {"home": str((tmp_path / "studio").resolve()), "port": 7860}
+
+
+def test_the_panels_get_cards_with_small_pictures(tmp_path):
+    flask = pytest.importorskip("flask")
+    image = pytest.importorskip("PIL.Image")
+    import io
+    buffer = io.BytesIO()
+    image.new("RGB", (640, 360), (200, 40, 40)).save(buffer, "JPEG")
+    app = flask.Flask("t")
+    rows = [dict(CATALOG["channels"][0], preview_url="/cr-workspace/preview/recipe/documentary.jpg?v=abc123"),
+            dict(CATALOG["channels"][1], preview_url=None, art_url="/cr-workspace/art/custom.svg")]
+
+    @app.get("/cr-workspace/catalog")
+    def catalog():
+        return flask.jsonify({"channels": rows, "prices": CATALOG["prices"]})
+
+    @app.get("/cr-workspace/preview/recipe/<name>.jpg")
+    def preview(name):
+        return flask.Response(buffer.getvalue(), mimetype="image/jpeg")
+    (tmp_path / "workspace_art").mkdir()
+    (tmp_path / "workspace_art" / "custom.svg").write_text("<svg/>")
+    ccc.install(SimpleNamespace(app=app), "tok", tmp_path)
+    data = app.test_client().get("/cr-claude-code/styles", base_url="http://127.0.0.1:7860").get_json()
+    first, second = data["styles"]
+    assert first["id"] == "documentary" and first["cloud_note"] == "" and first["features"]["on"] == ["youtube"]
+    assert first["png"].endswith("documentary-abc123-s.png") and Path(first["png"]).read_bytes()[:4] == b"\x89PNG"
+    assert image.open(first["jpg"]).size == (320, 180)
+    assert second["png"] == "" and second["art"].endswith("custom.svg") and second["cloud_note"]
+    assert data["prices"]["voice"]["per_min"] == 0.02

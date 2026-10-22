@@ -1,5 +1,16 @@
 [
   {
+    "build": 84,
+    "date": "2026-10-22",
+    "title": "Make videos from Claude Code",
+    "items": [
+      "New: Claude Code in your Studio folder can now make your videos. Type /make-videos (or just ask): Claude shows a gallery of your styles to pick from, tells you what it costs on this computer or on Studio Cloud, and starts once you agree.",
+      "New: /clone-style clones a style from a YouTube channel, /cloud-batch makes up to 5 videos at once on Studio Cloud, and /my-videos shows what is being made and plays your finished videos.",
+      "New: a desktop notification when a video, a cloud render or a style study is done.",
+      "Claude Code always asks you before anything that spends money, and never reads your keys."
+    ]
+  },
+  {
     "build": 83,
     "date": "2026-10-22",
     "title": "Footage searches no longer stall on a stuck video",

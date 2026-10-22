@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Choose a style · ChannelRecipe Studio</title>
+<link rel="icon" href="/cr-workspace/icon.svg" type="image/svg+xml">
+<style>
+:root{color-scheme:dark;--navy:#0F1222;--surface:#181C30;--raised:#20263B;--input:#111626;--ink:#F1F0F8;--muted:#B2B7CD;--line:#30374C;--line-strong:#58637F;--violet:#6D5AE0;--violet-dark:#5541C8;--violet-ink:#B7A5FF;--green:#82D6B0;--amber:#F0C586;--red:#FFA5BA;--body:"General Sans","Inter",system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--display:"Cabinet Grotesk","General Sans","Inter",system-ui,sans-serif}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;background:var(--navy);color:var(--ink);font:14px/1.5 var(--body);-webkit-font-smoothing:antialiased}
+button,input{font:inherit}button{cursor:pointer;border:0;border-radius:10px;color:inherit}button:disabled{opacity:.5;cursor:default}
+:focus-visible{outline:3px solid var(--violet);outline-offset:3px}
+[hidden]{display:none!important}
+header{position:sticky;top:0;z-index:5;background:rgba(15,18,34,.94);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.bar{max-width:1240px;margin:0 auto;padding:18px 24px 14px;display:flex;flex-wrap:wrap;gap:14px 20px;align-items:center}
+.brand{display:flex;gap:12px;align-items:center;margin-right:auto}
+.brand img{width:34px;height:34px;border-radius:9px}
+h1{font:750 24px/1.1 var(--display);letter-spacing:-.03em;margin:0}
+.sub{color:var(--muted);font-size:13px;margin:2px 0 0}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{background:var(--surface);border:1px solid var(--line);padding:7px 13px;border-radius:999px;color:var(--muted);font-size:13px}
+.chip[aria-pressed="true"]{background:var(--violet);border-color:var(--violet);color:#fff}
+.search{background:var(--input);border:1px solid var(--line);border-radius:10px;padding:8px 12px;color:var(--ink);min-width:200px}
+.notice{max-width:1240px;margin:0 auto;padding:0 24px}
+.sent{margin:16px 0 0;padding:14px 18px;border-radius:14px;background:#17322A;border:1px solid #2C6B55;color:#D8F5E8}
+.sent strong{color:#fff}.sent.wait{background:var(--surface);border-color:var(--line);color:var(--muted)}
+.error{margin:16px 0 0;padding:12px 16px;border-radius:12px;background:#3A1D28;border:1px solid #7A3A52;color:#FFD9E2}
+main{max-width:1240px;margin:0 auto;padding:22px 24px 60px;display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:18px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;overflow:hidden;display:flex;flex-direction:column;transition:border-color .15s,transform .15s}
+.card:hover{border-color:var(--line-strong);transform:translateY(-2px)}
+.card.chosen{border-color:var(--green);box-shadow:0 0 0 2px rgba(130,214,176,.35)}
+.thumb{position:relative;aspect-ratio:16/9;background:#0B0E1A;overflow:hidden}
+.thumb img,.thumb video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.thumb .art{object-fit:contain;padding:18%;opacity:.85}
+.thumb video{opacity:0;transition:opacity .2s}.card:hover .thumb video.ready{opacity:1}
+.label{position:absolute;left:8px;bottom:8px;background:rgba(10,12,22,.78);color:#D9DCEA;font-size:11px;padding:3px 8px;border-radius:6px;max-width:calc(100% - 16px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.body{padding:14px 16px 16px;display:flex;flex-direction:column;gap:8px;flex:1}
+.name{font:700 17px/1.25 var(--display);letter-spacing:-.02em;margin:0}
+.tags{display:flex;flex-wrap:wrap;gap:5px}
+.tag{font-size:11px;padding:2px 8px;border-radius:999px;background:var(--raised);color:var(--muted);border:1px solid var(--line)}
+.tag.cloud{color:var(--green);border-color:#2C6B55}.tag.mine{color:var(--violet-ink);border-color:#4B3F86}.tag.short{color:var(--amber);border-color:#6B5630}
+.desc{color:var(--muted);margin:0;flex:1}
+.cost{color:#8E94AC;font-size:12px;margin:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.use{margin-top:4px;background:var(--violet);color:#fff;padding:10px 14px;font-weight:650}
+.use:hover:not(:disabled){background:var(--violet-dark)}
+.card.chosen .use{background:#2C6B55}
+.clone{border-style:dashed;justify-content:center}
+.clone .body{gap:10px;justify-content:center}
+.clone input{background:var(--input);border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:var(--ink);width:100%}
+.clone .use{background:transparent;border:1px solid var(--violet);color:var(--violet-ink)}
+.empty{grid-column:1/-1;color:var(--muted);text-align:center;padding:60px 0}
+@media (max-width:640px){.bar{padding:14px 16px}.search{min-width:0;flex:1}main{padding:16px;grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="brand"><img src="/cr-workspace/icon.svg" alt=""><div><h1>Choose a style</h1><p class="sub" id="sub">Your installed video styles.</p></div></div>
+    <div class="chips" role="group" aria-label="Show">
+      <button class="chip" data-filter="all" aria-pressed="true">All</button>
+      <button class="chip" data-filter="videos" aria-pressed="false">Long videos</button>
+      <button class="chip" data-filter="shorts" aria-pressed="false">Shorts</button>
+      <button class="chip" data-filter="mine" aria-pressed="false">My styles</button>
+      <button class="chip" data-filter="cloud" aria-pressed="false">Renders in the cloud</button>
+    </div>
+    <input class="search" id="search" type="search" placeholder="Search styles" aria-label="Search styles">
+  </div>
+</header>
+<div class="notice"><div id="sent" class="sent" hidden></div><div id="error" class="error" hidden></div></div>
+<main id="grid"><p class="empty">Loading your styles…</p></main>
+<script>
+const TOKEN = __LOCAL_TOKEN_JSON__, PICK = __PICK_JSON__;
+const $ = id => document.getElementById(id);
+let rows = [], filter = 'all', chosen = null, claimed = false;
+function el(tag, cls, text) {const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n;}
+function kind(r) {return r.short_seconds ? 'short' : 'video';}
+function cloudOk(r) {return !/^cr[-_]/.test(r.name || '') && r.name !== 'folio' && !r.panels;}
+function oneLine(t) {t = String(t || '').replace(/\s+/g, ' ').trim(); const m = t.match(/^.*?[.!?](\s|$)/); return (m ? m[0] : t).trim();}
+function shown() {
+  const q = $('search').value.trim().toLowerCase();
+  return rows.filter(r => (filter === 'all' || filter === 'videos' && kind(r) === 'video' || filter === 'shorts' && kind(r) === 'short'
+    || filter === 'mine' && r.custom || filter === 'cloud' && cloudOk(r))
+    && (!q || [r.name, r.label, r.tagline, r.description, r.family].join(' ').toLowerCase().includes(q)));
+}
+async function choose(body, button) {
+  $('error').hidden = true; button.disabled = true;
+  try {
+    const r = await fetch('/cr-gallery/picks/' + PICK, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-CR-Local-Token': TOKEN}, body: JSON.stringify(body)});
+    const data = await r.json(); if (!r.ok) throw new Error(data.error || 'Studio could not save your choice.');
+    chosen = data; render(); watch();
+  } catch (e) {$('error').textContent = e.message; $('error').hidden = false;} finally {button.disabled = false;}
+}
+function banner() {
+  const box = $('sent'); if (!chosen) {box.hidden = true; return;}
+  box.hidden = false; box.classList.toggle('wait', false); box.replaceChildren();
+  const what = chosen.action === 'clone' ? 'Clone a new style' + (chosen.youtube_url ? ' from ' + chosen.youtube_url : '') : chosen.name;
+  box.append(el('span', '', claimed ? '✓ Claude Code has it: ' : 'Sent to Claude Code: '), el('strong', '', what),
+    el('span', '', claimed ? '. Go back to the chat.' : '. Go back to the chat; you can still change it until Claude reads it.'));
+}
+async function watch() {
+  if (!PICK || claimed) return;
+  try {const r = await fetch('/cr-gallery/picks/' + PICK); const d = await r.json(); if (d.read) {claimed = true; render(); return;} if (d.state === 'expired') return;} catch (_) {}
+  setTimeout(watch, 2500);
+}
+function card(r) {
+  const c = el('article', 'card' + (chosen && chosen.style === r.name ? ' chosen' : ''));
+  const t = el('div', 'thumb');
+  const img = el('img', r.preview_url ? '' : 'art'); img.alt = ''; img.loading = 'lazy'; img.src = r.preview_url || r.art_url || '/cr-workspace/icon.svg';
+  img.onerror = () => {img.className = 'art'; img.src = r.art_url || '/cr-workspace/icon.svg';};
+  t.append(img);
+  if (r.preview_video_url) {const v = el('video'); v.muted = true; v.loop = true; v.playsInline = true; v.preload = 'none'; v.src = r.preview_video_url;
+    c.addEventListener('mouseenter', () => v.play().then(() => v.classList.add('ready')).catch(() => {}));
+    c.addEventListener('mouseleave', () => {v.pause(); v.classList.remove('ready');}); t.append(v);}
+  if (r.preview_label) t.append(el('span', 'label', r.preview_label));
+  const b = el('div', 'body');
+  b.append(el('h2', 'name', r.label || r.name));
+  const tags = el('div', 'tags');
+  if (r.family) tags.append(el('span', 'tag', r.family));
+  if (kind(r) === 'short') tags.append(el('span', 'tag short', 'Short'));
+  if (r.custom) tags.append(el('span', 'tag mine', 'My style'));
+  tags.append(el('span', 'tag' + (cloudOk(r) ? ' cloud' : ''), cloudOk(r) ? 'Cloud or this computer' : 'This computer'));
+  b.append(tags, el('p', 'desc', oneLine(r.tagline || r.description)));
+  if (r.cost) {const cost = el('p', 'cost', 'Media: ' + oneLine(r.cost)); cost.title = r.cost; b.append(cost);}
+  if (PICK && !claimed) {
+    const use = el('button', 'use', chosen && chosen.style === r.name ? 'Chosen ✓' : chosen ? 'Use this instead' : 'Use this style');
+    use.type = 'button'; use.addEventListener('click', () => choose({style: r.name}, use)); b.append(use);
+  } else if (!PICK) {
+    const a = el('a', 'use', 'Create a video'); a.href = '/?cr-preset=' + encodeURIComponent(r.name); a.style.textAlign = 'center'; a.style.textDecoration = 'none'; a.style.borderRadius = '10px'; b.append(a);
+  }
+  c.append(t, b); return c;
+}
+function cloneCard() {
+  const c = el('article', 'card clone' + (chosen && chosen.action === 'clone' ? ' chosen' : '')), b = el('div', 'body');
+  b.append(el('h2', 'name', 'Clone a new style'), el('p', 'desc', 'Paste a YouTube channel or video. Studio studies how it looks and builds a reusable style from it.'));
+  const input = el('input'); input.type = 'url'; input.placeholder = 'https://www.youtube.com/@channel'; input.setAttribute('aria-label', 'YouTube link');
+  const go = el('button', 'use', 'Clone this style'); go.type = 'button';
+  go.addEventListener('click', () => choose({action: 'clone', youtube_url: input.value.trim()}, go));
+  b.append(input, go); c.append(b); return c;
+}
+function render() {
+  const list = shown(), grid = $('grid'); grid.replaceChildren();
+  if (PICK && !claimed && (filter === 'all' || filter === 'mine')) grid.append(cloneCard());
+  for (const r of list) grid.append(card(r));
+  if (!list.length) grid.append(el('p', 'empty', 'No styles match.'));
+  banner();
+}
+for (const b of document.querySelectorAll('[data-filter]')) b.addEventListener('click', () => {
+  filter = b.dataset.filter; for (const x of document.querySelectorAll('[data-filter]')) x.setAttribute('aria-pressed', String(x === b)); render();});
+$('search').addEventListener('input', render);
+(async () => {
+  if (PICK) $('sub').textContent = 'Press “Use this style” and Claude Code takes it from there.';
+  try {
+    if (PICK) {const p = await (await fetch('/cr-gallery/picks/' + PICK)).json(); if (p.state === 'expired') {$('error').textContent = p.message; $('error').hidden = false;} else if (p.state === 'chosen') {chosen = p; claimed = !!p.read;}}
+    const r = await fetch('/cr-workspace/catalog'); const data = await r.json(); if (!r.ok) throw new Error(data.error || 'Studio could not list your styles.');
+    rows = data.channels || []; render(); if (chosen && !claimed) watch();
+  } catch (e) {$('grid').replaceChildren(el('p', 'empty', e.message + ' Keep the Studio launcher open and refresh this page.'));}
+})();
+</script>
+</body>
+</html>

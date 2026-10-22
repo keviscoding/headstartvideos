@@ -72,6 +72,21 @@ settings. Update in place instead:
    previous version — read the message to them.
 4. Start Studio again with the launcher.
 
+## Studio's own tools in Claude Code (start here)
+
+When the customer wants to make videos, pick or clone a style, render on Studio Cloud or watch their videos, use
+the `studio` tools (mcp__studio__*) and the skills /make-videos, /clone-style, /cloud-batch and /my-videos. They drive
+the running Studio through its own checks, so nothing needs the Studio web page.
+
+- Start with `setup_check`. If Studio isn't running, ask them to open its launcher (step 4 above).
+- Styles: `list_styles` gives each style's id, description, thumbnail file and a `gallery_url` picker. Show the
+  picker (in the Claude desktop app, in the Browser pane; in a terminal, `open_in_studio(page='gallery',
+  id=pick_id, open_browser=true)`) and read the choice with `get_style_pick`.
+- Money: get `quote` first and tell them the cost; call `make_videos` with its `quote_id` only after they agree.
+  Claude Code also asks them to approve `make_videos` and `clone_style`. Never approve paid work for them.
+- `make_videos` returns ids at once. Check `progress` now and then, never in a tight loop; Studio shows a desktop
+  notification when a video is done. `list_videos` has each finished video's file and watch link.
+
 ## Making videos through ChannelRecipe tools
 
 Use ChannelRecipe's MCP production workflow and the installed studio engine. Do

@@ -627,6 +627,7 @@ def apply_staged(home: Path = HOME, *, keep=frozenset(), now=time.time) -> dict:
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     retire(home)
+    configure_claude_code(home)
     if requirements_changed:
         # The launcher installs libraries once; make it check them again.
         (home / ".venv" / ".cr-installed").unlink(missing_ok=True)
@@ -664,6 +665,7 @@ def update(home: Path = HOME, *, get=http_get, running=studio_running, now=time.
         shutil.rmtree(staging, ignore_errors=True)
         archive.unlink(missing_ok=True)
     retire(home)
+    configure_claude_code(home)
     if requirements_changed:
         # The launcher installs libraries once; make it check them again.
         (home / ".venv" / ".cr-installed").unlink(missing_ok=True)
@@ -676,6 +678,21 @@ def update(home: Path = HOME, *, get=http_get, running=studio_running, now=time.
         message += (" You had edited %d file(s), so they were kept; the new versions are saved beside them with "
                     ".new at the end: %s" % (len(kept), ", ".join(kept[:10])))
     return message
+
+
+def configure_claude_code(home: Path = HOME) -> None:
+    """Claude Code in this folder: the new release's studio tools and their permissions (cr_claude_code.configure).
+    Loaded from the folder, so an update run by an older updater still uses the new code. Best effort."""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("cr_claude_code_update", home / "cr_claude_code.py")
+        if spec is None or spec.loader is None:
+            return
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.configure(home)
+    except Exception:                                       # noqa: BLE001 - Studio configures it again on start
+        pass
 
 
 def main() -> int:
