@@ -90,7 +90,9 @@ that cast and its kind of sets in real 3D, then animates it (characters walk, ru
 engine's body plan is a ball head on a body with stick limbs; you describe THIS channel's version of it. So besides the
 keys below, return "cast_3d", measured from the frames:
  "cast_3d": {"plan": "orb",
-   "head": {"size": head height as a fraction of the whole character's height (0.18-0.34), "color": "#hex",
+   "head": {"size": head height as a fraction of the whole character's height (0.18-0.34): MEASURE it on a frame where a
+            character stands full-length (the head's height in pixels over the height from the top of the head to the
+            soles), never by impression: a big round head reads bigger than it is, "color": "#hex",
             "rim": "#hex of the light catching the head's lit edge", "rim_width": 0-0.15 (the rim's width as a fraction
             of the head radius; 0 = none)},
    "face": {"set": "ring" (eyes drawn as rings with a pupil inside: in wide shots they read as dots, so judge them in the
@@ -98,9 +100,10 @@ keys below, return "cast_3d", measured from the frames:
             the face marks", "size": 0.7-1.4 (1.0 = the two eyes' centres about a fifth of the head's width apart and
             each eye a tenth of it across; bigger faces higher)},
    "limbs": {"color": "#hex", "thickness": 0.6-2.0 (1 = thin sticks), "hand_color": "#hex"},
-   "shoes": {"color": "#hex"},
+   "shoes": {"color": "#hex of the shoes where they meet the ground (they often differ from the legs: look at the feet)"},
    "toon": {"outline": 0-0.014 (outline width in metres on a 1.6 m character: 0.009 = the usual crisp dark line round the
-            clothes, 2-3 pixels wide on a full-body shot; 0 = none), "outline_color": "#hex",
+            clothes, 2-3 pixels wide on a full-body shot, the one you see without zooming where a jacket meets the sky or
+            the grass; 0.004 only for a hairline you have to look for; 0 = none), "outline_color": "#hex",
             "rim": "#hex", "rim_k": 0-1.6 (how strong the rim light on clothes and limbs is)},
    "palette": ["#hex", ...] the clothing colours of the channel's people, most used first (up to 10),
    "details": the garment details the channel's clothes show, from collar|hood|zip|buttons|patch|pocket|hem|zigzag (a patterned hem
