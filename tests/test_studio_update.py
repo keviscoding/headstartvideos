@@ -7,12 +7,13 @@ import hashlib
 import io
 import json
 import os
+import socket
 import sys
 import zipfile
 from pathlib import Path
 
 import pytest
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "local_runtime"))
 import cr_update  # noqa: E402
@@ -468,3 +469,48 @@ def test_a_release_published_mid_update_says_so_and_mixes_nothing(studio, monkey
         run(studio, server)
     assert (studio / "cr_studio.py").read_bytes() == b"old studio"
     assert not any("release-46" in url for url, _ in server.requests if url.startswith("https://storage.example/"))
+
+
+class BlockedStorageServer(Server):
+    """This computer can't look up the storage host (a creator's browser: DNS_PROBE_FINISHED_NXDOMAIN), but
+    ChannelRecipe streams the same file, byte ranges included, to its signed-in account."""
+
+    def get(self, url, headers):
+        if url.endswith("/api/studio/shorts-pack"):
+            self.requests.append((url, dict(headers)))
+            return HTTPError(url, 302, "Found", {"Location": "https://storage.example/pack.zip?sig=1"}, None)
+        if url.startswith("https://storage.example/"):
+            self.requests.append((url, dict(headers)))
+            raise URLError(socket.gaierror(8, "nodename nor servname provided, or not known"))
+        if url.endswith("/file"):
+            self.requests.append((url, dict(headers)))
+            assert headers.get("Authorization") == "Bearer " + KEY
+            wanted = headers.get("Range", "").partition("=")[2]
+            if wanted:
+                first, _, last = wanted.partition("-")
+                last = int(last) if last else len(self.zip_bytes) - 1
+                part = self.zip_bytes[int(first):last + 1]
+                return Body(part, status=206, headers={"Content-Range": "bytes %s-%d/%d" % (first, last, len(self.zip_bytes)),
+                                                       "Content-Length": str(len(part))})
+            return Body(self.zip_bytes, headers={"Content-Length": str(len(self.zip_bytes)),
+                                                 "x-amz-meta-sha256": self.sha})
+        return super().get(url, headers)
+
+
+def test_a_computer_that_cannot_reach_storage_updates_through_channelrecipe(studio, monkeypatch):
+    monkeypatch.setattr(cr_update.time, "sleep", lambda s: None)
+    zip_bytes, _ = release("5.3-admin.45", {"cr_studio.py": b"new studio" * 5000, "requirements.txt": b"flask\n"})
+    server = BlockedStorageServer("5.3-admin.45", zip_bytes, ranges=True)
+    assert "from version 44 to 45" in run(studio, server)
+    assert (studio / "cr_studio.py").read_bytes() == b"new studio" * 5000
+    assert any(url.endswith("/api/studio/download/file") for url, _ in server.requests)
+
+
+def test_a_whole_download_resumes_through_channelrecipe_when_storage_cannot_be_reached(studio, monkeypatch, tmp_path):
+    monkeypatch.setattr(cr_update.time, "sleep", lambda s: None)
+    zip_bytes, _ = release("5.3-admin.45", {"cr_studio.py": b"x" * 9000, "requirements.txt": b"flask\n"})
+    server = BlockedStorageServer("5.3-admin.45", zip_bytes)
+    target = tmp_path / "pack.zip"
+    cr_update.download("https://cr.example", KEY, target, get=server.get, path="/api/studio/shorts-pack")
+    assert target.read_bytes() == zip_bytes
+    assert any(url.endswith("/api/studio/shorts-pack/file") for url, _ in server.requests), "the pack too"

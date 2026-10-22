@@ -219,3 +219,50 @@ def test_an_admin_can_restart_and_raise_one_accounts_style_clones(env, monkeypat
     again = studio.grant_style_clones(user(1, "daily", "owner@example.com"), customer["email"], 2, False)
     assert again["used"] == 1 and again["limit"] == 5, "without reset the restart time is kept"
     assert studio.style_clone_usage(user(7, "daily"))["limit"] == 3, "nobody else changes"
+
+
+def test_the_download_also_streams_through_this_site_for_providers_that_cannot_reach_storage(env, monkeypatch):
+    """A creator's browser showed DNS_PROBE_FINISHED_NXDOMAIN for the storage host the signed link names; this site
+    loads for them, so the website's button streams the ZIP through it, byte ranges included."""
+    import io
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from webapp import storage
+    data = bytes(range(256)) * 400
+    asked = []
+
+    class Body(io.BytesIO):
+        def iter_chunks(self, size):
+            while True:
+                chunk = self.read(size)
+                if not chunk:
+                    return
+                yield chunk
+
+    class Client:
+        def get_object(self, **params):
+            asked.append(params)
+            wanted = params.get("Range")
+            if wanted:
+                first = int(wanted.split("=")[1].split("-")[0])
+                part = data[first:]
+                return {"Body": Body(part), "ContentLength": len(part),
+                        "ContentRange": f"bytes {first}-{len(data) - 1}/{len(data)}", "Metadata": {"sha256": "abc"}}
+            return {"Body": Body(data), "ContentLength": len(data), "Metadata": {"sha256": "abc"}}
+    monkeypatch.setattr(storage, "is_remote", lambda: True)
+    monkeypatch.setattr(storage, "_get_client", lambda: Client())
+    monkeypatch.setattr(storage, "_spaces_creds", lambda: ("k", "s", "bucket", "r", "e"))
+    app = FastAPI()
+    app.include_router(studio.make_router(lambda req: user(1, "daily") if req.headers.get("x-test-user") else None,
+                                          prefix="/api/studio"))
+    client = TestClient(app)
+    assert client.get("/api/studio/download/file").status_code == 401
+    res = client.get("/api/studio/download/file", headers={"x-test-user": "1"})
+    assert res.status_code == 200 and res.content == data and asked[-1]["Key"] == studio.RELEASE_KEY
+    assert "attachment" in res.headers["content-disposition"] and res.headers["accept-ranges"] == "bytes"
+    assert res.headers["x-amz-meta-sha256"] == "abc" and "no-store" in res.headers["cache-control"]
+    part = client.get("/api/studio/download/file", headers={"x-test-user": "1", "Range": "bytes=1000-"})
+    assert part.status_code == 206 and part.content == data[1000:]
+    assert part.headers["content-range"] == f"bytes 1000-{len(data) - 1}/{len(data)}"
+    pack = client.get("/api/studio/shorts-pack/file", headers={"x-test-user": "1"})
+    assert pack.status_code == 200 and asked[-1]["Key"] == studio.SHORTS_PACK_KEY

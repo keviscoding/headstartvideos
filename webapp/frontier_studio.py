@@ -20,7 +20,7 @@ from typing import Literal
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -31,15 +31,15 @@ from webapp import plans
 from cryptography.fernet import Fernet, InvalidToken
 from webapp import frontier_providers as providers
 
-VERSION = "5.3-admin.75"
+VERSION = "5.3-admin.76"
 CATALOG = Path(__file__).resolve().parent / "frontier" / "catalog.json"
-RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.75.zip"
+RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.76.zip"
 # Every release the server still serves (older ones keep running projects alive). Append each new release; never
 # remove one, or projects pinned to it stop.
 APPROVED_RELEASES = ("5.3-admin.8", "5.3-admin.9", "5.3-admin.10", "5.3-admin.11", "5.3-admin.12",
                 "5.3-admin.13", "5.3-admin.14", "5.3-admin.15", "5.3-admin.16", "5.3-admin.17",
                 "5.3-admin.18", "5.3-admin.19", "5.3-admin.20", "5.3-admin.21", "5.3-admin.22",
-                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43", "5.3-admin.44", "5.3-admin.45", "5.3-admin.46", "5.3-admin.47", "5.3-admin.48", "5.3-admin.49", "5.3-admin.50", "5.3-admin.51", "5.3-admin.52", "5.3-admin.53", "5.3-admin.54", "5.3-admin.55", "5.3-admin.56", "5.3-admin.57", "5.3-admin.58", "5.3-admin.59", "5.3-admin.60", "5.3-admin.61", "5.3-admin.62", "5.3-admin.63", "5.3-admin.64", "5.3-admin.65", "5.3-admin.66", "5.3-admin.67", "5.3-admin.68", "5.3-admin.69", "5.3-admin.70", "5.3-admin.71", "5.3-admin.72", "5.3-admin.73", "5.3-admin.74", "5.3-admin.75")
+                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43", "5.3-admin.44", "5.3-admin.45", "5.3-admin.46", "5.3-admin.47", "5.3-admin.48", "5.3-admin.49", "5.3-admin.50", "5.3-admin.51", "5.3-admin.52", "5.3-admin.53", "5.3-admin.54", "5.3-admin.55", "5.3-admin.56", "5.3-admin.57", "5.3-admin.58", "5.3-admin.59", "5.3-admin.60", "5.3-admin.61", "5.3-admin.62", "5.3-admin.63", "5.3-admin.64", "5.3-admin.65", "5.3-admin.66", "5.3-admin.67", "5.3-admin.68", "5.3-admin.69", "5.3-admin.70", "5.3-admin.71", "5.3-admin.72", "5.3-admin.73", "5.3-admin.74", "5.3-admin.75", "5.3-admin.76")
 # Releases that may also START a new video: the newest two. A customer who hasn't pressed Update yet keeps making
 # videos the morning after a release; the project pins the release it started on.
 SUPPORTED_RELEASES = APPROVED_RELEASES[-2:]
@@ -1245,6 +1245,54 @@ def make_router(session_user, *, prefix="/api/frontier"):
         except Exception:
             raise HTTPException(503, "The Shorts pack is being prepared. Please try again shortly.")
         return RedirectResponse(url, status_code=302, headers=headers)
+
+    def stream_private(request: Request, key: str, filename: str, headers: dict):
+        """A private release file streamed through channelrecipe.com, byte ranges included (resume, partial update).
+        Some internet providers can't reach the storage host the signed links name (a creator's browser showed
+        DNS_PROBE_FINISHED_NXDOMAIN for channelrecipe-media.sfo3.digitaloceanspaces.com), but they reach this site."""
+        from webapp import storage
+        if not storage.is_remote():
+            raise HTTPException(503, "The studio download is being prepared. Please try again shortly.")
+        params = {"Bucket": storage._spaces_creds()[2], "Key": key}
+        wanted = request.headers.get("range") or ""
+        if re.fullmatch(r"bytes=\d+-\d*", wanted):
+            params["Range"] = wanted
+        try:
+            obj = storage._get_client().get_object(**params)
+        except Exception:
+            raise HTTPException(503, "The studio download is being prepared. Please try again shortly.")
+        body = obj["Body"]
+        out = {**headers, "Accept-Ranges": "bytes", "Content-Length": str(obj.get("ContentLength") or 0),
+               "Content-Disposition": 'attachment; filename="%s"' % filename}
+        sha = (obj.get("Metadata") or {}).get("sha256")
+        if sha:
+            out["x-amz-meta-sha256"] = sha
+        if obj.get("ContentRange"):
+            out["Content-Range"] = obj["ContentRange"]
+
+        def chunks():
+            try:
+                yield from body.iter_chunks(1 << 20)
+            finally:
+                body.close()
+        return StreamingResponse(chunks(), status_code=206 if obj.get("ContentRange") else 200,
+                                 media_type="application/zip", headers=out)
+
+    @router.get("/download/file")
+    def download_file(request: Request, user=Depends(access)):
+        """The studio ZIP through this site (the website's download button; the updater's fallback)."""
+        if request.headers.get("range", "bytes=0-").startswith("bytes=0-"):
+            milestones.record(user["id"], milestones.DOWNLOADED)
+        if not release_ready():
+            raise HTTPException(503, "The studio download is being prepared. Please try again shortly.")
+        return stream_private(request, RELEASE_KEY, "ChannelRecipe-local-studio-%s.zip" % VERSION,
+                              {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
+
+    @router.get("/shorts-pack/file")
+    def shorts_pack_file(request: Request, user=Depends(access)):
+        """The Shorts asset pack through this site (the updater's fallback when the storage host can't be reached)."""
+        return stream_private(request, SHORTS_PACK_KEY, "shorts-assets.zip",
+                              {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
     @router.get("/download")
     def download(user=Depends(access)):
