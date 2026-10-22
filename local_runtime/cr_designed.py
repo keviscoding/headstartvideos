@@ -221,9 +221,9 @@ def clean(spec) -> dict:
     out = {
         "plan": plan if plan in PLANS else "orb",
         "head": {"size": _num(head.get("size"), 0.18, 0.34, 0.246), "color": _hex(head.get("color"), "#070708"),
-                 "rim": _hex(head.get("rim"), "#F7E7C2"), "rim_width": _num(head.get("rim_width"), 0.0, 0.15, 0.075)},
+                 "rim": _hex(head.get("rim"), "#F7E7C2"), "rim_width": _num(head.get("rim_width"), 0.0, 0.15, 0.09)},
         "face": {"set": face.get("set") if face.get("set") in FACE_SETS else "ring", "color": _hex(face.get("color"), "#FFFFFF"),
-                 "size": _num(face.get("size"), 0.7, 1.4, 1.0)},
+                 "size": _num(face.get("size"), 0.7, 1.4, 1.15)},
         "limbs": {"color": _hex(limbs.get("color"), "#0E0E10"), "thickness": _num(limbs.get("thickness"), 0.6, 2.0, 1.0),
                   "hand_color": _hex(limbs.get("hand_color"), _hex(limbs.get("color"), "#101013"))},
         "shoes": {"color": _hex(shoes.get("color"), "#F2F0EA")},
@@ -316,9 +316,22 @@ def stamp(video: dict, spec, lead: dict = None) -> dict:
         if str(look.get("preset") or "") != PRESET:
             continue
         look["designed"] = copy.deepcopy(arch)
-        if isinstance(scene.get("world"), dict) or "world" not in scene:
+        rooms = [e for sec in ("structures", "objects") for e in scene.get(sec) or []
+                 if isinstance(e, dict) and str(e.get("kind") or "").startswith("interior.")]
+        if rooms:                                 # a realistic room of the documentary library: the designed room instead
+            kind = str(rooms[0].get("kind"))
+            scene["world"] = {"biome": "designed_room", "furnish": next(
+                (f for w, f in _FURNISH if re.search(w, kind)), "living")}
+            for sec in ("structures", "objects"):
+                if isinstance(scene.get(sec), list):
+                    scene[sec] = [e for e in scene[sec] if not (isinstance(e, dict) and str(e.get("kind") or "").startswith("interior."))]
+        elif isinstance(scene.get("world"), dict) or "world" not in scene:
             scene["world"] = _world(scene.get("world") or {})
     return out
+
+
+_FURNISH = [(r"office|study|hq|bunker", "office"), (r"operating|hospital|lab|surgery", "lab"), (r"kitchen", "kitchen"),
+            (r"class|school", "classroom"), (r"bed|cell|small_room|cabin", "bedroom")]
 
 
 def test_video(spec) -> dict:

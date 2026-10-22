@@ -67,7 +67,7 @@ def test_every_value_of_a_cast_spec_is_checked():
                     "cast": [{"name": "Dot <b>", "top": "cape", "color": "teal", "hat": {"kind": "wizard"}, "glasses": "yes"},
                              "not a row"]})
     assert spec["plan"] == "orb" and spec["head"]["size"] == 0.34 and spec["head"]["color"] == "#070708"
-    assert spec["head"]["rim_width"] == 0.0 and spec["face"]["set"] == "ring" and spec["face"]["size"] == 1.0
+    assert spec["head"]["rim_width"] == 0.0 and spec["face"]["set"] == "ring" and spec["face"]["size"] == 1.15
     assert spec["palette"] == ["#D2382D", "#2F5BA8"] and spec["details"] == ["hood"] and spec["sets"] == ["designed_room"]
     assert "extra" not in spec
     assert spec["cast"] == [{"name": "Dot b", "role": "lead", "top": "jacket", "color": "#1FA5A0"}]
@@ -119,3 +119,11 @@ def test_the_kit_is_found_only_in_a_studio_that_has_it(tmp_path):
     kit.parent.mkdir(parents=True)
     kit.write_text("export const MODULES = [];")
     assert D.engine_ready(tmp_path)
+
+
+def test_a_realistic_room_becomes_the_designed_room():
+    video = {"cast": [], "scenes": [{"id": "s", "look": {"preset": "designed"}, "world": {"biome": "interior"},
+                                     "structures": [{"kind": "interior.office", "at": [0, 0]}, {"kind": "prop.sign"}]}]}
+    scene = D.stamp(video, {})["scenes"][0]
+    assert scene["world"] == {"biome": "designed_room", "furnish": "office"}
+    assert scene["structures"] == [{"kind": "prop.sign"}]
