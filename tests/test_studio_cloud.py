@@ -211,7 +211,8 @@ def test_only_what_the_cloud_can_make_goes_there(studio):
     b = studio.cloud.blocked
     assert b({"style": "documentary", "features": {"youtube": True}}) == ""
     assert "this computer" in b({"style": "cr-shorts-ranking"}) and "this computer" in b({"style": "cr_clone_abc"})
-    assert "3D" in b({"style": "documentary", "features": {"threed": True}}) and "3D" in b({"style": "folio"})
+    assert b({"style": "3d", "features": {"threed": True}}) == "", "3D renders on the GPU machine"
+    assert "FOLIO" in b({"style": "folio"})
     assert "recording" in b({"style": "documentary", "byo_audio": "uploads/me.wav"})
     assert "Fast mode" in b({"style": "documentary", "render_backend": "manimgx"})
     p = studio.cloud.farm_payload({"title": "T", "style": "documentary", "minutes": 8, "steps": ["video", "thumbnail"],
@@ -440,3 +441,32 @@ def test_the_machine_makes_the_engine_adjustments_the_studio_makes(studio, monke
     import make_video
     assert applied == ["cr_media", "cr_render", "cr_style_delivery"], "one failing adjustment doesn't stop the rest"
     assert make_video._claude_endpoint("anthropic") is None, "no relay given: the engine's own endpoint"
+
+
+
+def test_3d_goes_to_the_gpu_machine_and_the_farm_no_longer_refuses_it(studio, monkeypatch):
+    from flask import Flask, jsonify
+    app = Flask(__name__)
+    asked = []
+
+    def threed_on(style, asked_features=None):
+        return style == "3d"
+
+    engine = SimpleNamespace(app=app, _threed_on=threed_on)
+
+    @app.post("/api/farm/queue")
+    def api_farm_queue():
+        # the engine's own route checks the module-level function at call time
+        asked.append(engine._threed_on("3d"))
+        return jsonify(ok=True)
+    monkeypatch.setattr(studio.cloud, "_THREED", [])
+    monkeypatch.setattr(studio.cloud, "active", lambda home=None: True)
+    studio.cloud.install_routes(engine, "tok", studio.home)
+    app.test_client().post("/api/farm/queue", json={})
+    assert asked == [False], "inside a Studio Cloud queue a 3D job is not refused"
+    assert engine._threed_on("3d") is True, "everywhere else the engine's own answer stands"
+    assert studio.cloud.wants_gpu({"style": "3d", "features": {"threed": True}})
+    assert not studio.cloud.wants_gpu({"style": "documentary"})
+    monkeypatch.setattr(studio.cloud, "active", lambda home=None: False)
+    app.test_client().post("/api/farm/queue", json={})
+    assert asked[-1] is True, "without Studio Cloud (a RunPod farm) the engine still refuses 3D"

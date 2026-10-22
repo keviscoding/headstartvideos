@@ -193,6 +193,18 @@ def studio_bucket(home: Path = HOME) -> BrokerBucket:
     return BrokerBucket(base + "/api/studio/cloud", "Bearer " + key)
 
 
+_THREED = []          # the engine's own "does this job make 3D scenes" (app._threed_on), saved before it is wrapped
+_LOCAL = threading.local()
+
+
+def wants_gpu(spec: dict) -> bool:
+    """A job that renders 3D scenes needs the machine with a graphics card (three.js in Chromium)."""
+    try:
+        return bool(_THREED and _THREED[0](str(spec.get("style") or ""), spec.get("features")))
+    except Exception:                                       # noqa: BLE001 - when in doubt, the CPU machine
+        return False
+
+
 _SECRET_NAME = re.compile(r"key|token|secret|password|proof", re.I)
 
 
@@ -251,7 +263,8 @@ class CloudPods:
         settings = studio_settings(self.home)
         if settings:
             env = {**env, "CR_STUDIO_SETTINGS": json.dumps(settings)}
-        job = self._call("POST", "/jobs", {"machine": "cpu", "minutes": float(spec.get("minutes") or 10),
+        machine = "gpu" if wants_gpu(spec) else "cpu"
+        job = self._call("POST", "/jobs", {"machine": machine, "minutes": float(spec.get("minutes") or 10),
                                            "slug": env.get("FARM_SLUG", ""), "title": env.get("FARM_TITLE", ""),
                                            "env": env})
         Relay.ensure(self.home)
@@ -517,8 +530,8 @@ def blocked(p: dict) -> str:
     style, features = str(p.get("style") or ""), p.get("features") or {}
     if style.startswith(("cr-", "cr_")):
         return "This recipe renders on this computer for now."
-    if style == "folio" or features.get("threed"):
-        return "3D scenes and FOLIO render on this computer for now."
+    if style == "folio":
+        return "FOLIO renders on this computer: every shot is drawn by your Claude Code."
     if p.get("byo_audio"):
         return "Your own recording renders on this computer."
     if (p.get("render_backend") or "original") != "original":
@@ -577,6 +590,28 @@ def install_routes(studio, token: str, home: Path = HOME) -> None:
 
     app = studio.app
     _STUDIO[:] = [studio]
+    original_threed = getattr(studio, "_threed_on", None)
+    if original_threed is not None and not _THREED:
+        _THREED.append(original_threed)
+
+        def threed_on(style, asked=None):
+            # inside a Studio Cloud farm queue the job renders on the GPU machine: not a reason to refuse it
+            if getattr(_LOCAL, "cloud_queue", False):
+                return False
+            return original_threed(style, asked)
+        studio._threed_on = threed_on
+        queue_view = app.view_functions.get(next((r.endpoint for r in app.url_map.iter_rules()
+                                                  if r.rule == "/api/farm/queue"), ""), None)
+        if queue_view is not None:
+            endpoint = next(r.endpoint for r in app.url_map.iter_rules() if r.rule == "/api/farm/queue")
+
+            def farm_queue(*args, **kwargs):
+                _LOCAL.cloud_queue = active(home)
+                try:
+                    return queue_view(*args, **kwargs)
+                finally:
+                    _LOCAL.cloud_queue = False
+            app.view_functions[endpoint] = farm_queue
 
     @app.post("/cr-cloud/start")
     def cr_cloud_start():

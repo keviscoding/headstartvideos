@@ -498,7 +498,10 @@ def test_studio_cloud_renders_on_a_channelrecipe_machine_when_chosen(workspace):
     page.evaluate("document.getElementById('crw-minutes').dispatchEvent(new Event('input',{bubbles:true}))")
     assert "keeps this computer busy" in page.locator("#crw-cloud-note").inner_text(), "a long video: the cloud is suggested"
 
+    env.cloud["machines"]["gpu"] = {"price_per_hr": 2.4}
     env.open("?cr-preset=3d")
     page.wait_for_selector("#crw-cloud-choice:not([hidden])")
-    assert page.locator("[data-render-on=cloud]").is_disabled()
-    assert "3D scenes" in page.locator("#crw-cloud-note").inner_text()
+    assert page.locator("[data-render-on=cloud]").is_enabled(), "3D renders on the cloud's graphics card"
+    page.locator("[data-render-on=cloud]").click()
+    note = page.locator("#crw-cloud-note").inner_text()
+    assert "graphics card" in note and "$2.40 an hour" in note
