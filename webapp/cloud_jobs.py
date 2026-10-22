@@ -25,6 +25,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import secrets
 import threading
 import time
@@ -41,11 +42,13 @@ from webapp import database as db
 
 # What a customer pays per machine-minute, in cents. Modal's list prices (2026-10-22): the CPU machine
 # (8 physical cores, 32 GiB) costs about $0.63/h and the GPU machine (L4 + 4 cores, 16 GiB) about $1.12/h.
+# Measured 2026-10-22: a 1-minute Documentary took 17.3 machine-minutes end to end (the engine's README measured a
+# 10-minute one at 27 minutes on a similar machine), so most of a short video's time is fixed work.
 MACHINES = {
-    "cpu": {"cents_per_min": 2, "label": "Cloud machine (16 vCPU)", "per_video_minute": 3.0},
+    "cpu": {"cents_per_min": 2, "label": "Cloud machine (16 vCPU)", "per_video_minute": 2.5},
     "gpu": {"cents_per_min": 4, "label": "Cloud machine with a GPU (NVIDIA L4)", "per_video_minute": 7.0},
 }
-STARTUP_MINUTES = 6            # boot, code download, installing anything new
+STARTUP_MINUTES = 12           # boot, code download, research and the fixed passes every video makes
 MAX_MINUTES = 240              # the engine's own watchdog default
 MIN_CHARGE_CENTS = 5
 RELAY_WAIT_S = 20 * 60         # how long a machine's Claude question waits for the creator's Studio
@@ -63,6 +66,7 @@ RENDER_KEYS = {
     "EPIDEMIC_API_KEY", "EPIDEMIC", "ELEVENLABS_API_KEY", "ELEVENLABS_MODEL",
     "CLAUDE_PROVIDER", "SCRIPT_PROVIDER", "CLAUDE_FALLBACK", "PYTHONUNBUFFERED", "DEBIAN_FRONTEND",
     "FARM_JOB_KEY", "FARM_SLUG", "FARM_TITLE", "FARM_CODE_URL", "FARM_ASSETS_URL", "FARM_STATUS_URL",
+    "CR_STUDIO_VERSION", "CR_CODE_KIND",
 }
 SIGNED_URL_KEYS = ("FARM_CODE_URL", "FARM_ASSETS_URL", "FARM_STATUS_URL")
 
@@ -309,6 +313,16 @@ def _signed_key(url: str, user_id: int) -> str:
     return key if key.startswith(_prefix(user_id)) and ".." not in key.split("/") else ""
 
 
+def release_url(version: str) -> str:
+    """A signed link to an approved Studio release, for a Studio Cloud machine to start from."""
+    from webapp.frontier_studio import APPROVED_RELEASES
+    if version not in APPROVED_RELEASES:
+        raise HTTPException(400, "This Studio version can't render on Studio Cloud. Update Studio, then try again.")
+    client, bucket, _endpoint = _storage()
+    return client.generate_presigned_url("get_object", Params={"Bucket": bucket,
+                                         "Key": f"private/frontier/channelrecipe-{version}.zip"}, ExpiresIn=12 * 3600)
+
+
 # ── starting a job ──────────────────────────────────────────────────────────────────────────────────────────
 
 def pod_env(user_id: int, job_id: str, token: str, env: dict, max_minutes: int) -> dict:
@@ -323,6 +337,11 @@ def pod_env(user_id: int, job_id: str, token: str, env: dict, max_minutes: int) 
             raise HTTPException(400, f"{k} must be a link this account's Studio Cloud storage signed.")
     if not out.get("FARM_JOB_KEY"):
         raise HTTPException(400, "The job has no spec.")
+    if out.get("CR_CODE_KIND") == "overlay":
+        # The Studio sent only its own files: the machine starts from the official release of the same version.
+        out["FARM_RELEASE_URL"] = release_url(out.get("CR_STUDIO_VERSION", ""))
+    else:
+        out.pop("CR_CODE_KIND", None)
     out["FARM_JOB_KEY"] = _clean_key(out["FARM_JOB_KEY"])
     out.update({
         "CLAUDE_PROVIDER": "anthropic", "SCRIPT_PROVIDER": "anthropic", "CLAUDE_FALLBACK": "",
@@ -495,15 +514,26 @@ def relay_response(j: dict, body: dict):
 
 class _PlainRelay:
     """Decided after the first 90 s: a quick answer is an ordinary JSON response (or a 503 the engine retries);
-    a slow one becomes a 200 kept alive with whitespace."""
-    def __init__(self, rid: str, model: str, until: float):
-        self.rid, self.model, self.until = rid, model, until
+    a slow one becomes a 200 kept alive with whitespace. `raw`: the answer is the JSON to return (a download)."""
+    def __init__(self, rid: str, model: str, until: float, raw: bool = False):
+        self.rid, self.model, self.until, self.raw = rid, model, until, raw
+
+    def _body(self, res: dict | None) -> str:
+        if self.raw:
+            if res and res["status"] == "answered":
+                return res["answer"]
+            return json.dumps({"rc": 1, "stdout": "", "files": [],
+                               "stderr": "Studio Cloud: " + ((res or {}).get("error") or "your Studio didn't answer")})
+        if res and res["status"] == "answered":
+            return json.dumps(_message(res["answer"], self.model))
+        return json.dumps({"type": "error", "content": [], "error": {
+            "type": "overloaded_error", "message": (res or {}).get("error") or "timed out waiting for your Studio"}})
 
     async def respond(self):
         res = await _wait_answer(self.rid, time.time() + 90)
         if res is not None:
-            if res["status"] == "answered":
-                return JSONResponse(_message(res["answer"], self.model))
+            if res["status"] == "answered" or self.raw:
+                return JSONResponse(json.loads(self._body(res)))
             return JSONResponse({"type": "error", "error": {"type": "overloaded_error",
                                                             "message": res["error"] or "Studio relay failed"}},
                                 status_code=503)
@@ -513,11 +543,7 @@ class _PlainRelay:
             while r is None and time.time() < self.until:
                 yield " "
                 r = await _wait_answer(self.rid, min(self.until, time.time() + 10))
-            if r and r["status"] == "answered":
-                yield json.dumps(_message(r["answer"], self.model))
-            else:
-                yield json.dumps({"type": "error", "content": [], "error": {
-                    "type": "overloaded_error", "message": (r or {}).get("error") or "timed out waiting for your Studio"}})
+            yield self._body(r)
         return StreamingResponse(rest(), media_type="application/json")
 
 
@@ -596,7 +622,8 @@ def make_router(access) -> APIRouter:
 
     @router.delete("/jobs/{job_id}")
     def delete_job(job_id: str, user=Depends(access)):
-        return _job_view(cancel(_job(job_id, user["id"])))
+        # The farm also "terminates" a machine that has just finished: ask Modal first, so a finished job is done.
+        return _job_view(cancel(refresh(_job(job_id, user["id"]), force=True)))
 
     @router.post("/storage")
     def post_storage(req: StorageRequest, user=Depends(access)):
@@ -636,6 +663,23 @@ def make_router(access) -> APIRouter:
     def post_pod_storage(req: StorageRequest, request: Request):
         j = _pod_job(request)
         return storage_op(j["user_id"], req.op, req.key, req.method, req.seconds, req.content_type)
+
+    @router.post("/relay/ytdlp")
+    async def post_relay_ytdlp(request: Request):
+        """A machine's YouTube download, handed to the creator's Studio (YouTube refuses datacentre machines)."""
+        j = await run_in_threadpool(_pod_job, request)
+        try:
+            body = await request.json()
+        except ValueError:
+            raise HTTPException(400, "Send the download.")
+        prefix = str((body or {}).get("prefix") or "")
+        argv = (body or {}).get("argv")
+        if not re.fullmatch(r"relay/[0-9a-f]{16}", prefix) or not isinstance(argv, list) or len(argv) > 60:
+            raise HTTPException(400, "Send the download.")
+        rid = await run_in_threadpool(relay_enqueue, j, {"kind": "ytdlp", "argv": [str(a)[:2000] for a in argv],
+                                                         "inputs": [str(x)[:500] for x in body.get("inputs") or []][:10],
+                                                         "prefix": prefix})
+        return await _PlainRelay(rid, "", time.time() + RELAY_WAIT_S, raw=True).respond()
 
     @router.post("/relay/v1/messages")
     async def post_relay_messages(request: Request):

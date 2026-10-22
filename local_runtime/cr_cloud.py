@@ -15,12 +15,17 @@ account connected, this module swaps those three for ChannelRecipe's own:
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
+import re
+import secrets
+import subprocess
 import sys
 import tempfile
 import threading
 import time
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -216,6 +221,9 @@ class CloudPods:
             spec = json.loads(studio_bucket(self.home).get_bytes(env["FARM_JOB_KEY"]).decode("utf-8"))
         except Exception:                                   # noqa: BLE001 - the quote then assumes ten minutes
             pass
+        version = release_version(self.home)
+        if version and "/code/overlay-" in env.get("FARM_CODE_URL", ""):
+            env = {**env, "CR_STUDIO_VERSION": version, "CR_CODE_KIND": "overlay"}
         job = self._call("POST", "/jobs", {"machine": "cpu", "minutes": float(spec.get("minutes") or 10),
                                            "slug": env.get("FARM_SLUG", ""), "title": env.get("FARM_TITLE", ""),
                                            "env": env})
@@ -244,11 +252,20 @@ class CloudPods:
         return []
 
 
+_STUDIO = []
+
+
+def _farm_running() -> bool:
+    farm = getattr(_STUDIO[0], "FARM", {}) if _STUDIO else {}
+    thread = farm.get("thread") if isinstance(farm, dict) else None
+    return bool(thread is not None and thread.is_alive())
+
+
 class Relay:
     """Answers the Claude questions a Studio Cloud machine asks, with this computer's Claude Code."""
     _thread = None
     _lock = threading.Lock()
-    WORKERS = 3
+    WORKERS = 4
 
     @classmethod
     def ensure(cls, home: Path = HOME):
@@ -261,7 +278,7 @@ class Relay:
     def _loop(cls, home: Path):
         idle_since = time.time()
         busy = threading.Semaphore(cls.WORKERS)
-        while time.time() - idle_since < 20 * 60:         # it stops itself once no machine has asked for a while
+        while time.time() - idle_since < 20 * 60 or _farm_running():   # while a machine may still ask
             base, key = _connection(home)
             if not base:
                 return
@@ -325,6 +342,8 @@ def _prompt_parts(request: dict, folder: Path) -> tuple[str, list]:
 
 
 def answer(request: dict) -> str:
+    if request.get("kind") == "ytdlp":
+        return json.dumps(run_ytdlp(request))
     import make_video as mv
     with tempfile.TemporaryDirectory(prefix="cr-cloud-") as tmp:
         prompt, images = _prompt_parts(request, Path(tmp))
@@ -335,6 +354,63 @@ def answer(request: dict) -> str:
 
 
 # ── wiring the farm to Studio Cloud ───────────────────────────────────────────────────────────────────────────
+
+OVERLAY_SKIP_TOP = {"shorts", "models"}      # the Shorts pack and downloaded models: fetched again where needed
+
+
+def release_version(home: Path = HOME) -> str:
+    try:
+        return str(json.loads((home / "cr-release.json").read_text()).get("version") or "")
+    except (OSError, ValueError):
+        return ""
+
+
+def overlay_files(home: Path, skip) -> list:
+    """This Studio's own files: everything the farm would send that is not exactly as the release shipped it."""
+    try:
+        shipped = json.loads((home / "cr-files.json").read_text()).get("files") or {}
+    except (OSError, ValueError):
+        shipped = {}
+    out = []
+    for p in sorted(home.rglob("*")):
+        if not p.is_file():
+            continue
+        rel = p.relative_to(home).as_posix()
+        top = rel.split("/")[0]
+        if skip(rel) or top.startswith(".") or top in OVERLAY_SKIP_TOP:
+            continue
+        want = shipped.get(rel)
+        if want and want == hashlib.sha256(p.read_bytes()).hexdigest():
+            continue
+        out.append((rel, p))
+    return out
+
+
+def overlay_bundle(bucket, home: Path = HOME, skip=None, sink=None) -> str:
+    """The farm's code bundle for Studio Cloud: only this Studio's own files. The machine starts from the official
+    release of the same version, which ChannelRecipe already has, so nothing it already has is uploaded."""
+    say = sink or print
+    files = overlay_files(home, skip or (lambda rel: False))
+    digest = hashlib.sha256()
+    for rel, p in files:
+        digest.update(rel.encode())
+        digest.update(hashlib.sha256(p.read_bytes()).digest())
+    key = f"code/overlay-{release_version(home) or 'unknown'}-{digest.hexdigest()[:12]}.zip"
+    if bucket.exists(key):
+        say(f"  code: Studio {release_version(home)} plus your own files, already uploaded")
+        return key
+    tmp = home / ".farm-overlay.zip"
+    try:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
+            for rel, p in files:
+                z.write(p, rel)
+        say(f"  code: Studio {release_version(home)} comes from ChannelRecipe; uploading only your own "
+            f"{len(files)} file(s) ({tmp.stat().st_size / 1024 ** 2:.1f} MB)")
+        bucket.put_file(key, tmp, "application/zip")
+    finally:
+        tmp.unlink(missing_ok=True)
+    return key
+
 
 def checklist(original) -> list:
     st = status()
@@ -385,9 +461,18 @@ def install(home: Path = HOME) -> bool:
     def runpod(api_key: str = "", session=None):
         return CloudPods(api_key, session, home) if api_key == SENTINEL else original_runpod(api_key, session)
 
+    original_bundle = getattr(ff, "bundle", None)
+
+    def bundle(bucket, quiet: bool = False, sink=None):
+        if isinstance(bucket, BrokerBucket) and release_version(home) and (home / "cr-files.json").is_file():
+            return overlay_bundle(bucket, home, getattr(ff, "_skip", None), None if quiet else sink)
+        return original_bundle(bucket, quiet=quiet, sink=sink)
+
     fc.Config.__init__, fc.Config.checklist, fc.Config.missing_for_mac = init, check, missing
     fc.bucket_from = ff.bucket_from = bucket_from
     frp.RunPod = runpod
+    if original_bundle is not None:
+        ff.bundle = bundle
     _INSTALLED.append(True)
     return True
 
@@ -448,6 +533,7 @@ def install_routes(studio, token: str, home: Path = HOME) -> None:
     from flask import jsonify, request
 
     app = studio.app
+    _STUDIO[:] = [studio]
 
     @app.post("/cr-cloud/start")
     def cr_cloud_start():
@@ -489,6 +575,52 @@ def install_routes(studio, token: str, home: Path = HOME) -> None:
 
 # ── the machine's side ────────────────────────────────────────────────────────────────────────────────────────
 
+def _relay_claude() -> None:
+    """Claude through the job's relay, switched on inside the engine only. Left in the environment, the relay's
+    OpenLux settings would also make the engine pick OpenLux as its video watcher, which the relay is not."""
+    url, key = os.environ.pop("OPENLUX_BASE_URL", ""), os.environ.pop("OPENLUX_API_KEY", "")
+    os.environ.pop("CLAUDE_RELAY", None)
+    if not (url and key):
+        return
+    import importlib.abc
+    import importlib.util
+
+    class Hook(importlib.abc.MetaPathFinder):
+        def find_spec(self, name, path, target=None):
+            if name != "make_video":
+                return None
+            sys.meta_path.remove(self)
+            spec = importlib.util.find_spec(name)
+            if spec is None or spec.loader is None:
+                return spec
+            run = spec.loader.exec_module
+
+            def exec_module(module):
+                run(module)
+                original = module._claude_endpoint
+
+                def endpoint(provider):
+                    if provider in ("anthropic", "openlux"):
+                        return (url.rstrip("/") + "/v1/messages",
+                                {"x-api-key": key, "anthropic-version": "2023-06-01",
+                                 "content-type": "application/json"})
+                    return original(provider)
+                module._claude_endpoint = endpoint
+            spec.loader.exec_module = exec_module
+            return spec
+    sys.meta_path.insert(0, Hook())
+
+
+def _relay_youtube() -> None:
+    """YouTube answers datacentre machines with "confirm you're not a bot", so the engine's yt-dlp is pointed at
+    `python -m cr_cloud ytdlp`, which hands YouTube downloads to the creator's Studio (their own connection)."""
+    shim = Path(tempfile.gettempdir()) / "cr-cloud-ytdlp"
+    shim.write_text(f"#!/bin/sh\nPYTHONPATH=\"{HOME}${{PYTHONPATH:+:$PYTHONPATH}}\" exec \"{sys.executable}\" "
+                    f"-m cr_cloud ytdlp \"$@\"\n")
+    shim.chmod(0o755)
+    os.environ["YTDLP_BIN"] = str(shim)
+
+
 def pod() -> int:
     """Run the farm's own runner with its storage pointed at the job's signed broker."""
     sys.path.insert(0, str(HOME))
@@ -496,13 +628,145 @@ def pod() -> int:
     if not broker or not token:
         print("FARM_BROKER_URL / FARM_JOB_TOKEN are not set: this is not a Studio Cloud machine", file=sys.stderr)
         return 2
+    _relay_claude()
+    _relay_youtube()
     import farm.config as fc
     fc.bucket_from = lambda cfg: BrokerBucket(broker, "Bearer " + token)
     from farm import runner
     return int(runner.main() or 0)
 
 
+# ── YouTube through the creator's connection ──────────────────────────────────────────────────────────────────
+
+ROOT_MARK = "@@ROOT@@"
+_YT_TARGET = re.compile(r"^(https://(www\.|m\.)?(youtube\.com|youtu\.be)/\S+|ytsearch\d{0,3}:.{1,300})$", re.S)
+_FLAGS = {"-q", "--no-warnings", "--force-keyframes-at-cuts", "--skip-download", "--write-info-json",
+          "--flat-playlist", "-j", "-J", "--force-ipv4"}
+_VALUE_FLAGS = {"-f", "--download-sections", "--merge-output-format", "-o", "--load-info-json", "--playlist-end",
+                "--print", "--js-runtimes", "--sleep-requests", "--extractor-args"}
+
+
+def _youtube_job(argv: list, root: Path) -> bool:
+    """Does this yt-dlp run need YouTube (search, a YouTube link, or a YouTube video's saved info file)?"""
+    for i, a in enumerate(argv):
+        if a.startswith("ytsearch") or "youtube.com/" in a or "youtu.be/" in a:
+            return True
+        if a == "--load-info-json" and i + 1 < len(argv):
+            try:
+                info = json.loads(Path(argv[i + 1]).read_text())
+                return "youtube" in str(info.get("extractor") or info.get("webpage_url") or "").lower()
+            except (OSError, ValueError):
+                return False
+    return False
+
+
+def ytdlp_main(argv: list) -> int:
+    """What a Studio Cloud machine runs as yt-dlp. Archive.org and other links download here; YouTube goes to
+    the creator's Studio with the machine's paths marked, and what it downloaded comes back into the same places."""
+    root = Path(os.environ.get("CHANNELRECIPE_HOME") or os.getcwd()).resolve()
+    if not _youtube_job(argv, root):
+        return subprocess.call([sys.executable, "-m", "yt_dlp"] + argv)
+    broker, token = os.environ.get("FARM_BROKER_URL", ""), os.environ.get("FARM_JOB_TOKEN", "")
+    bucket = BrokerBucket(broker, "Bearer " + token)
+    prefix = "relay/" + secrets.token_hex(8)
+    mapped, inputs = [], []
+    for a in argv:
+        if a.startswith(str(root) + "/"):
+            rel = Path(a).resolve().relative_to(root).as_posix() if Path(a).exists() else a[len(str(root)) + 1:]
+            if Path(a).is_file():
+                bucket.put_file(f"{prefix}/in/{rel}", Path(a))
+                inputs.append(rel)
+            mapped.append(f"{ROOT_MARK}/{rel}")
+        else:
+            mapped.append(a)
+    try:
+        r = requests.post(broker.rsplit("/pod", 1)[0] + "/relay/ytdlp", json={"argv": mapped, "inputs": inputs,
+                          "prefix": prefix}, headers={"x-api-key": token}, timeout=1900)
+        out = json.loads(r.text) if r.ok else {"rc": 1, "stderr": f"Studio Cloud relay: HTTP {r.status_code}"}
+    except (requests.RequestException, ValueError) as e:
+        out = {"rc": 1, "stderr": f"Studio Cloud relay: {type(e).__name__}"}
+    for rel in out.get("files") or []:
+        if ".." in rel.split("/"):
+            continue
+        try:
+            bucket.get_file(f"{prefix}/out/{rel}", root / rel)
+        except Exception as e:                              # noqa: BLE001 - yt-dlp's caller checks for the file
+            out["stderr"] = (out.get("stderr") or "") + f"\nStudio Cloud: could not bring back {rel}: {e}"
+    sys.stdout.write(out.get("stdout") or "")
+    sys.stderr.write(out.get("stderr") or "")
+    return int(out.get("rc") or 0)
+
+
+def _safe_ytdlp_args(argv: list) -> list:
+    """The pod's yt-dlp arguments, if every one is something the engine itself asks for; else ValueError."""
+    out, i = [], 0
+    while i < len(argv):
+        a = str(argv[i])
+        if a in _FLAGS:
+            out.append(a)
+        elif a in _VALUE_FLAGS and i + 1 < len(argv):
+            v = str(argv[i + 1])
+            if a in ("-o", "--load-info-json"):
+                if not v.startswith(ROOT_MARK + "/") or ".." in v.split("/"):
+                    raise ValueError(f"{a} must stay in the job folder")
+            elif a == "--js-runtimes" and v not in ("node", "bun", "deno"):
+                raise ValueError("unknown JavaScript runtime")
+            elif a == "--extractor-args" and not re.fullmatch(r"youtube:player_client=[a-z_,]+", v):
+                raise ValueError("unexpected extractor arguments")
+            out += [a, v]
+            i += 1
+        elif _YT_TARGET.match(a):
+            out.append(a)
+        else:
+            raise ValueError(f"not an option the engine uses: {a[:40]}")
+        i += 1
+    return out
+
+
+def run_ytdlp(request: dict, home: Path = HOME) -> dict:
+    """A Studio Cloud machine's YouTube download, run here on this computer's connection. Only the options the
+    engine uses are accepted (never --exec or a path outside the job's temporary folder)."""
+    try:
+        args = _safe_ytdlp_args(list(request.get("argv") or []))
+    except ValueError as e:
+        return {"rc": 2, "stdout": "", "stderr": f"Studio Cloud refused this download: {e}", "files": []}
+    prefix = str(request.get("prefix") or "")
+    if not re.fullmatch(r"relay/[0-9a-f]{16}", prefix):
+        return {"rc": 2, "stdout": "", "stderr": "Studio Cloud refused this download: bad folder", "files": []}
+    bucket = studio_bucket(home)
+    with tempfile.TemporaryDirectory(prefix="cr-cloud-yt-") as tmp:
+        work = Path(tmp)
+        for rel in request.get("inputs") or []:
+            if ".." not in str(rel).split("/"):
+                bucket.get_file(f"{prefix}/in/{rel}", work / rel)
+        before = {p: p.stat().st_mtime for p in work.rglob("*") if p.is_file()}
+        args = [a.replace(ROOT_MARK, str(work)) for a in args]
+        for i, a in enumerate(args[:-1]):
+            if a == "-o":
+                Path(args[i + 1]).parent.mkdir(parents=True, exist_ok=True)
+        try:
+            import youtube
+            prefix_cmd = youtube.ytdlp() or [sys.executable, "-m", "yt_dlp"]
+        except Exception:                                   # noqa: BLE001
+            prefix_cmd = [sys.executable, "-m", "yt_dlp"]
+        try:
+            p = subprocess.run(prefix_cmd + args, capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", timeout=900, cwd=work)
+            rc, stdout, stderr = p.returncode, p.stdout, p.stderr
+        except subprocess.TimeoutExpired:
+            rc, stdout, stderr = 1, "", "Studio Cloud: the download took too long on this computer"
+        files = []
+        for f in sorted(work.rglob("*")):
+            if f.is_file() and before.get(f) != f.stat().st_mtime and not f.name.endswith((".part", ".ytdl")):
+                rel = f.relative_to(work).as_posix()
+                bucket.put_file(f"{prefix}/out/{rel}", f)
+                files.append(rel)
+    return {"rc": rc, "stdout": stdout[:2_000_000], "stderr": stderr[-20000:], "files": files}
+
+
 if __name__ == "__main__":
     if sys.argv[1:2] == ["pod"]:
         raise SystemExit(pod())
+    if sys.argv[1:2] == ["ytdlp"]:
+        raise SystemExit(ytdlp_main(sys.argv[2:]))
     print(__doc__)

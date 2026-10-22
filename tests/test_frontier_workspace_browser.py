@@ -490,6 +490,12 @@ def test_studio_cloud_renders_on_a_channelrecipe_machine_when_chosen(workspace):
     assert "Writing the script" in page.locator("#crw-cloud-status").inner_text()
     assert page.locator("#crw-cloud-videos a").get_attribute("href") == "/api/farm/file/done-film/Done%20film.mp4"
 
+    page.locator(".crw-nav [data-nav=create]").click()
+    page.locator("[data-render-on=local]").click()
+    page.locator("[data-minutes='20']").click() if page.locator("[data-minutes='20']").count() else page.fill("#crw-minutes", "20")
+    page.evaluate("document.getElementById('crw-minutes').dispatchEvent(new Event('input',{bubbles:true}))")
+    assert "keeps this computer busy" in page.locator("#crw-cloud-note").inner_text(), "a long video: the cloud is suggested"
+
     env.open("?cr-preset=3d")
     page.wait_for_selector("#crw-cloud-choice:not([hidden])")
     assert page.locator("[data-render-on=cloud]").is_disabled()

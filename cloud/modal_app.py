@@ -18,6 +18,7 @@ The machine holds the creator's own render keys for the one job and a token that
 ChannelRecipe key is ever in it.
 """
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -45,6 +46,9 @@ image = (
 )
 app = modal.App("cr-studio-cloud", image=image)
 control_secret = modal.Secret.from_name("cr-cloud-control")
+# Official Studio releases, kept once per version: a Studio sends only its own files and the machine starts from these
+releases = modal.Volume.from_name("cr-studio-releases", create_if_missing=True)
+RELEASES = Path("/releases")
 
 GPU_CHROMIUM = "--use-angle=vulkan --enable-features=Vulkan --disable-vulkan-surface --ignore-gpu-blocklist"
 FOUR_HOURS = 4 * 3600 + 600
@@ -54,21 +58,62 @@ def _say(msg: str) -> None:
     print(f"=== studio cloud: {msg} ===", flush=True)
 
 
-def _fetch_code(url: str) -> None:
+def _release_zip(version: str, url: str) -> Path:
+    """The official release for this version, downloaded once into the shared volume."""
+    if not re.fullmatch(r"\d+\.\d+-admin\.\d+", version or ""):
+        raise RuntimeError("unknown Studio version")
+    releases.reload()
+    z = RELEASES / f"channelrecipe-{version}.zip"
+    if z.is_file() and zipfile.is_zipfile(z):
+        _say(f"Studio {version} from the release cache")
+        return z
+    part = RELEASES / f".{version}.{os.getpid()}.{int(time.time())}.part"
+    with urllib.request.urlopen(url, timeout=900) as r, part.open("wb") as f:
+        shutil.copyfileobj(r, f, 1 << 20)
+    if not zipfile.is_zipfile(part):
+        part.unlink(missing_ok=True)
+        raise RuntimeError("the Studio release download is not a zip (link expired?)")
+    part.rename(z)
+    releases.commit()
+    _say(f"Studio {version} downloaded into the release cache ({z.stat().st_size / 1024 ** 2:.0f} MB)")
+    return z
+
+
+def _unpack_release(z: Path) -> None:
+    """The release ZIP holds one top folder ("ChannelRecipe studio/"); its contents become the machine's Studio."""
+    with zipfile.ZipFile(z) as zf:
+        for info in zf.infolist():
+            parts = Path(info.filename).parts
+            if len(parts) < 2 or ".." in parts:
+                continue
+            dest = ROOT.joinpath(*parts[1:])
+            if info.is_dir():
+                dest.mkdir(parents=True, exist_ok=True)
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(info) as src, dest.open("wb") as out:
+                shutil.copyfileobj(src, out, 1 << 20)
+
+
+def _fetch_code(url: str, release: Path | None = None) -> None:
     if ROOT.exists():
         shutil.rmtree(ROOT)
     ROOT.mkdir(parents=True)
+    if release is not None:
+        _unpack_release(release)
     blob = Path("/tmp/channelrecipe.zip")
     last = None
     for attempt in range(4):
         try:
             with urllib.request.urlopen(url, timeout=600) as r, blob.open("wb") as f:
                 shutil.copyfileobj(r, f, 1 << 20)
-            if blob.stat().st_size < 1024:
-                raise RuntimeError("the code download is empty (link expired?)")
+            if blob.stat().st_size < 22 or not zipfile.is_zipfile(blob):
+                raise RuntimeError("the code download is not a zip (link expired?)")
             with zipfile.ZipFile(blob) as z:
+                if any(".." in Path(n).parts or n.startswith("/") for n in z.namelist()):
+                    raise RuntimeError("the code bundle has a path outside its folder")
                 z.extractall(ROOT)
-            _say(f"code {blob.stat().st_size / 1024 ** 2:.0f} MB")
+            _say(f"{'your own files' if release is not None else 'code'} {blob.stat().st_size / 1024 ** 2:.1f} MB")
             return
         except Exception as e:                          # noqa: BLE001 - retried, then reported
             last = e
@@ -81,7 +126,10 @@ def _fetch_code(url: str) -> None:
 def _run(job_id: str, env: dict, max_seconds: int, gpu: bool) -> dict:
     t0 = time.time()
     try:
-        _fetch_code(env["FARM_CODE_URL"])
+        release = None
+        if env.get("FARM_RELEASE_URL"):
+            release = _release_zip(env.get("CR_STUDIO_VERSION", ""), env["FARM_RELEASE_URL"])
+        _fetch_code(env["FARM_CODE_URL"], release)
         req = ROOT / "requirements.txt"
         if req.is_file():
             subprocess.run(["python", "-m", "pip", "install", "-q", "--disable-pip-version-check", "-r", str(req)],
@@ -108,12 +156,12 @@ def _run(job_id: str, env: dict, max_seconds: int, gpu: bool) -> dict:
     return {"ok": rc == 0, "seconds": seconds, "error": error}
 
 
-@app.function(cpu=8, memory=32768, timeout=FOUR_HOURS, max_containers=20)
+@app.function(cpu=8, memory=32768, timeout=FOUR_HOURS, max_containers=20, volumes={"/releases": releases})
 def render_cpu(job_id: str, env: dict, max_seconds: int) -> dict:
     return _run(job_id, env, max_seconds, gpu=False)
 
 
-@app.function(gpu="L4", cpu=4, memory=16384, timeout=FOUR_HOURS, max_containers=10)
+@app.function(gpu="L4", cpu=4, memory=16384, timeout=FOUR_HOURS, max_containers=10, volumes={"/releases": releases})
 def render_gpu(job_id: str, env: dict, max_seconds: int) -> dict:
     return _run(job_id, env, max_seconds, gpu=True)
 

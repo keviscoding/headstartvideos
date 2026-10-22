@@ -37,7 +37,9 @@ FARM = {
         def bucket_from(cfg):
             return "their own bucket"
     """),
-    "farm.py": "from farm.config import Config, bucket_from\n",
+    "farm.py": "from farm.config import Config, bucket_from\n"
+               "def _skip(rel):\n    return rel.startswith('output/')\n"
+               "def bundle(bucket, quiet=False, sink=None):\n    return 'code/channelrecipe-full.zip'\n",
     "runner.py": textwrap.dedent("""
         def main():
             from farm.config import bucket_from
@@ -128,6 +130,7 @@ def test_the_farm_switches_to_studio_cloud_only_when_the_account_has_it(studio, 
     assert [c["key"] for c in cfg.checklist()] == ["cloud", "balance", "render"]
     assert isinstance(ff.bucket_from(cfg), studio.cloud.BrokerBucket), "farm.farm's own import is switched too"
     assert isinstance(frp.RunPod(cfg.runpod_key), studio.cloud.CloudPods)
+    assert ff.bundle("their own bucket") == "code/channelrecipe-full.zip", "their own bucket keeps the full bundle"
     assert frp.RunPod("rp_theirs").api_key == "rp_theirs", "a creator's own RunPod key keeps RunPod"
 
     status.update(balance_usd=0.1)
@@ -248,3 +251,127 @@ def test_a_step_that_exits_is_reported_not_left_preparing(studio):
             raise SystemExit("Claude API error: timeout")
     studio.cloud.start(Client(), "tok", {"title": "T", "style": "documentary"})
     assert studio.cloud.TASK["state"] == "failed" and "timeout" in studio.cloud.TASK["error"]
+
+
+ENGINE_CALLS = [   # the shapes of the engine's own yt-dlp runs (youtube.py, footjudge.py, soundbites.py, make_video.py)
+    ["--js-runtimes", "node", "--flat-playlist", "--no-warnings", "-j", "ytsearch8:eagle eyesight close up"],
+    ["--js-runtimes", "node", "-q", "--no-warnings", "-f", "bv*[height<=360]+ba/b[height<=360]/worst",
+     "--download-sections", "*12.0-40.0", "--force-keyframes-at-cuts", "--merge-output-format", "mp4",
+     "-o", "@@ROOT@@/output/documentary/_work/x/youtube/low/abc.%(ext)s", "https://www.youtube.com/watch?v=abcdefghijk"],
+    ["-q", "--no-warnings", "--skip-download", "--write-info-json", "-o", "@@ROOT@@/output/w/info/abc",
+     "https://www.youtube.com/watch?v=abcdefghijk"],
+    ["-q", "--no-warnings", "-f", "bv*[height<=1080]/b", "--download-sections", "*1.00-5.00", "--force-keyframes-at-cuts",
+     "-o", "@@ROOT@@/output/w/sections/abc_1.0_5.0.%(ext)s", "--load-info-json", "@@ROOT@@/output/w/info/abc.info.json"],
+    ["-q", "--no-warnings", "--skip-download", "--print", "%(title)s\t%(channel)s", "https://youtu.be/abcdefghijk"],
+    ["--flat-playlist", "-J", "--playlist-end", "120", "--no-warnings", "https://www.youtube.com/@somechannel/videos"],
+]
+
+
+def test_the_creators_studio_runs_only_the_downloads_the_engine_asks_for(studio):
+    for argv in ENGINE_CALLS:
+        assert studio.cloud._safe_ytdlp_args(argv) == argv
+    for bad in (["--exec", "rm -rf ~", "https://www.youtube.com/watch?v=abcdefghijk"],
+                ["-o", "/Users/me/.ssh/x", "https://www.youtube.com/watch?v=abcdefghijk"],
+                ["-o", "@@ROOT@@/../../escape", "https://www.youtube.com/watch?v=abcdefghijk"],
+                ["--cookies-from-browser", "chrome", "https://www.youtube.com/watch?v=abcdefghijk"],
+                ["--batch-file", "@@ROOT@@/list.txt"], ["https://evil.example/x"],
+                ["--js-runtimes", "sh", "ytsearch1:x"], ["--extractor-args", "generic:impersonate", "ytsearch1:x"]):
+        with pytest.raises(ValueError):
+            studio.cloud._safe_ytdlp_args(bad)
+    out = studio.cloud.run_ytdlp({"argv": ["--exec", "touch /tmp/x", "ytsearch1:x"], "prefix": "relay/0123456789abcdef"})
+    assert out["rc"] == 2 and "refused" in out["stderr"] and out["files"] == []
+
+
+def test_a_youtube_download_runs_on_this_computer_and_comes_back(studio, monkeypatch):
+    store = {"relay/0123456789abcdef/in/output/w/info/abc.info.json": b'{"extractor": "youtube"}'}
+    monkeypatch.setattr(studio.cloud.requests, "Session", lambda: Http(store))
+    ran = []
+
+    def fake_run(cmd, **kw):
+        ran.append(cmd)
+        out = next(Path(cmd[i + 1]) for i, a in enumerate(cmd) if a == "-o")
+        Path(str(out).replace(".%(ext)s", ".mp4")).write_bytes(b"clip")
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+    monkeypatch.setattr(studio.cloud.subprocess, "run", fake_run)
+    monkeypatch.setitem(sys.modules, "youtube", SimpleNamespace(ytdlp=lambda: ["/usr/local/bin/yt-dlp", "--cookies", "c.txt"]))
+    out = studio.cloud.run_ytdlp({"argv": ENGINE_CALLS[3], "prefix": "relay/0123456789abcdef",
+                                  "inputs": ["output/w/info/abc.info.json"]}, studio.home)
+    assert out["rc"] == 0 and out["files"] == ["output/w/sections/abc_1.0_5.0.mp4"]
+    assert store["relay/0123456789abcdef/out/output/w/sections/abc_1.0_5.0.mp4"] == b"clip"
+    cmd = ran[0]
+    assert cmd[:3] == ["/usr/local/bin/yt-dlp", "--cookies", "c.txt"], "this computer's own yt-dlp settings"
+    assert not any("@@ROOT@@" in a for a in cmd), "the machine's paths become a private folder here"
+
+
+def test_the_machine_sends_youtube_to_the_studio_and_archive_org_direct(studio, monkeypatch, tmp_path):
+    root = tmp_path / "pod"
+    (root / "output/w/info").mkdir(parents=True)
+    (root / "output/w/info/abc.info.json").write_text('{"extractor": "youtube"}')
+    monkeypatch.setenv("CHANNELRECIPE_HOME", str(root))
+    monkeypatch.setenv("FARM_BROKER_URL", "https://cr.test/api/studio/cloud/pod")
+    monkeypatch.setenv("FARM_JOB_TOKEN", "crj_job")
+    store = {}
+    monkeypatch.setattr(studio.cloud.requests, "Session", lambda: Http(store))
+    sent = []
+
+    def relay(url, json=None, headers=None, timeout=None):
+        sent.append((url, json, headers))
+        store[f"{json['prefix']}/out/output/w/sections/abc_1.0_5.0.mp4"] = b"clip"
+        body = '  {"rc": 0, "stdout": "", "stderr": "", "files": ["output/w/sections/abc_1.0_5.0.mp4"]}'
+        return SimpleNamespace(ok=True, status_code=200, text=body)
+    monkeypatch.setattr(studio.cloud.requests, "post", relay)
+    argv = ["-q", "-o", f"{root}/output/w/sections/abc_1.0_5.0.%(ext)s", "--load-info-json",
+            f"{root}/output/w/info/abc.info.json"]
+    assert studio.cloud.ytdlp_main(argv) == 0
+    url, body, headers = sent[0]
+    assert url == "https://cr.test/api/studio/cloud/relay/ytdlp" and headers == {"x-api-key": "crj_job"}
+    assert body["argv"][2] == "@@ROOT@@/output/w/sections/abc_1.0_5.0.%(ext)s"
+    assert body["inputs"] == ["output/w/info/abc.info.json"] and f"{body['prefix']}/in/output/w/info/abc.info.json" in store
+    assert (root / "output/w/sections/abc_1.0_5.0.mp4").read_bytes() == b"clip"
+
+    calls = []
+    monkeypatch.setattr(studio.cloud.subprocess, "call", lambda cmd: calls.append(cmd) or 0)
+    assert studio.cloud.ytdlp_main(["-q", "https://archive.org/details/film"]) == 0
+    assert calls and calls[0][1:3] == ["-m", "yt_dlp"] and len(sent) == 1, "Archive.org downloads on the machine"
+
+
+def test_the_machine_uses_the_claude_relay_without_pretending_to_have_openlux(studio, monkeypatch, tmp_path):
+    (tmp_path / "make_video.py").write_text("def _claude_endpoint(provider):\n    return None\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "make_video", raising=False)
+    monkeypatch.setenv("OPENLUX_BASE_URL", "https://cr.test/api/studio/cloud/relay")
+    monkeypatch.setenv("OPENLUX_API_KEY", "crj_job")
+    monkeypatch.setenv("CLAUDE_RELAY", "openlux")
+    studio.cloud._relay_claude()
+    import os
+    assert not any(os.environ.get(k) for k in ("OPENLUX_BASE_URL", "OPENLUX_API_KEY", "CLAUDE_RELAY")), \
+        "the engine's video watchers don't see an OpenLux key"
+    import make_video
+    url, headers = make_video._claude_endpoint("anthropic")
+    assert url == "https://cr.test/api/studio/cloud/relay/v1/messages" and headers["x-api-key"] == "crj_job"
+    assert make_video._claude_endpoint("kie") is None
+
+
+def test_only_this_studios_own_files_are_uploaded(studio):
+    import hashlib
+    home = studio.home
+    (home / "make_video.py").write_text("engine")
+    (home / "styles").mkdir()
+    (home / "styles" / "mine.json").write_text("{}")
+    (home / "edited.py").write_text("changed")
+    (home / "shorts").mkdir()
+    (home / "shorts" / "pack.bin").write_text("big")
+    (home / ".cr-logs").mkdir()
+    (home / ".cr-logs" / "x.log").write_text("log")
+    (home / "cr-release.json").write_text('{"version": "5.3-admin.78"}')
+    sha = lambda s: hashlib.sha256(s.encode()).hexdigest()
+    (home / "cr-files.json").write_text(json.dumps({"files": {"make_video.py": sha("engine"), "edited.py": sha("old"),
+                                                              "cr-release.json": sha('{"version": "5.3-admin.78"}')}}))
+    rels = [rel for rel, _ in studio.cloud.overlay_files(home, lambda rel: rel.startswith("farm/"))]
+    assert sorted(rels) == ["cr-files.json", "edited.py", "styles/mine.json"], \
+        "unchanged release files, the Shorts pack, models and dot-folders stay home"
+    store = {}
+    b = studio.cloud.BrokerBucket("https://cr.test/api/studio/cloud", "Bearer x", Http(store))
+    key = studio.cloud.overlay_bundle(b, home, lambda rel: rel.startswith("farm/"), sink=lambda line: None)
+    assert key.startswith("code/overlay-5.3-admin.78-") and key in store
+    assert studio.cloud.overlay_bundle(b, home, lambda rel: rel.startswith("farm/"), sink=lambda line: None) == key

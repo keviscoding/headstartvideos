@@ -591,9 +591,15 @@
     const why=cloudBlock(), rate=(info.machines?.cpu?.price_per_hr||1.2).toFixed(2), balance=(info.balance_usd||0).toFixed(2);
     box.querySelector('[data-render-on="cloud"]').disabled=!!why; if(why)state.renderOn='local';
     chooseGroup('[data-render-on]','renderOn',state.renderOn||'local');
+    // When the cloud is the better choice, say so: this computer is already making a video, or a long one would tie it up.
+    const minutes=number('crw-minutes',10,1,60), suggest=!why&&state.renderOn!=='cloud'
+      ? (state.busy?'Your computer is making another video. Studio Cloud can make this one at the same time. '
+        :minutes>=15?`A ${minutes}-minute video keeps this computer busy for a long time. Studio Cloud renders it while you keep working. `:'')
+      : '';
+    box.classList.toggle('is-suggested', !!suggest);
     text('crw-cloud-note', why || (state.renderOn==='cloud'
-      ? `The script, voice and pictures are made here with your Claude Code, then a ChannelRecipe machine renders the video at $${rate} an hour (a 10-minute video is usually under $1). It reserves its most before it starts; you pay only what it used. Balance: $${balance}. Keep Studio open while it renders.`
-      : `Or render on a ChannelRecipe machine at about $${rate} an hour and keep your computer free. Balance: $${balance}.`));
+      ? `The script, voice and pictures are made here with your Claude Code, and YouTube clips come down on your own connection; a ChannelRecipe machine does the heavy rendering at $${rate} an hour (a 10-minute video is usually under $1). It reserves its most before it starts; you pay only what it used. Balance: $${balance}. Keep Studio open while it renders.`
+      : `${suggest}Or render on a ChannelRecipe machine at about $${rate} an hour and keep your computer free. Balance: $${balance}.`));
   }
   async function refreshCloud() {
     try {state.cloudInfo=await api('/cr-cloud');} catch(_) {state.cloudInfo=null;}
