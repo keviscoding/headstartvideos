@@ -26,6 +26,20 @@ LEGACY_ENDPOINT = "https://api.kie.ai/gemini-2.5-flash/v1/chat/completions"
 WATCH_ENDPOINT = "https://api.kie.ai/gemini-3-8-flash-openai/v1/chat/completions"
 
 
+# Kie's watcher answers a short watch copy in 10-25 s when it works (measured 2026-10-22), but sometimes it never
+# answers: the original waits 900 s a try, three tries, so one stuck video held a footage search for most of an hour.
+# Five minutes a try is still far more than a working answer needs, and a stuck one now fails over to the next video.
+WATCH_TIMEOUT_S = 300
+
+
+def _watch_timeout(timeout):
+    if isinstance(timeout, (int, float)):
+        return (15, min(float(timeout), WATCH_TIMEOUT_S))
+    if isinstance(timeout, tuple) and len(timeout) == 2 and isinstance(timeout[1], (int, float)):
+        return (timeout[0], min(float(timeout[1]), WATCH_TIMEOUT_S))
+    return (15, WATCH_TIMEOUT_S)
+
+
 def _original_watch_payload(payload):
     """Match only the original one-shot video chat, without an explicit model.
 
@@ -65,8 +79,9 @@ class _WatcherRequests:
     def post(self, url, *args, **kwargs):
         if url == LEGACY_ENDPOINT and _original_watch_payload(kwargs.get("json")):
             url = WATCH_ENDPOINT
-        # Forward the exact object and all original upload, timeout, auth, and
-        # response behavior; the original watcher owns parsing and recovery.
+            kwargs["timeout"] = _watch_timeout(kwargs.get("timeout"))
+        # Forward the exact object and all original upload, auth, and response
+        # behavior; the original watcher owns parsing and recovery.
         return self._original.post(url, *args, **kwargs)
 
 
