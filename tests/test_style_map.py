@@ -157,13 +157,34 @@ IFOLOGY = {"pictures__art_style": axis("Bright low-poly 3D render: characters wi
            "pictures__characters": axis([{"name": "Runner", "look": "round black head, simple white face, yellow "
                                           "jacket, black stick legs", "role": "mascot", "screen_share": 0.4}]),
            "motion__classes": axis({"still": 0.2, "camera": 0.2, "moving": 0.6})}
+# a designed cast the designed-cast kit doesn't build (blocky game avatars): still drawn in its own look
+BLOCKY = {"pictures__art_style": axis("Roblox-style blocky avatars with yellow block heads and decal faces, bright "
+                                      "simple sets."),
+          "pictures__characters": axis([{"name": "Noob", "look": "yellow block head with a smiley decal, blue torso, "
+                                         "green legs", "role": "mascot", "screen_share": 0.4}]),
+          "motion__classes": axis({"still": 0.2, "camera": 0.2, "moving": 0.6})}
 
 
-def test_a_designed_3d_world_is_drawn_in_its_own_look_not_put_on_mannequins():
+def test_a_designed_cast_the_3d_engine_builds_is_rebuilt_in_3d():
     """@ifologyfilms (round black heads, cute faces, bright jackets, stick legs, low-poly sets) was cloned onto the 3D
-    engine's faceless mannequins. A 3D world the engine can't build goes the drawn route: the picture recipe, the
-    style drawing and the 2.1 model, its cast's character sheet, moving pictures, and the 3D engine off."""
+    engine's faceless mannequins, then drawn as pictures (Studio 72-76: 6/10, and its characters never moved). Studio
+    77's 3D engine builds ball-headed casts itself: the 3D recipe in the designed look, the cast spec, no picture model."""
     plan = cm.plan_style(profile({"3d": 0.85, "graphic": 0.15}, {"3d_render": 0.85}, **IFOLOGY), STYLES)
+    assert plan["base"] == "3d" and plan["route"]["engine"] == "designed" and "medium_gap" not in plan["route"]
+    lt = plan["overrides"]["look"]["threed"]
+    assert lt["preset"] == "designed" and lt["designed"]["plan"] == "orb"
+    assert lt["designed"]["cast"][0] == {"name": "Runner", "role": "lead", "top": "jacket", "color": "#E8B320"}
+    assert lt["share"] == 0.85 and lt["fill"] is False, "the channel's own graphics keep their share"
+    on = plan["overrides"]["features"]["on"]
+    assert "threed" in on and "ai_images" not in on and "motion" in on
+    assert "image_model" not in cm.apply(STYLES["3d"], plan)["look"]
+    assert all(row["why"] for row in plan["settings"])
+
+
+def test_a_designed_3d_world_the_engine_cant_build_is_drawn_in_its_own_look_not_put_on_mannequins():
+    """A designed cast the 3D engine can't build goes the drawn route: the picture recipe, the style drawing and the
+    2.1 model, its cast's character sheet, moving pictures, and the 3D engine off."""
+    plan = cm.plan_style(profile({"3d": 0.85, "graphic": 0.15}, {"3d_render": 0.85}, **BLOCKY), STYLES)
     assert plan["base"] == "stories" and "drawn in their exact 3D-render look" in plan["base_why"]
     assert plan["route"]["engine"] == "drawn" and "mannequins" in plan["route"]["why"]
     on = plan["overrides"]["features"]["on"]
@@ -174,8 +195,10 @@ def test_a_designed_3d_world_is_drawn_in_its_own_look_not_put_on_mannequins():
 
 
 def test_a_3d_recipe_picked_for_a_designed_world_is_warned_about():
-    plan = cm.plan_style(profile({"3d": 0.85}, {"3d_render": 0.85}, **IFOLOGY), STYLES, base="3d")
+    plan = cm.plan_style(profile({"3d": 0.85}, {"3d_render": 0.85}, **BLOCKY), STYLES, base="3d")
     assert plan["base"] == "3d" and "faceless mannequins" in plan["route"]["warning"]
+    built = cm.plan_style(profile({"3d": 0.85}, {"3d_render": 0.85}, **IFOLOGY), STYLES, base="3d")
+    assert built["route"]["engine"] == "designed" and "warning" not in built["route"]
 
 
 def test_a_3d_recipe_picked_for_a_designed_world_keeps_the_3d_engine():
@@ -214,8 +237,13 @@ def test_reconstruction_channels_stay_on_the_3d_engine():
 
 
 def test_the_route_shown_on_the_look_screen_never_flips_after_an_answer():
+    built = profile({"3d": 0.6}, **{"pictures__art_style": axis("3D scenes with soft light."),
+                                     "pictures__characters": IFOLOGY["pictures__characters"]})
+    assert cm.plan_style(built, STYLES)["route"]["engine"] == "designed"
+    plan = cm.plan_style(built, STYLES, answers={"host": "No host"})
+    assert plan["route"]["engine"] == "designed" and plan["base"] == "3d", "removing the host never changes the route"
     cast_only = profile({"3d": 0.6}, **{"pictures__art_style": axis("3D scenes with soft light."),
-                                         "pictures__characters": IFOLOGY["pictures__characters"]})
+                                         "pictures__characters": BLOCKY["pictures__characters"]})
     assert cm.plan_style(cast_only, STYLES)["route"]["engine"] == "drawn"
     plan = cm.plan_style(cast_only, STYLES, answers={"host": "No host"})
     assert plan["route"]["engine"] == "drawn" and plan["base"] == "stories" and "style_image" in plan["needs"]
@@ -388,7 +416,8 @@ def test_looks_saved_before_gemini_judged_the_3d_people_are_routed_by_their_word
 def test_geminis_own_verdict_on_the_3d_people_decides_over_the_words():
     faceless_words = {"pictures__art_style": axis("Low-poly cel-shaded 3D with black round featureless heads."),
                       "pictures__people_3d": axis({"designed": 0.8, "no_people": 0.2})}
-    assert cm.plan_style(profile({"3d": 0.85}, **faceless_words), STYLES)["route"]["engine"] == "drawn"
+    assert cm.plan_style(profile({"3d": 0.85}, **faceless_words), STYLES)["route"]["engine"] == "designed", \
+        "Gemini saw faces on ball heads: the designed-cast kit builds them"
     seen_faceless = {**IFOLOGY, "pictures__people_3d": axis({"faceless": 0.9, "designed": 0.1})}
     assert cm.plan_style(profile({"3d": 0.85}, **seen_faceless), STYLES)["route"]["engine"] == "threed"
 
@@ -396,11 +425,11 @@ def test_geminis_own_verdict_on_the_3d_people_decides_over_the_words():
 def test_small_white_eyes_are_not_an_all_white_world():
     tiny = profile({"3d": 0.8}, **{"pictures__art_style": axis("Low-poly 3D: figures with black ball heads and small "
                                                                "white eyes, bright jackets.")})
-    assert not cm._white_3d(tiny) and cm.plan_style(tiny, STYLES)["route"]["engine"] == "drawn"
+    assert not cm._white_3d(tiny) and cm.plan_style(tiny, STYLES)["route"]["engine"] == "designed"
     assert cm._white_3d(profile({"3d": 0.8}, **{"pictures__art_style": axis("All-white matte 3D world.")}))
 
 
-def test_the_real_ifology_look_is_drawn_whichever_way_gemini_words_its_heads():
+def test_the_real_ifology_look_is_built_in_3d_whichever_way_gemini_words_its_heads():
     """Gemini's own words for @ifologyfilms on 2026-10-21, including one character it called "featureless"."""
     real = {"pictures__art_style": axis("Minimalist low-poly 3D cel-shaded animation featuring black-headed stick "
                                         "figures with simple dot eyes and flat-colored jackets, interspersed with sleek "
@@ -411,10 +440,11 @@ def test_the_real_ifology_look_is_drawn_whichever_way_gemini_words_its_heads():
                 {"name": "Protagonist", "look": "black round featureless head with expressive white eye slits, gray "
                  "hoodie, black pants", "role": "character", "screen_share": 0.665}])}
     plan = cm.plan_style(profile({"3d": 0.868, "graphic": 0.111}, **real), STYLES)
-    assert plan["base"] == "stories" and plan["route"]["engine"] == "drawn"
+    assert plan["base"] == "3d" and plan["route"]["engine"] == "designed"
+    assert plan["overrides"]["look"]["threed"]["designed"]["cast"][0]["top"] == "hoodie", "the lead: most on screen"
     only_featureless = {**real, "pictures__art_style": axis("Low-poly cel-shaded 3D animation."),
                         "pictures__characters": axis([real["pictures__characters"]["value"][1]])}
-    assert cm.plan_style(profile({"3d": 0.868}, **only_featureless), STYLES)["route"]["engine"] == "drawn", \
+    assert cm.plan_style(profile({"3d": 0.868}, **only_featureless), STYLES)["route"]["engine"] == "designed", \
         "eye slits are a face, even on a head Gemini calls featureless"
 
 
@@ -440,7 +470,9 @@ def test_the_creators_answer_on_how_the_3d_is_made_decides_the_route():
     designed = profile({"3d": 0.85}, {"3d_render": 0.85}, **IFOLOGY)
     plan = cm.plan_style(designed, STYLES)
     q = next(q for q in plan["questions"] if q["id"] == "medium")
-    assert q["options"][0] == cm.MEDIUM_DESIGNED and plan["route"]["medium_gap"] == cm.MEDIUM_GAP
+    assert q["options"][0] == cm.MEDIUM_DESIGNED and plan["route"]["engine"] == "designed" and "medium_gap" not in plan["route"]
+    blocky = cm.plan_style(profile({"3d": 0.85}, {"3d_render": 0.85}, **BLOCKY), STYLES)
+    assert blocky["route"]["medium_gap"] == cm.MEDIUM_GAP, "a cast the engine can't build is said before anything is paid"
     told = cm.plan_style(designed, STYLES, answers={"medium": cm.MEDIUM_FACELESS})
     assert told["route"]["engine"] == "threed" and "medium_gap" not in told["route"] and told["base"] == "3d"
     recon = profile({"3d": 0.6}, **{"pictures__art_style": RECONSTRUCTION})
@@ -453,7 +485,7 @@ def test_the_creators_answer_on_how_the_3d_is_made_decides_the_route():
 
 
 def test_a_3d_recipe_picked_by_hand_for_characters_with_faces_is_said_too():
-    plan = cm.plan_style(profile({"3d": 0.85}, {"3d_render": 0.85}, **IFOLOGY), STYLES, base="3d")
+    plan = cm.plan_style(profile({"3d": 0.85}, {"3d_render": 0.85}, **BLOCKY), STYLES, base="3d")
     assert plan["route"]["engine"] == "threed" and plan["route"]["medium_gap"] == cm.MEDIUM_GAP_MANNEQUINS
     told = cm.plan_style(profile({"3d": 0.6}, **{"pictures__art_style": RECONSTRUCTION}), STYLES, base="3d",
                          answers={"medium": cm.MEDIUM_DESIGNED})

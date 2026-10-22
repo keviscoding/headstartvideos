@@ -83,6 +83,32 @@ character of every story must be drawn that same way. That design language is th
 full (only never a name, a logo or one character's signature item).
 """
 
+# A designed cast Studio's 3D engine builds itself (cr_style_map.route "designed", Studio 77): the art director's eyes
+# measure the channel's characters into the cast spec the engine builds from (cr_designed), in the same call.
+ROUTE_DESIGNED = """HOW THESE PICTURES ARE MADE: the references are 3D renders of a DESIGNED cast, and Studio's own 3D engine rebuilds
+that cast and its kind of sets in real 3D, then animates it (characters walk, run and act; faces change expression). The
+engine's body plan is a ball head on a body with stick limbs; you describe THIS channel's version of it. So besides the
+keys below, return "cast_3d", measured from the frames:
+ "cast_3d": {"plan": "orb",
+   "head": {"size": head height as a fraction of the whole character's height (0.18-0.34), "color": "#hex",
+            "rim": "#hex of the light catching the head's lit edge", "rim_width": 0-0.15 (the rim's width as a fraction
+            of the head radius; 0 = none)},
+   "face": {"set": "ring" (eyes drawn as rings with a pupil) | "dot" (filled dots) | "bean" (tall ovals), "color": "#hex of
+            the face marks", "size": 0.7-1.4},
+   "limbs": {"color": "#hex", "thickness": 0.6-2.0 (1 = thin sticks), "hand_color": "#hex"},
+   "shoes": {"color": "#hex"},
+   "toon": {"outline": 0-0.012 (outline width in metres on a 1.6 m character; 0 = none), "outline_color": "#hex",
+            "rim": "#hex", "rim_k": 0-1.6 (how strong the rim light on clothes and limbs is)},
+   "palette": ["#hex", ...] the clothing colours of the channel's people, most used first (up to 10),
+   "details": the garment details the channel's clothes show, from collar|hood|zip|buttons|patch|pocket|hem|cuffs|stripes|tie,
+   "cast": [{"name": "a NEW name", "role": "lead" (the channel's main character, in most videos) | "character",
+             "top": jacket|hoodie|track|tshirt|sweater|labcoat|suit|dress|chef|coverall, "color": "#hex", "trim": "#hex",
+             "hat": {"kind": cap|beret|beanie|hardhat|chef|crown|band, "color": "#hex"} or null, "glasses": true|false}]
+            (the characters who return across the references, at most 4, the main one first),
+   "sets": the kinds of places the channel films in, from designed_room|designed_street|designed_city|designed_track|designed_park}
+Use the exact colours you see. still_suffix and people are still written (they describe the look in words).
+"""
+
 CANDID = ("The pictures are photographs: write them as everyday phone-camera frames (deep focus, natural mixed light, "
           "unstaged framing, mild noise), never glossy, studio-lit or cinematic. Where the profile calls the light "
           "commercial, studio or crisp, ignore it: AI photographs that look that perfect read as fake.")
@@ -129,7 +155,7 @@ def prompt(profile: dict, mapping: dict, *, title: str, brief: str, base: str, e
     polish_line = CANDID if rule.startswith("candid") or polish == "candid" else LO_FI if polish == "lo-fi" else ""
     return (ART_PROMPT.replace("[TITLE]", title.strip()[:280]).replace("[BRIEF]", (brief or "none").strip()[:1500])
             .replace("[BASE]", base).replace("[POLISH]", polish_line)
-            .replace("[ROUTE]", ROUTE_DRAWN if (mapping.get("route") or {}).get("engine") == "drawn" else "")
+            .replace("[ROUTE]", {"drawn": ROUTE_DRAWN, "designed": ROUTE_DESIGNED}.get((mapping.get("route") or {}).get("engine"), ""))
             .replace("[PROFILE]", json.dumps(_compact(profile, mapping), ensure_ascii=False)[:9000])
             .replace("[EXCERPT]", (excerpt or "no captions available").strip()[:1500]))
 
@@ -217,6 +243,12 @@ def check(answer: dict, *, banned: list, candid: bool = False) -> dict:
         out[key] = [_clean(x, 220, banned) for x in rows if str(x).strip()][:6]
     rows = answer.get("broll") if isinstance(answer.get("broll"), list) else []
     out["broll"] = [q for q in (_clean(x, 60, banned) for x in rows) if 2 <= len(q.split()) <= 6][:10]
+    if isinstance(answer.get("cast_3d"), dict):
+        import cr_designed
+        spec = cr_designed.clean(answer["cast_3d"])
+        for row in spec["cast"]:
+            row["name"] = _clean(row["name"], 40, banned)
+        out["cast_3d"] = {**spec, "from": "art director"}
     return out
 
 
@@ -241,6 +273,8 @@ def overrides(art: dict) -> dict:
     if art.get("video_motion"):
         look["video_motion"] = art["video_motion"]
     out = {"look": look}
+    if art.get("cast_3d"):
+        look["threed"] = {"designed": art["cast_3d"]}       # the cast spec the 3D engine builds the channel's people from
     if art.get("description"):
         out["description"] = art["description"]
     if art.get("tagline"):
@@ -274,5 +308,6 @@ def direct(see, profile: dict, mapping: dict, *, title: str, brief: str, base: s
         log(f"  art director: {exc}; the learned settings are kept without it")
         return {}
     log(f"  art director: picture style {len(art['still_suffix'].split())} words"
-        + (", cast written" if art.get("cast") else "") + (", mascot designed" if art.get("mascot") else ""))
+        + (", cast written" if art.get("cast") else "") + (", mascot designed" if art.get("mascot") else "")
+        + (f", 3D cast spec ({len(art['cast_3d']['cast'])} characters)" if art.get("cast_3d") else ""))
     return {"art": art, "overrides": overrides(art)}

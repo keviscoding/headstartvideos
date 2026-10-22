@@ -14,8 +14,10 @@ verdict is saved with the style and shown to the creator, plainly, whatever it i
 A held-out reference frame goes in with the candidates as a hidden control: when the channel's own frame doesn't
 score well, the judge didn't understand the references, and the verdict says it can't be trusted.
 
-Only styles that draw their pictures are checked (an image model and picture words); a style that films or builds its
-pictures, or whose videos are graphics only, is skipped with its reason. It runs after the style is saved, within a few
+Only styles that draw their pictures are checked (an image model and picture words), and since Studio 77 styles whose
+designed cast the 3D engine builds (look.threed.preset "designed"): their three test shots are RENDERED by the engine
+from the style's cast spec (no picture is paid for; one round, since the judge's prompt fixes can't change code). A
+style that films its pictures, or whose videos are graphics only, is skipped with its reason. It runs after the style is saved, within a few
 minutes, and nothing here undoes or stops a study: a missing account, a busy judge or a picture that never comes back
 is noted, the rounds already paid for are kept, and the style stays as it was saved. Every number that decides the
 verdict is the drawn pictures' own: the hidden control is only the judge's test. run() pays (pictures, the check);
@@ -100,10 +102,18 @@ def _people(style) -> bool:
                                                                               words))
 
 
+def _designed(style) -> dict:
+    """The cast spec of a style whose designed cast the 3D engine builds, else None."""
+    lt = (style.get("look") or {}).get("threed")
+    if isinstance(lt, dict) and lt.get("preset") == "designed":
+        return lt.get("designed") if isinstance(lt.get("designed"), dict) else {}
+    return None
+
+
 def _hash(style) -> str:
     look = style.get("look") or {}
-    return hashlib.sha256(json.dumps([look.get("still_suffix"), look.get("image_model"), look.get("character")],
-                                     sort_keys=True).encode()).hexdigest()[:20]
+    return hashlib.sha256(json.dumps([look.get("still_suffix"), look.get("image_model"), look.get("character"),
+                                      _designed(style)], sort_keys=True).encode()).hexdigest()[:20]
 
 
 def wanted(style) -> str:
@@ -111,6 +121,8 @@ def wanted(style) -> str:
     if (style.get("cr_style_clone") or {}).get("visual_mode") == "reference_only":
         return "this style's videos are all motion graphics, with no drawn pictures"
     look = style.get("look") or {}
+    if _designed(style) is not None:
+        return ""                                           # rendered by the 3D engine from the cast spec
     if not str(look.get("still_suffix") or "").strip():
         return "this style has no picture words to draw with"
     if not look.get("image_model"):
@@ -150,7 +162,34 @@ def _row(r, extra, pictures, got) -> dict:
     return row
 
 
-def run(folder, spec, style, log, *, home, generate=None, upload=None, call=None) -> dict:
+def render_designed(home, style, out_dir, *, timeout_s=None, run=None) -> list:
+    """The three test shots rendered by this Studio's 3D engine in the style's design (cr_designed.test_video): the
+    preview frames of each scene, in SUBJECTS order. [] when the engine can't render them."""
+    import subprocess
+    import sys
+    import cr_designed
+    home, out_dir = Path(home), Path(out_dir)
+    if not cr_designed.engine_ready(home):
+        raise RuntimeError("this Studio's 3D engine has no designed-cast kit (update Studio)")
+    video = cr_designed.test_video(_designed(style) or {})
+    work = out_dir / "render"
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True, exist_ok=True)
+    (work / "video.json").write_text(json.dumps(video, indent=1), encoding="utf-8")
+    cmd = [sys.executable, str(home / "threed" / "render.py"), str(work / "video.json"), str(work), "--preview", "1.6",
+           "--w", "1280", "--h", "720"]
+    (run or subprocess.run)(cmd, cwd=str(home / "threed"), capture_output=True, text=True, timeout=timeout_s or LIMIT_S)
+    pictures = []
+    for k, scene in enumerate(video["scenes"]):
+        got = sorted(work.glob(scene["id"] + "_*.jpg"))
+        if got:
+            dest = out_dir / f"r0_{k}.jpg"
+            shutil.copyfile(got[0], dest)
+            pictures.append(dest)
+    return pictures
+
+
+def run(folder, spec, style, log, *, home, generate=None, upload=None, call=None, render=None) -> dict:
     """Draw, judge, and once more with the judge's fixes when below the bar. Saved in <operation>/likeness.json."""
     folder = Path(folder)
     saved = _read(folder / CHECK)
@@ -167,9 +206,11 @@ def run(folder, spec, style, log, *, home, generate=None, upload=None, call=None
         result = {"state": "skipped", "why": "too few reference frames to compare with", "style_hash": _hash(style)}
         _write(folder / CHECK, result)
         return result
-    import cr_media
-    gen = generate or cr_media.image
-    put = upload or (lambda path: cr_media.upload(path, task="images"))
+    designed = _designed(style) is not None
+    if not designed:
+        import cr_media
+        gen = generate or cr_media.image
+        put = upload or (lambda path: cr_media.upload(path, task="images"))
     if call is None:
         import cr_bridge
         call = cr_bridge.call
@@ -179,17 +220,20 @@ def run(folder, spec, style, log, *, home, generate=None, upload=None, call=None
     draw_from = shots[0]                                      # drawn from; never judged against itself
     control = shots[-1] if len(shots) >= 5 else None          # the channel's own frame, hidden among the candidates
     judged = [s for s in shots[1:] if s != control][:6]
-    people = _people(style)
-    context = ("The candidates were drawn by an image model to match the references' look"
+    people = _people(style) or designed
+    context = ("The candidates were rendered by a 3D engine in the references' design, including how their characters "
+               "are built." if designed else "The candidates were drawn by an image model to match the references' look"
                + (", including how their characters are designed." if people else "."))
     suffix, extra, rounds, spent, stopped = str(look.get("still_suffix") or ""), "", [], 0.0, ""
     out_dir = folder / "likeness"
     out_dir.mkdir(parents=True, exist_ok=True)
     try:
-        ref_url = put(draw_from)
-        for r in range(ROUNDS):
+        ref_url = None if designed else put(draw_from)
+        for r in range(1 if designed else ROUNDS):
             pictures = []
-            for k, subject in enumerate(SUBJECTS):
+            if designed:                                      # rendered, not drawn: nothing paid but the judge
+                pictures = (render or render_designed)(home, style, out_dir, timeout_s=max(60, deadline - time.monotonic()))
+            for k, subject in enumerate([] if designed else SUBJECTS):
                 if time.monotonic() > deadline:
                     raise TimeoutError("the image account took too long")
                 dest = out_dir / f"r{r}_{k}.jpg"
@@ -233,7 +277,7 @@ def run(folder, spec, style, log, *, home, generate=None, upload=None, call=None
               "cost_usd": round(spent, 3)}
     if stopped:
         result["stopped"] = stopped
-    cast = str(look.get("character") or "").strip()
+    cast = "" if designed else str(look.get("character") or "").strip()
     if cast and not _wants_upload(spec) and not look.get("character_image") and time.monotonic() < deadline:
         first = re.split(r"\n|(?<=\.)\s+(?=[A-Z][\w' -]{1,40}(?: \([^)]*\))?:)",
                          re.sub(r"^THE CAST\s*[—-]\s*", "", cast))[0].strip() or cast

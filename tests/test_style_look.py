@@ -219,6 +219,15 @@ def test_a_3d_channel_is_asked_how_its_3d_is_made_and_a_medium_studio_cant_make_
     saved["profile"]["pictures"]["people_3d"] = {"value": {"designed": 1.0}, "confidence": 0.7, "from": ["watched"]}
     saved.pop("mapping", None)
     path.write_text(json.dumps(saved))
+    built = look.status(home, done["look_id"])["mapping"]
+    assert built["route"]["engine"] == "designed" and "medium_gap" not in built["route"], \
+        "Studio 77 builds ball-headed casts in 3D: nothing to accept"
+    payload = {"preview_id": "pv_" + "a" * 64, "reference_ids": [VIDEO], "base_style": "stories", "label": "Mine",
+               "title": "A video", "acknowledge_costs": True, "look_id": done["look_id"], "answers": {},
+               "visual_mode": "mixed"}
+    assert clone._spec(home, payload)["look_id"] == done["look_id"], "pictures by the creator's own choice: no gate"
+    saved["profile"]["pictures"]["art_style"]["value"] = "Roblox-style blocky avatars with yellow block heads, decal faces."
+    path.write_text(json.dumps(saved))
     shown = look.status(home, done["look_id"])["mapping"]
     question = next(q for q in shown["questions"] if q["id"] == "medium")
     assert question["options"][0] == cr_style_map.MEDIUM_DESIGNED, "Studio's guess first"
@@ -494,3 +503,23 @@ def test_a_3d_look_saved_before_gemini_judged_its_faces_is_watched_again_and_eve
     path.write_text(json.dumps(saved))
     look.start(home, "pv_" + "a" * 64, [VIDEO], spawn=lambda h, i: spawned.append(i))
     assert len(spawned) == 1, "a judged look is reused"
+
+
+def test_the_art_director_measures_a_designed_cast_into_the_3d_engines_cast_spec():
+    """Studio 77: on the designed route the art director's same call returns the cast spec the engine builds the
+    channel's people from (checked value by value), and it lands in look.threed.designed."""
+    mapping = {"settings": [], "route": {"engine": "designed", "why": "ball heads"}}
+    text = art.prompt({"recognisable": []}, mapping, title="What if", brief="", base="3d", excerpt="")
+    assert '"cast_3d"' in text and "ring" in text and "designed_track" in text
+    answer = {**ANSWER, "cast_3d": {"plan": "orb", "head": {"size": 0.25, "color": "#050505", "rim": "#F5E5C0"},
+                                    "face": {"set": "ring", "color": "#ffffff"}, "palette": ["#E8B320", "nope"],
+                                    "cast": [{"name": "Pip Explains kid", "role": "lead", "top": "hoodie",
+                                              "color": "#3E8C4A", "hat": {"kind": "cap", "color": "#E8B320"}}]}}
+    out = art.direct(lambda prompt, images: json.dumps(answer), {"recognisable": []}, mapping, title="t", brief="",
+                     base="3d", excerpt="", sheets=[], banned=["Pip Explains"], log=lambda m: None)
+    spec = out["overrides"]["look"]["threed"]["designed"]
+    assert spec["head"]["color"] == "#050505" and spec["palette"] == ["#E8B320"] and spec["from"] == "art director"
+    assert spec["cast"][0]["name"] == "the reference kid" and spec["cast"][0]["hat"] == {"kind": "cap", "color": "#E8B320"}
+    plain = art.direct(lambda prompt, images: json.dumps(ANSWER), {"recognisable": []}, {"settings": []}, title="t",
+                       brief="", base="stories", excerpt="", sheets=[], banned=[], log=lambda m: None)
+    assert "threed" not in plain["overrides"]["look"], "only a designed route gets a cast spec"

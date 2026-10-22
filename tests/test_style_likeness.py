@@ -191,3 +191,50 @@ def test_the_server_judge_checks_its_input_and_answers_scores(monkeypatch, tmp_p
     for bad in ([], ["not base64!"], [base64.b64encode(b"GIF89a....").decode()]):
         with pytest.raises(HTTPException):
             sw.compare(user, bad or [b64jpeg()], [b64jpeg()] if bad else [], post=post)
+
+
+def test_a_designed_cast_style_is_checked_on_shots_the_3d_engine_renders(setup, tmp_path):
+    """Studio 77: a style whose designed cast the engine builds is checked on three RENDERED shots (no picture paid,
+    one round: a judge's prompt fix can't change code), judged like any other."""
+    home, folder, style, calls, run = setup
+    built = {"name": "cr_clone_ifology", "look": {"still_suffix": " Low-poly 3D.", "threed": {"preset": "designed",
+             "designed": {"plan": "orb", "cast": [{"name": "Dot", "role": "lead", "top": "hoodie", "color": "#3E8C4A"}]}}}}
+    assert lk.wanted(built) == ""
+    rendered = []
+
+    def render(h, st, out_dir, timeout_s=None):
+        rendered.append((h, st["look"]["threed"]["designed"]["plan"], timeout_s > 0))
+        return [jpeg(Path(out_dir) / f"r0_{k}.jpg") for k in range(3)]
+    calls["answers"] = [verdict(5, fixes=["bigger heads"]), verdict(9)]
+    result = lk.run(folder, {"look_id": "lk_1"}, built, lambda m: None, home=home, generate=None, upload=None,
+                    call=lambda path, payload: (calls["judge"].append(payload) or calls["answers"].pop(0)), render=render)
+    assert rendered == [(home, "orb", True)] and calls["draw"] == [], "rendered, never drawn"
+    assert len(calls["judge"]) == 1 and result["state"] == "done" and len(result["rounds"]) == 1
+    assert "rendered by a 3D engine" in calls["judge"][0]["context"] and result["people"] is True
+    assert result["cost_usd"] == 0.004, "only the judge is paid"
+    saved = lk.apply_saved(folder, built, home)
+    assert "style_image" not in saved["look"] and saved["cr_style_clone"]["likeness"]["state"] == "done"
+    changed = json.loads(json.dumps(built))
+    changed["look"]["threed"]["designed"]["cast"][0]["color"] = "#D2382D"
+    assert lk._hash(changed) != lk._hash(built), "a new cast spec is a new check"
+
+
+def test_the_designed_shots_come_from_this_studios_own_renderer(tmp_path):
+    home, out = tmp_path / "studio", tmp_path / "out"
+    kit = home / "threed/engine/lib/designed/index.js"
+    kit.parent.mkdir(parents=True)
+    kit.write_text("")
+    ran = []
+
+    def fake(cmd, cwd=None, capture_output=None, text=None, timeout=None):
+        ran.append((cmd, cwd, timeout))
+        work = Path(cmd[3])
+        for scene in json.loads(Path(cmd[2]).read_text())["scenes"]:
+            jpeg(work / f"{scene['id']}_01.60.jpg")
+    style = {"look": {"threed": {"preset": "designed", "designed": {}}}}
+    pics = lk.render_designed(home, style, out, timeout_s=90, run=fake)
+    assert [p.name for p in pics] == ["r0_0.jpg", "r0_1.jpg", "r0_2.jpg"]
+    cmd, cwd, timeout = ran[0]
+    assert cmd[1].endswith("threed/render.py") and "--preview" in cmd and cwd == str(home / "threed") and timeout == 90
+    with pytest.raises(RuntimeError, match="designed-cast kit"):
+        lk.render_designed(tmp_path / "old", style, out, run=fake)

@@ -3,7 +3,7 @@
  "cases": [
   {
    "family": "ifology",
-   "expected": "drawn",
+   "expected": "designed",
    "art_style": "Bright low-poly 3D with flat pastel shading and soft contact shadows; characters are simple toy-like figures with an oversized solid black sphere for a head, tiny white dot eyes and a line mouth, colored jackets and thin black legs, placed in clean simplified sets.",
    "alternatives": [
     "low-poly 3D cartoon",
@@ -33,11 +33,11 @@
     "black sphere-headed figures",
     "bright low-poly worlds"
    ],
-   "why": "Designed cartoon figures with faces on a stylised sphere head; the 3D engine's plain white mannequins would lose the signature look."
+   "why": "Designed cartoon figures with faces on a stylised sphere head; the 3D engine's plain white mannequins would lose the signature look. Studio 77: ball heads on stick limbs or simple jacketed bodies are built by the designed-cast kit."
   },
   {
    "family": "ifology",
-   "expected": "drawn",
+   "expected": "designed",
    "art_style": "Clean stylised 3D animation with a low polygon count and vivid flat colours. People appear as silhouette-like figures: a glossy jet-black head showing only two small white eyes and a tiny mouth, a brightly coloured coat, and spindly dark legs. Backgrounds are simplified cities, labs and landscapes under even daylight.",
    "alternatives": [
     "silhouette characters in 3D",
@@ -61,11 +61,11 @@
     "bright simplified 3D sets",
     "fast cuts with big captions"
    ],
-   "why": "'Silhouette' here means a designed black-headed character with eyes and a mouth, not a faceless reconstruction mannequin."
+   "why": "'Silhouette' here means a designed black-headed character with eyes and a mouth, not a faceless reconstruction mannequin. Studio 77: ball heads on stick limbs or simple jacketed bodies are built by the designed-cast kit."
   },
   {
    "family": "ifology",
-   "expected": "drawn",
+   "expected": "designed",
    "art_style": "Smooth matte 3D render with low-poly props and terrain, a saturated primary palette and soft global illumination. Each character has a large pitch-black orb for a head carrying a white emoticon face (two dots and a curved stroke), a chunky coloured jacket and wire-thin black legs.",
    "alternatives": [
     "emoji-faced 3D characters",
@@ -94,11 +94,11 @@
     "second-person 'you' scenarios",
     "toy-bright low-poly scenery"
    ],
-   "why": "Emoticon faces on stylised orb heads are a designed avatar that the mannequin engine cannot build."
+   "why": "Emoticon faces on stylised orb heads are a designed avatar that the mannequin engine cannot build. Studio 77: ball heads on stick limbs or simple jacketed bodies are built by the designed-cast kit."
   },
   {
    "family": "ifology",
-   "expected": "drawn",
+   "expected": "designed",
    "art_style": "3D stickman animation: figures with thick black ball heads, small white eyes and a mouth, colored zip-up jackets over stick bodies and skinny black legs, rendered in a bright low-poly world with simple ambient lighting and minimal textures.",
    "alternatives": [
     "3D stick figure animation",
@@ -121,11 +121,11 @@
     "\"What would happen if...\" story hooks",
     "minimal low-poly environments"
    ],
-   "why": "Stick-figure 3D with black ball heads and drawn features is a designed cast, so it belongs on the drawn route."
+   "why": "Stick-figure 3D with black ball heads and drawn features is a designed cast, so it belongs on the drawn route. Studio 77: ball heads on stick limbs or simple jacketed bodies are built by the designed-cast kit."
   },
   {
    "family": "ifology",
-   "expected": "drawn",
+   "expected": "designed",
    "art_style": "Low-poly 3D with a bright, slightly desaturated pastel palette and flat shading. From a distance the figures look almost faceless, just a dark spherical head on a coloured torso with thin dark legs, but close-ups reveal tiny white eyes and a small mouth. Scenes are simplified real-world places such as streets, apartments and deserts.",
    "alternatives": [
     "faceless-looking low-poly figures",
@@ -148,11 +148,11 @@
     "simple low-poly real-world places",
     "\"Could you survive...\" scenarios"
    ],
-   "why": "The heads only look faceless from far away; they are designed black spheres with eyes, which a plain white mannequin would not match."
+   "why": "The heads only look faceless from far away; they are designed black spheres with eyes, which a plain white mannequin would not match. Studio 77: ball heads on stick limbs or simple jacketed bodies are built by the designed-cast kit."
   },
   {
    "family": "ifology",
-   "expected": "drawn",
+   "expected": "designed",
    "art_style": "Minimalist 3D render with low-polygon models and clean bright lighting with soft shadows. The people are anonymous, generic figures with no hair or skin: a blank matt-black ball for a head marked only by two white dots and a short white line, plain coloured jackets and slim black legs, acting out reconstruction-style scenes in everyday places.",
    "alternatives": [
     "generic 3D figures",
@@ -181,11 +181,11 @@
     "everyday situations pushed to extremes",
     "clean low-poly rooms"
    ],
-   "why": "Despite the 'anonymous' and 'reconstruction-style' wording, the black ball heads with dot faces are a designed character look, not a grey mannequin."
+   "why": "Despite the 'anonymous' and 'reconstruction-style' wording, the black ball heads with dot faces are a designed character look, not a grey mannequin. Studio 77: ball heads on stick limbs or simple jacketed bodies are built by the designed-cast kit."
   },
   {
    "family": "ifology",
-   "expected": "drawn",
+   "expected": "designed",
    "art_style": "Cheerful low-poly 3D animation with a bright, sunny grade and matt, untextured surfaces in saturated colours. The cast are little figures with large jet-black spherical heads, two tiny white eyes and a small white mouth, colourful jackets or jumpers and very thin black legs, set against simplified countryside, city and space backdrops with gentle soft shadows.",
    "alternatives": [
     "colourful low-poly 3D cartoon",
@@ -210,11 +210,11 @@
     "sunny low-poly worlds",
     "punchy narrator with quick cuts"
    ],
-   "why": "A stylised cartoon cast with faces on oversized black heads needs the image model to keep the channel's exact look."
+   "why": "A stylised cartoon cast with faces on oversized black heads needs the image model to keep the channel's exact look. Studio 77: ball heads on stick limbs or simple jacketed bodies are built by the designed-cast kit."
   },
   {
    "family": "ifology",
-   "expected": "drawn",
+   "expected": "designed",
    "art_style": "Real-time style 3D render with a Blender Eevee look: flat-shaded low-poly meshes, unlit-looking black emissive sphere heads with white decal eyes and mouth, solid diffuse materials on the jackets, black cylinder legs, bright HDRI sky lighting, mild ambient occlusion and a wide-angle virtual camera.",
    "alternatives": [
     "Eevee low-poly render",
@@ -243,11 +243,11 @@
     "flat-shaded low-poly sets",
     "hypothetical 'what if' narration"
    ],
-   "why": "Technical render words aside, the decal-faced black sphere heads are a designed avatar, not a faceless white or grey figure."
+   "why": "Technical render words aside, the decal-faced black sphere heads are a designed avatar, not a faceless white or grey figure. Studio 77: ball heads on stick limbs or simple jacketed bodies are built by the designed-cast kit."
   },
   {
    "family": "ifology",
-   "expected": "drawn",
+   "expected": "designed",
    "art_style": "Stylised 3D that looks like a mobile game: chunky low-poly props, candy-bright colours and soft shading. Characters have heads like shiny black bowling balls with little white eyes and a smile, puffy coloured jackets and pencil-thin black legs.",
    "alternatives": [
     "mobile game cutscene look",
@@ -270,11 +270,11 @@
     "bright game-cutscene sets",
     "\"What would happen if...\" titles"
    ],
-   "why": "A game-avatar cast with smiling black bowling-ball heads belongs on the drawn route."
+   "why": "A game-avatar cast with smiling black bowling-ball heads belongs on the drawn route. Studio 77: ball heads on stick limbs or simple jacketed bodies are built by the designed-cast kit."
   },
   {
    "family": "ifology",
-   "expected": "drawn",
+   "expected": "designed",
    "art_style": "Simple 3D cartoon with low-poly geometry and flat bright colour. Characters use a minimal face design: a big black head with two white dot eyes and a dash mouth, no nose, ears or hair; each body is a coloured jacket on thin black legs. Clean daylight, light soft shadows and simplified props.",
    "alternatives": [
     "minimal-face 3D cartoon",
@@ -303,11 +303,11 @@
     "the same yellow-jacket hero in every video",
     "\"What if you could...\" hooks"
    ],
-   "why": "A recurring mascot with a designed minimal face is a cartoon character, not a reconstruction mannequin."
+   "why": "A recurring mascot with a designed minimal face is a cartoon character, not a reconstruction mannequin. Studio 77: ball heads on stick limbs or simple jacketed bodies are built by the designed-cast kit."
   },
   {
    "family": "ifology",
-   "expected": "drawn",
+   "expected": "designed",
    "art_style": "Low-poly 3D. Bright colours. Ink-black head spheres with small white features on simple jacketed bodies.",
    "alternatives": [],
    "shot_looks": [
@@ -319,11 +319,11 @@
     "low-poly 3D",
     "what-if scenarios"
    ],
-   "why": "Even with no named characters, the terse art_style describes designed head spheres with faces, so it should go drawn."
+   "why": "Even with no named characters, the terse art_style describes designed head spheres with faces, so it should go drawn. Studio 77: ball heads on stick limbs or simple jacketed bodies are built by the designed-cast kit."
   },
   {
    "family": "ifology",
-   "expected": "drawn",
+   "expected": "designed",
    "art_style": "Polished low-poly 3D in a diorama look, with near tilt-shift framing, bright cheerful lighting and smooth sky gradients. The people look like small doll-like puppets: an oversized black marble for a head with simple white eyes and a mouth that often change expression, a boxy coloured jacket and two skinny black legs without feet detail. Crowds read as rows of dark dots.",
    "alternatives": [
     "diorama-style 3D",
@@ -354,7 +354,7 @@
     "crowds as rows of dark dots",
     "\"What if...\" narration"
    ],
-   "why": "Expressive puppet figures with designed marble heads need the image model, not plain mannequins."
+   "why": "Expressive puppet figures with designed marble heads need the image model, not plain mannequins. Studio 77: ball heads on stick limbs or simple jacketed bodies are built by the designed-cast kit."
   },
   {
    "family": "game-avatars",
@@ -1372,7 +1372,7 @@
   },
   {
    "family": "traps",
-   "expected": "drawn",
+   "expected": "designed",
    "art_style": "Soft-lit 3D render with a Blender/Cycles feel: small toy-like people whose heads are smooth, glossy charcoal spheres. In wide shots the heads read as featureless, but close-ups show two tiny white oval eyes and a short curved mouth line. Bodies are simple, in solid-colour tees and trousers, on clean minimalist pastel stages with gentle ambient occlusion.",
    "alternatives": [
     "Minimal 3D diorama look: sphere-headed figures in plain clothes with almost no facial detail apart from pinprick eyes, uncluttered sets in muted mint and peach, soft contact shadows, slight tilt-shift."
@@ -1396,7 +1396,7 @@
     "clean pastel miniature sets",
     "'What if...' premise title cards"
    ],
-   "why": "The cast is designed and has real eyes and mouths, even if tiny. The mannequin engine would lose the dark-dome heads and the eye reactions."
+   "why": "The cast is designed and has real eyes and mouths, even if tiny. The mannequin engine would lose the dark-dome heads and the eye reactions. Studio 77: ball heads on stick limbs or simple jacketed bodies are built by the designed-cast kit."
   },
   {
    "family": "traps",
@@ -1704,7 +1704,7 @@
   },
   {
    "family": "traps",
-   "expected": "drawn",
+   "expected": "designed",
    "art_style": "Minimalist 3D stickmen: matte-white sphere heads on thin capsule limbs, mostly featureless. Emotion is carried by two floating black eyebrows and a small 'o' mouth that pops on for surprise. Bold flat-colour props in a seamless off-white void with a hard drop shadow.",
    "alternatives": [
     "3D stick-figure animation: white ball-headed stickmen with expressive brows, simple coloured objects, infinite white studio."
@@ -1728,7 +1728,7 @@
     "one bright prop per scene",
     "comic shake on surprise"
    ],
-   "why": "The plain white looks like a mannequin, but this is a designed stick-figure character in a void whose eyebrows and mouth do the acting. It is not a reconstruction in a real place."
+   "why": "The plain white looks like a mannequin, but this is a designed stick-figure character in a void whose eyebrows and mouth do the acting. It is not a reconstruction in a real place. Studio 77: ball heads on stick limbs or simple jacketed bodies are built by the designed-cast kit."
   },
   {
    "family": "heldout-designed",

@@ -20,7 +20,7 @@ import copy
 import re
 
 SCHEMA = 1
-ROUTER = 75          # how 3D is routed (73: Gemini judges the faces; 75: the creator is asked); older saved plans are made again
+ROUTER = 77          # how 3D is routed (73: Gemini judges the faces; 75: the creator is asked; 77: a designed cast is built in 3D); older saved plans are made again
 # How a channel's 3D is made is asked of the creator (Studio's guess first): the answer decides how the videos are made,
 # and a medium Studio can't make yet is said before anything is paid, never swapped in silently (an @ifologyfilms clone
 # drew stills of characters the channel animates in 3D, and was called fixed).
@@ -30,7 +30,8 @@ MEDIUM_OBJECTS = "3D objects, places, maps or diagrams, without people"
 MEDIUMS = (MEDIUM_DESIGNED, MEDIUM_FACELESS, MEDIUM_OBJECTS)
 MEDIUM_GAP = ("Studio can't animate these characters in 3D yet. Your videos would be drawn pictures in their look, some "
               "of them animated by AI: close to how the channel looks, but its characters won't walk, run and act the "
-              "way they do in its videos. 3D characters are coming in a Studio update.")
+              "way they do in its videos. Studio's 3D engine builds designed casts with ball heads on stick limbs; "
+              "more kinds of characters are coming in Studio updates.")
 MEDIUM_GAP_MANNEQUINS = ("With a 3D recipe, Studio's 3D engine makes faceless mannequins: the channel's characters would "
                          "become faceless figures in your videos. The recommended recipe draws them in their own look "
                          "instead. 3D characters are coming in a Studio update.")
@@ -172,6 +173,9 @@ def choose_base(profile: dict, installed) -> tuple:
     generated = fam.get("generated", 0) + fam.get("generated_motion", 0) + drawn_3d(profile)
     real = fam.get("footage", 0) + fam.get("photo", 0) + fam.get("document", 0)
     picks = []
+    if fam.get("3d", 0) >= 0.3 and designed_3d(profile):
+        picks.append(("3d", f"{round(fam['3d'] * 100)}% of the pictures are 3D scenes with a designed cast, which "
+                            "Studio's 3D engine builds and animates"))
     if fam.get("3d", 0) >= 0.3:
         ok, cannot = (not drawn_3d(profile), profile.get("_drawn_why") or threed_rebuildable(profile)[1])
         if ok:
@@ -618,7 +622,8 @@ def threed_rebuildable(profile) -> tuple:
     """(True, "") when Studio's 3D engine can make the references' 3D (white models, faceless mannequins, places
     without people); else (False, why): its people are designed, as Gemini saw them, or by the words."""
     import cr_style_profile
-    cannot = "Studio's 3D engine can't make: it builds only faceless mannequins in real places"
+    cannot = ("Studio's 3D engine can't make: it builds faceless mannequins in real places, and designed casts only "
+              "with ball heads on stick limbs")
     art = str(_v(_get(profile, "pictures", "art_style"), "") or "")
     seen = _v(_get(profile, "pictures", "people_3d"), {}) or {}
     if isinstance(seen, dict) and seen:
@@ -640,14 +645,25 @@ def threed_rebuildable(profile) -> tuple:
     return True, ""
 
 
+def designed_3d(profile) -> float:
+    """The share of the references' 3D whose designed cast Studio's 3D engine builds itself (Studio 77: the
+    designed-cast kit, ball heads on stick limbs), 0 otherwise. Once plan_style has decided (profile["_designed_3d"]),
+    that decision stands."""
+    if "_designed_3d" in profile:
+        return float(profile["_designed_3d"] or 0)
+    import cr_designed
+    share = _families(profile).get("3d", 0)
+    return share if share >= 0.2 and not threed_rebuildable(profile)[0] and cr_designed.fits(profile)[0] else 0.0
+
+
 def drawn_3d(profile) -> float:
-    """The share of the references' 3D that is drawn instead (the drawn route), 0 when the 3D engine can make it. Once
-    plan_style has decided (profile["_drawn_3d"]), that decision stands: the look screen's route never flips after an
-    answer, and a 3D recipe the creator chose keeps the 3D engine."""
+    """The share of the references' 3D that is drawn instead (the drawn route), 0 when the 3D engine can make it (its
+    mannequins, or the designed-cast kit). Once plan_style has decided (profile["_drawn_3d"]), that decision stands:
+    the look screen's route never flips after an answer, and a 3D recipe the creator chose keeps the 3D engine."""
     if "_drawn_3d" in profile:
         return float(profile["_drawn_3d"] or 0)
     share = _families(profile).get("3d", 0)
-    return share if share >= 0.2 and not threed_rebuildable(profile)[0] else 0.0
+    return share if share >= 0.2 and not threed_rebuildable(profile)[0] and not designed_3d(profile) else 0.0
 
 
 def medium_question(profile) -> dict:
@@ -656,26 +672,43 @@ def medium_question(profile) -> dict:
     if share < 0.2:
         return {}
     seen = _v(_get(profile, "pictures", "people_3d"), {}) or {}
-    guess = MEDIUM_DESIGNED if drawn_3d({k: v for k, v in profile.items() if k != "_drawn_3d"}) else \
+    fresh = {k: v for k, v in profile.items() if k not in ("_drawn_3d", "_designed_3d")}
+    guess = MEDIUM_DESIGNED if drawn_3d(fresh) or designed_3d(fresh) else \
         MEDIUM_OBJECTS if isinstance(seen, dict) and float(seen.get("no_people") or 0) > 0.5 else MEDIUM_FACELESS
     return {"id": "medium", "ask": f"How are this channel's 3D pictures made? ({round(share * 100)}% of its pictures "
             "are 3D.) Studio's guess is first: change it if it's wrong, because it decides how your videos are made.",
             "options": [guess] + [m for m in MEDIUMS if m != guess]}
 
 
-def route(profile, chosen: str = "", drawn=None, told: bool = False) -> dict:
-    """How this channel's pictures are made: {"engine": "drawn" | "threed" | "pictures", "why", "warning"?,
-    "medium_gap"?}. drawn: the share decided by the creator's answer (told) or by plan_style, else from the profile."""
+def route(profile, chosen: str = "", drawn=None, told: bool = False, designed=None, by_hand: bool = False) -> dict:
+    """How this channel's pictures are made: {"engine": "designed" | "drawn" | "threed" | "pictures", "why",
+    "warning"?, "medium_gap"?}. drawn / designed: the shares decided by the creator's answer (told) or by plan_style,
+    else from the profile; by_hand: a designed cast the 3D engine builds, drawn because the creator picked a picture
+    recipe (no gate, a pointer to the 3D recipe)."""
     share = _families(profile).get("3d", 0)
+    fresh ={k: v for k, v in profile.items() if k not in ("_drawn_3d", "_designed_3d")}
+    if designed is None:
+        designed = designed_3d(fresh)
     if drawn is None:
-        drawn = drawn_3d({k: v for k, v in profile.items() if k != "_drawn_3d"})
+        drawn = drawn_3d(fresh)
+    if designed:
+        import cr_designed
+        seen = cr_designed.fits(profile)[1]
+        return {"engine": "designed", "why": f"{round(share * 100)}% of the pictures are 3D scenes with a designed cast"
+                + (f" ({seen})" if seen else "") + ". Studio's 3D engine builds the channel's own characters (their heads, "
+                "faces, clothes and limbs) and its kind of sets, and animates them: they walk, run and act in real 3D."}
+    if drawn and by_hand:
+        return {"engine": "drawn", "why": f"you chose the {chosen} recipe, which draws every scene as a picture in their "
+                "3D-render look", "warning": "Studio's 3D recipe builds this channel's designed cast in real 3D: pick it "
+                "to have its characters walk, run and act the way they do in its videos."}
     if drawn and chosen in ("3d", "nocturne"):
         return {"engine": "threed", "why": "you chose a 3D recipe",
                 "warning": "Studio's 3D engine makes faceless mannequins, so these characters and sets won't look like "
                            "the channel's. The recommended recipe draws every scene in their own 3D look.",
                 "medium_gap": MEDIUM_GAP_MANNEQUINS}
     if drawn:
-        why = ("you said its 3D characters have faces, which Studio's 3D engine can't make yet" if told else
+        why = ("you said its 3D characters have faces, and they aren't the ball-headed kind Studio's 3D engine builds yet"
+               if told else
                threed_rebuildable(profile)[1] or "its 3D characters are designed, which Studio's 3D engine can't make yet")
         return {"engine": "drawn", "why": f"{round(share * 100)}% of the pictures are 3D scenes, but {why}. Every scene "
                 "is drawn as a picture in their 3D-render look instead, and some are animated by AI.",
@@ -742,6 +775,32 @@ def _features(plan: Plan, profile: dict, base: str, base_style: dict):
                  why=f"{round(fam['graphic'] * 100)}% of the runtime is charts, maps or graphics", source="watched")
         plan.set("pacing.graphic_ratio", round(_clamp(fam["graphic"], 0.05, 0.5), 2), area="Options",
                  label="Graphics share", why="measured from the watched shots", source="watched")
+
+
+def _designed_cast(plan: Plan, profile: dict, base: str, original: dict):
+    """A designed cast built by the 3D engine: the designed look, the cast spec (from what Studio watched; the art
+    director writes its own over it), and the 3D share of the references (the rest stays the channel's graphics)."""
+    share = designed_3d(profile)
+    if not share or base not in ("3d", "nocturne"):
+        return
+    import cr_designed
+    spec = cr_designed.from_profile(original)
+    lead = next((r for r in spec["cast"] if r["role"] == "lead"), spec["cast"][0] if spec["cast"] else {})
+    plan.set("look.threed.preset", cr_designed.PRESET, area="Look", label="3D look",
+             why="the references' 3D is a designed cast and bright low-poly sets (watched)", source="watched",
+             show="the channel's own characters and sets, rebuilt in 3D")
+    plan.set("look.threed.designed", spec, area="Look", label="3D cast",
+             why="how the channel's characters are built: " + cr_designed.fits(original)[1], source="watched",
+             show=(f"ball heads with {spec['face']['set']} eyes, stick limbs; main character in a "
+                   f"{lead.get('top', 'jacket')}" + (f" and a {lead['hat']['kind']}" if lead.get("hat") else "")))
+    graphics = _families(profile).get("graphic", 0)
+    own = round(_clamp(share / max(1e-6, share + graphics), 0.6, 0.95), 2)
+    plan.set("look.threed.share", own, area="Look", label="3D share",
+             why=f"{round(share * 100)}% of the references' pictures are 3D, {round(graphics * 100)}% graphics",
+             source="watched", show=f"{round(own * 100)}% of the video in 3D")
+    # the 3D keeps that share (the channel's own graphics keep the rest): not filling every gap
+    plan.overrides["look"]["threed"].update(min_share=round(max(0.5, own - 0.06), 2), max_share=round(min(0.97, own + 0.05), 2),
+                                            fill=False)
 
 
 def _real_clips(plan: Plan, profile: dict, base: str):
@@ -946,8 +1005,17 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
     told = medium in MEDIUMS and _families(profile).get("3d", 0) >= 0.2
     # the creator's answer decides how the 3D is made; without one, the route the look screen showed (never one an
     # answer about a host or the music flips)
-    looked = (_families(profile).get("3d", 0) if medium == MEDIUM_DESIGNED else 0.0) if told else drawn_3d(profile)
-    way = route(profile, base or "", drawn=looked, told=told)
+    import cr_designed
+    builds = bool(cr_designed.fits(profile)[0])
+    if told:
+        shown = _families(profile).get("3d", 0) if medium == MEDIUM_DESIGNED else 0.0
+        designed, looked = (shown, 0.0) if builds else (0.0, shown)
+    else:
+        designed, looked = designed_3d(profile), drawn_3d(profile)
+    by_hand = bool(designed) and bool(base) and base not in ("3d", "nocturne")
+    if by_hand:                                   # the creator picked a picture recipe: drawn, by their choice
+        designed, looked = 0.0, designed
+    way = route(profile, base or "", drawn=looked, told=told, designed=designed, by_hand=by_hand)
     if answers:
         profile = answer(profile, answers)
         if str(answers.get("host") or "").startswith("Yes, I'll upload"):
@@ -955,6 +1023,7 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
     else:
         profile = dict(profile)
     profile["_drawn_3d"] = 0.0 if base in ("3d", "nocturne") else looked
+    profile["_designed_3d"] = designed
     profile["_drawn_why"] = (("you said its 3D characters have faces, which Studio's 3D engine can't make yet" if told
                               else threed_rebuildable(original)[1]) if looked else "")
     chosen, why = (base, "chosen by you") if base else choose_base(profile, styles)
@@ -969,6 +1038,7 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
     _look(plan, profile)
     _text(plan, profile)
     _features(plan, profile, chosen, base_style)
+    _designed_cast(plan, profile, chosen, original)
     _real_clips(plan, profile, chosen)
     _sound(plan, profile)
     _voice(plan, profile)
