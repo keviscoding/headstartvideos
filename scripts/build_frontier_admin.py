@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 from scripts import studio_branding
-VERSION = "5.3-admin.78"
+VERSION = "5.3-admin.79"
 PRIVATE_WORKFLOWS = {
     "cr-style-delivery-prompt.txt": ROOT / "data/frontier/reference2d-compiler.txt",
     "cr-style-study-brief.txt": ROOT / "data/frontier/reference2d-study.txt",
@@ -135,6 +135,49 @@ def private_shorts_resources(root: Path):
     return resources
 
 
+# ChannelRecipe's own additions to the 3D engine (Studio 79+): the designed-cast kit, kept in the gitignored
+# data/frontier/threed/ (lib/designed/*.js and the catalog entries its kinds add), never in this public repository.
+THREED_KIT = re.compile(r"lib/designed/[a-z_]+\.js")
+THREED_CATALOG = "catalog-additions.json"
+
+
+def private_threed_resources(root: Path):
+    """The designed-cast kit's engine modules, shipped under threed/engine/ (the engine registers the library through
+    ENGINE_PATCHES; the director's catalog gains its kinds through merge_catalog)."""
+    folder = root / "data/frontier/threed"
+    if not folder.exists():
+        return []
+    if folder.is_symlink() or not folder.is_dir():
+        raise ValueError("The 3D engine additions must be an ordinary owned folder.")
+    resources = []
+    for path in sorted(p for p in folder.rglob("*") if p.is_file() or p.is_symlink()):
+        rel = path.relative_to(folder).as_posix()
+        if rel == THREED_CATALOG or path.name.startswith("."):
+            continue
+        if path.is_symlink() or not THREED_KIT.fullmatch(rel) or path.stat().st_size > 1024 * 1024:
+            raise ValueError("3D engine additions must be small ordinary lib/designed/*.js files: " + rel)
+        resources.append((path, "threed/engine/" + rel))
+    if resources and not (folder / THREED_CATALOG).is_file():
+        raise ValueError("The designed-cast kit needs its catalog entries (data/frontier/threed/catalog-additions.json).")
+    return resources
+
+
+def merge_catalog(contents: bytes, root: Path = None) -> bytes:
+    """The engine's static catalog (what the 3D director may build) with the designed-cast kit's kinds and look preset."""
+    extra = (root or ROOT) / "data/frontier/threed" / THREED_CATALOG
+    if not extra.is_file():
+        return contents
+    add = json.loads(extra.read_text(encoding="utf-8"))
+    catalog = json.loads(contents.decode("utf-8"))
+    for key in ("kinds", "presets"):
+        rows = add.get(key) or {}
+        clash = [k for k in rows if k in (catalog.get(key) or {})]
+        if clash:
+            raise ValueError("The designed-cast catalog entries clash with the engine's own: " + ", ".join(clash[:5]))
+        catalog.setdefault(key, {}).update(rows)
+    return json.dumps(catalog, indent=1, ensure_ascii=False).encode("utf-8")
+
+
 READY_MADE = re.compile(r"cr-[a-z0-9]+(?:-[a-z0-9]+){0,6}")
 
 
@@ -230,6 +273,11 @@ LOOK_WHITE_STUDIO = ' "white_studio": {"director": "THE LOOK (this film\'s prese
 PRESET_STUDIO_COLOR = "\n  // STUDIO COLOUR (2026-10-16): white studio's clean daylight models painted in the creator's palette (a base colour on most\n  // surfaces, one accent on what matters, a dark for contrast): matte painted plaster that keeps its colour, soft daylight\n  // even at night or underwater, a light seamless world, soft grey outlines, no grain. For creators who find white on white flat.\n  studio_color: {\n    desc: 'clean studio 3D reconstruction in the creator palette: matte painted models in a base colour with one accent and a dark, soft daylight, a light seamless world, no grain',\n    stylised: true, tragedy_ok: true,\n    grade: { mul: { exposure: 1.0 }, add: { lift: [0.012, 0.012, 0.012] },\n      set: { mono: 0.1, ink: [0.14, 0.14, 0.15], mid: [0.6, 0.58, 0.55], midAt: 0.4, paper: [0.96, 0.94, 0.88], sat: 0.95,\n        contrast: 1.2, vignette: 0.12, vigPow: 1.3, grain: 0, bloom: 0.04, shoulder: 0.9 } },\n    night: { mul: { exposure: 1.5 }, add: { lift: [0.025, 0.025, 0.028] },\n      set: { mono: 0.1, ink: [0.13, 0.13, 0.15], mid: [0.58, 0.57, 0.55], midAt: 0.4, paper: [0.94, 0.92, 0.87], sat: 0.95,\n        contrast: 1.2, vignette: 0.14, vigPow: 1.3, grain: 0, bloom: 0.04, shoulder: 0.9 } },\n    atmos: { tint: [0.9, 0.88, 0.83], tintAmt: 0.4, density: 0.15, sky: [0.88, 0.86, 0.8] },\n    ink: { amt: 0.5, px: 1.5, pxC: 0.8, col: [0.25, 0.25, 0.27], far: [400, 1200], depthK: 0.03, crease: 0.85 },\n    labelKeep: true, labelInk: 'dark',\n    world: { tufts: false },\n    material: { rough: [0.6, 0.95], metal: 0.0, env: 0.15, skin: 0xEDE6D6,\n      look: { flat: 6, nrm: 0, pal: 1, sat: 0.8, gamma: 0.85 } },\n    shadow: { soft: 2.6 },\n    qa: { hot_start: 0.95, hot_target: 0.9, hot_area: 0.97, face_white: 1.0, face_mean: 256, dark_sep: 0, scrim_max: 0.86 },\n  },\n"
 LOOK_STUDIO_COLOR = ' "studio_color": {"director": "THE LOOK (this film\'s preset: STUDIO COLOUR — the engine renders every shot as a clean painted scale model on top of your look block; you never set it and never imitate it with grades): a clean 3D reconstruction like a painted model on a studio table. Paint it ONLY in the film\'s palette (3D SCENE PALETTE in the creative direction): its base colour on most surfaces, models and the faceless mannequins, its accent on the one thing that matters in each shot (the torpedo, the warning light, the key person\'s detail, the label), its dark for shadows, hulls and contrast; never real-world colour beyond the palette. Light EVERY scene as soft daylight (time afternoon or morning, sky overcast or clear, grade neutral), even when the story happens at night, in the dark or underwater: depth, night and danger are told by the words, the labels and the accent colour, never by darkness. No pitch-dark interiors, no night grades, no glowing red rooms. Never stage a shot whose subject is only fog, sky, open water or darkness: always show a model at a scale that reads, framed with the ground, a structure or the horizon behind it. Real shapes, era-accurate ships, vehicles and buildings. Captions live in the bottom quarter of the frame: keep it free of text and of the subject\'s key action.", "review": "THE LOOK IS INTENTIONAL — this film uses the STUDIO COLOUR preset: clean matte models painted in the film\'s palette (a base colour, one accent, a dark), soft daylight even for night or underwater scenes, labels in dark ink on pale tags. Do not score it as unrealistic or flat, and do not fix it toward realism, night or darkness. Judge craft INSIDE the look: the story, the subject reading at a glance, the motion, the hard fails H1-H8 (all still apply), faceless mannequins. Flag a dark, night-lit or underwater-dark shot (fix: soft daylight, the palette\'s base colour), a shot whose subject disappears into the background, and a shot that uses colours outside the palette or loses the accent on what matters.", "qa": "THE LOOK OF THIS FILM IS INTENTIONAL: STUDIO COLOUR — clean painted models in the film\'s palette, soft daylight even at night, labels in dark ink. Never flag the look itself as unrealistic; flag a dark shot, a subject that cannot be seen, and colours outside the palette.", "cookbook": "LOOK PRESET studio_color (this film) — stage it like a painted scale model on a studio table: soft daylight in every scene, the palette\'s base colour on most surfaces, its accent on one thing per shot, clear shapes and silhouettes, medium and wide views that read as models, slow orbit or push_in; subjects framed with the ground or a structure behind them. Avoid night lighting, dark interiors, underwater darkness, fog-only shots and colours outside the palette."},\n'
 
+# DESIGNED (Studio 79): a designed-3D channel's own cast and sets (threed/engine/lib/designed), for the director, reviewer
+# and QA (the engine's look preset comes with the kit, lib/designed/preset.js)
+LOOK_DESIGNED = ' "designed": ' + json.dumps(json.loads((ROOT / "scripts/studio_designed_look.json").read_text(encoding="utf-8")),
+                                             ensure_ascii=False) + ',\n'
+
 ENGINE_PATCHES = {
     # TikTok (Ranking Shorts' pasted links) answers yt-dlp only through browser impersonation: its curl-cffi extra.
     # The floor moves with each release: requirements.txt changing is what makes an in-place update reinstall, and
@@ -291,6 +339,11 @@ ENGINE_PATCHES = {
     # (looks.json, which also lists the look so a style may ask for it).
     "threed/engine/core/presets.js": [
         ("  documentary: null,\n", PRESET_WHITE_STUDIO + PRESET_STUDIO_COLOR),
+        # the designed look preset comes with the designed-cast kit (lib/designed/preset.js)
+        ("import { V3_PRESETS } from './presets_v3.js';",
+         "import { V3_PRESETS } from './presets_v3.js';\n"
+         "import { DESIGNED_PRESETS } from '../lib/designed/preset.js';   // ChannelRecipe: designed-3D channels (lib/designed)"),
+        ("Object.assign(PRESETS, V3_PRESETS);", "Object.assign(PRESETS, V3_PRESETS, DESIGNED_PRESETS);"),
         ("  if (P.ink) { g.outline = JSON.parse(JSON.stringify(P.ink)); g.labelMask = true; }   // grade.outline (grade.ink is the mono ink colour); never across a label\n",
          "  if (P.ink) { g.outline = JSON.parse(JSON.stringify(P.ink)); g.labelMask = true; }   // grade.outline (grade.ink is the mono ink colour); never across a label\n"
          "  if (P.labelKeep) { g.labelKeep = true; g.labelMask = true; }   // the labels keep their own colours through a mono grade (white studio)\n"),
@@ -317,6 +370,15 @@ ENGINE_PATCHES = {
     ],
     "threed/director/looks.json": [
         ('{\n "documentary": {\n', '{\n' + LOOK_WHITE_STUDIO + LOOK_STUDIO_COLOR + ' "documentary": {\n'),
+        (' "documentary": {\n', LOOK_DESIGNED + ' "documentary": {\n'),
+    ],
+    # the designed-cast kit (lib/designed): its library is loaded with the others, and a scene's look may carry the
+    # channel's archetype (look.designed) without a warning
+    "threed/engine/core/registry.js": [
+        ("['v3', '../lib/v3/index.js']];", "['v3', '../lib/v3/index.js'], ['designed', '../lib/designed/index.js']];"),
+    ],
+    "threed/engine/core/spec.js": [
+        ("'preset', 'dark', 'pitch_dark', 'film', 'keep_hue'],", "'preset', 'dark', 'pitch_dark', 'film', 'keep_hue', 'designed'],"),
     ],
     "make_video.py": [
         # A dark chapter card or learned graphic in a slot longer than itself held its faded-out last frame: seconds of
@@ -441,6 +503,8 @@ ENGINE_PATCHES = {
 
 
 def patch_engine(relative: str, contents: bytes) -> bytes:
+    if relative == "threed/catalog.json":
+        return merge_catalog(contents)
     patches = ENGINE_PATCHES.get(relative)
     if not patches:
         return contents
@@ -538,7 +602,7 @@ def build(source: Path, target: Path, previous: Path | None = None, with_shorts:
     shorts = with_shorts
     recipes = [r for r in private_recipe_resources(ROOT) if shorts or not r[1].startswith("styles/cr-shorts-")]
     preview_resources = (private_preview_resources(ROOT) + private_sound_resources(ROOT)
-                         + recipes + (private_shorts_resources(ROOT) if shorts else []))
+                         + recipes + (private_shorts_resources(ROOT) if shorts else []) + private_threed_resources(ROOT))
     target.parent.mkdir(parents=True, exist_ok=True)
     count = 0
     transformed_files = []

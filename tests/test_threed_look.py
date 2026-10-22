@@ -102,3 +102,38 @@ def test_a_studio_colour_recipe_paints_in_its_own_palette_unless_the_creator_cho
     assert engine._extra_block() == "", "outside a video nothing is added"
     look.install(engine)
     assert run("again", "cr-3d").count("3D SCENE PALETTE") == 1, "installing twice adds the line once"
+
+
+def test_a_designed_video_carries_the_channels_cast_into_every_scene(tmp_path, monkeypatch):
+    """Studio 79: a recipe in the designed look (look.threed.designed) stamps every video.json the engine renders, and
+    the director's creative direction names the channel's cast; any other look is untouched."""
+    mod = types.ModuleType("threed")
+    mod.SB = types.SimpleNamespace(PRESETS=["documentary", "designed"], look_id=lambda p: p if p in ("designed",) else "")
+    mod._cfg = lambda engine, style: {"preset": "designed"}
+    mod._video = lambda board, sub=None, preset=None: {"cast": board.get("cast", []), "scenes": [
+        {"id": "s1", "look": {"preset": preset}, "world": {"biome": "temperate"}}]}
+    rendered = []
+
+    def _add_to_timeline(segs, srt, job, style, force, engine, total):
+        rendered.append(mod._video({"cast": [{"id": "you"}]}, preset="designed"))
+        rendered.append(mod._video({"cast": [{"id": "you"}]}, preset="documentary"))
+        return segs
+    mod._add_to_timeline = _add_to_timeline
+    monkeypatch.setitem(sys.modules, "threed", mod)
+    spec = {"plan": "orb", "cast": [{"name": "Dot", "role": "lead", "top": "hoodie", "color": "#3E8C4A"}]}
+    engine = types.SimpleNamespace(STYLE_INFO={"cr_clone_if": {"look": {"threed": {"preset": "designed", "designed": spec}}}},
+                                   _extra_block=lambda: "")
+    look.install(engine)
+    j = job(tmp_path, "if", None)
+    (j / "style.txt").write_text("cr_clone_if")
+    mod._add_to_timeline([], j / "subs.srt", j, "cr_clone_if", False, engine, 60.0)
+    designed, plain = rendered
+    assert designed["scenes"][0]["look"]["designed"]["plan"] == "orb"
+    assert designed["scenes"][0]["world"]["biome"] == "designed_park"
+    assert designed["cast"][0]["designed"] == {"top": "hoodie", "color": "#3E8C4A"}
+    assert "designed" not in plain["scenes"][0]["look"] and plain["scenes"][0]["world"]["biome"] == "temperate"
+    look._current.job = j
+    try:
+        assert "THE CHANNEL'S DESIGNED CAST" in engine._extra_block()
+    finally:
+        look._current.job = None

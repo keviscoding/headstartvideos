@@ -67,7 +67,7 @@ Return ONE JSON object:
    between its specific shots, in its subject area and mood (for a money channel: 'counting cash close up', 'bank
    building exterior'); never names, never the reference video's own story"],
  "hook_notes": "one or two sentences: how the first 30 seconds run",
- "body_notes": "one or two sentences: how the edit runs after the hook"
+ "body_notes": "one or two sentences: how the edit runs after the hook"[CAST_3D]
 }
 Write in English. Never name the reference channel, its creator, any artist or any studio; describe instead."""
 
@@ -82,6 +82,44 @@ precisely: head shape and colour, face (eyes, mouth, how simple), body and limbs
 character of every story must be drawn that same way. That design language is the channel's style: write it out in
 full (only never a name, a logo or one character's signature item).
 """
+
+# A designed cast Studio's 3D engine builds itself (cr_style_map.route "designed", Studio 79): the art director's eyes
+# measure the channel's characters into the cast spec the engine builds from (cr_designed), in the same call.
+ROUTE_DESIGNED = """HOW THESE PICTURES ARE MADE: the references are 3D renders of a DESIGNED cast, and Studio's own 3D engine rebuilds
+that cast and its kind of sets in real 3D, then animates it (characters walk, run and act; faces change expression). The
+engine's body plan is a ball head on a body with stick limbs; you describe THIS channel's version of it. So besides the
+keys below, return "cast_3d", measured from the frames:
+ "cast_3d": {"plan": "orb",
+   "head": {"size": head height as a fraction of the whole character's height (0.18-0.34): MEASURE it on a frame where a
+            character stands full-length (the head's height in pixels over the height from the top of the head to the
+            soles), never by impression: a big round head reads bigger than it is, "color": "#hex",
+            "rim": "#hex of the light catching the head's lit edge", "rim_width": 0-0.15 (the rim's width as a fraction
+            of the head radius; 0 = none)},
+   "face": {"set": "ring" (eyes drawn as rings with a pupil inside: in wide shots they read as dots, so judge them in the
+            closest shots) | "dot" (plain filled dots, even close up) | "bean" (tall filled ovals), "color": "#hex of
+            the face marks", "size": 0.7-1.4 (1.0 = the two eyes' centres about a fifth of the head's width apart and
+            each eye a tenth of it across; bigger faces higher)},
+   "limbs": {"color": "#hex", "thickness": 0.6-2.0 (1 = thin sticks), "hand_color": "#hex"},
+   "shoes": {"color": "#hex of the shoes where they meet the ground (they often differ from the legs: look at the feet)"},
+   "toon": {"outline": 0-0.014 (outline width in metres on a 1.6 m character: 0.009 = the usual crisp dark line round the
+            clothes, 2-3 pixels wide on a full-body shot, the one you see without zooming where a jacket meets the sky or
+            the grass; 0.004 only for a hairline you have to look for; 0 = none), "outline_color": "#hex",
+            "rim": "#hex", "rim_k": 0-1.6 (how strong the rim light on clothes and limbs is)},
+   "palette": ["#hex", ...] the clothing colours of the channel's people, most used first (up to 10),
+   "details": the garment details the channel's clothes show, from collar|hood|zip|buttons|patch|pocket|hem|zigzag (a patterned hem
+               band)|cuffs|stripes|tie,
+   "cast": [{"name": "a NEW name", "role": "lead" (the channel's main character, in most videos) | "character",
+             "top": jacket|hoodie|track|tshirt|sweater|labcoat|suit|dress|chef|coverall, "color": "#hex", "trim": "#hex",
+             "hat": {"kind": cap|beret|beanie|hardhat|chef|crown|band, "color": "#hex"} or null, "glasses": true|false}]
+            (the characters who return across the references, at most 4, the main one first),
+   "sets": the kinds of places the channel films in, from designed_room|designed_street|designed_city|designed_track|designed_park}
+Use the exact colours you see. still_suffix and people are still written (they describe the look in words).
+"""
+# the designed route's key inside the answer's own template (an instruction outside it was skipped: the answer followed
+# the template)
+CAST_3D_KEY = (',\n "cast_3d": {"plan": "orb", "head": {...}, "face": {...}, "limbs": {...}, "shoes": {...}, "toon": {...}, '
+               '"palette": [...], "details": [...], "cast": [...], "sets": [...]}   // REQUIRED: the 3D cast spec described '
+               'under HOW THESE PICTURES ARE MADE')
 
 CANDID = ("The pictures are photographs: write them as everyday phone-camera frames (deep focus, natural mixed light, "
           "unstaged framing, mild noise), never glossy, studio-lit or cinematic. Where the profile calls the light "
@@ -129,7 +167,8 @@ def prompt(profile: dict, mapping: dict, *, title: str, brief: str, base: str, e
     polish_line = CANDID if rule.startswith("candid") or polish == "candid" else LO_FI if polish == "lo-fi" else ""
     return (ART_PROMPT.replace("[TITLE]", title.strip()[:280]).replace("[BRIEF]", (brief or "none").strip()[:1500])
             .replace("[BASE]", base).replace("[POLISH]", polish_line)
-            .replace("[ROUTE]", ROUTE_DRAWN if (mapping.get("route") or {}).get("engine") == "drawn" else "")
+            .replace("[ROUTE]", {"drawn": ROUTE_DRAWN, "designed": ROUTE_DESIGNED}.get((mapping.get("route") or {}).get("engine"), ""))
+            .replace("[CAST_3D]", CAST_3D_KEY if (mapping.get("route") or {}).get("engine") == "designed" else "")
             .replace("[PROFILE]", json.dumps(_compact(profile, mapping), ensure_ascii=False)[:9000])
             .replace("[EXCERPT]", (excerpt or "no captions available").strip()[:1500]))
 
@@ -217,6 +256,12 @@ def check(answer: dict, *, banned: list, candid: bool = False) -> dict:
         out[key] = [_clean(x, 220, banned) for x in rows if str(x).strip()][:6]
     rows = answer.get("broll") if isinstance(answer.get("broll"), list) else []
     out["broll"] = [q for q in (_clean(x, 60, banned) for x in rows) if 2 <= len(q.split()) <= 6][:10]
+    if isinstance(answer.get("cast_3d"), dict):
+        import cr_designed
+        spec = cr_designed.clean(answer["cast_3d"])
+        for row in spec["cast"]:
+            row["name"] = _clean(row["name"], 40, banned)
+        out["cast_3d"] = {**spec, "from": "art director"}
     return out
 
 
@@ -241,6 +286,8 @@ def overrides(art: dict) -> dict:
     if art.get("video_motion"):
         look["video_motion"] = art["video_motion"]
     out = {"look": look}
+    if art.get("cast_3d"):
+        look["threed"] = {"designed": art["cast_3d"]}       # the cast spec the 3D engine builds the channel's people from
     if art.get("description"):
         out["description"] = art["description"]
     if art.get("tagline"):
@@ -274,5 +321,6 @@ def direct(see, profile: dict, mapping: dict, *, title: str, brief: str, base: s
         log(f"  art director: {exc}; the learned settings are kept without it")
         return {}
     log(f"  art director: picture style {len(art['still_suffix'].split())} words"
-        + (", cast written" if art.get("cast") else "") + (", mascot designed" if art.get("mascot") else ""))
+        + (", cast written" if art.get("cast") else "") + (", mascot designed" if art.get("mascot") else "")
+        + (f", 3D cast spec ({len(art['cast_3d']['cast'])} characters)" if art.get("cast_3d") else ""))
     return {"art": art, "overrides": overrides(art)}

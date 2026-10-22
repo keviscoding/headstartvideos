@@ -1,7 +1,8 @@
 """The 3D look a creator chooses for one video: the recipe's own, white studio (all-white models), studio colour
 (the clean studio models painted in the creator's palette) or colour film.
 
-A recipe's 3D look is its look.threed.preset (white_studio for the clean 3D reconstruction channels). In Create the
+A recipe's 3D look is its look.threed.preset (white_studio for the clean 3D reconstruction channels; designed for a
+channel whose designed cast the engine builds itself, from the cast spec look.threed.designed: Studio 79). In Create the
 creator may choose another for one video (run_spec cr_threed_look); a colour palette always comes with the colour look,
 so its colours show. The engine reads a video's 3D settings without knowing the job, so the job is remembered while
 its 3D is made and the choice applied whenever the settings are read.
@@ -56,6 +57,19 @@ def recipe_palette(engine, job) -> str:
     return str(lt.get("palette") or DEFAULT_PALETTE)
 
 
+def recipe_designed(engine, job):
+    """The cast spec of a designed-look video (the recipe's look.threed.designed), or None for any other look."""
+    try:
+        style = (Path(job) / "style.txt").read_text(encoding="utf-8").strip()
+    except (OSError, TypeError):
+        return None
+    look = ((getattr(engine, "STYLE_INFO", {}) or {}).get(style) or {}).get("look") or {}
+    lt = look.get("threed") if isinstance(look.get("threed"), dict) else {}
+    if (chosen(job) or str(lt.get("preset") or "")) != "designed":
+        return None
+    return lt.get("designed") if isinstance(lt.get("designed"), dict) else {}
+
+
 def _with_palette(engine):
     """The 3D director's creative direction carries the recipe's palette when the creator gave none."""
     original = getattr(engine, "_extra_block", None)
@@ -65,12 +79,20 @@ def _with_palette(engine):
     def _extra_block():
         out = original() or ""
         job = _job()
+        lines = []
         if job and "3D SCENE PALETTE" not in out:
             palette = recipe_palette(engine, job)
             if palette:
-                line = PALETTE_LINE.format(palette)
-                out = (out.rstrip("\n") + "\n" + line + "\n") if out else (
-                    "\n\nEXTRA INSTRUCTIONS FROM THE CREATOR FOR THIS VIDEO — follow them wherever they apply:\n" + line + "\n")
+                lines.append(PALETTE_LINE.format(palette))
+        spec = recipe_designed(engine, job) if job else None
+        if spec is not None and "DESIGNED CAST" not in out:
+            import cr_designed
+            cast = cr_designed.cast_lines(spec)
+            if cast:
+                lines.append(cast)
+        for line in lines:
+            out = (out.rstrip("\n") + "\n" + line + "\n") if out else (
+                "\n\nEXTRA INSTRUCTIONS FROM THE CREATOR FOR THIS VIDEO — follow them wherever they apply:\n" + line + "\n")
         return out
     _extra_block._cr_palette = True
     engine._extra_block = _extra_block
@@ -111,3 +133,28 @@ def install(engine=None):
     for name in ("_add_to_timeline", "_repair_cli", "_cli_setup"):
         if hasattr(threed, name):
             setattr(threed, name, remembering(getattr(threed, name)))
+    _with_designed(threed, engine)
+
+
+def _with_designed(threed, engine=None):
+    """Every video.json of a designed-look video carries the channel's archetype on each scene, stands in a designed
+    set and gives every CastDef its designed block (cr_designed.stamp); other looks are untouched."""
+    original = getattr(threed, "_video", None)
+    if original is None or getattr(original, "_cr_designed", False):
+        return
+
+    def _video(board, sub=None, preset=None):
+        video = original(board, sub, preset)
+        try:
+            look = threed.SB.look_id(preset) if hasattr(threed, "SB") and hasattr(threed.SB, "look_id") else str(preset or "")
+        except Exception:                                   # noqa: BLE001 - the engine's own json stands
+            look = ""
+        if look != "designed":
+            return video
+        import sys
+        import cr_designed
+        job = _job()
+        spec = recipe_designed(engine or sys.modules.get("make_video"), job) if job else None
+        return cr_designed.stamp(video, spec or {})
+    _video._cr_designed = True
+    threed._video = _video

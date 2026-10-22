@@ -1,5 +1,15 @@
 [
   {
+    "build": 79,
+    "date": "2026-10-22",
+    "title": "Designed 3D characters, rebuilt in 3D",
+    "items": [
+      "New: designed 3D characters, rebuilt in 3D. Style clones of channels whose characters are designed, like round black heads with cute faces on stick-figure bodies, are now rebuilt in Studio's 3D engine: the channel's kind of heads, face marks, jackets, stick legs and gloves, in its kind of sets (rooms, streets, downtown, a running track or a park). They walk, run, point, check their phones and react, their faces change expression on the words, and the words on eye charts, signs, posters and screens are readable.",
+      "New: the clone checks itself with 3D test shots. It writes down the channel's cast (each recurring character's outfit and colours), renders test shots with the 3D engine and compares them with the channel, with no picture costs.",
+      "Changed: other designed characters are still drawn for now. Channels whose characters are another kind of design (blocky game avatars, clay, chibi or realistic faces) still have their scenes drawn in their look, and Studio says so before anything is paid."
+    ]
+  },
+  {
     "build": 78,
     "date": "2026-10-22",
     "title": "Studio Cloud: choose where each video renders",

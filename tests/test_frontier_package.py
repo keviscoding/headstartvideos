@@ -467,7 +467,8 @@ def test_the_white_studio_3d_look_reaches_the_renderer_and_the_director():
     assert list(looks)[0] == "white_studio" and "soft overcast daylight" in looks["white_studio"]["director"]
     assert "never flag the look itself" in looks["white_studio"]["qa"].lower()
     presets = package.patch_engine("threed/engine/core/presets.js", (
-        b"export const PRESETS = {\n  documentary: null,\n};\n"
+        b"import { V3_PRESETS } from './presets_v3.js';\nexport const PRESETS = {\n  documentary: null,\n};\n"
+        b"Object.assign(PRESETS, V3_PRESETS);\n"
         b"  if (P.ink) { g.outline = JSON.parse(JSON.stringify(P.ink)); g.labelMask = true; }   // grade.outline (grade.ink is"
         b" the mono ink colour); never across a label\n")).decode()
     assert "white_studio: {" in presets and "labelInk: 'dark'" in presets and "midAt: 0.35" in presets
@@ -584,3 +585,47 @@ def test_the_studio_installs_yt_dlp_with_browser_impersonation_for_tiktok():
     assert 'yt-dlp[default,curl-cffi]>=2026.8.19; python_version >= "3.10"' in patched and "requests" in patched
     # one RapidOCR for every Python: 1.3+ caps Python below 3.13 and renamed the detector the Studio calls
     assert 'rapidocr-onnxruntime==1.2.3; python_version >= "3.10"' in patched
+
+
+def test_the_designed_cast_kit_reaches_the_engine_and_the_director():
+    """Studio 79: the designed-cast kit (threed/engine/lib/designed) is loaded with the engine's libraries, its look
+    preset joins the presets, a scene may carry the channel's archetype, and the director knows the look."""
+    registry = package.patch_engine("threed/engine/core/registry.js",
+                                    b"const LIBS = [['nature', '../lib/nature/index.js'], ['v3', '../lib/v3/index.js']];\n").decode()
+    assert "['designed', '../lib/designed/index.js']]" in registry
+    presets = package.patch_engine("threed/engine/core/presets.js", (
+        b"import { V3_PRESETS } from './presets_v3.js';\nexport const PRESETS = {\n  documentary: null,\n};\n"
+        b"Object.assign(PRESETS, V3_PRESETS);\n"
+        b"  if (P.ink) { g.outline = JSON.parse(JSON.stringify(P.ink)); g.labelMask = true; }   // grade.outline (grade.ink is"
+        b" the mono ink colour); never across a label\n")).decode()
+    assert "import { DESIGNED_PRESETS } from '../lib/designed/preset.js';" in presets
+    assert "Object.assign(PRESETS, V3_PRESETS, DESIGNED_PRESETS);" in presets
+    spec = package.patch_engine("threed/engine/core/spec.js",
+                                b"  look: ['time', 'preset', 'dark', 'pitch_dark', 'film', 'keep_hue'],\n").decode()
+    assert "'keep_hue', 'designed']" in spec
+    looks = json.loads(package.patch_engine("threed/director/looks.json", b'{\n "documentary": {\n  "director": "x"\n }\n}\n'))
+    assert list(looks) == ["white_studio", "studio_color", "designed", "documentary"]
+    assert "FACES ACT" in looks["designed"]["director"] and "FACES ARE REQUIRED" in looks["designed"]["review"]
+    assert "designed_room" in looks["designed"]["cookbook"]
+
+
+def test_the_designed_cast_kit_ships_only_from_the_private_folder(tmp_path, monkeypatch):
+    root = tmp_path / "builder"
+    kit = root / "data/frontier/threed"
+    assert package.private_threed_resources(root) == []
+    (kit / "lib/designed").mkdir(parents=True)
+    (kit / "lib/designed/people.js").write_text("export const x = 1;")
+    with pytest.raises(ValueError, match="catalog entries"):
+        package.private_threed_resources(root)
+    (kit / "catalog-additions.json").write_text(json.dumps({"kinds": {"designed.person": {"desc": "x"}},
+                                                            "presets": {"designed": {"desc": "y"}}}))
+    assert [rel for _, rel in package.private_threed_resources(root)] == ["threed/engine/lib/designed/people.js"]
+    merged = json.loads(package.merge_catalog(json.dumps({"kinds": {"cast": {}}, "presets": {}}).encode(), root))
+    assert set(merged["kinds"]) == {"cast", "designed.person"} and "designed" in merged["presets"]
+    with pytest.raises(ValueError, match="clash"):
+        package.merge_catalog(json.dumps({"kinds": {"designed.person": {}}}).encode(), root)
+    (kit / "lib/designed/notes.txt").write_text("not code")
+    with pytest.raises(ValueError, match="lib/designed"):
+        package.private_threed_resources(root)
+    monkeypatch.setattr(package, "ROOT", tmp_path / "nothing")
+    assert package.patch_engine("threed/catalog.json", b'{"kinds": {}}') == b'{"kinds": {}}', "no kit: unchanged"
