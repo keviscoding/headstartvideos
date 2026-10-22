@@ -194,7 +194,7 @@ def test_the_server_judge_checks_its_input_and_answers_scores(monkeypatch, tmp_p
 
 
 def test_a_designed_cast_style_is_checked_on_shots_the_3d_engine_renders(setup, tmp_path):
-    """Studio 77: a style whose designed cast the engine builds is checked on three RENDERED shots (no picture paid,
+    """Studio 78: a style whose designed cast the engine builds is checked on three RENDERED shots (no picture paid,
     one round: a judge's prompt fix can't change code), judged like any other."""
     home, folder, style, calls, run = setup
     built = {"name": "cr_clone_ifology", "look": {"still_suffix": " Low-poly 3D.", "threed": {"preset": "designed",

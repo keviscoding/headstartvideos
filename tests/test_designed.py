@@ -1,4 +1,4 @@
-"""Designed 3D (local_runtime/cr_designed.py, Studio 77): a channel whose designed cast the 3D engine builds itself.
+"""Designed 3D (local_runtime/cr_designed.py, Studio 78): a channel whose designed cast the 3D engine builds itself.
 @ifologyfilms was cloned onto faceless mannequins, then drawn as pictures; now its ball-headed cast is rebuilt in 3D
 from a cast spec. Pure data: no model, no network, no renderer."""
 import json
@@ -127,3 +127,11 @@ def test_a_realistic_room_becomes_the_designed_room():
     scene = D.stamp(video, {})["scenes"][0]
     assert scene["world"] == {"biome": "designed_room", "furnish": "office"}
     assert scene["structures"] == [{"kind": "prop.sign"}]
+
+
+def test_the_director_is_taught_readable_words_phones_and_the_channels_colours():
+    """the first test video's eye chart was blank boxes, its phone a grey card on the floor, a Galileo shot sepia"""
+    look = json.loads((Path(__file__).parents[1] / "scripts" / "studio_designed_look.json").read_text(encoding="utf-8"))
+    assert "designed.board" in look["director"] and "EYE CHART is style chart" in look["cookbook"]
+    assert "action phone" in look["director"] and "PHONES IN HAND" in look["cookbook"]
+    assert "never sepia" in look["director"]

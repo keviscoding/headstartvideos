@@ -168,7 +168,7 @@ BLOCKY = {"pictures__art_style": axis("Roblox-style blocky avatars with yellow b
 def test_a_designed_cast_the_3d_engine_builds_is_rebuilt_in_3d():
     """@ifologyfilms (round black heads, cute faces, bright jackets, stick legs, low-poly sets) was cloned onto the 3D
     engine's faceless mannequins, then drawn as pictures (Studio 72-76: 6/10, and its characters never moved). Studio
-    77's 3D engine builds ball-headed casts itself: the 3D recipe in the designed look, the cast spec, no picture model."""
+    78's 3D engine builds ball-headed casts itself: the 3D recipe in the designed look, the cast spec, no picture model."""
     plan = cm.plan_style(profile({"3d": 0.85, "graphic": 0.15}, {"3d_render": 0.85}, **IFOLOGY), STYLES)
     assert plan["base"] == "3d" and plan["route"]["engine"] == "designed" and "medium_gap" not in plan["route"]
     lt = plan["overrides"]["look"]["threed"]

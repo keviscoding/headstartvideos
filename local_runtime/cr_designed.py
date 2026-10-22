@@ -3,7 +3,7 @@
 
 A customer cloned @ifologyfilms (round black heads with white face marks, bright jackets, stick legs, bright low-poly
 sets) and got mannequins; Studio 72-75 drew the scenes with an image model instead, which looked close (6/10) but never
-moved like the channel. Studio 77's engine has a designed-cast kit (threed/engine/lib/designed): under the look preset
+moved like the channel. Studio 78's engine has a designed-cast kit (threed/engine/lib/designed): under the look preset
 "designed" it builds every person from the channel's ARCHETYPE (head, face marks, body, limbs, shoes, rim light,
 outline, palette) and each character's outfit, on the house rig, so every 3D action works, and it brings the
 channel's kind of sets (a room, a street, downtown, an athletics track, a park).
@@ -74,7 +74,7 @@ DEFAULT_LOOK = {"top": "jacket", "color": "#E8B320", "hat": None, "glasses": Fal
 
 
 def engine_ready(home) -> bool:
-    """This Studio's 3D engine has the designed-cast kit (Studio 77+)."""
+    """This Studio's 3D engine has the designed-cast kit (Studio 78+)."""
     try:
         return (Path(home) / KIT).is_file()
     except (OSError, TypeError):
