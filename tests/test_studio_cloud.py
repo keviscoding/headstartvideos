@@ -1,0 +1,192 @@
+"""Studio Cloud on the Studio's side (local_runtime/cr_cloud.py): the engine's farm keeps working unchanged, with
+RunPod, its bucket and its Anthropic key swapped for ChannelRecipe's machines, signed storage and the creator's own
+Claude Code."""
+import base64
+import importlib
+import json
+import sys
+import textwrap
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).parents[1] / "local_runtime"))
+
+FARM = {
+    "__init__.py": "",
+    "s3.py": "class S3Error(RuntimeError):\n    pass\n",
+    "runpod.py": textwrap.dedent("""
+        class RunPod:
+            def __init__(self, api_key, session=None):
+                self.api_key = api_key
+        def price_of(pod):
+            return float(pod.get("costPerHr") or 0)
+    """),
+    "config.py": textwrap.dedent("""
+        import os
+        class Config:
+            def __init__(self):
+                self.runpod_key = os.environ.get("RUNPOD_API_KEY", "")
+                self.bucket_endpoint = self.bucket = self.bucket_key_id = self.bucket_secret = ""
+                self.gpu, self.cloud, self.max_pods, self.budget_usd = "A4000", "COMMUNITY", 5, 10.0
+            def checklist(self):
+                return [{"key": "runpod", "ok": False}, {"key": "render", "label": "A voice", "ok": True}]
+            def missing_for_mac(self):
+                return ["RUNPOD_API_KEY"]
+        def bucket_from(cfg):
+            return "their own bucket"
+    """),
+    "farm.py": "from farm.config import Config, bucket_from\n",
+    "runner.py": textwrap.dedent("""
+        def main():
+            from farm.config import bucket_from
+            global USED
+            USED = bucket_from(None)
+            return 0
+    """),
+}
+
+
+@pytest.fixture
+def studio(tmp_path, monkeypatch):
+    pkg = tmp_path / "farm"
+    pkg.mkdir()
+    for name, src in FARM.items():
+        (pkg / name).write_text(src)
+    (tmp_path / ".cr-connection.json").write_text(json.dumps({"key": "cr_mcp_abc", "url": "https://cr.test"}))
+    monkeypatch.syspath_prepend(str(tmp_path))
+    for name in [m for m in sys.modules if m == "farm" or m.startswith("farm.")]:
+        monkeypatch.delitem(sys.modules, name)
+    import cr_cloud
+    cr_cloud = importlib.reload(cr_cloud)
+    monkeypatch.setattr(cr_cloud, "HOME", tmp_path)
+    return SimpleNamespace(home=tmp_path, cloud=cr_cloud)
+
+
+class Http:
+    """Plays channelrecipe.com and the storage it signs."""
+    def __init__(self, store=None, jobs=None):
+        self.store = store if store is not None else {}
+        self.sent = []
+
+    def _r(self, status=200, body=None, content=b""):
+        return SimpleNamespace(status_code=status, ok=status < 400, json=lambda: body, content=content, text="",
+                               iter_content=lambda n: [content])
+
+    def post(self, url, json=None, headers=None, timeout=None):
+        self.sent.append(("POST", url, json, headers))
+        op, key = json["op"], json["key"]
+        if op == "presign":
+            return self._r(body={"url": f"https://signed/{json['method']}/{key}"})
+        if op == "exists":
+            return self._r(body={"exists": key in self.store})
+        if op == "list":
+            return self._r(body={"items": [{"key": k, "size": len(v), "modified": 0} for k, v in self.store.items()
+                                           if k.startswith(key)]})
+        if op == "delete":
+            self.store.pop(key, None)
+            return self._r(body={"ok": True})
+
+    def put(self, url, data=None, headers=None, timeout=None):
+        key = url.split("/PUT/", 1)[1]
+        self.store[key] = data if isinstance(data, bytes) else data.read()
+        return self._r()
+
+    def get(self, url, stream=False, timeout=None):
+        key = url.split("/GET/", 1)[1]
+        return self._r(content=self.store[key]) if key in self.store else self._r(404)
+
+
+def test_the_bucket_is_signed_by_the_server_and_speaks_the_farms_language(studio):
+    http = Http()
+    b = studio.cloud.BrokerBucket("https://cr.test/api/studio/cloud", "Bearer cr_mcp_abc", http)
+    b.put_bytes("status/a.json", b'{"state":"queued"}', "application/json")
+    assert b.get_bytes("status/a.json") == b'{"state":"queued"}' and b.exists("status/a.json")
+    assert http.sent[0][1] == "https://cr.test/api/studio/cloud/storage"
+    assert http.sent[0][3] == {"Authorization": "Bearer cr_mcp_abc"}
+    assert b.list("status/")[0]["modified"] == "1970-01-01T00:00:00.000Z", "S3's own date format"
+    from farm.s3 import S3Error
+    with pytest.raises(S3Error):
+        b.get_bytes("status/missing.json"), "a missing object is the farm's own error, which it handles"
+
+
+def test_the_farm_switches_to_studio_cloud_only_when_the_account_has_it(studio, monkeypatch):
+    monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
+    status = {"available": False, "balance_usd": 0, "why": "not yet"}
+    monkeypatch.setattr(studio.cloud, "status", lambda force=False, home=None: status)
+    assert studio.cloud.install(studio.home)
+    import farm.config as fc
+    import farm.farm as ff
+    import farm.runpod as frp
+    cfg = fc.Config()
+    assert not cfg.studio_cloud and fc.bucket_from(cfg) == "their own bucket", "without it, the farm is untouched"
+
+    status.update(available=True, balance_usd=4.5, why="")
+    cfg = fc.Config()
+    assert cfg.studio_cloud and cfg.runpod_key == "studio-cloud" and cfg.missing_for_mac() == []
+    assert [c["key"] for c in cfg.checklist()] == ["cloud", "balance", "render"]
+    assert isinstance(ff.bucket_from(cfg), studio.cloud.BrokerBucket), "farm.farm's own import is switched too"
+    assert isinstance(frp.RunPod(cfg.runpod_key), studio.cloud.CloudPods)
+    assert frp.RunPod("rp_theirs").api_key == "rp_theirs", "a creator's own RunPod key keeps RunPod"
+
+    status.update(balance_usd=0.1)
+    assert fc.Config().missing_for_mac() == ["Studio Cloud balance ($0.10)"], "an empty balance asks for a top-up"
+
+
+def test_starting_a_machine_asks_channelrecipe_with_the_jobs_length(studio, monkeypatch):
+    store = {"jobs/a.json": json.dumps({"minutes": 12}).encode()}
+    monkeypatch.setattr(studio.cloud.requests, "Session", lambda: Http(store))
+    calls = []
+
+    class Api:
+        def request(self, method, url, json=None, headers=None, timeout=None):
+            calls.append((method, url, json))
+            return SimpleNamespace(status_code=200, json=lambda: {"id": "cj_1", "slug": "a", "status": "running",
+                                                                   "price_per_hr": 1.2})
+    monkeypatch.setattr(studio.cloud.Relay, "ensure", classmethod(lambda cls, home=None: calls.append("relay")))
+    monkeypatch.setattr(studio.cloud, "status", lambda force=False, home=None: {"available": True})
+    pods = studio.cloud.CloudPods(home=studio.home, session=Api())
+    pod = pods.create(name="channelrecipe-a", env={"FARM_JOB_KEY": "jobs/a.json", "FARM_SLUG": "a"})
+    method, url, body = calls[0]
+    assert (method, url) == ("POST", "https://cr.test/api/studio/cloud/jobs") and body["minutes"] == 12.0
+    assert body["machine"] == "cpu" and "relay" in calls, "the Studio starts answering the machine's questions"
+    assert pod["costPerHr"] == 1.2 and pod["name"].startswith("channelrecipe")
+
+
+def test_a_relayed_question_becomes_one_prompt_with_its_pictures(studio, tmp_path):
+    png = base64.b64encode(b"\x89PNG fake").decode()
+    prompt, images = studio.cloud._prompt_parts({
+        "system": [{"type": "text", "text": "You choose footage."}],
+        "messages": [{"role": "user", "content": [
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": png}},
+            {"type": "text", "text": "Which frame is sharper?"}]}]}, tmp_path)
+    assert prompt == "You choose footage.\n\nWhich frame is sharper?"
+    assert len(images) == 1 and Path(images[0]).read_bytes() == b"\x89PNG fake"
+
+
+def test_answers_go_through_this_computers_claude_code(studio, monkeypatch):
+    seen = []
+    fake = SimpleNamespace(SCRIPT_MODEL="claude-opus",
+                           claude=lambda p, m, n, provider=None: seen.append((p, m, n, provider)) or "text answer",
+                           _claude_code_vision=lambda p, imgs: seen.append(("vision", p, len(imgs))) or "seen it")
+    monkeypatch.setitem(sys.modules, "make_video", fake)
+    assert studio.cloud.answer({"model": "claude-sonnet-5", "max_tokens": 900,
+                                "messages": [{"role": "user", "content": "Title?"}]}) == "text answer"
+    assert seen[-1] == ("Title?", "claude-sonnet-5", 900, "claudecode")
+    png = base64.b64encode(b"x").decode()
+    assert studio.cloud.answer({"messages": [{"role": "user", "content": [
+        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": png}},
+        {"type": "text", "text": "Describe"}]}]}) == "seen it"
+
+
+def test_the_machine_runs_the_farms_runner_with_the_signed_broker(studio, monkeypatch):
+    monkeypatch.setenv("FARM_BROKER_URL", "https://cr.test/api/studio/cloud/pod")
+    monkeypatch.setenv("FARM_JOB_TOKEN", "crj_job")
+    assert studio.cloud.pod() == 0
+    from farm import runner
+    assert isinstance(runner.USED, studio.cloud.BrokerBucket)
+    assert runner.USED.base == "https://cr.test/api/studio/cloud/pod"
+    assert runner.USED.headers == {"Authorization": "Bearer crj_job"}
+    monkeypatch.delenv("FARM_JOB_TOKEN")
+    assert studio.cloud.pod() == 2, "not a Studio Cloud machine without its token"

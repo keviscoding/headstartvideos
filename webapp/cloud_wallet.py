@@ -83,6 +83,18 @@ def credit_topup(user_id: int, cents: int, ref: str) -> bool:
     return True
 
 
+def grant(user_id: int, cents: int, note: str) -> None:
+    """Balance given by ChannelRecipe's team (a test, a refund, a goodwill credit), recorded as such."""
+    initialize()
+    if cents <= 0:
+        return
+    with db._conn() as conn:
+        _ensure(conn, user_id)
+        _row(conn, user_id, "grant", cents, ref="grant:" + secrets.token_hex(8), note=note or "from ChannelRecipe")
+        conn.execute(db._q("UPDATE cloud_wallets SET balance_cents=balance_cents+?, updated_at=? WHERE user_id=?"),
+                     (int(cents), time.time(), user_id))
+
+
 def reserve(user_id: int, job_id: str, cents: int, note: str = "") -> bool:
     """Hold a job's quoted cost. False (and nothing held) when the balance is short; once per job."""
     initialize()
@@ -135,7 +147,7 @@ def checkout_session(user: dict, usd: int, base_url: str, *, stripe=None):
         raise HTTPException(400, f"Choose a top-up of ${', $'.join(str(c) for c in CHUNKS_USD)}.")
     if stripe is None:
         import stripe as stripe_module
-        from webapp import config
+        import config
         if not config.STRIPE_SECRET_KEY:
             raise HTTPException(503, "Payments aren't set up yet.")
         stripe_module.api_key = config.STRIPE_SECRET_KEY

@@ -568,6 +568,8 @@ app.include_router(_studio_connect.make_router(_current_user))
 app.include_router(_style_watch.make_router(_studio_access(_current_user)))
 from webapp import cloud_wallet as _cloud_wallet
 app.include_router(_cloud_wallet.make_router(_studio_access(_current_user)))
+from webapp import cloud_jobs as _cloud_jobs
+app.include_router(_cloud_jobs.make_router(_studio_access(_current_user)))
 from webapp import studio_ranking as _studio_ranking
 app.include_router(_studio_ranking.make_router(_studio_access(_current_user)))
 app.include_router(_frontier_router(_current_user))
