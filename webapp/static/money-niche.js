@@ -301,7 +301,7 @@
         const verify = async () => {
             err(''); if (!/^\d{6}$/.test(code.value.trim())) { err('Enter the 6-digit code.'); return; }
             const b = stage.querySelector('[data-verify]'); b.disabled = true;
-            let attribution = null; try { attribution = window.CRTelemetry?.attributionProps?.() || null; } catch (_) {}
+            let attribution = null; try { attribution = window.CRTelemetry?.attributionPayload?.() || window.CRTelemetry?.attributionProps?.() || null; } catch (_) {}
             try { await done(await api('/api/auth/verify', {email: email.value.trim(), code: code.value.trim(), attribution})); } catch (e) { err(e.message); b.disabled = false; }
         };
         stage.querySelector('[data-send]').onclick = send; email.onkeydown = (e) => { if (e.key === 'Enter') send(); };
@@ -467,7 +467,8 @@
                 try { await api('/api/leads', {source: 'quiz', consent: true, niche: p.niche, result: S.door === 'channel' ? '' : S.full.id}); } catch (_) {}
             }
             if (!tier) { location.href = r.next || '/app#local-studio'; return; }
-            try { const c = await api('/api/billing/checkout', {plan: tier + '_' + S.cycle, skip_trial: true, return_to: 'local-studio'}); if (c.url) { location.href = c.url; return; } }
+            let attribution = null; try { attribution = window.CRTelemetry?.attributionPayload?.() || null; } catch (_) {}
+            try { const c = await api('/api/billing/checkout', {plan: tier + '_' + S.cycle, skip_trial: true, return_to: 'local-studio', attribution}); if (c.url) { location.href = c.url; return; } }
             catch (e) { toast(e.message); }
             location.href = r.next || '/app#local-studio';
         } catch (e) { toast(e.message); button.disabled = false; button.textContent = label; }

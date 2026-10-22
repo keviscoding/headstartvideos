@@ -138,6 +138,17 @@ function analyticsDeclined() {
     return localStorage.getItem('cr_cookie_consent') === 'declined';
 }
 
+// Sales attribution for checkout: optional, and a failure here never blocks paying.
+function _attrPayload() {
+    try {
+        return (window.CRTelemetry && window.CRTelemetry.attributionPayload)
+            ? window.CRTelemetry.attributionPayload()
+            : null;
+    } catch (_) {
+        return null;
+    }
+}
+
 function _attrProps() {
     try {
         return (window.CRTelemetry && window.CRTelemetry.attributionProps)
@@ -1808,6 +1819,7 @@ async function _doCheckout(plan = 'daily_monthly') {
                 plan,
                 skip_trial: !!_checkoutSkipTrial,
                 return_to: state.page === 'pipeline' ? 'pipeline' : 'local-studio',
+                attribution: _attrPayload(),
             }),
         });
         let data;
@@ -3649,6 +3661,24 @@ document.addEventListener('click', async (e) => {
     }
 });
 
+// Admins: a link from the analytics dashboard to the sales-attribution report (/admin/sales).
+function _addSalesByVideoLink(workspace) {
+    try {
+        const existing = document.getElementById('analytics-sales-link');
+        if (!isAdminUser()) { existing?.remove(); return; }
+        if (existing || !workspace) return;
+        const a = document.createElement('a');
+        a.id = 'analytics-sales-link';
+        a.href = '/admin/sales';
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.className = 'cr-surface';
+        a.style.cssText = 'display:inline-block;padding:10px 14px;font-weight:600;text-decoration:none;';
+        a.textContent = 'Sales by video →';
+        workspace.prepend(a);
+    } catch (_) {}
+}
+
 async function loadAnalyticsDashboard() {
     const gate = document.getElementById('analytics-gate');
     const workspace = document.getElementById('analytics-workspace');
@@ -3660,6 +3690,7 @@ async function loadAnalyticsDashboard() {
     }
     gate?.classList.add('hidden');
     workspace?.classList.remove('hidden');
+    _addSalesByVideoLink(workspace);
     const days = parseInt(document.getElementById('analytics-days')?.value || '30', 10) || 30;
     if (status) status.textContent = 'Loading…';
     try {
@@ -6653,7 +6684,7 @@ async function authVerifyCode() {
             body: JSON.stringify({
                 email,
                 code,
-                attribution: _attrProps(),
+                attribution: _attrPayload() || _attrProps(),
             }),
         });
         const data = await res.json();

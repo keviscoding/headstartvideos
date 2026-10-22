@@ -28,7 +28,7 @@
 
     async function signIn(credential) {
         let attribution = null;
-        try { attribution = window.CRTelemetry?.attributionProps?.() || null; } catch (_) {}
+        try { attribution = window.CRTelemetry?.attributionPayload?.() || window.CRTelemetry?.attributionProps?.() || null; } catch (_) {}
         const res = await fetch('/api/auth/google', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({credential, attribution}),
