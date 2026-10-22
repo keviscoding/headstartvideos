@@ -480,12 +480,14 @@ def test_studio_cloud_renders_on_a_channelrecipe_machine_when_chosen(workspace):
     page.wait_for_selector("#crw-cloud-choice:not([hidden])")
     page.locator("[data-render-on=cloud]").click()
     note = page.locator("#crw-cloud-note").inner_text()
+    assert page.locator("#crw-summary-renderer").inner_text() == "Studio Cloud", "the summary says where it renders"
     assert "$1.20 an hour" in note and "Balance: $10.00" in note and "you pay only what it used" in note
     page.locator("#crw-title").fill("Cloud film")
     page.locator("#crw-create").click()
     page.wait_for_function("window.CR_WORKSPACE_CLIENT.state.page==='projects'")
     assert len(env.cloud_starts) == 1 and env.cloud_starts[0]["style"] == "documentary"
     assert env.cloud_starts[0]["title"] == "Cloud film" and not env.creates, "it never also renders here"
+    assert page.evaluate("document.getElementById('crw-summary-renderer').textContent") in ("Studio Cloud", "Local render")
     page.wait_for_selector("#crw-cloud-panel:not([hidden])")
     assert "Writing the script" in page.locator("#crw-cloud-status").inner_text()
     assert page.locator("#crw-cloud-videos a").get_attribute("href") == "/api/farm/file/done-film/Done%20film.mp4"

@@ -1,5 +1,15 @@
 [
   {
+    "build": 80,
+    "date": "2026-10-22",
+    "title": "Studio Cloud renders the way your Studio does",
+    "items": [
+      "In testing with the ChannelRecipe team: a cloud render now uses the same picture, voice, sound and footage-watching choices as your Studio (never your account key), so it comes out like a video made here.",
+      "Studio Cloud takes up to 5 titles at once and renders them side by side.",
+      "The summary under Create says Studio Cloud when you choose it, and the cloud renders list shows each video's title."
+    ]
+  },
+  {
     "build": 79,
     "date": "2026-10-22",
     "title": "Designed 3D characters, rebuilt in 3D",

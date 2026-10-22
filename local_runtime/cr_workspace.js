@@ -268,7 +268,7 @@
     text('crw-summary-duration', isRanking(r) ? `${number('crw-ranks',5,3,10)} ranked clips` : isShort(r) ? `${number('crw-seconds',25,15,60)} seconds` : state.narration === 'own' ? 'Length of your recording' : `${number('crw-minutes',10,1,60)} minutes`);
     text('crw-summary-visuals', strict(r) ? 'Reference animation throughout' : Object.entries(featureValues()).filter(([k,v]) => v && k !== 'sound').map(([k]) => (featureCopy[k] || [k])[0]).join(', ') || 'Recipe defaults');
     text('crw-summary-voice', state.narration === 'own' ? 'Your uploaded narration' : state.setup?.narration?.voice || 'Connected narration account');
-    text('crw-summary-renderer', checked('crw-fast-toggle') && featureValues().threed && !strict() ? 'Fast mode · local render' : 'Local render');
+    text('crw-summary-renderer', state.renderOn==='cloud' && state.cloudInfo?.available && !cloudBlock() ? 'Studio Cloud' : checked('crw-fast-toggle') && featureValues().threed && !strict() ? 'Fast mode · local render' : 'Local render');
   }
   function gate() {
     const ready = state.setup?.readiness?.ready === true;
@@ -688,7 +688,7 @@
   for(const b of all('[data-project-filter]'))b.addEventListener('click',()=>{state.projectFilter=b.dataset.projectFilter;chooseGroup('[data-project-filter]','projectFilter',state.projectFilter);renderProjects();});
   for(const b of all('[data-family]'))b.addEventListener('click',()=>{state.family=b.dataset.family;chooseGroup('[data-family]','family',state.family);gallery();});
   $('crw-form').addEventListener('submit',submit);
-  for(const b of all('[data-render-on]'))b.addEventListener('click',()=>{if(b.disabled)return;state.renderOn=b.dataset.renderOn;cloudChoice();});
+  for(const b of all('[data-render-on]'))b.addEventListener('click',()=>{if(b.disabled)return;state.renderOn=b.dataset.renderOn;cloudChoice();summary();});
   $('crw-fast-install').addEventListener('click',async()=>{$('crw-fast-install').disabled=true;try{await api('/cr-renderer',{method:'POST',body:{action:'install'}});}catch(e){text('crw-fast-setup-status',e.message);}refreshFast();});
   refreshFast();
   $('crw-form').addEventListener('input',()=>{updateOptional();summary();save();cloudChoice();});
