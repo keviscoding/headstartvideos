@@ -74,14 +74,14 @@ const TOKEN = __LOCAL_TOKEN_JSON__, PICK = __PICK_JSON__;
 const $ = id => document.getElementById(id);
 let rows = [], filter = 'all', chosen = null, claimed = false;
 function el(tag, cls, text) {const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n;}
-function kind(r) {return r.short_seconds ? 'short' : 'video';}
-function cloudOk(r) {return !/^cr[-_]/.test(r.name || '') && r.name !== 'folio' && !r.panels;}
+function kind(r) {return r.kind === 'short' ? 'short' : 'video';}
+function cloudOk(r) {return !r.cloud_note;}   // Studio Cloud's own rule, as Studio reports it
 function oneLine(t) {t = String(t || '').replace(/\s+/g, ' ').trim(); const m = t.match(/^.*?[.!?](\s|$)/); return (m ? m[0] : t).trim();}
 function shown() {
   const q = $('search').value.trim().toLowerCase();
   return rows.filter(r => (filter === 'all' || filter === 'videos' && kind(r) === 'video' || filter === 'shorts' && kind(r) === 'short'
-    || filter === 'mine' && r.custom || filter === 'cloud' && cloudOk(r))
-    && (!q || [r.name, r.label, r.tagline, r.description, r.family].join(' ').toLowerCase().includes(q)));
+    || filter === 'mine' && r.mine || filter === 'cloud' && cloudOk(r))
+    && (!q || [r.id, r.name, r.description, r.family].join(' ').toLowerCase().includes(q)));
 }
 async function choose(body, button) {
   $('error').hidden = true; button.disabled = true;
@@ -104,7 +104,7 @@ async function watch() {
   setTimeout(watch, 2500);
 }
 function card(r) {
-  const c = el('article', 'card' + (chosen && chosen.style === r.name ? ' chosen' : ''));
+  const c = el('article', 'card' + (chosen && chosen.style === r.id ? ' chosen' : ''));
   const t = el('div', 'thumb');
   const img = el('img', r.preview_url ? '' : 'art'); img.alt = ''; img.loading = 'lazy'; img.src = r.preview_url || r.art_url || '/cr-workspace/icon.svg';
   img.onerror = () => {img.className = 'art'; img.src = r.art_url || '/cr-workspace/icon.svg';};
@@ -114,19 +114,21 @@ function card(r) {
     c.addEventListener('mouseleave', () => {v.pause(); v.classList.remove('ready');}); t.append(v);}
   if (r.preview_label) t.append(el('span', 'label', r.preview_label));
   const b = el('div', 'body');
-  b.append(el('h2', 'name', r.label || r.name));
+  b.append(el('h2', 'name', r.name || r.id));
   const tags = el('div', 'tags');
   if (r.family) tags.append(el('span', 'tag', r.family));
   if (kind(r) === 'short') tags.append(el('span', 'tag short', 'Short'));
-  if (r.custom) tags.append(el('span', 'tag mine', 'My style'));
-  tags.append(el('span', 'tag' + (cloudOk(r) ? ' cloud' : ''), cloudOk(r) ? 'Cloud or this computer' : 'This computer'));
-  b.append(tags, el('p', 'desc', oneLine(r.tagline || r.description)));
+  if (r.mine) tags.append(el('span', 'tag mine', 'My style'));
+  const where = el('span', 'tag' + (cloudOk(r) ? ' cloud' : ''), cloudOk(r) ? 'Cloud or this computer' : 'This computer');
+  if (!cloudOk(r)) where.title = r.cloud_note;
+  tags.append(where);
+  b.append(tags, el('p', 'desc', oneLine(r.description)));
   if (r.cost) {const cost = el('p', 'cost', 'Media: ' + oneLine(r.cost)); cost.title = r.cost; b.append(cost);}
   if (PICK && !claimed) {
-    const use = el('button', 'use', chosen && chosen.style === r.name ? 'Chosen ✓' : chosen ? 'Use this instead' : 'Use this style');
-    use.type = 'button'; use.addEventListener('click', () => choose({style: r.name}, use)); b.append(use);
+    const use = el('button', 'use', chosen && chosen.style === r.id ? 'Chosen ✓' : chosen ? 'Use this instead' : 'Use this style');
+    use.type = 'button'; use.addEventListener('click', () => choose({style: r.id}, use)); b.append(use);
   } else if (!PICK) {
-    const a = el('a', 'use', 'Create a video'); a.href = '/?cr-preset=' + encodeURIComponent(r.name); a.style.textAlign = 'center'; a.style.textDecoration = 'none'; a.style.borderRadius = '10px'; b.append(a);
+    const a = el('a', 'use', 'Create a video'); a.href = '/?cr-preset=' + encodeURIComponent(r.id); a.style.textAlign = 'center'; a.style.textDecoration = 'none'; a.style.borderRadius = '10px'; b.append(a);
   }
   c.append(t, b); return c;
 }
@@ -152,8 +154,8 @@ $('search').addEventListener('input', render);
   if (PICK) $('sub').textContent = 'Press “Use this style” and Claude Code takes it from there.';
   try {
     if (PICK) {const p = await (await fetch('/cr-gallery/picks/' + PICK)).json(); if (p.state === 'expired') {$('error').textContent = p.message; $('error').hidden = false;} else if (p.state === 'chosen') {chosen = p; claimed = !!p.read;}}
-    const r = await fetch('/cr-workspace/catalog'); const data = await r.json(); if (!r.ok) throw new Error(data.error || 'Studio could not list your styles.');
-    rows = data.channels || []; render(); if (chosen && !claimed) watch();
+    const r = await fetch('/cr-claude-code/styles'); const data = await r.json(); if (!r.ok) throw new Error(data.error || 'Studio could not list your styles.');
+    rows = data.styles || []; render(); if (chosen && !claimed) watch();
   } catch (e) {$('grid').replaceChildren(el('p', 'empty', e.message + ' Keep the Studio launcher open and refresh this page.'));}
 })();
 </script>

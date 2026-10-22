@@ -1,5 +1,16 @@
 [
   {
+    "build": 86,
+    "date": "2026-10-22",
+    "title": "Find your niche and build your product from Claude Code",
+    "items": [
+      "New: /niche-strategy in Claude Code. It reads ChannelRecipe's live niche database and gives you channel ideas built on cross-niche arbitrage: a winning format bent toward a new audience, an open lane in a hot niche, or two channels combined, each with the evidence, the first five titles and a product idea.",
+      "New: combine two or three YouTube channels into one new style. Studio studies videos from each and learns one look from all of them.",
+      "New: /digital-product. Get product ideas for a niche before you even start (checked against what 140+ channels sell, with channel names and free domains), then build the book, its landing page and checkout from Claude Code.",
+      "In testing with the ChannelRecipe team: the style gallery and Claude Code show every style Studio Cloud can render, including your own clones."
+    ]
+  },
+  {
     "build": 85,
     "date": "2026-10-22",
     "title": "Studio Cloud renders your cloned styles too",
