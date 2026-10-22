@@ -49,7 +49,8 @@ def browser_page(tmp_path):
     app.after_request(namespace["inject"])
     app.add_url_rule("/", view_func=lambda: SCREEN)
     html = app.test_client().get("/").get_data(as_text=True)
-    state = SimpleNamespace(mode="claudecode", selected=False, farm_ready=False, posts=[], ready=True)
+    state = SimpleNamespace(mode="claudecode", selected=False, farm_ready=False, posts=[], ready=True,
+                            cloud={"available": False, "why": "Studio Cloud isn't switched on yet."})
     with api.sync_playwright() as playwright:
         try:
             browser = playwright.chromium.launch(headless=True)
@@ -66,6 +67,8 @@ def browser_page(tmp_path):
             if req.url == "http://fixture.test/cr-status":
                 return route.fulfill(status=200, content_type="application/json", body=json.dumps({
                     "readiness": {"ready": state.ready}, "brain_mode": state.mode}))
+            if req.url == "http://fixture.test/cr-cloud":
+                return route.fulfill(status=200, content_type="application/json", body=json.dumps(state.cloud))
             if req.url == "http://fixture.test/api/farm":
                 return route.fulfill(status=200, content_type="application/json", body=json.dumps({"ready": state.farm_ready}))
             if req.method == "POST" and req.url in {"http://fixture.test/api/run", "http://fixture.test/api/farm/queue"}:
@@ -141,3 +144,20 @@ def test_api_brain_keeps_original_farm_choice_and_dispatch(browser_page):
     page.locator("#go").click()
     assert state.posts == ["farm/queue"]
     assert page.evaluate("localStorage.getItem('fr.farm')") == "1"
+
+
+def test_studio_cloud_opens_the_farm_with_its_price_and_balance(browser_page):
+    """With Studio Cloud on the account, Cloud render is a real choice: no RunPod or bucket to connect, the price
+    and balance on the page, and a selected farm no longer blocks Create."""
+    page, state, open_page = browser_page
+    state.selected, state.farm_ready = True, True          # the farm's config reports Studio Cloud ready
+    state.cloud = {"available": True, "balance_usd": 4.5, "topup_url": "https://channelrecipe.com/app#billing",
+                   "machines": {"cpu": {"price_per_hr": 1.2}}}
+    open_page()
+    page.wait_for_selector("#cr-cloud-note")
+    note = page.locator("#cr-cloud-note").inner_text()
+    assert "Studio Cloud" in note and "$1.20 an hour" in note and "Balance: $4.50" in note
+    assert page.locator("#cr-cloud-note a").get_attribute("href") == "https://channelrecipe.com/app#billing"
+    assert page.locator("#f_on").is_enabled() and page.locator("#f_on").is_checked()
+    assert page.locator("#go").is_enabled(), "a selected farm renders on Studio Cloud instead of being refused"
+    assert "Uncheck Cloud render" not in page.locator("#cr-generation-readiness").inner_text()

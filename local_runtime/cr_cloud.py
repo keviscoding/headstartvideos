@@ -70,6 +70,14 @@ class BrokerBucket:
     def presign(self, key: str, seconds: int = 6 * 3600, method: str = "GET", content_type: str = "") -> str:
         return self._op("presign", key, method=method, seconds=int(seconds), content_type=content_type)["url"]
 
+    def _send(self, method: str, key: str, url: str, **kw):
+        """One request to storage; a network failure is the farm's own storage error, which it is built to survive."""
+        try:
+            r = self.http.put(url, **kw) if method == "PUT" else self.http.get(url, **kw)
+        except requests.RequestException as e:
+            raise _s3_error(f"{method} {key}: storage unreachable ({type(e).__name__})")
+        return self._check(r, method, key)
+
     def _check(self, r, method: str, key: str):
         if r.status_code >= 400:
             raise _s3_error(f"{method} {key} -> HTTP {r.status_code}: {(r.text or '')[:200]}")
@@ -77,7 +85,7 @@ class BrokerBucket:
 
     def put_bytes(self, key: str, data: bytes, content_type: str = "application/octet-stream") -> None:
         url = self.presign(key, 3600, "PUT", content_type)
-        self._check(self.http.put(url, data=data, headers={"Content-Type": content_type}, timeout=300), "PUT", key)
+        self._send("PUT", key, url, data=data, headers={"Content-Type": content_type}, timeout=300)
 
     def put_file(self, key: str, path, content_type: str | None = None, timeout: int = 1800) -> int:
         path = Path(path)
@@ -85,23 +93,27 @@ class BrokerBucket:
         ctype = content_type or _guess_type(path.name)
         url = self.presign(key, 6 * 3600, "PUT", ctype)
         with path.open("rb") as fh:
-            self._check(self.http.put(url, data=fh, headers={"Content-Type": ctype, "Content-Length": str(size)},
-                                      timeout=timeout), "PUT", key)
+            self._send("PUT", key, url, data=fh, headers={"Content-Type": ctype, "Content-Length": str(size)},
+                       timeout=timeout)
         return size
 
     def get_bytes(self, key: str) -> bytes:
-        return self._check(self.http.get(self.presign(key, 600), timeout=300), "GET", key).content
+        return self._send("GET", key, self.presign(key, 600), timeout=300).content
 
     def get_file(self, key: str, path, timeout: int = 1800) -> int:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".part")
         got = 0
-        r = self._check(self.http.get(self.presign(key, 6 * 3600), stream=True, timeout=timeout), "GET", key)
-        with tmp.open("wb") as fh:
-            for block in r.iter_content(1 << 20):
-                fh.write(block)
-                got += len(block)
+        r = self._send("GET", key, self.presign(key, 6 * 3600), stream=True, timeout=timeout)
+        try:
+            with tmp.open("wb") as fh:
+                for block in r.iter_content(1 << 20):
+                    fh.write(block)
+                    got += len(block)
+        except requests.RequestException as e:
+            tmp.unlink(missing_ok=True)
+            raise _s3_error(f"GET {key}: the download broke off ({type(e).__name__})")
         tmp.replace(path)
         return got
 

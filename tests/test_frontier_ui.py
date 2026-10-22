@@ -67,6 +67,7 @@ def test_saved_claude_limit_is_advisory_and_setup_still_gates_create(page, ready
               "claude_code": {"allowance": {"blocked": False, "reported_limit": True,
                                              "message": "Earlier limit. You can create a new video now."}}}
     page.route("https://studio.fixture/cr-status", lambda route: route.fulfill(json=status))
+    page.route("https://studio.fixture/cr-cloud", lambda route: route.fulfill(json={"available": False}))
     page.route("https://studio.fixture/", lambda route: route.fulfill(
         content_type="text/html", body='<html><body><button id="go">Create video</button>'+guard+'</body></html>'))
     page.goto("https://studio.fixture/")

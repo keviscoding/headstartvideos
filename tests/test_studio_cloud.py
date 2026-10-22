@@ -190,3 +190,15 @@ def test_the_machine_runs_the_farms_runner_with_the_signed_broker(studio, monkey
     assert runner.USED.headers == {"Authorization": "Bearer crj_job"}
     monkeypatch.delenv("FARM_JOB_TOKEN")
     assert studio.cloud.pod() == 2, "not a Studio Cloud machine without its token"
+
+
+def test_a_network_failure_is_a_storage_error_the_farm_survives(studio):
+    import requests
+
+    class Down(Http):
+        def put(self, *a, **kw):
+            raise requests.ConnectionError("no route")
+    b = studio.cloud.BrokerBucket("https://cr.test/api/studio/cloud", "Bearer x", Down())
+    from farm.s3 import S3Error
+    with pytest.raises(S3Error):
+        b.put_bytes("status/a.json", b"{}", "application/json")

@@ -1,5 +1,14 @@
 [
   {
+    "build": 77,
+    "date": "2026-10-22",
+    "title": "Groundwork for rendering in the cloud",
+    "items": [
+      "New, in testing with the ChannelRecipe team: Studio Cloud. The script, voice and pictures are made on your computer with your Claude Code as always, then a ChannelRecipe machine renders the video, paid from a small prepaid balance. It opens to everyone once it has passed its tests; until then nothing changes for you.",
+      "Fixed: stopping the render farm, or collecting and deleting its finished videos, now works while it is still running."
+    ]
+  },
+  {
     "build": 76,
     "date": "2026-10-22",
     "title": "Downloads that work on every connection",
