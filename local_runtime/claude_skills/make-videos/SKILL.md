@@ -1,7 +1,6 @@
 ---
 name: make-videos
-description: Make one to five videos with ChannelRecipe Studio. Pick a style (visual gallery), choose this computer or Studio Cloud, see the cost, start, then watch them.
-disable-model-invocation: true
+description: Make one to five videos with ChannelRecipe Studio. Use whenever the creator wants to make, create or start a video. Pick a style (visual gallery), choose this computer or Studio Cloud, see the cost, start, then watch them.
 argument-hint: "[titles or video idea]"
 ---
 

@@ -1,7 +1,6 @@
 ---
 name: clone-style
 description: Clone a video style from a YouTube channel or video into ChannelRecipe Studio, so new videos can be made in that look.
-disable-model-invocation: true
 argument-hint: "[YouTube channel or video link]"
 ---
 

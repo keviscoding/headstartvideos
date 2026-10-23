@@ -1,7 +1,6 @@
 ---
 name: cloud-batch
 description: Make up to five videos at once on Studio Cloud (ChannelRecipe's machines render them side by side), paid from the cloud balance.
-disable-model-invocation: true
 argument-hint: "[topic or titles]"
 ---
 

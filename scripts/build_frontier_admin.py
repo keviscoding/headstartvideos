@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 from scripts import studio_branding
-VERSION = "5.3-admin.88"
+VERSION = "5.3-admin.89"
 PRIVATE_WORKFLOWS = {
     "cr-style-delivery-prompt.txt": ROOT / "data/frontier/reference2d-compiler.txt",
     "cr-style-study-brief.txt": ROOT / "data/frontier/reference2d-study.txt",
@@ -60,6 +60,20 @@ def runtime_resources(root: Path):
             if path.is_symlink():
                 raise ValueError("Workspace artwork must be ordinary owned files.")
             yield path, "workspace_art/" + path.name
+
+
+def claude_code_files() -> dict:
+    """The folder's Claude Code setup, in the download itself, so Studio's tools are there from the very first
+    Claude Code session (before Studio has ever run): .mcp.json names the folder's Node launcher, and
+    .claude/settings.json approves both servers and asks before paid tools. Studio's own configure() keeps both
+    current from then on; the updater never overwrites .mcp.json (it holds the account key)."""
+    import importlib.util
+    source = Path(__file__).resolve().parents[1] / "local_runtime" / "cr_claude_code.py"     # this repository's own
+    spec = importlib.util.spec_from_file_location("cr_claude_code_build", source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return {".mcp.json": (json.dumps(module.first_run_servers(), indent=2) + "\n").encode(),
+            ".claude/settings.json": (json.dumps(module.folder_settings({}), indent=2) + "\n").encode()}
 
 
 def private_preview_resources(root: Path):
@@ -661,6 +675,8 @@ def build(source: Path, target: Path, previous: Path | None = None, with_shorts:
                 contents = compose_claude_instructions(private_guide, operational_overrides) if path.name == "CLAUDE.md" else path.read_bytes()
                 write_resource(relative, contents, executable=path.suffix == ".command")
             write_resource("cr-providers.json", (ROOT / "webapp/frontier/providers.json").read_bytes())
+            for relative, contents in claude_code_files().items():
+                write_resource(relative, contents)
             for name, path in PRIVATE_WORKFLOWS.items():
                 write_resource(name, path.read_bytes())
             for path, relative in preview_resources:

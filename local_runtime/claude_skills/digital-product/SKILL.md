@@ -1,7 +1,6 @@
 ---
 name: digital-product
 description: Plan and build a digital product (an illustrated, fact-checked book or cookbook with a landing page, Stripe checkout and launch guide) for a niche or channel with ChannelRecipe Studio, so the channel earns beyond AdSense.
-disable-model-invocation: true
 argument-hint: "[the niche or channel]"
 ---
 

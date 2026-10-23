@@ -1,5 +1,15 @@
 [
   {
+    "build": 89,
+    "date": "2026-10-23",
+    "title": "Claude Code knows your Studio from the very first chat",
+    "items": [
+      "Fixed: in a freshly downloaded Studio, Claude Code didn't have Studio's tools until Studio had run once and you opened a new chat. The download now carries them, so even the first chat in the folder can make videos, clone styles and check setup.",
+      "Just say \"let's make a video\": Claude now uses /make-videos (and the other Studio commands) by itself. It still shows you the cost and asks before anything that spends money.",
+      "If you have two copies of Studio on one computer, Claude tells you which one is running instead of getting confused."
+    ]
+  },
+  {
     "build": 88,
     "date": "2026-10-23",
     "title": "Make videos by just asking Claude Code",

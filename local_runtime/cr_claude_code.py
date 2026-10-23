@@ -71,6 +71,30 @@ def _add(items, wanted) -> list:
     return items + [x for x in wanted if x not in items]
 
 
+def folder_settings(settings=None) -> dict:
+    """The folder's .claude/settings.json: both servers approved, the free tools and niche reads allowed, the paid
+    tools always asked, the key files never read. Merged into what is there; the download ships it as is."""
+    settings = dict(settings or {})
+    settings["enabledMcpjsonServers"] = _add(settings.get("enabledMcpjsonServers"), ["channelrecipe", SERVER])
+    permissions = dict(settings.get("permissions")) if isinstance(settings.get("permissions"), dict) else {}
+    paid = [f"mcp__{SERVER}__{n}" for n in PAID_TOOLS]
+    free = [f"mcp__{SERVER}__{n}" for n in FREE_TOOLS] + [f"mcp__channelrecipe__{n}" for n in NICHE_TOOLS]
+    # a paid tool is always asked, even when someone allowed the whole server
+    permissions["allow"] = [x for x in _add(permissions.get("allow"), free) if x not in paid]
+    permissions["ask"] = _add(permissions.get("ask"), paid)
+    permissions["deny"] = _add(permissions.get("deny"), NEVER_READ)
+    settings["permissions"] = permissions
+    return settings
+
+
+def first_run_servers() -> dict:
+    """The download's .mcp.json: the studio tools from the very first Claude Code session, through the folder's
+    Node launcher (Studio has no Python of its own yet). configure() replaces it with Studio's Python once Studio runs."""
+    return {"mcpServers": {SERVER: {"type": "stdio", "command": "node",
+                                    "args": ["${CLAUDE_PROJECT_DIR:-.}/cr_studio_launch.js"],
+                                    "env": {"PYTHONIOENCODING": "utf-8"}}}}
+
+
 def configure(home=None) -> dict:
     """Register the studio tool server and merge the folder's Claude Code settings. Returns what changed."""
     home = Path(home or HOME).resolve()
@@ -90,15 +114,7 @@ def configure(home=None) -> dict:
     settings = _load(settings_file)
     if settings is not None:
         before = json.dumps(settings, sort_keys=True)
-        settings["enabledMcpjsonServers"] = _add(settings.get("enabledMcpjsonServers"), ["channelrecipe", SERVER])
-        permissions = settings.get("permissions") if isinstance(settings.get("permissions"), dict) else {}
-        paid = [f"mcp__{SERVER}__{n}" for n in PAID_TOOLS]
-        # a paid tool is always asked, even when someone allowed the whole server
-        free = [f"mcp__{SERVER}__{n}" for n in FREE_TOOLS] + [f"mcp__channelrecipe__{n}" for n in NICHE_TOOLS]
-        permissions["allow"] = [x for x in _add(permissions.get("allow"), free) if x not in paid]
-        permissions["ask"] = _add(permissions.get("ask"), paid)
-        permissions["deny"] = _add(permissions.get("deny"), NEVER_READ)
-        settings["permissions"] = permissions
+        settings = folder_settings(settings)
         if json.dumps(settings, sort_keys=True) != before:
             _save(settings_file, settings)
             changed.append(".claude/settings.json")
@@ -353,6 +369,15 @@ def install(studio, token: str, home=None) -> dict:
                 choice = {"action": "use", "style": style, "name": row.get("label") or style,
                           "where": body.get("where") if body.get("where") in ("this_computer", "studio_cloud") else ""}
             return protect(jsonify(picks.choose(pick, choice)))
+        except Exception as error:                                 # noqa: BLE001
+            return failure(error)
+
+    @app.get("/cr-claude-code/home")
+    def cr_claude_code_home():
+        """Which Studio folder this is, so the tools of another copy on this computer can say so."""
+        try:
+            local_access()
+            return protect(jsonify(home=str(home)))
         except Exception as error:                                 # noqa: BLE001
             return failure(error)
 

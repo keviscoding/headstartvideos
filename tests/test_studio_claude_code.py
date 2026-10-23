@@ -39,6 +39,7 @@ CATALOG = {
 class FakeStudio:
     def __init__(self):
         self.calls = []
+        self.home = None
         self.run_answers = []
         self.notes = {"cr-shorts-3d": "Shorts render on this computer.", "cr-manga-recaps": "Reads your own panels.",
                       "cr-shorts-ranking": "Shorts render on this computer.", "cr_clone_abc": ""}
@@ -47,6 +48,12 @@ class FakeStudio:
 
     def __call__(self, method, path, body=None, **kw):
         self.calls.append((method, path, body))
+        if path == "/cr-status":
+            return {"local_version": "5.3-admin.89", "readiness": {"ready": True, "blockers": []}}
+        if path.startswith("/cr-cloud"):
+            return {"available": True, "balance_usd": 7.71}
+        if path == "/cr-claude-code/home":
+            return {"home": str(self.home or tools.HOME)}
         if path == "/cr-workspace/catalog":
             return json.loads(json.dumps(CATALOG))
         if path == "/cr-claude-code/styles":                      # Studio Cloud's own answer per style
@@ -343,13 +350,14 @@ def test_the_release_ships_the_skills():
     assert {"cr_studio_tools.py", "cr_claude_code.py", "cr_gallery.html"} <= shipped
 
 
-def test_paid_skills_are_only_started_by_the_creator():
-    for name, paid in (("make-videos", True), ("clone-style", True), ("cloud-batch", True), ("my-videos", False),
-                       ("niche-strategy", False), ("digital-product", True)):
+def test_skills_are_claudes_to_use_and_money_stays_with_the_tools():
+    # every skill is Claude's to use when the creator asks in their own words ("let's make a video"): money is
+    # guarded by the tools themselves (a fresh quote_id, and Claude Code's ask rule for the paid tools)
+    for name in ("make-videos", "clone-style", "cloud-batch", "my-videos", "niche-strategy", "digital-product"):
         text = (ROOT / "local_runtime" / "claude_skills" / name / "SKILL.md").read_text()
         head = text.split("---", 2)[1]
         assert f"name: {name}" in head and "description:" in head
-        assert ("disable-model-invocation: true" in head) is paid
+        assert "disable-model-invocation" not in head
 
 
 # ── the gallery's picks ───────────────────────────────────────────────────────────────────────────────────────
@@ -545,3 +553,37 @@ def test_niche_database_reads_are_allowed_and_building_a_product_is_asked(tmp_pa
     assert "mcp__channelrecipe__list_niche_channels" in permissions["allow"]
     assert "mcp__studio__product_ideas" in permissions["allow"]
     assert "mcp__studio__build_product" in permissions["ask"]
+
+
+def test_the_download_has_the_tools_before_studio_ever_runs():
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import build_frontier_admin as builder
+    files = builder.claude_code_files()
+    server = json.loads(files[".mcp.json"])["mcpServers"]["studio"]
+    assert server["command"] == "node" and server["args"] == ["${CLAUDE_PROJECT_DIR:-.}/cr_studio_launch.js"]
+    settings = json.loads(files[".claude/settings.json"])
+    assert settings == ccc.folder_settings({}) and "mcp__studio__make_videos" in settings["permissions"]["ask"]
+    assert "cr_studio_launch.js" in {relative for _, relative in builder.runtime_resources(ROOT)}
+    assert "channelrecipe" not in json.loads(files[".mcp.json"])["mcpServers"]          # no account, no key
+
+
+def test_studio_start_replaces_the_first_run_entry_and_keeps_shipped_settings_unchanged(tmp_path):
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import build_frontier_admin as builder
+    for name, contents in builder.claude_code_files().items():
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_bytes(contents)
+    shipped = (tmp_path / ".claude" / "settings.json").read_bytes()
+    assert ccc.configure(tmp_path)["changed"] == [".mcp.json"]                     # settings already right
+    assert (tmp_path / ".claude" / "settings.json").read_bytes() == shipped        # the updater sees it unedited
+    assert json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]["studio"]["args"] == [
+        str(tmp_path.resolve() / "cr_studio_tools.py")]
+
+
+def test_tools_refuse_another_folders_studio(studio):
+    studio.home = "/Users/someone/Downloads/ChannelRecipe studio"
+    out = ok("setup_check", {})
+    assert out["this_folder"] is False and "ChannelRecipe studio" in out["running_folder"]
+    result = tools.run_tool("make_videos", {"titles": ["T"], "style": "documentary", "where": "this_computer"})
+    assert result["isError"] and "not this folder" in result["structuredContent"]["error"]
+    assert not studio.posted("/api/run")
