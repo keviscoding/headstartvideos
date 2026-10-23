@@ -768,7 +768,11 @@ def tool_product_ideas(args):
     ideas = [{"number": n, **{k: i.get(k) for k in ("title", "promise", "kind", "format", "who", "size", "price_usd",
                                                      "why", "chapters", "risk") if i.get(k) is not None}}
              for n, i in enumerate(pack.get("ideas") or [], 1)]
-    return {"ideas": ideas, "channel_names": pack.get("names") or [], "free_domains": pack.get("domains") or [],
+    domains = [d for d in pack.get("domains") or [] if isinstance(d, (str, dict))]
+    free = [d if isinstance(d, str) else d.get("domain") for d in domains if isinstance(d, str) or d.get("free")]
+    taken = [d.get("domain") for d in domains if isinstance(d, dict) and not d.get("free")]
+    return {"ideas": ideas, "channel_names": pack.get("names") or [], "free_domains": [d for d in free if d],
+            "taken_domains": [d for d in taken if d],
             "pricing": pack.get("pricing") or {}, "funnel": pack.get("funnel") or {}, "launch": pack.get("launch") or [],
             "next": "Show the creator these. To build one: build_product(idea_number=…, domain=…, channel_name=…). "
                     "A domain is bought separately (about $11 a year on Vercel), never by Studio."}

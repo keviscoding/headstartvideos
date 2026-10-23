@@ -48,11 +48,14 @@ class TaskFailed(AccountStop):
     def __init__(self, provider, receipt, task):
         self.code = str(receipt.get("failure_code") or "")
         self.reason = receipt.get("failure_message") or ""
+        self.task_id, self.rejected, self.credits = receipt.get("id"), bool(receipt.get("rejected")), receipt.get("credits")
         self.category = receipt.get("failure_category") or failure_category(self.code, self.reason)
         self.fallback_allowed = provider == "kie" and task == "images" and self.category in ("moderation", "model_failure")
         action = (" Review this image prompt or choose another image model in Setup & accounts." if self.category == "moderation" and task == "images"
                   else " Review this narration text in your provider log." if self.category == "moderation" and task == "narration"
                   else " Top up this account, then resume." if self.category == "balance"
+                  else " Kie charged nothing for it. Wait a few minutes, then press Resume saved project to try again."
+                  if fresh_attempt_ok(provider, task, receipt)
                   else " Check its log; no other wallet was used.")
         prefix = f"{PROVIDERS[provider]['label']} " + (f"refused this {task} request." if receipt.get("rejected") else f"failed this {task} task.")
         if (provider == "kie" and task == "narration" and receipt.get("id") and not receipt.get("rejected")
@@ -63,6 +66,29 @@ class TaskFailed(AccountStop):
                 action = " Kie reported 0 credits consumed." + action
         super().__init__(prefix +
                          (" " + self.reason if self.reason else "") + action)
+
+
+TRANSIENT = re.compile(r"internal error|try again later|timed? ?out|temporarily|overloaded|busy|service unavailable", re.I)
+
+
+def fresh_attempt_ok(provider, task, receipt) -> bool:
+    """A narration task Kie took, ran and then failed on its own side (a server error such as "Internal Error, please
+    try again later") and charged nothing for: submitting the same narration again cannot pay twice. Rejections,
+    moderation, balance and account problems, a missing task ID, and any failure with credits taken or unknown keep
+    stopping the video, as do every image, motion and avatar task (images have their own model fallbacks)."""
+    if provider != "kie" or task != "narration" or not isinstance(receipt, dict):
+        return False
+    if receipt.get("status") != "failed" or receipt.get("rejected") or not receipt.get("id"):
+        return False
+    credits = receipt.get("credits")
+    if isinstance(credits, bool) or not isinstance(credits, (int, float)) or credits != 0:
+        return False
+    code, reason = str(receipt.get("failure_code") or ""), str(receipt.get("failure_message") or "")
+    if failure_category(code, reason) in ("moderation", "balance", "access", "rate_limit", "cancelled"):
+        return False
+    if code == "422" and "task id is blank" in reason.casefold():
+        return False                                          # explained separately; a new attempt is the creator's call
+    return code in ("500", "501", "502", "503", "504") or bool(TRANSIENT.search(reason))
 
 
 def failure_category(code, reason):
@@ -272,7 +298,12 @@ def run(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
                 _references[previous["url"]] = {"task_fingerprint": fingerprint}
                 return previous["url"]
             if previous.get("status") == "failed":
-                raise TaskFailed(provider, previous, task)
+                if not fresh_attempt_ok(provider, task, previous):
+                    raise TaskFailed(provider, previous, task)
+                kept = marker.with_name(marker.stem + f".failed-{int(time.time() * 1000)}.json")
+                marker.replace(kept)                         # the failed receipt stays, under its own name
+                log(f"{PROVIDERS[provider]['label']} failed task {previous.get('id')} charged nothing; trying again.")
+                previous = {}
             if previous and not previous.get("id"):
                 raise AccountStop("This media submission has an uncertain result. Check your provider task log and the .cr-tasks receipt before deliberately retrying.")
             if not previous:
@@ -507,6 +538,10 @@ def route_avatar(original):
     return routed
 
 
+# A narration task Kie failed on its own side and charged nothing for is tried twice more, after these pauses (s).
+NARRATION_RETRY_PAUSES = (30, 90)
+
+
 def _chunks(text, limit=2400):
     # Hard bounds also handle a sentence longer than the model's text limit.
     remaining = text.strip()
@@ -532,7 +567,19 @@ def narrate(engine, text, mp3, srt, voice_id="", style=""):
     parts = []
     for i, piece in enumerate(_chunks(text)):
         part = folder / f"part-{i:03d}.{model['format']}"
-        run("narration", narration_input(piece, voice, model["id"]), part, model=model["id"], log=engine.log)
+        for attempt, pause in enumerate(NARRATION_RETRY_PAUSES + (None,)):
+            try:
+                run("narration", narration_input(piece, voice, model["id"]), part, model=model["id"], log=engine.log)
+                break
+            except TaskFailed as failed:
+                receipt = {"status": "failed", "id": getattr(failed, "task_id", None), "rejected": failed.rejected,
+                           "credits": failed.credits, "failure_code": failed.code, "failure_message": failed.reason}
+                if pause is None or not fresh_attempt_ok(provider, "narration", receipt):
+                    raise
+                engine.log(f"{PROVIDERS[provider]['label']} narration hit a passing error ({failed.reason or failed.code}) "
+                           f"and charged nothing; trying again in {pause} s (attempt {attempt + 2} of "
+                           f"{len(NARRATION_RETRY_PAUSES) + 1}).")
+                time.sleep(pause)
         parts.append(part)
     if not parts:
         raise AccountStop("There is no narration text to record.")

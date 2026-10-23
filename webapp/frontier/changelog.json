@@ -1,5 +1,14 @@
 [
   {
+    "build": 87,
+    "date": "2026-10-23",
+    "title": "A passing Kie voice error no longer stops your video",
+    "items": [
+      "Fixed: when Kie's voice service had a passing error (\"Internal Error, Please try again later\") and charged nothing for it, the whole video stopped, and Resume saved project stopped again straight away. Studio now tries that part of the voice again twice, a little later, and if Kie is still down, Resume tries again once you press it.",
+      "Nothing that was charged, refused or uncertain is ever sent again by itself."
+    ]
+  },
+  {
     "build": 86,
     "date": "2026-10-22",
     "title": "Find your niche and build your product from Claude Code",
