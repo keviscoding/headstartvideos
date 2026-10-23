@@ -1,5 +1,14 @@
 [
   {
+    "build": 95,
+    "date": "2026-10-24",
+    "title": "Voice fixes",
+    "items": [
+      "Fixed: some recipes could stop at their voice in Studio 94. A voice step called a part that had moved; it works again, and a check now stops that kind of slip before release.",
+      "Fixed: Voice it another way now shows whenever a narration fails. Before, a page opened before an update could miss it."
+    ]
+  },
+  {
     "build": 94,
     "date": "2026-10-24",
     "title": "When a voice fails, voice it another way",
