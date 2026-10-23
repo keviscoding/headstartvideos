@@ -408,6 +408,41 @@ def install(studio, activity, *, token, home=None):
         except Exception as error:
             return failure(error)
 
+    @app.get("/cr-workspace/stopped")
+    def cr_workspace_stopped():
+        """Videos that stopped before finishing, read from their saved folders, so they stay in Projects (with
+        Resume) after Studio restarts: the live job list only knows what ran since the last start. Read only."""
+        try:
+            local_access()
+            live = getattr(studio, "JOBS", {}) or {}
+            rows = []
+            for job in (studio.mv.list_jobs() if hasattr(studio.mv, "list_jobs") else []):
+                try:
+                    job = Path(job)
+                    slug = job.name
+                    if not _SLUG.fullmatch(slug) or studio.mv.final_video(job).is_file():
+                        continue
+                    marker = job / "cr-project.json"
+                    saved = _read(marker)
+                    project_id = saved.get("id")
+                    # the same rule as the project's Resume button (cr_workspace_project), so every card can resume
+                    if (not isinstance(project_id, str) or not _PROJECT.fullmatch(project_id)
+                            or saved.get("brain_mode") != "claudecode" or saved.get("purpose", "video") != "video"
+                            or ((live.get(slug) or {}).get("state") or saved.get("status")) in {"done", "queued", "running"}):
+                        continue
+                    spec = saved.get("job_spec") if isinstance(saved.get("job_spec"), dict) else {}
+                    title_file = job / "title.txt"
+                    title = (title_file.read_text(encoding="utf-8").splitlines() or [""])[0] if title_file.is_file() else ""
+                    rows.append({"slug": slug, "title": _text(title or spec.get("title") or saved.get("title"), 300),
+                                 "style": _text(spec.get("style") or saved.get("style"), 140), "state": "stopped",
+                                 "mtime": marker.stat().st_mtime})
+                except (OSError, ValueError, TypeError, AttributeError):
+                    continue
+            rows.sort(key=lambda r: -r["mtime"])
+            return protect(jsonify(projects=rows[:30]))
+        except Exception as error:
+            return failure(error)
+
     @app.get("/cr-workspace/project/<slug>")
     def cr_workspace_project(slug):
         try:

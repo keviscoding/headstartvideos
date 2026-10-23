@@ -1,5 +1,14 @@
 [
   {
+    "build": 90,
+    "date": "2026-10-23",
+    "title": "Stopped videos stay in Projects, ready to resume",
+    "items": [
+      "Fixed: a video that stopped (for example when a provider had a hiccup) vanished from Projects once Studio restarted or updated, so there was no way to press Resume. Stopped videos now stay in Projects under Needs attention: open one and press Resume saved project. Everything already made is reused.",
+      "In Claude Code, ask \"resume my stopped video\": Claude lists the videos that stopped, says why, and carries one on after you approve."
+    ]
+  },
+  {
     "build": 89,
     "date": "2026-10-23",
     "title": "Claude Code knows your Studio from the very first chat",

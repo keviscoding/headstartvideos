@@ -358,7 +358,9 @@
   };
   function statusBadge(value) {const kind = value === 'done' ? 'done' : ['running','queued'].includes(value) ? 'running' : 'stopped'; return el('span',`crw-status-badge is-${kind}`,{done:'Ready',running:'In production',queued:'Queued',held:'On hold',cancelled:'Cancelled',error:'Needs review',failed:'Needs review'}[value] || 'Saved');}
   function combinedProjects() {
-    const map = new Map(state.jobs.map(j => [j.slug,{...j,state:'done',hasVideo:true}]));
+    // stopped videos saved on disk first, so a live or finished entry for the same folder wins
+    const map = new Map((state.stopped || []).map(j => [j.slug,{...j}]));
+    for (const j of state.jobs) map.set(j.slug,{...j,state:'done',hasVideo:true});
     for (const q of state.queue) map.set(q.slug,{...(map.get(q.slug) || {}),...q});
     return [...map.values()];
   }
@@ -398,7 +400,14 @@
   async function refreshProgress() {
     if (!state.openJob) return;
     try {
-      const data = await api(`/api/status/${encoded(state.openJob)}`); const lines = data.lines || [];
+      let data;
+      try {data = await api(`/api/status/${encoded(state.openJob)}`);}
+      catch (e) {
+        // A video that stopped before Studio last restarted: its log is gone, its saved work and Resume are not
+        if (!(state.stopped || []).some(j => j.slug === state.openJob)) throw e;
+        data = {done: true, state: 'error', lines: [], error: 'This video stopped before Studio last restarted. Its saved work is kept: press Resume saved project to carry on from where it stopped.'};
+      }
+      const lines = data.lines || [];
       const last = lines[lines.length-1] || ''; text('crw-progress-phase', data.done ? (data.state === 'done' ? 'Ready to watch' : 'This project stopped') : phaseCopy(last));
       const queued = state.queue.find(q=>q.slug===state.openJob); text('crw-progress-time',data.elapsed != null ? elapsed(data.elapsed) : queued?.elapsed != null ? elapsed(queued.elapsed) : '');
       const bar = $('crw-progress-bar'); const percent = data.done && data.state === 'done' ? 100 : Number.isFinite(data.progress) ? Math.max(0,Math.min(100,data.progress*100)) : null;
@@ -501,7 +510,9 @@
   async function refreshActivity(initial = false) {
     if (state.refresh) return state.refresh;
     state.refresh = (async()=>{
-      const results = await Promise.allSettled([api('/api/queue'),api('/cr-workspace/activity'), initial || state.page === 'projects' ? api('/api/jobs') : Promise.resolve(null), api('/cr-queue')]);
+      const results = await Promise.allSettled([api('/api/queue'),api('/cr-workspace/activity'), initial || state.page === 'projects' ? api('/api/jobs') : Promise.resolve(null), api('/cr-queue'),
+        initial || state.page === 'projects' ? api('/cr-workspace/stopped') : Promise.resolve(null)]);
+      if (results[4].status==='fulfilled' && results[4].value) state.stopped=results[4].value.projects || [];
       if (results[3].status==='fulfilled' && !state.heldBusy) drawHeld(results[3].value);
       if (results[0].status==='fulfilled') {
         const watched = state.queue.filter(q=>['running','queued'].includes(q.state));

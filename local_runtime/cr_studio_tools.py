@@ -563,6 +563,17 @@ def tool_progress(args):
         jobs.append(row)
     out = {"this_computer": jobs, "busy": bool(queue.get("busy"))}
     try:
+        live = {j["id"] for j in jobs}
+        stopped = [{"id": "video:" + r["slug"], "title": r.get("title"), "style": r.get("style"), "state": "stopped",
+                    "stopped": time.strftime("%Y-%m-%d %H:%M", time.localtime(r.get("mtime") or 0))}
+                   for r in call("GET", "/cr-workspace/stopped", timeout=30).get("projects") or []]
+        stopped = [r for r in stopped if r["id"] not in live]
+        if stopped:
+            out["stopped"] = stopped
+            out["stopped_note"] = "Videos that stopped before finishing. resume_video(id) carries one on, reusing its saved work."
+    except Refused:
+        pass
+    try:
         cloud = cloud_progress()
         if cloud.get("state") not in (None, "", "idle") or cloud.get("videos"):
             out["studio_cloud"] = cloud
@@ -578,6 +589,22 @@ def tool_progress(args):
     except Refused:
         pass
     return out
+
+
+def tool_resume_video(args):
+    same_studio()
+    slug = str(args.get("id") or "").strip().removeprefix("video:")
+    if not _SLUG.fullmatch(slug):
+        raise Refused("Give the stopped video's id from progress().")
+    saved = call("GET", "/cr-workspace/project/" + _quote_path(slug), timeout=30)
+    if not saved.get("available_for_resume") or not saved.get("project_id"):
+        raise Refused(f"\"{saved.get('title') or slug}\" can't be resumed: it's {saved.get('status') or 'not a stopped video'}. "
+                      "Check progress().")
+    result = call("POST", "/cr-submit-project", {"project_id": saved["project_id"]}, timeout=120)
+    return {"resumed": True, "id": "video:" + slug, "title": saved.get("title"),
+            "queued": [q.get("slug") if isinstance(q, dict) else q for q in result.get("queued") or []],
+            "next": "It carries on from where it stopped and reuses everything already made (script, pictures, "
+                    "voice parts). Check progress(id) now and then; Studio shows a notification when it's done."}
 
 
 def cloud_progress() -> dict:
@@ -935,6 +962,11 @@ TOOLS = {
                       {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}),
     "products": (tool_products, "The creator's digital products (books, cookbooks) and how a build is going "
                  "(id=…). Free.", _schema({"id": {"type": "string"}}), _FREE),
+    "resume_video": (tool_resume_video, "Carry on a video that stopped before finishing (progress() lists them under "
+                     "stopped). Reuses everything already made, so only the rest is paid for. Tell the creator what "
+                     "stopped it first (progress(id)).",
+                     _schema({"id": {"type": "string", "description": "video:<slug> from progress()."}}, ["id"]),
+                     {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}),
     "clone_style": (tool_clone_style, "Step 2: study the looked-at references and build a new reusable style. Uses "
                     "the creator's Claude Code for 15-30 minutes and one of their plan's style clones. Needs look_id, a "
                     "style_name, an example_title and the creator's answers to the look's questions.",

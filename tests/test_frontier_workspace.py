@@ -272,3 +272,33 @@ def test_live_render_metrics_exclude_previous_projects_setup_and_private_fields(
     env.studio.JOBS["active"]["state"]="done"
     assert env.get("/cr-workspace/render/active").json=={"scenes":[]}
     assert env.get("/cr-workspace/render/unknown").json=={"scenes":[]}
+
+
+def test_stopped_videos_stay_in_projects_after_a_restart(env):
+    """A video that stopped before finishing is listed from its saved folder (the live job list empties on restart),
+    so Projects keeps it with Resume. Finished, running and non-video folders are left out."""
+    out = env.home / "output" / "documentary" / "_work"
+    def folder(slug, marker, title="", video=False):
+        path = out / slug
+        path.mkdir(parents=True)
+        if marker is not None:
+            (path / "cr-project.json").write_text(json.dumps(marker))
+        if title:
+            (path / "title.txt").write_text(title + "\n")
+        if video:
+            (path / "video.mp4").write_bytes(b"done")
+        return path
+    stopped = folder("zombie-outbreak--abc", {"id": PROJECT, "brain_mode": "claudecode",
+                     "job_spec": {"title": "Zombie Outbreak: 30 Days Locked Inside", "style": "stories"}},
+                     "Zombie Outbreak: 30 Days Locked Inside")
+    finished = folder("finished--abc", {"id": "crv_" + "3" * 24, "brain_mode": "claudecode"}, "Done", video=True)
+    running = folder("running--abc", {"id": "crv_" + "4" * 24, "brain_mode": "claudecode"}, "Running")
+    folder("style-study--abc", {"id": "crv_" + "5" * 24, "brain_mode": "claudecode", "purpose": "creative"})
+    folder("no-marker--abc", None, "Legacy")
+    env.studio.mv.list_jobs = lambda: [stopped, finished, running, out / "style-study--abc", out / "no-marker--abc"]
+    env.studio.mv.final_video = lambda job: Path(job) / "video.mp4"
+    env.studio.JOBS["running--abc"] = {"state": "running"}
+    rows = env.get("/cr-workspace/stopped").json["projects"]
+    assert [(r["slug"], r["title"], r["style"], r["state"]) for r in rows] == [
+        ("zombie-outbreak--abc", "Zombie Outbreak: 30 Days Locked Inside", "stories", "stopped")]
+    assert env.get("/cr-workspace/stopped", headers={"Origin": "https://evil.example"}).status_code == 403
