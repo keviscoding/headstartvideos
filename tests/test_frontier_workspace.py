@@ -302,3 +302,53 @@ def test_stopped_videos_stay_in_projects_after_a_restart(env):
     assert [(r["slug"], r["title"], r["style"], r["state"]) for r in rows] == [
         ("zombie-outbreak--abc", "Zombie Outbreak: 30 Days Locked Inside", "stories", "stopped")]
     assert env.get("/cr-workspace/stopped", headers={"Origin": "https://evil.example"}).status_code == 403
+
+
+def test_a_video_whose_voice_stopped_can_be_voiced_another_way(env, monkeypatch):
+    """Kie's ElevenLabs voice answered "Internal Error" three times and the creator could only wait. A video whose
+    voice stopped now offers the same voice again, Gemini through the same Kie key, their own ElevenLabs account or
+    their own recording, for that video only."""
+    import cr_media
+    job = env.home / "output" / "documentary" / "_work" / "the-heist--abc"
+    job.mkdir(parents=True)
+    env.jobs["the-heist--abc"] = job
+    (job / "script.txt").write_text("The vault opened at midnight.", encoding="utf-8")
+    (job / cr_media.VOICE_FAILED).write_text(json.dumps({"provider": "kie", "label": "Kie.ai", "category": "model_failure",
+        "reason": "Internal Error, Please try again later", "charged": 0, "model": "elevenlabs/text-to-speech-turbo-2-5"}))
+    monkeypatch.setenv("KIE_API_KEY", "customer-test-key")
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    got = env.get("/cr-workspace/voice/the-heist--abc").json
+    assert got["stopped_on_voice"] and got["current"] == "again" and got["script"] == "The vault opened at midnight."
+    assert [c["id"] for c in got["choices"]] == ["again", "gemini-man", "gemini-woman", "elevenlabs", "own"]
+    eleven = next(c for c in got["choices"] if c["id"] == "elevenlabs")
+    assert eleven["ready"] is False and eleven["setup"] == "/cr-setup" and "never in a chat" in eleven["note"]
+    pick = lambda body, **kw: env.client.post("/cr-workspace/voice/the-heist--abc", base_url=BASE, json=body,
+                                             headers={"X-CR-Local-Token": TOKEN, **kw.get("headers", {})})
+    assert env.client.post("/cr-workspace/voice/the-heist--abc", base_url=BASE, json={"choice": "gemini-man"}).status_code == 403
+    assert pick({"choice": "elevenlabs"}).status_code == 409, "no key yet: Setup first"
+    assert pick({"choice": "nonsense"}).status_code == 400
+    assert pick({"choice": "gemini-woman"}).json["saved"]
+    assert json.loads((job / cr_media.VOICE_CHOICE).read_text()) == {"provider": "kie", "model": "google/gemini-3-8-flash-tts",
+                                                                     "voice": "Kore"}
+    assert env.get("/cr-workspace/voice/the-heist--abc").json["current"] == "gemini-woman"
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "customer-eleven-key")
+    assert pick({"choice": "elevenlabs"}).json["saved"]
+    assert json.loads((job / cr_media.VOICE_CHOICE).read_text()) == {"provider": "original"}
+    take = env.home / "Desktop" / "my take.m4a"
+    take.parent.mkdir()
+    take.write_bytes(b"my voice")
+    uploads = env.home / "uploads" / "voiceovers"
+    kept = []
+    fake = SimpleNamespace(UPLOADS=uploads, resolve=lambda ref: take if ref == str(take) else None,
+                           save_upload=lambda stream, name: kept.append((stream.read(), name)) or {"id": "my-take-1a2b3c4d.mp3"})
+    monkeypatch.setitem(sys.modules, "voices", fake)
+    assert pick({"choice": "own"}).status_code == 400, "a recording is needed"
+    assert pick({"choice": "own", "recording": str(take)}).json["saved"]
+    assert kept == [(b"my voice", "my take.m4a")], "a file on this computer is kept with the uploads"
+    assert json.loads((job / cr_media.VOICE_CHOICE).read_text()) == {"provider": "own", "file": "my-take-1a2b3c4d.mp3"}
+    assert pick({"choice": "again"}).json["saved"] and not (job / cr_media.VOICE_CHOICE).exists()
+    env.studio.JOBS["the-heist--abc"] = {"state": "running"}
+    assert pick({"choice": "gemini-man"}).status_code == 409, "never while it is being made"
+    env.studio.JOBS.clear()
+    (job / "audio.mp3").write_bytes(b"voice")
+    assert pick({"choice": "gemini-man"}).status_code == 409, "a video that has its voice keeps it"

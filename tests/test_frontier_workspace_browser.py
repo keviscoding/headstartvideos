@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import threading
@@ -146,6 +147,8 @@ def workspace(browser):
 
     @app.get("/api/queue")
     def queue():
+        if env.mode == "voice":
+            return jsonify(busy=False, jobs=[{"slug": "voice-film", "title": "The Heist", "state": "error"}])
         return jsonify(busy=env.mode == "active", jobs=[{"slug": "active-film", "title": "A film in production",
                        "style": "3d", "state": "running"}] if env.mode == "active" else [
                        {"slug": "stopped-film", "title": "Saved project needs review", "state": "error"}])
@@ -175,8 +178,37 @@ def workspace(browser):
             env.preview_cached.add(slug)
         return Response(image.getvalue(), mimetype="image/jpeg")
 
+    @app.get("/cr-workspace/project/<slug>")
+    def saved_project(slug):
+        return jsonify(slug=slug, project_id="crv_" + "9" * 24, available_for_resume=slug == "voice-film",
+                       title="The Heist", status="error")
+
+    @app.get("/cr-workspace/voice/<slug>")
+    def voice_choices(slug):
+        return jsonify(stopped_on_voice=slug == "voice-film", has_voice=False, current="again",
+                       failed={"label": "Kie.ai", "reason": "Internal Error, Please try again later", "charged": 0},
+                       script="The vault opened at midnight.", choices=[
+                           {"id": "again", "label": "Try the same voice again", "ready": True, "note": "The voice in Setup & accounts, once more."},
+                           {"id": "gemini-man", "label": "Gemini voice through Kie (a man's voice)", "ready": True, "note": "The same Kie account, a different voice service."},
+                           {"id": "gemini-woman", "label": "Gemini voice through Kie (a woman's voice)", "ready": True, "note": "The same Kie account."},
+                           {"id": "elevenlabs", "label": "Your own ElevenLabs account", "ready": False, "setup": "/cr-setup",
+                            "note": "Add your ElevenLabs key in Setup & accounts first (paste it there, never in a chat)."},
+                           {"id": "own", "label": "Your own recording", "ready": True, "note": "Read the script aloud and upload the recording."}])
+
+    @app.post("/cr-workspace/voice/<slug>")
+    def voice_pick(slug):
+        return jsonify(saved=True, choice=request.json["choice"])
+
+    @app.post("/cr-submit-project")
+    def submit_saved():
+        return jsonify(queued=[{"slug": "voice-film"}], project_id=request.json["project_id"])
+
     @app.get("/api/status/<slug>")
     def progress(slug):
+        if slug == "voice-film":
+            return jsonify(state="error", done=True, lines=["Writing the voiceover"], progress=0.08, elapsed=60,
+                           error="Kie.ai failed this narration task. Internal Error, Please try again later",
+                           cr_cancel={"can_cancel": False})
         active = slug == "active-film"
         return jsonify(state="running" if active else "done", done=not active,
                        lines=["ffmpeg: final render"] if active else ["published: synthetic film"],
@@ -505,3 +537,26 @@ def test_studio_cloud_renders_on_a_channelrecipe_machine_when_chosen(workspace):
     page.locator("[data-render-on=cloud]").click()
     note = page.locator("#crw-cloud-note").inner_text()
     assert "graphics card" in note and "$2.40 an hour" in note
+
+
+def test_a_video_whose_voice_stopped_offers_other_voices_and_carries_on(workspace):
+    """Kie's ElevenLabs voice failed three times and the creator could only wait: the stopped project now offers the
+    same voice again, Gemini through Kie, their ElevenLabs account (Setup first) or their own recording."""
+    env, page = workspace, workspace.page
+    env.mode = "voice"
+    env.open("#projects")
+    page.get_by_role("button", name="Review issue", exact=True).click()
+    box = page.locator(".crw-voice-choices")
+    box.wait_for(state="visible")
+    assert "Kie.ai couldn't record this video's voice" in box.inner_text()
+    assert page.get_by_role("button", name="Your own ElevenLabs account").is_disabled()
+    assert box.get_by_role("link", name="Open Setup").get_attribute("href") == "/cr-setup"
+    page.locator(".crw-voice-script summary").click()
+    assert "The vault opened at midnight." in page.locator(".crw-voice-script pre").inner_text()
+    if os.environ.get("CR_SHOT"):
+        page.locator("#crw-progress").screenshot(path=os.environ["CR_SHOT"])
+    page.get_by_role("button", name="Gemini voice through Kie (a woman's voice)").click()
+    page.wait_for_function("document.querySelector('#crw-toast').textContent.includes('new voice')")
+    assert [p for p in env.posts if p["path"].startswith(("/cr-workspace/voice", "/cr-submit"))] == [
+        {"path": "/cr-workspace/voice/voice-film", "body": {"choice": "gemini-woman"}},
+        {"path": "/cr-submit-project", "body": {"project_id": "crv_" + "9" * 24}}]

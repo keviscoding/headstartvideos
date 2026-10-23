@@ -105,6 +105,20 @@ class FakeStudio:
                     "title": "Done", "status": "done"}
         if path == "/cr-submit-project":
             return {"queued": [{"slug": "zombie--abc"}], "project_id": body["project_id"]}
+        if path == "/api/status/zombie--abc":
+            return {"state": "error", "done": True, "progress": 0.08, "error": "Kie.ai failed this narration task.",
+                    "lines": ["Writing the voiceover"]}
+        if path == "/cr-workspace/voice/zombie--abc":
+            if method == "POST":
+                return {"saved": True, "choice": body["choice"]}
+            return {"stopped_on_voice": True, "has_voice": False, "current": "again",
+                    "failed": {"label": "Kie.ai", "reason": "Internal Error, Please try again later", "charged": 0},
+                    "script": "The vault opened.", "script_file": "/studio/output/x/zombie--abc/script.txt",
+                    "choices": [{"id": "again", "label": "Try the same voice again", "ready": True, "note": "n"},
+                                {"id": "gemini-man", "label": "Gemini", "ready": True, "note": "n"},
+                                {"id": "elevenlabs", "label": "ElevenLabs", "ready": False, "note": "n",
+                                 "setup": "/cr-setup"},
+                                {"id": "own", "label": "Own", "ready": True, "note": "n"}]}
         if path == "/api/products":
             return {"products": [{"slug": "pantry-book", "title": "Pantry Book", "secret": "no"}]}
         raise AssertionError("unexpected route " + path)
@@ -611,6 +625,20 @@ def test_a_stopped_video_is_listed_and_resumed_by_its_saved_project(studio):
     refused = tools.run_tool("resume_video", {"id": "video:done--abc"})
     assert refused["isError"] and "can't be resumed" in refused["structuredContent"]["error"]
     assert len(studio.posted("/cr-submit-project")) == 1
+
+
+def test_a_video_that_stopped_on_its_voice_offers_the_ways_to_voice_it(studio):
+    out = ok("progress", {"id": "video:zombie--abc"})
+    assert out["stopped_on"] == "voice" and out["voice_failed"]["charged"] == 0
+    assert [c["id"] for c in out["voice_choices"]] == ["again", "gemini-man", "elevenlabs", "own"]
+    assert "never in chat" in out["voice_note"] and out["script_file"].endswith("script.txt")
+    assert "setup" not in out["voice_choices"][2], "only what Claude needs to ask"
+    resumed = ok("resume_video", {"id": "video:zombie--abc", "voice": "own", "recording": "/Users/me/take.m4a"})
+    assert resumed["voice"] == "own"
+    assert studio.posted("/cr-workspace/voice/zombie--abc") == [{"choice": "own", "recording": "/Users/me/take.m4a"}]
+    assert studio.posted("/cr-submit-project") == [{"project_id": "crv_" + "1" * 24}], "the choice, then Resume"
+    schema = tools.TOOLS["resume_video"][2]["properties"]["voice"]
+    assert schema["enum"] == ["again", "gemini-man", "gemini-woman", "elevenlabs", "own"]
 
 
 def test_setup_check_says_why_the_graphics_browser_isnt_ready_and_the_fix_runs_in_studio(studio, monkeypatch):

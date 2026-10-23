@@ -54,6 +54,9 @@ class TaskFailed(AccountStop):
         action = (" Review this image prompt or choose another image model in Setup & accounts." if self.category == "moderation" and task == "images"
                   else " Review this narration text in your provider log." if self.category == "moderation" and task == "narration"
                   else " Top up this account, then resume." if self.category == "balance"
+                  else " Kie charged nothing for it. Wait a few minutes and press Resume saved project, or voice this video "
+                       "another way (Gemini through Kie, your own ElevenLabs account, or your own recording)."
+                  if fresh_attempt_ok(provider, task, receipt) and task == "narration"
                   else " Kie charged nothing for it. Wait a few minutes, then press Resume saved project to try again."
                   if fresh_attempt_ok(provider, task, receipt)
                   else " Wait a few minutes, then press Resume saved project to try again."
@@ -119,6 +122,8 @@ def failure_category(code, reason):
 def profile(task=None):
     if task == "motion" and getattr(_routing, "native_motion", False):
         return {"provider": "kie", "tasks": ["motion"]}
+    if task == "narration" and getattr(_routing, "narration", None):
+        return _routing.narration                    # this video's own voice choice (job_voice), while narrate runs
     settings = cr_bridge.load_settings()
     images = settings.get("images") or {}
     if task == "images" and images.get("provider") == "kie":
@@ -564,8 +569,50 @@ def _chunks(text, limit=2400):
         remaining = remaining[end:].lstrip()
 
 
+# A video whose voice failed can be voiced another way, for that video only: the choice sits in its job folder and
+# Resume reads it here (the saved project's own settings live on ChannelRecipe and stay as they are).
+VOICE_CHOICE = "cr-voice.json"           # {"provider": "kie", "model", "voice"} | {"provider": "original"} | {"provider": "own", "file"}
+VOICE_FAILED = "cr-voice-failed.json"    # why the last voice attempt stopped (offered choices read it)
+
+
+def job_voice(job) -> dict:
+    """This video's own voice choice, or {} for the voice in Setup & accounts."""
+    try:
+        choice = json.loads((Path(job) / VOICE_CHOICE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(choice, dict):
+        return {}
+    if choice.get("provider") == "kie":
+        try:
+            model = narration_model("kie", choice.get("model"))
+        except AccountStop:
+            return {}
+        voice = str(choice.get("voice") or model["default_voice"])
+        if model.get("voice_names") and voice not in model["voice_names"]:
+            voice = model["default_voice"]
+        return {"provider": "kie", "model": model["id"], "voice": voice, "tasks": ["narration"]}
+    if choice.get("provider") == "original":
+        return {"provider": "original"}
+    if choice.get("provider") == "own" and str(choice.get("file") or "").strip():
+        return {"provider": "own", "file": str(choice["file"])}
+    return {}
+
+
+def _voice_failed(job, provider, model, failed) -> None:
+    try:
+        (Path(job) / VOICE_FAILED).write_text(json.dumps({
+            "provider": provider, "label": PROVIDERS.get(provider, {}).get("label", provider), "model": model,
+            "category": getattr(failed, "category", ""), "reason": str(getattr(failed, "reason", "") or failed)[:300],
+            "charged": getattr(failed, "credits", None), "at": int(time.time())}), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def narrate(engine, text, mp3, srt, voice_id="", style=""):
-    cfg = profile("narration")
+    chosen = job_voice(Path(mp3).parent)
+    chosen = chosen if chosen.get("provider") == "kie" else None
+    cfg = chosen or profile("narration")
     provider = cfg["provider"]
     model = narration_model(provider, cfg.get("model"))
     voice = cfg.get("voice") or model["default_voice"]
@@ -574,22 +621,30 @@ def narrate(engine, text, mp3, srt, voice_id="", style=""):
     folder = Path(mp3).parent / (Path(mp3).stem + "-hub-voice")
     folder.mkdir(parents=True, exist_ok=True)
     parts = []
-    for i, piece in enumerate(_chunks(text)):
-        part = folder / f"part-{i:03d}.{model['format']}"
-        for attempt, pause in enumerate(NARRATION_RETRY_PAUSES + (None,)):
-            try:
-                run("narration", narration_input(piece, voice, model["id"]), part, model=model["id"], log=engine.log)
-                break
-            except TaskFailed as failed:
-                receipt = {"status": "failed", "id": getattr(failed, "task_id", None), "rejected": failed.rejected,
-                           "credits": failed.credits, "failure_code": failed.code, "failure_message": failed.reason}
-                if pause is None or not fresh_attempt_ok(provider, "narration", receipt):
-                    raise
-                engine.log(f"{PROVIDERS[provider]['label']} narration hit a passing error ({failed.reason or failed.code}) "
-                           f"and charged nothing; trying again in {pause} s (attempt {attempt + 2} of "
-                           f"{len(NARRATION_RETRY_PAUSES) + 1}).")
-                time.sleep(pause)
-        parts.append(part)
+    _routing.narration = chosen                      # run() pays with the chosen account, not Setup's narration one
+    try:
+        for i, piece in enumerate(_chunks(text)):
+            part = folder / f"part-{i:03d}.{model['format']}"
+            for attempt, pause in enumerate(NARRATION_RETRY_PAUSES + (None,)):
+                try:
+                    run("narration", narration_input(piece, voice, model["id"]), part, model=model["id"], log=engine.log)
+                    break
+                except TaskFailed as failed:
+                    receipt = {"status": "failed", "id": getattr(failed, "task_id", None), "rejected": failed.rejected,
+                               "credits": failed.credits, "failure_code": failed.code, "failure_message": failed.reason}
+                    if pause is None or not fresh_attempt_ok(provider, "narration", receipt):
+                        raise
+                    engine.log(f"{PROVIDERS[provider]['label']} narration hit a passing error ({failed.reason or failed.code}) "
+                               f"and charged nothing; trying again in {pause} s (attempt {attempt + 2} of "
+                               f"{len(NARRATION_RETRY_PAUSES) + 1}).")
+                    time.sleep(pause)
+            parts.append(part)
+    except (AccountStop, Exception) as failed:              # what stopped this voice, for the choices offered
+        if getattr(failed, "category", "") != "cancelled":
+            _voice_failed(Path(mp3).parent, provider, model["id"], failed)
+        raise
+    finally:
+        _routing.narration = None
     if not parts:
         raise AccountStop("There is no narration text to record.")
     if len(parts) == 1 and model["format"] == "mp3":
@@ -603,6 +658,10 @@ def narrate(engine, text, mp3, srt, voice_id="", style=""):
         listing.write_text("".join(f"file '{p.name}'\n" for p in parts))
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0",
                         "-i", str(listing), "-c:a", "libmp3lame", "-b:a", "192k", str(mp3)], check=True)
+    _time_narration(engine, mp3, srt, text)
+
+
+def _time_narration(engine, mp3, srt, text):
     # Both hubs return audio. Preserve timing with the engine's local Whisper,
     # then restore script spelling instead of inventing caption timestamps.
     engine.log("Timing narration on this computer…")
@@ -622,6 +681,70 @@ def narrate(engine, text, mp3, srt, voice_id="", style=""):
         raise AccountStop("Narration was saved, but subtitle timing failed. Check the audio before resuming.")
     Path(srt).write_text("\n".join(f"{i+1}\n{engine._srt_ts(c[0][1])} --> {engine._srt_ts(c[-1][2])}\n{' '.join(w[0] for w in c)}\n" for i, c in enumerate(cues)))
     engine._script_words_into_srt(Path(srt), text)
+
+
+def make_voiceover(engine, original_voice):
+    """The engine's voiceover step: this video's own voice choice (VOICE_CHOICE) first, then the narration
+    account in Setup & accounts, else the engine's own voices."""
+    def voiceover(script, job, force=False, avatar_min=0, style=""):
+        chosen = job_voice(job)
+        if chosen.get("provider") == "own":
+            return own_recording(engine, script, Path(job), chosen["file"], force)
+        if chosen.get("provider") == "original" or not (chosen or active("narration")):
+            out = original_voice(script, job, force, avatar_min, style)
+            (Path(job) / VOICE_FAILED).unlink(missing_ok=True)
+            return out
+        job = Path(job)
+        mp3, srt = job / "audio.mp3", job / "subs.srt"
+        if (job / "voice.own").exists() or (mp3.exists() and srt.exists() and not force):
+            (job / VOICE_FAILED).unlink(missing_ok=True)
+            return mp3, srt
+        # Preserve the engine's intro split and join contract for presenter jobs.
+        pieces = engine._split_script_by_minutes(script, avatar_min)
+        if len(pieces) > 1:
+            audio_parts, subtitle_parts, offset = [], [], 0.0
+            for i, piece in enumerate(pieces, 1):
+                pm, ps = job / f"audio_p{i}.mp3", job / f"subs_p{i}.srt"
+                narrate(engine, piece, pm, ps, style=style)
+                audio_parts.append(pm)
+                subtitle_parts.append((ps, offset))
+                offset += engine._audio_dur(pm)
+            engine._concat_mp3(audio_parts, mp3)
+            engine._merge_srt(subtitle_parts, srt)
+        else:
+            narrate(engine, script, mp3, srt, style=style)
+        (job / "words_heard.json").unlink(missing_ok=True)
+        (job / VOICE_FAILED).unlink(missing_ok=True)
+        engine._speed_voice(mp3, srt, style)
+        engine._regroup_word_srt(srt)
+        return engine._denoise_voice(mp3, style), srt
+    return voiceover
+
+
+def own_recording(engine, script, job: Path, file: str, force=False):
+    """The creator's own recording as this video's voice, chosen after its AI voice stopped: it becomes the video's
+    audio.mp3, timed on this computer and spelled as the script they read. Nothing is paid for it."""
+    import voices
+    src = voices.resolve(file)
+    if src is None:
+        raise AccountStop("Your recording for this video isn't there any more. Upload it again, or pick another voice.")
+    mp3, srt, mark = job / "audio.mp3", job / "subs.srt", job / "cr-voice-own.txt"
+    sig = f"{src.name}:{src.stat().st_size}:{int(src.stat().st_mtime)}"
+    if (mp3.exists() and srt.exists() and not force and mark.is_file()
+            and mark.read_text(encoding="utf-8").strip() == sig):
+        return mp3, srt
+    engine.log(f"Your own recording is this video's voice: {src.name}")
+    if src.suffix.lower() == ".mp3":
+        shutil.copyfile(src, mp3)
+    else:
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(src), "-c:a", "libmp3lame", "-b:a", "192k",
+                        str(mp3)], check=True)
+    (job / "words_heard.json").unlink(missing_ok=True)
+    _time_narration(engine, mp3, srt, script)
+    engine._regroup_word_srt(srt)
+    mark.write_text(sig + "\n", encoding="utf-8")
+    (job / VOICE_FAILED).unlink(missing_ok=True)
+    return mp3, srt
 
 
 def install(engine):
@@ -715,33 +838,7 @@ def install(engine):
     import cr_history_io
     cr_history_io.install(history_kit)
     hook("_tts_one", "narration", lambda *a, **k: narrate(engine, *a, **k))
-    original_voice = engine.generate_voiceover
-    def voiceover(script, job, force=False, avatar_min=0, style=""):
-        if not active("narration"):
-            return original_voice(script, job, force, avatar_min, style)
-        job = Path(job)
-        mp3, srt = job / "audio.mp3", job / "subs.srt"
-        if (job / "voice.own").exists() or (mp3.exists() and srt.exists() and not force):
-            return mp3, srt
-        # Preserve the engine's intro split and join contract for presenter jobs.
-        pieces = engine._split_script_by_minutes(script, avatar_min)
-        if len(pieces) > 1:
-            audio_parts, subtitle_parts, offset = [], [], 0.0
-            for i, piece in enumerate(pieces, 1):
-                pm, ps = job / f"audio_p{i}.mp3", job / f"subs_p{i}.srt"
-                narrate(engine, piece, pm, ps, style=style)
-                audio_parts.append(pm)
-                subtitle_parts.append((ps, offset))
-                offset += engine._audio_dur(pm)
-            engine._concat_mp3(audio_parts, mp3)
-            engine._merge_srt(subtitle_parts, srt)
-        else:
-            narrate(engine, script, mp3, srt, style=style)
-        (job / "words_heard.json").unlink(missing_ok=True)
-        engine._speed_voice(mp3, srt, style)
-        engine._regroup_word_srt(srt)
-        return engine._denoise_voice(mp3, style), srt
-    engine.generate_voiceover = voiceover
+    engine.generate_voiceover = make_voiceover(engine, engine.generate_voiceover)
     # These modules have independent voice entry points and media uploads.
     import wavespeed
     import vox

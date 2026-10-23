@@ -1,5 +1,15 @@
 [
   {
+    "build": 94,
+    "date": "2026-10-24",
+    "title": "When a voice fails, voice it another way",
+    "items": [
+      "New: a video whose voice failed can be voiced another way. Pick Gemini through Kie (same key), your own ElevenLabs account, or your own recording, and it carries on from where it stopped; your other videos keep Setup's voice.",
+      "New: Claude Code offers the same choice. When a voice service is down, Claude asks which way to carry on instead of only waiting.",
+      "New: your own recording, any time a voice fails. Read the script shown on the project, upload the recording, and the video is timed to your reading."
+    ]
+  },
+  {
     "build": 93,
     "date": "2026-10-24",
     "title": "3D and photo Shorts on Windows",

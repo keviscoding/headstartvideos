@@ -430,9 +430,47 @@
         else {
           const saved = await api(`/cr-workspace/project/${encoded(state.openJob)}`);
           if (saved.available_for_resume) {const resume=el('button','crw-text-button','Resume saved project'); resume.type='button'; resume.addEventListener('click',async()=>{resume.disabled=true;try{await api('/cr-submit-project',{method:'POST',body:{project_id:saved.project_id}});toast('Saved project submitted. Completed assets will be reused.');await refreshActivity();}catch(e){text('crw-progress-note',e.message);}finally{resume.disabled=false;}});$('crw-progress-actions').append(resume);}
+          if (saved.available_for_resume) {try {const voice=await api(`/cr-workspace/voice/${encoded(state.openJob)}`); if (voice.stopped_on_voice && !voice.has_voice) voiceChoices(voice, saved);} catch (_) {/* Resume stays available */}}
         }
       }
     } catch (e) {text('crw-progress-note',e.message);}
+  }
+  // A video whose voice stopped: voice it another way, this video only (Gemini through Kie, the creator's own
+  // ElevenLabs account, or their own recording), then carry on from where it stopped.
+  function voiceChoices(voice, saved) {
+    const slug = state.openJob, box = el('div', 'crw-voice-choices');
+    box.append(el('p', 'crw-voice-title', 'Voice it another way'));
+    const why = voice.failed && voice.failed.label ? `${voice.failed.label} couldn't record this video's voice${voice.failed.reason ? ` ("${voice.failed.reason}")` : ''}.` : "This video's voice couldn't be recorded.";
+    box.append(el('p', 'crw-field-help', `${why} Pick how to carry on. Everything already made is kept.`));
+    const resumeWith = async (body, button) => {
+      button.disabled = true;
+      try {
+        await api(`/cr-workspace/voice/${encoded(slug)}`, {method: 'POST', body});
+        await api('/cr-submit-project', {method: 'POST', body: {project_id: saved.project_id}});
+        toast('Carrying on with the new voice. Completed work is reused.'); await refreshActivity();
+      } catch (e) {text('crw-progress-note', e.message);} finally {button.disabled = false;}
+    };
+    for (const choice of voice.choices || []) {
+      const row = el('div', 'crw-voice-choice'), button = el('button', choice.id === voice.current ? 'crw-primary-button' : 'crw-secondary-button', choice.label);
+      button.type = 'button'; button.disabled = !choice.ready; row.append(button, el('span', 'crw-field-help', choice.note));
+      if (!choice.ready && choice.setup) {const link = el('a', 'crw-text-button', 'Open Setup'); link.href = choice.setup; row.append(link);}
+      if (choice.id === 'own') {
+        const file = el('input'); file.type = 'file'; file.accept = 'audio/*,video/*'; file.hidden = true;
+        const read = el('details', 'crw-voice-script'), summary = el('summary', '', 'Show the script to read'), words = el('pre', '', voice.script || 'The script is not saved yet.');
+        read.append(summary, words);
+        button.addEventListener('click', () => file.click());
+        file.addEventListener('change', async () => {
+          if (!file.files.length) return; button.disabled = true; text('crw-progress-note', 'Uploading your recording…');
+          try {const form = new FormData(); form.append('file', file.files[0]); const up = await api('/api/voiceover', {method: 'POST', body: form});
+            await resumeWith({choice: 'own', recording: up.voiceover.id}, button);
+          } catch (e) {text('crw-progress-note', e.message);} finally {button.disabled = false; file.value = '';}
+        });
+        row.append(file); box.append(row, read); continue;
+      }
+      button.addEventListener('click', () => resumeWith({choice: choice.id}, button));
+      box.append(row);
+    }
+    $('crw-progress-actions').append(box);
   }
   async function openOutput(job) {
     try {
