@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -31,15 +32,15 @@ from webapp import plans
 from cryptography.fernet import Fernet, InvalidToken
 from webapp import frontier_providers as providers
 
-VERSION = "5.3-admin.91"
+VERSION = "5.3-admin.92"
 CATALOG = Path(__file__).resolve().parent / "frontier" / "catalog.json"
-RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.91.zip"
+RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.92.zip"
 # Every release the server still serves (older ones keep running projects alive). Append each new release; never
 # remove one, or projects pinned to it stop.
 APPROVED_RELEASES = ("5.3-admin.8", "5.3-admin.9", "5.3-admin.10", "5.3-admin.11", "5.3-admin.12",
                 "5.3-admin.13", "5.3-admin.14", "5.3-admin.15", "5.3-admin.16", "5.3-admin.17",
                 "5.3-admin.18", "5.3-admin.19", "5.3-admin.20", "5.3-admin.21", "5.3-admin.22",
-                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43", "5.3-admin.44", "5.3-admin.45", "5.3-admin.46", "5.3-admin.47", "5.3-admin.48", "5.3-admin.49", "5.3-admin.50", "5.3-admin.51", "5.3-admin.52", "5.3-admin.53", "5.3-admin.54", "5.3-admin.55", "5.3-admin.56", "5.3-admin.57", "5.3-admin.58", "5.3-admin.59", "5.3-admin.60", "5.3-admin.61", "5.3-admin.62", "5.3-admin.63", "5.3-admin.64", "5.3-admin.65", "5.3-admin.66", "5.3-admin.67", "5.3-admin.68", "5.3-admin.69", "5.3-admin.70", "5.3-admin.71", "5.3-admin.72", "5.3-admin.73", "5.3-admin.74", "5.3-admin.75", "5.3-admin.76", "5.3-admin.77", "5.3-admin.78", "5.3-admin.79", "5.3-admin.80", "5.3-admin.81", "5.3-admin.82", "5.3-admin.83", "5.3-admin.84", "5.3-admin.85", "5.3-admin.86", "5.3-admin.87", "5.3-admin.88", "5.3-admin.89", "5.3-admin.90", "5.3-admin.91")
+                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43", "5.3-admin.44", "5.3-admin.45", "5.3-admin.46", "5.3-admin.47", "5.3-admin.48", "5.3-admin.49", "5.3-admin.50", "5.3-admin.51", "5.3-admin.52", "5.3-admin.53", "5.3-admin.54", "5.3-admin.55", "5.3-admin.56", "5.3-admin.57", "5.3-admin.58", "5.3-admin.59", "5.3-admin.60", "5.3-admin.61", "5.3-admin.62", "5.3-admin.63", "5.3-admin.64", "5.3-admin.65", "5.3-admin.66", "5.3-admin.67", "5.3-admin.68", "5.3-admin.69", "5.3-admin.70", "5.3-admin.71", "5.3-admin.72", "5.3-admin.73", "5.3-admin.74", "5.3-admin.75", "5.3-admin.76", "5.3-admin.77", "5.3-admin.78", "5.3-admin.79", "5.3-admin.80", "5.3-admin.81", "5.3-admin.82", "5.3-admin.83", "5.3-admin.84", "5.3-admin.85", "5.3-admin.86", "5.3-admin.87", "5.3-admin.88", "5.3-admin.89", "5.3-admin.90", "5.3-admin.91", "5.3-admin.92")
 # Releases that may also START a new video: the newest two. A customer who hasn't pressed Update yet keeps making
 # videos the morning after a release; the project pins the release it started on.
 SUPPORTED_RELEASES = APPROVED_RELEASES[-2:]
@@ -50,6 +51,66 @@ NATIVE_STAGE_LIMIT = 2
 # A Studio update reads the release in many byte ranges with one link, and storage is in San Francisco: from Europe
 # a slow connection outlived a 10-minute link and every retry was refused ("the update keeps getting interrupted").
 DOWNLOAD_LINK_SECONDS = 3600
+# A Studio asks for a download link again only when the last one failed. Asked this often within ten minutes, its
+# computer can't fetch storage links (a creator's internet provider reset every connection to the storage host while
+# this site worked), so for a day that account's links stream through this site instead. Studio 92 switches by itself;
+# earlier Studios did only when the storage host's name didn't resolve.
+SITE_LINK_ASKS, SITE_LINK_WINDOW, SITE_LINK_DAYS = 3, 600, 1
+_link_asks: dict = {}
+_link_lock = threading.Lock()
+
+
+def storage_blocked(user_id: int, what: str, now: float | None = None) -> bool:
+    """Whether this account's link for `what` ("pack" or "release") should stream through this site; counts this ask."""
+    now = time.time() if now is None else now
+    with _link_lock:
+        entry = _link_asks.setdefault(int(user_id), {"until": 0.0})
+        asks = [t for t in entry.get(what, []) if now - t < SITE_LINK_WINDOW][-10:] + [now]
+        entry[what] = asks
+        if len(asks) >= SITE_LINK_ASKS:
+            entry["until"] = now + SITE_LINK_DAYS * 86400
+        if len(_link_asks) > 5000:                      # forget accounts with nothing recent
+            for uid in [u for u, e in _link_asks.items() if e["until"] < now
+                        and all(now - t >= SITE_LINK_WINDOW for k, v in e.items() if k != "until" for t in v)]:
+                _link_asks.pop(uid, None)
+        return entry["until"] > now
+
+
+def _stream_key() -> bytes | None:
+    base = (os.getenv("FRONTIER_SECRETS_KEY", "") or config.SECRETS_KEY or "").strip()
+    return hashlib.sha256(b"cr-studio-stream\0" + base.encode()).digest() if base else None
+
+
+def _b64(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def stream_token(user_id: int, what: str, now: float | None = None) -> str | None:
+    """A signed, hour-long link token for one account and one file; None when the server has no signing secret."""
+    key = _stream_key()
+    if not key:
+        return None
+    body = _b64(json.dumps({"u": int(user_id), "w": what, "e": int((time.time() if now is None else now)
+                                                                     + DOWNLOAD_LINK_SECONDS)},
+                           separators=(",", ":")).encode())
+    return body + "." + _b64(hmac.new(key, body.encode(), hashlib.sha256).digest())
+
+
+def read_stream_token(token: str, what: str, now: float | None = None) -> int | None:
+    """The account a valid, unexpired token for `what` was issued to, or None."""
+    key = _stream_key()
+    body, _, signature = str(token or "").partition(".")
+    if not key or not body or not signature or len(token) > 400:
+        return None
+    if not hmac.compare_digest(_b64(hmac.new(key, body.encode(), hashlib.sha256).digest()), signature):
+        return None
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+        if payload.get("w") != what or int(payload.get("e", 0)) < (time.time() if now is None else now):
+            return None
+        return int(payload["u"])
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return None
 # The Shorts asset pack (people, animals, motion clips, the prop and creature libraries, sound libraries, the 2D host):
 # a Studio downloads it the first time someone makes a Short (local_runtime/cr_shorts.py ensure_pack). A private
 # object; each entitled request gets a short-lived signed link. Built by shorts-clone tools/pack_shorts.py.
@@ -1231,12 +1292,26 @@ def make_router(session_user, *, prefix="/api/frontier"):
     def runtime_retry(req:NativeRetryStage,user=Depends(access)):
         return native_retry_stage(user,req)
 
+    def site_link(request: Request, user_id: int, what: str) -> str | None:
+        """This site's own link for `what`, signed for this account, for a computer that can't fetch storage links."""
+        token = stream_token(user_id, what)
+        if not token:
+            return None
+        origin = str(request.base_url).rstrip("/")
+        if origin.startswith("http://") and request.url.hostname not in ("localhost", "127.0.0.1", "testserver"):
+            origin = "https://" + origin[len("http://"):]           # behind the platform's proxy: the public origin
+        return f"{origin}{prefix}/stream/{what}?t={token}"
+
     @router.get("/shorts-pack")
-    def shorts_pack(user=Depends(access)):
+    def shorts_pack(request: Request, user=Depends(access)):
         headers = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}
         from webapp import storage
         if not storage.is_remote():
             raise HTTPException(503, "The Shorts pack is being prepared. Please try again shortly.")
+        if storage_blocked(user["id"], "pack"):
+            link = site_link(request, user["id"], "pack")
+            if link:
+                return RedirectResponse(link, status_code=302, headers=headers)
         try:
             url = storage._get_client().generate_presigned_url("get_object", Params={
                 "Bucket": storage._spaces_creds()[2], "Key": SHORTS_PACK_KEY,
@@ -1259,7 +1334,10 @@ def make_router(session_user, *, prefix="/api/frontier"):
             params["Range"] = wanted
         try:
             obj = storage._get_client().get_object(**params)
-        except Exception:
+        except Exception as error:
+            reply = getattr(error, "response", None)
+            if isinstance(reply, dict) and (reply.get("Error") or {}).get("Code") == "InvalidRange":
+                raise HTTPException(416, "That part of the file doesn't exist; download it again.")
             raise HTTPException(503, "The studio download is being prepared. Please try again shortly.")
         body = obj["Body"]
         out = {**headers, "Accept-Ranges": "bytes", "Content-Length": str(obj.get("ContentLength") or 0),
@@ -1288,6 +1366,18 @@ def make_router(session_user, *, prefix="/api/frontier"):
         return stream_private(request, RELEASE_KEY, "ChannelRecipe-local-studio-%s.zip" % VERSION,
                               {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
+    @router.get("/stream/{what}")
+    def stream(what: str, request: Request, t: str = ""):
+        """A site link from site_link(): the token stands in for the account key (the link is followed without it)."""
+        headers = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}
+        if what not in ("pack", "release") or read_stream_token(t, what) is None:
+            raise HTTPException(403, "This download link expired. Try again.")
+        if what == "pack":
+            return stream_private(request, SHORTS_PACK_KEY, "shorts-assets.zip", headers)
+        if not release_ready():
+            raise HTTPException(503, "The studio download is being prepared. Please try again shortly.")
+        return stream_private(request, RELEASE_KEY, "ChannelRecipe-local-studio-%s.zip" % VERSION, headers)
+
     @router.get("/shorts-pack/file")
     def shorts_pack_file(request: Request, user=Depends(access)):
         """The Shorts asset pack through this site (the updater's fallback when the storage host can't be reached)."""
@@ -1295,7 +1385,7 @@ def make_router(session_user, *, prefix="/api/frontier"):
                               {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
     @router.get("/download")
-    def download(user=Depends(access)):
+    def download(request: Request, user=Depends(access)):
         headers = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}
         milestones.record(user["id"], milestones.DOWNLOADED)
         local = os.getenv("FRONTIER_RELEASE_PATH", "")
@@ -1310,6 +1400,10 @@ def make_router(session_user, *, prefix="/api/frontier"):
         # downloads must not tie up the site. The object stays private; the
         # link is minted per signed-in, entitled request and expires quickly
         # (an in-progress transfer is unaffected by expiry).
+        if storage_blocked(user["id"], "release"):
+            link = site_link(request, user["id"], "release")
+            if link:
+                return RedirectResponse(link, status_code=302, headers=headers)
         try:
             url = storage._get_client().generate_presigned_url("get_object", Params={
                 "Bucket": storage._spaces_creds()[2], "Key": RELEASE_KEY,

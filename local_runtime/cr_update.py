@@ -144,8 +144,11 @@ def _status(response) -> int:
     return int(getattr(response, "status", None) or getattr(response, "code", None) or 200)
 
 
+STORAGE_MISSES = 2        # failed connections to the storage link before the same file comes through ChannelRecipe
+
+
 def download(base: str, key: str, target: Path, get=http_get, attempts: int = 6, path: str = "/api/studio/download",
-             sleep=None) -> None:
+             sleep=None, resume: bool = False, progress=None) -> None:
     """Download the release, resuming after drops and checking it arrived whole.
 
     The signed storage link supports byte ranges, so an interrupted transfer
@@ -154,6 +157,14 @@ def download(base: str, key: str, target: Path, get=http_get, attempts: int = 6,
     San Francisco; a creator in Europe saw "the update keeps getting interrupted").
     The finished file must match the size and the SHA-256 the release was
     uploaded with (when storage reports them).
+
+    `attempts` counts tries in a row that brought nothing new, so a connection that
+    keeps dropping still finishes while each try gets further. A computer that can't
+    open the storage link at all (its internet provider can't look the name up, or
+    resets or refuses the connection: a creator's Shorts pack failed six times in a
+    second each) gets the same file streamed through ChannelRecipe. resume=True keeps
+    a partial file from an earlier run and carries on from it. progress(done, total)
+    hears how far a long download got.
     """
     auth = {"Authorization": "Bearer " + key}
     sleep = sleep or time.sleep
@@ -162,56 +173,81 @@ def download(base: str, key: str, target: Path, get=http_get, attempts: int = 6,
         first = get(base + path, auth)
         location = _signed_location(first)
         size = expected_sha = None
-        newer = via_site = False
-        target.unlink(missing_ok=True)
-        for attempt in range(attempts):
+        newer = via_site = restarted = False
+        tries = stalled = misses = 0
+        if not resume:
+            target.unlink(missing_ok=True)
+        best = target.stat().st_size if target.exists() else 0
+        while True:
             have = target.stat().st_size if target.exists() else 0
-            if attempt:
-                sleep(min(20, 2 * attempt))
+            if tries:
+                sleep(min(20, 2 * max(1, stalled)))
                 if location and not via_site:
                     location, newer = _fresh_link(lambda: _signed_location(get(base + path, auth)), location)
+            tries += 1
+            last = stalled + 1 >= attempts or tries >= attempts * 25
             response = None
             if location and not via_site:
                 try:
                     response = get(location, {"Range": "bytes=%d-" % have} if have else {})
                 except (HTTPError, URLError, OSError, http.client.HTTPException) as error:
-                    if _host_unreachable(error):
+                    if _certificate_problem(error):
+                        raise
+                    if isinstance(error, HTTPError) and error.code == 416 and have and not restarted:
+                        target.unlink(missing_ok=True)    # a kept partial longer than the file: start it again
+                        restarted = True
+                        continue
+                    if not isinstance(error, HTTPError):
+                        misses += 1
+                    if _host_unreachable(error) or misses >= STORAGE_MISSES:
                         via_site = True              # storage can't be reached from here: through ChannelRecipe
                     else:
-                        if attempt and newer and isinstance(error, HTTPError) and error.code in (400, 403):
+                        if tries > 1 and newer and isinstance(error, HTTPError) and error.code in (400, 403):
                             raise UpdateStopped(NEWER_RELEASE) from None
-                        if attempt + 1 == attempts or _certificate_problem(error):
+                        if last:
                             raise
+                        stalled += 1
                         continue                     # refused (an expired link) or dropped: a fresh link next time
             if via_site:
                 try:
                     response = get(site, {**auth, "Range": "bytes=%d-" % have} if have else auth)
                 except (HTTPError, URLError, OSError, http.client.HTTPException) as error:
-                    if (attempt + 1 == attempts or _certificate_problem(error)
+                    if isinstance(error, HTTPError) and error.code == 416 and have and not restarted:
+                        target.unlink(missing_ok=True)
+                        restarted = True
+                        continue
+                    if (last or _certificate_problem(error)
                             or isinstance(error, HTTPError) and error.code in (401, 402, 403, 404)):
                         raise
+                    stalled += 1
                     continue
             if response is not None:
                 if have and size and _status(response) == 206 and _range_total(response) not in (None, size):
                     raise UpdateStopped(NEWER_RELEASE)
             else:
-                response, have = (first if attempt == 0 else get(base + path, auth)), 0
+                response, have = (first if tries == 1 else get(base + path, auth)), 0
             if have and _status(response) != 206:
                 have = 0  # the server ignored the range; start again
+            if have and size is None:                # carrying on from an earlier run's partial file
+                size = _range_total(response)
+                expected_sha = response.headers.get("x-amz-meta-sha256")
             if not have:
                 size = int(response.headers.get("Content-Length") or 0) or None
                 expected_sha = response.headers.get("x-amz-meta-sha256")
             with open(target, "ab" if have else "wb") as out:
-                try:
-                    shutil.copyfileobj(response, out, 1024 * 1024)
-                except (OSError, http.client.HTTPException):
-                    pass  # resume on the next attempt
-            if size is None or target.stat().st_size >= size:
+                _copy(response, out, have, size, progress)
+            got = target.stat().st_size
+            if size is None or got >= size:
+                break
+            stalled = 0 if got > best else stalled + 1
+            best = max(best, got)
+            if stalled >= attempts or tries >= attempts * 25:
                 break
         if size is not None and target.stat().st_size != size:
             raise UpdateStopped("The download kept getting interrupted. Nothing was changed; check your "
                                 "connection and try again.")
         if expected_sha and _digest(target) != expected_sha.strip().lower():
+            target.unlink(missing_ok=True)           # never resumed from: the next try starts clean
             raise UpdateStopped("The download didn't match the published release. Nothing was changed; try again.")
     except UpdateStopped:
         raise
@@ -221,6 +257,27 @@ def download(base: str, key: str, target: Path, get=http_get, attempts: int = 6,
         if _certificate_problem(error):
             raise UpdateStopped(CERTIFICATE_HELP) from None
         raise UpdateStopped("The download was interrupted. Nothing was changed; check your connection and try again.") from None
+
+
+def _copy(response, out, done: int, size: int | None, progress) -> None:
+    """Copy one response into the file; a drop keeps what arrived (the next try resumes from it)."""
+    step = max(32 << 20, (size or 0) // 10)
+    mark = done + step
+    try:
+        while True:
+            chunk = response.read(1 << 20)
+            if not chunk:
+                return
+            out.write(chunk)
+            done += len(chunk)
+            if progress and done >= mark:
+                mark = done + step
+                try:
+                    progress(done, size)
+                except Exception:                    # noqa: BLE001 - progress is only a courtesy
+                    pass
+    except (OSError, http.client.HTTPException):
+        pass
 
 
 def _host_unreachable(error) -> bool:
@@ -375,12 +432,17 @@ def stage_changes(home: Path, base: str, key: str, staging: Path, expected: str,
     location = _signed_location(first)
     if not location:
         raise _NoRanges()
-    via = {}
-    try:
-        probe = get(location, {"Range": "bytes=0-0"})
-    except (URLError, OSError) as error:
-        if not _host_unreachable(error):
-            raise
+    via, probe = {}, None
+    for miss in range(STORAGE_MISSES):
+        try:
+            probe = get(location, {"Range": "bytes=0-0"})
+            break
+        except (URLError, OSError) as error:
+            if isinstance(error, HTTPError) or _certificate_problem(error):
+                raise
+            if _host_unreachable(error) or miss + 1 == STORAGE_MISSES:
+                break
+    if probe is None:
         location, via = base + "/api/studio/download/file", auth      # storage can't be reached: through ChannelRecipe
         probe = get(location, {**via, "Range": "bytes=0-0"})
     total = int((probe.headers.get("Content-Range") or "").rpartition("/")[2] or 0) if _status(probe) == 206 else 0

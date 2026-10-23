@@ -1,5 +1,15 @@
 [
   {
+    "build": 92,
+    "date": "2026-10-23",
+    "title": "Downloads that finish, whatever your connection",
+    "items": [
+      "Fixed: the Shorts pack now downloads on connections that block our storage. Some internet providers cut every connection to it, so the first Short stopped; Studio now gets the same file through channelrecipe.com instead.",
+      "Fixed: a Shorts pack download that stops keeps what arrived. Resume carries on from there instead of starting the 400 MB again, and the project shows how far it got.",
+      "Fixed: a connection that keeps dropping still finishes. Studio keeps going while each try gets further, for the Shorts pack and for updates."
+    ]
+  },
+  {
     "build": 91,
     "date": "2026-10-23",
     "title": "Smoother setup: a one-click fix for the graphics browser",
