@@ -76,7 +76,9 @@ class FakeStudio:
         if path == "/api/offers/pack":
             return {"pack": {"ideas": [{"title": "Pantry Book", "promise": "Cook from the cupboard", "kind": "cookbook"},
                                        {"title": "Money Basics", "promise": "Fix your money", "kind": "lesson-book"}],
-                             "names": [{"name": "Cupboard Chef"}], "domains": ["cupboardchef.com"],
+                             "names": [{"name": "Cupboard Chef"}],
+                             "domains": [{"domain": "cupboardchef.com", "free": True},
+                                         {"domain": "pantry.com", "free": False}],
                              "pricing": {"launch_usd": 29}, "launch": ["Buy the domain"], "file": "/x/pack.json"}}
         if path == "/api/products/build":
             return {"slug": "pantry-book"}
@@ -524,7 +526,8 @@ def test_combine_preview_merges_channels_into_one_saved_preview(tmp_path, monkey
 
 def test_product_ideas_then_build_by_number(studio):
     out = ok("product_ideas", {"about": "cheap cooking for students"})
-    assert [i["title"] for i in out["ideas"]] == ["Pantry Book", "Money Basics"] and out["free_domains"]
+    assert [i["title"] for i in out["ideas"]] == ["Pantry Book", "Money Basics"]
+    assert out["free_domains"] == ["cupboardchef.com"] and out["taken_domains"] == ["pantry.com"]
     assert studio.posted("/api/offers/pack")[0]["instructions"] == "cheap cooking for students"
     assert tools.run_tool("build_product", {"idea_number": 3})["isError"]
     built = ok("build_product", {"idea_number": 1, "domain": "cupboardchef.com"})

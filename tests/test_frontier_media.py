@@ -461,3 +461,61 @@ def test_a_style_picture_model_goes_first_unless_the_creator_chose_another(hub, 
 
 def test_pictures_run_four_at_a_time_and_other_tasks_two():
     assert media._slots["images"]._value == 4 and media._other_slots._value == 2
+
+
+def _voice_engine():
+    words = [SimpleNamespace(word="Hello", start=0.1, end=0.4), SimpleNamespace(word="world.", start=0.5, end=0.8)]
+    return SimpleNamespace(log=lambda *_: None, _get_whisper=lambda: SimpleNamespace(
+        transcribe=lambda *a, **k: ([SimpleNamespace(words=words)], None)),
+        _srt_ts=lambda n: "00:00:00," + str(int(n * 1000)).zfill(3), _script_words_into_srt=lambda *a: None)
+
+
+KIE_INTERNAL = {"state": "fail", "failCode": "500", "failMsg": "Internal Error, Please try again later", "creditsConsumed": 0}
+
+
+def test_uncharged_kie_narration_internal_error_is_tried_again(hub, monkeypatch):
+    creates = kie_tasks(monkeypatch, [KIE_INTERNAL, "success"])
+    monkeypatch.setattr(media, "narration_audio", lambda path: [0.0])
+    pauses = []
+    monkeypatch.setattr(media.time, "sleep", lambda s: pauses.append(s))
+    media.narrate(_voice_engine(), "Hello world.", hub / "audio.mp3", hub / "subs.srt")
+    assert len(creates) == 2 and (hub / "audio.mp3").read_bytes() == b"generated media"
+    assert 30 in pauses
+    receipts = sorted(p.name for p in (hub / "audio-hub-voice" / ".cr-tasks").glob("*.json"))
+    assert len(receipts) == 2 and any(".failed-" in r for r in receipts)        # the failed receipt is kept
+
+
+def test_narration_stops_after_three_uncharged_failures_and_resume_tries_again(hub, monkeypatch):
+    creates = kie_tasks(monkeypatch, [KIE_INTERNAL] * 3 + ["success"])
+    monkeypatch.setattr(media, "narration_audio", lambda path: [0.0])
+    with pytest.raises(media.TaskFailed, match="Kie charged nothing for it.*Resume saved project"):
+        media.narrate(_voice_engine(), "Hello world.", hub / "audio.mp3", hub / "subs.srt")
+    assert len(creates) == 3
+    media.narrate(_voice_engine(), "Hello world.", hub / "audio.mp3", hub / "subs.srt")   # the creator's Resume
+    assert len(creates) == 4
+
+
+@pytest.mark.parametrize("state", [
+    {"state": "fail", "failCode": "500", "failMsg": "Internal Error, Please try again later"},          # charge unknown
+    {"state": "fail", "failCode": "500", "failMsg": "Internal Error, Please try again later", "creditsConsumed": 1.2},
+    {"state": "fail", "failCode": "422", "failMsg": "Flagged as sensitive", "creditsConsumed": 0},
+    {"state": "fail", "failCode": "402", "failMsg": "Insufficient credits", "creditsConsumed": 0},
+    {"state": "fail", "failCode": "422", "failMsg": "generate playground failed, task id is blank", "creditsConsumed": 0},
+    {"state": "fail", "failCode": "400", "failMsg": "Text too long", "creditsConsumed": 0}])
+def test_other_narration_failures_never_submit_again(hub, monkeypatch, state):
+    creates = kie_tasks(monkeypatch, [state, "success"])
+    monkeypatch.setattr(media, "narration_audio", lambda path: [0.0])
+    for _ in range(2):
+        with pytest.raises(media.TaskFailed):
+            media.narrate(_voice_engine(), "Hello world.", hub / "audio.mp3", hub / "subs.srt")
+    assert len(creates) == 1
+
+
+def test_uncharged_image_failures_keep_their_own_model_fallbacks(hub, monkeypatch):
+    receipt = {"status": "failed", "id": "t", "credits": 0, "failure_code": "500", "failure_message": "Internal error"}
+    assert media.fresh_attempt_ok("kie", "narration", receipt)
+    assert not media.fresh_attempt_ok("kie", "images", receipt)
+    assert not media.fresh_attempt_ok("atlas", "narration", receipt)
+    assert not media.fresh_attempt_ok("kie", "narration", {**receipt, "rejected": True})
+    assert not media.fresh_attempt_ok("kie", "narration", {**receipt, "id": None})
+    assert not media.fresh_attempt_ok("kie", "narration", {**receipt, "credits": True})
