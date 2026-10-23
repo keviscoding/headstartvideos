@@ -16,7 +16,7 @@ def main():
     if not re.fullmatch(r"crv_[a-f0-9]{24}",args.project):
         parser.error("Use the project ID returned by ChannelRecipe.")
     try:
-        control=json.loads((HOME/".cr-runtime.json").read_text())
+        control=json.loads((HOME/".cr-runtime.json").read_text(encoding="utf-8"))
         response=requests.post("http://127.0.0.1:7860/cr-submit-project",json={"project_id":args.project},
             headers={"X-CR-Local-Token":control["token"]},timeout=(5,90),allow_redirects=False)
         data=response.json()

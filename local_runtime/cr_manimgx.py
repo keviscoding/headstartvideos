@@ -779,14 +779,14 @@ def _accepted_response(directory, saved, context, assets):
                 or proof.get("failed_receipt_sha256") != _file_hash(paths[3])
                 or record.get("source_sha256") != saved.get("source_sha256")
                 or record.get("response_sha256") != _file_hash(paths[2])
-                or _compiler_result(paths[2].read_text(), context, assets) != saved["result"]):
+                or _compiler_result(paths[2].read_text(encoding="utf-8"), context, assets) != saved["result"]):
             raise RuntimeError("The accepted native recovery evidence changed before reuse.")
         return {"kind": "reviewed_native_quota_recovery", "proof": proof,
                 "receipt_sha256": _file_hash(paths[1]), "response_sha256": _file_hash(paths[2])}
     journal = _read(directory / "compile-attempts.json")
     if journal.get("key") == key and journal.get("state") == "validated" and journal.get("calls") in (1, 2):
         raw_path = directory / f"compiler-response-{journal['calls']}.txt"
-        if not _regular(raw_path) or _compiler_result(raw_path.read_text(), context, assets) != saved["result"]:
+        if not _regular(raw_path) or _compiler_result(raw_path.read_text(encoding="utf-8"), context, assets) != saved["result"]:
             raise RuntimeError("The accepted graphics response changed before format reuse.")
         return {"kind": "native_compile", "journal_sha256": _file_hash(directory / "compile-attempts.json"),
                 "response_sha256": _file_hash(raw_path)}
@@ -799,7 +799,7 @@ def _accepted_response(directory, saved, context, assets):
             and recovery.get("state") == "corrected"
             and recovery.get("corrected_source_sha256") == saved.get("source_sha256")):
         raw_path = directory / "compiler-correction-response-1.txt"
-        if not _regular(raw_path) or _compiler_result(raw_path.read_text(), context, assets) != saved["result"]:
+        if not _regular(raw_path) or _compiler_result(raw_path.read_text(encoding="utf-8"), context, assets) != saved["result"]:
             raise RuntimeError("The accepted graphics correction changed before format reuse.")
         return {"kind": "native_corrected_recovery", "proof": proof,
                 "receipt_sha256": _file_hash(directory / "recovery.json"), "response_sha256": _file_hash(raw_path)}
@@ -823,7 +823,7 @@ def _accepted_response(directory, saved, context, assets):
                 if (correction.get("key") != key or correction.get("state") != "validated"
                         or correction.get("calls") != 1 or correction.get("recovery_proof") != proof
                         or not _regular(raw_path)
-                        or _compiler_result(raw_path.read_text(), context, assets) != saved["result"]
+                        or _compiler_result(raw_path.read_text(encoding="utf-8"), context, assets) != saved["result"]
                         or corrected_manifest.get("typed") is not True
                         or corrected_manifest.get("key") != key
                         or corrected_manifest.get("result") != saved["result"]
@@ -1087,7 +1087,7 @@ def _revision_start(context, ready, directory, key, owner):
         result = _compiler_result(json.dumps(saved.get("result")), previous, old_assets)
         source_hash = hashlib.sha256(result["source"].encode()).hexdigest()
         acceptance = _accepted_response(old, saved, previous, old_assets)
-        native = _revision_native_result(raw_path.read_text(), owner)
+        native = _revision_native_result(raw_path.read_text(encoding="utf-8"), owner)
         if native is None or provenance.get("native") != native:
             continue
         if saved.get("source_sha256") != source_hash or _file_hash(source) != source_hash:
@@ -1097,7 +1097,7 @@ def _revision_start(context, ready, directory, key, owner):
         if (any(not _revision_regular(Path(path), cache) or _file_hash(Path(path)) != digest
                 for path, digest in hashes.items())
                 or _accepted_response(old, _read(manifest), previous, old_assets) != acceptance
-                or _revision_native_result(raw_path.read_text(), owner) != native):
+                or _revision_native_result(raw_path.read_text(encoding="utf-8"), owner) != native):
             raise RuntimeError("The previous scene evidence changed during API validation. No revision request was started.")
         lineage = {"version": _REVISION_VERSION, "source_key": old.name,
             "source_sha256": source_hash, "source_manifest_sha256": hashes[str(manifest)],

@@ -66,7 +66,7 @@ def main():
     cr_shorts.install(engine)
     if mode=="claudecode":
         progress=cr_bridge.project_progress(args.project)
-        version=json.loads((HOME/"cr-release.json").read_text())["version"]
+        version=json.loads((HOME/"cr-release.json").read_text(encoding="utf-8"))["version"]
         current=cr_bridge.call("status")["production_workflow"]
         workflow=progress["workflow"]
         compatible=version==workflow["required_release"] or (version==current["required_release"] and
@@ -79,7 +79,7 @@ def main():
         cr_bridge._project=cr_bridge.call("projects/"+args.project)
     checks={**cr_studio.graphics_ready(),"python":sys.version_info >= (3,10),"ffmpeg":cr_studio.video_tools_ready(),
         "node":cr_studio.tool_ready("node","--version") or cr_studio.tool_ready("deno","--version"),
-        "local_version":json.loads((HOME/"cr-release.json").read_text())["version"],"account":cr_bridge.call("status")}
+        "local_version":json.loads((HOME/"cr-release.json").read_text(encoding="utf-8"))["version"],"account":cr_bridge.call("status")}
     ready=cr_readiness.basic(checks)
     if not ready["ready"]:
         raise RuntimeError("Finish setup before starting this worker: "+" ".join(ready["blockers"]))

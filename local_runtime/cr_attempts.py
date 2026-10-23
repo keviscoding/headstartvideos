@@ -11,7 +11,7 @@ def owned_slug(engine, project_id):
     matches = []
     for job in engine.list_jobs():
         try:
-            if json.loads((Path(job) / "cr-project.json").read_text()).get("id") == project_id:
+            if json.loads((Path(job) / "cr-project.json").read_text(encoding="utf-8")).get("id") == project_id:
                 matches.append(Path(job).name)
         except (OSError, ValueError, AttributeError):
             pass

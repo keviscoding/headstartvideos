@@ -611,3 +611,18 @@ def test_a_stopped_video_is_listed_and_resumed_by_its_saved_project(studio):
     refused = tools.run_tool("resume_video", {"id": "video:done--abc"})
     assert refused["isError"] and "can't be resumed" in refused["structuredContent"]["error"]
     assert len(studio.posted("/cr-submit-project")) == 1
+
+
+def test_setup_check_says_why_the_graphics_browser_isnt_ready_and_the_fix_runs_in_studio(studio, monkeypatch):
+    calls = []
+    real_call = tools.call
+
+    def call(method, path, body=None, **kw):
+        calls.append((method, path))
+        if path == "/cr-setup/fix-browser":
+            return {"state": "installing"}
+        return real_call(method, path, body, **kw)
+    monkeypatch.setattr(tools, "call", call)
+    out = ok("fix_graphics_browser", {})
+    assert out["state"] == "installing" and ("POST", "/cr-setup/fix-browser") in calls
+    assert "fix_graphics_browser" in ccc.FREE_TOOLS, "free and pre-approved: it only installs Studio's own browser"

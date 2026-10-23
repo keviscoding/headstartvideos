@@ -115,7 +115,7 @@ def _saved_jobs(home):
         if marker.is_symlink() or not marker.resolve().is_relative_to(output):
             continue
         try:
-            saved = json.loads(marker.read_text())
+            saved = json.loads(marker.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
         if not isinstance(saved, dict):
@@ -142,7 +142,7 @@ def install(studio, activity, *, home, readiness=None):
 
     def recovery_status():
         try:
-            result = json.loads(recovery_path.read_text())
+            result = json.loads(recovery_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {}
         if not isinstance(result, dict):
@@ -189,7 +189,7 @@ def install(studio, activity, *, home, readiness=None):
     def renderer_status():
         with activity.lock:
             try:
-                state = json.loads(state_path.read_text())
+                state = json.loads(state_path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 state = {"state": "not_installed", "message": "Optional. The standard renderer is ready to use with your normal setup."}
             running = worker["thread"] is not None and worker["thread"].is_alive()

@@ -86,7 +86,7 @@ def sync_receipts(bridge):
     saved=0
     for path in list((Path(bridge.HOME)/"output/cr-claude-cache").glob("*/*.json")):
         try:
-            data=json.loads(path.read_text())
+            data=json.loads(path.read_text(encoding="utf-8"))
             if data.get("state") not in {"complete_local","failed_local"} or not data.get("receipt"):
                 continue
             bridge.finish_stage(data["receipt"])
@@ -392,12 +392,12 @@ class Runtime:
         if expected is not None and expected != (project_id, stage_id):
             raise ClaudeStageStopped("The recovered request changed. No replacement stage was authorized or executed.")
         try:
-            installed_version=json.loads((Path(self.bridge.HOME)/"cr-release.json").read_text())["version"]
+            installed_version=json.loads((Path(self.bridge.HOME)/"cr-release.json").read_text(encoding="utf-8"))["version"]
         except (OSError,ValueError,KeyError):
-            installed_version=cfg.get("local_version","5.3-admin.90")
+            installed_version=cfg.get("local_version","5.3-admin.91")
         cache = Path(self.bridge.HOME) / "output" / "cr-claude-cache" / project_id / (stage_id + ".json")
         try:
-            saved = json.loads(cache.read_text())
+            saved = json.loads(cache.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             saved = {}
         stage = {"project_id": project_id, "stage_id": stage_id, "input_fingerprint": fingerprint,
@@ -551,7 +551,7 @@ def install(engine, bridge):
 
 def _verification_workflow(root=None):
     try:
-        release = json.loads((Path(root or HOME)/"cr-release.json").read_text())
+        release = json.loads((Path(root or HOME)/"cr-release.json").read_text(encoding="utf-8"))
         workflow, source = release["workflow_version"], release["source_sha256"]
         if not isinstance(workflow, str) or not workflow or not re.fullmatch(r"[a-f0-9]{64}", source):
             return {}
@@ -574,7 +574,7 @@ def _verification_identity_for_workflow(settings, local, workflow):
 
 def _verification_marker(settings, local, *, root=None):
     try:
-        marker = json.loads((Path(root or HOME)/".cr-claude-verified.json").read_text())
+        marker = json.loads((Path(root or HOME)/".cr-claude-verified.json").read_text(encoding="utf-8"))
         verified_at = marker.get("verified_at", 0)
         if (not local.get("ready") or not isinstance(verified_at, (int, float))
                 or not 0 <= time.time()-verified_at < 86400):
@@ -679,7 +679,7 @@ def verify_models(engine, bridge, proof):
     marker = Path(bridge.HOME)/".cr-claude-probe.json"
     identity = _verification_identity(cfg,local,root=bridge.HOME)
     try:
-        previous = json.loads(marker.read_text())
+        previous = json.loads(marker.read_text(encoding="utf-8"))
     except (OSError,ValueError):
         previous = {}
     verified = _verification_marker(cfg,local,root=bridge.HOME)

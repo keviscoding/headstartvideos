@@ -113,7 +113,7 @@ def save(files, root: Path = None) -> dict:
     folder = root / set_id
     summary = folder / "set.json"
     if summary.is_file():
-        return json.loads(summary.read_text())
+        return json.loads(summary.read_text(encoding="utf-8"))
     tmp = root / (set_id + ".tmp")
     tmp.mkdir(parents=True, exist_ok=True)
     count = 0
@@ -135,7 +135,7 @@ def save(files, root: Path = None) -> dict:
     if folder.exists():
         import shutil
         shutil.rmtree(tmp, ignore_errors=True)
-        return json.loads(summary.read_text())
+        return json.loads(summary.read_text(encoding="utf-8"))
     tmp.rename(folder)
     return info
 
@@ -145,7 +145,7 @@ def panel_set(set_id: str, root: Path = None) -> dict:
         raise ValueError("Upload your panels again.")
     folder = Path(root or ROOT) / set_id
     try:
-        info = json.loads((folder / "set.json").read_text())
+        info = json.loads((folder / "set.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         raise ValueError("Those panels are not on this computer any more. Upload them again.") from None
     info["files"] = sorted(str(p) for p in folder.glob("[0-9][0-9][0-9][0-9].jpg"))
@@ -157,7 +157,7 @@ def recent(root: Path = None, limit: int = 12) -> list:
     rows = []
     for f in folder.glob("ps_*/set.json") if folder.is_dir() else []:
         try:
-            rows.append(json.loads(f.read_text()))
+            rows.append(json.loads(f.read_text(encoding="utf-8")))
         except (OSError, ValueError):
             continue
     return sorted(rows, key=lambda r: -float(r.get("created") or 0))[:limit]
@@ -238,7 +238,7 @@ def _json_list(text: str) -> list:
 
 def read_panels(files: list, see, cache: Path, log=print) -> list:
     """[{panel, what}] for every panel, read a few at a time; cached so a resumed job never reads twice."""
-    saved = json.loads(cache.read_text()) if cache.is_file() else {}
+    saved = json.loads(cache.read_text(encoding="utf-8")) if cache.is_file() else {}
     rows = {int(r["panel"]): r for r in saved.get("panels", []) if isinstance(r, dict) and "panel" in r}
     for a in range(0, len(files), BATCH):
         batch = list(range(a + 1, min(len(files), a + BATCH) + 1))
@@ -320,7 +320,7 @@ def visuals(engine, script: str, job, log=print) -> tuple:
     rows = read_panels(files, lambda p, imgs: engine.claude_vision(p, imgs, max_tokens=4000),
                        job / "panel_log.json", log)
     tied_f = job / "panel_story.json"
-    tied = json.loads(tied_f.read_text()) if tied_f.is_file() else None
+    tied = json.loads(tied_f.read_text(encoding="utf-8")) if tied_f.is_file() else None
     if not tied:
         tied = tie(script, rows, lambda prompt: engine.claude(prompt, engine.SCRIPT_MODEL, max_tokens=16000,
                                                               provider=getattr(engine, "SCRIPT_PROVIDER", None)))

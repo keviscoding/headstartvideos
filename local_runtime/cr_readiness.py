@@ -33,7 +33,7 @@ def basic(checks, *, verify_mcp=True):
             account.get("supported_versions") or [account.get("version")]),
              "A new Studio is out. Press Update now at the top of the studio page: it keeps your projects."),
         item("ffmpeg", "Video and caption tools", checks.get("ffmpeg"), "Install FFmpeg with subtitles, H.264, AAC and MP3 support, then reopen the launcher."),
-        item("browser", "Graphics browser", checks.get("browser"), "Reopen the launcher to install its graphics browser."),
+        item("browser", "Graphics browser", checks.get("browser"), checks.get("browser_reason") or "Open Setup and press Fix it next to Graphics browser."),
         item("node", "JavaScript runtime", checks.get("node"), "Install Node.js LTS, then reopen the launcher.")]
     cli = cr_claude.status()
     cli.update(models=[{"id":m,"label":"Claude Opus 5.5" if "opus" in m else "Claude Sonnet 5.5"} for m in cr_claude.MODELS],

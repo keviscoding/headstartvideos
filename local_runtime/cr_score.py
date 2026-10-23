@@ -109,7 +109,7 @@ def generate(inputs: dict, dest: Path, *, log=print, timeout_s=900, post=None, g
                                    sort_keys=True).encode()).hexdigest()[:24]
     marker = dest.parent / ".cr-tasks" / f"{dest.stem}-{fp}.json"
     takes = [dest.with_name(f"{dest.stem}_take{i + 1}.mp3") for i in range(2)]
-    receipt = json.loads(marker.read_text()) if marker.is_file() else {}
+    receipt = json.loads(marker.read_text(encoding="utf-8")) if marker.is_file() else {}
     if receipt.get("status") == "complete" and all(t.is_file() for t in takes[:receipt.get("takes", 2)]):
         return takes[:receipt.get("takes", 2)]
     if receipt.get("status") == "failed":

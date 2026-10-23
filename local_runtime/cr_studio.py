@@ -338,29 +338,69 @@ def output_artifacts(engine, job):
 
 
 def graphics_ready():
+    """Can the graphics browser draw? With the reason when it can't, so setup (and the creator's Claude Code) can say
+    what to do instead of a bare "needs attention". A working browser is checked again in five minutes; a broken one
+    every time, so a fix shows at once (a cached failure used to look like the fix hadn't worked)."""
     if _graphics_check.get("expires",0)>time.monotonic():
         return _graphics_check["result"]
-    result={"browser":False,"webgl":False}
+    result={"browser":False,"webgl":False,"browser_reason":""}
     try:
         from playwright.sync_api import sync_playwright
-        with sync_playwright() as p:
-            if Path(p.chromium.executable_path).is_file():
-                browser=p.chromium.launch(headless=True,args=["--enable-unsafe-swiftshader"])
-                page=browser.new_page()
-                result=page.evaluate("""() => ({browser:!!document.createElement('canvas').getContext('2d'),webgl:!!document.createElement('canvas').getContext('webgl2')})""")
-                browser.close()
     except Exception:
-        pass
-    _graphics_check.update(result=result,expires=time.monotonic()+300)
+        result["browser_reason"]="The graphics browser's library isn't installed. Press Fix it next to Graphics browser."
+    else:
+        try:
+            with sync_playwright() as p:
+                if not Path(p.chromium.executable_path).is_file():
+                    result["browser_reason"]="The graphics browser isn't installed yet. Press Fix it to install it (a few minutes)."
+                else:
+                    browser=p.chromium.launch(headless=True,args=["--enable-unsafe-swiftshader"])
+                    page=browser.new_page()
+                    result.update(page.evaluate("""() => ({browser:!!document.createElement('canvas').getContext('2d'),webgl:!!document.createElement('canvas').getContext('webgl2')})"""))
+                    browser.close()
+                    if not result.get("browser"):
+                        result["browser_reason"]="The graphics browser started but couldn't draw. Press Fix it to reinstall it."
+        except Exception as error:
+            first=(str(error).strip().splitlines() or [type(error).__name__])[0][:160]
+            result["browser_reason"]=f"The graphics browser won't start ({first}). Press Fix it to reinstall it."
+    _graphics_check.update(result=result,expires=time.monotonic()+(300 if result.get("browser") else 0))
     return result
+
+
+BROWSER_FIX = {"state": "idle", "tail": ""}
+_browser_fix_lock = threading.Lock()
+
+
+def fix_graphics_browser():
+    """Install (or reinstall) the graphics browser into this Studio's own Python, in the background. The launcher used
+    to do this only on its very first run, so "reopen the launcher" never repaired a missing browser."""
+    with _browser_fix_lock:
+        if BROWSER_FIX["state"] == "installing":
+            return dict(BROWSER_FIX)
+        BROWSER_FIX.update(state="installing", tail="")
+
+    def work():
+        try:
+            run = subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"],
+                                 capture_output=True, text=True, timeout=1800)
+            ok, tail = run.returncode == 0, ((run.stdout or "") + (run.stderr or ""))[-1500:]
+        except Exception as error:
+            ok, tail = False, f"{type(error).__name__}: {error}"[:500]
+        _graphics_check.clear()
+        ready = bool(ok and graphics_ready().get("browser"))
+        BROWSER_FIX.update(state="done" if ready else "failed",
+                           tail="" if ready else (tail or (graphics_ready().get("browser_reason") or "")))
+    started = dict(BROWSER_FIX)
+    threading.Thread(target=work, daemon=True, name="cr-fix-browser").start()
+    return started
 
 
 def sync_completion_receipt(bridge, pending):
     """Sync metadata, retaining evidence when an old repeat contradicted success."""
-    receipt = json.loads(pending.read_text())
+    receipt = json.loads(pending.read_text(encoding="utf-8"))
     saved_path = pending.with_name(".cr-finish.json")
     try:
-        saved = json.loads(saved_path.read_text())
+        saved = json.loads(saved_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         saved = {}
     if (receipt.get("status") == "failed" and saved.get("status") == "done"
@@ -534,7 +574,7 @@ def create_app():
 
     @studio.app.get("/cr-setup")
     def setup_page():
-        text = (HOME / "cr_setup.html").read_text()
+        text = (HOME / "cr_setup.html").read_text(encoding="utf-8")
         return Response(text.replace("__LOCAL_TOKEN__", token), mimetype="text/html", headers={"Cache-Control": "no-store"})
 
     # The full check runs Claude Code, its tools list and an account call: about 2.5 s. Pages that only need to draw
@@ -600,7 +640,7 @@ def create_app():
                             "model": plan[0] if plan else "", "fallbacks": plan[1:],
                             "connected": bool(image_cfg and os.getenv(cr_media.PROVIDERS[image_cfg["provider"]]["key_env"]))}
         try:
-            checks["local_version"] = json.loads((HOME / "cr-release.json").read_text())["version"]
+            checks["local_version"] = json.loads((HOME / "cr-release.json").read_text(encoding="utf-8"))["version"]
         except (OSError, ValueError, KeyError):
             checks["local_version"] = "development"
         readiness = cr_readiness.basic(checks)
@@ -686,7 +726,7 @@ def create_app():
                 if cfg.get("brain_mode") == "claudecode":
                     cr_claude.preserve_model_verification(cfg,local)
                 cfg.update(cr_claude.select_profile(data.get("general_model"),data.get("visual_model")))
-                cfg["local_version"]=json.loads((HOME/"cr-release.json").read_text())["version"]
+                cfg["local_version"]=json.loads((HOME/"cr-release.json").read_text(encoding="utf-8"))["version"]
                 cfg.pop("setup_proof",None)
                 cr_bridge.save_settings(cfg)
                 cr_bridge.install(studio.mv)
@@ -753,6 +793,14 @@ def create_app():
         except Exception as e:
             return jsonify(error=str(e)), 400
         return jsonify(connected=True, brain_connected=bool(status.get("brain", {}).get("connected")))
+
+    @studio.app.post("/cr-setup/fix-browser")
+    def fix_browser_route():
+        return jsonify(fix_graphics_browser()), 202
+
+    @studio.app.get("/cr-setup/fix-browser")
+    def fix_browser_status():
+        return jsonify(dict(BROWSER_FIX))
 
     @studio.app.get("/cr-diagnostics")
     def diagnostics():
@@ -1258,8 +1306,8 @@ def create_app():
                     if entry:
                         preset={"style":name,"tab":entry.get("tab","production")}
                         try:
-                            checked=json.loads((HOME/".cr-setup-proof.json").read_text())
-                            if checked.get("style")==name and checked.get("setup",{}).get("local_version")==json.loads((HOME/"cr-release.json").read_text())["version"]:
+                            checked=json.loads((HOME/".cr-setup-proof.json").read_text(encoding="utf-8"))
+                            if checked.get("style")==name and checked.get("setup",{}).get("local_version")==json.loads((HOME/"cr-release.json").read_text(encoding="utf-8"))["version"]:
                                 preset["features"]=checked.get("features",{})
                         except (OSError,ValueError,KeyError):
                             pass
@@ -1270,10 +1318,10 @@ def create_app():
             text = text.replace("</head>", patch + "</head>", 1)
             text = text.replace("<body>", '<body><a href="/cr-setup" style="display:block;background:#171B2E;color:#EDEEF5;padding:12px 24px;font:14px system-ui;text-decoration:none">ChannelRecipe · Setup &amp; accounts</a>', 1)
             if request.path == "/":
-                text=text.replace("</body>",(HOME/"cr_renderer_panel.html").read_text()+"</body>",1)
+                text=text.replace("</body>",(HOME/"cr_renderer_panel.html").read_text(encoding="utf-8")+"</body>",1)
                 cancel_panel = HOME / "cr_video_cancel.html"
                 if cancel_panel.is_file():
-                    text=text.replace("</body>",cancel_panel.read_text()+"</body>",1)
+                    text=text.replace("</body>",cancel_panel.read_text(encoding="utf-8")+"</body>",1)
                 guard = """<style>#farm.cr-native-farm #farmSetup,#farm.cr-native-farm #farmBody{display:none!important}</style>
 <script>document.addEventListener('DOMContentLoaded',()=>{
  const go=document.getElementById('go');if(!go)return;
@@ -1348,7 +1396,7 @@ def create_app():
             else:
                 job = studio.mv.job_dir(title, style)
             marker = job / "cr-project.json"
-            previous = json.loads(marker.read_text()) if marker.is_file() else {}
+            previous = json.loads(marker.read_text(encoding="utf-8")) if marker.is_file() else {}
             if spec.get("timeline"):
                 for key in ("render_backend", "manimgx_identity"):
                     if key in (previous.get("job_spec") or {}):

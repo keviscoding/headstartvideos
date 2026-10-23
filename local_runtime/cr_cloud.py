@@ -154,7 +154,7 @@ def _guess_type(name: str) -> str:
 
 def _connection(home: Path = HOME) -> tuple[str, str]:
     try:
-        cfg = json.loads((home / ".cr-connection.json").read_text())
+        cfg = json.loads((home / ".cr-connection.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return "", ""
     key = str(cfg.get("key") or "")
@@ -213,7 +213,7 @@ def studio_settings(home: Path = HOME) -> dict:
     this Studio would. Never the account key or anything named like a secret: the machine's keys come only from the
     creator's render settings."""
     try:
-        cfg = json.loads((home / ".cr-connection.json").read_text())
+        cfg = json.loads((home / ".cr-connection.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
 
@@ -416,7 +416,7 @@ OVERLAY_SKIP_TOP = {"shorts", "models"}      # the Shorts pack and downloaded mo
 
 def release_version(home: Path = HOME) -> str:
     try:
-        return str(json.loads((home / "cr-release.json").read_text()).get("version") or "")
+        return str(json.loads((home / "cr-release.json").read_text(encoding="utf-8")).get("version") or "")
     except (OSError, ValueError):
         return ""
 
@@ -424,7 +424,7 @@ def release_version(home: Path = HOME) -> str:
 def overlay_files(home: Path, skip) -> list:
     """This Studio's own files: everything the farm would send that is not exactly as the release shipped it."""
     try:
-        shipped = json.loads((home / "cr-files.json").read_text()).get("files") or {}
+        shipped = json.loads((home / "cr-files.json").read_text(encoding="utf-8")).get("files") or {}
     except (OSError, ValueError):
         shipped = {}
     out = []
@@ -779,7 +779,7 @@ def _youtube_job(argv: list, root: Path) -> bool:
             return True
         if a == "--load-info-json" and i + 1 < len(argv):
             try:
-                info = json.loads(Path(argv[i + 1]).read_text())
+                info = json.loads(Path(argv[i + 1]).read_text(encoding="utf-8"))
                 return "youtube" in str(info.get("extractor") or info.get("webpage_url") or "").lower()
             except (OSError, ValueError):
                 return False
