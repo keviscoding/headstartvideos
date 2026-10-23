@@ -1,5 +1,14 @@
 [
   {
+    "build": 93,
+    "date": "2026-10-24",
+    "title": "3D and photo Shorts on Windows",
+    "items": [
+      "Fixed: 3D and photo Shorts now start on Windows. They stopped at the script with \"The system cannot find the file specified\", because they couldn't find Claude Code there; they now find it the way the rest of Studio does.",
+      "Fixed: 3D Shorts on Windows now get their captions. The captions file's path broke at the drive letter."
+    ]
+  },
+  {
     "build": 92,
     "date": "2026-10-23",
     "title": "Downloads that finish, whatever your connection",
