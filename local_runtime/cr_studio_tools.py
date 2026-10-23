@@ -107,6 +107,27 @@ def call(method: str, path: str, body=None, *, timeout: float = 60, wait_busy: f
         return payload
 
 
+def other_folder() -> str:
+    """The folder of the Studio answering on this computer when it isn't this one ('' when it is, or when an older
+    Studio can't say). Two copies of Studio can't run at once: the tools here must not act on another's projects."""
+    try:
+        running = str(call("GET", "/cr-claude-code/home", timeout=10).get("home") or "")
+    except Refused:
+        return ""
+    try:
+        return "" if not running or Path(running).resolve() == HOME.resolve() else running
+    except OSError:
+        return ""
+
+
+def same_studio() -> None:
+    elsewhere = other_folder()
+    if elsewhere:
+        raise Refused(f"The Studio running on this computer is the copy in \"{elsewhere}\", not this folder. Open "
+                      "Claude Code in that folder to use it (your projects and settings are there), or close it "
+                      "and start this folder's launcher. Keep one Studio folder: a second copy hides your projects.")
+
+
 def link(path: str) -> str:
     return PUBLIC + path
 
@@ -323,6 +344,12 @@ def tool_setup_check(args):
     except Closed:
         return {"running": False, "message": CLOSED,
                 "launcher": str(HOME / ("Start on Windows.cmd" if os.name == "nt" else "Start on Mac.command"))}
+    elsewhere = other_folder()
+    if elsewhere:
+        return {"running": True, "this_folder": False, "running_folder": elsewhere,
+                "message": f"The Studio running on this computer is the copy in \"{elsewhere}\", not this folder. "
+                           "Open Claude Code in that folder to make videos (your projects and settings are there), "
+                           "or close that Studio's launcher window and start this folder's launcher instead."}
     readiness = status.get("readiness") or {}
     claude = status.get("claude_code") or {}
     try:
@@ -344,6 +371,7 @@ def tool_setup_check(args):
 
 
 def tool_list_styles(args):
+    same_studio()
     cat = catalog()
     rows = list(cat.get("channels") or [])
     want = str(args.get("kind") or "all")
@@ -375,6 +403,7 @@ def tool_list_styles(args):
 
 
 def tool_get_style_pick(args):
+    same_studio()
     pick = str(args.get("pick_id") or "")
     if not _PICK.fullmatch(pick):
         raise Refused("Use the pick_id that list_styles returned.")
@@ -441,6 +470,7 @@ def video_payload(row: dict, titles: list, minutes: int, features: dict, options
 
 
 def tool_make_videos(args):
+    same_studio()
     titles = [str(t).strip() for t in (args.get("titles") or []) if str(t).strip()]
     if not titles:
         raise Refused("Give at least one title.")
@@ -678,6 +708,7 @@ def pick_references(eligible: list, count: int = 3) -> list:
 
 
 def tool_clone_style_look(args):
+    same_studio()
     urls = [str(u).strip() for u in (args.get("youtube_urls") or []) if str(u).strip()]
     url = str(args.get("youtube_url") or "").strip()
     if url and url not in urls:
@@ -719,6 +750,7 @@ def tool_clone_style_look(args):
 
 
 def tool_clone_style(args):
+    same_studio()
     look_id = str(args.get("look_id") or "")
     saved = _read(STATE / "looks.json").get(look_id)
     if not _LOOK.fullmatch(look_id) or not saved:
@@ -755,6 +787,7 @@ def tool_clone_style(args):
 
 
 def tool_product_ideas(args):
+    same_studio()
     about = str(args.get("about") or "").strip()
     channel = str(args.get("channel") or "").strip()
     if not about and not channel:
@@ -779,6 +812,7 @@ def tool_product_ideas(args):
 
 
 def tool_build_product(args):
+    same_studio()
     saved = _read(STATE / "last-pack.json")
     pack = saved.get("pack") or {}
     ideas = pack.get("ideas") or []

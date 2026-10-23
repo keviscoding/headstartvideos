@@ -80,6 +80,11 @@ the `studio` tools (mcp__studio__*) and the skills /make-videos, /clone-style, /
 Studio through its own checks, so nothing needs the Studio web page.
 
 - Start with `setup_check`. If Studio isn't running, ask them to open its launcher (step 4 above).
+- No `studio` tools in this session? Studio's tools load when a Claude Code session starts. If Studio, Node or
+  Python was installed or first started during this session, ask them to open a new Claude Code session in this
+  folder (or run /mcp in a terminal session), then carry on. Never drive the Studio web page instead.
+- `setup_check` says another folder's Studio is running: there is a second copy of Studio on this computer. Tell them
+  to use the folder it names (their projects are there), or close it and start this folder's launcher.
 - Styles: `list_styles` gives each style's id, description, thumbnail file and a `gallery_url` picker. Show the
   picker (in the Claude desktop app, in the Browser pane; in a terminal, `open_in_studio(page='gallery',
   id=pick_id, open_browser=true)`) and read the choice with `get_style_pick`.

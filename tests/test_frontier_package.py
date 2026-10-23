@@ -114,7 +114,12 @@ def test_workspace_browser_resources_ship_without_local_cache_or_secret_files(sy
             assert archive.read("ChannelRecipe studio/" + name).decode() == text
         assert not any(name.endswith((".json", ".log")) for name in archive.namelist()
                        if name not in {"ChannelRecipe studio/cr-release.json", "ChannelRecipe studio/cr-providers.json",
-                                       "ChannelRecipe studio/cr-branding.json", "ChannelRecipe studio/cr-files.json"})
+                                       "ChannelRecipe studio/cr-branding.json", "ChannelRecipe studio/cr-files.json",
+                                       "ChannelRecipe studio/.mcp.json", "ChannelRecipe studio/.claude/settings.json"})
+        # Claude Code's first-run setup ships too (the studio tools from the first session); never an account key
+        for name in ("ChannelRecipe studio/.mcp.json", "ChannelRecipe studio/.claude/settings.json"):
+            text = archive.read(name).decode()
+            assert "cr_mcp_" not in text and "Bearer" not in text and "channelrecipe.com" not in text
         assert not any("nested" in name for name in archive.namelist())
         # The updater's manifest lists every other shipped file with its exact hash.
         shipped = json.loads(archive.read("ChannelRecipe studio/cr-files.json"))["files"]
