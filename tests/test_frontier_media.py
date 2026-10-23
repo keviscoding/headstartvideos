@@ -495,8 +495,18 @@ def test_narration_stops_after_three_uncharged_failures_and_resume_tries_again(h
     assert len(creates) == 4
 
 
+def test_resume_tries_again_when_kie_did_not_say_what_the_failed_voice_cost(hub, monkeypatch):
+    unknown = {"state": "fail", "failCode": "500", "failMsg": "Internal Error, Please try again later"}
+    creates = kie_tasks(monkeypatch, [unknown, "success"])
+    monkeypatch.setattr(media, "narration_audio", lambda path: [0.0])
+    with pytest.raises(media.TaskFailed, match="press Resume saved project") as failed:
+        media.narrate(_voice_engine(), "Hello world.", hub / "audio.mp3", hub / "subs.srt")
+    assert "charged nothing" not in str(failed.value) and len(creates) == 1        # no automatic retry
+    media.narrate(_voice_engine(), "Hello world.", hub / "audio.mp3", hub / "subs.srt")   # the creator's Resume
+    assert len(creates) == 2
+
+
 @pytest.mark.parametrize("state", [
-    {"state": "fail", "failCode": "500", "failMsg": "Internal Error, Please try again later"},          # charge unknown
     {"state": "fail", "failCode": "500", "failMsg": "Internal Error, Please try again later", "creditsConsumed": 1.2},
     {"state": "fail", "failCode": "422", "failMsg": "Flagged as sensitive", "creditsConsumed": 0},
     {"state": "fail", "failCode": "402", "failMsg": "Insufficient credits", "creditsConsumed": 0},
@@ -519,3 +529,6 @@ def test_uncharged_image_failures_keep_their_own_model_fallbacks(hub, monkeypatc
     assert not media.fresh_attempt_ok("kie", "narration", {**receipt, "rejected": True})
     assert not media.fresh_attempt_ok("kie", "narration", {**receipt, "id": None})
     assert not media.fresh_attempt_ok("kie", "narration", {**receipt, "credits": True})
+    assert not media.fresh_attempt_ok("kie", "narration", {**receipt, "credits": None})
+    assert media.fresh_attempt_ok("kie", "narration", {**receipt, "credits": None}, asked=True)
+    assert not media.fresh_attempt_ok("kie", "narration", {**receipt, "credits": 3}, asked=True)
