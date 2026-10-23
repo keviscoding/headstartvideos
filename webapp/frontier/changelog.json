@@ -1,5 +1,15 @@
 [
   {
+    "build": 91,
+    "date": "2026-10-23",
+    "title": "Smoother setup: a one-click fix for the graphics browser",
+    "items": [
+      "Fixed: the graphics browser now has a one-click Fix it in Setup. Before, reopening the launcher never reinstalled it, so setup could keep saying it needed attention; Setup now also says why, and the launcher checks it on every start.",
+      "Fixed: two Windows setup bugs. The setup page could crash, and the graphics browser check could fail even when the browser worked.",
+      "New: Claude Code can fix the graphics browser for you. Open your Studio folder in Claude Code and ask it to finish setup."
+    ]
+  },
+  {
     "build": 90,
     "date": "2026-10-23",
     "title": "Stopped videos stay in Projects, ready to resume",

@@ -19,7 +19,7 @@ CANCEL_MESSAGE = "Cancelled on this computer. Saved media and caches are kept. R
 
 def _read(path):
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
 

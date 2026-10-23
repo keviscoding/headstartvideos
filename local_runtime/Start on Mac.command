@@ -32,6 +32,16 @@ if [ ! -f .venv/.cr-installed ]; then
   .venv/bin/python -m playwright install chromium || failed "The graphics browser could not finish installing. Check the error above and your connection, then reopen this launcher."
   touch .venv/.cr-installed
 fi
+# The graphics browser is checked on every start, not only the first: a missing one is installed again here.
+if ! .venv/bin/python -c 'import os, sys
+from playwright.sync_api import sync_playwright
+p = sync_playwright().start()
+ok = os.path.exists(p.chromium.executable_path)
+p.stop()
+sys.exit(0 if ok else 1)' >/dev/null 2>&1; then
+  echo "Installing the graphics browser. This can take a few minutes."
+  .venv/bin/python -m playwright install chromium || echo "The graphics browser could not install. Studio's setup page has a Fix it button for it."
+fi
 .venv/bin/python cr_studio.py
 cr_result=$?
 read -r -p "Press Return to close. "

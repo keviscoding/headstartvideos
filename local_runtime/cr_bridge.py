@@ -34,7 +34,7 @@ def workflow_view(result):
     if not isinstance(result, dict):
         return result
     try:
-        release = json.loads((HOME / "cr-release.json").read_text())
+        release = json.loads((HOME / "cr-release.json").read_text(encoding="utf-8"))
         target = release["workflow_version"]
         if hashlib.sha256(target.encode()).hexdigest() not in _WORKFLOW_NAMES:
             return result
@@ -94,7 +94,7 @@ def finish_project(payload):
 
 def load_settings():
     try:
-        return json.loads(SETTINGS.read_text())
+        return json.loads(SETTINGS.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
 
@@ -206,7 +206,7 @@ def begin_project(title, style, resume_id=None, *, proof=None, job_spec=None, pu
             identity = hashlib.sha256(json.dumps({"payload":payload,"account":cfg.get("key")},sort_keys=True).encode()).hexdigest()
             pending_path = HOME / ".cr-pending-begin.json"
             try:
-                pending = json.loads(pending_path.read_text())
+                pending = json.loads(pending_path.read_text(encoding="utf-8"))
             except (OSError,ValueError):
                 pending = {}
             begin_key = pending.get("begin_id") if pending.get("identity") == identity else "b_" + secrets.token_hex(16)
@@ -253,7 +253,7 @@ def think(prompt, max_tokens=8000, kind="text", images=None, model=None):
     receipt.parent.mkdir(parents=True, exist_ok=True)
     with _lock:
         try:
-            rows = json.loads(receipt.read_text())
+            rows = json.loads(receipt.read_text(encoding="utf-8"))
         except (ValueError, OSError):
             rows = {}
         rows[request_id] = {k: v for k, v in result.items() if k != "text"}

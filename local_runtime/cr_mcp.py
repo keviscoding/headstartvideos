@@ -215,7 +215,7 @@ def register(settings):
     url, key = _connection(settings)
     path = HOME / ".mcp.json"
     try:
-        data = json.loads(path.read_text()) if path.exists() else {}
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     except (OSError, ValueError):
         raise RuntimeError("The local MCP configuration needs attention. Back it up before reconnecting.") from None
     servers = data.setdefault("mcpServers", {})
@@ -231,7 +231,7 @@ def register(settings):
 def is_registered(settings):
     try:
         url,key=_connection(settings)
-        server=json.loads((HOME/".mcp.json").read_text()).get("mcpServers",{}).get("channelrecipe",{})
+        server=json.loads((HOME/".mcp.json").read_text(encoding="utf-8")).get("mcpServers",{}).get("channelrecipe",{})
         return server.get("url")==url and server.get("headers",{}).get("Authorization")=="Bearer "+key
     except (OSError,ValueError,RuntimeError):
         return False

@@ -1,5 +1,9 @@
 """Carry CR authorization into Frontier's original isolated Python workers."""
 from __future__ import annotations
+# asyncio first: on Windows it subclasses subprocess.Popen when it loads (asyncio.windows_utils). install() below
+# replaces subprocess.Popen with a function, and subclassing a function fails, which broke Playwright's graphics
+# browser inside Studio (found by a customer's Claude Code, 2026-10-23).
+import asyncio  # noqa: F401
 import os
 from pathlib import Path
 import subprocess

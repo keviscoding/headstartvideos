@@ -222,7 +222,7 @@ def finish(job, log=print) -> bool:
         return False
     stamp = job / "cta.json"
     mark = f"{video.stat().st_size}:{video.stat().st_mtime_ns}"
-    done = json.loads(stamp.read_text()) if stamp.is_file() else {}
+    done = json.loads(stamp.read_text(encoding="utf-8")) if stamp.is_file() else {}
     if done.get("video") != mark:
         total = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
                                       str(video)], capture_output=True, text=True, check=True).stdout.strip() or 0)

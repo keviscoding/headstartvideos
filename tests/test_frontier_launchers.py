@@ -11,6 +11,8 @@ import uuid
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1] / "local_runtime"
+BROWSER_CHECK = ["-c", "import os, sys\nfrom playwright.sync_api import sync_playwright\np = sync_playwright().start()\n"
+                       "ok = os.path.exists(p.chromium.executable_path)\np.stop()\nsys.exit(0 if ok else 1)"]
 
 
 def fake_python(path, version):
@@ -25,6 +27,8 @@ args = sys.argv[1:]
 with open(os.environ["LAUNCH_TEST_LOG"], "a") as log:
     log.write(json.dumps({{"exe":str(pathlib.Path(sys.argv[0])),"version":version,"args":args}})+"\\n")
 if args[:1] == ["-c"]:
+    if "chromium.executable_path" in args[1]:
+        raise SystemExit(1 if os.environ.get("LAUNCH_TEST_NO_BROWSER") else 0)
     if "Studio Python:" in args[1]: print("Studio Python:", version)
     raise SystemExit(0 if tuple(map(int,version.split("."))) >= (3,10) else 1)
 if args == ["--version"]:
@@ -81,7 +85,7 @@ def test_mac_selects_compatible_fallback_and_preserves_spaced_paths(mac_launch):
     assert [call["args"] for call in calls if call["exe"].endswith(".venv/bin/python")] == [
         ["-c", "import sys; print(\"Studio Python:\", sys.version.split()[0]); raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"],
         ["-m","pip","install","-r","requirements.txt"],
-        ["-m","playwright","install","chromium"], ["cr_studio.py"]]
+        ["-m","playwright","install","chromium"], BROWSER_CHECK, ["cr_studio.py"]]
 
 
 def test_mac_rejects_all_old_interpreters_before_creating_environment(mac_launch):
@@ -121,7 +125,17 @@ def test_mac_existing_current_environment_skips_install_and_preserves_server_exi
     (folder / ".venv/.cr-installed").touch()
     result, calls = run(LAUNCH_TEST_STUDIO_EXIT="7")
     assert result.returncode == 7
-    assert len(calls) == 2 and calls[-1]["args"] == ["cr_studio.py"]
+    assert [call["args"] for call in calls][1:] == [BROWSER_CHECK, ["cr_studio.py"]]
+
+
+def test_mac_reinstalls_a_missing_graphics_browser_on_every_start(mac_launch):
+    folder, _, run = mac_launch
+    fake_python(folder / ".venv/bin/python", "3.12.9")
+    (folder / ".venv/.cr-installed").touch()
+    result, calls = run(LAUNCH_TEST_NO_BROWSER="1")
+    assert result.returncode == 0
+    assert [call["args"] for call in calls][1:] == [BROWSER_CHECK, ["-m","playwright","install","chromium"],
+                                                   ["cr_studio.py"]]
 
 
 def test_windows_launcher_keeps_double_click_diagnostics_and_has_no_compound_blocks():

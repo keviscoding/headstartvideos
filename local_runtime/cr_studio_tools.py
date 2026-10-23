@@ -362,12 +362,27 @@ def tool_setup_check(args):
             "ready": bool(readiness.get("ready")), "blockers": blockers,
             "fixes_itself": "make_videos runs the tiny daily Claude model check itself." if only_verify else "",
             "setup_page": link("/cr-setup"),
+            "graphics_browser": {"ready": bool(status.get("browser")), "why": status.get("browser_reason") or "",
+                                 "fix": "" if status.get("browser") else
+                                 "Call fix_graphics_browser: Studio installs it itself. Don't install it from this "
+                                 "shell; Claude Code's shell can be sandboxed, and Studio wouldn't see it."},
             "claude_code": {"signed_in": bool(claude.get("authenticated")),
                             "models_verified": bool(claude.get("models_verified")),
                             "usage_limit_reached": bool((claude.get("allowance") or {}).get("blocked"))},
             "studio_cloud": {"available": bool(cloud.get("available")), "balance_usd": cloud.get("balance_usd"),
                              "why": cloud.get("why") or "", "topup_url": cloud.get("topup_url")},
             "gallery_url": link("/cr-gallery")}
+
+
+def tool_fix_graphics_browser(args):
+    """Studio installs (or reinstalls) its graphics browser in its own environment, in the background."""
+    try:
+        state = call("POST", "/cr-setup/fix-browser", {}, timeout=60)
+    except Closed:
+        return {"running": False, "message": CLOSED}
+    return {"state": state.get("state"), "message": "Studio is installing its graphics browser (a few minutes). "
+            "Call setup_check in a couple of minutes; graphics_browser.ready turns true when it works."
+            if state.get("state") == "installing" else "Done: call setup_check to confirm."}
 
 
 def tool_list_styles(args):
@@ -894,6 +909,10 @@ _FREE = {"readOnlyHint": True, "openWorldHint": False}
 TOOLS = {
     "setup_check": (tool_setup_check, "Is ChannelRecipe Studio running and ready to make videos? Also Claude Code's "
                     "status and the Studio Cloud balance. Free. Call this first.", _schema(), _FREE),
+    "fix_graphics_browser": (tool_fix_graphics_browser, "When setup_check says the graphics browser isn't ready: "
+                             "Studio installs it itself, in its own environment (never install it from this shell). "
+                             "Free; takes a few minutes in the background.", _schema(),
+                             {"readOnlyHint": False, "openWorldHint": False}),
     "list_styles": (tool_list_styles, "The video styles (recipes) installed in Studio, with a one-line description, "
                     "id, a local thumbnail picture, where each can render, and gallery_url: a visual picker page with a "
                     "pick_id to read the creator's choice back with get_style_pick. Free.",

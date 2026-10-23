@@ -109,7 +109,7 @@ def studio_running(port: int = STUDIO_PORT) -> bool:
 
 def _settings(home: Path) -> tuple[str, str]:
     try:
-        cfg = json.loads((home / ".cr-connection.json").read_text())
+        cfg = json.loads((home / ".cr-connection.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         cfg = {}
     key, base = str(cfg.get("key", "")), str(cfg.get("url", "https://channelrecipe.com")).rstrip("/")
@@ -464,7 +464,7 @@ def _same(path: Path, other: Path) -> bool:
 def _installed_hashes(home: Path) -> dict[str, str]:
     """What this install originally shipped (from release 44 on), to spot creator edits."""
     try:
-        files = json.loads((home / "cr-files.json").read_text()).get("files", {})
+        files = json.loads((home / "cr-files.json").read_text(encoding="utf-8")).get("files", {})
         return files if isinstance(files, dict) else {}
     except (OSError, ValueError):
         return {}
@@ -536,7 +536,7 @@ def retire(home: Path = HOME) -> list[str]:
     creator edited or added is never touched. Safe to run on every start.
     """
     try:
-        retired = json.loads((home / "cr-files.json").read_text()).get("retired", {})
+        retired = json.loads((home / "cr-files.json").read_text(encoding="utf-8")).get("retired", {})
     except (OSError, ValueError):
         return []
     removed = []
@@ -576,7 +576,7 @@ def _fetch(home, base, key, staging, archive, remote, *, get=http_get, progress=
 
 def _installed(home: Path) -> str:
     try:
-        return json.loads((home / "cr-release.json").read_text())["version"]
+        return json.loads((home / "cr-release.json").read_text(encoding="utf-8"))["version"]
     except (OSError, ValueError, KeyError):
         raise UpdateStopped("This folder isn't a ChannelRecipe Studio install. Run the update from your Studio folder.") from None
 
@@ -611,7 +611,7 @@ def apply_staged(home: Path = HOME, *, keep=frozenset(), now=time.time) -> dict:
     """Install a staged release. Files named in keep are left as they are (in use by the launcher)."""
     staging = home / STAGED
     try:
-        saved = json.loads((staging / ".cr-staged.json").read_text())
+        saved = json.loads((staging / ".cr-staged.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         raise UpdateStopped("No update is ready to install. Download it again.") from None
     local = _installed(home)
@@ -640,7 +640,7 @@ def apply_staged(home: Path = HOME, *, keep=frozenset(), now=time.time) -> dict:
 
 def update(home: Path = HOME, *, get=http_get, running=studio_running, now=time.time) -> str:
     try:
-        local = json.loads((home / "cr-release.json").read_text())["version"]
+        local = json.loads((home / "cr-release.json").read_text(encoding="utf-8"))["version"]
     except (OSError, ValueError, KeyError):
         raise UpdateStopped("This folder isn't a ChannelRecipe Studio install. Run the update from your Studio folder.") from None
     if running():

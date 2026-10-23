@@ -32,7 +32,7 @@ def status(home, account, *, now=None):
     if not account:
         return {"blocked": False}
     try:
-        saved = json.loads((Path(home) / ".cr-claude-allowance.json").read_text())
+        saved = json.loads((Path(home) / ".cr-claude-allowance.json").read_text(encoding="utf-8"))
         remaining = float(saved["reset_at"]) - (time.time() if now is None else now)
         if saved.get("account") != account or remaining <= 0 or remaining > 25 * 3600:
             return {"blocked": False}

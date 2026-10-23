@@ -232,7 +232,7 @@ def run_zero_model_benchmark(root, context, assets, ready, reference_identity, a
     if (not isinstance(ready, dict) or not _HASH.fullmatch(str(ready.get("identity", "")))
             or (reference_identity is not None and not _HASH.fullmatch(str(reference_identity)))):
         raise ValueError("Preserve the exact pinned setup and original reference identities.")
-    manifest = json.loads(manifest_path.read_text())
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     key = renderer._digest({"input": context, "assets": assets, "compiler": renderer.COMPILER_VERSION,
         "setup": ready["identity"], "original_references": reference_identity})
     result = renderer._compiler_result(json.dumps(manifest.get("result")), context, assets)
@@ -293,7 +293,7 @@ def run_zero_model_benchmark(root, context, assets, ready, reference_identity, a
                         timeout=timeout, env=renderer._environment(), cwd=str(proof_dir))
                 elapsed = time.perf_counter() - started
                 try:
-                    report = json.loads((directory / "report.json").read_text())
+                    report = json.loads((directory / "report.json").read_text(encoding="utf-8"))
                     original_qa = report["scenes"][0]
                     complete = (len(report["scenes"]) == 1 and original_qa["id"] == sid
                         and original_qa["status"] in {"ok", "rendered_with_issues"}

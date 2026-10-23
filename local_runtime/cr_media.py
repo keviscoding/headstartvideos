@@ -25,7 +25,7 @@ HOME = Path(__file__).resolve().parent
 CATALOG = HOME / "cr-providers.json"
 if not CATALOG.is_file():  # Repository tests; the builder supplies the same catalog.
     CATALOG = HOME.parent / "webapp/frontier/providers.json"
-PROVIDERS = json.loads(CATALOG.read_text())
+PROVIDERS = json.loads(CATALOG.read_text(encoding="utf-8"))
 TASKS = {"images", "narration", "motion", "avatars"}
 # Tasks in flight per kind. Pictures run four at a time (a video needs dozens and Kie takes up to a minute for
 # each); voice, motion and avatars stay at two.
@@ -248,7 +248,7 @@ def upload(path, cache_file=None, *, task=None):
     # Uploads expire. Reuse for at most 12 hours, not indefinitely.
     with _lock:
         if marker.is_file():
-            previous = json.loads(marker.read_text())
+            previous = json.loads(marker.read_text(encoding="utf-8"))
             if previous.get("created_at", 0) > time.time() - 43200:
                 _references[previous["url"]] = {"upload_sha256": digest}
                 return _url(previous["url"])
@@ -300,7 +300,7 @@ def run(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
     base = "https://api.kie.ai/api/v1/jobs" if provider == "kie" else "https://api.atlascloud.ai/api/v1/model"
     with _slots.get(task, _other_slots):
         with _lock:
-            previous = json.loads(marker.read_text()) if marker.is_file() else {}
+            previous = json.loads(marker.read_text(encoding="utf-8")) if marker.is_file() else {}
             if previous.get("status") == "complete" and dest.is_file() and previous.get("file_sha256") == hashlib.sha256(dest.read_bytes()).hexdigest():
                 log(f"cached model task: {dest.name}")
                 _references[previous["url"]] = {"task_fingerprint": fingerprint}

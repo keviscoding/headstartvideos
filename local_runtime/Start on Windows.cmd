@@ -63,6 +63,16 @@ type nul > ".venv\.cr-installed"
 if errorlevel 1 goto marker_failed
 
 :run_studio
+rem The graphics browser is checked on every start, not only the first: a missing one is installed again here.
+".venv\Scripts\python.exe" -c "import os,sys;from playwright.sync_api import sync_playwright as s;p=s().start();ok=os.path.exists(p.chromium.executable_path);p.stop();sys.exit(0 if ok else 1)" >nul 2>&1
+if errorlevel 1 goto install_browser
+goto start_studio
+
+:install_browser
+echo Installing the graphics browser. This can take a few minutes.
+".venv\Scripts\python.exe" -m playwright install chromium
+
+:start_studio
 ".venv\Scripts\python.exe" cr_studio.py
 set "CR_EXIT_CODE=%ERRORLEVEL%"
 echo.

@@ -62,7 +62,7 @@ def check(job, target: dict = None, log=print) -> dict:
     out = job / "sound_qc.json"
     mark = f"{video.stat().st_size}:{video.stat().st_mtime_ns}"
     try:
-        saved = json.loads(out.read_text())
+        saved = json.loads(out.read_text(encoding="utf-8"))
         if saved.get("video") == mark:
             return saved
     except (OSError, ValueError):

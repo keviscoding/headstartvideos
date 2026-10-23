@@ -164,9 +164,23 @@ function updateHubBrain(general,visual){
  }
  $('hub-brain-research').textContent=brainResearch(id,$('hub-brain-model').value);
 }
+// One click repairs the graphics browser (the launcher only installed it on its first run, so reopening it never did).
+async function fixBrowser(button,note){
+ button.disabled=true;note.textContent='Installing the graphics browser. This can take a few minutes…';
+ try{
+  await fetch('/cr-setup/fix-browser',{method:'POST',headers:{'X-CR-Local-Token':token}});
+  for(let i=0;i<600;i++){
+   await new Promise(r=>setTimeout(r,3000));
+   const s=await (await fetch('/cr-setup/fix-browser',{headers:{'X-CR-Local-Token':token},cache:'no-store'})).json();
+   if(s.state==='done'){note.textContent='Installed and working.';refresh();return;}
+   if(s.state==='failed'){note.textContent='It couldn’t install: '+String(s.tail||'').split('\n').filter(Boolean).slice(-2).join(' ')+' Press Copy diagnostics above and paste it in Discord #help.';button.disabled=false;return;}
+  }
+ }catch(error){note.textContent='Refresh this page and press Fix it again.';button.disabled=false;}
+}
 async function refresh(){try{
  const data=await request('/cr-status'),labels={python:'Python',ffmpeg:'Video tools (FFmpeg)',browser:'Graphics browser',node:'YouTube helper (Node)'};statusData=data;if(claudeDraft&&!claudeModelsDirty())claudeDraft=null;
  $('checks').innerHTML=Object.entries(labels).map(([key,label])=>'<div class="check '+(data[key]?'ok':'')+'">'+label+'<b>'+(data[key]?'Ready':'Needs attention')+'</b></div>').join('');
+ if(!data.browser){const row=[...$('checks').querySelectorAll('.check')].find(r=>r.textContent.startsWith('Graphics browser'));if(row){const note=document.createElement('small');note.textContent=data.browser_reason||'The graphics browser needs installing.';const fix=document.createElement('button');fix.type='button';fix.className='link-button';fix.id='fix-browser';fix.textContent='Fix it';fix.onclick=()=>fixBrowser(fix,note);row.append(note,fix);}}
  const connected=!!data.account?.brain?.connected;accounts=data.model_accounts||{};savedProviders=data.providers||{};
  currentBrain={...(data.account?.brain||{}),model:data.brain_models?.general||data.account?.brain?.model,visual_model:data.brain_models?.visual||data.account?.brain?.visual_model||data.account?.brain?.model};
  $('version').textContent='ChannelRecipe Studio '+(String(data.local_version||'').match(/admin\.(\d+)$/)?.[1]||data.local_version||'');$('update').hidden=!newerRelease(data.account?.version,data.local_version);
