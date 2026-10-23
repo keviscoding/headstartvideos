@@ -91,6 +91,20 @@ class FakeStudio:
             return {"slug": "pantry-book"}
         if path == "/api/products/build/pantry-book":
             return {"slug": "pantry-book", "running": True, "code": None, "lines": ["write: 12/60"]}
+        if path == "/cr-workspace/stopped":
+            return {"projects": [{"slug": "zombie--abc", "title": "Zombie Outbreak", "style": "stories", "mtime": 1}]}
+        if path == "/api/queue":
+            return {"jobs": [], "busy": False}
+        if path == "/cr-workspace/activity":
+            return {"operations": []}
+        if path == "/cr-workspace/project/zombie--abc":
+            return {"slug": "zombie--abc", "project_id": "crv_" + "1" * 24, "available_for_resume": True,
+                    "title": "Zombie Outbreak", "status": "error"}
+        if path == "/cr-workspace/project/done--abc":
+            return {"slug": "done--abc", "project_id": "crv_" + "2" * 24, "available_for_resume": False,
+                    "title": "Done", "status": "done"}
+        if path == "/cr-submit-project":
+            return {"queued": [{"slug": "zombie--abc"}], "project_id": body["project_id"]}
         if path == "/api/products":
             return {"products": [{"slug": "pantry-book", "title": "Pantry Book", "secret": "no"}]}
         raise AssertionError("unexpected route " + path)
@@ -587,3 +601,13 @@ def test_tools_refuse_another_folders_studio(studio):
     result = tools.run_tool("make_videos", {"titles": ["T"], "style": "documentary", "where": "this_computer"})
     assert result["isError"] and "not this folder" in result["structuredContent"]["error"]
     assert not studio.posted("/api/run")
+
+
+def test_a_stopped_video_is_listed_and_resumed_by_its_saved_project(studio):
+    out = ok("progress", {})
+    assert out["stopped"][0]["id"] == "video:zombie--abc" and "resume_video" in out["stopped_note"]
+    resumed = ok("resume_video", {"id": "video:zombie--abc"})
+    assert resumed["resumed"] and studio.posted("/cr-submit-project") == [{"project_id": "crv_" + "1" * 24}]
+    refused = tools.run_tool("resume_video", {"id": "video:done--abc"})
+    assert refused["isError"] and "can't be resumed" in refused["structuredContent"]["error"]
+    assert len(studio.posted("/cr-submit-project")) == 1

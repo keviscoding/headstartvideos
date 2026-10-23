@@ -92,6 +92,8 @@ Studio through its own checks, so nothing needs the Studio web page.
   Claude Code also asks them to approve `make_videos` and `clone_style`. Never approve paid work for them.
 - `make_videos` returns ids at once. Check `progress` now and then, never in a tight loop; Studio shows a desktop
   notification when a video is done. `list_videos` has each finished video's file and watch link.
+- A video that stopped (a provider hiccup, a closed Studio): `progress()` lists it under `stopped`; tell them what
+  stopped it (`progress(id)`), then `resume_video(id)` carries it on and reuses everything already made.
 
 ## Making videos through ChannelRecipe tools
 
