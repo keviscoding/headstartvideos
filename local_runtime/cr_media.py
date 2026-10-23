@@ -838,7 +838,8 @@ def install(engine):
     import cr_history_io
     cr_history_io.install(history_kit)
     hook("_tts_one", "narration", lambda *a, **k: narrate(engine, *a, **k))
-    engine.generate_voiceover = make_voiceover(engine, engine.generate_voiceover)
+    voiceover = make_voiceover(engine, engine.generate_voiceover)
+    engine.generate_voiceover = voiceover
     # These modules have independent voice entry points and media uploads.
     import wavespeed
     import vox
@@ -846,7 +847,7 @@ def install(engine):
     for module in (wavespeed, vox):
         original = module.voiceover
         def routed_voice(eng, script, job, *args, _original=original, **kwargs):
-            if active("narration"):
+            if active("narration") or job_voice(job):       # Setup's narration account, or this video's own choice
                 force = kwargs.get("force", args[-1] if args and isinstance(args[-1], bool) else False)
                 style = args[0] if args and isinstance(args[0], str) else ""
                 return voiceover(script, job, force=force, style=style)
