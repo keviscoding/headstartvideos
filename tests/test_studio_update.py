@@ -514,3 +514,85 @@ def test_a_whole_download_resumes_through_channelrecipe_when_storage_cannot_be_r
     cr_update.download("https://cr.example", KEY, target, get=server.get, path="/api/studio/shorts-pack")
     assert target.read_bytes() == zip_bytes
     assert any(url.endswith("/api/studio/shorts-pack/file") for url, _ in server.requests), "the pack too"
+
+
+class ResettingStorageServer(BlockedStorageServer):
+    """The storage host's name resolves, but this creator's internet provider resets every connection to it (their
+    Shorts pack failed six times, about a second each); ChannelRecipe itself works."""
+
+    def get(self, url, headers):
+        if url.startswith("https://storage.example/"):
+            self.requests.append((url, dict(headers)))
+            raise URLError(ConnectionResetError(54, "Connection reset by peer"))
+        return super().get(url, headers)
+
+
+def test_storage_that_resets_every_connection_comes_through_channelrecipe_after_two_tries(monkeypatch, tmp_path):
+    zip_bytes, _ = release("5.3-admin.45", {"cr_studio.py": b"x" * 9000})
+    server = ResettingStorageServer("5.3-admin.45", zip_bytes)
+    target = tmp_path / "pack.zip"
+    cr_update.download("https://cr.example", KEY, target, get=server.get, path="/api/studio/shorts-pack",
+                       sleep=lambda s: None)
+    assert target.read_bytes() == zip_bytes
+    storage = [url for url, _ in server.requests if url.startswith("https://storage.example/")]
+    assert len(storage) == cr_update.STORAGE_MISSES == 2
+    assert any(url.endswith("/api/studio/shorts-pack/file") for url, _ in server.requests)
+
+
+def test_an_update_whose_storage_resets_connections_comes_through_channelrecipe(studio, monkeypatch):
+    monkeypatch.setattr(cr_update.time, "sleep", lambda s: None)
+    zip_bytes, _ = release("5.3-admin.45", {"cr_studio.py": b"new studio" * 5000, "requirements.txt": b"flask\n"})
+    server = ResettingStorageServer("5.3-admin.45", zip_bytes, ranges=True)
+    assert "from version 44 to 45" in run(studio, server)
+    assert (studio / "cr_studio.py").read_bytes() == b"new studio" * 5000
+    assert any(url.endswith("/api/studio/download/file") for url, _ in server.requests)
+
+
+class ChoppyServer(Server):
+    """Every storage response drops after `chunk` bytes, but byte ranges resume it: many drops, each one further."""
+
+    def __init__(self, *args, chunk=1000, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.chunk = chunk
+
+    def get(self, url, headers):
+        if url.endswith("/api/studio/shorts-pack"):
+            self.requests.append((url, dict(headers)))
+            return HTTPError(url, 302, "Found", {"Location": "https://storage.example/pack.zip?sig=1"}, None)
+        if url.startswith("https://storage.example/"):
+            self.requests.append((url, dict(headers)))
+            start = int(headers.get("Range", "bytes=0-").partition("=")[2].rstrip("-") or 0)
+            total = len(self.zip_bytes)
+            head = {"Content-Length": str(total - start), "x-amz-meta-sha256": self.sha}
+            if start:
+                head["Content-Range"] = "bytes %d-%d/%d" % (start, total - 1, total)
+            return Body(self.zip_bytes[start:], status=206 if start else 200, headers=head, fail_after=self.chunk)
+        return super().get(url, headers)
+
+
+def test_a_connection_that_keeps_dropping_still_finishes_while_each_try_gets_further(tmp_path):
+    zip_bytes, _ = release("5.3-admin.45", {"cr_studio.py": bytes(range(256)) * 60})
+    server = ChoppyServer("5.3-admin.45", zip_bytes, chunk=len(zip_bytes) // 12 + 1)
+    target, heard = tmp_path / "pack.zip", []
+    cr_update.download("https://cr.example", KEY, target, get=server.get, path="/api/studio/shorts-pack",
+                       sleep=lambda s: None, progress=lambda done, total: heard.append((done, total)))
+    assert target.read_bytes() == zip_bytes
+    assert sum(url.startswith("https://storage.example/") for url, _ in server.requests) > 6, "more drops than tries"
+
+
+def test_a_kept_partial_download_carries_on_and_is_still_checked_whole(tmp_path):
+    zip_bytes, _ = release("5.3-admin.45", {"cr_studio.py": bytes(range(256)) * 60})
+    server = ChoppyServer("5.3-admin.45", zip_bytes, chunk=len(zip_bytes))
+    target = tmp_path / "pack.zip"
+    third = len(zip_bytes) // 3
+    target.write_bytes(zip_bytes[:third])
+    cr_update.download("https://cr.example", KEY, target, get=server.get, path="/api/studio/shorts-pack",
+                       sleep=lambda s: None, resume=True)
+    assert target.read_bytes() == zip_bytes
+    storage = [h for url, h in server.requests if url.startswith("https://storage.example/")]
+    assert storage[0] == {"Range": "bytes=%d-" % third}, "carried on from the kept part"
+    target.write_bytes(b"x" * third)                         # a kept part that isn't this file
+    with pytest.raises(cr_update.UpdateStopped, match="didn't match"):
+        cr_update.download("https://cr.example", KEY, target, get=server.get, path="/api/studio/shorts-pack",
+                           sleep=lambda s: None, resume=True)
+    assert not target.exists(), "a file that didn't match is never resumed from"

@@ -126,31 +126,42 @@ PACK_INDEX = ("rbx", "r3d", "engine", "skins", "rbx", "index.json")   # the last
 
 def ensure_pack(sink=None, engine=None, home: Path = HOME) -> None:
     """The Shorts asset pack (people, animals, motion, sounds; about 400 MB): fetched from ChannelRecipe and unpacked into
-    shorts/ the first time a Short is made on this computer. Later Shorts find it in place."""
+    shorts/ the first time a Short is made on this computer. Later Shorts find it in place. A download that stops keeps
+    what arrived, so Resume carries on from there instead of starting the 400 MB again."""
     import zipfile
     root = shorts_root(home)
     if root.joinpath(*PACK_INDEX).is_file():
         return
     import cr_update
     target = home / ".cr-shorts-pack.zip"
-    try:
-        base, key = cr_update._settings(home)
-        _say(sink, engine, "First Short on this computer: downloading the Shorts pack (about 400 MB, only once)")
-        cr_update.download(base, key, target, path="/api/studio/shorts-pack")
-    except cr_update.UpdateStopped as error:
-        target.unlink(missing_ok=True)
-        why = re.sub(r"Nothing was changed; (\w)", lambda m: m.group(1).upper(), str(error)).replace("Nothing was changed. ", "")
-        raise RuntimeError("The Shorts pack couldn't be downloaded. " + why) from None
+    if not zipfile.is_zipfile(target):                           # a whole pack already here (an unpack that stopped)
+        def heard(done, total):
+            mb = lambda n: round(n / (1 << 20))
+            _say(sink, engine, f"Downloading the Shorts pack: {mb(done)} of {mb(total)} MB" if total
+                 else f"Downloading the Shorts pack: {mb(done)} MB")
+        try:
+            base, key = cr_update._settings(home)
+            _say(sink, engine, "First Short on this computer: downloading the Shorts pack (about 400 MB, only once)"
+                 if not target.exists() else "Carrying on with the Shorts pack download")
+            cr_update.download(base, key, target, path="/api/studio/shorts-pack", resume=True, progress=heard)
+        except cr_update.UpdateStopped as error:
+            why = re.sub(r"Nothing was changed; (\w)", lambda m: m.group(1).upper(), str(error)).replace("Nothing was changed. ", "")
+            kept = " Resume carries on from where it stopped." if target.exists() else ""
+            raise RuntimeError("The Shorts pack couldn't be downloaded. " + why + kept) from None
     _say(sink, engine, "Unpacking the Shorts pack")
     index = "/".join(PACK_INDEX)
-    with zipfile.ZipFile(target) as pack:
-        members = pack.infolist()
-        for m in members:                                        # nothing may land outside shorts/
-            parts = Path(m.filename).parts
-            if m.filename.startswith(("/", "\\")) or ".." in parts or (parts and ":" in parts[0]):
-                raise RuntimeError("The Shorts pack looks damaged. Try again.")
-        for m in sorted(members, key=lambda m: m.filename == index):   # the index last: an interrupted unpack is redone
-            pack.extract(m, root)
+    try:
+        with zipfile.ZipFile(target) as pack:
+            members = pack.infolist()
+            for m in members:                                    # nothing may land outside shorts/
+                parts = Path(m.filename).parts
+                if m.filename.startswith(("/", "\\")) or ".." in parts or (parts and ":" in parts[0]):
+                    raise RuntimeError("The Shorts pack looks damaged. Try again.")
+            for m in sorted(members, key=lambda m: m.filename == index):   # the index last: an interrupted unpack is redone
+                pack.extract(m, root)
+    except (zipfile.BadZipFile, RuntimeError) as error:
+        target.unlink(missing_ok=True)                           # never reused: the next try downloads it clean
+        raise RuntimeError(str(error) if isinstance(error, RuntimeError) else "The Shorts pack looks damaged. Try again.") from None
     target.unlink(missing_ok=True)
     _say(sink, engine, "Shorts pack ready")
 

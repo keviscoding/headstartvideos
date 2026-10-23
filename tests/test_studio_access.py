@@ -266,3 +266,70 @@ def test_the_download_also_streams_through_this_site_for_providers_that_cannot_r
     assert part.headers["content-range"] == f"bytes 1000-{len(data) - 1}/{len(data)}"
     pack = client.get("/api/studio/shorts-pack/file", headers={"x-test-user": "1"})
     assert pack.status_code == 200 and asked[-1]["Key"] == studio.SHORTS_PACK_KEY
+
+
+def test_a_studio_that_keeps_asking_for_the_same_link_gets_it_through_this_site(env, monkeypatch):
+    """A creator's internet provider reset every connection to the storage host (six asks, a second apart), and
+    Studios before 92 only switch by themselves when the host's name doesn't resolve: from the third ask in ten
+    minutes, the redirect is this site's own link, signed for the account and the file, byte ranges included."""
+    import io
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from webapp import storage
+    data = bytes(range(256)) * 50
+
+    class Body(io.BytesIO):
+        def iter_chunks(self, size):
+            while chunk := self.read(size):
+                yield chunk
+
+    class Client:
+        def generate_presigned_url(self, op, Params, ExpiresIn):
+            return "https://storage.example/" + Params["Key"] + "?sig=1"
+
+        def get_object(self, **params):
+            first = int((params.get("Range") or "bytes=0-").split("=")[1].split("-")[0])
+            out = {"Body": Body(data[first:]), "ContentLength": len(data) - first, "Metadata": {"sha256": "abc"}}
+            if params.get("Range"):
+                out["ContentRange"] = f"bytes {first}-{len(data) - 1}/{len(data)}"
+            return out
+    monkeypatch.setenv("FRONTIER_SECRETS_KEY", "stream-test-secret")
+    monkeypatch.setattr(studio, "_link_asks", {})
+    monkeypatch.setattr(studio, "release_ready", lambda: True)
+    monkeypatch.setattr(storage, "is_remote", lambda: True)
+    monkeypatch.setattr(storage, "_get_client", lambda: Client())
+    monkeypatch.setattr(storage, "_spaces_creds", lambda: ("k", "s", "bucket", "r", "e"))
+    app = FastAPI()
+    app.include_router(studio.make_router(lambda req: user(int(req.headers["x-test-user"]), "daily")
+                                          if req.headers.get("x-test-user") else None, prefix="/api/studio"))
+    client = TestClient(app)
+    ask = lambda who="1", path="/api/studio/shorts-pack": client.get(path, headers={"x-test-user": who},
+                                                                       follow_redirects=False).headers["location"]
+    assert ask().startswith("https://storage.example/") and ask().startswith("https://storage.example/")
+    link = ask()
+    assert "/api/studio/stream/pack?t=" in link, "the third ask in ten minutes: through this site"
+    assert ask("2").startswith("https://storage.example/"), "only that account"
+    assert ask(path="/api/studio/download").startswith("http://testserver/api/studio/stream/release?t="), \
+        "and its Studio updates come through this site too"
+    path = link.split("testserver", 1)[1]
+    whole = client.get(path)
+    assert whole.status_code == 200 and whole.content == data and whole.headers["x-amz-meta-sha256"] == "abc"
+    part = client.get(path, headers={"Range": "bytes=1000-"})
+    assert part.status_code == 206 and part.content == data[1000:]
+    token = path.split("t=")[1]
+    assert client.get("/api/studio/stream/release?t=" + token).status_code == 403, "signed for one file"
+    assert client.get(path[:-2] + ("A" if path[-2] != "A" else "B") + path[-1]).status_code == 403
+    assert studio.read_stream_token(token, "pack", now=studio.time.time() + studio.DOWNLOAD_LINK_SECONDS + 5) is None
+
+
+def test_asks_spread_over_more_than_ten_minutes_keep_the_storage_link():
+    studio._link_asks.pop(99, None)
+    assert not studio.storage_blocked(99, "pack", now=0)
+    assert not studio.storage_blocked(99, "pack", now=700)
+    assert not studio.storage_blocked(99, "pack", now=1400)
+    assert not studio.storage_blocked(99, "release", now=1401), "a pack and an update are counted apart"
+    assert not studio.storage_blocked(99, "pack", now=1450)
+    assert studio.storage_blocked(99, "pack", now=1500), "the third ask within ten minutes"
+    assert studio.storage_blocked(99, "release", now=1600), "then the account's links all come through this site"
+    assert not studio.storage_blocked(99, "release", now=1500 + 86400 + 1)
+    studio._link_asks.pop(99, None)

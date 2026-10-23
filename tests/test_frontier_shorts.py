@@ -59,8 +59,9 @@ def test_the_pack_downloads_once_and_unpacks_into_shorts_with_its_index_last(tmp
         pass
     fake.UpdateStopped = UpdateStopped
     fake._settings = lambda home: ("https://channelrecipe.com", "cr_mcp_k")
-    def download(base, key, target, path="/api/studio/download"):
+    def download(base, key, target, path="/api/studio/download", **options):
         calls.append(path)
+        assert options.get("resume") is True and callable(options.get("progress"))
         _pack(target, [index, "rbx/r3d/engine/skins/animals/dog.glb", "hoodie/host1/pose.png"])
     fake.download = download
     monkeypatch.setitem(sys.modules, "cr_update", fake)
@@ -79,7 +80,7 @@ def test_a_pack_that_would_write_outside_shorts_is_refused(tmp_path, monkeypatch
     fake = types.ModuleType("cr_update")
     fake.UpdateStopped = type("UpdateStopped", (Exception,), {})
     fake._settings = lambda home: ("https://channelrecipe.com", "cr_mcp_k")
-    fake.download = lambda base, key, target, path=None: _pack(target, ["../evil.py"])
+    fake.download = lambda base, key, target, path=None, **options: _pack(target, ["../evil.py"])
     monkeypatch.setitem(sys.modules, "cr_update", fake)
     import pytest
     with pytest.raises(RuntimeError, match="damaged"):
@@ -101,6 +102,51 @@ def test_a_failed_pack_download_says_why_in_plain_words(tmp_path, monkeypatch):
     import pytest
     with pytest.raises(RuntimeError, match="Shorts pack couldn't be downloaded. The download was interrupted. Check your connection"):
         shorts.ensure_pack(None, None, home=tmp_path)
+
+
+def test_a_stopped_pack_download_keeps_what_arrived_and_resume_carries_on(tmp_path, monkeypatch):
+    import types
+    import pytest
+    index = "/".join(shorts.PACK_INDEX)
+    fake = types.ModuleType("cr_update")
+    class UpdateStopped(Exception):
+        pass
+    fake.UpdateStopped = UpdateStopped
+    fake._settings = lambda home: ("https://channelrecipe.com", "cr_mcp_k")
+    runs = []
+    def download(base, key, target, path=None, resume=False, progress=None):
+        runs.append(target.stat().st_size if target.exists() else 0)
+        if len(runs) == 1:
+            target.write_bytes(b"PK partial")                       # some of it arrived, then the connection dropped
+            raise UpdateStopped("The download was interrupted. Nothing was changed; check your connection and try again.")
+        assert resume, "the second run carries on from the partial file"
+        progress(200 << 20, 400 << 20)
+        _pack(target, [index])
+    fake.download = download
+    monkeypatch.setitem(sys.modules, "cr_update", fake)
+    said = []
+    with pytest.raises(RuntimeError, match="Resume carries on from where it stopped"):
+        shorts.ensure_pack(said.append, None, home=tmp_path)
+    assert (tmp_path / ".cr-shorts-pack.zip").exists(), "what arrived is kept"
+    shorts.ensure_pack(said.append, None, home=tmp_path)
+    assert runs == [0, len(b"PK partial")]
+    assert (tmp_path / "shorts" / index).is_file() and not (tmp_path / ".cr-shorts-pack.zip").exists()
+    assert any("200 of 400 MB" in line for line in said) and any("Carrying on" in line for line in said)
+
+
+def test_a_whole_pack_left_by_a_stopped_unpack_is_unpacked_without_downloading_again(tmp_path, monkeypatch):
+    import types
+    index = "/".join(shorts.PACK_INDEX)
+    fake = types.ModuleType("cr_update")
+    fake.UpdateStopped = type("UpdateStopped", (Exception,), {})
+    fake._settings = lambda home: ("https://channelrecipe.com", "cr_mcp_k")
+    def download(*a, **k):
+        raise AssertionError("no second download")
+    fake.download = download
+    monkeypatch.setitem(sys.modules, "cr_update", fake)
+    _pack(tmp_path / ".cr-shorts-pack.zip", [index, "hoodie/host1/pose.png"])
+    shorts.ensure_pack(None, None, home=tmp_path)
+    assert (tmp_path / "shorts" / index).is_file()
 
 
 def test_a_ranking_shorts_options_travel_in_their_own_marker_and_only_known_kinds_pass():
