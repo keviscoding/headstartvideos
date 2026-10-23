@@ -550,6 +550,21 @@ def _job_status(slug: str) -> dict:
            "last_lines": [line for line in (status.get("lines") or [])[-6:] if line.strip()]}
     if status.get("video"):
         out.update(watch_url=link("/f/video/" + _quote_path(slug)), project_url=link("/editor/" + _quote_path(slug)))
+    elif out["done"] or out["state"] in ("error", "stopped"):
+        try:
+            voice = call("GET", "/cr-workspace/voice/" + _quote_path(slug), timeout=20)
+        except Refused:
+            voice = {}
+        if voice.get("stopped_on_voice") and not voice.get("has_voice"):
+            out["stopped_on"] = "voice"
+            out["voice_failed"] = voice.get("failed")
+            out["voice_choices"] = [{k: c.get(k) for k in ("id", "label", "ready", "note")} for c in voice.get("choices") or []]
+            out["voice_note"] = ("The voice service couldn't record this video's voice. Ask the creator which way to carry "
+                                 "on (only the ready choices work now), then resume_video(id, voice=<choice id>). For "
+                                 "their own recording, show them the script (script_file) to read, then pass the "
+                                 "recording's path as recording. An ElevenLabs key goes in Setup & accounts, never in chat.")
+            if voice.get("script_file"):
+                out["script_file"] = voice["script_file"]
     return out
 
 
@@ -615,8 +630,12 @@ def tool_resume_video(args):
     if not saved.get("available_for_resume") or not saved.get("project_id"):
         raise Refused(f"\"{saved.get('title') or slug}\" can't be resumed: it's {saved.get('status') or 'not a stopped video'}. "
                       "Check progress().")
+    voice = str(args.get("voice") or "").strip()
+    if voice:
+        call("POST", "/cr-workspace/voice/" + _quote_path(slug),
+             {"choice": voice, "recording": str(args.get("recording") or "").strip()}, timeout=180)
     result = call("POST", "/cr-submit-project", {"project_id": saved["project_id"]}, timeout=120)
-    return {"resumed": True, "id": "video:" + slug, "title": saved.get("title"),
+    return {"resumed": True, "id": "video:" + slug, "title": saved.get("title"), **({"voice": voice} if voice else {}),
             "queued": [q.get("slug") if isinstance(q, dict) else q for q in result.get("queued") or []],
             "next": "It carries on from where it stopped and reuses everything already made (script, pictures, "
                     "voice parts). Check progress(id) now and then; Studio shows a notification when it's done."}
@@ -983,8 +1002,16 @@ TOOLS = {
                  "(id=…). Free.", _schema({"id": {"type": "string"}}), _FREE),
     "resume_video": (tool_resume_video, "Carry on a video that stopped before finishing (progress() lists them under "
                      "stopped). Reuses everything already made, so only the rest is paid for. Tell the creator what "
-                     "stopped it first (progress(id)).",
-                     _schema({"id": {"type": "string", "description": "video:<slug> from progress()."}}, ["id"]),
+                     "stopped it first (progress(id)). When progress(id) shows voice_choices (its voice service "
+                     "failed), ask which they want and pass it as voice: the same voice again, Gemini through Kie, "
+                     "their own ElevenLabs account, or their own recording (pass its file path as recording).",
+                     _schema({"id": {"type": "string", "description": "video:<slug> from progress()."},
+                              "voice": {"type": "string", "enum": ["again", "gemini-man", "gemini-woman", "elevenlabs",
+                                                                   "own"],
+                                        "description": "Only for a video that stopped on its voice: how to voice it now "
+                                                       "(this video only)."},
+                              "recording": {"type": "string", "description": "voice=own: the path of the creator's "
+                                                                             "recording on this computer."}}, ["id"]),
                      {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}),
     "clone_style": (tool_clone_style, "Step 2: study the looked-at references and build a new reusable style. Uses "
                     "the creator's Claude Code for 15-30 minutes and one of their plan's style clones. Needs look_id, a "

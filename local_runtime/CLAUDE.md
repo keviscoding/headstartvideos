@@ -97,6 +97,12 @@ Studio through its own checks, so nothing needs the Studio web page.
   notification when a video is done. `list_videos` has each finished video's file and watch link.
 - A video that stopped (a provider hiccup, a closed Studio): `progress()` lists it under `stopped`; tell them what
   stopped it (`progress(id)`), then `resume_video(id)` carries it on and reuses everything already made.
+- A video that stopped on its voice (`progress(id)` shows `voice_choices`, for example Kie answering "Internal Error"):
+  tell them what failed and whether anything was charged (`voice_failed`), then ask which way to carry on: the same
+  voice again after a few minutes, Gemini through Kie (same key), their own ElevenLabs account, or their own recording.
+  Offer only the ready ones (an ElevenLabs key goes in Setup & accounts, never in chat) and never pick for them. For
+  their own recording, show them the script (`script_file`) to read, then `resume_video(id, voice="own",
+  recording=<the file's path>)`; otherwise `resume_video(id, voice=<choice id>)`. The choice is for that video only.
 
 ## Making videos through ChannelRecipe tools
 

@@ -443,6 +443,109 @@ def install(studio, activity, *, token, home=None):
         except Exception as error:
             return failure(error)
 
+    # A video whose voice stopped (a provider down, a balance run out) can be voiced another way, for that video
+    # only: Gemini through the same Kie key, the creator's own ElevenLabs account, or their own recording. The choice
+    # sits in its folder (cr_media.VOICE_CHOICE) and Resume carries on with it.
+    GEMINI_TTS = "google/gemini-3-8-flash-tts"
+    GEMINI_VOICES = {"gemini-man": ("Charon", "a man's voice"), "gemini-woman": ("Kore", "a woman's voice")}
+
+    def voice_job(slug):
+        if not _SLUG.fullmatch(slug) or slug in {".", ".."}:
+            raise ValueError("Unavailable project.")
+        found = studio.mv.find_job(slug)
+        job = Path(found).resolve() if found is not None else None
+        if job is None or not job.is_dir() or not job.is_relative_to(home / "output"):
+            raise ValueError("Unavailable project.")
+        return job
+
+    def voice_choices(job):
+        import os
+        import cr_media
+        failed = _read(job / cr_media.VOICE_FAILED) if (job / cr_media.VOICE_FAILED).is_file() else {}
+        chosen = cr_media.job_voice(job)
+        current = ("own" if chosen.get("provider") == "own" else "elevenlabs" if chosen.get("provider") == "original"
+                   else next((k for k, (v, _) in GEMINI_VOICES.items() if v == chosen.get("voice")), "gemini-man")
+                   if chosen.get("provider") == "kie" else "again")
+        kie, eleven = bool(os.getenv("KIE_API_KEY", "").strip()), bool(os.getenv("ELEVENLABS_API_KEY", "").strip())
+        kie_empty = failed.get("provider") == "kie" and failed.get("category") == "balance"
+        rows = [{"id": "again", "label": "Try the same voice again", "ready": True,
+                 "note": "The voice in Setup & accounts, once more. Best after waiting a few minutes."}]
+        if failed.get("model") != GEMINI_TTS or current != "again":
+            for key, (voice, words) in GEMINI_VOICES.items():
+                rows.append({"id": key, "label": f"Gemini voice through Kie ({words})", "ready": kie and not kie_empty,
+                             "note": ("Your Kie balance ran out: top it up first." if kie_empty else
+                                      "The same Kie account, a different voice service: it often works while Kie's "
+                                      "ElevenLabs voices are down." if kie else "Needs a Kie.ai key in Setup & accounts.")})
+        rows.append({"id": "elevenlabs", "label": "Your own ElevenLabs account", "ready": eleven,
+                     "note": "Skips Kie: ElevenLabs reads it directly, charged to your ElevenLabs plan." if eleven
+                     else "Add your ElevenLabs key in Setup & accounts first (paste it there, never in a chat).",
+                     **({} if eleven else {"setup": "/cr-setup"})})
+        rows.append({"id": "own", "label": "Your own recording", "ready": True,
+                     "note": "Read the script aloud and upload the recording (mp3, wav or m4a). Nothing is paid for "
+                             "the voice, and the video is timed to your reading."})
+        script = job / "script.txt"
+        return {"stopped_on_voice": bool(failed), "current": current, "choices": rows,
+                "failed": {k: failed.get(k) for k in ("label", "reason", "category", "charged", "at")} if failed else None,
+                "has_voice": (job / "audio.mp3").is_file(),
+                "script": script.read_text(encoding="utf-8", errors="replace")[:40000] if script.is_file() else "",
+                "script_file": str(script) if script.is_file() else ""}
+
+    @app.get("/cr-workspace/voice/<slug>")
+    def cr_workspace_voice(slug):
+        try:
+            local_access()
+            return protect(jsonify(slug=slug, **voice_choices(voice_job(slug))))
+        except Exception as error:
+            return failure(error)
+
+    @app.post("/cr-workspace/voice/<slug>")
+    def cr_workspace_voice_pick(slug):
+        try:
+            local_access()
+            import cr_media
+            job = voice_job(slug)
+            if ((getattr(studio, "JOBS", {}).get(job.name) or {}).get("state")) in {"running", "queued"}:
+                return protect(jsonify(error="This video is still being made. Pick its voice once it has stopped.")), 409
+            if (job / "audio.mp3").is_file():
+                return protect(jsonify(error="This video already has its voice. Resume it as it is.")), 409
+            data = request.get_json(silent=True) or {}
+            pick = str(data.get("choice") or "")
+            offer = {c["id"]: c for c in voice_choices(job)["choices"]}
+            if pick not in offer:
+                return protect(jsonify(error="Pick one of the voices offered for this video.")), 400
+            if not offer[pick]["ready"]:
+                return protect(jsonify(error=offer[pick]["note"])), 409
+            target = job / cr_media.VOICE_CHOICE
+            if pick == "again":
+                target.unlink(missing_ok=True)
+            elif pick in GEMINI_VOICES:
+                target.write_text(json.dumps({"provider": "kie", "model": GEMINI_TTS, "voice": GEMINI_VOICES[pick][0]}),
+                                  encoding="utf-8")
+            elif pick == "elevenlabs":
+                target.write_text(json.dumps({"provider": "original"}), encoding="utf-8")
+            else:
+                import voices
+                ref = str(data.get("recording") or "").strip()
+                src = voices.resolve(ref)
+                if src is None:
+                    return protect(jsonify(error="Upload your recording first (mp3, wav or m4a).")), 400
+                if src.parent.resolve() != voices.UPLOADS.resolve():      # a file on this computer: kept with the uploads
+                    with src.open("rb") as stream:
+                        ref = voices.save_upload(stream, src.name)["id"]
+                target.write_text(json.dumps({"provider": "own", "file": ref}), encoding="utf-8")
+            for pattern in ("audio_p*.mp3", "subs_p*.srt"):                    # a half-voiced presenter split: all again
+                for part in job.glob(pattern):
+                    part.unlink(missing_ok=True)
+            label = offer[pick]["label"]
+            return protect(jsonify(saved=True, choice=pick, message=f"This video will use: {label}. Resume it to carry on "
+                                   "from where it stopped; everything already made is reused."))
+        except ValueError as error:
+            if "Unavailable" in str(error):
+                return failure(error)
+            return protect(jsonify(error=str(error))), 400
+        except Exception as error:
+            return failure(error)
+
     @app.get("/cr-workspace/project/<slug>")
     def cr_workspace_project(slug):
         try:

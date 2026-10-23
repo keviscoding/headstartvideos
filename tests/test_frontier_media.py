@@ -532,3 +532,79 @@ def test_uncharged_image_failures_keep_their_own_model_fallbacks(hub, monkeypatc
     assert not media.fresh_attempt_ok("kie", "narration", {**receipt, "credits": None})
     assert media.fresh_attempt_ok("kie", "narration", {**receipt, "credits": None}, asked=True)
     assert not media.fresh_attempt_ok("kie", "narration", {**receipt, "credits": 3}, asked=True)
+
+
+GEMINI = "google/gemini-3-8-flash-tts"
+
+
+def test_a_stopped_voice_is_recorded_and_the_video_can_be_voiced_with_gemini_through_kie(hub, monkeypatch):
+    """A creator's Kie ElevenLabs voice answered "Internal Error" three times; Studio could only offer waiting. The
+    stop is recorded for the choices, and a Gemini choice voices that video with the same Kie key."""
+    media.cr_bridge.save_settings({"costs_accepted": True, "narration": {"provider": "kie"}})
+    creates = kie_tasks(monkeypatch, [KIE_INTERNAL] * 3 + ["success"])
+    monkeypatch.setattr(media, "narration_audio", lambda path: [0.0])
+    monkeypatch.setattr(media.subprocess, "run", lambda args, **k: Path(args[-1]).write_bytes(b"mp3"))  # Gemini: wav
+    with pytest.raises(media.TaskFailed, match="voice this video another way"):
+        media.narrate(_voice_engine(), "Hello world.", hub / "audio.mp3", hub / "subs.srt")
+    failed = json.loads((hub / media.VOICE_FAILED).read_text())
+    assert failed["provider"] == "kie" and failed["charged"] == 0 and "Internal Error" in failed["reason"]
+    (hub / media.VOICE_CHOICE).write_text(json.dumps({"provider": "kie", "model": GEMINI, "voice": "Charon"}))
+    media.narrate(_voice_engine(), "Hello world.", hub / "audio.mp3", hub / "subs.srt")
+    asked = creates[-1]
+    assert asked["model"] == GEMINI and asked["input"]["speakers"][0]["voice_name"] == "Charon"
+    assert media.profile("narration") == {"provider": "kie", "tasks": ["narration"]}, "Setup's choice is unchanged"
+
+
+def test_a_gemini_choice_pays_with_kie_even_when_setup_narrates_elsewhere(hub, monkeypatch):
+    media.cr_bridge.save_settings({"costs_accepted": True, "narration": {"provider": "original"}})
+    creates = kie_tasks(monkeypatch, ["success"])
+    monkeypatch.setattr(media, "narration_audio", lambda path: [0.0])
+    monkeypatch.setattr(media.subprocess, "run", lambda args, **k: Path(args[-1]).write_bytes(b"mp3"))  # Gemini: wav
+    (hub / media.VOICE_CHOICE).write_text(json.dumps({"provider": "kie", "model": GEMINI, "voice": "Kore"}))
+    media.narrate(_voice_engine(), "Hello world.", hub / "audio.mp3", hub / "subs.srt")
+    assert creates[0]["model"] == GEMINI and creates[0]["input"]["speakers"][0]["voice_name"] == "Kore"
+    assert media.profile("narration") == {}, "the choice routes only while that video's voice is made"
+
+
+def test_a_voice_choice_routes_this_video_only(hub, monkeypatch):
+    calls = []
+    engine = SimpleNamespace(log=lambda *_: None, _split_script_by_minutes=lambda s, m: [s],
+                             _speed_voice=lambda *a: None, _regroup_word_srt=lambda *a: calls.append("regroup"),
+                             _denoise_voice=lambda mp3, style: mp3)
+    original = lambda script, job, force, avatar_min, style: calls.append(("engine", Path(job).name)) or ("a", "s")
+    voiceover = media.make_voiceover(engine, original)
+    job = hub / "video-one"
+    job.mkdir()
+    (job / media.VOICE_FAILED).write_text("{}")
+    (job / media.VOICE_CHOICE).write_text(json.dumps({"provider": "original"}))
+    assert voiceover("Hello world.", job) == ("a", "s") and calls == [("engine", "video-one")]
+    assert not (job / media.VOICE_FAILED).exists(), "a voice that worked clears the stop"
+    owned = []
+    monkeypatch.setattr(media, "own_recording", lambda eng, script, j, f, force: owned.append((j.name, f)) or ("m", "t"))
+    (job / media.VOICE_CHOICE).write_text(json.dumps({"provider": "own", "file": "my-take-1a2b3c4d.mp3"}))
+    assert voiceover("Hello world.", job) == ("m", "t") and owned == [("video-one", "my-take-1a2b3c4d.mp3")]
+    assert media.job_voice(hub / "another-video") == {}
+    (job / media.VOICE_CHOICE).write_text(json.dumps({"provider": "kie", "model": "no/such-model"}))
+    assert media.job_voice(job) == {}, "an unknown model falls back to Setup's voice"
+
+
+def test_an_own_recording_becomes_the_voice_timed_and_spelled_as_the_script(hub, monkeypatch):
+    import types
+    recording = hub / "uploads" / "my-take.mp3"
+    recording.parent.mkdir()
+    recording.write_bytes(b"my voice")
+    monkeypatch.setitem(sys.modules, "voices", types.SimpleNamespace(resolve=lambda ref: recording if ref == "my-take.mp3" else None))
+    monkeypatch.setattr(media, "narration_audio", lambda path: [0.0])
+    spelled = []
+    engine = _voice_engine()
+    engine._script_words_into_srt = lambda srt, words: spelled.append(words)
+    engine._regroup_word_srt = lambda srt: None
+    job = hub / "video-two"
+    job.mkdir()
+    (job / media.VOICE_FAILED).write_text("{}")
+    mp3, srt = media.own_recording(engine, "Hello world.", job, "my-take.mp3")
+    assert mp3.read_bytes() == b"my voice" and "00:00:00,100 --> 00:00:00,800" in srt.read_text()
+    assert spelled == ["Hello world."] and not (job / media.VOICE_FAILED).exists()
+    assert not (job / "voice.own").exists(), "the engine's own mark is never set (a normal Resume would delete it)"
+    with pytest.raises(media.AccountStop, match="isn't there any more"):
+        media.own_recording(engine, "Hello world.", job, "gone.mp3")
