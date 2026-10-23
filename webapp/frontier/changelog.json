@@ -1,5 +1,14 @@
 [
   {
+    "build": 88,
+    "date": "2026-10-23",
+    "title": "Make videos by just asking Claude Code",
+    "items": [
+      "The setup page and START HERE now show the second way to use Studio: open Claude Code in your Studio folder and type /make-videos, /niche-strategy, /clone-style, /digital-product or /my-videos, or just say what you want.",
+      "Fixed: a video stopped by a passing Kie voice error now carries on when you press Resume saved project, even for videos that stopped before this update."
+    ]
+  },
+  {
     "build": 87,
     "date": "2026-10-23",
     "title": "A passing Kie voice error no longer stops your video",

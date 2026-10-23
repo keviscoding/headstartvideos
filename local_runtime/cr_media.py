@@ -56,6 +56,8 @@ class TaskFailed(AccountStop):
                   else " Top up this account, then resume." if self.category == "balance"
                   else " Kie charged nothing for it. Wait a few minutes, then press Resume saved project to try again."
                   if fresh_attempt_ok(provider, task, receipt)
+                  else " Wait a few minutes, then press Resume saved project to try again."
+                  if fresh_attempt_ok(provider, task, receipt, asked=True)
                   else " Check its log; no other wallet was used.")
         prefix = f"{PROVIDERS[provider]['label']} " + (f"refused this {task} request." if receipt.get("rejected") else f"failed this {task} task.")
         if (provider == "kie" and task == "narration" and receipt.get("id") and not receipt.get("rejected")
@@ -71,17 +73,23 @@ class TaskFailed(AccountStop):
 TRANSIENT = re.compile(r"internal error|try again later|timed? ?out|temporarily|overloaded|busy|service unavailable", re.I)
 
 
-def fresh_attempt_ok(provider, task, receipt) -> bool:
+def fresh_attempt_ok(provider, task, receipt, *, asked=False) -> bool:
     """A narration task Kie took, ran and then failed on its own side (a server error such as "Internal Error, please
     try again later") and charged nothing for: submitting the same narration again cannot pay twice. Rejections,
-    moderation, balance and account problems, a missing task ID, and any failure with credits taken or unknown keep
-    stopping the video, as do every image, motion and avatar task (images have their own model fallbacks)."""
+    moderation, balance and account problems, a missing task ID, and any failure with credits taken keep stopping
+    the video, as do every image, motion and avatar task (images have their own model fallbacks).
+
+    asked: the creator pressed Resume (a new run met the failed receipt). Kie's answer is then enough even when it
+    didn't say what the failed task cost: it produced nothing, so a new task can't pay twice for the same voice.
+    Studio's own automatic retries need Kie to report 0 credits."""
     if provider != "kie" or task != "narration" or not isinstance(receipt, dict):
         return False
     if receipt.get("status") != "failed" or receipt.get("rejected") or not receipt.get("id"):
         return False
     credits = receipt.get("credits")
-    if isinstance(credits, bool) or not isinstance(credits, (int, float)) or credits != 0:
+    if isinstance(credits, bool) or (credits is not None and not isinstance(credits, (int, float))):
+        return False
+    if credits is None and not asked or credits is not None and credits != 0:
         return False
     code, reason = str(receipt.get("failure_code") or ""), str(receipt.get("failure_message") or "")
     if failure_category(code, reason) in ("moderation", "balance", "access", "rate_limit", "cancelled"):
@@ -298,7 +306,8 @@ def run(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
                 _references[previous["url"]] = {"task_fingerprint": fingerprint}
                 return previous["url"]
             if previous.get("status") == "failed":
-                if not fresh_attempt_ok(provider, task, previous):
+                # A run that meets a failed receipt was started by the creator (Resume, Carry on): never by Studio.
+                if not fresh_attempt_ok(provider, task, previous, asked=True):
                     raise TaskFailed(provider, previous, task)
                 kept = marker.with_name(marker.stem + f".failed-{int(time.time() * 1000)}.json")
                 marker.replace(kept)                         # the failed receipt stays, under its own name

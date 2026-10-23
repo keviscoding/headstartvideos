@@ -101,12 +101,13 @@ window.CRLocalStudio = (() => {
             ['film','Any faceless format','Documentaries, explainers, history, true crime, sports, essays and more. Dozens of built-in styles.'],
             ['style','Clone a channel’s style','Point it at a YouTube channel you admire. Studio studies the real frames and builds a reusable style.'],
             ['cube','Motion graphics and 3D','Maps, charts, archival footage, animated scenes and fast 3D graphics. Not just slideshows.'],
-            ['edit','Edit before you publish','Review every scene on a timeline, fix what you don’t like, then export.']];
+            ['edit','Edit before you publish','Review every scene on a timeline, fix what you don’t like, then export.'],
+            ['chat','Runs from Claude Code','Open Claude Code in your Studio folder and just ask. It finds your niche, picks the style with you, shows the cost first and makes the videos.']];
         return '<section class="ls-section" id="ls-how"><h2>What Studio does</h2><div class="ls-features">'+list.map(([key,title,text])=>
             '<article>'+icon(key)+'<h3>'+title+'</h3><p>'+text+'</p></article>').join('')+'</div>'+
             '<div class="ls-how"><div><span>1</span><p><strong>Download Studio</strong>Mac or Windows. Claude Code can install it for you.</p></div>'+
             '<div><span>2</span><p><strong>Connect your accounts</strong>Your Claude account does the thinking; Kie.ai or Atlas Cloud makes voice and images.</p></div>'+
-            '<div><span>3</span><p><strong>Make videos</strong>Pick a style, type a title, review the edit, export.</p></div></div></section>';
+            '<div><span>3</span><p><strong>Make videos</strong>Pick a style and type a title in Studio, or just ask Claude Code.</p></div></div></section>';
     }
     function planCards() {
         const catalog = typeof PLAN_CATALOG !== 'undefined' ? PLAN_CATALOG : [];
@@ -147,8 +148,22 @@ window.CRLocalStudio = (() => {
             ['What does a video cost to make?','It depends on length and style. You pay Claude and your media provider directly at their own prices. We don’t add a markup.'],
             ['Is this different from the recipes on ChannelRecipe?','Yes. Classic recipes are ChannelRecipe v1 and run in our cloud. Studio is v2: far more styles, style cloning, motion graphics, 3D and a real editor.'],
             ['Can Claude set it up for me?','Yes. Open the downloaded folder in Claude Code and paste the prompt we give you. It checks your computer, installs what’s missing and starts the studio.'],
+            ['Can I make videos from Claude Code instead of the Studio page?','Yes. Open Claude Code in your Studio folder and type /make-videos, /niche-strategy, /clone-style or /digital-product, or just ask in your own words. Claude shows you the styles, tells you the cost before anything starts and asks before it spends anything.'],
             ['What if I get stuck?','Ask in our Discord. We answer there every day, and it’s where we hear what to build next.']];
         return '<section class="ls-section ls-faq"><h2>Questions</h2>'+items.map(([q,a])=>'<details><summary>'+q+'</summary><p>'+a+'</p></details>').join('')+'</section>';
+    }
+    // The other way to use Studio: talk to Claude Code in the Studio folder (Studio 84+: its own tools and commands).
+    function claudeCodeWay() {
+        const list = [
+            ['film','/make-videos','Pick a style from a gallery, see the cost first, make up to 5 videos.'],
+            ['idea','/niche-strategy','Channel ideas from our live niche database: a winning format bent toward a new audience, an open lane, or two channels combined.'],
+            ['style','/clone-style','Clone a YouTube channel’s look, or combine two or three channels into one new style.'],
+            ['key','/digital-product','Product ideas for your niche, then the book, its landing page and checkout, so you earn beyond AdSense.'],
+            ['check','/my-videos','What’s being made right now, and your finished videos.']];
+        return '<section class="ls-section" id="ls-claude-code"><div class="ls-section-row"><div><h2>Or just ask Claude Code</h2>'+
+            '<p class="ls-section-sub">Open Claude Code in your Studio folder (in the Claude desktop app: <b>Code</b>, then choose the folder) and type a command, or say what you want in your own words. Studio needs to be running. Claude asks you before anything that costs money.</p></div></div>'+
+            '<div class="ls-features">'+list.map(([key,title,text])=>'<article>'+icon(key)+'<h3>'+title+'</h3><p>'+text+'</p></article>').join('')+'</div>'+
+            '<p class="ls-fineprint">Want a panel with your styles and videos inside Claude Code? Install the ChannelRecipe plugin from a terminal: <code>claude plugin install channelrecipe --marketplace keviscoding/channelrecipe-plugins</code>, then type /studio.</p></section>';
     }
     function discordCard(compact = false) {
         return '<aside class="ls-discord'+(compact?' compact':'')+'"><span class="ls-discord-icon">'+icon('chat')+'</span><div><strong>Join the ChannelRecipe Discord</strong>'+
@@ -163,7 +178,7 @@ window.CRLocalStudio = (() => {
             ['Download Studio', !!m.downloaded_at || !!m.connected_at || !!m.projects, 'Mac or Windows, about 250 MB'],
             ['Install and connect it', !!m.connected_at || !!m.seen_at || !!m.projects, 'Claude Code can do it for you'],
             ['Make your first video', Number(m.finished || 0) > 0, Number(m.finished || 0) > 0
-                ? Number(m.finished)+' finished '+(Number(m.finished)===1?'video':'videos') : 'Type a title, pick a recipe, press Create']];
+                ? Number(m.finished)+' finished '+(Number(m.finished)===1?'video':'videos') : 'In Studio, or type /make-videos in Claude Code']];
         const done = steps.filter(s=>s[1]).length;
         if (done === steps.length) {
             // all set: what's worth knowing at a glance instead of three struck-through steps
@@ -321,12 +336,12 @@ window.CRLocalStudio = (() => {
                 '<section class="ls-section" id="ls-niches-section" hidden><div class="ls-section-row"><div><h2 id="ls-niches-title">Fresh niches this week</h2>'+
                 '<p class="ls-section-sub">Faceless channels the Niche Finder found growing right now. Pick one, then clone its look in Studio’s Style library.</p></div>'+
                 '<button class="btn-ghost" data-ls-niche-finder>Open Niche Finder</button></div><div id="ls-niches" class="ls-niches"></div></section>'+
-                whatsNew()+readyMade()+discordCard()+
+                claudeCodeWay()+whatsNew()+readyMade()+discordCard()+
                 '<details class="ls-advanced ls-reinstall"><summary>Install Studio on another computer</summary>'+setupSteps()+'</details>'+
                 '<div class="ls-home-plan">'+planPanel(true)+'</div>'+
                 '<details class="ls-advanced"><summary>Advanced: use an API key instead of Claude Code</summary><p>Most people should use Claude Code. If you’d rather pay per request with an API key, save it here, then choose “API brain” in the studio’s setup page.</p>'+brainForm()+'</details>';
         }
-        return '<div class="ls-member-grid">'+setupSteps()+planPanel()+'</div>'+discordCard()+
+        return '<div class="ls-member-grid">'+setupSteps()+planPanel()+'</div>'+claudeCodeWay()+discordCard()+
             '<section class="ls-section"><div class="ls-section-row"><h2>Your projects</h2><button class="btn-ghost" data-ls-refresh>Refresh</button></div><div id="ls-history"><p class="ls-muted">Loading…</p></div></section>'+
             '<details class="ls-advanced"><summary>Advanced: use an API key instead of Claude Code</summary><p>Most people should use Claude Code. If you’d rather pay per request with an API key, save it here, then choose “API brain” in the studio’s setup page.</p>'+brainForm()+'</details>';
     }

@@ -27,7 +27,22 @@
    - paste your ChannelRecipe key (Studio page on channelrecipe.com),
    - sign in to Claude Code and verify your models,
    - connect Kie.ai or Atlas Cloud for voice and images.
-4. Open the studio, pick a recipe, type a title and press **Create video**.
+4. Open the studio, pick a recipe, type a title and press **Create video**. Or make it from Claude Code (next
+   section).
+
+## Make videos by asking Claude Code
+
+Keep Studio running (its launcher window open), open Claude Code in this folder and say what you want, or type a
+command:
+
+- **/make-videos**: pick a style from a gallery, see the cost first, make up to 5 videos.
+- **/niche-strategy**: channel ideas from ChannelRecipe's live niche database, with the evidence.
+- **/clone-style**: clone a YouTube channel's look, or combine two or three channels into one new style.
+- **/digital-product**: a product for your niche (the book, its landing page and checkout).
+- **/my-videos**: what's being made, and your finished videos.
+
+Claude Code asks you before anything that costs money. The first time you open this folder it asks whether to
+trust it: say yes, so Studio's tools can work without asking every time.
 
 Your videos, thumbnails and exports are in **Projects** and in this folder's
 `output` folder. To use Studio again later, open the launcher again.
