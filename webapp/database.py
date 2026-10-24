@@ -738,7 +738,11 @@ def create_user(email: str) -> dict:
         else:
             cur.execute("INSERT OR IGNORE INTO users (email) VALUES (?)", (email,))
         cur.execute(_q("SELECT * FROM users WHERE email = ?"), (email,))
-        return dict(cur.fetchone())
+        user = dict(cur.fetchone())
+    if any(e.lower().strip() == email for _, e, _ in _PENDING_PLAN_GRANTS):
+        _apply_pending_plan_grants()                     # a plan given before they signed up applies at once
+        user = get_user_by_id(user["id"]) or user
+    return user
 
 
 def get_user_by_sub_id(sub_id: str) -> dict | None:
