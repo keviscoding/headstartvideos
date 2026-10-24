@@ -283,7 +283,10 @@ def _youtube_engine() -> bytes:
             '                          data={"uploadPath": "frontier", "fileName": path.name},\n'
             '                          files={"file": (path.name, fh, "video/mp4")}, timeout=900)\n'
             '    r.raise_for_status()\n'
-            'def ytdlp():\n    cmd = ["yt-dlp"]\n    if _num_env("YT_SLEEP") > 0:\n        cmd += ["--sleep-requests", "1"]\n'
+            'def ytdlp():\n    b = _env("YTDLP_BIN") or shutil.which("yt-dlp")\n    if b:\n        cmd = [b]\n    else:\n'
+            '        try:\n            import yt_dlp  # noqa: F401\n            cmd = [sys.executable, "-m", "yt_dlp"]\n'
+            '        except ImportError:\n            return []\n    if not shutil.which("deno"):\n        pass\n'
+            '    if _num_env("YT_SLEEP") > 0:\n        cmd += ["--sleep-requests", "1"]\n'
             '    return cmd\n'
             'def search(q):\n    if True:\n        try:\n            p = run()\n'
             '        except subprocess.TimeoutExpired:\n            return []\n        for line in p.stdout.splitlines():\n'
@@ -590,6 +593,32 @@ def test_the_studio_installs_yt_dlp_with_browser_impersonation_for_tiktok():
     assert 'yt-dlp[default,curl-cffi]>=2026.8.19; python_version >= "3.10"' in patched and "requests" in patched
     # one RapidOCR for every Python: 1.3+ caps Python below 3.13 and renamed the detector the Studio calls
     assert 'rapidocr-onnxruntime==1.2.3; python_version >= "3.10"' in patched
+    # Studio's Python trusts the certificates this computer trusts (an antivirus that scans secure connections)
+    assert 'truststore>=0.10.4; python_version >= "3.10"' in patched
+
+
+def test_the_engines_ytdlp_runs_studios_copy_trusting_this_computers_certificates(monkeypatch, tmp_path):
+    import os
+    import shutil
+    import sys
+    import types
+    patched = package.patch_engine("youtube.py", _youtube_engine()).decode()
+    start = patched.index("def ytdlp():")
+    space = {"_env": lambda name: os.environ.get(name, ""), "shutil": shutil, "sys": sys,
+             "_num_env": lambda name: 0.0}
+    exec(compile(patched[start:patched.index("def search(", start)], "youtube.py", "exec"), space)
+    own = str(Path(sys.executable).with_name("yt-dlp"))
+    monkeypatch.setenv("YTDLP_BIN", own)
+    trust = types.ModuleType("cr_trust")
+    trust.ytdlp_command = lambda cmd: ["python", "cr_ytdlp.py", *cmd[1:]] if cmd[0] == own else cmd
+    monkeypatch.setitem(sys.modules, "cr_trust", trust)
+    assert space["ytdlp"]() == ["python", "cr_ytdlp.py"]
+    monkeypatch.setenv("YTDLP_BIN", "/opt/homebrew/bin/yt-dlp")
+    assert space["ytdlp"]() == ["/opt/homebrew/bin/yt-dlp"], "a yt-dlp the creator chose is theirs"
+    monkeypatch.delitem(sys.modules, "cr_trust")
+    monkeypatch.setattr(sys, "path", [str(tmp_path)])          # an engine run where cr_trust can't be imported
+    monkeypatch.setenv("YTDLP_BIN", own)
+    assert space["ytdlp"]() == [own]
 
 
 def test_the_designed_cast_kit_reaches_the_engine_and_the_director():

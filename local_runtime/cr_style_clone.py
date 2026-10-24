@@ -173,7 +173,8 @@ def _ytdlp_command():
     import importlib.util
     ipv4 = ["--force-ipv4"] if os.environ.get("YT_FORCE_IPV4", "") not in ("", "0", "no", "off", "false") else []
     if importlib.util.find_spec("yt_dlp") is not None:
-        return [sys.executable, "-m", "yt_dlp"] + ipv4
+        import cr_trust
+        return cr_trust.ytdlp_command([sys.executable, "-m", "yt_dlp"]) + ipv4
     found = shutil.which("yt-dlp")
     return [found] + ipv4 if found else []
 
@@ -1328,6 +1329,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Run an approved, owned reference study through ChannelRecipe.")
     parser.add_argument("--operation", required=True)
     args = parser.parse_args(argv)
+    import cr_trust
+    cr_trust.install()
     import cr_bridge
     import cr_media
     import cr_render
