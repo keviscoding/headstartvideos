@@ -110,6 +110,28 @@
   function findRecipe(id) {return rows().find(r => identity(r) === id || r.name === id);}
   function featureValues() {const out = {}; for (const input of all('#crw-features input')) out[input.dataset.feature] = input.checked; return out;}
   function strict(recipe = state.selected) {return recipe?.visual_policy === 'reference_only' || recipe?.visual_policy_label === 'Reference animation only';}
+  // The recipe's character, changed for one video (cr_character.py). The recipe's picture of its character goes with
+  // every still and keeps the face the same, so new words draw the new character once in the recipe's style (or the
+  // creator uploads a picture) and that picture replaces the recipe's. A customer (Discord, 2026-10-24) couldn't
+  // change the character through Extra instructions.
+  const castOf = (r) => Array.isArray(r?.character) ? r.character.join('\n') : String(r?.character || '');
+  const castKey = (v) => String(v || '').replace(/[—–]/g, '-').replace(/[‘’]/g, "'").replace(/[“”]/g, '"').toLowerCase().split(/\s+/).filter(Boolean).join(' ');
+  function characterChanged() {const own = castOf(state.selected), v = castKey($('crw-character').value); return !!v && v !== castKey(own) && v !== castKey(own.slice(0, 4000));}
+  function characterView(message) {
+    const r = state.selected || {}, pick = $('crw-character-image').value, row = (state.characters || []).find(x => x.rel === pick), changed = characterChanged();
+    const src = row ? row.src : (!changed && r.character_image ? `/char/${encoded(r.name)}` : ''), art = $('crw-character-art');
+    art.hidden = !src; if (src && art.getAttribute('src') !== src) art.src = src;
+    $('crw-character-draw').disabled = !changed || !!state.drawing;
+    text('crw-character-status', message != null ? message : pick ? 'This picture decides how your character looks in every picture of this video.'
+      : changed && r.character_image ? 'Studio draws your character from these words in this recipe’s style (one picture, about $0.02) and keeps them in every picture of the video. Press Draw this character to see them first.'
+      : changed ? 'Your words describe the character in every picture.' : r.character_image ? 'The recipe’s own character. Change the words or upload a picture to change who appears.' : '');
+  }
+  function addCharacter(row) {
+    state.characters = [row, ...(state.characters || []).filter(x => x.rel !== row.rel)];
+    let o = [...$('crw-character-image').options].find(x => x.value === row.rel);
+    if (!o) {o = el('option', '', row.label || row.file); o.value = row.rel; $('crw-character-image').append(o);}
+    $('crw-character-image').value = row.rel; if (row.text) $('crw-character').value = row.text;
+  }
   function save() {
     if (!state.selected) return;
     state.featureDrafts[state.selected.name] = featureValues();
@@ -186,7 +208,7 @@
       group.append(label);
     }
     text('crw-features-note', strict(recipe) ? 'Every visual scene uses your learned animation kit. Narration, captions and sound remain available.' : 'Choose the sources this recipe can use. Account requirements are checked before generation.');
-    $('crw-character').value = recipe.character || '';
+    $('crw-character').value = castOf(recipe); $('crw-character-image').value = ''; characterView();
     hide('crw-panels-section', !recipe.panels); if (recipe.panels) loadPanels();
     const pics = recipe.pictures; hide('crw-pictures-section', !pics || strict(recipe));
     if (pics) {const r = $('crw-pictures'); r.min = pics.floor; r.max = pics.ceiling; r.value = pics.default; showPictures();}
@@ -273,7 +295,7 @@
   function gate() {
     const ready = state.setup?.readiness?.ready === true;
     const needsPanels = !!state.selected?.panels && !state.panels;
-    const blocked = state.submitting || state.uploading || !state.catalog || !ready || state.busy || (state.narration === 'own' && !state.audio) || needsPanels;
+    const blocked = state.submitting || state.uploading || state.drawing || !state.catalog || !ready || state.busy || (state.narration === 'own' && !state.audio) || needsPanels;
     $('crw-create').disabled = blocked;
     let message = !state.catalog ? 'Loading your visual recipes…' : !ready && mustUpdate() ? 'A new Studio is out. Press Update now at the top of this page to keep making new videos: it takes a minute and keeps your projects.' : !ready ? (state.setup?.readiness?.blockers || ['Finish account setup before creating a video.']).join(' ') : state.busy ? 'A project is using this studio. Its progress is available in Projects.' : state.narration === 'own' && !state.audio ? 'Choose a narration recording to continue.' : needsPanels ? 'Choose your panels to continue.' : 'Ready. Each Create starts a separate new project.';
     text('crw-readiness', message);
@@ -632,6 +654,7 @@
     if(r.name==='cr-manga-recaps'||r.panels)return 'Recaps made from your own panels render on this computer.';
     if(r.name==='folio')return 'FOLIO renders on this computer: every shot is drawn by your Claude Code.';
     if(state.narration==='own')return 'Your own recording renders on this computer.';
+    if($('crw-character-image').value&&!strict())return 'A character picture of your own renders on this computer for now.';
     return '';
   }
   function cloudChoice() {
@@ -699,7 +722,7 @@
   }
   async function optionalAccounts() {
     if(state.optionalLoaded)return;state.optionalLoaded=true;
-    try{const result=await api('/api/characters');for(const row of result.characters||[]){const o=el('option','',row.label||row.file);o.value=row.rel;$('crw-character-image').append(o);}}catch(_){/* Empty reference libraries are optional. */}
+    try{const result=await api('/api/characters');state.characters=[...(state.characters||[]),...(result.characters||[]).filter(r=>!(state.characters||[]).some(x=>x.rel===r.rel))];for(const row of result.characters||[]){if([...$('crw-character-image').options].some(x=>x.value===row.rel))continue;const o=el('option','',row.label||row.file);o.value=row.rel;$('crw-character-image').append(o);}characterView();}catch(_){/* Empty reference libraries are optional. */}
     try{const result=await api('/api/products');for(const row of result.products||[]){const o=el('option','',row.title||row.name||row.slug);o.value=row.slug;$('crw-offer').append(o);} hide('crw-offer-section', !(result.products||[]).length);}catch(_){hide('crw-offer-section',true);}
     try{const result=await api(`/api/avatars?style=${encoded(state.selected?.name||'')}`);for(const row of result.avatars||[]){const o=el('option','',row.persona||row.id);o.value=row.id;$('crw-avatar-id').append(o);} if(result.seconds){$('crw-avatar-seconds').min=result.seconds.min;$('crw-avatar-seconds').max=result.seconds.max;}if(result.count)$('crw-avatar-count').max=result.count.max;}catch(_){text('crw-avatar-portraits','Presenter choices are available after account setup.');}
   }
@@ -753,6 +776,10 @@
   $('crw-projects-refresh').addEventListener('click',()=>refreshActivity(true));
   $('crw-progress-cancel').addEventListener('click',async()=>{const b=$('crw-progress-cancel');if(!b.dataset.run||!state.openJob)return;b.disabled=true;try{await api(`/cr-video/${encoded(state.openJob)}/cancel`,{method:'POST',body:{run_id:b.dataset.run}});toast('Cancellation requested. Completed work stays saved.');await refreshActivity();}catch(e){text('crw-progress-note',e.message);}});
   $('crw-presenter-add').addEventListener('click',async()=>{const file=$('crw-presenter-photo').files[0];if(!file){text('crw-presenter-status','Choose a photo of your presenter.');return;}state.uploading=true;gate();text('crw-presenter-status','Adding your presenter…');const form=new FormData();form.append('file',file);form.append('name',$('crw-presenter-name').value);form.append('gender',$('crw-presenter-gender').value);form.append('persona',$('crw-presenter-persona').value);try{const result=await api('/cr-workspace/presenter',{method:'POST',body:form});const row=result.presenter;const o=el('option','',row.name||row.id);o.value=row.id;$('crw-avatar-id').prepend(o);$('crw-avatar-id').value=row.id;text('crw-presenter-status',`${row.name} is ready to present.`);}catch(e){text('crw-presenter-status',e.message);}finally{state.uploading=false;gate();}});
+  $('crw-character').addEventListener('input',()=>{characterView();summary();});
+  $('crw-character-image').addEventListener('change',()=>{const row=(state.characters||[]).find(x=>x.rel===$('crw-character-image').value);if(row&&row.text)$('crw-character').value=row.text;else if(!row)$('crw-character').value=castOf(state.selected);characterView();summary();});
+  $('crw-character-draw').addEventListener('click',async()=>{const words=$('crw-character').value.trim();if(!words||!state.selected)return;state.drawing=true;gate();characterView('Drawing your character in this recipe’s style. This takes about a minute…');try{const result=await api('/cr-workspace/character/draw',{method:'POST',body:{style:state.selected.name,description:words}});addCharacter(result.character);state.drawing=false;characterView('Your character is drawn. They appear in every picture of this video.');}catch(e){state.drawing=false;characterView(e.message);}summary();gate();});
+  $('crw-character-file').addEventListener('change',async()=>{const file=$('crw-character-file').files[0];if(!file)return;state.uploading=true;gate();characterView('Saving your character…');const form=new FormData();form.append('file',file);if(characterChanged())form.append('description',$('crw-character').value.trim());try{const result=await api('/cr-workspace/character',{method:'POST',body:form});addCharacter(result.character);characterView('Your picture is the character in every picture of this video.');}catch(e){characterView(e.message);}finally{state.uploading=false;$('crw-character-file').value='';summary();gate();}});
   $('crw-pictures').addEventListener('input',()=>{showPictures();summary();});
   $('crw-cta-on').addEventListener('change',()=>{hide('crw-cta-fields',!checked('crw-cta-on'));save();});
   $('crw-cta-image').addEventListener('change',async()=>{const file=$('crw-cta-image').files[0];if(!file)return;state.uploading=true;gate();text('crw-cta-status','Saving your picture…');const form=new FormData();form.append('file',file);try{const result=await api('/cr-workspace/cta-image',{method:'POST',body:form});state.ctaImage=result.image;text('crw-cta-status','Your picture is on the card.');}catch(e){state.ctaImage='';text('crw-cta-status',e.message);}finally{state.uploading=false;gate();}});

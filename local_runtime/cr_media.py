@@ -840,6 +840,8 @@ def install(engine):
         cr_drawon.install(engine)                   # whiteboard styles: each picture draws itself on
         import cr_threed_look
         cr_threed_look.install(engine)              # the 3D look chosen in Create for one video
+        import cr_character
+        cr_character.install(engine)                # a new character for one video replaces the recipe's picture
         import cr_style_prompts
         cr_style_prompts.install(engine)            # learned styles draw with today's storyboard prompt
     except ImportError:

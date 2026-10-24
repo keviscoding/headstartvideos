@@ -99,6 +99,12 @@ Studio through its own checks, so nothing needs the Studio web page.
   id=pick_id, open_browser=true)`) and read the choice with `get_style_pick`.
 - Money: get `quote` first and tell them the cost; call `make_videos` with its `quote_id` only after they agree.
   Claude Code also asks them to approve `make_videos` and `clone_style`. Never approve paid work for them.
+- A different character (they want to change how a style's character looks): pass `make_videos` options.character
+  (words: age, hair, face, clothes) or options.character_picture (the path of their picture). On the Studio page it's
+  Creative direction → Character (type new words and press Draw this character, or upload a picture). Prefer it to
+  Extra instructions: those can change the look, but the style's picture of its old character still goes with every
+  picture, so nothing keeps the new face the same. New words are drawn once in the style's look (one picture, about
+  $0.02). Shorts keep their own host, and 3D scenes follow the words as closely as the 3D figures allow.
 - `make_videos` returns ids at once. Check `progress` now and then, never in a tight loop; Studio shows a desktop
   notification when a video is done. `list_videos` has each finished video's file and watch link.
 - A video that stopped (a provider hiccup, a closed Studio): `progress()` lists it under `stopped`; tell them what

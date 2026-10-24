@@ -555,6 +555,9 @@ def blocked(p: dict) -> str:
         return "FOLIO renders on this computer: every shot is drawn by your Claude Code."
     if p.get("byo_audio"):
         return "Your own recording renders on this computer."
+    if p.get("character_image"):
+        # the machine's queue route drops a picked picture; words alone (and a sheet drawn from them) prepare here
+        return "A character picture of your own renders on this computer for now."
     if (p.get("render_backend") or "original") != "original":
         return "Fast mode renders on this computer."
     return ""

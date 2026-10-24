@@ -28,6 +28,7 @@ import cr_presentation
 
 TOKEN = "synthetic-browser-local-token"
 CLONE = "cr_clone_browser_fixture"
+STORY_CAST = "THE MAIN CHARACTER is the man from the reference image \u2014 early thirties, short dark hair."
 
 
 @pytest.fixture(scope="module")
@@ -49,7 +50,7 @@ def workspace(browser):
                           local_version="synthetic-studio", account=None, update_state={"state": "idle"}, voice="Kore",
                           preview_active=0, preview_max_active=0, preview_busy=0, preview_delay=0,
                           finished_jobs=[{"slug": "finished-film", "title": "A finished film", "style": "documentary", "editable": True}],
-                          cloud=None, cloud_starts=[])
+                          cloud=None, cloud_starts=[], characters=[], drawn=[])
     preview_lock = threading.Lock()
     image = io.BytesIO()
     Image.new("RGB", (160, 90), "#415573").save(image, "JPEG")
@@ -58,6 +59,8 @@ def workspace(browser):
         {"name": "3d", "tab": "3d", "features": {"offered": ["threed", "maps", "sound"], "on": ["threed", "sound"]}},
         {"name": CLONE, "label": "My Illustrated Worlds", "custom": True,
          "features": {"offered": ["motion", "sound"], "on": ["motion", "sound"]}},
+        {"name": "stories", "label": "2D Life Stories", "character": STORY_CAST, "character_image": "characters/stories.png",
+         "features": {"offered": ["ai_images", "sound"], "on": ["ai_images", "sound"]}},
     ]
     features = [{"key": key, "label": key, "explicit": key == "threed"}
                 for key in ("youtube", "ai_images", "motion", "maps", "threed", "sound")]
@@ -241,6 +244,31 @@ def workspace(browser):
         return jsonify(state="preparing", title="Cloud film", message="Writing the script…", error="", balance_usd=9.5,
                        lines=["queued"], farm="", videos=[{"slug": "done-film", "title": "Done film",
                                                            "video": "Done film.mp4"}])
+
+    @app.get("/api/characters")
+    def characters():
+        return jsonify(characters=env.characters)
+
+    @app.post("/cr-workspace/character/draw")
+    def character_draw():
+        env.drawn.append(request.json)
+        row = {"rel": "characters/mia-a-woman-abc123.png", "file": "mia-a-woman-abc123.png", "label": "mia a woman",
+               "src": "/charimg/mia-a-woman-abc123.png", "text": request.json["description"]}
+        env.characters.append(row)
+        return jsonify(character=row)
+
+    @app.post("/cr-workspace/character")
+    def character_upload():
+        assert request.files["file"].read()
+        row = {"rel": "characters/my-host-def456.png", "file": "my-host-def456.png", "label": "my host",
+               "src": "/charimg/my-host-def456.png", "text": "THE CAST: the main character is exactly the character in "
+               "the character reference image."}
+        return jsonify(character=row)
+
+    @app.get("/char/<style>")
+    @app.get("/charimg/<name>")
+    def character_picture(style=None, name=None):
+        return Response(image.getvalue(), mimetype="image/jpeg")
 
     @app.post("/cr-video/<slug>/cancel")
     def cancel(slug):
@@ -560,3 +588,42 @@ def test_a_video_whose_voice_stopped_offers_other_voices_and_carries_on(workspac
     assert [p for p in env.posts if p["path"].startswith(("/cr-workspace/voice", "/cr-submit"))] == [
         {"path": "/cr-workspace/voice/voice-film", "body": {"choice": "gemini-woman"}},
         {"path": "/cr-submit-project", "body": {"project_id": "crv_" + "9" * 24}}]
+
+
+def test_a_new_character_is_drawn_or_uploaded_and_goes_with_the_video(workspace):
+    """A customer (Discord, 2026-10-24) couldn't change the character in Creative direction: new words now draw the
+    character (or a picture is uploaded) and that picture goes with the video."""
+    env, page = workspace, workspace.page
+    env.open("?cr-preset=stories")
+    page.locator("summary:has-text('Creative direction')").click()
+    assert page.locator("#crw-character").input_value() == STORY_CAST, "the recipe's own words, as written"
+    page.wait_for_function("!document.getElementById('crw-character-art').hidden")
+    assert page.locator("#crw-character-art").get_attribute("src") == "/char/stories"
+    assert page.locator("#crw-character-draw").is_disabled()
+    assert "The recipe’s own character" in page.locator("#crw-character-status").inner_text()
+    mia = "Mia, a woman in her thirties with long red hair and a green raincoat."
+    page.locator("#crw-character").fill(mia)
+    assert "draws your character from these words" in page.locator("#crw-character-status").inner_text()
+    assert page.locator("#crw-character-art").is_hidden(), "the recipe's man is no longer shown as the character"
+    page.locator("#crw-character-draw").click()
+    page.wait_for_function("document.getElementById('crw-character-image').value==='characters/mia-a-woman-abc123.png'")
+    assert env.drawn == [{"style": "stories", "description": mia}]
+    assert page.locator("#crw-character-art").get_attribute("src") == "/charimg/mia-a-woman-abc123.png"
+    page.locator("#crw-title").fill("A rainy year")
+    page.locator("#crw-create").click()
+    page.wait_for_function("!window.CR_WORKSPACE_CLIENT.state.submitting && window.CR_WORKSPACE_CLIENT.state.page==='projects'")
+    body = env.creates[0]["body"]
+    assert body["character"] == mia and body["character_image"] == "characters/mia-a-woman-abc123.png"
+    assert mia not in body["extra"]
+    # or a picture of their own: its words replace the recipe's, so words and picture agree
+    page.locator(".crw-nav [data-nav=create]").click()
+    image = io.BytesIO()
+    Image.new("RGB", (400, 400), "#C04040").save(image, "PNG")
+    page.set_input_files("#crw-character-file", files=[{"name": "host.png", "mimeType": "image/png",
+                                                         "buffer": image.getvalue()}])
+    page.wait_for_function("document.getElementById('crw-character-image').value==='characters/my-host-def456.png'")
+    assert page.locator("#crw-character").input_value().startswith("THE CAST: the main character is exactly")
+    # going back to Automatic brings back the recipe's own character
+    page.locator("#crw-character-image").select_option("")
+    assert page.locator("#crw-character").input_value() == STORY_CAST
+

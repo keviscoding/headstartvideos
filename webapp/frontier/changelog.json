@@ -1,5 +1,16 @@
 [
   {
+    "build": 99,
+    "date": "2026-10-24",
+    "title": "Change a recipe's character for one video",
+    "items": [
+      "New: give any story recipe a different main character. In Create, open Creative direction: Character now comes first, showing the recipe's own character.",
+      "Draw your own character from a description. Type who they are and press Draw this character: Studio draws them once in the recipe's style (one picture, about $0.02) and keeps them in every picture.",
+      "Or upload a picture of your character. It replaces the recipe's character in every picture of that video, and stays on your computer for the next one.",
+      "In Claude Code, ask for a different character. make_videos takes the character's description or the path of their picture."
+    ]
+  },
+  {
     "build": 98,
     "date": "2026-10-24",
     "title": "Setup finds network problems before your first video",
