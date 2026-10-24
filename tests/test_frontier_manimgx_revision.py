@@ -24,8 +24,8 @@ def revision(stub_runtime, monkeypatch):
     monkeypatch.setattr(refs, "resolve", lambda *a: copy.deepcopy(bundle))
     monkeypatch.setattr(refs, "save_reference", lambda p, b: gx._write(p, "Private fixture", text=True))
     first = run_stub(state)
-    cache = state.root / "job/threed/.cr-manimgx"
-    old = cache / first["scenes"][0]["compiler_key"]
+    cache = state.root / "job/threed" / gx.cache_name()
+    old = cache / gx.key_folder(first["scenes"][0]["compiler_key"])
     saved = gx._read(old / "compiler.json")
     identity = {"project_id": "crv_" + "1" * 24, "user_id": 1,
         "native_account_fingerprint": "a" * 64, "profile_identity": "b" * 64,
@@ -44,7 +44,7 @@ def revision(stub_runtime, monkeypatch):
     owner = {"home": str(state.root), "identity": identity, "stages": [stage]}
     native = gx._revision_native_result(raw, owner)
     assert native is not None
-    saved["native_provenance"] = {"identity": identity, "native": native, "key": old.name,
+    saved["native_provenance"] = {"identity": identity, "native": native, "key": saved["key"],
         "context_sha256": gx._digest(saved["context"]), "assets_sha256": gx._digest({}),
         "reference_identity": bundle["identity"], "setup_identity": state.ready["identity"],
         "compiler": gx.COMPILER_VERSION}
@@ -54,7 +54,7 @@ def revision(stub_runtime, monkeypatch):
     target["scene"]["label"] = "New label"
     key = gx._cache_key(target, {}, state.ready, bundle)
     state.__dict__.update(old=old, cache=cache, owner=owner, saved=saved, target=target,
-        target_dir=cache / key, key=key, native_path=native_path, bundle=bundle, raw=raw)
+        target_dir=cache / gx.key_folder(key), key=key, native_path=native_path, bundle=bundle, raw=raw)
     return state
 
 

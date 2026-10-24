@@ -157,7 +157,7 @@ def test_original_texture_records_reach_source_validation_and_cache(stub_runtime
     first = run_stub(state, compiler=compiler)
     second = run_stub(state, compiler=lambda *a: pytest.fail("Completed textured source must be reused"), output="second")
     assert first["scenes"][0]["compiler_key"] == second["scenes"][0]["compiler_key"]
-    saved = gx._read(state.root / "job/threed/.cr-manimgx" / first["scenes"][0]["compiler_key"] / "compiler.json")
+    saved = gx._read(state.root / "job/threed" / gx.cache_name() / gx.key_folder(first["scenes"][0]["compiler_key"]) / "compiler.json")
     assert saved["typed"] is True and "ImageMobject" in saved["result"]["source"]
 
 
@@ -191,7 +191,7 @@ def saved_source_correction(stub_runtime, monkeypatch):
     bundle = {"identity": "source-proof", "context": {"sources": ["original.js"]}, "assets": {}}
     key = gx._digest({"input": context, "assets": assets, "compiler": gx.COMPILER_VERSION,
                       "setup": state.ready["identity"], "original_references": bundle["identity"]})
-    directory = state.root / key
+    directory = state.root / gx.key_folder(key)
     diagnostic = "Known source API diagnostic"
     result = manifest(context)
     source_sha = gx.hashlib.sha256(SOURCE.encode()).hexdigest()
@@ -758,7 +758,7 @@ def test_runtime_api_failure_preserves_source_and_blocks_implicit_retry(stub_run
     monkeypatch.setattr(gx, "_invoke", failed)
     with pytest.raises(RuntimeError, match="method unavailable"):
         run_stub(state)
-    directory = next((state.root / "job/threed/.cr-manimgx").iterdir())
+    directory = next((state.root / "job/threed" / gx.cache_name()).iterdir())
     original = (directory / "scene.py").read_bytes()
     failure = gx._read(directory / "runtime-failure.json")
     assert failure["source_sha256"] == gx._file_hash(directory / "scene.py")

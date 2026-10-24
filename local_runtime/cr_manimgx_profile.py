@@ -237,7 +237,8 @@ def run_zero_model_benchmark(root, context, assets, ready, reference_identity, a
         "setup": ready["identity"], "original_references": reference_identity})
     result = renderer._compiler_result(json.dumps(manifest.get("result")), context, assets)
     source_hash = hashlib.sha256(result["source"].encode()).hexdigest()
-    if (manifest.get("key") != key or manifest_path.parent.name != key or manifest.get("typed") is not True
+    if (manifest.get("key") != key or not renderer.is_key_folder(manifest_path.parent.name, key)
+            or manifest.get("typed") is not True
             or manifest.get("source_sha256") != source_hash
             or not (manifest_path.parent / "scene.py").is_file()
             or hashlib.sha256((manifest_path.parent / "scene.py").read_bytes()).hexdigest() != source_hash):

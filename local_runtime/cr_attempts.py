@@ -20,9 +20,14 @@ def owned_slug(engine, project_id):
     return matches[0] if matches else None
 
 
+# A new attempt's folder: the title's slug and 8 characters of its project. It was base[:85] + 24 characters, and a
+# video's deepest files went past Windows' 260-character limit (cr_paths). Saved attempts keep their saved names.
+ATTEMPT_BASE, ATTEMPT_ID = 46, 8
+
+
 def new_slug(base, identity):
     base = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(base)).strip("-_") or "video"
-    return base[:85] + "--" + identity[-24:]
+    return base[:ATTEMPT_BASE].rstrip("-_") + "--" + identity[-ATTEMPT_ID:]
 
 
 def reserve_output(engine, job, spec):
@@ -32,7 +37,8 @@ def reserve_output(engine, job, spec):
     title = Path(engine.youtube_filename(spec["title"])).stem
     folder = title
     if (job.parent.parent / folder).exists():
-        folder = f"{title} ({job.name})"
+        # another video of this title is there: this one's own 8 characters, not its whole folder name (Windows' limit)
+        folder = f"{title} ({job.name[-ATTEMPT_ID:]})"
         if (job.parent.parent / folder).exists():
             raise RuntimeError("This attempt's output folder already exists. Its files were preserved.")
     import cr_claude

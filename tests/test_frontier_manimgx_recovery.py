@@ -59,7 +59,7 @@ def saved(tmp_path, monkeypatch):
     identity = {"input": context, "compiler": renderer.COMPILER_VERSION, "setup": ready["identity"], "original_references": bundle["identity"]}
     legacy = renderer._digest({**identity, "assets": {str(asset): assets[next(iter(assets))]["sha256"]}})
     key = renderer._digest({**identity, "assets": assets})
-    old = job / "threed/.cr-manimgx" / legacy
+    old = job / "threed" / renderer.cache_name() / renderer.key_folder(legacy)
     write(old / "compile-attempts.json", {"key": legacy, "state": "stopped", "calls": 1})
     (old / "compiler-response-1.txt").write_text(raw)
     (old / "original-reference.txt").write_text("exact original private reference")
@@ -72,7 +72,7 @@ def saved(tmp_path, monkeypatch):
     checked = []
     monkeypatch.setattr(renderer, "_typecheck", lambda python, path: checked.append((python, path.read_text())))
     return SimpleNamespace(home=tmp_path, job=job, out=out, old=old, key=key, cloud=cloud, checked=checked,
-                           asset=asset, destination=job / "threed/.cr-manimgx" / key, bundle=bundle)
+                           asset=asset, destination=job / "threed" / renderer.cache_name() / renderer.key_folder(key), bundle=bundle)
 
 
 def invoke(saved, **kwargs):
@@ -252,13 +252,13 @@ def test_coverage_length_recovery_accepts_same_key_without_changing_old_history(
     assert result["accepted"] and not result["reused"] and len(saved.checked) == 1
     for name, data in original.items():
         assert (saved.old / name).read_bytes() == data
-    work = saved.old / ".recovery-coverage-text"
+    work = saved.old / renderer.recovery_name("coverage_text")
     receipt = json.loads((work / "recovery.json").read_text())
     manifest = json.loads((saved.old / "compiler.json").read_text())
     assert receipt["state"] == "validated" and receipt["model_calls"] == 0
     assert manifest["key"] == saved.key and manifest["typed"] is True
     assert manifest["recovery_of"] == saved.key and manifest["recovery_kind"] == "coverage_text"
-    assert manifest["recovery_receipt"] == ".recovery-coverage-text/recovery.json"
+    assert manifest["recovery_receipt"] == renderer.recovery_name("coverage_text") + "/recovery.json"
     assert invoke(saved, acknowledge_recovery=True)["reused"] and len(saved.checked) == 1
     row = recovery.discover(saved.home, saved.job, saved.cloud)[0]
     assert row["state"] == "validated" and not row["can_validate"] and not row["can_correct"]
@@ -278,7 +278,7 @@ def test_coverage_recovery_rejects_real_manifest_failures_without_typecheck(cove
     update_completed_response(saved, result)
     history = {p.name: p.read_bytes() for p in saved.old.iterdir()}
     with pytest.raises(RuntimeError): invoke(saved, acknowledge_recovery=True)
-    assert not saved.checked and not (saved.old / ".recovery-coverage-text").exists()
+    assert not saved.checked and not (saved.old / renderer.recovery_name("coverage_text")).exists()
     assert {p.name: p.read_bytes() for p in saved.old.iterdir()} == history
     assert not recovery.discover(saved.home, saved.job, saved.cloud)
 
@@ -308,7 +308,7 @@ def test_coverage_typecheck_failure_preserves_history_and_offers_only_explicit_a
         invoke(saved, acknowledge_recovery=True)
     for name, data in history.items(): assert (saved.old / name).read_bytes() == data
     assert not (saved.old / "compiler.json").exists()
-    receipt = json.loads((saved.old / ".recovery-coverage-text/recovery.json").read_text())
+    receipt = json.loads((saved.old / renderer.recovery_name("coverage_text") / "recovery.json").read_text())
     state = "source_invalid" if api_failure else "stopped"
     assert receipt["state"] == state and receipt["model_calls"] == 0
     row = recovery.discover(saved.home, saved.job, saved.cloud)[0]
@@ -325,7 +325,7 @@ def test_coverage_unknown_accepted_cache_cannot_be_overwritten(coverage_saved):
     write(saved.old / "compiler.json", {"key": saved.key, "typed": True, "recovery_kind": "coverage_text"})
     with pytest.raises(RuntimeError, match="other acceptance"):
         invoke(saved, acknowledge_recovery=True)
-    assert not saved.checked and not (saved.old / ".recovery-coverage-text").exists()
+    assert not saved.checked and not (saved.old / renderer.recovery_name("coverage_text")).exists()
 
 
 def test_coverage_accepted_cache_changes_are_not_reported_as_validated(coverage_saved):
@@ -346,7 +346,7 @@ def test_coverage_existing_empty_or_malformed_manifest_is_never_overwritten(cove
     before = {p.name: p.read_bytes() for p in saved.old.iterdir()}
     with pytest.raises(RuntimeError): invoke(saved, acknowledge_recovery=True)
     assert {p.name: p.read_bytes() for p in saved.old.iterdir()} == before
-    assert not saved.checked and not (saved.old / ".recovery-coverage-text").exists()
+    assert not saved.checked and not (saved.old / renderer.recovery_name("coverage_text")).exists()
 
 
 @pytest.mark.parametrize("kind", ["edited", "symlink", "directory"])
@@ -365,7 +365,7 @@ def test_coverage_existing_unknown_scene_is_never_overwritten(coverage_saved, ki
     assert (before.st_ino, before.st_mode, before.st_mtime_ns) == (after.st_ino, after.st_mode, after.st_mtime_ns)
     assert target.read_text() == SOURCE
     if kind == "edited": assert scene.read_text() == SOURCE + "# User edit\n"
-    assert not saved.checked and not (saved.old / ".recovery-coverage-text").exists()
+    assert not saved.checked and not (saved.old / renderer.recovery_name("coverage_text")).exists()
 
 
 def test_coverage_identical_regular_scene_preserves_inode_and_bytes(coverage_saved):
@@ -391,7 +391,7 @@ def test_coverage_publication_rechecks_work_that_appeared_during_typecheck(cover
     with pytest.raises(RuntimeError, match="will not be overwritten"):
         invoke(saved, acknowledge_recovery=True)
     assert (saved.old / path_name).read_text() == contents
-    receipt = json.loads((saved.old / ".recovery-coverage-text/recovery.json").read_text())
+    receipt = json.loads((saved.old / renderer.recovery_name("coverage_text") / "recovery.json").read_text())
     assert receipt["state"] == "stopped" and receipt["model_calls"] == 0
     assert json.loads((saved.old / "compile-attempts.json").read_text()) == {"key": saved.key, "state": "stopped", "calls": 1}
     assert len(saved.checked) == 1
@@ -410,7 +410,7 @@ def test_coverage_exclusive_publication_cannot_replace_a_racing_file(coverage_sa
     with pytest.raises(RuntimeError, match="will not be overwritten"):
         invoke(saved, acknowledge_recovery=True)
     assert (saved.old / path_name).read_text() == contents
-    receipt = json.loads((saved.old / ".recovery-coverage-text/recovery.json").read_text())
+    receipt = json.loads((saved.old / renderer.recovery_name("coverage_text") / "recovery.json").read_text())
     assert receipt["state"] == "stopped" and receipt["model_calls"] == 0
     assert json.loads((saved.old / "compile-attempts.json").read_text()) == {"key": saved.key, "state": "stopped", "calls": 1}
     assert len(saved.checked) == 1
@@ -423,7 +423,7 @@ def test_recovery_never_writes_redirected_cache(coverage_saved, tmp_path):
     saved.old.symlink_to(outside, target_is_directory=True)
     with pytest.raises(RuntimeError, match="redirected paths"):
         invoke(saved, acknowledge_recovery=True)
-    assert not saved.checked and not (outside / ".recovery-coverage-text").exists()
+    assert not saved.checked and not (outside / renderer.recovery_name("coverage_text")).exists()
 
 
 @pytest.mark.parametrize("metadata_failure", [False, True])
@@ -472,7 +472,7 @@ def test_correction_requires_explicit_fresh_native_setup_and_restores_context(sa
 def coverage_correction(coverage_saved, monkeypatch):
     import cr_bridge
     saved = coverage_saved
-    work = saved.old / ".recovery-coverage-text"
+    work = saved.old / renderer.recovery_name("coverage_text")
     corrected_source = SOURCE.replace("self.wait(1)", "self.wait(1.0)")
     calls = []
     def checker(python, source):
@@ -527,7 +527,7 @@ def test_coverage_api_correction_is_explicit_single_native_call_and_preserves_or
     assert (saved.old / "scene.py").read_text() == saved.corrected_source
     manifest = json.loads((saved.old / "compiler.json").read_text())
     receipt = json.loads((saved.work / "recovery.json").read_text())
-    assert manifest["recovery_receipt"] == ".recovery-coverage-text/recovery.json"
+    assert manifest["recovery_receipt"] == renderer.recovery_name("coverage_text") + "/recovery.json"
     assert manifest["recovery_proof"] == receipt["proof"] and receipt["state"] == "corrected"
     assert receipt["model_calls"] == 1 and receipt["diagnostic"] == "Known API type error"
     assert manifest["source_sha256"] != receipt["proof"]["source_sha256"]
@@ -617,7 +617,7 @@ def runtime_saved(saved):
         f'Traceback (most recent call last):\n  File "{saved.old / "scene.py"}", line 4, in construct\n'
         "    m.Sphere().set_shade_in_3d(False)\n"
         "AttributeError: 'Sphere' object has no attribute 'set_shade_in_3d'. Did you mean: 'shade_in_3d'?\n")
-    saved.work = saved.old / ".recovery-runtime-api"
+    saved.work = saved.old / renderer.recovery_name("runtime_api")
     return saved
 
 
@@ -746,7 +746,7 @@ def manifest_saved(coverage_saved):
     saved.complete_result = result
     saved.original_raw = json.dumps(result)[:-30]
     update_completed_raw(saved, saved.original_raw)
-    saved.work = saved.old / ".recovery-manifest-json"
+    saved.work = saved.old / renderer.recovery_name("manifest_json")
     return saved
 
 
@@ -840,7 +840,7 @@ def test_manifest_correction_is_explicit_one_shot_and_preserves_saved_incomplete
     receipt = json.loads((saved.work / "recovery.json").read_text())
     manifest = json.loads((saved.old / "compiler.json").read_text())
     assert receipt["state"] == "corrected" and receipt["model_calls"] == 1
-    assert manifest["recovery_kind"] == "manifest_json" and manifest["recovery_receipt"] == ".recovery-manifest-json/recovery.json"
+    assert manifest["recovery_kind"] == "manifest_json" and manifest["recovery_receipt"] == renderer.recovery_name("manifest_json") + "/recovery.json"
     assert invoke(saved, acknowledge_recovery=True)["reused"]
     with pytest.raises(RuntimeError): correct_coverage(saved, acknowledge_correction=True)
     assert saved.calls.count("correct") == 1
@@ -894,7 +894,7 @@ def test_completed_native_correction_recovers_locally_without_rewriting_stopped_
     plan = recovery._prepare(saved.home, PROJECT, saved.out, "original", saved.cloud)
     args = (saved.old, plan["context"], plan["assets"], plan["ready"], saved.key, saved.bundle)
     result, source = recovery.runtime_override(*args)
-    assert result["source"] == SOURCE and source.parent.name == ".completed-correction-validation"
+    assert result["source"] == SOURCE and source.parent.name == renderer.recovery_name("validation")
     assert "completed_validation_sha256" in recovery.runtime_acceptance(*args)
     row = recovery.discover(saved.home, saved.job, saved.cloud)[0]
     assert row["state"] == "validated" and not row["can_validate"] and not row["can_correct"]
@@ -915,7 +915,7 @@ def test_completed_correction_requires_exact_successful_native_receipt_before_lo
         native = json.loads(saved.correction_native.read_text()); native["account_fingerprint"] = "other-account"; write(saved.correction_native, native)
     elif mutation == "accepted_manifest": write(saved.work / "compiler-corrected.json", {"typed": True})
     with pytest.raises(RuntimeError): invoke(saved, acknowledge_recovery=True)
-    assert not (saved.work / ".completed-correction-validation").exists() and not saved.checked
+    assert not (saved.work / renderer.recovery_name("validation")).exists() and not saved.checked
 
 
 def test_completed_correction_local_failure_is_one_shot_and_keeps_original_source(completed_runtime_correction, monkeypatch):
@@ -937,7 +937,7 @@ def test_revalidated_correction_rechecks_original_and_sidecar_hashes_before_rend
     saved = completed_runtime_correction
     invoke(saved, acknowledge_recovery=True)
     plan = recovery._prepare(saved.home, PROJECT, saved.out, "original", saved.cloud)
-    validation = saved.work / ".completed-correction-validation"
+    validation = saved.work / renderer.recovery_name("validation")
     if target == "history": (saved.work / "scene-corrected.validation.log").write_text("Changed old diagnostic")
     elif target == "sidecar_source": (validation / "scene.py").write_text("# Changed")
     elif target == "sidecar_manifest": write(validation / "compiler-corrected.json", {"typed": True})
@@ -956,6 +956,6 @@ def test_completed_correction_rechecks_inputs_after_local_validation(completed_r
         elif mutation == "account": monkeypatch.setattr(recovery.cr_claude, "status", lambda: {"ready": True, "account_fingerprint": "changed"})
     monkeypatch.setattr(renderer, "_typecheck", racing_checker)
     with pytest.raises(RuntimeError): invoke(saved, acknowledge_recovery=True)
-    receipt = json.loads((saved.work / ".completed-correction-validation/recovery.json").read_text())
+    receipt = json.loads((saved.work / renderer.recovery_name("validation") / "recovery.json").read_text())
     assert receipt["state"] == "stopped" and receipt["model_calls"] == 0
-    assert not (saved.work / ".completed-correction-validation/compiler-corrected.json").exists()
+    assert not (saved.work / renderer.recovery_name("validation") / "compiler-corrected.json").exists()

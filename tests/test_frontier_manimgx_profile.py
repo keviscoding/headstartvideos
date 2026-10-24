@@ -128,7 +128,7 @@ def bench(tmp_path, monkeypatch):
     context = final_context()
     key = renderer._digest({"input": context, "assets": {}, "compiler": renderer.COMPILER_VERSION,
         "setup": ready["identity"], "original_references": reference})
-    directory = root / "output/exact/threed/.cr-manimgx" / key; directory.mkdir(parents=True)
+    directory = root / "output/exact/threed" / renderer.cache_name() / renderer.key_folder(key); directory.mkdir(parents=True)
     result = {"scene_class": "ExactScene", "source": SOURCE, "unsupported": [],
         "coverage": {pointer: "Original requirement preserved exactly." for pointer in renderer._pointers(context)}}
     manifest = {"key": key, "typed": True, "source_sha256": hashlib.sha256(SOURCE.encode()).hexdigest(),

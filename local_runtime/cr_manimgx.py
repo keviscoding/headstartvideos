@@ -107,6 +107,42 @@ def _file_hash(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+# Windows stops at 260 characters in a file's path (cr_paths), and a scene's cache and recovery folders sit deep in
+# its video's folder. There a video's scene cache is .gx, a scene's folder is named by the first 12 characters of its
+# key and its recovery folders are short; a Mac and Linux keep the names their saved scenes already have. (No saved
+# scene on Windows was reusable before: its sources were written with CRLF and never matched their hash.)
+SHORT_NAMES = os.name == "nt"
+_RECOVERY = {"runtime_api": (".recovery-runtime-api", ".rx-api"),
+             "coverage_text": (".recovery-coverage-text", ".rx-text"),
+             "manifest_json": (".recovery-manifest-json", ".rx-json"),
+             "native_stage": (".recovery-native-stage", ".rx-nat"),
+             "procedural_pixels": (".recovery-procedural-pixels", ".rx-px"),
+             "validation": (".completed-correction-validation", ".ok")}
+
+
+def recovery_name(kind):
+    """The folder name of a scene's `kind` of recovery."""
+    return _RECOVERY[kind][1 if SHORT_NAMES else 0]
+
+
+def cache_name():
+    """The name of a video's scene cache, in its threed folder."""
+    return ".gx" if SHORT_NAMES else ".cr-manimgx"
+
+
+def key_folder(key):
+    """The folder name of the scene cached under `key`."""
+    return key[:12] if SHORT_NAMES else key
+
+
+def is_key_folder(name, key=None):
+    """Is `name` a scene's cache folder (the one of `key`, when given)?"""
+    if not isinstance(name, str) or not re.fullmatch(r"[a-f0-9]{12}" if SHORT_NAMES else r"[a-f0-9]{64}", name):
+        return False
+    return key is None or (isinstance(key, str) and re.fullmatch(r"[a-f0-9]{64}", key) is not None
+                           and key_folder(key) == name)
+
+
 def _write(path, value, *, text=False):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -502,7 +538,7 @@ def _typecheck(python, source, *, timeout=30):
             # A local variable annotation has no executable effect. The
             # companion only declares dynamic dictionary state explicitly;
             # object member names and call signatures are still checked.
-            with tempfile.TemporaryDirectory(prefix=".cr-typing-", dir=Path(source).parent) as temporary:
+            with tempfile.TemporaryDirectory(prefix=".ty-" if SHORT_NAMES else ".cr-typing-", dir=Path(source).parent) as temporary:
                 candidate = Path(temporary) / Path(source).name
                 _write(candidate, text, text=True)
                 checked = subprocess.run([str(checker), "check", str(candidate), "--python", str(python),
@@ -633,11 +669,11 @@ def correct_recovered_source(engine, context, assets, ready, directory, key, *, 
     if recovery_directory is not None:
         work = Path(recovery_directory)
         if (work.is_symlink() or not work.is_dir() or work.resolve().parent != directory.resolve()
-                or work.name not in {".recovery-coverage-text", ".recovery-runtime-api", ".recovery-manifest-json"}):
+                or work.name not in {recovery_name(k) for k in ("coverage_text", "runtime_api", "manifest_json")}):
             raise RuntimeError("Use this compiler request's exact private source recovery directory.")
     receipt = _read(work / "recovery.json")
     proof = receipt.get("proof", {})
-    manifest_repair = work.name == ".recovery-manifest-json" and receipt.get("error_type") == "ManimGXManifestJSONError"
+    manifest_repair = work.name == recovery_name("manifest_json") and receipt.get("error_type") == "ManimGXManifestJSONError"
     saved_result = _read(work / "recovery-result.json")
     if manifest_repair:
         if set(saved_result) != {"saved_response"} or not isinstance(saved_result["saved_response"], str):
@@ -653,7 +689,7 @@ def correct_recovered_source(engine, context, assets, ready, directory, key, *, 
             or proof.get("context_sha256") != _digest(context) or proof.get("assets_sha256") != _digest(assets)
             or proof.get("source_sha256") != source_hash or proof.get("setup_identity") != ready["identity"]
             or proof.get("reference_identity") != reference_bundle["identity"]
-            or (work.name != ".recovery-runtime-api" and ((directory / "compiler.json").exists() or (directory / "compiler.json").is_symlink()))
+            or (work.name != recovery_name("runtime_api") and ((directory / "compiler.json").exists() or (directory / "compiler.json").is_symlink()))
             or (work / "compiler-corrected.json").exists()):
         raise RuntimeError("This saved source correction no longer matches its verified recovery. Review the stopped graphics request.")
     candidate = work / ("saved-response.txt" if manifest_repair else "scene-recovered.py")
@@ -670,7 +706,7 @@ def correct_recovered_source(engine, context, assets, ready, directory, key, *, 
             raise RuntimeError("This saved response can now be validated locally; no Claude correction was started.")
         if proof.get("manifest_diagnostic") != diagnostic:
             raise RuntimeError("The saved manifest diagnostic changed. No Claude correction was started.")
-    elif work.name == ".recovery-runtime-api":
+    elif work.name == recovery_name("runtime_api"):
         import cr_manimgx_recovery
         evidence = cr_manimgx_recovery.runtime_diagnostic(directory, context, assets, ready, key, reference_bundle)
         if receipt.get("error_type") != "ManimGXRuntimeAPIError" or proof.get("runtime_failure") != evidence:
@@ -774,7 +810,7 @@ def _accepted_response(directory, saved, context, assets):
     """Bind accepted source to its saved successful compile or recovery evidence."""
     key = saved["key"]
     if saved.get("recovery_kind") == "native_quota":
-        work = directory / ".recovery-native-stage"
+        work = directory / recovery_name("native_stage")
         record = _read(work / "recovery.json")
         proof = record.get("proof") or {}
         paths = (directory / "compile-attempts.json", work / "recovery.json", work / "response.txt", work / "failed-native-receipt.json")
@@ -816,7 +852,7 @@ def _accepted_response(directory, saved, context, assets):
         if receipt.resolve().is_relative_to(directory.resolve()) and _regular(receipt):
             record = _read(receipt); proof = record.get("proof", {})
             if (saved.get("recovery_kind") in {"coverage_text", "manifest_json"}
-                    and relative == ".recovery-" + ("coverage-text" if saved.get("recovery_kind") == "coverage_text" else "manifest-json") + "/recovery.json"
+                    and relative == recovery_name(saved["recovery_kind"]) + "/recovery.json"
                     and record.get("state") == "corrected" and record.get("model_calls") == 1
                     and record.get("corrected_source_sha256") == saved.get("source_sha256")
                     and proof == saved.get("recovery_proof") and isinstance(proof, dict)
@@ -874,30 +910,31 @@ def _reuse_source(context, assets, ready, directory, key, *, reference_bundle=No
     for manifest in entries:
         source_dir = manifest.parent
         if (source_dir == directory or source_dir.is_symlink() or not _regular(manifest)
-                or not re.fullmatch(r"[a-f0-9]{64}", source_dir.name)):
+                or not is_key_folder(source_dir.name)):
             continue
-        if recorded and recorded.get("source_key") != source_dir.name:
+        if recorded and not is_key_folder(source_dir.name, recorded.get("source_key")):
             continue
         saved = _read(manifest)
-        if saved.get("typed") is not True or saved.get("key") != source_dir.name:
+        if saved.get("typed") is not True or not is_key_folder(source_dir.name, saved.get("key")):
             continue
+        source_key = saved["key"]                       # the folder's own full key, checked against its name
         if isinstance(saved.get("context"), dict):
             contexts = [saved["context"]]
         else:
             if legacy is None:
                 legacy = _legacy_contexts(cache)
-            contexts = list(legacy.get(source_dir.name, {}).values())
+            contexts = list(legacy.get(source_key, {}).values())
         for source_context in contexts:
             effective_manifest = manifest
             override = None
-            if _cache_key(source_context, assets, ready, reference_bundle) != source_dir.name:
+            if _cache_key(source_context, assets, ready, reference_bundle) != source_key:
                 continue
-            if (source_dir / ".recovery-runtime-api").exists():
+            if (source_dir / recovery_name("runtime_api")).exists():
                 import cr_manimgx_recovery
                 # Matching stopped recovery must not turn into a fresh paid
                 # compile simply because its child proof failed validation.
                 override = cr_manimgx_recovery.runtime_override(source_dir, source_context, assets, ready,
-                                                               source_dir.name, reference_bundle)
+                                                               source_key, reference_bundle)
             if (source_dir / "runtime-failure.json").exists() and override is None:
                 raise RuntimeError("This matching saved scene requires explicit runtime source recovery before format reuse.")
             try:
@@ -917,9 +954,9 @@ def _reuse_source(context, assets, ready, directory, key, *, reference_bundle=No
                     or _file_hash(source) != assessment["source_sha256"]):
                 raise RuntimeError("The accepted graphics source changed before format reuse; it will not compile again automatically.")
             acceptance = (cr_manimgx_recovery.runtime_acceptance(source_dir, source_context, assets, ready,
-                          source_dir.name, reference_bundle) if override is not None
+                          source_key, reference_bundle) if override is not None
                           else _accepted_response(source_dir, saved, source_context, assets))
-            receipt = {"version": profile.VERSION, "target_key": key, "source_key": source_dir.name,
+            receipt = {"version": profile.VERSION, "target_key": key, "source_key": source_key,
                 "manifest_sha256": _file_hash(effective_manifest), "assets_sha256": _digest(assets),
                 "setup_identity": ready["identity"],
                 "reference_identity": reference_bundle["identity"] if reference_bundle else None,
@@ -940,7 +977,7 @@ def _reuse_source(context, assets, ready, directory, key, *, reference_bundle=No
         raise RuntimeError("The accepted graphics source changed during format validation.")
     runtime_child = receipt["acceptance"].get("kind") == "completed_native_runtime_correction"
     source_manifest = source.parent / ("compiler-corrected.json" if runtime_child else "compiler.json")
-    acceptance = (cr_manimgx_recovery.runtime_acceptance(cache / receipt["source_key"], source_context, assets, ready,
+    acceptance = (cr_manimgx_recovery.runtime_acceptance(cache / key_folder(receipt["source_key"]), source_context, assets, ready,
                   receipt["source_key"], reference_bundle) if runtime_child
                   else _accepted_response(source.parent, _read(source_manifest), source_context, assets))
     if (_file_hash(source_manifest) != receipt["manifest_sha256"]
@@ -1062,21 +1099,21 @@ def _revision_start(context, ready, directory, key, owner):
         provenance = saved.get("native_provenance")
         # Historical caches and explicit recovery sidecars have no execution-time
         # account binding. Keep exact reuse, but never invent revision provenance.
-        if (saved.get("typed") is not True or saved.get("key") != old.name
-                or not re.fullmatch(r"[a-f0-9]{64}", old.name)
+        if (saved.get("typed") is not True or not is_key_folder(old.name, saved.get("key"))
                 or not isinstance(provenance, dict) or provenance.get("identity") != identity
                 or (old / "runtime-failure.json").exists()
-                or (old / ".recovery-runtime-api").exists()):
+                or (old / recovery_name("runtime_api")).exists()):
             continue
+        old_key = saved["key"]                          # the folder's own full key, checked against its name
         previous = saved.get("context")
         if (not isinstance(previous, dict) or previous.get("scene", {}).get("id") != context["scene"]["id"]
-                or previous == context or _digest(previous) not in contexts.get(old.name, {})):
+                or previous == context or _digest(previous) not in contexts.get(old_key, {})):
             continue
         bundle = cr_manimgx_refs.resolve(owner["home"], previous)
         old_assets = _assets(previous, cache.parent)
         old_assets.update(bundle["assets"])
-        if (_cache_key(previous, old_assets, ready, bundle) != old.name
-                or provenance.get("key") != old.name
+        if (_cache_key(previous, old_assets, ready, bundle) != old_key
+                or provenance.get("key") != old_key
                 or provenance.get("context_sha256") != _digest(previous)
                 or provenance.get("assets_sha256") != _digest(old_assets)
                 or provenance.get("reference_identity") != bundle["identity"]
@@ -1085,7 +1122,7 @@ def _revision_start(context, ready, directory, key, owner):
             continue
         journal_path, source = old / "compile-attempts.json", old / "scene.py"
         journal = _read(journal_path)
-        if journal.get("key") != old.name or journal.get("state") != "validated" or journal.get("calls") not in (1, 2):
+        if journal.get("key") != old_key or journal.get("state") != "validated" or journal.get("calls") not in (1, 2):
             continue
         raw_path = old / f"compiler-response-{journal['calls']}.txt"
         paths = (manifest, source, journal_path, raw_path)
@@ -1106,12 +1143,12 @@ def _revision_start(context, ready, directory, key, owner):
                 or _accepted_response(old, _read(manifest), previous, old_assets) != acceptance
                 or _revision_native_result(raw_path.read_text(encoding="utf-8"), owner) != native):
             raise RuntimeError("The previous scene evidence changed during API validation. No revision request was started.")
-        lineage = {"version": _REVISION_VERSION, "source_key": old.name,
+        lineage = {"version": _REVISION_VERSION, "source_key": old_key,
             "source_sha256": source_hash, "source_manifest_sha256": hashes[str(manifest)],
             "previous_context_sha256": _digest(previous), "target_context_sha256": _digest(context),
             "acceptance": acceptance, "identity": identity, "native": native,
             "source_file": str(source.resolve()), "uses_previous_pixels": False, "visual_approval": False}
-        candidates.append((old.name, lineage, previous))
+        candidates.append((old_key, lineage, previous))
     if not candidates:
         return None
     rankings = {}
@@ -1210,7 +1247,7 @@ def _resume_quota_source(engine, context, assets, ready, directory, key, referen
     plan = _native_quota_plan(engine, context, assets, ready, directory, key, reference_bundle)
     if plan is None:
         return None
-    work = directory / ".recovery-native-stage"
+    work = directory / recovery_name("native_stage")
     if work.exists() or work.is_symlink():
         raise RuntimeError("This native graphics recovery already started. Its saved work will not execute again automatically.")
     import cr_claude
@@ -1295,7 +1332,7 @@ def _compiled_source(engine, compiler, context, assets, ready, directory, key, *
     manifest = directory / "compiler.json"
     saved = _read(manifest)
     source = directory / "scene.py"
-    if (directory / ".recovery-runtime-api").exists():
+    if (directory / recovery_name("runtime_api")).exists():
         import cr_manimgx_recovery
         override = cr_manimgx_recovery.runtime_override(directory, context, assets, ready, key, reference_bundle)
         if override is not None:
@@ -1593,7 +1630,7 @@ def render(engine, video, outdir, args, what, total_scenes=0, progress=None, *, 
         injections = _OUTPUT_INJECTIONS.get(_digest(video), {}).copy()
     outdir = Path(outdir).resolve()
     outdir.mkdir(parents=True, exist_ok=True)
-    cache = next((p for p in [outdir, *outdir.parents] if p.name == "threed"), outdir) / ".cr-manimgx"
+    cache = next((p for p in [outdir, *outdir.parents] if p.name == "threed"), outdir) / cache_name()
     started = time.monotonic()
     report = {"video": str(outdir / "video.json"), "outdir": str(outdir), "quality": options["quality"],
               "w": options["width"], "h": options["height"], "fps": options["fps"], "renderer": "manimgx",
@@ -1626,7 +1663,7 @@ def render(engine, video, outdir, args, what, total_scenes=0, progress=None, *, 
                 # source validation and the compiler cache identity.
                 assets.update(reference_bundle["assets"])
             key = _cache_key(context, assets, ready, reference_bundle)
-            directory = cache / key
+            directory = cache / key_folder(key)
             if event:
                 event({"event": "compile", "scene_id": sid, "scene": number, "total_scenes": len(video["scenes"])})
             result, source = _compiled_source(engine, compiler, context, assets, ready, directory, key,
@@ -1646,7 +1683,7 @@ def render(engine, video, outdir, args, what, total_scenes=0, progress=None, *, 
                     event({**value, "scene_id": sid, "scene": number, "total_scenes": len(video["scenes"]), "phase": what})
                 if hasattr(engine, "log") and value.get("event") in {"frame", "exporting"}:
                     engine.log(f"{what} — Fast mode {sid}: {value.get('frame', 0)} frames, {value.get('time', 0):.2f}/{duration:.2f}s ({value['event']})")
-            runtime_child = source.parent.is_relative_to(directory / ".recovery-runtime-api")
+            runtime_child = source.parent.is_relative_to(directory / recovery_name("runtime_api"))
             render_directory = source.parent if runtime_child else directory
             _progress(root, {"event": "render", "scene_id": sid, "fps": options["fps"],
                              "total_frames": math.ceil(duration * options["fps"]) + 1, "frame": 0, "elapsed": 0})

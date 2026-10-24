@@ -11,11 +11,26 @@ import re
 from pathlib import Path, PurePosixPath
 
 LIMIT = 259                     # MAX_PATH is 260 characters with the closing NUL
-SLUG = 59                       # a video's working folder name at its longest (the engine's slugify: 52, "-", 6)
+SLUG = 59                       # a video's working folder name at its longest (the engine's slugify: 52, "-", 6;
+                                # Studio's own attempt folders, cr_attempts.new_slug, stay inside it)
 STYLE_NAME = 24                 # a learned style's own name (cr_style_clone); its folder is cr-clone-<name>
-# The deepest file a video makes inside its working folder: a VOX collage picture (a 40-character picture id) and the
-# receipt Studio keeps beside it (measured from the engine and from finished videos, 2026-10-24).
-COLLAGE = PurePosixPath("vox_scenes", "m00", "vox", "assets", "x" * 40 + "_raw.png")
+TEMPORARY = "x" * 8 + ".tmp"    # what a temporary file adds to the name it stands for (tempfile, cr_manimgx._write)
+
+
+def inside_video() -> list:
+    """The deepest files a video makes inside its working folder, on this computer's naming (measured from the engine,
+    finished videos and Fast mode's own tests, 2026-10-24): a VOX collage picture (a 40-character picture id) and the
+    receipt Studio keeps beside it, and Fast mode's deepest recovery files and type checks."""
+    import cr_manimgx as gx
+    import cr_media
+    collage = PurePosixPath("vox_scenes", "m00", "vox", "assets", "x" * 40 + "_raw.png")
+    scene = PurePosixPath("threed", gx.cache_name(), gx.key_folder("0" * 64))
+    deepest_recovery = max((gx.recovery_name(kind) for kind in ("runtime_api", "coverage_text", "manifest_json",
+                                                                  "native_stage", "procedural_pixels")), key=len)
+    return [collage, collage.parent / ".cr-tasks" / cr_media.receipt_name(collage.name, "0" * 64),
+            scene / deepest_recovery / ("." + "compiler-correction-response-1.txt" + TEMPORARY),
+            scene / deepest_recovery / (".ty-" if gx.SHORT_NAMES else ".cr-typing-") / (".scene-corrected.py" + TEMPORARY),
+            scene / gx.recovery_name("runtime_api") / gx.recovery_name("validation") / ".compiler-corrected.json" ]
 
 
 def style_folder(style_id: str) -> str:
@@ -25,15 +40,30 @@ def style_folder(style_id: str) -> str:
 
 def deepest(home=None) -> int:
     """The longest path, in characters below the Studio folder, a video can make: its style's folder (the longest
-    installed style, or a new learned one), its working folder, and a collage picture's receipt inside that."""
-    import cr_media
+    installed style, or a new learned one), its working folder, and the deepest file inside that."""
     styles = ["cr_clone_" + "x" * STYLE_NAME]
     if home is not None:
         styles += [path.stem for path in (Path(home) / "styles").glob("*.json")]
     folder = max((style_folder(style) for style in styles), key=len)
-    receipt = COLLAGE.parent / ".cr-tasks" / cr_media.receipt_name(COLLAGE.name, "0" * 64)
-    inside = max(len(str(COLLAGE)), len(str(receipt)))
-    return len(str(PurePosixPath("output", folder, "_work"))) + 1 + SLUG + 1 + inside
+    return (len(str(PurePosixPath("output", folder, "_work"))) + 1 + SLUG + 1
+            + max(len(str(path)) for path in inside_video()))
+
+
+def title_problem(folder: str, style: str, titles, youtube_filename) -> str:
+    """A finished video moves into its own folder named after its title, beside its description file named after it
+    too (the engine's youtube_filename, up to 120 characters), and "(" + 8 characters + ")" when another video of the
+    title is there: the one path that grows with the title. "" when every title fits below `folder`."""
+    longest = 0
+    for title in titles:
+        stem = PurePosixPath(youtube_filename(title)).stem
+        longest = max(longest, len(stem))
+    fixed = len(folder) + len(f"/output/{style_folder(style)}/") + len(" (12345678)/") + len(" - description.txt")
+    if fixed + 2 * longest <= LIMIT:
+        return ""
+    most = max(10, (LIMIT - fixed) // 2)
+    return (f"Windows stops at 260 characters in a file's path, and a finished video's files are named after its "
+            f"title: in this Studio folder a title can be up to about {most} characters. Shorten the title, or move "
+            f"the whole ChannelRecipe studio folder somewhere shorter, such as C:\\ChannelRecipe studio.")
 
 
 def long_paths_enabled():

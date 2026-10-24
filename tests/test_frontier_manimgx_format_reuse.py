@@ -38,15 +38,15 @@ def test_preview_to_final_reuses_one_accepted_source_with_separate_lineage(stub_
     state, calls = stub_runtime, []
     monkeypatch.setattr(gx, "_validate_output", lambda *a: None)
     first = run_stub(state, compiler=compiler_count(calls))
-    old = state.root / "job/threed/.cr-manimgx" / first["scenes"][0]["compiler_key"]
+    old = state.root / "job/threed" / gx.cache_name() / gx.key_folder(first["scenes"][0]["compiler_key"])
     saved = {p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in old.iterdir() if p.is_file()}
     checks = []
     monkeypatch.setattr(gx, "_typecheck", lambda py, source: checks.append(Path(source)))
     second = run_stub(state, video=final_video(), args=FINAL, compiler=compiler_count(calls), output="final")
-    target = old.parent / second["scenes"][0]["compiler_key"]
+    target = old.parent / gx.key_folder(second["scenes"][0]["compiler_key"])
     receipt = gx._read(target / "reuse.json")
     assert len(calls) == 1 and checks == [old / "scene.py"]
-    assert receipt["source_key"] == old.name and receipt["target_key"] == target.name
+    assert gx.key_folder(receipt["source_key"]) == old.name and gx.key_folder(receipt["target_key"]) == target.name
     assert receipt["model_calls"] == 0 and receipt["changes_original_coverage"] is False
     assert receipt["assessment"]["target_injection"]["value"] == 6
     assert not (target / "compiler.json").exists() and not (target / "scene.py").exists()
@@ -64,7 +64,7 @@ def test_legacy_source_reconstructs_only_exact_actual_report_video_input(stub_ru
     state, calls = stub_runtime, []
     monkeypatch.setattr(gx, "_validate_output", lambda *a: None)
     first = run_stub(state, compiler=compiler_count(calls))
-    old = state.root / "job/threed/.cr-manimgx" / first["scenes"][0]["compiler_key"]
+    old = state.root / "job/threed" / gx.cache_name() / gx.key_folder(first["scenes"][0]["compiler_key"])
     saved = gx._read(old / "compiler.json"); saved.pop("context"); saved.pop("output_injection")
     gx._write(old / "compiler.json", saved)
     run_stub(state, video=final_video(), args=FINAL, compiler=compiler_count(calls), output="final")
@@ -82,7 +82,7 @@ def test_non_equivalent_or_output_dependent_source_is_never_borrowed(stub_runtim
     elif change == "aspect": args = ["--w", "1920", "--h", "1200", "--quality", "final"]
     elif change == "explicit_sub": gx._OUTPUT_INJECTIONS[gx._digest(video)] = {}
     elif change == "bad_report":
-        old = state.root / "job/threed/.cr-manimgx" / first["scenes"][0]["compiler_key"]
+        old = state.root / "job/threed" / gx.cache_name() / gx.key_folder(first["scenes"][0]["compiler_key"])
         saved = gx._read(old / "compiler.json"); saved.pop("context"); saved.pop("output_injection")
         gx._write(old / "compiler.json", saved)
         report = state.root / "job/threed/review/report.json"
@@ -96,12 +96,12 @@ def test_changed_acceptance_or_stopped_target_cannot_trigger_compile_or_reuse(st
     state, calls = stub_runtime, []
     monkeypatch.setattr(gx, "_validate_output", lambda *a: None)
     first = run_stub(state, compiler=compiler_count(calls))
-    cache = state.root / "job/threed/.cr-manimgx"
-    old = cache / first["scenes"][0]["compiler_key"]
+    cache = state.root / "job/threed" / gx.cache_name()
+    old = cache / gx.key_folder(first["scenes"][0]["compiler_key"])
     video = final_video()
     context = {"scene": video["scenes"][0], "cast": [], "video": {},
                "output": {"width": 1920, "height": 1080, "fps": 30, "quality": "final"}}
-    target = cache / gx._cache_key(context, {}, state.ready, None)
+    target = cache / gx.key_folder(gx._cache_key(context, {}, state.ready, None))
     if changed == "source": (old / "scene.py").write_text(SOURCE + "# edited\n")
     elif changed == "accepted_response": (old / "compiler-response-1.txt").write_text("{}")
     elif changed == "target_stopped": gx._write(target / "compile-attempts.json", {"state": "stopped", "calls": 1})
@@ -136,7 +136,7 @@ def test_output_provenance_keeps_original_values_hashes_and_explicit_sub(monkeyp
 
 def coverage_correction_fixture(state):
     root = state.directory
-    work = root / ".recovery-coverage-text"
+    work = root / gx.recovery_name("coverage_text")
     work.mkdir()
     for name in ("recovery.json", "recovery-result.json", "scene-recovered.py"):
         (root / name).rename(work / name)
@@ -171,7 +171,7 @@ def test_coverage_correction_writes_only_child_and_has_accepted_reuse_lineage(sa
     gx._write(work / "recovery.json", receipt)
     root_manifest = {"key": state.key, "typed": True, "result": result, "source_sha256": source_hash,
         "recovery_of": state.key, "recovery_kind": "coverage_text",
-        "recovery_receipt": ".recovery-coverage-text/recovery.json", "recovery_proof": receipt["proof"]}
+        "recovery_receipt": gx.recovery_name("coverage_text") + "/recovery.json", "recovery_proof": receipt["proof"]}
     acceptance = gx._accepted_response(state.directory, root_manifest, state.context, state.assets)
     assert acceptance["kind"] == "completed_native_recovery_correction"
     journal = gx._read(work / "correction-attempts.json"); journal["calls"] = 2
@@ -188,7 +188,7 @@ def test_coverage_correction_writes_only_child_and_has_accepted_reuse_lineage(sa
 def test_coverage_correction_rejects_outside_or_failed_child_without_repeat(saved_source_correction):
     state, calls = saved_source_correction, []
     work, receipt = coverage_correction_fixture(state)
-    outside = work.parent.parent / ".recovery-coverage-text"; outside.mkdir()
+    outside = work.parent.parent / gx.recovery_name("coverage_text"); outside.mkdir()
     with pytest.raises(RuntimeError, match="exact private"):
         gx.correct_recovered_source(SimpleNamespace(), state.context, state.assets,
             state.ready, state.directory, state.key, reference_bundle=state.bundle,

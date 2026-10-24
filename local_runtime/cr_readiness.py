@@ -188,6 +188,14 @@ def preset(studio, checks, spec):
             cap = caps.get("features",{}).get(feature,{"ok":True})
             label = studio.features.BY_KEY.get(feature,{}).get("label",feature)
             results.append(item(feature,label,cap.get("ok"),cap.get("why") or "Connect the required account or explicitly turn this option off."))
+    # Windows' 260-character limit: a finished video's files are named after its title (cr_paths)
+    paths = checks.get("file_paths") or {}
+    if paths.get("folder") and paths.get("long_paths") is False:
+        import cr_paths
+        titles = [line for line in str(spec.get("title") or "").splitlines() if line.strip()]
+        problem = cr_paths.title_problem(paths["folder"], style, titles, studio.mv.youtube_filename) if titles else ""
+        if problem:
+            results.append(item("title_length", "Title fits Windows' path limit", False, problem))
     # YouTube has no way around it: a recipe that uses it stops here on a network that can't reach it, not mid-video
     youtube = cr_network.youtube_problem(checks.get("network") or {})
     ranking = ((info or {}).get("shorts") or {}).get("pipeline") == "ranking"

@@ -269,7 +269,8 @@ def _upload_failed(path, size, provider, why):
 
 
 def receipt_name(name: str, fingerprint: str) -> str:
-    return hashlib.sha256(name.encode("utf-8")).hexdigest()[:12] + "-" + fingerprint[:24] + ".json"
+    """One digest of the file's name and its task (21 characters): a receipt for each file, and for each request."""
+    return hashlib.sha256((name + "\0" + fingerprint).encode("utf-8")).hexdigest()[:16] + ".json"
 
 
 def task_receipt(dest, fingerprint) -> Path:
@@ -285,7 +286,7 @@ def upload(path, cache_file=None, *, task=None):
     provider, key = account(task)
     path = Path(path)
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    marker = path.parent / ".cr-tasks" / f"upload-{provider}-{digest[:24]}.json"     # short: Windows stops at 260
+    marker = path.parent / ".cr-tasks" / f"up-{provider}-{digest[:16]}.json"     # short: Windows stops at 260
     # Uploads expire. Reuse for at most 12 hours, not indefinitely.
     with _lock:
         if marker.is_file():
