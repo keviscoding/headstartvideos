@@ -15,6 +15,8 @@ import os
 import subprocess
 import sys
 import tempfile
+
+import pytest
 from pathlib import Path
 
 # Add workspace to path
@@ -104,6 +106,8 @@ It runs beneath every decision you make.
     }
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="core/ is the hosted cook pipeline: it renders on the Linux cook "
+                    "servers, never on a creator's PC")
 def test_frontier_smoke():
     """Run Frontier smoke test."""
     print("\n" + "="*60)

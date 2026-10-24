@@ -373,7 +373,7 @@ def _corrected_manifest(plan, receipt, manifest):
             or manifest.get("recovery_proof") != proof
             or manifest.get("recovery_of") != plan["legacy_key"]
             or manifest.get("recovery_kind") != plan["kind"]
-            or manifest.get("recovery_receipt") != str((work / "recovery.json").relative_to(directory))
+            or manifest.get("recovery_receipt") != (work / "recovery.json").relative_to(directory).as_posix()
             or child_manifest.get("key") != plan["key"] or child_manifest.get("typed") is not True
             or child_manifest.get("result") != result or child_manifest.get("source_sha256") != source_hash
             or child_manifest.get("recovery_proof") != proof
@@ -611,7 +611,7 @@ def _prepare(home, project_id, outdir, scene_id, cloud_progress):
                 or recovered_manifest.get("typed") is not True or recovered_manifest.get("result") != result
                 or recovered_manifest.get("source_sha256") != plan["proof"]["source_sha256"]
                 or recovered_manifest.get("recovery_of") != legacy_key
-                or recovered_manifest.get("recovery_receipt") != str((work / "recovery.json").relative_to(directory))
+                or recovered_manifest.get("recovery_receipt") != (work / "recovery.json").relative_to(directory).as_posix()
                 or not (directory / "scene.py").is_file()
                 or _hash(directory / "scene.py") != plan["proof"]["source_sha256"]):
             raise RuntimeError("This accepted source no longer matches its original completed response and local recovery receipt.")
@@ -718,7 +718,7 @@ def recover(home, project_id, outdir, scene_id, cloud_progress, *, acknowledge_r
                 and manifest.get("key") == plan["key"] and manifest.get("typed") is True
                 and manifest.get("recovery_kind") == plan["kind"]
                 and manifest.get("recovery_of") == plan["legacy_key"]
-                and manifest.get("recovery_receipt") == str((work / "recovery.json").relative_to(directory))
+                and manifest.get("recovery_receipt") == (work / "recovery.json").relative_to(directory).as_posix()
                 and manifest.get("source_sha256") == proof["source_sha256"]
                 and manifest.get("result") == plan["result"]
                 and _hash(directory / "scene.py") == proof["source_sha256"]):
@@ -786,7 +786,7 @@ def recover(home, project_id, outdir, scene_id, cloud_progress, *, acknowledge_r
         _existing_source(source, proof["source_sha256"])
         _publish_new(directory / "compiler.json", {"key": plan["key"], "typed": True,
                         "source_sha256": proof["source_sha256"], "result": plan["result"], "recovery_of": plan["legacy_key"],
-                        "recovery_kind": plan["kind"], "recovery_receipt": str((work / "recovery.json").relative_to(directory))})
+                        "recovery_kind": plan["kind"], "recovery_receipt": (work / "recovery.json").relative_to(directory).as_posix()})
     except BaseException as error:
         record.update(state="stopped", error_type=type(error).__name__, diagnostic=renderer._redacted_diagnostic(str(error)))
         renderer._write(work / "recovery.json", record)
@@ -885,7 +885,7 @@ def correct(home, project_id, outdir, scene_id, cloud_progress, *, acknowledge_c
                 _existing_source(directory / "scene.py", corrected_hash)
                 _publish_new(directory / "compiler.json", {"key": plan["key"], "typed": True,
                     "source_sha256": corrected_hash, "result": result, "recovery_of": plan["legacy_key"],
-                    "recovery_kind": plan["kind"], "recovery_receipt": str((work / "recovery.json").relative_to(directory)),
+                    "recovery_kind": plan["kind"], "recovery_receipt": (work / "recovery.json").relative_to(directory).as_posix(),
                     "recovery_proof": plan["proof"]})
             receipt["corrected_response_sha256"] = _hash(response)
         receipt.update(state="corrected", corrected_source_sha256=corrected_hash, corrected_at=time.time(), model_calls=1)
