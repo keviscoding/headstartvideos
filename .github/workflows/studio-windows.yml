@@ -1,6 +1,7 @@
 # Studio runs on creators' own computers, and many of them are Windows PCs. We build on Macs, so Windows-only bugs
-# (cp1252 text reads, npm's claude.cmd, ffmpeg paths at the drive letter, a worker dying while it loads Whisper)
-# reached creators before us. This runs the tests and starts Studio on Windows before a release does.
+# (cp1252 text reads, npm's claude.cmd, a worker dying while it loads Whisper) reached creators before us. This runs
+# the tests and starts Studio on Windows before a release does. The private engine and Shorts pipelines aren't in this
+# repository: their Windows tests run where that source is.
 name: Windows Studio
 on:
   pull_request:
