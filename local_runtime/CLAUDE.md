@@ -117,6 +117,12 @@ Studio through its own checks, so nothing needs the Studio web page.
   Offer only the ready ones (an ElevenLabs key goes in Setup & accounts, never in chat) and never pick for them. For
   their own recording, show them the script (`script_file`) to read, then `resume_video(id, voice="own",
   recording=<the file's path>)`; otherwise `resume_video(id, voice=<choice id>)`. The choice is for that video only.
+- Cloning a style (/clone-style): the look's questions come first, and two of them decide how the videos are MADE, so
+  ask them before anything else, in plain words, with Studio's guess as the first option: `medium` (a 3D channel: how
+  its 3D is made) and `animation` (a channel that animates its drawn characters, like stick-figure fights: animated by
+  Studio, or pictures in their look with some AI-animated clips). If `look_progress` or `clone_style` returns a
+  `medium_gap`, Studio can't make that medium yet: read it to the creator and call `clone_style` with
+  `accept_medium=true` only after they accept it. Never accept it for them, and never call a stopgap the real thing.
 
 ## Making videos through ChannelRecipe tools
 

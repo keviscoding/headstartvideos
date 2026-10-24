@@ -20,7 +20,7 @@ import copy
 import re
 
 SCHEMA = 1
-ROUTER = 79          # how 3D is routed (73: Gemini judges the faces; 75: the creator is asked; 79: a designed cast is built in 3D); older saved plans are made again
+ROUTER = 101         # how 3D is routed (73: Gemini judges the faces; 75: the creator is asked; 79: a designed cast is built in 3D; 101: animated 2D characters are asked about); older saved plans are made again
 # How a channel's 3D is made is asked of the creator (Studio's guess first): the answer decides how the videos are made,
 # and a medium Studio can't make yet is said before anything is paid, never swapped in silently (an @ifologyfilms clone
 # drew stills of characters the channel animates in 3D, and was called fixed).
@@ -35,6 +35,21 @@ MEDIUM_GAP = ("Studio can't animate these characters in 3D yet. Your videos woul
 MEDIUM_GAP_MANNEQUINS = ("With a 3D recipe, Studio's 3D engine makes faceless mannequins: the channel's characters would "
                          "become faceless figures in your videos. The recommended recipe draws them in their own look "
                          "instead. 3D characters are coming in a Studio update.")
+# The same for drawn 2D characters the channel animates frame by frame (stick-figure fights, animated short films): a
+# @DartAnimates clone came out as AI stills with camera moves, the right look with nothing moving.
+ANIMATED_CODE = "Animated: Studio rigs the characters and animates them (they walk, fight and act)"
+ANIMATED_PICTURES = "Pictures in their look, with some clips animated by AI"
+ANIMATIONS = (ANIMATED_CODE, ANIMATED_PICTURES)
+ANIMATION_GAP = ("Studio can't rig and animate these characters yet. Your videos would be drawn pictures in their look, "
+                 "some of them moved as cut-outs or animated by AI: close to how the channel looks, but its characters "
+                 "won't walk, fight and act the way they do in its videos. Animated 2D characters are coming in a "
+                 "Studio update.")
+# the drawn sources whose characters a channel can animate (an AI image that moves is AI video, a manga panel holds)
+DRAWN_2D = ("stick_figure", "drawing", "cutout", "painting")
+MOVES_ANYWAY = ("live_footage", "archival_footage", "stock_footage", "news_clip", "bodycam_cctv", "interview", "ai_video",
+                "motion_graphic", "presenter", "avatar")
+ANIMATED_SHARE = 0.6         # of the drawn pictures' time, measured moving: their characters are animated
+ANIMATED_SURE = 0.8          # above this (or with no narrator carrying the story) Studio's guess is to animate them
 
 # The recipes a learned style can be built on, by what their machinery is for. Order matters: the first that fits wins.
 BASES = {
@@ -680,11 +695,86 @@ def medium_question(profile) -> dict:
             "options": [guess] + [m for m in MEDIUMS if m != guess]}
 
 
-def route(profile, chosen: str = "", drawn=None, told: bool = False, designed=None, by_hand: bool = False) -> dict:
+def _drawn_2d(profile) -> float:
+    sources = _v(_get(profile, "pictures", "sources"), {}) or {}
+    return sum(float(sources.get(k) or 0) for k in DRAWN_2D)
+
+
+def _narrator_carries(profile) -> bool:
+    """A narrator tells the story (an explainer), rather than the animation itself (a fight, a short film with a few
+    lines of voice)."""
+    narration = str(_v(_get(profile, "format", "narration"), "") or "").lower()
+    wpm = _get(profile, "voice", "wpm")
+    return narration not in ("", "none") and (wpm is None or float(wpm) >= 60)
+
+
+def animated_2d(profile) -> float:
+    """How much of the drawn pictures' time their characters move (0..1): 0 when the drawn pictures aren't most of the
+    channel, or hold still and move only now and then (cut-outs, a push in). How much moves is MEASURED: a watching
+    model calls nearly every drawn shot "animated" (0.6-0.9 on stick-figure explainers), while the measured motion
+    inside the picture reads 0.93 on @DartAnimates' fights, 0.69 on an animated short film and 0.39-0.64 on
+    stick-figure explainers. Without a measurement, only a channel with no narrator counts (its pictures carry it)."""
+    drawn = _drawn_2d(profile)
+    if drawn < 0.5:
+        return 0.0
+    classes = _get(profile, "motion", "classes") or {}
+    if "measured" not in (classes.get("from") or []) and _narrator_carries(profile):
+        return 0.0
+    # what moves by its nature (footage, AI video, motion graphics, a presenter) is not the drawings moving
+    sources = _v(_get(profile, "pictures", "sources"), {}) or {}
+    other = sum(float(sources.get(k) or 0) for k in MOVES_ANYWAY)
+    moving = max(0.0, float((_v(classes, {}) or {}).get("moving") or 0) - other) / drawn
+    return round(min(1.0, moving), 3) if moving >= ANIMATED_SHARE else 0.0
+
+
+def animation_guess(profile) -> str:
+    """Studio's guess for an animated 2D channel: animate its characters when they move nearly all the time or carry the
+    story without a narrator; pictures for an explainer whose figures move in small ways under a narrator."""
+    share = animated_2d(profile)
+    if not share:
+        return ""
+    return ANIMATED_CODE if share >= ANIMATED_SURE or not _narrator_carries(profile) else ANIMATED_PICTURES
+
+
+def animation_question(profile) -> dict:
+    """The look screen's question on a channel that animates its drawn characters, Studio's guess first; {} otherwise.
+    A 3D channel is asked how its 3D is made instead."""
+    share = animated_2d(profile)
+    if not share or _families(profile).get("3d", 0) >= 0.2:
+        return {}
+    guess = animation_guess(profile)
+    return {"id": "animation", "ask": f"This channel animates its characters: they move {round(share * 100)}% of the "
+            "time its drawn pictures are on screen. How should your videos be made? Studio's guess is first: change it "
+            "if it's wrong, because it decides how your videos are made.",
+            "options": [guess] + [o for o in ANIMATIONS if o != guess]}
+
+
+def _animated_route(profile, animation: str) -> dict:
+    """The route of a channel that animates its drawn characters (animation: the creator's answer, else Studio's
+    guess); {} for any other channel."""
+    if not animation_question(profile):
+        return {}
+    drawn = round(_drawn_2d(profile) * 100)
+    told = animation in ANIMATIONS
+    pick = animation if told else animation_guess(profile)
+    if pick == ANIMATED_CODE:
+        return {"engine": "pictures", "why": f"{drawn}% of the pictures are drawn characters the channel animates, but "
+                "Studio can't rig and animate them yet. Every scene is drawn as a picture in their look instead, and "
+                "some move as cut-outs or are animated by AI.", "medium_gap": ANIMATION_GAP}
+    if told:
+        return {"engine": "pictures", "why": "you chose pictures: every scene is drawn as a picture in their look, and "
+                "some move as cut-outs or are animated by AI. The channel animates its characters, so they won't move "
+                "the way they do in its videos."}
+    return {"engine": "pictures", "why": "every scene is drawn as a picture in their look, and some move as cut-outs "
+            "or are animated by AI (the channel's characters move in small ways under its narrator)."}
+
+
+def route(profile, chosen: str = "", drawn=None, told: bool = False, designed=None, by_hand: bool = False,
+          animation: str = "") -> dict:
     """How this channel's pictures are made: {"engine": "designed" | "drawn" | "threed" | "pictures", "why",
     "warning"?, "medium_gap"?}. drawn / designed: the shares decided by the creator's answer (told) or by plan_style,
     else from the profile; by_hand: a designed cast the 3D engine builds, drawn because the creator picked a picture
-    recipe (no gate, a pointer to the 3D recipe)."""
+    recipe (no gate, a pointer to the 3D recipe); animation: the creator's answer about animated 2D characters."""
     share = _families(profile).get("3d", 0)
     fresh ={k: v for k, v in profile.items() if k not in ("_drawn_3d", "_designed_3d")}
     if designed is None:
@@ -716,7 +806,7 @@ def route(profile, chosen: str = "", drawn=None, told: bool = False, designed=No
     if share >= 0.2:
         return {"engine": "threed", "why": f"{round(share * 100)}% of the pictures are 3D scenes Studio's 3D engine "
                                           "can build"}
-    return {"engine": "pictures", "why": ""}
+    return _animated_route(fresh, animation) or {"engine": "pictures", "why": ""}
 
 
 def _features(plan: Plan, profile: dict, base: str, base_style: dict):
@@ -1015,7 +1105,8 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
     by_hand = bool(designed) and bool(base) and base not in ("3d", "nocturne")
     if by_hand:                                   # the creator picked a picture recipe: drawn, by their choice
         designed, looked = 0.0, designed
-    way = route(profile, base or "", drawn=looked, told=told, designed=designed, by_hand=by_hand)
+    way = route(profile, base or "", drawn=looked, told=told, designed=designed, by_hand=by_hand,
+                animation=str((answers or {}).get("animation") or ""))
     if answers:
         profile = answer(profile, answers)
         if str(answers.get("host") or "").startswith("Yes, I'll upload"):
@@ -1049,7 +1140,8 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
             "overrides": plan.overrides, "remove": plan.remove, "settings": plan.settings,
             "needs": list(dict.fromkeys(plan.needs)), "notes": plan.notes,
             "cost": cost(plan.overrides, chosen),
-            "questions": [q for q in [medium_question(original)] if q] + list(original.get("questions") or [])}
+            "questions": [q for q in [medium_question(original), animation_question(original)] if q]
+                         + list(original.get("questions") or [])}
 
 
 def cost(overrides: dict, base: str) -> dict:
