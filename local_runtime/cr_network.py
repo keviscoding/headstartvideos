@@ -15,6 +15,11 @@ An antivirus or firewall on the computer can block Studio itself while the brows
 connection is inspected. Setup then says so, names the antivirus it finds running, and says how to allow Studio in it
 (never to switch it off).
 
+An antivirus or company firewall that inspects secure connections adds its own root certificate to the computer's
+store. Studio trusts that store as the browser does (cr_trust), and this check uses the same certificates, so such a
+computer passes; "intercepted" is left for an inspection the computer itself doesn't trust (or a Studio whose
+libraries haven't been updated yet).
+
 The check runs in the background: setup asks for the last result, which a passing check keeps for ten minutes and a
 failing one for a minute, so a fix shows quickly.
 """
@@ -157,8 +162,10 @@ def local_block(problems: dict, local: str = "", antivirus=()) -> dict:
     who = name or "An antivirus or firewall on this computer"
     lead = {"local": f"{who} is blocking Studio's own connections: Studio can't even connect to itself on this "
                      f"computer (127.0.0.1:{STUDIO_PORT}).",
-            "inspects": f"{who} inspects this computer's secure connections, and Studio's fail because of it (your "
-                        "browser trusts the inspection, Studio doesn't).",
+            "inspects": (f"{who} inspects this computer's secure connections with a certificate this computer "
+                         "doesn't trust, so Studio's fail." if _system_trust() else
+                         f"{who} inspects this computer's secure connections, and Studio's fail because of it (your "
+                         "browser trusts the inspection, Studio doesn't)."),
             "everything": f"Studio can't reach any of its services. If websites open in your browser, {name or 'an antivirus or firewall'} "
                           "is blocking Studio itself, not the network."}[kind]
     programs = studio_programs()
@@ -181,12 +188,21 @@ def _proxy_for(host: str) -> str:
 
 
 def _context() -> ssl.SSLContext:
-    """The certificates requests checks against (certifi), so a pass here means Studio's own downloads work too."""
+    """The certificates Studio's own downloads check against (this computer's store and certifi's list, cr_trust),
+    so a pass here means they work too."""
     try:
-        import certifi
-        return ssl.create_default_context(cafile=certifi.where())
+        import cr_trust
+        return cr_trust.context()
     except Exception:                                          # noqa: BLE001
         return ssl.create_default_context()
+
+
+def _system_trust() -> bool:
+    try:
+        import cr_trust
+        return cr_trust.active()
+    except Exception:                                          # noqa: BLE001
+        return False
 
 
 def classify(error: BaseException) -> str:
@@ -215,8 +231,9 @@ def handshake(host: str, timeout: float = TIMEOUT) -> str:
             return ""
         except Exception as error:                             # noqa: BLE001
             text = repr(error)
+            # truststore words a failed check in the operating system's own terms, without OpenSSL's code
             return ("dns" if "NameResolution" in text or "getaddrinfo" in text
-                    else "intercepted" if "CERTIFICATE_VERIFY_FAILED" in text
+                    else "intercepted" if "CERTIFICATE_VERIFY_FAILED" in text or "SSLCertVerificationError" in text
                     else "timeout" if "Timeout" in text else "cut" if "SSL" in text else "unreachable")
     try:
         with socket.create_connection((host, PORT), timeout=timeout) as raw:
@@ -419,6 +436,7 @@ def diagnostics_line(result: dict) -> str:
     local = result.get("local_block") or {}
     on_computer = (f" · blocked on this computer ({local['kind']}); antivirus: {local.get('antivirus') or 'none found'}"
                    if local.get("suspected") else "")
+    on_computer += " · certificates: " + ("this computer's and certifi's" if _system_trust() else "certifi's only")
     if not bad:
         return "Network: every service reachable" + on_computer
     def tag(r):

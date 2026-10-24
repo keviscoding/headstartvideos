@@ -194,8 +194,8 @@ def test_diagnostics_say_which_hosts_and_why():
     assert line.startswith("Network: can't reach api.kie.ai (the network cuts the secure connection as it starts, "
                            "blocks setup)")
     assert "tempfile.aiquickdraw.com (the network cuts the secure connection as it starts, goes around" in line
-    assert cr_network.diagnostics_line(cr_network.check(EVERYTHING, probe=probe_with({}))) == \
-        "Network: every service reachable"
+    assert cr_network.diagnostics_line(cr_network.check(EVERYTHING, probe=probe_with({}))).startswith(
+        "Network: every service reachable · certificates: ")
 
 
 # ── readiness: setup blocks only what has no way around it ────────────────────────────────────────────────────────

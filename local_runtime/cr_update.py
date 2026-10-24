@@ -67,11 +67,17 @@ class _NoRedirect(HTTPRedirectHandler):
 
 
 def tls_context() -> ssl.SSLContext:
-    """Verify HTTPS with certifi's bundle when present.
+    """Verify HTTPS with this computer's certificates and certifi's bundle (cr_trust), so an antivirus that scans
+    secure connections doesn't stop the update; certifi's bundle alone without it.
 
     python.org's macOS Python ships without CA certificates until its
     "Install Certificates" step runs; the studio's .venv always has certifi.
     """
+    try:
+        import cr_trust
+        return cr_trust.context()
+    except ImportError:
+        pass
     try:
         import certifi
         return ssl.create_default_context(cafile=certifi.where())
