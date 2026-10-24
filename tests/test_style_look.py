@@ -555,3 +555,46 @@ def test_the_art_director_measures_a_designed_cast_into_the_3d_engines_cast_spec
     plain = art.direct(lambda prompt, images: json.dumps(ANSWER), {"recognisable": []}, {"settings": []}, title="t",
                        brief="", base="stories", excerpt="", sheets=[], banned=[], log=lambda m: None)
     assert "threed" not in plain["overrides"]["look"], "only a designed route gets a cast spec"
+
+
+def test_an_animation_under_the_channels_bar_is_said_and_pictures_are_used_only_when_the_creator_asks(home):
+    """Claude's renderer for an animated channel is judged against the channel's own frames: the creator is told its
+    score and bar plainly, and Use pictures instead re-plans the saved style as pictures in their look, never by
+    itself."""
+    import cr_style_map
+    _, done, _ = run_look(home)
+    bridge = SimpleNamespace(load_settings=lambda: {"key": "cr_mcp_test", "url": "https://channelrecipe.com"})
+    op = "op_" + "e" * 24
+    folder = clone._folder(home) / op
+    folder.mkdir(parents=True)
+    style = {"name": "cr_clone_dart", "look": {"visuals": "cr_animated2d", "animated2d": {"renderer": {
+        "state": "below_bar", "overall": 5.2, "bar": 6.5, "version": 1}}}, "cost": "Your voice only.",
+        "cr_style_clone": {"operation_id": op, "learned_v2": {"look_id": done["look_id"],
+                                                              "route": {"engine": "animated2d"}}}}
+    target = home / "styles" / "cr_clone_dart.json"
+    target.write_text(json.dumps(style))
+    clone._write(folder / "operation.json", {
+        "operation_id": op, "owner": clone._owner(bridge), "state": "complete", "phase": "complete",
+        "spec": {"style_id": "cr_clone_dart", "look_id": done["look_id"], "base_style": "stories", "answers": {},
+                 "reference_url": "https://www.youtube.com/@pip/videos", "references": [{"id": VIDEO}],
+                 "budget_minutes": 22, "max_calls": 40, "label": "Dart", "title": "Gojo vs Sukuna", "brief": "",
+                 "minutes": 1, "visual_mode": "mixed", "preview_id": "pv_" + "a" * 64, "name": "cr_clone_dart"},
+        "style_sha256": clone._file_hash(target)})
+    told = clone.renderer_verdict(style)
+    assert told["offer_pictures"] and "5.2/10" in told["say"] and "6.5" in told["say"]
+    assert "Use pictures instead" in told["say"]
+    passed = clone.renderer_verdict({"look": {"visuals": "cr_animated2d", "animated2d": {"renderer": {
+        "state": "passed", "overall": 7.1, "bar": 6.5}}}})
+    assert "offer_pictures" not in passed and "7.1/10" in passed["say"]
+    assert clone.renderer_verdict({"look": {}}) == {}, "a pictures style has no animation to report"
+    shown = clone.status(home, op, bridge)
+    assert shown["renderer"]["state"] == "below_bar" and shown["message"] == told["say"]
+    clone.use_pictures(home, op, bridge)
+    after = json.loads(target.read_text())
+    assert after["look"].get("visuals") != "cr_animated2d" and "animated2d" not in after["look"] and "cost" not in after
+    assert after["cr_style_clone"]["pictures_instead"]["renderer"] == {"state": "below_bar", "overall": 5.2, "bar": 6.5}
+    assert after["cr_style_clone"]["learned_v2"]["route"]["engine"] == "pictures"
+    assert clone.renderer_verdict(after)["state"] == "pictures"
+    saved = json.loads((folder / "operation.json").read_text())
+    assert saved["style_sha256"] == clone._file_hash(target), "the study still recognises its saved style"
+    assert cr_style_map.ANIMATED_PICTURES  # the plan used is the creator's "pictures" answer

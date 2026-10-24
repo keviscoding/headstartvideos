@@ -772,7 +772,10 @@ def look_progress(look_id: str) -> dict:
                         "with look_id, a style name, an example title and their answers. The 'medium' (3D) and "
                         "'animation' (animated 2D characters) questions decide how the videos are made: ask them "
                         "first, in plain words. A medium_gap (for Studio's guess; another answer can change it) is "
-                        "something Studio can't make yet: read it to the creator before anything is paid.")
+                        "something Studio can't make yet: read it to the creator before anything is paid. Animated "
+                        "in code adds a few minutes of their Claude Code usage to the study (usually 3 to 10, at "
+                        "most 25: Claude writes and checks the channel's animation); its videos then cost their voice and at most a few "
+                        "background pictures. Say so before they choose.")
     return out
 
 
@@ -785,6 +788,15 @@ def clone_progress(operation: str) -> dict:
     if d.get("state") == "done" and d.get("style_ready"):
         out["next"] = ("The style is ready: it appears in list_styles under kind='mine'. Its samples and character "
                        "can be set on the page.")
+    renderer = d.get("renderer") or {}
+    if renderer:
+        # an animated style: Claude's renderer for the channel, scored against the channel's own frames
+        out["animation"] = {k: renderer.get(k) for k in ("state", "overall", "bar", "version") if k in renderer}
+        out["animation"]["what_to_tell_them"] = renderer.get("say") or ""
+        if renderer.get("offer_pictures"):
+            out["next"] = ("Read what_to_tell_them to the creator. If they would rather have pictures in the channel's "
+                           "look, open the page (open_in_studio page='style_clone' id=<this op id>) and press Use "
+                           "pictures instead; never choose for them.")
     return out
 
 

@@ -23,7 +23,8 @@ Link: $ARGUMENTS
 5. **Their answers.** When the look is done, ask each of its `questions` (a multiple-choice question works well;
    Studio's guess is the first option). Ask `medium` (how a 3D channel's 3D is made) and `animation` (whether the
    channel's drawn characters are animated, or pictures in their look) first: they decide how the videos are made.
-   If `look_progress` shows a `medium_gap`, tell them now what their videos will be (`how_made`). Also ask:
+   If `look_progress` shows a `medium_gap`, tell them now what their videos will be (`how_made`). Choosing animated
+   adds a few minutes of their Claude Code to the study (usually 3 to 10) (Claude writes the channel's animation); say so. Also ask:
    - a name for the new style (for example "My History Style");
    - an example video title in the channel's subject.
    Mention `suggested_base` and `because` in one line: the recipe the new style builds on.
@@ -34,8 +35,9 @@ Link: $ARGUMENTS
    them to approve the tool call. If it returns a `medium_gap`, read it to them; only with their OK call again with
    `accept_medium=true`.
 8. **Progress.** Give the page link (`page`) and say Studio shows a notification when the style is ready. Check
-   `progress(id=op_…)` when they ask. When it's ready the style appears in `list_styles(kind='mine')`; offer to make
-   a first video with it (the make-videos skill). Styles learned from a channel render on this computer.
+   `progress(id=op_…)` when they ask. When it's ready the style appears in `list_styles(kind='mine')`; for an
+   animated style, read `animation.what_to_tell_them` first. Offer to make a first video with it (the make-videos
+   skill). Styles learned from a channel render on this computer.
 
 If the plan's style clones are used up, Studio says so: point them to https://channelrecipe.com/app#billing.
 If a study stops, read what Studio said; never start it again by yourself.
