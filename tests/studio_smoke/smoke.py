@@ -214,9 +214,8 @@ def wait_until_ready(url, process, log_path, minutes):
         if process.poll() is not None:
             return False, "the launcher stopped (exit %s) before Studio answered" % process.returncode
         try:
-            status, _, _ = get(url + "/cr-setup", timeout=5)
-            if status == 200:
-                return True, ""
+            get(url + "/cr-setup", timeout=5)           # any answer, even an error page: Studio is up (the checks judge it)
+            return True, ""
         except (OSError, urllib.error.URLError):
             pass
         if time.monotonic() - said > 30:
