@@ -77,7 +77,8 @@ def test_a_blocked_host_with_no_way_around_blocks_with_what_to_do():
     dns = cr_network.check(EVERYTHING, probe=probe_with({"api.kie.ai": "dns"}))
     assert "can't look up its address" in dns["message"] and "Check this computer is online" in dns["message"]
     inspected = cr_network.check(EVERYTHING, probe=probe_with({"api.kie.ai": "intercepted"}))
-    assert "intercepts secure connections" in inspected["message"] and "Antivirus" in inspected["message"]
+    assert "inspects this computer's secure connections" in inspected["message"]
+    assert inspected["local_block"]["kind"] == "inspects" and "Allow Studio in" in inspected["message"]
 
 
 def test_without_channelrecipe_the_ways_around_dont_work_either():
@@ -397,3 +398,134 @@ def test_local_path_finds_a_folder_model_and_rejects_an_incomplete_one(tmp_path,
     assert cr_whisper.local_path(str(folder)) == str(folder)
     monkeypatch.setenv("WHISPER_MODEL", "small")
     assert cr_whisper.model_name(tmp_path) == "small" and cr_whisper.repo_for("small") == "Systran/faster-whisper-small"
+
+
+# ── an antivirus or firewall blocking Studio itself (a Windows creator's Norton, 2026-10-24) ────────────────────────
+
+def never_says_switch_it_off(text):
+    low = text.lower()
+    return not any(words in low for words in ("turn it off", "turn off", "switch it off", "switch off", "disable"))
+
+
+def test_studio_unable_to_reach_itself_names_the_antivirus_and_how_to_allow_studio():
+    result = cr_network.check(EVERYTHING, probe=probe_with({}), local="refused", antivirus=["Norton"])
+    local = result["local_block"]
+    assert local["suspected"] and local["kind"] == "local" and result["ready"] is False
+    assert result["message"].startswith("Norton is blocking Studio's own connections")
+    assert "127.0.0.1:7860" in result["message"] and "127.0.0.1 port 7860" in result["message"]
+    assert sys.executable in result["message"] and local["programs"][0] == sys.executable
+    assert "in Norton: Settings, Firewall, Program Control" in result["message"]
+    assert never_says_switch_it_off(result["message"])
+
+
+def test_every_host_failing_points_at_the_computer_and_an_offline_one_says_check_online():
+    everything = {h[0]: "timeout" for h in cr_network.HOSTS}
+    result = cr_network.check(EVERYTHING, probe=probe_with(everything))
+    local = result["local_block"]
+    assert local["kind"] == "everything" and local["antivirus"] == ""
+    assert "If websites open in your browser, an antivirus or firewall is blocking Studio itself" in result["message"]
+    assert "Allow Studio in your antivirus or firewall" in result["message"]
+    blocking = [r for r in result["hosts"] if r["blocking"]]
+    assert blocking and all("phone hotspot" not in r["message"] for r in blocking), "the fix is said once, up top"
+    offline = cr_network.check(EVERYTHING, probe=probe_with({h[0]: "dns" for h in cr_network.HOSTS}))
+    assert offline["local_block"]["suspected"] is False and "Check it's online" in offline["message"]
+    one = cr_network.check(EVERYTHING, probe=probe_with({"api.kie.ai": "timeout"}))
+    assert one["local_block"]["suspected"] is False, "one blocked host is the network, not the computer"
+
+
+def test_inspected_connections_with_a_known_antivirus_say_allow_studio_never_switch_it_off():
+    result = cr_network.check(EVERYTHING, probe=probe_with({"channelrecipe.com": "intercepted", "api.kie.ai": "intercepted"}),
+                              antivirus=["Avast"])
+    assert result["message"].startswith("Avast inspects this computer's secure connections")
+    assert "Allow Studio in Avast" in result["message"] and never_says_switch_it_off(result["message"])
+    for row in result["hosts"]:
+        assert never_says_switch_it_off(row["message"])
+
+
+@pytest.mark.parametrize("platform,listing,found", [
+    ("nt", '"System Idle Process","0","Services","0","8 K"\n"NortonSecurity.exe","4012","Services","0","90,000 K"\n'
+           '"bdagent.exe","5120","Console","1","20,000 K"\n', ["Norton", "Bitdefender"]),
+    ("nt", '"explorer.exe","100","Console","1","9 K"\n"MsMpEng.exe","200","Services","0","9 K"\n', []),
+    ("posix", "/sbin/launchd\n/Applications/Little Snitch.app/Contents/Components/Little Snitch Agent\n"
+              "/Applications/LuLu.app/Contents/MacOS/LuLu\n", ["Little Snitch", "LuLu"]),
+])
+def test_the_running_antivirus_is_found_from_the_process_list(monkeypatch, platform, listing, found):
+    monkeypatch.setattr(cr_network.os, "name", platform)
+    cr_network._antivirus.clear()
+    asked = []
+    run = lambda cmd, **kw: asked.append(cmd) or SimpleNamespace(stdout=listing)
+    assert cr_network.running_antivirus(run=run) == found
+    assert asked[0][0] == ("tasklist" if platform == "nt" else "ps")
+    assert cr_network.running_antivirus(run=lambda *a, **k: pytest.fail("kept for ten minutes")) == found
+    cr_network._antivirus.clear()
+
+
+def test_the_process_list_is_read_only_when_the_computer_looks_like_the_block():
+    looked = []
+    find = lambda: looked.append(1) or ["Norton"]
+    clear = cr_network.scan(["api.kie.ai"], port=7860, probe=lambda h: "", probe_local=lambda port: "",
+                            find_antivirus=find)
+    assert clear["antivirus"] == [] and looked == []
+    blocked = cr_network.scan(["api.kie.ai"], port=7860, probe=lambda h: "", probe_local=lambda port: "refused",
+                              find_antivirus=find)
+    assert blocked["antivirus"] == ["Norton"] and blocked["local"] == "refused" and looked == [1]
+
+
+def test_status_tries_studios_own_address_when_it_is_serving(monkeypatch):
+    ports = []
+    probe_local = lambda port: ports.append(port) or "refused"
+    result = cr_network.status(EVERYTHING, probe=probe_with({}), port=7860, probe_local=probe_local,
+                               find_antivirus=lambda: ["Norton"])
+    assert ports == [7860] and result["local_block"]["antivirus"] == "Norton" and result["ready"] is False
+    assert "blocked on this computer (local); antivirus: Norton" in cr_network.diagnostics_line(result)
+    cr_network.forget()
+    cr_network.status(EVERYTHING, probe=probe_with({}), probe_local=probe_local)
+    assert ports == [7860], "at Studio start nothing is serving yet: no self-check"
+
+
+def test_a_real_refused_local_port_reads_as_a_block_on_the_computer():
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    port = server.getsockname()[1]
+    server.close()
+    assert cr_network.local_probe(port, timeout=3) in ("refused", "timeout")
+    listening = socket.socket()
+    listening.bind(("127.0.0.1", 0))
+    listening.listen(1)
+    assert cr_network.local_probe(listening.getsockname()[1]) == ""
+    listening.close()
+
+
+def test_setup_doesnt_wait_a_minute_and_a_half_for_an_unreachable_channelrecipe():
+    """The account call retries a lost connection for about 90 s (right for a video); setup asks once, quickly."""
+    import cr_studio
+    import requests
+    blocked = cr_network.check(EVERYTHING, probe=probe_with({"channelrecipe.com": "cut"}))
+    asked = []
+
+    def head(url, **kw):
+        asked.append((url, kw["timeout"]))
+        raise requests.exceptions.ConnectionError("cut")
+    assert cr_studio.channelrecipe_answers({"url": "https://channelrecipe.com"}, blocked, head=head) is False
+    assert asked == [("https://channelrecipe.com/api/health", (5, 5))]
+    assert cr_studio.channelrecipe_answers({}, blocked, head=lambda url, **kw: None) is True, \
+        "the request got through after all: the normal account call runs"
+    clear = cr_network.check(EVERYTHING, probe=probe_with({}))
+    assert cr_studio.channelrecipe_answers({}, clear, head=lambda *a, **k: pytest.fail("not asked")) is True
+    assert cr_studio.channelrecipe_answers({}, {"checking": True, "hosts": []},
+                                           head=lambda *a, **k: pytest.fail("not asked")) is True
+
+
+def test_readiness_skips_the_slow_tools_check_when_channelrecipe_is_unreachable(monkeypatch):
+    monkeypatch.setattr(cr_readiness.cr_bridge, "load_settings", lambda: {"key": "cr_mcp_" + "k" * 24,
+                                                                          "brain_mode": "claudecode"})
+    monkeypatch.setattr(cr_readiness.cr_claude, "status", lambda: {"ready": True, "installed": True,
+                                                                   "authenticated": True})
+    monkeypatch.setattr(cr_readiness.cr_claude, "models_verified", lambda *a: True)
+    monkeypatch.setattr(cr_readiness.cr_mcp, "is_registered", lambda cfg: True)
+    monkeypatch.setattr(cr_readiness.cr_mcp, "status", lambda cfg: pytest.fail("a 90 s check setup already answered"))
+    why = "Studio can't reach channelrecipe.com from this computer right now. See Network under Make sure the tools are ready."
+    ready = cr_readiness.basic({"cr_unreachable": True, "connection_error": why})
+    rows = {r["key"]: r for r in ready["checks"]}
+    assert rows["connection"]["message"] == why and rows["mcp"]["message"] == why
+    assert rows["release"]["ready"] is True, "no account answer: no claim that a new Studio is out"

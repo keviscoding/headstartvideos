@@ -248,6 +248,26 @@ def download(url, dest):
         tmp.unlink(missing_ok=True)
 
 
+# Uploads (reference pictures, clips) create nothing paid, so a dropped or timed-out one is simply sent again. A creator
+# on a slow connection saw a large clip fail every time: one request, a fixed three minutes, no second try (2026-10-24).
+UPLOAD_TRIES, UPLOAD_WAITS = 3, (10, 30)       # three tries; seconds before the second and the third
+SLOW_UPLINK = 32 * 1024                        # bytes a second a slow home connection still sends
+
+
+def upload_timeout(size):
+    """(connect, read) seconds for an upload of `size` bytes: room for a slow connection to send it and the host to
+    answer, never under three minutes, at most an hour."""
+    return (15, min(3600, max(180, int(size / SLOW_UPLINK) + 120)))
+
+
+def _upload_failed(path, size, provider, why):
+    megabytes = size / (1024 * 1024)
+    return AccountStop(f"The upload of {path.name} ({megabytes:.1f} MB) to {PROVIDERS[provider]['label']} didn't finish "
+                       f"after {UPLOAD_TRIES} tries ({why}). Nothing was charged. A slow or unstable connection may not "
+                       "send a file this size in time: press Resume saved project to try again, on a faster or wired "
+                       "connection if you can.")
+
+
 def upload(path, cache_file=None, *, task=None):
     provider, key = account(task)
     path = Path(path)
@@ -260,23 +280,47 @@ def upload(path, cache_file=None, *, task=None):
             if previous.get("created_at", 0) > time.time() - 43200:
                 _references[previous["url"]] = {"upload_sha256": digest}
                 return _url(previous["url"])
-        headers = {"Authorization": "Bearer " + key}
-        url = ("https://kieai.redpandaai.co/api/file-stream-upload" if provider == "kie"
-               else "https://api.atlascloud.ai/api/v1/model/uploadMedia")
+    # The upload itself runs outside the lock: a slow one must not hold up the pictures being made beside it.
+    headers = {"Authorization": "Bearer " + key}
+    url = ("https://kieai.redpandaai.co/api/file-stream-upload" if provider == "kie"
+           else "https://api.atlascloud.ai/api/v1/model/uploadMedia")
+    size = path.stat().st_size
+    why = ""
+    for attempt in range(UPLOAD_TRIES):
+        if attempt:
+            wait = UPLOAD_WAITS[min(attempt, len(UPLOAD_WAITS)) - 1]
+            print(f"The upload of {path.name} stopped ({why}); trying again in {wait} s "
+                  f"(try {attempt + 1} of {UPLOAD_TRIES}).", flush=True)
+            time.sleep(wait)
         try:
             with path.open("rb") as f:
                 res = requests.post(url, headers=headers, files={"file": (digest + path.suffix, f, mimetypes.guess_type(path.name)[0])},
                                     data={"uploadPath": "channelrecipe", "fileName": digest + path.suffix} if provider == "kie" else None,
-                                    timeout=(15, 180), allow_redirects=False)
-            data = _data(res, provider)
-            value = ((data.get("data") or {}).get("downloadUrl") if provider == "kie" else
-                     data.get("url") or (data.get("data") or {}).get("url"))
-            value = _url(value)
-            _write(marker, {"url": value, "created_at": time.time()})
-            _references[value] = {"upload_sha256": digest}
-            return value
+                                    timeout=upload_timeout(size), allow_redirects=False)
+        except requests.ConnectTimeout:
+            why = "the upload host didn't answer"
+            continue
+        except requests.Timeout:
+            why = "the connection was too slow to finish in time"
+            continue
+        except requests.ConnectionError as error:      # a slow send that timed out arrives as "write operation timed out"
+            why = ("the connection was too slow to finish in time" if "timed out" in str(error).lower()
+                   else "the connection dropped")
+            continue
         except requests.RequestException:
             raise AccountStop("The reference upload stopped. Check your model account connection.")
+        if res.status_code == 429 or res.status_code >= 500:
+            why = f"the upload host was busy (HTTP {res.status_code})"
+            continue
+        data = _data(res, provider)
+        value = ((data.get("data") or {}).get("downloadUrl") if provider == "kie" else
+                 data.get("url") or (data.get("data") or {}).get("url"))
+        value = _url(value)
+        with _lock:
+            _write(marker, {"url": value, "created_at": time.time()})
+            _references[value] = {"upload_sha256": digest}
+        return value
+    raise _upload_failed(path, size, provider, why)
 
 
 def _never_sent(error) -> bool:
@@ -842,6 +886,8 @@ def install(engine):
         cr_drawon.install(engine)                   # whiteboard styles: each picture draws itself on
         import cr_threed_look
         cr_threed_look.install(engine)              # the 3D look chosen in Create for one video
+        import cr_character
+        cr_character.install(engine)                # a new character for one video replaces the recipe's picture
         import cr_style_prompts
         cr_style_prompts.install(engine)            # learned styles draw with today's storyboard prompt
     except ImportError:

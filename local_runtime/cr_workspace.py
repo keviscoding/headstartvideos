@@ -284,6 +284,71 @@ def install(studio, activity, *, token, home=None):
         except Exception as error:
             return panel_error(error)
 
+    def character_error(error):
+        if isinstance(error, (ValueError, PermissionError)):
+            return protect(jsonify(error=str(error))), 403 if isinstance(error, PermissionError) else 400
+        app.logger.error("Character request %s failed", request.path, exc_info=error)
+        return protect(jsonify(error="Your character could not be made: " + str(error)[:200])), 503
+
+    @app.post("/cr-workspace/character")
+    def cr_workspace_character_upload():
+        """A picture of your own character (cr_character): it replaces the recipe's picture in the videos it's picked
+        for. Create sends a form; Studio's Claude Code tools send {image_base64, filename, description}."""
+        try:
+            local_access()
+            import base64
+            import binascii
+            import cr_character
+            upload = request.files.get("file")
+            if upload is not None:
+                data, name, words = upload.read(), upload.filename or "", request.form.get("description", "")
+            else:
+                body = request.get_json(silent=True) or {}
+                try:
+                    data = base64.b64decode(str(body.get("image_base64") or ""), validate=True)
+                except (binascii.Error, ValueError):
+                    raise ValueError("Send the picture as base64.") from None
+                name, words = str(body.get("filename") or ""), str(body.get("description") or "")
+            path = cr_character.save_upload(home, data, name, words)
+            return protect(jsonify(character=cr_character.item(home, path)))
+        except Exception as error:
+            return character_error(error)
+
+    @app.post("/cr-workspace/character/draw")
+    def cr_workspace_character_draw():
+        """A character described in words, drawn once in the recipe's own style (one picture on the creator's image
+        account, about $0.02). The same words and recipe reuse it, here and when the video's stills are drawn."""
+        try:
+            local_access()
+            import cr_character
+            body = request.get_json(silent=True) or {}
+            style = str(body.get("style") or "")
+            words = str(body.get("description") or "").strip()
+            st = (getattr(studio.styles, "STYLES", {}) or {}).get(style)
+            if not isinstance(st, dict):
+                raise ValueError("Choose a recipe first.")
+            if not words:
+                raise ValueError("Describe your character first: who they are, their age, hair, face and clothes.")
+            if not cr_bridge.load_settings().get("costs_accepted"):
+                raise ValueError("Review your provider spending in setup before drawing a character.")
+            look = st.get("look") if isinstance(st.get("look"), dict) else {}
+            import cr_media
+            if cr_media.active("images"):
+                def generate(prompt, dest, label, ref_urls):
+                    return cr_media.image(prompt, dest, label, ref_urls=ref_urls, model=look.get("image_model") or None)
+            else:
+                def generate(prompt, dest, label, ref_urls):
+                    return studio.mv.image_gen(prompt, dest, label, ref_urls=ref_urls,
+                                               kie_create_fn=getattr(studio.mv, "_kie_create", None))
+            try:
+                path = cr_character.draw(home, style, words, look, generate=generate, host=studio.mv.host_image,
+                                         log=app.logger.info)
+            except SystemExit as stop:                   # the engine exits when no picture service is set up
+                raise ValueError(f"Connect a picture account in setup first ({stop}).") from None
+            return protect(jsonify(character=cr_character.item(home, path)))
+        except Exception as error:
+            return character_error(error)
+
     @app.get("/cr-workspace/cta-image/<image>.jpg")
     def cr_workspace_cta_image_file(image):
         try:
