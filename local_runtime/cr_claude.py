@@ -439,7 +439,7 @@ class Runtime:
         try:
             installed_version=json.loads((Path(self.bridge.HOME)/"cr-release.json").read_text(encoding="utf-8"))["version"]
         except (OSError,ValueError,KeyError):
-            installed_version=cfg.get("local_version","5.3-admin.100")
+            installed_version=cfg.get("local_version","5.3-admin.101")
         cache = Path(self.bridge.HOME) / "output" / "cr-claude-cache" / project_id / (stage_id + ".json")
         try:
             saved = json.loads(cache.read_text(encoding="utf-8"))
