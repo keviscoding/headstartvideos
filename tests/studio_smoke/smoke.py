@@ -343,6 +343,7 @@ def tracebacks(text):
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")      # a CI log is a cp1252 pipe on Windows
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--port", type=int, default=7860)
     parser.add_argument("--report", type=Path)
