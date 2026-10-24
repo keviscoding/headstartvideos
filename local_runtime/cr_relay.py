@@ -6,9 +6,14 @@ and every video stopped. Any GET for a file on Kie's file hosts that fails to co
 ChannelRecipe's relay (/api/studio/media-relay, signed in with this Studio's account), and the host is remembered as
 blocked for a day, so the rest of the video goes straight through the relay.
 
+Uploads to Kie's upload host (kieai.redpandaai.co: reference pictures, the watcher's light video copies) go the same
+way through /api/studio/upload-relay when that host can't be reached. An upload has to reach Kie with the creator's
+Kie key, so only for that relayed upload the key travels to ChannelRecipe in X-CR-Kie-Authorization; the site passes
+it to Kie for that one request and never keeps or logs it.
+
 install() wraps requests' transport once per process (Studio, its video workers and the Shorts pipelines), so every
-downloader in the engine is covered without changing it. Only these hosts and only GETs are touched; Kie's own key is
-never sent to ChannelRecipe.
+downloader and uploader in the engine is covered without changing it. Only these hosts are touched: GETs of Kie's
+files, and POSTs to Kie's two upload addresses. Kie's key is never sent with a relayed download.
 """
 from __future__ import annotations
 
@@ -21,6 +26,8 @@ from urllib.parse import urlsplit
 
 HOME = Path(__file__).resolve().parent
 RELAY_SUFFIXES = ("aiquickdraw.com", "redpandaai.co")      # Kie's result and upload file hosts
+UPLOAD_HOST = "kieai.redpandaai.co"
+UPLOAD_PATHS = ("/api/file-stream-upload", "/api/file-base64-upload")
 BLOCKED_FILE = HOME / ".cr-relay-hosts.json"
 BLOCKED_SECONDS = 24 * 3600
 _lock = threading.Lock()
@@ -30,6 +37,12 @@ def relayable(url: str) -> bool:
     parts = urlsplit(str(url or ""))
     host = (parts.hostname or "").lower()
     return parts.scheme == "https" and any(host == s or host.endswith("." + s) for s in RELAY_SUFFIXES)
+
+
+def uploadable(url: str) -> bool:
+    parts = urlsplit(str(url or ""))
+    return (parts.scheme == "https" and (parts.hostname or "").lower() == UPLOAD_HOST and parts.port in (None, 443)
+            and parts.path in UPLOAD_PATHS)
 
 
 def _blocked_hosts() -> dict:
@@ -85,6 +98,25 @@ def relayed(request):
     return out
 
 
+def relayed_upload(request):
+    """The same upload, sent to ChannelRecipe's upload relay; None without a connected account, or for a streamed
+    body that can't be sent a second time."""
+    account = _account()
+    if account is None or not isinstance(request.body, (bytes, str)):
+        return None
+    base, key = account
+    out = request.copy()
+    kie = out.headers.pop("Authorization", None)
+    for name in ("Cookie", "Proxy-Authorization"):
+        out.headers.pop(name, None)
+    out.prepare_url(base + "/api/studio/upload-relay", {"path": urlsplit(request.url).path})
+    out.headers["Authorization"] = "Bearer " + key
+    if kie:
+        out.headers["X-CR-Kie-Authorization"] = kie
+    out.headers["X-CR-Relay"] = "1"
+    return out
+
+
 def install() -> None:
     try:
         import requests
@@ -96,21 +128,27 @@ def install() -> None:
     original = HTTPAdapter.send
 
     def send(self, request, **kwargs):
-        if request.method != "GET" or request.headers.get("X-CR-Relay") or not relayable(request.url):
+        if request.headers.get("X-CR-Relay"):
+            return original(self, request, **kwargs)
+        if request.method == "GET" and relayable(request.url):
+            via_relay, what = relayed, "fetching Kie's files"
+        elif request.method == "POST" and uploadable(request.url):
+            via_relay, what = relayed_upload, "uploading to Kie"
+        else:
             return original(self, request, **kwargs)
         host = (urlsplit(request.url).hostname or "").lower()
         if not blocked(host):
             try:
                 return original(self, request, **kwargs)
             except requests.exceptions.ConnectionError as error:       # incl. SSL handshake cuts and connect timeouts
-                via = relayed(request)
+                via = via_relay(request)
                 if via is None:
                     raise
                 mark_blocked(host)
                 print(f"{host} can't be reached from this computer ({type(error).__name__}); "
-                      "fetching Kie's files through ChannelRecipe instead", flush=True)
+                      f"{what} through ChannelRecipe instead", flush=True)
                 return original(self, via, **kwargs)
-        via = relayed(request)
+        via = via_relay(request)
         return original(self, via if via is not None else request, **kwargs)
 
     send._cr_relay = True

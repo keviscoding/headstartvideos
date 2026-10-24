@@ -654,3 +654,44 @@ def test_setup_check_says_why_the_graphics_browser_isnt_ready_and_the_fix_runs_i
     out = ok("fix_graphics_browser", {})
     assert out["state"] == "installing" and ("POST", "/cr-setup/fix-browser") in calls
     assert "fix_graphics_browser" in ccc.FREE_TOOLS, "free and pre-approved: it only installs Studio's own browser"
+
+
+def test_setup_check_names_blocked_services_and_the_speech_model_and_the_fix_runs_in_studio(studio, monkeypatch):
+    sys.path.insert(0, str(ROOT / "local_runtime"))
+    import cr_network
+    network = cr_network.check({"kie": True, "speech_model": True, "youtube": True}, probe=lambda host: {
+        "api.kie.ai": "cut", "tempfile.aiquickdraw.com": "cut", "www.youtube.com": "refused"}.get(host, ""))
+    real_call = tools.call
+    calls = []
+
+    def call(method, path, body=None, **kw):
+        calls.append((method, path))
+        if path == "/cr-status":
+            return {"local_version": "5.3-admin.98", "readiness": {"ready": False, "blockers": [network["message"]]},
+                    "network": network, "speech_model": {"ready": False, "state": "missing",
+                                                         "reason": "The speech-timing model isn't on this computer yet."}}
+        if path == "/cr-setup/fix-speech-model":
+            return {"state": "checking"}
+        return real_call(method, path, body, **kw)
+    monkeypatch.setattr(tools, "call", call)
+    out = ok("setup_check", {})
+    net = out["network"]
+    assert net["ready"] is False and [b["host"] for b in net["blocked"]] == ["api.kie.ai"]
+    assert "phone hotspot" in net["blocked"][0]["message"]
+    assert [g["host"] for g in net["goes_around"]] == ["tempfile.aiquickdraw.com"]
+    assert [y["host"] for y in net["youtube_only"]] == ["www.youtube.com"] and "plain words" in net["what_to_do"]
+    assert out["speech_model"]["ready"] is False and "fix_speech_model" in out["speech_model"]["fix"]
+    fixed = ok("fix_speech_model", {})
+    assert fixed["state"] == "checking" and ("POST", "/cr-setup/fix-speech-model") in calls
+    assert "fix_speech_model" in ccc.FREE_TOOLS, "free and pre-approved: it only downloads Studio's own model"
+
+
+def test_setup_check_on_a_clear_network_has_nothing_to_say(studio, monkeypatch):
+    real_call = tools.call
+    monkeypatch.setattr(tools, "call", lambda method, path, body=None, **kw: {
+        "local_version": "5.3-admin.98", "readiness": {"ready": True, "blockers": []},
+        "network": {"ready": True, "hosts": [], "message": "This computer reaches every service Studio uses."},
+        "speech_model": {"ready": True, "state": "ready"}} if path == "/cr-status" else real_call(method, path, body, **kw))
+    out = ok("setup_check", {})
+    assert out["network"]["ready"] and out["network"]["blocked"] == [] and out["network"]["what_to_do"] == ""
+    assert out["speech_model"] == {"ready": True, "state": "ready", "why": "", "fix": ""}

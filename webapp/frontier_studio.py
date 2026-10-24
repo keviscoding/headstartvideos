@@ -32,15 +32,15 @@ from webapp import plans
 from cryptography.fernet import Fernet, InvalidToken
 from webapp import frontier_providers as providers
 
-VERSION = "5.3-admin.97"
+VERSION = "5.3-admin.98"
 CATALOG = Path(__file__).resolve().parent / "frontier" / "catalog.json"
-RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.97.zip"
+RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.98.zip"
 # Every release the server still serves (older ones keep running projects alive). Append each new release; never
 # remove one, or projects pinned to it stop.
 APPROVED_RELEASES = ("5.3-admin.8", "5.3-admin.9", "5.3-admin.10", "5.3-admin.11", "5.3-admin.12",
                 "5.3-admin.13", "5.3-admin.14", "5.3-admin.15", "5.3-admin.16", "5.3-admin.17",
                 "5.3-admin.18", "5.3-admin.19", "5.3-admin.20", "5.3-admin.21", "5.3-admin.22",
-                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43", "5.3-admin.44", "5.3-admin.45", "5.3-admin.46", "5.3-admin.47", "5.3-admin.48", "5.3-admin.49", "5.3-admin.50", "5.3-admin.51", "5.3-admin.52", "5.3-admin.53", "5.3-admin.54", "5.3-admin.55", "5.3-admin.56", "5.3-admin.57", "5.3-admin.58", "5.3-admin.59", "5.3-admin.60", "5.3-admin.61", "5.3-admin.62", "5.3-admin.63", "5.3-admin.64", "5.3-admin.65", "5.3-admin.66", "5.3-admin.67", "5.3-admin.68", "5.3-admin.69", "5.3-admin.70", "5.3-admin.71", "5.3-admin.72", "5.3-admin.73", "5.3-admin.74", "5.3-admin.75", "5.3-admin.76", "5.3-admin.77", "5.3-admin.78", "5.3-admin.79", "5.3-admin.80", "5.3-admin.81", "5.3-admin.82", "5.3-admin.83", "5.3-admin.84", "5.3-admin.85", "5.3-admin.86", "5.3-admin.87", "5.3-admin.88", "5.3-admin.89", "5.3-admin.90", "5.3-admin.91", "5.3-admin.92", "5.3-admin.93", "5.3-admin.94", "5.3-admin.95", "5.3-admin.96", "5.3-admin.97")
+                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43", "5.3-admin.44", "5.3-admin.45", "5.3-admin.46", "5.3-admin.47", "5.3-admin.48", "5.3-admin.49", "5.3-admin.50", "5.3-admin.51", "5.3-admin.52", "5.3-admin.53", "5.3-admin.54", "5.3-admin.55", "5.3-admin.56", "5.3-admin.57", "5.3-admin.58", "5.3-admin.59", "5.3-admin.60", "5.3-admin.61", "5.3-admin.62", "5.3-admin.63", "5.3-admin.64", "5.3-admin.65", "5.3-admin.66", "5.3-admin.67", "5.3-admin.68", "5.3-admin.69", "5.3-admin.70", "5.3-admin.71", "5.3-admin.72", "5.3-admin.73", "5.3-admin.74", "5.3-admin.75", "5.3-admin.76", "5.3-admin.77", "5.3-admin.78", "5.3-admin.79", "5.3-admin.80", "5.3-admin.81", "5.3-admin.82", "5.3-admin.83", "5.3-admin.84", "5.3-admin.85", "5.3-admin.86", "5.3-admin.87", "5.3-admin.88", "5.3-admin.89", "5.3-admin.90", "5.3-admin.91", "5.3-admin.92", "5.3-admin.93", "5.3-admin.94", "5.3-admin.95", "5.3-admin.96", "5.3-admin.97", "5.3-admin.98")
 # Releases that may also START or RESUME a video: every release from MIN_SUPPORTED_RELEASE to the newest. A new release
 # never forces an update (2026-10-24: with "the newest two", five releases in one night made creators stop their work
 # to update, twice). Raise the minimum only on purpose, when older Studios can no longer work with this server, and say
@@ -1200,6 +1200,12 @@ class _BrandedWorkflowRoute(APIRoute):
         return branded
 
 
+# Studio's upload relay (make_router's /upload-relay): Kie's upload host, its two upload addresses, and the limits.
+MEDIA_UPLOAD_URL = "https://kieai.redpandaai.co"
+MEDIA_UPLOAD_PATHS = ("/api/file-stream-upload", "/api/file-base64-upload")
+MEDIA_UPLOAD_PARALLEL, MEDIA_UPLOAD_MAX_BYTES = 4, 200 * 1024 * 1024
+
+
 def studio_access(session_user):
     """FastAPI dependency: a Studio plan, by web session or by the Studio's account key."""
     def access(request: Request):
@@ -1427,6 +1433,79 @@ def make_router(session_user, *, prefix="/api/frontier"):
                 slot.release()
         return StreamingResponse(chunks(), status_code=upstream.status_code, headers=out,
                                  media_type=upstream.headers.get("Content-Type") or "application/octet-stream")
+
+    # Uploads to Kie's upload host (reference pictures, the watcher's light video copies) for a Studio whose network
+    # can't reach kieai.redpandaai.co (local_runtime/cr_relay.py). Only that host's two upload addresses, only for a
+    # Studio account, MEDIA_UPLOAD_PARALLEL at a time per account and MEDIA_UPLOAD_MAX_BYTES an upload. An upload has
+    # to reach Kie with the creator's own Kie key: it comes in X-CR-Kie-Authorization for this one request, goes to Kie
+    # and is never kept or logged. Kie's answer comes back as it is.
+    upload_slots: dict = {}
+
+    def forward_upload(user_id, path, body, content_type, kie_authorization):
+        """(status, body, content type) from Kie. Never raises: an exception here would carry the key into error
+        reports."""
+        with relay_lock:
+            slot = upload_slots.setdefault(user_id, threading.BoundedSemaphore(MEDIA_UPLOAD_PARALLEL))
+        if not slot.acquire(timeout=120):
+            body.close()
+            return 429, b'{"error":"Too many uploads at once. Try again in a moment."}', "application/json"
+        try:
+            body.seek(0, 2)
+            size = body.tell()
+            body.seek(0)
+            upstream = requests.post(MEDIA_UPLOAD_URL + path, data=body, timeout=(10, 170), allow_redirects=False,
+                                     headers={"Authorization": kie_authorization, "Content-Type": content_type,
+                                              "Content-Length": str(size), "User-Agent": "ChannelRecipe-Studio-relay"})
+            reply = upstream.content[:1 << 20]
+            kind = (upstream.headers.get("Content-Type") or "application/json").split(";", 1)[0]
+            if kind == "application/json":
+                try:
+                    json.loads(reply)
+                except ValueError:
+                    kind = "text/plain"
+            return upstream.status_code, reply, kind
+        except Exception:                                          # noqa: BLE001 - no detail: it could hold the key
+            return 502, b'{"error":"Kie\'s upload host didn\'t answer. Try again shortly."}', "application/json"
+        finally:
+            slot.release()
+            body.close()
+
+    @router.post("/upload-relay")
+    async def upload_relay(request: Request, path: str = "", user=Depends(access)):
+        import tempfile
+        from fastapi.concurrency import run_in_threadpool
+        from fastapi.responses import Response
+        kie_authorization = request.headers.get("x-cr-kie-authorization") or ""
+        if path not in MEDIA_UPLOAD_PATHS:
+            return JSONResponse({"error": "Only uploads to Kie's upload host can be sent this way."}, status_code=400)
+        if not kie_authorization.startswith("Bearer ") or len(kie_authorization) > 512:
+            return JSONResponse({"error": "Reconnect your Kie.ai account in Setup."}, status_code=400)
+        try:
+            declared = int(request.headers.get("content-length") or 0)
+        except ValueError:
+            declared = 0
+        if declared > MEDIA_UPLOAD_MAX_BYTES:
+            return JSONResponse({"error": "This upload is larger than the relay's limit."}, status_code=413)
+        body = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
+        size = 0
+        try:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > MEDIA_UPLOAD_MAX_BYTES:
+                    body.close()
+                    return JSONResponse({"error": "This upload is larger than the relay's limit."}, status_code=413)
+                body.write(chunk)
+        except Exception:                                          # noqa: BLE001 - the Studio hung up mid-upload
+            body.close()
+            return JSONResponse({"error": "The upload didn't arrive. Try again."}, status_code=400)
+        if not size:
+            body.close()
+            return JSONResponse({"error": "The upload was empty."}, status_code=400)
+        status, reply, kind = await run_in_threadpool(
+            forward_upload, user["id"], path, body, request.headers.get("content-type") or "application/octet-stream",
+            kie_authorization)
+        return Response(reply, status_code=status, media_type=kind,
+                        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
     @router.get("/stream/{what}")
     def stream(what: str, request: Request, t: str = ""):

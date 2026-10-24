@@ -20,10 +20,12 @@ import cr_media
 import cr_render
 import cr_claude
 import cr_mcp
+import cr_network
 import cr_readiness
 import cr_workers
 import cr_ui
 import cr_submission
+import cr_whisper
 import hashlib
 import re
 
@@ -395,6 +397,25 @@ def fix_graphics_browser():
     return started
 
 
+def network_needs(speech: dict) -> dict:
+    """What this Studio needs to reach: Kie unless another media account replaced it, ElevenLabs with a key, and
+    huggingface.co only while the speech-timing model isn't on this computer."""
+    try:
+        hub = cr_media.profile() or {}
+    except Exception:                                          # noqa: BLE001
+        hub = {}
+    return cr_network.wants_from_env(speech_model_missing=(speech or {}).get("state") in ("missing", "downloading",
+                                                                                          "broken"),
+                                     hub_provider=str(hub.get("provider") or ""))
+
+
+def fix_speech_model():
+    """Setup's Fix it for the speech-timing model: download it (again, when it's there but won't load) and load it
+    once, in the background."""
+    state = cr_whisper.status().get("state")
+    return cr_whisper.ensure(force=state == "broken")
+
+
 def sync_completion_receipt(bridge, pending):
     """Sync metadata, retaining evidence when an old repeat contradicted success."""
     receipt = json.loads(pending.read_text(encoding="utf-8"))
@@ -592,6 +613,11 @@ def create_app():
                   "node": tool_ready("node", "--version") or tool_ready("deno", "--version"),
                   "connected": bool(cfg.get("key")), "costs_accepted": bool(cfg.get("costs_accepted"))}
         checks.update(graphics_ready())
+        checks["speech_model"] = cr_whisper.status()
+        # the setup page shows "Checking…" after 3 s and asks again; a check before work waits for the answer
+        page = has_request_context() and request.path == "/cr-status"
+        checks["network"] = cr_network.status(network_needs(checks["speech_model"]),
+                                              wait=3 if page else cr_network.TIMEOUT * 2 + 2)
         try:
             checks["account"] = cr_bridge.call("status") if cfg.get("key") else None
         except Exception as e:
@@ -802,6 +828,21 @@ def create_app():
     def fix_browser_status():
         return jsonify(dict(BROWSER_FIX))
 
+    @studio.app.post("/cr-setup/fix-speech-model")
+    def fix_speech_model_route():
+        return jsonify(fix_speech_model()), 202
+
+    @studio.app.get("/cr-setup/fix-speech-model")
+    def fix_speech_model_status():
+        return jsonify({**dict(cr_whisper.FIX), **cr_whisper.status()})
+
+    @studio.app.post("/cr-setup/network")
+    def network_recheck():
+        """Check again now (after the creator changed network or allowed a host)."""
+        cr_network.forget()
+        last_status.clear()
+        return jsonify(cr_network.status(network_needs(cr_whisper.status())))
+
     @studio.app.get("/cr-diagnostics")
     def diagnostics():
         import platform
@@ -833,6 +874,9 @@ def create_app():
             "Writing route: %s" % checks.get("brain_mode", "unknown"),
             "Voice and images: %s%s · narration %s" % (hub.get("provider", "none"),
                 (" (" + ", ".join(hub.get("tasks", [])) + ")") if hub.get("tasks") else "", tick(voice.get("connected"))),
+            cr_network.diagnostics_line(checks.get("network") or {}),
+            "Speech-timing model: %s" % ("ready" if (checks.get("speech_model") or {}).get("ready") else
+                                         ((checks.get("speech_model") or {}).get("reason") or "unknown")[:300]),
             "Setup ready: %s" % tick(readiness.get("ready")),
             "Working right now: %s" % running,
         ]
@@ -1677,6 +1721,10 @@ def main():
         raise SystemExit(1)
     prefer_studio_ytdlp()
     polite_youtube()
+    # Found while setting up, not halfway through the first video: the speech-timing model (downloaded and loaded
+    # once) and the services this network can't reach.
+    for begin in (cr_whisper.start, lambda: cr_network.start(network_needs(cr_whisper.status()))):
+        threading.Thread(target=begin, daemon=True, name="cr-setup-checks").start()
     try:
         # Updates from older releases ran an updater that could not remove
         # retired files, so tidy them on start too.
