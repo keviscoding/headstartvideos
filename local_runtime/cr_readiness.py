@@ -27,10 +27,12 @@ def basic(checks, *, verify_mcp=True):
     mode = cfg.get("brain_mode", "channelrecipe")
     account = checks.get("account") or {}
     results = [item("python","Python 3.10 or newer",checks.get("python") is True,"Install Python 3.12, then reopen the launcher."),
-        item("connection", "ChannelRecipe account", bool(account), "Connect your CR account in step 2."),
+        item("connection", "ChannelRecipe account", bool(account), checks.get("connection_error") if
+             cfg.get("key") and checks.get("connection_error") else "Connect your CR account in step 2."),
         item("spending", "Account spending acknowledged", cfg.get("costs_accepted"), "Review account costs in step 2."),
         # the releases that may start new videos: the latest, or any the account lists as still supported
-        item("release", "Current workflow installed", checks.get("local_version") in (
+        # without the account's answer nothing is known about releases (the connection row says why)
+        item("release", "Current workflow installed", not account or checks.get("local_version") in (
             account.get("supported_versions") or [account.get("version")]),
              "A new Studio is out. Press Update now at the top of the studio page: it keeps your projects."),
         item("ffmpeg", "Video and caption tools", checks.get("ffmpeg"), "Install FFmpeg with subtitles, H.264, AAC and MP3 support, then reopen the launcher."),
@@ -43,7 +45,10 @@ def basic(checks, *, verify_mcp=True):
                visual_model=cfg.get("visual_model", cr_claude.VISUAL_MODEL),
                models_saved=bool(cfg.get("general_model") and cfg.get("visual_model") and cfg.get("local_version")),
                billing="Your signed-in Claude Code account and its usage limits apply.")
-    mcp = cr_mcp.status(cfg) if cfg.get("key") and verify_mcp else {"connected":False,"why":"Connect CR first."}
+    if checks.get("cr_unreachable") is True:      # setup found channelrecipe.com unreachable just now: no 90 s wait
+        mcp = {"connected": False, "why": checks.get("connection_error") or "Studio can't reach channelrecipe.com."}
+    else:
+        mcp = cr_mcp.status(cfg) if cfg.get("key") and verify_mcp else {"connected":False,"why":"Connect CR first."}
     registered=cr_mcp.is_registered(cfg)
     cli["mcp_connected"] = mcp["connected"] and registered
     cli["models_verified"] = cr_claude.models_verified(cfg, cli)

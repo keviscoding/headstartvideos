@@ -184,12 +184,23 @@ function renderSetupRows(data){
  const net=data.network||{},hosts=net.hosts||[],bad=hosts.filter(h=>!h.reachable&&h.needed!==false),waiting=net.checking&&!hosts.length;
  if(data.network){const netText=toolRow('Network',!waiting&&net.ready!==false&&!(net.warnings||[]).length,waiting?'Checking…':null);netText.parentElement.id='network-row';
  if(waiting){smallNote(netText,net.message||'Checking which services this computer can reach…');setTimeout(refresh,4000);}
+ const local=net.local_block||{};if(local.message){const lead=smallNote(netText,local.message);lead.id='network-local';lead.style.color='var(--text)';}
+ if(hosts.some(h=>h.host==='channelrecipe.com'&&!h.reachable))browserReaches(smallNote(netText,'Checking whether your browser can reach channelrecipe.com…'));
  const order=h=>h.blocking?0:h.warning?1:2;for(const host of bad.sort((a,b)=>order(a)-order(b)))smallNote(netText,host.message);if(bad.length||waiting)netText.parentElement.classList.add('wide');
  if(bad.length){const again=document.createElement('button');again.type='button';again.className='link-button';again.id='network-again';again.textContent='Check again';again.onclick=async()=>{again.disabled=true;again.textContent='Checking…';try{await fetch('/cr-setup/network',{method:'POST',headers:{'X-CR-Local-Token':token}});}catch(e){}refresh();};netText.append(again);}}
  const speech=data.speech_model||{},busy=['downloading','checking'].includes(speech.state);
  if(data.speech_model){const speechText=toolRow('Speech-timing model',speech.ready===true,busy?(speech.state==='downloading'?'Downloading…':'Checking…'):null);speechText.parentElement.id='speech-row';
  if(speech.ready!==true){const note=smallNote(speechText,speech.reason||'');if(busy)fixSpeech(null,note);else{const fix=document.createElement('button');fix.type='button';fix.className='link-button';fix.id='fix-speech';fix.textContent='Fix it';fix.onclick=()=>fixSpeech(fix,note);speechText.append(fix);}}}
  $('tools-ok-text').textContent='✓ Your computer is ready: Python, video tools, graphics browser, Node and the speech-timing model are installed, and this network reaches what Studio needs.'+((net.fallbacks||[]).length?' Some services are blocked on this network; Studio goes around them through channelrecipe.com.':'');
+}
+// Studio can't reach channelrecipe.com: can this browser? Then the internet works and something on this computer
+// (an antivirus or firewall) is blocking Studio itself.
+async function browserReaches(note){
+ note.id='network-browser';
+ try{const stop=new AbortController();setTimeout(()=>stop.abort(),8000);
+  await fetch('https://channelrecipe.com/favicon.ico?cr-reach='+Date.now(),{mode:'no-cors',cache:'no-store',signal:stop.signal});
+  note.textContent='Your browser reaches channelrecipe.com, so the internet works: an antivirus or firewall on this computer is blocking Studio itself. Allow Studio in it as described above.';
+ }catch(error){note.textContent='Your browser can’t reach channelrecipe.com either: check this computer’s internet connection first.';}
 }
 // Fix it for the speech-timing model: Studio downloads it (about 140 MB) and loads it once. Without a button it only
 // follows the download Studio started by itself.

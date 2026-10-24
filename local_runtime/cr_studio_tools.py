@@ -390,13 +390,19 @@ def network_summary(net: dict) -> dict:
     rows = [r for r in net.get("hosts") or [] if not r.get("reachable") and r.get("needed", True)]
     pick = lambda flag: [{"host": r["host"], "for": r.get("for", ""), "message": r.get("message", "")}
                          for r in rows if r.get(flag)]
+    local = net.get("local_block") or {}
     return {"ready": net.get("ready", True) is not False, "checking": bool(net.get("checking") and not rows),
             "blocked": pick("blocking"), "goes_around": pick("fallback"), "youtube_only": pick("warning"),
+            "on_this_computer": {"suspected": bool(local.get("suspected")), "antivirus": local.get("antivirus") or "",
+                                 "allow_programs": local.get("programs") or [], "message": local.get("message") or ""},
             "message": net.get("message") or "",
             "what_to_do": "Tell the creator in plain words which service is blocked and what to do (allow it in their "
                           "firewall, antivirus or VPN, or try another network such as a phone hotspot), then call "
-                          "setup_check again. Hosts under goes_around need nothing: Studio already works around them."
-                          if rows else ""}
+                          "setup_check again. Hosts under goes_around need nothing: Studio already works around them. "
+                          "When on_this_computer.suspected, the block is an antivirus or firewall on this computer, "
+                          "not the network: walk them through allowing allow_programs and 127.0.0.1:7860 in it (it is "
+                          "named when Studio found it running). Never suggest switching it off."
+                          if rows or local.get("suspected") else ""}
 
 
 def tool_fix_speech_model(args):
