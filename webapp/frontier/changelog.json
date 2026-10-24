@@ -1,5 +1,16 @@
 [
   {
+    "build": 104,
+    "date": "2026-10-24",
+    "title": "Claude writes your animated channel's animation",
+    "items": [
+      "New: cloning an animated channel has Claude write its animation. During the study your Claude Code writes the channel's characters, moves, effects and places in code, draws test shots, compares them with the channel's own frames and improves them (2 to 4 drafts, usually 3 to 10 minutes of Claude usage).",
+      "Any drawn style, not just stick figures. Fight channels, animated short films and cartoon heroes each get an animation of their own, saved with the style and reused for every video: Claude directs the characters to the narration and Studio draws every frame on this computer.",
+      "Checked before you see it. Every video's animation is reviewed frame by frame before it is drawn, and if a channel's animation falls short of its own frames, the style's page says so and offers Use pictures instead.",
+      "Cheaper animated videos. A video costs its voice, plus a background picture for each place (about $0.02) only when the channel's animation asks for them."
+    ]
+  },
+  {
     "build": 103,
     "date": "2026-10-24",
     "title": "Animated stick-figure channels, animated for real",
