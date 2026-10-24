@@ -860,6 +860,10 @@ def _apply_learned(folder, spec, style, log):
     if art.get("overrides"):
         cr_style_map._merge(learned, art["overrides"])
     cr_style_prompts.with_original_sound(learned)      # real clips are found only where the script marks them
+    if (mapping.get("route") or {}).get("engine") == "animated2d":
+        # the characters are animated in code: no writer's words change how the video is made
+        look = learned.setdefault("look", {})
+        look.update(visuals=mapping["overrides"]["look"]["visuals"], animated2d=mapping["overrides"]["look"]["animated2d"])
     learned.setdefault("cr_style_clone", {}).update(
         learned_v2={"look_id": spec["look_id"], "base": mapping["base"], "base_why": mapping["base_why"],
                     "route": mapping.get("route") or {},

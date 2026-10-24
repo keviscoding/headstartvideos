@@ -120,8 +120,10 @@ Studio through its own checks, so nothing needs the Studio web page.
 - Cloning a style (/clone-style): the look's questions come first, and two of them decide how the videos are MADE, so
   ask them before anything else, in plain words, with Studio's guess as the first option: `medium` (a 3D channel: how
   its 3D is made) and `animation` (a channel that animates its drawn characters, like stick-figure fights: animated by
-  Studio, or pictures in their look with some AI-animated clips). If `look_progress` or `clone_style` returns a
-  `medium_gap`, Studio can't make that medium yet: read it to the creator and call `clone_style` with
+  Studio, or pictures in their look with some AI-animated clips). Studio animates stick-figure casts itself: it rigs
+  each video's characters as puppets in the channel's look and animates them in code, timed to the narration, in front
+  of a few background pictures drawn in the channel's look (about $0.08 a video). If `look_progress` or `clone_style`
+  returns a `medium_gap`, Studio can't make that medium yet: read it to the creator and call `clone_style` with
   `accept_medium=true` only after they accept it. Never accept it for them, and never call a stopgap the real thing.
 
 ## Making videos through ChannelRecipe tools

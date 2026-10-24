@@ -20,7 +20,7 @@ import copy
 import re
 
 SCHEMA = 1
-ROUTER = 101         # how 3D is routed (73: Gemini judges the faces; 75: the creator is asked; 79: a designed cast is built in 3D; 101: animated 2D characters are asked about); older saved plans are made again
+ROUTER = 102         # how a channel is routed (73: Gemini judges 3D faces; 75: the creator is asked; 79: a designed cast is built in 3D; 101: animated 2D characters are asked about; 102: and animated in code); older saved plans are made again
 # How a channel's 3D is made is asked of the creator (Studio's guess first): the answer decides how the videos are made,
 # and a medium Studio can't make yet is said before anything is paid, never swapped in silently (an @ifologyfilms clone
 # drew stills of characters the channel animates in 3D, and was called fixed).
@@ -44,6 +44,10 @@ ANIMATION_GAP = ("Studio can't rig and animate these characters yet. Your videos
                  "some of them moved as cut-outs or animated by AI: close to how the channel looks, but its characters "
                  "won't walk, fight and act the way they do in its videos. Animated 2D characters are coming in a "
                  "Studio update.")
+ANIMATION_GAP_KIND = ("Studio rigs and animates stick-figure characters, and this channel's characters are drawn "
+                      "differently. Your videos would be drawn pictures in their look, some of them moved as cut-outs or "
+                      "animated by AI: close to how the channel looks, but its characters won't walk, fight and act the "
+                      "way they do in its videos. More kinds of 2D characters are coming in Studio updates.")
 # the drawn sources whose characters a channel can animate (an AI image that moves is AI video, a manga panel holds)
 DRAWN_2D = ("stick_figure", "drawing", "cutout", "painting")
 MOVES_ANYWAY = ("live_footage", "archival_footage", "stock_footage", "news_clip", "bodycam_cctv", "interview", "ai_video",
@@ -139,6 +143,7 @@ class Plan:
         self.overrides, self.remove, self.settings, self.needs, self.notes = {}, [], [], [], []
         self.motion_cutout = False
         self.candid_photo = False
+        self.animated2d = False
 
     def set(self, path: str, value, *, area: str, label: str, why: str, source: str = "", confidence: float = None,
             show=None):
@@ -758,9 +763,17 @@ def _animated_route(profile, animation: str) -> dict:
     told = animation in ANIMATIONS
     pick = animation if told else animation_guess(profile)
     if pick == ANIMATED_CODE:
+        import cr_animated2d
+        ok, seen = cr_animated2d.fits(profile)
+        if ok and cr_animated2d.available():
+            return {"engine": "animated2d", "why": f"{drawn}% of the pictures are drawn characters the channel animates "
+                    f"({seen}). Studio rigs them as puppets and animates them in code: they walk, fight and act, timed to "
+                    "the narration, in front of backgrounds drawn in the channel's look."}
+        kit = cr_animated2d.available()
         return {"engine": "pictures", "why": f"{drawn}% of the pictures are drawn characters the channel animates, but "
-                "Studio can't rig and animate them yet. Every scene is drawn as a picture in their look instead, and "
-                "some move as cut-outs or are animated by AI.", "medium_gap": ANIMATION_GAP}
+                + ("Studio rigs only stick-figure characters so far" if kit else "Studio can't rig and animate them yet")
+                + ". Every scene is drawn as a picture in their look instead, and some move as cut-outs or are animated "
+                "by AI.", "medium_gap": ANIMATION_GAP_KIND if kit else ANIMATION_GAP}
     if told:
         return {"engine": "pictures", "why": "you chose pictures: every scene is drawn as a picture in their look, and "
                 "some move as cut-outs or are animated by AI. The channel animates its characters, so they won't move "
@@ -771,7 +784,7 @@ def _animated_route(profile, animation: str) -> dict:
 
 def route(profile, chosen: str = "", drawn=None, told: bool = False, designed=None, by_hand: bool = False,
           animation: str = "") -> dict:
-    """How this channel's pictures are made: {"engine": "designed" | "drawn" | "threed" | "pictures", "why",
+    """How this channel's pictures are made: {"engine": "designed" | "drawn" | "threed" | "animated2d" | "pictures", "why",
     "warning"?, "medium_gap"?}. drawn / designed: the shares decided by the creator's answer (told) or by plan_style,
     else from the profile; by_hand: a designed cast the 3D engine builds, drawn because the creator picked a picture
     recipe (no gate, a pointer to the 3D recipe); animation: the creator's answer about animated 2D characters."""
@@ -826,12 +839,15 @@ def _features(plan: Plan, profile: dict, base: str, base_style: dict):
         "sound": True,
         "depth": plan.motion_cutout,
     }
+    if getattr(plan, "animated2d", False):
+        # the plugin animates every scene itself: sound design is the only switch that still means something
+        want = {k: k == "sound" for k in want}
     # real photos (and cut-outs) of the people and things the narration names: what these channels show between their
     # clips, and what fills the sentences real footage can't show (a 1-minute business documentary found footage for 20 of
     # its 50 seconds and stretched a chapter card over the rest)
     photos = sources.get("archival_photo", 0) + sources.get("cutout", 0) + sources.get("photo", 0)
     want["spotlight"] = base in ("documentary", "nocturne", "jung") and (photos >= 0.03 or want["youtube"])
-    offered = list((base_style.get("features") or {}).get("offered") or [])
+    offered = [] if getattr(plan, "animated2d", False) else list((base_style.get("features") or {}).get("offered") or [])
     on = [k for k, v in want.items() if v]
     reasons = {"youtube": "real footage", "stock": "stock footage", "ai_images": "generated pictures", "maps": "maps",
                "spotlight": "real photos of who and what is named",
@@ -865,6 +881,25 @@ def _features(plan: Plan, profile: dict, base: str, base_style: dict):
                  why=f"{round(fam['graphic'] * 100)}% of the runtime is charts, maps or graphics", source="watched")
         plan.set("pacing.graphic_ratio", round(_clamp(fam["graphic"], 0.05, 0.5), 2), area="Options",
                  label="Graphics share", why="measured from the watched shots", source="watched")
+
+
+def _animated2d(plan: Plan, original: dict):
+    """A channel whose drawn characters are animated in code (cr_animated2d): the visuals plugin and the channel's
+    animation conventions; the cast and places are designed for each video from its script."""
+    import cr_animated2d
+    spec = cr_animated2d.from_profile(original)
+    plan.set("look.visuals", cr_animated2d.VISUALS, area="Motion", label="Animated characters",
+             why="the references' drawn characters walk, fight and act; Studio rigs them as puppets and animates them "
+                 "in code (" + cr_animated2d.fits(original)[1] + ")", source="measured,watched",
+             show="rigged and animated in code, timed to the narration")
+    plan.set("look.animated2d", spec, area="Motion", label="How they are drawn",
+             why="the channel's own conventions: " + (spec["art"][:160] or "flat colours, round heads, thick limbs"),
+             source="watched", show="round heads, thick limbs, flat colours" + (", outlines" if spec.get("outline") else "")
+             + (", blurred backgrounds" if spec.get("blur", 0) >= 4 else ""))
+    plan.set("pacing.clips_per_min", 0.0, area="Motion", label="Moving pictures",
+             why="every scene is animated in code; no AI video is paid for", source="", show="off (animated in code)")
+    plan.needs = [n for n in plan.needs if n not in ("style_image", "character_image")]
+    plan.needs.append("plates")
 
 
 def _designed_cast(plan: Plan, profile: dict, base: str, original: dict):
@@ -1122,10 +1157,14 @@ def plan_style(profile: dict, styles: dict, *, base: str = None, minutes_hint: f
         raise ValueError(f"The {chosen} recipe isn't installed here.")
     base_style = styles[chosen]
     plan = Plan()
+    plan.animated2d = way.get("engine") == "animated2d"
     _pictures(plan, profile, chosen, base_style)
     _storyboard(plan, profile, chosen)
     _pace(plan, profile, chosen)
-    _motion(plan, profile, chosen, minutes_hint)
+    if plan.animated2d:
+        _animated2d(plan, profile)                # as the creator answered (the picture style they chose)
+    else:
+        _motion(plan, profile, chosen, minutes_hint)
     _look(plan, profile)
     _text(plan, profile)
     _features(plan, profile, chosen, base_style)
@@ -1152,6 +1191,11 @@ def cost(overrides: dict, base: str) -> dict:
                                          else 0.0)
     clips = pacing.get("clips_per_min") or 0.0
     presenter = ((overrides.get("look") or {}).get("avatar") or {}).get("per_min") or 0.0
+    if ((overrides.get("look") or {}).get("visuals")) == "cr_animated2d":
+        # the animation is drawn in code; a few background plates are drawn once per video
+        return {"pictures_per_min": 0.0, "clips_per_min": 0.0, "presenter_s_per_min": 0.0, "usd_per_min": 0.02,
+                "plates_per_video": 4, "note": "about 4 background pictures a video on your Kie account (about $0.08); "
+                "the characters are animated in code; voice and music are extra"}
     usd = stills * PICTURE_USD + clips * CLIP_USD + presenter * PRESENTER_USD_S
     return {"pictures_per_min": round(stills, 1), "clips_per_min": clips, "presenter_s_per_min": presenter,
             "usd_per_min": round(usd, 2),

@@ -184,6 +184,41 @@ def private_threed_resources(root: Path):
     return resources
 
 
+# The animated 2D cast kit (Studio 102+): stick-figure puppets rigged and animated in code (cr_animated2d.py drives it),
+# kept in the gitignored data/frontier/animated2d/ (its JavaScript, the casting and director prompts, its fight sounds),
+# never in this public repository.
+ANIMATED2D_FILES = re.compile(r"(rig|draw|moves|fx|film)\.js|(cast|director)\.txt")
+ANIMATED2D_SOUND = re.compile(r"sounds/[a-z_]+\.mp3")
+
+
+def private_animated2d_resources(root: Path):
+    """The animated 2D kit, shipped under animated2d/, and its fight sounds under assets/sfx/animated2d/ (Studio's mixer
+    plays a "file:sfx/animated2d/<name>.mp3" mark)."""
+    folder = root / "data/frontier/animated2d"
+    if not folder.exists():
+        return []
+    if folder.is_symlink() or not folder.is_dir():
+        raise ValueError("The animated 2D kit must be an ordinary owned folder.")
+    resources = []
+    for path in sorted(p for p in folder.rglob("*") if p.is_file() or p.is_symlink()):
+        rel = path.relative_to(folder).as_posix()
+        if path.name.startswith("."):
+            continue
+        if path.is_symlink() or path.stat().st_size > 2 * 1024 * 1024:
+            raise ValueError("Animated 2D kit files must be small ordinary files: " + rel)
+        if ANIMATED2D_FILES.fullmatch(rel):
+            resources.append((path, "animated2d/" + rel))
+        elif ANIMATED2D_SOUND.fullmatch(rel):
+            resources.append((path, "assets/sfx/animated2d/" + rel.split("/", 1)[1]))
+        else:
+            raise ValueError("Unexpected file in the animated 2D kit: " + rel)
+    names = {dest.split("/", 1)[1] for _, dest in resources if dest.startswith("animated2d/")}
+    missing = sorted({"rig.js", "draw.js", "moves.js", "fx.js", "film.js", "cast.txt", "director.txt"} - names)
+    if resources and missing:
+        raise ValueError("The animated 2D kit is incomplete: " + ", ".join(missing))
+    return resources
+
+
 def merge_catalog(contents: bytes, root: Path = None) -> bytes:
     """The engine's static catalog (what the 3D director may build) with the designed-cast kit's kinds and look preset."""
     extra = (root or ROOT) / "data/frontier/threed" / THREED_CATALOG
@@ -624,7 +659,8 @@ def build(source: Path, target: Path, previous: Path | None = None, with_shorts:
     shorts = with_shorts
     recipes = [r for r in private_recipe_resources(ROOT) if shorts or not r[1].startswith("styles/cr-shorts-")]
     preview_resources = (private_preview_resources(ROOT) + private_sound_resources(ROOT)
-                         + recipes + (private_shorts_resources(ROOT) if shorts else []) + private_threed_resources(ROOT))
+                         + recipes + (private_shorts_resources(ROOT) if shorts else []) + private_threed_resources(ROOT)
+                         + private_animated2d_resources(ROOT))
     target.parent.mkdir(parents=True, exist_ok=True)
     count = 0
     transformed_files = []
