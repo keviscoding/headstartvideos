@@ -750,6 +750,29 @@ def own_recording(engine, script, job: Path, file: str, force=False):
     return mp3, srt
 
 
+def wrap_whisper(engine):
+    """The engine's speech-timing model reads narration as PCM, and loads the copy setup downloaded (cr_whisper), so a
+    video never asks huggingface.co for it mid-run."""
+    original_whisper=getattr(engine,"_get_whisper",None)
+    if original_whisper and not getattr(original_whisper,"_cr_pcm_io",False):
+        class WhisperIO:
+            def __init__(self,model):self.model=model
+            def __getattr__(self,name):return getattr(self.model,name)
+            def transcribe(self,audio,*args,**kwargs):
+                if isinstance(audio,(str,Path)):
+                    audio=narration_audio(audio)
+                return self.model.transcribe(audio,*args,**kwargs)
+        def get_whisper():
+            try:
+                import cr_whisper
+                cr_whisper.point_engine(engine)
+            except Exception:                          # noqa: BLE001 - the engine loads it as before
+                pass
+            return WhisperIO(original_whisper())
+        get_whisper._cr_pcm_io=True
+        engine._get_whisper=get_whisper
+
+
 def install(engine):
     """Keep native providers when a task is unticked; resolve settings per call."""
     import cr_watch
@@ -765,18 +788,7 @@ def install(engine):
         cr_storyboard.install(engine)
     except ImportError:
         pass
-    original_whisper=getattr(engine,"_get_whisper",None)
-    if original_whisper and not getattr(original_whisper,"_cr_pcm_io",False):
-        class WhisperIO:
-            def __init__(self,model):self.model=model
-            def __getattr__(self,name):return getattr(self.model,name)
-            def transcribe(self,audio,*args,**kwargs):
-                if isinstance(audio,(str,Path)):
-                    audio=narration_audio(audio)
-                return self.model.transcribe(audio,*args,**kwargs)
-        def get_whisper():return WhisperIO(original_whisper())
-        get_whisper._cr_pcm_io=True
-        engine._get_whisper=get_whisper
+    wrap_whisper(engine)
     global _native_images
     _native_images = engine._image_provider
     def hook(name, task, replacement):

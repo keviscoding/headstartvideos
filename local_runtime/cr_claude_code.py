@@ -23,7 +23,7 @@ from pathlib import Path
 
 HOME = Path(__file__).resolve().parent
 SERVER = "studio"
-FREE_TOOLS = ("setup_check", "fix_graphics_browser", "list_styles", "get_style_pick", "quote", "progress", "list_videos", "open_in_studio",
+FREE_TOOLS = ("setup_check", "fix_graphics_browser", "fix_speech_model", "list_styles", "get_style_pick", "quote", "progress", "list_videos", "open_in_studio",
               "cloud_balance", "clone_style_look", "product_ideas", "products")
 PAID_TOOLS = ("make_videos", "clone_style", "build_product", "resume_video")
 # ChannelRecipe's hosted niche database (the account's `channelrecipe` server beside `studio`): reading it is free

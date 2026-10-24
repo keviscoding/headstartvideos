@@ -62,6 +62,68 @@ def test_without_a_connected_account_the_original_error_stands(relay, monkeypatc
         requests.get(FILE, timeout=5)
 
 
+UPLOAD = "https://kieai.redpandaai.co/api/file-stream-upload"
+
+
+@pytest.fixture
+def upload_relay(tmp_path, monkeypatch):
+    """Kie's upload host cut during the handshake; channelrecipe.com answers like Kie does."""
+    sent = []
+
+    def fake_send(self, request, **kwargs):
+        sent.append(request)
+        if (urlsplit(request.url).hostname or "") == "kieai.redpandaai.co":
+            raise requests.exceptions.SSLError("EOF occurred in violation of protocol (_ssl.c:1000)")
+        response = requests.Response()
+        response.status_code, response.url = 200, request.url
+        response._content = b'{"success":true,"code":200,"data":{"downloadUrl":"https://tempfile.redpandaai.co/x.png"}}'
+        return response
+    monkeypatch.setattr(HTTPAdapter, "send", fake_send)
+    monkeypatch.setattr(cr_relay, "BLOCKED_FILE", tmp_path / ".cr-relay-hosts.json")
+    monkeypatch.setitem(sys.modules, "cr_bridge", SimpleNamespace(load_settings=lambda: {
+        "key": "cr_mcp_" + "k" * 24, "url": "https://channelrecipe.com"}))
+    cr_relay.install()
+    return sent
+
+
+def test_an_upload_to_kies_cut_upload_host_goes_through_channelrecipe(upload_relay, tmp_path):
+    picture = tmp_path / "ref.png"
+    picture.write_bytes(b"\x89PNG reference")
+    with picture.open("rb") as f:
+        got = requests.post(UPLOAD, headers={"Authorization": "Bearer kie-secret"},
+                            files={"file": ("ref.png", f, "image/png")}, data={"uploadPath": "channelrecipe"}, timeout=5)
+    assert got.json()["data"]["downloadUrl"].startswith("https://tempfile.redpandaai.co/")
+    direct, via = upload_relay
+    assert direct.url == UPLOAD
+    assert via.url == "https://channelrecipe.com/api/studio/upload-relay?path=%2Fapi%2Ffile-stream-upload"
+    assert via.headers["Authorization"] == "Bearer cr_mcp_" + "k" * 24
+    assert via.headers["X-CR-Kie-Authorization"] == "Bearer kie-secret", "the upload still reaches Kie as the creator"
+    assert via.body == direct.body and b"\x89PNG reference" in via.body
+    assert via.headers["Content-Type"] == direct.headers["Content-Type"], "the same multipart upload"
+    assert cr_relay.blocked("kieai.redpandaai.co")
+    requests.post("https://kieai.redpandaai.co/api/file-base64-upload", json={"base64Data": "x"},
+                  headers={"Authorization": "Bearer kie-secret"}, timeout=5)
+    assert len(upload_relay) == 3 and "path=%2Fapi%2Ffile-base64-upload" in upload_relay[-1].url, \
+        "the rest of the video's uploads go straight through"
+
+
+def test_only_kies_two_upload_addresses_are_relayed(upload_relay):
+    for url in ("https://kieai.redpandaai.co/api/other", "https://api.kie.ai/api/v1/jobs/createTask"):
+        try:
+            requests.post(url, data=b"x", headers={"Authorization": "Bearer kie-secret"}, timeout=5)
+        except requests.exceptions.SSLError:
+            pass
+    assert [r.url for r in upload_relay] == ["https://kieai.redpandaai.co/api/other",
+                                             "https://api.kie.ai/api/v1/jobs/createTask"]
+    assert all("X-CR-Kie-Authorization" not in r.headers for r in upload_relay)
+
+
+def test_a_streamed_upload_body_isnt_sent_twice(upload_relay):
+    with pytest.raises(requests.exceptions.SSLError):
+        requests.post(UPLOAD, data=iter([b"part"]), timeout=5)
+    assert len(upload_relay) == 1
+
+
 @pytest.mark.parametrize("tail,code,reason", [
     ("whisper: loading model 'base' (CPU, int8)…\nOMP: Error #15: Initializing libiomp5md.dll, but found libiomp5md.dll "
      "already initialized.", 3, "maths library clashed"),
