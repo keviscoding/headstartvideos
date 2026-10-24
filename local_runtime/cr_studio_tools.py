@@ -765,10 +765,14 @@ def look_progress(look_id: str) -> dict:
         out.update(questions=[{"id": q.get("id"), "ask": q.get("ask"), "options": q.get("options")}
                               for q in m.get("questions") or []],
                    suggested_base=m.get("base"), because=m.get("base_why"), made_with=route.get("engine"),
+                   how_made=route.get("why") or "",
                    medium_gap=route.get("medium_gap") or "", cost_note=m.get("cost") if isinstance(m.get("cost"), str)
                    else "", not_watched=d.get("not_watched") or [],
                    next="Ask the creator these questions (their first option is Studio's guess), then call clone_style "
-                        "with look_id, a style name, an example title and their answers.")
+                        "with look_id, a style name, an example title and their answers. The 'medium' (3D) and "
+                        "'animation' (animated 2D characters) questions decide how the videos are made: ask them "
+                        "first, in plain words. A medium_gap (for Studio's guess; another answer can change it) is "
+                        "something Studio can't make yet: read it to the creator before anything is paid.")
     return out
 
 
@@ -940,8 +944,9 @@ def tool_clone_style(args):
                "attempt_id": secrets.token_hex(16)}
     gap = (mapping.get("route") or {}).get("medium_gap") or ""
     if gap and payload["visual_mode"] != "reference_only" and not payload["accept_medium"]:
-        return {"started": False, "medium_gap": gap,
-                "next": "Read this to the creator. If they accept it, call clone_style again with accept_medium=true."}
+        return {"started": False, "medium_gap": gap, "how_made": (mapping.get("route") or {}).get("why") or "",
+                "next": "Read this to the creator in plain words: it is what their videos will be. If they accept it, "
+                        "call clone_style again with accept_medium=true. Never accept it for them."}
     status = call("POST", "/cr-style-clone/start", payload, timeout=120)
     return {"started": True, "id": status.get("operation_id"), "state": status.get("state"),
             "message": status.get("message"), "page": link("/cr-style-clone?operation=" + str(status.get("operation_id"))),
@@ -1127,7 +1132,8 @@ TOOLS = {
                      {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}),
     "clone_style": (tool_clone_style, "Step 2: study the looked-at references and build a new reusable style. Uses "
                     "the creator's Claude Code for 15-30 minutes and one of their plan's style clones. Needs look_id, a "
-                    "style_name, an example_title and the creator's answers to the look's questions.",
+                    "style_name, an example_title and the creator's answers to the look's questions. accept_medium: "
+                    "only after the creator read and accepted the medium_gap this returns (what Studio can't make yet).",
                     _schema({"look_id": {"type": "string"}, "style_name": {"type": "string"},
                              "example_title": {"type": "string"},
                              "answers": {"type": "object", "additionalProperties": {"type": "string"}},

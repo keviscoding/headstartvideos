@@ -21,7 +21,9 @@ Link: $ARGUMENTS
    from each channel (for example "the storytelling and pacing of channel A, the 3D look of channel B").
 4. **Wait for the look.** Check `progress(id=look_id)` about once a minute (a few minutes in all). Say what it's doing.
 5. **Their answers.** When the look is done, ask each of its `questions` (a multiple-choice question works well;
-   Studio's guess is the first option). Also ask:
+   Studio's guess is the first option). Ask `medium` (how a 3D channel's 3D is made) and `animation` (whether the
+   channel's drawn characters are animated, or pictures in their look) first: they decide how the videos are made.
+   If `look_progress` shows a `medium_gap`, tell them now what their videos will be (`how_made`). Also ask:
    - a name for the new style (for example "My History Style");
    - an example video title in the channel's subject.
    Mention `suggested_base` and `because` in one line: the recipe the new style builds on.

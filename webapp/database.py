@@ -494,6 +494,7 @@ def _init_db():
             conn.executescript(_INDEXES)
             conn.executescript(_MIGRATIONS)
     _apply_pending_credit_grants()
+    _apply_pending_plan_grants()
     _apply_pending_user_notices()
 
 
@@ -509,6 +510,47 @@ _PENDING_CREDIT_GRANTS = [
     # Customer refund — failed cook / support.
     ("2026-07-13-drama-refund-2", "dramarecap107@gmail.com", 2),
 ]
+
+# Idempotent plans given by the owner (applied once per grant_key on boot; the account must exist, else retried next
+# boot). Only Stripe events change a plan afterwards: an account with no active subscription keeps it, and one with a
+# subscription goes back to what it pays for at its next billing event. (grant_key, email, plan)
+_PENDING_PLAN_GRANTS = [
+    # Owner, 2026-10-24: give this creator the Max plan.
+    ("2026-10-24-rivora-max", "rivora31@gmail.com", "studio_max"),
+]
+
+
+def _apply_pending_plan_grants() -> None:
+    from webapp import plans
+    for grant_key, email, plan in _PENDING_PLAN_GRANTS:
+        email = email.lower().strip()
+        tier = plans.TIERS.get(plan)
+        if tier is None:
+            print(f"[ops] plan grant {grant_key}: unknown plan {plan}")
+            continue
+        try:
+            with _conn() as conn:
+                cur = conn.cursor()
+                cur.execute("CREATE TABLE IF NOT EXISTS ops_plan_grants (grant_key TEXT PRIMARY KEY, email TEXT, "
+                            "plan TEXT, applied_at REAL)")
+                cur.execute(_q("SELECT 1 FROM ops_plan_grants WHERE grant_key = ?"), (grant_key,))
+                if cur.fetchone():
+                    continue
+                cur.execute(_q("SELECT id, plan, credits FROM users WHERE email = ?"), (email,))
+                row = cur.fetchone()
+                if not row:
+                    print(f"[ops] plan grant {grant_key}: user {email} not found yet — will retry next boot")
+                    continue
+                user = dict(row)
+                credits = max(int(user.get("credits") or 0), tier.monthly_credits)
+                cur.execute(_q("UPDATE users SET plan = ?, credits = ? WHERE id = ?"), (plan, credits, user["id"]))
+                cur.execute(_q("INSERT INTO ops_plan_grants (grant_key, email, plan, applied_at) VALUES (?, ?, ?, ?)"),
+                            (grant_key, email, plan, time.time()))
+                print(f"[ops] Granted plan {plan} to {email} (was {user['plan']}, credits {user['credits']} -> "
+                      f"{credits}) via {grant_key}")
+        except Exception as e:
+            print(f"[ops] plan grant {grant_key} failed: {e}")
+
 
 # One-shot in-app notices (shown once after login / refresh).
 # (notice_key, email, kind, title, body)

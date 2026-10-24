@@ -714,3 +714,42 @@ def test_setup_check_says_an_antivirus_blocks_studio_and_what_to_allow(studio, m
     assert net["ready"] is False and here["suspected"] and here["antivirus"] == "Norton"
     assert here["allow_programs"][0] == sys.executable and "127.0.0.1:7860" in net["what_to_do"]
     assert "Never suggest switching it off" in net["what_to_do"]
+
+
+def test_a_medium_studio_cant_make_is_read_to_the_creator_and_accepted_by_them(studio, monkeypatch):
+    """The look's 'animation' question (a channel that animates its drawn characters) reaches Claude, and a medium Studio
+    can't make yet is said before the study starts, never accepted silently."""
+    import cr_style_map
+    look_id = "lk_" + "e" * 24
+    gap = {"engine": "pictures", "why": "drawn as pictures instead", "medium_gap": cr_style_map.ANIMATION_GAP}
+    question = {"id": "animation", "ask": "This channel animates its characters…",
+                "options": list(cr_style_map.ANIMATIONS)}
+
+    def fake(method, path, body=None, **kw):
+        studio.calls.append((method, path, body))
+        if path == "/cr-style-clone/look/" + look_id:
+            return {"state": "done", "percent": 100, "message": "Here's what Studio saw.",
+                    "mapping": {"questions": [question], "base": "stories", "base_why": "drawn", "route": gap}}
+        if path.endswith("/plan"):
+            told = (body.get("answers") or {}).get("animation") == cr_style_map.ANIMATED_PICTURES
+            return {"mapping": {"base": "stories", "route": {"engine": "pictures", "why": "you chose pictures"}
+                                if told else gap}}
+        if path == "/cr-style-clone/start":
+            return {"operation_id": "op_" + "f" * 24, "state": "running"}
+        return studio(method, path, body, **kw)
+    monkeypatch.setattr(tools, "call", fake)
+    tools.STATE.mkdir(parents=True, exist_ok=True)
+    (tools.STATE / "looks.json").write_text(json.dumps({look_id: {"preview_id": "pv_" + "c" * 64,
+                                                                  "reference_ids": ["a1aaaaaaaaa"], "at": 1}}))
+    shown = ok("progress", {"id": look_id})
+    assert shown["questions"][0]["id"] == "animation" and shown["medium_gap"] == cr_style_map.ANIMATION_GAP
+    assert shown["how_made"] == "drawn as pictures instead" and "medium_gap" in shown["next"]
+    args = {"look_id": look_id, "style_name": "Stick fights", "example_title": "Gojo vs Sukuna",
+            "answers": {"animation": cr_style_map.ANIMATED_CODE}}
+    held = ok("clone_style", args)
+    assert held["started"] is False and held["medium_gap"] == cr_style_map.ANIMATION_GAP
+    assert "Never accept it for them" in held["next"] and not studio.posted("/cr-style-clone/start")
+    assert ok("clone_style", {**args, "accept_medium": True})["started"] is True
+    assert studio.posted("/cr-style-clone/start")[0]["accept_medium"] is True
+    chose = ok("clone_style", {**args, "answers": {"animation": cr_style_map.ANIMATED_PICTURES}})
+    assert chose["started"] is True and studio.posted("/cr-style-clone/start")[1]["accept_medium"] is False
