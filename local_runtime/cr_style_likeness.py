@@ -121,10 +121,19 @@ def _designed(style) -> dict:
     return None
 
 
+def _animated(style) -> dict:
+    """The animation conventions of a style whose characters are animated in code (cr_animated2d), else None."""
+    look = style.get("look") or {}
+    if look.get("visuals") == "cr_animated2d":
+        return look.get("animated2d") if isinstance(look.get("animated2d"), dict) else {}
+    return None
+
+
 def _hash(style) -> str:
     look = style.get("look") or {}
     return hashlib.sha256(json.dumps([look.get("still_suffix"), look.get("image_model"), look.get("character"),
-                                      _designed(style)], sort_keys=True).encode()).hexdigest()[:20]
+                                      _designed(style)] + ([_animated(style)] if _animated(style) is not None else []),
+                                     sort_keys=True).encode()).hexdigest()[:20]
 
 
 def wanted(style) -> str:
@@ -132,8 +141,8 @@ def wanted(style) -> str:
     if (style.get("cr_style_clone") or {}).get("visual_mode") == "reference_only":
         return "this style's videos are all motion graphics, with no drawn pictures"
     look = style.get("look") or {}
-    if _designed(style) is not None:
-        return ""                                           # rendered by the 3D engine from the cast spec
+    if _designed(style) is not None or _animated(style) is not None:
+        return ""                                           # rendered by the 3D engine or the 2D kit, in code
     if not str(look.get("still_suffix") or "").strip():
         return "this style has no picture words to draw with"
     if not look.get("image_model"):
@@ -201,6 +210,14 @@ def render_designed(home, style, out_dir, *, timeout_s=None, run=None) -> list:
     return pictures
 
 
+def render_animated(home, style, out_dir, *, timeout_s=None) -> list:
+    """The three test shots drawn by the animated 2D kit in the style's conventions (cr_animated2d.test_film)."""
+    import cr_animated2d
+    if not cr_animated2d.available(home):
+        raise RuntimeError("this Studio has no animated 2D kit (update Studio)")
+    return cr_animated2d.render_stills(cr_animated2d.test_film(_animated(style) or {}), out_dir, home=home)
+
+
 def run(folder, spec, style, log, *, home, generate=None, upload=None, call=None, render=None) -> dict:
     """Draw, judge, and once more with the judge's fixes when below the bar. Saved in <operation>/likeness.json."""
     folder = Path(folder)
@@ -223,7 +240,8 @@ def run(folder, spec, style, log, *, home, generate=None, upload=None, call=None
         result = {"state": "skipped", "why": "too few reference frames to compare with", "style_hash": _hash(style)}
         _write(folder / CHECK, result)
         return result
-    designed = _designed(style) is not None
+    animated = _animated(style) is not None
+    designed = _designed(style) is not None or animated
     if not designed:
         import cr_media
         gen = generate or cr_media.image
@@ -238,7 +256,10 @@ def run(folder, spec, style, log, *, home, generate=None, upload=None, call=None
     control = shots[-1] if len(shots) >= 5 else None          # the channel's own frame, hidden among the candidates
     judged = [s for s in shots[1:] if s != control][:6]
     people = _people(style) or designed
-    context = ("The candidates were rendered by a 3D engine in the references' design, including how their characters "
+    context = ("The candidates were drawn by a 2D animation engine in the references' design: rigged characters in "
+               "the channel's conventions, on a plain stand-in background (each video draws its own backgrounds). Judge "
+               "the characters, their poses and effects, and the palette as this channel's." if animated else
+               "The candidates were rendered by a 3D engine in the references' design, including how their characters "
                "are built. Judge them as 3D scenes of this channel." if designed else "The candidates were drawn by an image model to match the references' look"
                + (", including how their characters are designed." if people else "."))
     suffix, extra, rounds, spent, stopped = str(look.get("still_suffix") or ""), "", [], 0.0, ""
@@ -249,7 +270,8 @@ def run(folder, spec, style, log, *, home, generate=None, upload=None, call=None
         for r in range(1 if designed else ROUNDS):
             pictures = []
             if designed:                                      # rendered, not drawn: nothing paid but the judge
-                pictures = (render or render_designed)(home, style, out_dir, timeout_s=max(60, deadline - time.monotonic()))
+                pictures = (render or (render_animated if animated else render_designed))(
+                    home, style, out_dir, timeout_s=max(60, deadline - time.monotonic()))
             for k, subject in enumerate([] if designed else SUBJECTS):
                 if time.monotonic() > deadline:
                     raise TimeoutError("the image account took too long")
@@ -331,7 +353,7 @@ def apply_saved(folder, style, home) -> dict:
     assets = Path(home) / "assets"
     target = assets / "styles" / "learned" / name
     best = Path(folder) / "likeness" / str(result.get("best") or "")
-    if name and best.is_file() and look.get("image_model"):
+    if name and best.is_file() and look.get("image_model") and _animated(style) is None:
         target.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(best, target / "style.jpg")
         look["style_image"] = (target / "style.jpg").relative_to(assets).as_posix()

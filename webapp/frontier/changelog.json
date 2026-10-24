@@ -1,5 +1,15 @@
 [
   {
+    "build": 103,
+    "date": "2026-10-24",
+    "title": "Animated stick-figure channels, animated for real",
+    "items": [
+      "New: clone a stick-figure animation channel and its characters really move. Studio rigs every character as a puppet in the channel's look and animates them in code: they walk, dash, punch, kick, block, power up and fire energy blasts, timed to the narration.",
+      "Each video designs its own cast from the script (hair, blindfolds, hats, markings, gloves, four arms) and draws a few backgrounds in the channel's look, about $0.08 a video. The fights come with hit sparks, auras, lightning, speed lines, impact frames and their own punch and blast sounds.",
+      "When you clone such a channel, keep Animated in the look's first question. The style's test shots are drawn by the animation kit, so checking the likeness costs nothing."
+    ]
+  },
+  {
     "build": 102,
     "date": "2026-10-24",
     "title": "Studio on Windows: long folders, collages and more",
