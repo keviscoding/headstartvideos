@@ -183,8 +183,8 @@ def _status(exe, *, run=None, environment=None):
     env = clean_environment(environment)
     try:
         # Claude Code answers in UTF-8; Windows would read it as cp1252
-        version = invoke([exe, "--version"], capture_output=True, text=True, encoding="utf-8", errors="replace", env=env,
-                         timeout=CHECK_SECONDS)
+        version = subprocess.run(["claude", "--version"], capture_output=True, text=True, encoding="utf-8",
+                                 errors="replace", env=env, timeout=CHECK_SECONDS)
         match = re.search(r"\b(\d+)\.(\d+)\.(\d+)\b", version.stdout or "")
         if version.returncode or not match:
             raise ValueError("version")

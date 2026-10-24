@@ -610,7 +610,7 @@ def create_app():
 
     @studio.app.get("/cr-setup")
     def setup_page():
-        text = (HOME / "cr_setup.html").read_text(encoding="utf-8")
+        text = (HOME / "cr_setup.html").read_text()
         return Response(text.replace("__LOCAL_TOKEN__", token), mimetype="text/html", headers={"Cache-Control": "no-store"})
 
     # The full check runs Claude Code, its tools list and an account call: about 2.5 s. Pages that only need to draw
