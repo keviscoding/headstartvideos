@@ -2,8 +2,8 @@
 whose certificate that root signs (as the antivirus re-signs every site).
 
 The tests use it with the root in no certificate store (Studio must call that "intercepted"). The Studio trust job
-in CI also adds the root to the computer's own store, as the antivirus does, and points CR_TEST_OS_TRUSTED_CA at the
-folder: then Studio must pass where certifi alone fails.
+in CI (Windows) also adds the root to the computer's own store, as the antivirus does, and points
+CR_TEST_OS_TRUSTED_CA at the folder: then Studio must pass where certifi alone fails.
 
     python tests/studio_trust_lab.py make FOLDER     writes ca.pem, ca.cer (DER, for Windows), leaf.pem, leaf.key
 """

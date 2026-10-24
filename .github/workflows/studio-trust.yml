@@ -1,7 +1,9 @@
 name: Studio trusts the computer's certificates
 # An antivirus or company firewall that inspects secure connections adds its own root to the computer's certificate
-# store. This job does the same with a stand-in root on real Windows and macOS, then checks Studio's Python (requests,
-# setup's Network check, Studio's yt-dlp) passes where certifi alone fails (tests/test_studio_trust.py).
+# store. This job does the same with a stand-in root on real Windows, then checks Studio's Python (requests, setup's
+# Network check, Studio's yt-dlp) passes where certifi alone fails (tests/test_studio_trust.py). macOS runners refuse
+# to trust a root without a person at the keyboard (authorizationdb write: NO -60005), so the Mac keychain path is
+# checked by hand: after cr_trust.install() requests reports macOS's own verdict on an untrusted root.
 on:
   pull_request:
     paths:
@@ -16,11 +18,7 @@ permissions:
   contents: read
 jobs:
   inspected:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -31,14 +29,8 @@ jobs:
       - name: Make a stand-in antivirus root
         run: python tests/studio_trust_lab.py make "${{ runner.temp }}/web-shield"
       - name: Add it to the Windows certificate store, as an antivirus does
-        if: runner.os == 'Windows'
         shell: pwsh
         run: Import-Certificate -FilePath "${{ runner.temp }}\web-shield\ca.cer" -CertStoreLocation Cert:\LocalMachine\Root
-      - name: Add it to the macOS keychain, as an antivirus does
-        if: runner.os == 'macOS'
-        run: |
-          sudo security authorizationdb write com.apple.trust-settings.admin allow
-          sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${{ runner.temp }}/web-shield/ca.pem"
       - name: Studio passes behind it
         env:
           CR_TEST_OS_TRUSTED_CA: ${{ runner.temp }}/web-shield
