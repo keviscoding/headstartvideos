@@ -51,6 +51,12 @@ What they asked for: $ARGUMENTS
 - Options (all optional): captions, thumbnails, thumbnail_count, description, extra_instructions (creative
   direction), script (their own narration, one title), features {key: true/false} (the style's switches, shown by
   `quote` under media), short_seconds, ranking {...} for Ranking Shorts.
+- **A different character** (the style's card shows its `character`): pass `options.character` (words: age, hair,
+  face, clothes, one recognisable detail) or `options.character_picture` (the path of their picture), rather than
+  extra_instructions: the style's picture of its old character would still go with every image, so nothing keeps
+  the new face the same from picture to picture. On a style with a
+  character picture, new words are drawn once in the style's look (one picture, about $0.02; `quote` says so under
+  `character`). Shorts keep their own host.
 - ChannelRecipe's own recipes (ids starting cr-), learned styles (cr_clone_…), FOLIO and Manga Recaps render on
   this computer for now.
 - Never turn on paid options the creator didn't ask for, and never retry a stopped video by yourself: tell them what

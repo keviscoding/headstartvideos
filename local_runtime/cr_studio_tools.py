@@ -250,7 +250,9 @@ def style_card(row: dict, thumb: str = "") -> dict:
             "renders_on": ["this_computer"] + ([] if block else ["studio_cloud"]),
             "cloud_note": block, "media_cost": one_line(row.get("cost"), 220) if row.get("cost") else "",
             "short_seconds": row.get("short_seconds"), "needs_panels": bool(row.get("panels")),
-            "thumbnail_path": thumb, "preview_url": link(row["preview_url"]) if row.get("preview_url") else ""}
+            "thumbnail_path": thumb, "preview_url": link(row["preview_url"]) if row.get("preview_url") else "",
+            # its recurring character (options.character / character_picture change it for a video)
+            "character": one_line(row.get("character"), 300) if isinstance(row.get("character"), str) else ""}
 
 
 def new_pick() -> dict:
@@ -470,8 +472,14 @@ def tool_quote(args):
     titles = max(1, min(int(args.get("titles") or 1), MAX_TITLES))
     minutes = 1 if kind(row) == "short" else max(1, min(int(args.get("minutes") or 10), 60))
     where = where_of(args)
-    return quote_for(cat, row, titles=titles, minutes=minutes, where=where,
-                     features=features_for(row, (args.get("options") or {}).get("features")))
+    options = args.get("options") or {}
+    if not isinstance(options, dict):
+        raise Refused("options must be an object.")
+    character_choice(row, options, where)
+    q = quote_for(cat, row, titles=titles, minutes=minutes, where=where, features=features_for(row, options.get("features")))
+    if character_note(row, options):
+        q["character"] = character_note(row, options)
+    return q
 
 
 def where_of(args) -> str:
@@ -517,6 +525,58 @@ def video_payload(row: dict, titles: list, minutes: int, features: dict, options
     return p
 
 
+CHARACTER_PICTURE = (".png", ".jpg", ".jpeg", ".webp")
+
+
+def character_choice(row: dict, options: dict, where: str) -> tuple:
+    """(words, picture path) from options.character and options.character_picture, checked before anything starts."""
+    words = str(options.get("character") or "").strip()
+    picture = str(options.get("character_picture") or "").strip()
+    if not (words or picture):
+        return "", ""
+    if kind(row) == "short":
+        raise Refused("Shorts keep their own host. A character of your own works in the long-video styles.")
+    if row.get("visual_policy") == "reference_only":
+        raise Refused(f"{row.get('label') or row['name']} draws every scene with its learned animation kit, so its "
+                      "character can't be changed for one video.")
+    if len(words) > 4000:
+        raise Refused("Keep the character's description under 4,000 characters.")
+    if picture:
+        if where == "studio_cloud":
+            raise Refused("A character picture of your own renders on this computer for now: use where='this_computer'.")
+        path = Path(picture).expanduser()
+        if not path.is_file() or path.suffix.lower() not in CHARACTER_PICTURE:
+            raise Refused("character_picture must be a PNG, JPG or WebP picture on this computer.")
+        if path.stat().st_size > 20 * 1024 * 1024:
+            raise Refused("The character picture is over 20 MB. Export a smaller one.")
+    return words, picture
+
+
+def character_note(row: dict, options: dict) -> str:
+    """What a new character adds to a quote: one drawn picture when the style carries a character picture."""
+    words, picture = str(options.get("character") or "").strip(), str(options.get("character_picture") or "").strip()
+    if picture:
+        return "Your picture replaces the style's character in every picture of these videos."
+    if words and row.get("character_image"):
+        return ("Studio draws your character once in this style's look (one picture, about $0.02, reused for the same "
+                "words) and keeps them in every picture of these videos.")
+    return "Your words describe the character in every picture." if words else ""
+
+
+def apply_character(payload: dict, words: str, picture: str) -> dict:
+    """The job spec's character and character_image: a picture is saved in Studio first (assets/characters)."""
+    if picture:
+        import base64
+        path = Path(picture).expanduser()
+        saved = call("POST", "/cr-workspace/character", {"image_base64": base64.b64encode(path.read_bytes()).decode(),
+                                                         "filename": path.name, "description": words}, timeout=60)
+        row = saved.get("character") or {}
+        payload.update(character=row.get("text") or words, character_image=row.get("rel") or "")
+    elif words:
+        payload["character"] = words
+    return payload
+
+
 def tool_make_videos(args):
     same_studio()
     titles = [str(t).strip() for t in (args.get("titles") or []) if str(t).strip()]
@@ -534,8 +594,11 @@ def tool_make_videos(args):
     where = where_of(args)
     minutes = 1 if kind(row) == "short" else max(1, min(int(args.get("minutes") or 10), 60))
     features = features_for(row, options.get("features"))
+    words, picture = character_choice(row, options, where)
     issued = _read(STATE / "quotes.json").get(str(args.get("quote_id") or ""))
     q = quote_for(cat, row, titles=len(titles), minutes=minutes, where=where, features=features)
+    if character_note(row, options):
+        q["character"] = character_note(row, options)
     if args.get("quote_id") != q["quote_id"] or not issued or time.time() - issued > QUOTE_SECONDS:
         return {"started": False, "quote": q,
                 "next": "Nothing started. Tell the creator this cost, and when they agree call make_videos again with "
@@ -544,7 +607,7 @@ def tool_make_videos(args):
         raise Refused(f"Your Studio Cloud balance is ${q['cloud']['balance_usd']:.2f} and these videos reserve up to "
                       f"${q['most_reserved_usd']:.2f}. Top up at {q['cloud']['topup_url']}, or make them on this "
                       "computer.")
-    payload = video_payload(row, titles, minutes, features, options)
+    payload = apply_character(video_payload(row, titles, minutes, features, options), words, picture)
     record = _read(STATE / "jobs.json")
     if where == "studio_cloud":
         call("POST", "/cr-cloud/start", payload, timeout=60)
@@ -952,7 +1015,13 @@ _OPTIONS = {"type": "object", "description": (
     "description with chapters and sources, default true), extra_instructions (creative direction), script (your "
     "own narration, one title only), features {key: true/false} to switch the style's options (keys from quote), "
     "short_seconds 15-60 for Shorts, ranking {ranks 3-10, narrator_lines, vine_booms, meme_sounds full|light|off, "
-    "punch_ins, captions} for Ranking Shorts.")}
+    "punch_ins, captions} for Ranking Shorts. character: words for the main character who appears in every picture "
+    "(age, hair, face, clothes, one recognisable detail); they replace the style's own character for these videos, and "
+    "on a style with a character picture Studio draws the new one once in the style's look (one picture, about $0.02). "
+    "character_picture: the path of a picture of the character on this computer (PNG, JPG or WebP); it replaces the "
+    "style's character picture. To change how a style's character looks, use these rather than extra_instructions: "
+    "they replace the style's picture of its old character, which otherwise goes with every image, so the new "
+    "character looks the same in every picture.")}
 _WHERE = {"type": "string", "enum": ["this_computer", "studio_cloud"],
           "description": "this_computer (free machine, one video at a time) or studio_cloud (a ChannelRecipe machine "
                          "renders it, paid from the cloud balance; videos render side by side)."}
