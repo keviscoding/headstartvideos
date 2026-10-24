@@ -733,7 +733,7 @@ def _write_settings() -> None:
     except ValueError:
         settings = {}
     if isinstance(settings, dict) and settings and not (HOME / ".cr-connection.json").exists():
-        (HOME / ".cr-connection.json").write_text(json.dumps(settings))
+        (HOME / ".cr-connection.json").write_text(json.dumps(settings), encoding="utf-8")
 
 
 def _relay_youtube() -> None:
@@ -741,7 +741,7 @@ def _relay_youtube() -> None:
     `python -m cr_cloud ytdlp`, which hands YouTube downloads to the creator's Studio (their own connection)."""
     shim = Path(tempfile.gettempdir()) / "cr-cloud-ytdlp"
     shim.write_text(f"#!/bin/sh\nPYTHONPATH=\"{HOME}${{PYTHONPATH:+:$PYTHONPATH}}\" exec \"{sys.executable}\" "
-                    f"-m cr_cloud ytdlp \"$@\"\n")
+                    f"-m cr_cloud ytdlp \"$@\"\n", encoding="utf-8")
     shim.chmod(0o755)
     os.environ["YTDLP_BIN"] = str(shim)
 

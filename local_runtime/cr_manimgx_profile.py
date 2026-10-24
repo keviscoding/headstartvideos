@@ -183,7 +183,7 @@ def assess_reuse(source_context, target_context, source, *, source_injection=Non
 def _probe_video(path, width, height, fps, duration, *, environment):
     completed = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
         "stream=width,height,codec_name,avg_frame_rate,nb_frames:format=duration", "-of", "json", str(path)],
-        capture_output=True, text=True, timeout=20, env=environment)
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20, env=environment)
     try:
         result = json.loads(completed.stdout); stream = result["streams"][0]
         top, bottom = stream["avg_frame_rate"].split("/")
@@ -288,7 +288,7 @@ def run_zero_model_benchmark(root, context, assets, ready, reference_identity, a
                     "--w", str(profile["width"]), "--h", str(profile["height"]), "--quality", profile["quality"], "--force", "--crf", "16"]
                 if assets_root is not None:
                     command += ["--assets", str(assets_root)]
-                with (directory / "process.log").open("w") as log:
+                with (directory / "process.log").open("w", encoding="utf-8") as log:
                     completed = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT,
                         timeout=timeout, env=renderer._environment(), cwd=str(proof_dir))
                 elapsed = time.perf_counter() - started

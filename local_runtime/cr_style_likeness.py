@@ -189,7 +189,8 @@ def render_designed(home, style, out_dir, *, timeout_s=None, run=None) -> list:
     (work / "video.json").write_text(json.dumps(video, indent=1), encoding="utf-8")
     cmd = [sys.executable, str(home / "threed" / "render.py"), str(work / "video.json"), str(work), "--preview", "1.6",
            "--w", "1280", "--h", "720"]
-    (run or subprocess.run)(cmd, cwd=str(home / "threed"), capture_output=True, text=True, timeout=timeout_s or LIMIT_S)
+    (run or subprocess.run)(cmd, cwd=str(home / "threed"), capture_output=True, text=True, encoding="utf-8", errors="replace",
+                            timeout=timeout_s or LIMIT_S)
     pictures = []
     for k, scene in enumerate(video["scenes"]):
         got = sorted(work.glob(scene["id"] + "_*.jpg"))

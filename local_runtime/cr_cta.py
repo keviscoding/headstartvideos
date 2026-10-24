@@ -225,13 +225,15 @@ def finish(job, log=print) -> bool:
     done = json.loads(stamp.read_text(encoding="utf-8")) if stamp.is_file() else {}
     if done.get("video") != mark:
         total = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
-                                      str(video)], capture_output=True, text=True, check=True).stdout.strip() or 0)
+                                      str(video)], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                     check=True).stdout.strip() or 0)
         times = mention_times(job, int(cfg.get("count") or 1), total)
         png = card(cfg, job / "cta" / "card.png")
         tmp = job / "video.cta.mp4"
         overlay(video, png, times, tmp)
         tmp.replace(video)
-        stamp.write_text(json.dumps({"video": f"{video.stat().st_size}:{video.stat().st_mtime_ns}", "at": times}))
+        stamp.write_text(json.dumps({"video": f"{video.stat().st_size}:{video.stat().st_mtime_ns}", "at": times}),
+                         encoding="utf-8")
         log(f"call to action: the card at {', '.join(f'{t:.0f}s' for t in times)}")
     desc = job / "youtube.txt"
     head = f"{cfg['what']}: {cfg['link']}\n\n"

@@ -31,8 +31,9 @@ def windows_python(monkeypatch):
                  "PYLAUNCHER_ALWAYS_INSTALL", "PYLAUNCHER_DRYRUN"):
         monkeypatch.setenv(name, "isolated-fixture")
 
-    def invoke(args, *, capture_output, text, timeout, env):
+    def invoke(args, *, capture_output, text, timeout, env, encoding, errors):
         assert capture_output and text and timeout == 10
+        assert encoding == "utf-8" == env["PYTHONIOENCODING"] and errors == "replace", "C:\\Users\\Zoé's Python path"
         assert env["PYTHON_MANAGER_AUTOMATIC_INSTALL"] == "false"
         assert not any(name in env for name in ("KIE_API_KEY", "ANTHROPIC_API_KEY", "PYLAUNCHER_ALLOW_INSTALL",
                                                "PYLAUNCHER_ALWAYS_INSTALL", "PYLAUNCHER_DRYRUN"))

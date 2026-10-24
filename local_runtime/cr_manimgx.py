@@ -142,7 +142,9 @@ def _environment():
     # Rendering is local and silent: generated scenes never inherit service keys.
     env = {k: v for k, v in os.environ.items() if not
            (k.endswith("_KEY") or "TOKEN" in k or k.startswith(("CLAUDE", "ANTHROPIC", "OPENAI", "FAL_")))}
-    env.update(PYTHONUNBUFFERED="1", PYTHONDONTWRITEBYTECODE="1")
+    # PYTHONIOENCODING: a child Python prints UTF-8, as this side reads it (Windows pipes default to cp1252,
+    # which garbles or fails a path like C:\Users\Zoé)
+    env.update(PYTHONUNBUFFERED="1", PYTHONDONTWRITEBYTECODE="1", PYTHONIOENCODING="utf-8")
     env.pop("PYTHONPATH", None)
     env.pop("PYTHONHOME", None)
     return env
@@ -153,7 +155,8 @@ def _probe(python, *, timeout=15, refresh=False):
     if not refresh and cached and time.monotonic() - cached[0] < 60:
         return cached[1]
     completed = subprocess.run([str(python), str(Path(__file__).resolve()), "--probe"],
-                               capture_output=True, text=True, timeout=timeout, env=_environment())
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
+                               env=_environment())
     if completed.returncode:
         raise RuntimeError("The separate Fast mode environment is unavailable. Run its setup check again.")
     result = json.loads(completed.stdout)
@@ -487,7 +490,8 @@ LOCAL ASSETS:\n{json.dumps(assets, ensure_ascii=False)}
 def _typecheck(python, source, *, timeout=30):
     checker = Path(python).parent / ("ty.exe" if os.name == "nt" else "ty")
     completed = subprocess.run([str(checker), "check", str(source), "--python", str(python), "--output-format", "concise"],
-                               capture_output=True, text=True, timeout=timeout, env=_environment())
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
+                               env=_environment())
     if completed.returncode:
         diagnostic = _redacted_diagnostic(completed.stdout + completed.stderr)
         companion = _local_dict_typing(Path(source).read_text(encoding="utf-8"), diagnostic)
@@ -501,6 +505,7 @@ def _typecheck(python, source, *, timeout=30):
                 _write(candidate, text, text=True)
                 checked = subprocess.run([str(checker), "check", str(candidate), "--python", str(python),
                                           "--output-format", "concise"], capture_output=True, text=True,
+                                         encoding="utf-8", errors="replace",
                                          timeout=timeout, env=_environment())
             if checked.returncode == 0:
                 _write(Path(source).with_suffix(".typecheck.json"), {"version": "cr-local-dict-typing.1",
@@ -1523,7 +1528,8 @@ def _validate_output(response, destination, duration, fps, width, height):
     try:
         probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
                                 "stream=width,height,codec_name,avg_frame_rate,nb_frames:format=duration", "-of", "json", str(destination)],
-                               capture_output=True, text=True, timeout=15, env=_environment())
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
+                               env=_environment())
         metadata = json.loads(probe.stdout)
         stream = metadata["streams"][0]
         actual_duration = float(metadata["format"]["duration"])

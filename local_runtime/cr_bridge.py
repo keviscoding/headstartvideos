@@ -102,7 +102,7 @@ def load_settings():
 def save_settings(data):
     # Atomic write and private permissions; never echo keys into shell commands.
     tmp = SETTINGS.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2))
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
     try:
         tmp.chmod(0o600)
     except OSError:
@@ -211,7 +211,7 @@ def begin_project(title, style, resume_id=None, *, proof=None, job_spec=None, pu
                 pending = {}
             begin_key = pending.get("begin_id") if pending.get("identity") == identity else "b_" + secrets.token_hex(16)
             fd = os.open(pending_path,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600)
-            with os.fdopen(fd,"w") as handle:
+            with os.fdopen(fd,"w", encoding="utf-8") as handle:
                 json.dump({"identity":identity,"begin_id":begin_key},handle)
             result = _mcp_tool("local_studio_begin", {**payload,"begin_id":begin_key})
             _project = {**result["project"], "job_spec": result.get("job_spec", spec)}
@@ -257,7 +257,7 @@ def think(prompt, max_tokens=8000, kind="text", images=None, model=None):
         except (ValueError, OSError):
             rows = {}
         rows[request_id] = {k: v for k, v in result.items() if k != "text"}
-        receipt.write_text(json.dumps(rows, indent=2))
+        receipt.write_text(json.dumps(rows, indent=2), encoding="utf-8")
     return result["text"]
 
 

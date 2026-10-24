@@ -512,6 +512,7 @@ def test_child_environment_excludes_service_credentials_and_python_path(monkeypa
     env = gx._environment()
     assert "private-value" not in env.values() and env["NORMAL_RENDER_OPTION"] == "keep"
     assert env["PYTHONUNBUFFERED"] == "1"
+    assert env["PYTHONIOENCODING"] == "utf-8", "a child Python's output is read as UTF-8 (Windows pipes are cp1252)"
 
 
 def child_process(monkeypatch, program):

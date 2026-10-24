@@ -226,7 +226,7 @@ def test_the_designed_shots_come_from_this_studios_own_renderer(tmp_path):
     kit.write_text("")
     ran = []
 
-    def fake(cmd, cwd=None, capture_output=None, text=None, timeout=None):
+    def fake(cmd, cwd=None, capture_output=None, text=None, timeout=None, encoding=None, errors=None):
         ran.append((cmd, cwd, timeout))
         work = Path(cmd[3])
         for scene in json.loads(Path(cmd[2]).read_text())["scenes"]:

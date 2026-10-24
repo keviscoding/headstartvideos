@@ -131,7 +131,7 @@ def save(files, root: Path = None) -> dict:
             piece.save(tmp / f"{count:04d}.jpg", quality=92)
     info = {"id": set_id, "count": count, "uploaded": len(images), "created": time.time(),
             "name": Path(images[0][0]).stem[:60] + (f" and {len(images) - 1} more" if len(images) > 1 else "")}
-    (tmp / "set.json").write_text(json.dumps(info, indent=1))
+    (tmp / "set.json").write_text(json.dumps(info, indent=1), encoding="utf-8")
     if folder.exists():
         import shutil
         shutil.rmtree(tmp, ignore_errors=True)
@@ -255,7 +255,7 @@ def read_panels(files: list, see, cache: Path, log=print) -> list:
                 rows[n] = {"panel": n, "what": str(r["what"]).strip()[:400]}
         for n in batch:
             rows.setdefault(n, {"panel": n, "what": ""})
-        cache.write_text(json.dumps({"panels": [rows[k] for k in sorted(rows)]}, indent=1))
+        cache.write_text(json.dumps({"panels": [rows[k] for k in sorted(rows)]}, indent=1), encoding="utf-8")
         log(f"  panels: read {batch[-1]}/{len(files)}")
     return [rows[k] for k in sorted(rows)]
 
@@ -324,7 +324,7 @@ def visuals(engine, script: str, job, log=print) -> tuple:
     if not tied:
         tied = tie(script, rows, lambda prompt: engine.claude(prompt, engine.SCRIPT_MODEL, max_tokens=16000,
                                                               provider=getattr(engine, "SCRIPT_PROVIDER", None)))
-        tied_f.write_text(json.dumps(tied, indent=1))
+        tied_f.write_text(json.dumps(tied, indent=1), encoding="utf-8")
     img_dir = job / "images"
     items, photos = [], []
     for k, r in enumerate(tied):

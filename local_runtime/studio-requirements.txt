@@ -1,0 +1,15 @@
+# The libraries a creator's Studio installs: the download's requirements.txt (the engine's list with the builder's
+# ENGINE_PATCHES applied). Windows CI builds its Studio from this copy, because the engine isn't in this repository;
+# tests/test_windows_portability.py checks it still matches the release when the private source is on this computer.
+
+requests>=2.31
+python-dotenv>=1.0
+flask>=3.0
+playwright>=1.40
+faster-whisper>=1.0
+Pillow>=10.0
+numpy>=1.24
+opencv-python-headless>=4.8
+yt-dlp[default,curl-cffi]>=2026.8.19; python_version >= "3.10"
+rapidocr-onnxruntime==1.2.3; python_version >= "3.10"
+pypdf>=4.0

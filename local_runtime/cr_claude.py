@@ -182,7 +182,9 @@ def _status(exe, *, run=None, environment=None):
     invoke = run or _real_run
     env = clean_environment(environment)
     try:
-        version = invoke([exe, "--version"], capture_output=True, text=True, env=env, timeout=CHECK_SECONDS)
+        # Claude Code answers in UTF-8; Windows would read it as cp1252
+        version = invoke([exe, "--version"], capture_output=True, text=True, encoding="utf-8", errors="replace", env=env,
+                         timeout=CHECK_SECONDS)
         match = re.search(r"\b(\d+)\.(\d+)\.(\d+)\b", version.stdout or "")
         if version.returncode or not match:
             raise ValueError("version")
@@ -191,7 +193,8 @@ def _status(exe, *, run=None, environment=None):
             result["message"] = "Update Claude Code to version 2.1.268 or newer."
             return result
         auth = invoke([exe, "--setting-sources", "", "auth", "status"],
-                      capture_output=True, text=True, env=env, timeout=CHECK_SECONDS)
+                      capture_output=True, text=True, encoding="utf-8", errors="replace", env=env,
+                      timeout=CHECK_SECONDS)
         data = json.loads(auth.stdout or "{}")
         result["account_fingerprint"] = hashlib.sha256(str(data.get("email") or data.get("accountUuid") or "unknown-local-account").encode()).hexdigest()
         method = data.get("authMethod", "none")
@@ -754,6 +757,7 @@ def verify_models(engine, bridge, proof):
                 "--tools","","--strict-mcp-config","--mcp-config",'{"mcpServers":{}}',
                 "--max-turns","1","--no-session-persistence"]
             result=subprocess.run(command,input="Connection check: reply exactly OK.",capture_output=True,text=True,
+                                  encoding="utf-8",errors="replace",
                                   env=clean_environment(),timeout=120,cwd=check_cwd)
             _,text=_result(result.stdout,"json")
             if json.loads(text).get("result","").strip() != "OK":

@@ -665,7 +665,7 @@ def prepare(home: Path = HOME, *, get=http_get, progress=None) -> dict:
     finally:
         archive.unlink(missing_ok=True)
     (staging / ".cr-staged.json").write_text(json.dumps({
-        "version": remote, "from": local, "files": [[p.as_posix(), x] for p, x in files]}))
+        "version": remote, "from": local, "files": [[p.as_posix(), x] for p, x in files]}), encoding="utf-8")
     return {"state": "staged", "version": remote, "files": len(files)}
 
 

@@ -206,7 +206,8 @@ def draw_all(job, photos, log=print, workers: int = 3) -> int:
 def _clip_s(anim: Path) -> float:
     try:
         return float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
-                                     str(anim)], capture_output=True, text=True, timeout=30).stdout.strip())
+                                     str(anim)], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                    timeout=30).stdout.strip())
     except (OSError, ValueError, subprocess.SubprocessError):
         return 0.0
 

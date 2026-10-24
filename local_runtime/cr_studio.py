@@ -382,7 +382,7 @@ def fix_graphics_browser():
     def work():
         try:
             run = subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"],
-                                 capture_output=True, text=True, timeout=1800)
+                                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800)
             ok, tail = run.returncode == 0, ((run.stdout or "") + (run.stderr or ""))[-1500:]
         except Exception as error:
             ok, tail = False, f"{type(error).__name__}: {error}"[:500]
@@ -443,7 +443,8 @@ def video_tools_ready(ffmpeg="ffmpeg", ffprobe="ffprobe"):
         # A minimal Homebrew build can pass -version but cannot burn captions.
         for flag, required in (("-filters", {"subtitles"}),
                                ("-encoders", {"libx264", "aac", "libmp3lame"})):
-            result = subprocess.run([executable, flag], capture_output=True, text=True, timeout=5)
+            result = subprocess.run([executable, flag], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                    timeout=5)
             names = {line.split()[1] for line in result.stdout.splitlines() if len(line.split()) > 1}
             if result.returncode or not required <= names:
                 return False
@@ -498,7 +499,7 @@ def create_app():
     # The project launcher reads this private, local-only control token. It is
     # never sent to CR or included in copied launch commands.
     control = HOME / ".cr-runtime.json"
-    control.write_text(json.dumps({"pid":os.getpid(),"token":token,"port":7860}))
+    control.write_text(json.dumps({"pid":os.getpid(),"token":token,"port":7860}), encoding="utf-8")
     control.chmod(0o600)
     # Prevent a remote website from using the local control room (DNS rebinding/CSRF).
     @studio.app.before_request
@@ -662,7 +663,7 @@ def create_app():
                 cfg.update(local_version=result["proof"]["local_version"],setup_proof=result["proof"])
                 cr_bridge.save_settings(cfg)
                 proof_file=HOME/".cr-setup-proof.json"
-                proof_file.write_text(json.dumps({"setup":result["proof"],"style":(request.get_json(silent=True) or {}).get("style"),"features":result["features"]},indent=2))
+                proof_file.write_text(json.dumps({"setup":result["proof"],"style":(request.get_json(silent=True) or {}).get("style"),"features":result["features"]},indent=2), encoding="utf-8")
                 proof_file.chmod(0o600)
                 if cfg.get("brain_mode") == "claudecode":
                     result["workflow"]=cr_bridge.prepare_runtime(result["proof"])["workflow"]
@@ -1444,7 +1445,8 @@ def create_app():
             job.mkdir(parents=True, exist_ok=True)
             import cr_attempts
             cr_attempts.reserve_output(studio.mv, job, spec)
-            marker.write_text(json.dumps({**project,"brain_mode":cfg.get("brain_mode","channelrecipe")}, indent=2))
+            marker.write_text(json.dumps({**project,"brain_mode":cfg.get("brain_mode","channelrecipe")}, indent=2),
+                              encoding="utf-8")
         except Exception as error:
             with studio.LOCK:
                 studio.JOBS.setdefault(spec["slug"], {}).update(state="error", error=str(error), done=False)

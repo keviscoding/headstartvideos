@@ -205,7 +205,7 @@ def list_videos(url, limit, timeout=90, *, run=subprocess.run):
         # YouTube changes often; one quiet update of the helper usually fixes it.
         _YT_HELPER["updated"] = True
         upgrade = run([sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "-q", "-U", "yt-dlp"],
-                      capture_output=True, text=True, timeout=240)
+                      capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=240)
         if upgrade.returncode == 0:
             command = _ytdlp_command()
             rows, error = attempt()
@@ -370,7 +370,8 @@ def room_to_check(platform=None, free_gb=None, memory_level=None) -> str:
     if memory_level is None:
         try:
             memory_level = int(subprocess.run(["sysctl", "-n", "kern.memorystatus_level"], capture_output=True,
-                                              text=True, timeout=10).stdout.strip() or 100)
+                                              text=True, encoding="utf-8", errors="replace",
+                                              timeout=10).stdout.strip() or 100)
         except (OSError, ValueError, subprocess.TimeoutExpired):
             memory_level = 100
     if memory_level < float(os.environ.get("REFLEARN_MIN_MEM_LEVEL") or CHECK_MEMORY_LEVEL):
