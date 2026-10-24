@@ -83,6 +83,12 @@ Studio through its own checks, so nothing needs the Studio web page.
 - If `setup_check` says the graphics browser isn't ready, call `fix_graphics_browser` (Studio installs it itself) and
   check again after a couple of minutes. Never install it with pip/playwright from your own shell: Claude Code's shell
   can be sandboxed, so the install lands where Studio can't see it. Setup's page has the same Fix it button.
+- `setup_check`'s `speech_model` not ready: while it says downloading or checking, Studio is fetching it by itself;
+  otherwise call `fix_speech_model` (same rule: never install it from your shell).
+- `setup_check`'s `network` lists services this computer can't reach. Tell them in plain words: `blocked` ones stop
+  videos (allow the host in their firewall, antivirus or VPN, or try another network such as a phone hotspot);
+  `goes_around` ones need nothing (Studio reaches them through channelrecipe.com); `youtube_only` ones stop only
+  recipes that use YouTube.
 - No `studio` tools in this session? Studio's tools load when a Claude Code session starts. If Studio, Node or
   Python was installed or first started during this session, ask them to open a new Claude Code session in this
   folder (or run /mcp in a terminal session), then carry on. Never drive the Studio web page instead.

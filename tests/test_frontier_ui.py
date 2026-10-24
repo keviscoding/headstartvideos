@@ -624,3 +624,71 @@ def test_simple_setup_shows_one_step_at_a_time_with_one_click_connect(page):
     assert "connected" in tab.locator("#notice").inner_text()
     assert tab.locator("#claude-quick").is_enabled()
     assert tab.evaluate("location.search") == ""
+
+
+def test_setup_shows_blocked_services_and_fixes_the_speech_model_with_a_progress_line(page):
+    """Network and speech-model problems show in setup, in plain words, before any video (2026-10-24)."""
+    sys.path.insert(0, str(Path(__file__).parents[1] / "local_runtime"))
+    import cr_network
+    tab, errors = page
+    tab.unroute("**/*")
+    html = (Path(__file__).parents[1] / "local_runtime" / "cr_setup.html").read_text()
+    html = html.replace("__LOCAL_TOKEN__", "ui-fixture-local-token")
+    wants = {"kie": True, "speech_model": True, "youtube": True}
+    blocked = cr_network.check(wants, probe=lambda h: {"api.kie.ai": "cut", "tempfile.aiquickdraw.com": "cut"}.get(h, ""))
+    clear = cr_network.check(wants, probe=lambda h: "")
+    state = {"python": True, "ffmpeg": True, "browser": True, "node": True, "connected": True,
+             "costs_accepted": True, "brain_mode": "claudecode", "local_version": "5.3-admin.98",
+             "model_accounts": {}, "providers": {}, "account": {"brain": {"connected": False}},
+             "claude_code": {"installed": True, "authenticated": True, "models": []},
+             "network": blocked,
+             "speech_model": {"ready": False, "state": "missing", "reason": "The speech-timing model isn't on this "
+                              "computer yet (about 140 MB). Press Fix it to download it."},
+             "readiness": {"ready": False, "checks": [], "blockers": [blocked["message"]]}}
+    asked = {"fix": 0, "polls": 0, "network": 0}
+
+    def fixture(route):
+        request = route.request
+        if request.url.startswith(ONBOARDING_MEDIA):
+            return route.fulfill(status=200, content_type="image/jpeg", body=b"")
+        path = urlparse(request.url).path
+        if path == "/cr-setup":
+            return route.fulfill(body=html, content_type="text/html")
+        assert request.headers.get("x-cr-local-token") == "ui-fixture-local-token"
+        if path == "/cr-status":
+            return route.fulfill(json=state)
+        if path == "/cr-workspace/catalog":
+            return route.fulfill(json={"channels": [], "features": []})
+        if path == "/cr-setup/fix-speech-model" and request.method == "POST":
+            asked["fix"] += 1
+            return route.fulfill(status=202, json={"state": "checking"})
+        if path == "/cr-setup/fix-speech-model":
+            asked["polls"] += 1
+            if asked["polls"] == 1:
+                return route.fulfill(json={"state": "downloading", "ready": False, "reason":
+                                           "Downloading the speech-timing model: 63 of 141 MB. Setup finishes it by itself."})
+            state["speech_model"] = {"ready": True, "state": "ready", "reason": ""}
+            return route.fulfill(json={"state": "ready", "ready": True, "reason": ""})
+        if path == "/cr-setup/network" and request.method == "POST":
+            asked["network"] += 1
+            state["network"] = clear
+            return route.fulfill(json=clear)
+        pytest.fail("Unexpected request: " + request.method + " " + request.url)
+
+    tab.route("**/*", fixture)
+    tab.goto("http://setup-ui-fixture.invalid/cr-setup")
+    tab.wait_for_selector("#network-row")
+    network = tab.locator("#network-row").inner_text()
+    assert "Needs attention" in network and "api.kie.ai" in network and "phone hotspot" in network
+    assert "through channelrecipe.com instead" in network, "a host Studio goes around is explained, not blocked"
+    assert tab.locator("#checks").is_visible(), "a problem keeps the tools box open"
+    speech = tab.locator("#speech-row")
+    assert "Press Fix it" in speech.inner_text() and "Needs attention" in speech.inner_text()
+    tab.locator("#fix-speech").click()
+    tab.wait_for_function("document.querySelector('#speech-row')?.innerText.includes('63 of 141 MB')", timeout=8000)
+    tab.wait_for_function("document.querySelector('#speech-row')?.classList.contains('ok')", timeout=8000)
+    assert asked["fix"] == 1
+    tab.locator("#network-again").click()
+    tab.wait_for_function("document.querySelector('#network-row')?.classList.contains('ok')", timeout=8000)
+    assert asked["network"] == 1 and not tab.locator("#network-row small").count()
+    assert errors == []

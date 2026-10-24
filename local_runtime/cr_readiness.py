@@ -13,6 +13,7 @@ import cr_bridge
 import cr_claude
 import cr_media
 import cr_mcp
+import cr_network
 
 _accounts = {}
 
@@ -35,6 +36,7 @@ def basic(checks, *, verify_mcp=True):
         item("ffmpeg", "Video and caption tools", checks.get("ffmpeg"), "Install FFmpeg with subtitles, H.264, AAC and MP3 support, then reopen the launcher."),
         item("browser", "Graphics browser", checks.get("browser"), checks.get("browser_reason") or "Open Setup and press Fix it next to Graphics browser."),
         item("node", "JavaScript runtime", checks.get("node"), "Install Node.js LTS, then reopen the launcher.")]
+    results += setup_rows(checks)
     cli = cr_claude.status()
     cli.update(models=[{"id":m,"label":"Claude Opus 5.5" if "opus" in m else "Claude Sonnet 5.5"} for m in cr_claude.MODELS],
                general_model=cfg.get("general_model", cr_claude.GENERAL_MODEL),
@@ -53,6 +55,23 @@ def basic(checks, *, verify_mcp=True):
         results.append(item("brain", "Selected API brain connected", account.get("brain", {}).get("connected"), "Choose your Claude Code route or connect an API brain in step 3."))
     return {"ready": all(row["ready"] for row in results), "checks":results,
             "blockers":[r["message"] for r in results if not r["ready"]], "claude_code":cli, "brain_mode":mode}
+
+
+def setup_rows(checks):
+    """The network and the speech-timing model, found in setup rather than halfway through a video. A network row
+    that passes can still carry a note: a blocked host Studio goes around, or YouTube (which only some recipes use:
+    preset() stops those)."""
+    rows = []
+    if "network" in checks:
+        net = checks.get("network") or {}
+        rows.append({"key": "network", "label": "Network", "ready": net.get("ready", True) is not False,
+                     "message": "" if net.get("checking") and not net.get("hosts") or not (
+                         net.get("blocked") or net.get("warnings") or net.get("fallbacks")) else net.get("message", "")})
+    if "speech_model" in checks:
+        speech = checks.get("speech_model") or {}
+        rows.append(item("speech_model", "Speech-timing model", speech.get("ready"),
+                         speech.get("reason") or "Open Setup and press Fix it next to Speech-timing model."))
+    return rows
 
 
 def proof(checks, *, media_ready=False, purpose="video"):
@@ -161,6 +180,11 @@ def preset(studio, checks, spec):
             cap = caps.get("features",{}).get(feature,{"ok":True})
             label = studio.features.BY_KEY.get(feature,{}).get("label",feature)
             results.append(item(feature,label,cap.get("ok"),cap.get("why") or "Connect the required account or explicitly turn this option off."))
+    # YouTube has no way around it: a recipe that uses it stops here on a network that can't reach it, not mid-video
+    youtube = cr_network.youtube_problem(checks.get("network") or {})
+    ranking = ((info or {}).get("shorts") or {}).get("pipeline") == "ranking"
+    if youtube and (ranking or wanted.get("youtube") and "video" in steps):
+        results.append(item("youtube_network", "YouTube reachable", False, youtube))
     # Validate selected replacement accounts before the first voice/image job.
     checked = set()
     for task in ("narration","images","motion","avatars"):

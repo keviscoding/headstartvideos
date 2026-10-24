@@ -378,3 +378,57 @@ def test_kies_files_come_through_the_relay_for_a_studio_that_cant_reach_kies_fil
                   "https://tempfile.aiquickdraw.com:8443/x.wav"):
         assert client.get("/api/studio/media-relay", params={"url": other}, headers={"x-test-user": "1"}).status_code == 400
     assert len(asked) == 2, "nothing else is ever fetched"
+
+
+def test_uploads_to_kies_cut_upload_host_go_through_the_relay(env, monkeypatch):
+    """A Studio whose network can't reach kieai.redpandaai.co uploads here (local_runtime/cr_relay.py). Only Kie's two
+    upload addresses, only for a Studio account, the body passed on as it came, Kie's answer back as it is."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    posted = []
+
+    def post(url, data=None, headers=None, **kw):
+        posted.append({"url": url, "body": data.read(), "headers": dict(headers), **kw})
+        return SimpleNamespace(status_code=200, headers={"Content-Type": "application/json"},
+                               content=b'{"success":true,"code":200,"data":{"downloadUrl":"https://tempfile.redpandaai.co/a.png"}}')
+    monkeypatch.setattr(studio.requests, "post", post)
+    app = FastAPI()
+    app.include_router(studio.make_router(lambda req: user(1, "daily") if req.headers.get("x-test-user") else None,
+                                          prefix="/api/studio"))
+    client = TestClient(app)
+    body = b"--b\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.png\"\r\n\r\nPNG\r\n--b--\r\n"
+    kie = {"x-test-user": "1", "X-CR-Kie-Authorization": "Bearer kie-secret",
+           "Content-Type": "multipart/form-data; boundary=b"}
+    ask = lambda path="/api/file-stream-upload", headers=kie, content=body: client.post(
+        "/api/studio/upload-relay", params={"path": path}, headers=headers, content=content)
+    assert ask(headers={k: v for k, v in kie.items() if k != "x-test-user"}).status_code == 401
+    got = ask()
+    assert got.status_code == 200 and got.json()["data"]["downloadUrl"] == "https://tempfile.redpandaai.co/a.png"
+    sent = posted[-1]
+    assert sent["url"] == "https://kieai.redpandaai.co/api/file-stream-upload" and sent["body"] == body
+    assert sent["headers"]["Authorization"] == "Bearer kie-secret"
+    assert sent["headers"]["Content-Type"] == "multipart/form-data; boundary=b"
+    assert sent["headers"]["Content-Length"] == str(len(body)) and sent["allow_redirects"] is False
+    assert ask("/api/file-base64-upload").status_code == 200
+    assert posted[-1]["url"] == "https://kieai.redpandaai.co/api/file-base64-upload"
+    for wrong in ("/api/file-url-upload", "https://evil.example/x", "/api/v1/jobs/createTask", ""):
+        assert ask(wrong).status_code == 400
+    assert ask(headers={**kie, "X-CR-Kie-Authorization": ""}).status_code == 400
+    assert ask(content=b"").status_code == 400
+    assert len(posted) == 2, "nothing else is ever sent to Kie"
+    monkeypatch.setattr(studio, "MEDIA_UPLOAD_MAX_BYTES", 10)
+    assert ask().status_code == 413 and len(posted) == 2, "the size cap"
+
+
+def test_a_failed_upload_relay_never_echoes_the_kie_key(env, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    def post(*a, **k):
+        raise studio.requests.exceptions.ConnectionError("Bearer kie-secret could not connect")
+    monkeypatch.setattr(studio.requests, "post", post)
+    app = FastAPI()
+    app.include_router(studio.make_router(lambda req: user(1, "daily"), prefix="/api/studio"))
+    got = TestClient(app).post("/api/studio/upload-relay", params={"path": "/api/file-stream-upload"},
+                               headers={"X-CR-Kie-Authorization": "Bearer kie-secret"}, content=b"x")
+    assert got.status_code == 502 and "kie-secret" not in got.text and "upload host" in got.text

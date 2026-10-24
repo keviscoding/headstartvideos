@@ -357,6 +357,7 @@ def tool_setup_check(args):
     except Refused:
         cloud = {"available": False, "why": "Studio Cloud's status didn't load."}
     blockers = readiness.get("blockers") or []
+    speech = status.get("speech_model") or {}
     only_verify = bool(blockers) and all("Verify both Claude models" in b for b in blockers)
     return {"running": True, "studio_version": str(status.get("local_version") or "").replace("5.3-admin.", ""),
             "ready": bool(readiness.get("ready")), "blockers": blockers,
@@ -366,12 +367,44 @@ def tool_setup_check(args):
                                  "fix": "" if status.get("browser") else
                                  "Call fix_graphics_browser: Studio installs it itself. Don't install it from this "
                                  "shell; Claude Code's shell can be sandboxed, and Studio wouldn't see it."},
+            "network": network_summary(status.get("network") or {}),
+            "speech_model": {"ready": bool(speech.get("ready")), "state": speech.get("state") or "",
+                             "why": speech.get("reason") or "",
+                             "fix": "" if speech.get("ready") else
+                             "Studio downloads it by itself while it's 'downloading' or 'checking': call setup_check "
+                             "again in a minute. Otherwise call fix_speech_model (Studio downloads and checks it "
+                             "itself; never install it from this shell)."},
             "claude_code": {"signed_in": bool(claude.get("authenticated")),
                             "models_verified": bool(claude.get("models_verified")),
                             "usage_limit_reached": bool((claude.get("allowance") or {}).get("blocked"))},
             "studio_cloud": {"available": bool(cloud.get("available")), "balance_usd": cloud.get("balance_usd"),
                              "why": cloud.get("why") or "", "topup_url": cloud.get("topup_url")},
             "gallery_url": link("/cr-gallery")}
+
+
+def network_summary(net: dict) -> dict:
+    """Which services this computer can't reach, in plain words: `blocked` stops videos (with what to do), `goes_around`
+    are blocked hosts Studio reaches through channelrecipe.com, `youtube_only` stops only recipes that use YouTube."""
+    rows = [r for r in net.get("hosts") or [] if not r.get("reachable") and r.get("needed", True)]
+    pick = lambda flag: [{"host": r["host"], "for": r.get("for", ""), "message": r.get("message", "")}
+                         for r in rows if r.get(flag)]
+    return {"ready": net.get("ready", True) is not False, "checking": bool(net.get("checking") and not rows),
+            "blocked": pick("blocking"), "goes_around": pick("fallback"), "youtube_only": pick("warning"),
+            "message": net.get("message") or "",
+            "what_to_do": "Tell the creator in plain words which service is blocked and what to do (allow it in their "
+                          "firewall, antivirus or VPN, or try another network such as a phone hotspot), then call "
+                          "setup_check again. Hosts under goes_around need nothing: Studio already works around them."
+                          if rows else ""}
+
+
+def tool_fix_speech_model(args):
+    """Studio downloads its speech-timing model (again, when it won't load) and loads it once, in the background."""
+    try:
+        state = call("POST", "/cr-setup/fix-speech-model", {}, timeout=60)
+    except Closed:
+        return {"running": False, "message": CLOSED}
+    return {"state": state.get("state"), "message": "Studio is downloading and checking its speech-timing model (about "
+            "140 MB, a minute or two). Call setup_check in a minute; speech_model.ready turns true when it works."}
 
 
 def tool_fix_graphics_browser(args):
@@ -932,6 +965,10 @@ TOOLS = {
                              "Studio installs it itself, in its own environment (never install it from this shell). "
                              "Free; takes a few minutes in the background.", _schema(),
                              {"readOnlyHint": False, "openWorldHint": False}),
+    "fix_speech_model": (tool_fix_speech_model, "When setup_check says the speech-timing model isn't ready (and isn't "
+                         "already downloading): Studio downloads it (about 140 MB) and checks it loads, by itself. "
+                         "Free; a minute or two in the background.", _schema(),
+                         {"readOnlyHint": False, "openWorldHint": False}),
     "list_styles": (tool_list_styles, "The video styles (recipes) installed in Studio, with a one-line description, "
                     "id, a local thumbnail picture, where each can render, and gallery_url: a visual picker page with a "
                     "pick_id to read the creator's choice back with get_style_pick. Free.",

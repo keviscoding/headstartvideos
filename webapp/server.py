@@ -69,6 +69,14 @@ if config.SENTRY_DSN:
         from sentry_sdk.integrations.starlette import StarletteIntegration
         def _sentry_before_send(event, hint):
             """Drop expected client/user errors so Sentry stays signal-heavy."""
+            try:
+                # a creator's Kie key on its way to Kie through the Studio upload relay is never reported
+                headers = (event.get("request") or {}).get("headers")
+                if isinstance(headers, dict):
+                    for name in [n for n in headers if str(n).lower() == "x-cr-kie-authorization"]:
+                        headers[name] = "[removed]"
+            except Exception:
+                pass
             # Synthetic DSN spam (security scanners probing public ingest)
             try:
                 msg = str(event.get("message") or "")

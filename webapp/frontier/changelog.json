@@ -1,5 +1,16 @@
 [
   {
+    "build": 98,
+    "date": "2026-10-24",
+    "title": "Setup finds network problems before your first video",
+    "items": [
+      "New: setup checks your network. It tries a quick secure connection to every service Studio uses and names any your network blocks, in plain words. Where Studio has a way around a block it says so and you can carry on; where it hasn't, it tells you what to do before a video starts.",
+      "New: the speech-timing model downloads during setup. A progress line shows how far it is, and Studio checks it loads on your computer once, so your first video no longer downloads it halfway through. A model that can't load shows in setup with a Fix it button.",
+      "Fixed: uploads to Kie work when your network blocks Kie's upload host. Studio sends those pictures and clips through channelrecipe.com instead.",
+      "New in Claude Code: its setup check covers the network and the speech model. Claude can also download the model for you."
+    ]
+  },
+  {
     "build": 97,
     "date": "2026-10-24",
     "title": "Works on more networks, and says why when it stops",
