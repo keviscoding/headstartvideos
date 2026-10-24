@@ -10,7 +10,8 @@
    requirements, the graphics browser, then cr_studio.py. No account keys. Claude Code is npm's claude.cmd in the
    profile's AppData\\Roaming\\npm, a stand-in that is signed in.
 3. Checks /cr-setup (served exactly as its UTF-8 file), /cr-status (Python, FFmpeg, Node, the graphics browser that
-   cr_studio.graphics_ready() launches, and Claude Code's sign-in check through claude.cmd) and /cr-diagnostics.
+   cr_studio.graphics_ready() launches, and Claude Code's sign-in check through claude.cmd) and /cr-diagnostics, then
+   loads the workspace and a 3D recipe's Create page in Chromium and asks /cr-3d for a 3D project's status.
 4. Makes a spoken narration and times it with Whisper in a worker started as Studio starts video workers
    (narration_worker.py): base model, int8, CPU, KMP_DUPLICATE_LIB_OK.
 Studio runs with PYTHONWARNDEFAULTENCODING=1: any Studio code that leaves a text encoding to the computer (cp1252 on
@@ -255,6 +256,50 @@ def parse_srt(text):
     return cues
 
 
+def check_workspace(report, studio, url):
+    """Studio's own pages in a real browser: the workspace, a 3D recipe's Create page (3D scenes on, Fast mode
+    offered), and a 3D project's /cr-3d status. A script error or a failing request on them fails the run."""
+    from playwright.sync_api import sync_playwright
+    problems, loaded = [], {}
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            for name, address in (("workspace", url + "/"), ("3D recipe", url + "/?cr-preset=smoke-3d")):
+                page = browser.new_page()
+                page.on("pageerror", lambda error, n=name: problems.append(f"{n}: script error {error}"[:300]))
+                page.on("console", lambda message, n=name: problems.append(f"{n}: {message.text}"[:300])
+                        if message.type == "error" else None)
+                page.on("response", lambda response, n=name: problems.append(
+                    f"{n}: HTTP {response.status} {response.url.replace(url, '')}") if response.status >= 400 else None)
+                page.goto(address, wait_until="networkidle", timeout=90000)
+                page.wait_for_timeout(1500)
+                loaded[name] = {"title": page.title(), "threed": page.evaluate(
+                    "() => !!document.querySelector('#crw-features input[data-feature=threed]:checked')"),
+                    "fast": page.is_visible("#crw-fast-section")}
+                page.close()
+        finally:
+            browser.close()
+    workspace, threed = loaded.get("workspace", {}), loaded.get("3D recipe", {})
+    report.check("Workspace page loads in Chromium with no script errors or failing requests",
+                 workspace.get("title", "").startswith("ChannelRecipe") and not problems,
+                 "; ".join(problems[:4]) or workspace.get("title", ""))
+    report.check("A 3D recipe's Create page loads: 3D scenes on, Fast mode offered", threed.get("threed")
+                 and threed.get("fast"), "3D scenes %s, Fast mode section %s" % (threed.get("threed"), threed.get("fast")))
+    job = studio / "output" / "smoke-3d" / "_work" / "a-3d-test-video"
+    (job / "threed").mkdir(parents=True, exist_ok=True)
+    answers = {}
+    for slug in (job.name, "no-such-video"):
+        status, _, body = get(url + "/cr-3d/" + slug, timeout=60)
+        try:
+            answers[slug] = (status, json.loads(body))
+        except ValueError:
+            answers[slug] = (status, {})
+    report.check("A 3D project's scene status (/cr-3d/<slug>) answers", all(
+        status == 200 and isinstance(data, dict) and "available" in data and "state" in data
+        for status, data in answers.values()), "; ".join("%s: HTTP %s %s" % (slug, status, {k: data.get(k) for k in (
+            "available", "state")}) for slug, (status, data) in answers.items()))
+
+
 def check_speech_model(report, url, minutes=15):
     """Studio downloads the speech-timing model when it starts and loads it once in its own process (cr_whisper);
     setup shows the answer."""
@@ -377,6 +422,7 @@ def main():
                          "%.0f s" % (time.monotonic() - started) if ready else why + "\n" + tail(log_path, 25))
             if ready:
                 check_pages(report, studio, url, calls)
+                check_workspace(report, studio, url)
                 check_speech_model(report, url)
                 check_narration(report, studio, env, artifacts)
     finally:
@@ -429,6 +475,12 @@ def check_pages(report, studio, url, calls):
     report.check("Graphics browser draws, 2D and WebGL2 (cr_studio.graphics_ready)",
                  checks.get("browser") and checks.get("webgl"),
                  checks.get("browser_reason") or "browser %s, webgl %s" % (checks.get("browser"), checks.get("webgl")))
+    if WINDOWS:
+        paths = checks.get("file_paths") or {}
+        report.check("Setup reads Windows' long-path setting and this folder's room (cr_paths)",
+                     isinstance(paths.get("long_paths"), bool) and isinstance(paths.get("room"), int),
+                     "folder %s characters, videos need up to %s more, long paths %s" % (
+                         paths.get("folder_length"), paths.get("deepest"), paths.get("long_paths")))
     claude = checks.get("claude_code") or {}
     try:
         ran = [json.loads(line) for line in calls.read_text(encoding="utf-8").splitlines()]

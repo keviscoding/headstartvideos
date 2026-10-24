@@ -76,6 +76,9 @@ def setup_rows(checks):
         speech = checks.get("speech_model") or {}
         rows.append(item("speech_model", "Speech-timing model", speech.get("ready"),
                          speech.get("reason") or "Open Setup and press Fix it next to Speech-timing model."))
+    if checks.get("file_paths"):                  # Windows only: a note when the Studio folder is too deep (cr_paths)
+        paths = checks["file_paths"]
+        rows.append({"key": "file_paths", "label": "Windows file paths", "ready": True, "message": paths.get("message", "")})
     return rows
 
 

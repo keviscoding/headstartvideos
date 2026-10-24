@@ -268,11 +268,24 @@ def _upload_failed(path, size, provider, why):
                        "connection if you can.")
 
 
+def receipt_name(name: str, fingerprint: str) -> str:
+    return hashlib.sha256(name.encode("utf-8")).hexdigest()[:12] + "-" + fingerprint[:24] + ".json"
+
+
+def task_receipt(dest, fingerprint) -> Path:
+    """Where a paid media task's receipt lives: beside its file, in .cr-tasks. Named by a digest of the file's name,
+    not the name itself: beside a long picture name (a collage's) the receipt doubled the path, and Windows stops at
+    260 characters (cr_paths). A receipt saved under the old name is still the one used, so nothing is made twice."""
+    dest = Path(dest)
+    legacy = dest.parent / ".cr-tasks" / (dest.name + "-" + fingerprint[:24] + ".json")
+    return legacy if legacy.is_file() else dest.parent / ".cr-tasks" / receipt_name(dest.name, fingerprint)
+
+
 def upload(path, cache_file=None, *, task=None):
     provider, key = account(task)
     path = Path(path)
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    marker = path.parent / ".cr-tasks" / f"upload-{provider}-{digest}.json"
+    marker = path.parent / ".cr-tasks" / f"upload-{provider}-{digest[:24]}.json"     # short: Windows stops at 260
     # Uploads expire. Reuse for at most 12 hours, not indefinitely.
     with _lock:
         if marker.is_file():
@@ -347,7 +360,7 @@ def run(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
     # content/task identity, so refreshing one does not create another paid job.
     identity = {"provider": provider, "wallet": hashlib.sha256(key.encode()).hexdigest(), "payload": logical(payload)}
     fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
-    marker = dest.parent / ".cr-tasks" / (dest.name + "-" + fingerprint[:24] + ".json")
+    marker = task_receipt(dest, fingerprint)
     headers = {"Authorization": "Bearer " + key}
     base = "https://api.kie.ai/api/v1/jobs" if provider == "kie" else "https://api.atlascloud.ai/api/v1/model"
     with _slots.get(task, _other_slots):

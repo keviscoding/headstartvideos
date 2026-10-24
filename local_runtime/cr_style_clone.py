@@ -304,8 +304,9 @@ def _spec(home, supplied):
             or not isinstance(title, str) or not 1 <= len(title.strip()) <= 280 or any(c in title for c in "\r\n")):
         raise ValueError("Give the learned style a name and an example video title.")
     requested_name = supplied.get("name", "")
-    if requested_name and (not isinstance(requested_name, str) or not re.fullmatch(r"[a-z0-9_-]{1,50}", requested_name)):
-        raise ValueError("Use a short style ID with lowercase letters, numbers and hyphens.")
+    # up to 24: the style's id names its videos' folder (output/cr-clone-<name>/), and Windows stops at 260 characters
+    if requested_name and (not isinstance(requested_name, str) or not re.fullmatch(r"[a-z0-9_-]{1,24}", requested_name)):
+        raise ValueError("Use a short style ID (up to 24 lowercase letters, numbers and hyphens).")
     brief = supplied.get("brief", "")
     if not isinstance(brief, str) or len(brief) > 4000:
         raise ValueError("Keep the style brief under 4,000 characters.")

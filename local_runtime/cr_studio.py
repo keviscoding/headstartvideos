@@ -21,6 +21,7 @@ import cr_render
 import cr_claude
 import cr_mcp
 import cr_network
+import cr_paths
 import cr_readiness
 import cr_workers
 import cr_ui
@@ -629,6 +630,9 @@ def create_app():
                   "connected": bool(cfg.get("key")), "costs_accepted": bool(cfg.get("costs_accepted"))}
         checks.update(graphics_ready())
         checks["speech_model"] = cr_whisper.status()
+        paths = cr_paths.status(HOME)                  # Windows' 260-character limit: room for a video's files
+        if paths:
+            checks["file_paths"] = paths
         # the setup page shows "Checking…" after 3 s and asks again; a check before work waits for the answer
         # inside a request Studio is serving, so it also tries to reach itself (only a block on the computer stops that)
         page = has_request_context() and request.path == "/cr-status"
@@ -897,11 +901,13 @@ def create_app():
             "Voice and images: %s%s · narration %s" % (hub.get("provider", "none"),
                 (" (" + ", ".join(hub.get("tasks", [])) + ")") if hub.get("tasks") else "", tick(voice.get("connected"))),
             cr_network.diagnostics_line(checks.get("network") or {}),
+            cr_paths.diagnostics_line(checks.get("file_paths")),
             "Speech-timing model: %s" % ("ready" if (checks.get("speech_model") or {}).get("ready") else
                                          ((checks.get("speech_model") or {}).get("reason") or "unknown")[:300]),
             "Setup ready: %s" % tick(readiness.get("ready")),
             "Working right now: %s" % running,
         ]
+        lines = [line for line in lines if line]          # a check that doesn't apply here says nothing
         blockers = readiness.get("blockers") or []
         if blockers:
             lines.append("Setup still needs: " + "; ".join(str(b.get("message") if isinstance(b, dict) else b) for b in blockers)[:600])
