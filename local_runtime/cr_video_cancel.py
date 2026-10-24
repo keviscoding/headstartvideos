@@ -163,6 +163,18 @@ def run_original_worker(home, project_id, run_id, studio):
                 time.sleep(0.5)
 
 
+def worker_options(home) -> dict:
+    """How Studio starts a video worker process (the Windows smoke test starts its Whisper worker the same way)."""
+    # KMP_DUPLICATE_LIB_OK: two copies of Intel's OpenMP (the speech-timing model's and another library's) abort a
+    # process outright on Windows ("OMP: Error #15") instead of running.
+    options = {"cwd": str(home), "stdin": subprocess.DEVNULL, "env": {**os.environ, "KMP_DUPLICATE_LIB_OK": "TRUE"}}
+    if os.name == "nt":
+        options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        options["start_new_session"] = True
+    return options
+
+
 class VideoWorkers:
     def __init__(self, studio, home, *, popen=None, stop=None):
         self.studio, self.home = studio, Path(home)
@@ -199,14 +211,7 @@ class VideoWorkers:
                      steps=spec.get("steps", []), minutes=spec.get("minutes", 10), style=spec.get("style", ""))
         command = [sys.executable, str(self.home / "cr_worker.py"), "--project", project_id,
                    "--", str(self.home / "app.py"), "--cr-video", run_id]
-        # KMP_DUPLICATE_LIB_OK: two copies of Intel's OpenMP (the speech-timing model's and another library's) abort a
-        # process outright on Windows ("OMP: Error #15") instead of running.
-        options = {"cwd": str(self.home), "stdin": subprocess.DEVNULL,
-                   "env": {**os.environ, "KMP_DUPLICATE_LIB_OK": "TRUE"}}
-        if os.name == "nt":
-            options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-        else:
-            options["start_new_session"] = True
+        options = worker_options(self.home)
         log_path = folder / "worker.log"
         log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
         with os.fdopen(log_fd, "ab") as log:

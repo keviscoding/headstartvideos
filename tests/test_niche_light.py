@@ -4,7 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from core import niche_light as light
+pytest.importorskip("resource", reason="the light niche job runs on the Linux niche server (POSIX resource limits)")
+from core import niche_light as light  # noqa: E402
 from webapp import database as db
 from webapp.niche_store import NicheStore
 

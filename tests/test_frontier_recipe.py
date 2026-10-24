@@ -151,7 +151,7 @@ def test_frontier_niche_json_exists():
     niche_path = ROOT / "webapp" / "niches" / "frontier.json"
     assert niche_path.exists(), "Frontier niche JSON missing"
     
-    with open(niche_path) as f:
+    with open(niche_path, encoding="utf-8") as f:
         niche = json.load(f)
     
     assert niche["id"] == "frontier"
@@ -165,7 +165,7 @@ def test_recipe_labels_includes_frontier():
     """Frontend RECIPE_LABELS should include Frontier."""
     app_js_path = ROOT / "webapp" / "static" / "app.js"
     
-    with open(app_js_path, "r") as f:
+    with open(app_js_path, "r", encoding="utf-8") as f:
         content = f.read()
     
     # Check that frontier is in RECIPE_LABELS

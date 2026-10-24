@@ -1,12 +1,40 @@
 """Shared test settings."""
+import io
+import pathlib
 import sys
 import warnings
 from pathlib import Path
 
 import pytest
 
-RUNTIME = Path(__file__).resolve().parents[1] / "local_runtime"
+TESTS = Path(__file__).resolve().parent
+RUNTIME = TESTS.parent / "local_runtime"
 _DEFAULT_ENCODING = set()
+_read_text, _write_text = pathlib.Path.read_text, pathlib.Path.write_text
+
+
+def _encoding(encoding):
+    """The tests' own reads and writes of the repository's files are UTF-8, as the files are; on Windows a bare
+    read_text() or write_text() would use cp1252. Only calls made from a test file get this. Studio's own code never
+    does: it must say encoding="utf-8" itself (tests/test_windows_portability.py), and Python's EncodingWarning still
+    names its line."""
+    if encoding is not None:
+        return encoding
+    caller = sys._getframe(2).f_code.co_filename
+    if Path(caller).parent == TESTS:
+        return "utf-8"
+    return io.text_encoding(None, 3)
+
+
+def _test_read_text(self, encoding=None, errors=None, newline=None):
+    return _read_text(self, _encoding(encoding), errors, newline)
+
+
+def _test_write_text(self, data, encoding=None, errors=None, newline=None):
+    return _write_text(self, data, _encoding(encoding), errors, newline)
+
+
+pathlib.Path.read_text, pathlib.Path.write_text = _test_read_text, _test_write_text
 
 
 @pytest.fixture(autouse=True)

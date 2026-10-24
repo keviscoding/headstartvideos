@@ -59,10 +59,16 @@ jobs:
         run: >-
           .venv\Scripts\python -m pytest tests --deselect tests/test_ken_burns_motion.py::test_all_effects
           -p no:cacheprovider -rfEs --timeout 900 --junitxml=windows-tests.xml
-      - name: Keep the test report
+      - name: Start Studio as a creator does (tests/studio_smoke/smoke.py)
+        # its real launcher in a fresh folder, no keys, npm's claude.cmd; setup, status, diagnostics, Whisper timing
+        if: ${{ !cancelled() }}
+        run: .venv\Scripts\python tests\studio_smoke\smoke.py --artifacts studio-smoke --report studio-smoke\report.md
+      - name: Keep the reports
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: windows-studio-report
-          path: windows-tests.xml
+          path: |
+            windows-tests.xml
+            studio-smoke
           if-no-files-found: ignore
