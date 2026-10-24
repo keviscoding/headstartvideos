@@ -20,7 +20,7 @@ MEASURE_S = 360.0
 
 def loudness(video) -> dict:
     r = subprocess.run(["ffmpeg", "-nostats", "-i", str(video), "-af", "ebur128=peak=true", "-f", "null", "-"],
-                       capture_output=True, text=True, timeout=1800)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800)
     tail = r.stderr[r.stderr.rfind("Summary:"):]
     i = re.search(r"I:\s*(-?[\d.]+)\s*LUFS", tail)
     tp = re.search(r"Peak:\s*(-?[\d.]+)\s*dBFS", tail)
@@ -70,7 +70,7 @@ def check(job, target: dict = None, log=print) -> dict:
     qc = {**loudness(video), **bed(video)}
     qc["lines"] = verdict(qc, target or {})
     qc["video"] = mark
-    out.write_text(json.dumps(qc, indent=1))
+    out.write_text(json.dumps(qc, indent=1), encoding="utf-8")
     log("sound check: " + "; ".join(row["text"] for row in qc["lines"]))
     return qc
 

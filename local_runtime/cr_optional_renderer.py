@@ -27,7 +27,7 @@ def supported_python():
     def supported(candidate):
         try:
             check = subprocess.run([candidate, "-c", "import sys;print(int(sys.version_info >= (3,13)))"],
-                capture_output=True, text=True, timeout=10, env=env)
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10, env=env)
             return check.returncode == 0 and check.stdout.strip() == "1"
         except (OSError, subprocess.TimeoutExpired):
             return False
@@ -46,7 +46,7 @@ def supported_python():
         for version in ("-3.14", "-3.13", "-3"):
             try:
                 found = subprocess.run([launcher, version, "-c", "import sys;print(sys.executable)"],
-                    capture_output=True, text=True, timeout=10, env=env)
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10, env=env)
             except (OSError, subprocess.TimeoutExpired):
                 continue
             candidate = found.stdout.strip()

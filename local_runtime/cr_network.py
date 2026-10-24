@@ -105,11 +105,13 @@ def running_antivirus(*, run=None) -> list:
     run = run or subprocess.run
     try:
         if os.name == "nt":
-            out = run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True, timeout=15,
-                      creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+            # tasklist writes in the console's OEM code page; read as cp1252, a byte like 0x90 (É) failed the list
+            out = run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True, encoding="oem",
+                      errors="replace", timeout=15, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
             names = {line.split(",")[0].strip().strip('"').lower() for line in out.splitlines() if line.strip()}
         else:
-            out = run(["ps", "-axo", "comm="], capture_output=True, text=True, timeout=15).stdout
+            out = run(["ps", "-axo", "comm="], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                      timeout=15).stdout
             names = {os.path.basename(line.strip()).lower() for line in out.splitlines() if line.strip()}
     except Exception:                                          # noqa: BLE001 - no process list: say "your antivirus"
         names = set()

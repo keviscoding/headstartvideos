@@ -250,7 +250,8 @@ def test_original_empty_search_is_explained_without_another_request(actual_searc
     entry = _last_diagnostic(original)
     assert entry["returncode"] == 0 and entry["raw_entries"] == 0 and entry["accepted_entries"] == 0
     assert entry["outcome"] == "no_raw_entries"
-    assert original.logfile.stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":                         # POSIX permission bits; Windows keeps the file private by its ACL
+        assert original.logfile.stat().st_mode & 0o777 == 0o600
 
 
 def test_original_filters_are_preserved_and_distinguished_from_no_results(actual_search):

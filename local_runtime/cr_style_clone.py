@@ -97,7 +97,10 @@ def _lock(folder, name=".lock"):
         try:
             if os.name == "nt":
                 import msvcrt
-                handle.seek(0); handle.write(b"0"); handle.flush(); handle.seek(0)
+                # Windows locks byte 0 even past the end of the file. Never write it first: the descriptor has no
+                # O_APPEND, so the write landed on a byte another study had locked, and the failed write came back on
+                # close as a bare "Permission denied" instead of this message.
+                handle.seek(0)
                 msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
             else:
                 import fcntl
@@ -205,7 +208,7 @@ def list_videos(url, limit, timeout=90, *, run=subprocess.run):
         # YouTube changes often; one quiet update of the helper usually fixes it.
         _YT_HELPER["updated"] = True
         upgrade = run([sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "-q", "-U", "yt-dlp"],
-                      capture_output=True, text=True, timeout=240)
+                      capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=240)
         if upgrade.returncode == 0:
             command = _ytdlp_command()
             rows, error = attempt()
@@ -301,8 +304,9 @@ def _spec(home, supplied):
             or not isinstance(title, str) or not 1 <= len(title.strip()) <= 280 or any(c in title for c in "\r\n")):
         raise ValueError("Give the learned style a name and an example video title.")
     requested_name = supplied.get("name", "")
-    if requested_name and (not isinstance(requested_name, str) or not re.fullmatch(r"[a-z0-9_-]{1,50}", requested_name)):
-        raise ValueError("Use a short style ID with lowercase letters, numbers and hyphens.")
+    # up to 24: the style's id names its videos' folder (output/cr-clone-<name>/), and Windows stops at 260 characters
+    if requested_name and (not isinstance(requested_name, str) or not re.fullmatch(r"[a-z0-9_-]{1,24}", requested_name)):
+        raise ValueError("Use a short style ID (up to 24 lowercase letters, numbers and hyphens).")
     brief = supplied.get("brief", "")
     if not isinstance(brief, str) or len(brief) > 4000:
         raise ValueError("Keep the style brief under 4,000 characters.")
@@ -370,7 +374,8 @@ def room_to_check(platform=None, free_gb=None, memory_level=None) -> str:
     if memory_level is None:
         try:
             memory_level = int(subprocess.run(["sysctl", "-n", "kern.memorystatus_level"], capture_output=True,
-                                              text=True, timeout=10).stdout.strip() or 100)
+                                              text=True, encoding="utf-8", errors="replace",
+                                              timeout=10).stdout.strip() or 100)
         except (OSError, ValueError, subprocess.TimeoutExpired):
             memory_level = 100
     if memory_level < float(os.environ.get("REFLEARN_MIN_MEM_LEVEL") or CHECK_MEMORY_LEVEL):
@@ -761,13 +766,15 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
 def _portable(value, home):
     """The style with every path inside this Studio written relative to it (its kit's manifest, the study board), so
     the style keeps working when the Studio folder moves; the engine reads them from the Studio folder."""
-    root = str(Path(home).resolve()) + "/"
+    # normcase: Windows paths use backslashes and any case ("C:\Users\..."), so a plain "/" prefix never matched there
+    # and a Windows creator's learned styles kept absolute paths
+    root = os.path.normcase(str(Path(home).resolve())) + os.sep
     if isinstance(value, dict):
         return {k: _portable(v, home) for k, v in value.items()}
     if isinstance(value, list):
         return [_portable(v, home) for v in value]
-    if isinstance(value, str) and value.startswith(root):
-        return value[len(root):]
+    if isinstance(value, str) and os.path.normcase(value).startswith(root):
+        return Path(value[len(root):]).as_posix()
     return value
 
 

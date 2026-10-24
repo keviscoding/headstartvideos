@@ -101,7 +101,7 @@ def test_runtime_corrected_source_reuses_final_format_without_touching_parent_lo
     report = gx.render(SimpleNamespace(), gx._read(s.out / 'video.json'), output,
         ['--w','1280','--h','720','--quality','final'], 'final', root=s.home,
         compiler=lambda *a: pytest.fail('No repeat compiler'))
-    target = s.old.parent / report['scenes'][0]['compiler_key']
+    target = s.old.parent / gx.key_folder(report['scenes'][0]['compiler_key'])
     assert invoked[0][1] == target
     assert Path(invoked[0][0]['source']) == expected_source
     assert gx._read(target / 'reuse.json')['acceptance']['kind'] == 'completed_native_runtime_correction'

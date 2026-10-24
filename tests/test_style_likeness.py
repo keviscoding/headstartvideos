@@ -226,7 +226,7 @@ def test_the_designed_shots_come_from_this_studios_own_renderer(tmp_path):
     kit.write_text("")
     ran = []
 
-    def fake(cmd, cwd=None, capture_output=None, text=None, timeout=None):
+    def fake(cmd, cwd=None, capture_output=None, text=None, timeout=None, encoding=None, errors=None):
         ran.append((cmd, cwd, timeout))
         work = Path(cmd[3])
         for scene in json.loads(Path(cmd[2]).read_text())["scenes"]:
@@ -235,7 +235,7 @@ def test_the_designed_shots_come_from_this_studios_own_renderer(tmp_path):
     pics = lk.render_designed(home, style, out, timeout_s=90, run=fake)
     assert [p.name for p in pics] == ["r0_0.jpg", "r0_1.jpg", "r0_2.jpg"]
     cmd, cwd, timeout = ran[0]
-    assert cmd[1].endswith("threed/render.py") and "--preview" in cmd and cwd == str(home / "threed") and timeout == 90
+    assert Path(cmd[1]).as_posix().endswith("threed/render.py") and "--preview" in cmd and cwd == str(home / "threed") and timeout == 90
     with pytest.raises(RuntimeError, match="designed-cast kit"):
         lk.render_designed(tmp_path / "old", style, out, run=fake)
 

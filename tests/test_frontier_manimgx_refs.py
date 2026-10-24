@@ -50,7 +50,9 @@ def test_compiler_reads_one_private_source_document_on_the_visual_role(source, m
         calls.append((prompt, model, files, what))
         assert len(files) == 1
         reference = Path(files[0])
-        assert reference.is_file() and reference.stat().st_mode & 0o077 == 0
+        assert reference.is_file()
+        if os.name != "nt":                         # POSIX permission bits; Windows keeps the file private by its ACL
+            assert reference.stat().st_mode & 0o077 == 0
         assert 'export function helper()' in reference.read_text()
         assert 'export function helper()' not in prompt
         return json.dumps(manifest)
@@ -231,7 +233,8 @@ def test_large_inventory_uses_private_exact_indexed_files_without_a_giant_prompt
     moved = home / "recovery-child" / "original-reference.txt"
     assert refs.save_reference(moved, result) == document
     assert reference.read_text() == document
-    assert reference.stat().st_mode & 0o077 == 0
+    if os.name != "nt":                         # POSIX permission bits; Windows keeps the file private by its ACL
+        assert reference.stat().st_mode & 0o077 == 0
     assert "INDEXED DELIVERY" in document
     assert "// private exact source fixture" not in document
     assert len(document.encode()) < refs.INLINE_SOURCE_BYTES
@@ -244,8 +247,9 @@ def test_large_inventory_uses_private_exact_indexed_files_without_a_giant_prompt
         original = by_name[row["reference"]]
         assert copied.is_relative_to(reference.parent)
         assert copied.read_bytes() == Path(original["path"]).read_bytes()
-        assert copied.stat().st_mode & 0o077 == 0
-        assert copied.parent.stat().st_mode & 0o077 == 0
+        if os.name != "nt":                         # POSIX permission bits; Windows keeps the file private by its ACL
+            assert copied.stat().st_mode & 0o077 == 0
+            assert copied.parent.stat().st_mode & 0o077 == 0
         assert hashlib.sha256(copied.read_bytes()).hexdigest() == row["sha256"]
         assert copied.stat().st_size == row["bytes"]
 

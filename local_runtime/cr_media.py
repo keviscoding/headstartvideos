@@ -211,7 +211,7 @@ def _data(res, provider):
 def _write(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2))
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
     tmp.chmod(0o600)
     tmp.replace(path)
 
@@ -268,11 +268,25 @@ def _upload_failed(path, size, provider, why):
                        "connection if you can.")
 
 
+def receipt_name(name: str, fingerprint: str) -> str:
+    """One digest of the file's name and its task (21 characters): a receipt for each file, and for each request."""
+    return hashlib.sha256((name + "\0" + fingerprint).encode("utf-8")).hexdigest()[:16] + ".json"
+
+
+def task_receipt(dest, fingerprint) -> Path:
+    """Where a paid media task's receipt lives: beside its file, in .cr-tasks. Named by a digest of the file's name,
+    not the name itself: beside a long picture name (a collage's) the receipt doubled the path, and Windows stops at
+    260 characters (cr_paths). A receipt saved under the old name is still the one used, so nothing is made twice."""
+    dest = Path(dest)
+    legacy = dest.parent / ".cr-tasks" / (dest.name + "-" + fingerprint[:24] + ".json")
+    return legacy if legacy.is_file() else dest.parent / ".cr-tasks" / receipt_name(dest.name, fingerprint)
+
+
 def upload(path, cache_file=None, *, task=None):
     provider, key = account(task)
     path = Path(path)
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    marker = path.parent / ".cr-tasks" / f"upload-{provider}-{digest}.json"
+    marker = path.parent / ".cr-tasks" / f"up-{provider}-{digest[:16]}.json"     # short: Windows stops at 260
     # Uploads expire. Reuse for at most 12 hours, not indefinitely.
     with _lock:
         if marker.is_file():
@@ -347,7 +361,7 @@ def run(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
     # content/task identity, so refreshing one does not create another paid job.
     identity = {"provider": provider, "wallet": hashlib.sha256(key.encode()).hexdigest(), "payload": logical(payload)}
     fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
-    marker = dest.parent / ".cr-tasks" / (dest.name + "-" + fingerprint[:24] + ".json")
+    marker = task_receipt(dest, fingerprint)
     headers = {"Authorization": "Bearer " + key}
     base = "https://api.kie.ai/api/v1/jobs" if provider == "kie" else "https://api.atlascloud.ai/api/v1/model"
     with _slots.get(task, _other_slots):
@@ -702,7 +716,7 @@ def narrate(engine, text, mp3, srt, voice_id="", style=""):
     else:
         # Relative names avoid escaping user-controlled folder names in ffconcat.
         listing = folder / "parts.txt"
-        listing.write_text("".join(f"file '{p.name}'\n" for p in parts))
+        listing.write_text("".join(f"file '{p.name}'\n" for p in parts), encoding="utf-8")   # ffmpeg reads UTF-8
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0",
                         "-i", str(listing), "-c:a", "libmp3lame", "-b:a", "192k", str(mp3)], check=True)
     _time_narration(engine, mp3, srt, text)
@@ -726,7 +740,9 @@ def _time_narration(engine, mp3, srt, text):
         cues.append(current)
     if not cues:
         raise AccountStop("Narration was saved, but subtitle timing failed. Check the audio before resuming.")
-    Path(srt).write_text("\n".join(f"{i+1}\n{engine._srt_ts(c[0][1])} --> {engine._srt_ts(c[-1][2])}\n{' '.join(w[0] for w in c)}\n" for i, c in enumerate(cues)))
+    # UTF-8, as the engine and ffmpeg read it: on Windows the cp1252 default would stop a video at a "café" in its words
+    Path(srt).write_text("\n".join(f"{i+1}\n{engine._srt_ts(c[0][1])} --> {engine._srt_ts(c[-1][2])}\n{' '.join(w[0] for w in c)}\n"
+                                   for i, c in enumerate(cues)), encoding="utf-8")
     engine._script_words_into_srt(Path(srt), text)
 
 

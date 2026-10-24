@@ -60,7 +60,7 @@ def _publish_new(path, value, *, text=False):
     fd, name = tempfile.mkstemp(dir=path.parent, prefix="." + path.name, suffix=".recovery-tmp")
     temporary = Path(name)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:     # the hashed text, byte for byte
             handle.write(value) if text else json.dump(value, handle, ensure_ascii=False, allow_nan=False)
         temporary.chmod(0o600)
         try:
@@ -202,7 +202,7 @@ def _completed_correction_candidate(home, plan, cloud_progress):
 
 
 def _completed_validation_result(work, context, assets, proof):
-    validation = work / ".completed-correction-validation"
+    validation = work / renderer.recovery_name("validation")
     if validation.is_symlink() or not validation.is_dir():
         raise RuntimeError("The completed-correction validation directory changed.")
     result, history = _completed_correction_inputs(work, context, assets, proof)
@@ -231,7 +231,7 @@ def _completed_validation_result(work, context, assets, proof):
 
 def _recover_completed_correction(home, outdir, plan, cloud_progress):
     work = plan["recovery_directory"]
-    validation = work / ".completed-correction-validation"
+    validation = work / renderer.recovery_name("validation")
     if _present(validation):
         result, source = _completed_validation_result(work, plan["context"], plan["assets"], plan["proof"])
         return {"accepted": True, "reused": True, "corrected": True, "model_calls": 0,
@@ -267,7 +267,7 @@ def _recover_completed_correction(home, outdir, plan, cloud_progress):
 def runtime_override(directory, context, assets, ready, key, reference_bundle):
     """Return only a completed explicit runtime correction, retaining its parent."""
     directory = Path(directory)
-    work = directory / ".recovery-runtime-api"
+    work = directory / renderer.recovery_name("runtime_api")
     if not _present(work):
         return None
     if work.is_symlink() or not work.is_dir():
@@ -280,7 +280,7 @@ def runtime_override(directory, context, assets, ready, key, reference_bundle):
     journal = _read(directory / "compile-attempts.json")
     original_response = directory / f"compiler-response-{journal.get('calls')}.txt"
     reference = directory / "original-reference.txt"
-    validated_completion = _present(work / ".completed-correction-validation")
+    validated_completion = _present(work / renderer.recovery_name("validation"))
     if ((record.get("state") != "corrected" and not (record.get("state") == "stopped" and validated_completion)) or record.get("model_calls") != 1
             or proof.get("runtime_failure") != evidence or proof.get("key") != key
             or proof.get("source_sha256") != evidence["source_sha256"]
@@ -312,7 +312,7 @@ def runtime_acceptance(directory, context, assets, ready, key, reference_bundle)
     if accepted is None:
         return None
     directory = Path(directory)
-    work = directory / ".recovery-runtime-api"
+    work = directory / renderer.recovery_name("runtime_api")
     manifest_directory = accepted[1].parent
     acceptance = {"kind": "completed_native_runtime_correction", "key": key,
             "source_sha256": _hash(accepted[1]),
@@ -373,7 +373,7 @@ def _corrected_manifest(plan, receipt, manifest):
             or manifest.get("recovery_proof") != proof
             or manifest.get("recovery_of") != plan["legacy_key"]
             or manifest.get("recovery_kind") != plan["kind"]
-            or manifest.get("recovery_receipt") != str((work / "recovery.json").relative_to(directory))
+            or manifest.get("recovery_receipt") != (work / "recovery.json").relative_to(directory).as_posix()
             or child_manifest.get("key") != plan["key"] or child_manifest.get("typed") is not True
             or child_manifest.get("result") != result or child_manifest.get("source_sha256") != source_hash
             or child_manifest.get("recovery_proof") != proof
@@ -474,14 +474,14 @@ def _prepare(home, project_id, outdir, scene_id, cloud_progress):
                 "setup": ready["identity"], "original_references": bundle["identity"]}
     legacy_key = renderer._digest({**identity, "assets": legacy_assets})
     key = renderer._digest({**identity, "assets": assets})
-    directory = threed / ".cr-manimgx" / key
-    old = threed / ".cr-manimgx" / legacy_key
+    directory = threed / renderer.cache_name() / renderer.key_folder(key)
+    old = threed / renderer.cache_name() / renderer.key_folder(legacy_key)
     kind = "asset_records"
     if legacy_key == key or not (old / "compiler-response-1.txt").is_file():
         # This second known adapter failure used the correct full asset
         # records. Only its former description-length rule rejected it.
         old, legacy_key, kind = directory, key, "coverage_text"
-    cache_root = threed / ".cr-manimgx"
+    cache_root = threed / renderer.cache_name()
     if directory.resolve().parent != cache_root or old.resolve().parent != cache_root:
         raise RuntimeError("Use this video's original compiler cache, without redirected paths.")
     journal = _read(old / "compile-attempts.json")
@@ -506,8 +506,8 @@ def _prepare(home, project_id, outdir, scene_id, cloud_progress):
                        n.args[0] if n.args else next((k.value for k in n.keywords if k.arg == "filename_or_array"), None))
                    for n in ast.walk(tree)):
                 kind = "procedural_pixels"
-    child_names = {"runtime_api": ".recovery-runtime-api", "coverage_text": ".recovery-coverage-text",
-                   "manifest_json": ".recovery-manifest-json", "procedural_pixels": ".recovery-procedural-pixels"}
+    child_names = {kind: renderer.recovery_name(kind)
+                   for kind in ("runtime_api", "coverage_text", "manifest_json", "procedural_pixels")}
     work = directory / child_names[kind] if kind in child_names else directory
     if work.is_symlink():
         raise RuntimeError("The saved recovery path was redirected; no source was accepted.")
@@ -611,7 +611,7 @@ def _prepare(home, project_id, outdir, scene_id, cloud_progress):
                 or recovered_manifest.get("typed") is not True or recovered_manifest.get("result") != result
                 or recovered_manifest.get("source_sha256") != plan["proof"]["source_sha256"]
                 or recovered_manifest.get("recovery_of") != legacy_key
-                or recovered_manifest.get("recovery_receipt") != str((work / "recovery.json").relative_to(directory))
+                or recovered_manifest.get("recovery_receipt") != (work / "recovery.json").relative_to(directory).as_posix()
                 or not (directory / "scene.py").is_file()
                 or _hash(directory / "scene.py") != plan["proof"]["source_sha256"]):
             raise RuntimeError("This accepted source no longer matches its original completed response and local recovery receipt.")
@@ -656,7 +656,7 @@ def discover(home, job, cloud_progress):
             completed_available = False
             completed_validated = False
             if plan["kind"] == "runtime_api" and saved.get("state") == "stopped":
-                validation = plan["recovery_directory"] / ".completed-correction-validation"
+                validation = plan["recovery_directory"] / renderer.recovery_name("validation")
                 try:
                     if _present(validation):
                         _completed_validation_result(plan["recovery_directory"], plan["context"], plan["assets"], plan["proof"])
@@ -718,7 +718,7 @@ def recover(home, project_id, outdir, scene_id, cloud_progress, *, acknowledge_r
                 and manifest.get("key") == plan["key"] and manifest.get("typed") is True
                 and manifest.get("recovery_kind") == plan["kind"]
                 and manifest.get("recovery_of") == plan["legacy_key"]
-                and manifest.get("recovery_receipt") == str((work / "recovery.json").relative_to(directory))
+                and manifest.get("recovery_receipt") == (work / "recovery.json").relative_to(directory).as_posix()
                 and manifest.get("source_sha256") == proof["source_sha256"]
                 and manifest.get("result") == plan["result"]
                 and _hash(directory / "scene.py") == proof["source_sha256"]):
@@ -786,7 +786,7 @@ def recover(home, project_id, outdir, scene_id, cloud_progress, *, acknowledge_r
         _existing_source(source, proof["source_sha256"])
         _publish_new(directory / "compiler.json", {"key": plan["key"], "typed": True,
                         "source_sha256": proof["source_sha256"], "result": plan["result"], "recovery_of": plan["legacy_key"],
-                        "recovery_kind": plan["kind"], "recovery_receipt": str((work / "recovery.json").relative_to(directory))})
+                        "recovery_kind": plan["kind"], "recovery_receipt": (work / "recovery.json").relative_to(directory).as_posix()})
     except BaseException as error:
         record.update(state="stopped", error_type=type(error).__name__, diagnostic=renderer._redacted_diagnostic(str(error)))
         renderer._write(work / "recovery.json", record)
@@ -885,7 +885,7 @@ def correct(home, project_id, outdir, scene_id, cloud_progress, *, acknowledge_c
                 _existing_source(directory / "scene.py", corrected_hash)
                 _publish_new(directory / "compiler.json", {"key": plan["key"], "typed": True,
                     "source_sha256": corrected_hash, "result": result, "recovery_of": plan["legacy_key"],
-                    "recovery_kind": plan["kind"], "recovery_receipt": str((work / "recovery.json").relative_to(directory)),
+                    "recovery_kind": plan["kind"], "recovery_receipt": (work / "recovery.json").relative_to(directory).as_posix(),
                     "recovery_proof": plan["proof"]})
             receipt["corrected_response_sha256"] = _hash(response)
         receipt.update(state="corrected", corrected_source_sha256=corrected_hash, corrected_at=time.time(), model_calls=1)

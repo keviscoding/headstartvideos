@@ -89,9 +89,33 @@ def test_a_request_that_may_have_arrived_is_never_sent_twice(hub, monkeypatch, e
     with pytest.raises(media.AccountStop, match="interrupted"):
         media.run("images", {"prompt": "Example"}, hub / "u.png")
     assert len(calls) == 1
-    receipt = json.loads(next((hub / ".cr-tasks").glob("u.png-*.json")).read_text())
+    receipt = json.loads(next(p for p in (hub / ".cr-tasks").glob("*.json") if not p.name.startswith("up-")).read_text())
     assert receipt["status"] == "submitting"
     assert receipt.get("submit_error", "ReadTimeout") in ("ReadTimeout", "ConnectionError")
+
+
+def test_a_receipt_is_named_short_and_an_old_one_is_still_the_one_used(hub, monkeypatch):
+    """Windows stops at 260 characters: a receipt no longer repeats its picture's long name. One saved under the old
+    name before this is still found, so a task already paid for or in doubt is never sent again."""
+    collage = hub / "a-roman-legionary-in-red-cloak-at-the-gate_raw.png"
+    sent, asked = [], []
+    real = media.task_receipt
+    monkeypatch.setattr(media, "task_receipt", lambda dest, fingerprint: asked.append(fingerprint) or real(dest, fingerprint))
+
+    def times_out(*a, **k):
+        sent.append(1)
+        raise media.requests.ReadTimeout("no answer")
+    monkeypatch.setattr(media.requests, "post", times_out)
+    with pytest.raises(media.AccountStop):
+        media.run("images", {"prompt": "Example"}, collage)
+    receipt, = (hub / ".cr-tasks").glob("*.json")
+    assert receipt.name == media.receipt_name(collage.name, asked[0]) and len(receipt.name) == 21 and len(sent) == 1
+    legacy = receipt.with_name(collage.name + "-" + asked[0][:24] + ".json")      # as Studio named it before
+    receipt.replace(legacy)
+    with pytest.raises(media.AccountStop, match="uncertain result"):
+        media.run("images", {"prompt": "Example"}, collage)
+    assert len(sent) == 1, "the request in doubt under its old receipt name was never sent again"
+    assert [p.name for p in (hub / ".cr-tasks").glob("*.json")] == [legacy.name]
 
 
 def test_a_refusal_says_which_code_and_keeps_it_with_the_receipt(hub, monkeypatch):
@@ -99,7 +123,7 @@ def test_a_refusal_says_which_code_and_keeps_it_with_the_receipt(hub, monkeypatc
     with pytest.raises(media.AccountStop, match=r"refused this request \(code 500\)") as stop:
         media.run("avatars", {"image_url": "https://i", "audio_url": "https://a"}, hub / "avatar.mp4")
     assert "upstream" not in str(stop.value)
-    receipt = json.loads(next((hub / ".cr-tasks").glob("avatar.mp4-*.json")).read_text())
+    receipt = json.loads(next(p for p in (hub / ".cr-tasks").glob("*.json") if not p.name.startswith("up-")).read_text())
     assert "code 500" in receipt["submit_error"] and receipt["status"] == "submitting"
 
 

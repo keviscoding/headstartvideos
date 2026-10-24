@@ -362,7 +362,7 @@ def api_correction(creative, monkeypatch):
     state = creative
     state.ready["python"] = "owned-pinned-python"
     state.context = compiler_context()
-    state.directory = state.root / "job/threed/.cr-manimgx/input-key"
+    state.directory = state.root / "job/threed" / gx.cache_name() / "input-key"
     state.model_calls = []
     state.bad_source = SOURCE.replace("side_length=2", "invented_size=2")
     def typecheck(python, path, **kwargs):

@@ -29,7 +29,7 @@ def fake_playwright(monkeypatch, exe_exists=True, launch_error=None, draws=True)
             return False
     module = SimpleNamespace(sync_playwright=lambda: Ctx())
     monkeypatch.setitem(sys.modules, "playwright.sync_api", module)
-    monkeypatch.setattr(cr_studio.Path, "is_file", lambda self: str(self) == "/fake/chrome" or Path.exists(self))
+    monkeypatch.setattr(cr_studio.Path, "is_file", lambda self: self.as_posix() == "/fake/chrome" or Path.exists(self))
     cr_studio._graphics_check.clear()
 
 

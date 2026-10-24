@@ -1,5 +1,16 @@
 [
   {
+    "build": 102,
+    "date": "2026-10-24",
+    "title": "Studio on Windows: long folders, collages and more",
+    "items": [
+      "Fixed for Windows: videos no longer stop at Windows' 260-character limit on file paths. Studio's own file names are much shorter now, so collages and Fast mode scenes fit, even with Studio in your Downloads folder.",
+      "New: setup warns when your Studio folder is too deep for Windows. It says how to fix it, and Create tells you before a video starts if its title is too long for that folder.",
+      "Fixed for Windows: captions with accented words (like café), Fast mode reusing its saved scenes, learned styles that keep working when you move your Studio folder, and a clear message when a second style study is started while one runs.",
+      "Every Studio release is now started and tested on Windows before it ships."
+    ]
+  },
+  {
     "build": 101,
     "date": "2026-10-24",
     "title": "Style clones ask about animated characters",

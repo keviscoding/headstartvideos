@@ -26,7 +26,8 @@ const f = new Function('data', 'esc', 'icon', 'returning', 'STUDIO_URL', code + 
 process.stdout.write(f(data, esc, () => '<svg></svg>', () => returning, 'http://127.0.0.1:7860/'));
 """
     payload = json.dumps([CODE, {"changelog": changelog}, returning, list(seen), now_ms])
-    out = subprocess.run(["node", "-e", script], input=payload, capture_output=True, text=True, timeout=30)
+    out = subprocess.run(["node", "-e", script], input=payload, capture_output=True, text=True, encoding="utf-8",
+                         timeout=30)
     assert out.returncode == 0, out.stderr
     return out.stdout
 

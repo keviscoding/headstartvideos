@@ -52,6 +52,8 @@ else:
 
 @pytest.fixture
 def mac_launch(tmp_path):
+    if sys.platform == "win32":
+        pytest.skip("Start on Mac.command runs in /bin/bash, with fake POSIX Pythons (Windows has its own launcher tests)")
     folder = tmp_path / "Fresh studio folder"
     folder.mkdir()
     launcher = folder / "Start on Mac.command"

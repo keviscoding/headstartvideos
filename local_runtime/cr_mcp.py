@@ -222,7 +222,7 @@ def register(settings):
     servers["channelrecipe"] = {"type": "http", "url": url,
                                 "headers": {"Authorization": "Bearer " + key}}
     temp = path.with_suffix(".tmp")
-    temp.write_text(json.dumps(data, indent=2))
+    temp.write_text(json.dumps(data, indent=2), encoding="utf-8")
     temp.chmod(0o600)
     temp.replace(path)
     return status(settings)

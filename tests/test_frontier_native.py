@@ -1,6 +1,7 @@
 """Production native-Claude authorization, isolation and saved-result recovery."""
 import hashlib
 import json
+import os
 from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
@@ -285,7 +286,8 @@ def test_cli_contract_and_local_cache_survive_connection_recovery(tmp_path,monke
     assert "ANTHROPIC_API_KEY" not in options["env"] and "KIE_API_KEY" not in options["env"]
     assert "CLAUDE_CODE_MAX_OUTPUT_TOKENS" not in options["env"]
     assert finish[0]["usage"]["reported"] and finish[0]["usage"]["output_tokens"]==11
-    assert next((tmp_path/"output/cr-claude-cache").rglob("*.json")).stat().st_mode&0o077==0
+    if os.name != "nt":                         # POSIX permission bits; Windows keeps the file private by its ACL
+        assert next((tmp_path/"output/cr-claude-cache").rglob("*.json")).stat().st_mode&0o077==0
 
 
 @pytest.mark.parametrize("envelope", ["structured", "wrapped", "text"])
@@ -421,7 +423,9 @@ def test_concurrent_receipt_writes_remain_atomic_and_private(tmp_path):
         list(pool.map(lambda n:cr_claude._private_write(path,{"state":"complete","result":"x"*5000,"writer":n}),range(50)))
     data=json.loads(path.read_text())
     assert data["state"]=="complete" and len(data["result"])==5000
-    assert path.stat().st_mode&0o077==0 and list(tmp_path.glob("*.tmp"))==[]
+    assert list(tmp_path.glob("*.tmp"))==[]
+    if os.name != "nt":                         # POSIX permission bits; Windows keeps the file private by its ACL
+        assert path.stat().st_mode&0o077==0
 
 
 def test_upgraded_runtime_authorizes_installed_release_with_saved_old_model_profile(native,monkeypatch):

@@ -66,7 +66,7 @@ def test_reviewed_quota_attempt_preserves_history_and_reuses_completed_source(st
     result, source = compile_scene(s)
     assert len(s.calls) == 1 and source.read_text() == SOURCE
     assert s.journal.read_bytes() == s.original_journal
-    work = s.target_dir / ".recovery-native-stage"
+    work = s.target_dir / gx.recovery_name("native_stage")
     assert (work / "failed-native-receipt.json").read_bytes() == s.original_failed
     saved = gx._read(s.target_dir / "compiler.json")
     assert gx._accepted_response(s.target_dir, saved, s.target, {})["kind"] == "reviewed_native_quota_recovery"
@@ -111,7 +111,7 @@ def test_tampered_native_recovery_never_publishes_or_repeats(stopped, change):
 
 def test_completed_recovery_evidence_cannot_be_changed_before_reuse(stopped):
     s = stopped; compile_scene(s)
-    gx._write(s.target_dir / ".recovery-native-stage/response.txt", "{}", text=True)
+    gx._write(s.target_dir / gx.recovery_name("native_stage") / "response.txt", "{}", text=True)
     with pytest.raises(RuntimeError, match="evidence changed"): compile_scene(s)
     assert len(s.calls) == 1
 
