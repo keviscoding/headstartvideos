@@ -414,7 +414,7 @@ def check_pages(report, studio, url, calls):
                  and ["--version"] in ran and any(c[-2:] == ["auth", "status"] for c in ran),
                  "installed %s, version %s, signed in %s; Studio ran it %d times: %s" % (
                      claude.get("installed"), claude.get("version"), claude.get("authenticated"), len(ran),
-                     "; ".join(" ".join(c) or "(no arguments)" for c in ran[:4])) + (
+                     "; ".join(" ".join(a or "\"\"" for a in c) for c in ran[:4])) + (
                      "" if claude.get("authenticated") else " | " + str(claude.get("message"))))
     status, kind, body = get(url + "/cr-diagnostics", headers={"X-CR-Local-Token": token}, timeout=300)
     text = body.decode("utf-8", "replace")

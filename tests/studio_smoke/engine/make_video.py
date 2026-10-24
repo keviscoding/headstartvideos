@@ -37,7 +37,10 @@ def _script_words_into_srt(srt: Path, script: str) -> int:
 
 
 
-
 # what Studio's adapters (cr_media, cr_render and the rest) wrap without checking first
-for _name in ("image_gen", "_kie_still_with_url", "_tts_one", "_final_mux", "_sources_block", "generate_astrology_visuals", "publish_named_copy", "generate_script", "_extra_block", "generate_voiceover", "host_image", "_kie_upload_image"):
+for _name in (
+    "image_gen", "_kie_still_with_url", "_tts_one", "_final_mux", "_sources_block", "generate_astrology_visuals",
+    "publish_named_copy", "generate_script", "_extra_block", "generate_voiceover", "host_image",
+    "_kie_upload_image",
+):
     globals()[_name] = refuses(_name)

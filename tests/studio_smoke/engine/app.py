@@ -8,7 +8,7 @@ from pathlib import Path
 
 from flask import Flask, jsonify
 
-import features
+import features                 # the engine's modules, as Studio reaches them (studio.features, studio.mv...)
 import make_video as mv
 import styles
 import timeline
