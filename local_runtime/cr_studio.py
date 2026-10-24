@@ -409,6 +409,20 @@ def network_needs(speech: dict) -> dict:
                                      hub_provider=str(hub.get("provider") or ""))
 
 
+def channelrecipe_answers(cfg, network, *, head=None) -> bool:
+    """False only when the network check just found channelrecipe.com unreachable and one quick request agrees."""
+    row = next((h for h in (network or {}).get("hosts") or [] if h.get("host") == cr_network.VIA_CR), None)
+    if row is None or row.get("reachable"):
+        return True
+    import requests
+    try:
+        (head or requests.head)(str(cfg.get("url") or "https://channelrecipe.com").rstrip("/") + "/api/health",
+                                timeout=(5, 5), allow_redirects=False)
+        return True
+    except requests.RequestException:
+        return False
+
+
 def fix_speech_model():
     """Setup's Fix it for the speech-timing model: download it (again, when it's there but won't load) and load it
     once, in the background."""
@@ -615,10 +629,17 @@ def create_app():
         checks.update(graphics_ready())
         checks["speech_model"] = cr_whisper.status()
         # the setup page shows "Checking…" after 3 s and asks again; a check before work waits for the answer
+        # inside a request Studio is serving, so it also tries to reach itself (only a block on the computer stops that)
         page = has_request_context() and request.path == "/cr-status"
         checks["network"] = cr_network.status(network_needs(checks["speech_model"]),
-                                              wait=3 if page else cr_network.TIMEOUT * 2 + 2)
+                                              wait=3 if page else cr_network.TIMEOUT * 2 + 2,
+                                              port=cr_network.STUDIO_PORT if has_request_context() else None)
         try:
+            if cfg.get("key") and not channelrecipe_answers(cfg, checks["network"]):
+                # the account call retries a lost connection for about 90 s (right for videos): setup says why now
+                checks["cr_unreachable"] = True                # and readiness skips the tools check (90 s too)
+                raise RuntimeError("Studio can't reach channelrecipe.com from this computer right now. See Network "
+                                   "under Make sure the tools are ready.")
             checks["account"] = cr_bridge.call("status") if cfg.get("key") else None
         except Exception as e:
             checks["connection_error"] = str(e)
@@ -841,7 +862,7 @@ def create_app():
         """Check again now (after the creator changed network or allowed a host)."""
         cr_network.forget()
         last_status.clear()
-        return jsonify(cr_network.status(network_needs(cr_whisper.status())))
+        return jsonify(cr_network.status(network_needs(cr_whisper.status()), port=cr_network.STUDIO_PORT))
 
     @studio.app.get("/cr-diagnostics")
     def diagnostics():

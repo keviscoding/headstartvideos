@@ -88,7 +88,9 @@ Studio through its own checks, so nothing needs the Studio web page.
 - `setup_check`'s `network` lists services this computer can't reach. Tell them in plain words: `blocked` ones stop
   videos (allow the host in their firewall, antivirus or VPN, or try another network such as a phone hotspot);
   `goes_around` ones need nothing (Studio reaches them through channelrecipe.com); `youtube_only` ones stop only
-  recipes that use YouTube.
+  recipes that use YouTube. When `network.on_this_computer.suspected`, an antivirus or firewall on the computer is
+  blocking Studio itself (their browser still works): help them allow `allow_programs` and 127.0.0.1:7860 in the
+  antivirus it names, step by step. Never suggest switching the antivirus off.
 - No `studio` tools in this session? Studio's tools load when a Claude Code session starts. If Studio, Node or
   Python was installed or first started during this session, ask them to open a new Claude Code session in this
   folder (or run /mcp in a terminal session), then carry on. Never drive the Studio web page instead.

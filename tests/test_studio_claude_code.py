@@ -695,3 +695,20 @@ def test_setup_check_on_a_clear_network_has_nothing_to_say(studio, monkeypatch):
     out = ok("setup_check", {})
     assert out["network"]["ready"] and out["network"]["blocked"] == [] and out["network"]["what_to_do"] == ""
     assert out["speech_model"] == {"ready": True, "state": "ready", "why": "", "fix": ""}
+
+
+def test_setup_check_says_an_antivirus_blocks_studio_and_what_to_allow(studio, monkeypatch):
+    sys.path.insert(0, str(ROOT / "local_runtime"))
+    import cr_network
+    network = cr_network.check({"kie": True, "youtube": True}, probe=lambda host: "", local="refused",
+                               antivirus=["Norton"])
+    real_call = tools.call
+    monkeypatch.setattr(tools, "call", lambda method, path, body=None, **kw: {
+        "local_version": "5.3-admin.99", "readiness": {"ready": False, "blockers": [network["message"]]},
+        "network": network, "speech_model": {"ready": True, "state": "ready"}}
+        if path == "/cr-status" else real_call(method, path, body, **kw))
+    net = ok("setup_check", {})["network"]
+    here = net["on_this_computer"]
+    assert net["ready"] is False and here["suspected"] and here["antivirus"] == "Norton"
+    assert here["allow_programs"][0] == sys.executable and "127.0.0.1:7860" in net["what_to_do"]
+    assert "Never suggest switching it off" in net["what_to_do"]

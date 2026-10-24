@@ -692,3 +692,50 @@ def test_setup_shows_blocked_services_and_fixes_the_speech_model_with_a_progress
     tab.wait_for_function("document.querySelector('#network-row')?.classList.contains('ok')", timeout=8000)
     assert asked["network"] == 1 and not tab.locator("#network-row small").count()
     assert errors == []
+
+
+@pytest.mark.parametrize("browser_reaches", [True, False])
+def test_setup_says_when_an_antivirus_blocks_studio_and_the_browser_still_works(page, browser_reaches):
+    """A Windows creator's Norton blocked Studio's connections while their browser worked (2026-10-24)."""
+    sys.path.insert(0, str(Path(__file__).parents[1] / "local_runtime"))
+    import cr_network
+    tab, errors = page
+    tab.unroute("**/*")
+    html = (Path(__file__).parents[1] / "local_runtime" / "cr_setup.html").read_text()
+    html = html.replace("__LOCAL_TOKEN__", "ui-fixture-local-token")
+    network = cr_network.check({"kie": True, "speech_model": False, "youtube": True},
+                               probe=lambda h: "timeout", antivirus=["Norton"])
+    state = {"python": True, "ffmpeg": True, "browser": True, "node": True, "connected": True,
+             "costs_accepted": True, "brain_mode": "claudecode", "local_version": "5.3-admin.99",
+             "model_accounts": {}, "providers": {}, "account": {"brain": {"connected": False}},
+             "claude_code": {"installed": True, "authenticated": True, "models": []},
+             "network": network, "speech_model": {"ready": True, "state": "ready", "reason": ""},
+             "readiness": {"ready": False, "checks": [], "blockers": [network["message"]]}}
+    reached = []
+
+    def fixture(route):
+        request = route.request
+        if request.url.startswith(ONBOARDING_MEDIA):
+            return route.fulfill(status=200, content_type="image/jpeg", body=b"")
+        if request.url.startswith("https://channelrecipe.com/favicon.ico"):
+            reached.append(request.url)
+            return route.fulfill(status=200, body=b"") if browser_reaches else route.abort()
+        path = urlparse(request.url).path
+        if path == "/cr-setup":
+            return route.fulfill(body=html, content_type="text/html")
+        if path == "/cr-status":
+            return route.fulfill(json=state)
+        if path == "/cr-workspace/catalog":
+            return route.fulfill(json={"channels": [], "features": []})
+        pytest.fail("Unexpected request: " + request.method + " " + request.url)
+
+    tab.route("**/*", fixture)
+    tab.goto("http://setup-ui-fixture.invalid/cr-setup")
+    tab.wait_for_selector("#network-local")
+    first = tab.locator("#network-row small").first.inner_text()
+    assert first.startswith("Studio can't reach any of its services") and "Allow Studio in Norton" in first
+    assert "Program Control" in first and "turn" not in first.lower()
+    expected = "so the internet works" if browser_reaches else "can’t reach channelrecipe.com either"
+    tab.wait_for_function(f"document.querySelector('#network-browser')?.textContent.includes({expected!r})",
+                          timeout=10000)
+    assert reached and errors == []

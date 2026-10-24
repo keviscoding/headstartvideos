@@ -608,3 +608,65 @@ def test_an_own_recording_becomes_the_voice_timed_and_spelled_as_the_script(hub,
     assert not (job / "voice.own").exists(), "the engine's own mark is never set (a normal Resume would delete it)"
     with pytest.raises(media.AccountStop, match="isn't there any more"):
         media.own_recording(engine, "Hello world.", job, "gone.mp3")
+
+
+# Uploads on a slow connection (a creator's footage uploads failed every time, 2026-10-24): an upload is free, so a
+# dropped or timed-out one is sent again, with time for its size, and a plain message when it still fails.
+
+def upload_attempts(monkeypatch, answers):
+    posts = []
+
+    def post(url, **kw):
+        posts.append({"url": url, "timeout": kw["timeout"], "file": kw["files"]["file"][1].read()})
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+    monkeypatch.setattr(media.requests, "post", post)
+    return posts
+
+
+KIE_UPLOADED = response({"code": 200, "data": {"downloadUrl": "https://tempfile.redpandaai.co/clip.mp4"}})
+
+
+def test_a_dropped_upload_is_sent_again_and_succeeds(hub, monkeypatch):
+    clip = hub / "clip.mp4"
+    clip.write_bytes(b"x" * 1000)
+    waits = []
+    monkeypatch.setattr(media.time, "sleep", lambda s: waits.append(s))
+    posts = upload_attempts(monkeypatch, [
+        media.requests.exceptions.ConnectionError("('Connection aborted.', TimeoutError('The write operation timed out'))"),
+        response({}, status=502), KIE_UPLOADED])
+    assert media.upload(clip, task="motion") == "https://tempfile.redpandaai.co/clip.mp4"
+    assert len(posts) == 3 and all(p["file"] == b"x" * 1000 for p in posts), "the whole file each time"
+    assert waits == [10, 30]
+    assert media.upload(clip, task="motion") == "https://tempfile.redpandaai.co/clip.mp4" and len(posts) == 3, \
+        "a finished upload is reused, not sent again"
+
+
+def test_a_big_clip_gets_time_for_its_size():
+    assert media.upload_timeout(1000) == (15, 180), "never under three minutes"
+    assert media.upload_timeout(200 * 1024 * 1024) == (15, 200 * 32 + 120), "200 MB at 32 KB a second"
+    assert media.upload_timeout(10 * 1024 ** 3) == (15, 3600), "at most an hour"
+
+
+def test_an_upload_that_never_finishes_says_why_in_plain_words(hub, monkeypatch):
+    clip = hub / "big.mp4"
+    clip.write_bytes(b"y" * (3 * 1024 * 1024))
+    posts = upload_attempts(monkeypatch, [media.requests.exceptions.ReadTimeout("read timed out")] * 3)
+    with pytest.raises(media.AccountStop) as stop:
+        media.upload(clip, task="motion")
+    message = str(stop.value)
+    assert len(posts) == 3 and posts[0]["timeout"] == media.upload_timeout(3 * 1024 * 1024)
+    assert "big.mp4 (3.0 MB)" in message and "didn't finish after 3 tries" in message
+    assert "too slow to finish in time" in message and "Nothing was charged" in message
+    assert "Resume saved project" in message and "faster or wired connection" in message
+
+
+def test_a_refused_upload_is_not_sent_again(hub, monkeypatch):
+    clip = hub / "ref.png"
+    clip.write_bytes(b"png")
+    posts = upload_attempts(monkeypatch, [response({}, status=401)])
+    with pytest.raises(media.AccountStop, match="HTTP 401"):
+        media.upload(clip, task="images")
+    assert len(posts) == 1, "a refusal is the account, not the connection"
