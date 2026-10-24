@@ -6,6 +6,7 @@ from pathlib import Path
 from stand_in import refuses
 
 STYLE_INFO = {}
+WHISPER_MODEL = "base"                              # Studio points this at the copy setup downloaded (cr_whisper)
 _WHISPER = None
 
 
@@ -17,8 +18,8 @@ def _get_whisper():
     global _WHISPER
     if _WHISPER is None:
         from faster_whisper import WhisperModel
-        log("whisper: loading model 'base' (CPU, int8)")
-        _WHISPER = WhisperModel("base", device="cpu", compute_type="int8")
+        log(f"whisper: loading model '{WHISPER_MODEL}' (CPU, int8)")
+        _WHISPER = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
     return _WHISPER
 
 

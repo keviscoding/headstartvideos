@@ -8,7 +8,9 @@
 These rules read the source, so they fail on a Mac too, before a release reaches a Windows PC. The Windows CI workflow
 (.github/workflows/studio-windows.yml) also runs the tests and starts Studio itself on Windows (tests/studio_smoke)."""
 import ast
+import os
 import re
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -21,6 +23,9 @@ SUBPROCESS = {"run", "Popen", "call", "check_call", "check_output"}
 PIPES = ("capture_output", "stdout", "stderr", "stdin", "input")
 MODE = re.compile(r"[rwxabt+U]*")
 NOT_FILES = {"webbrowser", "zipfile", "tarfile", "gzip", "Image", "wave", "av"}   # .open() that isn't a file's
+# the private engine source the releases are built from, where this computer has it (never in this repository or CI)
+ENGINE_SOURCE = Path(os.environ.get("CR_ENGINE_SOURCE")
+                     or Path.home() / "Downloads" / "Frontier" / "files" / "v5" / "Frontier-5.3-FULL.zip")
 
 
 def shipped_python():
@@ -141,3 +146,18 @@ def test_the_rules_catch_what_reached_customers(tmp_path):
         assert f"cr_bad.py:{line}: " in found and why in found, (line, found)
     (tmp_path / "cr_good.py").write_text(GOOD, encoding="utf-8")
     assert problems(tmp_path / "cr_good.py") == []
+
+
+def _requirements(text):
+    return sorted(line.split("#")[0].strip() for line in text.splitlines() if line.split("#")[0].strip())
+
+
+@pytest.mark.skipif(not ENGINE_SOURCE.is_file(), reason="the private engine source is not on this computer")
+def test_the_windows_ci_installs_what_the_download_installs():
+    """CI builds its Windows Studio from local_runtime/studio-requirements.txt, because the engine's own
+    requirements.txt is in the private source: the two must stay the same list (an ENGINE_PATCHES change too)."""
+    from scripts import build_frontier_admin as builder
+    with zipfile.ZipFile(ENGINE_SOURCE) as source:
+        shipped = builder.patch_engine("requirements.txt", source.read("Frontier/requirements.txt")).decode("utf-8")
+    ours = (RUNTIME / "studio-requirements.txt").read_text(encoding="utf-8")
+    assert _requirements(ours) == _requirements(shipped), "update local_runtime/studio-requirements.txt to match"

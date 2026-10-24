@@ -256,6 +256,27 @@ def parse_srt(text):
     return cues
 
 
+def check_speech_model(report, url, minutes=15):
+    """Studio downloads the speech-timing model when it starts and loads it once in its own process (cr_whisper);
+    setup shows the answer."""
+    started, state = time.monotonic(), {}
+    while time.monotonic() - started < minutes * 60:
+        status, _, body = get(url + "/cr-setup/fix-speech-model", timeout=30)
+        try:
+            state = json.loads(body) if status == 200 else {}
+        except ValueError:
+            state = {}
+        # downloading and checking are on the way; broken is final; missing or unchecked after a minute means
+        # Studio didn't start (or finish) the download by itself
+        if state.get("ready") or state.get("state") == "broken" or (
+                state.get("state") in ("missing", "unchecked") and time.monotonic() - started > 60):
+            break
+        time.sleep(3)
+    report.check("Setup's speech-timing model downloads and loads (Whisper base, int8, in its own process)",
+                 state.get("ready"), "%.0f s" % (time.monotonic() - started) if state.get("ready")
+                 else "%s: %s" % (state.get("state"), state.get("reason") or state.get("tail")))
+
+
 def check_narration(report, studio, env, artifacts):
     folder = studio / "output" / "cr-smoke"
     folder.mkdir(parents=True, exist_ok=True)
@@ -282,6 +303,9 @@ def check_narration(report, studio, env, artifacts):
                  "%.0f s" % seconds if result.get("ok") else result.get("why", ""))
     report.check("Worker started with KMP_DUPLICATE_LIB_OK (two OpenMP copies abort it on Windows)",
                  "KMP_DUPLICATE_LIB_OK=TRUE" in log)
+    loaded = re.search(r"whisper: loading model '([^']*)'", log)
+    report.check("The worker loads the model setup downloaded, not by name from huggingface.co",
+                 loaded and loaded.group(1) != "base", loaded.group(1) if loaded else "no model load in the worker log")
     if not result.get("ok"):
         return log
     try:
@@ -353,6 +377,7 @@ def main():
                          "%.0f s" % (time.monotonic() - started) if ready else why + "\n" + tail(log_path, 25))
             if ready:
                 check_pages(report, studio, url, calls)
+                check_speech_model(report, url)
                 check_narration(report, studio, env, artifacts)
     finally:
         if process is not None:
