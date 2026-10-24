@@ -753,3 +753,21 @@ def test_a_medium_studio_cant_make_is_read_to_the_creator_and_accepted_by_them(s
     assert studio.posted("/cr-style-clone/start")[0]["accept_medium"] is True
     chose = ok("clone_style", {**args, "answers": {"animation": cr_style_map.ANIMATED_PICTURES}})
     assert chose["started"] is True and studio.posted("/cr-style-clone/start")[1]["accept_medium"] is False
+
+
+def test_progress_on_an_animated_clone_says_the_animations_score_and_never_picks_pictures_for_them(studio, monkeypatch):
+    real_call = tools.call
+    op = "op_" + "f" * 24
+    status = {"operation_id": op, "state": "done", "phase": "complete", "percent": 100, "style_ready": True,
+              "message": "Your style is saved, but Claude's animation for this channel reached 5.2/10 ...",
+              "renderer": {"state": "below_bar", "overall": 5.2, "bar": 6.5, "version": 1, "offer_pictures": True,
+                           "say": "Your style is saved, but Claude's animation for this channel reached 5.2/10."}}
+    monkeypatch.setattr(tools, "call", lambda method, path, body=None, **kw: status
+                        if path == f"/cr-style-clone/{op}/status" else real_call(method, path, body, **kw))
+    out = ok("progress", {"id": op})
+    assert out["animation"]["state"] == "below_bar" and out["animation"]["bar"] == 6.5
+    assert out["animation"]["what_to_tell_them"].startswith("Your style is saved, but")
+    assert "Use pictures instead" in out["next"] and "never choose for them" in out["next"]
+    status["renderer"] = {"state": "passed", "overall": 6.7, "bar": 5.5, "say": "Claude wrote it: 6.7/10."}
+    passed = ok("progress", {"id": op})
+    assert passed["animation"]["what_to_tell_them"] == "Claude wrote it: 6.7/10." and "list_styles" in passed["next"]

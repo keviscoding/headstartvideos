@@ -151,10 +151,8 @@ def preset(studio, checks, spec):
             results.append(item("reference_workflow", "Full reference animation workflow", False, str(error)))
     if ((info or {}).get("look") or {}).get("visuals") == "cr_animated2d":
         import cr_animated2d
-        ok = cr_animated2d.available()
-        results.append(item("animated2d", "Animated 2D characters", ok,
-                            "" if ok else "This style animates its characters with Studio's 2D kit, which this Studio "
-                            "doesn't have. Update Studio, then try again."))
+        problem = cr_animated2d.renderer_problem(info)
+        results.append(item("animated2d", "The channel's animation", not problem, problem))
     caps = studio.features.capabilities()
     fcfg = (info or {}).get("features") or {}
     offered = fcfg.get("offered") if isinstance(fcfg.get("offered"),list) else [k for k in studio.features.KEYS if k not in studio.features.EXPLICIT]

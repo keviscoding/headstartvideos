@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 from scripts import studio_branding
-VERSION = "5.3-admin.103"
+VERSION = "5.3-admin.104"
 PRIVATE_WORKFLOWS = {
     "cr-style-delivery-prompt.txt": ROOT / "data/frontier/reference2d-compiler.txt",
     "cr-style-study-brief.txt": ROOT / "data/frontier/reference2d-study.txt",
@@ -184,10 +184,11 @@ def private_threed_resources(root: Path):
     return resources
 
 
-# The animated 2D cast kit (Studio 102+): stick-figure puppets rigged and animated in code (cr_animated2d.py drives it),
-# kept in the gitignored data/frontier/animated2d/ (its JavaScript, the casting and director prompts, its fight sounds),
-# never in this public repository.
-ANIMATED2D_FILES = re.compile(r"(rig|draw|moves|fx|film)\.js|(cast|director)\.txt")
+# The animated 2D kit (Studio 103+; the renderer platform since 104): the page runtime every channel's Claude-written
+# renderer runs in, its optional helpers and example, the build, casting and director prompts and the fight sounds
+# (cr_animated2d.py drives it), kept in the gitignored data/frontier/animated2d/, never in this public repository.
+ANIMATED2D_FILES = re.compile(r"(core|rig|draw|moves|fx|film|bind|example-stick|example-own)\.js|(cast|director|build)\.txt|"
+                              r"AUTHORING\.md")
 ANIMATED2D_SOUND = re.compile(r"sounds/[a-z_]+\.mp3")
 
 
@@ -213,7 +214,8 @@ def private_animated2d_resources(root: Path):
         else:
             raise ValueError("Unexpected file in the animated 2D kit: " + rel)
     names = {dest.split("/", 1)[1] for _, dest in resources if dest.startswith("animated2d/")}
-    missing = sorted({"rig.js", "draw.js", "moves.js", "fx.js", "film.js", "cast.txt", "director.txt"} - names)
+    missing = sorted({"core.js", "rig.js", "draw.js", "moves.js", "fx.js", "film.js", "bind.js", "example-stick.js",
+                      "example-own.js", "cast.txt", "director.txt", "build.txt", "AUTHORING.md"} - names)
     if resources and missing:
         raise ValueError("The animated 2D kit is incomplete: " + ", ".join(missing))
     return resources

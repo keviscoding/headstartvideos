@@ -38,6 +38,7 @@ PHASES = {
     "build": (58, "Writing the original learner's graphics kit."),
     "validate": (78, "Rendering and reviewing the learned graphics against the reference."),
     "art": (88, "Writing the picture style, cast and voice from what Studio saw."),
+    "renderer": (90, "Claude is writing this channel's animation and checking its test shots against the references."),
     "publish": (94, "Saving your validated style in the studio's preset library."),
     "complete": (100, "Your learned style is saved and ready to use."),
 }
@@ -331,8 +332,11 @@ def _spec(home, supplied):
         gap = (planned.get("route") or {}).get("medium_gap") if visual_mode != "reference_only" else ""
         if gap and supplied.get("accept_medium") is not True:
             raise ValueError(gap + " Tick that you understand before starting, or wait for the update.")
+        renderer = (planned.get("route") or {}).get("engine") == "animated2d" and visual_mode != "reference_only"
     elif answers:
         raise ValueError("Look at the references before answering questions about them.")
+    else:
+        renderer = False
     attempt_id = supplied.get("attempt_id", "")
     if attempt_id and (not isinstance(attempt_id, str) or not re.fullmatch(r"[a-f0-9]{32}", attempt_id)):
         raise ValueError("Start a new style study from its approval form.")
@@ -350,6 +354,7 @@ def _spec(home, supplied):
         "label": label.strip(), "title": title.strip(), "brief": brief,
         "budget_minutes": budget, "max_calls": calls, "minutes": minutes,
         "visual_mode": visual_mode, "attempt_id": attempt_id, "accept_medium": supplied.get("accept_medium") is True,
+        **({"renderer": True} if renderer else {}),
         **({"look_id": look_id, "answers": dict(answers)} if look_id else {})}
 
 
@@ -532,7 +537,80 @@ def status(home, operation_id, bridge):
             if route.get("engine") == "drawn" and not route.get("medium_gap"):     # a style saved before Studio 75
                 import cr_style_map
                 result["route"]["medium_gap"] = cr_style_map.MEDIUM_GAP
+        renderer = renderer_verdict(style)
+        if renderer:
+            result["renderer"] = renderer
+            if renderer.get("say"):
+                result["message"] = renderer["say"]
     return result
+
+
+def renderer_verdict(style) -> dict:
+    """What the creator is told about an animated style's renderer, plainly: how it scored against the channel's own
+    bar, and the pictures route offered when it fell short or never worked. {} for any other style."""
+    clone = style.get("cr_style_clone") or {}
+    if clone.get("pictures_instead"):
+        return {"state": "pictures", "say": "This style draws pictures in the channel's look (you chose pictures "
+                "instead of Claude's animation)."}
+    look = style.get("look") or {}
+    if look.get("visuals") != "cr_animated2d":
+        return {}
+    r = (look.get("animated2d") or {}).get("renderer")
+    if not isinstance(r, dict):
+        return {}
+    out = {k: r.get(k) for k in ("state", "overall", "bar", "control", "version", "why") if r.get(k) is not None}
+    if r.get("state") == "passed":
+        out["say"] = (f"Your style is saved. Claude wrote this channel's animation, and its test shots scored "
+                      f"{r.get('overall')}/10 against the channel's own frames (the bar for this channel: {r.get('bar')}). "
+                      "Every video is animated with it.")
+    elif r.get("state") == "below_bar":
+        out["say"] = (f"Your style is saved, but Claude's animation for this channel reached {r.get('overall')}/10 "
+                      f"against its own frames, under this channel's bar of {r.get('bar')}. Your videos will be animated "
+                      "with it as it is. If you'd rather have pictures in the channel's look, choose Use pictures "
+                      "instead.")
+        out["offer_pictures"] = True
+    else:
+        out["say"] = ("Your style is saved, but Claude couldn't write a working animation for this channel ("
+                      + str(r.get("why") or "no draft drew its test shots") + "). Videos in it won't start until you "
+                      "choose Use pictures instead, or study the channel again.")
+        out["offer_pictures"] = True
+    return out
+
+
+def use_pictures(home, operation_id, bridge):
+    """The creator's choice after an animation fell short: the saved style draws pictures in the channel's look
+    instead (the plan for the "pictures" answer), said in the style, never done without being asked."""
+    folder, saved = _saved(home, operation_id, bridge)
+    if saved.get("state") not in ("complete", "complete_local", "validated") or not _published(home, saved):
+        raise RuntimeError("Wait for the style to be saved first.")
+    import cr_style_look
+    import cr_style_map
+    spec = saved["spec"]
+    target = Path(home) / "styles" / (spec["style_id"] + ".json")
+    style = _read(target)
+    look = style.get("look") or {}
+    if look.get("visuals") != "cr_animated2d":
+        return status(home, operation_id, bridge)
+    looked = _read(cr_style_look.folder(home, spec.get("look_id") or "") / "look.json") if spec.get("look_id") else {}
+    answers = {**(spec.get("answers") or {}), "animation": cr_style_map.ANIMATED_PICTURES}
+    mapping = cr_style_map.plan_style(looked.get("profile") or {}, _installed_styles(home), base=spec["base_style"],
+                                      answers=answers)
+    renderer = (look.get("animated2d") or {}).get("renderer") or {}
+    look.pop("visuals", None)
+    look.pop("animated2d", None)
+    style.pop("cost", None)
+    style = cr_style_map.apply(style, mapping)
+    clone = style.setdefault("cr_style_clone", {})
+    clone["pictures_instead"] = {"at": time.time(), "renderer": {k: renderer.get(k) for k in ("state", "overall", "bar")}}
+    if isinstance(clone.get("learned_v2"), dict):
+        clone["learned_v2"]["route"] = mapping.get("route") or {}
+    _write(target, style)
+    _write(folder / "ready-style.json", style)
+    saved["style_sha256"] = _file_hash(target)
+    if saved.get("finish_receipt"):
+        saved["finish_receipt"]["artifacts"][0]["sha256"] = saved["style_sha256"]
+    _write(folder / "operation.json", saved)
+    return status(home, operation_id, bridge)
 
 
 def _published(home, saved):
@@ -759,6 +837,10 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
         progress("art")
         _art_director(folder, spec, looked, lambda prompt, images: learner._see(engine, clock, "art", prompt, images),
                       log)
+        if spec.get("renderer"):
+            progress("renderer")
+            _renderer(folder, spec, looked, lambda prompt, images: learner._see(engine, clock, "renderer", prompt,
+                                                                                 images, max_tokens=32000), log)
     return finish_original(engine, folder, spec, design, record, progress,
         learner=learner, designer=designer, log=log, report=clock.report())
 
@@ -836,6 +918,62 @@ def _art_director(folder, spec, looked, see, log):
     return art
 
 
+RENDERER_CONTEXT = ("The candidates were drawn in code by an animation renderer written for this channel, on a plain "
+                    "stand-in background where no background picture was drawn. Judge how the characters are built "
+                    "and drawn, their poses and effects, the palette and the framing as this channel's; do not judge "
+                    "the background.")
+
+
+def _by_video(frames: list) -> list:
+    """The channel's frames a video at a time in turn (<video>_<k>.jpg), so the frames Claude sees and the ones held
+    out to set the bar span its videos rather than the first one."""
+    groups = {}
+    for p in frames:
+        groups.setdefault(Path(p).stem.rsplit("_", 1)[0], []).append(p)
+    return [g[k] for k in range(max((len(g) for g in groups.values()), default=0)) for g in groups.values() if k < len(g)]
+
+
+def _renderer(folder, spec, looked, see, log):
+    """Claude writes the channel's animation renderer; its test shots are judged against the channel's own frames and
+    it is revised within a budget (cr_animated2d.build). Saved in <operation>/renderer/, so a recovery never repeats a
+    Claude call; a renderer below the channel's bar is saved and said, never swapped for something else."""
+    import cr_animated2d
+    import cr_bridge
+    import cr_style_likeness
+    import cr_style_map
+    home = _studio_home(folder)
+    profile = cr_style_map.answer(looked["profile"], spec.get("answers") or {})
+    channel = cr_animated2d.from_profile(profile)
+    art = ((_read(folder / "art-checkpoint.json").get("art") or {}).get("overrides") or {}).get("look") or {}
+    if art.get("character"):
+        channel["cast_in_words"] = str(art["character"])[:1500]
+    frames = cr_style_likeness.frames(home, spec["look_id"])
+    drawn = [p for p in frames if not cr_style_likeness.flat_graphic(p)]
+    frames = _by_video(drawn if len(drawn) >= 4 else frames)
+    if len(frames) < 9:
+        # one reference gives the look only 4 frames: the study's own frames of it (smaller) fill the frames Claude
+        # sees and the ones held out to set the bar, so the bar is still the channel's own
+        watched = [p for p in sorted((folder / "reflearn" / "ref_frames").glob("k*.jpg"))
+                   if not cr_animated2d._blank(p, 8)]
+        need = min(9 - len(frames), len(watched))
+        frames += [watched[i * len(watched) // need] for i in range(need)] if need else []
+    # the channel's own name is never drawn, though its watermark is in the frames Claude studies
+    handle = re.search(r"youtube\.com/@([\w.\-]+)", str(spec.get("reference_url") or ""))
+    names = list(dict.fromkeys([str(r.get("channel") or "") for r in looked.get("references") or []]
+                               + ([handle.group(1)] if handle else [])))
+
+    def judge(references, candidates):
+        return cr_bridge.call("style/compare", {"references": [cr_style_likeness._b64(p) for p in references],
+                                                "candidates": [cr_style_likeness._b64(p) for p in candidates],
+                                                "context": RENDERER_CONTEXT})
+    result = cr_animated2d.build(folder, {k: channel.get(k) for k in ("sky", "floor", "blur")}, channel, see=see,
+                                 judge=judge, references=frames[:9], home=home, log=log, names=[n for n in names if n])
+    log(f"  renderer: {result.get('state')}"
+        + (f", {result.get('overall')}/10 against a bar of {result.get('bar')}" if result.get("overall") is not None
+           else f" ({result.get('why', '')})"))
+    return result
+
+
 def _apply_learned(folder, spec, style, log):
     """The look's settings and the art director's words over the built style. Metadata only: no model call."""
     import cr_style_look
@@ -864,6 +1002,10 @@ def _apply_learned(folder, spec, style, log):
         # the characters are animated in code: no writer's words change how the video is made
         look = learned.setdefault("look", {})
         look.update(visuals=mapping["overrides"]["look"]["visuals"], animated2d=mapping["overrides"]["look"]["animated2d"])
+        import cr_animated2d
+        if spec.get("renderer"):
+            cr_animated2d.attach(learned, folder, home)
+        learned["cost"] = cr_animated2d.cost_note(learned)
     learned.setdefault("cr_style_clone", {}).update(
         learned_v2={"look_id": spec["look_id"], "base": mapping["base"], "base_why": mapping["base_why"],
                     "route": mapping.get("route") or {},
@@ -1281,7 +1423,11 @@ def run(home, operation_id, bridge, *, readiness, execute=None):
                 import make_video as engine
                 import cr_claude
                 cr_claude.install(engine, bridge)
-                with _creative_budget(saved["spec"]["budget_minutes"]):
+                extra = 0
+                if saved["spec"].get("renderer"):              # the channel's renderer is written within the study
+                    import cr_animated2d
+                    extra = cr_animated2d.BUILD_MINUTES
+                with _creative_budget(saved["spec"]["budget_minutes"] + extra):
                     if saved.get("refinement_only"):
                         import cr_style_refine
                         cr_style_refine.run_original(engine, folder, saved, progress)

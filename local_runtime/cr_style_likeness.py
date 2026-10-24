@@ -210,12 +210,33 @@ def render_designed(home, style, out_dir, *, timeout_s=None, run=None) -> list:
     return pictures
 
 
-def render_animated(home, style, out_dir, *, timeout_s=None) -> list:
-    """The three test shots drawn by the animated 2D kit in the style's conventions (cr_animated2d.test_film)."""
-    import cr_animated2d
-    if not cr_animated2d.available(home):
-        raise RuntimeError("this Studio has no animated 2D kit (update Studio)")
-    return cr_animated2d.render_stills(cr_animated2d.test_film(_animated(style) or {}), out_dir, home=home)
+def from_build(folder, style) -> dict:
+    """An animated style's check is its renderer's build: Claude's test shots were drawn by the renderer it saved and
+    judged against the channel's own frames, round by round (cr_animated2d.build). Nothing is drawn or paid again."""
+    folder = Path(folder)
+    built = _read(folder / "renderer" / "build.json")
+    if built.get("state") not in ("passed", "below_bar"):
+        return {"state": "failed", "style_hash": _hash(style), "cost_usd": 0.0,
+                "why": built.get("why") or "the study wrote no working animation renderer"}
+    out_dir = folder / "likeness"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    pictures = []
+    for k, rel in enumerate(built.get("stills") or []):
+        src = folder / "renderer" / rel
+        if src.is_file():
+            dest = out_dir / f"r0_{k}.jpg"
+            shutil.copyfile(src, dest)
+            pictures.append(dest.name)
+    best = next((r for r in built.get("rounds") or [] if r.get("round") == built.get("round")), {})
+    control = built.get("control")
+    overall, characters = float(built.get("overall") or 0), float(built.get("characters") or 0)
+    return {"state": "done", "style_hash": _hash(style), "checked_at": time.time(), "people": True,
+            "verdict": _verdict(overall, characters, True), "reliable": control is None or float(control) >= CONTROL_MIN,
+            "round": built.get("round"), "extra": "", "best": pictures[0] if pictures else "",
+            "scores": {"overall": overall, "characters": characters}, "dealbreakers": best.get("dealbreakers") or [],
+            "rounds": [{"round": built.get("round"), "pictures": pictures, "overall": overall,
+                        "characters": characters}],
+            "cost_usd": 0.0, "renderer": {"state": built["state"], "bar": built.get("bar"), "control": control}}
 
 
 def run(folder, spec, style, log, *, home, generate=None, upload=None, call=None, render=None) -> dict:
@@ -230,6 +251,11 @@ def run(folder, spec, style, log, *, home, generate=None, upload=None, call=None
         _write(folder / CHECK, result)
         log(f"  likeness check skipped: {why}")
         return result
+    if _animated(style) is not None:
+        result = from_build(folder, style)
+        _write(Path(folder) / CHECK, result)
+        log(f"  likeness check: the renderer's own build ({result.get('state')})")
+        return result
     shots = frames(home, spec.get("look_id"))
     if _designed(style) is not None:
         # rendered 3D shots are judged against the channel's 3D scenes, not its 2D graphics between them (with half
@@ -240,8 +266,7 @@ def run(folder, spec, style, log, *, home, generate=None, upload=None, call=None
         result = {"state": "skipped", "why": "too few reference frames to compare with", "style_hash": _hash(style)}
         _write(folder / CHECK, result)
         return result
-    animated = _animated(style) is not None
-    designed = _designed(style) is not None or animated
+    designed = _designed(style) is not None
     if not designed:
         import cr_media
         gen = generate or cr_media.image
@@ -256,10 +281,7 @@ def run(folder, spec, style, log, *, home, generate=None, upload=None, call=None
     control = shots[-1] if len(shots) >= 5 else None          # the channel's own frame, hidden among the candidates
     judged = [s for s in shots[1:] if s != control][:6]
     people = _people(style) or designed
-    context = ("The candidates were drawn by a 2D animation engine in the references' design: rigged characters in "
-               "the channel's conventions, on a plain stand-in background (each video draws its own backgrounds). Judge "
-               "the characters, their poses and effects, and the palette as this channel's." if animated else
-               "The candidates were rendered by a 3D engine in the references' design, including how their characters "
+    context = ("The candidates were rendered by a 3D engine in the references' design, including how their characters "
                "are built. Judge them as 3D scenes of this channel." if designed else "The candidates were drawn by an image model to match the references' look"
                + (", including how their characters are designed." if people else "."))
     suffix, extra, rounds, spent, stopped = str(look.get("still_suffix") or ""), "", [], 0.0, ""
@@ -270,8 +292,8 @@ def run(folder, spec, style, log, *, home, generate=None, upload=None, call=None
         for r in range(1 if designed else ROUNDS):
             pictures = []
             if designed:                                      # rendered, not drawn: nothing paid but the judge
-                pictures = (render or (render_animated if animated else render_designed))(
-                    home, style, out_dir, timeout_s=max(60, deadline - time.monotonic()))
+                pictures = (render or render_designed)(home, style, out_dir,
+                                                       timeout_s=max(60, deadline - time.monotonic()))
             for k, subject in enumerate([] if designed else SUBJECTS):
                 if time.monotonic() > deadline:
                     raise TimeoutError("the image account took too long")

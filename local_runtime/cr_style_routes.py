@@ -207,6 +207,19 @@ def install(studio, activity, setup_status, *, token, home=None):
         except Exception as error:
             return error_response(error)
 
+    @app.post("/cr-style-clone/<operation>/use-pictures")
+    def cr_style_use_pictures(operation):
+        """An animated style whose renderer fell short draws pictures instead, on the creator's word."""
+        try:
+            data()
+            with activity.lock:
+                if activity.busy():
+                    raise RuntimeError("Finish the current studio work before changing this style.")
+                cr_style_clone.use_pictures(home, operation, cr_bridge)
+            return no_store(jsonify(safe_status(operation)))
+        except Exception as error:
+            return error_response(error)
+
     @app.get("/cr-style-clone/look/<look_id>/sheet/<video_id>")
     def cr_style_look_sheet(look_id, video_id):
         try:

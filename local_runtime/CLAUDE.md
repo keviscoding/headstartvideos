@@ -119,11 +119,16 @@ Studio through its own checks, so nothing needs the Studio web page.
   recording=<the file's path>)`; otherwise `resume_video(id, voice=<choice id>)`. The choice is for that video only.
 - Cloning a style (/clone-style): the look's questions come first, and two of them decide how the videos are MADE, so
   ask them before anything else, in plain words, with Studio's guess as the first option: `medium` (a 3D channel: how
-  its 3D is made) and `animation` (a channel that animates its drawn characters, like stick-figure fights: animated by
-  Studio, or pictures in their look with some AI-animated clips). Studio animates stick-figure casts itself: it rigs
-  each video's characters as puppets in the channel's look and animates them in code, timed to the narration, in front
-  of a few background pictures drawn in the channel's look (about $0.08 a video). If `look_progress` or `clone_style`
-  returns a `medium_gap`, Studio can't make that medium yet: read it to the creator and call `clone_style` with
+  its 3D is made) and `animation` (a channel that animates its drawn characters, like stick-figure fights or animated
+  shorts: animated in code, or pictures in their look with some AI-animated clips). Animated in code means the study
+  has their Claude Code write this channel's own animation renderer (its characters, moves, effects and camera) and
+  check its test shots against the channel's frames: usually 3 to 10 more minutes of Claude usage (at most 25), no
+  money. Every video then reuses it: Claude directs the characters to the narration and Studio draws them on this
+  computer, so a video costs its voice, plus a background picture for each place (about $0.02) only when its animation
+  asks for them. Say this before they choose. When the study is done, `progress(op_…)` has `animation`: its score
+  against the channel's own bar; read `what_to_tell_them` to the creator, and if they would rather have pictures, they
+  press Use pictures instead on the style's page (never choose for them). If `look_progress` or `clone_style` returns
+  a `medium_gap`, Studio can't make that medium yet: read it to the creator and call `clone_style` with
   `accept_medium=true` only after they accept it. Never accept it for them, and never call a stopgap the real thing.
 
 ## Making videos through ChannelRecipe tools

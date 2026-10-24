@@ -37,9 +37,11 @@ MEDIUM_GAP_MANNEQUINS = ("With a 3D recipe, Studio's 3D engine makes faceless ma
                          "instead. 3D characters are coming in a Studio update.")
 # The same for drawn 2D characters the channel animates frame by frame (stick-figure fights, animated short films): a
 # @DartAnimates clone came out as AI stills with camera moves, the right look with nothing moving.
-ANIMATED_CODE = "Animated: Studio rigs the characters and animates them (they walk, fight and act)"
+ANIMATED_CODE = "Animated in code: your Claude Code writes the channel's animation (they walk, fight and act)"
 ANIMATED_PICTURES = "Pictures in their look, with some clips animated by AI"
 ANIMATIONS = (ANIMATED_CODE, ANIMATED_PICTURES)
+# Studio 101-103's wording of the same answer (a look answered before an update still means animated)
+ANIMATED_CODE_WAS = "Animated: Studio rigs the characters and animates them (they walk, fight and act)"
 ANIMATION_GAP = ("Studio can't rig and animate these characters yet. Your videos would be drawn pictures in their look, "
                  "some of them moved as cut-outs or animated by AI: close to how the channel looks, but its characters "
                  "won't walk, fight and act the way they do in its videos. Animated 2D characters are coming in a "
@@ -749,8 +751,11 @@ def animation_question(profile) -> dict:
         return {}
     guess = animation_guess(profile)
     return {"id": "animation", "ask": f"This channel animates its characters: they move {round(share * 100)}% of the "
-            "time its drawn pictures are on screen. How should your videos be made? Studio's guess is first: change it "
-            "if it's wrong, because it decides how your videos are made.",
+            "time its drawn pictures are on screen. How should your videos be made? Animated: during the study your "
+            "Claude Code writes this channel's animation in code and checks it against the channel (usually 3 to 10 "
+            "more minutes of Claude usage, at most 25); every video then costs only its voice, and at most a few "
+            "background pictures. Studio's guess is first: change it if it's wrong, because it decides how your videos "
+            "are made.",
             "options": [guess] + [o for o in ANIMATIONS if o != guess]}
 
 
@@ -760,6 +765,7 @@ def _animated_route(profile, animation: str) -> dict:
     if not animation_question(profile):
         return {}
     drawn = round(_drawn_2d(profile) * 100)
+    animation = ANIMATED_CODE if animation == ANIMATED_CODE_WAS else animation
     told = animation in ANIMATIONS
     pick = animation if told else animation_guess(profile)
     if pick == ANIMATED_CODE:
@@ -767,8 +773,11 @@ def _animated_route(profile, animation: str) -> dict:
         ok, seen = cr_animated2d.fits(profile)
         if ok and cr_animated2d.available():
             return {"engine": "animated2d", "why": f"{drawn}% of the pictures are drawn characters the channel animates "
-                    f"({seen}). Studio rigs them as puppets and animates them in code: they walk, fight and act, timed to "
-                    "the narration, in front of backgrounds drawn in the channel's look."}
+                    f"({seen}). During the study your Claude Code writes this channel's animation in code (its "
+                    "characters, moves, effects and camera) and checks its test shots against the channel's own frames "
+                    "(usually 3 to 10 more minutes of Claude usage, at most 25). Every video then reuses it: Claude "
+                    "directs the characters to the narration, and Studio draws them on this computer, with their places "
+                    "drawn in code or as background pictures in the channel's look (about $0.02 each)."}
         kit = cr_animated2d.available()
         return {"engine": "pictures", "why": f"{drawn}% of the pictures are drawn characters the channel animates, but "
                 + ("Studio rigs only stick-figure characters so far" if kit else "Studio can't rig and animate them yet")

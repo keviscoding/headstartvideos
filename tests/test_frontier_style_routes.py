@@ -710,7 +710,7 @@ def test_browser_the_answer_on_animated_2d_characters_replans_and_pictures_need_
             assert page.evaluate("look.mapping.route.medium_gap") == cr_style_map.ANIMATION_GAP
             page.locator(f"input[name='q-animation'][value='{cr_style_map.ANIMATED_PICTURES}']").check()
             page.wait_for_function("!(look.mapping.route||{}).medium_gap")
-            page.locator(f"input[name='q-animation'][value='{cr_style_map.ANIMATED_CODE}']").check()
+            page.locator(f"input[name='q-animation'][value=\"{cr_style_map.ANIMATED_CODE}\"]").check()
             page.wait_for_function("document.getElementById('medium-gap').hidden === false")
             assert "can't rig and animate these characters yet" in page.locator("#medium-gap-text").inner_text()
             assert "How the pictures are made" in page.locator("#look-route").inner_text()
