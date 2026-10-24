@@ -14,6 +14,7 @@ For full testing with real Atlas/Pexels, set ATLASCLOUD_KEY and PEXELS_KEY.
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 # Add workspace to path
@@ -109,7 +110,7 @@ def test_frontier_smoke():
     print("FRONTIER SMOKE TEST")
     print("="*60 + "\n")
     
-    output_dir = Path("/tmp/frontier_smoke_test")
+    output_dir = Path(tempfile.gettempdir()) / "frontier_smoke_test"
     output_dir.mkdir(exist_ok=True)
     
     # Create fixtures

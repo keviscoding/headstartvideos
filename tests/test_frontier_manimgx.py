@@ -575,7 +575,8 @@ def test_child_shader_or_protocol_failure_cannot_report_completion(tmp_path, mon
     with pytest.raises(RuntimeError, match=message):
         gx._invoke(sys.executable, {}, tmp_path, timeout=3)
     assert children[0].poll() is not None
-    assert (tmp_path / "render_stdout.log").stat().st_mode & 0o077 == 0
+    if os.name != "nt":                         # POSIX permission bits; Windows keeps the file private by its ACL
+        assert (tmp_path / "render_stdout.log").stat().st_mode & 0o077 == 0
 
 
 @pytest.mark.parametrize("changes", [{"duration": float("nan")}, {"duration": float("inf")}, {"frames": 1},
@@ -673,7 +674,9 @@ def test_native_typecheck_rejects_unknown_api_before_gpu_render(native_runtime, 
     with pytest.raises(RuntimeError, match="pinned API"):
         gx._typecheck(native_runtime.python, path)
     diagnostic = path.with_suffix(".validation.log")
-    assert "invented_size" in diagnostic.read_text() and diagnostic.stat().st_mode & 0o077 == 0
+    assert "invented_size" in diagnostic.read_text()
+    if os.name != "nt":                         # POSIX permission bits; Windows keeps the file private by its ACL
+        assert diagnostic.stat().st_mode & 0o077 == 0
 
 
 def test_native_mixed_dictionary_point_has_identical_executable_source(native_runtime, tmp_path):

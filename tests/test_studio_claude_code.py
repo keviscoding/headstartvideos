@@ -1,6 +1,7 @@
 """ChannelRecipe Studio inside Claude Code: the studio tool server, the folder settings, the gallery and notifications."""
 import io
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -330,7 +331,8 @@ def test_configure_adds_the_studio_server_beside_the_account_entry(tmp_path):
     assert servers["channelrecipe"] == account
     assert servers["studio"]["command"] == str(tmp_path / ".venv" / "bin" / "python")
     assert servers["studio"]["args"] == [str(tmp_path / "cr_studio_tools.py")]
-    assert (tmp_path / ".mcp.json").stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":                         # POSIX permission bits; Windows keeps the file private by its ACL
+        assert (tmp_path / ".mcp.json").stat().st_mode & 0o777 == 0o600
     settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
     assert settings["enabledMcpjsonServers"] == ["channelrecipe", "studio"]
     assert "mcp__studio__make_videos" in settings["permissions"]["ask"]

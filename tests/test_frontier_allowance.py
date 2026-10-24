@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 import json
 import hashlib
+import os
 import subprocess
 import sys
 import time
@@ -21,7 +22,8 @@ def test_timezone_reset_and_account_boundary(tmp_path):
     assert result["reset_at"] == datetime(2026, 10, 12, 8, 40, tzinfo=timezone.utc).timestamp()
     assert cr_allowance.status(tmp_path, "account-b", now=now) == {"blocked": False}
     assert cr_allowance.status(tmp_path, "account-a", now=result["reset_at"]) == {"blocked": False}
-    assert (tmp_path / ".cr-claude-allowance.json").stat().st_mode & 0o077 == 0
+    if os.name != "nt":                         # POSIX permission bits; Windows keeps the file private by its ACL
+        assert (tmp_path / ".cr-claude-allowance.json").stat().st_mode & 0o077 == 0
 
 
 @pytest.mark.parametrize("message", ["too many requests", "weekly limit resets tomorrow", "resets 9:40am", "resets 29:40pm (Europe/London)", "resets 9:40am (Unknown/City)"])

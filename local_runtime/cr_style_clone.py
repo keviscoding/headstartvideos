@@ -97,7 +97,10 @@ def _lock(folder, name=".lock"):
         try:
             if os.name == "nt":
                 import msvcrt
-                handle.seek(0); handle.write(b"0"); handle.flush(); handle.seek(0)
+                # Windows locks byte 0 even past the end of the file. Never write it first: the descriptor has no
+                # O_APPEND, so the write landed on a byte another study had locked, and the failed write came back on
+                # close as a bare "Permission denied" instead of this message.
+                handle.seek(0)
                 msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
             else:
                 import fcntl
@@ -762,13 +765,15 @@ def study_original(engine, folder, spec, progress, *, learner=None, designer=Non
 def _portable(value, home):
     """The style with every path inside this Studio written relative to it (its kit's manifest, the study board), so
     the style keeps working when the Studio folder moves; the engine reads them from the Studio folder."""
-    root = str(Path(home).resolve()) + "/"
+    # normcase: Windows paths use backslashes and any case ("C:\Users\..."), so a plain "/" prefix never matched there
+    # and a Windows creator's learned styles kept absolute paths
+    root = os.path.normcase(str(Path(home).resolve())) + os.sep
     if isinstance(value, dict):
         return {k: _portable(v, home) for k, v in value.items()}
     if isinstance(value, list):
         return [_portable(v, home) for v in value]
-    if isinstance(value, str) and value.startswith(root):
-        return value[len(root):]
+    if isinstance(value, str) and os.path.normcase(value).startswith(root):
+        return Path(value[len(root):]).as_posix()
     return value
 
 

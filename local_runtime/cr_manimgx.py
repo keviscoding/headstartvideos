@@ -114,7 +114,9 @@ def _write(path, value, *, text=False):
     fd, name = tempfile.mkstemp(dir=path.parent, prefix="." + path.name, suffix=".tmp")
     temporary = Path(name)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        # newline="": the bytes on disk are the text that was hashed (Windows would write "\n" as "\r\n", and every
+        # saved scene then read as changed)
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
             handle.write(value) if text else json.dump(value, handle, ensure_ascii=False, allow_nan=False)
         temporary.chmod(0o600)
         temporary.replace(path)

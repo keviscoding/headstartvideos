@@ -334,7 +334,8 @@ def test_a_crash_while_loading_never_takes_studio_with_it(speech, monkeypatch):
     real = subprocess.run
     monkeypatch.setattr(cr_whisper, "LOAD", "import os, signal; os.kill(os.getpid(), signal.SIGSEGV)")
     if sys.platform == "win32":
-        monkeypatch.setattr(cr_whisper, "LOAD", "import os; os._exit(3221225477)")
+        # 0xC0000005, an access violation: os._exit takes a C int, so it's written as a negative number
+        monkeypatch.setattr(cr_whisper, "LOAD", "import os; os._exit(-1073741819)")
     monkeypatch.setattr(cr_whisper.subprocess, "run", real)
     record = cr_whisper.load_check(str(speech.folder))
     assert record["ok"] is False and "a library it uses crashed" in record["error"]

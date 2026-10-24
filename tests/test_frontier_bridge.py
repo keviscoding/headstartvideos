@@ -1,5 +1,6 @@
 """The downloadable bridge must preserve jobs and never fall back to CR billing."""
 import json
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -17,7 +18,8 @@ def local(tmp_path, monkeypatch):
 
 
 def test_connection_file_is_private_and_unsecured_remote_url_is_rejected(local):
-    assert bridge.SETTINGS.stat().st_mode & 0o077 == 0
+    if os.name != "nt":                         # POSIX permission bits; Windows keeps the file private by its ACL
+        assert bridge.SETTINGS.stat().st_mode & 0o077 == 0
     with pytest.raises(RuntimeError, match="secure HTTPS"):
         bridge.call("status", settings={"url": "http://remote.example", "key": "cr_mcp_test_only"})
 

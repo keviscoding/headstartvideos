@@ -13,25 +13,29 @@ _DEFAULT_ENCODING = set()
 _read_text, _write_text = pathlib.Path.read_text, pathlib.Path.write_text
 
 
-def _encoding(encoding):
-    """The tests' own reads and writes of the repository's files are UTF-8, as the files are; on Windows a bare
-    read_text() or write_text() would use cp1252. Only calls made from a test file get this. Studio's own code never
-    does: it must say encoding="utf-8" itself (tests/test_windows_portability.py), and Python's EncodingWarning still
-    names its line."""
-    if encoding is not None:
-        return encoding
-    caller = sys._getframe(2).f_code.co_filename
-    if Path(caller).parent == TESTS:
-        return "utf-8"
-    return io.text_encoding(None, 3)
+def _from_a_test():
+    """Was the read_text()/write_text() that called this made by a test file itself?"""
+    return Path(sys._getframe(2).f_code.co_filename).parent == TESTS
 
 
+# The tests' own reads and writes of the repository's files are UTF-8, as the files are, and a test's file holds the
+# bytes it wrote, as on a Mac; on Windows a bare read_text()/write_text() would use cp1252 and turn "\n" into "\r\n".
+# Only calls made from a test file get this. Studio's own code never does: it must say encoding="utf-8" itself
+# (tests/test_windows_portability.py), and Python's EncodingWarning still names its line.
 def _test_read_text(self, encoding=None, errors=None, newline=None):
-    return _read_text(self, _encoding(encoding), errors, newline)
+    if encoding is None:
+        encoding = "utf-8" if _from_a_test() else io.text_encoding(None, 2)
+    return _read_text(self, encoding, errors, newline)
 
 
 def _test_write_text(self, data, encoding=None, errors=None, newline=None):
-    return _write_text(self, data, _encoding(encoding), errors, newline)
+    if encoding is None or newline is None:
+        test = _from_a_test()
+        if encoding is None:
+            encoding = "utf-8" if test else io.text_encoding(None, 2)
+        if newline is None and test:
+            newline = "\n"
+    return _write_text(self, data, encoding, errors, newline)
 
 
 pathlib.Path.read_text, pathlib.Path.write_text = _test_read_text, _test_write_text

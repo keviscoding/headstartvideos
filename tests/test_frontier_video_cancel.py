@@ -497,6 +497,10 @@ def test_studio_says_when_it_was_closed_in_the_middle_of_a_video(tmp_path):
     progress.parent.mkdir(parents=True)
     cancel._write(progress, {"project_id": PROJECT, "run_id": RUN, "job": {"state": "running", "done": False,
                                                                            "title": "The Hindenburg"}})
+    # written later in that session, as a real video's progress is (Windows stamps files from a clock that can run
+    # 16 ms behind time.time(), so a file written right after the session's note could look older than it)
+    later = time.time() + 5
+    os.utime(progress, (later, later))
     note = cr_studio.session_started(tmp_path)                      # closed from outside while that video ran
     assert '"The Hindenburg"' in note and "Claude Code" in note and "launcher window" in note
     cancel._write(progress, {"project_id": PROJECT, "run_id": RUN, "job": {"state": "done", "done": True}})

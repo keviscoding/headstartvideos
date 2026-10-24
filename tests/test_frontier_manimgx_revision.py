@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -145,7 +146,8 @@ def test_native_revision_reads_frozen_source_and_keeps_visual_role(revision, mon
         assert files[1] == revision.target_dir / "revision-start.py"
         assert files[1].read_text() == SOURCE
         assert files[1] != revision.old / "scene.py"
-        assert files[1].stat().st_mode & 0o077 == 0
+        if os.name != "nt":                         # POSIX permission bits; Windows keeps the file private by its ACL
+            assert files[1].stat().st_mode & 0o077 == 0
         return json.dumps(manifest(revision.target, SOURCE + "# revised native result\n"))
     monkeypatch.setitem(sys.modules, "threed", SimpleNamespace(_cc=native))
     engine = SimpleNamespace(_cr_original_cc_model="sonnet", CLAUDE_PROVIDER="claudecode")

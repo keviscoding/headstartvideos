@@ -146,17 +146,9 @@ SLOW_WORKER = (
     "time.sleep(60)\n")
 
 
-def _alive(pid):
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    return True
-
-
 def _gone(pid, seconds=8.0):
     for _ in range(int(seconds * 20)):
-        if not _alive(pid):
+        if not routes._alive(pid):          # Studio's own check: os.kill(pid, 0) would end the process on Windows
             return True
         time.sleep(0.05)
     return False

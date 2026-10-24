@@ -60,7 +60,7 @@ def _publish_new(path, value, *, text=False):
     fd, name = tempfile.mkstemp(dir=path.parent, prefix="." + path.name, suffix=".recovery-tmp")
     temporary = Path(name)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:     # the hashed text, byte for byte
             handle.write(value) if text else json.dump(value, handle, ensure_ascii=False, allow_nan=False)
         temporary.chmod(0o600)
         try:

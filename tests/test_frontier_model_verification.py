@@ -1,6 +1,7 @@
 """Keep model access checks across reviewed adapter upgrades without paid probes."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -87,7 +88,8 @@ def test_legacy_migration_keeps_check_age_and_requires_exact_saved_profile(verif
     assert migrated["schema_version"] == 2 and migrated["verified_at"] == 199940
     assert migrated["workflow"] == {"workflow":WORKFLOW,"source":SOURCE}
     assert cr_claude.models_verified({**v.cfg,"local_version":"5.3-admin.14"},v.local)
-    assert v.marker.stat().st_mode & 0o077 == 0
+    if os.name != "nt":                         # POSIX permission bits; Windows keeps the file private by its ACL
+        assert v.marker.stat().st_mode & 0o077 == 0
 
 
 @pytest.mark.parametrize("kind", ["expired","future_timestamp","unknown_adapter","changed_workflow","changed_source","missing_manifest"])
@@ -213,7 +215,8 @@ def test_completed_setup_report_and_lost_receipt_recover_without_more_model_call
         "media_type":"application/json"}]}
     assert delivered[0] == expected_receipt
     assert json.loads((report_dir/".cr-finish-pending.json").read_text()) == expected_receipt
-    assert report_path.stat().st_mode & 0o077 == 0
+    if os.name != "nt":                         # POSIX permission bits; Windows keeps the file private by its ACL
+        assert report_path.stat().st_mode & 0o077 == 0
     second = cr_claude.verify_models(SimpleNamespace(),bridge,{"local_version":"5.3-admin.14"})
     assert second["verified"] and second["reused"] and not second["completion_pending"]
     assert len(calls) == (0 if legacy else 2)
