@@ -79,6 +79,42 @@ def guard_parent(home, project_id, run_id):
     threading.Thread(target=watch, daemon=True).start()
 
 
+# A worker that ends without reporting (a crash below Python, or an exit before its own error was saved) is explained
+# from its log and exit code, so the creator and support see why instead of "the worker stopped".
+_NOISE = re.compile(r"^(cached|images:|story:|style:|character:|whisper:|timing|===)", re.I)
+
+
+def crash_reason(tail: str, code) -> str:
+    low = tail.lower()
+    if "the studio that started this video closed" in low:
+        return "Studio closed while this video was being made"
+    if "omp: error #15" in low:
+        return "two copies of a maths library clashed while the speech-timing model loaded"
+    if ("memoryerror" in low or "out of memory" in low or "cannot allocate memory" in low or "bad_alloc" in low
+            or code in (137, -9, 3221225495)):
+        return "this computer ran out of memory"
+    if code in (-4, 132, 3221225501):
+        return "a library needs a processor instruction this computer doesn't have"
+    if code in (-11, 139, 3221225477, 3221226505) or "segmentation fault" in low or "access violation" in low:
+        return "a library it uses crashed"
+    return f"it ended unexpectedly (exit code {code})"
+
+
+def crash_message(log_path, code) -> str:
+    try:
+        with open(log_path, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 16384))
+            tail = f.read().decode("utf-8", "replace")
+    except OSError:
+        tail = ""
+    last = next((line.strip() for line in reversed(tail.splitlines())
+                 if line.strip() and not _NOISE.match(line.strip())), "")
+    detail = f" Last message: {last[:240]}" if last else ""
+    return (f"The local video worker stopped: {crash_reason(tail, code)}. Saved work is kept: press Resume saved project "
+            f"to carry on from where it stopped.{detail} (Copy diagnostics in Setup includes the full log.)")
+
+
 def run_original_worker(home, project_id, run_id, studio):
     """Invoke the untouched original app function, mirroring only its status."""
     _, spec_path, progress = worker_files(home, run_id)
@@ -163,7 +199,10 @@ class VideoWorkers:
                      steps=spec.get("steps", []), minutes=spec.get("minutes", 10), style=spec.get("style", ""))
         command = [sys.executable, str(self.home / "cr_worker.py"), "--project", project_id,
                    "--", str(self.home / "app.py"), "--cr-video", run_id]
-        options = {"cwd": str(self.home), "stdin": subprocess.DEVNULL}
+        # KMP_DUPLICATE_LIB_OK: two copies of Intel's OpenMP (the speech-timing model's and another library's) abort a
+        # process outright on Windows ("OMP: Error #15") instead of running.
+        options = {"cwd": str(self.home), "stdin": subprocess.DEVNULL,
+                   "env": {**os.environ, "KMP_DUPLICATE_LIB_OK": "TRUE"}}
         if os.name == "nt":
             options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
         else:
@@ -197,8 +236,7 @@ class VideoWorkers:
                     _write(folder / "cancelled.json", {"project_id": project_id, "run_id": run_id, "slug": slug,
                             "status": "cancelled", "stopped_at": time.time()})
                 elif not state.get("done"):
-                    state.update(state="error", done=True,
-                                 error="The local video worker stopped. Saved work is kept; review its status in Setup before resuming.")
+                    state.update(state="error", done=True, error=crash_message(log_path, process.returncode))
                     state.setdefault("lines", []).append(state["error"])
             finally:
                 # Never free the account/project reservation while a worker lives.

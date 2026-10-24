@@ -338,3 +338,43 @@ def test_asks_spread_over_more_than_ten_minutes_keep_the_storage_link():
     assert studio.storage_blocked(99, "release", now=1600), "then the account's links all come through this site"
     assert not studio.storage_blocked(99, "release", now=1500 + 86400 + 1)
     studio._link_asks.pop(99, None)
+
+
+def test_kies_files_come_through_the_relay_for_a_studio_that_cant_reach_kies_file_host(env, monkeypatch):
+    """A creator's network cut every connection to aiquickdraw.com: their Studio fetches Kie's finished files here
+    (local_runtime/cr_relay.py). Only Kie's file hosts, only for a Studio account, byte ranges passed on."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    data = b"RIFF" + bytes(range(256)) * 20
+    asked = []
+
+    class Upstream:
+        def __init__(self, url, headers):
+            first = int((headers.get("Range") or "bytes=0-").split("=")[1].split("-")[0])
+            self.body, self.status_code = data[first:], 206 if headers.get("Range") else 200
+            self.headers = {"Content-Length": str(len(self.body)), "Content-Type": "audio/wav"}
+            if headers.get("Range"):
+                self.headers["Content-Range"] = f"bytes {first}-{len(data) - 1}/{len(data)}"
+
+        def iter_content(self, size):
+            yield self.body
+
+        def close(self):
+            pass
+    monkeypatch.setattr(studio.requests, "get", lambda url, headers=None, **kw: asked.append((url, headers, kw)) or Upstream(url, headers))
+    app = FastAPI()
+    app.include_router(studio.make_router(lambda req: user(1, "daily") if req.headers.get("x-test-user") else None,
+                                          prefix="/api/studio"))
+    client = TestClient(app)
+    url = "https://tempfile.aiquickdraw.com/r/voice-123.wav"
+    assert client.get("/api/studio/media-relay", params={"url": url}).status_code == 401
+    got = client.get("/api/studio/media-relay", params={"url": url}, headers={"x-test-user": "1"})
+    assert got.status_code == 200 and got.content == data and got.headers["content-type"] == "audio/wav"
+    assert asked[-1][0] == url and asked[-1][2]["allow_redirects"] is False
+    part = client.get("/api/studio/media-relay", params={"url": url}, headers={"x-test-user": "1", "Range": "bytes=100-"})
+    assert part.status_code == 206 and part.content == data[100:] and asked[-1][1]["Range"] == "bytes=100-"
+    for other in ("https://example.com/x.wav", "http://tempfile.aiquickdraw.com/x.wav",
+                  "https://aiquickdraw.com.evil.example/x.wav", "https://user:pw@tempfile.aiquickdraw.com/x.wav",
+                  "https://tempfile.aiquickdraw.com:8443/x.wav"):
+        assert client.get("/api/studio/media-relay", params={"url": other}, headers={"x-test-user": "1"}).status_code == 400
+    assert len(asked) == 2, "nothing else is ever fetched"
