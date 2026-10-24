@@ -843,6 +843,16 @@ def create_app():
         problems = [line for line in recent if any(word in line.lower() for word in ("error", "traceback", "failed", "exception", "stopped"))]
         lines += ["", "Recent problems:"] + (problems[-30:] or ["none"])
         lines += ["", "Recent Studio window output:"] + (recent[-40:] or ["none"])
+        try:                                     # the last video worker's own log (why a worker stopped)
+            logs = sorted((HOME / "output" / "cr-video-workers").glob("*/worker.log"), key=lambda p: p.stat().st_mtime)
+            if logs:
+                with open(logs[-1], "rb") as f:
+                    f.seek(0, 2)
+                    f.seek(max(0, f.tell() - 6000))
+                    tail = f.read().decode("utf-8", "replace").splitlines()[-40:]
+                lines += ["", "Last video worker log:"] + tail
+        except OSError:
+            pass
         home = str(Path.home())
         text = redact("\n".join(lines)).replace(home, "~")
         return Response(text, mimetype="text/plain", headers={"Cache-Control": "private, no-store"})

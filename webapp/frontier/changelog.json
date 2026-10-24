@@ -1,5 +1,15 @@
 [
   {
+    "build": 97,
+    "date": "2026-10-24",
+    "title": "Works on more networks, and says why when it stops",
+    "items": [
+      "Fixed: Studio now gets Kie's finished files even when your network blocks Kie's file host. Voice, pictures, music and models then come through channelrecipe.com instead, for the rest of the day.",
+      "Fixed: when a video stops unexpectedly, Studio says why. The stop message names the cause and the last error, and Copy diagnostics now includes the video's own log.",
+      "Fixed: a clash between two copies of a maths library can no longer stop a video on Windows while it times the narration."
+    ]
+  },
+  {
     "build": 96,
     "date": "2026-10-24",
     "title": "Updates never stop your work",

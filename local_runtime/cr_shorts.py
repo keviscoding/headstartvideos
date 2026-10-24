@@ -233,6 +233,7 @@ def child_env(**extra) -> dict:
     holds emoji), then on the first emoji label it printed and on every picked.json, plan.json and edit.json it wrote.
     PYTHONIOENCODING too, because it outranks UTF-8 mode for the pipes when a creator has it set."""
     return {**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8:replace",
+            "KMP_DUPLICATE_LIB_OK": "TRUE",       # two OpenMP copies (speech timing + another library) abort on Windows
             **{k: str(v) for k, v in extra.items()}}
 
 

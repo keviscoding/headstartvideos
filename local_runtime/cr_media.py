@@ -20,6 +20,9 @@ from urllib.parse import urlsplit
 
 import requests
 import cr_bridge
+import cr_relay
+
+cr_relay.install()               # Kie's files through ChannelRecipe when this computer can't reach Kie's file host
 
 HOME = Path(__file__).resolve().parent
 CATALOG = HOME / "cr-providers.json"

@@ -32,15 +32,15 @@ from webapp import plans
 from cryptography.fernet import Fernet, InvalidToken
 from webapp import frontier_providers as providers
 
-VERSION = "5.3-admin.96"
+VERSION = "5.3-admin.97"
 CATALOG = Path(__file__).resolve().parent / "frontier" / "catalog.json"
-RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.96.zip"
+RELEASE_KEY = "private/frontier/channelrecipe-5.3-admin.97.zip"
 # Every release the server still serves (older ones keep running projects alive). Append each new release; never
 # remove one, or projects pinned to it stop.
 APPROVED_RELEASES = ("5.3-admin.8", "5.3-admin.9", "5.3-admin.10", "5.3-admin.11", "5.3-admin.12",
                 "5.3-admin.13", "5.3-admin.14", "5.3-admin.15", "5.3-admin.16", "5.3-admin.17",
                 "5.3-admin.18", "5.3-admin.19", "5.3-admin.20", "5.3-admin.21", "5.3-admin.22",
-                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43", "5.3-admin.44", "5.3-admin.45", "5.3-admin.46", "5.3-admin.47", "5.3-admin.48", "5.3-admin.49", "5.3-admin.50", "5.3-admin.51", "5.3-admin.52", "5.3-admin.53", "5.3-admin.54", "5.3-admin.55", "5.3-admin.56", "5.3-admin.57", "5.3-admin.58", "5.3-admin.59", "5.3-admin.60", "5.3-admin.61", "5.3-admin.62", "5.3-admin.63", "5.3-admin.64", "5.3-admin.65", "5.3-admin.66", "5.3-admin.67", "5.3-admin.68", "5.3-admin.69", "5.3-admin.70", "5.3-admin.71", "5.3-admin.72", "5.3-admin.73", "5.3-admin.74", "5.3-admin.75", "5.3-admin.76", "5.3-admin.77", "5.3-admin.78", "5.3-admin.79", "5.3-admin.80", "5.3-admin.81", "5.3-admin.82", "5.3-admin.83", "5.3-admin.84", "5.3-admin.85", "5.3-admin.86", "5.3-admin.87", "5.3-admin.88", "5.3-admin.89", "5.3-admin.90", "5.3-admin.91", "5.3-admin.92", "5.3-admin.93", "5.3-admin.94", "5.3-admin.95", "5.3-admin.96")
+                "5.3-admin.23", "5.3-admin.24", "5.3-admin.25", "5.3-admin.26", "5.3-admin.27", "5.3-admin.28", "5.3-admin.29", "5.3-admin.30", "5.3-admin.31", "5.3-admin.32", "5.3-admin.33", "5.3-admin.34", "5.3-admin.35", "5.3-admin.36", "5.3-admin.38", "5.3-admin.39", "5.3-admin.40", "5.3-admin.41", "5.3-admin.42", "5.3-admin.43", "5.3-admin.44", "5.3-admin.45", "5.3-admin.46", "5.3-admin.47", "5.3-admin.48", "5.3-admin.49", "5.3-admin.50", "5.3-admin.51", "5.3-admin.52", "5.3-admin.53", "5.3-admin.54", "5.3-admin.55", "5.3-admin.56", "5.3-admin.57", "5.3-admin.58", "5.3-admin.59", "5.3-admin.60", "5.3-admin.61", "5.3-admin.62", "5.3-admin.63", "5.3-admin.64", "5.3-admin.65", "5.3-admin.66", "5.3-admin.67", "5.3-admin.68", "5.3-admin.69", "5.3-admin.70", "5.3-admin.71", "5.3-admin.72", "5.3-admin.73", "5.3-admin.74", "5.3-admin.75", "5.3-admin.76", "5.3-admin.77", "5.3-admin.78", "5.3-admin.79", "5.3-admin.80", "5.3-admin.81", "5.3-admin.82", "5.3-admin.83", "5.3-admin.84", "5.3-admin.85", "5.3-admin.86", "5.3-admin.87", "5.3-admin.88", "5.3-admin.89", "5.3-admin.90", "5.3-admin.91", "5.3-admin.92", "5.3-admin.93", "5.3-admin.94", "5.3-admin.95", "5.3-admin.96", "5.3-admin.97")
 # Releases that may also START or RESUME a video: every release from MIN_SUPPORTED_RELEASE to the newest. A new release
 # never forces an update (2026-10-24: with "the newest two", five releases in one night made creators stop their work
 # to update, twice). Raise the minimum only on purpose, when older Studios can no longer work with this server, and say
@@ -1368,6 +1368,65 @@ def make_router(session_user, *, prefix="/api/frontier"):
             raise HTTPException(503, "The studio download is being prepared. Please try again shortly.")
         return stream_private(request, RELEASE_KEY, "ChannelRecipe-local-studio-%s.zip" % VERSION,
                               {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
+
+    # Kie's finished files (voice, pictures, music, 3D models) for a Studio whose network can't reach Kie's file host:
+    # a creator's provider cut every connection to aiquickdraw.com during the handshake while this site worked
+    # (local_runtime/cr_relay.py). Only Kie's file hosts, only for a Studio account, at most MEDIA_RELAY_PARALLEL at a
+    # time per account and MEDIA_RELAY_MAX_BYTES a file.
+    MEDIA_RELAY_SUFFIXES = ("aiquickdraw.com", "redpandaai.co")
+    MEDIA_RELAY_PARALLEL, MEDIA_RELAY_MAX_BYTES = 6, 600 * 1024 * 1024
+    relay_slots: dict = {}
+    relay_lock = threading.Lock()
+
+    @router.get("/media-relay")
+    def media_relay(request: Request, url: str = "", user=Depends(access)):
+        from urllib.parse import urlsplit
+        parts = urlsplit(url)
+        host = (parts.hostname or "").lower()
+        if (parts.scheme != "https" or parts.port not in (None, 443) or parts.username or parts.password
+                or not any(host == s or host.endswith("." + s) for s in MEDIA_RELAY_SUFFIXES)):
+            raise HTTPException(400, "Only Kie's generated files can be fetched this way.")
+        with relay_lock:
+            slot = relay_slots.setdefault(user["id"], threading.BoundedSemaphore(MEDIA_RELAY_PARALLEL))
+        if not slot.acquire(timeout=60):
+            raise HTTPException(429, "Too many files at once. Try again in a moment.")
+        headers = {"User-Agent": "ChannelRecipe-Studio-relay"}
+        wanted = request.headers.get("range") or ""
+        if re.fullmatch(r"bytes=\d+-\d*", wanted):
+            headers["Range"] = wanted
+        try:
+            upstream = requests.get(url, headers=headers, stream=True, timeout=(10, 120), allow_redirects=False)
+        except requests.RequestException:
+            slot.release()
+            raise HTTPException(502, "Kie's file host didn't answer. Try again shortly.")
+        if upstream.status_code not in (200, 206):
+            upstream.close()
+            slot.release()
+            raise HTTPException(502 if upstream.status_code >= 500 else 404,
+                                f"Kie's file host answered {upstream.status_code} for this file.")
+        size = int(upstream.headers.get("Content-Length") or 0)
+        if size > MEDIA_RELAY_MAX_BYTES:
+            upstream.close()
+            slot.release()
+            raise HTTPException(413, "This file is larger than the relay's limit.")
+        out = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}
+        for name in ("Content-Length", "Content-Range", "Content-Type", "Accept-Ranges"):
+            if upstream.headers.get(name):
+                out[name] = upstream.headers[name]
+
+        def chunks():
+            sent = 0
+            try:
+                for chunk in upstream.iter_content(1 << 20):
+                    sent += len(chunk)
+                    if sent > MEDIA_RELAY_MAX_BYTES:
+                        break
+                    yield chunk
+            finally:
+                upstream.close()
+                slot.release()
+        return StreamingResponse(chunks(), status_code=upstream.status_code, headers=out,
+                                 media_type=upstream.headers.get("Content-Type") or "application/octet-stream")
 
     @router.get("/stream/{what}")
     def stream(what: str, request: Request, t: str = ""):
