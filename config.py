@@ -256,6 +256,13 @@ BYOK_EMAILS = sorted(_BYOK_EMAILS_DEFAULT | set(_BYOK_EMAILS_ENV))
 
 # Telemetry (all optional — everything stays inert if these are blank)
 POSTHOG_KEY = (os.getenv("POSTHOG_KEY", "") or "").strip()
+
+# Affiliate program (Rewardful, connected to our Stripe in Rewardful's dashboard). Off until the owner sets
+# REWARDFUL_PUBLIC_KEY (the public "data-rewardful" key, not a secret) and AFFILIATE_PORTAL_URL (where affiliates sign up).
+REWARDFUL_PUBLIC_KEY = (os.getenv("REWARDFUL_PUBLIC_KEY", "") or "").strip()
+AFFILIATE_PORTAL_URL = (os.getenv("AFFILIATE_PORTAL_URL", "") or "").strip()
+AFFILIATE_COMMISSION_PCT = max(0, int(os.getenv("AFFILIATE_COMMISSION_PCT", "30") or 30))
+AFFILIATE_COMMISSION_MONTHS = max(0, int(os.getenv("AFFILIATE_COMMISSION_MONTHS", "12") or 12))
 POSTHOG_HOST = (os.getenv("POSTHOG_HOST", "https://us.i.posthog.com") or "").strip()
 SENTRY_DSN = (os.getenv("SENTRY_DSN", "") or "").strip()
 

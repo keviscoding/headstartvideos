@@ -846,6 +846,8 @@ class CheckoutRequest(BaseModel):
     # Where the app reopens after Stripe: Studio by default, or the Classic
     # recipe flow when the paywall interrupted a v1 cook.
     return_to: Literal["local-studio", "pipeline"] = "local-studio"
+    # Rewardful's referral id from the visitor's affiliate link (cr-affiliate.js); checked in _referral()
+    referral: str = ""
 
 class TopupRequest(BaseModel):
     credits: int = 5
@@ -1248,6 +1250,16 @@ async def create_checkout(req: CheckoutRequest, request: Request):
     else:
         session_kwargs["metadata"]["skip_trial"] = "1"
         session_kwargs["success_url"] = f"{base_url}/app?welcome=1#{req.return_to}"
+
+    referral = _referral(req.referral)
+    if referral:
+        # Rewardful credits the affiliate from the Checkout session's client_reference_id, and from the customer's
+        # "referral" metadata for later invoices; both are only labels for Stripe, so a failure never stops a checkout
+        session_kwargs["client_reference_id"] = referral
+        try:
+            stripe.Customer.modify(customer_id, metadata={"referral": referral})
+        except Exception as e:                            # noqa: BLE001
+            print(f"[affiliate] could not label customer {customer_id}: {e}")
 
     try:
         session = stripe.checkout.Session.create(**session_kwargs)
@@ -2101,6 +2113,20 @@ class KeyTestRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Pages
 # ---------------------------------------------------------------------------
+@app.get("/affiliates", response_class=HTMLResponse)
+async def affiliates_page():
+    """The affiliate program's page: live once the owner has set up Rewardful and its sign-up portal."""
+    page = STATIC_DIR / "affiliates.html"
+    portal = getattr(config, "AFFILIATE_PORTAL_URL", "")
+    if not (_affiliates_on() and portal.startswith("https://") and page.exists()):
+        raise HTTPException(404, "Not found")
+    from html import escape
+    return web_assets.html_page(page, fill={
+        "__PORTAL_URL__": escape(portal, quote=True),
+        "__COMMISSION_PCT__": str(int(config.AFFILIATE_COMMISSION_PCT)),
+        "__COMMISSION_MONTHS__": str(int(config.AFFILIATE_COMMISSION_MONTHS))})
+
+
 @app.get("/", response_class=HTMLResponse)
 async def landing():
     lp = STATIC_DIR / "landing.html"
@@ -2298,7 +2324,22 @@ async def get_client_config():
         "free_trial_days": int(getattr(config, "FREE_TRIAL_DAYS", 0) or 0),
         # Sign in with Google shows only when the owner has set GOOGLE_CLIENT_ID (a public value, not a secret)
         "google_client_id": _google_client_id(),
+        # the affiliate tracker loads only once the owner has connected Rewardful (a public key)
+        "affiliate": {"provider": "rewardful", "key": config.REWARDFUL_PUBLIC_KEY} if _affiliates_on() else None,
     }
+
+
+_REFERRAL = re.compile(r"^[A-Za-z0-9-]{8,64}$")
+
+
+def _affiliates_on() -> bool:
+    return bool(getattr(config, "REWARDFUL_PUBLIC_KEY", ""))
+
+
+def _referral(value) -> str:
+    """Rewardful's referral id for this visitor, or "" (a bad value is ignored, never a failed checkout)."""
+    value = str(value or "").strip()
+    return value if _affiliates_on() and _REFERRAL.match(value) else ""
 
 
 @app.get("/api/niches")

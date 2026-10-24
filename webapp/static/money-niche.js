@@ -467,7 +467,7 @@
                 try { await api('/api/leads', {source: 'quiz', consent: true, niche: p.niche, result: S.door === 'channel' ? '' : S.full.id}); } catch (_) {}
             }
             if (!tier) { location.href = r.next || '/app#local-studio'; return; }
-            try { const c = await api('/api/billing/checkout', {plan: tier + '_' + S.cycle, skip_trial: true, return_to: 'local-studio'}); if (c.url) { location.href = c.url; return; } }
+            try { const c = await api('/api/billing/checkout', {plan: tier + '_' + S.cycle, skip_trial: true, return_to: 'local-studio', referral: (window.crReferral && window.crReferral()) || ''}); if (c.url) { location.href = c.url; return; } }
             catch (e) { toast(e.message); }
             location.href = r.next || '/app#local-studio';
         } catch (e) { toast(e.message); button.disabled = false; button.textContent = label; }
