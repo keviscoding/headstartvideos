@@ -1,5 +1,15 @@
 [
   {
+    "build": 100,
+    "date": "2026-10-24",
+    "title": "Uploads on slow connections, and antivirus blocks named",
+    "items": [
+      "Fixed: uploads to Kie now survive slow connections. A big clip gets time for its size, a dropped upload is sent again (uploads cost nothing), and if it still can't finish Studio says why in plain words.",
+      "New: setup tells an antivirus block apart from a network block. It names the antivirus it finds running and says what to allow in it, step by step.",
+      "Fixed: setup answers in seconds when channelrecipe.com is out of reach. It used to wait a minute and a half."
+    ]
+  },
+  {
     "build": 99,
     "date": "2026-10-24",
     "title": "Change a recipe's character for one video",

@@ -646,7 +646,7 @@ def test_a_dropped_upload_is_sent_again_and_succeeds(hub, monkeypatch):
 
 def test_a_big_clip_gets_time_for_its_size():
     assert media.upload_timeout(1000) == (15, 180), "never under three minutes"
-    assert media.upload_timeout(200 * 1024 * 1024) == (15, 200 * 32 + 120), "200 MB at 32 KB a second"
+    assert media.upload_timeout(50 * 1024 * 1024) == (15, 50 * 32 + 120), "50 MB at 32 KB a second, then the answer"
     assert media.upload_timeout(10 * 1024 ** 3) == (15, 3600), "at most an hour"
 
 
