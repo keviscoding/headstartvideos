@@ -293,7 +293,8 @@ def check_narration(report, studio, env, artifacts):
                          env=env, capture_output=True, encoding="utf-8", errors="replace", timeout=1200)
     seconds = time.monotonic() - started
     worker_log = folder / "worker.log"
-    shutil.copy2(worker_log, artifacts / "narration-worker.log") if worker_log.is_file() else None
+    if worker_log.is_file():
+        shutil.copy2(worker_log, artifacts / "narration-worker.log")
     try:
         result = json.loads(run.stdout.strip().splitlines()[-1])
     except (ValueError, IndexError):
@@ -307,12 +308,12 @@ def check_narration(report, studio, env, artifacts):
     report.check("The worker loads the model setup downloaded, not by name from huggingface.co",
                  loaded and loaded.group(1) != "base", loaded.group(1) if loaded else "no model load in the worker log")
     if not result.get("ok"):
-        return log
+        return
     try:
         cues = parse_srt(srt.read_text(encoding="utf-8"))           # strict: captions are UTF-8
     except (OSError, UnicodeDecodeError, ValueError) as error:
         report.check("Captions saved as UTF-8 with timings", False, "%s: %s" % (type(error).__name__, error))
-        return log
+        return
     words = [w for _, _, line in cues for w in re.findall(r"[a-z']+", line.lower())]
     ordered = all(a <= b <= c for (a, b, _), (c, _, _) in zip(cues, cues[1:])) and all(s <= e for s, e, _ in cues)
     duration = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
@@ -325,7 +326,6 @@ def check_narration(report, studio, env, artifacts):
         found = sum(1 for w in set(words) if w in heard)
         report.check("Whisper heard the narration's words", found >= len(heard) // 2,
                      "%d of %d words: %s" % (found, len(heard), " ".join(words)[:200]))
-    return log
 
 
 def encoding_warnings(text):
