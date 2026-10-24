@@ -659,3 +659,74 @@ def test_browser_the_answer_on_how_the_3d_is_made_carries_through_continue_and_s
             assert not errors, errors
         finally:
             browser.close()
+
+
+def test_browser_the_answer_on_animated_2d_characters_replans_and_pictures_need_the_tick(env, monkeypatch):
+    """A @DartAnimates clone made AI stills of stick figures the channel animates. The look screen asks, the answer
+    re-plans at once, and pictures in place of animation start only once the creator ticks that they understand."""
+    browser_api = pytest.importorskip("playwright.sync_api")
+    sys.path.insert(0, str(Path(__file__).parent))
+    import test_style_map as tsm
+    (env.home / "styles" / "stories.json").write_text(json.dumps({**tsm.STYLES["stories"], "name": "stories",
+                                                                  "label": "2D Life Stories"}))
+    catalogue = env.studio.styles.catalogue
+    env.studio.styles.catalogue = lambda: catalogue() + [{"name": "stories", "label": "2D Life Stories"}]
+    dart = tsm.animated()
+
+    def spawn(home, look_id):
+        path = cr_style_look.folder(home, look_id) / "look.json"
+        saved = json.loads(path.read_text())
+        saved.update(state="done", phase="done", finished_at=__import__("time").time(), sheets=[], not_watched=[],
+                     profile=dart)
+        saved.pop("mapping", None)
+        path.write_text(json.dumps(saved))
+    monkeypatch.setattr(cr_style_look, "_spawn", spawn)
+    with browser_api.sync_playwright() as playwright:
+        try:
+            browser = playwright.chromium.launch(headless=True)
+        except browser_api.Error as error:
+            pytest.skip("Local Chromium is unavailable: " + str(error).splitlines()[0])
+        try:
+            page = browser.new_page(viewport={"width": 1200, "height": 1000})
+            page.set_default_timeout(5000)
+            errors = []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+
+            def respond(route):
+                url = urlsplit(route.request.url)
+                path = url.path + (("?" + url.query) if url.query else "")
+                response = env.client.open(path, method=route.request.method, base_url=BASE,
+                                           headers=dict(route.request.headers), data=route.request.post_data)
+                route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.data)
+            page.route("**/*", respond)
+            page.goto(BASE + "/cr-style-clone")
+            page.locator("#reference-url").fill("https://www.youtube.com/@DartAnimates")
+            page.locator("#preview-button").click()
+            page.locator("#candidate-list input").nth(0).check()
+            page.locator("#next-button").click()
+            page.locator("#look-result").wait_for(state="visible")
+            options = page.locator("input[name='q-animation']")
+            assert options.nth(0).get_attribute("value") == cr_style_map.ANIMATED_CODE, "Studio's guess first"
+            assert page.evaluate("look.mapping.route.medium_gap") == cr_style_map.ANIMATION_GAP
+            page.locator(f"input[name='q-animation'][value='{cr_style_map.ANIMATED_PICTURES}']").check()
+            page.wait_for_function("!(look.mapping.route||{}).medium_gap")
+            page.locator(f"input[name='q-animation'][value='{cr_style_map.ANIMATED_CODE}']").check()
+            page.wait_for_function("document.getElementById('medium-gap').hidden === false")
+            assert "can't rig and animate these characters yet" in page.locator("#medium-gap-text").inner_text()
+            assert "How the pictures are made" in page.locator("#look-route").inner_text()
+            page.locator("#look-next").click()
+            page.locator("#style-label").fill("Stick fights")
+            page.locator("#example-title").fill("Gojo vs Sukuna: who wins")
+            page.locator("#usage-approved").check()
+            page.locator("#start-button").click()
+            assert "tick that you understand" in page.locator("#notice").inner_text().lower() and not env.targets
+            page.locator("#accept-medium").check()
+            page.locator("#start-button").click()
+            page.locator("#progress-panel").wait_for(state="visible")
+            operation = page.evaluate("localStorage.getItem('cr.styleStudy')")
+            _, saved = clone._saved(env.home, operation, env.bridge)
+            assert saved["spec"]["accept_medium"] is True
+            assert saved["spec"]["answers"]["animation"] == cr_style_map.ANIMATED_CODE
+            assert not errors, errors
+        finally:
+            browser.close()

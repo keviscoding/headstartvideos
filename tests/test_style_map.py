@@ -490,3 +490,58 @@ def test_a_3d_recipe_picked_by_hand_for_characters_with_faces_is_said_too():
     told = cm.plan_style(profile({"3d": 0.6}, **{"pictures__art_style": RECONSTRUCTION}), STYLES, base="3d",
                          answers={"medium": cm.MEDIUM_DESIGNED})
     assert told["route"]["medium_gap"] == cm.MEDIUM_GAP_MANNEQUINS, "the creator said faces, the recipe makes mannequins"
+
+
+# ── drawn characters the channel animates (@DartAnimates: stick-figure fights) ────────────────────────────────
+
+def animated(moving=0.93, sources=None, narration="none", measured=True, **over):
+    """A drawn 2D channel shaped like the measured @DartAnimates look: 88% stick figures, 93% of the runtime moving."""
+    classes = {"value": {"moving": moving, "still": round(1 - moving, 3)}, "confidence": 0.9,
+               "from": ["measured", "watched"] if measured else ["watched"]}
+    return profile({"generated": 0.88, "graphic": 0.07}, sources or {"stick_figure": 0.88, "text_card": 0.04},
+                   **{"motion__classes": classes, "format__narration": axis(narration), **over})
+
+
+def test_a_channel_that_animates_its_drawn_characters_is_asked_and_a_medium_studio_cant_make_is_gated():
+    """A @DartAnimates clone came out as AI stills with camera moves: the right look, and nothing moved."""
+    dart = animated()
+    assert cm.animated_2d(dart) == 1.0
+    plan = cm.plan_style(dart, STYLES)
+    question = next(q for q in plan["questions"] if q["id"] == "animation")
+    assert question["options"] == [cm.ANIMATED_CODE, cm.ANIMATED_PICTURES], "Studio's guess first: animate them"
+    assert plan["route"]["medium_gap"] == cm.ANIMATION_GAP, "never a silent swap to pictures"
+    told = cm.plan_style(dart, STYLES, answers={"animation": cm.ANIMATED_PICTURES})["route"]
+    assert "medium_gap" not in told and told["why"].startswith("you chose pictures")
+    gated = cm.plan_style(dart, STYLES, answers={"animation": cm.ANIMATED_CODE})["route"]
+    assert gated["medium_gap"] == cm.ANIMATION_GAP
+
+
+def test_an_explainer_whose_figures_move_under_a_narrator_guesses_pictures_and_still_drawings_ask_nothing():
+    # measured moving 0.64 on a stick-figure explainer with meme faces (narrated): asked, pictures first, no gate
+    explainer = animated(0.64, {"stick_figure": 0.92}, narration="voiceover")
+    question = next(q for q in cm.plan_style(explainer, STYLES)["questions"] if q["id"] == "animation")
+    assert question["options"][0] == cm.ANIMATED_PICTURES
+    assert "medium_gap" not in cm.plan_style(explainer, STYLES)["route"]
+    # a short film with a few lines of voice: the animation carries it
+    film = animated(0.69, {"drawing": 0.9}, narration="voiceover", voice=axis({}, wpm=19))
+    assert cm.animation_guess(film) == cm.ANIMATED_CODE
+    # stick-figure stories (measured moving 0.39): their figures slide as cut-outs, as before
+    stories = animated(0.39, {"stick_figure": 0.93}, narration="voiceover")
+    assert not cm.animated_2d(stories)
+    assert all(q["id"] != "animation" for q in cm.plan_style(stories, STYLES)["questions"])
+
+
+def test_footage_moving_beside_paintings_is_not_animation_and_a_model_alone_is_not_believed():
+    essay = animated(0.37, {"painting": 0.23, "drawing": 0.17, "live_footage": 0.26, "stock_footage": 0.19},
+                     narration="voiceover")
+    assert not cm.animated_2d(essay), "the footage moves, not the paintings"
+    # unmeasured (downloads blocked): a watching model calls nearly every drawn shot animated
+    assert not cm.animated_2d(animated(0.9, narration="voiceover", measured=False))
+    assert cm.animated_2d(animated(0.9, narration="none", measured=False)), "no narrator: the pictures carry it"
+
+
+def test_a_3d_channel_is_asked_about_its_3d_not_about_2d_animation():
+    p = animated(0.9, {"3d_render": 0.3, "stick_figure": 0.6})
+    p["pictures"]["sources"]["families"] = {"3d": 0.3, "generated": 0.6}
+    questions = [q["id"] for q in cm.plan_style(p, STYLES)["questions"]]
+    assert "medium" in questions and "animation" not in questions

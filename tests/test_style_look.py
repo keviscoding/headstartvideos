@@ -244,6 +244,38 @@ def test_a_3d_channel_is_asked_how_its_3d_is_made_and_a_medium_studio_cant_make_
     assert clone._spec(home, graphics)["look_id"] == done["look_id"], "graphics only draws no pictures: no gate"
 
 
+
+def test_a_channel_that_animates_its_drawn_characters_is_asked_and_pictures_in_their_place_are_accepted_in_words(home):
+    """A @DartAnimates clone (stick-figure fights) made AI stills with camera moves: the look was right, and nothing
+    moved. Now the look screen asks (Studio's guess first), and pictures in place of animation start only when the
+    creator ticks that they understand, or chose pictures themselves."""
+    import cr_style_map
+    _, done, _ = run_look(home)
+    path = look.folder(home, done["look_id"]) / "look.json"
+    saved = json.loads(path.read_text())
+    saved["profile"]["pictures"]["sources"].update(value={"stick_figure": 0.88, "text_card": 0.04},
+                                                   families={"generated": 0.88, "graphic": 0.04})
+    saved["profile"]["motion"]["classes"] = {"value": {"moving": 0.93, "still": 0.07}, "confidence": 0.96,
+                                             "from": ["measured", "watched"]}
+    saved["profile"]["format"]["narration"] = {"value": "none", "confidence": 0.8, "from": ["watched"]}
+    saved["mapping"]["router"] = 79                       # planned by an older Studio: planned again
+    path.write_text(json.dumps(saved))
+    shown = look.status(home, done["look_id"])["mapping"]
+    question = next(q for q in shown["questions"] if q["id"] == "animation")
+    assert question["options"][0] == cr_style_map.ANIMATED_CODE, "Studio's guess first"
+    assert shown["route"]["medium_gap"] == cr_style_map.ANIMATION_GAP
+    payload = {"preview_id": "pv_" + "a" * 64, "reference_ids": [VIDEO], "base_style": "stories", "label": "Mine",
+               "title": "Gojo vs Sukuna", "acknowledge_costs": True, "look_id": done["look_id"], "answers": {},
+               "visual_mode": "mixed"}
+    with pytest.raises(ValueError, match="Tick that you understand"):
+        clone._spec(home, payload)
+    with pytest.raises(ValueError, match="Tick that you understand"):
+        clone._spec(home, {**payload, "answers": {"animation": cr_style_map.ANIMATED_CODE}})
+    assert clone._spec(home, {**payload, "accept_medium": True})["accept_medium"] is True
+    pictures = {**payload, "answers": {"animation": cr_style_map.ANIMATED_PICTURES}}
+    assert clone._spec(home, pictures)["answers"]["animation"] == cr_style_map.ANIMATED_PICTURES, \
+        "the creator's own answer needs no gate"
+
 # ── style samples and the character sheet ─────────────────────────────────────────────────────────────────
 
 def saved_v2_style(home, look_id, cast="THE CAST — Toby: stick figure in a red cap."):

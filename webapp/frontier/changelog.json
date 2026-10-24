@@ -1,5 +1,15 @@
 [
   {
+    "build": 101,
+    "date": "2026-10-24",
+    "title": "Style clones ask about animated characters",
+    "items": [
+      "New: style clones ask about animated characters. When you clone a channel that animates its drawn characters (stick-figure fights, animated short films), Studio asks how your videos should be made, with its guess first.",
+      "Studio can't rig and animate 2D characters yet, so it says so before your study starts: your videos would be drawn pictures in their look, some moved as cut-outs or animated by AI. Nothing starts until you tick that you understand, or choose pictures yourself.",
+      "In Claude Code, the clone-style tools ask the same question and read you the same note before anything runs."
+    ]
+  },
+  {
     "build": 100,
     "date": "2026-10-24",
     "title": "Uploads on slow connections, and antivirus blocks named",
