@@ -130,9 +130,50 @@ def find_executable():
     return next((str(p.resolve()) for p in candidates if p.is_file() and os.access(p, os.X_OK)), None)
 
 
+# Claude Code's sign-in check starts Claude Code twice (version, then auth status). On a slow Windows computer that
+# took 51 s and the old 20 s limit read it as "not signed in", which stopped a creator's video. Each command now has
+# CHECK_SECONDS, and a confirmed sign-in is reused for STATUS_REUSE_SECONDS; if a later check times out, a sign-in
+# confirmed within STATUS_TRUST_SECONDS still counts (a real sign-out shows up as the stage's own sign-in error).
+CHECK_SECONDS = 90
+STATUS_REUSE_SECONDS = 300
+STATUS_TRUST_SECONDS = 3600
+_status_cache = {"at": 0.0, "exe": "", "result": None}
+_status_lock = threading.Lock()
+
+
 def status(executable=None, *, run=None, environment=None):
     """Read-only installation/login check. Return no identity or credentials."""
     exe = executable or find_executable()
+    reusable = run is None and environment is None and bool(exe)       # the real check, not a test's or a custom one
+    if reusable:
+        with _status_lock:
+            cached = _status_cache["result"]
+            if (cached and _status_cache["exe"] == exe
+                    and time.monotonic() - _status_cache["at"] < STATUS_REUSE_SECONDS):
+                return _fresh_allowance(dict(cached))
+    result = _status(exe, run=run, environment=environment)
+    if reusable:
+        with _status_lock:
+            if result.get("ready"):
+                _status_cache.update(at=time.monotonic(), exe=exe, result=dict(result))
+            elif (result.get("timed_out") and _status_cache["result"] and _status_cache["exe"] == exe
+                    and time.monotonic() - _status_cache["at"] < STATUS_TRUST_SECONDS):
+                return _fresh_allowance(dict(_status_cache["result"]))
+    result.pop("timed_out", None)
+    return result
+
+
+def _fresh_allowance(result):
+    """A reused sign-in still reports today's usage allowance (it changes as videos run)."""
+    try:
+        import cr_allowance
+        result["allowance"] = cr_allowance.status(HOME, result["account_fingerprint"])
+    except Exception:                                    # noqa: BLE001 - the sign-in itself stands
+        pass
+    return result
+
+
+def _status(exe, *, run=None, environment=None):
     result = {"installed": bool(exe), "authenticated": False, "ready": False,
               "version": "", "auth_method": "none", "api_provider": "", "subscription_type": ""}
     if not exe:
@@ -141,7 +182,7 @@ def status(executable=None, *, run=None, environment=None):
     invoke = run or _real_run
     env = clean_environment(environment)
     try:
-        version = invoke([exe, "--version"], capture_output=True, text=True, env=env, timeout=20)
+        version = invoke([exe, "--version"], capture_output=True, text=True, env=env, timeout=CHECK_SECONDS)
         match = re.search(r"\b(\d+)\.(\d+)\.(\d+)\b", version.stdout or "")
         if version.returncode or not match:
             raise ValueError("version")
@@ -150,7 +191,7 @@ def status(executable=None, *, run=None, environment=None):
             result["message"] = "Update Claude Code to version 2.1.268 or newer."
             return result
         auth = invoke([exe, "--setting-sources", "", "auth", "status"],
-                      capture_output=True, text=True, env=env, timeout=20)
+                      capture_output=True, text=True, env=env, timeout=CHECK_SECONDS)
         data = json.loads(auth.stdout or "{}")
         result["account_fingerprint"] = hashlib.sha256(str(data.get("email") or data.get("accountUuid") or "unknown-local-account").encode()).hexdigest()
         method = data.get("authMethod", "none")
@@ -165,7 +206,11 @@ def status(executable=None, *, run=None, environment=None):
         result["allowance"] = cr_allowance.status(HOME, result["account_fingerprint"])
         result["message"] = ("Your local Claude account is connected. Its usage limits apply."
                              if result["ready"] else "Sign in to Claude Code with your Claude subscription. API and cloud billing are not used in this mode.")
-    except (OSError, subprocess.TimeoutExpired, ValueError, TypeError, AttributeError):
+    except subprocess.TimeoutExpired:
+        result["timed_out"] = True
+        result["message"] = ("Claude Code took more than a minute and a half to answer its sign-in check. Close other "
+                             "heavy apps, then check again.")
+    except (OSError, ValueError, TypeError, AttributeError):
         result["message"] = "Claude Code could not confirm its local login. Open it and sign in again."
     return result
 
@@ -394,7 +439,7 @@ class Runtime:
         try:
             installed_version=json.loads((Path(self.bridge.HOME)/"cr-release.json").read_text(encoding="utf-8"))["version"]
         except (OSError,ValueError,KeyError):
-            installed_version=cfg.get("local_version","5.3-admin.95")
+            installed_version=cfg.get("local_version","5.3-admin.96")
         cache = Path(self.bridge.HOME) / "output" / "cr-claude-cache" / project_id / (stage_id + ".json")
         try:
             saved = json.loads(cache.read_text(encoding="utf-8"))

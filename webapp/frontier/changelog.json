@@ -1,5 +1,14 @@
 [
   {
+    "build": 96,
+    "date": "2026-10-24",
+    "title": "Updates never stop your work",
+    "items": [
+      "Fixed: a new Studio no longer makes you update before you can carry on. Every Studio from the last few days keeps starting and resuming videos, so updating is your choice, when you're ready.",
+      "Fixed: a slow computer no longer stops a video at the Claude Code sign-in check. Studio now waits longer for Claude Code to answer and reuses a sign-in it confirmed recently."
+    ]
+  },
+  {
     "build": 95,
     "date": "2026-10-24",
     "title": "Voice fixes",

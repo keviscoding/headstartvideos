@@ -535,3 +535,32 @@ def test_reviewed_stage_guard_rejects_changed_request_before_authorization(tmp_p
         with cr_claude.expect_stage("crv_" + "1" * 24, "cc_" + fingerprint):
             runtime.run(args, input=prompt, text=True)
     assert cr_claude._expected_stage.get() is None
+
+
+def test_a_slow_claude_code_never_reads_as_signed_out(monkeypatch):
+    """A creator's Windows computer took 51 s to answer Claude Code's sign-in check and the 20 s limit stopped their
+    video. Each command now gets CHECK_SECONDS, a confirmed sign-in is reused for a few minutes, and a check that
+    times out soon after a confirmed one still counts."""
+    import subprocess
+    monkeypatch.setitem(__import__("sys").modules, "cr_allowance", SimpleNamespace(status=lambda home, who: {"blocked": False}))
+    monkeypatch.setattr(cr_claude, "_status_cache", {"at": 0.0, "exe": "", "result": None})
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(cr_claude.time, "monotonic", lambda: clock["now"])
+    calls, slow = [], {"on": False}
+    def run(args, **kw):
+        calls.append((args[1:], kw["timeout"]))
+        if slow["on"]:
+            raise subprocess.TimeoutExpired(args, kw["timeout"])
+        return SimpleNamespace(returncode=0, stdout="2.1.291" if "--version" in args else json.dumps(
+            {"loggedIn": True, "authMethod": "claude.ai", "apiProvider": "firstParty", "subscriptionType": "max"}))
+    monkeypatch.setattr(cr_claude, "_real_run", run)
+    assert cr_claude.status("/fake/claude")["ready"] and len(calls) == 2
+    assert all(timeout == cr_claude.CHECK_SECONDS >= 60 for _, timeout in calls)
+    assert cr_claude.status("/fake/claude")["ready"] and len(calls) == 2, "a confirmed sign-in is reused"
+    clock["now"] += cr_claude.STATUS_REUSE_SECONDS + 1
+    slow["on"] = True
+    again = cr_claude.status("/fake/claude")
+    assert again["ready"] and again["allowance"] == {"blocked": False} and len(calls) == 3, "slow, but signed in"
+    clock["now"] += cr_claude.STATUS_TRUST_SECONDS
+    gone = cr_claude.status("/fake/claude")
+    assert not gone["ready"] and "minute and a half" in gone["message"] and "timed_out" not in gone
