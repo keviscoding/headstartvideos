@@ -10,6 +10,7 @@ These rules read the source, so they fail on a Mac too, before a release reaches
 import ast
 import os
 import re
+import sys
 import zipfile
 from pathlib import Path
 
@@ -66,13 +67,17 @@ def _subprocess_call(call):
     return False
 
 
-def problems(path):
+def problems(path, *, encodings=True):
+    """The rules' findings in one file. encodings=False: only the bare command names (see below)."""
     source = path.read_text(encoding="utf-8")
     found = []
     for node in ast.walk(ast.parse(source, str(path))):
         if not isinstance(node, ast.Call):
             continue
         func, where = node.func, f"{_name(path)}:{node.lineno}"
+        if not encodings:
+            found += _bare_commands(node, where)
+            continue
         has_encoding = _keyword(node, "encoding") is not None
         receiver = func.value.id if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) else ""
         method = func.attr if isinstance(func, ast.Attribute) else ""
@@ -96,19 +101,34 @@ def problems(path):
         piped = _subprocess_call(node) or any(_keyword(node, name) is not None for name in PIPES)
         if piped and (_true(_keyword(node, "text")) or _true(_keyword(node, "universal_newlines"))) and not has_encoding:
             found.append(f"{where}: subprocess in text mode without encoding=\"utf-8\" (Windows decodes it as cp1252)")
-        if _subprocess_call(node):
-            command = node.args[0] if node.args else _keyword(node, "args")
-            first = command.elts[0] if isinstance(command, (ast.List, ast.Tuple)) and command.elts else command
-            if isinstance(first, ast.Constant) and isinstance(first.value, str) and \
-                    first.value.split(" ")[0].lower() in CMD_SHIMS:
-                found.append(f"{where}: starts {first.value.split(' ')[0]!r} by its bare name ([WinError 2] on Windows: "
-                             "use its full path, e.g. cr_claude.find_executable())")
+        found += _bare_commands(node, where)
     return found
+
+
+def _bare_commands(node, where):
+    if not _subprocess_call(node):
+        return []
+    command = node.args[0] if node.args else _keyword(node, "args")
+    first = command.elts[0] if isinstance(command, (ast.List, ast.Tuple)) and command.elts else command
+    if isinstance(first, ast.Constant) and isinstance(first.value, str) and first.value.split(" ")[0].lower() in CMD_SHIMS:
+        return [f"{where}: starts {first.value.split(' ')[0]!r} by its bare name ([WinError 2] on Windows: "
+                "use its full path, e.g. cr_claude.find_executable())"]
+    return []
 
 
 @pytest.mark.parametrize("path", shipped_python(), ids=_name)
 def test_studio_code_reads_text_as_utf8_and_starts_cmd_tools_by_path(path):
-    assert not problems(path), "\n".join(problems(path))
+    # The Shorts pipelines always run in Python's UTF-8 mode (cr_shorts.child_env, checked below), where a text file or
+    # pipe without an encoding is UTF-8 already: only the bare command names apply to them.
+    found = problems(path, encodings=not path.is_relative_to(SHORTS))
+    assert not found, "\n".join(found)
+
+
+def test_the_shorts_pipelines_run_in_utf8_mode():
+    sys.path.insert(0, str(RUNTIME))
+    import cr_shorts
+    env = cr_shorts.child_env()
+    assert env["PYTHONUTF8"] == "1" and env["PYTHONIOENCODING"].startswith("utf-8")
 
 
 BAD = '''import json, os, subprocess
