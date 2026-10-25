@@ -695,6 +695,23 @@ def bar_for(control) -> float:
     return round(max(5.0, min(7.5, float(control) - 1.5)), 2)
 
 
+def _own_rounds(out: Path, key: str):
+    """Round files belong to the build they were written for (renderer/key): Claude's drafts for an earlier spec (a 3D
+    channel once briefed with the 2D kit) are moved aside, never reused as this build's answers. A build from before
+    the key file is known by its control.json, written before its first round."""
+    stamp = out / "key"
+    had = stamp.read_text(encoding="utf-8").strip() if stamp.is_file() else str(_read(out / "control.json").get("key") or "")
+    old = [p for p in out.iterdir() if p.name.startswith("round-")] if had != key else []
+    if old:
+        aside, n = out / f"old-{(had or 'unkeyed')[:8]}", 1
+        while aside.exists():
+            aside, n = out / f"old-{(had or 'unkeyed')[:8]}-{n}", n + 1
+        aside.mkdir()
+        for p in old:
+            p.rename(aside / p.name)
+    stamp.write_text(key, encoding="utf-8")
+
+
 def build(folder, spec: dict, channel: dict, *, see, judge, references: list, home=None, log=print,
           rounds: int = BUILD_ROUNDS, minutes: float = BUILD_MINUTES, names=()) -> dict:
     """Claude writes this channel's renderer; the kit draws its test shots; the judge scores them against the
@@ -711,6 +728,7 @@ def build(folder, spec: dict, channel: dict, *, see, judge, references: list, ho
     saved = _read(out / "build.json")
     if saved.get("key") == key and saved.get("state") in ("passed", "below_bar", "failed"):
         return saved
+    _own_rounds(out, key)
     refs = [Path(r) for r in references if Path(r).is_file()]
     if len(refs) < 3:
         result = {"key": key, "state": "failed", "why": "too few reference frames to build a renderer from"}

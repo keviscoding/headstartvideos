@@ -356,7 +356,7 @@ def _spec(home, supplied):
         "label": label.strip(), "title": title.strip(), "brief": brief,
         "budget_minutes": budget, "max_calls": calls, "minutes": minutes,
         "visual_mode": visual_mode, "attempt_id": attempt_id, "accept_medium": supplied.get("accept_medium") is True,
-        **({"renderer": True} if renderer else {}),
+        **({"renderer": renderer} if renderer else {}),
         **({"look_id": look_id, "answers": dict(answers)} if look_id else {})}
 
 
@@ -940,6 +940,18 @@ def _by_video(frames: list) -> list:
     return [g[k] for k in range(max((len(g) for g in groups.values()), default=0)) for g in groups.values() if k < len(g)]
 
 
+def renderer_dims(spec, looked, home) -> int:
+    """2 or 3: which kit the study's renderer is written on. A study started before the spec said "2d"/"3d" stored
+    True; its planned route says which (a 3D channel once got the 2D kit, and its drafts were flat canvas code)."""
+    said = spec.get("renderer")
+    if said is not True:
+        return 3 if said == "3d" else 2
+    import cr_style_map
+    planned = cr_style_map.plan_style(looked.get("profile") or {}, _installed_styles(home), base=spec.get("base_style"),
+                                      answers=spec.get("answers") or {})
+    return 3 if (planned.get("route") or {}).get("engine") == "animated3d" else 2
+
+
 def _renderer(folder, spec, looked, see, log):
     """Claude writes the channel's animation renderer; its test shots are judged against the channel's own frames and
     it is revised within a budget (cr_animated2d.build). Saved in <operation>/renderer/, so a recovery never repeats a
@@ -951,7 +963,7 @@ def _renderer(folder, spec, looked, see, log):
     home = _studio_home(folder)
     profile = cr_style_map.answer(looked["profile"], spec.get("answers") or {})
     channel = cr_animated2d.from_profile(profile)
-    three = spec.get("renderer") == "3d"
+    three = renderer_dims(spec, looked, home) == 3
     size = {}
     if three:
         tall = cr_style_map.vertical(looked["profile"])

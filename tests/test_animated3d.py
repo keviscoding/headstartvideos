@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 import cr_animated2d as a2d  # noqa: E402
 import cr_style_map as cm  # noqa: E402
 import test_style_map as tsm  # noqa: E402
+from test_style_look import home  # noqa: E402,F401 - the fixture
 
 PRIVATE_2D = ROOT / "data" / "frontier" / "animated2d"
 PRIVATE_3D = ROOT / "data" / "frontier" / "animated3d"
@@ -201,6 +202,76 @@ def test_the_study_writes_a_3d_renderer_at_the_channels_size(tmp_path, monkeypat
     assert got["spec"]["dims"] == 3 and (got["spec"]["width"], got["spec"]["height"]) == (1080, 1920)
     assert got["channel"]["medium"] == "real 3D (three.js)" and "Shorts" in got["channel"]["format"]
     assert got["names"] == ["gneef"]
+
+
+def _roblox_look(home):
+    """A finished look at a Roblox-style 3D story channel (vertical Shorts), from test_style_look's references."""
+    import cr_style_look as look
+    import test_style_look as tsl
+    _, done, _ = tsl.run_look(home)
+    path = look.folder(home, done["look_id"]) / "look.json"
+    saved = json.loads(path.read_text())
+    pictures = saved["profile"]["pictures"]
+    pictures["sources"]["families"] = {"3d": 0.85, "graphic": 0.15}
+    pictures["art_style"]["value"] = "Roblox-style blocky avatars with yellow block heads, decal faces."
+    saved["profile"].setdefault("format", {})["vertical"] = tsm.axis(1.0)
+    saved.pop("mapping", None)
+    path.write_text(json.dumps(saved))
+    return done["look_id"], json.loads(path.read_text())
+
+
+def test_a_3d_study_is_briefed_with_the_3d_kit_from_its_start(home, kit3d, monkeypatch):
+    """The first @gneef study stored renderer: True, the 3D was lost on the way, and Claude wrote four flat canvas drafts
+    for a three.js channel (4.3/10). The spec now says "3d" from the start, an older True is read from the route, and
+    the build is given the 3D guide at the Short's size."""
+    import cr_style_clone as clone
+    import cr_style_likeness
+    import test_style_look as tsl
+    look_id, looked = _roblox_look(home)
+    payload = {"preview_id": "pv_" + "a" * 64, "reference_ids": [tsl.VIDEO], "base_style": "stories", "label": "Mine",
+               "title": "A video", "acknowledge_costs": True, "look_id": look_id, "answers": {}, "visual_mode": "mixed"}
+    spec = clone._spec(home, payload)
+    assert spec["renderer"] == "3d"
+    assert clone.renderer_dims(spec, looked, home) == 3
+    assert clone.renderer_dims({**spec, "renderer": True}, looked, home) == 3, "a study started before the fix"
+    pictures = {**spec, "renderer": True, "answers": {"medium": cm.MEDIUM_PICTURES}}
+    assert clone.renderer_dims(pictures, looked, home) == 2
+    assert clone._spec(home, {**payload, "visual_mode": "reference_only"}).get("renderer") is None
+    # the build itself: the 3D guide and example, never the 2D one
+    for kit, files in ((a2d.KIT, ("build.txt", "AUTHORING.md")), (a2d.KIT3D, ("AUTHORING.md", "example3d.js"))):
+        (home / kit).mkdir(exist_ok=True)
+        for name in files:
+            (home / kit / name).write_text(f"[{kit}/{name}]" + (" [AUTHORING] [EXAMPLE] [CHANNEL]" if name == "build.txt"
+                                                                else ""), encoding="utf-8")
+    monkeypatch.setattr(cr_style_likeness, "frames", lambda h, i: tsm_frames(home / "frames", 9))
+    monkeypatch.setattr(cr_style_likeness, "flat_graphic", lambda p: False)
+    folder = clone._folder(home) / ("op_" + "d" * 24)
+    (folder / "renderer").mkdir(parents=True)
+    (folder / "renderer" / "round-1.txt").write_text("```javascript\n// 2D canvas draft\n```", encoding="utf-8")
+    prompts = []
+    import cr_bridge
+    monkeypatch.setattr(cr_bridge, "call", lambda path, payload: {})
+    result = clone._renderer(folder, spec, looked, lambda prompt, images: prompts.append(prompt) or "", lambda m: None)
+    assert result["state"] == "failed" and len(prompts) == 1, "the stale 2D draft is not this build's answer"
+    assert f"[{a2d.KIT3D}/AUTHORING.md]" in prompts[0] and f"[{a2d.KIT3D}/example3d.js]" in prompts[0]
+    assert f"[{a2d.KIT}/AUTHORING.md]" not in prompts[0] and "real 3D (three.js)" in prompts[0]
+    assert (folder / "renderer" / "key").read_text() == result["key"]
+    assert list((folder / "renderer").glob("old-*/round-1.txt")), "the old draft is kept aside, not deleted"
+
+
+def test_round_files_belong_to_their_build(tmp_path):
+    out = tmp_path / "renderer"
+    (out / "round-1").mkdir(parents=True)
+    (out / "round-1.txt").write_text("draft for key aaaa")
+    (out / "control.json").write_text(json.dumps({"key": "aaaa"}))
+    a2d._own_rounds(out, "aaaa")
+    assert (out / "round-1.txt").is_file() and (out / "key").read_text() == "aaaa", "a build from before the key file"
+    a2d._own_rounds(out, "bbbb")
+    assert not (out / "round-1.txt").exists() and (out / "old-aaaa" / "round-1.txt").is_file()
+    assert (out / "old-aaaa" / "round-1").is_dir() and (out / "key").read_text() == "bbbb"
+    (out / "round-1.txt").write_text("draft for key bbbb")
+    a2d._own_rounds(out, "bbbb")
+    assert (out / "round-1.txt").read_text() == "draft for key bbbb"
 
 
 def tsm_frames(folder, n):
