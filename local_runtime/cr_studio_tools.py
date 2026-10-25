@@ -5,6 +5,7 @@ Every tool calls Studio's own local routes on http://127.0.0.1:7860 with the loc
 each check, gate and receipt the Studio page uses applies here too. Nothing here renders, reads keys or spends by
 itself: paid work starts only through make_videos and clone_style, which Claude Code asks the creator to approve
 (permissions.ask in .claude/settings.json), and make_videos starts nothing until the cost was shown (its quote_id).
+delete_video and delete_style are asked too; they move the item into Studio's trash (30 days), never delete at once.
 
     .venv/bin/python cr_studio_tools.py            what Claude Code runs
     .venv/bin/python cr_studio_tools.py --check    one setup check, printed (for support)
@@ -1027,6 +1028,58 @@ def tool_products(args):
             "next": "Your videos can sell a finished product: pick it under Your product on the Studio page."}
 
 
+# ── deleting (into Studio's trash) ──────────────────────────────────────────────────────────────────────────────
+
+def _same_name(given, actual) -> bool:
+    """The name the creator approved is the item's own (spacing, case and curly quotes aside)."""
+    def key(value):
+        text = str(value or "")
+        for curly, plain in (("’", "'"), ("‘", "'"), ("“", '"'), ("”", '"'), ("—", "-"), ("–", "-")):
+            text = text.replace(curly, plain)
+        return " ".join(text.split()).casefold()
+    return bool(key(given)) and key(given) == key(actual)
+
+
+def _trashed(done: dict, page: str) -> dict:
+    until = time.strftime("%d %b %Y", time.localtime(done.get("empties_at") or time.time() + 30 * 86400))
+    return {"deleted": True, "title": done.get("title"), "moved_to_trash": done.get("goes") or [],
+            "kept": done.get("kept") or [],
+            "restore": f"It waits in Studio's trash until {until}, then Studio empties it for good. To bring it back "
+                       f"before then: Recently deleted on the Studio page ({link(page)}), Restore.",
+            "next": "Tell the creator in a line what went, what was kept and that it can be restored for 30 days."}
+
+
+def tool_delete_video(args):
+    same_studio()
+    slug = str(args.get("id") or "").strip().removeprefix("video:")
+    if not _SLUG.fullmatch(slug):
+        raise Refused("Give the video's id from list_videos or progress() (video:…).")
+    path = "/cr-workspace/delete/video/" + _quote_path(slug)
+    plan = call("GET", path, timeout=60)
+    if not _same_name(args.get("title"), plan.get("title")):
+        raise Refused(f"video:{slug} is “{plan.get('title')}”, not “{args.get('title') or ''}”. Nothing was deleted: "
+                      "check the video with list_videos and ask the creator again.")
+    if plan.get("blocked"):
+        raise Refused(f"“{plan.get('title')}” {plan['blocked']} Nothing was deleted.")
+    return _trashed(call("POST", path, {}, timeout=120), "/#projects")
+
+
+def tool_delete_style(args):
+    same_studio()
+    style = str(args.get("id") or "").strip()
+    if not _STYLE.fullmatch(style) or not style.startswith("cr_clone_"):
+        raise Refused("Only a style the creator cloned can be deleted (an id from list_styles(kind='mine'), cr_clone_…). "
+                      "Studio's own recipes stay.")
+    path = "/cr-workspace/delete/style/" + _quote_path(style)
+    plan = call("GET", path, timeout=60)
+    if not _same_name(args.get("name"), plan.get("title")):
+        raise Refused(f"{style} is “{plan.get('title')}”, not “{args.get('name') or ''}”. Nothing was deleted: check "
+                      "the style with list_styles and ask the creator again.")
+    if plan.get("blocked"):
+        raise Refused(f"{plan['blocked']} Nothing was deleted.")
+    return _trashed(call("POST", path, {}, timeout=60), "/#styles")
+
+
 # ── MCP plumbing ──────────────────────────────────────────────────────────────────────────────────────────────
 
 def _schema(properties=None, required=()):
@@ -1049,6 +1102,7 @@ _WHERE = {"type": "string", "enum": ["this_computer", "studio_cloud"],
           "description": "this_computer (free machine, one video at a time) or studio_cloud (a ChannelRecipe machine "
                          "renders it, paid from the cloud balance; videos render side by side)."}
 _FREE = {"readOnlyHint": True, "openWorldHint": False}
+_DELETES = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False}
 
 TOOLS = {
     "setup_check": (tool_setup_check, "Is ChannelRecipe Studio running and ready to make videos? Also Claude Code's "
@@ -1155,6 +1209,25 @@ TOOLS = {
                              "accept_medium": {"type": "boolean"}},
                             ["look_id", "style_name", "example_title"]),
                     {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}),
+    "delete_video": (tool_delete_video, "Delete a finished or stopped video, only when the creator asks: it moves to "
+                     "Studio's trash (the finished file, its description and thumbnails, its working files) and "
+                     "Recently deleted on the Studio page restores it for 30 days. Their voice library, styles and "
+                     "other videos stay. Refused while the video is being made. Tell the creator which video goes "
+                     "first; Claude Code asks them to approve.",
+                     _schema({"id": {"type": "string", "description": "video:<slug> from list_videos or progress()."},
+                              "title": {"type": "string", "description": "The video's title as list_videos or "
+                                                                         "progress() shows it. It must match the "
+                                                                         "video, so the approval names what goes."}},
+                             ["id", "title"]), _DELETES),
+    "delete_style": (tool_delete_style, "Delete a style the creator cloned (list_styles kind='mine', id cr_clone_…), "
+                     "only when they ask: its recipe moves to Studio's trash and Recently deleted restores it for 30 "
+                     "days. Videos made with it, their voice library and the study's notes stay; their plan's style "
+                     "clone count doesn't change. Studio's own recipes can't be deleted. Tell the creator which style "
+                     "goes first; Claude Code asks them to approve.",
+                     _schema({"id": {"type": "string", "description": "The style's id from list_styles (cr_clone_…)."},
+                              "name": {"type": "string", "description": "The style's name as list_styles shows it. It "
+                                                                        "must match the style, so the approval names "
+                                                                        "what goes."}}, ["id", "name"]), _DELETES),
 }
 
 

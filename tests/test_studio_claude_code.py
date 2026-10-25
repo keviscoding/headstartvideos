@@ -314,7 +314,7 @@ def test_mcp_handshake_and_tool_list():
     assert [r["id"] for r in replies] == [1, 2, 3]
     assert replies[0]["result"]["protocolVersion"] == "2025-03-26"
     names = {t["name"] for t in replies[1]["result"]["tools"]}
-    assert set(ccc.FREE_TOOLS) | set(ccc.PAID_TOOLS) == names
+    assert set(ccc.FREE_TOOLS) | set(ccc.PAID_TOOLS) | set(ccc.DESTRUCTIVE_TOOLS) == names
     assert all(t["inputSchema"]["type"] == "object" for t in replies[1]["result"]["tools"])
     assert replies[2]["error"]["code"] == -32601
 

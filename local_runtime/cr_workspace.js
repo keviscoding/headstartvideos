@@ -311,6 +311,7 @@
     text('crw-page-name', {create:'Create video',projects:'Your projects',styles:'Style library'}[state.page]);
     if (persist) history.replaceState(null,'',`${location.pathname}${location.search}#${state.page}`);
     if (state.page === 'projects') {renderProjects(); cloudPanel();} if (state.page === 'styles') renderStyles();
+    if (state.page !== 'create') loadTrash();
     $('crw-main').focus({preventScroll:true});
   }
   function inspect(recipe, reveal = false) {
@@ -363,7 +364,13 @@
   function renderStyles() {
     renderAllowance();
     const customs = rows().filter(r => r.custom); const target = $('crw-styles-list'); target.replaceChildren();
-    for (const recipe of customs) {const card = recipeCard(recipe,r => {selectRecipe(r); showPage('create');}); target.append(card);}
+    for (const recipe of customs) {
+      const card = recipeCard(recipe,r => {selectRecipe(r); showPage('create');});
+      if (!/^cr_clone_/.test(recipe.name || '')) {target.append(card); continue;}     // only styles you cloned
+      const item = el('div','crw-style-item'), del = el('button','crw-text-button crw-delete-button','Delete style'); del.type = 'button';
+      del.setAttribute('aria-label', `Delete ${recipe.label}`); del.addEventListener('click', () => openDelete('style', recipe.name));
+      item.append(card, del); target.append(item);
+    }
     hide('crw-styles-empty',!!customs.length);
     // a finished study is already a saved style above; only studies still running or stopped are listed here
     const studies = state.studies.filter(study => study.state !== 'done');
@@ -400,7 +407,9 @@
       posterObserver?.observe(video);
     } else {media.classList.add('crw-preview-unavailable');media.append(el('span','', ['running','queued'].includes(job.state)?'Video is in production':'No finished video yet'));}
     const body=el('div','crw-card-body');body.append(statusBadge(job.state),el('h3','',job.title||'Untitled video'),el('p','crw-card-meta',`${r?.label||'Video project'}${job.mtime?' · '+date(job.mtime):''}`));
-    const actions=el('div','crw-card-actions');const open=el('button','crw-secondary-button',job.hasVideo?'Video & exports':['running','queued'].includes(job.state)?'View progress':'Review issue');open.type='button';open.addEventListener('click',()=>job.hasVideo?openOutput(job):openProgress(job));actions.append(open);body.append(actions);card.append(media,body);return card;
+    const actions=el('div','crw-card-actions');const open=el('button','crw-secondary-button',job.hasVideo?'Video & exports':['running','queued'].includes(job.state)?'View progress':'Review issue');open.type='button';open.addEventListener('click',()=>job.hasVideo?openOutput(job):openProgress(job));actions.append(open);
+    if(!['running','queued','held'].includes(job.state)){const del=el('button','crw-text-button crw-delete-button','Delete');del.type='button';del.setAttribute('aria-label',`Delete ${job.title||'this video'}`);del.addEventListener('click',()=>openDelete('video',job.slug));actions.append(del);}
+    body.append(actions);card.append(media,body);return card;
   }
   function renderProjects() {
     const projects=combinedProjects().filter(j=>state.projectFilter==='all'||(state.projectFilter==='done'?j.state==='done':state.projectFilter==='active'?['running','queued'].includes(j.state):!['running','queued','done'].includes(j.state)));
@@ -494,15 +503,81 @@
     }
     $('crw-progress-actions').append(box);
   }
+  // Delete a finished or stopped video, or a learned style (thatguygab, 2026-10-25). Studio says what goes and what is
+  // kept, then moves it into its trash (cr_trash): Undo, or Restore in Recently deleted for 30 days. Never at once.
+  async function openDelete(kind, id) {
+    state.deleting = {kind, id};
+    text('crw-delete-title', kind === 'style' ? 'Delete this style?' : 'Delete this video?');
+    text('crw-delete-name', ''); $('crw-delete-goes').replaceChildren(); $('crw-delete-kept').replaceChildren();
+    text('crw-delete-note', 'Checking what goes…'); hide('crw-delete-error', true); $('crw-delete-confirm').disabled = true;
+    if (!$('crw-delete').open) $('crw-delete').showModal();
+    try {
+      const plan = await api(`/cr-workspace/delete/${kind}/${encoded(id)}`);
+      if (state.deleting?.id !== id) return;
+      text('crw-delete-name', `“${plan.title}”`);
+      $('crw-delete-goes').replaceChildren(...(plan.goes || []).map(v => el('li', '', v)));
+      $('crw-delete-kept').replaceChildren(...(plan.kept || []).map(v => el('li', '', v)));
+      text('crw-delete-note', `It waits in Studio’s trash for ${plan.keep_days || 30} days, then Studio empties it for good. Until then, Restore in Recently deleted puts it back.`);
+      if (plan.blocked) {text('crw-delete-error', kind === 'video' ? `This video ${plan.blocked}` : plan.blocked); hide('crw-delete-error', false);}
+      $('crw-delete-confirm').disabled = !!plan.blocked;
+      if (!plan.blocked) $('crw-delete-cancel').focus();
+    } catch (e) {text('crw-delete-note', ''); text('crw-delete-error', e.message); hide('crw-delete-error', false);}
+  }
+  async function confirmDelete() {
+    const target = state.deleting, button = $('crw-delete-confirm'); if (!target) return; button.disabled = true;
+    try {
+      const done = await api(`/cr-workspace/delete/${target.kind}/${encoded(target.id)}`, {method: 'POST', body: {}});
+      $('crw-delete').close();
+      undoToast(`“${done.title}” is in Studio’s trash.`, done.trash_id);
+      await afterTrashChange(target.kind);
+    } catch (e) {text('crw-delete-error', e.message); hide('crw-delete-error', false); button.disabled = false;}
+  }
+  function undoToast(message, entry) {
+    const box = $('crw-toast'), undo = el('button', 'crw-inline-link crw-toast-undo', 'Undo'); undo.type = 'button';
+    undo.addEventListener('click', () => restoreEntry(entry, undo));
+    box.replaceChildren(el('span', '', message), undo); hide('crw-toast', false);
+    clearTimeout(toast.timer); toast.timer = setTimeout(() => hide('crw-toast', true), 10000);
+  }
+  async function restoreEntry(id, button) {
+    if (button) button.disabled = true;
+    try {
+      const back = await api(`/cr-workspace/trash/${encoded(id)}/restore`, {method: 'POST', body: {}});
+      toast(`“${back.title}” is back ${back.kind === 'style' ? 'in your Style library' : 'in Projects'}.`);
+      await afterTrashChange(back.kind);
+    } catch (e) {toast(e.message); if (button) button.disabled = false;}
+  }
+  async function afterTrashChange(kind) {
+    if (kind === 'style') {
+      try {state.catalog = await api('/cr-workspace/catalog');} catch (_) {/* the next page load has it */}
+      // a deleted style can't stay chosen on Create: its saved recipe file is gone
+      if (state.selected && !findRecipe(identity(state.selected))) selectRecipe(findRecipe('documentary') || rows()[0]);
+      if (state.page === 'styles') renderStyles();
+    } else await refreshActivity(true);
+    await loadTrash();
+  }
+  async function loadTrash() {
+    try {state.trash = (await api('/cr-workspace/trash')).entries || [];} catch (_) {state.trash = state.trash || [];}
+    for (const [id, kind] of [['crw-trash-videos', 'video'], ['crw-trash-styles', 'style']]) {
+      const box = $(id); if (!box) continue;
+      const mine = state.trash.filter(r => r.kind === kind);
+      box.hidden = !mine.length; box.querySelector('[data-trash-count]').textContent = mine.length ? `(${mine.length})` : '';
+      box.querySelector('.crw-trash-list').replaceChildren(...mine.map(r => {
+        const row = el('div', 'crw-trash-row'), copy = el('div'), days = Number(r.days_left) || 0;
+        copy.append(el('strong', '', r.name || 'Untitled'), el('span', 'crw-field-help', `Deleted ${date(r.deleted_at)} · emptied for good in ${days} day${days === 1 ? '' : 's'}`));
+        const back = el('button', 'crw-secondary-button', 'Restore'); back.type = 'button'; back.setAttribute('aria-label', `Restore ${r.name || 'this item'}`);
+        back.addEventListener('click', () => restoreEntry(r.id, back)); row.append(copy, back); return row;
+      }));
+    }
+  }
   async function openOutput(job) {
     try {
       const data = await api(`/api/result/${encoded(job.slug)}`); if (!data.video) throw new Error('This project has no finished video to open yet.');
       for(const player of all('.crw-video-preview'))player.pause();state.currentOutput = job; text('crw-output-title',job.title || 'Your video'); text('crw-output-message','');
       $('crw-output-video').poster=`/cr-workspace/preview/project/${encoded(job.slug)}.jpg`;$('crw-output-video').src = `/f/video/${encoded(job.slug)}`; $('crw-output-download').href = `/f/video/${encoded(job.slug)}`;
       $('crw-output-editor').href = `/editor/${encoded(job.slug)}`; $('crw-output-editor').hidden = job.editable === false;
-      text('crw-output-editor-label', 'Open timeline');
+      text('crw-output-editor-label', 'Open timeline'); hide('crw-output-timing', job.editable === false);
       // A Ranking Short: its own editor (change a line, swap a clip, remake), the owner's "mini timeline for this format"
-      try {const rk = await api(`/cr-ranking/edit/${encoded(job.slug)}`); if (rk && rk.slots) {$('crw-output-editor').href = `/cr-ranking-edit?job=${encoded(job.slug)}`; text('crw-output-editor-label', 'Edit countdown'); $('crw-output-editor').hidden = false;}} catch (_) {}
+      try {const rk = await api(`/cr-ranking/edit/${encoded(job.slug)}`); if (rk && rk.slots) {$('crw-output-editor').href = `/cr-ranking-edit?job=${encoded(job.slug)}`; text('crw-output-editor-label', 'Edit countdown'); $('crw-output-editor').hidden = false; hide('crw-output-timing', true);}} catch (_) {}
       const exports = [['audio','Narration','audio'],['script','Script','script'],['srt','Subtitles','srt'],['desc','Description','desc']];
       $('crw-output-exports').replaceChildren(); for (const [key,label,kind] of exports) if (data[key]) {const a=el('a','crw-export-link',label);a.href=`/f/${kind}/${encoded(job.slug)}`;a.download='';$('crw-output-exports').append(a);}
       for (const name of data.thumbs || data.thumbnails || []) {const filename=typeof name==='string'?name:name.name; if (!filename) continue;const a=el('a','crw-export-link','Thumbnail');a.href=`/f/thumb/${encoded(job.slug)}/${encoded(filename)}`;a.download='';$('crw-output-exports').append(a);}
@@ -774,6 +849,9 @@
   $('crw-output').addEventListener('close',()=>{$('crw-output-video').pause();$('crw-output-video').removeAttribute('src');$('crw-output-video').load();});
   $('crw-output-reveal').addEventListener('click',async()=>{if(!state.currentOutput)return;try{await api(`/api/reveal/${encoded(state.currentOutput.slug)}`,{method:'POST',body:{}});text('crw-output-message','The video folder is open on this computer.');}catch(e){text('crw-output-message',e.message);}});
   $('crw-projects-refresh').addEventListener('click',()=>refreshActivity(true));
+  $('crw-delete-confirm').addEventListener('click',confirmDelete);
+  for(const id of ['crw-delete-cancel','crw-delete-close'])$(id).addEventListener('click',()=>$('crw-delete').close());
+  $('crw-delete').addEventListener('close',()=>{state.deleting=null;});
   $('crw-progress-cancel').addEventListener('click',async()=>{const b=$('crw-progress-cancel');if(!b.dataset.run||!state.openJob)return;b.disabled=true;try{await api(`/cr-video/${encoded(state.openJob)}/cancel`,{method:'POST',body:{run_id:b.dataset.run}});toast('Cancellation requested. Completed work stays saved.');await refreshActivity();}catch(e){text('crw-progress-note',e.message);}});
   $('crw-presenter-add').addEventListener('click',async()=>{const file=$('crw-presenter-photo').files[0];if(!file){text('crw-presenter-status','Choose a photo of your presenter.');return;}state.uploading=true;gate();text('crw-presenter-status','Adding your presenter…');const form=new FormData();form.append('file',file);form.append('name',$('crw-presenter-name').value);form.append('gender',$('crw-presenter-gender').value);form.append('persona',$('crw-presenter-persona').value);try{const result=await api('/cr-workspace/presenter',{method:'POST',body:form});const row=result.presenter;const o=el('option','',row.name||row.id);o.value=row.id;$('crw-avatar-id').prepend(o);$('crw-avatar-id').value=row.id;text('crw-presenter-status',`${row.name} is ready to present.`);}catch(e){text('crw-presenter-status',e.message);}finally{state.uploading=false;gate();}});
   $('crw-character').addEventListener('input',()=>{characterView();summary();});
