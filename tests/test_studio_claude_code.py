@@ -122,6 +122,15 @@ class FakeStudio:
                                 {"id": "own", "label": "Own", "ready": True, "note": "n"}]}
         if path == "/api/products":
             return {"products": [{"slug": "pantry-book", "title": "Pantry Book", "secret": "no"}]}
+        if path.startswith("/cr-workspace/delete/"):            # cr_workspace's own delete routes (cr_trash)
+            kind, ident = path.split("/")[3:5]
+            title = {"done--abc": "Done", "busy--abc": "Busy", "cr_clone_abc": "My Style"}[ident]
+            blocked = "is being made right now. Cancel it or let it finish, then delete it." if ident == "busy--abc" else ""
+            plan = {"kind": kind, "id": ident, "title": title, "goes": ["The finished video: Done.mp4 (5.0 MB)"],
+                    "kept": ["Your voice library and saved recordings"], "keep_days": 30, "blocked": blocked}
+            if method == "POST":
+                return {**plan, "deleted": True, "trash_id": "v20261025-120000-abcdef", "empties_at": 1_800_000_000}
+            return plan
         raise AssertionError("unexpected route " + path)
 
     def posted(self, path):
@@ -771,3 +780,46 @@ def test_progress_on_an_animated_clone_says_the_animations_score_and_never_picks
     status["renderer"] = {"state": "passed", "overall": 6.7, "bar": 5.5, "say": "Claude wrote it: 6.7/10."}
     passed = ok("progress", {"id": op})
     assert passed["animation"]["what_to_tell_them"] == "Claude wrote it: 6.7/10." and "list_styles" in passed["next"]
+
+
+# ── deleting, only ever into Studio's trash and always asked ──────────────────────────────────────────────────
+
+def test_delete_video_moves_the_named_video_to_the_trash(studio):
+    out = ok("delete_video", {"id": "video:done--abc", "title": "  done "})
+    assert out["deleted"] and out["moved_to_trash"] == ["The finished video: Done.mp4 (5.0 MB)"]
+    assert out["kept"] == ["Your voice library and saved recordings"]
+    assert "Recently deleted" in out["restore"] and "http://localhost:7860/#projects" in out["restore"]
+    assert studio.posted("/cr-workspace/delete/video/done--abc") == [{}]
+
+
+def test_delete_video_refuses_another_title_or_a_video_being_made(studio):
+    wrong = tools.run_tool("delete_video", {"id": "video:done--abc", "title": "Zombie Outbreak"})
+    assert wrong["isError"] and "not “Zombie Outbreak”" in wrong["structuredContent"]["error"]
+    busy = tools.run_tool("delete_video", {"id": "video:busy--abc", "title": "Busy"})
+    assert busy["isError"] and "being made" in busy["structuredContent"]["error"]
+    assert tools.run_tool("delete_video", {"id": "video:../x", "title": "x"})["isError"]
+    assert not [c for c in studio.calls if c[0] == "POST"], "nothing was deleted"
+
+
+def test_delete_style_takes_only_a_cloned_style_by_its_name(studio):
+    refused = tools.run_tool("delete_style", {"id": "documentary", "name": "Editorial Documentary"})
+    assert refused["isError"] and "Only a style the creator cloned" in refused["structuredContent"]["error"]
+    assert not [c for c in studio.calls if "/delete/" in c[1]], "a built-in recipe is refused before Studio is asked"
+    assert tools.run_tool("delete_style", {"id": "cr_clone_abc", "name": "Other"})["isError"]
+    out = ok("delete_style", {"id": "cr_clone_abc", "name": "My Style"})
+    assert out["deleted"] and "#styles" in out["restore"]
+    assert studio.posted("/cr-workspace/delete/style/cr_clone_abc") == [{}]
+
+
+def test_the_deletes_are_destructive_and_always_asked(tmp_path):
+    for name in ("delete_video", "delete_style"):
+        hints = tools.TOOLS[name][3]
+        assert hints["destructiveHint"] is True and hints["readOnlyHint"] is False
+        assert "trash" in tools.TOOLS[name][1] and "approve" in tools.TOOLS[name][1]
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text(json.dumps({"permissions": {
+        "allow": ["mcp__studio__delete_video", "mcp__studio__list_videos"]}}))
+    ccc.configure(tmp_path)
+    permissions = json.loads((tmp_path / ".claude" / "settings.json").read_text())["permissions"]
+    assert {"mcp__studio__delete_video", "mcp__studio__delete_style"} <= set(permissions["ask"])
+    assert not {"mcp__studio__delete_video", "mcp__studio__delete_style"} & set(permissions["allow"])

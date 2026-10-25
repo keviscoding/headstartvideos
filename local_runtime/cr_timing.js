@@ -103,7 +103,8 @@
       row.append(mk('div', 'crt-note', edge === 'start' ? 'Appears when the video starts.' : 'Ends when the video ends.'));
       return row;
     }
-    const label = mk('b', pending ? 'is-pending' : '', `${name} at ${fmt(at, 2)}${pending ? ' · saving…' : ''}`);
+    const word = nearestWord(at, 0.12);
+    const label = mk('b', pending ? 'is-pending' : '', `${name} at ${fmt(at, 2)}${word ? ` · on “${word.w}”` : ''}${pending ? ' · saving…' : ''}`);
     top.append(label,
       button(`−${STEP} s`, `${name} ${STEP} s earlier${edge === 'start' ? ' (Alt+←)' : ' (Alt+Shift+←)'}`, () => nudge(i, edge, -STEP), at - STEP < b[0] - 1e-6),
       button(`+${STEP} s`, `${name} ${STEP} s later${edge === 'start' ? ' (Alt+→)' : ' (Alt+Shift+→)'}`, () => nudge(i, edge, STEP), at + STEP > b[1] + 1e-6),
@@ -112,7 +113,7 @@
     row.append(top);
     const near = T.words.filter(w => w.t0 >= Math.max(b[0], at - WINDOW) - 1e-6 && w.t0 <= Math.min(b[1], at + WINDOW) + 1e-6);
     if (near.length) {
-      const chips = mk('div', 'crt-words-row'), on = nearestWord(at, 0.12);
+      const chips = mk('div', 'crt-words-row'), on = word;
       chips.setAttribute('aria-label', `${name} on a word`);
       for (const w of near.slice(0, 18)) {
         const chip = mk('button', 'crt-chip' + (w === on ? ' is-now' : ''), w.w); chip.type = 'button';
@@ -198,10 +199,11 @@
   let frame = 0;
   function drawWords() {
     frame = 0;
-    if (!T.words.length || PPS < 24) {layer.replaceChildren(); return;}          // too far out: the words would overlap
+    if (!T.words.length || PPS < 12) {layer.replaceChildren(); return;}          // too far out: the ticks would merge
     const from = scroller.scrollLeft / PPS - 2, to = (scroller.scrollLeft + scroller.clientWidth) / PPS + 2;
     layer.replaceChildren(...T.words.filter(w => w.t1 >= from && w.t0 <= to).map(w => {
-      const n = mk('span', 'crt-word', w.w); n.style.left = `${X(w.t0)}px`; n.style.width = `${Math.max(2, X(w.t1 - w.t0))}px`; return n;
+      const width = X(w.t1 - w.t0), n = mk('span', 'crt-word', width >= 24 ? w.w : '');      // a tick where a word has no room
+      n.style.left = `${X(w.t0)}px`; n.style.width = `${Math.max(2, width)}px`; return n;
     }));
   }
   const redraw = () => {if (!frame) frame = requestAnimationFrame(drawWords);};

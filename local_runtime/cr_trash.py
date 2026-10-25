@@ -128,11 +128,13 @@ def _move(src: Path, dest: Path) -> None:
 
 
 def _rmtree(path: Path) -> None:
-    """Remove a trash entry for good (only ever called on an entry inside the trash). Read-only files (Windows) are
-    made writable and tried again; whatever still can't go is left for the next time."""
+    """Remove a trash entry for good (only ever called on an entry inside the trash). A read-only file (Windows) or
+    folder is made writable and tried again; whatever still can't go is left for the next time."""
     def retry(function, target, _info):
         try:
-            os.chmod(target, stat.S_IWRITE | stat.S_IREAD)
+            os.chmod(os.path.dirname(target), stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
+            if not os.path.islink(target):
+                os.chmod(target, stat.S_IWRITE | stat.S_IREAD | (stat.S_IEXEC if os.path.isdir(target) else 0))
             function(target)
         except OSError:
             pass

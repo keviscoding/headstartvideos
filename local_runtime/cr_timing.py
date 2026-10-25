@@ -107,7 +107,7 @@ def with_addon(html: str) -> str:
 def install(studio, *, home=None) -> bool:
     """Add the add-on's routes and load it into the editor page. False (nothing changed) on an engine without the
     timeline editor."""
-    from flask import Response, jsonify, request, send_file
+    from flask import jsonify, request, send_file
     app = studio.app
     home = Path(home or HOME).resolve()
     editors = [rule.endpoint for rule in app.url_map.iter_rules()

@@ -243,6 +243,8 @@ def test_click_a_picture_then_the_word_it_should_appear_on(editor):
     assert "Appears at 0:05.00" in panel.inner_text() and "Ends at 0:10.00" in panel.inner_text()
     chips = panel.locator(".crt-edge").first.locator(".crt-chip")
     assert "Suez" in chips.all_inner_texts() and "2021." not in chips.all_inner_texts(), "only where the cut can go"
+    if os.environ.get("CR_SHOT"):
+        page.screenshot(path=os.environ["CR_SHOT"].replace(".png", "-timing.png"))
     chips.filter(has_text="Suez").click()
     page.wait_for_function("document.querySelector('#insp .crt-panel b')?.textContent.includes('0:06.20')")
     assert retimes(editor) == [{"op": "retime", "slot": 1, "start": 6.2, "end": 10}]
@@ -301,7 +303,11 @@ def test_dragging_an_edge_snaps_to_the_spoken_word_and_sends_one_retime(editor):
 
 def test_the_words_are_written_on_the_voice_track(editor):
     page = editor.page
-    page.wait_for_function("document.querySelectorAll('#laneA .crt-word').length > 0")
-    words = page.locator("#laneA .crt-word").all_inner_texts()
-    assert "Suez" in words and "floats." in words
+    page.wait_for_function("document.querySelectorAll('#laneA .crt-word').length === 29")
+    assert "2021." in page.locator("#laneA .crt-word").all_inner_texts(), "a word with room is written out"
+    page.evaluate("setZoom(160, 0, 0)")                      # zoomed in: every word has room
+    page.wait_for_function("[...document.querySelectorAll('#laneA .crt-word')].some(n => n.textContent === 'Suez')")
+    assert "floats." not in page.locator("#laneA .crt-word").all_inner_texts(), "only the words in view are drawn"
+    page.evaluate("document.getElementById('scroll').scrollLeft = 1e6")
+    page.wait_for_function("[...document.querySelectorAll('#laneA .crt-word')].some(n => n.textContent === 'floats.')")
     assert page.locator("#insp .crt-tip").count() == 1, "the empty inspector says how to fix a picture's timing"
