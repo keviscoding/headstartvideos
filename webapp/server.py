@@ -564,6 +564,9 @@ def require_admin(request: Request) -> dict:
 # The admins' Showcase: the newest Studio videos, private, with signed download links (webapp/showcase.py).
 from webapp import showcase as _showcase
 app.include_router(_showcase.make_router(require_admin))
+# Why customers' Studio videos stop: counts only (webapp/studio_failures.py).
+from webapp import studio_failures as _studio_failures
+app.include_router(_studio_failures.make_router(require_admin))
 
 
 # ChannelRecipe Studio for subscribers. The router checks both web sessions

@@ -607,6 +607,13 @@ def start(client, token: str, p: dict) -> None:
     except BaseException as e:                              # noqa: BLE001 - the engine exits on a failed Claude step
         why = str(e) if not isinstance(e, SystemExit) else f"a step stopped ({e})" if str(e) else "a step stopped"
         TASK.update(state="failed", error=f"Preparing it here stopped: {why}"[:400], message="")
+        import cr_failure                                   # why, privacy-safe, for ChannelRecipe's counts
+
+        def note(line):
+            if TASK.get("state") == "failed" and TASK.get("title") == title:
+                TASK["error"] = (str(TASK.get("error") or "") + " " + line).strip()
+        cr_failure.report_stop(e, source="cloud", recipe=str(p.get("style") or ""), titles=titles, default_step="cloud",
+                               on_note=note)
 
 
 def install_routes(studio, token: str, home: Path = HOME) -> None:
