@@ -311,6 +311,13 @@ def quote_for(cat: dict, row: dict, *, titles: int, minutes: int, where: str, fe
     else:
         out["expected_total_usd"] = round(media["per_video_usd"] * titles, 2)
         out["this_computer"] = "Renders on this computer, one video at a time; no machine to pay for."
+    if features.get("youtube") and kind(row) != "short":
+        # Research footage watches YouTube videos before the video is made: how long that adds, said with the cost
+        import cr_watch
+        b = cr_watch.budget(minutes)
+        out["footage"] = {"videos_watched_at_most": b["videos"], "adds_minutes": b["typical_minutes"],
+                          "stops_watching_after_minutes": b["stop_minutes"], "note": cr_watch.estimate_text(minutes)
+                          + " Turn off the youtube feature (options.features) for a faster video without real footage."}
     key = json.dumps([row["name"], titles, minutes, where, sorted(k for k, v in features.items() if v)])
     out["quote_id"] = "q_" + hashlib.sha256(key.encode()).hexdigest()[:16]
     quotes = _read(STATE / "quotes.json")
@@ -325,6 +332,10 @@ def summary(q: dict) -> str:
     n, each = q["titles"], " each" if q["titles"] > 1 else ""
     usd = q["media"]["per_video_usd"]
     media = f"media about ${usd:.2f}{each}" if usd >= 0.01 else "media a few cents"
+    footage = q.get("footage")
+    # the footage is watched on this computer wherever the video renders
+    watching = (f" Research footage adds about {footage['adds_minutes'][0]} to {footage['adds_minutes'][1]} minutes a "
+                f"video (it watches up to {footage['videos_watched_at_most']} YouTube videos)." if footage else "")
     if q["where"] == "studio_cloud":
         c = q["cloud"]
         text = (f"{n} × {q['minutes']}-min {q['style_name']} on Studio Cloud: machine about "
@@ -333,9 +344,9 @@ def summary(q: dict) -> str:
                 f"${c['balance_usd']:.2f}.")
         if q.get("short_by_usd"):
             text += f" Short by ${q['short_by_usd']:.2f}: top up at {c['topup_url']}."
-        return text
+        return text + watching
     return (f"{n} × {q['minutes']}-min {q['style_name']} on this computer: {media}; about "
-            f"${q['expected_total_usd']:.2f} in all, plus Claude Code usage on your plan.")
+            f"${q['expected_total_usd']:.2f} in all, plus Claude Code usage on your plan." + watching)
 
 
 # ── the tools ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -650,6 +661,14 @@ def _job_status(slug: str) -> dict:
     out = {"id": "video:" + slug, "state": status.get("state"), "done": bool(status.get("done")),
            "percent": round(100 * float(status.get("progress") or 0)), "error": status.get("error") or "",
            "last_lines": [line for line in (status.get("lines") or [])[-6:] if line.strip()]}
+    # Research footage: how far its YouTube watching is (cr_watch says "watched N of M videos" as it goes; once the
+    # video has moved on, newer lines have pushed it out of the last ten)
+    watched = next((m for m in (re.search(r"YouTube: watched (\d+) of (\d+) videos", line or "")
+                                for line in reversed((status.get("lines") or [])[-10:])) if m), None)
+    if watched and not out["done"]:
+        out["watching_clips"] = {"watched": int(watched.group(1)), "of": int(watched.group(2)),
+                                 "note": "Still watching YouTube videos for its footage; it stops by itself at its "
+                                         "budget and carries on with the clips it found."}
     if status.get("video"):
         out.update(watch_url=link("/f/video/" + _quote_path(slug)), project_url=link("/editor/" + _quote_path(slug)))
     elif out["done"] or out["state"] in ("error", "stopped"):

@@ -129,6 +129,10 @@ class FakeStudio:
                         "choices": [{"id": "skip", "label": "Finish without the presenter", "ready": True, "note": "n"},
                                     {"id": "again", "label": "Try the presenter again", "ready": True, "note": "n"}]}
             return {"stopped_on_presenter": False, "choices": []}
+        if path == "/api/status/watching--abc":
+            return {"state": "running", "done": False, "progress": 0.3, "error": "", "lines": [
+                "YouTube: 120 searches", "  YouTube: watched 15 of 42 videos (6 min so far; this video stops watching "
+                "at 40 min)", "  v03_0: not watched - the watcher said no"]}
         if path == "/api/status/heist--abc":
             return {"state": "error", "done": True, "progress": 0.97, "lines": ["Avatar intro"],
                     "error": "Kie.ai couldn't make this video's presenter (Internal Error)."}
@@ -198,6 +202,19 @@ def test_a_quote_for_other_choices_or_an_old_one_starts_nothing(studio, monkeypa
     out = ok("make_videos", {"titles": ["One"], "style": "documentary", "minutes": 10, "where": "this_computer",
                              "quote_id": q["quote_id"]})
     assert out["started"] is False and not studio.posted("/api/run")
+
+
+def test_a_quote_with_research_footage_says_how_long_its_watching_takes(studio):
+    """A customer's 10-minute video watched YouTube clips for 22 extra hours (2026-10-25): the time is said up front,
+    with the cost, and the watching is capped to a budget for the length."""
+    q = ok("quote", {"style": "documentary", "minutes": 10})
+    assert q["footage"]["videos_watched_at_most"] == 50 and q["footage"]["adds_minutes"] == [22, 44]
+    assert q["footage"]["stops_watching_after_minutes"] == 40 and "options.features" in q["footage"]["note"]
+    assert "Research footage adds about 22 to 44 minutes a video" in q["summary"]
+    off = ok("quote", {"style": "documentary", "minutes": 10, "options": {"features": {"youtube": False}}})
+    assert "footage" not in off and "Research footage" not in off["summary"]
+    progress = ok("progress", {"id": "video:watching--abc"})
+    assert progress["watching_clips"]["watched"] == 15 and progress["watching_clips"]["of"] == 42
 
 
 def test_cloud_quote_and_start(studio):

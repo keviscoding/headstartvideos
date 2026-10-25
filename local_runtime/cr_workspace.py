@@ -143,6 +143,9 @@ def install(studio, activity, *, token, home=None):
                 preview_label=source.label if source else "No video preview yet",
                 preview_video_url=source.video_url if source else None)
         preview_cache.update(at=time.monotonic(), sources=sources)
+        # what Research footage may watch for each length, 1 to 60 minutes (Create says it before a video starts)
+        import cr_watch
+        data["footage_watch"] = [cr_watch.budget(minutes) for minutes in range(1, 61)]
         return cr_presentation.plain_copy(data)
 
     def selected_preset():

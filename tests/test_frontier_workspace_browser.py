@@ -25,6 +25,7 @@ from werkzeug.serving import make_server
 RUNTIME = Path(__file__).parents[1] / "local_runtime"
 sys.path.insert(0, str(RUNTIME))
 import cr_presentation
+import cr_watch
 
 TOKEN = "synthetic-browser-local-token"
 CLONE = "cr_clone_browser_fixture"
@@ -50,7 +51,7 @@ def workspace(browser):
                           local_version="synthetic-studio", account=None, update_state={"state": "idle"}, voice="Kore",
                           preview_active=0, preview_max_active=0, preview_busy=0, preview_delay=0,
                           finished_jobs=[{"slug": "finished-film", "title": "A finished film", "style": "documentary", "editable": True}],
-                          cloud=None, cloud_starts=[], characters=[], drawn=[])
+                          cloud=None, cloud_starts=[], characters=[], drawn=[], active_lines=["ffmpeg: final render"])
     preview_lock = threading.Lock()
     image = io.BytesIO()
     Image.new("RGB", (160, 90), "#415573").save(image, "JPEG")
@@ -67,7 +68,7 @@ def workspace(browser):
     catalog = {"channels": cr_presentation.presentation_catalog(rows, {
         CLONE: {"cr_style_clone": {"visual_mode": "reference_only"}}}),
         "features": features, "caps": {"features": {row["key"]: {"ok": True} for row in features}},
-        "dlc": {}, "prices": {}}
+        "dlc": {}, "prices": {}, "footage_watch": [cr_watch.budget(m) for m in range(1, 61)]}
     app = Flask(__name__)
 
     @app.before_request
@@ -238,7 +239,7 @@ def workspace(browser):
                            cr_cancel={"can_cancel": False})
         active = slug == "active-film"
         return jsonify(state="running" if active else "done", done=not active,
-                       lines=["ffmpeg: final render"] if active else ["published: synthetic film"],
+                       lines=env.active_lines if active else ["published: synthetic film"],
                        progress=0.425 if active else 1, elapsed=125, error="",
                        cr_cancel={"can_cancel": active, "run_id": "exact-active-run" if active else ""})
 
@@ -414,6 +415,32 @@ def test_projects_draw_native_progress_cancel_exact_run_and_preserve_exports(wor
     assert page.locator("#crw-output-editor").get_attribute("href") == "/editor/finished-film"
     assert page.locator("#crw-output-exports a").count() == 5
     assert page.locator("#crw-output-exports a").all_text_contents() == ["Narration", "Script", "Subtitles", "Description", "Thumbnail"]
+
+
+def test_research_footage_says_what_its_watching_adds_and_progress_counts_the_videos(workspace):
+    """A customer's 10-minute video watched YouTube clips for 22 extra hours (2026-10-25): Create says what Research
+    footage adds for the length chosen, and the progress names how far the watching is."""
+    env, page = workspace, workspace.page
+    env.open("?cr-preset=documentary")
+    note = page.locator("#crw-footage-note")
+    note.wait_for(state="visible")
+    ten = cr_watch.budget(10)
+    assert f"about {ten['typical_minutes'][0]} to {ten['typical_minutes'][1]} minutes to a 10-minute video" in note.inner_text()
+    assert f"up to {ten['videos']} YouTube videos" in note.inner_text()
+    page.locator("[data-minutes='20']").click()
+    assert f"up to {cr_watch.budget(20)['videos']} YouTube videos" in note.inner_text()
+    if os.environ.get("CR_SHOT"):
+        page.locator(".crw-video-summary").screenshot(path=os.environ["CR_SHOT"])
+    page.locator("summary:has-text('Visual sources')").click()
+    page.locator("#crw-features [data-feature='youtube']").uncheck()
+    assert note.is_hidden(), "no footage, no watching"
+    env.mode = "active"
+    env.active_lines = ["YouTube: 40 searches", "  YouTube: watched 12 of 42 videos (5 min so far; this video stops "
+                        "watching at 40 min)"]
+    env.open("#projects")
+    page.get_by_role("button", name="View progress", exact=True).click()
+    page.wait_for_function("document.querySelector('#crw-progress-phase').textContent.includes('12 of 42')")
+    assert page.locator("#crw-progress-phase").inner_text() == "Watching YouTube clips (12 of 42)"
 
 
 def test_gallery_works_with_keyboard_and_a_mobile_viewport(workspace):

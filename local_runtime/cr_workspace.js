@@ -291,6 +291,16 @@
     text('crw-summary-visuals', strict(r) ? 'Reference animation throughout' : Object.entries(featureValues()).filter(([k,v]) => v && k !== 'sound').map(([k]) => (featureCopy[k] || [k])[0]).join(', ') || 'Recipe defaults');
     text('crw-summary-voice', state.narration === 'own' ? 'Your uploaded narration' : state.setup?.narration?.voice || 'Connected narration account');
     text('crw-summary-renderer', state.renderOn==='cloud' && state.cloudInfo?.available && !cloudBlock() ? 'Studio Cloud' : checked('crw-fast-toggle') && featureValues().threed && !strict() ? 'Fast mode · local render' : 'Local render');
+    footageNote();
+  }
+  // Research footage watches YouTube videos on the creator's video-model account before the video is made: what that
+  // adds, said before Create (a customer's 10-minute video watched clips for 22 hours, 2026-10-25). The numbers are
+  // Studio's own budget for the length (cr_watch.budget, sent with the catalog).
+  function footageNote() {
+    const r = state.selected, b = (state.catalog?.footage_watch || [])[number('crw-minutes',10,1,60) - 1];
+    const on = !!(r && b && featureValues().youtube && !strict(r) && !isShort(r) && !isRanking(r) && state.narration !== 'own');
+    hide('crw-footage-note', !on);
+    if (on) text('crw-footage-note', `Research footage adds about ${b.typical_minutes[0]} to ${b.typical_minutes[1]} minutes to a ${b.minutes}-minute video: Studio watches up to ${b.videos} YouTube videos on your video-model account to find its clips. It stops watching after ${b.stop_minutes} minutes and goes on with what it found.`);
   }
   function gate() {
     const ready = state.setup?.readiness?.ready === true;
@@ -374,6 +384,7 @@
   }
   const phaseCopy = line => {
     const v = String(line || ''); if (/DONE|published:/i.test(v)) return 'Finishing your video';
+    const watching = /YouTube: watched (\d+) of (\d+) videos/.exec(v); if (watching) return `Watching YouTube clips (${watching[1]} of ${watching[2]})`;
     if (/ffmpeg|final render|concat|mux/i.test(v)) return 'Rendering the film'; if (/review|critique|verify|repair/i.test(v)) return 'Reviewing visuals';
     if (/subtitles|whisper|timing narration/i.test(v)) return 'Timing narration and captions'; if (/voice|tts|narration/i.test(v)) return 'Creating narration';
     if (/design|scene|graphic|image|motion|kit/i.test(v)) return 'Building visual scenes'; if (/script|fact check/i.test(v)) return 'Writing and checking the story'; return 'Preparing the project';
