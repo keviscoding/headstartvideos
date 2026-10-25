@@ -22,7 +22,7 @@
   const slug = typeof SLUG === 'string' ? SLUG : decodeURIComponent(location.pathname.split('/').filter(Boolean).pop() || '');
   const MIN = 0.8;            // the editor's own shortest shot (timeline.MIN_SLOT)
   const STEP = 0.1, WINDOW = 3.2, SNAP_PX = 14, SAVE_AFTER = 650;
-  const T = {words: [], source: '', pending: null, timer: 0, voice: null, stopVoice: 0, stopAt: null};
+  const T = {words: [], source: '', pending: null, timer: 0, hearSoon: 0, voice: null, stopVoice: 0, stopAt: null};
   const mk = (tag, cls, txt) => {const n = document.createElement(tag); if (cls) n.className = cls; if (txt != null) n.textContent = txt; return n;};
   const button = (label, title, handler, disabled) => {
     const b = mk('button', 'btn sm', label); b.type = 'button'; if (title) b.title = title; b.disabled = !!disabled;
@@ -61,6 +61,7 @@
     const t = Math.max(b[0], Math.min(b[1], shown(i, edge) + delta));
     T.pending = {i, edge, t}; seek(t); mount(true);
     clearTimeout(T.timer); T.timer = setTimeout(commit, SAVE_AFTER);    // a run of nudges is saved as one change
+    clearTimeout(T.hearSoon); T.hearSoon = setTimeout(() => hearWord(t, 0.7), 250);   // and you hear where it lands
   }
   function commit() {
     clearTimeout(T.timer); const p = T.pending; T.pending = null;
@@ -83,7 +84,7 @@
     return T.voice;
   }
   function hearWord(t, seconds) {                            // the narration alone, from t (while dragging)
-    const a = voice(); clearTimeout(T.stopVoice);
+    const a = voice(); clearTimeout(T.stopVoice); if (!V.paused) V.pause();
     try {a.currentTime = Math.max(0, t);} catch (_) {}
     a.play().catch(() => {}); T.stopVoice = setTimeout(() => a.pause(), Math.round(seconds * 1000));
   }
@@ -118,7 +119,7 @@
       for (const w of near.slice(0, 18)) {
         const chip = mk('button', 'crt-chip' + (w === on ? ' is-now' : ''), w.w); chip.type = 'button';
         chip.title = `${edge === 'start' ? 'Show this picture from' : 'End this picture on'} “${w.w}” (${fmt(w.t0, 2)})`;
-        chip.addEventListener('click', () => {if (T.pending) commit(); moveEdge(i, edge, w.t0);});
+        chip.addEventListener('click', () => {if (T.pending) commit(); hearWord(w.t0, Math.min(0.9, Math.max(0.4, w.t1 - w.t0 + 0.2))); moveEdge(i, edge, w.t0);});
         chip.addEventListener('mouseenter', () => {if (V.paused) seek(w.t0);});
         chips.append(chip);
       }
