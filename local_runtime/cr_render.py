@@ -16,6 +16,8 @@ def install(engine):
     cr_renderer_contracts.install(engine)
     import cr_manimgx, cr_bridge
     cr_manimgx.install(engine, cr_bridge)
+    import cr_freeze
+    cr_freeze.install(engine)               # a frozen picture is traced to its segments and made again, never published
     original = engine._final_mux
     def final_mux(job, *args, **kwargs):
         try:
