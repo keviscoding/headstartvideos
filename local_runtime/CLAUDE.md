@@ -91,6 +91,9 @@ Studio through its own checks, so nothing needs the Studio web page.
   recipes that use YouTube. When `network.on_this_computer.suspected`, an antivirus or firewall on the computer is
   blocking Studio itself (their browser still works): help them allow `allow_programs` and 127.0.0.1:7860 in the
   antivirus it names, step by step. Never suggest switching the antivirus off.
+- `setup_check`'s `computer` says what this computer has (memory, processor cores, free disk) and, in `notes`, where
+  it's short of what Studio uses. Tell them before a long video. `make_videos` refuses a video the disk can't hold and
+  says how much to free: help them free space (the Bin or Recycle Bin, old downloads), but never delete their files.
 - No `studio` tools in this session? Studio's tools load when a Claude Code session starts. If Studio, Node or
   Python was installed or first started during this session, ask them to open a new Claude Code session in this
   folder (or run /mcp in a terminal session), then carry on. Never drive the Studio web page instead.
@@ -123,6 +126,11 @@ Studio through its own checks, so nothing needs the Studio web page.
   Offer only the ready ones (an ElevenLabs key goes in Setup & accounts, never in chat) and never pick for them. For
   their own recording, show them the script (`script_file`) to read, then `resume_video(id, voice="own",
   recording=<the file's path>)`; otherwise `resume_video(id, voice=<choice id>)`. The choice is for that video only.
+- A video that stopped on its AI presenter (`progress(id)` shows `presenter_choices`, for example Kie answering 500 on
+  the presenter intro): the rest of the video is finished and saved. Tell them what failed (`presenter_failed`) and ask
+  how to carry on: finish without the presenter (`resume_video(id, presenter="skip")`, nothing more is paid) or try the
+  presenter again after a few minutes (`presenter="again"`; read them its note, which says when that could pay twice).
+  Never pick for them.
 - Cloning a style (/clone-style): the look's questions come first, and two of them decide how the videos are MADE, so
   ask them before anything else, in plain words, with Studio's guess as the first option: `medium` (a 3D channel: how
   its 3D is made) and `animation` (a channel that animates its drawn characters, like stick-figure fights or animated

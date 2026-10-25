@@ -146,6 +146,9 @@ def install(studio, activity, *, token, home=None):
                 preview_label=source.label if source else "No video preview yet",
                 preview_video_url=source.video_url if source else None)
         preview_cache.update(at=time.monotonic(), sources=sources)
+        # what Research footage may watch for each length, 1 to 60 minutes (Create says it before a video starts)
+        import cr_watch
+        data["footage_watch"] = [cr_watch.budget(minutes) for minutes in range(1, 61)]
         return cr_presentation.plain_copy(data)
 
     def selected_preset():
@@ -482,13 +485,16 @@ def install(studio, activity, *, token, home=None):
         Resume) after Studio restarts: the live job list only knows what ran since the last start. Read only."""
         try:
             local_access()
+            import cr_media
             live = getattr(studio, "JOBS", {}) or {}
             rows = []
             for job in (studio.mv.list_jobs() if hasattr(studio.mv, "list_jobs") else []):
                 try:
                     job = Path(job)
                     slug = job.name
-                    if not _SLUG.fullmatch(slug) or studio.mv.final_video(job).is_file():
+                    # a video that stopped on its presenter has its film finished but not published: still stopped
+                    presenter = (job / cr_media.PRESENTER_FAILED).is_file()
+                    if not _SLUG.fullmatch(slug) or studio.mv.final_video(job).is_file() and not presenter:
                         continue
                     marker = job / "cr-project.json"
                     saved = _read(marker)
@@ -503,7 +509,7 @@ def install(studio, activity, *, token, home=None):
                     title = (title_file.read_text(encoding="utf-8").splitlines() or [""])[0] if title_file.is_file() else ""
                     rows.append({"slug": slug, "title": _text(title or spec.get("title") or saved.get("title"), 300),
                                  "style": _text(spec.get("style") or saved.get("style"), 140), "state": "stopped",
-                                 "mtime": marker.stat().st_mtime})
+                                 "mtime": marker.stat().st_mtime, **({"stopped_on": "presenter"} if presenter else {})})
                 except (OSError, ValueError, TypeError, AttributeError):
                     continue
             rows.sort(key=lambda r: -r["mtime"])
@@ -669,6 +675,64 @@ def install(studio, activity, *, token, home=None):
             return one_at_a_time(lambda: cr_trash.restore(studio, home, entry))
         except Exception as error:
             return trash_error(error)
+
+    # A video whose presenter couldn't be made (its avatar service failed at the very last step) has its whole film
+    # finished and saved: it can finish without the presenter, or try the presenter again later. The choice sits in
+    # its folder (cr_media.PRESENTER_CHOICE) and Resume carries on with it.
+    def presenter_choices(job):
+        import cr_media
+        failed = _read(job / cr_media.PRESENTER_FAILED) if (job / cr_media.PRESENTER_FAILED).is_file() else {}
+        uncertain = bool(cr_media.uncertain_presenter(job)) if failed else False
+        charged = failed.get("charged")
+        label = _text(failed.get("label"), 60) or "The presenter service"
+        again = ("The presenter is made again from where it stopped. Its last attempt got no clear answer from "
+                 f"{label}: check its task log first, because if that task did start, trying again pays for a second "
+                 "one." if uncertain else
+                 f"Best after waiting a few minutes. {label} charged nothing for the attempt that failed." if charged == 0
+                 else "Best after waiting a few minutes. The presenter is made again from where it stopped.")
+        rows = [{"id": "skip", "label": "Finish without the presenter", "ready": True,
+                 "note": "The video is finished as it is now, without the presenter intro. Nothing more is paid."},
+                {"id": "again", "label": "Try the presenter again", "ready": True, "note": again}]
+        return {"stopped_on_presenter": bool(failed),
+                "current": "skip" if cr_media.job_presenter(job).get("skip") else "again", "choices": rows,
+                "failed": {k: failed.get(k) for k in ("label", "reason", "category", "charged", "uncertain", "at")}
+                if failed else None}
+
+    @app.get("/cr-workspace/presenter-choice/<slug>")
+    def cr_workspace_presenter_choice(slug):
+        try:
+            local_access()
+            return protect(jsonify(slug=slug, **presenter_choices(voice_job(slug))))
+        except Exception as error:
+            return failure(error)
+
+    @app.post("/cr-workspace/presenter-choice/<slug>")
+    def cr_workspace_presenter_choice_pick(slug):
+        try:
+            local_access()
+            import cr_media
+            job = voice_job(slug)
+            if ((getattr(studio, "JOBS", {}).get(job.name) or {}).get("state")) in {"running", "queued"}:
+                return protect(jsonify(error="This video is still being made. Choose once it has stopped.")), 409
+            pick = str((request.get_json(silent=True) or {}).get("choice") or "")
+            if pick not in {"skip", "again"}:
+                return protect(jsonify(error="Choose to finish without the presenter, or to try it again.")), 400
+            target = job / cr_media.PRESENTER_CHOICE
+            if pick == "skip":
+                target.write_text(json.dumps({"skip": True}), encoding="utf-8")
+                message = "This video finishes without its presenter. Resume it to finish it; nothing more is paid."
+            else:
+                target.unlink(missing_ok=True)
+                if (job / cr_media.PRESENTER_FAILED).is_file():
+                    cr_media.retry_presenter(job)
+                message = "This video tries its presenter again. Resume it to carry on; everything else is reused."
+            return protect(jsonify(saved=True, choice=pick, message=message))
+        except ValueError as error:
+            if "Unavailable" in str(error):
+                return failure(error)
+            return protect(jsonify(error=str(error))), 400
+        except Exception as error:
+            return failure(error)
 
     @app.get("/cr-workspace/project/<slug>")
     def cr_workspace_project(slug):

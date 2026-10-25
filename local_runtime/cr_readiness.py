@@ -11,6 +11,7 @@ import requests
 
 import cr_bridge
 import cr_claude
+import cr_machine
 import cr_media
 import cr_mcp
 import cr_network
@@ -79,6 +80,9 @@ def setup_rows(checks):
     if checks.get("file_paths"):                  # Windows only: a note when the Studio folder is too deep (cr_paths)
         paths = checks["file_paths"]
         rows.append({"key": "file_paths", "label": "Windows file paths", "ready": True, "message": paths.get("message", "")})
+    if checks.get("computer"):                    # memory, cores and free disk (cr_machine): a note; preset() checks
+        computer = checks["computer"]             # the disk against each video
+        rows.append({"key": "computer", "label": "This computer", "ready": True, "message": computer.get("message", "")})
     return rows
 
 
@@ -200,6 +204,14 @@ def preset(studio, checks, spec):
         problem = cr_paths.title_problem(paths["folder"], style, titles, studio.mv.youtube_filename) if titles else ""
         if problem:
             results.append(item("title_length", "Title fits Windows' path limit", False, problem))
+    # A disk that fills up stops a video halfway, with nothing anyone can read: it stops here instead (cr_machine)
+    free = (checks.get("computer") or {}).get("free_disk_gb")
+    if free is not None and "video" in steps:
+        titles = [line for line in str(spec.get("title") or "").splitlines() if line.strip()]
+        room = cr_machine.disk_problem(free, spec.get("minutes") or 1, len(titles) or 1,
+                                       threed=bool(wanted.get("threed")) or backend == "manimgx")
+        if room:
+            results.append(item("disk_space", "Room for this video on the disk", False, room))
     # YouTube has no way around it: a recipe that uses it stops here on a network that can't reach it, not mid-video
     youtube = cr_network.youtube_problem(checks.get("network") or {})
     ranking = ((info or {}).get("shorts") or {}).get("pipeline") == "ranking"

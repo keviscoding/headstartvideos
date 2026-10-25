@@ -304,6 +304,51 @@ def test_stopped_videos_stay_in_projects_after_a_restart(env):
     assert env.get("/cr-workspace/stopped", headers={"Origin": "https://evil.example"}).status_code == 403
 
 
+def test_a_video_whose_presenter_stopped_can_finish_without_it_or_try_again(env):
+    """Kie answered 500 on a 9-second presenter intro and stopped a finished 10-minute video at its last step
+    (2026-10-25). Its film is on disk but not published: it stays a stopped project, offering to finish without the
+    presenter or to try the presenter again, for that video only."""
+    import cr_media
+    out = env.home / "output" / "documentary" / "_work"
+    job = out / "the-heist--abc"
+    job.mkdir(parents=True)
+    env.jobs["the-heist--abc"] = job
+    (job / "cr-project.json").write_text(json.dumps({"id": PROJECT, "brain_mode": "claudecode", "status": "failed",
+                                                     "job_spec": {"title": "The Heist", "style": "documentary"}}))
+    (job / "video.mp4").write_bytes(b"the film, without its presenter")
+    env.studio.mv.list_jobs = lambda: [job]
+    env.studio.mv.final_video = lambda j: Path(j) / "video.mp4"
+    got = env.get("/cr-workspace/presenter-choice/the-heist--abc").json
+    assert got["stopped_on_presenter"] is False and env.get("/cr-workspace/stopped").json["projects"] == []
+    (job / cr_media.PRESENTER_FAILED).write_text(json.dumps({"label": "Kie.ai", "reason": "Internal Error",
+                                                             "category": "model_failure", "charged": 0}))
+    rows = env.get("/cr-workspace/stopped").json["projects"]
+    assert [(r["slug"], r.get("stopped_on")) for r in rows] == [("the-heist--abc", "presenter")]
+    got = env.get("/cr-workspace/presenter-choice/the-heist--abc").json
+    assert got["stopped_on_presenter"] and got["current"] == "again" and got["failed"]["reason"] == "Internal Error"
+    assert [c["id"] for c in got["choices"]] == ["skip", "again"]
+    assert "charged nothing" in got["choices"][1]["note"]
+    pick = lambda body: env.client.post("/cr-workspace/presenter-choice/the-heist--abc", base_url=BASE, json=body,
+                                        headers={"X-CR-Local-Token": TOKEN})
+    assert env.client.post("/cr-workspace/presenter-choice/the-heist--abc", base_url=BASE,
+                           json={"choice": "skip"}).status_code == 403
+    assert pick({"choice": "nonsense"}).status_code == 400
+    assert pick({"choice": "skip"}).json["saved"] and cr_media.job_presenter(job) == {"skip": True}
+    assert env.get("/cr-workspace/presenter-choice/the-heist--abc").json["current"] == "skip"
+    # Kie answered the submission itself with a server error: whether the task started is unclear, and the note says
+    # so before the creator tries again (which sets that receipt aside, so the next run sends the presenter again)
+    tasks = job / ".cr-tasks"
+    tasks.mkdir()
+    (tasks / "0123456789abcdef.json").write_text(json.dumps({"provider": "kie", "model": "kling/ai-avatar-standard",
+                                                            "status": "submitting", "submit_error": "code 500"}))
+    note = env.get("/cr-workspace/presenter-choice/the-heist--abc").json["choices"][1]["note"]
+    assert "check its task log first" in note and "pays for a second one" in note
+    assert pick({"choice": "again"}).json["saved"] and not (job / cr_media.PRESENTER_CHOICE).exists()
+    assert cr_media.uncertain_presenter(job) == [] and len(list(tasks.glob("*.uncertain-*.json"))) == 1
+    env.studio.JOBS["the-heist--abc"] = {"state": "running"}
+    assert pick({"choice": "skip"}).status_code == 409, "never while it is being made"
+
+
 def test_a_video_whose_voice_stopped_can_be_voiced_another_way(env, monkeypatch):
     """Kie's ElevenLabs voice answered "Internal Error" three times and the creator could only wait. A video whose
     voice stopped now offers the same voice again, Gemini through the same Kie key, their own ElevenLabs account or

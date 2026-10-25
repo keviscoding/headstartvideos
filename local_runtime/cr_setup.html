@@ -191,7 +191,11 @@ function renderSetupRows(data){
  const speech=data.speech_model||{},busy=['downloading','checking'].includes(speech.state);
  if(data.speech_model){const speechText=toolRow('Speech-timing model',speech.ready===true,busy?(speech.state==='downloading'?'Downloading…':'Checking…'):null);speechText.parentElement.id='speech-row';
  if(speech.ready!==true){const note=smallNote(speechText,speech.reason||'');if(busy)fixSpeech(null,note);else{const fix=document.createElement('button');fix.type='button';fix.className='link-button';fix.id='fix-speech';fix.textContent='Fix it';fix.onclick=()=>fixSpeech(fix,note);speechText.append(fix);}}}
- $('tools-ok-text').textContent='✓ Your computer is ready: Python, video tools, graphics browser, Node and the speech-timing model are installed, and this network reaches what Studio needs.'+((net.fallbacks||[]).length?' Some services are blocked on this network; Studio goes around them through channelrecipe.com.':'');
+ // This computer: memory, cores and free disk (cr_machine). A note, never a stop: each video checks the disk itself.
+ const pc=data.computer,has=pc?[pc.memory_gb!=null?Math.round(pc.memory_gb)+' GB of memory':'',pc.cores?pc.cores+' processor cores':'',pc.free_disk_gb!=null?pc.free_disk_gb+' GB free on its disk':''].filter(Boolean):[];
+ if(pc){const pcText=toolRow('This computer'+(has.length?': '+has.join(', '):''),!pc.message,pc.message?'See note':null);pcText.parentElement.id='computer-row';
+ if(pc.message){for(const line of pc.notes||[pc.message])smallNote(pcText,line);pcText.parentElement.classList.add('wide');}}
+ $('tools-ok-text').textContent='✓ Your computer is ready: Python, video tools, graphics browser, Node and the speech-timing model are installed, and this network reaches what Studio needs.'+(has.length?' It has '+has.join(', ')+'.':'')+((net.fallbacks||[]).length?' Some services are blocked on this network; Studio goes around them through channelrecipe.com.':'');
 }
 // Studio can't reach channelrecipe.com: can this browser? Then the internet works and something on this computer
 // (an antivirus or firewall) is blocking Studio itself.
@@ -338,7 +342,7 @@ function updateSteps(){
   const badge=sec.querySelector('.step-state');if(badge)badge.textContent=done&&k!=='ready'?'✓ Done':k===current&&k!=='ready'?'Next':'';
   if(stepSeen[k]!==done&&done)sec.classList.remove('open');stepSeen[k]=done;}
  for(const li of document.querySelectorAll('#steps-nav li')){const k=li.dataset.step;li.classList.toggle('done',k==='ready'?st.ready:!!st[k]);li.classList.toggle('current',k===current);}
- $('step-tools').classList.toggle('all-good',['python','ffmpeg','browser','node'].every(k=>statusData[k]===true)&&(!statusData.speech_model||statusData.speech_model.ready===true)&&statusData.network?.ready!==false&&!(statusData.network?.warnings||[]).length&&!(statusData.network?.checking&&!(statusData.network?.hosts||[]).length));
+ $('step-tools').classList.toggle('all-good',['python','ffmpeg','browser','node'].every(k=>statusData[k]===true)&&(!statusData.speech_model||statusData.speech_model.ready===true)&&statusData.network?.ready!==false&&!(statusData.network?.warnings||[]).length&&!(statusData.network?.checking&&!(statusData.network?.hosts||[]).length)&&!statusData.computer?.message);
  const cli=statusData.claude_code||{},ready=cli.installed===true&&cli.authenticated===true;
  $('claude-quick').disabled=quickRunning||setupBusy||!st.account||!ready;
  if(!quickRunning)$('claude-quick-status').textContent=!st.account?'Connect your ChannelRecipe account first (step 1).':!cli.installed?'Claude Code isn’t installed yet. Open this folder in Claude Code and ask it to finish setup, or follow the steps under Details.':!cli.authenticated?'Sign in to Claude Code first: open Terminal (Mac) or PowerShell (Windows), type claude and follow the browser login. Then press Check my Claude Code login under Details.':st.claude?'Claude is set up for videos.':'Connects Studio to Claude Code, picks the recommended models and runs a tiny check. About a minute.';

@@ -314,6 +314,21 @@ def quote_for(cat: dict, row: dict, *, titles: int, minutes: int, where: str, fe
     else:
         out["expected_total_usd"] = round(media["per_video_usd"] * titles, 2)
         out["this_computer"] = "Renders on this computer, one video at a time; no machine to pay for."
+        # the disk holds each video's working folder: one that can't fit is said with the cost, not after it
+        import cr_machine
+        threed = bool(features.get("threed"))
+        free = cr_machine.free_disk_gb(HOME)
+        out["disk"] = {"needs_gb": cr_machine.need_gb(minutes, titles, threed), "free_gb": free}
+        room = cr_machine.disk_problem(free, minutes, titles, threed)
+        if room:
+            out["disk"]["problem"] = room
+    if features.get("youtube") and kind(row) != "short":
+        # Research footage watches YouTube videos before the video is made: how long that adds, said with the cost
+        import cr_watch
+        b = cr_watch.budget(minutes)
+        out["footage"] = {"videos_watched_at_most": b["videos"], "adds_minutes": b["typical_minutes"],
+                          "stops_watching_after_minutes": b["stop_minutes"], "note": cr_watch.estimate_text(minutes)
+                          + " Turn off the youtube feature (options.features) for a faster video without real footage."}
     key = json.dumps([row["name"], titles, minutes, where, sorted(k for k, v in features.items() if v)])
     out["quote_id"] = "q_" + hashlib.sha256(key.encode()).hexdigest()[:16]
     quotes = _read(STATE / "quotes.json")
@@ -328,6 +343,10 @@ def summary(q: dict) -> str:
     n, each = q["titles"], " each" if q["titles"] > 1 else ""
     usd = q["media"]["per_video_usd"]
     media = f"media about ${usd:.2f}{each}" if usd >= 0.01 else "media a few cents"
+    footage = q.get("footage")
+    # the footage is watched on this computer wherever the video renders
+    watching = (f" Research footage adds about {footage['adds_minutes'][0]} to {footage['adds_minutes'][1]} minutes a "
+                f"video (it watches up to {footage['videos_watched_at_most']} YouTube videos)." if footage else "")
     if q["where"] == "studio_cloud":
         c = q["cloud"]
         text = (f"{n} × {q['minutes']}-min {q['style_name']} on Studio Cloud: machine about "
@@ -336,9 +355,10 @@ def summary(q: dict) -> str:
                 f"${c['balance_usd']:.2f}.")
         if q.get("short_by_usd"):
             text += f" Short by ${q['short_by_usd']:.2f}: top up at {c['topup_url']}."
-        return text
+        return text + watching
+    room = (" " + q["disk"]["problem"]) if (q.get("disk") or {}).get("problem") else ""
     return (f"{n} × {q['minutes']}-min {q['style_name']} on this computer: {media}; about "
-            f"${q['expected_total_usd']:.2f} in all, plus Claude Code usage on your plan.")
+            f"${q['expected_total_usd']:.2f} in all, plus Claude Code usage on your plan." + watching + room)
 
 
 # ── the tools ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -373,6 +393,7 @@ def tool_setup_check(args):
                                  "Call fix_graphics_browser: Studio installs it itself. Don't install it from this "
                                  "shell; Claude Code's shell can be sandboxed, and Studio wouldn't see it."},
             "network": network_summary(status.get("network") or {}),
+            "computer": computer_summary(status.get("computer")),
             "speech_model": {"ready": bool(speech.get("ready")), "state": speech.get("state") or "",
                              "why": speech.get("reason") or "",
                              "fix": "" if speech.get("ready") else
@@ -385,6 +406,21 @@ def tool_setup_check(args):
             "studio_cloud": {"available": bool(cloud.get("available")), "balance_usd": cloud.get("balance_usd"),
                              "why": cloud.get("why") or "", "topup_url": cloud.get("topup_url")},
             "gallery_url": link("/cr-gallery")}
+
+
+def computer_summary(pc) -> dict:
+    """What this computer has (memory, cores, free disk) and where it's short of what Studio uses. Never a stop by
+    itself: make_videos checks the disk against each video and refuses one that can't fit, saying how much to free."""
+    if not pc:
+        return {"checked": False}
+    return {"checked": True, "memory_gb": pc.get("memory_gb"), "cores": pc.get("cores"),
+            "free_disk_gb": pc.get("free_disk_gb"),
+            "disk_needed_gb": {"10_minute_video": pc.get("ten_minute_video_gb"),
+                               "10_minute_3d_video": pc.get("ten_minute_3d_video_gb")},
+            "short_of": pc.get("short") or [], "notes": pc.get("notes") or [],
+            "what_to_do": "Tell the creator these notes in plain words before a long video: free disk space (empty "
+                          "the Bin or Recycle Bin, delete old downloads) or close other apps. Never delete their files "
+                          "yourself." if pc.get("notes") else ""}
 
 
 def network_summary(net: dict) -> dict:
@@ -653,6 +689,14 @@ def _job_status(slug: str) -> dict:
     out = {"id": "video:" + slug, "state": status.get("state"), "done": bool(status.get("done")),
            "percent": round(100 * float(status.get("progress") or 0)), "error": status.get("error") or "",
            "last_lines": [line for line in (status.get("lines") or [])[-6:] if line.strip()]}
+    # Research footage: how far its YouTube watching is (cr_watch says "watched N of M videos" as it goes; once the
+    # video has moved on, newer lines have pushed it out of the last ten)
+    watched = next((m for m in (re.search(r"YouTube: watched (\d+) of (\d+) videos", line or "")
+                                for line in reversed((status.get("lines") or [])[-10:])) if m), None)
+    if watched and not out["done"]:
+        out["watching_clips"] = {"watched": int(watched.group(1)), "of": int(watched.group(2)),
+                                 "note": "Still watching YouTube videos for its footage; it stops by itself at its "
+                                         "budget and carries on with the clips it found."}
     if status.get("video"):
         out.update(watch_url=link("/f/video/" + _quote_path(slug)), project_url=link("/editor/" + _quote_path(slug)))
     elif out["done"] or out["state"] in ("error", "stopped"):
@@ -670,6 +714,19 @@ def _job_status(slug: str) -> dict:
                                  "recording's path as recording. An ElevenLabs key goes in Setup & accounts, never in chat.")
             if voice.get("script_file"):
                 out["script_file"] = voice["script_file"]
+        try:
+            presenter = call("GET", "/cr-workspace/presenter-choice/" + _quote_path(slug), timeout=20)
+        except Refused:
+            presenter = {}
+        if presenter.get("stopped_on_presenter"):
+            out["stopped_on"] = "presenter"
+            out["presenter_failed"] = presenter.get("failed")
+            out["presenter_choices"] = [{k: c.get(k) for k in ("id", "label", "ready", "note")}
+                                        for c in presenter.get("choices") or []]
+            out["presenter_note"] = ("The presenter service couldn't make this video's presenter; the rest of the video "
+                                     "is finished and saved. Ask the creator: finish it without the presenter, or try "
+                                     "the presenter again in a few minutes (read them the choice's note, which says "
+                                     "whether that could pay twice). Then resume_video(id, presenter=<choice id>).")
     return out
 
 
@@ -742,8 +799,12 @@ def tool_resume_video(args):
     if voice:
         call("POST", "/cr-workspace/voice/" + _quote_path(slug),
              {"choice": voice, "recording": str(args.get("recording") or "").strip()}, timeout=180)
+    presenter = str(args.get("presenter") or "").strip()
+    if presenter:
+        call("POST", "/cr-workspace/presenter-choice/" + _quote_path(slug), {"choice": presenter}, timeout=60)
     result = call("POST", "/cr-submit-project", {"project_id": saved["project_id"]}, timeout=120)
     return {"resumed": True, "id": "video:" + slug, "title": saved.get("title"), **({"voice": voice} if voice else {}),
+            **({"presenter": presenter} if presenter else {}),
             "queued": [q.get("slug") if isinstance(q, dict) else q for q in result.get("queued") or []],
             "next": "It carries on from where it stopped and reuses everything already made (script, pictures, "
                     "voice parts). Check progress(id) now and then; Studio shows a notification when it's done."}
@@ -1296,8 +1357,13 @@ TOOLS = {
                      "stopped). Reuses everything already made, so only the rest is paid for. Tell the creator what "
                      "stopped it first (progress(id)). When progress(id) shows voice_choices (its voice service "
                      "failed), ask which they want and pass it as voice: the same voice again, Gemini through Kie, "
-                     "their own ElevenLabs account, or their own recording (pass its file path as recording).",
+                     "their own ElevenLabs account, or their own recording (pass its file path as recording). When it "
+                     "shows presenter_choices (its AI presenter failed), ask and pass presenter: skip (finish without "
+                     "the presenter) or again.",
                      _schema({"id": {"type": "string", "description": "video:<slug> from progress()."},
+                              "presenter": {"type": "string", "enum": ["skip", "again"],
+                                            "description": "Only for a video that stopped on its presenter: finish "
+                                                           "without it (skip) or try it again (this video only)."},
                               "voice": {"type": "string", "enum": ["again", "gemini-man", "gemini-woman", "elevenlabs",
                                                                    "own"],
                                         "description": "Only for a video that stopped on its voice: how to voice it now "

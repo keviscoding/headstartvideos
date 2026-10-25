@@ -20,6 +20,7 @@ import cr_media
 import cr_render
 import cr_claude
 import cr_failure
+import cr_machine
 import cr_mcp
 import cr_network
 import cr_paths
@@ -634,6 +635,7 @@ def create_app():
         paths = cr_paths.status(HOME)                  # Windows' 260-character limit: room for a video's files
         if paths:
             checks["file_paths"] = paths
+        checks["computer"] = cr_machine.status(HOME)  # memory, cores and free disk: a note here, a stop per video
         # the setup page shows "Checking…" after 3 s and asks again; a check before work waits for the answer
         # inside a request Studio is serving, so it also tries to reach itself (only a block on the computer stops that)
         page = has_request_context() and request.path == "/cr-status"
@@ -904,6 +906,7 @@ def create_app():
                 (" (" + ", ".join(hub.get("tasks", [])) + ")") if hub.get("tasks") else "", tick(voice.get("connected"))),
             cr_network.diagnostics_line(checks.get("network") or {}),
             cr_paths.diagnostics_line(checks.get("file_paths")),
+            cr_machine.diagnostics_line(checks.get("computer")),
             "Speech-timing model: %s" % ("ready" if (checks.get("speech_model") or {}).get("ready") else
                                          ((checks.get("speech_model") or {}).get("reason") or "unknown")[:300]),
             "Setup ready: %s" % tick(readiness.get("ready")),

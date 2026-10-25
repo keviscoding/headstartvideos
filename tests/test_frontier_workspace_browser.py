@@ -25,6 +25,7 @@ from werkzeug.serving import make_server
 RUNTIME = Path(__file__).parents[1] / "local_runtime"
 sys.path.insert(0, str(RUNTIME))
 import cr_presentation
+import cr_watch
 
 TOKEN = "synthetic-browser-local-token"
 CLONE = "cr_clone_browser_fixture"
@@ -50,7 +51,7 @@ def workspace(browser):
                           local_version="synthetic-studio", account=None, update_state={"state": "idle"}, voice="Kore",
                           preview_active=0, preview_max_active=0, preview_busy=0, preview_delay=0,
                           finished_jobs=[{"slug": "finished-film", "title": "A finished film", "style": "documentary", "editable": True}],
-                          cloud=None, cloud_starts=[], characters=[], drawn=[])
+                          cloud=None, cloud_starts=[], characters=[], drawn=[], active_lines=["ffmpeg: final render"])
     preview_lock = threading.Lock()
     image = io.BytesIO()
     Image.new("RGB", (160, 90), "#415573").save(image, "JPEG")
@@ -67,7 +68,7 @@ def workspace(browser):
     catalog = {"channels": cr_presentation.presentation_catalog(rows, {
         CLONE: {"cr_style_clone": {"visual_mode": "reference_only"}}}),
         "features": features, "caps": {"features": {row["key"]: {"ok": True} for row in features}},
-        "dlc": {}, "prices": {}}
+        "dlc": {}, "prices": {}, "footage_watch": [cr_watch.budget(m) for m in range(1, 61)]}
     app = Flask(__name__)
 
     @app.before_request
@@ -148,8 +149,30 @@ def workspace(browser):
         env.update_state = {"state": "restarting"}
         return jsonify(env.update_state)
 
+    @app.get("/cr-workspace/presenter-choice/<slug>")
+    def presenter_choices(slug):
+        return jsonify(stopped_on_presenter=slug == "presenter-film", current="again",
+                       failed={"label": "Kie.ai", "reason": "Internal Error", "charged": 0}, choices=[
+                           {"id": "skip", "label": "Finish without the presenter", "ready": True,
+                            "note": "The video is finished as it is now, without the presenter intro."},
+                           {"id": "again", "label": "Try the presenter again", "ready": True,
+                            "note": "Best after waiting a few minutes."}])
+
+    @app.post("/cr-workspace/presenter-choice/<slug>")
+    def presenter_pick(slug):
+        return jsonify(saved=True, choice=request.json["choice"])
+
+    @app.get("/cr-workspace/stopped")
+    def stopped_projects():
+        if env.mode == "presenter":
+            return jsonify(projects=[{"slug": "presenter-film", "title": "The Heist", "style": "documentary",
+                                      "state": "stopped", "mtime": 1, "stopped_on": "presenter"}])
+        return jsonify(projects=[])
+
     @app.get("/api/queue")
     def queue():
+        if env.mode == "presenter":
+            return jsonify(busy=False, jobs=[])
         if env.mode == "voice":
             return jsonify(busy=False, jobs=[{"slug": "voice-film", "title": "The Heist", "state": "error"}])
         return jsonify(busy=env.mode == "active", jobs=[{"slug": "active-film", "title": "A film in production",
@@ -183,7 +206,7 @@ def workspace(browser):
 
     @app.get("/cr-workspace/project/<slug>")
     def saved_project(slug):
-        return jsonify(slug=slug, project_id="crv_" + "9" * 24, available_for_resume=slug == "voice-film",
+        return jsonify(slug=slug, project_id="crv_" + "9" * 24, available_for_resume=slug in ("voice-film", "presenter-film"),
                        title="The Heist", status="error")
 
     @app.get("/cr-workspace/voice/<slug>")
@@ -208,13 +231,15 @@ def workspace(browser):
 
     @app.get("/api/status/<slug>")
     def progress(slug):
+        if slug == "presenter-film":
+            return jsonify(error="no live job"), 404
         if slug == "voice-film":
             return jsonify(state="error", done=True, lines=["Writing the voiceover"], progress=0.08, elapsed=60,
                            error="Kie.ai failed this narration task. Internal Error, Please try again later",
                            cr_cancel={"can_cancel": False})
         active = slug == "active-film"
         return jsonify(state="running" if active else "done", done=not active,
-                       lines=["ffmpeg: final render"] if active else ["published: synthetic film"],
+                       lines=env.active_lines if active else ["published: synthetic film"],
                        progress=0.425 if active else 1, elapsed=125, error="",
                        cr_cancel={"can_cancel": active, "run_id": "exact-active-run" if active else ""})
 
@@ -435,6 +460,32 @@ def test_projects_draw_native_progress_cancel_exact_run_and_preserve_exports(wor
     assert page.locator("#crw-output-exports a").all_text_contents() == ["Narration", "Script", "Subtitles", "Description", "Thumbnail"]
 
 
+def test_research_footage_says_what_its_watching_adds_and_progress_counts_the_videos(workspace):
+    """A customer's 10-minute video watched YouTube clips for 22 extra hours (2026-10-25): Create says what Research
+    footage adds for the length chosen, and the progress names how far the watching is."""
+    env, page = workspace, workspace.page
+    env.open("?cr-preset=documentary")
+    note = page.locator("#crw-footage-note")
+    note.wait_for(state="visible")
+    ten = cr_watch.budget(10)
+    assert f"about {ten['typical_minutes'][0]} to {ten['typical_minutes'][1]} minutes to a 10-minute video" in note.inner_text()
+    assert f"up to {ten['videos']} YouTube videos" in note.inner_text()
+    page.locator("[data-minutes='20']").click()
+    assert f"up to {cr_watch.budget(20)['videos']} YouTube videos" in note.inner_text()
+    if os.environ.get("CR_SHOT"):
+        page.locator(".crw-video-summary").screenshot(path=os.environ["CR_SHOT"])
+    page.locator("summary:has-text('Visual sources')").click()
+    page.locator("#crw-features [data-feature='youtube']").uncheck()
+    assert note.is_hidden(), "no footage, no watching"
+    env.mode = "active"
+    env.active_lines = ["YouTube: 40 searches", "  YouTube: watched 12 of 42 videos (5 min so far; this video stops "
+                        "watching at 40 min)"]
+    env.open("#projects")
+    page.get_by_role("button", name="View progress", exact=True).click()
+    page.wait_for_function("document.querySelector('#crw-progress-phase').textContent.includes('12 of 42')")
+    assert page.locator("#crw-progress-phase").inner_text() == "Watching YouTube clips (12 of 42)"
+
+
 def test_gallery_works_with_keyboard_and_a_mobile_viewport(workspace):
     env, page = workspace, workspace.page
     page.set_viewport_size({"width": 390, "height": 844})
@@ -630,6 +681,26 @@ def test_a_video_whose_voice_stopped_offers_other_voices_and_carries_on(workspac
     page.wait_for_function("document.querySelector('#crw-toast').textContent.includes('new voice')")
     assert [p for p in env.posts if p["path"].startswith(("/cr-workspace/voice", "/cr-submit"))] == [
         {"path": "/cr-workspace/voice/voice-film", "body": {"choice": "gemini-woman"}},
+        {"path": "/cr-submit-project", "body": {"project_id": "crv_" + "9" * 24}}]
+
+
+def test_a_video_whose_presenter_stopped_finishes_without_it_from_projects(workspace):
+    """Kie answered 500 on a presenter intro and stopped a finished video (2026-10-25). Its film is on disk, so the
+    library lists it, but it stays a stopped project offering to finish without the presenter or to try again."""
+    env, page = workspace, workspace.page
+    env.mode = "presenter"
+    env.finished_jobs = [{"slug": "presenter-film", "title": "The Heist", "style": "documentary", "editable": True}]
+    env.open("#projects")
+    card = page.locator('.crw-project-card[data-slug="presenter-film"]')
+    card.get_by_role("button", name="Review issue", exact=True).click()
+    box = page.locator(".crw-voice-choices")
+    box.wait_for(state="visible")
+    assert "Kie.ai couldn't make this video's presenter" in box.inner_text()
+    assert "The rest of the video is finished and saved" in box.inner_text()
+    page.get_by_role("button", name="Finish without the presenter").click()
+    page.wait_for_function("document.querySelector('#crw-toast').textContent.includes('without its presenter')")
+    assert [p for p in env.posts if p["path"].startswith(("/cr-workspace/presenter-choice", "/cr-submit"))] == [
+        {"path": "/cr-workspace/presenter-choice/presenter-film", "body": {"choice": "skip"}},
         {"path": "/cr-submit-project", "body": {"project_id": "crv_" + "9" * 24}}]
 
 

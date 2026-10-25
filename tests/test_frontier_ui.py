@@ -739,3 +739,50 @@ def test_setup_says_when_an_antivirus_blocks_studio_and_the_browser_still_works(
     tab.wait_for_function(f"document.querySelector('#network-browser')?.textContent.includes({expected!r})",
                           timeout=10000)
     assert reached and errors == []
+
+
+@pytest.mark.parametrize("roomy", [True, False])
+def test_setup_says_what_this_computer_has_and_a_small_one_keeps_the_tools_box_open(page, roomy):
+    """Memory, processor cores and free disk, read by Studio (cr_machine), in setup before any video (2026-10-25)."""
+    sys.path.insert(0, str(Path(__file__).parents[1] / "local_runtime"))
+    import cr_machine
+    tab, errors = page
+    tab.unroute("**/*")
+    html = (Path(__file__).parents[1] / "local_runtime" / "cr_setup.html").read_text(encoding="utf-8")
+    html = html.replace("__LOCAL_TOKEN__", "ui-fixture-local-token")
+    computer = (cr_machine.status(".", memory=16.0, cpu=10, free=120.5) if roomy
+                else cr_machine.status(".", memory=8.0, cpu=8, free=3.4))
+    state = {"python": True, "ffmpeg": True, "browser": True, "node": True, "connected": True,
+             "costs_accepted": True, "brain_mode": "claudecode", "local_version": "5.3-admin.104",
+             "model_accounts": {}, "providers": {}, "account": {"brain": {"connected": False}},
+             "claude_code": {"installed": True, "authenticated": True, "models": []},
+             "network": {"ready": True, "hosts": [], "message": ""}, "speech_model": {"ready": True, "state": "ready"},
+             "computer": computer, "readiness": {"ready": False, "checks": [], "blockers": ["Connect Claude."]}}
+
+    def fixture(route):
+        request = route.request
+        if request.url.startswith(ONBOARDING_MEDIA):
+            return route.fulfill(status=200, content_type="image/jpeg", body=b"")
+        path = urlparse(request.url).path
+        if path == "/cr-setup":
+            return route.fulfill(body=html, content_type="text/html")
+        if path == "/cr-status":
+            return route.fulfill(json=state)
+        if path == "/cr-workspace/catalog":
+            return route.fulfill(json={"channels": [], "features": []})
+        pytest.fail("Unexpected request: " + request.method + " " + request.url)
+
+    tab.route("**/*", fixture)
+    tab.goto("http://setup-ui-fixture.invalid/cr-setup")
+    tab.wait_for_selector("#computer-row", state="attached")
+    row = tab.locator("#computer-row").text_content()
+    if roomy:
+        assert "This computer: 16 GB of memory, 10 processor cores, 120.5 GB free on its disk" in row
+        assert tab.locator("#checks").is_hidden(), "a ready computer collapses to one line"
+        assert "It has 16 GB of memory, 10 processor cores, 120.5 GB free on its disk." in \
+            tab.locator("#tools-ok-text").text_content()
+    else:
+        assert tab.locator("#checks").is_visible(), "a note keeps the tools box open"
+        assert "See note" in row and "3.4 GB is free on the disk Studio is on" in row and "about 6 GB" in row
+        assert "ok" not in tab.locator("#computer-row").get_attribute("class")
+    assert errors == []

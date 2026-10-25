@@ -87,8 +87,14 @@ def fresh_attempt_ok(provider, task, receipt, *, asked=False) -> bool:
 
     asked: the creator pressed Resume (a new run met the failed receipt). Kie's answer is then enough even when it
     didn't say what the failed task cost: it produced nothing, so a new task can't pay twice for the same voice.
-    Studio's own automatic retries need Kie to report 0 credits."""
-    if provider != "kie" or task != "narration" or not isinstance(receipt, dict):
+    Studio's own automatic retries need Kie to report 0 credits.
+
+    A presenter (avatars) Kie failed the same way is made again only when the creator asks: a video whose presenter
+    stopped offers "try the presenter again" (cr-presenter.json), and before this a failed receipt stopped every Resume
+    of that video for good (a customer's video, 2026-10-25). Studio never retries a presenter by itself."""
+    if provider != "kie" or task not in ("narration", "avatars") or not isinstance(receipt, dict):
+        return False
+    if task == "avatars" and not asked:
         return False
     if receipt.get("status") != "failed" or receipt.get("rejected") or not receipt.get("id"):
         return False
@@ -812,6 +818,102 @@ def own_recording(engine, script, job: Path, file: str, force=False):
     return mp3, srt
 
 
+# A video whose presenter couldn't be made (Kie answering 500 on a 9-second avatar intro, 2026-10-25) stopped at its
+# very last step with the whole film finished, and every Resume met the same failure. It now stops with a choice, for
+# that video only: finish without the presenter, or try the presenter again later. Both are read from its folder.
+PRESENTER_CHOICE = "cr-presenter.json"          # {"skip": true}: this video finishes without its presenter
+PRESENTER_FAILED = "cr-presenter-failed.json"   # why the presenter stopped (the choices offered read it)
+
+
+def job_presenter(job) -> dict:
+    """This video's own presenter choice: {"skip": True}, or {} for the presenter it asked for."""
+    try:
+        choice = json.loads((Path(job) / PRESENTER_CHOICE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {"skip": True} if isinstance(choice, dict) and choice.get("skip") is True else {}
+
+
+def uncertain_presenter(job) -> list:
+    """The receipts of this video's presenter tasks whose submission has an uncertain result (sent, no task ID came
+    back, as when Kie answers a submission with a server error): run() never sends those again by itself."""
+    models = {m for p in PROVIDERS.values() if isinstance(p, dict)
+              for k, m in (p.get("models") or {}).items() if k in ("avatars", "avatar_pro")}
+    out = []
+    for receipt in sorted((Path(job) / ".cr-tasks").glob("*.json")):
+        if ".uncertain-" in receipt.name or ".failed-" in receipt.name:
+            continue                                  # one set aside before: kept, never read by run() again
+        try:
+            data = json.loads(receipt.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and data.get("model") in models and data.get("status") == "submitting" \
+                and not data.get("id"):
+            out.append(receipt)
+    return out
+
+
+def retry_presenter(job) -> int:
+    """The creator chose to try the presenter again: an uncertain receipt is kept under its own name, so the next run
+    submits the presenter again (the choice said that may pay for a second one). A failed receipt needs nothing here:
+    run() tries a task Kie failed on its own side again when a Resume meets it (fresh_attempt_ok)."""
+    n = 0
+    for receipt in uncertain_presenter(job):
+        receipt.replace(receipt.with_name(receipt.stem + f".uncertain-{int(time.time() * 1000)}.json"))
+        n += 1
+    return n
+
+
+def _presenter_failed(job, failed) -> None:
+    try:
+        provider = profile("avatars").get("provider") if active("avatars") else "kie"
+        (Path(job) / PRESENTER_FAILED).write_text(json.dumps({
+            "provider": provider, "label": PROVIDERS.get(provider, {}).get("label", provider),
+            "category": getattr(failed, "category", ""), "code": getattr(failed, "code", ""),
+            "reason": str(getattr(failed, "reason", "") or failed)[:300], "charged": getattr(failed, "credits", None),
+            "uncertain": bool(uncertain_presenter(job)), "at": int(time.time())}), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def make_presenter(engine, original):
+    """The engine's presenter step (make_video._maybe_presenter) with this video's own choice. The engine lets a
+    presenter that fails go ("an avatar service having a bad minute is no reason to hand back nothing"), but a paid
+    task's stop here is a BaseException and went past it, so the finished film never published. Now such a stop saves
+    what failed and asks the creator (Projects, or progress() in Claude Code); "skip" finishes the video as it is."""
+    if getattr(original, "_cr_presenter", False):
+        return original
+
+    def maybe_presenter(final, job, mp3, srt, avatar_id="", avatar_s=0, force=False, avatar_count=1):
+        job, final = Path(job), Path(final)
+        if job_presenter(job).get("skip"):
+            if avatar_s:
+                engine.log("presenter: left out of this video, as chosen when it stopped")
+            out = original(final, job, mp3, srt, avatar_id, 0, force, avatar_count)
+            (job / PRESENTER_FAILED).unlink(missing_ok=True)
+            return out
+        try:
+            out = original(final, job, mp3, srt, avatar_id, avatar_s, force, avatar_count)
+        except AccountStop as failed:
+            plain = final.with_name(f"{final.stem}_plain{final.suffix}")
+            if not final.exists() and plain.exists():
+                os.replace(plain, final)                # the film goes back where everything expects it
+            if getattr(failed, "category", "") == "cancelled":
+                raise
+            _presenter_failed(job, failed)
+            label = PROVIDERS.get(profile("avatars").get("provider") if active("avatars") else "kie", {}).get(
+                "label", "The presenter service")
+            why = str(getattr(failed, "reason", "") or getattr(failed, "code", "") or "").strip()
+            raise AccountStop(f"{label} couldn't make this video's presenter" + (f" ({why[:160]})" if why else "")
+                              + ". The rest of the video is finished and saved. Open it in Projects and choose: "
+                                "finish it without the presenter, or try the presenter again in a few minutes.") \
+                from None
+        (job / PRESENTER_FAILED).unlink(missing_ok=True)
+        return out
+    maybe_presenter._cr_presenter = True
+    return maybe_presenter
+
+
 def wrap_whisper(engine):
     """The engine's speech-timing model reads narration as PCM, and loads the copy setup downloaded (cr_whisper), so a
     video never asks huggingface.co for it mid-run."""
@@ -962,3 +1064,5 @@ def install(engine):
     for name in ("_kie", "_wavespeed", "_wavespeed_avatar"):
         original = getattr(avatar, name)
         setattr(avatar, name, route_avatar(original))
+    if callable(getattr(engine, "_maybe_presenter", None)):
+        engine._maybe_presenter = make_presenter(engine, engine._maybe_presenter)

@@ -291,6 +291,16 @@
     text('crw-summary-visuals', strict(r) ? 'Reference animation throughout' : Object.entries(featureValues()).filter(([k,v]) => v && k !== 'sound').map(([k]) => (featureCopy[k] || [k])[0]).join(', ') || 'Recipe defaults');
     text('crw-summary-voice', state.narration === 'own' ? 'Your uploaded narration' : state.setup?.narration?.voice || 'Connected narration account');
     text('crw-summary-renderer', state.renderOn==='cloud' && state.cloudInfo?.available && !cloudBlock() ? 'Studio Cloud' : checked('crw-fast-toggle') && featureValues().threed && !strict() ? 'Fast mode · local render' : 'Local render');
+    footageNote();
+  }
+  // Research footage watches YouTube videos on the creator's video-model account before the video is made: what that
+  // adds, said before Create (a customer's 10-minute video watched clips for 22 hours, 2026-10-25). The numbers are
+  // Studio's own budget for the length (cr_watch.budget, sent with the catalog).
+  function footageNote() {
+    const r = state.selected, b = (state.catalog?.footage_watch || [])[number('crw-minutes',10,1,60) - 1];
+    const on = !!(r && b && featureValues().youtube && !strict(r) && !isShort(r) && !isRanking(r) && state.narration !== 'own');
+    hide('crw-footage-note', !on);
+    if (on) text('crw-footage-note', `Research footage adds about ${b.typical_minutes[0]} to ${b.typical_minutes[1]} minutes to a ${b.minutes}-minute video: Studio watches up to ${b.videos} YouTube videos on your video-model account to find its clips. It stops watching after ${b.stop_minutes} minutes and goes on with what it found.`);
   }
   function gate() {
     const ready = state.setup?.readiness?.ready === true;
@@ -384,6 +394,7 @@
   }
   const phaseCopy = line => {
     const v = String(line || ''); if (/DONE|published:/i.test(v)) return 'Finishing your video';
+    const watching = /YouTube: watched (\d+) of (\d+) videos/.exec(v); if (watching) return `Watching YouTube clips (${watching[1]} of ${watching[2]})`;
     if (/ffmpeg|final render|concat|mux/i.test(v)) return 'Rendering the film'; if (/review|critique|verify|repair/i.test(v)) return 'Reviewing visuals';
     if (/subtitles|whisper|timing narration/i.test(v)) return 'Timing narration and captions'; if (/voice|tts|narration/i.test(v)) return 'Creating narration';
     if (/design|scene|graphic|image|motion|kit/i.test(v)) return 'Building visual scenes'; if (/script|fact check/i.test(v)) return 'Writing and checking the story'; return 'Preparing the project';
@@ -392,7 +403,8 @@
   function combinedProjects() {
     // stopped videos saved on disk first, so a live or finished entry for the same folder wins
     const map = new Map((state.stopped || []).map(j => [j.slug,{...j}]));
-    for (const j of state.jobs) map.set(j.slug,{...j,state:'done',hasVideo:true});
+    // a video stopped on its presenter has its film on disk but isn't finished: it stays stopped, with its choices
+    for (const j of state.jobs) map.set(j.slug,map.get(j.slug)?.stopped_on ? {...j,...map.get(j.slug)} : {...j,state:'done',hasVideo:true});
     for (const q of state.queue) map.set(q.slug,{...(map.get(q.slug) || {}),...q});
     return [...map.values()];
   }
@@ -465,6 +477,7 @@
           const saved = await api(`/cr-workspace/project/${encoded(state.openJob)}`);
           if (saved.available_for_resume) {const resume=el('button','crw-text-button','Resume saved project'); resume.type='button'; resume.addEventListener('click',async()=>{resume.disabled=true;try{await api('/cr-submit-project',{method:'POST',body:{project_id:saved.project_id}});toast('Saved project submitted. Completed assets will be reused.');await refreshActivity();}catch(e){text('crw-progress-note',e.message);}finally{resume.disabled=false;}});$('crw-progress-actions').append(resume);}
           if (saved.available_for_resume) {try {const voice=await api(`/cr-workspace/voice/${encoded(state.openJob)}`); if ((voice.stopped_on_voice || /narration (task|service)/i.test(data.error || '')) && !voice.has_voice) voiceChoices(voice, saved);} catch (_) {/* Resume stays available */}}
+          if (saved.available_for_resume) {try {const presenter=await api(`/cr-workspace/presenter-choice/${encoded(state.openJob)}`); if (presenter.stopped_on_presenter) presenterChoices(presenter, saved);} catch (_) {/* Resume stays available */}}
         }
       }
     } catch (e) {text('crw-progress-note',e.message);}
@@ -571,6 +584,29 @@
         back.addEventListener('click', () => restoreEntry(r.id, back)); row.append(copy, back); return row;
       }));
     }
+  }
+  // A video whose presenter couldn't be made: its film is finished, so it can finish without the presenter, or try
+  // the presenter again later. The choice is for this video only.
+  function presenterChoices(presenter, saved) {
+    const slug = state.openJob, box = el('div', 'crw-voice-choices');
+    box.append(el('p', 'crw-voice-title', 'Finish without the presenter?'));
+    const failed = presenter.failed || {};
+    const why = `${failed.label || 'The presenter service'} couldn't make this video's presenter${failed.reason ? ` ("${failed.reason}")` : ''}.`;
+    box.append(el('p', 'crw-field-help', `${why} The rest of the video is finished and saved. Pick how to carry on.`));
+    for (const choice of presenter.choices || []) {
+      const row = el('div', 'crw-voice-choice'), button = el('button', choice.id === 'skip' ? 'crw-primary-button' : 'crw-secondary-button', choice.label);
+      button.type = 'button'; button.disabled = !choice.ready; row.append(button, el('span', 'crw-field-help', choice.note));
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        try {
+          await api(`/cr-workspace/presenter-choice/${encoded(slug)}`, {method: 'POST', body: {choice: choice.id}});
+          await api('/cr-submit-project', {method: 'POST', body: {project_id: saved.project_id}});
+          toast(choice.id === 'skip' ? 'Finishing the video without its presenter.' : 'Trying the presenter again. Everything else is reused.'); await refreshActivity();
+        } catch (e) {text('crw-progress-note', e.message);} finally {button.disabled = false;}
+      });
+      box.append(row);
+    }
+    $('crw-progress-actions').append(box);
   }
   async function openOutput(job) {
     try {
