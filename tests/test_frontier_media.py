@@ -182,6 +182,26 @@ def test_native_kie_motion_does_not_switch_unselected_tasks_or_an_explicit_hub(h
     assert observed[-1][0] == "atlas" and observed[-1][1]["image"] == "https://files.example/frame"
 
 
+def test_a_kie_presenter_is_sent_the_prompt_kie_requires(hub, monkeypatch):
+    """Kie's Kling avatar models refuse a request without a prompt ({"code": 500, "msg": "prompt is required"},
+    measured 2026-10-25), so every AI presenter on a Kie account stopped its video at the intro."""
+    sent = []
+    monkeypatch.setattr(media.requests, "post", lambda url, **k: sent.append(k["json"]) or
+                        response({"code": 200, "data": {"taskId": "avatar-task"}}))
+    monkeypatch.setattr(media.requests, "get", lambda *a, **k: response({"code": 200, "data": {
+        "state": "success", "resultJson": json.dumps({"resultUrls": ["https://files.example/presenter.mp4"]})}}))
+    media.avatar_clip("kling-standard", "https://files.example/face", "https://files.example/voice", hub / "avatar.mp4")
+    assert sent[0]["model"] == "kling/ai-avatar-standard"
+    prompt = sent[0]["input"]["prompt"]
+    assert prompt.strip() and len(prompt) <= 5000 and "speaks" in prompt
+    # a shot's own movement (the engine's motion argument) leads the prompt, through the engine's routed call
+    wrapped = media.route_avatar(lambda *a, **k: pytest.fail("the Kie account renders the presenter"))
+    wrapped("pruna", "https://files.example/face", "https://files.example/voice", hub / "avatar_2.mp4", lambda *_: None,
+            "Leans toward the camera")
+    assert sent[1]["input"]["prompt"].startswith("Leans toward the camera ")
+    assert sent[1]["input"]["image_url"] == "https://files.example/face"
+
+
 def test_native_presenter_receives_positional_motion_when_replacement_is_off(hub, monkeypatch):
     media.cr_bridge.save_settings({"costs_accepted": True, "narration": {"provider": "kie"}})
     calls = []

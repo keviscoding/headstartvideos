@@ -592,7 +592,25 @@ def native_motion(*args, **kwargs):
         return motion(*args, **kwargs)
 
 
-def avatar_clip(provider, image_url, audio_url, dest, log=print):
+# The engine's own words for how a presenter moves (avatar.MOTION_PROMPT), used when the engine can't be read.
+PRESENTER_MOTION = ("The person speaks naturally to camera, subtle head movement, natural blinking, relaxed shoulders, "
+                    "small hand gesture, static camera.")
+
+
+def presenter_prompt(motion=""):
+    """What Kie's Kling avatar models are told about the presenter's movement. Kie requires it: without a prompt
+    every presenter was refused ({"code": 500, "msg": "prompt is required"}), so every video with an AI presenter on
+    a Kie account stopped at its intro (sweep 2026-10-25). The engine's own Kling call always sent one."""
+    try:
+        import avatar
+        base = str(getattr(avatar, "MOTION_PROMPT", "") or PRESENTER_MOTION)
+    except Exception:                                   # noqa: BLE001 - the engine's words are a nicety, not a need
+        base = PRESENTER_MOTION
+    motion = str(motion or "").strip()
+    return (((motion + " ") if motion else "") + base)[:5000]
+
+
+def avatar_clip(provider, image_url, audio_url, dest, log=print, motion=""):
     if provider not in ("kling-standard", "kling-pro"):
         # Setup's "Kling Standard / Pro presenters": every presenter on this account is Kling. A recipe written for
         # another presenter model (Pruna on WaveSpeed) speaks through Kling Standard, as the engine itself does when
@@ -600,7 +618,8 @@ def avatar_clip(provider, image_url, audio_url, dest, log=print):
         log(f"    avatar: {provider} presenter shots run as Kling Standard on your model account")
         provider = "kling-standard"
     hub = profile()["provider"]
-    inputs = {"image_url": image_url, "audio_url": audio_url} if hub == "kie" else {"image": image_url, "audio": audio_url}
+    inputs = ({"image_url": image_url, "audio_url": audio_url, "prompt": presenter_prompt(motion)} if hub == "kie"
+              else {"image": image_url, "audio": audio_url})
     model = PROVIDERS[hub]["models"]["avatar_pro" if provider == "kling-pro" else "avatars"]
     run("avatars", inputs, dest, model=model, log=log)
     return Path(dest)
@@ -610,7 +629,9 @@ def route_avatar(original):
     """Forward native positional options when presenter replacement is off."""
     def routed(provider, image_url, audio_url, dest, log=print, *args, **kwargs):
         if active("avatars"):
-            return avatar_clip(provider, image_url, audio_url, dest, log)
+            # the engine's presenter calls pass a shot's movement as their next argument (motion=)
+            motion = kwargs.get("motion", args[0] if args and isinstance(args[0], str) else "")
+            return avatar_clip(provider, image_url, audio_url, dest, log, motion=motion)
         return original(provider, image_url, audio_url, dest, log, *args, **kwargs)
     return routed
 
