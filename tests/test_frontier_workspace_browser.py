@@ -627,3 +627,15 @@ def test_a_new_character_is_drawn_or_uploaded_and_goes_with_the_video(workspace)
     page.locator("#crw-character-image").select_option("")
     assert page.locator("#crw-character").input_value() == STORY_CAST
 
+
+
+def test_a_learned_style_in_the_library_can_be_edited_or_studied_again(workspace):
+    """A customer asked whether a learned recipe can be changed or has to be deleted and made again."""
+    env, page = workspace, workspace.page
+    env.open("#styles")
+    page.locator(".crw-nav [data-nav=styles]").click()
+    item = page.locator("#crw-styles-list .crw-style-item")
+    assert item.count() == 1 and "My Illustrated Worlds" in item.inner_text()
+    assert item.locator("a").get_attribute("href") == "/cr-style-clone?edit=" + CLONE
+    item.locator(".crw-recipe-card").click()
+    assert page.locator("#crw-selected-name").inner_text() == "My Illustrated Worlds", "the card still picks the style"

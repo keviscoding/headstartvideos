@@ -169,7 +169,8 @@ def test_every_route_rejects_remote_hosts_and_origins(env, path, method):
     assert not env.calls and not env.targets
 
 
-@pytest.mark.parametrize("path", ["/preview", "/start", "/op_" + "1" * 24 + "/sync", "/op_" + "1" * 24 + "/continue", "/op_" + "1" * 24 + "/recover", "/op_" + "1" * 24 + "/refine"])
+@pytest.mark.parametrize("path", ["/preview", "/start", "/op_" + "1" * 24 + "/sync", "/op_" + "1" * 24 + "/continue", "/op_" + "1" * 24 + "/recover", "/op_" + "1" * 24 + "/refine",
+                                  "/style/cr_clone_" + "1" * 12, "/sample"])
 def test_mutations_require_local_control_token(env, path):
     assert env.post("/cr-style-clone" + path, headers={}).status_code == 403
     assert env.post("/cr-style-clone" + path, headers={"X-CR-Local-Token": "wrong"}).status_code == 403
@@ -730,3 +731,182 @@ def test_browser_the_answer_on_animated_2d_characters_replans_and_pictures_need_
             assert not errors, errors
         finally:
             browser.close()
+
+
+def test_the_page_previews_up_to_three_channels_as_one_mix(env):
+    """A customer could only pick videos from one channel on the web; Claude Code could already mix them."""
+    mixed = env.post("/cr-style-clone/preview", {"urls": ["https://www.youtube.com/@Ifverse",
+                                                          "https://www.youtube.com/@Other"]})
+    assert mixed.status_code == 200 and mixed.json["combined"]
+    assert mixed.json["reference_urls"] == ["https://www.youtube.com/@Ifverse/videos",
+                                            "https://www.youtube.com/@Other/videos"]
+    assert [name for name, _ in env.calls] == ["preview", "preview"]
+    one = env.post("/cr-style-clone/preview", {"urls": ["https://www.youtube.com/@Ifverse"]})
+    assert one.status_code == 200 and "combined" not in one.json
+    assert env.post("/cr-style-clone/preview", {"urls": ["a", "b", "c", "d"]}).status_code == 400
+    # the study keeps every channel it mixes, so a new attempt lists them all again
+    payload = {**env.approved(), "preview_id": mixed.json["preview_id"]}
+    started = env.post("/cr-style-clone/start", payload)
+    assert started.status_code == 200 and len(started.json["reference_urls"]) == 2
+
+
+def test_a_learned_style_is_edited_through_the_page_and_studio_reads_it_again(env):
+    name = "cr_clone_" + "6" * 12
+    (env.home / "styles" / (name + ".json")).write_text(json.dumps({
+        "name": name, "label": "Mine", "description": "About bees.", "features": {"offered": ["sound"], "on": []},
+        "cr_style_clone": {"operation_id": "op_" + "6" * 24}}))
+    got = env.get("/cr-style-clone/style/" + name)
+    assert got.status_code == 200 and got.json["name"] == "Mine"
+    assert env.get("/cr-style-clone/style/cr_clone_none").status_code == 404
+    assert env.get("/cr-style-clone/style/documentary").status_code == 400
+    saved = env.post("/cr-style-clone/style/" + name, {"changes": {"name": "My bees", "features_on": ["sound"]}})
+    assert saved.status_code == 200 and saved.json["saved"] and saved.json["name"] == "My bees"
+    assert ("load_all", None) in env.calls, "Studio reads the edited style at once"
+    assert not env.targets, "an edit never starts a study"
+
+
+def test_a_sample_needs_the_creators_approval_and_runs_on_their_own_accounts(env, monkeypatch):
+    import cr_style_sample
+    (env.home / "styles/stories.json").write_text(json.dumps({"name": "stories", "pacing": {"photo_every_s": 5}}))
+    started = []
+    monkeypatch.setattr(cr_style_sample, "start", lambda home, name, style, topic, line, **kw: started.append(
+        (name, topic, sorted(kw))) or {"sample_id": "sm_" + "7" * 24, "state": "running"})
+    env.studio.mv = SimpleNamespace(host_image=lambda path: "url", image_gen=lambda *a, **k: None)
+    body = {"style": "stories", "topic": "How bees build homes"}
+    assert env.post("/cr-style-clone/sample", body).status_code == 400 and not started
+    env.cfg["costs_accepted"] = False
+    assert env.post("/cr-style-clone/sample", {**body, "acknowledge_costs": True}).status_code == 400
+    env.cfg["costs_accepted"] = True
+    assert env.post("/cr-style-clone/sample", {**body, "style": "none", "acknowledge_costs": True}).status_code == 400
+    ok = env.post("/cr-style-clone/sample", {**body, "acknowledge_costs": True})
+    assert ok.status_code == 200 and started == [("stories", "How bees build homes", ["generate", "host", "voice"])]
+    assert env.get("/cr-style-clone/sample/sm_bad/status").status_code == 400
+    assert env.get("/cr-style-clone/sample/" + "sm_" + "8" * 24 + "/video.mp4").status_code == 404
+    assert not env.targets
+
+
+def _browser(env):
+    browser_api = pytest.importorskip("playwright.sync_api")
+    playwright = browser_api.sync_playwright().start()
+    try:
+        browser = playwright.chromium.launch(headless=True)
+    except browser_api.Error as error:
+        playwright.stop()
+        pytest.skip("Local Chromium is unavailable: " + str(error).splitlines()[0])
+    page = browser.new_page(viewport={"width": 1200, "height": 1000})
+    page.set_default_timeout(5000)
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+
+    def respond(route):
+        url = urlsplit(route.request.url)
+        assert url.hostname == "127.0.0.1", "Browser flow must stay local"
+        path = url.path + (("?" + url.query) if url.query else "")
+        response = env.client.open(path, method=route.request.method, base_url=BASE,
+                                   headers=dict(route.request.headers), data=route.request.post_data)
+        route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.data)
+    page.route("**/*", respond)
+    return SimpleNamespace(page=page, errors=errors, close=lambda: (browser.close(), playwright.stop()))
+
+
+CLONE_PREVIEW = clone.preview
+
+
+def test_browser_mixing_two_channels_suggests_close_styles_and_tries_one_first(env, monkeypatch):
+    import cr_style_sample
+    lists = {"@Ifverse": [{"id": VIDEO, "title": "What If One Second Felt Like Ten", "channel": "Ifverse",
+                           "duration": 406, "views": 100000}],
+             "@gneef": [{"id": THIRD, "title": "Every City Has A Beast", "channel": "Gneef", "views": 10000000,
+                         "short": True}]}
+
+    def preview(home, url):
+        env.calls.append(("preview", url))
+        rows = next(v for k, v in lists.items() if k in url)
+        return CLONE_PREVIEW(home, url, learner=SimpleNamespace(_flat=lambda *a: rows))
+    monkeypatch.setattr(clone, "preview", preview)
+    suggestion = {"id": "stories", "name": "2D Life Stories", "closeness": 91, "why": "both are mostly drawn pictures",
+                  "kind": "video", "mine": False, "recommended": True, "same_references": False,
+                  "preview_url": "/cr-workspace/preview/recipe/stories.jpg", "use_url": "/?cr-preset=stories",
+                  "description": "", "sample": {"can": True, "pictures": 2, "seconds": 5, "cost_usd": 0.05}}
+    monkeypatch.setattr(cr_style_look, "similar", lambda *a, **k: [suggestion])
+    (env.home / "styles/stories.json").write_text(json.dumps({"name": "stories", "pacing": {"photo_every_s": 5}}))
+    env.studio.mv = SimpleNamespace(host_image=lambda path: "url", image_gen=lambda *a, **k: None)
+    asked = []
+    state = {"state": "running"}
+    monkeypatch.setattr(cr_style_sample, "start", lambda home, name, style, topic, line, **kw: asked.append(
+        (name, topic)) or {"sample_id": "sm_" + "9" * 24, "state": "running", "message": "Drawing two pictures."})
+    monkeypatch.setattr(cr_style_sample, "status", lambda home, ident: {
+        "sample_id": ident, "state": state["state"], "message": "Here are a few seconds.",
+        "video_url": "/cr-style-clone/sample/" + ident + "/video.mp4"})
+    b = _browser(env)
+    try:
+        page = b.page
+        page.goto(BASE + "/cr-style-clone")
+        page.locator("#add-link").click()
+        page.locator("#reference-url").fill("https://www.youtube.com/@Ifverse")
+        page.locator("#reference-url-2").fill("https://www.youtube.com/@gneef")
+        page.locator("#preview-button").click()
+        page.locator("#references").wait_for(state="visible")
+        assert page.locator("#mix-note").is_visible() and page.locator("#shorts-note").is_visible()
+        assert "Short" in page.locator("#candidate-list").inner_text(), "a Short is listed, never refused"
+        page.locator("#candidate-list input").nth(0).check()
+        page.locator("#candidate-list input").nth(1).check()
+        assert "mixing 2 channels" in page.locator("#selection-summary").inner_text()
+        page.locator("#next-button").click()
+        page.locator("#look-result").wait_for(state="visible")
+        card = page.locator("#similar-list .similar-card")
+        assert card.count() == 1 and "91% close" in card.inner_text() and "$0.05" in card.inner_text()
+        assert page.locator("#look-next").is_enabled(), "a suggestion never stands in the way of the study"
+        assert card.locator("a").get_attribute("href") == "/?cr-preset=stories"
+        card.locator("input[type=text]").fill("How bees build homes")
+        assert card.locator("button").is_disabled()
+        card.locator("input[type=checkbox]").check()
+        state["state"] = "done"
+        card.locator("button").click()
+        card.locator("video").wait_for(state="attached", timeout=8000)
+        assert asked == [("stories", "How bees build homes")] and not env.targets
+        page.locator("#look-next").click()
+        page.locator("#style-label").fill("My mix")
+        page.locator("#example-title").fill("How bees build homes")
+        page.locator("#usage-approved").check()
+        page.locator("#start-button").click()
+        page.locator("#progress-panel").wait_for(state="visible")
+        operation = page.evaluate("localStorage.getItem('cr.styleStudy')")
+        _, saved = clone._saved(env.home, operation, env.bridge)
+        assert [r["id"] for r in saved["spec"]["references"]] == [VIDEO, THIRD]
+        assert saved["spec"]["reference_urls"] == ["https://www.youtube.com/@Ifverse/videos",
+                                                   "https://www.youtube.com/@gneef/videos"]
+        assert not b.errors, b.errors
+    finally:
+        b.close()
+
+
+def test_browser_a_learned_style_is_edited_and_studied_again_from_its_page(env):
+    name = "cr_clone_" + "6" * 12
+    (env.home / "styles" / (name + ".json")).write_text(json.dumps({
+        "name": name, "label": "Mine", "description": "About bees.", "script_notes": ["Be warm."],
+        "look": {"captions": {"off": True}}, "pacing": {"photo_every_s": 3.0},
+        "features": {"offered": ["ai_images", "sound"], "on": ["ai_images"]},
+        "cr_style_clone": {"operation_id": "op_" + "6" * 24}}))
+    b = _browser(env)
+    try:
+        page = b.page
+        page.goto(BASE + "/cr-style-clone?edit=" + name)
+        page.locator("#edit-panel").wait_for(state="visible")
+        assert page.locator("#reference-panel").is_hidden() and page.locator("#edit-name").input_value() == "Mine"
+        assert page.locator("#edit-script-notes").input_value() == "Be warm."
+        page.locator("#edit-name").fill("Warm bees")
+        page.locator("#edit-script-notes").fill("Be warm.\nEnd on a question.")
+        page.locator("#edit-features input[value='sound']").check()
+        page.locator("#edit-subtitles").check()
+        page.locator("#edit-save").click()
+        page.wait_for_function("document.getElementById('notice').textContent.startsWith('Saved')")
+        style = json.loads((env.home / "styles" / (name + ".json")).read_text())
+        assert style["label"] == "Warm bees" and style["script_notes"] == ["Be warm.", "End on a question."]
+        assert style["features"]["on"] == ["ai_images", "sound"] and style["look"]["captions"]["off"] is False
+        assert page.locator("#edit-restudy").get_attribute("href") == "/cr-style-clone?restudy=" + name
+        page.goto(BASE + "/cr-style-clone?restudy=" + name)
+        page.wait_for_function("document.getElementById('notice').textContent.includes('new version of Warm bees')")
+        assert page.locator("#reference-panel").is_visible() and not b.errors, b.errors
+    finally:
+        b.close()

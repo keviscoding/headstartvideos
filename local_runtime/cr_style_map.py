@@ -1237,3 +1237,125 @@ def apply(style: dict, mapping: dict) -> dict:
     if out.get("look", {}).get("placement") == "":
         out["look"].pop("placement", None)
     return out
+
+
+# ── the styles already installed that come closest ─────────────────────────────────────────────────────────────
+# Shown before a paid study, as suggestions only (never a gate): a creator may already have a recipe close to the
+# channel, or a style learned from it. Compared on what the pictures are made of (the profile's families, the same
+# axis choose_base reads), the pace and the format (Shorts or long videos). A learned style is compared on its own
+# look's profile; a recipe on what its machinery makes, written here like BASES (none of them carries a profile).
+RECIPE_FAMILIES = {
+    "3d": {"3d": .75, "graphic": .15, "footage": .1}, "quest": {"3d": .85, "graphic": .15},
+    "nocturne": {"3d": .5, "footage": .4, "graphic": .1}, "cr-3d-reconstruction": {"3d": .75, "graphic": .25},
+    "folio": {"generated": .7, "graphic": .3}, "stories": {"generated": 1.0}, "atlas": {"generated": .8, "graphic": .2},
+    "history": {"generated": .8, "graphic": .2}, "cr-stick-stories": {"generated": .9, "graphic": .1},
+    "cr-handdrawn-finance": {"generated": .85, "graphic": .15},
+    "cr-deadly-places": {"generated": .6, "graphic": .25, "photo": .15},
+    "documentary": {"footage": .6, "photo": .1, "document": .1, "graphic": .2},
+    "almanac": {"footage": .45, "photo": .3, "graphic": .25}, "courtside": {"footage": .7, "graphic": .2, "photo": .1},
+    "deep": {"footage": .55, "graphic": .35, "generated": .1},
+    "dossier": {"footage": .4, "document": .3, "graphic": .2, "photo": .1},
+    "legend": {"footage": .7, "photo": .3}, "news": {"footage": .55, "graphic": .35, "presenter": .1},
+    "cr-paper-finance": {"footage": .4, "document": .3, "graphic": .3},
+    "cr-business-doc": {"footage": .6, "document": .25, "graphic": .15}, "cr-true-crime": {"footage": .8, "graphic": .2},
+    "cr-quiet-essays": {"footage": .7, "generated": .3},
+    "hacker": {"graphic": .6, "footage": .4}, "horizon": {"graphic": .55, "footage": .35, "document": .1},
+    "kinetic": {"graphic": .7, "footage": .3}, "hustle": {"generated": .45, "graphic": .35, "footage": .2},
+    "jung": {"footage": .35, "generated": .4, "graphic": .25},
+    "avatar": {"presenter": .3, "generated": .7}, "avatar-premium": {"presenter": .35, "generated": .45, "graphic": .2},
+    "mentor": {"presenter": .4, "generated": .4, "graphic": .2}, "modern-homes": {"presenter": .35, "generated": .65},
+    "pulse": {"presenter": .3, "footage": .4, "graphic": .3}, "pitmaster": {"presenter": .4, "generated": .5, "graphic": .1},
+    "workshop": {"presenter": .35, "generated": .35, "footage": .3}, "cr-expert-presenter": {"presenter": .3, "photo": .7},
+    "cr-manga-recaps": {"panel": 1.0},
+    "cr-shorts-3d": {"3d": 1.0}, "cr-shorts-3d-dark": {"3d": .8, "footage": .2},
+    "cr-shorts-photo": {"photo": .6, "generated": .4}, "cr-shorts-ranking": {"footage": 1.0},
+}
+# what an unlisted recipe's switches make (its features.on)
+FEATURE_FAMILIES = {"threed": "3d", "youtube": "footage", "stock": "footage", "ai_images": "generated",
+                    "avatar": "presenter", "maps": "graphic", "headlines": "document", "motion": "graphic",
+                    "spotlight": "photo"}
+FAMILY_WORDS = {"generated": "drawn or generated pictures", "generated_motion": "AI-animated clips",
+                "footage": "real footage", "photo": "photos", "document": "documents and screenshots",
+                "graphic": "motion graphics, maps and charts", "3d": "3D scenes", "panel": "comic panels",
+                "presenter": "a presenter on camera", "meme": "memes"}
+
+
+def is_short(style: dict) -> bool:
+    return isinstance(style.get("shorts"), dict) or style.get("format") == "short"
+
+
+def style_families(name: str, style: dict, profile: dict = None) -> dict:
+    """What a style's pictures are made of, as shares: its own look's profile for a learned style, else the table."""
+    if profile:
+        fam = _families(profile)
+        if fam:
+            return {k: float(v) for k, v in fam.items() if k != "other"}
+    if name in RECIPE_FAMILIES:
+        return dict(RECIPE_FAMILIES[name])
+    on = (style.get("features") or {}).get("on") if isinstance(style.get("features"), dict) else None
+    out = {}
+    for key in on or []:
+        if key in FEATURE_FAMILIES:
+            out[FEATURE_FAMILIES[key]] = out.get(FEATURE_FAMILIES[key], 0) + 1.0
+    if not out and (style.get("pacing") or {}).get("photo_every_s"):
+        out = {"generated": 1.0}                                 # a story recipe: a picture for every line
+    total = sum(out.values())
+    return {k: v / total for k, v in out.items()} if total else {}
+
+
+def _cosine(a: dict, b: dict) -> float:
+    dot = sum(a.get(k, 0) * b.get(k, 0) for k in set(a) | set(b))
+    size = (sum(v * v for v in a.values()) ** .5) * (sum(v * v for v in b.values()) ** .5)
+    return dot / size if size else 0.0
+
+
+def _pace_of(style: dict, profile: dict = None) -> float:
+    if profile:
+        med = _get(profile, "edit", "median_shot_s") or {}
+        value = med.get("body") or _v(med)
+        if value:
+            return float(value)
+    pacing = style.get("pacing") or {}
+    return float(pacing.get("photo_every_s") or pacing.get("cut_s") or 0)
+
+
+def similar(profile: dict, styles: dict, *, profiles: dict = None, shorts: bool = False, base: str = "",
+            look_id: str = "", limit: int = 3) -> list:
+    """The installed styles closest to a looked-at channel, best first: [{"id", "closeness" (0-100), "why", "kind",
+    "mine", "recommended", "same_references"}]. `styles` is every installed style {name: style dict}, `profiles` the
+    look profile of each learned style {name: profile}, `shorts` whether the references are Shorts, `base` the recipe
+    the study would build on. Suggestions only: nothing here decides or blocks a study."""
+    import math
+    profiles = profiles or {}
+    mine = {k: float(v) for k, v in _families(profile).items() if k != "other"}
+    pace = _pace_of({}, profile)
+    rows = []
+    for name, style in styles.items():
+        if not isinstance(style, dict) or name.startswith("_") or style.get("variant_of"):
+            continue
+        learned = (style.get("cr_style_clone") or {}).get("learned_v2") or {}
+        theirs = style_families(name, style, profiles.get(name))
+        if not theirs or not mine:
+            continue
+        same = bool(look_id) and learned.get("look_id") == look_id
+        their_pace = _pace_of(style, profiles.get(name))
+        paced = (1 - min(1.0, abs(math.log(pace / their_pace)) / math.log(4))) if pace and their_pace else 0.5
+        fits = 1.0 if is_short(style) == bool(shorts) else 0.0
+        score = 1.0 if same else .75 * _cosine(mine, theirs) + .15 * paced + .10 * fits
+        shared = max(set(mine) & set(theirs), key=lambda k: min(mine[k], theirs[k]), default="")
+        if same:
+            why = "you already learned a style from these same videos"
+        elif shared:
+            why = (f"both are mostly {FAMILY_WORDS.get(shared, shared)} ({round(mine[shared] * 100)}% here, "
+                   f"{round(theirs[shared] * 100)}% in it)")
+        else:
+            why = "the closest of your styles, though its pictures are made differently"
+        if pace and their_pace and paced >= .7 and not same:
+            why += f", cutting about as often (every {pace:.1f} s here, {their_pace:.1f} s in it)"
+        if fits and shorts and not same:
+            why += ", and it makes Shorts too"
+        rows.append({"id": name, "closeness": round(score * 100), "why": why,
+                     "kind": "short" if is_short(style) else "video", "mine": bool(style.get("cr_style_clone")),
+                     "recommended": name == base, "same_references": same})
+    rows.sort(key=lambda r: (-r["closeness"], not r["recommended"], r["id"]))
+    return [r for r in rows if r["closeness"] >= 30][:limit]
