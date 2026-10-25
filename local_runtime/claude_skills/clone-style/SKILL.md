@@ -24,7 +24,8 @@ Link: $ARGUMENTS
    Studio's guess is the first option). Ask `medium` (how a 3D channel's 3D is made) and `animation` (whether the
    channel's drawn characters are animated, or pictures in their look) first: they decide how the videos are made.
    If `look_progress` shows a `medium_gap`, tell them now what their videos will be (`how_made`). Choosing animated
-   adds a few minutes of their Claude Code to the study (usually 3 to 10) (Claude writes the channel's animation); say so. Also ask:
+   (2D), or 3D characters with faces, has their Claude Code write the channel's own renderer during the study (usually
+   3 to 15 more minutes); say so. A Shorts channel's videos come out vertical. Also ask:
    - a name for the new style (for example "My History Style");
    - an example video title in the channel's subject.
    Mention `suggested_base` and `because` in one line: the recipe the new style builds on.

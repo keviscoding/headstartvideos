@@ -827,9 +827,9 @@ def route(profile, chosen: str = "", drawn=None, told: bool = False, designed=No
     share = _families(profile).get("3d", 0)
     fresh ={k: v for k, v in profile.items() if k not in ("_drawn_3d", "_designed_3d")}
     if rendered:
-        seen = threed_rebuildable(profile)[1] or ""
+        art = re.split(r"[.(;]", str(_v(_get(profile, "pictures", "art_style"), "") or ""))[0].strip(" ,")[:110]
         return {"engine": "animated3d", "why": f"{round(share * 100)}% of the pictures are 3D scenes with the channel's "
-                "own characters" + (f" ({seen.split(', which')[0]})" if seen else "") + ". During the study your Claude "
+                "own characters" + (f" ({art[0].lower() + art[1:]})" if art else "") + ". During the study your Claude "
                 "Code writes this channel's 3D renderer in code (its characters, sets, light and camera, in three.js) "
                 "and checks its test shots against the channel's own frames (usually 5 to 15 more minutes of Claude "
                 "usage, at most 25). Every video then reuses it: Claude directs the characters to the narration and "

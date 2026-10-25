@@ -125,11 +125,15 @@ Studio through its own checks, so nothing needs the Studio web page.
   check its test shots against the channel's frames: usually 3 to 10 more minutes of Claude usage (at most 25), no
   money. Every video then reuses it: Claude directs the characters to the narration and Studio draws them on this
   computer, so a video costs its voice, plus a background picture for each place (about $0.02) only when its animation
-  asks for them. Say this before they choose. When the study is done, `progress(op_…)` has `animation`: its score
-  against the channel's own bar; read `what_to_tell_them` to the creator, and if they would rather have pictures, they
-  press Use pictures instead on the style's page (never choose for them). If `look_progress` or `clone_style` returns
-  a `medium_gap`, Studio can't make that medium yet: read it to the creator and call `clone_style` with
-  `accept_medium=true` only after they accept it. Never accept it for them, and never call a stopgap the real thing.
+  asks for them. A 3D channel whose characters have faces (cartoon, game or toy-like, Roblox-style, a designed cast)
+  works the same way in real 3D: the study has their Claude Code write the channel's own three.js renderer (usually 5
+  to 15 more minutes of Claude usage) and every video is rendered in 3D on their computer, vertical with the channel's
+  captions for a Shorts channel; pictures with AI clips in place of 3D only when they choose that answer. Say this
+  before they choose. When the study is done, `progress(op_…)` has `animation`: its score against the channel's own
+  bar; read `what_to_tell_them` to the creator, and if they would rather have pictures, they press Use pictures
+  instead on the style's page (never choose for them). If `look_progress` or `clone_style` returns a `medium_gap`,
+  Studio can't make that medium yet: read it to the creator and call `clone_style` with `accept_medium=true` only
+  after they accept it. Never accept it for them, and never call a stopgap the real thing.
 
 ## Making videos through ChannelRecipe tools
 
