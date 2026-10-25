@@ -76,6 +76,41 @@ class TaskFailed(AccountStop):
                          (" " + self.reason if self.reason else "") + action)
 
 
+class ModelsExhausted(AccountStop):
+    """Every image model chosen in Setup failed this one picture, each for certain (a refusal or a failed task)."""
+
+
+class PictureFailed(RuntimeError):
+    """One picture or clip that could not be made, for certain: the engine skips it, as it does on its own services
+    (a story holds the picture before; more than a third missing still stops the video; an AI image becomes stock
+    footage; a thumbnail is left out). Nothing is submitted again for it."""
+
+
+# A failure that would stop every picture the same way stops the video; anything else stops only its own picture.
+ACCOUNT_WIDE = ("balance", "access")
+
+
+def skippable(make):
+    """`make` as the engine's own picture and clip calls meet it. AccountStop is a BaseException so the engine can't
+    swap wallets behind it, but that also went past every "one picture failing must not abort the video" handler in
+    the engine: one picture Kie couldn't make (a refusal on every model, or Kie's "422 task id is blank", 2 of 266
+    of the owner's own pictures) stopped a whole video. A 6-minute stick-figure story draws about 140 pictures, so
+    most long story videos stopped (cr-stick-stories 61% failed, sweep 2026-10-25). Certain, single-picture failures
+    are now the engine's to skip; balance and access problems, and anything uncertain (a pending task, an
+    interrupted submission or transfer), still stop the video with their own message and receipt."""
+    def made(*args, **kwargs):
+        try:
+            return make(*args, **kwargs)
+        except TaskFailed as failed:
+            if failed.category in ACCOUNT_WIDE:
+                raise
+            raise PictureFailed(str(failed)) from None
+        except ModelsExhausted as stopped:
+            raise PictureFailed(str(stopped)) from None
+    made._cr_skippable = True
+    return made
+
+
 TRANSIENT = re.compile(r"internal error|try again later|timed? ?out|temporarily|overloaded|busy|service unavailable", re.I)
 
 
@@ -555,7 +590,7 @@ def image(prompt, dest, label="image", ref_urls=None, model=None, **kwargs):
             last = error
             if index + 1 < len(plan):
                 print(f"  {label}: {choice['label']} failed ({error.category}); trying {image_model(plan[index+1])['label']} on the same Kie account.")
-    raise AccountStop(f"Image generation stopped after {len(plan)} selected models. {last} Saved attempts will not be submitted again on resume.")
+    raise ModelsExhausted(f"Image generation stopped after {len(plan)} selected models. {last} Saved attempts will not be submitted again on resume.")
 
 
 def motion(image_url, prompt, dest, label="motion", retries=1, **kwargs):
@@ -877,7 +912,7 @@ def install(engine):
     def hook(name, task, replacement):
         original = getattr(engine, name)
         setattr(engine, name, lambda *a, **k: replacement(*a, **k) if active(task) else original(*a, **k))
-    hook("image_gen", "images", image)
+    hook("image_gen", "images", skippable(image))
     hook("_image_provider", "images", lambda: "channelrecipe-hub")
     # The first frame of a moving picture is drawn against the channel's style drawing too (look.style_image),
     # like every still, so an animated picture keeps the same look. Jobs run one per worker process.
@@ -908,7 +943,7 @@ def install(engine):
         except Exception:
             refs = []
         note = getattr(engine, "STYLE_REF_NOTE", "") if refs else ""
-        return image(note + prompt, dest, label, ref_urls=refs)
+        return skippable(image)(note + prompt, dest, label, ref_urls=refs)
     hook("_kie_still_with_url", "images", still_with_url)
     try:
         import cr_panels
@@ -931,7 +966,7 @@ def install(engine):
         pass
     # Native Kie motion and the history kit previously bypassed the hub.
     # Both must use the same cheap model and the same durable receipts.
-    engine._kie_video_gen = native_motion
+    engine._kie_video_gen = skippable(native_motion)   # a clip that can't be made shows its first frame instead
     engine.KIE_VIDEO_MODEL = PROVIDERS["kie"]["models"]["motion"]
     engine.KIE_VIDEO_RES, engine.KIE_VIDEO_DUR = "720p", "5"
     import history_kit
@@ -962,13 +997,13 @@ def install(engine):
         image_model = any(x in model for x in ("nano-banana", "gpt-image", "seedream", "flux", "qwen-image"))
         if image_model and active("images"):
             refs = payload.get("images") or ([payload["image"]] if payload.get("image") else [])
-            image(payload.get("prompt", ""), dest, ref_urls=refs)
+            skippable(image)(payload.get("prompt", ""), dest, ref_urls=refs)
             return Path(dest)
         if "image-to-video" in model and active("motion"):
             source = payload.get("image") or payload.get("image_url")
             if not source:
                 raise AccountStop("This motion model needs a source image. Review the scene before retrying.")
-            motion(source, payload.get("prompt", ""), dest)
+            skippable(motion)(source, payload.get("prompt", ""), dest)
             return Path(dest)
         if (active("images") and image_model) or (active("motion") and ("video" in model or "wan" in model)):
             raise AccountStop("This specialised model needs its original account. Turn off its task replacement in Setup & accounts.")

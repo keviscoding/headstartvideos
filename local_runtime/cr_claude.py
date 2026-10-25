@@ -350,6 +350,44 @@ LONG_OUTPUT_TOKENS = 128000         # may use this much output in one message (C
 CONTINUED = "Output token limit hit"
 
 
+# Windows starts a program with one command line of at most 32,767 characters, and npm's claude.cmd goes through
+# cmd.exe, which stops at 8,191 and cuts an argument at its first newline. FOLIO hands Claude its drawing rules as
+# --system-prompt (42 KB for the storyboard, 54 KB for each drawing), so on Windows every FOLIO video stopped at its
+# first storyboard call: "cli_failed" in 0 seconds, 6 of 6 customer FOLIO videos (census, 2026-10-25). A system
+# prompt the command line can't carry goes in a file (Claude Code's --system-prompt-file) for that one run; the
+# stage's identity is the original request, so nothing already made or paid for changes. (Multi-line prompts move
+# only on Windows: elsewhere a newline in an argument is harmless.)
+PROMPT_FILE_FLAGS = {"--system-prompt": "--system-prompt-file", "--append-system-prompt": "--append-system-prompt-file"}
+
+
+def prompts_on_disk(command, folder, *, windows=None):
+    """(command, files): the command with each system prompt too long (or, on Windows, multi-line) for the command
+    line moved into a UTF-8 file in `folder`, and the files to delete after the run."""
+    windows = os.name == "nt" if windows is None else windows
+    limit = 8000          # on every computer, so a Mac runs FOLIO exactly as a Windows PC does
+    out, files = [], []
+    i = 0
+    while i < len(command):
+        arg = str(command[i])
+        flag, value, step = arg, None, 1
+        if arg in PROMPT_FILE_FLAGS and i + 1 < len(command):
+            value, step = str(command[i + 1]), 2
+        elif "=" in arg and arg.split("=", 1)[0] in PROMPT_FILE_FLAGS:
+            flag, value = arg.split("=", 1)
+        if value is not None and (len(value) > limit or (windows and ("\n" in value or "\r" in value))):
+            folder = Path(folder)
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder / (".prompt-" + hashlib.sha256(value.encode("utf-8")).hexdigest()[:16] + ".txt")
+            with open(path, "w", encoding="utf-8", newline="") as handle:     # the exact text, \n kept as \n
+                handle.write(value)
+            files.append(path)
+            out += [PROMPT_FILE_FLAGS[flag], str(path)]
+        else:
+            out += [str(c) for c in command[i:i + step]]
+        i += step
+    return out, files
+
+
 def _stream_rows(stdout):
     rows = []
     for line in str(stdout).splitlines():
@@ -504,7 +542,12 @@ class Runtime:
         failure_message="Claude could not finish this stage. Review recovery in ChannelRecipe."
         completed=None
         try:
-            completed = self.real_run(command, **options)
+            run_command, prompt_files = prompts_on_disk(command, cache.parent)
+            try:
+                completed = self.real_run(run_command, **options)
+            finally:
+                for prompt_file in prompt_files:
+                    prompt_file.unlink(missing_ok=True)
             if streamed and completed is not None:
                 # The stream lists rate-limit events on every run: classify a failure by its result alone.
                 completed = subprocess.CompletedProcess(getattr(completed, "args", command), completed.returncode,
