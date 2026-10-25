@@ -311,6 +311,14 @@ def quote_for(cat: dict, row: dict, *, titles: int, minutes: int, where: str, fe
     else:
         out["expected_total_usd"] = round(media["per_video_usd"] * titles, 2)
         out["this_computer"] = "Renders on this computer, one video at a time; no machine to pay for."
+        # the disk holds each video's working folder: one that can't fit is said with the cost, not after it
+        import cr_machine
+        threed = bool(features.get("threed"))
+        free = cr_machine.free_disk_gb(HOME)
+        out["disk"] = {"needs_gb": cr_machine.need_gb(minutes, titles, threed), "free_gb": free}
+        room = cr_machine.disk_problem(free, minutes, titles, threed)
+        if room:
+            out["disk"]["problem"] = room
     if features.get("youtube") and kind(row) != "short":
         # Research footage watches YouTube videos before the video is made: how long that adds, said with the cost
         import cr_watch
@@ -345,8 +353,9 @@ def summary(q: dict) -> str:
         if q.get("short_by_usd"):
             text += f" Short by ${q['short_by_usd']:.2f}: top up at {c['topup_url']}."
         return text + watching
+    room = (" " + q["disk"]["problem"]) if (q.get("disk") or {}).get("problem") else ""
     return (f"{n} × {q['minutes']}-min {q['style_name']} on this computer: {media}; about "
-            f"${q['expected_total_usd']:.2f} in all, plus Claude Code usage on your plan." + watching)
+            f"${q['expected_total_usd']:.2f} in all, plus Claude Code usage on your plan." + watching + room)
 
 
 # ── the tools ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -381,6 +390,7 @@ def tool_setup_check(args):
                                  "Call fix_graphics_browser: Studio installs it itself. Don't install it from this "
                                  "shell; Claude Code's shell can be sandboxed, and Studio wouldn't see it."},
             "network": network_summary(status.get("network") or {}),
+            "computer": computer_summary(status.get("computer")),
             "speech_model": {"ready": bool(speech.get("ready")), "state": speech.get("state") or "",
                              "why": speech.get("reason") or "",
                              "fix": "" if speech.get("ready") else
@@ -393,6 +403,21 @@ def tool_setup_check(args):
             "studio_cloud": {"available": bool(cloud.get("available")), "balance_usd": cloud.get("balance_usd"),
                              "why": cloud.get("why") or "", "topup_url": cloud.get("topup_url")},
             "gallery_url": link("/cr-gallery")}
+
+
+def computer_summary(pc) -> dict:
+    """What this computer has (memory, cores, free disk) and where it's short of what Studio uses. Never a stop by
+    itself: make_videos checks the disk against each video and refuses one that can't fit, saying how much to free."""
+    if not pc:
+        return {"checked": False}
+    return {"checked": True, "memory_gb": pc.get("memory_gb"), "cores": pc.get("cores"),
+            "free_disk_gb": pc.get("free_disk_gb"),
+            "disk_needed_gb": {"10_minute_video": pc.get("ten_minute_video_gb"),
+                               "10_minute_3d_video": pc.get("ten_minute_3d_video_gb")},
+            "short_of": pc.get("short") or [], "notes": pc.get("notes") or [],
+            "what_to_do": "Tell the creator these notes in plain words before a long video: free disk space (empty "
+                          "the Bin or Recycle Bin, delete old downloads) or close other apps. Never delete their files "
+                          "yourself." if pc.get("notes") else ""}
 
 
 def network_summary(net: dict) -> dict:
