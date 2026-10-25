@@ -111,6 +111,12 @@ Studio through its own checks, so nothing needs the Studio web page.
   notification when a video is done. `list_videos` has each finished video's file and watch link.
 - A video that stopped (a provider hiccup, a closed Studio): `progress()` lists it under `stopped`; tell them what
   stopped it (`progress(id)`), then `resume_video(id)` carries it on and reuses everything already made.
+- Deleting, only when the creator asks: `delete_video(id, title)` (a finished or stopped video) and
+  `delete_style(id, name)` (a style they cloned; Studio's own recipes can't be deleted) move it into Studio's trash,
+  never delete it at once. Recently deleted on the Studio page (Projects, or the Style library) restores it for 30
+  days, then Studio empties it for good. Say first which video or style goes and what stays (their voice library,
+  styles and other videos; for a style, the videos made with it), and that Claude Code asks them to approve. A video
+  being made is refused: don't cancel it to delete it unless they ask for that too.
 - A video that stopped on its voice (`progress(id)` shows `voice_choices`, for example Kie answering "Internal Error"):
   tell them what failed and whether anything was charged (`voice_failed`), then ask which way to carry on: the same
   voice again after a few minutes, Gemini through Kie (same key), their own ElevenLabs account, or their own recording.

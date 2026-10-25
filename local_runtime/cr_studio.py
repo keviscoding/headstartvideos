@@ -803,7 +803,8 @@ def create_app():
             if activity.lock.acquire(blocking=False):
                 try:
                     if not activity.busy():
-                        for pending in list(studio.OUT.rglob(".cr-finish-pending.json"))[:20]:
+                        # a deleted video waiting in Studio's trash (cr_trash) is not replayed
+                        for pending in [p for p in studio.OUT.rglob(".cr-finish-pending.json") if ".cr-trash" not in p.parts][:20]:
                             try:
                                 sync_completion_receipt(cr_bridge, pending)
                             except (Exception,ValueError):
@@ -1595,6 +1596,8 @@ def create_app():
     cr_optional_renderer.install(studio, activity, home=HOME, readiness=setup_status)
     import cr_workspace
     cr_workspace.install(studio, activity, token=token, home=HOME)
+    import cr_timing
+    cr_timing.install(studio, home=HOME)                         # the timeline editor's picture timing (its own retime)
     import cr_style_options
     cr_style_options.install(studio)
     cr_cloud.install(HOME)                                       # the farm on ChannelRecipe's machines, when the account has it
@@ -1763,6 +1766,8 @@ def main():
         pass
     studio = create_app()
     studio.OUT.mkdir(exist_ok=True)
+    import cr_trash                                              # deleted videos and styles older than 30 days go
+    threading.Thread(target=cr_trash.empty_old, args=(HOME,), daemon=True, name="cr-trash").start()
     try:
         import cr_claude_code
         cr_claude_code.configure(HOME)                           # Claude Code in this folder: the studio tools

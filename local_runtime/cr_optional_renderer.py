@@ -112,8 +112,8 @@ def _saved_jobs(home):
     output = (Path(home) / "output").resolve()
     jobs, duplicates = {}, set()
     for marker in output.rglob("cr-project.json"):
-        if marker.is_symlink() or not marker.resolve().is_relative_to(output):
-            continue
+        if marker.is_symlink() or not marker.resolve().is_relative_to(output) or ".cr-trash" in marker.parts:
+            continue                                            # a deleted video in Studio's trash is not a project
         try:
             saved = json.loads(marker.read_text(encoding="utf-8"))
         except (OSError, ValueError):

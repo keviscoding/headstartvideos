@@ -2,7 +2,9 @@
 
 GETs read the existing catalogue and saved local evidence. They never authorize,
 resume, synchronize or create creative work; existing POST controls remain owned
-by the original adapters and their local token/readiness guards.
+by the original adapters and their local token/readiness guards. The workspace's
+own POSTs only file away what the creator deletes (into Studio's trash, cr_trash)
+or put it back.
 """
 from __future__ import annotations
 
@@ -18,6 +20,7 @@ import cr_favicon
 import cr_presentation
 import cr_preview
 import cr_style_clone
+import cr_trash
 
 PREVIEW_CACHE_SECONDS = 120
 
@@ -610,6 +613,62 @@ def install(studio, activity, *, token, home=None):
             return protect(jsonify(error=str(error))), 400
         except Exception as error:
             return failure(error)
+
+    # Delete a finished or stopped video, or a learned style: GET says what goes and what is kept, POST moves it into
+    # Studio's trash (cr_trash), where it waits 30 days and Recently deleted can put it back. Nothing is removed at once.
+    def trash_error(error):
+        if isinstance(error, cr_trash.Refused):
+            return protect(jsonify(error=str(error))), 409
+        if isinstance(error, LookupError):
+            return protect(jsonify(error=str(error) or "That item isn't here any more.")), 404
+        return failure(error)
+
+    def one_at_a_time(work):
+        """The same lock Create and Resume take, so a video can't start while it is being deleted."""
+        if not activity.lock.acquire(blocking=False):
+            return protect(jsonify(error="Finish the current studio request, then try again. Nothing was deleted.")), 409
+        try:
+            return protect(jsonify(work()))
+        finally:
+            activity.lock.release()
+
+    @app.get("/cr-workspace/delete/<kind>/<name>")
+    def cr_workspace_delete_plan(kind, name):
+        try:
+            local_access()
+            plan = {"video": cr_trash.video_plan, "style": cr_trash.style_plan}.get(kind)
+            if plan is None:
+                raise LookupError("Choose a video or a style.")
+            return protect(jsonify(cr_trash.public(plan(studio, home, name))))
+        except Exception as error:
+            return trash_error(error)
+
+    @app.post("/cr-workspace/delete/<kind>/<name>")
+    def cr_workspace_delete(kind, name):
+        try:
+            local_access()
+            delete = {"video": cr_trash.delete_video, "style": cr_trash.delete_style}.get(kind)
+            if delete is None:
+                raise LookupError("Choose a video or a style.")
+            return one_at_a_time(lambda: delete(studio, home, name))
+        except Exception as error:
+            return trash_error(error)
+
+    @app.get("/cr-workspace/trash")
+    def cr_workspace_trash():
+        try:
+            local_access()
+            return protect(jsonify(entries=cr_trash.entries(home), keep_days=cr_trash.KEEP_DAYS))
+        except Exception as error:
+            return trash_error(error)
+
+    @app.post("/cr-workspace/trash/<entry>/restore")
+    def cr_workspace_restore(entry):
+        try:
+            local_access()
+            return one_at_a_time(lambda: cr_trash.restore(studio, home, entry))
+        except Exception as error:
+            return trash_error(error)
 
     @app.get("/cr-workspace/project/<slug>")
     def cr_workspace_project(slug):

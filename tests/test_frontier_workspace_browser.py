@@ -270,6 +270,49 @@ def workspace(browser):
     def character_picture(style=None, name=None):
         return Response(image.getvalue(), mimetype="image/jpeg")
 
+    # Delete into Studio's trash (cr_trash): what goes and what stays, then Restore
+    env.trash, env.trashed = [], {}
+
+    def item_title(kind, name):
+        if kind == "style":
+            return next((r["label"] for r in catalog["channels"] if r["name"] == name), name)
+        return next((j["title"] for j in env.finished_jobs if j["slug"] == name), name)
+
+    @app.get("/cr-workspace/delete/<kind>/<name>")
+    def delete_plan(kind, name):
+        goes = ["The style “My Illustrated Worlds”: its look, prompts and settings, from your Style library"] \
+            if kind == "style" else ["The finished video: A finished film.mp4 (12 MB)", "Its working files (40 MB)"]
+        kept = ["Videos you made with it stay in Projects"] if kind == "style" else ["Your voice library and saved recordings"]
+        return jsonify(kind=kind, id=name, title=item_title(kind, name), goes=goes, kept=kept, keep_days=30, blocked="")
+
+    @app.post("/cr-workspace/delete/<kind>/<name>")
+    def delete_item(kind, name):
+        entry = f"{kind[0]}20261025-120000-{len(env.trash):06x}"
+        title = item_title(kind, name)
+        if kind == "style":
+            env.trashed[entry] = ("style", [r for r in catalog["channels"] if r["name"] == name])
+            catalog["channels"] = [r for r in catalog["channels"] if r["name"] != name]
+        else:
+            env.trashed[entry] = ("video", [j for j in env.finished_jobs if j["slug"] == name])
+            env.finished_jobs = [j for j in env.finished_jobs if j["slug"] != name]
+        env.trash.insert(0, {"id": entry, "kind": kind, "name": title, "deleted_at": 1793000000, "days_left": 29})
+        return jsonify(deleted=True, kind=kind, id=name, title=title, trash_id=entry, goes=[], kept=[])
+
+    @app.get("/cr-workspace/trash")
+    def trash():
+        return jsonify(entries=env.trash, keep_days=30)
+
+    @app.post("/cr-workspace/trash/<entry>/restore")
+    def restore(entry):
+        kind, rows = env.trashed.pop(entry)
+        if kind == "style":
+            catalog["channels"] += rows
+        else:
+            env.finished_jobs += rows
+        row = next(r for r in env.trash if r["id"] == entry)
+        env.trash.remove(row)
+        return jsonify(restored=True, kind=kind, title=row["name"])
+
     @app.post("/cr-video/<slug>/cancel")
     def cancel(slug):
         if slug != "active-film" or request.json != {"run_id": "exact-active-run"}:
@@ -639,3 +682,61 @@ def test_a_learned_style_in_the_library_can_be_edited_or_studied_again(workspace
     assert item.locator("a").get_attribute("href") == "/cr-style-clone?edit=" + CLONE
     item.locator(".crw-recipe-card").click()
     assert page.locator("#crw-selected-name").inner_text() == "My Illustrated Worlds", "the card still picks the style"
+
+
+def test_a_finished_video_is_deleted_into_the_trash_and_undo_brings_it_back(workspace):
+    """thatguygab (2026-10-25) asked to delete videos: Delete names what goes and what stays, moves it to Studio's
+    trash, and Undo or Recently deleted puts it back."""
+    env, page = workspace, workspace.page
+    env.open("#projects")
+    card = page.locator('[data-slug="finished-film"]')
+    assert page.locator('[data-slug="active-film"], [data-slug="stopped-film"]').count() >= 1
+    card.get_by_role("button", name="Delete A finished film").click()
+    dialog = page.locator("#crw-delete")
+    dialog.wait_for(state="visible")
+    page.wait_for_function("!document.getElementById('crw-delete-confirm').disabled")
+    assert page.locator("#crw-delete-title").inner_text() == "Delete this video?"
+    assert page.locator("#crw-delete-name").inner_text() == "“A finished film”"
+    assert page.locator("#crw-delete-goes li").all_inner_texts()[0] == "The finished video: A finished film.mp4 (12 MB)"
+    assert page.locator("#crw-delete-kept li").all_inner_texts() == ["Your voice library and saved recordings"]
+    assert "30 days" in page.locator("#crw-delete-note").inner_text()
+    if os.environ.get("CR_SHOT"):
+        page.screenshot(path=os.environ["CR_SHOT"].replace(".png", "-delete.png"))
+    page.locator("#crw-delete-cancel").click()
+    assert dialog.is_hidden() and not [p for p in env.posts if "/delete/" in p["path"]], "Keep it deletes nothing"
+    card.get_by_role("button", name="Delete A finished film").click()
+    page.wait_for_function("!document.getElementById('crw-delete-confirm').disabled")
+    page.locator("#crw-delete-confirm").click()
+    page.wait_for_function("!document.querySelector('[data-slug=\"finished-film\"]')")
+    assert [p["path"] for p in env.posts if "/delete/" in p["path"]] == ["/cr-workspace/delete/video/finished-film"]
+    assert "is in Studio’s trash" in page.locator("#crw-toast").inner_text()
+    trash = page.locator("#crw-trash-videos")
+    trash.wait_for(state="visible")
+    assert "Recently deleted (1)" in trash.locator("summary").inner_text()
+    page.locator("#crw-toast .crw-toast-undo").click()
+    page.wait_for_selector('[data-slug="finished-film"]')
+    assert any(p["path"].endswith("/restore") for p in env.posts)
+    page.wait_for_function("document.getElementById('crw-trash-videos').hidden")
+    for slug in ("active-film", "stopped-film"):           # nothing being made offers Delete
+        if page.locator(f'[data-slug="{slug}"]').count():
+            assert page.locator(f'[data-slug="{slug}"] .crw-delete-button').count() == (0 if slug == "active-film" else 1)
+
+
+def test_a_learned_style_is_deleted_from_the_style_library_and_restored(workspace):
+    env, page = workspace, workspace.page
+    env.open("?cr-preset=" + CLONE)
+    assert page.locator("#crw-selected-name").inner_text() == "My Illustrated Worlds"
+    page.locator(".crw-nav [data-nav=styles]").click()
+    assert page.locator("#crw-styles-list .crw-delete-button").count() == 1, "only the style the creator cloned"
+    page.get_by_role("button", name="Delete My Illustrated Worlds").click()
+    page.wait_for_function("!document.getElementById('crw-delete-confirm').disabled")
+    assert page.locator("#crw-delete-title").inner_text() == "Delete this style?"
+    assert page.locator("#crw-delete-kept li").all_inner_texts() == ["Videos you made with it stay in Projects"]
+    page.locator("#crw-delete-confirm").click()
+    page.locator("#crw-trash-styles").wait_for(state="visible")
+    assert page.locator("#crw-styles-list .crw-recipe-card").count() == 0
+    assert page.locator("#crw-selected-name").inner_text() != "My Illustrated Worlds", "a deleted style isn't chosen"
+    page.locator("#crw-trash-styles summary").click()
+    page.get_by_role("button", name="Restore My Illustrated Worlds").click()
+    page.wait_for_selector("#crw-styles-list .crw-recipe-card")
+    assert "is back in your Style library" in page.locator("#crw-toast").inner_text()
