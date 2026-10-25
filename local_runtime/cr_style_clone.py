@@ -332,7 +332,9 @@ def _spec(home, supplied):
         gap = (planned.get("route") or {}).get("medium_gap") if visual_mode != "reference_only" else ""
         if gap and supplied.get("accept_medium") is not True:
             raise ValueError(gap + " Tick that you understand before starting, or wait for the update.")
-        renderer = (planned.get("route") or {}).get("engine") == "animated2d" and visual_mode != "reference_only"
+        engine = (planned.get("route") or {}).get("engine")
+        # "2d" / "3d": the study has the creator's Claude Code write the channel's renderer on that kit
+        renderer = {"animated2d": "2d", "animated3d": "3d"}.get(engine, False) if visual_mode != "reference_only" else False
     elif answers:
         raise ValueError("Look at the references before answering questions about them.")
     else:
@@ -553,7 +555,7 @@ def renderer_verdict(style) -> dict:
         return {"state": "pictures", "say": "This style draws pictures in the channel's look (you chose pictures "
                 "instead of Claude's animation)."}
     look = style.get("look") or {}
-    if look.get("visuals") != "cr_animated2d":
+    if look.get("visuals") not in ("cr_animated2d", "cr_animated3d"):
         return {}
     r = (look.get("animated2d") or {}).get("renderer")
     if not isinstance(r, dict):
@@ -589,15 +591,17 @@ def use_pictures(home, operation_id, bridge):
     target = Path(home) / "styles" / (spec["style_id"] + ".json")
     style = _read(target)
     look = style.get("look") or {}
-    if look.get("visuals") != "cr_animated2d":
+    if look.get("visuals") not in ("cr_animated2d", "cr_animated3d"):
         return status(home, operation_id, bridge)
     looked = _read(cr_style_look.folder(home, spec.get("look_id") or "") / "look.json") if spec.get("look_id") else {}
-    answers = {**(spec.get("answers") or {}), "animation": cr_style_map.ANIMATED_PICTURES}
+    # the "pictures" answer, for a 2D channel's animation and a 3D channel's medium alike
+    answers = {**(spec.get("answers") or {}), "animation": cr_style_map.ANIMATED_PICTURES,
+               **({"medium": cr_style_map.MEDIUM_PICTURES} if look.get("visuals") == "cr_animated3d" else {})}
     mapping = cr_style_map.plan_style(looked.get("profile") or {}, _installed_styles(home), base=spec["base_style"],
                                       answers=answers)
     renderer = (look.get("animated2d") or {}).get("renderer") or {}
-    look.pop("visuals", None)
-    look.pop("animated2d", None)
+    for key in ("visuals", "animated2d", "aspect"):
+        look.pop(key, None)
     style.pop("cost", None)
     style = cr_style_map.apply(style, mapping)
     clone = style.setdefault("cr_style_clone", {})
@@ -922,6 +926,9 @@ RENDERER_CONTEXT = ("The candidates were drawn in code by an animation renderer 
                     "stand-in background where no background picture was drawn. Judge how the characters are built "
                     "and drawn, their poses and effects, the palette and the framing as this channel's; do not judge "
                     "the background.")
+RENDERER_CONTEXT_3D = ("The candidates were rendered in real 3D by a three.js renderer written for this channel. Judge how "
+                       "the characters are built (proportions, heads, faces, clothes, materials), the sets, the light, "
+                       "the palette and the framing as this channel's.")
 
 
 def _by_video(frames: list) -> list:
@@ -944,6 +951,13 @@ def _renderer(folder, spec, looked, see, log):
     home = _studio_home(folder)
     profile = cr_style_map.answer(looked["profile"], spec.get("answers") or {})
     channel = cr_animated2d.from_profile(profile)
+    three = spec.get("renderer") == "3d"
+    size = {}
+    if three:
+        tall = cr_style_map.vertical(looked["profile"])
+        size = {"dims": 3, "width": 1080 if tall else 1920, "height": 1920 if tall else 1080}
+        channel.update(medium="real 3D (three.js)", format=("vertical 1080x1920 Shorts with captions" if tall else
+                                                            "16:9 1920x1080 video"))
     art = ((_read(folder / "art-checkpoint.json").get("art") or {}).get("overrides") or {}).get("look") or {}
     if art.get("character"):
         channel["cast_in_words"] = str(art["character"])[:1500]
@@ -965,8 +979,8 @@ def _renderer(folder, spec, looked, see, log):
     def judge(references, candidates):
         return cr_bridge.call("style/compare", {"references": [cr_style_likeness._b64(p) for p in references],
                                                 "candidates": [cr_style_likeness._b64(p) for p in candidates],
-                                                "context": RENDERER_CONTEXT})
-    result = cr_animated2d.build(folder, {k: channel.get(k) for k in ("sky", "floor", "blur")}, channel, see=see,
+                                                "context": RENDERER_CONTEXT_3D if three else RENDERER_CONTEXT})
+    result = cr_animated2d.build(folder, {**{k: channel.get(k) for k in ("sky", "floor", "blur")}, **size}, channel, see=see,
                                  judge=judge, references=frames[:9], home=home, log=log, names=[n for n in names if n])
     log(f"  renderer: {result.get('state')}"
         + (f", {result.get('overall')}/10 against a bar of {result.get('bar')}" if result.get("overall") is not None
@@ -998,10 +1012,12 @@ def _apply_learned(folder, spec, style, log):
     if art.get("overrides"):
         cr_style_map._merge(learned, art["overrides"])
     cr_style_prompts.with_original_sound(learned)      # real clips are found only where the script marks them
-    if (mapping.get("route") or {}).get("engine") == "animated2d":
+    if (mapping.get("route") or {}).get("engine") in ("animated2d", "animated3d"):
         # the characters are animated in code: no writer's words change how the video is made
         look = learned.setdefault("look", {})
         look.update(visuals=mapping["overrides"]["look"]["visuals"], animated2d=mapping["overrides"]["look"]["animated2d"])
+        if mapping["overrides"]["look"].get("aspect"):
+            look["aspect"] = mapping["overrides"]["look"]["aspect"]
         import cr_animated2d
         if spec.get("renderer"):
             cr_animated2d.attach(learned, folder, home)

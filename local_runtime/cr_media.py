@@ -481,7 +481,7 @@ def image_model(model):
 def picture_range(style: dict):
     """(floor, default, ceiling) pictures a minute a story recipe allows, or None for other recipes. The floor
     keeps quality: never fewer than half the recipe's own pace, nor under four a minute."""
-    if (((style or {}).get("look") or {}).get("visuals")) == "cr_animated2d":
+    if (((style or {}).get("look") or {}).get("visuals")) in ("cr_animated2d", "cr_animated3d"):
         return None                                   # animated in code: no pictures a minute to choose
     try:
         every = float(((style or {}).get("pacing") or {}).get("photo_every_s") or 0)
