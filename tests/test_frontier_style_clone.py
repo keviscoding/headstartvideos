@@ -729,3 +729,154 @@ def test_a_style_saved_on_the_drawn_route_before_studio_75_still_says_what_its_v
     result = clone.run(approved.home, one["operation_id"], approved.bridge, readiness=lambda: approved.proof,
                        execute=ready)
     assert result["route"]["medium_gap"] == cr_style_map.MEDIUM_GAP
+
+
+def _stopping_learner(approved, monkeypatch, **steps):
+    """The original learner (_learn) with stand-in steps that log what the real ones log, for a study that stops."""
+    folder = approved.home / "output/cr-style-clone" / ("op_" + "3" * 24)
+    __import__("shutil").rmtree(folder, ignore_errors=True)                  # a fresh study for each stop
+    folder.mkdir(parents=True)
+    spec = clone._spec(approved.home, approved.spec)
+    spec["style_id"] = "cr_clone_stops"
+    sheet = folder / "frame.jpg"
+    sheet.write_bytes(b"synthetic frame fixture")
+
+    class Clock:
+        def __init__(self, budget, log): self.log, self.budget = log, budget
+        def left(self): return steps.get("left", 1800)
+        def step(self, name): pass
+        def end(self): pass
+        def report(self): return {"minutes": {}, "total_min": 0, "cost": {}, "total_usd": 0, "total_usd_api": 0}
+
+    def watch_impl(reference, clock, work):
+        return steps["watch"](clock) if "watch" in steps else {"sheets": [str(sheet)], "frames": [], "measures": {}}
+
+    def spec_impl(engine, title, an, genome, ref, seen, clock, work):
+        return steps["spec"](clock) if "spec" in steps else {"style_name": "Learned", "signatures": [{"id": "a"}]}
+
+    def make_kit(engine, title, analysis, genome, learned, clock, stage, channel):
+        stage.mkdir(parents=True)
+        (stage / "kit.json").write_text(json.dumps({"name": "learned", "types": {"a": 4, "b": 4, "c": 4}}))
+        (stage / "kit.js").write_text("kit")
+        return {"wants": {}}
+    namespace = {"Path": Path, "shutil": __import__("shutil"), "GENKIT": "genkit", "LIB_MIN": .62,
+                 "match": lambda *a: [], "mode": lambda: "fresh", "_envf": lambda name, default: default,
+                 "research": lambda *a: pytest.fail("research"), "watch": watch_impl,
+                 "_fallback": lambda *a: pytest.fail("plain-style fallback"), "learn_spec": spec_impl,
+                 "build_kit": make_kit, "_media": lambda *a, **kw: {},
+                 "validate": lambda engine, stage, media, clock, work, sheet: steps["validate"](clock),
+                 "_strip_axes_file": lambda *a: {}, "_install": lambda *a: None, "board": lambda path, *a: path,
+                 "_slug": lambda text, n=60: "x", "save_library": lambda *a: folder,
+                 "_read_json": lambda path: {}, "copy": copy, "VERSION": "test"}
+    namespace = _original_functions(ORIGINAL / "reflearn.py", {"_learn"}, namespace)
+    learner = SimpleNamespace(**namespace, Clock=Clock, WORK="reflearn")
+    engine = SimpleNamespace(STYLE_INFO={"documentary": {"language": "English"}}, set_extra=lambda text: None)
+    designer = SimpleNamespace(design=lambda *a, **kw: {"genome": {"analysis": {}}})
+    with pytest.raises(clone.StudyStopped) as stopped:
+        clone.study_original(engine, folder, spec, lambda phase: None, learner=learner, designer=designer,
+                             transcript=lambda *a, **kw: [])
+    return str(stopped.value), folder
+
+
+def test_a_study_whose_references_cannot_be_downloaded_says_so_and_what_to_do(approved, monkeypatch):
+    """A customer's study stopped after a minute with "did not produce a graphics kit": the design took under a minute,
+    then YouTube refused the downloads and the learner gave up in silence (its fallback was switched off)."""
+    def refused(clock):
+        clock.log("  learn: watch — not downloaded: YouTube's bot check refused the download "
+                  "(\"Sign in to confirm you're not a bot\")")
+        return {}
+    said, folder = _stopping_learner(approved, monkeypatch, watch=refused)
+    assert "confirm it isn't a bot" in said and "Wait an hour" in said and "graphics kit" not in said
+    assert "learn: the reference could not be watched" in (folder / "study.log").read_text()
+
+    def missing(clock):
+        clock.log("  learn: watch — not downloaded: yt-dlp is not installed")
+        return {}
+    said, _ = _stopping_learner(approved, monkeypatch, watch=missing)
+    assert "YouTube helper is missing" in said
+
+
+def test_a_study_whose_claude_step_or_graphics_fail_says_which_and_why(approved, monkeypatch):
+    def limited(clock):
+        clock.log("  learn: watch vision call failed — _ClaudeError: claudecode vision: You've hit your limit "
+                  "SECRET-provider-text")
+        return {}
+    said, _ = _stopping_learner(approved, monkeypatch, spec=limited)
+    assert said.startswith("Claude couldn't read the reference frames: Your Claude account reached its usage limit")
+    assert "SECRET" not in said, "a Claude failure is classified, never quoted"
+
+    def broken(clock):
+        clock.log("  learn: validate — Chromium: 2/9 types ok; problems: hero: JS error — x is not defined; "
+                  "tag: the middle test frame is blank")
+        return {"kept": ["a", "b"], "bad": ["c"], "browser": True}
+    said, _ = _stopping_learner(approved, monkeypatch, validate=broken)
+    assert "drew only 2 of its scene types" in said and "hero: JS error" in said
+
+    said, _ = _stopping_learner(approved, monkeypatch, left=60)
+    assert "time ran out before it could watch" in said and "study budget" in said
+
+
+def test_a_stop_says_your_study_is_saved_once(approved):
+    one = clone.prepare(approved.home, approved.spec, approved.proof, approved.bridge)
+    folder = approved.home / "output/cr-style-clone" / one["operation_id"]
+    saved = clone._read(folder / "operation.json")
+    saved.update(state="failed", phase="watch", project_id=PROJECT)
+    clone._write(folder / "operation.json", saved)
+    for said in ("The original learner did not produce a graphics kit that passed real browser validation. Your "
+                 "study is saved; no plain preset was substituted.",                          # Studio 104 and older
+                 "Studio couldn't download the reference videos. No plain preset was substituted."):
+        try:
+            raise clone.StudyStopped(said)
+        except clone.StudyStopped as error:
+            clone._record_failure(folder, saved, error)
+        message = clone.status(approved.home, one["operation_id"], approved.bridge)["message"]
+        assert message.count("saved") == 1 and message.endswith("start it again here when you're ready.")
+        assert "No plain preset was substituted." in message
+
+
+LIST_VIDEOS = clone.list_videos
+
+
+def test_a_shorts_only_channel_is_read_from_its_shorts_tab_and_its_shorts_can_be_studied(approved, monkeypatch):
+    """@gneef posts only Shorts: yt-dlp said "does not have a videos tab" and Studio said the channel had no long
+    videos to learn from. Its Shorts tab is read instead, and a Short is studied like any video."""
+    assert clone.normalize_url("https://youtube.com/@gneef/shorts") == "https://www.youtube.com/@gneef/shorts"
+    assert clone.normalize_url("https://youtube.com/@gneef") == "https://www.youtube.com/@gneef/videos"
+    asked = []
+
+    def run(command, **kwargs):
+        asked.append(command[-1])
+        if command[-1].endswith("/videos"):
+            return SimpleNamespace(stdout="", stderr="ERROR: [youtube:tab] @gneef: This channel does not have a videos tab")
+        rows = [{"id": "nEfTh1zPyLE", "title": "There Is A Strange Door In The Woods", "duration": None,
+                 "view_count": 227000, "playlist_channel": "Gneef", "url": "https://www.youtube.com/shorts/nEfTh1zPyLE"},
+                {"id": "2hqi5vYh7jY", "title": "Every City Has A Beast", "view_count": 10000000,
+                 "playlist_channel": "Gneef", "url": "https://www.youtube.com/shorts/2hqi5vYh7jY"}]
+        return SimpleNamespace(stdout="\n".join(json.dumps(r) for r in rows), stderr="")
+    monkeypatch.setattr(clone, "list_videos", lambda url, limit: LIST_VIDEOS(url, limit, run=run))
+    result = clone.preview(approved.home, "https://youtube.com/@gneef")
+    assert asked == ["https://www.youtube.com/@gneef/videos", "https://www.youtube.com/@gneef/shorts"]
+    assert result["reference_url"] == "https://www.youtube.com/@gneef/shorts"
+    assert [(c["eligible"], c.get("short"), c["channel"]) for c in result["candidates"]] == [(True, True, "Gneef")] * 2
+    spec = clone._spec(approved.home, {**approved.spec, "preview_id": result["preview_id"],
+                                       "reference_ids": ["2hqi5vYh7jY", "nEfTh1zPyLE"]})
+    assert [r["id"] for r in spec["references"]] == ["2hqi5vYh7jY", "nEfTh1zPyLE"], "nothing refuses a Short"
+    # a single Short's own page gives its length and says it is a Short; under a minute is fine for a Short
+    one = clone.preview(approved.home, "https://youtube.com/shorts/" + VIDEO, learner=SimpleNamespace(
+        _flat=lambda *a: [{"id": VIDEO, "title": "A Short", "duration": 45, "short": True}]))
+    assert one["candidates"][0]["eligible"] and one["candidates"][0]["short"]
+    # a long-form video under a minute is still not a reference
+    clip = clone.preview(approved.home, "https://youtube.com/watch?v=" + VIDEO, learner=SimpleNamespace(
+        _flat=lambda *a: [{"id": VIDEO, "title": "A clip", "duration": 45}]))
+    assert not clip["candidates"][0]["eligible"]
+
+
+def test_youtube_listing_marks_shorts_and_says_plainly_when_a_channel_lists_nothing(monkeypatch):
+    assert clone._is_short({"url": "https://www.youtube.com/shorts/abcdefghijk"})
+    assert clone._is_short({"media_type": "short"}) and clone._is_short({"width": 1080, "height": 1920})
+    assert not clone._is_short({"url": "https://www.youtube.com/watch?v=abcdefghijk", "width": 1920, "height": 1080})
+    for said, kind in (("does not have a videos tab", clone.NoTab), ("does not have a shorts tab", clone.NoTab)):
+        run = lambda command, **kwargs: SimpleNamespace(stdout="", stderr="ERROR: This channel " + said)  # noqa: E731
+        with pytest.raises(kind) as error:
+            clone.list_videos("https://www.youtube.com/@x/videos", 8, run=run)
+        assert "no long videos" not in str(error.value) and "No model request was made" in str(error.value)

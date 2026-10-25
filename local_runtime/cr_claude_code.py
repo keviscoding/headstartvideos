@@ -552,25 +552,12 @@ def small_pictures(app, home: Path, row: dict) -> dict:
 
 def combine_preview(home: Path, urls: list, *, preview=None) -> dict:
     """One saved preview holding the videos of two or three YouTube channels or videos, so the existing look and
-    study take references from all of them (each candidate keeps its channel). Lists only: no model is asked."""
+    study take references from all of them (each candidate keeps its channel). Lists only: no model is asked. The
+    Studio page combines them the same way (cr_style_clone.preview_many)."""
     import cr_style_clone
     if not 2 <= len(urls) <= 3 or len(set(urls)) != len(urls):
         raise ValueError("Give two or three different YouTube channels or videos to combine.")
-    preview = preview or cr_style_clone.preview
-    sources, candidates, seen = [], [], set()
-    for number, url in enumerate(urls):
-        got = preview(home, url)
-        sources.append(got["reference_url"])
-        for row in got.get("candidates") or []:
-            if row["id"] not in seen:
-                seen.add(row["id"])
-                candidates.append({**row, "source": number})
-    result = {"reference_url": sources[0], "reference_urls": sources, "candidates": candidates,
-              "no_model_requests": True, "combined": True}
-    identifier = "pv_" + cr_style_clone._hash(result)
-    cr_style_clone._write(cr_style_clone._folder(home) / ".previews" / (identifier + ".json"),
-                          {**result, "created_at": time.time()})
-    return {**result, "preview_id": identifier}
+    return cr_style_clone.preview_many(home, list(urls), preview=preview)
 
 
 def catalog_rows(studio) -> list:
