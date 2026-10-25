@@ -27,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 import config
 from webapp import milestones
+from webapp import studio_failures
 from webapp import database as db
 from webapp import plans
 from cryptography.fernet import Fernet, InvalidToken
@@ -820,6 +821,30 @@ class NativeFinishProject(SafeContract):
     status: Literal["done", "failed"]
     artifacts: list[NativeArtifact] = Field(default_factory=list, max_length=20)
     error_code: NativeError = ""
+    # why a stopped project stopped (Studio 105+, local_runtime/cr_failure.py); older Studios send none
+    failure: studio_failures.FailureRecord | None = None
+
+
+class FailureReport(BaseModel):
+    """A stop that ends no project of its own (Studio Cloud's preparing)."""
+    model_config = ConfigDict(extra="ignore")
+    failure: studio_failures.FailureRecord
+
+
+def update_note(local_version) -> str:
+    """One plain line for a stopped video's message when its Studio isn't the newest release, or "". It never asks
+    for more than the release rules do: any of SUPPORTED_RELEASES may keep making videos (MIN_SUPPORTED_RELEASE), so
+    for those updating is the creator's choice, between videos."""
+    if local_version not in APPROVED_RELEASES or VERSION not in APPROVED_RELEASES:
+        return ""
+    if APPROVED_RELEASES.index(local_version) >= APPROVED_RELEASES.index(VERSION):
+        return ""
+    newest = "Studio " + VERSION.rsplit(".", 1)[-1]
+    if local_version in SUPPORTED_RELEASES:
+        return (f"A newer Studio, {newest}, is out and fixes many problems like this one. You can update between "
+                "videos with Update now at the top of the Studio page.")
+    return (f"A newer Studio, {newest}, is out and fixes many problems like this one. This Studio can finish its saved "
+            "videos; update between videos (Update now at the top of the Studio page) to start new ones.")
 
 
 class NativeRetryStage(SafeContract):
@@ -1139,11 +1164,20 @@ def native_finish_project(user, req: NativeFinishProject):
         conn.execute(db._q("UPDATE frontier_native_sessions SET artifacts_json=?,error_code=?,updated_at=? WHERE project_id=?"),
                      (json.dumps(artifacts), req.error_code, now, req.project_id))
         conn.execute(db._q("UPDATE frontier_projects SET status=?,updated_at=? WHERE id=?"), (req.status, now, req.project_id))
-        title, purpose = row["title"], json.loads(session["setup_json"]).get("purpose", "video")
+        setup = json.loads(session["setup_json"])
+        title, purpose = row["title"], setup.get("purpose", "video")
+    result = {"saved": True, "reused": False, "status": req.status, "project_id": req.project_id}
     if req.status == "done" and purpose == "video":
         from webapp import lifecycle_email
         lifecycle_email.on_video_finished(user, title)              # the first one gets a short "it's done" email
-    return {"saved": True, "reused": False, "status": req.status, "project_id": req.project_id}
+    if req.status == "failed":
+        if req.failure is not None:                                  # why it stopped: counted in /api/admin/failures
+            studio_failures.record_project(user["id"], req.project_id, req.error_code, req.failure, title)
+        note = "" if req.error_code == "cancelled" else update_note(
+            (req.failure.version if req.failure is not None else "") or setup.get("local_version"))
+        if note:
+            result["update_note"] = note
+    return result
 
 
 def native_retry_stage(user,req:NativeRetryStage):
@@ -1300,6 +1334,13 @@ def make_router(session_user, *, prefix="/api/frontier"):
     @router.post("/stages/retry")
     def runtime_retry(req:NativeRetryStage,user=Depends(access)):
         return native_retry_stage(user,req)
+
+    @router.post("/failures")
+    def report_failure(req: FailureReport, user=Depends(access)):
+        """A stop that ends no project (Studio Cloud's preparing): kept for the team's counts, a few an hour."""
+        saved = studio_failures.record_report(user["id"], req.failure)
+        note = "" if req.failure.category == "cancelled" else update_note(req.failure.version)
+        return {"saved": saved, **({"update_note": note} if note else {})}
 
     def site_link(request: Request, user_id: int, what: str) -> str | None:
         """This site's own link for `what`, signed for this account, for a computer that can't fetch storage links."""
