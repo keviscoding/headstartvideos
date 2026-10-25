@@ -167,7 +167,12 @@ def worker_options(home) -> dict:
     """How Studio starts a video worker process (the Windows smoke test starts its Whisper worker the same way)."""
     # KMP_DUPLICATE_LIB_OK: two copies of Intel's OpenMP (the speech-timing model's and another library's) abort a
     # process outright on Windows ("OMP: Error #15") instead of running.
-    options = {"cwd": str(home), "stdin": subprocess.DEVNULL, "env": {**os.environ, "KMP_DUPLICATE_LIB_OK": "TRUE"}}
+    # PYTHONUTF8: the engine is the private source, and 81 of its text reads, writes and tool outputs name no encoding
+    # (sweep 2026-10-25), so on Windows they used cp1252: a curly quote (”) in UTF-8 can't be read that way, and an
+    # arrow, a Japanese title or an emoji can't be written. In UTF-8 mode they are all UTF-8, as on a Mac, and so are the
+    # 3D, timeline and style workers this one starts. The Shorts run the same way (cr_shorts.child_env).
+    options = {"cwd": str(home), "stdin": subprocess.DEVNULL,
+               "env": {**os.environ, "KMP_DUPLICATE_LIB_OK": "TRUE", "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8:replace"}}
     if os.name == "nt":
         options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
