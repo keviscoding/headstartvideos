@@ -783,3 +783,130 @@ def test_a_sample_needs_the_creators_approval_and_runs_on_their_own_accounts(env
     assert env.get("/cr-style-clone/sample/sm_bad/status").status_code == 400
     assert env.get("/cr-style-clone/sample/" + "sm_" + "8" * 24 + "/video.mp4").status_code == 404
     assert not env.targets
+
+
+def _browser(env):
+    browser_api = pytest.importorskip("playwright.sync_api")
+    playwright = browser_api.sync_playwright().start()
+    try:
+        browser = playwright.chromium.launch(headless=True)
+    except browser_api.Error as error:
+        playwright.stop()
+        pytest.skip("Local Chromium is unavailable: " + str(error).splitlines()[0])
+    page = browser.new_page(viewport={"width": 1200, "height": 1000})
+    page.set_default_timeout(5000)
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+
+    def respond(route):
+        url = urlsplit(route.request.url)
+        assert url.hostname == "127.0.0.1", "Browser flow must stay local"
+        path = url.path + (("?" + url.query) if url.query else "")
+        response = env.client.open(path, method=route.request.method, base_url=BASE,
+                                   headers=dict(route.request.headers), data=route.request.post_data)
+        route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.data)
+    page.route("**/*", respond)
+    return SimpleNamespace(page=page, errors=errors, close=lambda: (browser.close(), playwright.stop()))
+
+
+CLONE_PREVIEW = clone.preview
+
+
+def test_browser_mixing_two_channels_suggests_close_styles_and_tries_one_first(env, monkeypatch):
+    import cr_style_sample
+    lists = {"@Ifverse": [{"id": VIDEO, "title": "What If One Second Felt Like Ten", "channel": "Ifverse",
+                           "duration": 406, "views": 100000}],
+             "@gneef": [{"id": THIRD, "title": "Every City Has A Beast", "channel": "Gneef", "views": 10000000,
+                         "short": True}]}
+
+    def preview(home, url):
+        env.calls.append(("preview", url))
+        rows = next(v for k, v in lists.items() if k in url)
+        return CLONE_PREVIEW(home, url, learner=SimpleNamespace(_flat=lambda *a: rows))
+    monkeypatch.setattr(clone, "preview", preview)
+    suggestion = {"id": "stories", "name": "2D Life Stories", "closeness": 91, "why": "both are mostly drawn pictures",
+                  "kind": "video", "mine": False, "recommended": True, "same_references": False,
+                  "preview_url": "/cr-workspace/preview/recipe/stories.jpg", "use_url": "/?cr-preset=stories",
+                  "description": "", "sample": {"can": True, "pictures": 2, "seconds": 5, "cost_usd": 0.05}}
+    monkeypatch.setattr(cr_style_look, "similar", lambda *a, **k: [suggestion])
+    (env.home / "styles/stories.json").write_text(json.dumps({"name": "stories", "pacing": {"photo_every_s": 5}}))
+    env.studio.mv = SimpleNamespace(host_image=lambda path: "url", image_gen=lambda *a, **k: None)
+    asked = []
+    state = {"state": "running"}
+    monkeypatch.setattr(cr_style_sample, "start", lambda home, name, style, topic, line, **kw: asked.append(
+        (name, topic)) or {"sample_id": "sm_" + "9" * 24, "state": "running", "message": "Drawing two pictures."})
+    monkeypatch.setattr(cr_style_sample, "status", lambda home, ident: {
+        "sample_id": ident, "state": state["state"], "message": "Here are a few seconds.",
+        "video_url": "/cr-style-clone/sample/" + ident + "/video.mp4"})
+    b = _browser(env)
+    try:
+        page = b.page
+        page.goto(BASE + "/cr-style-clone")
+        page.locator("#add-link").click()
+        page.locator("#reference-url").fill("https://www.youtube.com/@Ifverse")
+        page.locator("#reference-url-2").fill("https://www.youtube.com/@gneef")
+        page.locator("#preview-button").click()
+        page.locator("#references").wait_for(state="visible")
+        assert page.locator("#mix-note").is_visible() and page.locator("#shorts-note").is_visible()
+        assert "Short" in page.locator("#candidate-list").inner_text(), "a Short is listed, never refused"
+        page.locator("#candidate-list input").nth(0).check()
+        page.locator("#candidate-list input").nth(1).check()
+        assert "mixing 2 channels" in page.locator("#selection-summary").inner_text()
+        page.locator("#next-button").click()
+        page.locator("#look-result").wait_for(state="visible")
+        card = page.locator("#similar-list .similar-card")
+        assert card.count() == 1 and "91% close" in card.inner_text() and "$0.05" in card.inner_text()
+        assert page.locator("#look-next").is_enabled(), "a suggestion never stands in the way of the study"
+        assert card.locator("a").get_attribute("href") == "/?cr-preset=stories"
+        card.locator("input[type=text]").fill("How bees build homes")
+        assert card.locator("button").is_disabled()
+        card.locator("input[type=checkbox]").check()
+        state["state"] = "done"
+        card.locator("button").click()
+        card.locator("video").wait_for(state="attached", timeout=8000)
+        assert asked == [("stories", "How bees build homes")] and not env.targets
+        page.locator("#look-next").click()
+        page.locator("#style-label").fill("My mix")
+        page.locator("#example-title").fill("How bees build homes")
+        page.locator("#usage-approved").check()
+        page.locator("#start-button").click()
+        page.locator("#progress-panel").wait_for(state="visible")
+        operation = page.evaluate("localStorage.getItem('cr.styleStudy')")
+        _, saved = clone._saved(env.home, operation, env.bridge)
+        assert [r["id"] for r in saved["spec"]["references"]] == [VIDEO, THIRD]
+        assert saved["spec"]["reference_urls"] == ["https://www.youtube.com/@Ifverse/videos",
+                                                   "https://www.youtube.com/@gneef/videos"]
+        assert not b.errors, b.errors
+    finally:
+        b.close()
+
+
+def test_browser_a_learned_style_is_edited_and_studied_again_from_its_page(env):
+    name = "cr_clone_" + "6" * 12
+    (env.home / "styles" / (name + ".json")).write_text(json.dumps({
+        "name": name, "label": "Mine", "description": "About bees.", "script_notes": ["Be warm."],
+        "look": {"captions": {"off": True}}, "pacing": {"photo_every_s": 3.0},
+        "features": {"offered": ["ai_images", "sound"], "on": ["ai_images"]},
+        "cr_style_clone": {"operation_id": "op_" + "6" * 24}}))
+    b = _browser(env)
+    try:
+        page = b.page
+        page.goto(BASE + "/cr-style-clone?edit=" + name)
+        page.locator("#edit-panel").wait_for(state="visible")
+        assert page.locator("#reference-panel").is_hidden() and page.locator("#edit-name").input_value() == "Mine"
+        assert page.locator("#edit-script-notes").input_value() == "Be warm."
+        page.locator("#edit-name").fill("Warm bees")
+        page.locator("#edit-script-notes").fill("Be warm.\nEnd on a question.")
+        page.locator("#edit-features input[value='sound']").check()
+        page.locator("#edit-subtitles").check()
+        page.locator("#edit-save").click()
+        page.wait_for_function("document.getElementById('notice').textContent.startsWith('Saved')")
+        style = json.loads((env.home / "styles" / (name + ".json")).read_text())
+        assert style["label"] == "Warm bees" and style["script_notes"] == ["Be warm.", "End on a question."]
+        assert style["features"]["on"] == ["ai_images", "sound"] and style["look"]["captions"]["off"] is False
+        assert page.locator("#edit-restudy").get_attribute("href") == "/cr-style-clone?restudy=" + name
+        page.goto(BASE + "/cr-style-clone?restudy=" + name)
+        page.wait_for_function("document.getElementById('notice').textContent.includes('new version of Warm bees')")
+        assert page.locator("#reference-panel").is_visible() and not b.errors, b.errors
+    finally:
+        b.close()

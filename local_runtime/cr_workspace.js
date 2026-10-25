@@ -363,7 +363,13 @@
   function renderStyles() {
     renderAllowance();
     const customs = rows().filter(r => r.custom); const target = $('crw-styles-list'); target.replaceChildren();
-    for (const recipe of customs) {const card = recipeCard(recipe,r => {selectRecipe(r); showPage('create');}); target.append(card);}
+    for (const recipe of customs) {
+      const card = recipeCard(recipe,r => {selectRecipe(r); showPage('create');});
+      if (!/^cr_clone_[a-z0-9_-]{1,40}$/.test(recipe.name || '')) {target.append(card); continue;}
+      // a learned style can be edited (name, creative direction, Create's options) or studied again with other videos
+      const item = el('div','crw-style-item'); const edit = el('a','crw-inline-link','Edit or study again');
+      edit.href = `/cr-style-clone?edit=${encoded(recipe.name)}`; item.append(card, edit); target.append(item);
+    }
     hide('crw-styles-empty',!!customs.length);
     // a finished study is already a saved style above; only studies still running or stopped are listed here
     const studies = state.studies.filter(study => study.state !== 'done');
