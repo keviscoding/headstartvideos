@@ -120,6 +120,23 @@ class FakeStudio:
                                 {"id": "elevenlabs", "label": "ElevenLabs", "ready": False, "note": "n",
                                  "setup": "/cr-setup"},
                                 {"id": "own", "label": "Own", "ready": True, "note": "n"}]}
+        if path.startswith("/cr-workspace/presenter-choice/"):
+            if method == "POST":
+                return {"saved": True, "choice": body["choice"]}
+            if path.endswith("/heist--abc"):
+                return {"stopped_on_presenter": True, "current": "again",
+                        "failed": {"label": "Kie.ai", "reason": "Internal Error", "charged": 0},
+                        "choices": [{"id": "skip", "label": "Finish without the presenter", "ready": True, "note": "n"},
+                                    {"id": "again", "label": "Try the presenter again", "ready": True, "note": "n"}]}
+            return {"stopped_on_presenter": False, "choices": []}
+        if path == "/api/status/heist--abc":
+            return {"state": "error", "done": True, "progress": 0.97, "lines": ["Avatar intro"],
+                    "error": "Kie.ai couldn't make this video's presenter (Internal Error)."}
+        if path == "/cr-workspace/voice/heist--abc":
+            return {"stopped_on_voice": False, "has_voice": True, "choices": []}
+        if path == "/cr-workspace/project/heist--abc":
+            return {"slug": "heist--abc", "project_id": "crv_" + "3" * 24, "available_for_resume": True,
+                    "title": "The Heist", "status": "error"}
         if path == "/api/products":
             return {"products": [{"slug": "pantry-book", "title": "Pantry Book", "secret": "no"}]}
         raise AssertionError("unexpected route " + path)
@@ -641,6 +658,20 @@ def test_a_video_that_stopped_on_its_voice_offers_the_ways_to_voice_it(studio):
     assert studio.posted("/cr-submit-project") == [{"project_id": "crv_" + "1" * 24}], "the choice, then Resume"
     schema = tools.TOOLS["resume_video"][2]["properties"]["voice"]
     assert schema["enum"] == ["again", "gemini-man", "gemini-woman", "elevenlabs", "own"]
+
+
+def test_a_video_that_stopped_on_its_presenter_offers_to_finish_without_it(studio):
+    """Kie answered 500 on a presenter intro and stopped a finished video at its last step (2026-10-25)."""
+    out = ok("progress", {"id": "video:heist--abc"})
+    assert out["stopped_on"] == "presenter" and out["presenter_failed"]["charged"] == 0
+    assert [c["id"] for c in out["presenter_choices"]] == ["skip", "again"] and "resume_video" in out["presenter_note"]
+    assert "voice_choices" not in out
+    resumed = ok("resume_video", {"id": "video:heist--abc", "presenter": "skip"})
+    assert resumed["presenter"] == "skip"
+    assert studio.posted("/cr-workspace/presenter-choice/heist--abc") == [{"choice": "skip"}]
+    assert studio.posted("/cr-submit-project") == [{"project_id": "crv_" + "3" * 24}], "the choice, then Resume"
+    assert tools.TOOLS["resume_video"][2]["properties"]["presenter"]["enum"] == ["skip", "again"]
+    assert ok("progress", {"id": "video:zombie--abc"})["stopped_on"] == "voice", "a voice stop stays a voice stop"
 
 
 def test_setup_check_says_why_the_graphics_browser_isnt_ready_and_the_fix_runs_in_studio(studio, monkeypatch):

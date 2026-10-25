@@ -667,6 +667,19 @@ def _job_status(slug: str) -> dict:
                                  "recording's path as recording. An ElevenLabs key goes in Setup & accounts, never in chat.")
             if voice.get("script_file"):
                 out["script_file"] = voice["script_file"]
+        try:
+            presenter = call("GET", "/cr-workspace/presenter-choice/" + _quote_path(slug), timeout=20)
+        except Refused:
+            presenter = {}
+        if presenter.get("stopped_on_presenter"):
+            out["stopped_on"] = "presenter"
+            out["presenter_failed"] = presenter.get("failed")
+            out["presenter_choices"] = [{k: c.get(k) for k in ("id", "label", "ready", "note")}
+                                        for c in presenter.get("choices") or []]
+            out["presenter_note"] = ("The presenter service couldn't make this video's presenter; the rest of the video "
+                                     "is finished and saved. Ask the creator: finish it without the presenter, or try "
+                                     "the presenter again in a few minutes (read them the choice's note, which says "
+                                     "whether that could pay twice). Then resume_video(id, presenter=<choice id>).")
     return out
 
 
@@ -736,8 +749,12 @@ def tool_resume_video(args):
     if voice:
         call("POST", "/cr-workspace/voice/" + _quote_path(slug),
              {"choice": voice, "recording": str(args.get("recording") or "").strip()}, timeout=180)
+    presenter = str(args.get("presenter") or "").strip()
+    if presenter:
+        call("POST", "/cr-workspace/presenter-choice/" + _quote_path(slug), {"choice": presenter}, timeout=60)
     result = call("POST", "/cr-submit-project", {"project_id": saved["project_id"]}, timeout=120)
     return {"resumed": True, "id": "video:" + slug, "title": saved.get("title"), **({"voice": voice} if voice else {}),
+            **({"presenter": presenter} if presenter else {}),
             "queued": [q.get("slug") if isinstance(q, dict) else q for q in result.get("queued") or []],
             "next": "It carries on from where it stopped and reuses everything already made (script, pictures, "
                     "voice parts). Check progress(id) now and then; Studio shows a notification when it's done."}
@@ -1133,8 +1150,13 @@ TOOLS = {
                      "stopped). Reuses everything already made, so only the rest is paid for. Tell the creator what "
                      "stopped it first (progress(id)). When progress(id) shows voice_choices (its voice service "
                      "failed), ask which they want and pass it as voice: the same voice again, Gemini through Kie, "
-                     "their own ElevenLabs account, or their own recording (pass its file path as recording).",
+                     "their own ElevenLabs account, or their own recording (pass its file path as recording). When it "
+                     "shows presenter_choices (its AI presenter failed), ask and pass presenter: skip (finish without "
+                     "the presenter) or again.",
                      _schema({"id": {"type": "string", "description": "video:<slug> from progress()."},
+                              "presenter": {"type": "string", "enum": ["skip", "again"],
+                                            "description": "Only for a video that stopped on its presenter: finish "
+                                                           "without it (skip) or try it again (this video only)."},
                               "voice": {"type": "string", "enum": ["again", "gemini-man", "gemini-woman", "elevenlabs",
                                                                    "own"],
                                         "description": "Only for a video that stopped on its voice: how to voice it now "

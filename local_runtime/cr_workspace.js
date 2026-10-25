@@ -382,7 +382,8 @@
   function combinedProjects() {
     // stopped videos saved on disk first, so a live or finished entry for the same folder wins
     const map = new Map((state.stopped || []).map(j => [j.slug,{...j}]));
-    for (const j of state.jobs) map.set(j.slug,{...j,state:'done',hasVideo:true});
+    // a video stopped on its presenter has its film on disk but isn't finished: it stays stopped, with its choices
+    for (const j of state.jobs) map.set(j.slug,map.get(j.slug)?.stopped_on ? {...j,...map.get(j.slug)} : {...j,state:'done',hasVideo:true});
     for (const q of state.queue) map.set(q.slug,{...(map.get(q.slug) || {}),...q});
     return [...map.values()];
   }
@@ -453,6 +454,7 @@
           const saved = await api(`/cr-workspace/project/${encoded(state.openJob)}`);
           if (saved.available_for_resume) {const resume=el('button','crw-text-button','Resume saved project'); resume.type='button'; resume.addEventListener('click',async()=>{resume.disabled=true;try{await api('/cr-submit-project',{method:'POST',body:{project_id:saved.project_id}});toast('Saved project submitted. Completed assets will be reused.');await refreshActivity();}catch(e){text('crw-progress-note',e.message);}finally{resume.disabled=false;}});$('crw-progress-actions').append(resume);}
           if (saved.available_for_resume) {try {const voice=await api(`/cr-workspace/voice/${encoded(state.openJob)}`); if ((voice.stopped_on_voice || /narration (task|service)/i.test(data.error || '')) && !voice.has_voice) voiceChoices(voice, saved);} catch (_) {/* Resume stays available */}}
+          if (saved.available_for_resume) {try {const presenter=await api(`/cr-workspace/presenter-choice/${encoded(state.openJob)}`); if (presenter.stopped_on_presenter) presenterChoices(presenter, saved);} catch (_) {/* Resume stays available */}}
         }
       }
     } catch (e) {text('crw-progress-note',e.message);}
@@ -490,6 +492,29 @@
         row.append(file); box.append(row, read); continue;
       }
       button.addEventListener('click', () => resumeWith({choice: choice.id}, button));
+      box.append(row);
+    }
+    $('crw-progress-actions').append(box);
+  }
+  // A video whose presenter couldn't be made: its film is finished, so it can finish without the presenter, or try
+  // the presenter again later. The choice is for this video only.
+  function presenterChoices(presenter, saved) {
+    const slug = state.openJob, box = el('div', 'crw-voice-choices');
+    box.append(el('p', 'crw-voice-title', 'Finish without the presenter?'));
+    const failed = presenter.failed || {};
+    const why = `${failed.label || 'The presenter service'} couldn't make this video's presenter${failed.reason ? ` ("${failed.reason}")` : ''}.`;
+    box.append(el('p', 'crw-field-help', `${why} The rest of the video is finished and saved. Pick how to carry on.`));
+    for (const choice of presenter.choices || []) {
+      const row = el('div', 'crw-voice-choice'), button = el('button', choice.id === 'skip' ? 'crw-primary-button' : 'crw-secondary-button', choice.label);
+      button.type = 'button'; button.disabled = !choice.ready; row.append(button, el('span', 'crw-field-help', choice.note));
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        try {
+          await api(`/cr-workspace/presenter-choice/${encoded(slug)}`, {method: 'POST', body: {choice: choice.id}});
+          await api('/cr-submit-project', {method: 'POST', body: {project_id: saved.project_id}});
+          toast(choice.id === 'skip' ? 'Finishing the video without its presenter.' : 'Trying the presenter again. Everything else is reused.'); await refreshActivity();
+        } catch (e) {text('crw-progress-note', e.message);} finally {button.disabled = false;}
+      });
       box.append(row);
     }
     $('crw-progress-actions').append(box);

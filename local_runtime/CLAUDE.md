@@ -117,6 +117,11 @@ Studio through its own checks, so nothing needs the Studio web page.
   Offer only the ready ones (an ElevenLabs key goes in Setup & accounts, never in chat) and never pick for them. For
   their own recording, show them the script (`script_file`) to read, then `resume_video(id, voice="own",
   recording=<the file's path>)`; otherwise `resume_video(id, voice=<choice id>)`. The choice is for that video only.
+- A video that stopped on its AI presenter (`progress(id)` shows `presenter_choices`, for example Kie answering 500 on
+  the presenter intro): the rest of the video is finished and saved. Tell them what failed (`presenter_failed`) and ask
+  how to carry on: finish without the presenter (`resume_video(id, presenter="skip")`, nothing more is paid) or try the
+  presenter again after a few minutes (`presenter="again"`; read them its note, which says when that could pay twice).
+  Never pick for them.
 - Cloning a style (/clone-style): the look's questions come first, and two of them decide how the videos are MADE, so
   ask them before anything else, in plain words, with Studio's guess as the first option: `medium` (a 3D channel: how
   its 3D is made) and `animation` (a channel that animates its drawn characters, like stick-figure fights or animated
