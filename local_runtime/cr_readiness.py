@@ -111,12 +111,12 @@ def _check_hub(provider, key):
 def own_narration(studio, style, info, why):
     """(ok, why) for narration the engine's own check does not know. That check counts only Algrow, WaveSpeed and AI33
     keys, so with ElevenLabs connected on Setup (narration on the creator's own key) every Create stopped on "The
-    voiceover needs ALGROW_API_KEY, WAVESPEED_API_KEY or AI33_API_KEY" (the owner, 2026-10-21). A Ranking Short
-    narrates itself (shorts/ranking/voice.py: ElevenLabs on the creator's key, else ElevenLabs or Gemini through
-    Kie.ai, checked again before anything is paid); any other recipe narrates with ElevenLabs once a voice is chosen
-    for it (Create, Choose voice: the engine's voice pick)."""
+    voiceover needs ALGROW_API_KEY, WAVESPEED_API_KEY or AI33_API_KEY" (the owner, 2026-10-21). A Ranking or Roblox
+    Story Short narrates itself (shorts/ranking/voice.py, shorts/roblox/make_roblox.py: ElevenLabs on the creator's
+    key, else ElevenLabs or Gemini through Kie.ai, checked again before anything is paid); any other recipe narrates
+    with ElevenLabs once a voice is chosen for it (Create, Choose voice: the engine's voice pick)."""
     eleven = bool(os.getenv("ELEVENLABS_API_KEY", "").strip())
-    if ((info or {}).get("shorts") or {}).get("pipeline") == "ranking":
+    if ((info or {}).get("shorts") or {}).get("pipeline") in ("ranking", "roblox"):
         if eleven or os.getenv("KIE_API_KEY", "").strip():
             return True, ""
         return False, "Connect ElevenLabs or Kie.ai in Setup & accounts for the narrator."

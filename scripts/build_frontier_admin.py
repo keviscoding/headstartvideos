@@ -136,7 +136,7 @@ SHORTS_SUFFIXES = {".py", ".js", ".mjs", ".json", ".md", ".html", ".css", ".txt"
 
 
 def private_shorts_resources(root: Path):
-    """The Shorts pipelines (the 3D, photo and Ranking Shorts recipes): their code and the Shorts 3D engine's code,
+    """The Shorts pipelines (the 3D, photo, Ranking and Roblox Story Shorts recipes): their code and the Shorts 3D engine's code,
     shipped under shorts/. Assets (people, animals, mocap, places, the host, sound libraries) come in the first-use
     asset pack; the Ranking Shorts' meme sound library (about 17 MB of MP3s) ships with its pipeline."""
     folder = root / "data/frontier/shorts"
@@ -151,7 +151,7 @@ def private_shorts_resources(root: Path):
             continue
         if path.is_symlink() or path.suffix.lower() not in SHORTS_SUFFIXES or path.stat().st_size > 8 * 1024 * 1024:
             raise ValueError("Shorts files must be small ordinary code or data files: " + rel)
-        if rel.split("/")[0] not in {"zack", "hoodie", "sound", "rbx", "ranking"}:
+        if rel.split("/")[0] not in {"zack", "hoodie", "sound", "rbx", "ranking", "roblox"}:
             raise ValueError("Unexpected Shorts folder: " + rel)
         resources.append((path, "shorts/" + rel))
     return resources

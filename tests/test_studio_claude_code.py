@@ -29,6 +29,8 @@ CATALOG = {
          "features": {"offered": [], "on": []}},
         {"name": "cr-shorts-ranking", "label": "Ranking Shorts", "tagline": "Clips to #1.", "short_seconds": 25,
          "ranking": True, "features": {"offered": [], "on": []}},
+        {"name": "cr-shorts-roblox", "label": "Roblox Story Shorts", "tagline": "Blocky stories.", "short_seconds": 55,
+         "short_cost_usd": 0.6, "cost": "About $0.60 a Short.", "features": {"offered": [], "on": []}},
         {"name": "cr-manga-recaps", "label": "Manga Recaps", "tagline": "Panels.", "panels": True,
          "features": {"offered": [], "on": []}},
         {"name": "cr_clone_abc", "label": "My Style", "tagline": "Mine.", "custom": True,
@@ -43,7 +45,8 @@ class FakeStudio:
         self.home = None
         self.run_answers = []
         self.notes = {"cr-shorts-3d": "Shorts render on this computer.", "cr-manga-recaps": "Reads your own panels.",
-                      "cr-shorts-ranking": "Shorts render on this computer.", "cr_clone_abc": ""}
+                      "cr-shorts-ranking": "Shorts render on this computer.", "cr-shorts-roblox": "Shorts render on this computer.",
+                      "cr_clone_abc": ""}
         self.cloud_quote = {"available": True, "balance_usd": 7.71, "topup_url": "https://channelrecipe.com/app#billing",
                             "label": "Cloud machine", "expected_minutes": 15, "expected_cents": 29, "max_cents": 78}
 
@@ -223,6 +226,13 @@ def test_shorts_and_ranking_options(studio):
     assert body["minutes"] == 1 and body["extra"].startswith("[[short_seconds=40]] [[ranking=")
     ranking = json.loads(body["extra"].split("[[ranking=", 1)[1].split("]]", 1)[0])
     assert ranking["ranks"] == 7 and ranking["sfx"] == "light" and ranking["use_credits"] is False
+
+
+def test_a_shorts_recipe_quotes_its_own_cost_per_short(studio):
+    q = ok("quote", {"style": "cr-shorts-roblox", "titles": 2})
+    assert q["media"]["per_video_usd"] == 0.6 and q["expected_total_usd"] == 1.2
+    assert "media about $0.60 each" in q["summary"]
+    assert ok("quote", {"style": "cr-shorts-3d"})["media"]["per_video_usd"] == 0.02   # no estimate: the voice price
 
 
 def test_the_daily_model_check_is_run_once_when_it_is_the_only_blocker(studio):
