@@ -7,8 +7,9 @@ accounts (two pictures at about $0.02 and one line of voice); drawn only after t
 request is never paid twice (Studio's media receipts, and one sample per style, topic and line).
 
 A style whose videos aren't made of pictures (real footage, 3D scenes, animation drawn in code, a Shorts pipeline,
-the creator's own panels) can't be shown this way: offer() says what a real sample of it would need, and its existing
-sample frame or video stands in. A suggestion only: nothing here stands in the way of a study.
+the creator's own panels) can't be shown this way: offer() says what a real sample of it would need, and the frame of
+it the page already shows (its latest video, or its reference) stands in. A suggestion only: nothing here stands in the
+way of a study.
 """
 from __future__ import annotations
 
@@ -65,19 +66,19 @@ def offer(style: dict) -> dict:
     why = ""
     if isinstance(style.get("shorts"), dict) or style.get("format") == "short":
         why = ("Its Shorts are made by their own pipeline from a script, so a real sample is a whole Short (Create "
-               "makes one). Its sample video shows what they look like.")
+               "makes one).")
     elif look.get("visuals") == "cr_animated2d":
         why = ("Its characters are animated in code: a real sample needs Claude Code to direct a scene to a narrated "
-               "line (a few minutes of Claude, drawn on this computer). Its sample frame shows the look.")
+               "line (a few minutes of Claude, drawn on this computer).")
     elif look.get("visuals") or look.get("panels"):
-        why = "Its scenes are drawn by its own graphics kit or your own panels, so its sample frame shows the look."
+        why = ("Its scenes are drawn by its own graphics kit or from your own panels, so a real sample is a scene of "
+               "a video made with it.")
     elif "threed" in on and "ai_images" not in on:
         why = ("Its scenes are rendered in 3D on this computer: a real sample needs a 3D scene directed and rendered "
-               "for your topic (a few minutes of Claude and this computer, no picture costs). Its sample frame shows "
-               "the look.")
+               "for your topic (a few minutes of Claude and this computer, no picture costs).")
     elif not pictures:
         why = ("Its videos are cut from real footage found for each script, so a real sample needs a whole video's "
-               "footage search. Its sample frame shows the look.")
+               "footage search.")
     return {"can": not why, "pictures": PICTURES, "seconds": SECONDS, "cost_usd": COST_USD if not why else 0.0,
             "why_not": why}
 

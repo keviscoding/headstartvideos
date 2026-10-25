@@ -159,3 +159,12 @@ def test_the_ken_burns_sample_is_rendered_on_this_computer_at_the_voices_length(
     assert 6.0 <= sample._duration(out) <= 7.5
     silent = sample.render(stills, None, tmp_path / "silent.mp4")
     assert abs(sample._duration(silent) - sample.SECONDS) < 0.3
+
+
+def test_pictures_a_minute_stay_around_the_pace_the_style_was_learned_at_edit_after_edit(home):
+    edit.save(home, NAME, {"pictures_per_min": 15})
+    edit.save(home, NAME, {"pictures_per_min": 15})               # the floor of the learned pace, not of the last edit
+    got = edit.editable(home, NAME)["pictures"]
+    assert got == {"floor": 15.0, "default": 30.0, "ceiling": 30.0, "value": 15.0}
+    with pytest.raises(ValueError):
+        edit.save(home, NAME, {"pictures_per_min": 8})

@@ -66,11 +66,15 @@ def _notes(value) -> list:
 
 
 def _pictures(style) -> dict | None:
+    """The pictures a minute this style may draw: around the pace it was learned at (kept on the first edit), so
+    edit after edit never drifts below its quality floor."""
     import cr_media
-    span = cr_media.picture_range(style)
+    pacing = style.get("pacing") or {}
+    learned = pacing.get("learned_photo_every_s") or pacing.get("photo_every_s")
+    span = cr_media.picture_range({**style, "pacing": {**pacing, "photo_every_s": learned}})
     if not span:
         return None
-    every = float((style.get("pacing") or {}).get("photo_every_s") or 0)
+    every = float(pacing.get("photo_every_s") or 0)
     return {"floor": span[0], "default": span[1], "ceiling": span[2], "value": round(60.0 / every, 1) if every else span[1]}
 
 
@@ -160,7 +164,9 @@ def save(home, name, changes: dict) -> dict:
                 or not span["floor"] <= float(value) <= span["ceiling"]:
             raise ValueError("Choose pictures a minute between the style's floor and ceiling."
                              if span else "This style doesn't draw a set number of pictures a minute.")
-        out.setdefault("pacing", {})["photo_every_s"] = round(60.0 / float(value), 2)
+        pacing = out.setdefault("pacing", {})
+        pacing.setdefault("learned_photo_every_s", pacing.get("photo_every_s"))
+        pacing["photo_every_s"] = round(60.0 / float(value), 2)
     if "subtitles" in changes:
         if not isinstance(changes["subtitles"], bool):
             raise ValueError("Choose subtitles on or off.")
