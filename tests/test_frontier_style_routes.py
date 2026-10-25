@@ -169,7 +169,8 @@ def test_every_route_rejects_remote_hosts_and_origins(env, path, method):
     assert not env.calls and not env.targets
 
 
-@pytest.mark.parametrize("path", ["/preview", "/start", "/op_" + "1" * 24 + "/sync", "/op_" + "1" * 24 + "/continue", "/op_" + "1" * 24 + "/recover", "/op_" + "1" * 24 + "/refine"])
+@pytest.mark.parametrize("path", ["/preview", "/start", "/op_" + "1" * 24 + "/sync", "/op_" + "1" * 24 + "/continue", "/op_" + "1" * 24 + "/recover", "/op_" + "1" * 24 + "/refine",
+                                  "/style/cr_clone_" + "1" * 12, "/sample"])
 def test_mutations_require_local_control_token(env, path):
     assert env.post("/cr-style-clone" + path, headers={}).status_code == 403
     assert env.post("/cr-style-clone" + path, headers={"X-CR-Local-Token": "wrong"}).status_code == 403
@@ -730,3 +731,55 @@ def test_browser_the_answer_on_animated_2d_characters_replans_and_pictures_need_
             assert not errors, errors
         finally:
             browser.close()
+
+
+def test_the_page_previews_up_to_three_channels_as_one_mix(env):
+    """A customer could only pick videos from one channel on the web; Claude Code could already mix them."""
+    mixed = env.post("/cr-style-clone/preview", {"urls": ["https://www.youtube.com/@Ifverse",
+                                                          "https://www.youtube.com/@Other"]})
+    assert mixed.status_code == 200 and mixed.json["combined"]
+    assert mixed.json["reference_urls"] == ["https://www.youtube.com/@Ifverse/videos",
+                                            "https://www.youtube.com/@Other/videos"]
+    assert [name for name, _ in env.calls] == ["preview", "preview"]
+    one = env.post("/cr-style-clone/preview", {"urls": ["https://www.youtube.com/@Ifverse"]})
+    assert one.status_code == 200 and "combined" not in one.json
+    assert env.post("/cr-style-clone/preview", {"urls": ["a", "b", "c", "d"]}).status_code == 400
+    # the study keeps every channel it mixes, so a new attempt lists them all again
+    payload = {**env.approved(), "preview_id": mixed.json["preview_id"]}
+    started = env.post("/cr-style-clone/start", payload)
+    assert started.status_code == 200 and len(started.json["reference_urls"]) == 2
+
+
+def test_a_learned_style_is_edited_through_the_page_and_studio_reads_it_again(env):
+    name = "cr_clone_" + "6" * 12
+    (env.home / "styles" / (name + ".json")).write_text(json.dumps({
+        "name": name, "label": "Mine", "description": "About bees.", "features": {"offered": ["sound"], "on": []},
+        "cr_style_clone": {"operation_id": "op_" + "6" * 24}}))
+    got = env.get("/cr-style-clone/style/" + name)
+    assert got.status_code == 200 and got.json["name"] == "Mine"
+    assert env.get("/cr-style-clone/style/cr_clone_none").status_code == 404
+    assert env.get("/cr-style-clone/style/documentary").status_code == 400
+    saved = env.post("/cr-style-clone/style/" + name, {"changes": {"name": "My bees", "features_on": ["sound"]}})
+    assert saved.status_code == 200 and saved.json["saved"] and saved.json["name"] == "My bees"
+    assert ("load_all", None) in env.calls, "Studio reads the edited style at once"
+    assert not env.targets, "an edit never starts a study"
+
+
+def test_a_sample_needs_the_creators_approval_and_runs_on_their_own_accounts(env, monkeypatch):
+    import cr_style_sample
+    (env.home / "styles/stories.json").write_text(json.dumps({"name": "stories", "pacing": {"photo_every_s": 5}}))
+    started = []
+    monkeypatch.setattr(cr_style_sample, "start", lambda home, name, style, topic, line, **kw: started.append(
+        (name, topic, sorted(kw))) or {"sample_id": "sm_" + "7" * 24, "state": "running"})
+    env.studio.mv = SimpleNamespace(host_image=lambda path: "url", image_gen=lambda *a, **k: None)
+    body = {"style": "stories", "topic": "How bees build homes"}
+    assert env.post("/cr-style-clone/sample", body).status_code == 400 and not started
+    env.cfg["costs_accepted"] = False
+    assert env.post("/cr-style-clone/sample", {**body, "acknowledge_costs": True}).status_code == 400
+    env.cfg["costs_accepted"] = True
+    assert env.post("/cr-style-clone/sample", {**body, "style": "none", "acknowledge_costs": True}).status_code == 400
+    ok = env.post("/cr-style-clone/sample", {**body, "acknowledge_costs": True})
+    assert ok.status_code == 200 and started == [("stories", "How bees build homes", ["generate", "host", "voice"])]
+    assert env.get("/cr-style-clone/sample/sm_bad/status").status_code == 400
+    assert env.get("/cr-style-clone/sample/" + "sm_" + "8" * 24 + "/video.mp4").status_code == 404
+    assert not env.targets

@@ -214,9 +214,11 @@ def start(home, style_name: str, style: dict, topic: str, line: str = "", *, gen
     path = folder(home, ident)
     saved = _read(path / "sample.json")
     with _lock:
-        if ident in _jobs or (saved.get("state") == "done" and (path / "sample.mp4").is_file()):
-            return status(home, ident)
-        _jobs.add(ident)
+        made = ident in _jobs or (saved.get("state") == "done" and (path / "sample.mp4").is_file())
+        if not made:
+            _jobs.add(ident)
+    if made:
+        return status(home, ident)
     _write(path / "sample.json", {"state": "running", "style": style_name, "topic": topic, "line": line,
                                   "cost_usd": COST_USD, "message": "Drawing two pictures in this style.",
                                   "started_at": time.time()})

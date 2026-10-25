@@ -598,3 +598,22 @@ def test_an_animation_under_the_channels_bar_is_said_and_pictures_are_used_only_
     saved = json.loads((folder / "operation.json").read_text())
     assert saved["style_sha256"] == clone._file_hash(target), "the study still recognises its saved style"
     assert cr_style_map.ANIMATED_PICTURES  # the plan used is the creator's "pictures" answer
+
+
+def test_a_finished_look_suggests_the_closest_installed_styles_and_whether_one_can_be_tried_first(home):
+    _, done, _ = run_look(home)
+    rows = look.status(home, done["look_id"])["similar"]
+    assert rows and rows[0]["id"] == "stories" and rows[0]["name"] == "2D Life Stories"
+    assert rows[0]["use_url"] == "/?cr-preset=stories" and rows[0]["preview_url"].endswith("/stories.jpg")
+    assert rows[0]["sample"]["can"] and rows[0]["sample"]["cost_usd"] <= 0.10
+    footage = next((r for r in rows if r["id"] == "documentary"), None)
+    assert footage is None or not footage["sample"]["can"] and "footage" in footage["sample"]["why_not"]
+    assert done["shorts"] is False
+
+
+def test_a_suggestion_that_breaks_never_stops_the_look(home, monkeypatch):
+    import cr_style_map
+    _, done, _ = run_look(home)
+    monkeypatch.setattr(cr_style_map, "similar", lambda *a, **k: 1 / 0)
+    again = look.status(home, done["look_id"])
+    assert again["state"] == "done" and again["similar"] == []
