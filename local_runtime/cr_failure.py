@@ -56,12 +56,11 @@ _PATH = re.compile(r"(?<![\w:/\\~…])(?P<root>~|[A-Za-z]:|…|\.{1,2})?"
                    r"(?P<dirs>(?:[\\/]" + _SEG + r"(?: " + _SEG + r"){0,2}(?=[\\/]))*)"
                    r"[\\/](?P<base>[^\\/\s\"'<>|:,;()\[\]{}]+)?")
 _BOILERPLATE = [re.compile(p, re.I) for p in (
-    r"Saved work is kept[^.]*\.", r"Your (?:local |saved |generated )?(?:output|progress|work|study|scenes and voice)"
+    r"Wait a few minutes[^.]*(?:\.|$)", r"Saved work is kept[^.]*\.", r"Your (?:local |saved |generated )?(?:output|progress|work|study|scenes and voice)"
     r"[^.]{0,40}(?:saved|kept|intact)[^.]*\.", r"Check Video tools in Setup & accounts\.",
     r"\(Copy diagnostics[^)]*\)", r"(?:Press|press) Resume saved project[^.]*\.", r"It will not run again automatically\.",
     r"The details are in the project's[^.]*\.", r"Nothing was (?:spent|charged|changed)[^.]*\.",
-    r"(?:,? then )?review (?:this saved stage|recovery|its status|stopped Claude work)[^.]*\.",
-    r"Wait a few minutes[^.]*\.")]
+    r"(?:,? then )?review (?:this saved stage|recovery|its status|stopped Claude work)[^.]*\.")]
 _FIELDS = re.compile(r"(?i)['\"]?\b(code|msg|message|failmsg|failcode|error|errormessage|status|state|detail|reason|type)"
                      r"\b['\"]?\s*[:=]\s*(?:'([^'\n]{1,80})'|\"([^\"\n]{1,80})\"|([^,'\"{}\[\]\n]{1,80}))")
 
@@ -354,9 +353,12 @@ def _choice(value, allowed, default):
 
 
 def record(message, *, step: str = "", category: str = "", provider: str = "", header: str = "", code: str = "",
-           recipe: str = "", titles=(), source: str = "video", home: Path | None = None) -> dict:
+           recipe: str = "", titles=(), source: str = "video", home: Path | None = None,
+           default_step: str = "unknown") -> dict:
     """The failure record for one stop. Given step/category/provider win over what the message suggests."""
     guess = classify(str(message or ""), header=header, code=code, titles=titles)
+    if guess["failed_step"] == "unknown":
+        guess["failed_step"] = default_step
     found = {"failed_step": _choice(step or guess["failed_step"], STEPS, "unknown"),
              "category": _choice(category or guess["category"], CATEGORIES, "unknown"),
              "provider": _choice(provider or guess["provider"], PROVIDERS, "none"),
@@ -373,8 +375,8 @@ def from_exception(error: BaseException, **kw) -> dict:
     try:
         said = str(error).strip()
         message = f"{type(error).__name__}: {said}" if said else type(error).__name__
-        if isinstance(error, (KeyboardInterrupt, SystemExit)) and not said:
-            kw.setdefault("category", "cancelled")
+        if isinstance(error, (KeyboardInterrupt, SystemExit)) and not said and not kw.get("category"):
+            kw["category"] = "cancelled"
         return record(message, **kw)
     except Exception:                                           # noqa: BLE001 - a record never stops a finish
         return {"failed_step": "unknown", "category": "unknown", "provider": "none", "message": "",
@@ -464,6 +466,28 @@ def for_job(home, state: dict, spec: dict, job, project_id: str = "", error_code
         return record(message or "The video stopped without a message.", header=header, **base)
     except Exception:                                           # noqa: BLE001 - a record never stops a finish
         return from_exception(RuntimeError(str((state or {}).get("error") or "")), **base)
+
+
+def report_stop(error: BaseException, *, source: str, recipe: str = "", titles=(), default_step: str = "unknown",
+                on_note=None) -> None:
+    """A stop that ends no project of its own (Studio Cloud's preparing): its record goes to ChannelRecipe on its own, in
+    the background. An older server has no address for it, and any failure to send is ignored. on_note(line) gets the
+    server's line about a newer Studio, when it has one."""
+    import threading
+
+    def send():
+        try:
+            try:
+                import cr_bridge
+            except ImportError:                                    # pragma: no cover - imported as a package in tests
+                from . import cr_bridge
+            failure = from_exception(error, source=source, recipe=recipe, titles=titles, default_step=default_step)
+            note = update_note(cr_bridge.call("failures", {"failure": failure}))
+            if note and on_note is not None:
+                on_note(note)
+        except Exception:                                       # noqa: BLE001 - counting a stop never adds one
+            pass
+    threading.Thread(target=send, daemon=True, name="cr-failure-report").start()
 
 
 def update_note(answer) -> str:

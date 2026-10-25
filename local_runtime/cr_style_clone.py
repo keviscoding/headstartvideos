@@ -44,6 +44,28 @@ PHASES = {
 }
 
 
+# the failure record's step (cr_failure) for each phase a study can stop in
+PHASE_STEPS = {"prepared": "setup", "design": "script", "research": "youtube", "watch": "study", "build": "graphics",
+               "validate": "render", "art": "pictures", "renderer": "graphics", "publish": "save"}
+_STAGE_CATEGORIES = {"timeout": "timeout", "usage_limit": "usage_limit", "cancelled": "cancelled",
+                     "authentication_required": "auth"}
+
+
+def _failure_record(home, saved, error, step=""):
+    """Why this study stopped, privacy-safe (cr_failure): sent with its stopped finish so ChannelRecipe can count it."""
+    try:
+        import cr_failure
+        native = _native_failure(home, saved)
+        spec = saved.get("spec") or {}
+        return cr_failure.from_exception(error, step=step or PHASE_STEPS.get(saved.get("phase"), "study"),
+                                         source="style_study", recipe=spec.get("base_style", ""),
+                                         titles=[spec.get("title"), spec.get("label"), spec.get("name")],
+                                         category=_STAGE_CATEGORIES.get(native, ""),
+                                         provider="claude" if native else "")
+    except Exception:                                           # noqa: BLE001 - the stop itself is what matters
+        return None
+
+
 class StudyStopped(BaseException):
     """Do not let the original learner turn a stopped study into a plain style."""
 
@@ -482,6 +504,8 @@ def status(home, operation_id, bridge):
             message = "Claude reported a usage limit during this study. Your saved work is intact. Once your Claude account has available usage, review and approve a new study here."
         if failure_code == "metadata_handoff_failed":
             message = "Reference study and graphics validation finished, but saving the style stopped. Save the completed study without repeating Claude, downloads or rendering."
+        if saved.get("update_note"):
+            message += " " + saved["update_note"]
     elif state == "complete_local":
         message = "Your validated style is saved locally. Reconnect CR to record completion; no generation needs to repeat."
     elif state == "running":
@@ -690,7 +714,12 @@ def _sync(folder, saved, bridge):
     cr_claude.sync_receipts(bridge)
     if saved.get("finish_receipt"):
         bridge.project_progress(saved["project_id"])
-        bridge.finish_project(saved["finish_receipt"])
+        answer = bridge.finish_project(saved["finish_receipt"])
+        if saved["finish_receipt"].get("status") == "failed":
+            import cr_failure
+            note = cr_failure.update_note(answer)
+            if note:
+                saved["update_note"] = note                    # said with the stop: a newer Studio is available
         saved.pop("finish_receipt")
         if saved["state"] == "complete_local":
             saved["state"] = "complete"
@@ -1284,6 +1313,9 @@ def _finish_metadata_recovery(home, folder, saved, bridge, readiness, *, engine=
         _record_failure(folder, saved, error)
         saved.update(state="failed", completed_at=time.time(), finish_receipt={"project_id": saved["project_id"],
             "status": "failed", "artifacts": [], "error_code": "runtime_failed"})
+        failure = _failure_record(home, saved, error, step="save")
+        if failure:
+            saved["finish_receipt"]["failure"] = failure
         _write(folder / "operation.json", saved)
         try:
             _sync(folder, saved, bridge)
@@ -1441,6 +1473,9 @@ def run(home, operation_id, bridge, *, readiness, execute=None):
             _record_failure(folder, saved, error)
             saved.update(state="failed", completed_at=time.time(), finish_receipt={"project_id": project["id"],
                 "status": "failed", "artifacts": [], "error_code": "runtime_failed"})
+            failure = _failure_record(home, saved, error)
+            if failure:
+                saved["finish_receipt"]["failure"] = failure
             _write(folder / "operation.json", saved)
             try:
                 _sync(folder, saved, bridge)

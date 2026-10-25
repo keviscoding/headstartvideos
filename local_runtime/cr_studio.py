@@ -19,6 +19,7 @@ import cr_capabilities
 import cr_media
 import cr_render
 import cr_claude
+import cr_failure
 import cr_mcp
 import cr_network
 import cr_paths
@@ -1550,11 +1551,20 @@ def create_app():
                 try:
                     report={"project_id":project["id"],"status":"done" if complete else "failed",
                         "artifacts":artifacts,"error_code":"" if complete else "cancelled" if state.get("state")=="cancelled" else "runtime_failed"}
+                    if not complete:
+                        # why it stopped, privacy-safe (cr_failure): what ChannelRecipe counts to fix the commonest stops
+                        report["failure"]=cr_failure.for_job(HOME,state,spec,job,project["id"],report["error_code"])
                     pending=job/".cr-finish-pending.json"
                     cr_claude._private_write(pending,report)
-                    cr_bridge.finish_project(report)
+                    answer=cr_bridge.finish_project(report)
                     pending.replace(job/".cr-finish.json")
                     receipt_saved=True
+                    note=cr_failure.update_note(answer) if not complete and report["error_code"]!="cancelled" else ""
+                    if note:
+                        # one plain line: a newer Studio fixes many stops; updating stays the creator's choice
+                        state.setdefault("lines", []).append(note)
+                        if state.get("error"):
+                            state["error"]=str(state["error"]).rstrip()+" "+note
                 except Exception as error:
                     detail = str(error) if isinstance(error, cr_mcp.WorkflowError) else "CR could not save its completion record. Check your connection, then sync in Setup."
                     state.setdefault("lines", []).append("Your local output is saved. " + detail)

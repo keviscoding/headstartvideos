@@ -89,7 +89,16 @@ def project_progress(project_id):
 
 
 def finish_project(payload):
-    return _mcp_tool("local_studio_finish_project", payload)
+    """Record how a project ended; returns the server's answer. A stopped project's finish carries its failure record
+    (cr_failure). A server from before those records refuses the unknown field as invalid details, a refusal with no
+    status, so that finish goes again without the record: the project's end is never lost over it."""
+    try:
+        return _mcp_tool("local_studio_finish_project", payload)
+    except RuntimeError as error:
+        if not (isinstance(payload, dict) and "failure" in payload and type(error).__name__ == "WorkflowError"
+                and getattr(error, "status", 0) is None):
+            raise
+    return _mcp_tool("local_studio_finish_project", {k: v for k, v in payload.items() if k != "failure"})
 
 
 def load_settings():
