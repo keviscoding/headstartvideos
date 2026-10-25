@@ -43,6 +43,8 @@ _STYLE = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,139}\Z")
 _PICK = re.compile(r"pk_[a-f0-9]{24}\Z")
 _LOOK = re.compile(r"lk_[a-f0-9]{24}\Z")
 _OPERATION = re.compile(r"op_[a-f0-9]{24}\Z")
+_SAMPLE = re.compile(r"sm_[a-f0-9]{24}\Z")
+_LEARNED = re.compile(r"cr_clone_[a-z0-9_-]{1,40}\Z")
 # What only this computer makes for now (cr_cloud.blocked says the same to the Studio page).
 LOCAL_ONLY = "renders on this computer for now"
 
@@ -673,7 +675,8 @@ def _job_status(slug: str) -> dict:
 def tool_progress(args):
     ident = str(args.get("id") or "").strip()
     if ident.startswith("video:") or (ident and _SLUG.fullmatch(ident) and not
-                                       (_LOOK.fullmatch(ident) or _OPERATION.fullmatch(ident) or ident == "cloud")):
+                                       (_LOOK.fullmatch(ident) or _OPERATION.fullmatch(ident) or _SAMPLE.fullmatch(ident)
+                                        or ident == "cloud")):
         return _job_status(ident.removeprefix("video:"))
     if ident == "cloud":
         return cloud_progress()
@@ -681,8 +684,10 @@ def tool_progress(args):
         return look_progress(ident)
     if _OPERATION.fullmatch(ident):
         return clone_progress(ident)
+    if _SAMPLE.fullmatch(ident):
+        return sample_progress(ident)
     if ident:
-        raise Refused("Use an id from make_videos (video:…, cloud) or a style clone (lk_…, op_…).")
+        raise Refused("Use an id from make_videos (video:…, cloud), a style clone (lk_…, op_…) or a style sample (sm_…).")
     queue = call("GET", "/api/queue", timeout=20)
     jobs = []
     for job in queue.get("jobs") or []:
@@ -767,7 +772,8 @@ def look_progress(look_id: str) -> dict:
                    suggested_base=m.get("base"), because=m.get("base_why"), made_with=route.get("engine"),
                    how_made=route.get("why") or "",
                    medium_gap=route.get("medium_gap") or "", cost_note=m.get("cost") if isinstance(m.get("cost"), str)
-                   else "", not_watched=d.get("not_watched") or [],
+                   else "", not_watched=d.get("not_watched") or [], shorts=bool(d.get("shorts")),
+                   similar_styles=similar_styles(d.get("similar")),
                    next="Ask the creator these questions (their first option is Studio's guess), then call clone_style "
                         "with look_id, a style name, an example title and their answers. The 'medium' (3D) and "
                         "'animation' (animated 2D characters) questions decide how the videos are made: ask them "
@@ -775,7 +781,31 @@ def look_progress(look_id: str) -> dict:
                         "something Studio can't make yet: read it to the creator before anything is paid. Animated "
                         "in code adds a few minutes of their Claude Code usage to the study (usually 3 to 10, at "
                         "most 25: Claude writes and checks the channel's animation); its videos then cost their voice and at most a few "
-                        "background pictures. Say so before they choose.")
+                        "background pictures. Say so before they choose. " + SIMILAR_NEXT)
+    return out
+
+
+SIMILAR_NEXT = ("similar_styles are the styles they already have that come closest (suggestions only, never a reason not "
+                "to study): before the paid study, mention them in a line each. They can use one now (make_videos with its "
+                "id), try a few seconds of one on their topic first (style_sample: try_first.cost_usd on their own "
+                "accounts, ask before), or go on with the study.")
+
+
+def similar_styles(rows) -> list:
+    """The installed styles closest to the looked-at channel (cr_style_look.similar), as the tools say them."""
+    out = []
+    for r in rows or []:
+        if not isinstance(r, dict) or not r.get("id"):
+            continue
+        sample = r.get("sample") or {}
+        out.append({"id": r["id"], "name": r.get("name"), "closeness_percent": r.get("closeness"), "why": r.get("why"),
+                    "kind": r.get("kind"), "yours": bool(r.get("mine")),
+                    "the_study_builds_on_it": bool(r.get("recommended")),
+                    "learned_from_these_videos": bool(r.get("same_references")),
+                    "picture_url": link(r["preview_url"]) if r.get("preview_url") else "",
+                    "try_first": ({"tool": "style_sample", "cost_usd": sample.get("cost_usd"),
+                                   "seconds": sample.get("seconds")} if sample.get("can")
+                                  else {"not_offered": sample.get("why_not") or ""})})
     return out
 
 
@@ -917,8 +947,10 @@ def tool_clone_style_look(args):
     looks = _read(STATE / "looks.json")
     looks[look["look_id"]] = {"preview_id": preview["preview_id"], "reference_ids": chosen, "url": url, "at": time.time()}
     _write(STATE / "looks.json", dict(sorted(looks.items(), key=lambda kv: -kv[1]["at"])[:40]))
+    similar = similar_styles(look.get("similar")) if look.get("state") == "done" else []
     return {"look_id": look["look_id"], "state": look.get("state"), "message": look.get("message"),
             "combining": preview.get("reference_urls") or [],
+            **({"similar_styles": similar, "about_similar": SIMILAR_NEXT} if similar else {}),
             "studying": [{"id": c["id"], "title": c["title"], "channel": c.get("channel"), "views": c.get("views"),
                           "minutes": round((c.get("duration_seconds") or 0) / 60)} for c in eligible if c["id"] in chosen],
             "other_videos": [{"id": c["id"], "title": c["title"]} for c in eligible if c["id"] not in chosen][:9],
@@ -964,6 +996,82 @@ def tool_clone_style(args):
             "message": status.get("message"), "page": link("/cr-style-clone?operation=" + str(status.get("operation_id"))),
             "next": "The study runs on your Claude Code for about 15 to 30 minutes. Check with progress(id) now and "
                     "then; Studio shows a notification when the style is ready."}
+
+
+def _learned_style(wanted) -> str:
+    wanted = str(wanted or "").strip()
+    if _LEARNED.fullmatch(wanted):
+        return wanted
+    rows = [r for r in catalog().get("channels") or [] if r.get("custom")]
+    if not rows:
+        raise Refused("There are no learned styles yet: clone one with clone_style_look and clone_style.")
+    name = find_style(rows, wanted)["name"]
+    if not _LEARNED.fullmatch(name):
+        raise Refused("Only styles learned from a channel can be edited here.")
+    return name
+
+
+def tool_edit_style(args):
+    """A learned style's name, description, creative direction and Create's starting options: shown, or changed."""
+    same_studio()
+    style = _learned_style(args.get("style"))
+    keys = ("name", "tagline", "description", "script_notes", "director_notes", "character", "forget_character_picture",
+            "features_on", "pictures_per_min", "subtitles")
+    changes = {k: args[k] for k in keys if k in args}
+    path = "/cr-style-clone/style/" + _quote_path(style)
+    d = call("POST", path, {"changes": changes}, timeout=60) if changes else call("GET", path, timeout=30)
+    features = d.get("features") or {}
+    study = d.get("study") or {}
+    out = {k: d.get(k) for k in ("style", "name", "tagline", "description", "script_notes", "director_notes", "character",
+                                 "has_character_picture", "subtitles", "versions_kept")}
+    out.update(saved=bool(d.get("saved")), pictures_per_min=d.get("pictures"),
+               options={"offered": [f.get("key") for f in features.get("offered") or []], "on": features.get("on") or []},
+               study_again={"example_title": study.get("title") or "", "brief": study.get("brief") or "",
+                            "base_style": study.get("base_style") or "", "studied": study.get("reference_urls") or []},
+               page=link("/cr-style-clone?edit=" + _quote_path(style)),
+               next=("Saved: their next videos in this style use it (the version before is kept on their computer). "
+                     if d.get("saved") else "") +
+                    "To change it, call edit_style again with only what changes (script_notes and director_notes are "
+                    "one note per line, up to ten; features_on from options.offered; pictures_per_min within its "
+                    "floor and ceiling). character changes the words for who appears in every picture: pass "
+                    "forget_character_picture=true too when it's a different character, or the old picture keeps "
+                    "coming back. To study it again with other videos, call clone_style_look with the new links, then "
+                    "clone_style with a new style_name and study_again's example_title and brief: that makes a new "
+                    "style and keeps this one.")
+    return out
+
+
+def sample_progress(ident: str) -> dict:
+    d = call("GET", "/cr-style-clone/sample/" + ident + "/status", timeout=30)
+    out = {k: d.get(k) for k in ("sample_id", "state", "style", "topic", "line", "message", "cost_usd", "credits",
+                                 "voiced")}
+    if d.get("state") == "done":
+        out.update(file=d.get("video") or "", watch_url=link(d["video_url"]) if d.get("video_url") else "",
+                   next="Show them the sample (the file, or watch_url in the Browser pane). If they like it, "
+                        "make_videos with this style; if not, try another similar style or go on with the study.")
+    return out
+
+
+def tool_style_sample(args):
+    """A few seconds of an installed style on the creator's topic, before a paid study (or a progress check)."""
+    same_studio()
+    ident = str(args.get("id") or "").strip()
+    if ident:
+        if not _SAMPLE.fullmatch(ident):
+            raise Refused("Use the sample id style_sample returned (sm_…).")
+        return sample_progress(ident)
+    rows = catalog().get("channels") or []
+    style = find_style(rows, args.get("style"))["name"]
+    topic = str(args.get("topic") or "").strip()
+    if not topic:
+        raise Refused("Give the topic of a video they'd make, in a few words.")
+    d = call("POST", "/cr-style-clone/sample", {"style": style, "topic": topic[:200],
+                                                "line": str(args.get("line") or "")[:240], "acknowledge_costs": True},
+             timeout=60)
+    return {"id": d.get("sample_id"), "state": d.get("state"), "message": d.get("message"),
+            "cost_usd": d.get("cost_usd"),
+            "next": "Studio draws two pictures in the style, reads the line and moves over each picture (a minute or "
+                    "two). Check progress(id) or style_sample(id=…); it gives the video's file when done."}
 
 
 def tool_product_ideas(args):
@@ -1103,9 +1211,10 @@ TOOLS = {
     "cloud_balance": (tool_cloud_balance, "The Studio Cloud balance, top-up link and machine prices. Free.",
                       _schema(), _FREE),
     "clone_style_look": (tool_clone_style_look, "Step 1 of cloning a style from a YouTube channel or video, or of "
-                         "COMBINING two or three channels into one style (youtube_urls): Studio lists their videos and "
-                         "looks at up to 3 (the most viewed, taken in turn from each channel, or reference_ids). Free "
-                         "(no Claude). Then progress(look_id) until done: it brings questions for the creator.",
+                         "COMBINING two or three channels into one style (youtube_urls): Studio lists their videos (a channel "
+                         "of Shorts: its Shorts) and looks at up to 3 (the most viewed, taken in turn from each channel, "
+                         "or reference_ids). Free (no Claude). Then progress(look_id) until done: it brings questions "
+                         "for the creator and similar_styles, the styles they already have that come closest.",
                          _schema({"youtube_url": {"type": "string"},
                                   "youtube_urls": {"type": "array", "items": {"type": "string"}, "maxItems": 3,
                                                    "description": "Two or three channels to combine into one style."},
@@ -1141,6 +1250,29 @@ TOOLS = {
                                                        "(this video only)."},
                               "recording": {"type": "string", "description": "voice=own: the path of the creator's "
                                                                              "recording on this computer."}}, ["id"]),
+                     {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}),
+    "edit_style": (tool_edit_style, "Show or change one of the creator's learned styles (from clone_style): its name, "
+                   "tagline, description, creative direction for the script (script_notes) and for the pictures and "
+                   "edit (director_notes), its recurring character, which options are on (features_on), pictures a "
+                   "minute and subtitles. Pass only what changes; with none it shows the style. Free: no study, no "
+                   "money; the version before is kept. Its study_again has what to reuse to study it again with other "
+                   "videos (a new style; this one stays).",
+                   _schema({"style": {"type": "string", "description": "A learned style's id or name (list_styles kind='mine')."},
+                            "name": {"type": "string"}, "tagline": {"type": "string"},
+                            "description": {"type": "string", "description": "What the channel's videos are about."},
+                            "script_notes": {"type": "array", "items": {"type": "string"}, "maxItems": 10},
+                            "director_notes": {"type": "array", "items": {"type": "string"}, "maxItems": 10},
+                            "character": {"type": "string"}, "forget_character_picture": {"type": "boolean"},
+                            "features_on": {"type": "array", "items": {"type": "string"}},
+                            "pictures_per_min": {"type": "number"}, "subtitles": {"type": "boolean"}}, ["style"]),
+                   {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False}),
+    "style_sample": (tool_style_sample, "Try a style first: about 5 seconds of an installed style on the creator's "
+                     "topic (two pictures drawn as its videos draw them, one line read by their voice, a slow move "
+                     "over each). Spends about $0.05 on the creator's own accounts: ask first. Offered for picture "
+                     "styles (clone_style_look's similar_styles say which, try_first). id=sm_… checks one.",
+                     _schema({"style": {"type": "string"}, "topic": {"type": "string"},
+                              "line": {"type": "string", "description": "What the narrator says (default: the topic)."},
+                              "id": {"type": "string"}}),
                      {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}),
     "clone_style": (tool_clone_style, "Step 2: study the looked-at references and build a new reusable style. Uses "
                     "the creator's Claude Code for 15-30 minutes and one of their plan's style clones. Needs look_id, a "

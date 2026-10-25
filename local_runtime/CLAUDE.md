@@ -130,6 +130,14 @@ Studio through its own checks, so nothing needs the Studio web page.
   press Use pictures instead on the style's page (never choose for them). If `look_progress` or `clone_style` returns
   a `medium_gap`, Studio can't make that medium yet: read it to the creator and call `clone_style` with
   `accept_medium=true` only after they accept it. Never accept it for them, and never call a stopgap the real thing.
+- Before the paid study, the finished look's `similar_styles` are the styles they already have that come closest. Mention
+  them in a line each, as suggestions only, never as a reason not to study: they can use one now, or try a few seconds
+  of one on their topic first with `style_sample` (about $0.05 on their own accounts: say so and ask first). A channel
+  that posts only Shorts is read from its Shorts tab and studied like any other.
+- A learned style can be changed after it is saved, without studying again: `edit_style` shows or changes its name,
+  description, creative direction (script_notes, director_notes), character and the options Create starts from. On the
+  Studio page it is Style library → Edit or study again. To study it again with other videos, run the clone again
+  (`clone_style_look`, then `clone_style` with edit_style's `study_again`): that saves a new style and keeps this one.
 
 ## Making videos through ChannelRecipe tools
 
@@ -186,8 +194,9 @@ only reconciles receipts and does not generate again.
 
 ## Style cloning
 
-Clone a style at /cr-style-clone: it previews a public YouTube reference and runs
-the reference learner as its own creative project. The validated style becomes a
+Clone a style at /cr-style-clone: it previews one to three public YouTube channels
+or videos (mixed into one style when there are several) and runs the reference
+learner as its own creative project. The validated style becomes a
 local recipe. Study actual frames, use captions when available, and report
 evidence gaps; never substitute metadata for a viewed reference. Keep the learned
 visual language separate from copying the reference script or footage. Each plan

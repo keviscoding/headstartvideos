@@ -771,3 +771,69 @@ def test_progress_on_an_animated_clone_says_the_animations_score_and_never_picks
     status["renderer"] = {"state": "passed", "overall": 6.7, "bar": 5.5, "say": "Claude wrote it: 6.7/10."}
     passed = ok("progress", {"id": op})
     assert passed["animation"]["what_to_tell_them"] == "Claude wrote it: 6.7/10." and "list_styles" in passed["next"]
+
+
+SIMILAR = [{"id": "cr_clone_abc", "name": "My Style", "closeness": 93, "why": "both are mostly 3D scenes",
+            "kind": "video", "mine": True, "recommended": False, "same_references": False,
+            "preview_url": "/cr-workspace/preview/recipe/cr_clone_abc.jpg", "use_url": "/?cr-preset=cr_clone_abc",
+            "sample": {"can": True, "pictures": 2, "seconds": 5.0, "cost_usd": 0.05}},
+           {"id": "cr-shorts-3d", "name": "3D Explainer Shorts", "closeness": 90, "why": "both are mostly 3D scenes",
+            "kind": "short", "mine": False, "recommended": False, "same_references": False, "preview_url": "",
+            "use_url": "/?cr-preset=cr-shorts-3d", "sample": {"can": False, "why_not": "a whole Short"}}]
+
+
+@pytest.fixture
+def more(studio, monkeypatch):
+    """The fake Studio with the look's suggestions, the style editor and the sample routes."""
+    edits = []
+
+    def call(method, path, body=None, **kw):
+        if path == "/cr-style-clone/look/lk_" + "d" * 24:
+            return {"look_id": "lk_" + "d" * 24, "state": "done", "shorts": True, "similar": SIMILAR,
+                    "mapping": {"base": "3d", "questions": [], "route": {}}}
+        if path == "/cr-style-clone/style/cr_clone_abc":
+            edits.append((method, body))
+            return {"style": "cr_clone_abc", "name": (body or {}).get("changes", {}).get("name", "My Style"),
+                    "features": {"offered": [{"key": "ai_images", "label": "Generated pictures"}], "on": ["ai_images"]},
+                    "study": {"title": "What if the sun went out", "brief": "Light", "base_style": "stories",
+                              "reference_urls": ["https://www.youtube.com/@ifology/videos"]},
+                    "saved": method == "POST"}
+        if path == "/cr-style-clone/sample":
+            studio.calls.append((method, path, body))
+            return {"sample_id": "sm_" + "e" * 24, "state": "running", "cost_usd": 0.05, "message": "Drawing"}
+        if path == "/cr-style-clone/sample/sm_" + "e" * 24 + "/status":
+            return {"sample_id": "sm_" + "e" * 24, "state": "done", "video": "/studio/output/sample.mp4",
+                    "video_url": "/cr-style-clone/sample/sm_" + "e" * 24 + "/video.mp4", "cost_usd": 0.05}
+        return studio(method, path, body, **kw)
+    monkeypatch.setattr(tools, "call", call)
+    return SimpleNamespace(edits=edits)
+
+
+def test_a_finished_look_suggests_the_closest_styles_and_a_paid_try_first_without_blocking_the_study(studio, more):
+    out = ok("progress", {"id": "lk_" + "d" * 24})
+    assert out["shorts"] is True and [s["id"] for s in out["similar_styles"]] == ["cr_clone_abc", "cr-shorts-3d"]
+    assert out["similar_styles"][0]["try_first"] == {"tool": "style_sample", "cost_usd": 0.05, "seconds": 5.0}
+    assert out["similar_styles"][1]["try_first"] == {"not_offered": "a whole Short"}
+    assert out["similar_styles"][0]["picture_url"].startswith("http://localhost:7860/cr-workspace/preview/")
+    assert "suggestions only, never a reason not to study" in out["next"]
+
+
+def test_style_sample_is_a_paid_tool_that_says_its_cost_and_brings_back_the_video(studio, more):
+    assert "style_sample" in ccc.PAID_TOOLS and "edit_style" in ccc.FREE_TOOLS
+    started = ok("style_sample", {"style": "My Style", "topic": "How bees build homes"})
+    assert started["id"] == "sm_" + "e" * 24 and started["cost_usd"] == 0.05
+    assert studio.posted("/cr-style-clone/sample") == [{"style": "cr_clone_abc", "topic": "How bees build homes",
+                                                        "line": "", "acknowledge_costs": True}]
+    done = ok("progress", {"id": "sm_" + "e" * 24})
+    assert done["file"] == "/studio/output/sample.mp4" and done["watch_url"].endswith("/video.mp4")
+    assert tools.run_tool("style_sample", {"style": "My Style"})["isError"], "a topic first"
+
+
+def test_edit_style_shows_changes_and_says_how_to_study_it_again(studio, more):
+    shown = ok("edit_style", {"style": "My Style"})
+    assert shown["saved"] is False and more.edits[-1] == ("GET", None)
+    assert shown["study_again"]["example_title"] == "What if the sun went out" and "clone_style_look" in shown["next"]
+    saved = ok("edit_style", {"style": "cr_clone_abc", "name": "Bees", "script_notes": ["Be warm."]})
+    assert saved["saved"] and saved["name"] == "Bees"
+    assert more.edits[-1] == ("POST", {"changes": {"name": "Bees", "script_notes": ["Be warm."]}})
+    assert tools.run_tool("edit_style", {"style": "documentary"})["isError"], "a recipe Studio ships isn't edited here"
