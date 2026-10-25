@@ -641,7 +641,10 @@ def test_original_3d_preview_failure_reaches_real_owned_run_receipt_as_failed(ru
     state = r.studio.JOBS[spec["slug"]]
     assert state["state"] == "error" and "pinned API checker" in state["error"]
     assert not completed and not (job / "video.mp4").exists()
+    failure = receipts[0].pop("failure")               # why it stopped, privacy-safe (cr_failure)
     assert receipts == [{"project_id": "crv_" + "a" * 24, "status": "failed", "artifacts": [], "error_code": "runtime_failed"}]
+    assert failure["failed_step"] == "graphics" and failure["recipe"] == "3d" and failure["source"] == "video"
+    assert "pinned API checker" in failure["message"] and "Actual story" not in failure["message"]
     assert not r.studio._cr_activity.busy()
 
 

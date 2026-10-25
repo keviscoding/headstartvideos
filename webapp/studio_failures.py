@@ -46,6 +46,7 @@ _SEG = r"[^\s\\/\"'<>|:!,;()\[\]{}]+"
 _CLEAN = (
     (re.compile(r"(?i)\b(?:https?|wss?|ftp|file)://[^\s\"'<>)\]]+|\bwww\.[^\s\"'<>)\]]+"), "[link]"),
     (re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"), "[email]"),
+    (re.compile(r"(?:\"[^\"\n]{1,60}\"\s*|(?:[A-Z][\w'’.\-]*\s+){1,4})<\s*\[email\]\s*>"), "[email]"),  # "Jane Doe <…>"
     (re.compile(r"(?i)\b(bearer|basic)\s+[^\s,;\"']+"), r"\1 [hidden]"),
     (re.compile(r"(?i)\b([\w-]*(?:api[_-]?key|apikey|key|token|secret|password|passwd|authorization|cookie|signature"
                 r"|credential)s?)(['\"]?\s*[=:]\s*['\"]?)[^\s,;\"'&}]+"), r"\1\2[hidden]"),
@@ -58,6 +59,8 @@ _CLEAN = (
      lambda m: "~/…/" if m.group(1) == "~" else "…/"),
     (re.compile(r"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"), "[id]"),
     (re.compile(r"(?i)\b(?:crv_|op_|video_|b_|cc_)?[0-9a-f]{12,}\b"), "[id]"),
+    (re.compile(r"(?i)\b(user|account|customer|member|subscriber)((?:[ _-]?id)?\s*[#:=]?\s*)\d{2,}\b"), r"\1\2[id]"),
+    (re.compile(r"\b(?:DESKTOP|LAPTOP|WIN)-[A-Z0-9]{5,}\b"), "[computer]"),
     (re.compile(r"(?<![\w~…])(?=[A-Za-z0-9_\-+/=]*\d)(?=[A-Za-z0-9_\-+/=]*[A-Za-z])[A-Za-z0-9_\-+/=]{24,}"),
      "[hidden]"),
     (re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"), "[ip]"),
@@ -65,7 +68,8 @@ _CLEAN = (
 
 
 def clean_message(text, titles=()) -> str:
-    """One line with no links, emails, keys, ids, home folders or folder names, and no title; MAX_MESSAGE at most."""
+    """One line with no links, emails (nor the name before one), keys, ids, home folders, folder names or computer
+    names, and no title; MAX_MESSAGE at most."""
     text = " ".join(str(text or "")[:4000].split())
     for pattern, replacement in _CLEAN:
         text = pattern.sub(replacement, text)

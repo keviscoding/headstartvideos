@@ -44,6 +44,9 @@ _UUID = re.compile(r"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a
 _HEX_ID = re.compile(r"(?i)\b(?:crv_|op_|video_|b_|cc_)?[0-9a-f]{12,}\b")
 _LONG_TOKEN = re.compile(r"(?<![\w~…])(?=[A-Za-z0-9_\-+/=]*\d)(?=[A-Za-z0-9_\-+/=]*[A-Za-z])[A-Za-z0-9_\-+/=]{24,}")
 _IPV4 = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+_EMAIL_NAME = re.compile(r"(?:\"[^\"\n]{1,60}\"\s*|(?:[A-Z][\w'’.\-]*\s+){1,4})<\s*\[email\]\s*>")
+_ACCOUNT_NO = re.compile(r"(?i)\b(user|account|customer|member|subscriber)((?:[ _-]?id)?\s*[#:=]?\s*)\d{2,}\b")
+_PC_NAME = re.compile(r"\b(?:DESKTOP|LAPTOP|WIN)-[A-Z0-9]{5,}\b")
 _LONG_QUOTE = re.compile(r"(?<!\w)(?:\"[^\"\n]{48,}\"|'[^'\n]{48,}'|“[^”\n]{48,}”)(?!\w)")
 # a home folder, the user's name with it (no space in a Mac or Linux name; a Windows one ends at its backslash)
 _HOMES = (re.compile(r"(?i)\b[A-Z]:[\\/]+(?:Users|Documents and Settings)[\\/]+[^\\/\r\n\"']+?(?=[\\/]|$)"),
@@ -88,6 +91,30 @@ def _secrets():
     return sorted(set(found), key=len, reverse=True)
 
 
+_GENERIC_NAMES = {"user", "users", "admin", "administrator", "owner", "default", "public", "guest", "home", "runner",
+                  "desktop", "laptop", "computer", "local", "localhost", "macbook", "imac", "studio", "video", "videos"}
+
+
+def _names(home) -> list:
+    """This computer's user name (its home folder's, the environment's) and its own name, with their parts ("Jane
+    Doe" -> Jane, Doe), to take out of a message where no path holds them. Four letters at least: a shorter word
+    ("max", "kev") is as likely an ordinary word of the message."""
+    found = set()
+    try:
+        import socket
+        host = socket.gethostname().split(".")[0]
+    except (OSError, ValueError):
+        host = ""
+    folder = re.split(r"[\\/]+", str(home or "").rstrip("\\/"))[-1]     # either kind of path, on any computer
+    values = [folder, os.environ.get("USER"), os.environ.get("USERNAME"), host, host.split("-")[0]]
+    for value in values:
+        value = " ".join(str(value or "").split())
+        for part in [value] + re.split(r"[\s._\-]+", value):
+            if len(part) >= 4 and part.lower() not in _GENERIC_NAMES and not part.isdigit():
+                found.add(part)
+    return sorted(found, key=len, reverse=True)
+
+
 def _bodies(text: str) -> str:
     """A provider's answer pasted into a message ({...}) keeps only its code, status and message fields: a request
     body may hold the prompt, the narration or a link."""
@@ -111,25 +138,41 @@ def _bodies(text: str) -> str:
 
 
 def _title_forms(titles) -> list:
-    forms = []
+    """Regular expressions for a title as a message may hold it: whole, as a folder name (slug), or cut short (three
+    or more of its words in a row, and the start of the next one before an ellipsis). A run of short words only ("is
+    not a") says nothing of the title and is common in error messages, so a run needs a word of four letters or more.
+    The forms covering the most of the title's words come first, so no word of it is left over."""
+    forms: dict = {}
     for title in titles or ():
         title = " ".join(str(title or "").split())
         if len(title) < 3:
             continue
         slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
-        forms += [title, slug, slug.replace("-", "_"), slug.replace("-", " ")]
-        if len(title) > 24:
-            forms.append(title[:24])                              # a title cut short in a message
-    return sorted({f for f in forms if len(f) >= 3}, key=len, reverse=True)
+        words = re.findall(r"\w+", title)[:40]
+        for form in (title, slug, slug.replace("-", "_")):
+            if len(form) >= 3:
+                forms[re.escape(form)] = len(words) + 1
+        size = min(3, len(words))
+        for i in range(len(words)):
+            for j in range(i + size, len(words) + 1):
+                if not any(len(w) >= 4 for w in words[i:j]):
+                    continue
+                run = r"\W{1,3}".join(re.escape(w) for w in words[i:j])
+                if j < len(words):
+                    nxt = words[j]
+                    run += r"(?:\W{1,3}(?:" + "|".join(re.escape(nxt[:k]) for k in range(len(nxt), 0, -1)) + r")(?=…|\.\.\.))?"
+                run = r"\b" + run
+                forms[run] = max(forms.get(run, 0), j - i)
+    return [form for form, _ in sorted(forms.items(), key=lambda item: (-item[1], -len(item[0])))]
 
 
 def _title_words(titles) -> set:
     return {w for t in titles or () for w in re.findall(r"[a-z0-9]{4,}", str(t or "").lower())}
 
 
-def sanitize(text, *, titles=(), secrets=None, home=None, limit=MAX_MESSAGE) -> str:
-    """One line of `text` that is safe to send: no URLs, file paths (home -> ~, folder names dropped), emails, keys,
-    tokens, ids or titles, at most `limit` characters."""
+def sanitize(text, *, titles=(), secrets=None, home=None, names=None, limit=MAX_MESSAGE) -> str:
+    """One line of `text` that is safe to send: no URLs, file paths (home -> ~, folder names dropped), emails, names,
+    keys, tokens, ids or titles, at most `limit` characters. `names` defaults to this computer's (_names)."""
     text = " ".join(str(text or "").split())
     if not text:
         return ""
@@ -138,6 +181,7 @@ def sanitize(text, *, titles=(), secrets=None, home=None, limit=MAX_MESSAGE) -> 
             text = text.replace(secret, "[hidden]")
     text = _URL.sub("[link]", text)
     text = _EMAIL.sub("[email]", text)
+    text = _EMAIL_NAME.sub("[email]", text)                         # "Jane Doe <jane@…>"
     text = _HOST_PATH.sub(r"\1/…", text)
     text = _BEARER.sub(r"\1 [hidden]", text)
     text = _ASSIGNED.sub(r"\1\2[hidden]", text)
@@ -164,16 +208,21 @@ def sanitize(text, *, titles=(), secrets=None, home=None, limit=MAX_MESSAGE) -> 
         folders = [p for p in re.split(r"[\\/]+", match.group("dirs")) if p]
         if not base and not folders or not root and not folders:
             return match.group(0)                                  # "/" or "and/or": not a path
-        if words and any(w in base.lower() for w in words) or any(f.lower() in base.lower() for f in forms):
+        if words and any(w in base.lower() for w in words) or any(re.search(f, base, re.I) for f in forms):
             suffix = Path(base).suffix
             base = "[file]" + (suffix if re.fullmatch(r"\.[A-Za-z0-9]{1,5}", suffix) else "")
         lead = "~/" if root == "~" else ""
         return lead + ("…/" + base if folders or root not in ("", "~") else base)
     text = _PATH.sub(path, text)
     for form in forms:
-        text = re.sub(re.escape(form), "[title]", text, flags=re.I)
+        text = re.sub(form, "[title]", text, flags=re.I)
+    # after paths and titles, so a name in a folder or a title goes with it
+    for name in (names if names is not None else _names(home)):
+        text = re.sub(r"(?<![\w\[])" + re.escape(name) + r"(?![\w\]])", "[name]", text, flags=re.I)
+    text = _PC_NAME.sub("[computer]", text)
     text = _UUID.sub("[id]", text)
     text = _HEX_ID.sub("[id]", text)
+    text = _ACCOUNT_NO.sub(r"\1\2[id]", text)
     text = _LONG_TOKEN.sub("[hidden]", text)
     text = _IPV4.sub("[ip]", text)
     text = _LONG_QUOTE.sub('"…"', text)
@@ -305,7 +354,7 @@ def _neutral(text, titles=()) -> str:
     """The words a stop is classified by: its message without paths, titles or keys (a folder called "YouTube ideas"
     says nothing about YouTube), plus the services its links went to."""
     hosts = {m.group(1).lower() for m in re.finditer(r"(?i)\b(?:https?|wss?)://([^/\s:\"'<>]+)", str(text or ""))}
-    return (sanitize(text, titles=titles, secrets=[], limit=0) + " " + " ".join(sorted(hosts))).strip()
+    return (sanitize(text, titles=titles, secrets=[], names=(), limit=0) + " " + " ".join(sorted(hosts))).strip()
 
 
 def classify(text: str, *, header: str = "", code: str = "", titles=()) -> dict:
@@ -443,14 +492,14 @@ def for_job(home, state: dict, spec: dict, job, project_id: str = "", error_code
             short = _read(job / "short" / "error.json") if _fresh(job / "short" / "error.json", since) else {}
             if short:
                 code = str(short.get("code") or "")
-                found = classify(str(short.get("message") or message), code=code)
+                found = classify(str(short.get("message") or message), code=code, titles=titles)
                 if code.startswith("claude_") and found["failed_step"] == "unknown":
                     found["failed_step"] = "script"
                 return record(short.get("message") or message, code=code, **{**base, "source": "short"},
                               step=found["failed_step"])
             voice = _read(job / "cr-voice-failed.json") if _fresh(job / "cr-voice-failed.json", since) else {}
             if voice and float(voice.get("at") or since) >= since - 5:
-                said = classify(message)
+                said = classify(message, titles=titles)
                 category = said["category"] if said["category"] in ("timeout", "blocked_network", "cancelled") else \
                     _VOICE_CATEGORIES.get(str(voice.get("category") or ""), "provider_error")
                 provider = str(voice.get("provider") or "")
@@ -459,7 +508,8 @@ def for_job(home, state: dict, spec: dict, job, project_id: str = "", error_code
             if _MUX.search(message) or _fresh(job / "cr-render-error.log", since):
                 return record(message, step="mux", header=header, **base)
         stage = _claude_stop(home, project_id, since)
-        if stage and (not message or re.search(r"(?i)claude", message) or classify(message)["provider"] == "none"):
+        if stage and (not message or re.search(r"(?i)claude", message)
+                      or classify(message, titles=titles)["provider"] == "none"):
             return record(message or "A Claude stage stopped.", provider="claude",
                           category=_STAGE_CODES.get(stage, "provider_error"),
                           step=step_of(re.sub(r"(?i)claude", "", message), header, "claude"), header=header, **base)
