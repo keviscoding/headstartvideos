@@ -1777,20 +1777,25 @@ def create_app():
             if not ended:
                 ended.append(True)
                 queue_keeper.finished(spec, job_of)
+
+        def failed(error):
+            with studio.LOCK:
+                studio.JOBS.setdefault(spec["slug"], {}).update(state="error", error=str(error), done=True)
+                studio.RUNNING["slug"] = None
         try:
             activity.wait_for_editor()
             import cr_attempts
             with cr_attempts.bind(studio.mv, spec):
                 try:
                     return run_owned_spec(spec)
+                except Exception as error:
+                    failed(error)               # before finished(): a full disk's OSError holds the queue
                 finally:
                     # Inside the attempt's binding, so job_dir names this attempt's folder (its short/error.json).
                     finished(lambda: studio.mv.job_dir(str(spec.get("title") or "Your video"),
                                                        str(spec.get("style") or "jung")))
         except Exception as error:
-            with studio.LOCK:
-                studio.JOBS.setdefault(spec["slug"], {}).update(state="error", error=str(error), done=True)
-                studio.RUNNING["slug"] = None
+            failed(error)
             finished(lambda: None)
     studio._run_spec = run_spec
 

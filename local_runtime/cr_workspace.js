@@ -752,13 +752,16 @@
       const actions = el('div', 'crw-held-actions');
       const go = el('button', 'crw-primary-button', n === 1 ? 'Carry on' : `Carry on with all ${n}`); go.type = 'button';
       // Out of clip watches: carrying on now only helps with credits (0.02 a watch); otherwise it waits for next month.
-      const paid = q.code === 'out_of_watches' ? el('button', 'crw-secondary-button', 'Carry on using credits') : null;
+      const paid = q.code === 'out_of_watches' || q.credits ? el('button', 'crw-secondary-button', 'Carry on using credits') : null;
       if (paid) paid.type = 'button';
       const drop = el('button', 'crw-secondary-button', 'Remove'); drop.type = 'button';
       const buttons = [go, paid, drop].filter(Boolean), busy = on => buttons.forEach(b => b.disabled = on);
       const resume = async credits => {busy(true); state.heldBusy = true;
         try {const r = await api('/cr-queue/resume', {method: 'POST', body: {use_credits: credits}}); drawHeld(r);
-          toast(r.resumed ? `${r.resumed} queued again${credits ? ', using credits if watches run out' : ''}, made one at a time.` : 'Nothing was on hold.'); await refreshActivity();}
+          const still = (r.held || []).length;
+          toast(r.resumed ? `${r.resumed} queued again${credits ? ', using credits if watches run out' : ''}, made one at a time.${still ? ` ${still} still on hold: ${r.reason}` : ''}`
+            : r.checking ? 'Studio is already checking them. They go back in the queue in a moment.'
+            : still ? `Still on hold: ${r.reason || 'their setup needs attention.'}` : 'Nothing was on hold.'); await refreshActivity();}
         catch (e) {toast(e.message); busy(false);} finally {state.heldBusy = false;}};
       go.addEventListener('click', () => resume(false));
       if (paid) paid.addEventListener('click', () => resume(true));

@@ -110,7 +110,8 @@ def test_remove_drops_the_held_shorts(tmp_path):
     keeper = cr_queue.Keeper(studio, tmp_path)
     keeper.hold_ranking("Claude's usage limit is reached until 4 am.")
     assert keeper.drop() == 1
-    assert keeper.status() == {"held": [], "reason": "", "code": "", "scope": "", "waiting": 0, "max_ranking_batch": 15}
+    assert keeper.status() == {"held": [], "reason": "", "code": "", "scope": "", "credits": False, "checking": False,
+                               "waiting": 0, "max_ranking_batch": 15}
     assert studio.JOBS == {}
     restored = cr_queue.Keeper(fake_studio()[0], tmp_path)
     restored.restore()

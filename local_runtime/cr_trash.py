@@ -267,7 +267,7 @@ def _slug_busy(studio, slug: str) -> str:
     if queued or state == "queued":
         return "is waiting in the queue. Remove it from the queue or let it finish, then delete it."
     held = getattr(getattr(studio, "_cr_queue", None), "held", None) or []
-    if any(isinstance(spec, dict) and spec.get("slug") == slug for spec in held):
+    if state == "held" or any(isinstance(spec, dict) and spec.get("slug") == slug for spec in held):
         return "is on hold in the queue. Carry it on or remove it first."
     return ""
 
@@ -358,7 +358,7 @@ def _style_busy(studio, home, style: str) -> str:
     with _studio_lock(studio):
         jobs = dict(getattr(studio, "JOBS", None) or {})
         queue = list(getattr(studio, "QUEUE", None) or [])
-    if any(isinstance(j, dict) and j.get("style") == style and j.get("state") in ("running", "queued")
+    if any(isinstance(j, dict) and j.get("style") == style and j.get("state") in ("running", "queued", "held")
            for j in jobs.values()):
         return "A video in this style is being made right now. Delete the style once it has finished."
     if any(isinstance(s, dict) and s.get("style") == style for s in queue):
