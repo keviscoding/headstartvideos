@@ -374,11 +374,20 @@ ENGINE_PATCHES = {
     # so an antivirus or company firewall that inspects secure connections no longer fails every download. 0.10.5 or
     # later: before it, connections sharing one context could turn each other's certificate check off when they shook
     # hands at once (reproduced 2026-10-26); pure Python, 3.10+ (checked on PyPI, 2026-10-26).
+    # OpenCV once, not twice: RapidOCR requires opencv-python (the full build), so the engine's opencv-python-headless
+    # was a second copy of the same cv2 (about 44 MB more to download on Windows, the owner's test of 2026-10-26).
+    # Both builds hold the same modules (the engine's VideoCapture, inpainting, optical flow, face and QR models); the
+    # full one only adds desktop windows, which Studio never opens, and needs nothing more on Windows or a Mac.
+    # Folders that already have both keep them (pip removes nothing); the Studio Cloud image keeps its own list.
     "requirements.txt": [
         ('yt-dlp>=2025.10.22; python_version >= "3.10"',
          'yt-dlp[default,curl-cffi]>=2026.8.19; python_version >= "3.10"\n'
          'rapidocr-onnxruntime==1.2.3; python_version >= "3.10"   # Ranking Shorts: finds burned-in text to remove\n'
          'truststore>=0.10.5; python_version >= "3.10"   # Studio trusts this computer\'s certificates, as the browser does'),
+        ("opencv-python-headless>=4.8   # VEIL's keeper (loops chained and moved) and the presenter camera moves; "
+         "pure-ffmpeg fallback without it",
+         "opencv-python>=4.8   # VEIL's keeper (loops chained and moved) and the presenter camera moves; pure-ffmpeg "
+         "fallback without it. The full build, as RapidOCR needs: one copy, not two"),
     ],
     "reflearn.py": [
         ('need_lv, need_gb = _envf("REFLEARN_MIN_MEM_LEVEL", 40), _envf("REFLEARN_MIN_DISK_GB", 20)',
