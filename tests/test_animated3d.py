@@ -129,6 +129,24 @@ def test_the_3d_example_claude_is_shown_draws_a_vertical_short_and_passes_studio
     assert a2d.blank_runs(samples, 8) == [] and min(x for t, x in samples if t > 6.8) > 4
 
 
+def test_the_3d_example_draws_any_place_a_crowd_and_typed_parameters(home3d, tmp_path):
+    """Studio 109 (the owner's Windows test: a bunker drawn as the reference's supermarket): the 3D kit builds any place
+    from a set's words (Kit.room, the shared stage's props) and the example renderer passes the build's probes."""
+    code = (home3d / a2d.KIT3D / "example3d.js").read_text(encoding="utf-8")
+    scene = {"dims": 3, "duration": 4, "width": 960, "height": 540,
+             "cast": {"pip": {"name": "Pip", "shirt": "#e0462f", "cap": True}},
+             "sets": {"park": {"prompt": "a park", "sky": ["#8ec5f0", "#cfe6f7"], "floor_colors": ["#6fb35a", "#5fa34a"]}},
+             "shots": [{"start": 0, "end": 4, "set": "park", "framing": "wide", "cast": ["pip"]}], "stills": [1.0],
+             "actions": [{"at": 0, "who": "pip", "move": "place", "x": 0, "z": 0, "face": "front"}],
+             "fx": [{"kind": "caption", "at": 0, "text": "DAY ONE", "dur": 3}]}
+    man = _chromium(lambda: a2d.manifest(code, home3d, dims=3))
+    got = _chromium(lambda: a2d.probe(scene, {"dims": 3, "width": 960, "height": 540}, code, tmp_path / "probe",
+                                      home=home3d, man=man, channel={"cast": [{"name": "Pip", "look": "x", "share": 0.9}]},
+                                      stress=scene))
+    assert got["problems"] == [] and got["issues"] == [] and len(got["pictures"]) == 3
+    assert a2d.untyped(man) == [] and "pip" in a2d.recurring(man)
+
+
 # ── routing: any 3D channel with characters ─────────────────────────────────────────────────────────────────────
 
 @pytest.fixture

@@ -28,18 +28,26 @@ Kit.renderer({
   name: "bean-shorts", version: 1,
   manifest: {
     cast: { describe: "smooth white bean-shaped characters", traits: { color: "colour", band: { color: "colour" } } },
-    actions: { place: "{x, face}", hop: "{height}: a little hop", lean: "leans in" },
-    shots: ["wide", "close"], fx: { glow: "{dur}: a red glow" }, notes: "x from -3 to 3",
+    actions: { place: "{x: number, face: left|right}", hop: "{height: number}: a little hop", lean: "leans in" },
+    shots: ["wide", "close"], fx: { glow: "{dur: number}: a red glow" }, notes: "x from -3 to 3",
   },
   plates: { draw: false },
   prepare(scene, Kit) {
     for (const a of scene.actions) if (a.move === "hop") Kit.sound(a.at, "jump", 0);
-    const bg = document.createElement("canvas"); bg.width = 1920; bg.height = 1080;
-    const g = bg.getContext("2d"); g.fillStyle = "#101010"; g.fillRect(0, 0, 1920, 1080);
-    return { bg, scene };
+    const bgs = {};
+    for (const [id, set] of Object.entries(scene.sets || {})) {
+      const bg = document.createElement("canvas"); bg.width = 1920; bg.height = 1080;
+      const g = bg.getContext("2d"); g.fillStyle = ((set || {}).sky || ["#101010"])[0]; g.fillRect(0, 0, 1920, 1080);
+      for (let k = 0; k < Math.min(60, (set || {}).crowd || 0); k++) { g.fillStyle = "#777777"; g.fillRect(40 + k * 30, 500, 16, 60); }
+      bgs[id] = bg;
+    }
+    return { bgs, scene };
   },
   frame(ctx, t, s, Kit) {
-    ctx.drawImage(s.bg, 0, 0);
+    const shot = (s.scene.shots || []).find((x) => t >= x.start && t < (x.end ?? 1e9)) || (s.scene.shots || [])[0] || {};
+    const bg = s.bgs[shot.set] || Object.values(s.bgs)[0];
+    ctx.fillStyle = "#101010"; ctx.fillRect(0, 0, 1920, 1080);
+    if (bg) ctx.drawImage(bg, 0, 0);
     let i = 0;
     for (const [id, ch] of Object.entries(s.scene.cast)) {
       const hop = s.scene.actions.find((a) => a.who === id && a.move === "hop" && t >= a.at && t < a.at + 0.6);
@@ -184,6 +192,144 @@ def test_the_plan_keeps_the_renderers_own_actions_inside_its_stretch_and_covers_
     assert plan["fx"] == [{"kind": "glow", "at": 1.2, "dur": 1.0}]
 
 
+# ── Studio 109: the renderer's vocabulary, exactly (the owner's Windows test, 2026-10-26) ───────────────────────────
+
+HUD_MAN = {"actions": {"hud": {"does": "the day panel at the top left", "params": {"day": "number", "clock": "text:8",
+                                                                                  "temp": "number (degrees)"},
+                               "adds": "writes DAY before the day and °C after the temperature"},
+                       "board": {"does": "a whiteboard", "params": {"title": "text:24", "show": "sketch",
+                                                                    "items": "texts:12", "side": ["left", "right"]}},
+                       "talk": "{line: text:30, to: id}: says a line to someone"},
+           "fx": {"flash": "{dur: number, color: colour}: a flash"}, "shots": ["wide", "close"]}
+
+
+def test_every_parameter_is_checked_against_the_type_its_renderer_declared():
+    """The bunker video's HUD read "DAY DAY 1" and "18°C°": the renderer wrote DAY and °C itself and the director sent
+    them too. A plan's parameters now take their declared types."""
+    raw = {"shots": [{"start": 0, "framing": "wide", "set": "bunker"}],
+           "actions": [{"at": 0.5, "who": "you", "move": "hud", "day": "DAY 1", "clock": "6:42 PM tonight", "temp": "18°C"},
+                       {"at": 1, "who": "you", "move": "board", "title": "Someone has already done the math for us",
+                        "show": {"kind": "line", "trend": "down", "values": ["412", 300, "x"], "bogus": 1},
+                        "items": ["412 meals", "30 days", 7], "side": "Right"},
+                       {"at": 2, "who": "you", "move": "talk", "line": "We have food for one day and a half at most", "to": "mara"},
+                       {"at": 3, "who": "you", "move": "talk", "line": "Hi", "to": "nobody"}],
+           "fx": [{"kind": "flash", "at": 1, "dur": "0.2 s", "color": "white"}]}
+    plan = a2d.clean_plan(raw, {"you": {"name": "You"}, "mara": {"name": "Mara"}}, {"bunker": {"prompt": "x"}}, 0, 10, HUD_MAN)
+    hud, board, talk, bad = plan["actions"][-4:]
+    assert hud["day"] == 1 and hud["temp"] == 18 and hud["clock"] == "6:42 PM", "numbers bare, text within its length"
+    assert board["title"] == "Someone has already done" and len(board["title"]) <= 24, "cut on a whole word, no ellipsis"
+    assert board["show"] == {"kind": "line", "values": [412.0, 300.0], "trend": "down"} and board["side"] == "right"
+    assert board["items"] == ["412 meals", "30 days", "7"]
+    assert talk["line"] == "We have food for one day and a" and talk["to"] == "mara" and "to" not in bad
+    assert plan["fx"][0]["dur"] == 0.2 and plan["fx"][0]["color"] == "#eeeeee"
+
+
+def test_an_old_renderers_parameters_take_the_form_its_author_used():
+    """A renderer saved before 109 says nothing of types: how its own test scenes call each action does."""
+    man = {"actions": {"hud": "{day, time, temp}: the HUD: DAY n, a clock, the temperature", "sign": "{text}: a sign"},
+           "examples": {"actions": {"hud": {"day": 1, "time": "6:42 PM", "temp": 18}}}}
+    raw = {"actions": [{"at": 0, "who": "a", "move": "hud", "day": "Day 3", "time": "7:00 PM", "temp": "21°C"},
+                       {"at": 1, "who": "a", "move": "sign", "text": "CAPACITY 40"}]}
+    hud, sign = a2d.clean_plan(raw, {"a": {"name": "A"}}, {"s": {}}, 0, 5, man)["actions"][-2:]
+    assert (hud["day"], hud["time"], hud["temp"]) == (3, "7:00 PM", 21) and sign["text"] == "CAPACITY 40"
+    plain = a2d.clean_plan(raw, {"a": {"name": "A"}}, {"s": {}}, 0, 5, {"actions": man["actions"]})["actions"][-2]
+    assert plain["day"] == "Day 3", "without an example nothing is guessed"
+    long = a2d.clean_plan({"actions": [{"at": 0, "who": "a", "move": "sign", "text": "word " * 30}]}, {"a": {}},
+                          {"s": {}}, 0, 5, man)["actions"][-1]
+    assert 50 <= len(long["text"]) <= 60, "untyped long words are kept whole up to 60 characters, never dropped"
+
+
+def test_the_director_reads_each_parameters_type_what_the_renderer_adds_and_its_authors_example():
+    man = {**HUD_MAN, "examples": {"actions": {"hud": {"day": 1, "clock": "6:42 PM", "temp": 18}}}}
+    lines = "\n".join(a2d.vocabulary_lines(man, "actions"))
+    assert "- hud {day: a bare number, clock: text, at most 8 characters, temp: a bare number (degrees)}: the day panel" in lines
+    assert "[the renderer itself writes: writes DAY before the day and °C after the temperature; never send that]" in lines
+    assert 'e.g. {"move": "hud", "day": 1, "clock": "6:42 PM", "temp": 18}' in lines
+    assert "- talk {line: text, at most 30 characters, to: a cast id}: says a line to someone" in lines
+    assert "- flash {dur: a bare number, color: #rrggbb}: a flash" in "\n".join(a2d.vocabulary_lines(man, "fx"))
+
+
+def test_places_keep_what_they_are_and_a_renderer_that_draws_its_own_takes_new_ones_from_the_director():
+    sets = a2d.clean_sets({"Bunker Hall": {"prompt": "a concrete bunker hall", "inside": True, "walls": "grey",
+                                           "light": "harsh strip lights", "crowd": "about 80 people",
+                                           "props": ["steel hatch", "sign: CAPACITY 40", "", {"x": 1}],
+                                           "sky": ["#111111", "#222222"], "floor_colors": ["#333333", "#444444"]}})
+    assert sets["bunker_hall"] == {"prompt": "a concrete bunker hall", "sky": ["#111111", "#222222"],
+                                   "floor_colors": ["#333333", "#444444"], "inside": True, "walls": "#9a9da3",
+                                   "light": "harsh strip lights", "props": ["steel hatch", "sign: CAPACITY 40"], "crowd": 80}
+    raw = {"shots": [{"start": 0, "set": "bunker_hall", "framing": "wide", "crowd": 100},
+                     {"start": 2, "set": "hatch", "framing": "wide"}],
+           "sets": {"hatch": {"prompt": "the round steel hatch at the top of a ladder", "inside": True},
+                    "bunker_hall": {"prompt": "never replaces a designed place"}, "unused": {"prompt": "x"}}}
+    plan = a2d.clean_plan(raw, {"a": {}}, sets, 0, 5, {}, new_sets=2)
+    assert [s["set"] for s in plan["shots"]] == ["bunker_hall", "hatch"] and plan["shots"][0]["crowd"] == 100
+    assert list(plan["sets"]) == ["hatch"], "only the new places its shots use"
+    film = a2d.film_spec(plan, {"cast": {"a": {}}, "sets": sets}, {}, {})
+    assert film["sets"]["hatch"]["inside"] is True and film["sets"]["bunker_hall"]["props"][1] == "sign: CAPACITY 40"
+    plates = a2d.clean_plan(raw, {"a": {}}, sets, 0, 5, {})
+    assert "sets" not in plates and plates["shots"][1]["set"] == "bunker_hall", "a picture per place is paid: no new ones"
+
+
+def test_the_channels_recurring_characters_are_in_every_video():
+    """The study's test shots had the channel's red-cap mascot; the video didn't."""
+    man = {"cast": {"traits": {"color": "colour", "cap": "colour"}, "recurring": {"you": {"name": "You", "color": "#3f6fb0",
+                                                                                         "cap": "#d0302a"}}}}
+    cast = a2d.clean_cast({"mara": {"name": "Mara", "color": "red"}}, man["cast"]["traits"], a2d.recurring(man))
+    assert list(cast) == ["you", "mara"] and cast["you"] == {"name": "You", "color": "#3f6fb0", "cap": "#d0302a",
+                                                             "recurring": True}
+    again = a2d.clean_cast({"you": {"name": "You", "color": "#3f6fb0"}}, man["cast"]["traits"], a2d.recurring(man))
+    assert again == {"you": {"name": "You", "color": "#3f6fb0", "recurring": True}}, "the casting's own entry stands"
+    assert "keep these ids and traits" in a2d.recurring_words(man, {})
+    spec = a2d.from_profile(dart())
+    assert spec["cast"][0]["share"] == 0.9
+    words = a2d.recurring_words({}, spec)
+    assert "red_boxer: Red stick figure" in words and "90%" in words and "blue_boxer" not in words
+    assert a2d.recurring_words({}, {}).startswith("none")
+
+
+def test_a_plan_that_holds_repeats_or_idles_is_sent_back_in_the_directors_terms():
+    """The bunker video held one still figure for long stretches, repeated shots and left out the channel's mascot."""
+    shots = [{"start": 0.0, "end": 9.0, "set": "hall", "framing": "wide", "cast": ["mara"]},
+             {"start": 9.0, "end": 11.0, "set": "hall", "framing": "close:mara", "cast": ["mara"]},
+             {"start": 11.0, "end": 14.0, "set": "hall", "framing": "close:mara", "cast": ["mara"]}]
+    plan = {"duration": 14.0, "shots": shots, "fx": [],
+            "actions": [{"at": 0, "who": "mara", "move": "place"}, {"at": 7.5, "who": "mara", "move": "wave"}]}
+    cast = {"cast": {"you": {"name": "You", "recurring": True}, "mara": {"name": "Mara"}}}
+    notes = a2d.plan_notes(plan, cast, {"shot_s": 2.0}, t0=60.0)
+    assert notes == ["60.0 s to 69.0 s: one shot holds 9 s on the same view; cut on the words to another framing, place "
+                     "or person",
+                     "71.0 s: this shot repeats the one before it (the same place, framing and people)",
+                     "60.0 s to 67.5 s: nobody does anything for 8 s; give the people on screen actions that show the words",
+                     "67.5 s to 74.0 s: nobody does anything for 6 s; give the people on screen actions that show the words",
+                     "60.0 s to 74.0 s: the channel's recurring character (you) is in none of the shots"]
+    busy = {"duration": 6.0, "fx": [], "shots": [{"start": 0, "end": 3, "set": "hall", "framing": "wide", "cast": ["you"]},
+                                                  {"start": 3, "end": 6, "set": "pantry", "framing": "wide", "cast": ["you"]}],
+            "actions": [{"at": t, "who": "you", "move": "walk"} for t in (0.5, 2.5, 4.5)]}
+    assert a2d.plan_notes(busy, cast, {}) == []
+
+
+def test_the_swept_frames_find_a_frozen_picture_words_off_the_frame_or_over_others_and_shots_that_look_alike():
+    moves = [(k * 0.25, 0.0 if 2.0 <= k * 0.25 <= 5.5 else 0.01 if k * 0.25 > 7 else 1.2) for k in range(1, 40)]
+    sig_a, sig_b = [100] * 144, [100] * 143 + [104]
+    look = {"moves": moves, "sigs": {0.75: sig_a, 3.0: sig_a, 6.0: sig_b, 8.5: [10] * 144},
+            "texts": [{"kind": "over", "text": "DAY DAY 1", "other": "6:42 PM", "t": 0.5},
+                      {"kind": "over", "text": "DAY DAY 1", "other": "6:42 PM", "t": 0.75},
+                      {"kind": "off", "text": "a title sliding in", "t": 2.0}],
+            "overflow": [{"text": "until then, the bunker decides who stays", "t": 6.0}]}
+    plan = {"duration": 10.0, "shots": [{"start": 0, "end": 2, "set": "hall", "framing": "wide"},
+                                        {"start": 2, "end": 4, "set": "pantry", "framing": "wide"},
+                                        {"start": 4, "end": 8, "set": "pantry", "framing": "close:you"},
+                                        {"start": 8, "end": 10, "set": "hatch", "framing": "wide"}]}
+    notes = a2d.frame_notes(look, plan)
+    assert "1.8 s to 5.5 s: nothing on screen moves (a frozen picture); give someone an action there" in notes
+    assert len([n for n in notes if "frozen" in n]) == 1, "a figure that only breathes (a tiny change) is not frozen"
+    assert any('"DAY DAY 1" are drawn over "6:42 PM"' in n for n in notes)
+    assert not any("sliding" in n for n in notes), "words off the frame in one sampled frame are a slide-in, not a fault"
+    assert any("until then, the bunker decides who stays\" don't fit their box" in n for n in notes)
+    assert "2.0 s: this shot looks the same as the one before it" in notes and \
+        "4.0 s: this shot looks the same as the one before it" in notes and len([n for n in notes if "same" in n]) == 2
+
+
 def test_long_narration_is_choreographed_in_even_stretches_between_lines():
     lines = [(i * 5.0, i * 5.0 + 4.5, f"line {i}", []) for i in range(20)]
     parts = a2d.chunks(lines, 100.0)
@@ -222,12 +368,12 @@ def test_the_builder_ships_the_kit_and_its_sounds(tmp_path):
     from scripts import build_frontier_admin as builder
     kit_dir = tmp_path / "data/frontier/animated2d"
     (kit_dir / "sounds").mkdir(parents=True)
-    for name in ("core.js", "rig.js", "draw.js", "moves.js", "fx.js", "film.js", "bind.js", "example-stick.js",
-                 "example-own.js", "cast.txt", "director.txt", "build.txt", "AUTHORING.md"):
+    for name in ("core.js", "rig.js", "draw.js", "moves.js", "fx.js", "film.js", "stage.js", "bind.js", "example-stick.js",
+                 "example-own.js", "cast.txt", "director.txt", "build.txt", "review.txt", "AUTHORING.md"):
         (kit_dir / name).write_text("x", encoding="utf-8")
     (kit_dir / "sounds" / "punch.mp3").write_bytes(b"mp3")
     shipped = {dest for _, dest in builder.private_animated2d_resources(tmp_path)}
-    assert {"animated2d/core.js", "animated2d/build.txt", "animated2d/AUTHORING.md",
+    assert {"animated2d/core.js", "animated2d/stage.js", "animated2d/build.txt", "animated2d/AUTHORING.md",
             "assets/sfx/animated2d/punch.mp3"} <= shipped
     (kit_dir / "notes.md").write_text("x", encoding="utf-8")
     with pytest.raises(ValueError, match="Unexpected"):
@@ -265,7 +411,7 @@ const img = new Image(); img.onload = () => { window.__got++; }; img.src = "http
                                             home=home))
     with pytest.raises(a2d.AnimationStopped, match="boom"):
         _chromium(lambda: a2d.render_stills({**BEAN_SCENE, "stills": [1]}, home / "bad",
-                                            BEAN.replace("ctx.drawImage(s.bg, 0, 0);", "throw new Error('boom');"),
+                                            BEAN.replace("if (bg) ctx.drawImage(bg, 0, 0);", "throw new Error('boom');"),
                                             home=home))
 
 
@@ -306,7 +452,9 @@ def test_claude_writes_the_renderer_its_shots_are_judged_and_it_is_revised_until
                                          judge=judge, references=refs, home=home, log=lambda m: None))
     assert result["state"] == "passed" and result["round"] == 3 and result["overall"] == 7.5 and result["bar"] == 7.0
     assert "may not" in seen[1][0], "the refused draft's reasons go back to Claude"
-    assert "band sits too low" in seen[2][0] and len(seen[2][1]) == 5 + 3, "the judge's words and the last shots go back"
+    assert "band sits too low" in seen[2][0] and len(seen[2][1]) == 5 + 3 + 3, "the judge's words and the last shots go back"
+    assert [Path(p).name for p in seen[2][1][-3:]] == ["inside_0.jpg", "outside_0.jpg", "crowd_0.jpg"], \
+        "with Studio's probes: the test scene in a bunker room, on a beach and with a crowd"
     assert not any("never shown" in prompt for prompt, _ in seen), "the held-out frame's notes are not Claude's to fix"
     assert len(judged) == 3, "the channel's own frame is scored once, on its own"
     assert result["manifest"]["name"] == "bean-shorts" and (tmp_path / "op/renderer/renderer.js").is_file()
@@ -406,6 +554,61 @@ def test_the_example_claude_is_shown_draws_its_own_world_and_passes_studios_fram
     man = _chromium(lambda: a2d.manifest(code, home))
     assert set(man["actions"]) >= {"place", "walk", "jump"} and man["plates"]["draw"] is False
     assert "never its look" in a2d._prompt("build.txt", home) or "never its look" in a2d._prompt("AUTHORING.md", home)
+
+
+ONE_PLACE = r"""
+Kit.renderer({
+  name: "one-place", version: 1,
+  manifest: { cast: { describe: "a block", traits: { color: "colour" } },
+              actions: { place: "{x}", sign: { does: "a sign at the top right", params: { text: "text:40" } } } },
+  plates: { draw: false },
+  prepare(scene, Kit) { return { scene }; },
+  frame(ctx, t, s, Kit) {
+    ctx.fillStyle = "#335533"; ctx.fillRect(0, 0, 1920, 1080);
+    ctx.fillStyle = "#eeeeee"; ctx.fillRect(900 + Math.sin(t * 3) * 20, 500, 100, 300);
+    const sign = s.scene.actions.find((a) => a.move === "sign" && t >= a.at);
+    if (sign) { ctx.fillStyle = "#000"; ctx.font = "120px sans-serif"; ctx.fillText(String(sign.text || ""), 1300, 200); }
+  },
+});
+"""
+
+
+def test_a_draft_that_knows_only_its_own_place_is_sent_back_with_what_every_video_needs(home, tmp_path):
+    """The bunker video: a renderer that knew only the reference's places drew a bunker as supermarket aisles, 4 people
+    for 100 strangers, and board text off the board. The build now draws every draft somewhere new, with a crowd and
+    with every text parameter at its longest."""
+    scene = {"duration": 3, "cast": {"a": {"name": "A"}}, "sets": {"street": {"prompt": "a street"}},
+             "shots": [{"start": 0, "set": "street", "framing": "wide"}], "stills": [1.0],
+             "actions": [{"at": 0, "who": "a", "move": "place", "x": 0}, {"at": 0, "who": "a", "move": "sign", "text": "OPEN"}]}
+    man = _chromium(lambda: a2d.manifest(ONE_PLACE, home))
+    got = _chromium(lambda: a2d.probe(scene, {}, ONE_PLACE, tmp_path / "probe", home=home, man=man,
+                                      channel={"cast": [{"name": "you", "look": "a red-cap stick figure", "share": 0.8}]},
+                                      stress={**scene, "width": 1920, "height": 1080}))
+    issues = "\n".join(got["issues"])
+    assert got["problems"] == [] and [k for k, _ in got["pictures"]] == ["inside", "outside", "crowd"]
+    assert "came out the same in both" in issues and "crowd: 40 drew nobody more" in issues
+    assert "with each text parameter at its longest (sign.text)" in issues and "run off the edge of the frame" in issues
+    assert "these parameters say no type: place.x" in issues
+    assert "you (a red-cap stick figure) in 80% of its shots" in issues and "manifest.cast.recurring" in issues
+
+
+def test_the_example_claude_is_shown_meets_what_every_video_needs(home, tmp_path):
+    """The example renderer Claude learns the contract from draws any place, a crowd, typed parameters and words that
+    fit their box: Studio's probes find nothing to send back."""
+    code = (home / a2d.KIT / a2d.EXAMPLE_OWN).read_text(encoding="utf-8")
+    scene = {"duration": 6, "cast": {"pip": {"name": "Pip", "color": "#f0c040", "hat": True}},
+             "sets": {"park": {"prompt": "a park", "sky": ["#9fd0f0", "#e8f4fb"], "floor_colors": ["#5aa060", "#4a9050"]}},
+             "shots": [{"start": 0, "end": 6, "set": "park", "framing": "wide", "cast": ["pip"]}], "stills": [2.0],
+             "actions": [{"at": 0, "who": "pip", "move": "place", "x": -2, "face": "right"},
+                         {"at": 0.5, "who": "pip", "move": "board", "title": "412 meals", "note": "30 days",
+                          "show": {"kind": "line", "trend": "down"}}],
+             "fx": [{"kind": "day", "at": 0, "day": 1}]}
+    man = _chromium(lambda: a2d.manifest(code, home))
+    got = _chromium(lambda: a2d.probe(scene, {}, code, tmp_path / "probe", home=home, man=man,
+                                      channel={"cast": [{"name": "Pip", "look": "a yellow round-headed figure", "share": 0.9}]},
+                                      stress={**scene, "width": 1920, "height": 1080}))
+    assert got["problems"] == [] and got["issues"] == []
+    assert a2d.untyped(man) == [] and a2d.recurring(man) == {"pip": {"name": "Pip", "color": "#f0c040", "hat": True}}
 
 
 def test_the_frames_claude_sees_span_the_channels_videos():
@@ -511,7 +714,7 @@ class Engine:
 
     def claude(self, prompt, model, max_tokens=0, provider=None):
         self.prompts.append(prompt)
-        return json.dumps(self.cast if "character designer" in prompt else self.direction)
+        return json.dumps(self.cast if "designer of a" in prompt else self.direction)
 
     def image_gen(self, prompt, dest, label="", ref_urls=None):
         self.calls.append(("plate", label))
@@ -570,7 +773,7 @@ def test_every_video_casts_and_directs_in_the_saved_renderers_own_vocabulary_and
     assert casting["cast"]["bean"] == {"name": "Bean", "color": "#eeeeee", "band": {"color": "#e0625a"}}
     cast_prompt, director_prompt = engine.prompts
     assert '"band"' in cast_prompt and "smooth white bean-shaped" in cast_prompt
-    assert "- hop: {height}: a little hop" in director_prompt and "x from -3 to 3" in director_prompt
+    assert "- hop {height: a bare number}: a little hop" in director_prompt and "x from -3 to 3" in director_prompt
     film = json.loads((job / "animated2d" / "film-000.json").read_text())
     assert [a["move"] for a in film["actions"]] == ["place", "hop"], "an action the renderer lacks is dropped"
     clip = Path(next(c for c in engine.calls if c[0] == "plan")[1][0][1])
@@ -581,6 +784,47 @@ def test_every_video_casts_and_directs_in_the_saved_renderers_own_vocabulary_and
     monkeypatch.setattr(a2d, "blank_runs", lambda samples, duration, step=0.25: [(0.5, 4.0)])
     with pytest.raises(a2d.AnimationStopped, match="would show nothing from 0:00 to 0:04.*Nothing was drawn"):
         a2d.assemble(engine, job, job / "audio.mp3", job / "subs.srt", "cr_clone_beans", True, True)
+
+
+def test_each_stretch_is_looked_at_before_it_is_drawn_and_re_planned_once(home, tmp_path, monkeypatch):
+    """Nothing judged the bunker video's frames. Claude now looks at a few frames of each stretch before it is drawn
+    (Claude usage only): what the director can fix is re-planned once; what only the renderer draws wrong is said."""
+    folder = tmp_path / "op"
+    (folder / "renderer").mkdir(parents=True)
+    (folder / "renderer" / "renderer.js").write_text(BEAN, encoding="utf-8")
+    man = _chromium(lambda: a2d.manifest(BEAN, home))
+    (folder / "renderer" / "build.json").write_text(json.dumps({"state": "passed", "overall": 7, "bar": 6.5,
+        "sha256": hashlib.sha256(BEAN.encode()).hexdigest(), "manifest": man}))
+    style = a2d.attach({"name": "cr_clone_beans", "look": {"visuals": "cr_animated2d", "animated2d": {}}}, folder, home)
+    monkeypatch.setattr(a2d, "HERE", home)
+    job = tmp_path / "job"
+    job.mkdir()
+    (job / "script.txt").write_text("The bean wakes up and hops for joy.", encoding="utf-8")
+    (job / "title.txt").write_text("A Bean's Morning\n", encoding="utf-8")
+    (job / "subs.srt").write_text("1\n00:00:00,000 --> 00:00:01,200\nThe bean wakes up\n", encoding="utf-8")
+    engine = Engine("cr_clone_beans", style["look"])
+    looked = []
+
+    def claude_vision(prompt, images, model=None, max_tokens=2000):
+        looked.append((prompt, images))
+        return json.dumps({"problems": [{"moment": 1, "kind": "PLACE", "fix": "director", "what": "a void, not the kitchen"},
+                                        {"moment": 1, "kind": "STRAY", "fix": "renderer", "what": "a red band floats"}]})
+    engine.claude_vision = claude_vision
+    import cr_claude
+    monkeypatch.setattr(cr_claude, "VISUAL_MODEL", "opus", raising=False)
+    a2d.assemble(engine, job, job / "audio.mp3", job / "subs.srt", "cr_clone_beans", False, True)
+    assert len(looked) == 1 and len(looked[0][1]) == 1 and Path(looked[0][1][0]).is_file()
+    assert 'shot in "void"' in looked[0][0] and "The bean wakes up" in looked[0][0]
+    fix_prompt = engine.prompts[-1]
+    assert len(engine.prompts) == 3 and "A CHECK OF YOUR PLAN" in fix_prompt and "place: a void, not the kitchen" in fix_prompt
+    assert "red band" not in fix_prompt, "what only the renderer draws wrong is not the director's to fix"
+    review = json.loads((job / "animated2d" / "delivery.json").read_text())["review"]
+    assert review[0]["replanned"] and review[0]["renderer"] == ["1.2 s: stray: a red band floats"]
+    assert any("Improve this style" in m for k, m in engine.calls if k == "step")
+    again = Engine("cr_clone_beans", style["look"])
+    again.claude_vision = lambda *a, **k: pytest.fail("a stretch is looked at once")
+    a2d.assemble(again, job, job / "audio.mp3", job / "subs.srt", "cr_clone_beans", False, True)
+    assert again.prompts == [], "a resumed video asks Claude nothing again"
 
 
 def test_a_style_from_before_renderers_keeps_the_kits_stick_fights(home, monkeypatch):
