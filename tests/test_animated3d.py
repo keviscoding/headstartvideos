@@ -129,6 +129,51 @@ def test_the_3d_example_claude_is_shown_draws_a_vertical_short_and_passes_studio
     assert a2d.blank_runs(samples, 8) == [] and min(x for t, x in samples if t > 6.8) > 4
 
 
+def test_the_3d_example_draws_any_place_a_crowd_and_typed_parameters(home3d, tmp_path):
+    """Studio 109 (the owner's Windows test: a bunker drawn as the reference's supermarket): the 3D kit builds any place
+    from a set's words (Kit.room, the shared stage's props) and the example renderer passes the build's probes."""
+    code = (home3d / a2d.KIT3D / "example3d.js").read_text(encoding="utf-8")
+    scene = {"dims": 3, "duration": 4, "width": 960, "height": 540,
+             "cast": {"pip": {"name": "Pip", "shirt": "#e0462f", "cap": True}},
+             "sets": {"park": {"prompt": "a park", "sky": ["#8ec5f0", "#cfe6f7"], "floor_colors": ["#6fb35a", "#5fa34a"]}},
+             "shots": [{"start": 0, "end": 4, "set": "park", "framing": "wide", "cast": ["pip"]}], "stills": [1.0],
+             "actions": [{"at": 0, "who": "pip", "move": "place", "x": 0, "z": 0, "face": "front"}],
+             "fx": [{"kind": "caption", "at": 0, "text": "DAY ONE", "dur": 3}]}
+    man = _chromium(lambda: a2d.manifest(code, home3d, dims=3))
+    got = _chromium(lambda: a2d.probe(scene, {"dims": 3, "width": 960, "height": 540}, code, tmp_path / "probe",
+                                      home=home3d, man=man, channel={"cast": [{"name": "Pip", "look": "x", "share": 0.9}]},
+                                      stress=scene))
+    assert got["problems"] == [] and got["issues"] == [] and len(got["pictures"]) == 3
+    assert a2d.untyped(man) == [] and "pip" in a2d.recurring(man)
+
+
+def _caption3d(use_kit: bool) -> str:
+    import test_animated2d as t2
+    calls = t2.CAPTION_CALLS.replace("const W = ctx.canvas.width", "const ctx = view.overlay, W = ctx.canvas.width")
+    return (t2.CAPTION_108 + "Kit.renderer({ name: 'captions3d', version: 1, manifest: { actions: { place: '{x}' } }, "
+            "plates: { draw: false }, frame(view, t, s, Kit) { view.gl.setClearColor(0x223344); view.gl.clear(); "
+            "const cap = " + ("Kit.caption" if use_kit else "caption108") + ";\n" + calls + "} });")
+
+
+def test_the_3d_kit_caption_draws_exactly_as_studio_108_did(home3d, tmp_path):
+    """The coordinator's BLOCKER: a real 3D clone (gneef, renderer v5) drew its popups clipped off the frame with the
+    first 109 kit. Kit.caption on the overlay draws as 108 did."""
+    import test_animated2d as t2
+    scene = {"dims": 3, "duration": 3, "width": 960, "height": 540, "cast": {}, "sets": {"s": {}}, "shots": [{"start": 0}],
+             "actions": [], "stills": [0.5, 1.5, 2.5]}
+    new = _chromium(lambda: a2d.render_stills(scene, tmp_path / "new", _caption3d(True), home=home3d))
+    old = _chromium(lambda: a2d.render_stills(scene, tmp_path / "old", _caption3d(False), home=home3d))
+    assert [t2._same(a, b) for a, b in zip(new, old)] == [True, True, True]
+
+
+def test_a_studio_before_109_runs_3d_renderers_with_the_new_kit(home3d, monkeypatch):
+    """A Studio before 109 can't serve the 2D stage to a 3D page (no a2d/ root): the new 3D kit loads without it and
+    every renderer written before 109 draws as before."""
+    monkeypatch.setattr(a2d, "KIT_ROOTS", {k: v for k, v in a2d.KIT_ROOTS.items() if k != "a2d"})
+    stills = _chromium(lambda: a2d.render_stills(SCENE, home3d / "old", BOX, home=home3d))
+    assert stills and not a2d._blank(stills[0])
+
+
 # ── routing: any 3D channel with characters ─────────────────────────────────────────────────────────────────────
 
 @pytest.fixture
@@ -143,7 +188,8 @@ def _blocky(**over):
 def test_a_3d_channel_with_characters_is_rendered_by_its_own_renderer_not_drawn(kit3d):
     plan = cm.plan_style(_blocky(), tsm.STYLES)
     route = plan["route"]
-    assert route["engine"] == "animated3d" and "medium_gap" not in route and "three.js" in route["why"]
+    assert route["engine"] == "animated3d" and "medium_gap" not in route and "in real 3D" in route["why"]
+    assert "three.js" not in route["why"], "plain words for creators"
     assert plan["base"] == "stories", "a narrated story recipe carries the renderer, never the mannequin engine"
     look = plan["overrides"]["look"]
     assert look["visuals"] == a2d.VISUALS3D and look["animated2d"]["dims"] == 3
@@ -151,7 +197,7 @@ def test_a_3d_channel_with_characters_is_rendered_by_its_own_renderer_not_drawn(
     assert plan["overrides"]["pacing"]["clips_per_min"] == 0.0 and plan["cost"]["usd_per_min"] == 0.0
     assert "style_image" not in plan["needs"] and "threed" not in (look.get("threed") or {})
     question = next(q for q in plan["questions"] if q["id"] == "made")
-    assert question["options"] == [cm.MADE_CODE, cm.MADE_OTHER] and "writes this channel's own renderer" in question["ask"]
+    assert question["options"] == [cm.MADE_CODE, cm.MADE_OTHER] and "writes this channel's own animation" in question["ask"]
     assert "AI pictures drawn in their 3D look" in question["ask"], "what they'd get instead, said honestly"
     ifology = cm.plan_style(tsm.profile({"3d": 0.85, "graphic": 0.15}, {"3d_render": 0.85}, **tsm.IFOLOGY), tsm.STYLES)
     assert ifology["route"]["engine"] == "animated3d", "a designed cast too: the kit is the renderer's helper now"
@@ -200,7 +246,7 @@ def test_every_channel_is_written_in_code_unless_the_creator_chooses_otherwise(k
         other = cm.plan_style(prof, tsm.STYLES, answers={"made": cm.MADE_OTHER})
         assert other["route"]["engine"] == instead and other["overrides"]["look"].get("visuals") not in a2d.PLUGINS
     assert "real footage isn't part of a style written in code" in \
-        next(q for q in cm.plan_style(crime, tsm.STYLES)["questions"] if q["id"] == "made")["ask"]
+        next(q for q in cm.plan_style(crime, tsm.STYLES)["questions"] if q["id"] == "made")["ask"].lower()
     assert cm.plan_style(faceless, tsm.STYLES, base="3d")["route"]["engine"] == "threed", "the 3D recipe picked by hand"
     tall = cm.plan_style(tsm.profile({"generated": 0.9, "graphic": 0.1}, format__vertical=tsm.axis(1.0)), tsm.STYLES)
     spec = tall["overrides"]["look"]["animated2d"]
@@ -493,8 +539,9 @@ def test_a_quote_counts_the_channels_own_music_for_a_picture_style_too(monkeypat
     assert a2d.media_usd({"look": {"sound": {"music": False, "score": {}}}}) == {}, "music off: nothing to pay"
     assert a2d.media_usd({"look": {"sound": {"score": {"on": False}}}}) == {}
     monkeypatch.setattr(a2d, "available", lambda home=None: True)
-    said = cm.coded_route(tsm.profile({"generated": 0.9, "graphic": 0.1}))["why"]
-    assert "nothing else" not in said and "own music" in said and "up to 6" in said
+    # the costs are said once, in the look's cost line (the plan's cost note), not in the route's paragraph
+    said = cm.plan_style(tsm.profile({"generated": 0.9, "graphic": 0.1}), tsm.STYLES)["cost"]["note"]
+    assert "nothing else" not in said and "own music" in said and "up to 6" in said and "$0.12" in said
 
 
 def test_the_study_result_shows_the_renderers_test_shots_beside_the_channels_frames(tmp_path, monkeypatch):

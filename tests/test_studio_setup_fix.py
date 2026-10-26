@@ -11,11 +11,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "local_runtime"))
 import cr_studio  # noqa: E402
 
 
-def fake_playwright(monkeypatch, exe_exists=True, launch_error=None, draws=True):
+def fake_playwright(monkeypatch, exe_exists=True, launch_error=None, draws=True, full_chrome=False):
+    """exe_exists: Playwright's headless shell is installed (what a headless launch starts). full_chrome: the full
+    Chrome for Testing is too, which Studio no longer downloads (chromium.executable_path names it)."""
     class Chromium:
-        executable_path = "/fake/chrome" if exe_exists else "/missing/chrome"
+        executable_path = "/fake/chrome" if full_chrome else "/missing/chrome"
 
         def launch(self, **kw):
+            if not exe_exists:                                 # Playwright's own words when the shell is missing
+                raise RuntimeError("BrowserType.launch: Executable doesn't exist at /missing/chrome-headless-shell\n"
+                                   "Looks like Playwright was just installed or updated. Please run: playwright install")
             if launch_error:
                 raise RuntimeError(launch_error)
             page = SimpleNamespace(evaluate=lambda js: {"browser": draws, "webgl": draws})
@@ -43,9 +48,17 @@ def test_a_missing_browser_says_so_and_is_checked_again_every_time(monkeypatch):
 
 
 def test_a_browser_that_wont_start_gives_the_first_line_of_the_error(monkeypatch):
-    fake_playwright(monkeypatch, launch_error="Executable doesn't exist at /x\nmore detail")
+    fake_playwright(monkeypatch, launch_error="Target page, context or browser has been closed\nmore detail")
     r = cr_studio.graphics_ready()
-    assert "won't start (Executable doesn't exist at /x)" in r["browser_reason"] and "more detail" not in r["browser_reason"]
+    assert "won't start (Target page, context or browser has been closed)" in r["browser_reason"]
+    assert "more detail" not in r["browser_reason"]
+
+
+def test_the_headless_shell_alone_is_a_ready_graphics_browser(monkeypatch):
+    """Studio installs only Playwright's headless shell (B5, 2026-10-26): the missing full Chrome for Testing that
+    chromium.executable_path names must not read as "isn't installed"."""
+    fake_playwright(monkeypatch, exe_exists=True, full_chrome=False)
+    assert cr_studio.graphics_ready() == {"browser": True, "webgl": True, "browser_reason": ""}
 
 
 def test_fix_it_installs_into_studios_own_python_in_the_background(monkeypatch):
@@ -59,8 +72,22 @@ def test_fix_it_installs_into_studios_own_python_in_the_background(monkeypatch):
         if cr_studio.BROWSER_FIX["state"] != "installing":
             break
         time.sleep(0.02)
-    assert ran == [[sys.executable, "-m", "playwright", "install", "chromium"]]
+    assert ran == [[sys.executable, "-m", "playwright", "install", "--only-shell", "chromium"]]
     assert cr_studio.BROWSER_FIX["state"] == "done"
+
+
+def test_a_playwright_without_the_headless_shell_installs_the_full_browser_instead():
+    ran = []
+
+    def run(cmd, **kw):
+        ran.append(cmd)
+        return SimpleNamespace(returncode=1 if "--only-shell" in cmd else 0)    # older than 1.49: unknown option
+    assert cr_studio.install_graphics_browser(run=run).returncode == 0
+    assert ran == [[sys.executable, "-m", "playwright", "install", "--only-shell", "chromium"],
+                   [sys.executable, "-m", "playwright", "install", "chromium"]]
+    calls = []
+    assert cr_studio.install_graphics_browser(run=lambda cmd, **kw: calls.append(cmd) or 0) == 0, "subprocess.call"
+    assert len(calls) == 1
 
 
 def test_the_launchers_check_the_browser_on_every_start():
@@ -68,4 +95,6 @@ def test_the_launchers_check_the_browser_on_every_start():
     for name in ("Start on Mac.command", "Start on Windows.cmd"):
         text = (root / name).read_text(encoding="utf-8")
         after_marker = text.split(".cr-installed", 2)[-1]
-        assert "playwright install chromium" in after_marker, name
+        # the Mac launcher installs through its install_browser function, the Windows one inline
+        assert "playwright install --only-shell chromium" in after_marker or "install_browser ||" in after_marker, name
+        assert "playwright install --only-shell chromium" in text and "playwright install chromium" in text, name

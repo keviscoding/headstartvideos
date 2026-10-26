@@ -990,3 +990,140 @@ def test_browser_renaming_a_style_sends_only_its_name(env):
         assert style["description"] == "About  bees,\nmostly." and not b.errors, b.errors
     finally:
         b.close()
+
+
+def test_browser_a_channel_written_in_code_reads_plainly_from_the_look_to_the_saved_style(env, monkeypatch, tmp_path):
+    """The owner's Windows test of a stick-figure channel: "Look at these videos" stayed live while the look ran, the
+    bar went back for every video, the recipe promised "a drawn or generated picture for every line", the cost read
+    "$0.02 a minute ( a minute)", the example title had no ideas, the result gave two scores and two verdicts, the test
+    shots spilled under the sidebar, and section numbers ran 02, 02, 03."""
+    import os
+    import time as _time
+    import cr_animated2d
+    from PIL import Image
+    sys.path.insert(0, str(Path(__file__).parent))
+    import test_style_map as tsm
+    monkeypatch.setattr(cr_animated2d, "available", lambda home=None: True)
+    (env.home / "styles" / "stories.json").write_text(json.dumps({**tsm.STYLES["stories"], "name": "stories",
+                                                                  "label": "2D Life Stories"}))
+    catalogue = env.studio.styles.catalogue
+    env.studio.styles.catalogue = lambda: catalogue() + [{"name": "stories", "label": "2D Life Stories"}]
+    looks = {}
+
+    def spawn(home, look_id):
+        path = cr_style_look.folder(home, look_id) / "look.json"
+        saved = json.loads(path.read_text())
+        saved.update(phase="download", percent=40, video=2, videos=2, left_s=200, updated_at=_time.time(),
+                     message="Video 2 of 2 · Downloading 0:00-3:00 of Backup 1.")
+        path.write_text(json.dumps(saved))
+        looks["path"] = path
+    monkeypatch.setattr(cr_style_look, "_spawn", spawn)
+    shots = os.environ.get("CR_SHOTS")                        # a folder to save screenshots in, when looking by eye
+    b = _browser(env)
+    try:
+        page = b.page
+        page.goto(BASE + "/cr-style-clone")
+        page.locator("#reference-url").fill("https://www.youtube.com/@NobodyGetsIn")
+        page.locator("#preview-button").click()
+        page.locator("#candidate-list input").nth(0).check()
+        page.locator("#candidate-list input").nth(1).check()
+        page.locator("#next-button").click()
+        page.wait_for_function("document.getElementById('look-message').textContent.includes('minutes left')")
+        assert page.locator("#next-button").is_disabled(), "no second look while one runs"
+        assert page.locator("#look-message").inner_text() == "About 4 minutes left."
+        assert page.locator("#look-phase").inner_text().startswith("Video 2 of 2")
+        if shots:
+            page.screenshot(path=os.path.join(shots, "1-look-running.png"))
+        saved = json.loads(looks["path"].read_text())
+        saved.update(state="done", phase="done", finished_at=_time.time(), sheets=[], not_watched=[],
+                     profile={**tsm.animated(), "recognisable": ["Simple stick figure characters",
+                                                                 "Stick-figure characters", "Red cap mascot"]},
+                     titles=["100 Strangers, 1 Bunker: Who Survives 30 Days", "Backup 1"])
+        saved.pop("mapping", None)
+        looks["path"].write_text(json.dumps(saved))
+        page.locator("#look-result").wait_for(state="visible", timeout=8000)
+        assert not page.locator("#next-button").is_disabled()
+        made = page.locator("input[name='q-made']")
+        assert made.nth(0).get_attribute("value") == cr_style_map.MADE_CODE, "the saved answer is unchanged"
+        label = page.locator("#look-questions label").nth(0).inner_text()
+        assert label.startswith("Written in code") and "renderer" not in label
+        base = page.locator("#look-base-why").inner_text()
+        assert "drawn in code" in base and "drawn or generated picture" not in base
+        cost = page.locator("#look-cost").inner_text()
+        assert cost.startswith("Pictures cost nothing") and "( a minute)" not in cost and "a minute on" not in cost
+        assert page.locator("#look-recognisable li").count() == 2, "near-duplicate chips are one chip"
+        said = page.locator("#look-panel").inner_text()
+        assert "Picture model" not in said and "What the pictures do" not in said, "no AI-picture rows for code"
+        assert said.count("10 to 25 minutes") == 1 and "three.js" not in said and "picture costs yet" not in said
+        if shots:
+            page.screenshot(path=os.path.join(shots, "2-look-result.png"), full_page=True)
+        page.locator("#look-next").click()
+        assert page.locator("#brief-panel .number").inner_text() == "03 / MAKE IT YOURS"
+        assert page.locator("#visual-mode-row").is_hidden(), "a coded style has no 'video look' choice"
+        ideas = page.locator("#title-idea-list button")
+        assert 3 <= ideas.count() <= 5 and page.locator("#title-ideas").is_visible()
+        first = ideas.nth(0).inner_text()
+        ideas.nth(0).click()
+        assert page.locator("#example-title").input_value() == first and first != "Backup 1"
+        page.locator("#example-title").fill(first + " (mine)")                  # still the creator's to change
+        assert "three.js" not in page.locator("#likeness-cost").inner_text()
+        if shots:
+            page.screenshot(path=os.path.join(shots, "3-brief.png"), full_page=True)
+        page.locator("#style-label").fill("2d Survival Stories")
+        page.locator("#usage-approved").check()
+        page.locator("#start-button").click()
+        page.locator("#progress-panel").wait_for(state="visible")
+        assert page.locator("#look-next").is_hidden() and page.locator("#look-back").is_hidden(), "no stale buttons"
+        assert page.locator("#progress-panel .number").inner_text() == "04 / STUDY & SAVE"
+        operation = page.evaluate("localStorage.getItem('cr.styleStudy')")
+        _, saved_op = clone._saved(env.home, operation, env.bridge)
+        assert saved_op["spec"]["renderer"] == "2d" and saved_op["spec"]["title"] == first + " (mine)"
+
+        # the saved style: one score, one verdict, its test shots beside the channel's frames
+        pics = []
+        for k in range(3):
+            p = tmp_path / f"pic_{k}.jpg"
+            Image.new("RGB", (1920, 1080), (40 + 50 * k, 90, 120)).save(p)
+            pics.append(p)
+        monkeypatch.setattr(clone, "renderer_pictures", lambda home, op, bridge, style=None: {
+            "shots": pics[:3], "channel": pics[:2]})
+        ready = {**clone.status(env.home, operation, env.bridge), "state": "done", "style_ready": True, "phase": "complete",
+                 "percent": 100, "style": "cr_clone_x", "label": "2d Survival Stories", "message": "Your style is saved.",
+                 "likeness": {"state": "done", "verdict": "close", "scores": {"overall": 5.67, "characters": 6}},
+                 "renderer": {**clone.renderer_verdict({"look": {"visuals": "cr_animated2d", "animated2d": {
+                     "renderer": {"state": "passed", "overall": 5.67, "bar": 5.5}}}}), "shots": 3, "channel_frames": 2}}
+        monkeypatch.setattr(clone, "status", lambda home, op, bridge: dict(ready))
+        page.evaluate("poll()")
+        page.locator("#renderer-panel").wait_for(state="visible")
+        assert page.locator("#likeness-panel").is_hidden(), "one score: the animation's"
+        text = page.locator("#saved-result").inner_text()
+        assert text.count("/10") == 1 and "5.7/10" in text and "Medium 0" not in text and "6/10" not in text
+        assert page.locator("#renderer-text").inner_text().startswith("Claude wrote this channel's animation in code")
+        assert page.locator("#renderer-title").inner_text() == "Claude’s animation for this channel: close to the channel"
+        assert page.locator("#renderer-shots img").count() == 5
+        grid = page.locator("#renderer-shots").bounding_box()
+        aside = page.locator("aside").bounding_box()
+        assert grid["x"] + grid["width"] <= aside["x"], "the shots stay out from under the sidebar"
+        assert page.locator("#anchor-panel").is_hidden() and page.locator("#refine-controls").is_hidden()
+        if shots:
+            page.wait_for_timeout(300)
+            page.screenshot(path=os.path.join(shots, "4-saved.png"), full_page=True)
+            page.set_viewport_size({"width": 390, "height": 900})
+            page.wait_for_timeout(200)
+            page.screenshot(path=os.path.join(shots, "5-saved-phone.png"), full_page=True)
+        assert not b.errors, b.errors
+    finally:
+        b.close()
+
+
+def test_the_channels_graphics_are_studied_only_with_consent_and_only_for_a_coded_style_now_in_pictures(env):
+    """The opt-in graphics study (109 review): never without the tick, never for a style it doesn't fit."""
+    result = env.post("/cr-style-clone/start", env.approved())
+    source = result.json["operation_id"]
+    env.targets.pop()()
+    path = f"/cr-style-clone/{source}/graphics"
+    for payload in ({}, {"acknowledge_costs": False}, {"acknowledge_costs": "true"}):
+        assert env.post(path, payload).status_code == 400
+    refused = env.post(path, {"acknowledge_costs": True})
+    assert refused.status_code == 409 and "Only a style written in code" in refused.json["error"]
+    assert not env.targets, "no worker started"

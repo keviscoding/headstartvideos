@@ -1,5 +1,19 @@
 [
   {
+    "build": 109,
+    "date": "2026-10-26",
+    "title": "Coded channels look right, and Windows setup is smoother",
+    "items": [
+      "Fixed: cloned channels drawn in code work on Windows. They stopped with \"animation changed on disk\" because Windows saves files with other line endings.",
+      "Coded videos draw the places, people and text the story needs. A clone's renderer draws any place (a bunker, a beach), keeps a recurring cast, fits its text and keeps crowds moving, and each stretch of the video is checked frame by frame and fixed once if something's off. The check adds a few minutes of your Claude plan per minute of video; switch it off in Create.",
+      "Setup on Windows is smoother. Windows no longer blocks Studio's downloaded files, installs are quieter, the graphics browser is a smaller download, and FFmpeg and Node install with one press each.",
+      "Cloning a coded channel is quicker and clearer. It skips a 12 to 20 minute graphics step, shows which video it's on and the time left, and suggests title ideas from the channel's own titles.",
+      "A cloned style keeps its own narrator, and you can pick a voice per style in Choose voice. Styles you cloned before keep the voice they always used.",
+      "Use pictures instead now says the graphics come from the base recipe, and offers to learn the channel's own graphics (about 7 to 20 minutes of your Claude plan, saved as a copy).",
+      "Long titles work on Windows, Create shows its problems one per line, and My script says how long the pasted script reads."
+    ]
+  },
+  {
     "build": 108,
     "date": "2026-10-26",
     "title": "Improve a style from its page",

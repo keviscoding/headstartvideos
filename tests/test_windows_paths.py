@@ -101,6 +101,36 @@ def test_a_title_too_long_for_this_folder_stops_before_the_video_not_at_its_end(
     assert len(str(finished)) <= cr_paths.LIMIT
 
 
+def test_a_long_title_gets_a_shorter_file_name_on_windows_instead_of_stopping_create(tmp_path):
+    """The owner's Windows test (2026-10-26): a 112-character title in a Downloads folder stopped Create with "Shorten
+    the title". Studio now cuts the finished video's file name to fit; the title stays whole everywhere else."""
+    class Engine:
+        @staticmethod
+        def youtube_filename(title):
+            return title[:120].rstrip(". ") + ".mp4"
+    home = tmp_path / "studio"
+    (home / "styles").mkdir(parents=True)
+    folder = r"C:\Users\creator\Downloads\ChannelRecipe-local-studio-5.3-admin.107\ChannelRecipe studio"
+    title = "100 Strangers, 1 Bunker: Who Survives 30 Days? It's a drama-and-alliances format that keeps viewers on the edge."
+    off = Engine()
+    cr_paths.install(off, home, windows=False)
+    assert off.youtube_filename(title) == title.rstrip(".") + ".mp4", "a Mac keeps the whole name"
+    on = Engine()
+    cr_paths.install(on, home, windows=True, long_paths=True)
+    assert on.youtube_filename(title) == title.rstrip(".") + ".mp4", "so does Windows with long paths on"
+    win = Engine()
+    cr_paths.install(win, home, windows=True, long_paths=False, folder=folder)
+    cr_paths.install(win, home, windows=True, long_paths=False, folder="C:\\x")   # installed once
+    assert cr_paths.title_problem(folder, "cr_clone_7373019c2237", [title], Engine.youtube_filename), "it was stopped"
+    assert cr_paths.title_problem(folder, "cr_clone_7373019c2237", [title], win.youtube_filename) == ""
+    name = win.youtube_filename(title)
+    assert name.endswith(".mp4") and title.startswith(name[:-4].rsplit(" ", 1)[0])
+    assert len(name) - 4 <= cr_paths.title_room(folder, home)
+    assert win.youtube_filename("Short title") == "Short title.mp4"
+    one, two = win.youtube_filename(title + " Part 1"), win.youtube_filename(title + " Part 2")
+    assert one != two and len(one) - 4 <= cr_paths.title_room(folder, home), "two long titles cut alike stay apart"
+
+
 def test_windows_long_path_setting_is_read_where_it_exists():
     enabled = cr_paths.long_paths_enabled()
     assert enabled is None if sys.platform != "win32" else enabled in (True, False)

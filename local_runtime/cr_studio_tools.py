@@ -356,6 +356,16 @@ def quote_for(cat: dict, row: dict, *, titles: int, minutes: int, where: str, fe
             out["disk"]["problem"] = room
         elif warning:
             out["disk"]["warning"] = warning
+    check = row.get("frame_check") if isinstance(row.get("frame_check"), dict) else None
+    if check:
+        # a coded style's frame check (cr_animated2d): Claude looks at each minute's frames before they are drawn and
+        # re-plans a minute once when it finds something clear: Claude time on their plan, no money, said with the cost
+        lo, hi = check.get("per_minute") or (1.0, 2.5)
+        span = max(1, minutes if kind(row) != "short" else 1)
+        out["frame_check"] = {"on": bool(check.get("on", True)), "adds_minutes": [max(1, round(lo * span)), max(2, round(hi * span))],
+                              "note": "Before each minute is drawn, Claude looks at its frames and re-plans it once when it "
+                                      "shows the wrong place, broken words or a frozen picture: Claude time on your plan, "
+                                      "no money. make_videos options.frame_check=false skips it for a video."}
     if features.get("youtube") and kind(row) != "short":
         # Research footage watches YouTube videos before the video is made: how long that adds, said with the cost
         import cr_watch
@@ -381,6 +391,11 @@ def summary(q: dict) -> str:
     # the footage is watched on this computer wherever the video renders
     watching = (f" Research footage adds about {footage['adds_minutes'][0]} to {footage['adds_minutes'][1]} minutes a "
                 f"video (it watches up to {footage['videos_watched_at_most']} YouTube videos)." if footage else "")
+    check = q.get("frame_check") or {}
+    if check.get("on"):
+        lo, hi = check["adds_minutes"]
+        watching += (f" The frame check adds about {lo} to {hi} minutes of Claude time a video (Claude looks at each "
+                     "minute's frames before they are drawn; options.frame_check=false skips it).")
     if q["where"] == "studio_cloud":
         c = q["cloud"]
         text = (f"{n} × {q['minutes']}-min {q['style_name']} on Studio Cloud: machine about "
@@ -742,6 +757,8 @@ def video_payload(row: dict, titles: list, minutes: int, features: dict, options
          "cta": None, "pictures_per_min": None, "threed_look": "",
          # Create's Quicker 3D review: one 3D review round (cr_threed_look), for styles with 3D scenes only
          "threed_quick": options.get("quicker_3d_review") is True and bool((features or {}).get("threed"))}
+    if row.get("frame_check") and isinstance(options.get("frame_check"), bool):
+        p["frame_check"] = options["frame_check"]                   # a coded style's frame check, for this video only
     if p["script"] and len(titles) > 1:
         raise Refused("Your own script goes with one title.")
     if kind(row) == "short":
@@ -1214,6 +1231,8 @@ def look_progress(look_id: str) -> dict:
     d = call("GET", "/cr-style-clone/look/" + look_id, timeout=30)
     out = {"id": look_id, "state": d.get("state"), "percent": d.get("percent"), "message": d.get("message"),
            "references": d.get("references")}
+    if d.get("state") == "running" and d.get("left_s"):
+        out["minutes_left"] = max(1, round(float(d["left_s"]) / 60))       # measured from the look's steps so far
     if d.get("state") == "done":
         m = d.get("mapping") or {}
         route = m.get("route") or {}
@@ -1224,12 +1243,16 @@ def look_progress(look_id: str) -> dict:
                    medium_gap=route.get("medium_gap") or "", cost_note=m.get("cost") if isinstance(m.get("cost"), str)
                    else "", not_watched=d.get("not_watched") or [], shorts=bool(d.get("shorts")),
                    similar_styles=similar_styles(d.get("similar")),
+                   # example titles built from the channel's own titles (no model call): offer them for example_title
+                   title_ideas=[str(t) for t in d.get("title_ideas") or []][:5],
                    **({"shorts_note": SHORTS_NOTE} if d.get("shorts") else {}),
                    next="Ask the creator these questions (their first option is Studio's guess), then call clone_style "
-                        "with look_id, a style name, an example title and their answers. The 'made' question decides "
+                        "with look_id, a style name, an example title (title_ideas has a few from the channel's own "
+                        "titles to offer; they can change any) and their answers. The 'made' question decides "
                         "how the videos are made, so ask it first, in plain words. Written in code (recommended) has "
-                        "their Claude Code write the channel's own renderer during the study (usually 5 to 15 more "
-                        "minutes of their Claude usage, at most 25). Its videos then cost their voice, plus at most a "
+                        "their Claude Code write the channel's own renderer during the study (usually 10 to 25 "
+                        "minutes of their Claude usage for the whole study, at most 46). Its videos then cost their "
+                        "voice, plus at most a "
                         "few background pictures, and the renderer can be improved later with style_lab. Instead of "
                         "code gives Studio's ready-made pictures or 3D engine, which won't look or move exactly like the "
                         "channel. Say both before they choose. A medium_gap is something Studio can't make yet: read it "
@@ -1673,7 +1696,9 @@ _OPTIONS = {"type": "object", "description": (
     "description with chapters and sources, default true), extra_instructions (creative direction), script (your "
     "own narration, one title only), features {key: true/false} to switch the style's options (keys from quote), "
     "short_seconds 15-60 for Shorts, quicker_3d_review (true: one 3D review round instead of three, about a quarter "
-    "to a third less Claude time on a 3D video, fewer last fixes; Create's Quicker 3D review), "
+    "to a third less Claude time on a 3D video, fewer last fixes; Create's Quicker 3D review), frame_check (a style "
+    "drawn in code: false skips the check where Claude looks at each minute's frames before they are drawn and "
+    "re-plans it once when it finds something clear; default Studio's setting, quote's frame_check says its time), "
     "ranking {ranks 3-10, narrator_lines, vine_booms, meme_sounds full|light|off, "
     "punch_ins, captions} for Ranking Shorts. character: words for the main character who appears in every picture "
     "(age, hair, face, clothes, one recognisable detail); they replace the style's own character for these videos, and "

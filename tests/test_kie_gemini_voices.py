@@ -317,3 +317,49 @@ def test_the_guard_keeps_a_gemini_voice_it_is_given(hub, monkeypatch):
     creates = kie_tasks(monkeypatch)
     media.run("narration", media.narration_input("Hello there.", "Puck", GEMINI), hub / "voice.wav", model=TURBO)
     assert creates[0]["model"] == GEMINI and creates[0]["input"]["speakers"][0]["voice_name"] == "Puck"
+
+
+def test_a_cloned_style_reads_with_its_own_narrator_unless_one_is_chosen(hub, monkeypatch):
+    """The owner's Windows test (2026-10-26): the study picked Zubenelgenubi for a deadpan male channel, but nothing read
+    it and the video was voiced by the account's Kore. A style's own narrator now reads its videos; a voice chosen for
+    that style in Create beats it; a video's own choice beats both; another account's provider is left alone."""
+    save(narration={"provider": "kie", "model": GEMINI, "voice": "Kore"})
+    info = {"cr_style_clone": {"suggested_voice": "Zubenelgenubi", "own_narrator": True}}
+    assert media.style_voice("cr_clone_survival", info)["voice"] == "Zubenelgenubi"
+    old = {"cr_style_clone": {"suggested_voice": "Zubenelgenubi"}}
+    assert media.style_voice("cr_clone_old", old) == {}, "a clone saved before 109 keeps the account's voice"
+    assert media.style_voice("documentary", {}) == {}, "a recipe without a narrator keeps the account's voice"
+    assert media.style_voice("cr_clone_survival", {"cr_style_clone": {"suggested_voice": "NoSuchVoice",
+                                                                       "own_narrator": True}}) == {}
+    creates = kie_tasks(monkeypatch)
+    monkeypatch.setattr(media, "narration_audio", lambda path: [0.0])
+    monkeypatch.setattr(media.subprocess, "run", lambda args, **k: Path(args[-1]).write_bytes(b"mp3"))
+    engine = voice_engine([])
+    engine.STYLE_INFO = {"cr_clone_survival": info}
+    first = hub / "first"
+    first.mkdir()
+    media.narrate(engine, "Hello world.", first / "audio.mp3", first / "subs.srt", style="cr_clone_survival")
+    assert creates[-1]["input"]["speakers"][0]["voice_name"] == "Zubenelgenubi"
+    assert json.loads((first / media.STYLE_VOICE_PIN).read_text())["voice"] == "Zubenelgenubi", "kept with the video"
+    save(narration={"provider": "kie", "model": GEMINI, "voice": "Kore"}, style_voices={"cr_clone_survival": "Puck"})
+    assert media.style_voice("cr_clone_survival", info)["voice"] == "Puck", "the voice chosen for the style"
+    job = hub / "own-choice"
+    job.mkdir()
+    (job / media.VOICE_CHOICE).write_text(json.dumps({"provider": "kie", "model": GEMINI, "voice": "Charon"}))
+    media.narrate(engine, "Hello world.", job / "audio.mp3", job / "subs.srt", style="cr_clone_survival")
+    assert creates[-1]["input"]["speakers"][0]["voice_name"] == "Charon", "this video's own choice wins"
+    started = hub / "started"
+    (started / "audio-hub-voice").mkdir(parents=True)
+    (started / "audio-hub-voice" / "part-000.wav").write_bytes(b"kore, before the update")
+    media.narrate(engine, "Hello world.", started / "audio.mp3", started / "subs.srt", style="cr_clone_survival")
+    assert creates[-1]["input"]["speakers"][0]["voice_name"] == "Kore", "a video started before 109 keeps its voice"
+    # coordinator review: a Resume after a stop mid-narration reads with the voice it started with, never the account's
+    resumed = hub / "resumed"
+    (resumed / "audio-hub-voice").mkdir(parents=True)
+    (resumed / "audio-hub-voice" / "part-000.wav").write_bytes(b"zubenelgenubi, before the stop")
+    (resumed / media.STYLE_VOICE_PIN).write_text((first / media.STYLE_VOICE_PIN).read_text())
+    before = len(creates)
+    media.narrate(engine, "Hello world.", resumed / "audio.mp3", resumed / "subs.srt", style="cr_clone_survival")
+    assert {c["input"]["speakers"][0]["voice_name"] for c in creates[before:]} == {"Zubenelgenubi"}
+    save(narration={"provider": "original"})
+    assert media.style_voice("cr_clone_survival", info) == {}, "ElevenLabs on the creator's own key: untouched"

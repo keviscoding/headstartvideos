@@ -4,8 +4,15 @@ window.CRLocalStudio = (() => {
     const DISCORD_URL = '/community/discord';
     const SETUP_URL = 'http://127.0.0.1:7860/cr-setup';
     const STUDIO_URL = 'http://127.0.0.1:7860/';
-    const CLAUDE_PROMPT = 'Help me install ChannelRecipe Studio on this computer. Check what is missing, '
-        + 'install it for me one step at a time, then start the studio and open its setup page.';
+    // Windows' Extract All puts the "ChannelRecipe studio" folder inside one named after the download, and Claude Code
+    // opened on that outer folder loads none of Studio's tools (owner's Windows test, 2026-10-26): the prompt says so.
+    const CLAUDE_PROMPT = 'Help me install ChannelRecipe Studio on this computer. If this folder only holds a '
+        + '"ChannelRecipe studio" folder, work inside that one, and tell me to reopen Claude Code on it so Studio\'s tools '
+        + 'load. Check what is missing, install it for me one step at a time, then start the studio and open its setup page.';
+    // What a first install downloads, measured 2026-10-26: the ZIP (about 240 MB), then the libraries (Windows 200 MB,
+    // Mac 180), the graphics browser (115 / 95), FFmpeg (115 / 55), Node.js (40 / 55), the speech-timing model (140) and
+    // Claude Code's command-line tool (285 / 260) when it isn't there yet.
+    const DOWNLOAD = {windows: {more: '900 MB', total: '1.1 GB'}, mac: {more: '800 MB', total: '1 GB'}};
     let data = null, platform = /Win/i.test(navigator.userAgent) ? 'windows' : 'mac';
     let busy = false, brainChoice = 'anthropic', view = 'guest';
 
@@ -147,7 +154,7 @@ window.CRLocalStudio = (() => {
             ['What do I need?','A Mac or Windows computer, a Claude account (Pro or Max) and a media account from Kie.ai or Atlas Cloud. Studio checks everything during setup and tells you what’s missing.'],
             ['What does a video cost to make?','It depends on length and style. You pay Claude and your media provider directly at their own prices. We don’t add a markup.'],
             ['Is this different from the recipes on ChannelRecipe?','Yes. Classic recipes are ChannelRecipe v1 and run in our cloud. Studio is v2: far more styles, style cloning, motion graphics, 3D and a real editor.'],
-            ['Can Claude set it up for me?','Yes. Open the downloaded folder in Claude Code and paste the prompt we give you. It checks your computer, installs what’s missing and starts the studio.'],
+            ['Can Claude set it up for me?','Yes. Open the ChannelRecipe studio folder in Claude Code and paste the prompt we give you. It checks your computer, installs what’s missing and starts the studio. Claude Code asks before each step; you don’t need Bypass permissions.'],
             ['Can I make videos from Claude Code instead of the Studio page?','Yes. Open Claude Code in your Studio folder and type /make-videos, /niche-strategy, /clone-style or /digital-product, or just ask in your own words. Claude shows you the styles, tells you the cost before anything starts and asks before it spends anything.'],
             ['What if I get stuck?','Ask in our Discord. We answer there every day, and it’s where we hear what to build next.']];
         return '<section class="ls-section ls-faq"><h2>Questions</h2>'+items.map(([q,a])=>'<details><summary>'+q+'</summary><p>'+a+'</p></details>').join('')+'</section>';
@@ -175,7 +182,7 @@ window.CRLocalStudio = (() => {
     function checklist() {
         const m = progress();
         const steps = [
-            ['Download Studio', !!m.downloaded_at || !!m.connected_at || !!m.projects, 'Mac or Windows, about 250 MB'],
+            ['Download Studio', !!m.downloaded_at || !!m.connected_at || !!m.projects, 'Mac or Windows, about '+DOWNLOAD[platform].total+' with setup'],
             ['Install and connect it', !!m.connected_at || !!m.seen_at || !!m.projects, 'Claude Code can do it for you'],
             ['Make your first video', Number(m.finished || 0) > 0, Number(m.finished || 0) > 0
                 ? Number(m.finished)+' finished '+(Number(m.finished)===1?'video':'videos') : 'In Studio, or type /make-videos in Claude Code']];
@@ -283,11 +290,11 @@ window.CRLocalStudio = (() => {
         return '<section class="ls-walk" id="ls-setup-video" aria-label="Watch the whole setup">'+
             '<div class="ls-walk-head"><span class="ls-walk-chip">'+icon('play')+'3 min · start to finish</span>'+
             '<h3>Watch the whole setup first</h3>'+
-            '<p>Download, Claude Code, the Mac security prompt, your Kie.ai key and your first video, done for real. Stuck on one step? Jump straight to it.</p></div>'+
+            '<p>'+(platform==='windows'?'Download, Claude Code, your Kie.ai key and your first video, done for real (recorded on a Mac: on Windows you open the inner ChannelRecipe studio folder and Start on Windows.cmd).':'Download, Claude Code, the Mac security prompt, your Kie.ai key and your first video, done for real.')+' Stuck on one step? Jump straight to it.</p></div>'+
             '<div class="ls-walk-player"><video id="ls-walk-video" preload="none" playsinline poster="'+WALKTHROUGH+'.jpg" '+
                 'aria-label="The whole ChannelRecipe Studio setup, start to finish"><source src="'+WALKTHROUGH+'.mp4" type="video/mp4"></video>'+
             '<button type="button" class="ls-walk-play" data-ls-walk-seek="0">'+icon('play')+'Watch the setup <small>3:10</small></button></div>'+
-            '<ol class="ls-chapters">'+CHAPTERS.map(([t,label])=>'<li><button type="button" data-ls-walk-seek="'+t+'"><span>'+clock(t)+'</span>'+label+'</button></li>').join('')+'</ol>'+
+            '<ol class="ls-chapters">'+CHAPTERS.filter(([,label])=>platform!=='windows'||!/\bMac\b/.test(label)).map(([t,label])=>'<li><button type="button" data-ls-walk-seek="'+t+'"><span>'+clock(t)+'</span>'+label+'</button></li>').join('')+'</ol>'+
             '</section>';
     }
     function setupSteps() {
@@ -297,19 +304,22 @@ window.CRLocalStudio = (() => {
             '<div class="ls-step"><span class="ls-step-n">1</span><div class="ls-step-body"><h3>Download Studio</h3>'+
                 '<div class="ls-platform" role="group" aria-label="Your computer"><button data-ls-platform="mac" class="'+(platform==='mac'?'selected':'')+'">Mac</button><button data-ls-platform="windows" class="'+(platform==='windows'?'selected':'')+'">Windows</button></div>'+
                 '<a class="btn-primary ls-download-btn '+(ready?'':'ls-disabled')+'" '+(ready?'href="/api/studio/download/file" data-ls-download':'aria-disabled="true"')+'>'+icon('download')+(ready?'Download ChannelRecipe Studio':'Preparing the download…')+'</a>'+
-                '<p class="ls-step-note">About 250 MB. When it finishes, <b>extract the whole ZIP</b>'+(platform==='windows'?' (right-click → Extract All)':'')+' into a folder you’ll keep, like Documents.</p></div></div>'+
+                '<p class="ls-step-note">The ZIP is about 240 MB. When it finishes, <b>extract the whole ZIP</b>'+(platform==='windows'?' (right-click → Extract All)':'')+' into a folder you’ll keep, like Documents. Setup then downloads about '+DOWNLOAD[platform].more+' more the first time (libraries, the graphics browser, FFmpeg, Node.js, the speech model and Claude Code if you don’t have it): about '+DOWNLOAD[platform].total+' in all.</p></div></div>'+
             '<div class="ls-step"><span class="ls-step-n">2</span><div class="ls-step-body"><h3>Install it</h3>'+
                 '<div class="ls-install-options">'+
                 '<div class="ls-option recommended"><span class="ls-option-tag">Easiest</span><h4>Let Claude Code install it</h4>'+
-                    '<p>Open the extracted folder in Claude Code. In the Claude desktop app, choose <b>Code</b> and select the folder, then paste:</p>'+
+                    '<p>'+(platform==='windows'
+                        ? 'Open the <b>ChannelRecipe studio</b> folder in Claude Code: Extract All puts it <b>inside</b> a folder named after the download, so open the inner one (it holds Start on Windows.cmd). In the Claude desktop app, choose <b>Code</b> and select it, then paste:'
+                        : 'Open the extracted <b>ChannelRecipe studio</b> folder in Claude Code. In the Claude desktop app, choose <b>Code</b> and select the folder, then paste:')+'</p>'+
                     '<div class="ls-prompt-box"><code>'+esc(CLAUDE_PROMPT)+'</code><button class="btn-ghost" data-ls-copy-prompt>'+icon('copy')+'Copy</button></div>'+
-                    '<p class="ls-step-note">No Claude Code yet? <a href="https://claude.com/download" target="_blank" rel="noopener">Download the Claude app</a> and sign in with your Claude account. Studio also needs Claude Code’s command-line tool: its setup page installs it for you with one button.</p></div>'+
+                    '<p class="ls-step-note">No Claude Code yet? <a href="https://claude.com/download" target="_blank" rel="noopener">Download the Claude app</a> and sign in with your Claude account. Studio also needs Claude Code’s command-line tool: its setup page installs it for you with one button.</p>'+
+                    '<p class="ls-step-note">You don’t need <b>Bypass permissions</b> (the video uses it to skip questions): Claude Code asks before each step, and you press Allow. To use it anyway, turn on Settings › Claude Code › Allow bypass permissions mode in the Claude app first.</p></div>'+
                 '<div class="ls-option"><h4>Or install it yourself</h4>'+
-                    '<p>In the extracted folder, double-click <b>'+launcher+'</b>'+(platform==='mac'?' (if macOS blocks it, right-click → Open)':'')+'. The first launch takes a few minutes. Keep that window open. Your setup page opens in the browser.</p>'+
+                    '<p>In the '+(platform==='windows'?'inner ChannelRecipe studio':'extracted')+' folder, double-click <b>'+launcher+'</b>'+(platform==='mac'?' (if macOS blocks it, right-click → Open)':' (if Windows asks whether to run it, press Run: Studio then clears that warning for next time)')+'. The first launch takes a few minutes. Keep that window open. Your setup page opens in the browser.</p>'+
                     '<details class="ls-mini"><summary>It says something is missing</summary><p>Studio needs Python 3.10 or newer (3.13 recommended'+(platform==='windows'?'; tick “Add Python to PATH” when installing':'')+'). It’s the only tool you install yourself: the setup page installs FFmpeg, Node.js and Claude Code’s command-line tool with a Fix it button each, no password needed.</p></details></div>'+
                 '</div></div></div>'+
             '<div class="ls-step"><span class="ls-step-n">3</span><div class="ls-step-body"><h3>Connect your account</h3>'+
-                '<p>On the setup page, press <b>Connect my ChannelRecipe account</b> and approve. No key to copy.</p>'+
+                '<p>On the setup page, press <b>Connect my ChannelRecipe account</b> and approve. No key to copy. If FFmpeg or Node.js is missing, press <b>Fix it</b> next to it: no password.</p>'+
                 '<div class="ls-step-actions"><a class="btn-ghost" href="'+SETUP_URL+'" target="_blank" rel="noopener">Open setup page ↗</a>'+
                 '<button class="btn-secondary" data-ls-copy-key>'+icon('key')+'Copy my key instead</button></div>'+
                 '<p class="ls-step-note">Then press <b>Set up Claude for videos</b> and paste a Kie.ai key. When all three steps show ✓ Done, open Studio and make your first video.</p></div></div>'+

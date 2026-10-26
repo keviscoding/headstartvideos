@@ -32,8 +32,8 @@ def basic(checks, *, verify_mcp=True):
     account = checks.get("account") or {}
     results = [item("python","Python 3.10 or newer",checks.get("python") is True,"Install Python 3.12, then reopen the launcher."),
         item("connection", "ChannelRecipe account", bool(account), checks.get("connection_error") if
-             cfg.get("key") and checks.get("connection_error") else "Connect your CR account in step 2."),
-        item("spending", "Account spending acknowledged", cfg.get("costs_accepted"), "Review account costs in step 2."),
+             cfg.get("key") and checks.get("connection_error") else "Connect your ChannelRecipe account in step 1."),
+        item("spending", "Account spending acknowledged", cfg.get("costs_accepted"), "Review account costs in step 1."),
         # the releases that may start new videos: the latest, or any the account lists as still supported
         # without the account's answer nothing is known about releases (the connection row says why)
         item("release", "Current workflow installed", not account or checks.get("local_version") in (

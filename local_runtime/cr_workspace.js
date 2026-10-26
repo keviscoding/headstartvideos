@@ -74,7 +74,10 @@
   function el(tag, cls, text) {const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n;}
   function text(id, value) {if ($(id)) $(id).textContent = value == null ? '' : String(value);}
   function hide(id, value) {if ($(id)) $(id).hidden = !!value;}
-  function error(message) {text('crw-error', message || ''); hide('crw-error', !message);}
+  // Create's problems, one line each (the owner's Windows test, 2026-10-26: two stops ran together in one paragraph, and
+  // stayed on screen after the title or recipe they were about had changed: any change in the form clears them)
+  function error(message) {const lines=(Array.isArray(message)?message:[message]).map(m=>String(m||'').trim()).filter(Boolean);
+    $('crw-error').replaceChildren(...lines.map(m=>el('span','crw-error-line',m))); hide('crw-error', !lines.length);}
   function toast(message) {text('crw-toast', message); hide('crw-toast', false); clearTimeout(toast.timer); toast.timer = setTimeout(() => hide('crw-toast', true), 5500);}
   function encoded(value) {return encodeURIComponent(String(value));}
   function providerName(id) {return ({kie:'Kie.ai',atlas:'Atlas Cloud',original:''})[id] || '';}
@@ -159,7 +162,9 @@
     setInput(d.input === 'script' ? 'script' : 'idea', false);
     return d;
   }
-  function setInput(mode, persist = true) {state.input = mode; chooseGroup('[data-input-mode]', 'inputMode', mode); hide('crw-script-panel', mode !== 'script'); if (persist) save();}
+  function setInput(mode, persist = true) {state.input = mode; chooseGroup('[data-input-mode]', 'inputMode', mode); hide('crw-script-panel', mode !== 'script');
+    text('crw-title-help', mode === 'script' ? 'Write it like a YouTube title. Your script below is what the video says.' : 'Write it like a YouTube title. Studio researches and writes the video from it.');
+    if (persist) save();}
   async function setNarration(mode) {
     state.narration = mode; chooseGroup('[data-narration-mode]', 'narrationMode', mode);
     hide('crw-narration-ai', mode !== 'ai'); hide('crw-narration-own', mode !== 'own');
@@ -188,6 +193,7 @@
   function selectRecipe(recipe, persist = true) {
     if (state.selected) state.featureDrafts[state.selected.name] = featureValues();
     const fresh = !state.selected || state.selected.name !== recipe?.name;
+    if (fresh && state.selected) error('');                       // another recipe: the last one's problems don't apply
     state.selected = recipe;
     if (fresh && isShort(recipe) && recipe.short_seconds) { $('crw-seconds').value = recipe.short_seconds; chooseGroup('[data-seconds]', 'seconds', String(recipe.short_seconds)); }   // its own length
     text('crw-selected-name', recipe.label); text('crw-selected-description', recipe.description || recipe.tagline);
@@ -197,7 +203,9 @@
     const automatic = identity(recipe) === 'automatic'; hide('crw-adaptive-section', !recipe.auto_style);
     if (automatic) $('crw-adaptive').checked = true;
     const featureDefinitions = state.catalog?.features || [];
-    const offered = Array.isArray(recipe.features?.offered) ? recipe.features.offered : featureDefinitions.filter(f => !f.explicit).map(f => f.key);
+    // a style drawn by its own code: sound design is the only source that changes its video
+    const listed = Array.isArray(recipe.features?.offered) ? recipe.features.offered : featureDefinitions.filter(f => !f.explicit).map(f => f.key);
+    const offered = recipe.coded ? listed.filter(k => k === 'sound') : listed;
     const defaults = Array.isArray(recipe.features?.on) ? recipe.features.on : offered;
     const stored = state.featureDrafts[recipe.name] || {};
     const group = $('crw-features'); group.replaceChildren();
@@ -303,11 +311,22 @@
   function summary() {
     const r = state.selected; text('crw-summary-title', $('crw-title').value.trim() || 'Your next video');
     text('crw-summary-recipe', r?.label || 'Choose a recipe');
-    text('crw-summary-duration', isRanking(r) ? `${number('crw-ranks',5,3,10)} ranked clips` : isShort(r) ? `${number('crw-seconds',25,15,60)} seconds` : state.narration === 'own' ? 'Length of your recording' : `${number('crw-minutes',10,1,60)} minutes`);
+    // My script: the words set the length, not the minutes chosen (a 1-minute choice made a 1:24 video from 161 words,
+    // the owner's Windows test, 2026-10-26), so the page says how long it reads at the style's pace
+    const scriptWords = state.input === 'script' ? $('crw-script').value.trim().split(/\s+/).filter(Boolean).length : 0;
+    const pace = Number(r?.wpm) >= 80 && Number(r?.wpm) <= 260 ? Number(r.wpm) : 150;      // the style's words a minute
+    const scriptMinutes = scriptWords ? scriptWords / pace : 0;
+    const reads = scriptMinutes ? (scriptMinutes < 1 ? `about ${Math.max(5, Math.round(scriptMinutes * 60 / 5) * 5)} seconds` : `about ${Math.round(scriptMinutes * 10) / 10} minutes`) : '';
+    text('crw-script-length', reads ? `${scriptWords} words: ${reads} of video at this style's reading pace. Your script sets the length.` : '');
+    hide('crw-script-length', !reads);
+    text('crw-summary-duration', reads && state.narration !== 'own' && !isRanking(r) && !isShort(r) ? reads[0].toUpperCase() + reads.slice(1) + ' (your script)' : isRanking(r) ? `${number('crw-ranks',5,3,10)} ranked clips` : isShort(r) ? `${number('crw-seconds',25,15,60)} seconds` : state.narration === 'own' ? 'Length of your recording' : (m => `${m} minute${m === 1 ? '' : 's'}`)(number('crw-minutes',10,1,60)));
     text('crw-summary-visuals', strict(r) ? 'Reference animation throughout' : Object.entries(featureValues()).filter(([k,v]) => v && k !== 'sound').map(([k]) => (featureCopy[k] || [k])[0]).join(', ') || 'Recipe defaults');
-    text('crw-summary-voice', state.narration === 'own' ? 'Your uploaded narration' : state.setup?.narration?.voice || 'Connected narration account');
+    // a cloned style reads with its own narrator (the kind of voice its channel has), else the account's voice
+    const narrator = state.selected?.narrator || state.setup?.narration?.voice;
+    if (narrator) text('crw-narration-name', state.selected?.narrator ? `${narrator} · this style's narrator` : narrator);
+    text('crw-summary-voice', state.narration === 'own' ? 'Your uploaded narration' : narrator || 'Connected narration account');
     text('crw-summary-renderer', state.renderOn==='cloud' && state.cloudInfo?.available && !cloudBlock() ? 'Studio Cloud' : checked('crw-fast-toggle') && featureValues().threed && !strict() ? 'Fast mode · local render' : 'Local render');
-    footageNote(); threedNote();
+    footageNote(); threedNote(); frameCheckNote();
   }
   // A 3D video's time is mostly Claude's: it directs every shot, then reviews them in rounds (a customer's 2-minute 3D
   // video spent 84 of its 116 minutes in Claude Opus, 2026-10-25). Said before Create, with Quicker 3D review. Sections
@@ -333,6 +352,19 @@
     const on = !!(r && b && featureValues().youtube && !strict(r) && !isShort(r) && !isRanking(r) && state.narration !== 'own');
     hide('crw-footage-note', !on);
     if (on) text('crw-footage-note', `Research footage adds about ${b.typical_minutes[0]} to ${b.typical_minutes[1]} minutes to a ${b.minutes}-minute video: Studio watches up to ${b.videos} YouTube videos on your video-model account to find its clips. It stops watching after ${b.stop_minutes} minutes and goes on with what it found. If Kie's video watcher isn't answering, ChannelRecipe's own watcher takes over, from your plan's monthly clip watches (at most 20 a video, never your credits).` + (state.catalog?.footage_watcher?.note ? ' ' + state.catalog.footage_watcher.note : ''));
+  }
+  // A style drawn by its own code (Studio 109): before each minute is drawn, Claude looks at its frames and re-plans it
+  // once when it shows the wrong place, broken words or a frozen picture. Its Claude time is said before Create; the
+  // switch is Studio's setting for every new video (cr_animated2d.frame_check_default), sent with each video too.
+  function frameCheckNote() {
+    const r = state.selected, c = r?.frame_check, on = !!(r && c && !isRanking(r));
+    hide('crw-frame-check-note', !on);
+    if (!on) return;
+    const box = $('crw-frame-check');
+    if (box.dataset.style !== r.name) { box.checked = c.on !== false; box.dataset.style = r.name; }
+    const minutes = isShort(r) ? 1 : number('crw-minutes',10,1,60), per = Array.isArray(c.per_minute) ? c.per_minute : [1, 2.5];
+    const lo = Math.max(1, Math.round(minutes * per[0])), hi = Math.max(2, Math.round(minutes * per[1]));
+    text('crw-frame-check-text', box.checked ? `Before each minute is drawn, Claude looks at its frames and re-plans it once if it shows the wrong place, broken words or a frozen picture: about ${lo} to ${hi} more minutes of Claude time for this video, on your Claude plan, no money.` : 'Off: each minute is drawn as planned, without Claude looking at its frames first. Studio keeps this for every new video until you switch it on.');
   }
   function gate() {
     const ready = state.setup?.readiness?.ready === true;
@@ -546,7 +578,8 @@
           } stats.hidden=!stats.childElementCount;
         } catch(_) {/* Overall job progress remains available if GPU metrics are missing. */}
       }
-      text('crw-progress-log',lines.join('\n')); text('crw-progress-note',data.error || (data.done ? 'Saved work remains with this project. Starting another video creates a fresh attempt.' : 'Your studio is working. Completed steps and elapsed time come from the live job.'));
+      text('crw-progress-log',lines.join('\n')); text('crw-progress-label', data.state === 'done' ? 'READY' : data.done ? 'STOPPED' : 'IN PRODUCTION');
+      text('crw-progress-note',data.error || (data.state === 'done' ? 'Your video is ready. Open it to watch, download or change it.' : data.done ? 'Saved work remains with this project. Starting another video creates a fresh attempt.' : 'Your studio is working. Completed steps and elapsed time come from the live job.'));
       const cancel = data.cr_cancel || {}; $('crw-progress-cancel').disabled = cancel.can_cancel !== true; hide('crw-progress-cancel',cancel.can_cancel !== true); $('crw-progress-cancel').dataset.run = cancel.run_id || '';
       if (data.done && !$('crw-progress-actions').childElementCount) {
         const another = el('button','crw-secondary-button','Create another video'); another.type='button'; another.addEventListener('click',()=>showPage('create')); $('crw-progress-actions').append(another);
@@ -768,7 +801,8 @@
       try {const rk = await api(`/cr-ranking/edit/${encoded(job.slug)}`); if (rk && rk.slots) {$('crw-output-editor').href = `/cr-ranking-edit?job=${encoded(job.slug)}`; text('crw-output-editor-label', 'Edit countdown'); $('crw-output-editor').hidden = false; hide('crw-output-timing', true);}} catch (_) {}
       const exports = [['audio','Narration','audio'],['script','Script','script'],['srt','Subtitles','srt'],['desc','Description','desc']];
       $('crw-output-exports').replaceChildren(); for (const [key,label,kind] of exports) if (data[key]) {const a=el('a','crw-export-link',label);a.href=`/f/${kind}/${encoded(job.slug)}`;a.download='';$('crw-output-exports').append(a);}
-      for (const name of data.thumbs || data.thumbnails || []) {const filename=typeof name==='string'?name:name.name; if (!filename) continue;const a=el('a','crw-export-link','Thumbnail');a.href=`/f/thumb/${encoded(job.slug)}/${encoded(filename)}`;a.download='';$('crw-output-exports').append(a);}
+      const thumbs = (data.thumbs || data.thumbnails || []).map(name => typeof name === 'string' ? name : name?.name).filter(Boolean);
+      for (const [i, filename] of thumbs.entries()) {const a=el('a','crw-export-link',thumbs.length > 1 ? `Thumbnail ${i + 1}` : 'Thumbnail');a.href=`/f/thumb/${encoded(job.slug)}/${encoded(filename)}`;a.download='';$('crw-output-exports').append(a);}
       try {const saved = await api(`/cr-workspace/project/${encoded(job.slug)}`); const lines = (saved.sound_check || []).map(r => (r.state === 'ok' ? '✓ ' : '• ') + r.text); text('crw-output-message', lines.length ? 'Sound check: ' + lines.join(' · ') : '');} catch (_) {/* the sound check is optional */}
       $('crw-output').showModal();
     } catch (e) {toast(e.message);}
@@ -886,7 +920,7 @@
       offer:$('crw-offer').value,offer_plugs:number('crw-offer-plugs',0,0,2),panels:state.selected.panels?state.panels:'',cta:ctaValue(),
       pictures_per_min:state.selected.pictures&&Number($('crw-pictures').value)!==state.selected.pictures.default?Number($('crw-pictures').value):null,
       threed_look:threedLook(features), threed_quick:!!(features.threed && !strict() && checked('crw-threed-quick')),
-      carry_on_after_reset:checked('crw-carry-on')};
+      carry_on_after_reset:checked('crw-carry-on'), frame_check:state.selected?.frame_check?checked('crw-frame-check'):undefined};
     if(short&&isRanking(state.selected)){const handle=$('crw-rank-handle').value.trim().replace(/[^@\w.]/g,'').slice(0,40);
       // A Short to remake: any YouTube link form (Shorts, watch, youtu.be, m., any case), sent as one plain link, for one topic
       const pasted=$('crw-rank-reference').value.trim(), refId=(/(?:youtu\.be\/|youtube\.com\/(?:shorts\/|watch\?(?:[^#]*&)?v=|live\/|embed\/))([A-Za-z0-9_-]{11})/i.exec(pasted)||[])[1]||'';
@@ -994,8 +1028,8 @@
       if(first)await openProgress(typeof first==='string'?{slug:first,title:p.title.split('\n')[0]}:first);
     } catch(e){
       // a title that already stopped with its work saved (cr_recover): carry that one on first
-      if(e.details?.resume_first){try{await resumeFirst(e,p);}catch(err){error((err.details?.blockers||[]).join(' ')||err.message);showPage('create');}}
-      else{error((e.details?.blockers||[]).join(' ')||e.message);showPage('create');}
+      if(e.details?.resume_first){try{await resumeFirst(e,p);}catch(err){error(err.details?.blockers?.length?err.details.blockers:err.message);showPage('create');}}
+      else{error(e.details?.blockers?.length?e.details.blockers:e.message);showPage('create');}
     }finally{state.submitting=false;gate();}
   }
   async function optionalAccounts() {
@@ -1043,8 +1077,12 @@
   for(const b of all('[data-render-on]'))b.addEventListener('click',()=>{if(b.disabled)return;state.renderOn=b.dataset.renderOn;cloudChoice();summary();captionsNote();});
   $('crw-fast-install').addEventListener('click',async()=>{$('crw-fast-install').disabled=true;try{await api('/cr-renderer',{method:'POST',body:{action:'install'}});}catch(e){text('crw-fast-setup-status',e.message);}refreshFast();});
   refreshFast();
-  $('crw-form').addEventListener('input',()=>{updateOptional();summary();save();cloudChoice();});
+  $('crw-form').addEventListener('input',()=>{error('');updateOptional();summary();save();cloudChoice();});
   $('crw-captions').addEventListener('change',()=>{if(state.selected)state.captionsDrafts[state.selected.name]=checked('crw-captions');captionsNote();});
+  // the frame check's switch is Studio's own setting: kept for every coded style's new videos
+  $('crw-frame-check').addEventListener('change',async()=>{const on=checked('crw-frame-check');
+    for(const row of state.catalog?.channels||[])if(row.frame_check)row.frame_check.on=on;
+    try{await api('/cr-workspace/frame-check',{method:'POST',body:{on}});}catch(e){toast(e.message);}summary();});
   $('crw-form').addEventListener('change',()=>{updateOptional();summary();save();cloudChoice();});
   $('crw-recipe-open').addEventListener('click',openGallery);$('crw-styles-browse').addEventListener('click',openGallery);
   $('crw-gallery-search').addEventListener('input',gallery);$('crw-gallery-close').addEventListener('click',()=>{$('crw-gallery').close();$('crw-recipe-open').focus();});
@@ -1208,9 +1246,10 @@
   async function chooseVoice(name, button) {
     button.disabled = true;
     try {
-      const result = await api('/cr-voices/select', {method: 'POST', body: {voice: name}});
-      voices.data.voice = name; if (state.setup?.narration) state.setup.narration.voice = name;
-      text('crw-narration-name', name); text('crw-voices-status', result.message); renderVoices(); summary();
+      const own = voices.data.style_voice && state.selected?.narrator;
+      const result = await api('/cr-voices/select', {method: 'POST', body: own ? {voice: name, style: state.selected.name} : {voice: name}});
+      voices.data.voice = name; if (own) state.selected.narrator = name; else if (state.setup?.narration) state.setup.narration.voice = name;
+      text('crw-voices-status', result.message); renderVoices(); summary();
     } catch (e) {text('crw-voices-status', e.message); button.disabled = false;}
   }
   $('crw-voice-open').addEventListener('click', openVoices);

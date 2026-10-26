@@ -1,6 +1,8 @@
 """Setup's one-click Fix it for the tools Studio needs from outside Python: FFmpeg (with ffprobe), Node.js and the
-Claude Code command-line tool. Nothing installs until the creator presses Fix it on the setup page (or asks Claude
-Code, whose fix tools call the same routes).
+Claude Code command-line tool. Nothing installs until the creator presses Fix it (or asks Claude Code, whose fix tools
+call the same routes); FFmpeg and Node.js can start by themselves while the setup page is open only when
+AUTO_FIX_TOOLS (or the settings' auto_fix_tools) is on, which stays off until the owner decides. Claude Code installs
+only on Install Claude Code.
 
 FFmpeg and Node.js go into this Studio's own folder (tools/ffmpeg, tools/node): no password, no sudo, nothing in the
 computer's system folders, the creator's own FFmpeg or Node.js left as they are. Every download is pinned to one
@@ -107,6 +109,11 @@ NODE_LATEST = "24.22.1"
 CLAUDE_INSTALL_SH = "https://claude.ai/install.sh"
 CLAUDE_INSTALL_PS1 = "https://claude.ai/install.ps1"
 CLAUDE_SECONDS = 15 * 60
+# Both installers save Claude Code's program in ~/.claude/downloads (%USERPROFILE%\.claude\downloads) before they set it
+# up, and print nothing until they end: setup's progress line watches that file grow (read in both scripts,
+# 2026-10-26). The program's size in MB, from Anthropic's manifest of 2.1.310 (it moves a little each version).
+CLAUDE_DOWNLOADS = Path.home() / ".claude" / "downloads"
+CLAUDE_MB = {"windows-x64": 283, "darwin-arm64": 261, "darwin-x64": 272}
 
 # room on the disk while a fix runs: the download plus what is unpacked from it (FFmpeg for Windows is the largest)
 NEEDS_MB = {"ffmpeg": 700, "node": 400}
@@ -248,6 +255,18 @@ def node_status(*, which=None, run=None) -> dict:
         return {"ready": False, "version": text, "reason": f"Node.js {text} is too old for the YouTube downloader "
                 f"(it needs {NODE_MINIMUM} or newer)."}
     return {"ready": True, "version": text, "reason": ""}
+
+
+# FFmpeg and Node.js starting their own Fix it while setup is open (the owner's Windows test, 2026-10-26): about 150 MB
+# of programs downloaded without a press, so it stays off until the owner decides; `auto_fix_tools: true` in the
+# settings (or this constant) turns it on.
+AUTO_FIX_TOOLS = False
+
+
+def auto_fix_tools(settings: dict | None = None) -> bool:
+    """Does setup start FFmpeg's and Node.js's Fix it by itself?"""
+    value = (settings or {}).get("auto_fix_tools")
+    return value if isinstance(value, bool) else AUTO_FIX_TOOLS
 
 
 def can_fix(name: str, key: str | None = None) -> bool:
@@ -767,9 +786,54 @@ def sign_in_command(executable: str | None = None, *, windows: bool | None = Non
     return shlex.quote(path) + " auth login"
 
 
-SIGNED_IN_NEXT = ("press Open the sign-in window (or run {command} in Terminal on a Mac, PowerShell on Windows), sign "
-                  "in in your browser with the Claude account (Pro or Max) you want Studio to use, then press Check my "
-                  "Claude Code login.")
+SIGNED_IN_NEXT = ("press Open the sign-in window (or run {command} in {terminal}), sign in in your browser with the "
+                  "Claude account (Pro or Max) you want Studio to use, then press Check my Claude Code login.")
+
+
+def terminal_name(windows: bool | None = None, mac: bool | None = None) -> str:
+    """Where this computer's creator types a command: PowerShell on Windows, Terminal on a Mac (never both at once)."""
+    if WINDOWS if windows is None else windows:
+        return "PowerShell"
+    return "Terminal" if ((sys.platform == "darwin") if mac is None else mac) else "a terminal"
+
+
+def _clock(seconds: float) -> str:
+    seconds = int(seconds)
+    return f"{seconds // 60} min {seconds % 60} s" if seconds >= 60 else f"{seconds} s"
+
+
+class ClaudeProgress:
+    """Setup's moving line while Anthropic's installer runs: the download in MB as it lands, then its setup step, with
+    the time so far (the owner's Windows test, 2026-10-26: 2.5 minutes of one line that never changed)."""
+
+    def __init__(self, folder: Path = CLAUDE_DOWNLOADS, total_mb: int = 0, *, since: float | None = None,
+                 clock=time.monotonic):
+        self.folder, self.total_mb, self.clock = Path(folder), int(total_mb or 0), clock
+        self.since = time.time() if since is None else since       # files from an earlier, stopped install don't count
+        self.start, self.size, self.grew, self.seen = clock(), 0, clock(), False
+
+    def downloaded(self) -> int:
+        try:
+            files = [f for f in self.folder.iterdir() if f.name.startswith("claude") and f.is_file()]
+            return max((f.stat().st_size for f in files if f.stat().st_mtime >= self.since - 5), default=0)
+        except OSError:
+            return 0
+
+    def line(self) -> str:
+        now, size = self.clock(), self.downloaded()
+        took = _clock(now - self.start)
+        if size != self.size:
+            self.size, self.grew = size, now
+        if size:
+            self.seen = True
+            if now - self.grew < 8:
+                mb = size >> 20
+                return (f"Downloading Claude Code: {mb} of about {self.total_mb} MB ({took})…"
+                        if self.total_mb and mb <= self.total_mb else f"Downloading Claude Code: {mb} MB so far ({took})…")
+            return f"Checking and setting up Claude Code ({took})…"
+        if self.seen:
+            return f"Finishing the Claude Code install ({took})…"
+        return f"Starting Anthropic's official Claude Code installer ({took})…"
 
 
 def fix_claude(*, find=None, popen=None, kill=None, background: bool = True, windows: bool | None = None) -> dict:
@@ -778,11 +842,21 @@ def fix_claude(*, find=None, popen=None, kill=None, background: bool = True, win
         import cr_claude
         locate = find or cr_claude.find_executable
         found = locate()
+        terminal = terminal_name(windows)
         if found:
             return ("Claude Code is already installed. Last step, once: " +
-                    SIGNED_IN_NEXT.format(command=sign_in_command(found, windows=windows)))
-        fix.update(state="installing", message="Running Anthropic's official Claude Code installer (a minute or two; it "
-                                               "downloads about 200 MB)…")
+                    SIGNED_IN_NEXT.format(command=sign_in_command(found, windows=windows), terminal=terminal))
+        key = platform_key()
+        about = CLAUDE_MB.get("windows-x64" if (WINDOWS if windows is None else windows) else key, 0)
+        fix.update(state="installing", message="Running Anthropic's official Claude Code installer (a few minutes; it "
+                                               f"downloads about {about or 280} MB)…")
+        moving, done = ClaudeProgress(CLAUDE_DOWNLOADS, about), threading.Event()
+
+        def follow():
+            while not done.wait(2):
+                fix["message"] = moving.line()
+        follower = threading.Thread(target=follow, daemon=True, name="cr-fix-claude-progress")
+        follower.start()
         try:
             _, output = run_installer(claude_install_command(windows),
                                       env=powershell_env(cr_claude.clean_environment(), windows),
@@ -793,12 +867,15 @@ def fix_claude(*, find=None, popen=None, kill=None, background: bool = True, win
         except OSError as error:
             raise Stop(f"Studio couldn't start Claude Code's installer ({type(error).__name__}). Install it yourself "
                        "with the official guide (the link below), then press Check my Claude Code login.") from None
+        finally:
+            done.set()
+            follower.join(timeout=10)                          # its last line never lands after the result
         fix["tail"] = output[-1500:]
         found = locate()
         if not found:
             raise Stop(installer_problem(output))
         return "Claude Code is installed. Last step, once: " + SIGNED_IN_NEXT.format(
-            command=sign_in_command(found, windows=windows))
+            command=sign_in_command(found, windows=windows), terminal=terminal)
     return _start("claude", work, background=background)
 
 
@@ -835,7 +912,7 @@ def open_sign_in(*, find=None, popen=None, home: Path = HOME, windows: bool | No
         popen(["/usr/bin/open", "-a", "Terminal", str(script)])
     else:
         return {"opened": False, "command": command,
-                "message": f"Open a terminal, run {command} and sign in in your browser."}
+                "message": f"Open {terminal_name(windows, mac)}, run {command} and sign in in your browser."}
     return {"opened": True, "command": command,
             "message": "A sign-in window opened. Sign in in your browser with the Claude account (Pro or Max) Studio "
                        "should use, then come back here."}

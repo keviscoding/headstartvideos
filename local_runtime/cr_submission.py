@@ -138,6 +138,9 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
             spec["cr_captions"] = "on"           # captions asked for on a style that has none: burned in (cr_captions)
         if payload.get("threed_quick") is True:
             spec["cr_threed_quick"] = True            # one 3D review round (cr_threed_look)
+        if isinstance(payload.get("frame_check"), bool):
+            # a coded style's frame check for this video (cr_animated2d): Create's switch, or make_videos frame_check
+            spec["cr_frame_check"] = "on" if payload["frame_check"] else "off"
         if payload.get("carry_on_after_reset") is True:
             spec["cr_carry_on_after_reset"] = True     # the creator's up-front choice (cr_recover.CARRY_ON)
         if backend == "manimgx":

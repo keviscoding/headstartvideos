@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
 from scripts import studio_branding
-VERSION = "5.3-admin.108"
+VERSION = "5.3-admin.109"
 PRIVATE_WORKFLOWS = {
     "cr-style-delivery-prompt.txt": ROOT / "data/frontier/reference2d-compiler.txt",
     "cr-style-study-brief.txt": ROOT / "data/frontier/reference2d-study.txt",
@@ -187,7 +187,7 @@ def private_threed_resources(root: Path):
 # The animated 2D kit (Studio 103+; the renderer platform since 104): the page runtime every channel's Claude-written
 # renderer runs in, its optional helpers and example, the build, casting and director prompts and the fight sounds
 # (cr_animated2d.py drives it), kept in the gitignored data/frontier/animated2d/, never in this public repository.
-ANIMATED2D_FILES = re.compile(r"(core|rig|draw|moves|fx|film|bind|example-stick|example-own)\.js|(cast|director|build)\.txt|"
+ANIMATED2D_FILES = re.compile(r"(core|rig|draw|moves|fx|film|stage|bind|example-stick|example-own)\.js|(cast|director|build|review)\.txt|(cast|director)-\d+\.txt|"
                               r"AUTHORING\.md")
 ANIMATED2D_SOUND = re.compile(r"sounds/[a-z_]+\.mp3")
 
@@ -214,8 +214,8 @@ def private_animated2d_resources(root: Path):
         else:
             raise ValueError("Unexpected file in the animated 2D kit: " + rel)
     names = {dest.split("/", 1)[1] for _, dest in resources if dest.startswith("animated2d/")}
-    missing = sorted({"core.js", "rig.js", "draw.js", "moves.js", "fx.js", "film.js", "bind.js", "example-stick.js",
-                      "example-own.js", "cast.txt", "director.txt", "build.txt", "AUTHORING.md"} - names)
+    missing = sorted({"core.js", "rig.js", "draw.js", "moves.js", "fx.js", "film.js", "stage.js", "bind.js", "example-stick.js",
+                      "example-own.js", "cast.txt", "director.txt", "build.txt", "review.txt", "AUTHORING.md"} - names)
     if resources and missing:
         raise ValueError("The animated 2D kit is incomplete: " + ", ".join(missing))
     return resources
@@ -374,11 +374,20 @@ ENGINE_PATCHES = {
     # so an antivirus or company firewall that inspects secure connections no longer fails every download. 0.10.5 or
     # later: before it, connections sharing one context could turn each other's certificate check off when they shook
     # hands at once (reproduced 2026-10-26); pure Python, 3.10+ (checked on PyPI, 2026-10-26).
+    # OpenCV once, not twice: RapidOCR requires opencv-python (the full build), so the engine's opencv-python-headless
+    # was a second copy of the same cv2 (about 44 MB more to download on Windows, the owner's test of 2026-10-26).
+    # Both builds hold the same modules (the engine's VideoCapture, inpainting, optical flow, face and QR models); the
+    # full one only adds desktop windows, which Studio never opens, and needs nothing more on Windows or a Mac.
+    # Folders that already have both keep them (pip removes nothing); the Studio Cloud image keeps its own list.
     "requirements.txt": [
         ('yt-dlp>=2025.10.22; python_version >= "3.10"',
          'yt-dlp[default,curl-cffi]>=2026.8.19; python_version >= "3.10"\n'
          'rapidocr-onnxruntime==1.2.3; python_version >= "3.10"   # Ranking Shorts: finds burned-in text to remove\n'
          'truststore>=0.10.5; python_version >= "3.10"   # Studio trusts this computer\'s certificates, as the browser does'),
+        ("opencv-python-headless>=4.8   # VEIL's keeper (loops chained and moved) and the presenter camera moves; "
+         "pure-ffmpeg fallback without it",
+         "opencv-python>=4.8   # VEIL's keeper (loops chained and moved) and the presenter camera moves; pure-ffmpeg "
+         "fallback without it. The full build, as RapidOCR needs: one copy, not two"),
     ],
     "reflearn.py": [
         ('need_lv, need_gb = _envf("REFLEARN_MIN_MEM_LEVEL", 40), _envf("REFLEARN_MIN_DISK_GB", 20)',
@@ -589,6 +598,13 @@ ENGINE_PATCHES = {
          "                pick = min(pics, key=lambda p: abs(p[0] - at) if p[0] >= 0 else 1e9)\n"),
         ('        register_gen_kit(look["genkit"]["manifest"])\n',
          '        register_gen_kit(HERE / str(look["genkit"]["manifest"]))\n'),
+    ],
+    "history_kit.py": [
+        # "\," in a plain f-string is an invalid escape: Python 3.12+ printed a SyntaxWarning twice in the launcher on
+        # a first start (the owner's Windows test, 2026-10-26), which read like a crash. "\\," is the same text for
+        # FFmpeg's filter (a backslash and a comma), with no warning.
+        ("""lut = lambda k: f"clip(255*({g['lo']}+{g['hi'] - g['lo']:.4f}*pow(val/255\\,{g['gamma']}))*{k}\\,0\\,255)\"""",
+         """lut = lambda k: f"clip(255*({g['lo']}+{g['hi'] - g['lo']:.4f}*pow(val/255\\\\,{g['gamma']}))*{k}\\\\,0\\\\,255)\""""),
     ],
     "quest_hud.py": [
         ("def _wait_machine(log=print, min_level: int = 40, min_free_gb: float = 20.0) -> None:",

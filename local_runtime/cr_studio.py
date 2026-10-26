@@ -65,6 +65,15 @@ def chat_line() -> str:
     return "yes, its settings were left out" + (" (%s)" % effort[0] if effort else "")
 
 
+def start_page(cfg=None) -> str:
+    """The page Studio opens when it starts: setup until this Studio is connected with a voice account, then the
+    workspace, which links back to setup when a check fails. Before 109 every start opened setup again ("Three quick
+    steps"), even after a finished video (the owner's Windows test, 2026-10-26)."""
+    cfg = cr_bridge.load_settings() if cfg is None else cfg
+    voiced = (cfg.get("narration") or {}).get("provider") or (cfg.get("media_hub") or {}).get("provider")
+    return "/" if cfg.get("key") and voiced else "/cr-setup"
+
+
 def forget_claude_chat(environ=None) -> list:
     """Drop the variables a Claude Code chat hands its child processes; -> what was dropped (names, plus the effort
     level the chat asked for, never a value that could be personal)."""
@@ -397,25 +406,41 @@ def graphics_ready():
         result["browser_reason"]="The graphics browser's library isn't installed. Press Fix it next to Graphics browser."
     else:
         try:
+            # Studio draws in Playwright's headless shell (what a headless launch starts), so that is what's checked:
+            # chromium.executable_path names the full Chrome for Testing, which Studio no longer downloads (B5)
             with sync_playwright() as p:
-                if not Path(p.chromium.executable_path).is_file():
-                    result["browser_reason"]="The graphics browser isn't installed yet. Press Fix it to install it (a few minutes)."
-                else:
-                    browser=p.chromium.launch(headless=True,args=["--enable-unsafe-swiftshader"])
-                    page=browser.new_page()
-                    result.update(page.evaluate("""() => ({browser:!!document.createElement('canvas').getContext('2d'),webgl:!!document.createElement('canvas').getContext('webgl2')})"""))
-                    browser.close()
-                    if not result.get("browser"):
-                        result["browser_reason"]="The graphics browser started but couldn't draw. Press Fix it to reinstall it."
+                browser=p.chromium.launch(headless=True,args=["--enable-unsafe-swiftshader"])
+                page=browser.new_page()
+                result.update(page.evaluate("""() => ({browser:!!document.createElement('canvas').getContext('2d'),webgl:!!document.createElement('canvas').getContext('webgl2')})"""))
+                browser.close()
+                if not result.get("browser"):
+                    result["browser_reason"]="The graphics browser started but couldn't draw. Press Fix it to reinstall it."
         except Exception as error:
             first=(str(error).strip().splitlines() or [type(error).__name__])[0][:160]
-            result["browser_reason"]=f"The graphics browser won't start ({first}). Press Fix it to reinstall it."
+            if "Executable doesn't exist" in first or "playwright install" in str(error):
+                result["browser_reason"]="The graphics browser isn't installed yet. Press Fix it to install it (a few minutes)."
+            else:
+                result["browser_reason"]=f"The graphics browser won't start ({first}). Press Fix it to reinstall it."
     _graphics_check.update(result=result,expires=time.monotonic()+(300 if result.get("browser") else 0))
     return result
 
 
 BROWSER_FIX = {"state": "idle", "tail": ""}
 _browser_fix_lock = threading.Lock()
+# Playwright's headless shell only (about 115 MB): every graphic Studio draws runs headless, so the full Chrome for
+# Testing beside it (about 180 MB more) was never used (owner's Windows test, 2026-10-26). A Playwright older than
+# 1.49 has no --only-shell (and no shell of its own: it draws with the full Chromium), so that one installs as before.
+BROWSER_INSTALL = ("install", "--only-shell", "chromium")
+BROWSER_INSTALL_OLD = ("install", "chromium")
+
+
+def install_graphics_browser(run=None, **options):
+    """Install the graphics browser with this Studio's own Python; the last run's result (returncode, stdout, stderr)."""
+    run = run or subprocess.run
+    result = run([sys.executable, "-m", "playwright", *BROWSER_INSTALL], **options)
+    if getattr(result, "returncode", result) != 0:
+        result = run([sys.executable, "-m", "playwright", *BROWSER_INSTALL_OLD], **options)
+    return result
 
 
 def fix_graphics_browser():
@@ -428,8 +453,8 @@ def fix_graphics_browser():
 
     def work():
         try:
-            run = subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"],
-                                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800)
+            run = install_graphics_browser(capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                           timeout=1800)
             ok, tail = run.returncode == 0, ((run.stdout or "") + (run.stderr or ""))[-1500:]
         except Exception as error:
             ok, tail = False, f"{type(error).__name__}: {error}"[:500]
@@ -528,7 +553,8 @@ def tool_checks():
     return {"ffmpeg": not ffmpeg, "ffmpeg_reason": (ffmpeg + " " + cr_installs.fix_hint("ffmpeg")) if ffmpeg else "",
             "node": deno or node["ready"] or node_ready(), "node_youtube": node["ready"], "node_version": node["version"],
             "node_reason": (node["reason"] + " " + cr_installs.fix_hint("node")) if not node["ready"] else "",
-            "can_fix": {name: cr_installs.can_fix(name) for name in ("ffmpeg", "node", "claude")}}
+            "can_fix": {name: cr_installs.can_fix(name) for name in ("ffmpeg", "node", "claude")},
+            "auto_fix_tools": cr_installs.auto_fix_tools(cr_bridge.load_settings())}
 
 
 def fix_line():
@@ -692,6 +718,11 @@ def create_app():
         cfg = cr_bridge.load_settings()
         checks = {"python": sys.version_info >= (3,10), **tool_checks(),
                   "connected": bool(cfg.get("key")), "costs_accepted": bool(cfg.get("costs_accepted"))}
+        # setup follows a FFmpeg or Node.js download already running (it starts one by itself when they're missing),
+        # and says how to sign in on this computer (Terminal on a Mac, PowerShell on Windows)
+        checks["fixes"] = {name: {k: v for k, v in cr_installs.status(name).items() if k in ("state", "message")}
+                           for name in ("ffmpeg", "node")}
+        checks["system"] = "windows" if os.name == "nt" else "mac" if sys.platform == "darwin" else "linux"
         checks.update(graphics_ready())
         checks["speech_model"] = cr_whisper.status()
         paths = cr_paths.status(HOME)                  # Windows' 260-character limit: room for a video's files
@@ -978,8 +1009,9 @@ def create_app():
         except cr_installs.Stop as stop:
             return jsonify(error=str(stop)), 409
         except OSError as error:
-            return jsonify(error=f"Studio couldn't open the sign-in window ({type(error).__name__}). Open Terminal "
-                                 f"(PowerShell on Windows) and run: {cr_installs.sign_in_command(cr_claude.find_executable())}"), 409
+            return jsonify(error=f"Studio couldn't open the sign-in window ({type(error).__name__}). Open "
+                                 f"{cr_installs.terminal_name()} and run: "
+                                 f"{cr_installs.sign_in_command(cr_claude.find_executable())}"), 409
 
     @studio.app.post("/cr-setup/fix-speech-model")
     def fix_speech_model_route():
@@ -1389,6 +1421,12 @@ def create_app():
         out.write_bytes(r.content)
         return out
 
+    def style_narrator(style) -> str:
+        """The narrator of a cloned style that has one (cr_media.style_voice), "" for any other recipe."""
+        style = str(style or "")
+        info = (getattr(studio.styles, "STYLES", {}) or {}).get(style)
+        return cr_media.style_voice(style, info).get("voice", "") if isinstance(info, dict) else ""
+
     @studio.app.get("/cr-voices")
     def voices_list():
         try:
@@ -1399,6 +1437,9 @@ def create_app():
             return jsonify(connected=False, voices=[], previews=[])
         model, provider = current["model"], current["provider"]
         names = list(model.get("voice_names") or [])
+        own = style_narrator(request.args.get("style"))            # a cloned style's own narrator, Kie only
+        if own:
+            current = {**current, "voice": own}
         note = ""
         if provider == "kie":
             note = (cr_bridge.load_settings().get("voice_notice") or cr_media.kie_move_note(cr_media.profile("narration"))
@@ -1406,6 +1447,7 @@ def create_app():
         return jsonify(connected=True, provider=provider, provider_label=cr_media.PROVIDERS[provider]["label"],
                        model=model["id"], model_label=model.get("label", model["id"]), voice=current["voice"],
                        default_voice=model["default_voice"], voices=names, groups=model.get("voice_groups") or {},
+                       style_voice=bool(own),
                        note=note, previews=[name for name in names if preview_file(model, name).is_file()])
 
     @studio.app.post("/cr-voices/select")
@@ -1423,6 +1465,14 @@ def create_app():
         if not VOICE_NAME.fullmatch(voice) or (names and voice not in names):
             return jsonify(error="Choose a voice from the list."), 400
         cfg = cr_bridge.load_settings()
+        style = str((request.get_json(silent=True) or {}).get("style") or "")
+        if current["provider"] == "kie" and style_narrator(style):
+            # a cloned style keeps its own narrator: the choice is that style's, the account's voice stays as it was
+            cfg[cr_media.STYLE_VOICES] = {**(cfg.get(cr_media.STYLE_VOICES) or {}), style: voice}
+            cr_bridge.save_settings(cfg)
+            label = (studio.styles.STYLES.get(style) or {}).get("label") or "this style's"
+            return jsonify(saved=True, voice=voice, style=style,
+                           message=f"Your next {label} videos use the {voice} voice.")
         if (cfg.get("narration") or {}).get("provider") == current["provider"]:
             cfg["narration"] = {**cfg["narration"], "voice": voice}
         elif (cfg.get("media_hub") or {}).get("provider") == current["provider"]:
@@ -2006,6 +2056,10 @@ def main():
     # once) and the services this network can't reach.
     for begin in (cr_whisper.start, lambda: cr_network.start(network_needs(cr_whisper.status()))):
         threading.Thread(target=begin, daemon=True, name="cr-setup-checks").start()
+    # Windows: Studio's own files lose the downloaded-ZIP mark, so the launcher stops asking "Unknown Publisher"
+    # (cr_unblock; here too because an in-app update never replaces a running Windows launcher)
+    import cr_unblock
+    threading.Thread(target=cr_unblock.clear, args=(HOME,), daemon=True, name="cr-unblock").start()
     try:
         # Updates from older releases ran an updater that could not remove
         # retired files, so tidy them on start too.
@@ -2032,7 +2086,7 @@ def main():
                                 on_idle=lambda job: studio._enqueue_tl_render(Path(job), Path(job).name))
     def open_page():
         time.sleep(1)
-        webbrowser.open("http://127.0.0.1:7860/cr-setup")
+        webbrowser.open("http://127.0.0.1:7860" + start_page())
     if not os.environ.pop("CR_RESTARTED_FOR_UPDATE", ""):
         threading.Thread(target=open_page, daemon=True).start()
     from werkzeug.serving import make_server
@@ -2067,8 +2121,10 @@ def restart_into_update():
         print("Updated to ChannelRecipe Studio %s." % cr_update._build(result["version"]), flush=True)
         if result["requirements_changed"]:
             print("Installing updated libraries. This can take a minute…", flush=True)
-            if (subprocess.call([sys.executable, "-m", "pip", "install", "-r", str(HOME / "requirements.txt")]) == 0
-                    and subprocess.call([sys.executable, "-m", "playwright", "install", "chromium"]) == 0):
+            # quiet as the launchers are (errors still show), without pip's own upgrade notice
+            if (subprocess.call([sys.executable, "-m", "pip", "install", "-q", "--disable-pip-version-check", "-r",
+                                 str(HOME / "requirements.txt")]) == 0
+                    and install_graphics_browser(run=subprocess.call) == 0):
                 (HOME / ".venv" / ".cr-installed").touch()
     except cr_update.UpdateStopped as stopped:
         print(stopped, flush=True)

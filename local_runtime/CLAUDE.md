@@ -32,17 +32,21 @@ already passes.
      and go into its own folder. Copies the customer already has are used when
      they work (setup shows them as ready).
 4. **Start Studio.** Mac: `open "Start on Mac.command"`. Windows:
-   `start "" "Start on Windows.cmd"`. The launcher window must stay open; its
-   first run installs libraries and a graphics browser, which takes a few
-   minutes. If it fails, read the error in that window with the customer.
+   `powershell -NoProfile -Command "Unblock-File -LiteralPath '.\Start on Windows.cmd'; Start-Process '.\Start on Windows.cmd'"`
+   (Unblock-File takes off the mark Windows puts on files from a downloaded
+   ZIP, so Windows doesn't stop with an "Unknown Publisher" security warning;
+   Studio clears it from its other files itself). The launcher window must
+   stay open; its first run installs libraries and a graphics browser, which
+   takes a few minutes. If it fails, read the error in that window with the
+   customer.
    Never run `cr_studio.py` yourself inside a command or a background shell:
    when that command ends or times out, Studio closes, and any video it is
    making stops with it. Only the launcher's own window keeps it running.
 5. **Open setup.** When the launcher says it's ready, open
-   http://127.0.0.1:7860/cr-setup. If "Make sure the tools are ready" shows
-   Video tools (FFmpeg) or YouTube helper (Node) needing attention, they press
-   **Fix it** next to it (or call `fix_ffmpeg` / `fix_node`, below): Studio
-   downloads it into its own folder, no password. Then tell the customer, in
+   http://127.0.0.1:7860/cr-setup. If Video tools (FFmpeg) or YouTube helper
+   (Node) are missing or too old, they press **Fix it** next to each (or call
+   `fix_ffmpeg` / `fix_node`, below): Studio downloads it into its own folder,
+   no password, and the row says Downloading… until it's ready. Then tell the customer, in
    plain words, it's three buttons, top to bottom:
    1. **Connect my ChannelRecipe account**: it opens channelrecipe.com; they
       sign in if asked and press Approve, then land back on setup. No key to
@@ -74,10 +78,13 @@ settings. Update in place instead:
    http://127.0.0.1:7860).
 2. From this folder run the studio's own Python: Mac
    `.venv/bin/python cr_update.py`, Windows `.venv\Scripts\python cr_update.py`.
-3. Tell them what it printed. It keeps their output, accounts, keys, learned
-   styles and any files they edited (new versions of edited files are saved
-   beside them with `.new`). If it stops, nothing was changed or it restored the
-   previous version — read the message to them.
+3. Tell them what it printed. It keeps their output, accounts, keys and learned
+   styles; a recipe file they edited in `styles/` is kept and the new version
+   saved beside it with `.new`. Studio's code is always replaced (with a backup):
+   a change you made to it to get a customer unstuck is gone at the next update,
+   so say so, and have them send it to ChannelRecipe (Copy diagnostics for
+   support) so the real fix ships. If it stops, nothing was changed or it
+   restored the previous version — read the message to them.
 4. Start Studio again with the launcher.
 
 ## Studio's own tools in Claude Code (start here)
@@ -189,17 +196,29 @@ Studio through its own checks, so nothing needs the Studio web page.
 - Cloning a style (/clone-style): any channel is cloned in code by default. The look's `made` question comes first:
   ask it before anything else, in plain words. Written in code (Studio's recommendation, first) means the study has
   their Claude Code write this channel's own renderer from its frames, whatever they show (characters, graphics, maps,
-  text, 3D sets, camera), in three.js for a 3D channel, and check its test shots against the channel's frames: usually 5
-  to 15 more minutes of Claude usage (at most 25), no money. Every video then reuses it: Claude directs it to the
-  narration and Studio draws every frame on their computer, so a video costs its voice (plus about $0.02 for each
+  text, 3D sets, camera), in three.js for a 3D channel, and check its test shots against the channel's frames:
+  usually 10 to 25 minutes of Claude usage for the whole study (at most 46: the study budget plus 24 for the
+  animation), no money.
+  A style written in code has no motion-graphics kit (Studio 109 skips that step): its renderer draws every picture.
+  Every video then reuses it: Claude directs it to the narration and Studio draws every frame on their computer, so a
+  video costs its voice (plus about $0.02 for each
   background picture its renderer asks for, up to 6, and its own music when the channel has music, about $0.12 a
-  piece: `quote` counts both), vertical with the channel's captions for a Shorts channel. Instead of
+  piece: `quote` counts both), vertical with the channel's captions for a Shorts channel. Each video's places, props
+  and crowds are drawn in the channel's look from its own script (a bunker story gets a bunker), and before each
+  minute is drawn Studio checks its frames and Claude looks at a few of them (Claude usage, no money; `quote`'s
+  `frame_check` says the time it adds): what the plan clearly gets wrong is re-planned once; what the renderer itself
+  draws wrong goes on and is said in the video's progress, for Style Lab or Improve this style to fix. Create's Frame
+  check switch turns it off for every new video, and `make_videos` options.frame_check=false for one video. Styles studied before Studio 109 keep their renderer; studying the
+  channel again (or Improve this style) gives it the new abilities. Instead of
   code means Studio's ready-made pictures (AI pictures in their look, some AI-animated clips) or its fixed 3D engine:
   ready at once, but it won't look or move exactly like the channel; only when they choose it. When the study is
   done, `progress(op_…)` has `animation`: its score against the channel's own bar; read `what_to_tell_them` to the
   creator. If they want it closer, improve it with them in Style Lab (below); if they would rather have pictures,
-  they press Use pictures instead on the style's page (never choose for them). If `look_progress` or `clone_style`
-  returns a `medium_gap`, Studio can't make that yet: read it to the creator and call `clone_style` with
+  they press Use pictures instead on the style's page (never choose for them). Say first that those pictures come
+  with the base recipe's motion graphics and title cards, not the channel's: the page then offers to study the
+  channel's own graphics (about 7 to 20 minutes of their Claude usage, no money, only on their tick), saved as a copy.
+  If `look_progress` or `clone_style` returns a `medium_gap`, Studio can't make that yet: read it to the creator and
+  call `clone_style` with
   `accept_medium=true` only after they accept it. Never accept it for them, and never call a stopgap the real thing.
 - Improving a style after it's saved (any style written in code): the `style_lab` tool and the /clone-style
   skill's Style Lab section. They can prompt it like any code: edit its workspace files, preview, check against the

@@ -94,7 +94,9 @@ def install(studio, activity, setup_status, *, token, home=None):
         result["busy"] = busy
         result["can_continue_prepared"] = (result["state"] == "prepared" and not result["busy"]
                                            and not result.get("metadata_only"))
-        result["can_refine_saved"] = result["state"] == "done" and result.get("style_ready") is True
+        # a style written in code has no graphics kit to review: it is improved with Improve this style instead
+        result["can_refine_saved"] = (result["state"] == "done" and result.get("style_ready") is True
+                                      and not result.get("renderer") and not result.get("coded"))
         return result
 
     def native_proof(*, check_allowance=True):
@@ -343,6 +345,27 @@ def install(studio, activity, setup_status, *, token, home=None):
                 result = cr_style_refine.prepare(home, operation, proof, cr_bridge, acknowledge_costs=True)
                 # Preparation is indexed by the owned source. Repeated POSTs
                 # return the same operation; stopped/completed work never starts.
+                return no_store(jsonify(start_worker(result["operation_id"])))
+        except Exception as error:
+            return error_response(error)
+
+    @app.post("/cr-style-clone/<operation>/graphics")
+    def cr_style_graphics(operation):
+        """The opt-in graphics study of a style written in code that now draws pictures: the channel's own motion
+        graphics and title cards, learned on the creator's request (Claude usage only), saved in a copy of the style."""
+        try:
+            payload = data()
+            if payload.get("acknowledge_costs") is not True:
+                raise ValueError("Approve using your own Claude account for studying the channel's graphics first.")
+            with activity.lock:
+                if activity.busy():
+                    raise RuntimeError("Finish the current studio work before studying this style's graphics.")
+                proof = native_proof()
+                source = safe_status(operation)
+                if source["state"] != "done" or not source.get("style_ready"):
+                    raise RuntimeError("Save and reconcile this style before studying its graphics.")
+                result = cr_style_clone.prepare_graphics(home, operation, proof, cr_bridge)
+                # one at a time per style: a repeated POST returns the study already waiting, running or done
                 return no_store(jsonify(start_worker(result["operation_id"])))
         except Exception as error:
             return error_response(error)

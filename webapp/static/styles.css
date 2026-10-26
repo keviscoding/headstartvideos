@@ -1912,3 +1912,23 @@
 .showcase-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .showcase-actions .btn-primary, .showcase-actions .btn-secondary { font-size: 13px; padding: 8px 12px; text-decoration: none; }
 .showcase-actions .btn-ghost { font-size: 13px; margin-left: auto; }
+
+/* ---- Cookie consent ----
+   A small card in the bottom-right corner, over the narrow side column at most. Centred and wide, it sat over the Studio
+   page's Download button for a whole session (owner's Windows test, 2026-10-26). While it shows, the page keeps room
+   at its end so anything can scroll clear of it, and toasts sit above it. Full width on phones. */
+.cookie-banner {
+  position: fixed; right: 16px; bottom: 16px; z-index: 250; max-width: 360px;
+  background: var(--app-surface); border: 1px solid var(--app-border); border-radius: var(--radius-md);
+  padding: 12px 14px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); flex-wrap: wrap; align-items: center; gap: 10px;
+}
+.cookie-banner p { font-family: var(--font-body); font-size: 12.5px; line-height: 1.5; color: var(--app-ink-2); flex: 1; min-width: 180px; margin: 0; }
+.cookie-banner a { color: var(--accent); text-decoration: underline; }
+.cookie-banner .cookie-actions { display: flex; gap: 8px; }
+.cookie-banner button { font-size: 12.5px; padding: 5px 12px; }
+body.cookie-open { padding-bottom: 112px; }
+body.cookie-open #toast { bottom: 128px !important; }
+@media (max-width: 640px) {
+  .cookie-banner { left: 12px; right: 12px; bottom: 12px; max-width: none; }
+  body.cookie-open { padding-bottom: 140px; }
+}
