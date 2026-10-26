@@ -524,12 +524,19 @@ def install(studio, activity, *, token, home=None):
     GEMINI_TTS = "google/gemini-3-8-flash-tts"
     GEMINI_VOICES = {"gemini-man": ("Charon", "a man's voice"), "gemini-woman": ("Kore", "a woman's voice")}
 
+    def in_output(job) -> bool:
+        """A video's folder inside Studio's output folder, or inside the engine's own (CHANNELRECIPE_OUTPUT moves the
+        videos to another drive): never the folder itself, never anywhere else."""
+        roots = [home / "output"] + ([Path(studio.mv.OUTPUT_ROOT).resolve()]
+                                     if getattr(studio.mv, "OUTPUT_ROOT", None) else [])
+        return any(job.is_relative_to(root) and job != root for root in roots)
+
     def voice_job(slug):
         if not _SLUG.fullmatch(slug) or slug in {".", ".."}:
             raise ValueError("Unavailable project.")
         found = studio.mv.find_job(slug)
         job = Path(found).resolve() if found is not None else None
-        if job is None or not job.is_dir() or not job.is_relative_to(home / "output"):
+        if job is None or not job.is_dir() or not in_output(job):
             raise ValueError("Unavailable project.")
         return job
 
@@ -686,9 +693,20 @@ def install(studio, activity, *, token, home=None):
         uncertain = bool(cr_media.uncertain_presenter(job)) if failed else False
         charged = failed.get("charged")
         label = _text(failed.get("label"), 60) or "The presenter service"
+        category = str(failed.get("category") or "")
+        passing = category in ("model_failure", "rate_limit") or bool(cr_media.TRANSIENT.search(str(failed.get("reason")
+                                                                                                    or "")))
+        # out of credit, refused, or not a hiccup: waiting a few minutes won't change it, and the note says so
         again = ("The presenter is made again from where it stopped. Its last attempt got no clear answer from "
                  f"{label}: check its task log first, because if that task did start, trying again pays for a second "
                  "one." if uncertain else
+                 f"{label} says the balance ran out: top it up first, then try again." if category == "balance" else
+                 f"{label} refused the key: reconnect it in Setup & accounts first, then try again." if category ==
+                 "access" else
+                 f"{label} refused this presenter's content, so trying again is unlikely to work." if category ==
+                 "moderation" else
+                 f"{label} refused the request itself, so trying again is unlikely to work unless something changes."
+                 if failed and not passing else
                  f"Best after waiting a few minutes. {label} charged nothing for the attempt that failed." if charged == 0
                  else "Best after waiting a few minutes. The presenter is made again from where it stopped.")
         rows = [{"id": "skip", "label": "Finish without the presenter", "ready": True,
@@ -743,7 +761,7 @@ def install(studio, activity, *, token, home=None):
                 raise ValueError("Unavailable project.")
             found = studio.mv.find_job(slug)
             job = Path(found).resolve() if found is not None else None
-            if job is None or not job.is_dir() or not job.is_relative_to(home / "output"):
+            if job is None or not job.is_dir() or not in_output(job):
                 return protect(jsonify(slug=slug, project_id=None, available_for_resume=False)), 404
             marker = job / "cr-project.json"
             if marker.resolve().parent != job:

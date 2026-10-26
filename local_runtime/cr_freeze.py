@@ -3,16 +3,20 @@
 The engine's final pass (make_video._final_mux) muxes again, up to three times, when the picture stops moving
 (_picture_stalls): it takes the freeze for a read of the joined picture that timed out halfway. A customer's
 10-minute video froze from 5:15 to its end on every try (2026-10-25), and after the third the frozen mux was kept
-and published: the fault was in the picture under it, which muxing again can't change.
+and published: the segments under it moved, the picture made from them didn't, and muxing again couldn't change that.
 
 Here every freeze the check finds is laid over the segments the picture was joined from. A freeze inside one shot
 for less than HELD_MAX_S is that shot holding still (a still picture, a short clip holding its last frame): it is
-kept, without the engine's two pointless re-muxes. A freeze that runs across a cut (the picture should have changed
-there), holds one shot longer than HELD_MAX_S, or a picture that ends before the voice, is broken: the segments
-under it are deleted and rendered again from the pictures and clips already on disk, the film is joined again and
-muxed again; the second time the join is re-encoded whole. If the third mux still freezes, the video stops with a
-plain message naming the part, and the frozen file is set aside (video_frozen.mp4), so Resume assembles it again
-instead of finding it "cached". Nothing paid is made again: only local segment renders are repeated.
+kept, without the engine's two pointless re-muxes. A freeze that runs across a cut or holds one shot longer than
+HELD_MAX_S is looked at again in the segments themselves, by the same check: the check can't see a change under about
+2% of the frame (a small figure moving on white, a dark starfield's slow zoom, a slow pan over a mindmap), so when the
+segments stand still there too, the stillness is how those shots look, and it is kept. Only a freeze whose segments
+move under it, or a picture that ends before the voice, is broken: the segments under it are deleted and rendered
+again from the pictures and clips already on disk, the film is joined again and muxed again; the second time the join
+is re-encoded whole. If the third mux still freezes, the video stops with a plain message naming the part, and the
+frozen file is set aside (video_frozen.mp4), so Resume assembles it again instead of finding it "cached". Nothing paid
+is made again: only local segment renders are repeated. When the segments can't be looked at (a picture rendered in
+one piece, a file that can't be read), nothing is decided here: the engine muxes again and publishes, as it always did.
 """
 from __future__ import annotations
 
@@ -32,6 +36,8 @@ HOLD_S = 12.0              # the engine's own check: nothing in a finished video
 HELD_MAX_S = 30.0          # ...but one shot may hold its picture up to this long (a still, a clip's last frame)
 CROSS_S = 1.0              # a freeze that runs this far past a cut crosses it
 SHORT_S = 2.0              # a picture this much shorter than the voice ends early
+SOURCE_HOLD_S = 1.0        # the same check run on a segment itself, for still stretches this long...
+MOVES_S = 2.0              # ...and a segment moving this long under a freeze means the picture lost it
 REPAIRS = ("render", "reencode")   # what is tried after the first and the second frozen mux
 REPORT = "cr-freeze.json"
 FROZEN = "video_frozen.mp4"
@@ -75,6 +81,8 @@ def freezes(path, hold_s: float = HOLD_S) -> tuple:
         return None, 0.0
     err = p.stderr or ""
     clocks = re.findall(r"time=(\d+):(\d+):(\d+(?:\.\d+)?)", err)
+    if p.returncode and not clocks:
+        return None, 0.0                         # not a video ffmpeg can read
     length = (int(clocks[-1][0]) * 3600 + int(clocks[-1][1]) * 60 + float(clocks[-1][2])) if clocks else 0.0
     starts = [float(x) for x in re.findall(r"freeze_start: ([0-9.]+)", err)]
     ends = [float(x) for x in re.findall(r"freeze_end: ([0-9.]+)", err)]
@@ -108,13 +116,15 @@ def bounds_of(lengths: list) -> list:
 
 
 def classify(spans: list, bounds: list, length: float, voice: float = 0.0, planned: list = None,
-             suspects=()) -> list:
-    """[{"start", "end", "parts", "broken", "why"}] for the freezes of a finished mux. bounds: where the joined files
-    really sit; planned: where the plan put them (a cut belongs at each); suspects: files whose length is not their
-    slot's. parts: the joined files under the freeze (and the suspects, when it is broken). Broken: it runs across a
-    cut (the picture should have changed there), holds one shot longer than HELD_MAX_S, or the picture ends before
-    the voice. Without the joined files (a pipeline that renders its picture in one piece) only a freeze of more than
-    a minute to the end, or a picture shorter than the voice, is broken."""
+             suspects=(), still=None) -> list:
+    """[{"start", "end", "parts", "broken", "why", "source"}] for the freezes of a finished mux. bounds: where the
+    joined files really sit; planned: where the plan put them (a cut belongs at each); suspects: files whose length is
+    not their slot's; still(start, end): whether the joined files stand still there themselves (True), move (False)
+    or can't be looked at (None). parts: the joined files under the freeze (and the suspects, when it is broken).
+    why: it runs across a cut, holds one shot longer than HELD_MAX_S, or (without the joined files: a pipeline that
+    renders its picture in one piece) runs more than a minute to the end. source: what the files under such a freeze
+    do there ("moves", "still", or "unknown" when they can't be looked at). Broken: a freeze with a why whose files
+    move under it, or a picture that ends before the voice. A freeze its own files share is how those shots look."""
     cut_times = sorted({a for a, _ in bounds[1:]} | {a for a, _ in (planned or [])[1:]})
     rows = []
     for s, e in spans:
@@ -127,13 +137,61 @@ def classify(spans: list, bounds: list, length: float, voice: float = 0.0, plann
             why = "end"
         else:
             why = ""
-        rows.append({"start": s, "end": e, "parts": sorted(set(parts) | set(suspects)) if why else parts,
-                     "broken": bool(why), "why": why})
+        source = ""
+        if why:
+            verdict = still(s, e) if still else None
+            source = "moves" if verdict is False else "still" if verdict else "unknown"
+        broken = source == "moves"
+        rows.append({"start": s, "end": e, "parts": sorted(set(parts) | set(suspects)) if broken else parts,
+                     "broken": broken, "why": why, "source": source})
     if voice and length and length < voice - SHORT_S:
         parts = [i for i, (a, b) in enumerate(bounds) if b > length - 0.05]
         rows.append({"start": length, "end": voice, "parts": sorted(set(parts) | set(suspects)), "broken": True,
-                     "why": "short"})
+                     "why": "short", "source": ""})
     return rows
+
+
+def _stills(paths: list, st: dict) -> list:
+    """Each file's own still stretches ([(start, end)] by freezes() at SOURCE_HOLD_S), or None for one that can't be
+    read; a file is read once while it stays the same."""
+    cache = st.setdefault("stills", {})
+
+    def one(p):
+        key, stamp = _key(p), _stamp(p)
+        if stamp is None:
+            return None
+        hit = cache.get(key)
+        if hit and hit[0] == stamp:
+            return hit[1]
+        spans, length = freezes(p, SOURCE_HOLD_S)
+        spans = spans if spans is not None and length > 0 else None
+        cache[key] = (stamp, spans)
+        return spans
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        return list(ex.map(one, paths))
+
+
+def source_still(st: dict, start: float, end: float):
+    """Whether the files the picture was joined from stand still themselves under a freeze from start to end, by the
+    check's own measure (True: the stillness is how those shots look), or move there (False: the join or the mux lost
+    them). None when that can't be told: no joined files, one that can't be read, a freeze past their end."""
+    segs, bounds = st.get("segs") or [], st.get("bounds") or []
+    if not segs or len(bounds) != len(segs):
+        return None
+    under = [(i, max(start, a), min(end, b)) for i, (a, b) in enumerate(bounds) if min(end, b) - max(start, a) > 0.05]
+    looked = [(i, lo, hi) for i, lo, hi in under if hi - lo >= MOVES_S]
+    if not looked or (end - start) - sum(hi - lo for _, lo, hi in under) > MOVES_S:
+        return None
+    known = True
+    for (i, lo, hi), spans in zip(looked, _stills([segs[i] for i, _, _ in looked], st)):
+        if spans is None:
+            known = False
+            continue
+        a = bounds[i][0]
+        held = sum(max(0.0, min(hi - a, y) - max(lo - a, x)) for x, y in spans)
+        if (hi - lo) - held >= MOVES_S:
+            return False
+    return True if known else None
 
 
 def planned_lengths(engine, st: dict) -> list:
@@ -345,7 +403,8 @@ def install(engine):
 
     def picture_stalls(path, hold_s: float = HOLD_S):
         """The engine's check (the second the picture stops moving, or None), answered from every freeze of the mux:
-        a shot holding still is kept (None), a broken freeze is repaired before the engine muxes again."""
+        a shot holding still is kept (None), a broken freeze is repaired before the engine muxes again, and one whose
+        segments can't be looked at gets the engine's own answer (it muxes again, then keeps its last mux)."""
         path = Path(path)
         st = _state(path.parent)
         spans, length = freezes(path, hold_s)
@@ -361,15 +420,26 @@ def install(engine):
                     if abs(got - want) > 1.0]
         st["suspects"] = suspects
         rows = classify(spans, st.get("bounds") or [], length, st.get("voice") or 0.0,
-                        bounds_of(planned) if planned else None, suspects)
+                        bounds_of(planned) if planned else None, suspects,
+                        still=lambda s, e: source_still(st, s, e))
         broken = [r for r in rows if r["broken"]]
         for r in rows:
-            if not r["broken"]:
-                _log(engine, f"  picture: still for {r['end'] - r['start']:.0f} s at {clock(r['start'])}, inside one "
-                             f"shot ({_where(st, r['parts'][0]) if r['parts'] else 'one piece'}): kept")
+            if r["broken"]:
+                continue
+            where = _where(st, r["parts"][0]) if r["parts"] else "one piece"
+            still_for = f"still for {r['end'] - r['start']:.0f} s at {clock(r['start'])}"
+            if r["source"] == "still":
+                _log(engine, f"  picture: {still_for}, and so are the shots under it ({where}): that's how they look, "
+                             f"kept")
+            elif r["source"] == "unknown":
+                _log(engine, f"  picture: {still_for} ({where}); its shots couldn't be looked at, so the engine's own "
+                             f"check decides, as before")
+            else:
+                _log(engine, f"  picture: {still_for}, inside one shot ({where}): kept")
         st["broken"] = broken or None
         if not broken:
-            return None
+            doubt = [r for r in rows if r["source"] == "unknown"]
+            return doubt[0]["start"] if doubt else None
         st["rows"] = rows
         step = REPAIRS[st.get("repairs", 0)] if st.get("in_mux") and st.get("repairs", 0) < len(REPAIRS) else ""
         if step and segs:

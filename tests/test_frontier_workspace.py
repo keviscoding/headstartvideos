@@ -349,6 +349,47 @@ def test_a_video_whose_presenter_stopped_can_finish_without_it_or_try_again(env)
     assert pick({"choice": "skip"}).status_code == 409, "never while it is being made"
 
 
+@pytest.mark.parametrize("category,reason,says", [
+    ("balance", "insufficient credits", "top it up first"),
+    ("access", "unauthorized", "reconnect it in Setup & accounts first"),
+    ("moderation", "content policy", "unlikely to work"),
+    ("request", "avatar image is not a face", "unlikely to work"),
+    ("request", "the service timed out", "Best after waiting a few minutes"),
+    ("model_failure", "Internal Error", "Best after waiting a few minutes")])
+def test_trying_the_presenter_again_says_when_waiting_wont_help(env, category, reason, says):
+    import cr_media
+    job = env.home / "output" / "documentary" / "_work" / "the-heist--abc"
+    job.mkdir(parents=True)
+    env.jobs["the-heist--abc"] = job
+    (job / cr_media.PRESENTER_FAILED).write_text(json.dumps({"label": "Kie.ai", "reason": reason,
+                                                             "category": category, "charged": 0}))
+    note = env.get("/cr-workspace/presenter-choice/the-heist--abc").json["choices"][1]["note"]
+    assert says in note
+    if "waiting" not in says:
+        assert "waiting" not in note
+
+
+def test_presenter_choices_work_for_videos_moved_to_another_drive(env, tmp_path):
+    """CHANNELRECIPE_OUTPUT moves the videos (an external drive, D:\\ChannelRecipe): the engine's OUTPUT_ROOT is
+    accepted with the same checks as Studio's own output folder, and nothing outside either."""
+    import cr_media
+    drive = tmp_path / "drive" / "ChannelRecipe"
+    job = drive / "documentary" / "_work" / "the-heist--abc"
+    job.mkdir(parents=True)
+    env.jobs["the-heist--abc"] = job
+    (job / cr_media.PRESENTER_FAILED).write_text(json.dumps({"label": "Kie.ai", "reason": "Internal Error"}))
+    refused = lambda: env.get("/cr-workspace/presenter-choice/the-heist--abc").status_code >= 400  # noqa: E731
+    assert refused(), "no engine root: refused"
+    env.studio.mv.OUTPUT_ROOT = drive
+    assert env.get("/cr-workspace/presenter-choice/the-heist--abc").json["stopped_on_presenter"] is True
+    env.jobs["the-heist--abc"] = drive
+    assert refused(), "never the root itself"
+    elsewhere = tmp_path / "elsewhere" / "the-heist--abc"
+    elsewhere.mkdir(parents=True)
+    env.jobs["the-heist--abc"] = elsewhere
+    assert refused()
+
+
 def test_a_video_whose_voice_stopped_can_be_voiced_another_way(env, monkeypatch):
     """Kie's ElevenLabs voice answered "Internal Error" three times and the creator could only wait. A video whose
     voice stopped now offers the same voice again, Gemini through the same Kie key, their own ElevenLabs account or

@@ -136,6 +136,24 @@ def own_narration(studio, style, info, why):
     return False, why
 
 
+def saved_gb(studio, spec, titles) -> list:
+    """What each title's own working folder already holds on the disk, in GB (0.0 for a video not started yet): a
+    saved project carrying on needs only the rest."""
+    mv = getattr(studio, "mv", None)
+    find, slugify = getattr(mv, "find_job", None), getattr(mv, "slugify", None)
+    if not callable(find):
+        return []
+    slug = str(spec.get("cr_attempt_slug") or "")
+    out = []
+    for i, title in enumerate(titles or [""]):
+        try:
+            job = find(slug) if slug and i == 0 else find(slugify(title)) if callable(slugify) and title else None
+        except Exception:                                      # noqa: BLE001 - not found: nothing saved to count
+            job = None
+        out.append(cr_machine.folder_gb(job) if job else 0.0)
+    return out
+
+
 def preset(studio, checks, spec):
     ready = basic(checks)
     results = list(ready["checks"])
@@ -204,14 +222,20 @@ def preset(studio, checks, spec):
         problem = cr_paths.title_problem(paths["folder"], style, titles, studio.mv.youtube_filename) if titles else ""
         if problem:
             results.append(item("title_length", "Title fits Windows' path limit", False, problem))
-    # A disk that fills up stops a video halfway, with nothing anyone can read: it stops here instead (cr_machine)
+    # A disk that fills up stops a video halfway, with nothing anyone can read: it stops here instead (cr_machine),
+    # only when even the measured need can't fit; under the comfortable margin it goes ahead with a warning. A saved
+    # project carrying on (Resume, a presenter choice, a 3D reassembly) needs only what its folder doesn't hold yet.
+    warnings = []
     free = (checks.get("computer") or {}).get("free_disk_gb")
     if free is not None and "video" in steps:
         titles = [line for line in str(spec.get("title") or "").splitlines() if line.strip()]
-        room = cr_machine.disk_problem(free, spec.get("minutes") or 1, len(titles) or 1,
-                                       threed=bool(wanted.get("threed")) or backend == "manimgx")
+        room, warning = cr_machine.disk_check(free, spec.get("minutes") or 1, len(titles) or 1,
+                                              threed=bool(wanted.get("threed")) or backend == "manimgx",
+                                              saved=saved_gb(studio, spec, titles))
         if room:
             results.append(item("disk_space", "Room for this video on the disk", False, room))
+        elif warning:
+            warnings.append(warning)
     # YouTube has no way around it: a recipe that uses it stops here on a network that can't reach it, not mid-video
     youtube = cr_network.youtube_problem(checks.get("network") or {})
     ranking = ((info or {}).get("shorts") or {}).get("pipeline") == "ranking"
@@ -236,6 +260,8 @@ def preset(studio, checks, spec):
             results.append(item("account_"+task,task.title()+" account",False,"Reconnect or top up the selected "+task+" account in step 4."))
     result = {"ready":all(r["ready"] for r in results),"checks":results,
               "blockers":[r["message"] for r in results if not r["ready"]],"features":wanted}
+    if warnings:
+        result["warnings"] = warnings
     if renderer_identity:
         result["manimgx_identity"] = renderer_identity
     checks["claude_code"] = ready["claude_code"]

@@ -152,7 +152,8 @@ def workspace(browser):
     @app.get("/cr-workspace/presenter-choice/<slug>")
     def presenter_choices(slug):
         return jsonify(stopped_on_presenter=slug == "presenter-film", current="again",
-                       failed={"label": "Kie.ai", "reason": "Internal Error", "charged": 0}, choices=[
+                       failed={"label": "Kie.ai", "reason": "Internal Error", "charged": 0,
+                               "uncertain": getattr(env, "presenter_uncertain", False)}, choices=[
                            {"id": "skip", "label": "Finish without the presenter", "ready": True,
                             "note": "The video is finished as it is now, without the presenter intro."},
                            {"id": "again", "label": "Try the presenter again", "ready": True,
@@ -701,6 +702,30 @@ def test_a_video_whose_presenter_stopped_finishes_without_it_from_projects(works
     page.wait_for_function("document.querySelector('#crw-toast').textContent.includes('without its presenter')")
     assert [p for p in env.posts if p["path"].startswith(("/cr-workspace/presenter-choice", "/cr-submit"))] == [
         {"path": "/cr-workspace/presenter-choice/presenter-film", "body": {"choice": "skip"}},
+        {"path": "/cr-submit-project", "body": {"project_id": "crv_" + "9" * 24}}]
+
+
+def test_trying_an_uncertain_presenter_again_asks_first_because_it_can_pay_twice(workspace):
+    """Its last attempt got no clear answer (sent, no task ID back): that task may have started, so trying again could
+    pay for a second presenter. One click is never enough: the creator confirms, having read why (review, 2026-10-26)."""
+    env, page = workspace, workspace.page
+    env.mode, env.presenter_uncertain = "presenter", True
+    env.finished_jobs = [{"slug": "presenter-film", "title": "The Heist", "style": "documentary", "editable": True}]
+    env.open("#projects")
+    page.locator('.crw-project-card[data-slug="presenter-film"]').get_by_role("button", name="Review issue",
+                                                                             exact=True).click()
+    page.locator(".crw-voice-choices").wait_for(state="visible")
+    asked = []
+    page.once("dialog", lambda dialog: (asked.append(dialog.message), dialog.dismiss()))
+    page.get_by_role("button", name="Try the presenter again").click()
+    page.wait_for_function("true")
+    assert asked and "pays for a second presenter" in asked[0] and "Kie.ai" in asked[0]
+    assert not [p for p in env.posts if p["path"].startswith(("/cr-workspace/presenter-choice", "/cr-submit"))]
+    page.once("dialog", lambda dialog: dialog.accept())
+    page.get_by_role("button", name="Try the presenter again").click()
+    page.wait_for_function("document.querySelector('#crw-toast').textContent.includes('Trying the presenter again')")
+    assert [p for p in env.posts if p["path"].startswith(("/cr-workspace/presenter-choice", "/cr-submit"))] == [
+        {"path": "/cr-workspace/presenter-choice/presenter-film", "body": {"choice": "again"}},
         {"path": "/cr-submit-project", "body": {"project_id": "crv_" + "9" * 24}}]
 
 

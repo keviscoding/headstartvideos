@@ -607,6 +607,8 @@
       const row = el('div', 'crw-voice-choice'), button = el('button', choice.id === 'skip' ? 'crw-primary-button' : 'crw-secondary-button', choice.label);
       button.type = 'button'; button.disabled = !choice.ready; row.append(button, el('span', 'crw-field-help', choice.note));
       button.addEventListener('click', async () => {
+        // its last attempt got no clear answer: that task may have started, and trying again would pay for a second one
+        if (choice.id === 'again' && failed.uncertain && !confirm(`${failed.label || 'The presenter service'} gave no clear answer to this video's last presenter attempt, so it may have started and been charged. Trying again pays for a second presenter if it did. Check that service's task log first. Try the presenter again anyway?`)) return;
         button.disabled = true;
         try {
           await api(`/cr-workspace/presenter-choice/${encoded(slug)}`, {method: 'POST', body: {choice: choice.id}});
@@ -840,7 +842,7 @@
       // /api/run performs the authoritative option, account and renderer checks
       // before creating work; a second preflight would repeat those requests.
       const result=await api('/api/run',{method:'POST',body:p});$('crw-rank-reference').value='';save();showPage('projects');   // a Short to remake goes with that video only
-      toast('Your new video project has started.');await refreshActivity(true);
+      toast(['Your new video project has started.', ...(result.warnings || [])].join(' '));await refreshActivity(true);
       const first=(result.queued||[])[0];if(first)await openProgress(typeof first==='string'?{slug:first,title:p.title.split('\n')[0]}:first);
     } catch(e){error((e.details?.blockers||[]).join(' ')||e.message);showPage('create');}finally{state.submitting=false;$('crw-create').textContent='Create video';gate();}
   }

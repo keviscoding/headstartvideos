@@ -244,7 +244,12 @@ LINK_WATCHERS = ("gemini", "openlux", "algrow")
 PROGRESS_EVERY_S = 45.0
 
 _budget_lock = threading.RLock()
-_budget = {}                                          # the footage search running in this process (one video at a time)
+_budget = {}                                          # each video's footage search running, by its youtube/ folder
+
+
+def _bkey(work) -> str:
+    """The key of a video's footage search: its youtube/ folder (the engine's `work` and `ydir`)."""
+    return os.path.normcase(os.path.abspath(str(work)))
 
 
 def budget(minutes) -> dict:
@@ -339,14 +344,18 @@ def _install_budget(module):
         b = {"engine": engine, "plan": plan, "cfg": cfg, "ydir": Path(job) / "youtube", "t0": time.monotonic(),
              "said": 0.0, "watched": before, "new": 0, "done": 0, "planned": 0, "rounds": 0, "failed": {},
              "refused": 0, "workers": WORKERS_LINK if watcher in LINK_WATCHERS else WORKERS_UPLOAD}
+        key = _bkey(b["ydir"])
         with _budget_lock:
-            before = _budget.get("now")
-            _budget["now"] = b
+            before = _budget.get(key)
+            _budget[key] = b
         try:
             return fetch(engine, script, job, style, force, *args, **kwargs)
         finally:
             with _budget_lock:
-                _budget["now"] = before
+                if before is None:
+                    _budget.pop(key, None)
+                else:
+                    _budget[key] = before
             if b["new"]:
                 _log(b, f"  YouTube: {b['new']} video(s) watched in {(time.monotonic() - b['t0']) / 60:.0f} min "
                         f"({b['watched']} of this video's {plan['videos']})" + (
@@ -355,7 +364,7 @@ def _install_budget(module):
 
     @wraps(plan_focus)
     def focus(engine, title, needs, videos, work, *args, **kwargs):
-        b = _budget.get("now")
+        b = _budget.get(_bkey(work))
         if b is None:
             return plan_focus(engine, title, needs, videos, work, *args, **kwargs)
         b["rounds"] += 1
@@ -391,7 +400,7 @@ def _install_budget(module):
 
     @wraps(shots)
     def watch(vid, work, *args, **kwargs):
-        b = _budget.get("now")
+        b = _budget.get(_bkey(work))
         if b is None or _cached(module, work, vid):
             return shots(vid, work, *args, **kwargs)
         with _budget_lock:

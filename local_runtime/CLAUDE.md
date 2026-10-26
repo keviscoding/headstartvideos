@@ -91,9 +91,11 @@ Studio through its own checks, so nothing needs the Studio web page.
   recipes that use YouTube. When `network.on_this_computer.suspected`, an antivirus or firewall on the computer is
   blocking Studio itself (their browser still works): help them allow `allow_programs` and 127.0.0.1:7860 in the
   antivirus it names, step by step. Never suggest switching the antivirus off.
-- `setup_check`'s `computer` says what this computer has (memory, processor cores, free disk) and, in `notes`, where
-  it's short of what Studio uses. Tell them before a long video. `make_videos` refuses a video the disk can't hold and
-  says how much to free: help them free space (the Bin or Recycle Bin, old downloads), but never delete their files.
+- `setup_check`'s `computer` says what this computer has (memory, processor cores, free space on the disk its videos
+  go on) and, in `notes`, where it's short of what Studio uses. Tell them before a long video. `make_videos` refuses a
+  video the disk can't hold and says how much to free; `quote`'s `disk.warning` says when it fits with little to spare
+  (or a batch's later videos may not): help them free space (the Bin or Recycle Bin, old downloads), but never delete
+  their files.
 - No `studio` tools in this session? Studio's tools load when a Claude Code session starts. If Studio, Node or
   Python was installed or first started during this session, ask them to open a new Claude Code session in this
   folder (or run /mcp in a terminal session), then carry on. Never drive the Studio web page instead.

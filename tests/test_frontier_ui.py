@@ -783,6 +783,6 @@ def test_setup_says_what_this_computer_has_and_a_small_one_keeps_the_tools_box_o
             tab.locator("#tools-ok-text").text_content()
     else:
         assert tab.locator("#checks").is_visible(), "a note keeps the tools box open"
-        assert "See note" in row and "3.4 GB is free on the disk Studio is on" in row and "about 6 GB" in row
+        assert "See note" in row and "3.4 GB is free on the disk Studio's videos go on" in row and "about 4 GB" in row
         assert "ok" not in tab.locator("#computer-row").get_attribute("class")
     assert errors == []

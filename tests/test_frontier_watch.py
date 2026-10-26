@@ -482,6 +482,24 @@ def test_a_ten_minute_video_watches_at_most_its_budget_side_by_side_and_says_how
     assert len(module.CALLS) <= 1, "49 watched before: one more at most"
 
 
+def test_each_video_keeps_its_own_footage_budget(footage):
+    """Two videos searching at once in one Studio (a Short beside a long video, a preview) never share a budget: a
+    watch for one is counted against that one only, and a watch outside any search is never refused."""
+    import threading
+    module, engine, job = footage
+    other = job.parent / "other-job"
+    done = []
+    one = threading.Thread(target=lambda: done.append(module.fetch_clips(engine, "word " * 1500, job, "doc", False)))
+    two = threading.Thread(target=lambda: done.append(module.fetch_clips(engine, "word " * 1500, other, "doc", False)))
+    one.start(); two.start(); one.join(); two.join()
+    assert len(done) == 2 and len(module.CALLS) == 100, "50 each: each video's own budget, in full"
+    assert sum("footage budget is used" in line for line in engine.lines) == 24
+    assert watch._budget == {}, "nothing left behind when the searches end"
+    module.CALLS.clear()
+    module.shots("loose", job.parent / "preview" / "youtube")
+    assert module.CALLS == ["loose"]
+
+
 def test_watching_stops_when_the_video_s_watching_time_is_used(footage, monkeypatch):
     module, engine, job = footage
     clock = iter([0.0] + [10_000.0] * 1000)

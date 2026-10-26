@@ -537,7 +537,9 @@ def create_app():
     # The project launcher reads this private, local-only control token. It is
     # never sent to CR or included in copied launch commands.
     control = HOME / ".cr-runtime.json"
-    control.write_text(json.dumps({"pid":os.getpid(),"token":token,"port":7860}), encoding="utf-8")
+    # "output": where the videos go (CHANNELRECIPE_OUTPUT moves it), so Claude Code's quote measures that disk
+    control.write_text(json.dumps({"pid":os.getpid(),"token":token,"port":7860,
+                                   "output":str(getattr(studio.mv, "OUTPUT_ROOT", "") or "")}), encoding="utf-8")
     control.chmod(0o600)
     # Prevent a remote website from using the local control room (DNS rebinding/CSRF).
     @studio.app.before_request
@@ -582,6 +584,7 @@ def create_app():
                 if preflight.get("manimgx_identity"):
                     data["manimgx_identity"] = preflight["manimgx_identity"]
                     request._cached_json = (data, data)
+                g.cr_warnings = preflight.get("warnings") or []   # said with the start (inject), never a stop
                 cfg = cr_bridge.load_settings()
                 cfg["setup_proof"] = preflight["proof"]
                 cr_bridge.save_settings(cfg)
@@ -635,7 +638,8 @@ def create_app():
         paths = cr_paths.status(HOME)                  # Windows' 260-character limit: room for a video's files
         if paths:
             checks["file_paths"] = paths
-        checks["computer"] = cr_machine.status(HOME)  # memory, cores and free disk: a note here, a stop per video
+        # memory, cores and the free disk the videos go on (CHANNELRECIPE_OUTPUT moves them): a note here, a stop per video
+        checks["computer"] = cr_machine.status(HOME, root=getattr(studio.mv, "OUTPUT_ROOT", None))
         # the setup page shows "Checking…" after 3 s and asks again; a check before work waits for the answer
         # inside a request Studio is serving, so it also tries to reach itself (only a block on the computer stops that)
         page = has_request_context() and request.path == "/cr-status"
@@ -753,7 +757,7 @@ def create_app():
             if not 200 <= response.status_code < 300:
                 return response
             queued=response.get_json().get("queued",[])
-            return jsonify(queued=queued,project_id=project_id)
+            return jsonify(queued=queued,project_id=project_id,**({"warnings":preflight["warnings"]} if preflight.get("warnings") else {}))
         except Exception as error:
             return jsonify(error=str(error)),409
 
@@ -1372,6 +1376,12 @@ def create_app():
     # The independent workspace owns its shell and local-token client already.
     @studio.app.after_request
     def inject(response):
+        if request.path == "/api/run" and getattr(g, "cr_warnings", None) and 200 <= response.status_code < 300 \
+                and response.is_json:
+            # what this video's check warned about (a disk with little to spare) goes back with its start
+            body = response.get_json(silent=True)
+            if isinstance(body, dict):
+                response.set_data(json.dumps({**body, "warnings": g.cr_warnings}))
         if response.headers.get("X-CR-Workspace") == "1":
             return response
         if response.mimetype == "text/html" and request.path != "/cr-setup" and not response.direct_passthrough:
