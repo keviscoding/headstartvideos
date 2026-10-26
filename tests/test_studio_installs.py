@@ -389,13 +389,45 @@ def test_use_studio_tools_puts_studios_folders_first_once(tmp_path, windows):
 
 # ── Claude Code ───────────────────────────────────────────────────────────────────────────────────────────────
 
-def test_claude_is_installed_with_anthropics_documented_commands():
-    assert cr_installs.claude_install_command(False) == [
-        "/bin/bash", "-c", "set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash"]
+def test_claude_is_installed_with_anthropics_installers_downloaded_whole_before_they_run():
+    """Piped into bash, a script cut off mid-download could run half way (review, 2026-10-26): it's saved first."""
+    bash, flag, script = cr_installs.claude_install_command(False)
+    assert (bash, flag) == ("/bin/bash", "-c")
+    assert 'curl -fsSL -o "$t" https://claude.ai/install.sh && /bin/bash "$t"' in script
+    assert "| bash" not in script and "trap 'rm -f \"$t\"' EXIT" in script and "sudo" not in script
     command = cr_installs.claude_install_command(True)
     assert command[0].lower().endswith(("powershell.exe", "pwsh", "pwsh.exe", "powershell"))
-    assert command[1:] == ["-NoProfile", "-NonInteractive", "-Command", "irm https://claude.ai/install.ps1 | iex"]
-    assert "ExecutionPolicy" not in " ".join(command) and "sudo" not in " ".join(cr_installs.claude_install_command(False))
+    assert command[1:4] == ["-NoProfile", "-NonInteractive", "-Command"]
+    assert command[4] == "$ProgressPreference = 'SilentlyContinue'; irm https://claude.ai/install.ps1 | iex"
+    assert "ExecutionPolicy" not in " ".join(command)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the Mac and Linux command runs in bash")
+def test_the_saved_script_runs_only_when_its_download_finished(tmp_path, monkeypatch):
+    script = tmp_path / "install.sh"
+    script.write_text('#!/bin/bash\necho "ran $0"\nexit 3\n', encoding="utf-8")
+    monkeypatch.setattr(cr_installs, "CLAUDE_INSTALL_SH", script.as_uri())
+    bash, flag, command = cr_installs.claude_install_command(False)
+    env = {**os.environ, "TMPDIR": str(tmp_path)}
+    done = subprocess.run([bash, flag, command], capture_output=True, text=True, encoding="utf-8", env=env, timeout=30)
+    assert done.returncode == 3 and "ran " + str(tmp_path) in done.stdout, "the installer's own answer comes back"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["install.sh"], "the saved copy is removed"
+    monkeypatch.setattr(cr_installs, "CLAUDE_INSTALL_SH", (tmp_path / "missing.sh").as_uri())
+    failed = subprocess.run(list(cr_installs.claude_install_command(False)), capture_output=True, text=True,
+                            encoding="utf-8", env=env, timeout=30)
+    assert failed.returncode != 0 and "ran " not in failed.stdout, "a failed download runs nothing"
+
+
+class Child:
+    """A stand-in installer process."""
+    def __init__(self, output="", code=0, hang=False):
+        self.output, self.returncode, self.hang, self.pid, self.waited = output, code, hang, 4242, 0
+
+    def communicate(self, timeout=None):
+        self.waited += 1
+        if self.hang and self.waited == 1:
+            raise subprocess.TimeoutExpired("installer", timeout)
+        return self.output, None
 
 
 @pytest.mark.parametrize("windows", [False, True])
@@ -404,34 +436,34 @@ def test_fix_claude_runs_the_installer_in_a_clean_environment_then_finds_claude(
     found = []
     ran = []
 
-    def run(command, **kw):
+    def popen(command, **kw):
         ran.append((command, kw))
         found.append(r"C:\Users\Zoé\.local\bin\claude.exe" if windows else "/Users/zoe/.local/bin/claude")
-        return SimpleNamespace(returncode=0, stdout="Setting up Claude Code...\n✅ Installation complete!\n", stderr="")
-    cr_installs.fix_claude(find=lambda: found[-1] if found else None, run=run, background=False, windows=windows)
+        return Child("Setting up Claude Code...\n✅ Installation complete!\n")
+    cr_installs.fix_claude(find=lambda: found[-1] if found else None, popen=popen, background=False, windows=windows)
     state = cr_installs.status("claude")
     assert state["state"] == "done" and "Claude Code is installed" in state["message"]
     assert "Open the sign-in window" in state["message"] and "auth login" in state["message"]
     (command, kw), = ran
     assert command == cr_installs.claude_install_command(windows)
-    assert kw["stdin"] is subprocess.DEVNULL and kw["encoding"] == "utf-8" and kw["timeout"] == cr_installs.CLAUDE_SECONDS
+    assert kw["stdin"] is subprocess.DEVNULL and kw["encoding"] == "utf-8" and kw["stderr"] is subprocess.STDOUT
     assert "ANTHROPIC_API_KEY" not in kw["env"], "the installer never sees a key"
+    # its own process group (Mac, Linux) or tree root (Windows): a timeout stops all of it
+    assert kw.get("start_new_session") is True if os.name != "nt" else "creationflags" in kw
 
 
 def test_fix_claude_does_nothing_when_claude_is_there_and_says_why_an_install_failed():
     calls = []
-    cr_installs.fix_claude(find=lambda: "/x/claude", run=lambda *a, **k: calls.append(a), background=False)
+    cr_installs.fix_claude(find=lambda: "/x/claude", popen=lambda *a, **k: calls.append(a), background=False)
     assert calls == [] and "already installed" in cr_installs.status("claude")["message"]
     refused = "curl: (22) The requested URL returned error: 403\nsee https://www.anthropic.com/supported-countries"
-    cr_installs.fix_claude(find=lambda: None, background=False, run=lambda *a, **k: SimpleNamespace(
-        returncode=22, stdout="", stderr=refused))
+    cr_installs.fix_claude(find=lambda: None, background=False, popen=lambda *a, **k: Child(refused, 22))
     state = cr_installs.status("claude")
     assert state["state"] == "failed" and "supported countries" in state["message"] and "403" in state["tail"]
-
-    def slow(*a, **k):
-        raise subprocess.TimeoutExpired("bash", 900)
-    cr_installs.fix_claude(find=lambda: None, run=slow, background=False)
+    stuck, killed = Child(hang=True), []
+    cr_installs.fix_claude(find=lambda: None, popen=lambda *a, **k: stuck, kill=killed.append, background=False)
     assert "didn't finish within 15 minutes" in cr_installs.status("claude")["message"]
+    assert killed == [stuck], "the whole installer is stopped, so a second Install never runs beside it"
 
 
 def test_the_sign_in_window_runs_claude_by_its_full_path(tmp_path, monkeypatch):
@@ -472,6 +504,16 @@ def test_claude_from_the_official_installer_is_found_where_it_puts_it(tmp_path, 
     assert Path(cr_claude.find_executable()) == claude.resolve()
 
 
+def test_the_swap_waits_out_an_antivirus_scan_with_a_growing_pause(tmp_path):
+    """Norton, McAfee and Avast can scan a fresh ffmpeg.exe for half a minute (review, 2026-10-26)."""
+    waits, notes = [], []
+    source, target = tmp_path / "a", tmp_path / "b"
+    with pytest.raises(OSError):
+        cr_installs._rename(source, target, sleep=waits.append, waiting=lambda: notes.append(1))   # never there
+    assert waits[:5] == [0.5, 1.0, 2.0, 4.0, 8.0] and set(waits[5:]) == {8.0}
+    assert 30 <= sum(waits) <= 60 and len(notes) == len(waits)
+
+
 def test_the_swap_waits_out_a_brief_lock_and_keeps_the_old_install_when_it_cant(tmp_path, monkeypatch):
     """Windows refuses a rename while an antivirus scans a program just written: the swap tries again."""
     real = Path.rename
@@ -489,15 +531,81 @@ def test_the_swap_waits_out_a_brief_lock_and_keeps_the_old_install_when_it_cant(
     stage = tmp_path / "tools" / ".ffmpeg-1-2"
     stage.mkdir()
     (stage / "ffmpeg").write_bytes(b"new")
-    cr_installs._swap(stage, final, wait=0)
+    fix = {"message": ""}
+    cr_installs._swap(stage, final, sleep=lambda s: None, fix=fix)
+    assert "antivirus" in fix["message"], "the progress line says why it waits"
     assert (final / "ffmpeg").read_bytes() == b"new" and locked["left"] == 0
     assert sorted(p.name for p in (tmp_path / "tools").iterdir()) == ["ffmpeg"]
     stage.mkdir()
     (stage / "ffmpeg").write_bytes(b"newer")
     locked["left"] = 99
     with pytest.raises(cr_installs.Stop, match="still using it"):
-        cr_installs._swap(stage, final, wait=0)
+        cr_installs._swap(stage, final, sleep=lambda s: None, patience=2)
     assert (final / "ffmpeg").read_bytes() == b"new", "the working install stays"
+
+
+def test_an_install_left_aside_by_a_failed_undo_comes_back_and_is_kept_until_a_new_one_is_in(tmp_path):
+    tools = tmp_path / "tools"
+    (tools / ".ffmpeg-old-100").mkdir(parents=True)
+    (tools / ".ffmpeg-old-100" / "ffmpeg").write_bytes(b"working")
+    (tools / ".ffmpeg-stage-1-2").mkdir()
+    stage = cr_installs._stage(tmp_path, "ffmpeg")
+    assert (tools / "ffmpeg" / "ffmpeg").read_bytes() == b"working", "put back before anything is downloaded"
+    assert not (tools / ".ffmpeg-stage-1-2").exists() and stage.name.startswith(".ffmpeg-stage-")
+    (tools / ".ffmpeg-old-200").mkdir()                          # another left aside: kept until the swap succeeds
+    (stage / "ffmpeg").write_bytes(b"new")
+    cr_installs._swap(stage, tools / "ffmpeg", sleep=lambda s: None)
+    assert (tools / "ffmpeg" / "ffmpeg").read_bytes() == b"new" and sorted(p.name for p in tools.iterdir()) == ["ffmpeg"]
+
+
+def test_a_download_redirected_to_plain_http_is_not_followed(tmp_path):
+    data = b"x" * 100
+
+    class Moved(Response):
+        url = "http://mirror.example/f.zip"
+    pinned = item("https://host.example/f.zip", data)
+    with pytest.raises(cr_installs.Stop, match="insecure address"):
+        cr_installs.fetch(pinned, tmp_path / "dl", {"done": 0}, get=lambda url: Moved(body=data))
+
+
+def test_fix_ffmpeg_and_node_say_already_installed_when_studios_own_copy_works(tmp_path, monkeypatch):
+    """Free tools Claude Code can run unasked: nothing is downloaded or switched when Studio's copy works."""
+    for name in ("ffmpeg/ffmpeg", "ffmpeg/ffprobe", "node/node"):
+        (tmp_path / "tools" / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "tools" / name).write_bytes(b"x")
+    server, environ = Server({}), {"PATH": "/usr/bin"}
+    cr_installs.fix_ffmpeg(home=tmp_path, key="darwin-arm64", get=server, check=lambda f, p: "", background=False,
+                           macos=(14, 0), environ=environ, busy=lambda: True)
+    assert "already installed in Studio's own folder" in cr_installs.status("ffmpeg")["message"]
+    cr_installs.fix_node(home=tmp_path, key="darwin-arm64", get=server, check=lambda path: (24, 22, 1),
+                         background=False, macos=(14, 0), environ=environ, busy=lambda: True)
+    assert "Node.js 24.22.1 is already installed" in cr_installs.status("node")["message"]
+    assert server.asked == [] and environ["PATH"].split(os.pathsep)[0] == str(tmp_path / "tools" / "ffmpeg")
+    cr_installs.fix_node(home=tmp_path, key="darwin-arm64", get=node_pins(monkeypatch, "darwin-arm64"),
+                         check=lambda path: (24, 22, 1) if "-stage-" in path else (20, 1, 0),
+                         background=False, macos=(14, 0), environ={})
+    assert "Node.js 24.22.1 is installed" in cr_installs.status("node")["message"], "an old copy of its own is replaced"
+
+
+def test_nothing_is_switched_while_a_video_is_being_made(tmp_path, monkeypatch):
+    server = ffmpeg_pins(monkeypatch, "darwin-arm64")
+    cr_installs.fix_ffmpeg(home=tmp_path, key="darwin-arm64", get=server, check=lambda f, p: "", background=False,
+                           macos=(14, 0), environ={}, busy=lambda: True)
+    state = cr_installs.status("ffmpeg")
+    assert state["state"] == "failed" and "never switches its FFmpeg in the middle of one" in state["message"]
+    assert server.asked == [], "refused before anything is downloaded"
+    started = iter([False, True])                               # a video starts while it downloads
+    old = tmp_path / "tools" / "ffmpeg"
+    old.mkdir(parents=True)
+    (old / "ffmpeg").write_bytes(b"old")
+    cr_installs.fix_ffmpeg(home=tmp_path, key="darwin-arm64", get=server, check=lambda f, p: "", background=False,
+                           macos=(14, 0), environ={}, busy=lambda: next(started))
+    assert "never switches" in cr_installs.status("ffmpeg")["message"] and (old / "ffmpeg").read_bytes() == b"old"
+    assert sorted(p.name for p in (tmp_path / "tools").iterdir()) == ["ffmpeg"]
+    node = node_pins(monkeypatch, "windows-x64")
+    cr_installs.fix_node(home=tmp_path, key="windows-x64", get=node, check=lambda path: (24, 22, 1), background=False,
+                         environ={}, busy=lambda: True)
+    assert "never switches its Node.js" in cr_installs.status("node")["message"] and node.asked == []
 
 
 def test_the_hint_says_how_big_the_download_is_on_this_computer(monkeypatch):

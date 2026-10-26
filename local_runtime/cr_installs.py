@@ -81,8 +81,8 @@ FFMPEG = {
 # (a security release of 2026-10-20); 22.23.4 "Jod", the Maintenance LTS of the same day, only for Macs older than
 # macOS 13.5, which Node 24's Mac builds need (Node 22's run on macOS 11 and newer). yt-dlp's YouTube challenge solver
 # needs Node 22 or newer. Each SHA-256 is the archive's line in that release's SHASUMS256.txt
-# (https://nodejs.org/dist/vX/SHASUMS256.txt), and fix_node fetches that file again at install time and refuses
-# unless it lists the same hash. Only the node program is taken out (Studio never runs npm). Checked for real on
+# (https://nodejs.org/dist/vX/SHASUMS256.txt). The pinned hash is the guarantee; fix_node also reads that list again at
+# install time and refuses if it disagrees (a second look from the same host, without its GPG signature). Only the node program is taken out (Studio never runs npm). Checked for real on
 # 2026-10-26: both darwin-arm64 archives hashed as listed and their node ran (macOS minimums read from the binaries).
 NODE_MINIMUM = 22
 NODE_DIST = "https://nodejs.org/dist/"
@@ -367,6 +367,10 @@ def fetch(item: dict, folder: Path, fix: dict, *, get=None, what: str = "") -> P
                 if response.status_code != 200:
                     problems.append(f"{_host(url)} answered {response.status_code}")
                     continue
+                landed = str(getattr(response, "url", "") or url)
+                if not landed.startswith("https://"):            # a redirect to plain http: not followed
+                    problems.append(f"{_host(url)} sent Studio to an insecure address")
+                    continue
                 with open(part, "wb") as out:
                     for chunk in response.iter_content(1 << 20):
                         if not chunk:
@@ -458,54 +462,89 @@ def _room(home: Path, need_mb: int) -> None:
                    "the Bin or Recycle Bin, delete old downloads), then press Fix it.")
 
 
+SWAP_PATIENCE = 45.0          # seconds: Norton, McAfee and Avast can scan a fresh 100 MB ffmpeg.exe for half a minute
+
+
 def _stage(home: Path, name: str) -> Path:
+    """A fresh staging folder. A stopped fix's staging leftovers go; an earlier install (tools/.<name>-old-*, left
+    when a swap and its undo both failed) is put back if nothing replaced it, and is never deleted before a new
+    install is in place."""
     tools = Path(home) / "tools"
     tools.mkdir(parents=True, exist_ok=True)
-    for old in tools.glob(f".{name}-*"):                       # a stopped fix's leftovers
-        shutil.rmtree(old, ignore_errors=True)
-    stage = tools / f".{name}-{os.getpid()}-{int(time.time())}"
+    for left in tools.glob(f".{name}-stage-*"):
+        shutil.rmtree(left, ignore_errors=True)
+    final = tools / name
+    olds = sorted(tools.glob(f".{name}-old-*"))
+    if olds and not final.exists():
+        try:
+            olds[-1].rename(final)
+        except OSError:
+            pass
+    stage = tools / f".{name}-stage-{os.getpid()}-{int(time.time())}"
     stage.mkdir()
     return stage
 
 
-def _rename(source: Path, target: Path, *, tries: int = 10, wait: float = 0.5) -> None:
-    """Windows refuses a rename while an antivirus still scans a program just written or run: try again briefly."""
-    for attempt in range(tries):
+def _rename(source: Path, target: Path, *, patience: float = SWAP_PATIENCE, sleep=None, waiting=None) -> None:
+    """Windows refuses a rename while an antivirus still scans a program just written or run: try again, waiting
+    a little longer each time (0.5, 1, 2, 4, then 8 s), for up to `patience` seconds."""
+    sleep, waited, wait = sleep or time.sleep, 0.0, 0.5
+    while True:
         try:
             source.rename(target)
             return
         except OSError:
-            if attempt == tries - 1:
+            if waited >= patience:
                 raise
-            time.sleep(wait)
+            if waiting:
+                waiting()
+            sleep(wait)
+            waited += wait
+            wait = min(wait * 2, 8.0)
 
 
-def _swap(stage: Path, final: Path, *, wait: float = 0.5) -> None:
+def _swap(stage: Path, final: Path, *, patience: float = SWAP_PATIENCE, sleep=None, fix: dict | None = None) -> None:
     """Move the checked install into place; the one before it goes only once the new one is there."""
     old = final.with_name(f".{final.name}-old-{int(time.time())}")
+    note = (lambda: fix.update(message="Your antivirus is still checking the new files; waiting for it (up to a "
+                                       "minute)…")) if fix is not None else None
     try:
         if final.exists():
-            _rename(final, old, wait=wait)
-        _rename(stage, final, wait=wait)
+            _rename(final, old, patience=patience, sleep=sleep, waiting=note)
+        _rename(stage, final, patience=patience, sleep=sleep, waiting=note)
     except OSError:
         if old.exists() and not final.exists():
             try:
-                _rename(old, final, wait=wait)                # the working install back where it was
+                _rename(old, final, patience=patience, sleep=sleep)   # the working install back where it was
             except OSError:
-                pass
-        raise Stop(f"Studio couldn't replace its {final.name} folder: a program is probably still using it (a video "
-                   "being made). Try again when nothing is running.") from None
-    shutil.rmtree(old, ignore_errors=True)
+                pass                                           # kept as .<name>-old-*: _stage puts it back
+        raise Stop(f"Studio couldn't replace its {final.name} folder: a program (or an antivirus scan) is still using "
+                   "it. Try again in a few minutes, when no video is being made.") from None
+    for left in final.parent.glob(f".{final.name}-old-*"):
+        shutil.rmtree(left, ignore_errors=True)
 
 
 # ── FFmpeg ────────────────────────────────────────────────────────────────────────────────────────────────────
 
+VIDEO_RUNNING = ("A video is being made right now, and Studio never switches its {what} in the middle of one. Press "
+                 "Fix it again when it's done.")
+
+
 def fix_ffmpeg(*, home: Path = HOME, key: str | None = None, get=None, check=None, background: bool = True,
-               macos: tuple | None = None, environ=None) -> dict:
+               macos: tuple | None = None, environ=None, busy=None) -> dict:
     """Install FFmpeg + ffprobe into tools/ffmpeg and put it first on PATH. check(ffmpeg, ffprobe) -> '' when they
-    work (video_tools_problem)."""
+    work (video_tools_problem). busy() -> True while a video is being made: nothing is switched then (the fix tools
+    are free, so Claude Code can run them unasked)."""
     def work(fix):
         spec_key = platform_key() if key is None else key
+        windows = spec_key.startswith("windows") if spec_key else WINDOWS
+        own = Path(home) / "tools" / "ffmpeg"
+        paths = (str(own / _exe("ffmpeg", windows)), str(own / _exe("ffprobe", windows)))
+        if all(Path(p).is_file() for p in paths) and not (check or video_tools_problem)(*paths):
+            use_studio_tools(home, environ, windows)
+            return "FFmpeg is already installed in Studio's own folder and works. Nothing to download."
+        if busy and busy():
+            raise Stop(VIDEO_RUNNING.format(what="FFmpeg"))
         if spec_key not in FFMPEG:
             raise Stop("Studio has no FFmpeg of its own for this computer. " + fix_hint("ffmpeg"))
         if spec_key.startswith("darwin"):
@@ -516,7 +555,6 @@ def fix_ffmpeg(*, home: Path = HOME, key: str | None = None, get=None, check=Non
                            "(brew install ffmpeg-full), then reopen the launcher.")
         _room(home, NEEDS_MB["ffmpeg"])
         items = FFMPEG[spec_key]
-        windows = spec_key.startswith("windows")
         fix.update(state="downloading", done=0, total=sum(i["size"] for i in items), what=f"FFmpeg {FFMPEG_VERSION}")
         stage = _stage(home, "ffmpeg")
         try:
@@ -532,7 +570,9 @@ def fix_ffmpeg(*, home: Path = HOME, key: str | None = None, get=None, check=Non
             if problem:
                 raise Stop(f"The downloaded FFmpeg didn't pass Studio's check ({problem.rstrip('.')}), so it wasn't "
                            "installed. Press Copy diagnostics and paste it in Discord #help.")
-            _swap(files, Path(home) / "tools" / "ffmpeg")
+            if busy and busy():
+                raise Stop(VIDEO_RUNNING.format(what="FFmpeg"))
+            _swap(files, own, fix=fix)
         finally:
             shutil.rmtree(stage, ignore_errors=True)
         use_studio_tools(home, environ, windows)
@@ -578,11 +618,22 @@ def published_sha256(version: str, filename: str, *, get=None) -> str:
 
 
 def fix_node(*, home: Path = HOME, key: str | None = None, get=None, check=None, background: bool = True,
-             macos: tuple | None = None, environ=None) -> dict:
+             macos: tuple | None = None, environ=None, busy=None) -> dict:
     """Install Node.js (the node program only) into tools/node and put it first on PATH. check(node) -> version
-    tuple or None (version_of)."""
+    tuple or None (version_of). busy() as for fix_ffmpeg."""
     def work(fix):
         spec_key = platform_key() if key is None else key
+        windows = spec_key.startswith("windows") if spec_key else WINDOWS
+        own = Path(home) / "tools" / "node"
+        program = _exe("node", windows)
+        if (own / program).is_file():
+            have = (check or version_of)(str(own / program))
+            if have and have[0] >= NODE_MINIMUM:
+                use_studio_tools(home, environ, windows)
+                return (f"Node.js {'.'.join(map(str, have))} is already installed in Studio's own folder and works. "
+                        "Nothing to download.")
+        if busy and busy():
+            raise Stop(VIDEO_RUNNING.format(what="Node.js"))
         version = node_release(spec_key, macos)
         if not version:
             if spec_key.startswith("darwin"):
@@ -590,7 +641,6 @@ def fix_node(*, home: Path = HOME, key: str | None = None, get=None, check=None,
                            "then press Fix it again.")
             raise Stop("Studio has no Node.js of its own for this computer. " + fix_hint("node"))
         filename, size, sha = NODE[version]["builds"][spec_key]
-        windows = spec_key.startswith("windows")
         _room(home, NEEDS_MB["node"])
         fix.update(state="downloading", done=0, total=size, what=f"Node.js {version}")
         listed = published_sha256(version, filename, get=get)
@@ -602,7 +652,6 @@ def fix_node(*, home: Path = HOME, key: str | None = None, get=None, check=None,
             item = {"urls": [f"{NODE_DIST}v{version}/{filename}"], "size": size, "sha256": sha}
             archive = fetch(item, stage / "downloads", fix, get=get, what=f"Node.js {version}")
             top = filename[:-len(".zip")] if filename.endswith(".zip") else filename[:-len(".tar.gz")]
-            program = _exe("node", windows)
             files = stage / "node"
             take(archive, {program: f"{top}/{program}" if windows else f"{top}/bin/node"}, files)
             archive.unlink(missing_ok=True)
@@ -611,7 +660,9 @@ def fix_node(*, home: Path = HOME, key: str | None = None, get=None, check=None,
             if not found or found[0] < NODE_MINIMUM:
                 raise Stop(f"The downloaded Node.js {version} didn't start on this computer, so it wasn't installed. "
                            "Press Copy diagnostics and paste it in Discord #help.")
-            _swap(files, Path(home) / "tools" / "node")
+            if busy and busy():
+                raise Stop(VIDEO_RUNNING.format(what="Node.js"))
+            _swap(files, own, fix=fix)
         finally:
             shutil.rmtree(stage, ignore_errors=True)
         use_studio_tools(home, environ, windows)
@@ -630,11 +681,50 @@ def powershell() -> str:
 
 
 def claude_install_command(windows: bool | None = None) -> list:
-    """Anthropic's documented install command for this computer, run as it is documented."""
+    """Anthropic's documented installer for this computer. On a Mac (and Linux) the script is downloaded whole to a
+    temporary file first and only then run: piped straight into bash, a script cut off mid-download could run half
+    way. irm reads the whole script before iex runs it."""
     if WINDOWS if windows is None else windows:
-        return [powershell(), "-NoProfile", "-NonInteractive", "-Command", f"irm {CLAUDE_INSTALL_PS1} | iex"]
-    # pipefail: a download that fails stops here, instead of bash happily running an empty script
-    return ["/bin/bash", "-c", f"set -o pipefail; curl -fsSL {CLAUDE_INSTALL_SH} | bash"]
+        return [powershell(), "-NoProfile", "-NonInteractive", "-Command",
+                f"$ProgressPreference = 'SilentlyContinue'; irm {CLAUDE_INSTALL_PS1} | iex"]
+    return ["/bin/bash", "-c", 't=$(mktemp "${TMPDIR:-/tmp}/claude-install.XXXXXX") || exit 1; '
+            "trap 'rm -f \"$t\"' EXIT; "
+            f'curl -fsSL -o "$t" {CLAUDE_INSTALL_SH} && /bin/bash "$t"']
+
+
+def run_installer(command: list, *, env: dict, timeout: float, popen=None, kill=None) -> tuple:
+    """(exit code, output) of the installer. It runs in its own process group (Mac, Linux) or is a tree's root
+    (Windows), and on a timeout all of it is stopped, so a second Install never runs beside a stuck first one."""
+    popen = popen or subprocess.Popen
+    extra = ({"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200)} if WINDOWS else
+             {"start_new_session": True})
+    child = popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                  encoding="utf-8", errors="replace", env=env, **extra)
+    try:
+        output, _ = child.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        (kill or _kill_tree)(child)
+        try:
+            child.communicate(timeout=30)
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            pass
+        raise
+    return child.returncode, output or ""
+
+
+def _kill_tree(child) -> None:
+    try:
+        if WINDOWS:
+            taskkill = Path(os.environ.get("SystemRoot") or r"C:\Windows") / "System32" / "taskkill.exe"
+            subprocess.run([str(taskkill), "/T", "/F", "/PID", str(child.pid)], capture_output=True, timeout=30)
+        else:
+            import signal
+            os.killpg(child.pid, signal.SIGKILL)               # its own session: the group is the installer's
+    except (OSError, subprocess.SubprocessError):
+        try:
+            child.kill()
+        except OSError:
+            pass
 
 
 def installer_problem(output: str) -> str:
@@ -672,7 +762,7 @@ SIGNED_IN_NEXT = ("press Open the sign-in window (or run {command} in Terminal o
                   "Claude Code login.")
 
 
-def fix_claude(*, find=None, run=None, background: bool = True, windows: bool | None = None) -> dict:
+def fix_claude(*, find=None, popen=None, kill=None, background: bool = True, windows: bool | None = None) -> dict:
     """Run Anthropic's official Claude Code installer (only when the creator asks for it), then find the program."""
     def work(fix):
         import cr_claude
@@ -684,10 +774,8 @@ def fix_claude(*, find=None, run=None, background: bool = True, windows: bool | 
         fix.update(state="installing", message="Running Anthropic's official Claude Code installer (a minute or two; it "
                                                "downloads about 200 MB)…")
         try:
-            result = (run or subprocess.run)(claude_install_command(windows), stdin=subprocess.DEVNULL,
-                                             capture_output=True, text=True, encoding="utf-8", errors="replace",
-                                             timeout=CLAUDE_SECONDS, env=cr_claude.clean_environment())
-            output = (result.stdout or "") + (result.stderr or "")
+            _, output = run_installer(claude_install_command(windows), env=cr_claude.clean_environment(),
+                                      timeout=CLAUDE_SECONDS, popen=popen, kill=kill)
         except subprocess.TimeoutExpired:
             raise Stop("Claude Code's installer didn't finish within 15 minutes. Check the internet connection, then "
                        "press Install Claude Code again.") from None

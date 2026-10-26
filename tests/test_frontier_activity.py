@@ -969,7 +969,12 @@ def test_setup_fix_routes_start_studios_own_installs_behind_the_local_token(runt
         response = runtime.client.post(path, headers=runtime.headers)
         assert response.status_code == 202 and response.json == {"state": "starting"}
     assert [name for name, _ in started] == ["fix_ffmpeg", "fix_node", "fix_claude"]
-    assert started[0][1] == {"home": runtime.job} and started[1][1] == {"home": runtime.job}
+    assert started[0][1]["home"] == runtime.job and started[1][1]["home"] == runtime.job
+    busy = started[0][1]["busy"]                    # never switch FFmpeg or Node.js under a video being made
+    assert busy() is False
+    runtime.studio.RUNNING["slug"] = "a-video"
+    assert busy() is True and started[1][1]["busy"]() is True
+    runtime.studio.RUNNING.clear()
     monkeypatch.setitem(cr_installs.FIXES, "ffmpeg", {"state": "downloading", "done": 10 << 20, "total": 57 << 20,
                                                       "what": "FFmpeg 9.0.2", "message": "", "tail": ""})
     assert "10 of 57 MB" in runtime.client.get("/cr-setup/fix-ffmpeg", headers=runtime.headers).json["message"]

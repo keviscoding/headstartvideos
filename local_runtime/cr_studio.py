@@ -934,9 +934,18 @@ def create_app():
 
     # Fix it for FFmpeg, Node.js and Claude Code (cr_installs): FFmpeg and Node.js into Studio's own folder, Claude
     # Code with Anthropic's own installer. Each runs in the background; setup polls the GET for its progress line.
+    def video_running():
+        """A video (or any render) being made right now: setup's Fix its never switch FFmpeg or Node.js under it.
+        Read without the activity lock (a long setup request holds it); can't tell = don't switch."""
+        try:
+            return bool(activity.active or studio.RUNNING.get("slug") or studio.QUEUE or cr_workers.busy()
+                        or activity.editor_queue_busy())
+        except Exception:                                      # noqa: BLE001
+            return True
+
     @studio.app.post("/cr-setup/fix-ffmpeg")
     def fix_ffmpeg_route():
-        return jsonify(cr_installs.fix_ffmpeg(home=HOME)), 202
+        return jsonify(cr_installs.fix_ffmpeg(home=HOME, busy=video_running)), 202
 
     @studio.app.get("/cr-setup/fix-ffmpeg")
     def fix_ffmpeg_status():
@@ -944,7 +953,7 @@ def create_app():
 
     @studio.app.post("/cr-setup/fix-node")
     def fix_node_route():
-        return jsonify(cr_installs.fix_node(home=HOME)), 202
+        return jsonify(cr_installs.fix_node(home=HOME, busy=video_running)), 202
 
     @studio.app.get("/cr-setup/fix-node")
     def fix_node_status():
