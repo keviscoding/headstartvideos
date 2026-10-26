@@ -694,6 +694,89 @@ def test_setup_shows_blocked_services_and_fixes_the_speech_model_with_a_progress
     assert errors == []
 
 
+def test_setup_fixes_ffmpeg_and_node_and_installs_and_signs_in_to_claude_code(page):
+    """New customers got stuck at "Install FFmpeg / Node / Claude Code, then reopen the launcher" (2026-10-26): each
+    is one press now, with a progress line, and a failure says why and offers Fix it again."""
+    tab, errors = page
+    tab.unroute("**/*")
+    html = (Path(__file__).parents[1] / "local_runtime" / "cr_setup.html").read_text()
+    html = html.replace("__LOCAL_TOKEN__", "ui-fixture-local-token")
+    state = {"python": True, "ffmpeg": False, "browser": True, "node": False, "connected": True,
+             "ffmpeg_reason": "This computer's FFmpeg can't burn captions. Press Fix it next to Video tools.",
+             "node_reason": "Node.js 20.11.1 is too old for the YouTube downloader (it needs 22 or newer).",
+             "can_fix": {"ffmpeg": True, "node": True, "claude": True},
+             "costs_accepted": True, "brain_mode": "claudecode", "local_version": "5.3-admin.106",
+             "model_accounts": {}, "providers": {}, "account": {"brain": {"connected": False}},
+             "claude_code": {"installed": False, "authenticated": False, "models": []},
+             "speech_model": {"ready": True, "state": "ready", "reason": ""},
+             "readiness": {"ready": False, "checks": [], "blockers": []}}
+    asked = {"posts": [], "ffmpeg": 0, "node": 0, "claude": 0, "signin": 0}
+
+    def fixture(route):
+        request = route.request
+        if request.url.startswith(ONBOARDING_MEDIA):
+            return route.fulfill(status=200, content_type="image/jpeg", body=b"")
+        parsed = urlparse(request.url)
+        path = parsed.path
+        if path == "/cr-setup":
+            return route.fulfill(body=html, content_type="text/html")
+        assert request.headers.get("x-cr-local-token") == "ui-fixture-local-token"
+        if path == "/cr-status":
+            return route.fulfill(json=state)
+        if path == "/cr-workspace/catalog":
+            return route.fulfill(json={"channels": [], "features": []})
+        if request.method == "POST":
+            asked["posts"].append(path)
+            if path == "/cr-setup/claude-sign-in":
+                return route.fulfill(json={"opened": True, "message": "A sign-in window opened."})
+            return route.fulfill(status=202, json={"state": "starting"})
+        if path == "/cr-setup/fix-ffmpeg":
+            asked["ffmpeg"] += 1
+            if asked["ffmpeg"] == 1:
+                return route.fulfill(json={"state": "downloading", "message": "Downloading FFmpeg 9.0.2: 30 of 57 MB…"})
+            state.update(ffmpeg=True, ffmpeg_reason="")
+            return route.fulfill(json={"state": "done", "message": "FFmpeg 9.0.2 is installed."})
+        if path == "/cr-setup/fix-node":
+            return route.fulfill(json={"state": "failed", "message": "Studio couldn't download Node.js 24.22.1."})
+        if path == "/cr-setup/fix-claude" and parsed.query == "signin=1":
+            asked["signin"] += 1
+            state["claude_code"] = {**state["claude_code"], "authenticated": True}
+            return route.fulfill(json={"state": "done", "installed": True, "signed_in": True})
+        if path == "/cr-setup/fix-claude":
+            asked["claude"] += 1
+            state["claude_code"] = {"installed": True, "authenticated": False, "models": []}
+            return route.fulfill(json={"state": "done", "installed": True, "message": "Claude Code is installed. "
+                                       "Last step, once: press Open the sign-in window."})
+        pytest.fail("Unexpected request: " + request.method + " " + request.url)
+
+    tab.route("**/*", fixture)
+    tab.goto("http://setup-ui-fixture.invalid/cr-setup")
+    tab.wait_for_selector("#ffmpeg-row")
+    assert "can't burn captions" in tab.locator("#ffmpeg-row").inner_text()
+    assert "Node.js 20.11.1 is too old" in tab.locator("#node-row").inner_text()
+    tab.locator("#fix-ffmpeg").click()
+    tab.wait_for_function("document.querySelector('#ffmpeg-row')?.innerText.includes('30 of 57 MB')", timeout=8000)
+    tab.wait_for_function("document.querySelector('#ffmpeg-row')?.classList.contains('ok')", timeout=8000)
+    assert not tab.locator("#fix-ffmpeg").count()
+    tab.locator("#fix-node").click()
+    tab.wait_for_function("document.querySelector('#node-row')?.innerText.includes('download Node.js 24.22.1')",
+                          timeout=8000)
+    assert "Press Fix it to try again" in tab.locator("#node-row").inner_text()
+    assert tab.locator("#fix-node").is_enabled(), "a failure offers Fix it again"
+    # Claude Code: installed by Anthropic's installer, then a sign-in window, and the page notices the sign-in
+    assert tab.locator("#claude-install").is_visible() and tab.locator("#claude-signin").is_hidden()
+    assert "desktop app alone isn’t enough" in tab.locator("#claude-quick-status").inner_text()
+    tab.locator("#claude-install").click()
+    tab.wait_for_function("!document.querySelector('#claude-signin').hidden", timeout=10000)
+    assert tab.locator("#claude-install").is_hidden() and "Open the sign-in window" in tab.locator("#claude-fix-status").inner_text()
+    tab.locator("#claude-signin").click()
+    tab.wait_for_function("document.querySelector('#claude-fix-status').innerText.includes('Signed in')", timeout=12000)
+    tab.wait_for_function("document.querySelector('#claude-fix').hidden", timeout=8000)
+    assert asked["posts"] == ["/cr-setup/fix-ffmpeg", "/cr-setup/fix-node", "/cr-setup/fix-claude",
+                              "/cr-setup/claude-sign-in"]
+    assert errors == []
+
+
 @pytest.mark.parametrize("browser_reaches", [True, False])
 def test_setup_says_when_an_antivirus_blocks_studio_and_the_browser_still_works(page, browser_reaches):
     """A Windows creator's Norton blocked Studio's connections while their browser worked (2026-10-24)."""

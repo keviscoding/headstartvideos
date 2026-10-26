@@ -217,7 +217,9 @@ def video_tools_problem(ffmpeg: str = "ffmpeg", ffprobe: str = "ffprobe", *, whi
             if result.returncode:
                 return "FFmpeg is installed but won't start."
             names = {line.split()[1] for line in (result.stdout or "").splitlines() if len(line.split()) > 1}
-            missing += [why for name, why in wanted.items() if name not in names and why not in missing]
+            for name, why in wanted.items():
+                if name not in names and why not in missing:
+                    missing.append(why)
     except (OSError, subprocess.SubprocessError):
         return "FFmpeg is installed but won't start."
     return ("This computer's FFmpeg can't " + " or ".join(missing) + ".") if missing else ""
@@ -403,7 +405,10 @@ def take(archive: Path, members: dict, into: Path) -> None:
     try:
         if archive.name.endswith(".zip"):
             with zipfile.ZipFile(archive) as bundle:
+                listed = set(bundle.namelist())
                 for name, member in members.items():
+                    if member not in listed:
+                        raise KeyError(member)
                     with bundle.open(member) as source, open(into / name, "wb") as out:
                         shutil.copyfileobj(source, out, 1 << 20)
                     _executable(into / name)
