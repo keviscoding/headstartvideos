@@ -29,6 +29,7 @@ HOME = Path(__file__).resolve().parent
 STUDY_GUIDANCE = HOME / "cr-style-study-brief.txt"
 MAX_REFERENCES = 3
 MAX_REFERENCE_S = 24 * 3600
+SHORT_LINK_S = 180                      # the longest a Short runs
 PREVIEW_LIMIT = 8
 PHASES = {
     "prepared": (0, "Your approved reference study is ready to start."),
@@ -293,7 +294,12 @@ def preview(home, url, *, learner=None):
         duration = max(0.0, float(row.get("duration") or 0))
         # A Short is studied like any video (its whole length is looked at); YouTube's Shorts list gives no length.
         short = shorts_tab or bool(row.get("short"))
-        eligible = duration <= MAX_REFERENCE_S if short else 60 <= duration <= MAX_REFERENCE_S
+        if short:
+            eligible = duration <= MAX_REFERENCE_S
+        elif direct_id and 0 < duration < SHORT_LINK_S:
+            eligible = True     # a Short pasted as its own link isn't always listed as one: studied whatever its length
+        else:
+            eligible = 60 <= duration <= MAX_REFERENCE_S
         candidates.append({"id": identifier, "url": "https://www.youtube.com/watch?v=" + identifier,
             "title": str(row.get("title") or "Untitled reference")[:300],
             "channel": str(row.get("channel") or "")[:160],
@@ -880,6 +886,7 @@ def sync(home, operation_id, bridge):
     """Reconcile only saved metadata. Never call a model, downloader or renderer."""
     folder, saved = _saved(home, operation_id, bridge)
     with _lock(folder):
+        folder, saved = _saved(home, operation_id, bridge)    # as it is now: a style edit may have just saved it
         if saved.get("state") == "validated":
             _publish(home, folder, saved)
         _sync(folder, saved, bridge)
@@ -1584,6 +1591,7 @@ def run(home, operation_id, bridge, *, readiness, execute=None):
     """Execute once. Already completed studies only synchronize saved receipts."""
     folder, saved = _saved(home, operation_id, bridge)
     with _lock(_folder(home), ".runner.lock"), _lock(folder):
+        folder, saved = _saved(home, operation_id, bridge)    # as it is now: a style edit may have just saved it
         if saved["state"] in {"complete", "complete_local"}:
             _sync(folder, saved, bridge)
             return status(home, operation_id, bridge)

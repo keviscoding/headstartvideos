@@ -171,9 +171,9 @@ def similar(home, look_id, profile, *, base="", shorts=False) -> list:
         style = _read(path)
         if style:
             styles[Path(path).stem] = style
-            learned = ((style.get("cr_style_clone") or {}).get("learned_v2") or {}).get("look_id")
-            if learned and _ID.fullmatch(str(learned)):
-                profiles[Path(path).stem] = _read(folder(home, learned) / "look.json").get("profile") or {}
+            seen = learned_profile(home, style)
+            if seen:
+                profiles[Path(path).stem] = seen
     out = []
     for row in cr_style_map.similar(profile, styles, profiles=profiles, shorts=shorts, base=base, look_id=look_id):
         style = styles[row["id"]]
@@ -181,8 +181,17 @@ def similar(home, look_id, profile, *, base="", shorts=False) -> list:
         out.append({**row, "name": named[0] if named else str(style.get("label") or row["id"]),
                     "description": str(named[2] if named else style.get("tagline") or style.get("description") or "")[:240],
                     "preview_url": "/cr-workspace/preview/recipe/" + quote(row["id"], safe="") + ".jpg",
-                    "use_url": "/?cr-preset=" + quote(row["id"], safe=""), "sample": cr_style_sample.offer(style)})
+                    "use_url": "/?cr-preset=" + quote(row["id"], safe=""),
+                    "sample": cr_style_sample.offer(style, name=row["id"], profile=profiles.get(row["id"]))})
     return out
+
+
+def learned_profile(home, style) -> dict:
+    """What Studio saw of the channel a learned style was studied from (its look's profile), {} for any other style."""
+    learned = (((style or {}).get("cr_style_clone") or {}).get("learned_v2") or {}).get("look_id")
+    if not learned or not _ID.fullmatch(str(learned)):
+        return {}
+    return _read(folder(home, learned) / "look.json").get("profile") or {}
 
 
 # ── the work ───────────────────────────────────────────────────────────────────────────────────────────────

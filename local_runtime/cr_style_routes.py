@@ -458,13 +458,13 @@ def install(studio, activity, setup_status, *, token, home=None):
                 raise ValueError("Choose an installed style.")
             look = style.get("look") if isinstance(style.get("look"), dict) else {}
             import cr_media
-            if cr_media.active("images"):
-                def generate(prompt, dest, label, ref_urls):
-                    return cr_media.image(prompt, dest, label, ref_urls=ref_urls, model=look.get("image_model") or None)
-            else:
-                def generate(prompt, dest, label, ref_urls):
-                    return studio.mv.image_gen(prompt, dest, label, ref_urls=ref_urls,
-                                               kie_create_fn=getattr(studio.mv, "_kie_create", None))
+            # drawn only on the creator's own image account through Studio's media receipts (quoted, never paid
+            # twice); the engine's own image path tries other wallets without them, so it never draws a sample
+            if not cr_media.active("images"):
+                raise ValueError(cr_style_sample.NEEDS_IMAGES)
+
+            def generate(prompt, dest, label, ref_urls):
+                return cr_media.image(prompt, dest, label, ref_urls=ref_urls, model=look.get("image_model") or None)
             return no_store(jsonify(cr_style_sample.start(home, name, style, payload.get("topic"), payload.get("line"),
                                                           generate=generate, host=studio.mv.host_image,
                                                           voice=cr_style_sample.kie_voice)))

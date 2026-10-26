@@ -865,10 +865,13 @@ def test_a_shorts_only_channel_is_read_from_its_shorts_tab_and_its_shorts_can_be
     one = clone.preview(approved.home, "https://youtube.com/shorts/" + VIDEO, learner=SimpleNamespace(
         _flat=lambda *a: [{"id": VIDEO, "title": "A Short", "duration": 45, "short": True}]))
     assert one["candidates"][0]["eligible"] and one["candidates"][0]["short"]
-    # a long-form video under a minute is still not a reference
+    # a Short pasted as its own watch link isn't always listed as one: a single video under three minutes is studied
     clip = clone.preview(approved.home, "https://youtube.com/watch?v=" + VIDEO, learner=SimpleNamespace(
         _flat=lambda *a: [{"id": VIDEO, "title": "A clip", "duration": 45}]))
-    assert not clip["candidates"][0]["eligible"]
+    assert clip["candidates"][0]["eligible"] and not clip["candidates"][0].get("short")
+    unknown = clone.preview(approved.home, "https://youtube.com/watch?v=" + VIDEO, learner=SimpleNamespace(
+        _flat=lambda *a: [{"id": VIDEO, "title": "A clip", "duration": 0}]))
+    assert not unknown["candidates"][0]["eligible"], "a single video still needs a known length"
 
 
 def test_youtube_listing_marks_shorts_and_says_plainly_when_a_channel_lists_nothing(monkeypatch):

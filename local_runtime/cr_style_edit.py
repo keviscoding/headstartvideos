@@ -16,6 +16,7 @@ import copy
 import json
 import re
 import time
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 _STYLE = re.compile(r"cr_clone_[a-z0-9_-]{1,40}\Z")
@@ -26,6 +27,8 @@ FEATURE_LABELS = {"youtube": "Real footage (YouTube)", "stock": "Stock footage",
                   "vox": "Explainer graphics", "maps": "Maps", "spotlight": "Photos of who and what is named",
                   "headlines": "Articles and screenshots", "sound": "Sound design", "avatar": "A presenter on camera",
                   "threed": "3D scenes"}
+STILL_FINISHING = ("The study that made this style is still finishing it (checking how close its test pictures come "
+                   "to your references). Edit it in a few minutes; nothing was changed.")
 
 
 def _read(path) -> dict:
@@ -113,12 +116,36 @@ def editable(home, name) -> dict:
             "use_url": "/?cr-preset=" + name}
 
 
+@contextmanager
+def _study_done(home, style):
+    """Held while an edit is saved: the study that saved this style holds the same lock while it checks the likeness
+    and records completion, then writes its record (with the style's hash) from what it read before. An edit in
+    between would be lost and the style no longer the study's, so it waits until the study is done."""
+    import cr_style_clone
+    try:
+        folder = cr_style_clone._operation(home, str((style.get("cr_style_clone") or {}).get("operation_id") or ""))
+    except RuntimeError:
+        folder = None
+    with ExitStack() as held:
+        if folder is not None and folder.is_dir():
+            try:
+                held.enter_context(cr_style_clone._lock(folder))
+            except RuntimeError:
+                raise RuntimeError(STILL_FINISHING) from None
+        yield
+
+
 def save(home, name, changes: dict) -> dict:
     """Apply the creator's changes to a learned style. The previous version is kept; nothing else is touched."""
-    import cr_style_clone
     if not isinstance(changes, dict) or not changes:
         raise ValueError("Change something before saving.")
-    path, style = _style(home, name)
+    with _study_done(home, _style(home, name)[1]):
+        return _save(home, name, changes)
+
+
+def _save(home, name, changes: dict) -> dict:
+    import cr_style_clone
+    path, style = _style(home, name)                         # as the study left it
     before = cr_style_clone._file_hash(path)
     out = copy.deepcopy(style)
     look = out.setdefault("look", {})
@@ -149,14 +176,20 @@ def save(home, name, changes: dict) -> dict:
     if changes.get("forget_character_picture") is True:
         look.pop("character_image", None)          # the file stays; new words are drawn from the words alone
     if "features_on" in changes:
-        offered = (out.get("features") or {}).get("offered") or []
+        features = out.setdefault("features", {})
+        offered = [k for k in features.get("offered") or [] if isinstance(k, str)]
         wanted = changes["features_on"]
         if not isinstance(wanted, list) or any(k not in offered for k in wanted):
             raise ValueError("Choose options this style offers: " + ", ".join(offered) + ".")
-        on = [k for k in offered if k in wanted]
-        out.setdefault("features", {})["on"] = on
-        if "channel_on" in out["features"]:
-            out["features"]["channel_on"] = list(on)
+        # a switch the style turns on without offering it (its look's own choice, as autostyle adds AI pictures) is
+        # never shown here, so it keeps its state: only the offered ones are the creator's to change, and the ticks
+        # shown, sent back as they were, change nothing
+        now = features.get("on") if isinstance(features.get("on"), list) else offered
+        if set(wanted) != {k for k in now if k in offered}:
+            for key in ("on", "channel_on"):
+                if key == "on" or isinstance(features.get(key), list):
+                    was = features.get(key) if isinstance(features.get(key), list) else offered
+                    features[key] = [k for k in offered if k in wanted] + [k for k in was if k not in offered]
     if "pictures_per_min" in changes:
         span = _pictures(style)
         value = changes["pictures_per_min"]
@@ -164,9 +197,10 @@ def save(home, name, changes: dict) -> dict:
                 or not span["floor"] <= float(value) <= span["ceiling"]:
             raise ValueError("Choose pictures a minute between the style's floor and ceiling."
                              if span else "This style doesn't draw a set number of pictures a minute.")
-        pacing = out.setdefault("pacing", {})
-        pacing.setdefault("learned_photo_every_s", pacing.get("photo_every_s"))
-        pacing["photo_every_s"] = round(60.0 / float(value), 2)
+        if round(float(value), 1) != span["value"]:         # the pace shown, sent back unchanged, stays exact
+            pacing = out.setdefault("pacing", {})
+            pacing.setdefault("learned_photo_every_s", pacing.get("photo_every_s"))
+            pacing["photo_every_s"] = round(60.0 / float(value), 2)
     if "subtitles" in changes:
         if not isinstance(changes["subtitles"], bool):
             raise ValueError("Choose subtitles on or off.")

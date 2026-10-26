@@ -873,6 +873,32 @@ def test_a_finished_look_suggests_the_closest_styles_and_a_paid_try_first_withou
     assert out["similar_styles"][1]["try_first"] == {"not_offered": "a whole Short"}
     assert out["similar_styles"][0]["picture_url"].startswith("http://localhost:7860/cr-workspace/preview/")
     assert "suggestions only, never a reason not to study" in out["next"]
+    assert "regular landscape (16:9) videos" in out["shorts_note"], "a Shorts study says what its style makes"
+
+
+def test_clone_style_takes_a_bounded_study_budget_and_says_what_a_shorts_study_makes(studio, more, monkeypatch):
+    look_id = "lk_" + "d" * 24
+    looked = tools.call
+
+    def call(method, path, body=None, **kw):
+        if path.endswith("/plan"):
+            return {"mapping": {"base": "3d", "route": {}}}
+        if path == "/cr-style-clone/start":
+            studio.calls.append((method, path, body))
+            return {"operation_id": "op_" + "f" * 24, "state": "running"}
+        return looked(method, path, body, **kw)
+    monkeypatch.setattr(tools, "call", call)
+    tools.STATE.mkdir(parents=True, exist_ok=True)
+    (tools.STATE / "looks.json").write_text(json.dumps({look_id: {"preview_id": "pv_" + "c" * 64,
+                                                                  "reference_ids": ["a1aaaaaaaaa"], "at": 1}}))
+    args = {"look_id": look_id, "style_name": "Beasts", "example_title": "Every city has a beast"}
+    for wrong in (14, 31, "25", True):
+        assert tools.run_tool("clone_style", {**args, "budget_minutes": wrong})["isError"]
+    assert not studio.posted("/cr-style-clone/start")
+    started = ok("clone_style", {**args, "budget_minutes": 30})
+    assert studio.posted("/cr-style-clone/start")[0]["budget_minutes"] == 30 and "16:9" in started["shorts_note"]
+    ok("clone_style", args)
+    assert studio.posted("/cr-style-clone/start")[1]["budget_minutes"] == 22, "the page's default"
 
 
 def test_style_sample_is_a_paid_tool_that_says_its_cost_and_brings_back_the_video(studio, more):
