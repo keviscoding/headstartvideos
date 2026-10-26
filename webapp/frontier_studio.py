@@ -16,9 +16,11 @@ import re
 import secrets
 import threading
 import time
+import weakref
 from pathlib import Path
 from typing import Literal
 
+import httpx
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
@@ -1243,6 +1245,32 @@ MEDIA_UPLOAD_PATHS = ("/api/file-stream-upload", "/api/file-base64-upload")
 MEDIA_UPLOAD_PARALLEL, MEDIA_UPLOAD_MAX_BYTES = 4, 200 * 1024 * 1024
 
 
+# One HTTP client for every relayed download in this process (one per event loop: a client belongs to the loop it
+# runs on). Built per relay, each one made a fresh TLS context on the event loop (about 9 ms: twenty parallel fetches
+# held the loop 0.2 s) and a new connection to Kie's host; shared, both are reused. Closed when the server stops.
+_relay_clients: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
+def relay_client():
+    """The shared HTTP client for relayed downloads from Kie's file host (tests swap in a stand-in transport)."""
+    import asyncio
+    loop = asyncio.get_running_loop()
+    client = _relay_clients.get(loop)
+    if client is None or client.is_closed:
+        client = _relay_clients[loop] = httpx.AsyncClient(
+            timeout=httpx.Timeout(120.0, connect=10.0, pool=10.0),
+            limits=httpx.Limits(max_connections=256, max_keepalive_connections=32))
+    return client
+
+
+async def close_relay_client() -> None:
+    """At shutdown: close this event loop's shared relay client (its connections to Kie's host)."""
+    import asyncio
+    client = _relay_clients.pop(asyncio.get_running_loop(), None)
+    if client is not None:
+        await client.aclose()
+
+
 def studio_access(session_user):
     """FastAPI dependency: a Studio plan, by web session or by the Studio's account key."""
     def access(request: Request):
@@ -1423,57 +1451,70 @@ def make_router(session_user, *, prefix="/api/frontier"):
     # a creator's provider cut every connection to aiquickdraw.com during the handshake while this site worked
     # (local_runtime/cr_relay.py). Only Kie's file hosts, only for a Studio account, at most MEDIA_RELAY_PARALLEL at a
     # time per account and MEDIA_RELAY_MAX_BYTES a file.
+    #
+    # Streamed with async httpx, so a relay holds no worker thread: not while it waits for one of its account's slots
+    # (up to a minute), not while Kie's host connects and answers, not while a file trickles through. With a thread per
+    # relay (requests), one Studio fetching twenty files at once held twenty of the threads every plain-def route on
+    # the site shares.
     MEDIA_RELAY_SUFFIXES = ("aiquickdraw.com", "redpandaai.co")
     MEDIA_RELAY_PARALLEL, MEDIA_RELAY_MAX_BYTES = 6, 600 * 1024 * 1024
     relay_slots: dict = {}
     relay_lock = threading.Lock()
 
     @router.get("/media-relay")
-    def media_relay(request: Request, url: str = "", user=Depends(access)):
+    async def media_relay(request: Request, url: str = "", user=Depends(access)):
+        import asyncio
         from urllib.parse import urlsplit
         parts = urlsplit(url)
         host = (parts.hostname or "").lower()
         if (parts.scheme != "https" or parts.port not in (None, 443) or parts.username or parts.password
                 or not any(host == s or host.endswith("." + s) for s in MEDIA_RELAY_SUFFIXES)):
             raise HTTPException(400, "Only Kie's generated files can be fetched this way.")
-        with relay_lock:
-            slot = relay_slots.setdefault(user["id"], threading.BoundedSemaphore(MEDIA_RELAY_PARALLEL))
-        if not slot.acquire(timeout=60):
-            raise HTTPException(429, "Too many files at once. Try again in a moment.")
-        headers = {"User-Agent": "ChannelRecipe-Studio-relay"}
+        slot = relay_slots.setdefault(user["id"], asyncio.Semaphore(MEDIA_RELAY_PARALLEL))
+        try:
+            await asyncio.wait_for(slot.acquire(), timeout=60)
+        except asyncio.TimeoutError:
+            raise HTTPException(429, "Too many files at once. Try again in a moment.") from None
+        # the file's own bytes (identity): its length and byte ranges are passed on as Kie's host states them
+        headers = {"User-Agent": "ChannelRecipe-Studio-relay", "Accept-Encoding": "identity"}
         wanted = request.headers.get("range") or ""
         if re.fullmatch(r"bytes=\d+-\d*", wanted):
             headers["Range"] = wanted
+        client = relay_client()
+        upstream = None
         try:
-            upstream = requests.get(url, headers=headers, stream=True, timeout=(10, 120), allow_redirects=False)
-        except requests.RequestException:
+            upstream = await client.send(client.build_request("GET", url, headers=headers), stream=True,
+                                         follow_redirects=False)
+            if upstream.status_code not in (200, 206):
+                raise HTTPException(502 if upstream.status_code >= 500 else 404,
+                                    f"Kie's file host answered {upstream.status_code} for this file.")
+            size = int(upstream.headers.get("Content-Length") or 0)
+            if size > MEDIA_RELAY_MAX_BYTES:
+                raise HTTPException(413, "This file is larger than the relay's limit.")
+        except BaseException as error:
+            if upstream is not None:
+                await upstream.aclose()
             slot.release()
-            raise HTTPException(502, "Kie's file host didn't answer. Try again shortly.")
-        if upstream.status_code not in (200, 206):
-            upstream.close()
-            slot.release()
-            raise HTTPException(502 if upstream.status_code >= 500 else 404,
-                                f"Kie's file host answered {upstream.status_code} for this file.")
-        size = int(upstream.headers.get("Content-Length") or 0)
-        if size > MEDIA_RELAY_MAX_BYTES:
-            upstream.close()
-            slot.release()
-            raise HTTPException(413, "This file is larger than the relay's limit.")
+            if isinstance(error, httpx.HTTPError):
+                raise HTTPException(502, "Kie's file host didn't answer. Try again shortly.") from None
+            raise
         out = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}
+        # a host that encodes anyway: the decoded file goes out, so its encoded length can't
+        encoded = upstream.headers.get("Content-Encoding", "identity").lower() != "identity"
         for name in ("Content-Length", "Content-Range", "Content-Type", "Accept-Ranges"):
-            if upstream.headers.get(name):
+            if upstream.headers.get(name) and not (encoded and name == "Content-Length"):
                 out[name] = upstream.headers[name]
 
-        def chunks():
+        async def chunks():
             sent = 0
             try:
-                for chunk in upstream.iter_content(1 << 20):
+                async for chunk in upstream.aiter_bytes(1 << 20):
                     sent += len(chunk)
                     if sent > MEDIA_RELAY_MAX_BYTES:
                         break
                     yield chunk
             finally:
-                upstream.close()
+                await upstream.aclose()                         # the connection goes back to the shared client
                 slot.release()
         return StreamingResponse(chunks(), status_code=upstream.status_code, headers=out,
                                  media_type=upstream.headers.get("Content-Type") or "application/octet-stream")

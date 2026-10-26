@@ -32,6 +32,7 @@ def initialize() -> None:
         if key in _ready:
             return
         with db._conn() as conn:
+            db.schema_lock(conn, "milestones")                  # two containers boot together: one at a time
             conn.execute("""CREATE TABLE IF NOT EXISTS user_milestones (
                 user_id INTEGER NOT NULL, name TEXT NOT NULL,
                 first_at DOUBLE PRECISION NOT NULL, last_at DOUBLE PRECISION NOT NULL,

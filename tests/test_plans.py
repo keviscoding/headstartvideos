@@ -7,7 +7,6 @@ recognise the new Studio tiers.
 """
 from __future__ import annotations
 
-import asyncio
 import sys
 from pathlib import Path
 
@@ -186,7 +185,7 @@ class _Req:
 def test_checkout_refuses_plans_not_on_sale(monkeypatch, plan_key):
     monkeypatch.setattr(config, "STRIPE_SECRET_KEY", "sk_test_dummy")
     with pytest.raises(HTTPException) as err:
-        asyncio.run(server.create_checkout(server.CheckoutRequest(plan=plan_key), _Req()))
+        server.create_checkout(server.CheckoutRequest(plan=plan_key), _Req())
     assert err.value.status_code == 400
 
 
@@ -220,7 +219,7 @@ def _checkout(monkeypatch, plan_key, *, trial_days, user=None):
     monkeypatch.setattr(config, "FREE_TRIAL_DAYS", trial_days)
     member = user or {"id": 9, "email": "new@example.com", "plan": "free", "trial_used": 0, "stripe_customer_id": "cus_x"}
     monkeypatch.setattr(server, "_current_user", lambda request: member)
-    result = asyncio.run(server.create_checkout(server.CheckoutRequest(plan=plan_key), _Req()))
+    result = server.create_checkout(server.CheckoutRequest(plan=plan_key), _Req())
     assert result["url"].startswith("https://checkout.stripe.test")
     return fake.sessions[0]
 

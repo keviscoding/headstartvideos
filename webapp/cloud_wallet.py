@@ -35,6 +35,7 @@ def initialize():
         if key in _ready:
             return
         with db._conn() as conn:
+            db.schema_lock(conn, "cloud_wallet")                  # two containers boot together: one at a time
             conn.execute("""CREATE TABLE IF NOT EXISTS cloud_wallets (
                 user_id INTEGER PRIMARY KEY, balance_cents INTEGER NOT NULL DEFAULT 0,
                 updated_at DOUBLE PRECISION NOT NULL)""")
@@ -152,10 +153,8 @@ def checkout_session(user: dict, usd: int, base_url: str, *, stripe=None):
             raise HTTPException(503, "Payments aren't set up yet.")
         stripe_module.api_key = config.STRIPE_SECRET_KEY
         stripe = stripe_module
-    customer_id = user.get("stripe_customer_id")
-    if not customer_id:
-        customer_id = stripe.Customer.create(email=user["email"]).id
-        db.update_user(user["id"], stripe_customer_id=customer_id)
+    from webapp import stripe_customers
+    customer_id = stripe_customers.customer_for(stripe, user)       # one per account, the site's checkouts' key
     session = stripe.checkout.Session.create(
         customer=customer_id, mode="payment",
         line_items=[{"price_data": {"currency": "usd", "unit_amount": usd * 100,
