@@ -1281,8 +1281,9 @@ def create_app():
             target = preview_file(model, voice)
             if not target.is_file():
                 target.parent.mkdir(parents=True, exist_ok=True)
+                # a page waits on this: one try, never the video's patient retries (review, 2026-10-26)
                 cr_media.run("narration", cr_media.narration_input(VOICE_SAMPLE, voice, model["id"]), target,
-                             model=model["id"], log=studio.app.logger.info, timeout_s=180)
+                             model=model["id"], log=studio.app.logger.info, timeout_s=180, retry=False)
         except cr_media.AccountStop as error:
             return jsonify(error=str(error)), 409
         except Exception:

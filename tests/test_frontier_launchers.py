@@ -156,6 +156,9 @@ def test_windows_launcher_keeps_double_click_diagnostics_and_has_no_compound_blo
     assert 'if not exist "requirements.txt" goto incomplete_download' in lines
     assert lines.index('set "CR_PYTHON_ARGS=-3.13"') < lines.index('set "CR_PYTHON_ARGS=-3"')
     assert ':failed' in lines and lines[lines.index(':failed') + 3] == 'pause'
+    # Studio itself runs in Python's UTF-8 mode, as its video workers do (review, 2026-10-26)
+    start = lines.index(':start_studio')
+    assert lines.index('set "PYTHONUTF8=1"', start) < lines.index('".venv\\Scripts\\python.exe" cr_studio.py', start)
 
 
 @pytest.fixture
