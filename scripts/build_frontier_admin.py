@@ -599,6 +599,13 @@ ENGINE_PATCHES = {
         ('        register_gen_kit(look["genkit"]["manifest"])\n',
          '        register_gen_kit(HERE / str(look["genkit"]["manifest"]))\n'),
     ],
+    "history_kit.py": [
+        # "\," in a plain f-string is an invalid escape: Python 3.12+ printed a SyntaxWarning twice in the launcher on
+        # a first start (the owner's Windows test, 2026-10-26), which read like a crash. "\\," is the same text for
+        # FFmpeg's filter (a backslash and a comma), with no warning.
+        ("""lut = lambda k: f"clip(255*({g['lo']}+{g['hi'] - g['lo']:.4f}*pow(val/255\\,{g['gamma']}))*{k}\\,0\\,255)\"""",
+         """lut = lambda k: f"clip(255*({g['lo']}+{g['hi'] - g['lo']:.4f}*pow(val/255\\\\,{g['gamma']}))*{k}\\\\,0\\\\,255)\""""),
+    ],
     "quest_hud.py": [
         ("def _wait_machine(log=print, min_level: int = 40, min_free_gb: float = 20.0) -> None:",
          "def _wait_machine(log=print, min_level: int = 20, min_free_gb: float = 3.0) -> None:"),
