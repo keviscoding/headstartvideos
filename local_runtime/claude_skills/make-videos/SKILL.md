@@ -17,6 +17,9 @@ What they asked for: $ARGUMENTS
      Wait until `setup_check` says running.
    - Blockers: read them out in plain words. If one needs the setup page, open `setup_page` (see "Showing pages").
      A blocker that only asks to verify the Claude models fixes itself when the video starts.
+   - A part with a `fix` (graphics_browser, speech_model, video_tools, node, claude_code): call the fix tool it names
+     (Studio installs the tool itself, in its own folder) and call `setup_check` again in a minute or two. Never
+     install FFmpeg, Node.js, Claude Code or the graphics browser from your own shell.
 2. **Titles.** Use the titles or idea above, or ask. Up to 5 titles, one line each. If they gave an idea, suggest
    3 strong titles and let them choose.
 3. **Style.** If they named one, find it with `list_styles(search=…)`. Otherwise call `list_styles` and show the
