@@ -1412,7 +1412,9 @@ def apply(style: dict, mapping: dict) -> dict:
     voice = overrides.pop("voice", {})
     _merge(out, overrides)
     if voice.get("suggested"):
-        out.setdefault("cr_style_clone", {})["suggested_voice"] = voice["suggested"]
+        # own_narrator: saved by Studio 109 or later, which reads the style with it (cr_media.style_voice); a style saved
+        # before keeps the account's voice it was made with
+        out.setdefault("cr_style_clone", {}).update(suggested_voice=voice["suggested"], own_narrator=True)
     if out.get("look", {}).get("placement") == "":
         out["look"].pop("placement", None)
     return out

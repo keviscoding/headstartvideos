@@ -124,8 +124,11 @@ def test_a_long_title_gets_a_shorter_file_name_on_windows_instead_of_stopping_cr
     assert cr_paths.title_problem(folder, "cr_clone_7373019c2237", [title], Engine.youtube_filename), "it was stopped"
     assert cr_paths.title_problem(folder, "cr_clone_7373019c2237", [title], win.youtube_filename) == ""
     name = win.youtube_filename(title)
-    assert name.endswith(".mp4") and title.startswith(name[:-4]) and len(name) - 4 <= cr_paths.title_room(folder, home)
+    assert name.endswith(".mp4") and title.startswith(name[:-4].rsplit(" ", 1)[0])
+    assert len(name) - 4 <= cr_paths.title_room(folder, home)
     assert win.youtube_filename("Short title") == "Short title.mp4"
+    one, two = win.youtube_filename(title + " Part 1"), win.youtube_filename(title + " Part 2")
+    assert one != two and len(one) - 4 <= cr_paths.title_room(folder, home), "two long titles cut alike stay apart"
 
 
 def test_windows_long_path_setting_is_read_where_it_exists():
