@@ -13,8 +13,11 @@ kinetic" and the finished video had no captions. Two causes in the private engin
 
 Now:
 - Create's switch starts at the recipe's own choice (cr_workspace catalog `captions`) and says so. Turning it on for
-  a recipe without captions asks for them: the run carries cr_captions="on" (cr_submission, kept in run_spec.json),
-  and they are burned in with the recipe's other caption settings.
+  a recipe without captions asks for them (Create and make_videos send cr_captions="on"; cr_submission keeps it on
+  the run's spec, the engine writes it to run_spec.json, and at the run's start it is kept in the video's own folder,
+  cr-captions-asked.json, so a Resume or a 3D repair, whose specs come from the saved project, keep it), and they are
+  burned in with the recipe's other caption settings. A video asked nothing (every video before Studio 106, whose
+  burn_subs was on by default) keeps its style's own choice, repairs included.
 - A narration with no word timings is timed on this computer (the engine's Whisper, free) right after the voice
   step, and again before the final mux.
 - A video that should carry captions but ends up with none (no words could be timed, or every line fell on a
@@ -29,6 +32,7 @@ from functools import wraps
 from pathlib import Path
 
 ASKED = "cr_captions"                 # run_spec.json: "on" when the creator turned captions on for this video
+STICKY = "cr-captions-asked.json"     # the same request, kept with the video for its later runs
 RECORD = "cr-captions.json"           # what the final mux burned in, and why none when none
 _CUE = re.compile(r"(\d\d):(\d\d):(\d\d)[,.](\d+)\s*-->\s*(\d\d):(\d\d):(\d\d)[,.](\d+)")
 
@@ -50,13 +54,27 @@ def style_default(info) -> bool:
     return True
 
 
-def asked(job) -> bool:
-    """Whether the creator asked for captions on this video (Create's switch on, or make_videos captions=true)."""
+def _run_spec_asks(job) -> bool:
     try:
         spec = json.loads((Path(job) / "run_spec.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
     return isinstance(spec, dict) and spec.get(ASKED) == "on"
+
+
+def asked(job) -> bool:
+    """Whether the creator asked for captions on this video (Create's switch on, or make_videos captions=true), on
+    this run or an earlier one."""
+    return _run_spec_asks(job) or (Path(job) / STICKY).is_file()
+
+
+def remember(job) -> None:
+    """At a run's start: a request on this run's spec is kept in the video's folder for its later runs."""
+    if _run_spec_asks(job) and not (Path(job) / STICKY).is_file():
+        try:
+            (Path(job) / STICKY).write_text(json.dumps({ASKED: "on"}), encoding="utf-8")
+        except OSError:
+            pass
 
 
 def cue_count(srt) -> int:
@@ -191,6 +209,21 @@ def install(engine) -> None:
     final_mux._cr_captions = True
 
     engine._build_burn_ass, engine._final_mux = build_burn_ass, final_mux
+
+    # the engine writes this run's run_spec.json into the video's folder, then starts the run here
+    for name in ("run_custom", "run_pipeline"):
+        start = getattr(engine, name, None)
+        if not callable(start) or getattr(start, "_cr_captions", False):
+            continue
+
+        def run(title, minutes=20, *args, _start=start, **kwargs):
+            try:
+                remember(engine.job_dir(title, kwargs.get("style") or ""))
+            except Exception:                          # noqa: BLE001 - the run goes on; its run_spec still asks
+                pass
+            return _start(title, minutes, *args, **kwargs)
+        run._cr_captions = True
+        setattr(engine, name, run)
 
 
 def after_voice(engine, script: str, out) -> None:

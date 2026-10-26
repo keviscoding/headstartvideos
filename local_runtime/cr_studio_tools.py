@@ -570,6 +570,7 @@ def video_payload(row: dict, titles: list, minutes: int, features: dict, options
          # captions: the style's own choice unless asked (some styles have none, like their channel: list_styles'
          # captions false); captions=true burns them in anyway
          "burn_subs": (options["captions"] is not False) if "captions" in options else row.get("captions", True) is not False,
+         "cr_captions": "on" if options.get("captions") is True and row.get("captions") is False else "",
          "force": False,
          "thumb_count": max(1, min(int(options.get("thumbnail_count") or 2), 4)),
          "desc": description, "chapters": 5 if description else 0, "sources": 3 if description else 0,

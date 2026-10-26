@@ -431,7 +431,7 @@ def test_captions_start_at_the_recipes_own_choice_and_asking_for_them_is_sent(wo
     page.locator("#crw-title").fill("A wargame battle")
     page.locator("#crw-create").click()
     page.wait_for_function("!window.CR_WORKSPACE_CLIENT.state.submitting && window.CR_WORKSPACE_CLIENT.state.page==='projects'")
-    assert env.creates[0]["body"]["burn_subs"] is True
+    assert env.creates[0]["body"]["burn_subs"] is True and env.creates[0]["body"]["cr_captions"] == "on"
     page.locator(".crw-nav [data-nav=create]").click()
     page.evaluate("window.CR_WORKSPACE_CLIENT.selectRecipe(window.CR_WORKSPACE_CLIENT.state.catalog.channels.find(r => r.name === 'documentary'))")
     assert page.locator("#crw-captions").is_checked() and page.locator("#crw-captions-note").is_hidden()

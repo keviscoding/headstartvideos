@@ -767,7 +767,7 @@
     const features=featureValues(); const steps=['script','voiceover','images','pexels','video'];if(checked('crw-thumbnails'))steps.push('thumbnail');
     const p={title,style:state.selected.name,minutes:number('crw-minutes',10,1,60),steps,
       script:state.input==='script'?$('crw-script').value.trim():'',extra:withPalette($('crw-extra').value.trim(),features),byo_audio:state.narration==='own'?state.audio:'',
-      burn_subs:checked('crw-captions'),force:false,thumb_count:number('crw-thumbnail-count',2,1,4),
+      burn_subs:checked('crw-captions'),cr_captions:checked('crw-captions')&&state.selected?.captions===false?'on':'',force:false,thumb_count:number('crw-thumbnail-count',2,1,4),
       desc:checked('crw-description'),chapters:checked('crw-description')?number('crw-chapters',5,0,20):0,
       sources:checked('crw-description')&&checked('crw-sources')?number('crw-source-count',3,0,10):0,
       features,render_backend:features.threed&&checked('crw-fast-toggle')&&!strict()?'manimgx':'original',

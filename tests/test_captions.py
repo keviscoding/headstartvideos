@@ -215,11 +215,13 @@ def api_run():
     app.add_url_rule("/api/run", "api_run", namespace["api_run"], methods=["POST"])
     cr_submission.install(studio)
     client = app.test_client()
-    assert client.post("/api/run", json={"title": "On", "burn_subs": True}).status_code == 200
-    assert client.post("/api/run", json={"title": "Off", "burn_subs": False}).status_code == 200
-    assert client.post("/api/run", json={"title": "Default"}).status_code == 200
+    assert client.post("/api/run", json={"title": "On", "burn_subs": True, "cr_captions": "on"}).status_code == 200
+    assert client.post("/api/run", json={"title": "Off", "burn_subs": False, "cr_captions": "on"}).status_code == 200
+    # burn_subs alone is no request: every video before Studio 106 (and a 3D repair or a Resume of one, whose spec
+    # comes from the saved project) carried it on by default, and keeps its style's own choice
+    assert client.post("/api/run", json={"title": "Legacy", "burn_subs": True}).status_code == 200
     by = {s["title"]: s for s in studio.QUEUE}
-    assert by["On"]["cr_captions"] == "on" and "cr_captions" not in by["Off"] and "cr_captions" not in by["Default"]
+    assert by["On"]["cr_captions"] == "on" and "cr_captions" not in by["Off"] and "cr_captions" not in by["Legacy"]
 
 
 def test_make_videos_starts_at_the_styles_own_captions():
@@ -227,8 +229,10 @@ def test_make_videos_starts_at_the_styles_own_captions():
     none = {"name": "history", "label": "History", "captions": False}
     some = {"name": "documentary", "label": "Documentary", "captions": True}
     assert tools.video_payload(none, ["A"], 5, {}, {})["burn_subs"] is False
-    assert tools.video_payload(none, ["A"], 5, {}, {"captions": True})["burn_subs"] is True
+    asked = tools.video_payload(none, ["A"], 5, {}, {"captions": True})
+    assert asked["burn_subs"] is True and asked["cr_captions"] == "on"
     assert tools.video_payload(some, ["A"], 5, {}, {})["burn_subs"] is True
+    assert tools.video_payload(some, ["A"], 5, {}, {"captions": True})["cr_captions"] == "", "on by design: no override"
     assert tools.video_payload(some, ["A"], 5, {}, {"captions": False})["burn_subs"] is False
     assert tools.style_card({**none, "tagline": "x"})["captions"] is False
 
@@ -249,3 +253,25 @@ def test_the_create_page_starts_captions_at_the_recipes_own_choice():
     assert "recipe.captions !== false" in page and "captionsDrafts" in page
     assert "This style has no captions, like its channel." in page
     assert 'id="crw-captions-note"' in (ROOT / "local_runtime/cr_workspace.html").read_text(encoding="utf-8")
+
+
+def test_the_request_stays_with_the_video_for_a_resume_or_a_repair(tmp_path):
+    """A Resume or a 3D repair runs again from the saved project's spec, which never carries cr_captions: the engine
+    rewrites run_spec.json without it. The request kept in the video's folder at its first run's start still counts."""
+    job = tmp_path / "out" / "clone-video"
+    job.mkdir(parents=True)
+    started = []
+    engine = SimpleNamespace(STYLE_CAPTIONS={}, log=lambda line: None, job_dir=lambda title, style="": job,
+                             run_custom=lambda title, minutes=20, *a, **k: started.append((title, k.get("style"))),
+                             _build_burn_ass=lambda *a, **k: None, _final_mux=lambda *a, **k: None)
+    cr_captions.install(engine)
+    (job / "run_spec.json").write_text(json.dumps({"burn_subs": True, "cr_captions": "on"}))   # Create's run
+    engine.run_custom("My clone video", 2, style="cr_clone_wargame")
+    assert started == [("My clone video", "cr_clone_wargame")] and (job / cr_captions.STICKY).is_file()
+    (job / "run_spec.json").write_text(json.dumps({"burn_subs": True}))                         # the Resume's own
+    engine.run_custom("My clone video", 2, style="cr_clone_wargame")
+    assert cr_captions.asked(job)
+    other = tmp_path / "out" / "older-video"
+    other.mkdir()
+    (other / "run_spec.json").write_text(json.dumps({"burn_subs": True}))
+    assert not cr_captions.asked(other), "a video nobody asked keeps its style's choice"
