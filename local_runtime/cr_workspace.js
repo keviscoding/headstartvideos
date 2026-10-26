@@ -138,6 +138,7 @@
     const draft = {recipe: identity(state.selected), title: $('crw-title').value, script: $('crw-script').value,
       batch: $('crw-batch-titles').value, minutes: $('crw-minutes').value, input: state.input,
       extra: $('crw-extra').value, features: state.featureDrafts, captionsByRecipe: state.captionsDrafts,
+      ...(typeof state.captionsAll === 'boolean' ? {captions: state.captionsAll} : {}),   // an older draft's switch
       description: checked('crw-description'), thumbnails: checked('crw-thumbnails'),
       thumbnailCount: $('crw-thumbnail-count').value, chapters: $('crw-chapters').value,
       sources: checked('crw-sources'), sourceCount: $('crw-source-count').value,
@@ -331,7 +332,7 @@
     const r = state.selected, b = (state.catalog?.footage_watch || [])[number('crw-minutes',10,1,60) - 1];
     const on = !!(r && b && featureValues().youtube && !strict(r) && !isShort(r) && !isRanking(r) && state.narration !== 'own');
     hide('crw-footage-note', !on);
-    if (on) text('crw-footage-note', `Research footage adds about ${b.typical_minutes[0]} to ${b.typical_minutes[1]} minutes to a ${b.minutes}-minute video: Studio watches up to ${b.videos} YouTube videos on your video-model account to find its clips. It stops watching after ${b.stop_minutes} minutes and goes on with what it found. If Kie's video watcher isn't answering, ChannelRecipe's own watcher takes over, from your plan's monthly clip watches (never your credits).` + (state.catalog?.footage_watcher?.note ? ' ' + state.catalog.footage_watcher.note : ''));
+    if (on) text('crw-footage-note', `Research footage adds about ${b.typical_minutes[0]} to ${b.typical_minutes[1]} minutes to a ${b.minutes}-minute video: Studio watches up to ${b.videos} YouTube videos on your video-model account to find its clips. It stops watching after ${b.stop_minutes} minutes and goes on with what it found. If Kie's video watcher isn't answering, ChannelRecipe's own watcher takes over, from your plan's monthly clip watches (at most 20 a video, never your credits).` + (state.catalog?.footage_watcher?.note ? ' ' + state.catalog.footage_watcher.note : ''));
   }
   function gate() {
     const ready = state.setup?.readiness?.ready === true;

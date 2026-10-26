@@ -41,9 +41,18 @@ def analyst(prefer=None): return KIE["watchers"][0]
 def watchers(prefer=None): return list(KIE["watchers"])
 def focus_analysts(prefer=None): return list(KIE["watchers"])
 def plan_focus(engine, title, needs, videos, work): return {v["id"]: None for v in videos}
+def _low_copy(vid, work, span=None):
+    if KIE.get("local") == "blocked":
+        raise RuntimeError(f"could not fetch a 360p copy of {vid}")
+    a, b = (float(span[0]), float(span[1])) if span else (0.0, 0.0)
+    out = Path(work) / "low" / (f"{_safe(vid)}_{int(a)}_{int(b)}.mp4" if span else f"{_safe(vid)}.mp4")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(b"low copy")
+    return out
 def _kie_log(vid, prompt, work, span=None):
     if _KIE_DOWN["fails"] >= 3:
         raise RuntimeError("kie's video watcher failed three videos in a row - this search goes on without it")
+    _low_copy(vid, work, span)
     KIE["calls"].append(vid)
     if KIE["mode"] == "down":
         _KIE_DOWN["fails"] += 1
@@ -104,8 +113,11 @@ class Service:
 
     def __init__(self):
         self.posts, self.polls, self.refuse, self.running, self.lost = [], [], None, 0, 0
+        self.remaining = 300
 
     def __call__(self, path, payload=None, settings=None):
+        if path == "ranking/allowance":
+            return {"used": 0, "limit": 300, "remaining": self.remaining}
         if self.refuse:
             raise RuntimeError(self.refuse)
         if payload is not None:
@@ -148,18 +160,20 @@ def said(lines, text):
 def test_kie_down_hands_every_watch_to_channelrecipe_and_stops_asking_kie_after_three(run):
     got = run.module.fetch_clips(run.engine, "word " * 300, run.job, "documentary", False)
     assert len(got) == 6 and all(v["shots"] for v in got.values()), "every video is watched"
-    assert len(run.module.KIE["calls"]) == 3, "Kie is asked three times, then never again for this video"
+    # three failures open Kie's breaker; the first wave watches up to WORKERS_UPLOAD at once, so it may reach four
+    assert 3 <= len(run.module.KIE["calls"]) <= watch.WORKERS_UPLOAD, "then Kie is never asked again for this video"
     posts = run.service.posts
     assert {p["use_credits"] for p in posts} == {False} and {p["mode"] for p in posts} == {"scout"}
     assert all(p["end"] - p["start"] <= 240 for p in posts)
-    assert {(p["start"], p["end"]) for p in posts} == {(0, 240)}, "a video watched whole: its first four minutes"
-    assert len(posts) == 6
+    assert sorted({(p["start"], p["end"]) for p in posts}) == [(0, 240), (240, 300)], "a 5-minute video, whole"
+    assert len(posts) == 12
     taken = said(run.engine.lines, "ChannelRecipe's own watcher takes over")
     assert len(taken) == 1 and "never your credits" in taken[0] and "Kie's video watcher isn't answering" in taken[0]
-    assert said(run.engine.lines, "ChannelRecipe's watcher watched 6 video(s) (6 clip watches) because Kie's watcher "
-                                  "wasn't answering.")
+    assert "(300 left this month; at most 20 for this video)" in taken[0]
+    assert said(run.engine.lines, "ChannelRecipe's watcher watched 6 video(s) with 12 of your plan's clip watches (at "
+                                  "most 20 for a video) because Kie's watcher wasn't answering.")
     outcome = watch.last_outcome(run.home)
-    assert outcome["channelrecipe_watched"] == 6 and outcome["kie_failed"] == 3
+    assert outcome["channelrecipe_watched"] == 6 and outcome["kie_failed"] == len(run.module.KIE["calls"])
     assert outcome["note"] == ("On your last video, Kie's video watcher wasn't answering, so ChannelRecipe's watcher "
                                "watched 6 of its videos.")
 
@@ -330,9 +344,17 @@ def real_youtube(tmp_path, monkeypatch):
                                                                                           ConnectionError=ConnectionError)),
                            time=SimpleNamespace(sleep=lambda s: None, monotonic=time.monotonic),
                            _env=lambda name: "fixture-no-real-key" if name == "KIE_API_KEY" else "",
-                           _low_copy=lambda vid, work, span=None: tmp_path / "w.mp4", _watch_copy=lambda p: p,
+                           _low_copy=lambda vid, work, span=None: _engine_low_copy(vid, work, span),
+                           _watch_copy=lambda p: p,
                            archiveorg=None)
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), "exec"), module.__dict__)
+
+    def _engine_low_copy(vid, work, span=None):
+        a, b = (float(span[0]), float(span[1])) if span else (0.0, 0.0)
+        out = Path(work) / "low" / (f"{module._safe(vid)}_{int(a)}_{int(b)}.mp4" if span else f"{module._safe(vid)}.mp4")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"fixture")
+        return out
     watch._install_fallback(module)
     return module, sent
 
@@ -344,16 +366,88 @@ def test_the_engines_own_watch_path_takes_channelrecipes_shots_on_its_own_clock(
     work = tmp_path / "youtube"
     watch._budget[watch._bkey(work)] = b
     try:
-        whole = module.shots("vidwhole001", work)              # watched whole: its first four minutes
+        whole = module.shots("vidwhole001", work)              # watched whole: 0-240 and 240-300
         long_ = module.shots("vidstretch1", work, [[400.0, 700.0]])   # a stretch of a long video
     finally:
         watch._budget.pop(watch._bkey(work), None)
-    assert [module._sec(s["start"]) for s in whole["shots"]] == [10.0]
+    assert [module._sec(s["start"]) for s in whole["shots"]] == [10.0, 250.0]
     # the engine's own stretch() put the clip's clock back on the video's: 400 + 10 and 640 + 10, then (its rule: a
     # model can stop before the clip ends) it watched the tail after the last shot once more: 653-700, a shot at 663
     assert [module._sec(s["start"]) for s in long_["shots"]] == [410.0, 650.0, 663.0]
-    assert [(p["start"], p["end"]) for p in run.service.posts] == [(0, 240), (400, 640), (640, 700), (653, 700)]
+    assert [(p["start"], p["end"]) for p in run.service.posts] == [(0, 240), (240, 300), (400, 640), (640, 700),
+                                                                    (653, 700)]
     saved = json.loads((work / "catalog" / "vidstretch1.json").read_text(encoding="utf-8"))
     assert saved["schema"] == module.CATALOG_SCHEMA and saved["spans"] == [[400.0, 700.0]]
     assert any("api.kie.ai" in url for url in sent), "Kie was asked first"
     assert {p["question"][:40] for p in run.service.posts} >= {module.SHOTS_PROMPT[:40]}
+
+
+
+def test_a_clip_this_computer_cant_download_is_not_sent_to_channelrecipe(run):
+    """YouTube blocking yt-dlp is a local failure before Kie is asked: no clip watch spent, no blame on Kie, and the
+    engine's own error stands (review of bugs-106, fix 1)."""
+    run.module.KIE["local"] = "blocked"
+    got = run.module.fetch_clips(run.engine, "word " * 300, run.job, "documentary", False)
+    assert got == {} and run.service.posts == []
+    assert not said(run.engine.lines, "Kie's video watcher isn't answering")
+    assert said(run.engine.lines, "could not fetch a 360p copy of vid00000000")
+    assert watch.last_outcome(run.home) == {}
+
+
+def test_kies_own_failures_are_told_apart_from_this_computers(tmp_path):
+    import subprocess
+    module = SimpleNamespace(_safe=lambda v: v)
+    work = tmp_path / "youtube"
+    err = RuntimeError("api.kie.ai HTTP 500: Internal Server Error")
+    assert not watch.kie_failed(module, "vid00000001", work, None, err), "no copy made: Kie was never reached"
+    (work / "low").mkdir(parents=True)
+    (work / "low" / "vid00000001.mp4").write_bytes(b"x")
+    assert watch.kie_failed(module, "vid00000001", work, None, err)
+    assert watch.kie_failed(module, "vid00000001", work, None, TimeoutError("Read timed out. (read timeout=300)"))
+    assert not watch.kie_failed(module, "vid00000001", work, None, RuntimeError("could not fetch a 360p copy of x"))
+    assert not watch.kie_failed(module, "vid00000001", work, None, subprocess.TimeoutExpired(["yt-dlp"], 900))
+    assert watch.kie_failed(module, "other000001", work, (30.0, 90.0),
+                            RuntimeError("kie's video watcher failed three videos in a row")), "the breaker is Kie's"
+    (work / "low" / "vid00000002_30_90.mp4").write_bytes(b"x")
+    assert watch.kie_failed(module, "vid00000002", work, (30.4, 90.9), err), "a stretch's copy, by the engine's name"
+
+
+def test_one_video_takes_at_most_its_share_of_the_plans_clip_watches(run, monkeypatch):
+    """A 10-minute video can want 50 videos; through the fallback it takes at most 20 clip watches (fix 2)."""
+    monkeypatch.setattr(watch, "CR_MAX_CLIP_WATCHES", 4)
+    run.module.N = 6
+    got = run.module.fetch_clips(run.engine, "word " * 300, run.job, "documentary", False)
+    assert len(run.service.posts) == 4 and len(got) == 2, "two 5-minute videos, two windows each"
+    stopped = said(run.engine.lines, "footage watching stopped for this video")
+    assert len(stopped) == 1 and "it has used the 4 clip watches one video may take" in stopped[0]
+    assert said(run.engine.lines, "watched 2 video(s) with 4 of your plan's clip watches (at most 4 for a video)")
+
+
+def test_never_more_than_the_month_has_left(run):
+    run.service.remaining = 2
+    run.module.fetch_clips(run.engine, "word " * 300, run.job, "documentary", False)
+    assert len(run.service.posts) == 2
+    assert said(run.engine.lines, "(2 left this month; at most 2 for this video)")
+    run2 = run.service
+    run2.posts.clear()
+    run.service.remaining = 0
+    run.engine.lines.clear()
+    run.module.fetch_clips(run.engine, "word " * 300, run.home / "job2", "documentary", False)
+    assert run2.posts == []
+    assert said(run.engine.lines, "this month's ChannelRecipe clip watches are used up (your credits were not used)")
+
+
+def test_a_four_to_seven_minute_video_is_watched_whole_and_a_longer_one_says_how_much(run, tmp_path):
+    b = {"cr": {"watched": 0, "windows": 0, "kie_failed": 0, "said": True, "stopped": "", "down": 0, "cap": 20},
+         "dur": {"vid0000six1": 360.0, "vid000long1": 1500.0}, "engine": run.engine}
+    work = tmp_path / "youtube"
+    watch._budget[watch._bkey(work)] = b
+    try:
+        run.module._KIE_DOWN["fails"] = 3
+        six = run.module._log_one("vid0000six1", work, "Watch the whole video itself.", prefer="kie")
+        long_ = run.module._log_one("vid000long1", work, "Watch the whole video itself.", prefer="kie")
+    finally:
+        watch._budget.pop(watch._bkey(work), None)
+    assert [(p["start"], p["end"]) for p in run.service.posts] == [(0, 240), (240, 360), (0, 240), (240, 420)]
+    assert "spans" not in six, "a 6-minute video is watched whole"
+    assert long_["spans"] == [[0.0, 420.0]], "a 25-minute video watched whole says it was its first 7 minutes"

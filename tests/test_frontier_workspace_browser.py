@@ -464,6 +464,23 @@ def test_captions_start_at_the_recipes_own_choice_and_asking_for_them_is_sent(wo
     assert page.locator("#crw-captions").is_checked(), "the creator's choice for that recipe is kept"
 
 
+def test_a_saved_captions_off_survives_reloads(workspace):
+    """A creator who switched captions off before Studio 106 (one switch for every recipe) keeps it off after the
+    page saves its draft again and reloads (review of bugs-106, fix 4)."""
+    env, page = workspace, workspace.page
+    env.open()
+    page.evaluate("localStorage.setItem('channelrecipe.workspace.v1', JSON.stringify({recipe: 'documentary', "
+                  "captions: false}))")
+    for _ in range(2):
+        env.open()
+        page.locator("summary", has_text="Captions & publishing").click()
+        assert not page.locator("#crw-captions").is_checked()
+        page.locator("#crw-title").fill("Saved again")
+        page.locator("#crw-title").dispatch_event("change")              # the page saves its draft
+        saved = page.evaluate("JSON.parse(localStorage.getItem('channelrecipe.workspace.v1'))")
+        assert saved["captions"] is False
+
+
 def test_setup_blocks_before_work_but_quota_history_is_advisory(workspace):
     env, page = workspace, workspace.page
     env.mode = "needs_setup"

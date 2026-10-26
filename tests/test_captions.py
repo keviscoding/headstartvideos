@@ -23,9 +23,9 @@ SRT = "".join(f"{i + 1}\n00:00:{10 + i * 3:02d},000 --> 00:00:{12 + i * 3:02d},0
               for i in range(5))
 
 
-def fake_engine(lines):
+def fake_engine(lines, **extra):
     """make_video's caption rules: captions.off empties the cues; muted cues are dropped; one Dialogue per cue."""
-    engine = SimpleNamespace(STYLE_CAPTIONS={}, log=lines.append, muxed=[])
+    engine = SimpleNamespace(STYLE_CAPTIONS={}, log=lines.append, muxed=[], **extra)
 
     def build(srt, out_ass, mute_ranges=None, center=False, style="", captions=True):
         cap = engine.STYLE_CAPTIONS.get(style) or {}
@@ -217,11 +217,13 @@ def api_run():
     client = app.test_client()
     assert client.post("/api/run", json={"title": "On", "burn_subs": True, "cr_captions": "on"}).status_code == 200
     assert client.post("/api/run", json={"title": "Off", "burn_subs": False, "cr_captions": "on"}).status_code == 200
+    assert client.post("/api/run", json={"title": "Plain off", "burn_subs": False}).status_code == 200
     # burn_subs alone is no request: every video before Studio 106 (and a 3D repair or a Resume of one, whose spec
     # comes from the saved project) carried it on by default, and keeps its style's own choice
     assert client.post("/api/run", json={"title": "Legacy", "burn_subs": True}).status_code == 200
     by = {s["title"]: s for s in studio.QUEUE}
-    assert by["On"]["cr_captions"] == "on" and "cr_captions" not in by["Off"] and "cr_captions" not in by["Legacy"]
+    assert by["On"]["cr_captions"] == "on" and "cr_captions" not in by["Legacy"]
+    assert by["Off"]["cr_captions"] == by["Plain off"]["cr_captions"] == "off", "switched off: kept as off"
 
 
 def test_make_videos_starts_at_the_styles_own_captions():
@@ -275,3 +277,31 @@ def test_the_request_stays_with_the_video_for_a_resume_or_a_repair(tmp_path):
     other.mkdir()
     (other / "run_spec.json").write_text(json.dumps({"burn_subs": True}))
     assert not cr_captions.asked(other), "a video nobody asked keeps its style's choice"
+
+
+
+def test_this_runs_off_always_beats_a_kept_on(tmp_path, job):
+    """A video once asked for captions, then made again with captions switched off: no captions, and a later Resume
+    (no choice on its own spec) keeps the off (review of bugs-106, fix 3)."""
+    lines, started = [], []
+    engine = fake_engine(lines, job_dir=lambda title, style="": job,
+                         run_custom=lambda title, minutes=20, *a, **k: started.append(title))
+    engine.STYLE_CAPTIONS["cr_clone_wargame"] = {"off": True}
+    (job / "subs.srt").write_text(SRT, encoding="utf-8")
+    (job / "style.txt").write_text("cr_clone_wargame")
+    (job / "run_spec.json").write_text(json.dumps({"burn_subs": True, "cr_captions": "on"}))
+    engine.run_custom("Video", 2, style="cr_clone_wargame")
+    assert cr_captions.asked(job)
+    (job / "run_spec.json").write_text(json.dumps({"burn_subs": False, "cr_captions": "off"}))   # switched off
+    engine.run_custom("Video", 2, style="cr_clone_wargame")
+    assert not cr_captions.asked(job)
+    assert json.loads((job / cr_captions.STICKY).read_text()) == {"cr_captions": "off"}
+    engine._final_mux(job, job / "audio.mp3", job / "subs.srt", False)
+    assert engine.muxed[-1] is False, "this run's off wins over the kept on"
+    (job / "run_spec.json").write_text(json.dumps({"burn_subs": False}))                          # a Resume
+    assert not cr_captions.asked(job)
+
+
+def test_studio_cloud_is_sent_the_request_too():
+    import cr_cloud
+    assert cr_cloud.farm_payload({"title": "A", "burn_subs": True, "cr_captions": "on", "steps": []})["cr_captions"] == "on"

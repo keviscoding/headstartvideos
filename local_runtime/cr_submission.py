@@ -132,7 +132,9 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
             spec["cr_pictures_per_min"] = ppm
         if threed_look:
             spec["cr_threed_look"] = threed_look
-        if payload.get("cr_captions") == "on" and payload.get("burn_subs") is not False:
+        if payload.get("burn_subs") is False:
+            spec["cr_captions"] = "off"          # switched off for this video: a request kept from before never wins
+        elif payload.get("cr_captions") == "on":
             spec["cr_captions"] = "on"           # captions asked for on a style that has none: burned in (cr_captions)
         if payload.get("threed_quick") is True:
             spec["cr_threed_quick"] = True            # one 3D review round (cr_threed_look)
