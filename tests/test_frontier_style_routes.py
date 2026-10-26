@@ -766,20 +766,30 @@ def test_a_learned_style_is_edited_through_the_page_and_studio_reads_it_again(en
 
 
 def test_a_sample_needs_the_creators_approval_and_runs_on_their_own_accounts(env, monkeypatch):
+    import cr_media
     import cr_style_sample
     (env.home / "styles/stories.json").write_text(json.dumps({"name": "stories", "pacing": {"photo_every_s": 5}}))
-    started = []
+    started, drawn, engine = [], [], []
     monkeypatch.setattr(cr_style_sample, "start", lambda home, name, style, topic, line, **kw: started.append(
-        (name, topic, sorted(kw))) or {"sample_id": "sm_" + "7" * 24, "state": "running"})
-    env.studio.mv = SimpleNamespace(host_image=lambda path: "url", image_gen=lambda *a, **k: None)
+        (name, topic, sorted(kw))) or kw["generate"]("words", "still.jpg", "style sample 1", []) or {
+        "sample_id": "sm_" + "7" * 24, "state": "running"})
+    env.studio.mv = SimpleNamespace(host_image=lambda path: "url", image_gen=lambda *a, **k: engine.append(a))
+    images = {"active": False}
+    monkeypatch.setattr(cr_media, "active", lambda task: task == "images" and images["active"])
+    monkeypatch.setattr(cr_media, "image", lambda prompt, dest, label, **kw: drawn.append(label))
     body = {"style": "stories", "topic": "How bees build homes"}
     assert env.post("/cr-style-clone/sample", body).status_code == 400 and not started
     env.cfg["costs_accepted"] = False
     assert env.post("/cr-style-clone/sample", {**body, "acknowledge_costs": True}).status_code == 400
     env.cfg["costs_accepted"] = True
     assert env.post("/cr-style-clone/sample", {**body, "style": "none", "acknowledge_costs": True}).status_code == 400
+    # drawn only on the creator's own image account with Studio's receipts, never by the engine's other wallets
+    held = env.post("/cr-style-clone/sample", {**body, "acknowledge_costs": True})
+    assert held.status_code == 400 and "Connect Kie" in held.json["error"] and not started and not engine
+    images["active"] = True
     ok = env.post("/cr-style-clone/sample", {**body, "acknowledge_costs": True})
     assert ok.status_code == 200 and started == [("stories", "How bees build homes", ["generate", "host", "voice"])]
+    assert drawn == ["style sample 1"] and not engine
     assert env.get("/cr-style-clone/sample/sm_bad/status").status_code == 400
     assert env.get("/cr-style-clone/sample/" + "sm_" + "8" * 24 + "/video.mp4").status_code == 404
     assert not env.targets
@@ -831,6 +841,8 @@ def test_browser_mixing_two_channels_suggests_close_styles_and_tries_one_first(e
     monkeypatch.setattr(cr_style_look, "similar", lambda *a, **k: [suggestion])
     (env.home / "styles/stories.json").write_text(json.dumps({"name": "stories", "pacing": {"photo_every_s": 5}}))
     env.studio.mv = SimpleNamespace(host_image=lambda path: "url", image_gen=lambda *a, **k: None)
+    import cr_media
+    monkeypatch.setattr(cr_media, "active", lambda task: task == "images")
     asked = []
     state = {"state": "running"}
     monkeypatch.setattr(cr_style_sample, "start", lambda home, name, style, topic, line, **kw: asked.append(
@@ -908,5 +920,36 @@ def test_browser_a_learned_style_is_edited_and_studied_again_from_its_page(env):
         page.goto(BASE + "/cr-style-clone?restudy=" + name)
         page.wait_for_function("document.getElementById('notice').textContent.includes('new version of Warm bees')")
         assert page.locator("#reference-panel").is_visible() and not b.errors, b.errors
+    finally:
+        b.close()
+
+
+def test_browser_renaming_a_style_sends_only_its_name(env):
+    """A real learned style: its look switched on switches the editor doesn't offer, and a pace the slider can't hit
+    exactly. Renaming it alone must leave all of that byte for byte as it was."""
+    name = "cr_clone_" + "7" * 12
+    features = {"offered": ["maps", "motion", "sound"], "on": ["ai_images", "sound"], "channel_on": ["depth"],
+                "auto_own": ["ai_images"]}
+    (env.home / "styles" / (name + ".json")).write_text(json.dumps({
+        "name": name, "label": "Mine", "description": "About  bees,\nmostly.", "script_notes": ["Be warm."] * 12,
+        "look": {"captions": {"off": True}}, "pacing": {"photo_every_s": 5.5}, "features": features,
+        "cr_style_clone": {"operation_id": "op_" + "7" * 24}}))
+    sent = []
+    b = _browser(env)
+    try:
+        page = b.page
+        page.on("request", lambda r: sent.append(json.loads(r.post_data)) if r.method == "POST" else None)
+        page.goto(BASE + "/cr-style-clone?edit=" + name)
+        page.locator("#edit-panel").wait_for(state="visible")
+        page.locator("#edit-save").click()
+        page.wait_for_function("document.getElementById('notice').textContent === 'Nothing changed.'")
+        page.locator("#edit-name").fill("Warm bees")
+        page.locator("#edit-save").click()
+        page.wait_for_function("document.getElementById('notice').textContent.startsWith('Saved')")
+        assert sent == [{"changes": {"name": "Warm bees"}}], "only what the creator changed is sent"
+        style = json.loads((env.home / "styles" / (name + ".json")).read_text())
+        assert style["label"] == "Warm bees" and json.dumps(style["features"]) == json.dumps(features)
+        assert style["pacing"] == {"photo_every_s": 5.5} and style["script_notes"] == ["Be warm."] * 12
+        assert style["description"] == "About  bees,\nmostly." and not b.errors, b.errors
     finally:
         b.close()

@@ -774,6 +774,7 @@ def look_progress(look_id: str) -> dict:
                    medium_gap=route.get("medium_gap") or "", cost_note=m.get("cost") if isinstance(m.get("cost"), str)
                    else "", not_watched=d.get("not_watched") or [], shorts=bool(d.get("shorts")),
                    similar_styles=similar_styles(d.get("similar")),
+                   **({"shorts_note": SHORTS_NOTE} if d.get("shorts") else {}),
                    next="Ask the creator these questions (their first option is Studio's guess), then call clone_style "
                         "with look_id, a style name, an example title and their answers. The 'medium' (3D) and "
                         "'animation' (animated 2D characters) questions decide how the videos are made: ask them "
@@ -785,6 +786,9 @@ def look_progress(look_id: str) -> dict:
     return out
 
 
+SHORTS_NOTE = ("These references are Shorts. Studio studies them like any videos, but for now the style it saves "
+               "makes regular landscape (16:9) videos, not vertical Shorts: tell the creator before the paid study "
+               "(their Shorts recipes, similar_styles kind='short', make vertical Shorts).")
 SIMILAR_NEXT = ("similar_styles are the styles they already have that come closest (suggestions only, never a reason not "
                 "to study): before the paid study, mention them in a line each. They can use one now (make_videos with its "
                 "id), try a few seconds of one on their topic first (style_sample: try_first.cost_usd on their own "
@@ -978,10 +982,13 @@ def tool_clone_style(args):
         plan_body["base_style"] = str(args["base_style"])
     mapping = call("POST", f"/cr-style-clone/look/{look_id}/plan", plan_body, timeout=60).get("mapping") or {}
     visual = str(args.get("visual_mode") or "mixed")
+    budget = args.get("budget_minutes", 22)
+    if not isinstance(budget, int) or isinstance(budget, bool) or not 15 <= budget <= 30:
+        raise Refused("budget_minutes is the Claude study budget: 15 to 30 minutes (22 unless a study ran out of time).")
     payload = {"preview_id": saved["preview_id"], "reference_ids": saved["reference_ids"], "look_id": look_id,
                "answers": answers, "label": label[:80], "title": title[:280],
                "base_style": str(args.get("base_style") or mapping.get("base") or "documentary"),
-               "brief": str(args.get("brief") or "")[:4000], "budget_minutes": 22, "max_calls": 40,
+               "brief": str(args.get("brief") or "")[:4000], "budget_minutes": budget, "max_calls": 40,
                "minutes": max(1, min(int(args.get("example_minutes") or 10), 60)),
                "visual_mode": visual if visual in ("mixed", "reference_only") else "mixed",
                "acknowledge_costs": True, "accept_medium": bool(args.get("accept_medium")),
@@ -994,6 +1001,7 @@ def tool_clone_style(args):
     status = call("POST", "/cr-style-clone/start", payload, timeout=120)
     return {"started": True, "id": status.get("operation_id"), "state": status.get("state"),
             "message": status.get("message"), "page": link("/cr-style-clone?operation=" + str(status.get("operation_id"))),
+            **({"shorts_note": SHORTS_NOTE} if look.get("shorts") else {}),
             "next": "The study runs on your Claude Code for about 15 to 30 minutes. Check with progress(id) now and "
                     "then; Studio shows a notification when the style is ready."}
 
@@ -1277,13 +1285,17 @@ TOOLS = {
     "clone_style": (tool_clone_style, "Step 2: study the looked-at references and build a new reusable style. Uses "
                     "the creator's Claude Code for 15-30 minutes and one of their plan's style clones. Needs look_id, a "
                     "style_name, an example_title and the creator's answers to the look's questions. accept_medium: "
-                    "only after the creator read and accepted the medium_gap this returns (what Studio can't make yet).",
+                    "only after the creator read and accepted the medium_gap this returns (what Studio can't make yet). "
+                    "budget_minutes: the Claude study budget (15-30, default 22); raise it only when a study stopped "
+                    "because its time ran out. A style learned from Shorts makes regular 16:9 videos for now, not "
+                    "vertical Shorts.",
                     _schema({"look_id": {"type": "string"}, "style_name": {"type": "string"},
                              "example_title": {"type": "string"},
                              "answers": {"type": "object", "additionalProperties": {"type": "string"}},
                              "base_style": {"type": "string"}, "visual_mode": {"type": "string",
                                                                                "enum": ["mixed", "reference_only"]},
                              "brief": {"type": "string"}, "example_minutes": {"type": "integer"},
+                             "budget_minutes": {"type": "integer", "minimum": 15, "maximum": 30},
                              "accept_medium": {"type": "boolean"}},
                             ["look_id", "style_name", "example_title"]),
                     {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}),

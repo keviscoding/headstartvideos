@@ -168,3 +168,85 @@ def test_pictures_a_minute_stay_around_the_pace_the_style_was_learned_at_edit_af
     assert got == {"floor": 15.0, "default": 30.0, "ceiling": 30.0, "value": 15.0}
     with pytest.raises(ValueError):
         edit.save(home, NAME, {"pictures_per_min": 8})
+
+
+REAL = {**LEARNED, "pacing": {"photo_every_s": 5.5},
+        # a real learned style: its look switched on AI pictures and cut-out movement without offering them here
+        "features": {"offered": ["maps", "motion", "sound"], "on": ["ai_images", "sound"], "channel_on": ["depth"],
+                     "auto_own": ["ai_images"]}}
+
+
+def test_a_rename_leaves_the_switches_and_the_pace_exactly_as_they_were(home):
+    path = home / "styles" / (NAME + ".json")
+    path.write_text(json.dumps(REAL))
+    clone._write(clone._folder(home) / OPERATION / "operation.json", {
+        **json.loads((clone._folder(home) / OPERATION / "operation.json").read_text()),
+        "style_sha256": clone._file_hash(path)})
+    shown = edit.editable(home, NAME)
+    assert shown["features"]["on"] == ["sound"] and shown["pictures"]["value"] == 10.9
+    edit.save(home, NAME, {"name": "Renamed"})
+    style = json.loads(path.read_text())
+    assert style["label"] == "Renamed"
+    assert json.dumps(style["features"]) == json.dumps(REAL["features"]) and style["pacing"] == {"photo_every_s": 5.5}
+    # what the page showed, sent back as it was: nothing it didn't offer is dropped and the pace stays exact
+    edit.save(home, NAME, {"features_on": shown["features"]["on"], "pictures_per_min": shown["pictures"]["value"],
+                           "tagline": "Small"})
+    style = json.loads(path.read_text())
+    assert style["features"] == REAL["features"] and style["pacing"] == {"photo_every_s": 5.5}
+    edit.save(home, NAME, {"features_on": ["maps"]})              # an offered switch changed: the rest keep theirs
+    style = json.loads(path.read_text())
+    assert style["features"]["on"] == ["maps", "ai_images"] and style["features"]["channel_on"] == ["maps", "depth"]
+    saved = json.loads((clone._folder(home) / OPERATION / "operation.json").read_text())
+    assert clone._published(home, saved)
+
+
+def test_an_edit_waits_while_the_study_is_still_finishing_the_style(home):
+    path = home / "styles" / (NAME + ".json")
+    before = path.read_bytes()
+    folder = clone._folder(home) / OPERATION
+    with clone._lock(folder):                      # the study checks the likeness, then records completion
+        with pytest.raises(RuntimeError) as stopped:
+            edit.save(home, NAME, {"name": "Too soon"})
+    assert "still finishing" in str(stopped.value) and "in a few minutes" in str(stopped.value)
+    assert path.read_bytes() == before and not (home / "output" / "cr-style-edits").exists()
+    edit.save(home, NAME, {"name": "Now"})                     # once it's done, the edit is saved and still owned
+    saved = json.loads((folder / "operation.json").read_text())
+    assert json.loads(path.read_text())["label"] == "Now" and clone._published(home, saved)
+
+
+@pytest.mark.parametrize("name", ["kinetic", "workshop", "avatar", "avatar-premium", "hustle", "documentary"])
+def test_styles_not_made_of_generated_pictures_are_never_shown_as_two_ai_stills(name):
+    style = {"name": name, "features": {"on": ["ai_images", "motion", "youtube"]}, "pacing": {"photo_every_s": 4}}
+    offer = sample.offer(style, name=name)
+    assert not offer["can"] and offer["why_not"] and offer["cost_usd"] == 0
+    assert sample.offer(style, name="stories")["can"], "a story recipe's pictures are what its videos are made of"
+
+
+def test_a_learned_style_is_tried_first_only_when_its_channel_is_mostly_generated_pictures(home):
+    footage = {"pictures": {"sources": {"families": {"footage": .7, "generated": .2, "graphic": .1}}}}
+    drawn = {"pictures": {"sources": {"families": {"generated": .8, "graphic": .2}}}}
+    told = sample.offer(LEARNED, name=NAME, profile=footage)
+    assert not told["can"] and "real footage" in told["why_not"] and "20%" in told["why_not"]
+    assert sample.offer(LEARNED, name=NAME, profile=drawn)["can"]
+    look_id = "lk_" + "5" * 24
+    clone._write(clone._folder(home) / "looks" / look_id / "look.json", {"profile": footage})
+    youtube = {**LEARNED, "cr_style_clone": {**LEARNED["cr_style_clone"], "learned_v2": {"look_id": look_id}}}
+    with pytest.raises(ValueError) as refused:                 # the sample route reads the same look
+        sample.start(home, NAME, youtube, "volcanoes", generate=lambda *a, **k: None, host=str, thread=False)
+    assert "real footage" in str(refused.value)
+
+
+def test_the_sample_record_is_saved_while_the_page_reads_it_and_never_shows_a_folder(home, monkeypatch):
+    real_replace, refused = Path.replace, []
+
+    def replace(self, target):                 # Windows: the page's poll has sample.json open for a moment
+        if Path(target).name == "sample.json" and not refused:
+            refused.append(target)
+            raise PermissionError(13, "Permission denied", str(target))
+        return real_replace(self, target)
+    monkeypatch.setattr(Path, "replace", replace)
+    out = sample.start(home, NAME, LEARNED, "volcanoes", generate=lambda p, d, l, ref_urls: Path(d).write_bytes(b"j"),
+                       host=lambda p: "u", voice=None, make=lambda s, a, o: Path(o).write_bytes(b"mp4"), thread=False)
+    assert refused and out["state"] == "done"
+    said = sample._said(PermissionError(13, "Permission denied", "C:\\Users\\Kevin\\Studio\\sample.json"))
+    assert said == "Permission denied (sample.json)" and "Kevin" not in said
