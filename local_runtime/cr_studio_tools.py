@@ -1213,11 +1213,14 @@ TOOLS = {
                      "failed), ask which they want and pass it as voice: the same voice again, Gemini through Kie, "
                      "their own ElevenLabs account, or their own recording (pass its file path as recording). When it "
                      "shows presenter_choices (its AI presenter failed), ask and pass presenter: skip (finish without "
-                     "the presenter) or again.",
+                     "the presenter) or again. Before again, read them the again choice's note: when "
+                     "presenter_failed.uncertain is true, the last attempt got no clear answer and may have started, "
+                     "so again can pay for a second presenter; pass again only after they say yes to that.",
                      _schema({"id": {"type": "string", "description": "video:<slug> from progress()."},
                               "presenter": {"type": "string", "enum": ["skip", "again"],
                                             "description": "Only for a video that stopped on its presenter: finish "
-                                                           "without it (skip) or try it again (this video only)."},
+                                                           "without it (skip) or try it again (this video only; "
+                                                           "can pay twice when presenter_failed.uncertain)."},
                               "voice": {"type": "string", "enum": ["again", "gemini-man", "gemini-woman", "elevenlabs",
                                                                    "own"],
                                         "description": "Only for a video that stopped on its voice: how to voice it now "
