@@ -192,3 +192,51 @@ def test_a_renderer_composited_over_pictures_is_judged_on_its_characters_or_over
     assert r > g and r > b, "the test shot is composited over the workspace's picture"
     lab.check(home3d, "cr_clone_box", judge=judge)
     assert asked[-1] == {}, "over a real backdrop the background is judged too"
+
+
+THUD = """{ thud: { seconds: 0.4, make(ctx, Kit) {
+    const o = ctx.createOscillator(), g = ctx.createGain(), n = ctx.createBufferSource();
+    o.frequency.setValueAtTime(90, 0); o.frequency.exponentialRampToValueAtTime(40, 0.35);
+    g.gain.setValueAtTime(0.9, 0); g.gain.exponentialRampToValueAtTime(0.001, 0.38);
+    n.buffer = Kit.audio.noise(ctx, 0.05, 3); n.connect(g); o.connect(g).connect(ctx.destination); o.start(0); n.start(0);
+  } } }"""
+
+
+def test_a_channels_own_sounds_are_made_in_code_and_stock_slop_is_refused(home3d, monkeypatch):
+    """The owner (2026-10-26): a clone learns the channel's sound effects and makes them, never "generic slop sound
+    effects... the bell sounds and the one that goes braam". A renderer's own sounds are synthesised in its sandbox,
+    rendered once a version and mixed where it marks them; stock cues the channel's videos don't use are refused."""
+    import subprocess
+    assert a2d.generic_sounds({"braam", "ping", "whoosh"}, {"sounds": {"kinds": ["stone thud", "countdown beep"],
+                                                                        "booms_per_min": 0}}) != []
+    assert len(a2d.generic_sounds({"braam", "ping"}, {"sounds": {"kinds": ["stone thud"]}})) == 2
+    assert a2d.generic_sounds({"ping"}, {"sounds": {"kinds": ["bell ding"]}}) == [], "a channel that dings may ding"
+    assert a2d.generic_sounds({"braam"}, {"sounds": {"kinds": [], "booms_per_min": 2.0}}) == []
+    assert a2d.generic_sounds({"braam"}, {}) == [], "nothing heard to compare with"
+    monkeypatch.setattr(a2d, "available3d", lambda home=None: True)
+    _style(home3d)
+    folder = Path(lab.start(home3d, "cr_clone_box")["workspace"])
+    lab_json = json.loads((folder / "lab.json").read_text())
+    lab_json["sounds"] = {"kinds": ["stone thud", "countdown beep"], "booms_per_min": 0.0}
+    (folder / "lab.json").write_text(json.dumps(lab_json))
+    (folder / "scene.json").write_text(json.dumps({"duration": 3, "cast": {}, "sets": {"s": {}},
+                                                   "shots": [{"start": 0, "set": "s"}], "stills": [1.0]}))
+    own = BOX.replace("plates: { draw: false },", "plates: { draw: false }, sounds: " + THUD + ",") \
+        .replace('Kit.sound(0.5, "pop", 0);', 'Kit.sound(0.5, "thud", 0);')
+    (folder / "renderer.js").write_text(own)
+    shown = _chromium(lambda: lab.preview(home3d, "cr_clone_box", seconds=2))
+    assert shown["ok"], shown["problems"]
+    assert shown["own_sounds"] == ["thud"] and shown["heard"] is True and ["thud"] == [x[1] for x in shown["sounds"]]
+    probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0",
+                            shown["video"]], capture_output=True, text=True).stdout.replace(",", " ").split()
+    assert probe == ["video", "audio"], "the preview is heard, not only seen"
+    marks = a2d.style_sounds(own, "cr_clone_box", home3d, dims=3)
+    assert set(marks) == {"thud"} and marks["thud"].startswith("file:sfx/styles/cr_clone_box/")
+    assert (home3d / "assets" / marks["thud"][5:]).is_file()
+    assert a2d.style_sounds(own, "cr_clone_box", home3d, dims=3) == marks, "made once a version"
+    slop = BOX.replace('Kit.sound(0.5, "pop", 0);', 'Kit.sound(0.5, "braam", 0); Kit.sound(1.0, "wobble", 0);')
+    (folder / "renderer.js").write_text(slop)
+    shown = _chromium(lambda: lab.preview(home3d, "cr_clone_box", seconds=1))
+    assert not shown["ok"]
+    assert any('stock "braam"' in p and "stone thud" in p for p in shown["problems"]), shown["problems"]
+    assert any("wobble" in p for p in shown["problems"]), "a sound that is nobody's is said"

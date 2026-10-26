@@ -243,10 +243,52 @@ def start(home, style: str, *, fresh: bool = False) -> dict:
            "height": int(spec.get("height") or 1080), "captions": bool(spec.get("captions")), "operation": op,
            "names": names, "started_from": {"version": version, "sha256": _sha(code)},
            # the study's bar was set on boxed frames; the lab sets its own on the first check, on these frames
-           "study_bar": bar, "study_control": control, "bar": None, "control": None, "history": []}
+           "study_bar": bar, "study_control": control, "bar": None, "control": None, "history": [],
+           **({"sounds": spec["sounds"]} if isinstance(spec.get("sounds"), dict) else _heard(home, op_dir))}
     _write(lab_dir / "lab.json", lab)
     (lab_dir / "GUIDE.md").write_text(_guide(dims, data, lab, home), encoding="utf-8")
     return status(home, style)
+
+
+def _heard(home, op_dir) -> dict:
+    """{"sounds": ...}: what the study's look heard the channel play, for a style saved before its spec kept it."""
+    if not op_dir or not Path(op_dir).is_dir():
+        return {}
+    import cr_animated2d as a2d
+    import cr_style_look
+    ospec = _read(Path(op_dir) / "operation.json").get("spec") or {}
+    if not ospec.get("look_id"):
+        return {}
+    return a2d._sounds_of(_read(cr_style_look.folder(home, ospec["look_id"]) / "look.json").get("profile") or {})
+
+
+def _mix(video: Path, marks: list, duration: float, home=None) -> bool:
+    """The preview's own sounds and the kit's recordings, mixed at their marks into its video (Studio's shared cues
+    are mixed only in videos). False when there was nothing to mix."""
+    import subprocess
+    root = Path(home or HERE) / "assets"
+    rows = []
+    for t, name, db in marks[:40]:
+        if not str(name).startswith("file:"):
+            continue
+        path = Path(name[5:]) if Path(name[5:]).is_absolute() else root / name[5:]
+        if path.is_file():
+            rows.append((float(t), path, float(db)))
+    if not rows:
+        return False
+    cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(video)]
+    parts = []
+    for i, (t, path, db) in enumerate(rows):
+        cmd += ["-i", str(path)]
+        ms = int(max(0.0, t) * 1000)
+        parts.append(f"[{i + 1}:a]adelay={ms}|{ms},volume={db - 6:.1f}dB[a{i}]")
+    graph = ";".join(parts) + ";" + "".join(f"[a{i}]" for i in range(len(rows))) + \
+        f"amix=inputs={len(rows)}:normalize=0,apad,atrim=0:{duration:.3f}[mix]"
+    tmp = video.with_name(video.stem + ".mixed.mp4")
+    subprocess.run(cmd + ["-filter_complex", graph, "-map", "0:v", "-map", "[mix]", "-c:v", "copy", "-c:a", "aac",
+                          "-shortest", str(tmp)], check=True, capture_output=True)
+    tmp.replace(video)
+    return True
 
 
 def _lab(home, style: str) -> tuple:
@@ -389,15 +431,21 @@ def preview(home, style: str, *, seconds: float = PREVIEW_S) -> dict:
             if info["frame_ms"] > FRAME_MS:
                 problems.append(f"a frame takes {info['frame_ms']} ms to draw: keep it under {FRAME_MS} ms (build meshes, "
                                 "materials and textures once in prepare, only move them in frame)")
-            bad = sorted({str(m[1]) for m in info["marks"] if not a2d.sound_file(str(m[1]))})
-            if bad:
-                problems.append("unknown sound names " + ", ".join(bad[:8]) + ": use the names in the guide")
+            own, made = a2d.make_sounds(code, out / "sounds", home=home, dims=lab["dims"])
+            problems += made
             clip = {**test, "duration": max(1.0, min(float(seconds), 8.0, test["duration"]))}
-            marks = a2d.render(clip, out / "preview.mp4", code, workers=2, home=home, log=lambda m: None)
+            marks = a2d.render(clip, out / "preview.mp4", code, workers=2, home=home, log=lambda m: None,
+                               own={k: "file:" + str(v) for k, v in own.items()})
             entry["video"] = str(out / "preview.mp4")
             entry["sounds"] = [[t, Path(name).stem, db] for t, name, db in marks][:40]
-            stress, words = a2d._stress_scene(scene, spec), {}
-            runs = a2d.blank_runs(a2d.sweep(stress, code, home=home, text=words), stress["duration"])
+            entry["own_sounds"] = sorted(own)
+            entry["heard"] = _mix(out / "preview.mp4", marks, clip["duration"], home)
+            stress, words, played = a2d._stress_scene(scene, spec), {}, []
+            runs = a2d.blank_runs(a2d.sweep(stress, code, home=home, text=words, marks=played), stress["duration"])
+            unknown = sorted({str(m[1]) for m in played} - set(own) - {str(m[1]) for m in played if a2d.sound_file(str(m[1]))})
+            if unknown:
+                problems.append("it plays sounds that are neither its own (sounds: {...}) nor Studio's: " + ", ".join(unknown[:8]))
+            problems += a2d.generic_sounds({str(m[1]) for m in played} - set(own), {"sounds": lab.get("sounds")})
             entry["smallest_text"] = words or None
             if a2d.small_text(words, stress):
                 problems.append(a2d.small_text(words, stress))

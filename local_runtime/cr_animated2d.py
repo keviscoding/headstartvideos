@@ -272,7 +272,58 @@ def from_profile(profile: dict) -> dict:
             "impact_frames": True, "sky": [light[0], light[-1]], "floor": [dark[-1], dark[0]], "palette": palette[:8],
             "effects": [m.group(0) for m in re.finditer(r"(neon |glowing |energy )?(auras?|speed lines|smears?|"
                                                           r"motion blur|impact frames?|lightning|sparks|blood)", low)][:6],
-            "moving": round(float(motion.get("moving") or 0), 2), "cast": cast[:6]}
+            "moving": round(float(motion.get("moving") or 0), 2), "cast": cast[:6], **_sounds_of(profile)}
+
+
+def _sounds_of(profile: dict) -> dict:
+    """{"sounds": {kinds, on, booms_per_min}}: the effects the channel's videos were heard to play, which its renderer
+    makes in code; {} when the look heard none."""
+    sfx = (profile.get("sound") or {}).get("sfx") or {}
+    kinds = [str(k)[:60] for k in (sfx.get("kinds") or []) if str(k).strip()][:10]
+    if not kinds and not isinstance(sfx.get("booms_per_min"), (int, float)):
+        return {}
+    out = {"kinds": kinds, "on": [str(k)[:120] for k in (sfx.get("on") or [])][:6]}
+    if isinstance(sfx.get("booms_per_min"), (int, float)):
+        out["booms_per_min"] = round(float(sfx["booms_per_min"]), 2)
+    return {"sounds": out}
+
+
+# Studio's stock cues that read as generic sound design (the owner, 2026-10-26: "not use generic slop sound effects...
+# the bell sounds and the one that goes braam"): a renderer may use one only when the channel's own videos do
+GENERIC = {"braam": ("braam", "boom", "impact", "trailer"), "sub_drop": ("boom", "drop", "bass", "sub"),
+           "riser": ("riser", "rise", "build", "swell"), "sting": ("sting", "stinger", "orchestra hit"),
+           "ping": ("ping", "bell", "ding", "chime", "notification")}
+
+
+def sound_problems(code: str, names, heard: dict, out_dir: Path, *, home=None, dims: int = 2) -> list:
+    """What to tell Claude about a renderer's sound: its own sounds that can't be made, names it plays that are
+    nobody's, and Studio's stock cues this channel's videos don't use (heard: what the look heard, {"sounds": ...})."""
+    try:
+        files, problems = make_sounds(code, out_dir, home=home, dims=dims)
+    except AnimationStopped as error:
+        return [str(error)]
+    unknown = sorted(n for n in set(names) if not sound_file(str(n), files))
+    if unknown:
+        problems.append("it plays sounds that are neither its own (sounds: {...}) nor Studio's: " + ", ".join(unknown[:8]))
+    return problems + generic_sounds(set(names) - set(files), heard)
+
+
+def generic_sounds(names, spec: dict) -> list:
+    """What to tell Claude about stock cues its renderer plays that this channel's own videos don't ([] when none, or
+    when Studio heard nothing of its sound to compare with)."""
+    heard = (spec or {}).get("sounds") if isinstance((spec or {}).get("sounds"), dict) else None
+    if not heard:
+        return []
+    words = " ".join(heard.get("kinds") or []).lower()
+    booms = float(heard.get("booms_per_min") or 0)
+    out = []
+    for name in sorted(set(names) & set(GENERIC)):
+        if any(w in words for w in GENERIC[name]) or (name in ("braam", "sub_drop") and booms >= 0.5):
+            continue
+        out.append(f"it plays Studio's stock \"{name}\" sound, which this channel's own videos don't use (its sounds: "
+                   + (", ".join(heard.get("kinds") or []) or "none heard") + "): make the channel's own sounds in code "
+                   "(sounds: {...}) and play those")
+    return out
 
 
 # ── the page a renderer runs in ─────────────────────────────────────────────────────────────────────────────────────
@@ -487,6 +538,79 @@ class _Sandbox:
             pass
 
 
+_MAKE_SOUNDS = """async () => {
+  const R = Kit._renderer, out = {};
+  for (const [name, def] of Object.entries((R && R.sounds) || {})) {
+    if (!/^[a-z_]{1,32}$/.test(name) || !def || typeof def.make !== 'function') { out[name] = {error: 'not {seconds, make(ctx, Kit)}'}; continue; }
+    try {
+      const secs = Math.max(0.05, Math.min(4, +def.seconds || 1)), rate = 44100;
+      const ctx = new OfflineAudioContext(1, Math.round(secs * rate), rate);
+      await def.make(ctx, Kit);
+      const d = (await ctx.startRendering()).getChannelData(0);
+      let peak = 0; for (let i = 0; i < d.length; i++) { const v = Math.abs(d[i]); if (v === v && v > peak) peak = v; }
+      const g = peak > 1 ? 1 / peak : 1, pcm = new Int16Array(d.length);
+      for (let i = 0; i < d.length; i++) pcm[i] = Math.max(-32767, Math.min(32767, Math.round((d[i] || 0) * g * 32767)));
+      const b = new Uint8Array(pcm.buffer); let s = '';
+      for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+      out[name] = {pcm: btoa(s), rate, peak};
+    } catch (e) { out[name] = {error: String(e && e.message || e).slice(0, 200)}; }
+  }
+  return out;
+}"""
+
+
+def make_sounds(code: str, out_dir: Path, *, home=None, dims: int = 2) -> tuple:
+    """The renderer's own sounds (its `sounds: {name: {seconds, make(ctx, Kit)}}`), each rendered once in the sandbox
+    to out_dir/<name>.wav: ({name: path}, [problems in Claude's words])."""
+    import wave
+    out_dir = Path(out_dir)
+    box = _Sandbox(page({"duration": 1, "dims": dims} if dims == 3 else {"duration": 1}, code, home, mode="manifest"),
+                   320, 180, gl=dims == 3, home=home)
+    try:
+        err = box.error()
+        if err:
+            raise AnimationStopped("The animation renderer could not start: " + err[:400])
+        made = box.page.evaluate(_MAKE_SOUNDS) or {}
+    finally:
+        box.close()
+    files, problems = {}, []
+    for name, row in made.items():
+        if row.get("error"):
+            problems.append(f"its sound \"{name}\" could not be made: {row['error']}")
+            continue
+        if float(row.get("peak") or 0) < 0.01:
+            problems.append(f"its sound \"{name}\" came out silent")
+            continue
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / f"{name}.wav"
+        with wave.open(str(path), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(int(row.get("rate") or 44100))
+            w.writeframes(base64.b64decode(row["pcm"]))
+        files[name] = path
+    return files, problems
+
+
+def style_sounds(code: str, style_name: str, home=None, dims: int = 2) -> dict:
+    """{sound name: "file:..." mark}: a style's own sounds, rendered once per renderer version under
+    assets/sfx/styles/<style>/<version>/ (where Studio's mixer reads "file:" marks)."""
+    if "sounds" not in str(code):
+        return {}
+    name = re.sub(r"[^a-z0-9_-]", "", str(style_name or "style").lower())[:40] or "style"
+    digest = hashlib.sha256(str(code).encode("utf-8")).hexdigest()[:10]
+    root = Path(home or HERE) / "assets"
+    folder = root / "sfx" / "styles" / name / digest
+    done = _read(folder / "sounds.json")
+    if not done:
+        files, problems = make_sounds(code, folder, home=home, dims=dims)
+        done = {"files": {k: v.name for k, v in files.items()}, "problems": problems}
+        if files or problems:
+            _write(folder / "sounds.json", done)
+    return {k: "file:" + (folder / v).relative_to(root).as_posix() for k, v in (done.get("files") or {}).items()
+            if (folder / v).is_file()}
+
+
 def manifest(code: str, home=None, dims: int = 2) -> dict:
     """What a renderer says it can draw (its Kit.renderer manifest), read in the sandbox."""
     box = _Sandbox(page({"duration": 1, "dims": dims}, code, home, mode="manifest"), 320, 180, gl=dims == 3, home=home)
@@ -533,7 +657,7 @@ _SPREAD = ("(t)=>{window.renderFrame(t);const o=document.createElement('canvas')
            "const m=s/n;return Math.sqrt(Math.max(0,q/n-m*m));}")
 
 
-def sweep(spec: dict, code: str, *, home=None, step: float = SWEEP_STEP, text: dict = None) -> list:
+def sweep(spec: dict, code: str, *, home=None, step: float = SWEEP_STEP, text: dict = None, marks: list = None) -> list:
     """Every step seconds of the scene drawn and measured (no pictures saved): [(t, spread)], where spread is how much
     the frame's brightness varies (under 4: nothing on screen). The frame review before a real render. text: filled
     with the smallest words drawn on screen ({px, text, t}), when given."""
@@ -555,6 +679,8 @@ def sweep(spec: dict, code: str, *, home=None, step: float = SWEEP_STEP, text: d
             t += step
         if text is not None:
             text.update(box.page.evaluate("window.__textMin") or {})
+        if marks is not None:
+            marks.extend(box.page.evaluate("window.__marks") or [])
         return out
     finally:
         box.close()
@@ -589,7 +715,7 @@ def _before(scene: dict, at: float) -> str:
     return ", ".join(near[-6:]) or "nothing new"
 
 
-def render(spec: dict, out: Path, code: str, *, workers: int = 2, home=None, log=print) -> list:
+def render(spec: dict, out: Path, code: str, *, workers: int = 2, home=None, log=print, own: dict = None) -> list:
     """The scene to an mp4 (no sound) and its sound marks [(second, sound, dB)]. A frame is a pure function of its
     time, so a worker per share of the frames draws them side by side."""
     W, H = int(spec.get("width", 1920)), int(spec.get("height", 1080))
@@ -642,11 +768,14 @@ def render(spec: dict, out: Path, code: str, *, workers: int = 2, home=None, log
         log(f"animated 2D: {n} frames in {time.time() - started:.0f} s")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    return [(round(float(t), 3), sound_file(name), float(db)) for t, name, db in marks if sound_file(name)]
+    return [(round(float(t), 3), sound_file(name, own), float(db)) for t, name, db in marks if sound_file(name, own)]
 
 
-def sound_file(name: str) -> str:
-    """A sound mark as Studio's mixer names it: the kit's own recording, else one of Studio's shared cues."""
+def sound_file(name: str, own: dict = None) -> str:
+    """A sound mark as Studio's mixer names it: the style's own sound (made in code), else the kit's recording, else
+    one of Studio's shared cues."""
+    if own and name in own:
+        return own[name]
     if name in SOUND_FILES:
         return SOUNDS + name + ".mp3"
     return name if name in SHARED_CUES else ""
@@ -843,13 +972,15 @@ def build(folder, spec: dict, channel: dict, *, see, judge, references: list, ho
                 problems.append("every test shot came out as one flat colour: nothing was drawn")
             if not problems:
                 # Studio's own frame review: the stress scene (every action and effect) drawn frame by frame
-                stress, words = _stress_scene(scene, spec), {}
+                stress, words, played = _stress_scene(scene, spec), {}, []
                 try:
-                    runs = blank_runs(sweep(stress, code, home=home, text=words), stress["duration"])
+                    runs = blank_runs(sweep(stress, code, home=home, text=words, marks=played), stress["duration"])
                 except AnimationStopped as error:
                     runs, problems = [], [f"in your stress scene: {error}"]
                 if small_text(words, stress):
                     problems.append("in your stress scene " + small_text(words, stress))
+                problems += sound_problems(code, {m[1] for m in played}, channel, out / f"round-{r + 1}" / "sounds",
+                                           home=home, dims=dims_of(spec))
                 for a, b in runs[:3]:
                     problems.append(f"in your stress scene the picture went blank from {a:g} s to {b:g} s (after "
                                     f"{_before(stress, a)}): every action and effect must end with the picture back "
@@ -1495,6 +1626,7 @@ def assemble(engine, job, mp3, srt, style, force, burn_subs):
     folder.mkdir(exist_ok=True)
     timeline, segments, previous = [], [], ""
     code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()[:8]
+    own = style_sounds(code, style, dims=dims_of(spec))      # the style's own effects, made in code once a version
     for index, part in enumerate(parts):
         plan = direct(engine, job, casting, spec, part, index, previous, title, man)
         previous = ending(plan)
@@ -1516,7 +1648,7 @@ def assemble(engine, job, mp3, srt, style, force, burn_subs):
                     "style's page.")
             engine.step(f"Animated 2D: drawing {part[1] - part[0]:.0f} s of animation ({index + 1} of {len(parts)})")
             marks = render(film, out, code, workers=max(1, min(3, int(getattr(engine, "MOTION_WORKERS", 2)) + 1)),
-                           log=engine.log)
+                           log=engine.log, own=own)
             _write(out.with_suffix(".sfx.json"), marks)
         timeline.append(("motion", str(out), False, round(part[1] - part[0], 6)))
         segments.append((part[0], str(out), round(part[1] - part[0], 6)))
