@@ -350,6 +350,11 @@ async def _startup_tasks():
         _studio_failures.initialize()
     except Exception as e:
         print(f"[studio-failures] table not ready: {type(e).__name__}")
+    try:                                   # where new customers' setup is stuck (webapp/studio_setup.py)
+        from webapp import studio_setup as _studio_setup
+        _studio_setup.initialize()
+    except Exception as e:
+        print(f"[studio-setup] table not ready: {type(e).__name__}")
 
     try:                                   # Ranking clip watches a deploy stranded are picked up before anyone polls
         _studio_ranking.start_supervisor()

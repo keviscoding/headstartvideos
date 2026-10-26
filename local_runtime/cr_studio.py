@@ -741,6 +741,12 @@ def create_app():
         checks["brain_mode"] = readiness["brain_mode"]
         checks["claude_code"] = readiness.pop("claude_code")
         checks["readiness"] = readiness
+        try:                                                # where setup is stuck, for the team (check keys only)
+            import cr_setup_report
+            cr_setup_report.maybe_send(readiness, checks.get("local_version", ""),
+                                       connected=bool(cfg.get("key")) and not checks.get("cr_unreachable"))
+        except Exception:                                   # noqa: BLE001 - never trouble setup
+            pass
         last_status.update(at=time.monotonic(), checks=checks)
         return jsonify(checks)
 
