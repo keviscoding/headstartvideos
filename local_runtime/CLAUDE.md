@@ -44,10 +44,9 @@ already passes.
    making stops with it. Only the launcher's own window keeps it running.
 5. **Open setup.** When the launcher says it's ready, open
    http://127.0.0.1:7860/cr-setup. If Video tools (FFmpeg) or YouTube helper
-   (Node) are missing or too old, setup starts downloading them into Studio's
-   own folder by itself while the page is open (the row says Downloading…; no
-   password). Only if a row says it couldn't, they press **Fix it** next to it
-   (or call `fix_ffmpeg` / `fix_node`, below). Then tell the customer, in
+   (Node) are missing or too old, they press **Fix it** next to each (or call
+   `fix_ffmpeg` / `fix_node`, below): Studio downloads it into its own folder,
+   no password, and the row says Downloading… until it's ready. Then tell the customer, in
    plain words, it's three buttons, top to bottom:
    1. **Connect my ChannelRecipe account**: it opens channelrecipe.com; they
       sign in if asked and press Approve, then land back on setup. No key to

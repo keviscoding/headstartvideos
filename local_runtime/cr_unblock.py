@@ -26,9 +26,28 @@ def shipped(home: Path = HOME) -> list:
     except (OSError, ValueError, AttributeError):
         files = {}
     names = list(ALWAYS) + [name for name in files if isinstance(name, str) and name not in ALWAYS]
-    # only plain paths inside this folder: no parent steps, no drive letters, no streams of their own
+    # only plain paths inside this folder: no parent steps, no drive letters, no streams of their own, and no
+    # backslashes (Windows reads one as a folder step the POSIX check above can't see)
     return [name for name in names
-            if name and ":" not in name and not PurePosixPath(name).is_absolute() and ".." not in PurePosixPath(name).parts]
+            if name and ":" not in name and "\\" not in name and not PurePosixPath(name).is_absolute()
+            and ".." not in PurePosixPath(name).parts]
+
+
+def _inside(home: Path, name: str):
+    """The file a shipped name stands for, only when it's a real file inside this folder: never through a link or a
+    Windows junction (to anywhere else on the computer)."""
+    root = Path(home).resolve()
+    path = root.joinpath(*PurePosixPath(name).parts)
+    folder = root
+    for part in PurePosixPath(name).parts:
+        folder = folder / part
+        if os.path.islink(folder) or getattr(os.path, "isjunction", lambda _p: False)(folder):
+            return None
+    try:
+        resolved = path.resolve()
+    except (OSError, RuntimeError):
+        return None
+    return resolved if resolved.is_relative_to(root) and resolved.is_file() else None
 
 
 def clear(home: Path = HOME, *, windows: bool | None = None, remove=None) -> int:
@@ -39,7 +58,10 @@ def clear(home: Path = HOME, *, windows: bool | None = None, remove=None) -> int
     remove, cleared = remove or os.remove, 0
     for name in shipped(home):
         try:
-            remove(str(Path(home).joinpath(*PurePosixPath(name).parts)) + STREAM)
+            path = _inside(home, name)
+            if path is None:
+                continue
+            remove(str(path) + STREAM)
             cleared += 1
         except OSError:
             pass        # no mark (every file, once cleared), a disk without streams (FAT32, exFAT), or no such file

@@ -319,7 +319,7 @@ window.CRLocalStudio = (() => {
                     '<details class="ls-mini"><summary>It says something is missing</summary><p>Studio needs Python 3.10 or newer (3.13 recommended'+(platform==='windows'?'; tick “Add Python to PATH” when installing':'')+'). It’s the only tool you install yourself: the setup page installs FFmpeg, Node.js and Claude Code’s command-line tool with a Fix it button each, no password needed.</p></details></div>'+
                 '</div></div></div>'+
             '<div class="ls-step"><span class="ls-step-n">3</span><div class="ls-step-body"><h3>Connect your account</h3>'+
-                '<p>On the setup page, press <b>Connect my ChannelRecipe account</b> and approve. No key to copy. FFmpeg and Node.js download by themselves while the page is open.</p>'+
+                '<p>On the setup page, press <b>Connect my ChannelRecipe account</b> and approve. No key to copy. If FFmpeg or Node.js is missing, press <b>Fix it</b> next to it: no password.</p>'+
                 '<div class="ls-step-actions"><a class="btn-ghost" href="'+SETUP_URL+'" target="_blank" rel="noopener">Open setup page ↗</a>'+
                 '<button class="btn-secondary" data-ls-copy-key>'+icon('key')+'Copy my key instead</button></div>'+
                 '<p class="ls-step-note">Then press <b>Set up Claude for videos</b> and paste a Kie.ai key. When all three steps show ✓ Done, open Studio and make your first video.</p></div></div>'+
