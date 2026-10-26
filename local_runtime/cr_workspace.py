@@ -133,6 +133,8 @@ def install(studio, activity, *, token, home=None):
             info = styles.get(row.get("name")) if isinstance(styles, dict) else None
             # a recipe that shows the creator's own comic panels instead of drawing pictures (cr_panels)
             row["panels"] = bool(isinstance(info, dict) and isinstance(info.get("look"), dict) and info["look"].get("panels"))
+            import cr_captions
+            row["captions"] = cr_captions.style_default(info)       # Create's captions switch starts at this
             # a story recipe's pictures a minute, with its quality floor (create page slider)
             import cr_media
             span = None if row["panels"] else cr_media.picture_range(info if isinstance(info, dict) else {})

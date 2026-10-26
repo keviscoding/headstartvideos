@@ -5,7 +5,7 @@
   const all = selector => [...document.querySelectorAll(selector)];
   const boot = window.CR_WORKSPACE || {};
   const state = {catalog: null, setup: null, selected: null, inspected: null, input: 'idea', narration: 'ai',
-    audio: '', featureDrafts: {}, page: 'create', family: 'all', projectFilter: 'all',
+    audio: '', featureDrafts: {}, captionsDrafts: {}, page: 'create', family: 'all', projectFilter: 'all',
     queue: [], jobs: [], studies: [], busy: false, submitting: false, uploading: false,
     openJob: null, currentOutput: null, timer: null, refresh: null, optionalLoaded: false, projectNodes: new Map()};
   const STORAGE = 'channelrecipe.workspace.v1';
@@ -137,7 +137,7 @@
     state.featureDrafts[state.selected.name] = featureValues();
     const draft = {recipe: identity(state.selected), title: $('crw-title').value, script: $('crw-script').value,
       batch: $('crw-batch-titles').value, minutes: $('crw-minutes').value, input: state.input,
-      extra: $('crw-extra').value, features: state.featureDrafts, captions: checked('crw-captions'),
+      extra: $('crw-extra').value, features: state.featureDrafts, captionsByRecipe: state.captionsDrafts,
       description: checked('crw-description'), thumbnails: checked('crw-thumbnails'),
       thumbnailCount: $('crw-thumbnail-count').value, chapters: $('crw-chapters').value,
       sources: checked('crw-sources'), sourceCount: $('crw-source-count').value,
@@ -147,10 +147,13 @@
   function restore() {
     let d = {}; try {d = JSON.parse(localStorage.getItem(STORAGE) || '{}') || {};} catch (_) {}
     state.featureDrafts = d.features && typeof d.features === 'object' ? d.features : {};
+    // captions are chosen per recipe (a style may have none by design); an older draft's one switch is the fallback
+    state.captionsDrafts = d.captionsByRecipe && typeof d.captionsByRecipe === 'object' ? d.captionsByRecipe : {};
+    state.captionsAll = typeof d.captions === 'boolean' ? d.captions : undefined;
     for (const [id, key] of [['crw-title','title'],['crw-script','script'],['crw-batch-titles','batch'],['crw-extra','extra'],
       ['crw-minutes','minutes'],['crw-thumbnail-count','thumbnailCount'],['crw-chapters','chapters'],['crw-source-count','sourceCount']])
       if (typeof d[key] === 'string') $(id).value = d[key];
-    for (const [id, key] of [['crw-captions','captions'],['crw-description','description'],['crw-thumbnails','thumbnails'],
+    for (const [id, key] of [['crw-description','description'],['crw-thumbnails','thumbnails'],
       ['crw-sources','sources'],['crw-fast-toggle','fast'],['crw-adaptive','adaptive']]) if (typeof d[key] === 'boolean') $(id).checked = d[key];
     setInput(d.input === 'script' ? 'script' : 'idea', false);
     return d;
@@ -207,6 +210,11 @@
       input.addEventListener('change', () => {if (key === 'ai_images' && !input.checked) {const depth = group.querySelector('[data-feature="depth"]'); if (depth) depth.checked = false;} if (key === 'depth' && input.checked) {const images = group.querySelector('[data-feature="ai_images"]'); if (images) images.checked = true;} updateOptional(); save(); summary();});
       group.append(label);
     }
+    // Burned-in captions start at the recipe's own choice: a style with none (like its channel) starts off and says
+    // so; switching it on asks for them on this video (they are burned in anyway, cr_captions).
+    const chosenCaptions = state.captionsDrafts[recipe.name];
+    $('crw-captions').checked = typeof chosenCaptions === 'boolean' ? chosenCaptions : recipe.captions !== false && state.captionsAll !== false;
+    captionsNote();
     text('crw-features-note', strict(recipe) ? 'Every visual scene uses your learned animation kit. Narration, captions and sound remain available.' : 'Choose the sources this recipe can use. Account requirements are checked before generation.');
     $('crw-character').value = castOf(recipe); $('crw-character-image').value = ''; characterView();
     hide('crw-panels-section', !recipe.panels); if (recipe.panels) loadPanels();
@@ -253,6 +261,13 @@
       for (const set of state.panelSets) {const o = el('option', '', `${set.name} · ${set.count} panels`); o.value = set.id; $('crw-panels-recent').append(o);}
       $('crw-panels-recent').dataset.loaded = '1';
     } catch (e) {text('crw-panels-status', e.message);}
+  }
+  function captionsNote() {
+    const none = state.selected?.captions === false, cloud = state.renderOn === 'cloud' && state.cloudInfo?.available && !cloudBlock();
+    text('crw-captions-note', !none ? '' : !checked('crw-captions') ? 'This style has no captions, like its channel. Switch this on to add them to a video.'
+      : cloud ? 'This style has no captions, like its channel, and Studio Cloud renders it that way. Render on this computer to add them.'
+      : 'This style has no captions, like its channel. They will be added to this video.');
+    hide('crw-captions-note', !none);
   }
   function updateOptional() {
     const features = featureValues(); hide('crw-fast-section', !features.threed || strict());
@@ -905,10 +920,11 @@
   for(const b of all('[data-project-filter]'))b.addEventListener('click',()=>{state.projectFilter=b.dataset.projectFilter;chooseGroup('[data-project-filter]','projectFilter',state.projectFilter);renderProjects();});
   for(const b of all('[data-family]'))b.addEventListener('click',()=>{state.family=b.dataset.family;chooseGroup('[data-family]','family',state.family);gallery();});
   $('crw-form').addEventListener('submit',submit);
-  for(const b of all('[data-render-on]'))b.addEventListener('click',()=>{if(b.disabled)return;state.renderOn=b.dataset.renderOn;cloudChoice();summary();});
+  for(const b of all('[data-render-on]'))b.addEventListener('click',()=>{if(b.disabled)return;state.renderOn=b.dataset.renderOn;cloudChoice();summary();captionsNote();});
   $('crw-fast-install').addEventListener('click',async()=>{$('crw-fast-install').disabled=true;try{await api('/cr-renderer',{method:'POST',body:{action:'install'}});}catch(e){text('crw-fast-setup-status',e.message);}refreshFast();});
   refreshFast();
   $('crw-form').addEventListener('input',()=>{updateOptional();summary();save();cloudChoice();});
+  $('crw-captions').addEventListener('change',()=>{if(state.selected)state.captionsDrafts[state.selected.name]=checked('crw-captions');captionsNote();});
   $('crw-form').addEventListener('change',()=>{updateOptional();summary();save();cloudChoice();});
   $('crw-recipe-open').addEventListener('click',openGallery);$('crw-styles-browse').addEventListener('click',openGallery);
   $('crw-gallery-search').addEventListener('input',gallery);$('crw-gallery-close').addEventListener('click',()=>{$('crw-gallery').close();$('crw-recipe-open').focus();});

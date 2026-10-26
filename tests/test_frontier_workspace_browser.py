@@ -58,7 +58,7 @@ def workspace(browser):
     rows = [
         {"name": "documentary", "features": {"offered": ["youtube", "motion", "sound"], "on": ["youtube", "motion", "sound"]}},
         {"name": "3d", "tab": "3d", "features": {"offered": ["threed", "maps", "sound"], "on": ["threed", "sound"]}},
-        {"name": CLONE, "label": "My Illustrated Worlds", "custom": True,
+        {"name": CLONE, "label": "My Illustrated Worlds", "custom": True, "captions": False,   # its channel has none
          "features": {"offered": ["motion", "sound"], "on": ["motion", "sound"]}},
         {"name": "stories", "label": "2D Life Stories", "character": STORY_CAST, "character_image": "characters/stories.png",
          "features": {"offered": ["ai_images", "sound"], "on": ["ai_images", "sound"]}},
@@ -414,6 +414,28 @@ def test_saved_reference_recipe_excludes_stale_unrelated_visuals(workspace):
     assert body["features"] == {"motion": True, "sound": True}
     assert body["render_backend"] == "original"
     assert body["character_image"] == body["avatar_id"] == ""
+
+
+def test_captions_start_at_the_recipes_own_choice_and_asking_for_them_is_sent(workspace):
+    """Alex: a cloned style without captions showed "Burn captions into the video" on, and the video came out with
+    none. The switch now starts at the recipe's own choice and says so; switching it on asks for them."""
+    env, page = workspace, workspace.page
+    env.open("?cr-preset=" + CLONE)
+    page.locator("summary", has_text="Captions & publishing").click()
+    assert not page.locator("#crw-captions").is_checked()
+    assert "This style has no captions, like its channel. Switch this on" in page.inner_text("#crw-captions-note")
+    page.locator("#crw-captions").check()
+    assert "They will be added to this video." in page.inner_text("#crw-captions-note")
+    page.locator("#crw-title").fill("A wargame battle")
+    page.locator("#crw-create").click()
+    page.wait_for_function("!window.CR_WORKSPACE_CLIENT.state.submitting && window.CR_WORKSPACE_CLIENT.state.page==='projects'")
+    assert env.creates[0]["body"]["burn_subs"] is True
+    page.locator(".crw-nav [data-nav=create]").click()
+    page.evaluate("window.CR_WORKSPACE_CLIENT.selectRecipe(window.CR_WORKSPACE_CLIENT.state.catalog.channels.find(r => r.name === 'documentary'))")
+    assert page.locator("#crw-captions").is_checked() and page.locator("#crw-captions-note").is_hidden()
+    page.evaluate("window.CR_WORKSPACE_CLIENT.selectRecipe(window.CR_WORKSPACE_CLIENT.state.catalog.channels.find(r => r.name === %s))"
+                  % json.dumps(CLONE))
+    assert page.locator("#crw-captions").is_checked(), "the creator's choice for that recipe is kept"
 
 
 def test_setup_blocks_before_work_but_quota_history_is_advisory(workspace):

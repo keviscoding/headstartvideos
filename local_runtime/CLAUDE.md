@@ -125,6 +125,9 @@ Studio through its own checks, so nothing needs the Studio web page.
 - Voices: Kie narrates with Gemini voices only (70 of them, in Create → Choose voice, each with a free sample). For
   ElevenLabs voices the customer adds their own ElevenLabs key in Setup & accounts (its whole voice library then shows
   in Choose voice). Studio moved any saved Kie ElevenLabs voice to the Gemini voice of its kind and says so once.
+- Captions: a style card's `captions: false` means the style has none by design, like its channel; `make_videos`
+  options.captions=true burns them in anyway (Create's switch does the same). `progress(id)`'s `captions_note` says
+  why a video that should have had captions has none (for example its narration had no timed words): tell them.
 - A video that stopped on its voice (`progress(id)` shows `voice_choices`, for example Kie answering "Internal Error"):
   tell them what failed and whether anything was charged (`voice_failed`), then ask which way to carry on: the same
   voice again after a few minutes, Gemini through Kie (same key), their own ElevenLabs account, or their own recording.
