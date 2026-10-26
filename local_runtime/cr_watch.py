@@ -219,6 +219,11 @@ def install(module=None, *, home=None):
     source = getattr(module, "__file__", None)
     _install_search_diagnostics(module, home or (Path(source).resolve().parent if source else None))
     _install_budget(module)
+    try:
+        import cr_archive
+        cr_archive.install()                          # archive.org that isn't answering is skipped, after 2 calls
+    except Exception:                                 # noqa: BLE001 - the engine's own Archive search, as before
+        pass
     return facade
 
 
@@ -332,6 +337,11 @@ def _install_budget(module):
 
     @wraps(fetch)
     def fetch_clips(engine, script, job, style, force, *args, **kwargs):
+        try:
+            import cr_archive
+            cr_archive.reset(engine)                  # each video asks archive.org again
+        except ImportError:
+            pass
         plan = budget(_minutes_of(engine, script, style))
         try:
             cfg = module.settings(engine, style)
@@ -400,6 +410,10 @@ def _install_budget(module):
 
     @wraps(shots)
     def watch(vid, work, *args, **kwargs):
+        if str(vid).startswith("ia:") and not _cached(module, work, vid):
+            import cr_archive
+            if cr_archive.skipped():                  # its film would be fetched from archive.org, which is down
+                raise RuntimeError(cr_archive.SKIPPED)
         b = _budget.get(_bkey(work))
         if b is None or _cached(module, work, vid):
             return shots(vid, work, *args, **kwargs)
