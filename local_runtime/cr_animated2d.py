@@ -65,6 +65,8 @@ CHUNK_S = 60.0                         # narration a director call choreographs 
 PLATE_USD = 0.02                       # one background plate on the creator's Kie account
 BUILD_ROUNDS = 4                       # renderer drafts at most (each one Claude vision call and one judged render)
 MIN_ROUNDS = 2                         # a first draft over the bar is still revised once from the judge's notes
+ISSUE_COST = 0.75                      # how much closer to the channel a draft must be to win while it can't yet draw
+                                       # what every video needs (Studio 109's probes: any place, crowds, text, types)
 BUILD_MINUTES = 24                     # and at most this long in all
 RENDERER_MAX = 240_000                 # characters of renderer code
 CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; "
@@ -922,6 +924,138 @@ def _stress_scene(scene: dict, spec: dict) -> dict:
     return stress
 
 
+# ── what every video needs, probed during the build (Studio 109) ────────────────────────────────────────────────────
+# The owner's Windows test: the renderer only knew the places of the reference videos, so a bunker story was drawn in
+# supermarket aisles; 4 people stood for "100 strangers"; board text ran off the board. Every draft is now also drawn
+# in two places the channel never showed (one inside, one outside, with props), with a crowd, and with every text
+# parameter at its longest: what comes out the same, empty or off its box goes back to Claude with the pictures.
+PROBE_INSIDE = {"prompt": "a cramped underground bunker room with bunk beds and a steel hatch, harsh strip lights",
+                "inside": True, "walls": "#7d8580", "sky": ["#2a2d33", "#3a3d44"], "floor_colors": ["#4f524f", "#5d605d"],
+                "light": "harsh strip lights", "crowd": 0,
+                "props": ["steel hatch", "bunk beds", "shelf of canned food", "water tank", "sign: CAPACITY 40"]}
+PROBE_OUTSIDE = {"prompt": "a sunny beach at midday with palm trees and a lifeguard tower", "inside": False,
+                 "sky": ["#5fb8f0", "#bfe6fb"], "floor_colors": ["#e8d49a", "#d9c17e"], "light": "bright day", "crowd": 0,
+                 "props": ["palm tree", "lifeguard tower", "beach umbrella"]}
+PROBE_CROWD = 40
+PLACES_APART = 6.0                     # two places whose thumbnails (64x36 RGB, 0-255) differ less than this look alike
+CROWD_SHOWS = 1.0                      # a crowd that changes its place's thumbnail less than this drew nobody
+PROBE_WORDS = ("Somebody has already done the math for every single person in this bunker and nobody likes the "
+               "answer it gives")
+
+
+def _thumb(path):
+    from PIL import Image
+    with Image.open(path) as im:
+        small = im.convert("RGB").resize((64, 36))
+        return list(small.get_flattened_data() if hasattr(small, "get_flattened_data") else small.getdata())
+
+
+def _apart(a, b) -> float:
+    return sum(abs(x - y) for p, q in zip(a, b) for x, y in zip(p, q)) / max(1, 3 * len(a))
+
+
+def _long_words(most: int) -> str:
+    text = PROBE_WORDS
+    while len(text) < most:
+        text += " " + PROBE_WORDS
+    return _cut(text, most)
+
+
+def text_probe(scene: dict, man: dict):
+    """The scene with every declared text parameter at its longest (words up to its declared length, else 60), or
+    None when no action or effect in it takes text."""
+    scene = json.loads(json.dumps(scene))
+    changed = []
+    for key, field in (("actions", "move"), ("fx", "kind")):
+        for row in scene.get(key) or []:
+            if not isinstance(row, dict):
+                continue
+            for name, spec in types_for(man, key, row.get(field)).items():
+                if spec.get("type") == "text":
+                    row[name] = _long_words(int(spec.get("max") or 60))
+                elif spec.get("type") == "texts":
+                    row[name] = [_long_words(int(spec.get("max") or 40))] * 3
+                else:
+                    continue
+                changed.append(f"{row.get(field)}.{name}")
+    return (scene, sorted(set(changed))) if changed else (None, [])
+
+
+def untyped(man: dict) -> list:
+    """"action.param" for every parameter a renderer names without saying its type."""
+    return [f"{name}.{param}" for kind in ("actions", "fx") for name, entry in vocabulary((man or {}).get(kind)).items()
+            for param, spec in entry["params"].items() if spec.get("type") == "any"]
+
+
+def probe(scene: dict, spec: dict, code: str, out: Path, *, home=None, man: dict = None, channel: dict = None,
+          stress: dict = None) -> dict:
+    """What a draft does with what every video needs: {"problems" (it can't draw at all: hard), "issues" (what to
+    fix, in Claude's words), "pictures" [(what, path)]}. Its test scene is drawn at its first still in a bunker room,
+    on a beach (unless Studio draws each place's picture: plates.draw true) and with a crowd; its stress scene with
+    every text parameter at its longest."""
+    out = Path(out)
+    man, channel = man or {}, channel or {}
+    base = _test_scene(scene, spec)
+    base["stills"] = base["stills"][:1]
+    problems, issues, pictures = [], [], {}
+
+    def drawn(name, place, crowd=None):
+        variant = json.loads(json.dumps(base))
+        variant["sets"] = {k: {**place, **({"crowd": crowd} if crowd is not None else {})} for k in (base.get("sets") or {"place": {}})}
+        for sh in variant.get("shots") or []:
+            if isinstance(sh, dict):
+                sh.pop("crowd", None)
+                if sh.get("set") not in variant["sets"]:
+                    sh["set"] = next(iter(variant["sets"]))
+        try:
+            pictures[name] = render_stills(variant, out, code, home=home, prefix=name + "_")[0]
+        except AnimationStopped as error:
+            problems.append(f"drawn in a place your test scene never had ({place['prompt']}), it stopped: {error}")
+    own_places = not uses_plates(code)
+    drawn("inside", PROBE_INSIDE)
+    if own_places:
+        drawn("outside", PROBE_OUTSIDE)
+    if channel.get("cast") or (man.get("cast") or {}).get("traits"):
+        drawn("crowd", PROBE_INSIDE, PROBE_CROWD)
+    if problems:
+        return {"problems": problems, "issues": [], "pictures": list(pictures.items())}
+    thumbs = {k: _thumb(v) for k, v in pictures.items()}
+    if own_places and "outside" in thumbs and _apart(thumbs["inside"], thumbs["outside"]) < PLACES_APART:
+        issues.append("drawn in two places the channel never showed (an underground bunker room with bunk beds and a "
+                      "steel hatch; a sunny beach with palm trees), your test scene came out the same in both (the "
+                      "probe pictures are shown with your test shots): draw ANY place from its set's fields (prompt, "
+                      "inside, walls, floor_colors, sky, light, props) in the channel's style, never only its usual "
+                      "places (Kit.place.draw / Kit.room help)")
+    if "crowd" in thumbs and _apart(thumbs["inside"], thumbs["crowd"]) < CROWD_SHOWS:
+        issues.append(f"a place with crowd: {PROBE_CROWD} drew nobody more: draw a set's crowd (or a shot's) as that many "
+                      "background extras in the channel's figure style, smaller in depth (Kit.place.crowd gives slots)")
+    if stress:
+        long, which = text_probe(stress, man)
+        if long:
+            look = {}
+            try:
+                sweep(long, code, home=home, look=look)
+            except AnimationStopped as error:
+                problems.append(f"with long words in its text parameters ({', '.join(which[:6])}), it stopped: {error}")
+            said = frame_notes({"texts": look.get("texts"), "overflow": look.get("overflow")}, {"duration": long["duration"]})
+            if said:
+                issues.append(f"with each text parameter at its longest ({', '.join(which[:6])}): " + "; ".join(said[:4])
+                              + ". Keep every word in its box at a readable size (Kit.text.draw), lay rows out from "
+                              "measured widths, or declare a shorter text:N")
+    loose = untyped(man)
+    if loose:
+        issues.append("these parameters say no type: " + ", ".join(loose[:12]) + ". Give every action and effect "
+                      "{does, params, adds}: \"number\" for a number (Studio turns \"DAY 1\" into 1), \"text:N\" for "
+                      "words its box can show, and in adds what your code writes itself (a DAY label, a unit)")
+    seen = [c for c in channel.get("cast") or [] if isinstance(c, dict) and isinstance(c.get("share"), (int, float))
+            and c["share"] >= 0.5]
+    if seen and not recurring(man):
+        issues.append(f"the channel's frames show {seen[0].get('name') or 'one character'} ({str(seen[0].get('look'))[:120]}) "
+                      f"in {round(seen[0]['share'] * 100)}% of its shots: if the channel keeps that character in every "
+                      "video (a mascot, a host, the \"you\" of its stories), declare it in manifest.cast.recurring")
+    return {"problems": problems, "issues": issues, "pictures": list(pictures.items())}
+
+
 def split_refs(refs: list) -> tuple:
     """(shown, held): the channel's frames Claude sees (at most 6) and the last one or two, held out to set the bar."""
     held = refs[-2:] if len(refs) >= 7 else refs[-1:] if len(refs) >= 5 else []
@@ -1026,8 +1160,9 @@ def build(folder, spec: dict, channel: dict, *, see, judge, references: list, ho
                       .replace("[PREVIOUS]", previous or "(none yet: this is the first draft)")
                       .replace("[FEEDBACK]", feedback or "(none yet)").replace("[NAMES]", named)
                       .replace("[IMAGES]", f"The first {len(shown)} pictures are the channel's own frames"
-                               + (f"; the last {len(prev_stills)} are your previous test shots, in order." if prev_stills
-                                  else ".")))
+                               + (f"; the last {len(prev_stills)} are your previous test shots, in order (any after "
+                                  "the test shots are Studio's probes: your test scene's first still in an underground "
+                                  "bunker room, on a sunny beach, then with a crowd)." if prev_stills else ".")))
             log(f"  renderer: Claude writes draft {r + 1}")
             text = see(prompt, [str(p) for p in shown] + [str(p) for p in prev_stills])
             if not text:
@@ -1063,6 +1198,17 @@ def build(folder, spec: dict, channel: dict, *, see, judge, references: list, ho
                     problems.append(f"in your stress scene the picture went blank from {a:g} s to {b:g} s (after "
                                     f"{_before(stress, a)}): every action and effect must end with the picture back "
                                     "(a fade out holds black only until a later fade in)")
+                if not problems:
+                    try:
+                        found_now = manifest(code, home, dims_of(spec))
+                        probed = probe(scene, spec, code, out / f"round-{r + 1}" / "probe", home=home, man=found_now,
+                                       channel=channel, stress=stress)
+                    except AnimationStopped as error:
+                        probed = {"problems": [str(error)], "issues": [], "pictures": []}
+                    problems += probed["problems"]
+                    row["issues"] = probed["issues"]
+                    probes = [p for _, p in probed["pictures"]]
+                    row["probes"] = [str(Path(p).relative_to(out)) for p in probes]
         row["problems"] = problems
         if problems:
             feedback = "Your last draft could not be used:\n- " + "\n- ".join(problems[:6])
@@ -1084,17 +1230,23 @@ def build(folder, spec: dict, channel: dict, *, see, judge, references: list, ho
                    dealbreakers=(got.get("dealbreakers") or [])[:6], fixes=(got.get("fixes") or [])[:6],
                    stills=[str(Path(p).relative_to(out)) for p in stills])
         rows.append(row)
-        log(f"  renderer: draft {r + 1} scores {overall:g}/10 (the channel's own frame {row['control']}; bar {bar:g})")
-        if best is None or overall > best["overall"]:
+        issues = row.get("issues") or []
+        log(f"  renderer: draft {r + 1} scores {overall:g}/10 (the channel's own frame {row['control']}; bar {bar:g})"
+            + (f"; {len(issues)} thing(s) every video needs still to fix" if issues else ""))
+        # a draft that can't yet draw what every video needs (any place, crowds, words that fit, typed parameters)
+        # ranks below one that can, unless it is clearly closer to the channel
+        if best is None or overall - ISSUE_COST * bool(issues) > best["overall"] - ISSUE_COST * bool(best.get("issues")):
             best, best_code, best_scene = row, code, scene
-        if overall >= bar and r + 1 >= MIN_ROUNDS:
+        if overall >= bar and r + 1 >= MIN_ROUNDS and not issues:
             break
         feedback = (f"The judge compared your test shots with the channel's frames: {overall:g}/10 overall, characters "
                     f"{characters:g}/10 (the channel's own held-out frames score {control}; the bar is {bar:g})."
                     + (" That clears the bar: keep everything that works and make the shots closer still."
                        if overall >= bar else "") + "\nWhat still differs:\n- " + "\n- ".join(str(x) for x in (row["dealbreakers"] or ["(not said)"]))
-                    + "\nThe judge's fixes:\n- " + "\n- ".join(str(x) for x in (row["fixes"] or ["(none)"])))
-        previous, prev_stills = code[:RENDERER_MAX], stills
+                    + "\nThe judge's fixes:\n- " + "\n- ".join(str(x) for x in (row["fixes"] or ["(none)"]))
+                    + ("\nWhat every video needs that this draft doesn't do yet (Studio's own probes):\n- "
+                       + "\n- ".join(issues) if issues else ""))
+        previous, prev_stills = code[:RENDERER_MAX], stills + [Path(out / p) for p in row.get("probes") or []]
     if best is None:
         result = {"key": key, "state": "failed", "rounds": rows,
                   "why": "no draft of the renderer could draw its test shots" if rows else "Claude wrote no renderer"}
@@ -1114,7 +1266,7 @@ def build(folder, spec: dict, channel: dict, *, see, judge, references: list, ho
               "round": best["round"], "overall": best["overall"], "characters": best["characters"],
               "bar": best.get("bar", bar), "control": best.get("control"), "rounds": rows,
               "sha256": hashlib.sha256(best_code.encode("utf-8")).hexdigest(), "manifest": found, "api": KIT_API,
-              "stills": best.get("stills") or []}
+              "stills": best.get("stills") or [], "issues": best.get("issues") or []}
     _write(out / "build.json", result)
     return result
 
@@ -1139,7 +1291,8 @@ def attach(style: dict, folder, home) -> dict:
                         "version": int(re.sub(r"\D", "", same.stem)), "api": KIT_API, "dims": dims_of(spec),
                         "state": built["state"],
                         "overall": built.get("overall"), "bar": built.get("bar"), "control": built.get("control"),
-                        "round": built.get("round"), "manifest": built.get("manifest") or {}}
+                        "round": built.get("round"), "manifest": built.get("manifest") or {},
+                        **({"issues": built["issues"]} if built.get("issues") else {})}
     return style
 
 

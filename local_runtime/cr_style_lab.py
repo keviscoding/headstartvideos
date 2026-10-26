@@ -465,6 +465,14 @@ def _draw(home, style: str, lab_dir: Path, lab: dict, code: str, scene: dict, ou
             for a, b in runs[:3]:
                 problems.append(f"in the stress scene the picture went blank from {a:g} s to {b:g} s (after "
                                 f"{a2d._before(stress, a)}): every effect must end with the picture back")
+            if not problems:
+                # what every video needs (Studio 109): any place, crowds, words that fit, typed parameters, the
+                # recurring cast; said as warnings with their pictures, never a reason it can't be saved
+                probed = a2d.probe(scene, spec, code, out / "probe", home=home, man=found,
+                                   channel={"cast": (_spec(_style(home, style)).get("cast") or [])}, stress=stress)
+                problems += probed["problems"]
+                warnings += probed["issues"]
+                entry["probes"] = [str(p) for _, p in probed["pictures"]]
         except a2d.AnimationStopped as error:
             problems.append(str(error))
         except Exception as error:                          # noqa: BLE001 - the browser itself failed

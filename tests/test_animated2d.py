@@ -28,18 +28,26 @@ Kit.renderer({
   name: "bean-shorts", version: 1,
   manifest: {
     cast: { describe: "smooth white bean-shaped characters", traits: { color: "colour", band: { color: "colour" } } },
-    actions: { place: "{x, face}", hop: "{height}: a little hop", lean: "leans in" },
-    shots: ["wide", "close"], fx: { glow: "{dur}: a red glow" }, notes: "x from -3 to 3",
+    actions: { place: "{x: number, face: left|right}", hop: "{height: number}: a little hop", lean: "leans in" },
+    shots: ["wide", "close"], fx: { glow: "{dur: number}: a red glow" }, notes: "x from -3 to 3",
   },
   plates: { draw: false },
   prepare(scene, Kit) {
     for (const a of scene.actions) if (a.move === "hop") Kit.sound(a.at, "jump", 0);
-    const bg = document.createElement("canvas"); bg.width = 1920; bg.height = 1080;
-    const g = bg.getContext("2d"); g.fillStyle = "#101010"; g.fillRect(0, 0, 1920, 1080);
-    return { bg, scene };
+    const bgs = {};
+    for (const [id, set] of Object.entries(scene.sets || {})) {
+      const bg = document.createElement("canvas"); bg.width = 1920; bg.height = 1080;
+      const g = bg.getContext("2d"); g.fillStyle = ((set || {}).sky || ["#101010"])[0]; g.fillRect(0, 0, 1920, 1080);
+      for (let k = 0; k < Math.min(60, (set || {}).crowd || 0); k++) { g.fillStyle = "#777777"; g.fillRect(40 + k * 30, 500, 16, 60); }
+      bgs[id] = bg;
+    }
+    return { bgs, scene };
   },
   frame(ctx, t, s, Kit) {
-    ctx.drawImage(s.bg, 0, 0);
+    const shot = (s.scene.shots || []).find((x) => t >= x.start && t < (x.end ?? 1e9)) || (s.scene.shots || [])[0] || {};
+    const bg = s.bgs[shot.set] || Object.values(s.bgs)[0];
+    ctx.fillStyle = "#101010"; ctx.fillRect(0, 0, 1920, 1080);
+    if (bg) ctx.drawImage(bg, 0, 0);
     let i = 0;
     for (const [id, ch] of Object.entries(s.scene.cast)) {
       const hop = s.scene.actions.find((a) => a.who === id && a.move === "hop" && t >= a.at && t < a.at + 0.6);
@@ -394,7 +402,7 @@ const img = new Image(); img.onload = () => { window.__got++; }; img.src = "http
                                             home=home))
     with pytest.raises(a2d.AnimationStopped, match="boom"):
         _chromium(lambda: a2d.render_stills({**BEAN_SCENE, "stills": [1]}, home / "bad",
-                                            BEAN.replace("ctx.drawImage(s.bg, 0, 0);", "throw new Error('boom');"),
+                                            BEAN.replace("if (bg) ctx.drawImage(bg, 0, 0);", "throw new Error('boom');"),
                                             home=home))
 
 
@@ -435,7 +443,9 @@ def test_claude_writes_the_renderer_its_shots_are_judged_and_it_is_revised_until
                                          judge=judge, references=refs, home=home, log=lambda m: None))
     assert result["state"] == "passed" and result["round"] == 3 and result["overall"] == 7.5 and result["bar"] == 7.0
     assert "may not" in seen[1][0], "the refused draft's reasons go back to Claude"
-    assert "band sits too low" in seen[2][0] and len(seen[2][1]) == 5 + 3, "the judge's words and the last shots go back"
+    assert "band sits too low" in seen[2][0] and len(seen[2][1]) == 5 + 3 + 3, "the judge's words and the last shots go back"
+    assert [Path(p).name for p in seen[2][1][-3:]] == ["inside_0.jpg", "outside_0.jpg", "crowd_0.jpg"], \
+        "with Studio's probes: the test scene in a bunker room, on a beach and with a crowd"
     assert not any("never shown" in prompt for prompt, _ in seen), "the held-out frame's notes are not Claude's to fix"
     assert len(judged) == 3, "the channel's own frame is scored once, on its own"
     assert result["manifest"]["name"] == "bean-shorts" and (tmp_path / "op/renderer/renderer.js").is_file()
@@ -535,6 +545,61 @@ def test_the_example_claude_is_shown_draws_its_own_world_and_passes_studios_fram
     man = _chromium(lambda: a2d.manifest(code, home))
     assert set(man["actions"]) >= {"place", "walk", "jump"} and man["plates"]["draw"] is False
     assert "never its look" in a2d._prompt("build.txt", home) or "never its look" in a2d._prompt("AUTHORING.md", home)
+
+
+ONE_PLACE = r"""
+Kit.renderer({
+  name: "one-place", version: 1,
+  manifest: { cast: { describe: "a block", traits: { color: "colour" } },
+              actions: { place: "{x}", sign: { does: "a sign at the top right", params: { text: "text:40" } } } },
+  plates: { draw: false },
+  prepare(scene, Kit) { return { scene }; },
+  frame(ctx, t, s, Kit) {
+    ctx.fillStyle = "#335533"; ctx.fillRect(0, 0, 1920, 1080);
+    ctx.fillStyle = "#eeeeee"; ctx.fillRect(900 + Math.sin(t * 3) * 20, 500, 100, 300);
+    const sign = s.scene.actions.find((a) => a.move === "sign" && t >= a.at);
+    if (sign) { ctx.fillStyle = "#000"; ctx.font = "120px sans-serif"; ctx.fillText(String(sign.text || ""), 1300, 200); }
+  },
+});
+"""
+
+
+def test_a_draft_that_knows_only_its_own_place_is_sent_back_with_what_every_video_needs(home, tmp_path):
+    """The bunker video: a renderer that knew only the reference's places drew a bunker as supermarket aisles, 4 people
+    for 100 strangers, and board text off the board. The build now draws every draft somewhere new, with a crowd and
+    with every text parameter at its longest."""
+    scene = {"duration": 3, "cast": {"a": {"name": "A"}}, "sets": {"street": {"prompt": "a street"}},
+             "shots": [{"start": 0, "set": "street", "framing": "wide"}], "stills": [1.0],
+             "actions": [{"at": 0, "who": "a", "move": "place", "x": 0}, {"at": 0, "who": "a", "move": "sign", "text": "OPEN"}]}
+    man = _chromium(lambda: a2d.manifest(ONE_PLACE, home))
+    got = _chromium(lambda: a2d.probe(scene, {}, ONE_PLACE, tmp_path / "probe", home=home, man=man,
+                                      channel={"cast": [{"name": "you", "look": "a red-cap stick figure", "share": 0.8}]},
+                                      stress={**scene, "width": 1920, "height": 1080}))
+    issues = "\n".join(got["issues"])
+    assert got["problems"] == [] and [k for k, _ in got["pictures"]] == ["inside", "outside", "crowd"]
+    assert "came out the same in both" in issues and "crowd: 40 drew nobody more" in issues
+    assert "with each text parameter at its longest (sign.text)" in issues and "run off the edge of the frame" in issues
+    assert "these parameters say no type: place.x" in issues
+    assert "you (a red-cap stick figure) in 80% of its shots" in issues and "manifest.cast.recurring" in issues
+
+
+def test_the_example_claude_is_shown_meets_what_every_video_needs(home, tmp_path):
+    """The example renderer Claude learns the contract from draws any place, a crowd, typed parameters and words that
+    fit their box: Studio's probes find nothing to send back."""
+    code = (home / a2d.KIT / a2d.EXAMPLE_OWN).read_text(encoding="utf-8")
+    scene = {"duration": 6, "cast": {"pip": {"name": "Pip", "color": "#f0c040", "hat": True}},
+             "sets": {"park": {"prompt": "a park", "sky": ["#9fd0f0", "#e8f4fb"], "floor_colors": ["#5aa060", "#4a9050"]}},
+             "shots": [{"start": 0, "end": 6, "set": "park", "framing": "wide", "cast": ["pip"]}], "stills": [2.0],
+             "actions": [{"at": 0, "who": "pip", "move": "place", "x": -2, "face": "right"},
+                         {"at": 0.5, "who": "pip", "move": "board", "title": "412 meals", "note": "30 days",
+                          "show": {"kind": "line", "trend": "down"}}],
+             "fx": [{"kind": "day", "at": 0, "day": 1}]}
+    man = _chromium(lambda: a2d.manifest(code, home))
+    got = _chromium(lambda: a2d.probe(scene, {}, code, tmp_path / "probe", home=home, man=man,
+                                      channel={"cast": [{"name": "Pip", "look": "a yellow round-headed figure", "share": 0.9}]},
+                                      stress={**scene, "width": 1920, "height": 1080}))
+    assert got["problems"] == [] and got["issues"] == []
+    assert a2d.untyped(man) == [] and a2d.recurring(man) == {"pip": {"name": "Pip", "color": "#f0c040", "hat": True}}
 
 
 def test_the_frames_claude_sees_span_the_channels_videos():
@@ -674,7 +739,7 @@ def test_every_video_casts_and_directs_in_the_saved_renderers_own_vocabulary_and
     assert casting["cast"]["bean"] == {"name": "Bean", "color": "#eeeeee", "band": {"color": "#e0625a"}}
     cast_prompt, director_prompt = engine.prompts
     assert '"band"' in cast_prompt and "smooth white bean-shaped" in cast_prompt
-    assert "- hop {height}: a little hop" in director_prompt and "x from -3 to 3" in director_prompt
+    assert "- hop {height: a bare number}: a little hop" in director_prompt and "x from -3 to 3" in director_prompt
     film = json.loads((job / "animated2d" / "film-000.json").read_text())
     assert [a["move"] for a in film["actions"]] == ["place", "hop"], "an action the renderer lacks is dropped"
     clip = Path(next(c for c in engine.calls if c[0] == "plan")[1][0][1])
