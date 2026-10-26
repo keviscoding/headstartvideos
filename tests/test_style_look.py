@@ -901,3 +901,42 @@ def test_pictures_instead_of_code_say_whose_graphics_they_use_and_the_channels_a
     assert clone.status(home, src.op, src.bridge)["renderer"]["graphics_id"] == started["operation_id"]
     with pytest.raises(RuntimeError, match="Only a style written in code"):
         clone.prepare_graphics(home, started["operation_id"], src.proof, src.bridge)
+
+
+def test_title_ideas_change_only_numbers_that_count_something():
+    """The 109 review: "3D" became "5D", "4K" "5K", "2nd" "3nd" and "World War 2" "World War 3"."""
+    ideas = look.title_ideas(["Top 10 3D Games Of The 2nd Era In 4K", "World War 2 Survivors, 30 Days Later",
+                              "$100 vs $1,000,000 Bunker"])
+    assert ideas and all("3D" in i and "2nd" in i and "4K" in i for i in ideas if i.startswith("Top "))
+    assert any(i.startswith("Top 20 ") for i in ideas), "a count still changes"
+    assert all("World War 2 " in i for i in ideas if i.startswith("World War"))
+    assert all("$100" in i and "$1,000,000" in i for i in ideas if i.startswith("$"))
+
+
+def test_a_stopped_look_starts_no_more_downloads(home):
+    """The 109 review: a failed look kept downloading (and retrying) in the background, and Try again reuses its
+    folder. Once the look stops, its downloads try nothing new: no retry of the one in flight, no next one."""
+    import threading
+    import time as _time
+    started = look.start(home, "pv_" + "a" * 64, [VIDEO, OTHER], spawn=lambda h, i: None)
+    tried, release = [], threading.Event()
+
+    def download(vid, a, b, dest):
+        tried.append((vid, a))
+        if vid == VIDEO:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"0" * 60_000)
+            return dest
+        release.wait(5)                                       # the second video's download is in flight at the stop
+        raise RuntimeError("network hiccup")
+
+    def transcript(vid, work):
+        if vid == OTHER:
+            raise RuntimeError("captions broke")              # the look stops here
+        return []
+    done = look.run(home, started["look_id"], call=lambda path, payload=None: {"status": "done", "log": STICK_LOG},
+                    download=download, measure=fake_measure, transcript=transcript)
+    assert done["state"] == "failed"
+    release.set()
+    _time.sleep(0.5)
+    assert [t for t in tried if t[0] == OTHER] == [(OTHER, 0)], "the part in flight is never retried; no next part"
