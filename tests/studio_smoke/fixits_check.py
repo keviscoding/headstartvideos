@@ -28,6 +28,12 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "local_runtime"))
 import cr_installs  # noqa: E402
 
+# The Windows runner's console is cp1252; the installers print characters it can't encode ('‼'), which crashed the
+# report itself and hid the install's real outcome (2026-10-26).
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 ASS = """[Script Info]
 ScriptType: v4.00+
 PlayResX: 640
