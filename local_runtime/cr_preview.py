@@ -220,6 +220,39 @@ def _study_frame(home, style, info, bridge):
     return None
 
 
+_CODED = ("cr_animated2d", "cr_animated3d")
+
+
+def _coded(info) -> bool:
+    """A style written in code: its own renderer draws every picture (look.visuals is the animation plugin)."""
+    look = info.get("look") if isinstance(info.get("look"), dict) else {}
+    return look.get("visuals") in _CODED
+
+
+def _renderer_frame(home, style, info, bridge):
+    """A style written in code: one of its own renderer's test shots (Style Lab's latest preview of the saved version,
+    else the study's best draft, as the study page shows them), never the motion-graphics kit's title card (Studio 108
+    still wrote one for a coded study, and the recipe card showed it). Only from the saved style's own owned study."""
+    import cr_style_clone as clone
+    details = info.get("cr_style_clone")
+    if not isinstance(details, dict) or not _OPERATION.fullmatch(str(details.get("operation_id") or "")):
+        return None
+    try:
+        folder, saved = clone._saved(home, details["operation_id"], bridge)
+        if (saved.get("state") not in {"complete", "complete_local"}
+                or (saved.get("spec") or {}).get("style_id") != style or not clone._published(home, saved)):
+            return None
+        published = _read(Path(home) / "styles" / (style + ".json"))
+        shots = clone.renderer_pictures(home, details["operation_id"], bridge, style=published)["shots"]
+        for shot in shots:
+            path = _file(shot, Path(home).resolve(), {".jpg", ".jpeg"})
+            if path and path.stat().st_size <= _MAX_IMAGE:
+                return Source(path, "Animation preview")
+    except (OSError, ValueError, RuntimeError, KeyError, TypeError):
+        return None
+    return None
+
+
 def recipe_source(studio, home, style, bridge, *, latest=None):
     """Choose an exact style's own video, learned-style frame or style reference."""
     if not isinstance(style, str) or not _STYLE.fullmatch(style):
@@ -232,6 +265,10 @@ def recipe_source(studio, home, style, bridge, *, latest=None):
     # Your own latest video in this recipe first, then a learned style's own
     # frames, then the recipe's labelled style reference. The retired engine
     # sample films are no longer used for previews.
+    if _coded(info):
+        # a style written in code shows what its renderer draws: never a picture sample or a graphics-kit frame it
+        # doesn't use
+        return outputs.get(style) or _renderer_frame(home, style, info, bridge) or _packaged_frame(home, style)
     return (outputs.get(style) or _learned_sample(home, info) or _study_frame(home, style, info, bridge)
             or _packaged_frame(home, style))
 
