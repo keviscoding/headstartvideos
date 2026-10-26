@@ -291,8 +291,15 @@ def _read_inputs(prompt, args):
         for line in str(prompt).splitlines():
             if line.startswith("- "):
                 path = Path(line[2:])
-                if path.is_file():
-                    hashes.append([str(path.resolve()), hashlib.sha256(path.read_bytes()).hexdigest()])
+                try:
+                    if not path.is_file():
+                        continue
+                except (OSError, ValueError):
+                    # a bullet of text, not a path: before Python 3.14 a line longer than a file name raises
+                    # ("[Errno 63] File name too long: 'THIS IS THE LAST ROUND ...'"), which stopped every 3D
+                    # review's repair round (sweep, 2026-10-26: QUEST's round 2 skipped, 38 hard fails kept)
+                    continue
+                hashes.append([str(path.resolve()), hashlib.sha256(path.read_bytes()).hexdigest()])
     return hashes
 
 
