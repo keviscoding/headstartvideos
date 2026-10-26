@@ -5851,9 +5851,14 @@ async def start_storyboard_assemble(
     clips_dir: Path | None = None
     sid = (staging_id or "").strip()
     if sid:
-        stage = OUTPUT_DIR / "storyboard_assemble_uploads" / str(admin["id"]) / sid
+        # The match step makes "<job id>_<stamp>"; anything else (a "../<another account>/..." path) is refused, so
+        # one account can never assemble another's clips.
+        own = OUTPUT_DIR / "storyboard_assemble_uploads" / str(admin["id"])
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,160}", sid):
+            raise HTTPException(400, "That match isn't valid. Run Match again, then assemble.")
+        stage = own / sid
         meta_path = stage / "staging.json"
-        if meta_path.is_file():
+        if meta_path.resolve().is_relative_to(own.resolve()) and meta_path.is_file():
             try:
                 meta = json.loads(meta_path.read_text(encoding="utf-8"))
                 cand = Path(meta.get("clips_dir") or "")
@@ -7147,6 +7152,11 @@ async def get_settings(admin: dict = Depends(require_admin)):
 
 @app.post("/api/settings/keys")
 async def save_settings(keys: dict, admin: dict = Depends(require_admin)):
+    if storage.is_remote():
+        # On the hosted site a key saved here reached one container only, was lost on the next deploy, and was written
+        # to an .env file in the app folder. Production keys live in the DigitalOcean app settings.
+        raise HTTPException(409, "Set this key in the DigitalOcean app settings: keys saved here don't reach every "
+                                 "server and are lost on the next deploy.")
     env_path = ROOT / ".env"
     existing = {}
     if env_path.exists():
@@ -7273,10 +7283,13 @@ async def test_key(req: KeyTestRequest, admin: dict = Depends(require_admin)):
 # ---------------------------------------------------------------------------
 @app.get("/api/files/{file_path:path}")
 async def serve_file(file_path: str):
+    """Files the site made, under output/ only. This route has no sign-in, and it used to serve the whole app folder,
+    so the .env that Settings > keys wrote there, the Dockerfile and the code were readable by anyone (2026-10-26).
+    Dot-files and dot-folders are never served; anything else answers 404, so nothing reveals what exists."""
+    if any(part.startswith(".") for part in Path(file_path).parts):
+        raise HTTPException(404, "File not found")
     full = (ROOT / file_path).resolve()
-    if not full.is_relative_to(ROOT.resolve()):
-        raise HTTPException(403, "Access denied")
-    if not full.exists():
+    if not full.is_relative_to(OUTPUT_DIR.resolve()) or not full.is_file():
         raise HTTPException(404, "File not found")
     return FileResponse(str(full))
 
