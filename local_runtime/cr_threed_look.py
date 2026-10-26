@@ -47,6 +47,14 @@ def minutes(job) -> float:
         return 0.0
 
 
+def quick(job) -> bool:
+    """Quicker 3D review, chosen in Create: one review round."""
+    try:
+        return (json.loads((Path(job) / "run_spec.json").read_text(encoding="utf-8")) or {}).get("cr_threed_quick") is True
+    except (OSError, ValueError, TypeError, AttributeError):
+        return False
+
+
 def _own_threed(engine, style) -> dict:
     look = ((getattr(engine, "STYLE_INFO", None) or {}).get(style) or {}).get("look") or {}
     return look.get("threed") if isinstance(look.get("threed"), dict) else {}
@@ -139,6 +147,8 @@ def install(engine=None):
         length = minutes(job) if job else 0.0
         if 0 < length <= SHORT_VIDEO_MINUTES and "review_rounds" not in _own_threed(engine_, style):
             c["review_rounds"] = min(int(c.get("review_rounds", SHORT_REVIEW_ROUNDS)), SHORT_REVIEW_ROUNDS)
+        if job and quick(job):                               # the creator's choice wins over the recipe's own
+            c["review_rounds"] = min(int(c.get("review_rounds", 1)), 1)
         return c
     _cfg._cr_look = True
     threed._cfg = _cfg

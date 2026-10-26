@@ -121,6 +121,8 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
             spec["cr_pictures_per_min"] = ppm
         if threed_look:
             spec["cr_threed_look"] = threed_look
+        if payload.get("threed_quick") is True:
+            spec["cr_threed_quick"] = True            # one 3D review round (cr_threed_look)
         if backend == "manimgx":
             spec["manimgx_identity"] = payload.get("manimgx_identity")
     if before_publish is not None:
