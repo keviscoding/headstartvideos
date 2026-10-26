@@ -187,7 +187,7 @@ def private_threed_resources(root: Path):
 # The animated 2D kit (Studio 103+; the renderer platform since 104): the page runtime every channel's Claude-written
 # renderer runs in, its optional helpers and example, the build, casting and director prompts and the fight sounds
 # (cr_animated2d.py drives it), kept in the gitignored data/frontier/animated2d/, never in this public repository.
-ANIMATED2D_FILES = re.compile(r"(core|rig|draw|moves|fx|film|bind|example-stick|example-own)\.js|(cast|director|build)\.txt|"
+ANIMATED2D_FILES = re.compile(r"(core|rig|draw|moves|fx|film|stage|bind|example-stick|example-own)\.js|(cast|director|build)\.txt|"
                               r"AUTHORING\.md")
 ANIMATED2D_SOUND = re.compile(r"sounds/[a-z_]+\.mp3")
 
@@ -214,7 +214,7 @@ def private_animated2d_resources(root: Path):
         else:
             raise ValueError("Unexpected file in the animated 2D kit: " + rel)
     names = {dest.split("/", 1)[1] for _, dest in resources if dest.startswith("animated2d/")}
-    missing = sorted({"core.js", "rig.js", "draw.js", "moves.js", "fx.js", "film.js", "bind.js", "example-stick.js",
+    missing = sorted({"core.js", "rig.js", "draw.js", "moves.js", "fx.js", "film.js", "stage.js", "bind.js", "example-stick.js",
                       "example-own.js", "cast.txt", "director.txt", "build.txt", "AUTHORING.md"} - names)
     if resources and missing:
         raise ValueError("The animated 2D kit is incomplete: " + ", ".join(missing))

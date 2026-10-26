@@ -214,12 +214,12 @@ def test_the_builder_ships_the_kit_and_its_sounds(tmp_path):
     from scripts import build_frontier_admin as builder
     kit_dir = tmp_path / "data/frontier/animated2d"
     (kit_dir / "sounds").mkdir(parents=True)
-    for name in ("core.js", "rig.js", "draw.js", "moves.js", "fx.js", "film.js", "bind.js", "example-stick.js",
+    for name in ("core.js", "rig.js", "draw.js", "moves.js", "fx.js", "film.js", "stage.js", "bind.js", "example-stick.js",
                  "example-own.js", "cast.txt", "director.txt", "build.txt", "AUTHORING.md"):
         (kit_dir / name).write_text("x", encoding="utf-8")
     (kit_dir / "sounds" / "punch.mp3").write_bytes(b"mp3")
     shipped = {dest for _, dest in builder.private_animated2d_resources(tmp_path)}
-    assert {"animated2d/core.js", "animated2d/build.txt", "animated2d/AUTHORING.md",
+    assert {"animated2d/core.js", "animated2d/stage.js", "animated2d/build.txt", "animated2d/AUTHORING.md",
             "assets/sfx/animated2d/punch.mp3"} <= shipped
     (kit_dir / "notes.md").write_text("x", encoding="utf-8")
     with pytest.raises(ValueError, match="Unexpected"):
@@ -478,7 +478,7 @@ class Engine:
 
     def claude(self, prompt, model, max_tokens=0, provider=None):
         self.prompts.append(prompt)
-        return json.dumps(self.cast if "character designer" in prompt else self.direction)
+        return json.dumps(self.cast if "designer of a" in prompt else self.direction)
 
     def image_gen(self, prompt, dest, label="", ref_urls=None):
         self.calls.append(("plate", label))

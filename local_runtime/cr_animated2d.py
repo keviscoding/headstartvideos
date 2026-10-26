@@ -37,7 +37,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 KIT = "animated2d"                     # the kit's folder in the Studio (private: shipped by the release builder)
 KIT_API = 1                            # the page runtime's interface a renderer is written against
-KIT_FILES = ("core.js", "rig.js", "draw.js", "moves.js", "fx.js", "film.js", "bind.js")
+KIT_FILES = ("core.js", "rig.js", "draw.js", "moves.js", "fx.js", "film.js", "stage.js", "bind.js")
 EXAMPLE = "example-stick.js"             # the kit's own stick fights (styles from before renderers)
 EXAMPLE_OWN = "example-own.js"          # what Claude is shown: a renderer that draws everything itself
 PROMPTS = ("cast.txt", "director.txt", "build.txt", "AUTHORING.md", EXAMPLE_OWN)
@@ -50,7 +50,7 @@ KIT3D = "animated3d"
 KIT3D_FILES = ("core3d.js", "example3d.js", "AUTHORING.md")
 THREE_DIR = Path("threed") / "engine" / "vendor" / "three"
 KIT_ORIGIN = "https://kit.local"
-KIT_ROOTS = {"three": THREE_DIR, "kit": Path(KIT3D), "engine": Path("threed") / "engine",
+KIT_ROOTS = {"three": THREE_DIR, "kit": Path(KIT3D), "a2d": Path(KIT), "engine": Path("threed") / "engine",
              "rbx": Path("shorts") / "rbx" / "r3d" / "engine"}
 KIT_TYPES = {".js": "text/javascript", ".mjs": "text/javascript", ".json": "application/json", ".png": "image/png",
              ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".glb": "model/gltf-binary",
@@ -367,13 +367,31 @@ def check_code(code: str, names=()) -> list:
 
 # Words a renderer writes on the frame (or the 3D overlay), measured where they are drawn: the smallest font size on
 # screen in pixels, with the transform applied (a customer's cloned graphics had "nearly every overlay too small to
-# read at video size"). Words drawn into textures are not measured here.
-TEXT_METER = ("window.__textMin=null;window.__t=0;(function(){const P=CanvasRenderingContext2D.prototype;"
-              "for(const k of ['fillText','strokeText']){const f=P[k];P[k]=function(s){try{const c=this.canvas;"
-              "if(c&&(c.id==='c'||c.id==='o')&&String(s).trim()){const m=/(\\d+(?:\\.\\d+)?)px/.exec(this.font||'');"
-              "if(m){const t=this.getTransform();const px=parseFloat(m[1])*Math.sqrt(Math.abs(t.a*t.d-t.b*t.c));"
+# read at video size"), and since Studio 109 where each run of words lands: off the frame's edge, or over other words
+# drawn in the same frame (the owner's Windows test: "DAY DAY 1" with the clock box printed over the number). Words
+# drawn into textures or offscreen canvases (a place's sign) are not measured here; the kit's Kit.text reports words
+# it had to cut to keep them in their box (window.__overflow).
+TEXT_METER = ("window.__textMin=null;window.__t=0;window.__textIssues=[];(function(){const P=CanvasRenderingContext2D.prototype;"
+              "let frameT=null,boxes=[];"
+              "for(const k of ['fillText','strokeText']){const f=P[k];P[k]=function(s,x,y,maxW){try{const c=this.canvas;"
+              "const str=String(s);if(c&&(c.id==='c'||c.id==='o')&&str.trim()){const m=/(\\d+(?:\\.\\d+)?)px/.exec(this.font||'');"
+              "const t=this.getTransform();const sc=Math.sqrt(Math.abs(t.a*t.d-t.b*t.c));"
+              "if(m){const px=parseFloat(m[1])*sc;"
               "if(px>0&&(!window.__textMin||px<window.__textMin.px))window.__textMin={px:Math.round(px*10)/10,"
-              "text:String(s).slice(0,40),t:window.__t};}}}catch(e){}return f.apply(this,arguments);};}})();")
+              "text:str.slice(0,40),t:window.__t};}"
+              "const mt=this.measureText(str);let l=mt.actualBoundingBoxLeft||0,r=mt.actualBoundingBoxRight||mt.width,"
+              "a=mt.actualBoundingBoxAscent||0,d=mt.actualBoundingBoxDescent||0;"
+              "if(maxW!==undefined&&mt.width>maxW&&mt.width>0){const q=maxW/mt.width;l*=q;r*=q;}"
+              "const xs=[],ys=[];for(const [px,py] of [[x-l,y-a],[x+r,y-a],[x+r,y+d],[x-l,y+d]]){xs.push(t.a*px+t.c*py+t.e);"
+              "ys.push(t.b*px+t.d*py+t.f);}const bb=[Math.min(...xs),Math.min(...ys),Math.max(...xs),Math.max(...ys)];"
+              "const W=c.width,H=c.height,sl=Math.max(4,0.004*W),iss=window.__textIssues;"
+              "if(iss.length<300){if(bb[0]<-sl||bb[1]<-sl||bb[2]>W+sl||bb[3]>H+sl)iss.push({kind:'off',text:str.slice(0,60),t:window.__t});"
+              "if(frameT!==window.__t){frameT=window.__t;boxes=[];}"
+              "if(str.trim().length>1){for(const o of boxes){if(o.s===str)continue;"
+              "const ix=Math.min(bb[2],o.b[2])-Math.max(bb[0],o.b[0]),iy=Math.min(bb[3],o.b[3])-Math.max(bb[1],o.b[1]);"
+              "if(ix>0&&iy>0){const mn=Math.min((bb[2]-bb[0])*(bb[3]-bb[1]),(o.b[2]-o.b[0])*(o.b[3]-o.b[1]));"
+              "if(mn>0&&ix*iy>0.25*mn){iss.push({kind:'over',text:str.slice(0,60),other:o.s.slice(0,60),t:window.__t});break;}}}"
+              "boxes.push({s:str,b:bb});}}}}catch(e){}return f.apply(this,arguments);};}})();")
 MIN_TEXT = 0.026                       # of the frame's short side: 28 px at 1080, the least a phone viewer can read
 
 
@@ -677,38 +695,67 @@ def render_stills(spec: dict, out_dir: Path, code: str, *, home=None, prefix: st
 
 BLANK_RUN_S = 2.5                      # this long with nothing on screen, mid-film, is a fault in the renderer
 SWEEP_STEP = 0.25                      # seconds between the frames a sweep looks at
+FROZEN_S = 2.5                         # this long with nothing on screen moving at all reads as a frozen picture
+STILL = 0.04                           # a frame-to-frame change under this (mean of 64x36 grey, 0-255) is no change
+# a sampled frame: [how much its brightness varies (under 4: nothing on screen), how much it changed since the frame
+# sampled before it, and a 16x9 thumbnail of it (to tell two shots apart)]
 _SPREAD = ("(t)=>{window.renderFrame(t);const o=document.createElement('canvas');"
            "o.width=64;o.height=36;const x=o.getContext('2d');"
            "for(const id of ['c','o']){const c=document.getElementById(id);if(c)x.drawImage(c,0,0,64,36);}"
-           "const d=x.getImageData(0,0,64,36).data,n=d.length/4;let s=0,q=0;"
-           "for(let i=0;i<d.length;i+=4){const l=0.3*d[i]+0.59*d[i+1]+0.11*d[i+2];s+=l;q+=l*l;}"
-           "const m=s/n;return Math.sqrt(Math.max(0,q/n-m*m));}")
+           "const d=x.getImageData(0,0,64,36).data,n=d.length/4,g=new Float32Array(n);let s=0,q=0;"
+           "for(let i=0,j=0;i<d.length;i+=4,j++){const l=0.3*d[i]+0.59*d[i+1]+0.11*d[i+2];g[j]=l;s+=l;q+=l*l;}"
+           "const m=s/n,p=window.__prevGrey;let ch=-1;if(p&&p.length===n){ch=0;for(let j=0;j<n;j++)ch+=Math.abs(g[j]-p[j]);ch/=n;}"
+           "window.__prevGrey=g;const sig=[];for(let by=0;by<9;by++)for(let bx=0;bx<16;bx++){let a=0;"
+           "for(let yy=0;yy<4;yy++)for(let xx=0;xx<4;xx++)a+=g[(by*4+yy)*64+bx*4+xx];sig.push(Math.round(a/16));}"
+           "return [Math.sqrt(Math.max(0,q/n-m*m)),ch,sig];}")
 
 
-def sweep(spec: dict, code: str, *, home=None, step: float = SWEEP_STEP, text: dict = None, marks: list = None) -> list:
+def sweep(spec: dict, code: str, *, home=None, step: float = SWEEP_STEP, text: dict = None, marks: list = None,
+          look: dict = None, shots: list = None, shot_dir=None) -> list:
     """Every step seconds of the scene drawn and measured (no pictures saved): [(t, spread)], where spread is how much
     the frame's brightness varies (under 4: nothing on screen). The frame review before a real render. text: filled
-    with the smallest words drawn on screen ({px, text, t}), when given."""
+    with the smallest words drawn on screen ({px, text, t}), when given. look (Studio 109): filled with what else the
+    review reads: "moves" [(t, change since the frame before)], "sigs" {t: 16x9 thumbnail}, "texts" (words off the
+    frame or over other words), "overflow" (words Kit.text had to cut) and the renderer's "manifest". shots: seconds
+    whose frames are saved as JPEGs into shot_dir (for the review Claude looks at): look["shots"] [(t, path)]."""
     W, H = int(spec.get("width", 1920)), int(spec.get("height", 1080))
     duration = float(spec.get("duration") or 0)
     box = _Sandbox(page(spec, code, home), W, H, gl=dims_of(spec) == 3, home=home)
+    want = sorted({round(float(x), 3) for x in shots or [] if 0 <= float(x) < duration})
     try:
         err = box.error()
         if err:
             raise AnimationStopped("The animation renderer could not start: " + err[:600])
-        out, t = [], 0.0
-        while t < duration:
+        out, moves, sigs, saved = [], [], {}, []
+        grid = {round(k * step, 3) for k in range(int(math.ceil(duration / step - 1e-9)))}
+        for t in sorted(grid | set(want)):
             try:
-                out.append((round(t, 3), float(box.page.evaluate(_SPREAD, t))))
+                spread, change, sig = box.page.evaluate(_SPREAD, t)
             except Exception as error:                      # noqa: BLE001 - said in the renderer's words
                 said = box.error()
                 raise AnimationStopped("The animation renderer stopped while drawing "
                                        + (said or str(error).splitlines()[0])[:600]) from None
-            t += step
+            if t in want and shot_dir is not None:
+                dest = Path(shot_dir) / f"t{t:07.2f}.jpg"
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                box.page.screenshot(path=str(dest), type="jpeg", quality=88, clip={"x": 0, "y": 0, "width": W, "height": H})
+                saved.append((t, dest))
+            if t not in grid:                               # a frame between the sweep's own: not one of its samples
+                box.page.evaluate("window.__prevGrey=null")
+                continue
+            out.append((round(t, 3), float(spread)))
+            if change >= 0:
+                moves.append((round(t, 3), round(float(change), 3)))
+            sigs[round(t, 3)] = sig
         if text is not None:
             text.update(box.page.evaluate("window.__textMin") or {})
         if marks is not None:
             marks.extend(box.page.evaluate("window.__marks") or [])
+        if look is not None:
+            look.update(moves=moves, sigs=sigs, shots=saved,
+                        texts=box.page.evaluate("window.__textIssues||[]") or [],
+                        overflow=box.page.evaluate("window.__overflow||[]") or [],
+                        manifest=box.page.evaluate("window.__manifest||null") or {})
         return out
     finally:
         box.close()
