@@ -50,7 +50,10 @@ SUPPORTED_RELEASES = APPROVED_RELEASES[APPROVED_RELEASES.index(MIN_SUPPORTED_REL
 WORKFLOW_VERSION = "frontier-5.3-claudecode.1"
 BRANDED_WORKFLOW_VERSION = "channelrecipe-5.3-claudecode.1"
 SOURCE_SHA256 = "e379dc601672282040a2adbf30f7bf7f7d34fcdf38154e5f6a24ec6c2528cadf"
-NATIVE_STAGE_LIMIT = 2
+# Claude stages one project may run at once. The 3D engine directs and reviews three sections side by side; at 2 the third
+# waited for a slot (about 20 of a customer's 116-minute 2-minute 3D video, 2026-10-25). Studios up to 105 cap
+# themselves at 2, so raising this changes nothing for them; Studio 106 asks for 3.
+NATIVE_STAGE_LIMIT = 3
 # A Studio update reads the release in many byte ranges with one link, and storage is in San Francisco: from Europe
 # a slow connection outlived a 10-minute link and every retry was refused ("the update keeps getting interrupted").
 DOWNLOAD_LINK_SECONDS = 3600
