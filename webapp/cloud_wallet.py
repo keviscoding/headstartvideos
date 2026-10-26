@@ -154,7 +154,8 @@ def checkout_session(user: dict, usd: int, base_url: str, *, stripe=None):
         stripe = stripe_module
     customer_id = user.get("stripe_customer_id")
     if not customer_id:
-        customer_id = stripe.Customer.create(email=user["email"]).id
+        # one customer per account however many top-ups start at once (the same key as the site's checkouts)
+        customer_id = stripe.Customer.create(email=user["email"], idempotency_key=f"cr-customer-{int(user['id'])}").id
         db.update_user(user["id"], stripe_customer_id=customer_id)
     session = stripe.checkout.Session.create(
         customer=customer_id, mode="payment",

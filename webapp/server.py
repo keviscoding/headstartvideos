@@ -533,7 +533,7 @@ from webapp.database import (
     append_niche_hunt_progress, get_niche_hunt_run_by_job_id, get_latest_running_niche_hunt,
     cancel_niche_hunt_run, cancel_all_running_niche_hunts,
     ensure_user_mcp_api_key, rotate_user_mcp_api_key, get_user_by_mcp_api_key,
-    stripe_event_once,
+    stripe_event_once, cancel_cook_job_with_refund,
 )
 from webapp import storage
 from webapp import storyboard_staging as _sb_staging
@@ -1209,6 +1209,12 @@ def _invoice_subscription_id(invoice: dict) -> str:
     return ""
 
 
+def _stripe_customer_key(user_id) -> str:
+    """The idempotency key for creating an account's Stripe customer: one customer per account, whichever web
+    container or page asks first (Stripe keeps a key for 24 hours)."""
+    return f"cr-customer-{int(user_id)}"
+
+
 def _find_user_for_stripe(*, sub_id: str = "", customer_id: str = "") -> dict | None:
     row = get_user_by_sub_id(sub_id) if sub_id else None
     if row:
@@ -1256,7 +1262,8 @@ def create_checkout(req: CheckoutRequest, request: Request):
 
     customer_id = user.get("stripe_customer_id")
     if not customer_id:
-        customer = stripe.Customer.create(email=user["email"])
+        # Two checkouts at once (a double click reaching both web containers) get the same Stripe customer.
+        customer = stripe.Customer.create(email=user["email"], idempotency_key=_stripe_customer_key(user["id"]))
         customer_id = customer.id
         update_user(user["id"], stripe_customer_id=customer_id)
 
@@ -1321,7 +1328,8 @@ def create_topup(req: TopupRequest, request: Request):
 
     customer_id = user.get("stripe_customer_id")
     if not customer_id:
-        customer = stripe.Customer.create(email=user["email"])
+        # Two checkouts at once (a double click reaching both web containers) get the same Stripe customer.
+        customer = stripe.Customer.create(email=user["email"], idempotency_key=_stripe_customer_key(user["id"]))
         customer_id = customer.id
         update_user(user["id"], stripe_customer_id=customer_id)
 
@@ -1409,6 +1417,10 @@ def _apply_stripe_event(event_dict: dict) -> dict:
         if not user_id:
             print(f"[stripe] checkout.session.completed missing user_id metadata: {obj.get('id')}")
         else:
+            paid_as = _stripe_id(obj.get("customer"))
+            if paid_as:
+                # The customer this checkout paid as is the account's: later invoices find the account by it.
+                update_user(int(user_id), stripe_customer_id=paid_as)
             amount_total = obj.get("amount_total")
             currency = obj.get("currency") or "usd"
             session_id = obj.get("id") or ""
@@ -4199,24 +4211,28 @@ def cancel_build(job_id: str, request: Request):
         was_queued = job_queue.cancel_queued(job_id)
     else:
         was_queued = job.get("status") == "queued"
+    # One transaction, guarded: the cook is cancelled only if it is still going, and its credits come back at most
+    # once. A cancel sent twice (two clicks reaching both web containers), a cook that failed meanwhile and refunded
+    # itself, or the sweeper can no longer pay twice.
+    cancelled, refunded = cancel_cook_job_with_refund(job_id, "Cancelled by user")
+    if not cancelled:
+        try:
+            _refresh_job_from_db(job_id, job)
+        except Exception:
+            pass
+        return {"status": job["status"]}
     job["status"] = "cancelled"
     job["error"] = "Cancelled by user"
+    job["credit_deducted"] = False
     job["progress"].append({
         "time": time.time(),
         "message": "Cancelled",
         "phase": "cancelled",
     })
-    if job.get("credit_deducted"):
-        amt = job_credits_charged(job)
-        refund_credits(job["user_id"], amt)
-        job["credit_deducted"] = False
-        print(f"[build] Refunded {amt} credit(s) on cancel for user {job['user_id']} (queued={was_queued})")
+    if refunded:
+        print(f"[build] Refunded {refunded} credit(s) on cancel for user {job['user_id']} (queued={was_queued})")
     try:
-        update_cook_job(
-            job_id, status="cancelled", error="Cancelled by user",
-            credit_deducted=False, finished=True,
-            progress_json=json.dumps(job["progress"][-40:]),
-        )
+        update_cook_job(job_id, progress_json=json.dumps(job["progress"][-40:]))
     except Exception:
         pass
     return {"status": "cancelled", "was_queued": was_queued}

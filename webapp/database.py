@@ -1886,8 +1886,9 @@ def reclaim_stale_cook_jobs(stale_seconds: int = 180) -> int:
         return cur.rowcount or 0
 
 
-def _credits_charged_for_row(row: dict) -> int:
-    """Credits to refund for a cook row (HQ cooks charge more than 1)."""
+def _credits_charged_for_row(row: dict) -> float:
+    """Credits to refund for a cook row (HQ cooks charge more than 1, ranking shorts half a credit: an int here once
+    turned a 0.5 charge into a 1-credit refund). Same rule as cook_runner.job_credits_charged."""
     try:
         req = json.loads(row.get("request_json") or "{}")
     except Exception:
@@ -1896,9 +1897,9 @@ def _credits_charged_for_row(row: dict) -> int:
     if raw is None:
         raw = row.get("credit_deducted")
     try:
-        n = int(raw or 0)
+        n = _credit_amount(raw)
     except (TypeError, ValueError):
-        n = 1 if raw else 0
+        n = 1.0 if raw else 0.0
     if n <= 0 and row.get("credit_deducted"):
         return 1
     return max(0, n)
@@ -1974,20 +1975,55 @@ def fail_cook_job_with_refund(
         if (cur.rowcount or 0) != 1:
             return False, 0
 
+        return True, _refund_once_in(cur, job_id, row)
+
+
+def _refund_once_in(cur, job_id: str, row: dict) -> float:
+    """Give a cook's credits back at most once, inside the caller's transaction: credit_deducted flips 1 -> 0 in its
+    own conditional UPDATE, and only the caller that flipped it adds the credits. A failed cook, a cancel, the
+    sweeper and either web container can all ask; one of them pays. Returns the credits given back."""
+    cur.execute(_q("UPDATE cook_jobs SET credit_deducted = 0 WHERE job_id = ? AND credit_deducted = 1"), (job_id,))
+    if (cur.rowcount or 0) != 1:
+        return 0
+    refunded = _credits_charged_for_row(row)
+    if refunded <= 0 or not row.get("user_id"):
+        return 0
+    cur.execute(_q("UPDATE users SET credits = credits + ? WHERE id = ?"), (refunded, int(row["user_id"])))
+    return refunded
+
+
+def refund_cook_credits_once(job_id: str) -> float:
+    """A failed cook's credits back, at most once (see _refund_once_in). Returns the credits given back."""
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(_q("SELECT * FROM cook_jobs WHERE job_id = ?"), (job_id,))
+        found = cur.fetchone()
+        return _refund_once_in(cur, job_id, dict(found)) if found else 0
+
+
+def cancel_cook_job_with_refund(job_id: str, message: str = "Cancelled by user") -> tuple[bool, float]:
+    """Cancel a cook that is still queued or running and give its credits back, each exactly once.
+
+    Returns (cancelled, credits_refunded). `cancelled` is False when the cook already finished, failed or was
+    cancelled (by the sweeper, the cook itself or the other web container): nothing is touched. Same shape as
+    fail_cook_job_with_refund: a conditional status UPDATE, then the credit_deducted flip and the credits in the same
+    transaction."""
+    now = time.time()
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(_q("SELECT * FROM cook_jobs WHERE job_id = ?"), (job_id,))
+        found = cur.fetchone()
+        if not found:
+            return False, 0
+        row = dict(found)
         cur.execute(
-            _q("""UPDATE cook_jobs SET credit_deducted = 0
-                  WHERE job_id = ? AND credit_deducted = 1"""),
-            (job_id,),
+            _q("""UPDATE cook_jobs SET status = 'cancelled', error = ?, finished_at = ?
+                  WHERE job_id = ? AND status IN ('queued', 'web_queued', 'running')"""),
+            (message, now, job_id),
         )
-        refunded = _credits_charged_for_row(row) if (cur.rowcount or 0) == 1 else 0
-        if refunded > 0 and row.get("user_id"):
-            cur.execute(
-                _q("UPDATE users SET credits = credits + ? WHERE id = ?"),
-                (refunded, int(row["user_id"])),
-            )
-        else:
-            refunded = 0
-        return True, refunded
+        if (cur.rowcount or 0) != 1:
+            return False, 0
+        return True, _refund_once_in(cur, job_id, row)
 
 
 def append_cook_progress(job_id: str, message: str, phase: str = "running") -> None:
