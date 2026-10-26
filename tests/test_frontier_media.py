@@ -22,6 +22,9 @@ def hub(tmp_path, monkeypatch):
     return tmp_path
 
 
+GEMINI = "google/gemini-3-8-flash-tts"
+
+
 def response(body, status=200):
     return SimpleNamespace(status_code=status, json=lambda: body)
 
@@ -221,11 +224,13 @@ def test_narration_is_bounded_and_timings_come_from_audio(hub, monkeypatch):
     calls = []
     monkeypatch.setattr(media, "run", lambda task, inputs, dest, **k: calls.append(inputs) or Path(dest).write_bytes(b"audio"))
     monkeypatch.setattr(media, "narration_audio", lambda path: [0.0])
+    monkeypatch.setattr(media.subprocess, "run", lambda args, **k: Path(args[-1]).write_bytes(b"mp3"))  # Gemini: wav
     words = [SimpleNamespace(word="Hello", start=0.1, end=0.4), SimpleNamespace(word="world.", start=0.5, end=0.8)]
     engine = SimpleNamespace(log=lambda *_: None, _get_whisper=lambda: SimpleNamespace(transcribe=lambda *a, **k: ([SimpleNamespace(words=words)], None)),
                              _srt_ts=lambda n: "00:00:00," + str(int(n * 1000)).zfill(3), _script_words_into_srt=lambda *a: None)
     media.narrate(engine, "Hello world.", hub / "audio.mp3", hub / "subs.srt", voice_id="old-private-clone")
-    assert calls[0]["voice"] == media.PROVIDERS["kie"]["default_voice"]
+    # Kie narrates with Gemini voices: the model's own default voice, never the engine's private clone
+    assert calls[0]["speakers"][0]["voice_name"] == media.narration_model("kie")["default_voice"] == "Kore"
     assert "00:00:00,100 --> 00:00:00,800" in (hub / "subs.srt").read_text()
 
 
@@ -239,18 +244,18 @@ def test_no_media_generation_before_spending_agreement(hub, monkeypatch):
 def test_separate_narration_uses_its_wallet_without_changing_images(hub, monkeypatch):
     media.cr_bridge.save_settings({"costs_accepted": True,
         "media_hub": {"provider": "atlas", "tasks": sorted(media.TASKS)},
-        "narration": {"provider": "kie", "voice": "chosen-voice"}})
+        "narration": {"provider": "kie", "voice": "Charon"}})
     calls = []
     monkeypatch.setattr(media.requests, "post", lambda url, **kw: calls.append((url, kw)) or
                         response({"code": 200, "data": {"taskId": "voice-task"}}))
     monkeypatch.setattr(media.requests, "get", lambda *a, **kw: response({"code": 200,
         "data": {"state": "success", "resultJson": json.dumps({"resultUrls": ["https://files.example/voice.mp3"]})}}))
-    media.run("narration", {"text": "Hello", "voice": "chosen-voice"}, hub / "voice.mp3")
+    media.run("narration", media.narration_input("Hello", "Charon", GEMINI), hub / "voice.mp3")
     assert calls[0][0] == "https://api.kie.ai/api/v1/jobs/createTask"
     assert calls[0][1]["headers"]["Authorization"] == "Bearer customer-test-key"
-    assert calls[0][1]["json"]["model"] == "elevenlabs/text-to-speech-turbo-2-5"
+    assert calls[0][1]["json"]["model"] == GEMINI                   # Kie's narration: Gemini voices only
     assert media.profile("images")["provider"] == "atlas"
-    assert media.profile("narration")["voice"] == "chosen-voice"
+    assert media.profile("narration")["voice"] == "Charon"
 
 
 def test_individual_voice_override_and_inherited_hub_narration(hub):
@@ -520,10 +525,11 @@ KIE_INTERNAL = {"state": "fail", "failCode": "500", "failMsg": "Internal Error, 
 def test_uncharged_kie_narration_internal_error_is_tried_again(hub, monkeypatch):
     creates = kie_tasks(monkeypatch, [KIE_INTERNAL, "success"])
     monkeypatch.setattr(media, "narration_audio", lambda path: [0.0])
+    monkeypatch.setattr(media.subprocess, "run", lambda args, **k: Path(args[-1]).write_bytes(b"mp3"))  # Gemini: wav
     pauses = []
     monkeypatch.setattr(media.time, "sleep", lambda s: pauses.append(s))
     media.narrate(_voice_engine(), "Hello world.", hub / "audio.mp3", hub / "subs.srt")
-    assert len(creates) == 2 and (hub / "audio.mp3").read_bytes() == b"generated media"
+    assert len(creates) == 2 and (hub / "audio.mp3").read_bytes() == b"mp3"
     assert 30 in pauses
     receipts = sorted(p.name for p in (hub / "audio-hub-voice" / ".cr-tasks").glob("*.json"))
     assert len(receipts) == 2 and any(".failed-" in r for r in receipts)        # the failed receipt is kept
@@ -532,6 +538,7 @@ def test_uncharged_kie_narration_internal_error_is_tried_again(hub, monkeypatch)
 def test_narration_stops_after_three_uncharged_failures_and_resume_tries_again(hub, monkeypatch):
     creates = kie_tasks(monkeypatch, [KIE_INTERNAL] * 3 + ["success"])
     monkeypatch.setattr(media, "narration_audio", lambda path: [0.0])
+    monkeypatch.setattr(media.subprocess, "run", lambda args, **k: Path(args[-1]).write_bytes(b"mp3"))  # Gemini: wav
     with pytest.raises(media.TaskFailed, match="Kie charged nothing for it.*Resume saved project"):
         media.narrate(_voice_engine(), "Hello world.", hub / "audio.mp3", hub / "subs.srt")
     assert len(creates) == 3
@@ -562,6 +569,7 @@ def test_resume_tries_again_when_kie_did_not_say_what_the_failed_voice_cost(hub,
     unknown = {"state": "fail", "failCode": "500", "failMsg": "Internal Error, Please try again later"}
     creates = kie_tasks(monkeypatch, [unknown, "success"])
     monkeypatch.setattr(media, "narration_audio", lambda path: [0.0])
+    monkeypatch.setattr(media.subprocess, "run", lambda args, **k: Path(args[-1]).write_bytes(b"mp3"))  # Gemini: wav
     with pytest.raises(media.TaskFailed, match="press Resume saved project") as failed:
         media.narrate(_voice_engine(), "Hello world.", hub / "audio.mp3", hub / "subs.srt")
     assert "charged nothing" not in str(failed.value) and len(creates) == 1        # no automatic retry
@@ -595,9 +603,6 @@ def test_uncharged_image_failures_keep_their_own_model_fallbacks(hub, monkeypatc
     assert not media.fresh_attempt_ok("kie", "narration", {**receipt, "credits": None})
     assert media.fresh_attempt_ok("kie", "narration", {**receipt, "credits": None}, asked=True)
     assert not media.fresh_attempt_ok("kie", "narration", {**receipt, "credits": 3}, asked=True)
-
-
-GEMINI = "google/gemini-3-8-flash-tts"
 
 
 def test_a_stopped_voice_is_recorded_and_the_video_can_be_voiced_with_gemini_through_kie(hub, monkeypatch):

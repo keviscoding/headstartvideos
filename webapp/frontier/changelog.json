@@ -1,5 +1,15 @@
 [
   {
+    "build": 106,
+    "date": "2026-10-26",
+    "title": "Kie narrates with Gemini voices",
+    "items": [
+      "Fixed: Kie narration uses Gemini voices only. Kie's ElevenLabs Turbo voice kept failing, so Kie now narrates with Google's Gemini voices, with free samples to listen to in Choose voice. ElevenLabs voices need your own ElevenLabs key.",
+      "Your voice carries over. A Kie ElevenLabs voice you chose is matched once to a similar Gemini voice, and Studio tells you so until you pick another.",
+      "One voice per video. A video stopped halfway through its narration is voiced again in Gemini when you resume it, which costs a few cents, so a video never mixes two voices."
+    ]
+  },
+  {
     "build": 105,
     "date": "2026-10-26",
     "title": "Fewer stopped videos, plus Roblox Story Shorts",
