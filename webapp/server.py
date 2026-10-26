@@ -567,6 +567,9 @@ app.include_router(_showcase.make_router(require_admin))
 # Why customers' Studio videos stop: counts only (webapp/studio_failures.py).
 from webapp import studio_failures as _studio_failures
 app.include_router(_studio_failures.make_router(require_admin))
+# How far new customers get: setup, first video started, first video finished (webapp/milestones.py).
+from webapp import milestones as _milestones
+app.include_router(_milestones.make_router(require_admin))
 
 
 # ChannelRecipe Studio for subscribers. The router checks both web sessions
