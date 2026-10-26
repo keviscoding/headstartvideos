@@ -695,8 +695,9 @@ def test_setup_shows_blocked_services_and_fixes_the_speech_model_with_a_progress
 
 
 def test_setup_fixes_ffmpeg_and_node_and_installs_and_signs_in_to_claude_code(page):
-    """New customers got stuck at "Install FFmpeg / Node / Claude Code, then reopen the launcher" (2026-10-26): each
-    is one press now, with a progress line, and a failure says why and offers Fix it again."""
+    """New customers got stuck at "Install FFmpeg / Node / Claude Code, then reopen the launcher" (2026-10-26): FFmpeg
+    and Node.js now start by themselves while setup is open (the owner's Windows test: two Fix it presses nobody should
+    need), with a progress line and a Downloading… badge, and a failure says why and offers Fix it again."""
     tab, errors = page
     tab.unroute("**/*")
     html = (Path(__file__).parents[1] / "local_runtime" / "cr_setup.html").read_text()
@@ -708,7 +709,8 @@ def test_setup_fixes_ffmpeg_and_node_and_installs_and_signs_in_to_claude_code(pa
              "costs_accepted": True, "brain_mode": "claudecode", "local_version": "5.3-admin.106",
              "model_accounts": {}, "providers": {}, "account": {"brain": {"connected": False}},
              "claude_code": {"installed": False, "authenticated": False, "models": []},
-             "speech_model": {"ready": True, "state": "ready", "reason": ""},
+             "speech_model": {"ready": True, "state": "ready", "reason": ""}, "system": "windows",
+             "account": {"version": "5.3-admin.109", "brain": {"connected": False}},
              "readiness": {"ready": False, "checks": [], "blockers": []}}
     asked = {"posts": [], "ffmpeg": 0, "node": 0, "claude": 0, "signin": 0}
 
@@ -752,17 +754,28 @@ def test_setup_fixes_ffmpeg_and_node_and_installs_and_signs_in_to_claude_code(pa
     tab.route("**/*", fixture)
     tab.goto("http://setup-ui-fixture.invalid/cr-setup")
     tab.wait_for_selector("#ffmpeg-row")
-    assert "can't burn captions" in tab.locator("#ffmpeg-row").inner_text()
-    assert "Node.js 20.11.1 is too old" in tab.locator("#node-row").inner_text()
-    tab.locator("#fix-ffmpeg").click()
+    # nobody pressed anything: both start by themselves, and the badge says Downloading…, not Needs attention
     tab.wait_for_function("document.querySelector('#ffmpeg-row')?.innerText.includes('30 of 57 MB')", timeout=8000)
+    assert tab.locator("#ffmpeg-row > b").inner_text() == "Downloading…"
+    assert not tab.locator("#fix-ffmpeg").count(), "no Fix it while it downloads"
     tab.wait_for_function("document.querySelector('#ffmpeg-row')?.classList.contains('ok')", timeout=8000)
     assert not tab.locator("#fix-ffmpeg").count()
-    tab.locator("#fix-node").click()
     tab.wait_for_function("document.querySelector('#node-row')?.innerText.includes('download Node.js 24.22.1')",
                           timeout=8000)
     assert "Press Fix it to try again" in tab.locator("#node-row").inner_text()
+    assert tab.locator("#node-row > b").inner_text() == "Needs attention"
     assert tab.locator("#fix-node").is_enabled(), "a failure offers Fix it again"
+    assert sorted(asked["posts"]) == ["/cr-setup/fix-ffmpeg", "/cr-setup/fix-node"], "each started once, by itself"
+    tab.locator("#fix-node").click()
+    tab.wait_for_function("document.querySelector('#fix-node') && !document.querySelector('#fix-node').disabled",
+                          timeout=8000)
+    assert asked["posts"][2:] == ["/cr-setup/fix-node"], "a failed one is never started again by itself"
+    # first-time setup isn't finished: no "A newer Studio is available" yet (B8); Windows names PowerShell only (B7)
+    assert tab.locator("#update").is_hidden()
+    assert "PowerShell" in tab.locator("#claude-signin-manual").text_content()
+    assert "Terminal" not in tab.locator("#claude-details").text_content()
+    # the walkthrough was recorded on a Mac: no macOS security chapter on Windows (B9)
+    assert "Mac security" not in tab.locator("#walk-chapters").text_content()
     # Claude Code: installed by Anthropic's installer, then a sign-in window, and the page notices the sign-in
     assert tab.locator("#claude-install").is_visible() and tab.locator("#claude-signin").is_hidden()
     assert "desktop app alone isn’t enough" in tab.locator("#claude-quick-status").inner_text()
@@ -772,8 +785,68 @@ def test_setup_fixes_ffmpeg_and_node_and_installs_and_signs_in_to_claude_code(pa
     tab.locator("#claude-signin").click()
     tab.wait_for_function("document.querySelector('#claude-fix-status').innerText.includes('Signed in')", timeout=12000)
     tab.wait_for_function("document.querySelector('#claude-fix').hidden", timeout=8000)
-    assert asked["posts"] == ["/cr-setup/fix-ffmpeg", "/cr-setup/fix-node", "/cr-setup/fix-claude",
-                              "/cr-setup/claude-sign-in"]
+    assert asked["posts"][3:] == ["/cr-setup/fix-claude", "/cr-setup/claude-sign-in"]
+    assert errors == []
+
+
+def test_a_fix_that_failed_before_the_page_opened_says_why_and_waits_for_fix_it(page):
+    """Setup starts FFmpeg and Node.js by itself only once: one that already failed (Studio remembers) shows why and
+    waits for the creator's Fix it, instead of downloading again at every visit. Polish from the owner's Windows test
+    (2026-10-26): ChannelRecipe in full, keys that no browser offers to save as a password, a newer Studio mentioned
+    once setup is done."""
+    tab, errors = page
+    tab.unroute("**/*")
+    html = (Path(__file__).parents[1] / "local_runtime" / "cr_setup.html").read_text(encoding="utf-8")
+    html = html.replace("__LOCAL_TOKEN__", "ui-fixture-local-token")
+    state = {"python": True, "ffmpeg": False, "browser": True, "node": True, "node_youtube": True, "connected": False,
+             "ffmpeg_reason": "FFmpeg isn't installed. Press Fix it next to Video tools.",
+             "can_fix": {"ffmpeg": True, "node": True, "claude": True}, "system": "mac",
+             "fixes": {"ffmpeg": {"state": "failed", "message": "Studio couldn't download FFmpeg 9.0.2 (the connection "
+                                  "timed out)."}, "node": {"state": "idle", "message": ""}},
+             "costs_accepted": False, "brain_mode": "claudecode", "local_version": "5.3-admin.108",
+             "model_accounts": {}, "providers": {}, "account": {"version": "5.3-admin.109", "brain": {"connected": False}},
+             "claude_code": {"installed": True, "authenticated": True, "models": []},
+             "speech_model": {"ready": True, "state": "ready", "reason": ""},
+             "readiness": {"ready": False, "checks": [], "blockers": []}}
+    posts = []
+
+    def fixture(route):
+        request = route.request
+        if request.url.startswith(ONBOARDING_MEDIA):
+            return route.fulfill(status=200, content_type="image/jpeg", body=b"")
+        path = urlparse(request.url).path
+        if path == "/cr-setup":
+            return route.fulfill(body=html, content_type="text/html")
+        if path == "/cr-status":
+            return route.fulfill(json=state)
+        if path == "/cr-workspace/catalog":
+            return route.fulfill(json={"channels": [], "features": []})
+        if request.method == "POST":
+            posts.append(path)
+            return route.fulfill(status=202, json={"state": "starting"})
+        pytest.fail("Unexpected request: " + request.method + " " + request.url)
+
+    tab.route("**/*", fixture)
+    tab.goto("http://setup-ui-fixture.invalid/cr-setup")
+    tab.wait_for_function("document.querySelector('#ffmpeg-row')?.innerText.includes('timed out')", timeout=8000)
+    tab.wait_for_timeout(500)
+    assert posts == [], "not started again by itself"
+    assert "Press Fix it to try again" in tab.locator("#ffmpeg-row").inner_text() and tab.locator("#fix-ffmpeg").is_enabled()
+    assert tab.locator("#ffmpeg-row > b").inner_text() == "Needs attention"
+    assert tab.locator("#connection").inner_text() == "Connect your ChannelRecipe account first."
+    manual = tab.locator("#claude-signin-manual").text_content()               # inside the folded Details
+    assert "Terminal" in manual and "PowerShell" not in manual, "a Mac names Terminal only"
+    assert "Mac security" in tab.locator("#walk-chapters").text_content()
+    assert tab.locator("#update").is_hidden(), "a newer Studio waits until setup is done"
+    # every key field is masked text: no browser's password manager offers to save a Kie.ai key for 127.0.0.1
+    assert tab.locator("input[type=password]").count() == 0
+    for key in ("hub-key", "connect-key", "eleven-key", "provider-key"):
+        field = tab.locator("#" + key)
+        assert field.get_attribute("type") == "text" and field.get_attribute("autocomplete") == "off"
+        assert field.evaluate("el => getComputedStyle(el).webkitTextSecurity") == "disc"
+    state["readiness"] = {"ready": True, "checks": [], "blockers": []}
+    tab.reload()
+    tab.wait_for_function("!document.querySelector('#update').hidden", timeout=8000)
     assert errors == []
 
 

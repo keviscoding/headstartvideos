@@ -708,6 +708,11 @@ def create_app():
         cfg = cr_bridge.load_settings()
         checks = {"python": sys.version_info >= (3,10), **tool_checks(),
                   "connected": bool(cfg.get("key")), "costs_accepted": bool(cfg.get("costs_accepted"))}
+        # setup follows a FFmpeg or Node.js download already running (it starts one by itself when they're missing),
+        # and says how to sign in on this computer (Terminal on a Mac, PowerShell on Windows)
+        checks["fixes"] = {name: {k: v for k, v in cr_installs.status(name).items() if k in ("state", "message")}
+                           for name in ("ffmpeg", "node")}
+        checks["system"] = "windows" if os.name == "nt" else "mac" if sys.platform == "darwin" else "linux"
         checks.update(graphics_ready())
         checks["speech_model"] = cr_whisper.status()
         paths = cr_paths.status(HOME)                  # Windows' 260-character limit: room for a video's files
@@ -994,8 +999,9 @@ def create_app():
         except cr_installs.Stop as stop:
             return jsonify(error=str(stop)), 409
         except OSError as error:
-            return jsonify(error=f"Studio couldn't open the sign-in window ({type(error).__name__}). Open Terminal "
-                                 f"(PowerShell on Windows) and run: {cr_installs.sign_in_command(cr_claude.find_executable())}"), 409
+            return jsonify(error=f"Studio couldn't open the sign-in window ({type(error).__name__}). Open "
+                                 f"{cr_installs.terminal_name()} and run: "
+                                 f"{cr_installs.sign_in_command(cr_claude.find_executable())}"), 409
 
     @studio.app.post("/cr-setup/fix-speech-model")
     def fix_speech_model_route():
