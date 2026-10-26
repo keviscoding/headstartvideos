@@ -74,10 +74,13 @@ settings. Update in place instead:
    http://127.0.0.1:7860).
 2. From this folder run the studio's own Python: Mac
    `.venv/bin/python cr_update.py`, Windows `.venv\Scripts\python cr_update.py`.
-3. Tell them what it printed. It keeps their output, accounts, keys, learned
-   styles and any files they edited (new versions of edited files are saved
-   beside them with `.new`). If it stops, nothing was changed or it restored the
-   previous version — read the message to them.
+3. Tell them what it printed. It keeps their output, accounts, keys and learned
+   styles; a recipe file they edited in `styles/` is kept and the new version
+   saved beside it with `.new`. Studio's code is always replaced (with a backup):
+   a change you made to it to get a customer unstuck is gone at the next update,
+   so say so, and have them send it to ChannelRecipe (Copy diagnostics for
+   support) so the real fix ships. If it stops, nothing was changed or it
+   restored the previous version — read the message to them.
 4. Start Studio again with the launcher.
 
 ## Studio's own tools in Claude Code (start here)
