@@ -1,5 +1,22 @@
 [
   {
+      "build": 105,
+      "date": "2026-10-26",
+      "title": "Fewer stopped videos, plus delete and picture timing",
+      "items": [
+        "Fixed: a hiccup on the line to ChannelRecipe no longer stops a video. When an answer from ChannelRecipe gets lost on the way, Studio asks again for up to three minutes instead of stopping. Nothing is made or paid for twice.",
+        "Fixed: FOLIO videos work on Windows. Its long drawing rules now travel in a file, because Windows cut them short on the command line.",
+        "Fixed: one picture that can't be made no longer stops the whole video. The video carries on without it. AI presenters work again, and if a presenter still fails you can finish the video without it.",
+        "Fixed: style studies no longer stop right after their design steps. A long line in the study's rules made a Mac refuse it, and a long answer lost its start, so most failed clones ended there.",
+        "New: delete videos and learned styles. They wait in Studio's trash for 30 days, and Undo or Recently deleted brings them back. Claude Code always asks before deleting.",
+        "New: set exactly when each picture appears. The timeline editor's Timing panel snaps a picture's start and end to the words of the voice, with small nudges and a play button.",
+        "New: clone up to three channels into one style, Shorts channels too. You can now edit a style you learned, and before a paid clone Studio shows close styles you already have and can try about 5 seconds of one on your topic.",
+        "Fixed: Claude steps no longer run at a chat's extra-high effort. A Studio started from inside a Claude Code chat used to think much harder (and longer) at every step; now its steps use your normal settings, and the progress card names each 3D review round and why it takes a while.",
+        "Fixed: a video whose picture froze is repaired before it's published. Research footage also has a time limit per video, Studio keeps the computer awake while a video is made, and setup checks the disk your videos go on (about 4 GB free for a 10-minute video, 14 GB with 3D scenes).",
+        "When a video stops, Studio sends ChannelRecipe a short private note on why, so we can fix the cause. It never includes titles, scripts, names or file paths."
+      ]
+    },
+  {
     "build": 104,
     "date": "2026-10-24",
     "title": "Claude writes your animated channel's animation",
