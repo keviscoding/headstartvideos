@@ -187,7 +187,7 @@ def private_threed_resources(root: Path):
 # The animated 2D kit (Studio 103+; the renderer platform since 104): the page runtime every channel's Claude-written
 # renderer runs in, its optional helpers and example, the build, casting and director prompts and the fight sounds
 # (cr_animated2d.py drives it), kept in the gitignored data/frontier/animated2d/, never in this public repository.
-ANIMATED2D_FILES = re.compile(r"(core|rig|draw|moves|fx|film|stage|bind|example-stick|example-own)\.js|(cast|director|build|review)\.txt|"
+ANIMATED2D_FILES = re.compile(r"(core|rig|draw|moves|fx|film|stage|bind|example-stick|example-own)\.js|(cast|director|build|review)\.txt|(cast|director)-\d+\.txt|"
                               r"AUTHORING\.md")
 ANIMATED2D_SOUND = re.compile(r"sounds/[a-z_]+\.mp3")
 

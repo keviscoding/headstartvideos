@@ -356,6 +356,16 @@ def quote_for(cat: dict, row: dict, *, titles: int, minutes: int, where: str, fe
             out["disk"]["problem"] = room
         elif warning:
             out["disk"]["warning"] = warning
+    check = row.get("frame_check") if isinstance(row.get("frame_check"), dict) else None
+    if check:
+        # a coded style's frame check (cr_animated2d): Claude looks at each minute's frames before they are drawn and
+        # re-plans a minute once when it finds something clear: Claude time on their plan, no money, said with the cost
+        lo, hi = check.get("per_minute") or (1.0, 2.5)
+        span = max(1, minutes if kind(row) != "short" else 1)
+        out["frame_check"] = {"on": bool(check.get("on", True)), "adds_minutes": [max(1, round(lo * span)), max(2, round(hi * span))],
+                              "note": "Before each minute is drawn, Claude looks at its frames and re-plans it once when it "
+                                      "shows the wrong place, broken words or a frozen picture: Claude time on your plan, "
+                                      "no money. make_videos options.frame_check=false skips it for a video."}
     if features.get("youtube") and kind(row) != "short":
         # Research footage watches YouTube videos before the video is made: how long that adds, said with the cost
         import cr_watch
@@ -381,6 +391,11 @@ def summary(q: dict) -> str:
     # the footage is watched on this computer wherever the video renders
     watching = (f" Research footage adds about {footage['adds_minutes'][0]} to {footage['adds_minutes'][1]} minutes a "
                 f"video (it watches up to {footage['videos_watched_at_most']} YouTube videos)." if footage else "")
+    check = q.get("frame_check") or {}
+    if check.get("on"):
+        lo, hi = check["adds_minutes"]
+        watching += (f" The frame check adds about {lo} to {hi} minutes of Claude time a video (Claude looks at each "
+                     "minute's frames before they are drawn; options.frame_check=false skips it).")
     if q["where"] == "studio_cloud":
         c = q["cloud"]
         text = (f"{n} × {q['minutes']}-min {q['style_name']} on Studio Cloud: machine about "
@@ -742,6 +757,8 @@ def video_payload(row: dict, titles: list, minutes: int, features: dict, options
          "cta": None, "pictures_per_min": None, "threed_look": "",
          # Create's Quicker 3D review: one 3D review round (cr_threed_look), for styles with 3D scenes only
          "threed_quick": options.get("quicker_3d_review") is True and bool((features or {}).get("threed"))}
+    if row.get("frame_check") and isinstance(options.get("frame_check"), bool):
+        p["frame_check"] = options["frame_check"]                   # a coded style's frame check, for this video only
     if p["script"] and len(titles) > 1:
         raise Refused("Your own script goes with one title.")
     if kind(row) == "short":
@@ -1673,7 +1690,9 @@ _OPTIONS = {"type": "object", "description": (
     "description with chapters and sources, default true), extra_instructions (creative direction), script (your "
     "own narration, one title only), features {key: true/false} to switch the style's options (keys from quote), "
     "short_seconds 15-60 for Shorts, quicker_3d_review (true: one 3D review round instead of three, about a quarter "
-    "to a third less Claude time on a 3D video, fewer last fixes; Create's Quicker 3D review), "
+    "to a third less Claude time on a 3D video, fewer last fixes; Create's Quicker 3D review), frame_check (a style "
+    "drawn in code: false skips the check where Claude looks at each minute's frames before they are drawn and "
+    "re-plans it once when it finds something clear; default Studio's setting, quote's frame_check says its time), "
     "ranking {ranks 3-10, narrator_lines, vine_booms, meme_sounds full|light|off, "
     "punch_ins, captions} for Ranking Shorts. character: words for the main character who appears in every picture "
     "(age, hair, face, clothes, one recognisable detail); they replace the style's own character for these videos, and "

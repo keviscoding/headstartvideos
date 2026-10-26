@@ -147,6 +147,33 @@ def test_the_3d_example_draws_any_place_a_crowd_and_typed_parameters(home3d, tmp
     assert a2d.untyped(man) == [] and "pip" in a2d.recurring(man)
 
 
+def _caption3d(use_kit: bool) -> str:
+    import test_animated2d as t2
+    calls = t2.CAPTION_CALLS.replace("const W = ctx.canvas.width", "const ctx = view.overlay, W = ctx.canvas.width")
+    return (t2.CAPTION_108 + "Kit.renderer({ name: 'captions3d', version: 1, manifest: { actions: { place: '{x}' } }, "
+            "plates: { draw: false }, frame(view, t, s, Kit) { view.gl.setClearColor(0x223344); view.gl.clear(); "
+            "const cap = " + ("Kit.caption" if use_kit else "caption108") + ";\n" + calls + "} });")
+
+
+def test_the_3d_kit_caption_draws_exactly_as_studio_108_did(home3d, tmp_path):
+    """The coordinator's BLOCKER: a real 3D clone (gneef, renderer v5) drew its popups clipped off the frame with the
+    first 109 kit. Kit.caption on the overlay draws as 108 did."""
+    import test_animated2d as t2
+    scene = {"dims": 3, "duration": 3, "width": 960, "height": 540, "cast": {}, "sets": {"s": {}}, "shots": [{"start": 0}],
+             "actions": [], "stills": [0.5, 1.5, 2.5]}
+    new = _chromium(lambda: a2d.render_stills(scene, tmp_path / "new", _caption3d(True), home=home3d))
+    old = _chromium(lambda: a2d.render_stills(scene, tmp_path / "old", _caption3d(False), home=home3d))
+    assert [t2._same(a, b) for a, b in zip(new, old)] == [True, True, True]
+
+
+def test_a_studio_before_109_runs_3d_renderers_with_the_new_kit(home3d, monkeypatch):
+    """A Studio before 109 can't serve the 2D stage to a 3D page (no a2d/ root): the new 3D kit loads without it and
+    every renderer written before 109 draws as before."""
+    monkeypatch.setattr(a2d, "KIT_ROOTS", {k: v for k, v in a2d.KIT_ROOTS.items() if k != "a2d"})
+    stills = _chromium(lambda: a2d.render_stills(SCENE, home3d / "old", BOX, home=home3d))
+    assert stills and not a2d._blank(stills[0])
+
+
 # ── routing: any 3D channel with characters ─────────────────────────────────────────────────────────────────────
 
 @pytest.fixture

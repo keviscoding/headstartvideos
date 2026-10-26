@@ -307,7 +307,7 @@
     text('crw-summary-visuals', strict(r) ? 'Reference animation throughout' : Object.entries(featureValues()).filter(([k,v]) => v && k !== 'sound').map(([k]) => (featureCopy[k] || [k])[0]).join(', ') || 'Recipe defaults');
     text('crw-summary-voice', state.narration === 'own' ? 'Your uploaded narration' : state.setup?.narration?.voice || 'Connected narration account');
     text('crw-summary-renderer', state.renderOn==='cloud' && state.cloudInfo?.available && !cloudBlock() ? 'Studio Cloud' : checked('crw-fast-toggle') && featureValues().threed && !strict() ? 'Fast mode · local render' : 'Local render');
-    footageNote(); threedNote();
+    footageNote(); threedNote(); frameCheckNote();
   }
   // A 3D video's time is mostly Claude's: it directs every shot, then reviews them in rounds (a customer's 2-minute 3D
   // video spent 84 of its 116 minutes in Claude Opus, 2026-10-25). Said before Create, with Quicker 3D review. Sections
@@ -333,6 +333,19 @@
     const on = !!(r && b && featureValues().youtube && !strict(r) && !isShort(r) && !isRanking(r) && state.narration !== 'own');
     hide('crw-footage-note', !on);
     if (on) text('crw-footage-note', `Research footage adds about ${b.typical_minutes[0]} to ${b.typical_minutes[1]} minutes to a ${b.minutes}-minute video: Studio watches up to ${b.videos} YouTube videos on your video-model account to find its clips. It stops watching after ${b.stop_minutes} minutes and goes on with what it found. If Kie's video watcher isn't answering, ChannelRecipe's own watcher takes over, from your plan's monthly clip watches (at most 20 a video, never your credits).` + (state.catalog?.footage_watcher?.note ? ' ' + state.catalog.footage_watcher.note : ''));
+  }
+  // A style drawn by its own code (Studio 109): before each minute is drawn, Claude looks at its frames and re-plans it
+  // once when it shows the wrong place, broken words or a frozen picture. Its Claude time is said before Create; the
+  // switch is Studio's setting for every new video (cr_animated2d.frame_check_default), sent with each video too.
+  function frameCheckNote() {
+    const r = state.selected, c = r?.frame_check, on = !!(r && c && !isRanking(r));
+    hide('crw-frame-check-note', !on);
+    if (!on) return;
+    const box = $('crw-frame-check');
+    if (box.dataset.style !== r.name) { box.checked = c.on !== false; box.dataset.style = r.name; }
+    const minutes = isShort(r) ? 1 : number('crw-minutes',10,1,60), per = Array.isArray(c.per_minute) ? c.per_minute : [1, 2.5];
+    const lo = Math.max(1, Math.round(minutes * per[0])), hi = Math.max(2, Math.round(minutes * per[1]));
+    text('crw-frame-check-text', box.checked ? `Before each minute is drawn, Claude looks at its frames and re-plans it once if it shows the wrong place, broken words or a frozen picture: about ${lo} to ${hi} more minutes of Claude time for this video, on your Claude plan, no money.` : 'Off: each minute is drawn as planned, without Claude looking at its frames first. Studio keeps this for every new video until you switch it on.');
   }
   function gate() {
     const ready = state.setup?.readiness?.ready === true;
@@ -886,7 +899,7 @@
       offer:$('crw-offer').value,offer_plugs:number('crw-offer-plugs',0,0,2),panels:state.selected.panels?state.panels:'',cta:ctaValue(),
       pictures_per_min:state.selected.pictures&&Number($('crw-pictures').value)!==state.selected.pictures.default?Number($('crw-pictures').value):null,
       threed_look:threedLook(features), threed_quick:!!(features.threed && !strict() && checked('crw-threed-quick')),
-      carry_on_after_reset:checked('crw-carry-on')};
+      carry_on_after_reset:checked('crw-carry-on'), frame_check:state.selected?.frame_check?checked('crw-frame-check'):undefined};
     if(short&&isRanking(state.selected)){const handle=$('crw-rank-handle').value.trim().replace(/[^@\w.]/g,'').slice(0,40);
       // A Short to remake: any YouTube link form (Shorts, watch, youtu.be, m., any case), sent as one plain link, for one topic
       const pasted=$('crw-rank-reference').value.trim(), refId=(/(?:youtu\.be\/|youtube\.com\/(?:shorts\/|watch\?(?:[^#]*&)?v=|live\/|embed\/))([A-Za-z0-9_-]{11})/i.exec(pasted)||[])[1]||'';
@@ -1045,6 +1058,10 @@
   refreshFast();
   $('crw-form').addEventListener('input',()=>{updateOptional();summary();save();cloudChoice();});
   $('crw-captions').addEventListener('change',()=>{if(state.selected)state.captionsDrafts[state.selected.name]=checked('crw-captions');captionsNote();});
+  // the frame check's switch is Studio's own setting: kept for every coded style's new videos
+  $('crw-frame-check').addEventListener('change',async()=>{const on=checked('crw-frame-check');
+    for(const row of state.catalog?.channels||[])if(row.frame_check)row.frame_check.on=on;
+    try{await api('/cr-workspace/frame-check',{method:'POST',body:{on}});}catch(e){toast(e.message);}summary();});
   $('crw-form').addEventListener('change',()=>{updateOptional();summary();save();cloudChoice();});
   $('crw-recipe-open').addEventListener('click',openGallery);$('crw-styles-browse').addEventListener('click',openGallery);
   $('crw-gallery-search').addEventListener('input',gallery);$('crw-gallery-close').addEventListener('click',()=>{$('crw-gallery').close();$('crw-recipe-open').focus();});

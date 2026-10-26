@@ -364,7 +364,9 @@ def test_the_builder_ships_the_kit_and_its_sounds(tmp_path):
                  "example-own.js", "cast.txt", "director.txt", "build.txt", "review.txt", "AUTHORING.md"):
         (kit_dir / name).write_text("x", encoding="utf-8")
     (kit_dir / "sounds" / "punch.mp3").write_bytes(b"mp3")
+    (kit_dir / "cast-108.txt").write_text("x", encoding="utf-8")      # an earlier prompt, for videos resumed after an update
     shipped = {dest for _, dest in builder.private_animated2d_resources(tmp_path)}
+    assert "animated2d/cast-108.txt" in shipped
     assert {"animated2d/core.js", "animated2d/stage.js", "animated2d/build.txt", "animated2d/AUTHORING.md",
             "assets/sfx/animated2d/punch.mp3"} <= shipped
     (kit_dir / "notes.md").write_text("x", encoding="utf-8")
@@ -584,6 +586,35 @@ def test_a_draft_that_knows_only_its_own_place_is_sent_back_with_what_every_vide
     assert "you (a red-cap stick figure) in 80% of its shots" in issues and "manifest.cast.recurring" in issues
 
 
+def test_the_probes_advice_ranks_drafts_but_never_keeps_a_study_going(home, tmp_path):
+    """The coordinator's review: advice (a place drawn alike, no crowd, untyped parameters) pushed studies to 4 drafts
+    and the 24-minute cap, past "usually 5 to 15 minutes". It goes back once, ranks the drafts, and is saved."""
+    refs = _frames(tmp_path / "refs")
+    scene = {"duration": 3, "cast": {"a": {"name": "A"}}, "sets": {"street": {"prompt": "a street"}},
+             "shots": [{"start": 0, "set": "street", "framing": "wide"}], "stills": [1.0],
+             "actions": [{"at": 0, "who": "a", "move": "place", "x": 0}]}
+    seen = []
+
+    def see(prompt, images):
+        seen.append(prompt)
+        return _answer(ONE_PLACE, scene)
+    judge = lambda references, candidates: {"candidates": [{"overall": 8 if len(candidates) == 1 else 7}]  # noqa: E731
+                                            * len(candidates)}
+    result = _chromium(lambda: a2d.build(tmp_path / "op", {}, {"cast": [{"name": "x", "look": "y", "share": 0.2}]},
+                                         see=see, judge=judge, references=refs, home=home, log=lambda m: None))
+    assert len(seen) == 2 and result["state"] == "passed", "two drafts, as before the probes"
+    assert "came out the same in both" in seen[1] and any("came out the same" in i for i in result["issues"])
+    assert "places" not in result["manifest"], "it never showed it can draw any place"
+
+
+def test_a_quote_says_the_claude_time_the_frame_check_adds():
+    import cr_studio_tools as tools
+    q = {"titles": 1, "minutes": 3, "where": "this_computer", "style_name": "Beans", "expected_total_usd": 0.1,
+         "media": {"per_video_usd": 0.1}, "frame_check": {"on": True, "adds_minutes": [3, 8]}}
+    assert "The frame check adds about 3 to 8 minutes of Claude time a video" in tools.summary(q)
+    assert "frame check" not in tools.summary({**q, "frame_check": {"on": False, "adds_minutes": [3, 8]}})
+
+
 def test_the_example_claude_is_shown_meets_what_every_video_needs(home, tmp_path):
     """The example renderer Claude learns the contract from draws any place, a crowd, typed parameters and words that
     fit their box: Studio's probes find nothing to send back."""
@@ -753,13 +784,15 @@ def test_every_video_casts_and_directs_in_the_saved_renderers_own_vocabulary_and
         a2d.assemble(engine, job, job / "audio.mp3", job / "subs.srt", "cr_clone_beans", True, True)
 
 
-def test_each_stretch_is_looked_at_before_it_is_drawn_and_re_planned_once(home, tmp_path, monkeypatch):
-    """Nothing judged the bunker video's frames. Claude now looks at a few frames of each stretch before it is drawn
-    (Claude usage only): what the director can fix is re-planned once; what only the renderer draws wrong is said."""
+def _bean_video(home, tmp_path, monkeypatch, places=None, seen=None):
+    """A saved BEAN style (places "any": it passed the build's any-place probe) and a 2.4 s video of it, its engine
+    answering Claude's frame look with `seen`."""
     folder = tmp_path / "op"
     (folder / "renderer").mkdir(parents=True)
     (folder / "renderer" / "renderer.js").write_text(BEAN, encoding="utf-8")
     man = _chromium(lambda: a2d.manifest(BEAN, home))
+    if places:
+        man["places"] = places
     (folder / "renderer" / "build.json").write_text(json.dumps({"state": "passed", "overall": 7, "bar": 6.5,
         "sha256": hashlib.sha256(BEAN.encode()).hexdigest(), "manifest": man}))
     style = a2d.attach({"name": "cr_clone_beans", "look": {"visuals": "cr_animated2d", "animated2d": {}}}, folder, home)
@@ -770,16 +803,27 @@ def test_each_stretch_is_looked_at_before_it_is_drawn_and_re_planned_once(home, 
     (job / "title.txt").write_text("A Bean's Morning\n", encoding="utf-8")
     (job / "subs.srt").write_text("1\n00:00:00,000 --> 00:00:01,200\nThe bean wakes up\n", encoding="utf-8")
     engine = Engine("cr_clone_beans", style["look"])
-    looked = []
+    engine.looked = []
 
     def claude_vision(prompt, images, model=None, max_tokens=2000):
-        looked.append((prompt, images))
-        return json.dumps({"problems": [{"moment": 1, "kind": "PLACE", "fix": "director", "what": "a void, not the kitchen"},
-                                        {"moment": 1, "kind": "STRAY", "fix": "renderer", "what": "a red band floats"}]})
+        engine.looked.append((prompt, images))
+        return json.dumps({"problems": seen or []})
     engine.claude_vision = claude_vision
     import cr_claude
     monkeypatch.setattr(cr_claude, "VISUAL_MODEL", "opus", raising=False)
+    return style, job, engine
+
+
+WRONG_PLACE = {"moment": 1, "kind": "PLACE", "fix": "director", "what": "a void, not the kitchen"}
+STRAY_BAND = {"moment": 1, "kind": "STRAY", "fix": "renderer", "what": "a red band floats"}
+
+
+def test_each_stretch_is_looked_at_before_it_is_drawn_and_re_planned_once(home, tmp_path, monkeypatch):
+    """Nothing judged the bunker video's frames. Claude now looks at a few frames of each stretch before it is drawn
+    (Claude usage only): what the director can clearly fix is re-planned once; what only the renderer draws wrong is said."""
+    style, job, engine = _bean_video(home, tmp_path, monkeypatch, places="any", seen=[WRONG_PLACE, STRAY_BAND])
     a2d.assemble(engine, job, job / "audio.mp3", job / "subs.srt", "cr_clone_beans", False, True)
+    looked = engine.looked
     assert len(looked) == 1 and len(looked[0][1]) == 1 and Path(looked[0][1][0]).is_file()
     assert 'shot in "void"' in looked[0][0] and "The bean wakes up" in looked[0][0]
     fix_prompt = engine.prompts[-1]
@@ -792,6 +836,165 @@ def test_each_stretch_is_looked_at_before_it_is_drawn_and_re_planned_once(home, 
     again.claude_vision = lambda *a, **k: pytest.fail("a stretch is looked at once")
     a2d.assemble(again, job, job / "audio.mp3", job / "subs.srt", "cr_clone_beans", False, True)
     assert again.prompts == [], "a resumed video asks Claude nothing again"
+
+
+def test_a_wrong_place_a_renderer_cant_draw_or_a_minor_finding_is_never_re_planned(home, tmp_path, monkeypatch):
+    """The coordinator's review: a renderer written before 109 draws only its own places, so a wrong-place re-plan
+    buys nothing (it is said as the renderer's to fix); a finding that isn't clear (a still moment) isn't re-planned."""
+    _, job, engine = _bean_video(home, tmp_path, monkeypatch, seen=[WRONG_PLACE])
+    a2d.assemble(engine, job, job / "audio.mp3", job / "subs.srt", "cr_clone_beans", False, True)
+    assert len(engine.prompts) == 2 and len(engine.looked) == 1, "looked at, never re-planned"
+    review = json.loads((job / "animated2d" / "delivery.json").read_text())["review"][0]
+    assert not review["replanned"] and "draws only the places it was written with" in review["renderer"][0]
+    _, job2, engine2 = _bean_video(home, tmp_path / "b", monkeypatch, places="any",
+                                   seen=[{"moment": 1, "kind": "STILL", "fix": "director", "what": "a still moment"}])
+    a2d.assemble(engine2, job2, job2 / "audio.mp3", job2 / "subs.srt", "cr_clone_beans", False, True)
+    assert len(engine2.prompts) == 2, "a still moment alone isn't worth a re-plan"
+
+
+def test_the_frame_check_can_be_switched_off_for_studio_or_for_one_video(home, tmp_path, monkeypatch):
+    style, job, engine = _bean_video(home, tmp_path, monkeypatch, places="any", seen=[WRONG_PLACE])
+    assert a2d.frame_check_default(home) is True
+    a2d.set_frame_check(home, False)
+    assert json.loads((home / a2d.PREFS).read_text()) == {"animation_frame_check": False}
+    a2d.assemble(engine, job, job / "audio.mp3", job / "subs.srt", "cr_clone_beans", False, True)
+    assert engine.looked == [] and len(engine.prompts) == 2, "off: no look, no re-plan, the free checks still run"
+    assert json.loads((job / "animated2d" / "review-000.json").read_text())["checked"] is False
+    a2d.set_frame_check(home, True)
+    (job / "run_spec.json").write_text(json.dumps({"cr_frame_check": "off"}), encoding="utf-8")
+    assert a2d.frame_check_for(job, home) is False, "this video's own choice wins over Studio's setting"
+    (job / "run_spec.json").write_text(json.dumps({}), encoding="utf-8")
+    assert a2d.frame_check_for(job, home) is False, "and is kept for its Resumes"
+    import cr_studio_tools as tools
+    row = {"name": "cr_clone_beans", "label": "Beans", "frame_check": {"on": True, "per_minute": [1.0, 2.5]}}
+    assert tools.video_payload(row, ["A"], 3, {}, {"frame_check": False})["frame_check"] is False
+    assert "frame_check" not in tools.video_payload({**row, "frame_check": None}, ["A"], 3, {}, {"frame_check": False})
+
+
+def test_an_unreadable_re_plan_keeps_the_plan_that_passed_the_checks(home, tmp_path, monkeypatch):
+    """The coordinator's review: a malformed re-plan answer used to stop the video for good (its saved reply made every
+    Resume stop the same way)."""
+    style, job, engine = _bean_video(home, tmp_path, monkeypatch, places="any", seen=[WRONG_PLACE])
+    asked = engine.claude
+    engine.claude = lambda prompt, model, max_tokens=0, provider=None: (
+        "Sorry, I can't." if "A CHECK OF YOUR PLAN" in prompt else asked(prompt, model, max_tokens, provider))
+    final = a2d.assemble(engine, job, job / "audio.mp3", job / "subs.srt", "cr_clone_beans", False, True)
+    assert final == job / "video.mp4"
+    rec = json.loads((job / "animated2d" / "review-000.json").read_text())
+    assert rec["final"] == "first" and "incomplete" in rec["fix_refused"]
+    again = Engine("cr_clone_beans", style["look"])
+    again.claude_vision = lambda *a, **k: pytest.fail("never looked at twice")
+    a2d.assemble(again, job, job / "audio.mp3", job / "subs.srt", "cr_clone_beans", False, True)
+    assert again.prompts == [], "a Resume keeps the checked plan and asks nothing"
+
+
+def test_a_video_stopped_under_an_earlier_studio_reuses_its_cast_places_pictures_and_directions(home, tmp_path,
+                                                                                                monkeypatch):
+    """REQUIRED by the coordinator: a video stopped under 108 and resumed under 109 re-cast (cast.txt is part of its
+    key) and paid for up to 6 new background pictures. The kit keeps the earlier prompts (cast-108.txt,
+    director-108.txt) so a Resume finds its saved answers."""
+    plated = BEAN.replace("plates: { draw: false }", "plates: { prompt: \"flat\" }")
+    folder = tmp_path / "op"
+    (folder / "renderer").mkdir(parents=True)
+    (folder / "renderer" / "renderer.js").write_text(plated, encoding="utf-8")
+    man = _chromium(lambda: a2d.manifest(plated, home))
+    (folder / "renderer" / "build.json").write_text(json.dumps({"state": "passed", "sha256": hashlib.sha256(
+        plated.encode()).hexdigest(), "manifest": man}))
+    style = a2d.attach({"name": "cr_clone_plates", "look": {"visuals": "cr_animated2d", "animated2d": {}}}, folder, home)
+    monkeypatch.setattr(a2d, "HERE", home)
+    (home / a2d.KIT / "cast-107.txt").write_text("THE CASTING PROMPT OF AN EARLIER STUDIO", encoding="utf-8")
+    (home / a2d.KIT / "director-107.txt").write_text("THE DIRECTOR PROMPT OF AN EARLIER STUDIO", encoding="utf-8")
+    job = tmp_path / "job"
+    (job / "animated2d" / "plates").mkdir(parents=True)
+    script = "The bean wakes up and hops for joy."
+    engine = Engine("cr_clone_plates", style["look"])
+    code, pinned = a2d._style_renderer(engine, "cr_clone_plates", job)
+    spec = a2d._spec(engine, "cr_clone_plates")
+    # what the earlier Studio saved: its casting (keyed with its own cast.txt) and the picture of its one place
+    cast_spec = pinned.get("cast") or {}
+    asked = {"script": script, "prompt": "THE CASTING PROMPT OF AN EARLIER STUDIO", "brief": "", "cast": cast_spec,
+             "spec": {k: v for k, v in spec.items() if k != "renderer"}}
+    casting = {"key": a2d._digest(asked), "cast": {"bean": {"name": "Bean", "color": "#eeeeee"}},
+               "sets": {"kitchen": {"prompt": "a kitchen"}}}
+    (job / "animated2d" / "casting.json").write_text(json.dumps(casting), encoding="utf-8")
+    from PIL import Image
+    plate = job / "animated2d" / "plates" / f"kitchen-{a2d._digest(a2d.plate_prompt(casting['sets']['kitchen'], spec, pinned))[:10]}.jpg"
+    Image.effect_noise((320, 180), 60).convert("RGB").save(plate, quality=95)
+    assert plate.stat().st_size > 5000
+    engine.claude = lambda *a, **k: pytest.fail("a Resume after an update never casts again")
+    a2d.prepare(engine, script, job, "cr_clone_plates", False)
+    assert not [c for c in engine.calls if c[0] == "plate"], "nothing paid again: its picture is reused"
+    # a stretch it directed: found by the earlier director.txt (no examples in its docs then)
+    part = (0.0, 2.4, [(0.0, 1.2, "The bean wakes up", [("The", 0.0), ("bean", 0.3), ("wakes", 0.6), ("up", 0.9)])])
+    beats = a2d.beats_text(part[2])
+    docs = {"actions": pinned.get("actions") or {}, "shots": pinned.get("shots") or [], "fx": pinned.get("fx") or {},
+            "notes": pinned.get("notes") or ""}
+    key = a2d._digest({"beats": beats, "cast": casting["cast"], "sets": casting["sets"], "spec": spec,
+                       "prompt": "THE DIRECTOR PROMPT OF AN EARLIER STUDIO", "previous": "", "t": [0.0, 2.4], "docs": docs})
+    (job / "animated2d" / "director-000.json").write_text(json.dumps({"key": key}), encoding="utf-8")
+    (job / "animated2d" / "director-000.txt").write_text(json.dumps(engine.direction), encoding="utf-8")
+    plan = a2d.direct(engine, job, casting, spec, part, 0, "", "A Bean's Morning", pinned)
+    assert [a["move"] for a in plan["actions"]] == ["place", "hop"]
+
+
+def test_a_studio_before_109_runs_every_renderer_with_the_new_kit(home, monkeypatch):
+    """The coordinator's review: old code with the new kit stopped every coded style ("STAGE is not defined"). A
+    Studio before 109 doesn't load stage.js; its renderers draw as before."""
+    monkeypatch.setattr(a2d, "KIT_FILES", tuple(f for f in a2d.KIT_FILES if f != "stage.js"))
+    stills = _chromium(lambda: a2d.render_stills({**BEAN_SCENE, "stills": [1.3]}, home / "old", BEAN, home=home))
+    assert stills and not a2d._blank(stills[0])
+
+
+# Studio 108's Kit.caption (the 3D kit's, line for line): renderers saved before 109 must draw exactly as they did
+CAPTION_108 = r"""
+function caption108(ctx, text, o = {}) {
+  if (!text) return;
+  const W = ctx.canvas.width, H = ctx.canvas.height, size = (o.size || 0.07) * Math.min(W, H) * (H > W ? 1.25 : 1);
+  ctx.save();
+  ctx.font = `${o.weight || 900} ${size}px ${o.font || 'Arial Black, Arial, sans-serif'}`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
+  const x = W * (o.x ?? 0.5), y = H * (o.y ?? 0.7), s = o.upper === false ? text : text.toUpperCase();
+  ctx.lineWidth = size * (o.stroke ?? 0.16); ctx.strokeStyle = o.strokeColor || '#000000'; ctx.strokeText(s, x, y);
+  ctx.fillStyle = o.color || '#ffffff'; ctx.fillText(s, x, y);
+  ctx.restore();
+}
+"""
+# the calls of a real 3D clone (the gneef renderer v5): word captions at the bottom, popups moved and scaled
+CAPTION_CALLS = r"""
+  const W = ctx.canvas.width, H = ctx.canvas.height;
+  ctx.fillStyle = "#4a6a8a"; ctx.fillRect(0, 0, W, H);
+  if (t < 1) cap(ctx, "growth", { y: 0.7, size: 0.064, weight: 900, font: "Arial, Helvetica, sans-serif", upper: false, stroke: 0.2 });
+  else if (t < 2) { ctx.save(); ctx.translate(W / 2, H * 0.2); ctx.scale(1.08, 1.08);
+    cap(ctx, "10 lies = stone leg", { x: 0, y: 0, size: 0.06, color: "#ffe14a", upper: true }); ctx.restore(); }
+  else cap(ctx, "hello there", {});
+"""
+
+
+def _caption_renderer(use_kit: bool) -> str:
+    return (CAPTION_108 + "Kit.renderer({ name: 'captions', version: 1, manifest: { actions: { place: '{x}' } }, "
+            "plates: { draw: false }, frame(ctx, t, s, Kit) { const cap = " + ("Kit.caption" if use_kit else "caption108")
+            + ";\n" + CAPTION_CALLS + "} });")
+
+
+def _same(a, b) -> bool:
+    from PIL import Image, ImageChops
+    return ImageChops.difference(Image.open(a).convert("RGB"), Image.open(b).convert("RGB")).getbbox() is None
+
+
+def test_kit_caption_draws_exactly_as_studio_108_did(home, tmp_path):
+    """The coordinator's BLOCKER: the 109 kit's Kit.caption clipped a real 3D clone's popups off the frame ("10 LIES =
+    STO..."). It draws as 108 did; only a line wider than an untransformed frame is shrunk, and stroke 0 is no outline."""
+    scene = {"duration": 3, "width": 1920, "height": 1080, "cast": {}, "sets": {"s": {}}, "shots": [{"start": 0}],
+             "actions": [], "stills": [0.5, 1.5, 2.5]}
+    new = _chromium(lambda: a2d.render_stills(scene, tmp_path / "new", _caption_renderer(True), home=home))
+    old = _chromium(lambda: a2d.render_stills(scene, tmp_path / "old", _caption_renderer(False), home=home))
+    assert [_same(a, b) for a, b in zip(new, old)] == [True, True, True]
+    wide = {**scene, "stills": [0.5]}
+    long = _caption_renderer(True).replace('"growth"', '"' + "a very long line of words " * 6 + '"')
+    words = {}
+    look = {}
+    _chromium(lambda: a2d.sweep({**wide, "duration": 1}, long, home=home, text=words, look=look))
+    assert not [r for r in look["texts"] if r["kind"] == "off"], "a line wider than the frame fits it"
 
 
 def test_a_style_from_before_renderers_keeps_the_kits_stick_fights(home, monkeypatch):

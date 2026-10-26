@@ -151,6 +151,12 @@ def install(studio, activity, *, token, home=None):
             # a style drawn by its own renderer: its background pictures and its own music score, for quotes
             import cr_animated2d
             row["coded_media"] = cr_animated2d.media_usd(info) if isinstance(info, dict) else {}
+            # a coded style's frame check before each minute is drawn (Studio 109): Create says the Claude time it adds
+            # and keeps its switch, which is Studio's own setting
+            drawn = isinstance(info, dict) and isinstance(info.get("look"), dict) and \
+                info["look"].get("visuals") in cr_animated2d.PLUGINS
+            row["frame_check"] = {"on": cr_animated2d.frame_check_default(home),
+                                  "per_minute": list(cr_animated2d.FRAME_CHECK_MINUTES)} if drawn else None
             # a style written in code with a working renderer can be improved on its study's page (Improve this style)
             look = info.get("look") if isinstance(info, dict) and isinstance(info.get("look"), dict) else {}
             made = ((look.get("animated2d") or {}).get("renderer") or {}) if look.get("visuals") in cr_animated2d.PLUGINS \
@@ -387,6 +393,20 @@ def install(studio, activity, *, token, home=None):
             return protect(send_file(path, mimetype="image/jpeg", conditional=False))
         except Exception as error:
             return panel_error(error)
+
+    @app.post("/cr-workspace/frame-check")
+    def cr_workspace_frame_check():
+        """Create's frame-check switch: Studio's setting for a coded style's videos (Claude looks at each minute's frames
+        before they are drawn); on or off for every new video, until switched again."""
+        try:
+            local_access()
+            import cr_animated2d
+            body = request.get_json(silent=True) or {}
+            if not isinstance(body.get("on"), bool):
+                raise ValueError("Say on or off.")
+            return protect(jsonify(on=cr_animated2d.set_frame_check(home, body["on"])))
+        except Exception as error:
+            return failure(error)
 
     @app.get("/cr-workspace/catalog")
     def cr_workspace_catalog():

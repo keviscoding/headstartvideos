@@ -473,6 +473,7 @@ def _draw(home, style: str, lab_dir: Path, lab: dict, code: str, scene: dict, ou
                 problems += probed["problems"]
                 warnings += probed["issues"]
                 entry["probes"] = [str(p) for _, p in probed["pictures"]]
+                entry["places"] = probed.get("places")
         except a2d.AnimationStopped as error:
             problems.append(str(error))
         except Exception as error:                          # noqa: BLE001 - the browser itself failed
@@ -600,6 +601,8 @@ def save(home, style: str) -> dict:
     found = a2d.manifest(code, home, lab["dims"])
     scene = _read(lab_dir / "scene.json")
     found["examples"] = a2d.examples_from(scene.get("stress"), scene)    # how the director calls each action
+    if done.get("places") == "any":                                       # it passed the any-place probe
+        found["places"] = "any"
     checked = _last(lab, "check", sha)
     target = Path(home) / "assets" / "styles" / "learned" / style
     target.mkdir(parents=True, exist_ok=True)

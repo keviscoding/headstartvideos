@@ -195,9 +195,10 @@ Studio through its own checks, so nothing needs the Studio web page.
   background picture its renderer asks for, up to 6, and its own music when the channel has music, about $0.12 a
   piece: `quote` counts both), vertical with the channel's captions for a Shorts channel. Each video's places, props
   and crowds are drawn in the channel's look from its own script (a bunker story gets a bunker), and before each
-  minute is drawn Studio checks its frames and Claude looks at a few of them (Claude usage, no money): what the plan
-  gets wrong is re-planned once; what the renderer itself draws wrong goes on and is said in the video's progress,
-  for Style Lab or Improve this style to fix. Styles studied before Studio 109 keep their renderer; studying the
+  minute is drawn Studio checks its frames and Claude looks at a few of them (Claude usage, no money; `quote`'s
+  `frame_check` says the time it adds): what the plan clearly gets wrong is re-planned once; what the renderer itself
+  draws wrong goes on and is said in the video's progress, for Style Lab or Improve this style to fix. Create's Frame
+  check switch turns it off for every new video, and `make_videos` options.frame_check=false for one video. Styles studied before Studio 109 keep their renderer; studying the
   channel again (or Improve this style) gives it the new abilities. Instead of
   code means Studio's ready-made pictures (AI pictures in their look, some AI-animated clips) or its fixed 3D engine:
   ready at once, but it won't look or move exactly like the channel; only when they choose it. When the study is
