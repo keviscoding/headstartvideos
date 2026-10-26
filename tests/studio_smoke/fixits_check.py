@@ -1,6 +1,9 @@
 """Setup's Fix its for real, with the network (the Windows CI runs this; it works on a Mac too):
 
-    python tests/studio_smoke/fixits_check.py [--claude] [--report studio-smoke/fixits.md]
+    python tests/studio_smoke/fixits_check.py [--claude] [--tries 3] [--report fixits.md]
+
+(.github/workflows/setup-fixits.yml runs it on Windows: on pull requests that change the installer code, weekly and by
+hand.)
 
 1. FFmpeg: cr_installs.fix_ffmpeg downloads this computer's pinned build, checks its SHA-256, runs FFmpeg's own
    checks (captions with libass, H.264, AAC, MP3) and moves it into a fresh Studio folder's tools/ffmpeg, in a
@@ -65,9 +68,22 @@ def burn(work: Path) -> str:
     return "" if codecs == ["aac", "h264"] and (work / "out.mp3").stat().st_size > 1000 else f"made {codecs}"
 
 
+def attempt(run, name, tries) -> dict:
+    """Run one fix, again after a minute when it failed (an upstream hiccup), up to `tries` times."""
+    for n in range(1, max(1, tries) + 1):
+        run()
+        state = cr_installs.status(name)
+        if state["state"] == "done" or n == tries:
+            return state
+        print(f"  {name} try {n} failed ({state['message'][:200]}); trying again in a minute", flush=True)
+        time.sleep(60)
+    return state
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--claude", action="store_true", help="also run Anthropic's installer (CI runners only)")
+    parser.add_argument("--tries", type=int, default=1, help="tries per fix, a minute apart (an upstream hiccup)")
     parser.add_argument("--report", default="")
     args = parser.parse_args()
     rows = []
@@ -80,8 +96,7 @@ def main() -> int:
         return 1
     for name, fix, label in (("ffmpeg", cr_installs.fix_ffmpeg, "FFmpeg"), ("node", cr_installs.fix_node, "Node.js")):
         started = time.monotonic()
-        fix(home=home, background=False)
-        state = cr_installs.status(name)
+        state = attempt(lambda: fix(home=home, background=False), name, args.tries)
         check(rows, f"{label}: downloaded, SHA-256 checked, run and moved into tools/{name}", state["state"] == "done",
               f"{state['message']} ({time.monotonic() - started:.0f} s){' | ' + state.get('tail', '') if state.get('tail') else ''}")
     folders = [str(p) for p in cr_installs.tool_dirs(home)]
@@ -101,8 +116,7 @@ def main() -> int:
             check(rows, "Claude Code installer (skipped: claude is already here)", True, before)
         else:
             started = time.monotonic()
-            cr_installs.fix_claude(background=False)
-            state = cr_installs.status("claude")
+            state = attempt(lambda: cr_installs.fix_claude(background=False), "claude", args.tries)
             found = cr_claude.find_executable()
             check(rows, "Anthropic's installer ran and Studio found the new claude", state["state"] == "done" and found,
                   f"{found} ({time.monotonic() - started:.0f} s) {state['message'][:200]} {state.get('tail', '')[-300:]}")
