@@ -295,19 +295,19 @@
   }
   // A 3D video's time is mostly Claude's: it directs every shot, then reviews them in rounds (a customer's 2-minute 3D
   // video spent 84 of its 116 minutes in Claude Opus, 2026-10-25). Said before Create, with Quicker 3D review. Sections
-  // of about 50 s, three at a time; one Claude round took 8-19 minutes on customers' runs (re-measure after Studio 106
-  // asks Opus for medium effort, and lower these).
+  // of about 50 s, three at a time; one Claude round took 8-22 minutes on customers' runs (a 2-minute video's calls
+  // alone were ~69 min); Quicker 3D review measured 22-32% less, not half.
   function threedEstimate(minutes, quick) {
-    const groups = Math.max(1, Math.ceil(minutes * 60 * 0.85 / 50 / 3)), rounds = quick ? 1 : minutes <= 3 ? 2 : 3;
+    const groups = Math.max(1, Math.ceil(minutes * 60 * 0.85 / 50 / 3)), rounds = quick ? 1 : 3;
     const calls = (1 + rounds) * groups, nearest = v => Math.max(5, Math.round(v / 5) * 5);
-    return [nearest(calls * 8), nearest(calls * 19)];
+    return [nearest(calls * 8), nearest(calls * 22)];
   }
   function threedNote() {
     const r = state.selected, on = !!(r && featureValues().threed && !strict(r) && !isShort(r) && !isRanking(r));
     hide('crw-threed-note', !on);
     if (!on) return;
     const minutes = number('crw-minutes',10,1,60), [lo, hi] = threedEstimate(minutes, checked('crw-threed-quick'));
-    text('crw-threed-note', `3D adds about ${lo} to ${hi} minutes to a ${minutes}-minute video: Claude directs every shot and reviews them, on your Claude plan. Quicker 3D review (Creative direction, 3D look) cuts the reviews to one round.`);
+    text('crw-threed-note', `3D adds about ${lo} to ${hi} minutes of Claude work to a ${minutes}-minute video, plus rendering: Claude directs every shot and reviews them, on your Claude plan. Quicker 3D review (Creative direction, 3D look) does one review round: about a quarter to a third less.`);
   }
   // Research footage watches YouTube videos on the creator's video-model account before the video is made: what that
   // adds, said before Create (a customer's 10-minute video watched clips for 22 hours, 2026-10-25). The numbers are

@@ -158,7 +158,29 @@ def test_a_short_video_gets_two_3d_review_rounds_unless_its_recipe_set_its_own(t
         j.mkdir()
         (j / "run_spec.json").write_text(json.dumps({"minutes": mins} if mins is not None else {}))
         mod._add_to_timeline([], j, j, style, False, engine, 60.0)
-    assert rounds == [2, 3, 3, 3], "2 minutes: two rounds; 8 minutes, an unknown length or a recipe's own: as set"
+    assert rounds == [3, 3, 3, 3], "off by default: every video keeps the recipe's rounds until the A/B"
+
+
+def test_with_the_short_video_rule_on_a_short_video_gets_two_rounds(tmp_path, monkeypatch):
+    monkeypatch.setattr(look, "AUTO_SHORT_ROUNDS", True)
+    mod = types.ModuleType("threed")
+    mod.SB = types.SimpleNamespace(PRESETS=["documentary", "white_studio"])
+    mod._cfg = lambda engine, style: {"preset": "white_studio", "review_rounds": 3}
+    rounds = []
+
+    def _add_to_timeline(segs, srt, job, style, force, engine, total):
+        rounds.append(mod._cfg(engine, style)["review_rounds"])
+        return segs
+    mod._add_to_timeline = _add_to_timeline
+    monkeypatch.setitem(sys.modules, "threed", mod)
+    look.install()
+    engine = types.SimpleNamespace(STYLE_INFO={"own-rounds": {"look": {"threed": {"review_rounds": 3}}}})
+    for name, mins, style in (("short", 2, "cr-3d"), ("long", 8, "cr-3d"), ("short-own", 2, "own-rounds")):
+        j = tmp_path / name
+        j.mkdir()
+        (j / "run_spec.json").write_text(json.dumps({"minutes": mins}))
+        mod._add_to_timeline([], j, j, style, False, engine, 60.0)
+    assert rounds == [2, 3, 3]
 
 
 

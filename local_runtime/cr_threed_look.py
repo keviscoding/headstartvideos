@@ -31,11 +31,12 @@ def chosen(job) -> str:
     return look if look in LOOKS else ""
 
 
-# A short video gets at most two 3D review rounds. Each round is a long Opus call over contact sheets of every scene
+# A short video can get at most two 3D review rounds (AUTO_SHORT_ROUNDS, off by default). Each round is a long Opus call over contact sheets of every scene
 # (10-24 min on a customer's 2-minute 3D video, 2026-10-25), the engine's default is three, and its own reviews rarely
 # pass every shot, so the third round always ran. A recipe or style that sets look.threed.review_rounds keeps its own.
 SHORT_VIDEO_MINUTES = 3
 SHORT_REVIEW_ROUNDS = 2
+AUTO_SHORT_ROUNDS = False      # off until the owner-approved A/B shows no quality loss; Quicker 3D review is the opt-in
 
 
 def minutes(job) -> float:
@@ -145,7 +146,7 @@ def install(engine=None):
         if look and look in (getattr(threed.SB, "PRESETS", None) or LOOKS):
             c["preset"] = look
         length = minutes(job) if job else 0.0
-        if 0 < length <= SHORT_VIDEO_MINUTES and "review_rounds" not in _own_threed(engine_, style):
+        if AUTO_SHORT_ROUNDS and 0 < length <= SHORT_VIDEO_MINUTES and "review_rounds" not in _own_threed(engine_, style):
             c["review_rounds"] = min(int(c.get("review_rounds", SHORT_REVIEW_ROUNDS)), SHORT_REVIEW_ROUNDS)
         if job and quick(job):                               # the creator's choice wins over the recipe's own
             c["review_rounds"] = min(int(c.get("review_rounds", 1)), 1)

@@ -1,6 +1,6 @@
-"""Studio's own Claude stages ask for a deliberate effort: an Opus stage left to the CLI thought at length on every
-call (a 2-minute 3D video spent 84 minutes in Opus, 2026-10-25), and an effort inherited from a Claude Code chat
-(CLAUDE_EFFORT=xhigh) made every step overrun."""
+"""Studio's own Claude stages and their effort: by default the CLI's own (quality first, until an owner-approved A/B),
+never one inherited from a Claude Code chat (CLAUDE_EFFORT=xhigh made every step overrun), and a deliberate level
+when CR_CLAUDE_EFFORT, a caller's --effort or call_effort() asks for one."""
 import json
 from types import SimpleNamespace
 
@@ -46,15 +46,28 @@ def stages(calls):
     return [c for c in calls if c[0][1:] != ["--help"]]
 
 
+class Clock:
+    """time.sleep and time.monotonic together, so the slot wait's deadline moves as the waits pass."""
+    def __init__(self):
+        self.t = 1000.0
+
+    def sleep(self, s):
+        self.t += s
+
+    def monotonic(self):
+        return self.t
+
+
 OPUS = ["/fake/claude", "-p", "--model", "opus", "--tools", "Read", "--output-format", "json"]
 SONNET = ["/fake/claude", "-p", "--model", "sonnet", "--output-format", "json"]
 
 
-def test_an_opus_stage_asks_for_medium_effort(tmp_path, monkeypatch):
+def test_by_default_an_opus_stage_keeps_the_clis_own_effort_and_makes_no_help_check(tmp_path, monkeypatch):
     invoke, calls = cli()
     runtime(tmp_path, monkeypatch, invoke).run(OPUS, input="Review these scenes", text=True)
     (command, env), = stages(calls)
-    assert cr_claude._option(command, "--effort") == "medium"
+    assert "--effort" not in command
+    assert not [c for c in calls if c[0][1:] == ["--help"]], "nothing to check when no effort is asked for"
 
 
 def test_a_sonnet_stage_keeps_the_clis_own_effort(tmp_path, monkeypatch):
@@ -72,6 +85,7 @@ def test_an_effort_the_engine_chose_itself_is_kept(tmp_path, monkeypatch):
 
 
 def test_an_older_claude_code_without_the_option_is_never_given_it(tmp_path, monkeypatch):
+    monkeypatch.setenv("CR_CLAUDE_EFFORT", "medium")
     invoke, calls = cli(help_text="  --model <model>   Model for the current session")
     runtime(tmp_path, monkeypatch, invoke).run(OPUS, input="Review", text=True)
     (command, env), = stages(calls)
@@ -79,6 +93,7 @@ def test_an_older_claude_code_without_the_option_is_never_given_it(tmp_path, mon
 
 
 def test_the_help_check_runs_once_per_claude_code(tmp_path, monkeypatch):
+    monkeypatch.setenv("CR_CLAUDE_EFFORT", "medium")
     invoke, calls = cli()
     run = runtime(tmp_path, monkeypatch, invoke)
     run.run(OPUS, input="One", text=True)
@@ -86,7 +101,7 @@ def test_the_help_check_runs_once_per_claude_code(tmp_path, monkeypatch):
     assert sum(1 for c in calls if c[0][1:] == ["--help"]) == 1
 
 
-@pytest.mark.parametrize("chosen,expected", [("low", "low"), ("XHIGH", "xhigh"), ("default", None), ("loud", "medium")])
+@pytest.mark.parametrize("chosen,expected", [("low", "low"), ("XHIGH", "xhigh"), ("default", None), ("loud", None)])
 def test_cr_claude_effort_sets_every_stage(tmp_path, monkeypatch, chosen, expected):
     monkeypatch.setenv("CR_CLAUDE_EFFORT", chosen)
     invoke, calls = cli()
@@ -100,7 +115,7 @@ def test_an_effort_inherited_from_a_claude_code_chat_never_reaches_a_stage(tmp_p
     runtime(tmp_path, monkeypatch, invoke).run(OPUS, input="Review", text=True,
                                                 env={"CLAUDE_EFFORT": "xhigh", "PATH": "/usr/bin"})
     (command, env), = stages(calls)
-    assert "CLAUDE_EFFORT" not in env and cr_claude._option(command, "--effort") == "medium"
+    assert "CLAUDE_EFFORT" not in env and "--effort" not in command
 
 
 def test_a_stage_waits_while_the_projects_other_stages_run_instead_of_stopping(tmp_path, monkeypatch):
@@ -117,8 +132,13 @@ def test_a_stage_waits_while_the_projects_other_stages_run_instead_of_stopping(t
             raise err
         return {"execute": True, "authorization_token": "x" * 32, "selected_model": cr_claude.VISUAL_MODEL}
     run.bridge.authorize_stage = authorize
-    monkeypatch.setattr(cr_claude.time, "sleep", lambda s: None)
+    c = Clock()
+    monkeypatch.setattr(cr_claude.time, "sleep", c.sleep)
+    monkeypatch.setattr(cr_claude.time, "monotonic", c.monotonic)
+    said = []
+    run.engine = SimpleNamespace(log=said.append)
     assert run.run(OPUS, input="Review", text=True).returncode == 0
+    assert said == ["  Waiting for a Claude slot: this project's other Claude stages are running."], "said once"
     assert len(asked) == 3 and len(set(asked)) == 1, "the same stage, asked again"
     assert len(stages(calls)) == 1, "Claude ran once"
 
@@ -130,7 +150,9 @@ def test_a_stage_that_never_gets_a_slot_stops_saying_why(tmp_path, monkeypatch):
     def authorize(stage):
         raise cr_claude.WorkflowError("Wait for this project's active stages.", 429)
     run.bridge.authorize_stage = authorize
-    monkeypatch.setattr(cr_claude.time, "sleep", lambda s: None)
+    c = Clock()
+    monkeypatch.setattr(cr_claude.time, "sleep", c.sleep)
+    monkeypatch.setattr(cr_claude.time, "monotonic", c.monotonic)
     with pytest.raises(cr_claude.ClaudeStageStopped, match="active stages"):
         run.run(OPUS, input="Review", text=True)
     assert not stages(calls), "Claude never ran"
@@ -149,6 +171,7 @@ def test_a_caller_can_keep_the_clis_own_effort_for_one_call(tmp_path, monkeypatc
 
 def test_a_block_can_ask_for_its_own_effort_on_this_thread_only(tmp_path, monkeypatch):
     import threading
+    monkeypatch.setenv("CR_CLAUDE_EFFORT", "low")
     invoke, calls = cli()
     run = runtime(tmp_path, monkeypatch, invoke)
     with cr_claude.call_effort("default"):
@@ -160,4 +183,4 @@ def test_a_block_can_ask_for_its_own_effort_on_this_thread_only(tmp_path, monkey
         run.run(OPUS, input="Think harder", text=True)
     run.run(OPUS, input="After the block", text=True)
     asked = [cr_claude._option(command, "--effort") or None for command, env in stages(calls)]
-    assert asked == [None, "medium", "high", "medium"], "only the block's own thread changes"
+    assert asked == [None, "low", "high", "low"], "only the block's own thread changes"

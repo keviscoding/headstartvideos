@@ -251,13 +251,13 @@ def _option(args, name, default=""):
     return default
 
 
-# How hard Claude thinks on Studio's own stages. Left to the CLI, an Opus stage thought at length on every call: a 3D
-# review round took 10-24 minutes and a 2-minute 3D video 84 minutes of Opus (customer runs, 2026-10-25). Folio's
-# reviews already ask for "low". Opus stages ask for "medium"; Sonnet stages keep the CLI's own. A caller's own --effort
-# wins ("--effort default": the CLI's own for that call only). CR_CLAUDE_EFFORT set to a level applies it to every stage,
-# "default" leaves every stage to the CLI.
+# How hard Claude thinks on Studio's own stages. Left to the CLI, an Opus stage thinks at length on every call: a 3D
+# review round took 10-24 minutes and a 2-minute 3D video 84 minutes of Opus (customer runs, 2026-10-25). Until an
+# A/B the owner approves shows no quality loss, every stage keeps the CLI's own effort (VISUAL_EFFORT ""): quality is
+# the product, and Claude is never limited by default. A caller's own --effort wins ("--effort default": the CLI's own
+# for that call only); call_effort() scopes one to a thread; CR_CLAUDE_EFFORT set to a level applies it to every stage.
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
-VISUAL_EFFORT = "medium"
+VISUAL_EFFORT = ""
 _effort_flag: dict = {}
 _call_effort = ContextVar("cr_call_effort", default=None)
 
@@ -541,16 +541,32 @@ class Runtime:
                 self.bridge.finish_stage(saved["receipt"])
         except Exception:
             raise ClaudeStageStopped("ChannelRecipe could not authorize this stage. Your work is saved; reconnect before resuming.") from None
-        waited = 0
+        # The effort, and the free --help check behind it, are settled before the stage is authorized.
+        asked = _option(args, "--effort", "")
+        scoped = _call_effort.get()
+        if asked or scoped == "default":
+            effort = ""                                    # the caller's own (or "default", dropped below)
+        else:
+            effort = scoped if scoped in EFFORT_LEVELS else stage_effort(role)
+        if effort and not supports_effort(self.executable, environment=kwargs.get("env")):
+            effort = ""
+        deadline, said = time.monotonic() + SLOT_WAIT_S, False
         while True:
             try:
                 approval = self.bridge.authorize_stage(stage)
                 break
             except WorkflowError as error:
                 # 429: the project's other stages are running. Nothing was recorded or run, so asking again is free.
-                if error.status == 429 and waited < SLOT_WAIT_S:
+                # The deadline is on the clock: each ask can itself take minutes in cr_bridge's resends.
+                if error.status == 429 and time.monotonic() < deadline:
+                    if not said:
+                        said = True
+                        try:
+                            getattr(self.engine, "log", print)("  Waiting for a Claude slot: this project's other "
+                                                               "Claude stages are running.")
+                        except Exception:                  # noqa: BLE001 - a progress line only
+                            pass
                     time.sleep(SLOT_POLL_S)
-                    waited += SLOT_POLL_S
                     continue
                 raise ClaudeStageStopped("ChannelRecipe stopped this stage: " + error.detail
                                          + " No new Claude request was made.") from None
@@ -569,17 +585,9 @@ class Runtime:
         # Source helpers use --strict-mcp-config and deliberately expose no MCP
         # tools. The runner calls the authenticated CR MCP before/after them.
         command = _replace_option(command, "--settings", '{"apiKeyHelper":""}')
-        asked = _option(args, "--effort", "")
         if asked == "default":                             # a caller that wants the CLI's own effort for this call
             command = _drop_option(command, "--effort")
-        scoped = _call_effort.get()
-        if asked:
-            effort = ""                                    # the caller's own (or "default", dropped above)
-        elif scoped == "default":
-            effort = ""
-        else:
-            effort = scoped if scoped in EFFORT_LEVELS else stage_effort(role)
-        if effort and supports_effort(self.executable, environment=kwargs.get("env")):
+        if effort:
             command = _replace_option(command, "--effort", effort)
         env = clean_environment(kwargs.get("env"))
         if maximum is not None and maximum >= LONG_ANSWER_TOKENS:
