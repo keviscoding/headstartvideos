@@ -274,7 +274,10 @@ def status(home, style: str) -> dict:
            "saved_state": saved.get("state"), "changed_since_saved": sha != saved.get("sha256"),
            "this_code": {"previewed": bool(preview), "preview_ok": bool(preview.get("ok")),
                          "checked": check.get("overall"), "passed": check.get("passed")}}
-    if not preview:
+    if not out["changed_since_saved"] and saved.get("from") == "style_lab":
+        out["next"] = (f"This is the style's saved renderer (version {saved.get('version')}). Edit and preview to improve "
+                       "it, or make a video in the style to see it with its voice and sound.")
+    elif not preview:
         out["next"] = "Read GUIDE.md and the shown frames, edit renderer.js, then preview."
     elif not preview.get("ok"):
         out["next"] = "Fix the preview's problems, then preview again."
