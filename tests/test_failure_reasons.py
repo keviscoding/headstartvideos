@@ -32,17 +32,17 @@ def clean(text, **kw):
 
 # ── the message, cleaned ──────────────────────────────────────────────────────────────────────────────────────────
 
-def test_paths_keep_only_the_file_name_and_home_becomes_a_tilde(monkeypatch):
+def test_paths_keep_only_the_files_extension(monkeypatch):
     mac = clean("Error opening /Users/jane/Downloads/ChannelRecipe studio/output/clip-ab12/voice.mp3: No such file")
-    assert mac == "Error opening ~/…/voice.mp3: No such file"
+    assert mac == "Error opening [path].mp3: No such file"
     windows = clean(r"[Errno 28] No space left on device: 'C:\Users\Jane Doe\Videos\My Studio\output\frame.png'",
                     home=r"C:\Users\Jane Doe")
-    assert windows == "[Errno 28] No space left on device: '~/…/frame.png'"
+    assert windows == "[Errno 28] No space left on device: '[path].png'"
     other = clean("File /home/bob/studio/make_video.py and D:\\Work\\Studio\\output\\video.mp4 and /tmp/x/y.log")
-    assert "bob" not in other and "Work" not in other and "Studio" not in other and "tmp" not in other
-    assert "make_video.py" in other and "video.mp4" in other and "y.log" in other
+    assert other == "File [path].py and [path].mp4 and [path].log"
     studio_home = Path(cr_failure.HOME)                         # the Studio's own folder, wherever it is
-    assert clean(f"{studio_home}/output/a/b.mp4 failed", home="/nowhere") == "…/b.mp4 failed"
+    assert clean(f"{studio_home}/output/a/b.mp4 failed", home="/nowhere") == "[path].mp4 failed"
+    assert clean("/opt/homebrew/bin/ffmpeg: not found") == "…/ffmpeg: not found"    # the computer's own tools
     for words in ("1/3 Script", "and/or", "2/3 Voiceover + visuals"):
         assert clean(words) == words
 
@@ -73,10 +73,12 @@ def test_emails_links_ids_and_addresses_are_taken_out():
 
 
 def test_titles_and_their_folder_names_are_taken_out():
-    said = clean(f"Title: {TITLE} (10 min) failed in /Users/jane/out/why-ancient-rome-fell-apart-1a2b/"
+    said = clean(f"Rendering {TITLE} (10 min) failed in /Users/jane/out/why-ancient-rome-fell-apart-1a2b/"
                  "why-ancient-rome-fell-apart.mp4 while writing 'why_ancient_rome_fell_apart' and Why Ancient Rome Fe…")
-    assert "Rome" not in said and "rome" not in said and "Ancient" not in said, said
-    assert "[title]" in said and "~/…/[file].mp4" in said
+    assert said == "Rendering [title] (10 min) failed in [path].mp4 while writing '[title]' and [title]…", said
+    assert clean(f"Title: {TITLE} (10 min)") == "Title: …"
+    slug = clean("/opt/out/why-ancient-rome-fell-apart.mp4 is locked")        # outside a person's folders too
+    assert slug == "…/[file].mp4 is locked"
     # a run of the title's short words alone is ordinary text; a longer run of it is the title
     drill = clean("TypeError: 'NoneType' is not a number; This Is Not A…", titles=["This Is Not A Drill"])
     assert drill == "TypeError: 'NoneType' is not a number; [title]…", drill
@@ -113,6 +115,102 @@ def test_one_line_of_at_most_240_characters_without_the_studios_advice():
                   "saved project to carry on from where it stopped. Last message: images: 12/40 done (Copy diagnostics "
                   "in Setup includes the full log.)")
     assert crash == "The local video worker stopped: this computer ran out of memory. Last message: images: 12/40 done"
+
+
+# ── adversarial messages (review, 2026-10-26): the Studio's cleaner and the server's ─────────────────────────────
+
+def both(text, titles=(TITLE,)):
+    """The message as a Studio sends it, and as the server keeps it had a Studio sent it raw."""
+    return clean(text, titles=list(titles)), studio_failures.clean_message(text, list(titles))
+
+
+@pytest.mark.parametrize("message,expected,private", [
+    (r"C:\Users\Jane Doe\OneDrive - Contoso Ltd\Videos\cooking\a.mp4 is locked", "[path].mp4 is locked",
+     ("Jane", "Contoso", "OneDrive", "cooking", "Videos")),
+    ("open /Users/jane/Documents/Jane's Channel/scripts/x.txt failed", "open [path].txt failed",
+     ("jane", "Jane", "Channel", "scripts", "x.txt")),
+    ("/Users/jane/Movies/Grandma Rose Funeral Tribute Video/x.mp4: No such file", "[path].mp4: No such file",
+     ("Grandma", "Rose", "Funeral", "Tribute")),
+    ("Permission denied: '/Users/jane/Movies/Grandma Rose Funeral Tribute Video'", "Permission denied: '[path]'",
+     ("Grandma", "Funeral", "Video")),
+    ("read /Volumes/Jane's Drive/Big Trip 2024/clip.mov: Permission denied", "read [path].mov: Permission denied",
+     ("Jane", "Drive", "Trip", "clip")),
+    (r"copy \\JANES-PC\Share\Family Videos\x.mp4 failed", "copy [path].mp4 failed", ("JANES", "Share", "Family")),
+    ("file:///Users/jane/My%20Videos/Secret Plan/x.mp4 missing", "[path].mp4 missing", ("Secret", "Videos", "jane")),
+    ("failed (see /Users/jane/Videos/Channel (old)/x.log) retry", "failed (see [path].log) retry", ("Channel", "old")),
+    ("Kie content flagged by the safety system for prompt 'Sarah Johnson at 12 Elm St, Leeds'",
+     "Kie content flagged by the safety system for prompt '…'", ("Sarah", "Johnson", "Elm", "Leeds")),
+    ("flagged for prompt 'Sarah Johnson' today", "flagged for prompt '…' today", ("Sarah", "Johnson")),
+    ("ElevenLabs refused text: My name is John Smith. I live at 4 Park Road", "ElevenLabs refused text: …",
+     ("John", "Smith", "Park")),
+    ("KeyError: 'The secret recipe grandma never told anyone'", "KeyError: '…'", ("secret", "grandma")),
+    ('bad scenes ["John Smith confessed", "the night it rained"] in batch', "bad scenes […] in batch",
+     ("John", "confessed", "rained")),
+    ("scene 4: Grandma's kitchen at dawn; images: 3/40", "scene 4: …; images: 3/40", ("Grandma", "kitchen")),
+    ("Mail for jane doe <jane@example.com> via jane%40gmail.com", "Mail for [email] via [email]",
+     ("jane", "doe", "gmail")),
+    ("from 2001:db8::1 and fe80::1%en0 and 2001:0db8:85a3:0000:0000:8a2e:0370:7334", "from [ip] and [ip] and [ip]",
+     ("2001", "fe80", "db8")),
+    ("the reference channel @janedoe_cooks refused", "the reference channel [handle] refused", ("janedoe",)),
+])
+def test_private_words_never_stay_in_either_cleaner(message, expected, private):
+    for said in both(message):
+        assert said == expected, (said, message)
+        for word in private:
+            assert word not in said, (word, said)
+
+
+@pytest.mark.parametrize("message", [
+    "kie: 422 task id is blank", "insufficient credits", "KeyError: 'beats'", "ModuleNotFoundError: No module named 'cv2'",
+    "ERROR: [youtube] abc: Sign in to confirm you're not a bot.", "[Errno 28] No space left on device",
+    "std::bad_alloc at 00:01:23.45 with -map 0:a:0", "Cannot find module '@anthropic-ai/claude-code'",
+    "ConnectionError: HTTPSConnectionPool(host='api.kie.ai', port=443): Max retries exceeded",
+    "Command '[…]' returned non-zero exit status 1.", "1/3 Script and/or 2/3 Voiceover + visuals"])
+def test_codes_and_short_technical_messages_stay_readable(message):
+    assert both(message) == (message, message)
+
+
+def test_a_providers_answer_keeps_its_code_and_the_server_keeps_what_the_studio_sent():
+    sent = clean("kie task failed: {'code': 422, 'msg': 'task id is blank', 'data': ['A prompt about Jane', 'x']}")
+    assert sent == "kie task failed: (code: 422; msg: task id is blank)"
+    assert clean("Command '['ffmpeg', '-y', '-i', '/Users/jane/My Trip/in.mp4']' returned non-zero exit status 1."
+                 ) == "Command '[…]' returned non-zero exit status 1."
+    for message in ("Error opening /Users/jane/Jane's Channel/voice.mp3: No such file", "/opt/homebrew/bin/ffmpeg: x",
+                    f"Rendering {TITLE} for 'Sarah Johnson at Elm St' at fe80::1 for @jane", sent):
+        once = clean(message)
+        assert studio_failures.clean_message(once, [TITLE]) == once      # the server never undoes the Studio's work
+
+
+def test_the_worker_logs_last_line_keeps_only_an_exception(tmp_path):
+    log = tmp_path / "worker.log"
+    log.write_text("images: 3/40\n  -> scene 4: The old lighthouse keeper looks out to sea\n")
+    assert cr_video_cancel.crash_failure(log, 1) == {
+        "category": "", "message": "The video worker stopped: it ended unexpectedly (exit code 1)."}
+    log.write_text("Traceback (most recent call last):\nplaywright._impl._errors.TargetClosedError: Target page, context "
+                   "or browser has been closed\n")
+    assert cr_video_cancel.crash_failure(log, 1)["message"].endswith(
+        "Last message: TargetClosedError: Target page, context or browser has been closed")
+    log.write_text("ValueError: " + "lighthouse " * 40 + "\n")
+    said = cr_video_cancel.crash_failure(log, 1)["message"].split("Last message: ")[1]
+    assert said.startswith("ValueError: lighthouse") and len(said.split()) <= 13
+
+
+def test_a_long_title_and_a_long_traceback_are_cleaned_quickly(tmp_path):
+    title = " ".join(f"Story{n} About Ancient Engineers" for n in range(20))[:300]           # 300 characters, ~54 words
+    frames = "".join(f'  File "/Users/jane/Downloads/ChannelRecipe studio/engine/{title[:40]} {n}.py", line {n}, in '
+                     f"step{n}\n    render(scene, '{title[n:n + 60]}')\n" for n in range(120))
+    traceback = (f"Traceback for {title} (most recent call last):\n" + frames * 3)[:16000]
+    started = time.perf_counter()
+    said = cr_failure.sanitize(traceback, titles=[title, title.upper()], secrets=[], home=HOME, names=())
+    assert time.perf_counter() - started < 0.5
+    assert "Story" not in said and "Engineers" not in said and said.startswith("Traceback for [title]"), said
+    started = time.perf_counter()
+    job, state = job_state(tmp_path, error=traceback + "\nRuntimeError: boom", title=title)
+    found = cr_failure.for_job(tmp_path, state, {"style": "history", "title": title}, job, "", "runtime_failed")
+    assert time.perf_counter() - started < 0.5 and found["category"] == "crash"
+    started = time.perf_counter()
+    assert len(studio_failures.clean_message("[" * 9000 + traceback, [title])) <= 240
+    assert time.perf_counter() - started < 0.5
 
 
 # ── what kind of stop ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -254,7 +352,7 @@ def test_a_whole_record_holds_nothing_private(tmp_path, monkeypatch):
         assert private not in text, (private, text)
     assert (found["failed_step"], found["category"], found["provider"], found["recipe"]) == (
         "voice", "auth", "elevenlabs", "cloned_style")
-    assert "~/…/voice.mp3" in found["message"] and "[email]" in found["message"] and "[title]" in found["message"]
+    assert "[path].mp3" in found["message"] and "[email]" in found["message"] and "[title]" in found["message"]
 
 
 def test_a_record_never_stops_the_finish(tmp_path):
@@ -418,7 +516,7 @@ def test_a_stopped_projects_record_is_kept_and_counted_without_ids_emails_or_tit
     text = json.dumps(report, ensure_ascii=False)
     for private in (one, two, three, "owner@example.com", TITLE, "Jane", '"user_id"', "Another title"):
         assert private not in text, private
-    assert "~/…/y.mp3" in text and "[title]" in text and "[email]" in text
+    assert "[path].mp3" in text and "[title]" in text and "[email]" in text
 
 
 def test_numbers_alone_dont_split_a_message_and_a_resumed_project_is_counted(native):
@@ -534,3 +632,42 @@ def test_the_privacy_page_says_what_a_failure_report_holds():
     page = (Path(__file__).parents[1] / "webapp" / "static" / "privacy.html").read_text(encoding="utf-8")
     said = page.split("Studio failure reports")[1].split("</p>")[0]
     assert "file paths" in said and "keys" in said and "never contains" in said and "Windows, Mac or Linux" in said
+
+
+def test_records_older_than_the_longest_report_are_taken_out(native, monkeypatch):
+    project = native.begin("old")
+    studio.native_finish_project(native.owner, failed(project, {"message": "an old stop"}))
+    with studio.db._conn() as conn:
+        conn.execute("UPDATE frontier_failures SET updated_at=?", (time.time() - (studio_failures.MAX_DAYS + 1) * 86400,))
+    monkeypatch.setattr(studio_failures, "_pruned", {})                     # an hour later
+    assert studio_failures.record_report(1, studio_failures.FailureRecord(message="a new stop"))
+    with studio.db._conn() as conn:
+        kept = [r["message"] for r in conn.execute("SELECT message FROM frontier_failures").fetchall()]
+    assert kept == ["a new stop"]
+
+
+def test_the_table_is_made_once_at_startup_and_postgres_workers_take_turns(monkeypatch):
+    import inspect
+    from contextlib import contextmanager
+    import webapp.server as server
+    assert "_studio_failures.initialize()" in inspect.getsource(server._startup_tasks)
+    said = []
+
+    class Conn:                                                 # no database: what would be said to one
+        def execute(self, sql, params=()):
+            said.append(" ".join(sql.split()))
+            return self
+
+    @contextmanager
+    def conn():
+        yield Conn()
+    monkeypatch.setattr(studio_failures, "_ready", set())
+    monkeypatch.setattr(studio_failures, "_pruned", {})
+    monkeypatch.setattr(studio_failures.db, "IS_PG", True)
+    monkeypatch.setattr(studio_failures.db, "DATABASE_URL", "postgresql://example.invalid/none")
+    monkeypatch.setattr(studio_failures.db, "_conn", conn)
+    studio_failures.initialize()
+    studio_failures.initialize()
+    assert said[0] == "SELECT pg_advisory_xact_lock(726346123)"
+    assert sum(s.startswith("CREATE TABLE IF NOT EXISTS frontier_failures") for s in said) == 1
+    assert said[-1] == "DELETE FROM frontier_failures WHERE updated_at<%s"
