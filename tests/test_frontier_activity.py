@@ -763,6 +763,7 @@ def test_voice_picker_lists_previews_once_and_saves_the_choice(runtime, timeline
 
     def run(task, inputs, dest, **kwargs):
         made.append((task, inputs["speakers"][0]["voice_name"]))
+        assert kwargs.get("retry") is False, "a page waits on the preview: one try, no patient retries"
         Path(dest).write_bytes(b"ID3 sample")
 
     monkeypatch.setattr(cr_studio.cr_media, "run", run)

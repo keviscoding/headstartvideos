@@ -73,6 +73,8 @@ echo Installing the graphics browser. This can take a few minutes.
 ".venv\Scripts\python.exe" -m playwright install chromium
 
 :start_studio
+rem Studio runs in Python's UTF-8 mode, as its video workers do: every file, title and tool output is UTF-8.
+set "PYTHONUTF8=1"
 ".venv\Scripts\python.exe" cr_studio.py
 set "CR_EXIT_CODE=%ERRORLEVEL%"
 echo.

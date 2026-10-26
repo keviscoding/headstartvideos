@@ -113,3 +113,26 @@ def test_a_rules_file_that_cannot_be_written_leaves_nothing_behind(tmp_path, mon
     with pytest.raises(OSError):
         cr_claude.prompts_on_disk(folio_call(), tmp_path, windows=False)
     assert not list(tmp_path.glob(".prompt-*"))
+
+
+def test_a_long_bullet_of_text_in_a_review_prompt_is_not_taken_for_a_picture(tmp_path, monkeypatch):
+    """A 3D review's repair round lists its rules as "- " bullets beside the pictures it reads. Before Python 3.14,
+    Path(line).is_file() raises for a line longer than a file name ("[Errno 63] File name too long: 'THIS IS THE LAST
+    ROUND ...'"), so the stage failed before it started and QUEST's whole review round 2 was skipped (sweep,
+    2026-10-26). Pictures on their own lines still count toward the stage's identity."""
+    import errno
+    real_is_file = cr_claude.Path.is_file
+
+    def as_python_312(self):
+        if len(self.name) > 255:
+            raise OSError(errno.ENAMETOOLONG, "File name too long", str(self))
+        return real_is_file(self)
+
+    monkeypatch.setattr(cr_claude.Path, "is_file", as_python_312)
+    still = tmp_path / "shot_01.jpg"
+    still.write_bytes(b"a rendered still")
+    prompt = ("First read these image files so you can actually see them:\n- " + str(still) + "\n\n"
+              "- THIS IS THE LAST ROUND — A HARD-FAIL REPAIR ROUND: nothing you change now gets another look, so "
+              + "fix only what a hard fail names, " * 12 + "\n- C:\\bad|name?.png\n")
+    hashes = cr_claude._read_inputs(prompt, ["/fake/claude", "-p", "--tools", "Read"])
+    assert [h[0] for h in hashes] == [str(still.resolve())]

@@ -582,6 +582,12 @@ ENGINE_PATCHES = {
         ("def _wait_machine(log=print, min_level: int = 40, min_free_gb: float = 20.0) -> None:",
          "def _wait_machine(log=print, min_level: int = 20, min_free_gb: float = 3.0) -> None:"),
         ("    lvl = 45 if light else 40\n", "    lvl = 25 if light else 20\n"),
+        # The HUD registers Montserrat-Book.ttf, which no release ever shipped (it isn't in the engine source either):
+        # reading it failed, so every QUEST video came out without its game HUD ("QUEST: HUD not laid —
+        # FileNotFoundError ... Montserrat-Book.ttf", sweep 2026-10-26). A face that isn't there is left out; the
+        # browser draws that weight with the nearest Montserrat the release has.
+        ("             for fam, f, d in FONT_FACES]\n",
+         "             for fam, f, d in FONT_FACES if (FONTS / f).is_file()]   # a face the release lacks: the nearest weight draws\n"),
     ],
 }
 

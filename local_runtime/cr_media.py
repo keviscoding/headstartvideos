@@ -581,14 +581,14 @@ def _never_sent(error) -> bool:
     return any(sign in text for sign in ("NewConnectionError", "NameResolutionError", "Failed to establish a new connection"))
 
 
-def run(task, inputs, dest, *, model=None, log=print, timeout_s=1800):
+def run(task, inputs, dest, *, model=None, log=print, timeout_s=1800, retry=True):
     """One media task, from its receipt when it was already made. A narration Kie ran and then failed on its own side,
     charging nothing (fresh_attempt_ok: "Internal Error", "generate task timeout"), is submitted again after
     NARRATION_RETRY_PAUSES for every caller. Only the long-video voice used to ride these out; the Shorts call run()
     directly, so one of them stopped the whole Short ("The Short stopped unexpectedly (cr_media.TaskFailed: Kie.ai failed
     this narration task. generate task timeout. Kie charged nothing for it ...)", Photo Comedy Shorts, sweep
-    2026-10-26)."""
-    pauses = NARRATION_RETRY_PAUSES if task == "narration" else ()
+    2026-10-26). retry=False answers at once (a page waiting on it: Setup's voice preview)."""
+    pauses = NARRATION_RETRY_PAUSES if task == "narration" and retry else ()
     for attempt, pause in enumerate(pauses + (None,)):
         try:
             return _run_once(task, inputs, dest, model=model, log=log, timeout_s=timeout_s)

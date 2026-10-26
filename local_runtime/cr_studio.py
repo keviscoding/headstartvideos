@@ -1384,8 +1384,9 @@ def create_app():
                                    message=f"Free sample unavailable: make one with your {label} balance (about "
                                            f"${PREVIEW_COST_USD:.2f})?")
                 target.parent.mkdir(parents=True, exist_ok=True)
+                # a page waits on this: one try, never the video's patient retries (review, 2026-10-26)
                 cr_media.run("narration", cr_media.narration_input(VOICE_SAMPLE, voice, model["id"]), target,
-                             model=model["id"], log=studio.app.logger.info, timeout_s=180)
+                             model=model["id"], log=studio.app.logger.info, timeout_s=180, retry=False)
                 paid = True
         except cr_media.AccountStop as error:
             return jsonify(error=str(error)), 409
