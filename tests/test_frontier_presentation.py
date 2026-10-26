@@ -158,10 +158,10 @@ def test_display_copy_has_no_em_dashes_but_prompts_and_ids_are_untouched():
 
 def test_ready_made_recipes_have_their_own_names_and_the_nearest_artwork():
     rows = presentation.presentationCatalog([{"name": name} for name in sorted(presentation.READY_MADE_IDS)])
-    assert len({row["label"] for row in rows}) == len(presentation.READY_MADE_IDS) == 14
+    assert len({row["label"] for row in rows}) == len(presentation.READY_MADE_IDS) == 15
     assert all(row["capabilities"] and row["family"] and row["description"] for row in rows)
     # the Shorts recipes (owner-only builds ship them) sit together in their own family
     shorts = {row["name"] for row in rows if row["family"] == "Shorts"}
-    assert shorts == {"cr-shorts-3d", "cr-shorts-3d-dark", "cr-shorts-photo", "cr-shorts-ranking"}
+    assert shorts == {"cr-shorts-3d", "cr-shorts-3d-dark", "cr-shorts-photo", "cr-shorts-ranking", "cr-shorts-roblox"}
     assert presentation.asset("cr-manga-recaps.svg") == presentation.ART_ROOT / "folio.svg"
     assert not presentation.READY_MADE_IDS & presentation.BUILTIN_IDS
