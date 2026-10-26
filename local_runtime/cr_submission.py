@@ -132,6 +132,8 @@ def _publish(studio, payload, original, *, project_id=None, before_publish=None,
             spec["cr_pictures_per_min"] = ppm
         if threed_look:
             spec["cr_threed_look"] = threed_look
+        if payload.get("cr_captions") == "on" and payload.get("burn_subs") is not False:
+            spec["cr_captions"] = "on"           # captions asked for on a style that has none: burned in (cr_captions)
         if backend == "manimgx":
             spec["manimgx_identity"] = payload.get("manimgx_identity")
         if isinstance(proof, dict):

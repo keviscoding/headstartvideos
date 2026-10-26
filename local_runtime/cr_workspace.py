@@ -133,6 +133,8 @@ def install(studio, activity, *, token, home=None):
             info = styles.get(row.get("name")) if isinstance(styles, dict) else None
             # a recipe that shows the creator's own comic panels instead of drawing pictures (cr_panels)
             row["panels"] = bool(isinstance(info, dict) and isinstance(info.get("look"), dict) and info["look"].get("panels"))
+            import cr_captions
+            row["captions"] = cr_captions.style_default(info)       # Create's captions switch starts at this
             # a story recipe's pictures a minute, with its quality floor (create page slider)
             import cr_media
             span = None if row["panels"] else cr_media.picture_range(info if isinstance(info, dict) else {})
@@ -157,6 +159,8 @@ def install(studio, activity, *, token, home=None):
         # what Research footage may watch for each length, 1 to 60 minutes (Create says it before a video starts)
         import cr_watch
         data["footage_watch"] = [cr_watch.budget(minutes) for minutes in range(1, 61)]
+        # the last video's footage watching when Kie's watcher failed in it (moved to ChannelRecipe's, or stopped)
+        data["footage_watcher"] = cr_watch.last_outcome(home)
         return cr_presentation.plain_copy(data)
 
     def selected_preset():

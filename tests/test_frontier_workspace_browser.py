@@ -58,7 +58,7 @@ def workspace(browser):
     rows = [
         {"name": "documentary", "features": {"offered": ["youtube", "motion", "sound"], "on": ["youtube", "motion", "sound"]}},
         {"name": "3d", "tab": "3d", "features": {"offered": ["threed", "maps", "sound"], "on": ["threed", "sound"]}},
-        {"name": CLONE, "label": "My Illustrated Worlds", "custom": True,
+        {"name": CLONE, "label": "My Illustrated Worlds", "custom": True, "captions": False,   # its channel has none
          "features": {"offered": ["motion", "sound"], "on": ["motion", "sound"]}},
         {"name": "stories", "label": "2D Life Stories", "character": STORY_CAST, "character_image": "characters/stories.png",
          "features": {"offered": ["ai_images", "sound"], "on": ["ai_images", "sound"]}},
@@ -68,7 +68,9 @@ def workspace(browser):
     catalog = {"channels": cr_presentation.presentation_catalog(rows, {
         CLONE: {"cr_style_clone": {"visual_mode": "reference_only"}}}),
         "features": features, "caps": {"features": {row["key"]: {"ok": True} for row in features}},
-        "dlc": {}, "prices": {}, "footage_watch": [cr_watch.budget(m) for m in range(1, 61)]}
+        "dlc": {}, "prices": {}, "footage_watch": [cr_watch.budget(m) for m in range(1, 61)],
+        "footage_watcher": {"note": "On your last video, Kie's video watcher wasn't answering, so ChannelRecipe's "
+                                    "watcher watched 12 of its videos."}}
     app = Flask(__name__)
 
     @app.before_request
@@ -440,6 +442,28 @@ def test_saved_reference_recipe_excludes_stale_unrelated_visuals(workspace):
     assert body["character_image"] == body["avatar_id"] == ""
 
 
+def test_captions_start_at_the_recipes_own_choice_and_asking_for_them_is_sent(workspace):
+    """Alex: a cloned style without captions showed "Burn captions into the video" on, and the video came out with
+    none. The switch now starts at the recipe's own choice and says so; switching it on asks for them."""
+    env, page = workspace, workspace.page
+    env.open("?cr-preset=" + CLONE)
+    page.locator("summary", has_text="Captions & publishing").click()
+    assert not page.locator("#crw-captions").is_checked()
+    assert "This style has no captions, like its channel. Switch this on" in page.inner_text("#crw-captions-note")
+    page.locator("#crw-captions").check()
+    assert "They will be added to this video." in page.inner_text("#crw-captions-note")
+    page.locator("#crw-title").fill("A wargame battle")
+    page.locator("#crw-create").click()
+    page.wait_for_function("!window.CR_WORKSPACE_CLIENT.state.submitting && window.CR_WORKSPACE_CLIENT.state.page==='projects'")
+    assert env.creates[0]["body"]["burn_subs"] is True and env.creates[0]["body"]["cr_captions"] == "on"
+    page.locator(".crw-nav [data-nav=create]").click()
+    page.evaluate("window.CR_WORKSPACE_CLIENT.selectRecipe(window.CR_WORKSPACE_CLIENT.state.catalog.channels.find(r => r.name === 'documentary'))")
+    assert page.locator("#crw-captions").is_checked() and page.locator("#crw-captions-note").is_hidden()
+    page.evaluate("window.CR_WORKSPACE_CLIENT.selectRecipe(window.CR_WORKSPACE_CLIENT.state.catalog.channels.find(r => r.name === %s))"
+                  % json.dumps(CLONE))
+    assert page.locator("#crw-captions").is_checked(), "the creator's choice for that recipe is kept"
+
+
 def test_setup_blocks_before_work_but_quota_history_is_advisory(workspace):
     env, page = workspace, workspace.page
     env.mode = "needs_setup"
@@ -501,6 +525,9 @@ def test_research_footage_says_what_its_watching_adds_and_progress_counts_the_vi
     ten = cr_watch.budget(10)
     assert f"about {ten['typical_minutes'][0]} to {ten['typical_minutes'][1]} minutes to a 10-minute video" in note.inner_text()
     assert f"up to {ten['videos']} YouTube videos" in note.inner_text()
+    # Alex: Kie was his only watcher and it was down; Create says what happens then, and what happened last time
+    assert "If Kie's video watcher isn't answering, ChannelRecipe's own watcher takes over" in note.inner_text()
+    assert "never your credits" in note.inner_text() and "watched 12 of its videos" in note.inner_text()
     page.locator("[data-minutes='20']").click()
     assert f"up to {cr_watch.budget(20)['videos']} YouTube videos" in note.inner_text()
     if os.environ.get("CR_SHOT"):

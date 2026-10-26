@@ -264,6 +264,8 @@ def style_card(row: dict, thumb: str = "") -> dict:
             "cloud_note": block, "media_cost": one_line(row.get("cost"), 220) if row.get("cost") else "",
             "short_seconds": row.get("short_seconds"), "needs_panels": bool(row.get("panels")),
             "thumbnail_path": thumb, "preview_url": link(row["preview_url"]) if row.get("preview_url") else "",
+            # burned-in captions by the style's own design (false: none, like its channel; captions=true adds them)
+            "captions": row.get("captions", True) is not False,
             # its recurring character (options.character / character_picture change it for a video)
             "character": one_line(row.get("character"), 300) if isinstance(row.get("character"), str) else ""}
 
@@ -667,7 +669,11 @@ def video_payload(row: dict, titles: list, minutes: int, features: dict, options
     steps = ["script", "voiceover", "images", "pexels", "video"] + (["thumbnail"] if thumbs else [])
     p = {"title": "\n".join(titles), "style": row["name"], "minutes": minutes, "steps": steps,
          "script": str(options.get("script") or "").strip(), "extra": extra, "byo_audio": "",
-         "burn_subs": options.get("captions", True) is not False, "force": False,
+         # captions: the style's own choice unless asked (some styles have none, like their channel: list_styles'
+         # captions false); captions=true burns them in anyway
+         "burn_subs": (options["captions"] is not False) if "captions" in options else row.get("captions", True) is not False,
+         "cr_captions": "on" if options.get("captions") is True and row.get("captions") is False else "",
+         "force": False,
          "thumb_count": max(1, min(int(options.get("thumbnail_count") or 2), 4)),
          "desc": description, "chapters": 5 if description else 0, "sources": 3 if description else 0,
          "features": features, "render_backend": "original", "character": "", "character_image": "",
@@ -845,6 +851,17 @@ def _job_status(slug: str) -> dict:
                                                                           "on_hold_because")})
         out["note"] = HOLD_NOTE if out["state"] == "held" else ("Waiting in Studio's queue: it starts by itself when "
                                                                 "the videos before it finish.")
+    # captions the video should carry but doesn't, and why (cr_captions logs one "Captions: ..." line at the final mux)
+    said = next((line for line in reversed(status.get("lines") or []) if str(line).strip().startswith("Captions: none")),
+                None)
+    if said:
+        out["captions_note"] = str(said).strip()
+    # footage watching that moved to ChannelRecipe's watcher, or stopped, because Kie's watcher wasn't answering (cr_watch)
+    moved = [str(line).strip() for line in status.get("lines") or []
+             if re.search(r"Kie's video watcher isn't answering|footage watching stopped for this video|"
+                          r"ChannelRecipe's watcher watched", str(line))]
+    if moved:
+        out["footage_note"] = " ".join(dict.fromkeys(moved))[:600]
     if status.get("video"):
         out.update(watch_url=link("/f/video/" + _quote_path(slug)), project_url=link("/editor/" + _quote_path(slug)))
     elif out["done"] or out["state"] in ("error", "stopped"):
@@ -1428,7 +1445,8 @@ def _schema(properties=None, required=()):
 
 
 _OPTIONS = {"type": "object", "description": (
-    "Optional. captions (default true), thumbnails (default true), thumbnail_count 1-4, description (YouTube "
+    "Optional. captions (default: the style's own; a style whose captions is false has none, like its channel, and "
+    "captions=true burns them in anyway), thumbnails (default true), thumbnail_count 1-4, description (YouTube "
     "description with chapters and sources, default true), extra_instructions (creative direction), script (your "
     "own narration, one title only), features {key: true/false} to switch the style's options (keys from quote), "
     "short_seconds 15-60 for Shorts, ranking {ranks 3-10, narrator_lines, vine_booms, meme_sounds full|light|off, "

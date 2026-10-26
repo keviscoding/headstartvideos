@@ -23,6 +23,7 @@ import time
 
 
 _diagnostic_lock = threading.Lock()
+_home = {"path": None}                                # the Studio folder (its .cr-logs), set by install()
 
 
 LEGACY_ENDPOINT = "https://api.kie.ai/gemini-2.5-flash/v1/chat/completions"
@@ -217,8 +218,15 @@ def install(module=None, *, home=None):
         facade = _WatcherRequests(original, module)
         module.requests = facade
     source = getattr(module, "__file__", None)
-    _install_search_diagnostics(module, home or (Path(source).resolve().parent if source else None))
+    _home["path"] = home or (Path(source).resolve().parent if source else None)
+    _install_search_diagnostics(module, _home["path"])
     _install_budget(module)
+    _install_fallback(module)
+    try:
+        import cr_archive
+        cr_archive.install()                          # archive.org that isn't answering is skipped, after 2 calls
+    except Exception:                                 # noqa: BLE001 - the engine's own Archive search, as before
+        pass
     return facade
 
 
@@ -332,6 +340,11 @@ def _install_budget(module):
 
     @wraps(fetch)
     def fetch_clips(engine, script, job, style, force, *args, **kwargs):
+        try:
+            import cr_archive
+            cr_archive.reset(engine)                  # each video asks archive.org again
+        except ImportError:
+            pass
         plan = budget(_minutes_of(engine, script, style))
         try:
             cfg = module.settings(engine, style)
@@ -343,7 +356,11 @@ def _install_budget(module):
         before = len(list(catalog.glob("*.json"))) if catalog.is_dir() else 0
         b = {"engine": engine, "plan": plan, "cfg": cfg, "ydir": Path(job) / "youtube", "t0": time.monotonic(),
              "said": 0.0, "watched": before, "new": 0, "done": 0, "planned": 0, "rounds": 0, "failed": {},
-             "refused": 0, "workers": WORKERS_LINK if watcher in LINK_WATCHERS else WORKERS_UPLOAD}
+             "refused": 0, "workers": WORKERS_LINK if watcher in LINK_WATCHERS else WORKERS_UPLOAD,
+             "dur": {}, "cr": {"watched": 0, "windows": 0, "kie_failed": 0, "said": False, "stopped": "", "down": 0}}
+        down = getattr(module, "_KIE_DOWN", None)
+        if isinstance(down, dict):
+            down["fails"] = 0                          # each video asks Kie's watcher again (the engine never reset it)
         key = _bkey(b["ydir"])
         with _budget_lock:
             before = _budget.get(key)
@@ -360,6 +377,7 @@ def _install_budget(module):
                 _log(b, f"  YouTube: {b['new']} video(s) watched in {(time.monotonic() - b['t0']) / 60:.0f} min "
                         f"({b['watched']} of this video's {plan['videos']})" + (
                             f"; {b['refused']} left unwatched by the budget" if b["refused"] else ""))
+            _fallback_done(b)
     fetch_clips._cr_budget = True
 
     @wraps(plan_focus)
@@ -368,6 +386,12 @@ def _install_budget(module):
         if b is None:
             return plan_focus(engine, title, needs, videos, work, *args, **kwargs)
         b["rounds"] += 1
+        for v in videos or []:
+            if isinstance(v, dict) and v.get("id") and v.get("duration"):
+                try:
+                    b["dur"][v["id"]] = float(v["duration"])
+                except (TypeError, ValueError):
+                    pass
         if b["rounds"] == 1:
             # the first round: every stretch's candidates, cut to the budget (a sixth kept for the later rounds)
             every = list(dict.fromkeys(v for x in needs for v in x.get("videos") or []))
@@ -400,6 +424,10 @@ def _install_budget(module):
 
     @wraps(shots)
     def watch(vid, work, *args, **kwargs):
+        if str(vid).startswith("ia:") and not _cached(module, work, vid):
+            import cr_archive
+            if cr_archive.skipped():                  # its film would be fetched from archive.org, which is down
+                raise RuntimeError(cr_archive.SKIPPED)
         b = _budget.get(_bkey(work))
         if b is None or _cached(module, work, vid):
             return shots(vid, work, *args, **kwargs)
@@ -425,3 +453,280 @@ def _install_budget(module):
                 _progress(b, force=b["done"] >= b["planned"])
 
     module.fetch_clips, module.plan_focus, module.shots = fetch_clips, focus, watch
+
+
+# ── when Kie's watcher fails: ChannelRecipe's own watcher ─────────────────────────────────────────────────────────
+# Customer ALEX (Studio 104, 2026-10-26): Kie.ai was his only video watcher and it was down. 14 YouTube videos in a row
+# failed ("Read timed out (read timeout=300)", "Internal Server Error", "Service Unavailable"), each waiting up to five
+# minutes, and footage logging took 6087 s, with nothing to fall back on and no word in the UI. Now, for a video whose
+# only watcher is Kie: a watch Kie fails is watched by ChannelRecipe's own watcher instead (the Ranking Shorts service,
+# /api/studio/ranking/watch: Gemini on ChannelRecipe's key, by the YouTube link, in its low-cost "scout" mode, results
+# shared between customers), and after three Kie failures in a row (the engine's own breaker, youtube._KIE_DOWN; Studio
+# 105 counts a watch that never answers) Kie isn't asked again for this video: every watch goes straight there. Those
+# watches come from the plan's monthly clip watches (the same as Ranking Shorts'), never the account's credits
+# (use_credits is never sent). When they are used up, or the service can't be reached, footage watching stops for this
+# video with one plain line, and the video goes on with the clips already found. Each line also reaches Create's
+# footage note (.cr-logs/footage-watcher.json) and Claude Code's progress tool.
+CR_WINDOW_S = 240                                     # the server's scout window (studio_ranking.MODES["scout"])
+# a video watched whole goes there as one window: its first four minutes (the plan's clip watches are shared with
+# Ranking Shorts, and a trial has 60 a month); a stretch the engine chose is watched in full, window by window
+CR_WHOLE_MAX_S = CR_WINDOW_S
+CR_WAIT_S = 600                                       # one watch's wait, queue included (the server gives up at 900)
+CR_POLL_S = 4.0
+CR_PATIENCE_S = 90                                    # connection trouble retried this long (POSTs are deduplicated)
+CR_DOWN_AFTER = 3                                     # service failures in a row before this video stops asking
+STATUS_FILE = "footage-watcher.json"
+_YOUTUBE_ID = re.compile(r"[A-Za-z0-9_-]{11}\Z")
+OUT_OF_WATCHES = re.compile(r"used this month|clip watches|not enough credits|top up credits", re.I)
+SERVICE_DOWN = re.compile(r"isn.t available right now|busy today|reconnect your channelrecipe|connect your channelrecipe|"
+                          r"secure https|could not complete this step", re.I)
+TRANSIENT = re.compile(r"could not reach channelrecipe|channelrecipe could not answer|timed out|connection", re.I)
+
+
+class _Stop(RuntimeError):
+    """ChannelRecipe's watcher can't take this video's watches (used up, unreachable, not connected)."""
+
+
+def _sleep(seconds: float) -> None:
+    time.sleep(seconds)
+
+
+def _kie_only(module, span, prefer) -> bool:
+    """Kie is the only video watcher this computer has for this watch (the engine falls over to any other itself)."""
+    try:
+        have = module.focus_analysts(prefer) if span else module.watchers(prefer)
+    except Exception:                                  # noqa: BLE001 - an engine without the list: leave it alone
+        return False
+    return list(have) == ["kie"]
+
+
+def _kie_down(module) -> bool:
+    down = getattr(module, "_KIE_DOWN", None)
+    return isinstance(down, dict) and int(down.get("fails") or 0) >= 3
+
+
+def _seconds(module, value) -> float:
+    reader = getattr(module, "_sec", None)
+    if callable(reader):
+        try:
+            return float(reader(value))
+        except Exception:                              # noqa: BLE001
+            return -1.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return -1.0
+
+
+def _clock_of(module, t: float) -> str:
+    clock = getattr(module, "_clock", None)
+    if callable(clock):
+        return clock(t)
+    return f"{int(t) // 60:02d}:{t - (int(t) // 60) * 60:04.1f}"
+
+
+def windows(span, duration) -> list:
+    """The scout windows (at most CR_WINDOW_S each) a watch needs: the stretch `span`, or a whole video's first
+    CR_WHOLE_MAX_S seconds (its length when known, else one window)."""
+    if span:
+        a, b = float(span[0]), float(span[1])
+    else:
+        a, b = 0.0, min(float(duration or CR_WINDOW_S), CR_WHOLE_MAX_S)
+    a = max(0.0, a)
+    out = []
+    while b - a >= 2.0:
+        end = min(b, a + CR_WINDOW_S)
+        out.append((int(a), max(int(a) + 2, int(math.ceil(end)))))
+        a = end
+    return out or [(0, 2)]
+
+
+def _bridge(path, payload=None):
+    """One call to ChannelRecipe: connection trouble is retried for a while (a watch POST is deduplicated by the
+    server and polls are GETs, so asking again never charges twice)."""
+    import cr_bridge
+    t0, wait = time.monotonic(), 2.0
+    while True:
+        try:
+            return cr_bridge.call(path, payload)
+        except RuntimeError as error:
+            message = str(error)
+            if OUT_OF_WATCHES.search(message):
+                raise _Stop("this month's ChannelRecipe clip watches are used up (your credits were not used)") from None
+            if SERVICE_DOWN.search(message):
+                raise _Stop("ChannelRecipe's watcher isn't available right now") from None
+            if TRANSIENT.search(message) and time.monotonic() - t0 < CR_PATIENCE_S:
+                _sleep(wait)
+                wait = min(20.0, wait * 2)
+                continue
+            if TRANSIENT.search(message):
+                raise _Stop("ChannelRecipe can't be reached from this computer right now") from None
+            raise
+
+
+def _cr_watch_one(vid: str, start: int, end: int, question: str) -> dict:
+    payload = {"video_id": vid, "start": start, "end": end, "mode": "scout", "question": question,
+               "use_credits": False}                  # the plan's clip watches only: never the account's credits
+    job = _bridge("ranking/watch", payload)
+    t0, lost = time.monotonic(), False
+    while job.get("status") == "running" and time.monotonic() - t0 < CR_WAIT_S:
+        _sleep(CR_POLL_S)
+        try:
+            job = _bridge(f"ranking/watch/{job['job']}")
+        except RuntimeError as error:                 # a job lost to a server restart: asked again once, never paid twice
+            if "wasn't found" in str(error) and not lost:
+                lost = True
+                job = _bridge("ranking/watch", payload)
+                continue
+            raise
+    if job.get("status") != "done":
+        raise RuntimeError(str(job.get("error") or ("the watch took too long" if job.get("status") == "running"
+                                                    else "the watch didn't finish")))
+    log = job.get("log")
+    return log if isinstance(log, dict) else {}
+
+
+def _on_clip_clock(module, rows: list, window: tuple, clip_start: float, rel: float) -> list:
+    """A window's shots on the clock the engine expects: seconds from `rel` (the stretch's start, or 0 for a whole
+    video). Gemini may answer from the window's start, the stretch's or the video's own: whichever puts the most shots
+    inside the window wins."""
+    a, b = window
+    times = [(_seconds(module, r.get("start")), _seconds(module, r.get("end"))) for r in rows]
+    best, offset = -1, 0.0
+    for off in dict.fromkeys((0.0, float(a), float(clip_start))):
+        inside = sum(1 for s, _ in times if s >= 0 and a - 3 <= s + off <= b + 3)
+        if inside > best:
+            best, offset = inside, off
+    out = []
+    for row, (s, e) in zip(rows, times):
+        if s < 0:
+            continue
+        s, e = s + offset, (e + offset if e >= 0 else s + offset + 2.0)
+        if e <= s or s > b + 3 or e < a - 3:
+            continue
+        out.append(dict(row, start=_clock_of(module, max(0.0, max(a, s) - rel)),
+                        end=_clock_of(module, max(0.0, min(b, e) - rel))))
+    return out
+
+
+def _say_once(b: dict, key: str, message: str) -> None:
+    with _budget_lock:
+        if b["cr"].get(key):
+            return
+        b["cr"][key] = True
+    _log(b, message)
+
+
+def _install_fallback(module):
+    """Wrap the engine's one watch (_log_one): ChannelRecipe's watcher takes a watch Kie fails, and every watch once
+    Kie's breaker is open."""
+    original = getattr(module, "_log_one", None)
+    if not callable(original) or getattr(original, "_cr_fallback", False):
+        return
+
+    def by_channelrecipe(b, vid, prompt, span, why):
+        cr = b["cr"]
+        if cr["stopped"]:
+            raise RuntimeError(f"not watched: {cr['stopped']}")
+        if not _YOUTUBE_ID.fullmatch(str(vid)):
+            raise RuntimeError("not watched: ChannelRecipe's watcher watches YouTube videos only")
+        _say_once(b, "said", f"  YouTube: Kie's video watcher isn't answering ({why}); ChannelRecipe's own watcher "
+                             "takes over this video's footage watching. It uses your plan's monthly clip watches, "
+                             "never your credits.")
+        rel = float(span[0]) if span else 0.0
+        shots, summary = [], ""
+        try:
+            for window in windows(span, b["dur"].get(vid)):
+                log = _cr_watch_one(str(vid), window[0], window[1], prompt)
+                with _budget_lock:
+                    cr["windows"] += 1
+                    cr["down"] = 0
+                rows = log.get("shots") if isinstance(log.get("shots"), list) else []
+                shots += _on_clip_clock(module, [r for r in rows if isinstance(r, dict)], window,
+                                        float(span[0]) if span else 0.0, rel)
+                summary = summary or str(log.get("video") or "")
+        except _Stop as stop:
+            with _budget_lock:
+                first = not cr["stopped"]
+                cr["stopped"] = cr["stopped"] or str(stop)
+            if first:
+                _log(b, f"  YouTube: footage watching stopped for this video: Kie's watcher isn't answering and "
+                        f"{stop}. It goes on with the clips it already found.")
+            raise RuntimeError(f"not watched: {stop}") from None
+        except RuntimeError:
+            with _budget_lock:
+                cr["down"] += 1
+                if cr["down"] >= CR_DOWN_AFTER and not cr["stopped"]:
+                    cr["stopped"] = "ChannelRecipe's watcher failed three watches in a row"
+                    stopped = True
+                else:
+                    stopped = False
+            if stopped:
+                _log(b, "  YouTube: footage watching stopped for this video: Kie's watcher isn't answering and "
+                        "ChannelRecipe's watcher failed three watches in a row. It goes on with the clips it already "
+                        "found.")
+            raise
+        if not shots:
+            raise RuntimeError("the shot log had no shots")
+        with _budget_lock:
+            cr["watched"] += 1
+        return {"video": summary, "shots": shots}
+
+    @wraps(original)
+    def log_one(vid, work, prompt, span=None, prefer=None, *args, **kwargs):
+        b = _budget.get(_bkey(work))
+        if b is None or args or kwargs or not _kie_only(module, span, prefer) or str(vid).startswith("ia:"):
+            return original(vid, work, prompt, span, prefer, *args, **kwargs)
+        if _kie_down(module):
+            return by_channelrecipe(b, vid, prompt, span, "it failed three videos in a row")
+        try:
+            return original(vid, work, prompt, span, prefer)
+        except Exception as error:                     # noqa: BLE001 - this watch goes to ChannelRecipe's watcher
+            with _budget_lock:
+                b["cr"]["kie_failed"] += 1
+            why = re.sub(r"\s+", " ", str(error))[:90] or type(error).__name__
+            return by_channelrecipe(b, vid, prompt, span, why)
+    log_one._cr_fallback = True
+    module._log_one = log_one
+
+
+def _fallback_done(b: dict) -> None:
+    """The video's footage search is over: one summary line, and the last outcome kept for Create's footage note."""
+    cr = b.get("cr") or {}
+    if not (cr.get("kie_failed") or cr.get("said") or cr.get("stopped")):
+        return
+    if cr.get("watched"):
+        _log(b, f"  YouTube: ChannelRecipe's watcher watched {cr['watched']} video(s) ({cr['windows']} clip watches) "
+                "because Kie's watcher wasn't answering.")
+    home = _home.get("path")
+    if not home:
+        return
+    record = {"at": int(time.time()), "kie_failed": int(cr.get("kie_failed") or 0),
+              "channelrecipe_watched": int(cr.get("watched") or 0), "clip_watches": int(cr.get("windows") or 0),
+              "stopped": str(cr.get("stopped") or "")}
+    try:
+        folder = Path(home) / ".cr-logs"
+        folder.mkdir(parents=True, exist_ok=True)
+        tmp = folder / (STATUS_FILE + ".tmp")
+        tmp.write_text(json.dumps(record), encoding="utf-8")
+        os.replace(tmp, folder / STATUS_FILE)
+    except OSError:
+        pass
+
+
+def last_outcome(home=None, max_age_s: float = 2 * 86400) -> dict:
+    """The last video's footage watching, when Kie's watcher failed in it (Create's footage note says so), else {}."""
+    folder = Path(home or _home.get("path") or ".") / ".cr-logs"
+    try:
+        record = json.loads((folder / STATUS_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(record, dict) or time.time() - float(record.get("at") or 0) > max_age_s:
+        return {}
+    if record.get("stopped"):
+        record["note"] = (f"On your last video, Kie's video watcher wasn't answering and footage watching stopped: "
+                          f"{record['stopped']}.")
+    elif record.get("channelrecipe_watched"):
+        record["note"] = (f"On your last video, Kie's video watcher wasn't answering, so ChannelRecipe's watcher "
+                          f"watched {record['channelrecipe_watched']} of its videos.")
+    return record if record.get("note") else {}

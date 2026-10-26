@@ -61,6 +61,9 @@ What they asked for: $ARGUMENTS
 - Options (all optional): captions, thumbnails, thumbnail_count, description, extra_instructions (creative
   direction), script (their own narration, one title), features {key: true/false} (the style's switches, shown by
   `quote` under media), short_seconds, ranking {...} for Ranking Shorts.
+- **Captions** start at the style's own choice: a style card with `captions: false` has none by design, like its
+  channel. If they want captions on such a style, pass `options.captions: true` and Studio burns them in anyway.
+  When a video should have had captions but has none, `progress(id)` gives `captions_note` with the reason: tell them.
 - **A different character** (the style's card shows its `character`): pass `options.character` (words: age, hair,
   face, clothes, one recognisable detail) or `options.character_picture` (the path of their picture), rather than
   extra_instructions: the style's picture of its old character would still go with every image, so nothing keeps

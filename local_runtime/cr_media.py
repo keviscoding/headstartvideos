@@ -1050,6 +1050,8 @@ def make_voiceover(engine, original_voice):
         if chosen.get("provider") == "original" or not (chosen or active("narration")):
             out = original_voice(script, job, force, avatar_min, style)
             (Path(job) / VOICE_FAILED).unlink(missing_ok=True)
+            import cr_captions
+            cr_captions.after_voice(engine, script, out)   # an empty subs.srt (no word timings) is timed here
             return out
         job = Path(job)
         mp3, srt = job / "audio.mp3", job / "subs.srt"
@@ -1239,6 +1241,8 @@ def install(engine):
     except ImportError:
         pass
     wrap_whisper(engine)
+    import cr_captions
+    cr_captions.install(engine)                 # captions asked for are burned in, or the video says why not
     global _native_images
     _native_images = engine._image_provider
     def hook(name, task, replacement):
