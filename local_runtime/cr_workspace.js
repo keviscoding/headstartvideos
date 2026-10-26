@@ -311,7 +311,15 @@
   function summary() {
     const r = state.selected; text('crw-summary-title', $('crw-title').value.trim() || 'Your next video');
     text('crw-summary-recipe', r?.label || 'Choose a recipe');
-    text('crw-summary-duration', isRanking(r) ? `${number('crw-ranks',5,3,10)} ranked clips` : isShort(r) ? `${number('crw-seconds',25,15,60)} seconds` : state.narration === 'own' ? 'Length of your recording' : (m => `${m} minute${m === 1 ? '' : 's'}`)(number('crw-minutes',10,1,60)));
+    // My script: the words set the length, not the minutes chosen (a 1-minute choice made a 1:24 video from 161 words,
+    // the owner's Windows test, 2026-10-26), so the page says how long it reads at the style's pace
+    const scriptWords = state.input === 'script' ? $('crw-script').value.trim().split(/\s+/).filter(Boolean).length : 0;
+    const pace = Number(r?.wpm) >= 80 && Number(r?.wpm) <= 260 ? Number(r.wpm) : 150;      // the style's words a minute
+    const scriptMinutes = scriptWords ? scriptWords / pace : 0;
+    const reads = scriptMinutes ? (scriptMinutes < 1 ? `about ${Math.max(5, Math.round(scriptMinutes * 60 / 5) * 5)} seconds` : `about ${Math.round(scriptMinutes * 10) / 10} minutes`) : '';
+    text('crw-script-length', reads ? `${scriptWords} words: ${reads} of video at this style's reading pace. Your script sets the length.` : '');
+    hide('crw-script-length', !reads);
+    text('crw-summary-duration', reads && state.narration !== 'own' && !isRanking(r) && !isShort(r) ? reads[0].toUpperCase() + reads.slice(1) + ' (your script)' : isRanking(r) ? `${number('crw-ranks',5,3,10)} ranked clips` : isShort(r) ? `${number('crw-seconds',25,15,60)} seconds` : state.narration === 'own' ? 'Length of your recording' : (m => `${m} minute${m === 1 ? '' : 's'}`)(number('crw-minutes',10,1,60)));
     text('crw-summary-visuals', strict(r) ? 'Reference animation throughout' : Object.entries(featureValues()).filter(([k,v]) => v && k !== 'sound').map(([k]) => (featureCopy[k] || [k])[0]).join(', ') || 'Recipe defaults');
     // a cloned style reads with its own narrator (the kind of voice its channel has), else the account's voice
     const narrator = state.selected?.narrator || state.setup?.narration?.voice;
