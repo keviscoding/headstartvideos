@@ -122,6 +122,9 @@ Studio through its own checks, so nothing needs the Studio web page.
   days, then Studio empties it for good. Say first which video or style goes and what stays (their voice library,
   styles and other videos; for a style, the videos made with it), and that Claude Code asks them to approve. A video
   being made is refused: don't cancel it to delete it unless they ask for that too.
+- Voices: Kie narrates with Gemini voices only (70 of them, in Create → Choose voice, each with a free sample). For
+  ElevenLabs voices the customer adds their own ElevenLabs key in Setup & accounts (its whole voice library then shows
+  in Choose voice). Studio moved any saved Kie ElevenLabs voice to the Gemini voice of its kind and says so once.
 - A video that stopped on its voice (`progress(id)` shows `voice_choices`, for example Kie answering "Internal Error"):
   tell them what failed and whether anything was charged (`voice_failed`), then ask which way to carry on: the same
   voice again after a few minutes, Gemini through Kie (same key), their own ElevenLabs account, or their own recording.
