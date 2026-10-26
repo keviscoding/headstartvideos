@@ -40,6 +40,8 @@ PHASES = {
     "validate": (78, "Rendering and reviewing the learned graphics against the reference."),
     "art": (88, "Writing the picture style, cast and voice from what Studio saw."),
     "renderer": (90, "Claude is writing this channel's animation and checking its test shots against the references."),
+    "improve": (50, "Claude is making your change to the style's renderer, then drawing it and checking it against the "
+                    "channel."),
     "publish": (94, "Saving your validated style in the studio's preset library."),
     "complete": (100, "Your learned style is saved and ready to use."),
 }
@@ -641,6 +643,136 @@ def prepare(home, supplied, proof, bridge):
     return status(home, operation_id, bridge)
 
 
+IMPROVE_MINUTES = 25                     # two renderer calls at most (the change, one fix), then a free preview
+IMPROVE_MAX_CALLS = 3
+
+
+def prepare_improvement(home, source_operation, request, proof, bridge):
+    """One change to a coded style's renderer, in the creator's words, as its own owned operation (Improve this style
+    on the study page). Nothing runs here; the style changes only when the creator saves the new version. One change
+    at a time per style: while one is waiting or running, that one is returned."""
+    request = " ".join(str(request or "").split())
+    if not 4 <= len(request) <= 600:
+        raise ValueError("Say the change in a few words (up to 600 characters).")
+    source, original = _saved(home, source_operation, bridge)
+    proof, owner = _proof(bridge, proof), _owner(bridge)
+    if original.get("state") not in {"complete", "complete_local"} or not _published(home, original):
+        raise RuntimeError("Save this style before improving it.")
+    style_id = original["spec"]["style_id"]
+    style = _read(Path(home) / "styles" / (style_id + ".json"))
+    import cr_animated2d
+    record = ((style.get("look") or {}).get("animated2d") or {}).get("renderer") or {}
+    if (style.get("look") or {}).get("visuals") not in cr_animated2d.PLUGINS or not record.get("file"):
+        raise RuntimeError("Only a style written in code, with a working renderer, can be improved this way.")
+    with _lock(_folder(home), ".prepare.lock"), _lock(source):
+        index = _folder(home) / ".improvements" / (source_operation + ".json")
+        last = _read(index).get("operation_id")
+        if last:
+            _, before = _saved(home, last, bridge)
+            if before.get("state") in {"prepared", "running", "validated"}:
+                return status(home, last, bridge)
+        bridge.prepare_runtime(proof)
+        operation_id = "op_" + secrets.token_hex(12)
+        folder = _operation(home, operation_id)
+        folder.mkdir(parents=True, mode=0o700)
+        spec = copy.deepcopy(original["spec"])
+        spec.pop("renderer", None)                         # the change is written here, not by a study
+        spec.update(budget_minutes=IMPROVE_MINUTES, max_calls=IMPROVE_MAX_CALLS,
+                    base_sha256=_file_hash(Path(home) / "styles" / (spec["base_style"] + ".json")))
+        saved = {"operation_id": operation_id, "owner": owner, "spec": spec, "proof": proof,
+                 "identity": _hash({"source": source_operation, "request": request, "owner": owner,
+                                    "renderer": record.get("sha256"), "at": time.time()}),
+                 "state": "prepared", "phase": "prepared", "renderer_improve": True,
+                 "refinement_of": source_operation, "source_style": style_id, "request": request,
+                 "source_renderer": {k: record.get(k) for k in ("file", "sha256", "version")},
+                 "begin_id": "b_" + secrets.token_hex(16), "created_at": time.time()}
+        _write(folder / "operation.json", saved)
+        _write(index, {"operation_id": operation_id})
+    return status(home, operation_id, bridge)
+
+
+def improve_style(home, engine, folder, saved, progress, *, learner=None):
+    """The worker's part of Improve this style: Claude's change, drawn and checked by Style Lab (cr_style_lab
+    .run_improvement), held aside for the creator. StudyStopped when no usable version came of it."""
+    import cr_style_lab
+    if learner is None:
+        import reflearn as learner
+
+    def log(message):
+        descriptor = os.open(Path(folder) / "study.log", os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(str(message) + "\n")
+    clock = learner.Clock(saved["spec"]["budget_minutes"], log)
+    progress("improve")
+    with _renderer_effort():
+        return cr_style_lab.run_improvement(home, saved["source_style"], Path(folder).name, saved["request"],
+                                            see=lambda prompt, images: learner._see(engine, clock, "renderer", prompt,
+                                                                                    images, max_tokens=32000), log=log)
+
+
+def _finish_improvement(home, folder, saved):
+    """An improvement publishes nothing: its receipt names the waiting version (style-lab/<style>/improve/<op>/)."""
+    import cr_style_lab
+    path = cr_style_lab.improvement_folder(home, saved["source_style"], Path(folder).name) / "candidate.json"
+    if _read(path).get("state") not in {"ready", "saved", "kept_old"}:
+        raise RuntimeError("The improved version is missing. Review this saved change before any further work.")
+    saved.update(state="complete_local", phase="complete", completed_at=time.time())
+    saved["finish_receipt"] = {"project_id": saved["project_id"], "status": "done", "error_code": "",
+        "artifacts": [{"name": "style-improvement.json", "sha256": _file_hash(path), "media_type": "application/json"}]}
+    _write(Path(folder) / "operation.json", saved)
+
+
+def _improvement(home, operation_id, saved, state) -> dict:
+    """What the study page shows of one change: the request, the candidate's state and what it can show."""
+    import cr_style_lab
+    cand = cr_style_lab.candidate(home, saved["source_style"], operation_id)
+    out = {"request": saved.get("request"), "style": saved.get("source_style"),
+           "state": cand.get("state") or ("drawing" if state in {"prepared", "running"} else state),
+           "current_version": (saved.get("source_renderer") or {}).get("version"),
+           "current_shots": len([p for p in (cand.get("current") or {}).get("stills") or [] if Path(p).is_file()]),
+           "new_shots": len([p for p in cand.get("stills") or [] if Path(p).is_file()]),
+           "current_video": bool((cand.get("current") or {}).get("video")), "new_video": bool(cand.get("video"))}
+    for key in ("check", "problems", "warnings", "version"):
+        if cand.get(key):
+            out[key] = cand[key]
+    current = cand.get("current") or {}
+    if current.get("overall") is not None:
+        out["current_check"] = {"overall": current.get("overall"), "bar": current.get("bar")}
+    return out
+
+
+def improvement_pictures(home, operation_id, bridge) -> dict:
+    """{"current": [...], "new": [...], "current_video", "new_video"}: one change's test shots and 5 s videos, the
+    current version beside the new one. Files in the style's own Lab workspace only; the page asks by index."""
+    import cr_style_lab
+    folder, saved = _saved(home, operation_id, bridge)
+    if not saved.get("renderer_improve"):
+        raise RuntimeError("Choose a change to a style.")
+    cand = cr_style_lab.candidate(home, saved["source_style"], operation_id)
+    lab = cr_style_lab.folder(home, saved["source_style"]).resolve()
+
+    def fine(p, kinds):
+        p = Path(str(p or ""))
+        return (p.suffix.lower() in kinds and p.is_file() and not p.is_symlink() and p.resolve().is_relative_to(lab))
+    current = cand.get("current") or {}
+    return {"current": [Path(p) for p in current.get("stills") or [] if fine(p, (".jpg",))][:4],
+            "new": [Path(p) for p in cand.get("stills") or [] if fine(p, (".jpg",))][:4],
+            "current_video": Path(current["video"]) if fine(current.get("video"), (".mp4",)) else None,
+            "new_video": Path(cand["video"]) if fine(cand.get("video"), (".mp4",)) else None}
+
+
+def keep_improvement(home, operation_id, bridge, *, use_new: bool) -> dict:
+    """The creator's choice on a ready change: save it as the style's next renderer version (Style Lab's save, which
+    keeps the study's receipt in step) or keep the old one."""
+    import cr_style_lab
+    folder, saved = _saved(home, operation_id, bridge)
+    if not saved.get("renderer_improve") or saved.get("state") not in {"complete", "complete_local"}:
+        raise RuntimeError("Wait for the change to be drawn first.")
+    with _lock(folder), _lock(_operation(home, saved["refinement_of"])):    # a save rewrites the study's receipt
+        cr_style_lab.keep_candidate(home, saved["source_style"], operation_id, use_new=use_new is True)
+    return status(home, operation_id, bridge)
+
+
 def _saved(home, operation_id, bridge):
     folder = _operation(home, operation_id)
     saved = _read(folder / "operation.json")
@@ -722,6 +854,17 @@ def status(home, operation_id, bridge):
     result["recovery_of"] = saved.get("recovery_of")
     result["refinement_only"] = saved.get("refinement_only") is True
     result["refinement_of"] = saved.get("refinement_of")
+    if saved.get("renderer_improve"):
+        result.pop("retry_spec", None)                     # a change is asked again on its style's page, never re-studied
+        result["renderer_improve"] = True
+        result["improvement"] = change = _improvement(home, operation_id, saved, state)
+        said = {"ready": "Claude's change is ready. Compare it with the current version, then save it or keep the old "
+                         "one.",
+                "saved": f"Saved as version {change.get('version')} of the style's renderer. New videos use it.",
+                "kept_old": "You kept the current version. The change is still here to look at."}.get(change["state"])
+        if said and state in {"complete", "complete_local"}:
+            result["message"] = said
+        return result
     if result["style_ready"]:
         result.update(style=saved["spec"]["style_id"], label=saved["spec"]["label"],
                       board_available=(folder / "reflearn/board.jpg").is_file())
@@ -748,6 +891,10 @@ def status(home, operation_id, bridge):
         if renderer:
             seen = renderer_pictures(home, operation_id, bridge, style=style)
             renderer.update(shots=len(seen["shots"]), channel_frames=len(seen["channel"]))
+            # the latest change asked of it (Improve this style), so the page can pick it up again
+            change = _read(_folder(home) / ".improvements" / (operation_id + ".json")).get("operation_id")
+            if change and renderer.get("state") != "pictures":
+                renderer["improvement_id"] = change
             result["renderer"] = renderer
             if renderer.get("say"):
                 result["message"] = renderer["say"]
@@ -967,7 +1114,10 @@ def sync(home, operation_id, bridge):
     with _lock(folder):
         folder, saved = _saved(home, operation_id, bridge)    # as it is now: a style edit may have just saved it
         if saved.get("state") == "validated":
-            _publish(home, folder, saved)
+            if saved.get("renderer_improve"):
+                _finish_improvement(home, folder, saved)
+            else:
+                _publish(home, folder, saved)
         _sync(folder, saved, bridge)
     return status(home, operation_id, bridge)
 
@@ -1738,7 +1888,10 @@ def run(home, operation_id, bridge, *, readiness, execute=None):
             _sync(folder, saved, bridge)
             return status(home, operation_id, bridge)
         if saved["state"] == "validated":
-            _publish(home, folder, saved)
+            if saved.get("renderer_improve"):
+                _finish_improvement(home, folder, saved)
+            else:
+                _publish(home, folder, saved)
             _sync(folder, saved, bridge)
             return status(home, operation_id, bridge)
         if saved.get("metadata_only"):
@@ -1752,7 +1905,8 @@ def run(home, operation_id, bridge, *, readiness, execute=None):
             raise RuntimeError("The base preset changed after approval. Preview and approve a new study.")
         bridge.prepare_runtime(proof)
         response = bridge._mcp_tool("local_studio_begin", {"begin_id": saved["begin_id"],
-            "title": "Style study: " + saved["spec"]["title"], "style": saved["spec"]["base_style"],
+            "title": ("Improve style: " if saved.get("renderer_improve") else "Style study: ") + saved["spec"]["title"],
+            "style": saved["spec"]["base_style"],
             "minutes": 1, "features": {}, "options": {}, "setup": proof,
             "max_calls": saved["spec"]["max_calls"], "platform": "windows" if os.name == "nt" else "mac"})
         project = response["project"]
@@ -1773,7 +1927,9 @@ def run(home, operation_id, bridge, *, readiness, execute=None):
                     import cr_animated2d
                     extra = cr_animated2d.BUILD_MINUTES
                 with _creative_budget(saved["spec"]["budget_minutes"] + extra):
-                    if saved.get("refinement_only"):
+                    if saved.get("renderer_improve"):
+                        improve_style(home, engine, folder, saved, progress)
+                    elif saved.get("refinement_only"):
                         import cr_style_refine
                         cr_style_refine.run_original(engine, folder, saved, progress)
                     else:
@@ -1797,8 +1953,11 @@ def run(home, operation_id, bridge, *, readiness, execute=None):
             raise
         # From here on recovery only publishes the already validated style or
         # records completion. It cannot repeat a creative call.
-        _publish(home, folder, saved)
-        _likeness(home, folder, saved)
+        if saved.get("renderer_improve"):
+            _finish_improvement(home, folder, saved)       # held for the creator's choice: nothing is published
+        else:
+            _publish(home, folder, saved)
+            _likeness(home, folder, saved)
         try:
             _sync(folder, saved, bridge)
         except Exception:

@@ -726,7 +726,7 @@ def keep_candidate(home, style: str, operation_id: str, *, use_new: bool) -> dic
     only) or keep the old one."""
     out = improvement_folder(home, style, operation_id)
     cand = _read(out / "candidate.json")
-    if cand.get("state") != "ready":
+    if cand.get("state") not in ({"ready", "kept_old"} if use_new else {"ready"}):    # kept the old one: may still save
         raise LabError("This change has no ready version to keep: " + str(cand.get("state") or "not drawn yet") + ".")
     if use_new:
         lab_dir, lab = _lab(home, style)

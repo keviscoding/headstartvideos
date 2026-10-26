@@ -150,7 +150,9 @@ Studio through its own checks, so nothing needs the Studio web page.
   `accept_medium=true` only after they accept it. Never accept it for them, and never call a stopgap the real thing.
 - Improving a style after it's saved (any style written in code): the `style_lab` tool and the /clone-style
   skill's Style Lab section. They can prompt it like any code: edit its workspace files, preview, check against the
-  channel, save. Free.
+  channel, save. Free. Without Claude Code open, the Studio page does one change at a time the same way: Style
+  library → Improve this style (or the style's study page) takes the change in their words, shows the new version
+  beside the current one with its check, and saves it only when they press Save.
 - Before the paid study, the finished look's `similar_styles` are the styles they already have that come closest. Mention
   them in a line each, as suggestions only, never as a reason not to study: they can use one now, or try a few seconds
   of one on their topic first with `style_sample` (about $0.05 on their own accounts: say so and ask first). A channel

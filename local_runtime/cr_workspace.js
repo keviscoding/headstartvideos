@@ -382,6 +382,10 @@
       const edit = el('a','crw-inline-link','Edit or study again'); edit.href = `/cr-style-clone?edit=${encoded(recipe.name)}`;
       const del = el('button','crw-text-button crw-delete-button','Delete style'); del.type = 'button';
       del.setAttribute('aria-label', `Delete ${recipe.label}`); del.addEventListener('click', () => openDelete('style', recipe.name));
+      if (recipe.improve_study) {           // written in code: one change in your words, on its study's page
+        const better = el('a','crw-inline-link','Improve this style'); better.href = `/cr-style-clone?operation=${encoded(recipe.improve_study)}#improve`;
+        actions.append(better);
+      }
       actions.append(edit, del); item.append(card, actions); target.append(item);
     }
     hide('crw-styles-empty',!!customs.length);

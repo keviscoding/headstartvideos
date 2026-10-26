@@ -148,6 +148,12 @@ def install(studio, activity, *, token, home=None):
             # a style drawn by its own renderer: its background pictures and its own music score, for quotes
             import cr_animated2d
             row["coded_media"] = cr_animated2d.media_usd(info) if isinstance(info, dict) else {}
+            # a style written in code with a working renderer can be improved on its study's page (Improve this style)
+            look = info.get("look") if isinstance(info, dict) and isinstance(info.get("look"), dict) else {}
+            made = ((look.get("animated2d") or {}).get("renderer") or {}) if look.get("visuals") in cr_animated2d.PLUGINS \
+                else {}
+            study = ((info or {}).get("cr_style_clone") or {}).get("operation_id") if made.get("file") else None
+            row["improve_study"] = study if isinstance(study, str) and _OPERATION.fullmatch(study) else None
             row.update(preview_available=source is not None,
                 preview_url=("/cr-workspace/preview/recipe/" + quote(row["name"], safe="") + ".jpg?v="
                              + preview_version(source)) if source else None,
@@ -450,6 +456,8 @@ def install(studio, activity, *, token, home=None):
             for _, folder in sorted(candidates, reverse=True)[:12]:
                 try:
                     status = cr_style_clone.status(home, folder.name, cr_bridge)
+                    if status.get("renderer_improve"):
+                        continue                      # a change to a saved style shows on that style's own page
                     # status verifies the current local CR credential owns the
                     # operation before any title/label is copied from its file.
                     spec = _read(folder / "operation.json").get("spec") or {}
