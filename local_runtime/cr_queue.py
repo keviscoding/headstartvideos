@@ -453,8 +453,8 @@ class Keeper:
         with self.lock, self._studio_lock():
             return {"held": [{"slug": s["slug"], "title": s["title"], "ranking": is_ranking(s),
                               "reason": self.why.get(s["slug"]) or self.reason} for s in self.held],
-                    "reason": self.reason, "code": self.code, "waiting": len(self._queue),
-                    "max_ranking_batch": MAX_RANKING_BATCH}
+                    "reason": self.reason, "code": self.code, "scope": self.scope if self.held else "",
+                    "waiting": len(self._queue), "max_ranking_batch": MAX_RANKING_BATCH}
 
     def queue_rows(self, body):
         """The engine's /api/queue answer with each waiting video's place in line and the held ones (state held,

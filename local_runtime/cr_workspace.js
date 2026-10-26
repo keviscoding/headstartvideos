@@ -305,13 +305,33 @@
   function gate() {
     const ready = state.setup?.readiness?.ready === true;
     const needsPanels = !!state.selected?.panels && !state.panels;
-    const blocked = state.submitting || state.uploading || state.drawing || !state.catalog || !ready || state.busy || (state.narration === 'own' && !state.audio) || needsPanels;
+    // While Studio makes a video (or learns a style), Create adds this one to the queue: Studio makes them one at a
+    // time, so the creator can queue several and walk away (cr_queue).
+    const blocked = state.submitting || state.uploading || state.drawing || !state.catalog || !ready || (state.narration === 'own' && !state.audio) || needsPanels;
     $('crw-create').disabled = blocked;
-    let message = !state.catalog ? 'Loading your visual recipes…' : !ready && mustUpdate() ? 'A new Studio is out. Press Update now at the top of this page to keep making new videos: it takes a minute and keeps your projects.' : !ready ? (state.setup?.readiness?.blockers || ['Finish account setup before creating a video.']).join(' ') : state.busy ? 'A project is using this studio. Its progress is available in Projects.' : state.narration === 'own' && !state.audio ? 'Choose a narration recording to continue.' : needsPanels ? 'Choose your panels to continue.' : 'Ready. Each Create starts a separate new project.';
+    if (!state.submitting) createLabel();
+    let message = !state.catalog ? 'Loading your visual recipes…' : !ready && mustUpdate() ? 'A new Studio is out. Press Update now at the top of this page to keep making new videos: it takes a minute and keeps your projects.' : !ready ? (state.setup?.readiness?.blockers || ['Finish account setup before creating a video.']).join(' ') : state.narration === 'own' && !state.audio ? 'Choose a narration recording to continue.' : needsPanels ? 'Choose your panels to continue.' : queuing() ? queueNote() : 'Ready. Each Create starts a separate new project.';
     text('crw-readiness', message);
     const status = $('crw-connection'); status.querySelector('span:last-of-type').textContent = ready ? 'Accounts connected' : 'Accounts need attention';
     status.querySelector('.crw-status-dot').className = `crw-status-dot ${ready ? 'is-ready' : 'is-warning'}`;
     cloudChoice();
+  }
+  // The queue (cr_queue): Create says Add to queue while Studio works, and what waits says its place or why it's held.
+  function queuing() {
+    const cloud = state.renderOn === 'cloud' && state.cloudInfo?.available && !cloudBlock();
+    return !cloud && (state.busy || state.heldScope === 'all' && state.queue.some(q => q.state === 'held'));
+  }
+  function createLabel() {$('crw-create').textContent = queuing() ? 'Add to queue' : 'Create video';}
+  function queueNote() {
+    const waiting = state.queue.filter(q => q.state === 'queued').length, held = state.queue.filter(q => q.state === 'held');
+    if (held.length && state.heldScope === 'all') return `The queue is on hold: ${state.heldReason || 'something every video needs stopped.'} A video you add now waits with them; Carry on starts them again.`;
+    const making = state.queue.some(q => q.state === 'running') ? 'Studio is making a video' : 'Studio is busy';
+    return `${making}${waiting ? ` and ${waiting} more ${waiting === 1 ? 'is' : 'are'} waiting` : ''}. Add to queue: this one starts when the ones before it finish, one at a time. You don't need to stay.`;
+  }
+  function placeText(job) {
+    if (job.state === 'held') return 'On hold';
+    if (job.state !== 'queued' || !Number.isFinite(job.ahead)) return '';
+    return job.ahead === 0 ? 'Starting next' : job.ahead === 1 ? 'Next in line' : `${job.ahead} videos before it`;
   }
   function showPage(name, persist = true) {
     state.page = ['create','projects','styles'].includes(name) ? name : 'create';
@@ -435,19 +455,20 @@
       video.addEventListener('play',()=>{for(const other of all('.crw-video-preview'))if(other!==video)other.pause();video.controls=true;play.hidden=true;});video.addEventListener('pause',()=>{play.hidden=false;});video.addEventListener('ended',()=>{video.controls=false;play.hidden=false;});
       media.append(video,play);
       posterObserver?.observe(video);
-    } else {media.classList.add('crw-preview-unavailable');media.append(el('span','', ['running','queued'].includes(job.state)?'Video is in production':'No finished video yet'));}
-    const body=el('div','crw-card-body');body.append(statusBadge(job.state),el('h3','',job.title||'Untitled video'),el('p','crw-card-meta',`${r?.label||'Video project'}${job.mtime?' · '+date(job.mtime):''}`));
-    const actions=el('div','crw-card-actions');const open=el('button','crw-secondary-button',job.hasVideo?'Video & exports':['running','queued'].includes(job.state)?'View progress':'Review issue');open.type='button';open.addEventListener('click',()=>job.hasVideo?openOutput(job):openProgress(job));actions.append(open);
+    } else {media.classList.add('crw-preview-unavailable');media.append(el('span','', job.state==='queued'?'Waiting in the queue':job.state==='held'?'On hold in the queue':job.state==='running'?'Video is in production':'No finished video yet'));}
+    const body=el('div','crw-card-body');const place=placeText(job);body.append(statusBadge(job.state),el('h3','',job.title||'Untitled video'),el('p','crw-card-meta',`${r?.label||'Video project'}${place?' · '+place:''}${job.mtime?' · '+date(job.mtime):''}`));
+    if(job.state==='held'&&job.reason)body.append(el('p','crw-card-held',job.reason));
+    const actions=el('div','crw-card-actions');const open=el('button','crw-secondary-button',job.hasVideo?'Video & exports':['running','queued','held'].includes(job.state)?'View progress':'Review issue');open.type='button';open.addEventListener('click',()=>job.hasVideo?openOutput(job):openProgress(job));actions.append(open);
     if(!['running','queued','held'].includes(job.state)){const del=el('button','crw-text-button crw-delete-button','Delete');del.type='button';del.setAttribute('aria-label',`Delete ${job.title||'this video'}`);del.addEventListener('click',()=>openDelete('video',job.slug));actions.append(del);}
     body.append(actions);card.append(media,body);return card;
   }
   function renderProjects() {
-    const projects=combinedProjects().filter(j=>state.projectFilter==='all'||(state.projectFilter==='done'?j.state==='done':state.projectFilter==='active'?['running','queued'].includes(j.state):!['running','queued','done'].includes(j.state)));
+    const projects=combinedProjects().filter(j=>state.projectFilter==='all'||(state.projectFilter==='done'?j.state==='done':state.projectFilter==='active'?['running','queued','held'].includes(j.state):!['running','queued','held','done'].includes(j.state)));
     const target=$('crw-projects-list');const wanted=new Set(projects.map(j=>j.slug));
     const available=new Set(combinedProjects().map(j=>j.slug));for(const [slug,cached] of state.projectNodes)if(!available.has(slug)){discardProject(cached);state.projectNodes.delete(slug);}
     for(const node of [...target.children])if(!wanted.has(node.dataset.slug)){node.querySelector('video')?.pause();node.remove();}
     projects.forEach((job,index)=>{
-      const fingerprint=JSON.stringify([job.state,job.title,job.style,job.mtime,job.hasVideo,job.editable]);let saved=state.projectNodes.get(job.slug);
+      const fingerprint=JSON.stringify([job.state,job.title,job.style,job.mtime,job.hasVideo,job.editable,placeText(job),job.reason||'']);let saved=state.projectNodes.get(job.slug);
       if(!saved||saved.fingerprint!==fingerprint){discardProject(saved);saved={fingerprint,node:projectCard(job)};state.projectNodes.set(job.slug,saved);}
       if(target.children[index]!==saved.node)target.insertBefore(saved.node,target.children[index]||null);
     });
@@ -469,7 +490,11 @@
         data = {done: true, state: 'error', lines: [], error: 'This video stopped before Studio last restarted. Its saved work is kept: press Resume saved project to carry on from where it stopped.'};
       }
       const lines = data.lines || [];
-      const last = lines[lines.length-1] || '', now = phaseInfo(last);
+      const last = lines[lines.length-1] || '';
+      const inLine = state.queue.find(q=>q.slug===state.openJob && ['queued','held'].includes(q.state));
+      const place = inLine ? placeText(inLine) : '';
+      const now = inLine?.state === 'held' || data.state === 'held' ? {phase:'On hold in the queue',detail:inLine?.reason || ''}
+        : data.state === 'queued' ? {phase:'Waiting in the queue',detail:`${place ? place + '. ' : ''}It starts by itself; Studio makes one video at a time.`} : phaseInfo(last);
       text('crw-progress-phase', data.done ? (data.state === 'done' ? 'Ready to watch' : 'This project stopped') : now.phase);
       text('crw-progress-detail', data.done ? '' : now.detail); hide('crw-progress-detail', data.done || !now.detail);
       const queued = state.queue.find(q=>q.slug===state.openJob); text('crw-progress-time',data.elapsed != null ? elapsed(data.elapsed) : queued?.elapsed != null ? elapsed(queued.elapsed) : '');
@@ -686,6 +711,7 @@
   // Claude limits), or a Studio closed before they started. Nothing of theirs was spent; the creator decides.
   function drawHeld(q) {
     const held = q?.held || [];
+    state.heldScope = held.length ? q.scope || '' : ''; state.heldReason = held.length ? q.reason || '' : '';
     for (const box of all('[data-held-notice]')) {
       box.replaceChildren(); box.hidden = !held.length; if (!held.length) continue;
       const n = held.length, names = held.slice(0, 3).map(h => `“${h.title}”`).join(', ') + (n > 3 ? ` and ${n - 3} more` : '');
@@ -732,7 +758,8 @@
       if (results[2].status==='fulfilled' && results[2].value) state.jobs=results[2].value.jobs || [];
       const active = state.studies.find(x=>x.state==='running') || state.queue.find(x=>['running','queued'].includes(x.state));
       const notice=$('crw-active-notice');notice.replaceChildren();notice.hidden=!state.busy;
-      if (state.busy) {notice.append(el('strong','',active?.label || active?.title || 'Production in progress'),el('span','',active?.operation_id?'Your reference study is using the creative workspace.':'This studio is finishing a project.'));
+      const waiting = state.queue.filter(q=>q.state==='queued').length;
+      if (state.busy) {notice.append(el('strong','',active?.label || active?.title || 'Production in progress'),el('span','',active?.operation_id?'Your reference study is using the creative workspace.':waiting?`${waiting} more ${waiting===1?'video is':'videos are'} waiting in the queue. Studio makes them one at a time.`:'This studio is finishing a project. Videos you create now join the queue.'));
         const a=el('a','crw-inline-link','View progress');a.href=active?.link || '#projects';notice.append(a);
         if ('Notification' in window && Notification.permission === 'default') {
           const ask=el('button','crw-inline-link','Notify me when it’s ready');ask.type='button';
@@ -810,10 +837,11 @@
     chooseGroup('[data-render-on]','renderOn',state.renderOn||'local');
     // When the cloud is the better choice, say so: this computer is already making a video, or a long one would tie it up.
     const minutes=number('crw-minutes',10,1,60), suggest=!why&&state.renderOn!=='cloud'
-      ? (state.busy?'Your computer is making another video. Studio Cloud can make this one at the same time. '
+      ? (state.busy?'Your computer is making another video, so on this computer this one waits its turn in the queue. Studio Cloud can make it at the same time. '
         :minutes>=15?`A ${minutes}-minute video keeps this computer busy for a long time. Studio Cloud renders it while you keep working. `:'')
       : '';
     box.classList.toggle('is-suggested', !!suggest);
+    if (!state.submitting) createLabel();
     text('crw-cloud-note', why || (state.renderOn==='cloud'
       ? `The script, voice and pictures are made here with your Claude Code, and YouTube clips come down on your own connection; a ChannelRecipe machine${gpu?' with a graphics card renders the 3D scenes and':''} does the heavy rendering at $${rate} an hour${gpu?'':' (a 10-minute video is usually under $1)'}. It reserves its most before it starts; you pay only what it used. Balance: $${balance}. Keep Studio open while it renders.`
       : `${suggest}Or render on a ChannelRecipe machine at about $${rate} an hour and keep your computer free. Balance: $${balance}.`));
@@ -843,25 +871,29 @@
     clearTimeout(cloudPanel.timer); if(working&&state.page==='projects')cloudPanel.timer=setTimeout(cloudPanel,10000);
   }
   async function submit(event) {
-    event.preventDefault(); if(state.submitting||state.busy)return;error(''); let p;
+    event.preventDefault(); if(state.submitting)return;error(''); let p;
     try {p=payload();} catch(e){error(e.message);return;}
     if(state.renderOn==='cloud'&&state.cloudInfo?.available&&!cloudBlock()){
       state.submitting=true;gate();$('crw-create').textContent='Starting in the cloud…';
       try {await api('/cr-cloud/start',{method:'POST',body:p});save();showPage('projects');toast('Studio is preparing your video here. A ChannelRecipe machine renders it next.');await cloudPanel();}
-      catch(e){error(e.message);} finally{state.submitting=false;$('crw-create').textContent='Create video';gate();}
+      catch(e){error(e.message);} finally{state.submitting=false;gate();}
       return;
     }
     state.submitting=true;gate();$('crw-create').textContent='Checking your video…';
     let ok=false;
     try {ok=await rankingBatchOk(p);} catch(_) {ok=true;}       // the run itself checks again
-    if (!ok) {state.submitting=false;$('crw-create').textContent='Create video';gate();return;}
+    if (!ok) {state.submitting=false;gate();return;}
     try {
       // /api/run performs the authoritative option, account and renderer checks
       // before creating work; a second preflight would repeat those requests.
       const result=await api('/api/run',{method:'POST',body:p});$('crw-rank-reference').value='';save();showPage('projects');   // a Short to remake goes with that video only
-      toast(['Your new video project has started.', ...(result.warnings || [])].join(' '));await refreshActivity(true);
-      const first=(result.queued||[])[0];if(first)await openProgress(typeof first==='string'?{slug:first,title:p.title.split('\n')[0]}:first);
-    } catch(e){error((e.details?.blockers||[]).join(' ')||e.message);showPage('create');}finally{state.submitting=false;$('crw-create').textContent='Create video';gate();}
+      const first=(result.queued||[])[0], n=(result.queued||[]).length, many=n>1?`These ${n} videos`:'It';
+      const said=first?.held?`Added to the queue, on hold with the others: ${first.held}`
+        :first&&first.ahead>0?`Added to the queue. ${many} ${n>1?'start':'starts'} by ${n>1?'themselves':'itself'} when the ${first.ahead===1?'video':`${first.ahead} videos`} before ${n>1?'them':'it'} ${first.ahead===1?'finishes':'finish'}. You don't need to stay.`
+        :n>1?`Your ${n} videos are queued. Studio makes them one at a time.`:'Your new video project has started.';
+      toast([said, ...(result.warnings || [])].join(' '));await refreshActivity(true);
+      if(first)await openProgress(typeof first==='string'?{slug:first,title:p.title.split('\n')[0]}:first);
+    } catch(e){error((e.details?.blockers||[]).join(' ')||e.message);showPage('create');}finally{state.submitting=false;gate();}
   }
   async function optionalAccounts() {
     if(state.optionalLoaded)return;state.optionalLoaded=true;
