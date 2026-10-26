@@ -65,6 +65,15 @@ def chat_line() -> str:
     return "yes, its settings were left out" + (" (%s)" % effort[0] if effort else "")
 
 
+def start_page(cfg=None) -> str:
+    """The page Studio opens when it starts: setup until this Studio is connected with a voice account, then the
+    workspace, which links back to setup when a check fails. Before 109 every start opened setup again ("Three quick
+    steps"), even after a finished video (the owner's Windows test, 2026-10-26)."""
+    cfg = cr_bridge.load_settings() if cfg is None else cfg
+    voiced = (cfg.get("narration") or {}).get("provider") or (cfg.get("media_hub") or {}).get("provider")
+    return "/" if cfg.get("key") and voiced else "/cr-setup"
+
+
 def forget_claude_chat(environ=None) -> list:
     """Drop the variables a Claude Code chat hands its child processes; -> what was dropped (names, plus the effort
     level the chat asked for, never a value that could be personal)."""
@@ -1389,6 +1398,12 @@ def create_app():
         out.write_bytes(r.content)
         return out
 
+    def style_narrator(style) -> str:
+        """The narrator of a cloned style that has one (cr_media.style_voice), "" for any other recipe."""
+        style = str(style or "")
+        info = (getattr(studio.styles, "STYLES", {}) or {}).get(style)
+        return cr_media.style_voice(style, info).get("voice", "") if isinstance(info, dict) else ""
+
     @studio.app.get("/cr-voices")
     def voices_list():
         try:
@@ -1399,6 +1414,9 @@ def create_app():
             return jsonify(connected=False, voices=[], previews=[])
         model, provider = current["model"], current["provider"]
         names = list(model.get("voice_names") or [])
+        own = style_narrator(request.args.get("style"))            # a cloned style's own narrator, Kie only
+        if own:
+            current = {**current, "voice": own}
         note = ""
         if provider == "kie":
             note = (cr_bridge.load_settings().get("voice_notice") or cr_media.kie_move_note(cr_media.profile("narration"))
@@ -1406,6 +1424,7 @@ def create_app():
         return jsonify(connected=True, provider=provider, provider_label=cr_media.PROVIDERS[provider]["label"],
                        model=model["id"], model_label=model.get("label", model["id"]), voice=current["voice"],
                        default_voice=model["default_voice"], voices=names, groups=model.get("voice_groups") or {},
+                       style_voice=bool(own),
                        note=note, previews=[name for name in names if preview_file(model, name).is_file()])
 
     @studio.app.post("/cr-voices/select")
@@ -1423,6 +1442,14 @@ def create_app():
         if not VOICE_NAME.fullmatch(voice) or (names and voice not in names):
             return jsonify(error="Choose a voice from the list."), 400
         cfg = cr_bridge.load_settings()
+        style = str((request.get_json(silent=True) or {}).get("style") or "")
+        if current["provider"] == "kie" and style_narrator(style):
+            # a cloned style keeps its own narrator: the choice is that style's, the account's voice stays as it was
+            cfg[cr_media.STYLE_VOICES] = {**(cfg.get(cr_media.STYLE_VOICES) or {}), style: voice}
+            cr_bridge.save_settings(cfg)
+            label = (studio.styles.STYLES.get(style) or {}).get("label") or "this style's"
+            return jsonify(saved=True, voice=voice, style=style,
+                           message=f"Your next {label} videos use the {voice} voice.")
         if (cfg.get("narration") or {}).get("provider") == current["provider"]:
             cfg["narration"] = {**cfg["narration"], "voice": voice}
         elif (cfg.get("media_hub") or {}).get("provider") == current["provider"]:
@@ -2032,7 +2059,7 @@ def main():
                                 on_idle=lambda job: studio._enqueue_tl_render(Path(job), Path(job).name))
     def open_page():
         time.sleep(1)
-        webbrowser.open("http://127.0.0.1:7860/cr-setup")
+        webbrowser.open("http://127.0.0.1:7860" + start_page())
     if not os.environ.pop("CR_RESTARTED_FOR_UPDATE", ""):
         threading.Thread(target=open_page, daemon=True).start()
     from werkzeug.serving import make_server

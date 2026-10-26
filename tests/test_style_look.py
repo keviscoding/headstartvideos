@@ -215,6 +215,9 @@ def test_a_saved_or_improved_study_keeps_how_it_was_approved_and_its_renderer(ho
     coded = clone._apply_learned(folder, {**spec, "renderer": "2d"}, built, lambda m: None)
     assert coded["look"]["visuals"] in a2d.PLUGINS and coded["cr_style_clone"]["learned_v2"]["route"]["coded"]
     assert coded["look"]["animated2d"]["renderer"]["state"] == "missing"
+    full = {**built, "features": {"offered": ["youtube", "stock", "ai_images", "sound", "avatar"], "on": ["youtube"]}}
+    only = clone._apply_learned(folder, {**spec, "renderer": "2d"}, full, lambda m: None)["features"]
+    assert only["offered"] == ["sound"] and only["on"] == ["sound"], "a coded style offers sound design only"
     with pytest.raises(a2d.AnimationStopped):
         a2d.renderer_for(coded, home)                       # never the kit's stick fights in its place
     # Improve graphics on a coded style: the copy carries the source's renderer as last saved (Style Lab's included)

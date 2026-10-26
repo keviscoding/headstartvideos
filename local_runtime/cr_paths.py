@@ -66,6 +66,40 @@ def title_problem(folder: str, style: str, titles, youtube_filename) -> str:
             f"the whole ChannelRecipe studio folder somewhere shorter, such as C:\\ChannelRecipe studio.")
 
 
+def title_room(folder: str, home=None) -> int:
+    """The longest title-named file stem every style's finished video has room for below `folder`: its folder and its
+    description file both carry the stem (title_problem), in the longest style folder this Studio can have."""
+    styles = ["cr_clone_" + "x" * STYLE_NAME]
+    if home is not None:
+        styles += [path.stem for path in (Path(home) / "styles").glob("*.json")]
+    longest = max((style_folder(style) for style in styles), key=len)
+    fixed = len(folder) + len(f"/output/{longest}/") + len(" (12345678)/") + len(" - description.txt")
+    return max(10, (LIMIT - fixed) // 2)
+
+
+def install(engine, home, *, windows=None, long_paths=None, folder=None):
+    """On Windows without long paths, a finished video's file name is cut to fit this Studio folder (its title stays
+    whole everywhere else). Before 109 a long title stopped Create with "Shorten the title" (the owner's Windows test,
+    2026-10-26: a 112-character title in a Downloads folder had room for 56)."""
+    original = getattr(engine, "youtube_filename", None)
+    if original is None or getattr(original, "_cr_paths", False):
+        return
+    if not (os.name == "nt" if windows is None else windows):
+        return
+    if (long_paths_enabled() if long_paths is None else long_paths):
+        return
+    most = title_room(folder or str(Path(home).resolve()), home)
+
+    def youtube_filename(title):
+        name = original(title)
+        stem, dot, ext = name.rpartition(".")
+        if not dot or len(stem) <= most:
+            return name
+        return (stem[:most].rstrip(" .") or "video") + "." + ext
+    youtube_filename._cr_paths = True
+    engine.youtube_filename = youtube_filename
+
+
 def long_paths_enabled():
     """Windows' own long-path setting (read only); None on a Mac or Linux, which have no such limit."""
     if os.name != "nt":

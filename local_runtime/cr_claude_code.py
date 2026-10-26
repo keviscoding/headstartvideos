@@ -136,6 +136,20 @@ def configure(home=None) -> dict:
 
 # ── desktop notifications ─────────────────────────────────────────────────────────────────────────────────────
 
+def _windows_icon() -> str:
+    """ChannelRecipe's icon as a file Windows can show (the site's favicon.ico, kept in the temp folder); "" if not."""
+    try:
+        import tempfile
+        import cr_favicon
+        path = os.path.join(tempfile.gettempdir(), "channelrecipe-studio.ico")
+        if not os.path.isfile(path) or os.path.getsize(path) != len(cr_favicon.ICO):
+            with open(path, "wb") as out:
+                out.write(cr_favicon.ICO)
+        return path
+    except (OSError, ImportError, AttributeError):
+        return ""
+
+
 def notify(title: str, message: str, *, run=subprocess.Popen) -> bool:
     """A desktop notification (macOS Notification Centre, a Windows tray balloon). Best effort, never raises."""
     if os.environ.get("CR_NOTIFY", "1") == "0":
@@ -149,10 +163,16 @@ def notify(title: str, message: str, *, run=subprocess.Popen) -> bool:
             return True
         if os.name == "nt":
             quote = lambda s: "'" + s.replace("'", "''") + "'"         # noqa: E731 - PowerShell single quotes
+            # Windows names the balloon after the program that shows it ("Windows PowerShell", with a generic "i" in
+            # the owner's Windows test, 2026-10-26): it carries ChannelRecipe's own icon and name instead
+            icon = _windows_icon()
             script = ("Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; "
-                      "$n = New-Object System.Windows.Forms.NotifyIcon; $n.Icon = [System.Drawing.SystemIcons]::Information; "
-                      f"$n.BalloonTipTitle = {quote(title)}; $n.BalloonTipText = {quote(message)}; $n.Visible = $true; "
-                      "$n.ShowBalloonTip(8000); Start-Sleep -Seconds 9; $n.Dispose()")
+                      "$n = New-Object System.Windows.Forms.NotifyIcon; "
+                      + (f"$n.Icon = New-Object System.Drawing.Icon({quote(icon)}); " if icon
+                         else "$n.Icon = [System.Drawing.SystemIcons]::Information; ")
+                      + "$n.Text = 'ChannelRecipe Studio'; "
+                      f"$n.BalloonTipTitle = {quote(title)}; $n.BalloonTipText = {quote(message + ' (ChannelRecipe Studio)')}; "
+                      "$n.Visible = $true; $n.ShowBalloonTip(8000); Start-Sleep -Seconds 9; $n.Dispose()")
             # without PowerShell 7's module path (Studio started from pwsh), so Windows PowerShell loads its own
             env = {k: v for k, v in os.environ.items() if k.upper() != "PSMODULEPATH"}
             run(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", script], env=env,
