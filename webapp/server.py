@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -532,6 +533,7 @@ from webapp.database import (
     append_niche_hunt_progress, get_niche_hunt_run_by_job_id, get_latest_running_niche_hunt,
     cancel_niche_hunt_run, cancel_all_running_niche_hunts,
     ensure_user_mcp_api_key, rotate_user_mcp_api_key, get_user_by_mcp_api_key,
+    stripe_event_once,
 )
 from webapp import storage
 from webapp import storyboard_staging as _sb_staging
@@ -1360,6 +1362,40 @@ def _stripe_webhook_sync(payload: bytes, sig: str) -> dict:
 
     # construct_event returns a StripeObject — convert once so .get() works.
     event_dict = _stripe_obj_to_dict(event)
+    return _apply_stripe_event_once(event_dict)
+
+
+# The events _apply_stripe_event acts on; anything else is acknowledged without touching the database.
+_STRIPE_EVENTS_APPLIED = frozenset({
+    "checkout.session.completed", "checkout.session.expired", "invoice.payment_failed", "invoice.paid",
+    "customer.subscription.deleted", "customer.subscription.updated",
+})
+# One webhook at a time in this container: each one waiting for the database lock holds a pooled connection.
+_stripe_event_lock = threading.Lock()
+
+
+def _apply_stripe_event_once(event_dict: dict) -> dict:
+    """Apply a verified Stripe event exactly once, one event at a time across every web container.
+
+    Stripe retries a delivery it isn't sure arrived, and with two containers two deliveries can run at once (one
+    event loop used to serialize them). A transaction-level advisory lock makes events apply one after another, in
+    the order they got the lock, and the stripe_events table records each event id once it has applied: a repeat is
+    acknowledged and changes nothing. An event that fails is not recorded, so Stripe's retry applies it."""
+    evt_type = event_dict.get("type") or ""
+    evt_id = str(event_dict.get("id") or "")
+    if evt_type not in _STRIPE_EVENTS_APPLIED:
+        print(f"[stripe] webhook {evt_type} id={evt_id} (not used)")
+        return {"ok": True}
+    with _stripe_event_lock:
+        with stripe_event_once(evt_id, evt_type) as fresh:
+            if not fresh:
+                print(f"[stripe] webhook {evt_type} id={evt_id} already applied; skipped")
+                return {"ok": True, "duplicate": True}
+            return _apply_stripe_event(event_dict)
+
+
+def _apply_stripe_event(event_dict: dict) -> dict:
+    """What one Stripe event changes: plans, credits, the Studio Cloud balance, emails and analytics."""
     evt_type = event_dict.get("type") or ""
     data = event_dict.get("data") or {}
     if not isinstance(data, dict):

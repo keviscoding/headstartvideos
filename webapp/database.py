@@ -109,6 +109,11 @@ CREATE TABLE IF NOT EXISTS ops_credit_grants (
     amount      INTEGER NOT NULL,
     applied_at  REAL NOT NULL DEFAULT (strftime('%s','now'))
 );
+CREATE TABLE IF NOT EXISTS stripe_events (
+    event_id     TEXT PRIMARY KEY,
+    event_type   TEXT NOT NULL DEFAULT '',
+    processed_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS voice_clones (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id         INTEGER NOT NULL,
@@ -256,6 +261,11 @@ CREATE TABLE IF NOT EXISTS ops_credit_grants (
     amount      INTEGER NOT NULL,
     applied_at  DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now())
 );
+CREATE TABLE IF NOT EXISTS stripe_events (
+    event_id     TEXT PRIMARY KEY,
+    event_type   TEXT NOT NULL DEFAULT '',
+    processed_at DOUBLE PRECISION NOT NULL
+);
 CREATE TABLE IF NOT EXISTS voice_clones (
     id              BIGSERIAL PRIMARY KEY,
     user_id         BIGINT NOT NULL,
@@ -393,6 +403,30 @@ def schema_lock(conn, name: str = "core") -> None:
     if IS_PG:
         import zlib
         conn.execute("SELECT pg_advisory_xact_lock(%s, %s)", (SCHEMA_LOCK, zlib.crc32(name.encode()) & 0x7FFFFFFF))
+
+
+# Stripe webhooks apply one at a time across every web container, under this transaction-level advisory lock.
+STRIPE_EVENT_LOCK = 726346117
+
+
+@contextmanager
+def stripe_event_once(event_id: str, event_type: str = ""):
+    """`with stripe_event_once(id, type) as fresh:` fresh is False when this event already applied. When it is True,
+    the block applies the event and, once it finishes without an error, the id is recorded (an error records nothing,
+    so Stripe's retry applies it). The advisory lock is held on one connection for the whole block, so events apply
+    one after another across containers, in the order they took the lock. Without an id nothing is recorded."""
+    with _conn() as conn:
+        if IS_PG:
+            conn.execute("SELECT pg_advisory_xact_lock(%s)", (STRIPE_EVENT_LOCK,))
+        seen = event_id and conn.execute(_q("SELECT 1 FROM stripe_events WHERE event_id = ?"),
+                                         (event_id,)).fetchall()
+        if seen:
+            yield False
+            return
+        yield True
+        if event_id:
+            conn.execute(_q("INSERT INTO stripe_events (event_id, event_type, processed_at) VALUES (?, ?, ?) "
+                            "ON CONFLICT (event_id) DO NOTHING"), (event_id, event_type[:120], time.time()))
 
 
 def ping(timeout: float = 2.0) -> None:
