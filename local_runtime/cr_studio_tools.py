@@ -724,6 +724,12 @@ def _job_status(slug: str) -> dict:
                 None)
     if said:
         out["captions_note"] = str(said).strip()
+    # footage watching that moved to ChannelRecipe's watcher, or stopped, because Kie's watcher wasn't answering (cr_watch)
+    moved = [str(line).strip() for line in status.get("lines") or []
+             if re.search(r"Kie's video watcher isn't answering|footage watching stopped for this video|"
+                          r"ChannelRecipe's watcher watched", str(line))]
+    if moved:
+        out["footage_note"] = " ".join(dict.fromkeys(moved))[:600]
     if status.get("video"):
         out.update(watch_url=link("/f/video/" + _quote_path(slug)), project_url=link("/editor/" + _quote_path(slug)))
     elif out["done"] or out["state"] in ("error", "stopped"):

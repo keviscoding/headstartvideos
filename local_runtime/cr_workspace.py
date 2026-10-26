@@ -152,6 +152,8 @@ def install(studio, activity, *, token, home=None):
         # what Research footage may watch for each length, 1 to 60 minutes (Create says it before a video starts)
         import cr_watch
         data["footage_watch"] = [cr_watch.budget(minutes) for minutes in range(1, 61)]
+        # the last video's footage watching when Kie's watcher failed in it (moved to ChannelRecipe's, or stopped)
+        data["footage_watcher"] = cr_watch.last_outcome(home)
         return cr_presentation.plain_copy(data)
 
     def selected_preset():

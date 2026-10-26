@@ -68,7 +68,9 @@ def workspace(browser):
     catalog = {"channels": cr_presentation.presentation_catalog(rows, {
         CLONE: {"cr_style_clone": {"visual_mode": "reference_only"}}}),
         "features": features, "caps": {"features": {row["key"]: {"ok": True} for row in features}},
-        "dlc": {}, "prices": {}, "footage_watch": [cr_watch.budget(m) for m in range(1, 61)]}
+        "dlc": {}, "prices": {}, "footage_watch": [cr_watch.budget(m) for m in range(1, 61)],
+        "footage_watcher": {"note": "On your last video, Kie's video watcher wasn't answering, so ChannelRecipe's "
+                                    "watcher watched 12 of its videos."}}
     app = Flask(__name__)
 
     @app.before_request
@@ -499,6 +501,9 @@ def test_research_footage_says_what_its_watching_adds_and_progress_counts_the_vi
     ten = cr_watch.budget(10)
     assert f"about {ten['typical_minutes'][0]} to {ten['typical_minutes'][1]} minutes to a 10-minute video" in note.inner_text()
     assert f"up to {ten['videos']} YouTube videos" in note.inner_text()
+    # Alex: Kie was his only watcher and it was down; Create says what happens then, and what happened last time
+    assert "If Kie's video watcher isn't answering, ChannelRecipe's own watcher takes over" in note.inner_text()
+    assert "never your credits" in note.inner_text() and "watched 12 of its videos" in note.inner_text()
     page.locator("[data-minutes='20']").click()
     assert f"up to {cr_watch.budget(20)['videos']} YouTube videos" in note.inner_text()
     if os.environ.get("CR_SHOT"):
